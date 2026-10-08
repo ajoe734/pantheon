@@ -13,7 +13,6 @@ from services.source_ingestion.connectors import alpha_db, social, taiwan_offici
 from services.source_ingestion.connectors.alpha_db import ExternalAlphaDbAdapter
 from services.source_ingestion.connectors.base import SourceEvidenceError
 from services.source_ingestion.connectors.bounded_reader import (
-    OfficialResponseTruncated,
     ResponseTruncated,
     declared_content_length,
     read_bounded_response,
@@ -66,7 +65,7 @@ def test_bounded_reader_without_content_length_returns_as_read() -> None:
 
 def test_bounded_reader_truncation_against_content_length_raises() -> None:
     response = _ChunkedResponse([b"short body"], declared=1000)
-    with pytest.raises(OfficialResponseTruncated, match=r"read 10 of 1000 declared bytes"):
+    with pytest.raises(ResponseTruncated, match=r"read 10 of 1000 declared bytes"):
         read_bounded_response(response)
 
 
@@ -199,7 +198,7 @@ def test_alpha_db_connector_call_path_does_not_retry(monkeypatch: pytest.MonkeyP
     monkeypatch.setenv("ALPHA_DB_API_KEY", "test-key-alpha")
 
     adapter = ExternalAlphaDbAdapter()
-    with pytest.raises(OfficialResponseTruncated):
+    with pytest.raises(ResponseTruncated):
         adapter.fetch_payload(entity_id="AAPL", signal_id="technical_rsi_14d")
 
     assert call_count == 1
@@ -249,7 +248,7 @@ def test_social_connector_call_path_does_not_retry(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(social, "open_external_url", fake_open)
 
     adapter = AdmittedSocialMediaAdapter()
-    with pytest.raises(OfficialResponseTruncated):
+    with pytest.raises(ResponseTruncated):
         adapter.fetch_payload(symbol="AAPL")
 
     assert call_count == 1

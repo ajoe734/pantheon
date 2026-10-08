@@ -38,12 +38,8 @@ from .base import (
     SourceRecord,
 )
 from .bounded_reader import (
-    OfficialResponseTruncated,
     ResponseTruncated,
-    declared_content_length,
     read_bounded_response,
-    read_bounded_response as _read_bounded_response,
-    declared_content_length as _declared_content_length,
 )
 
 
@@ -370,9 +366,9 @@ def _fetch_official(
     for attempt in range(1, OFFICIAL_FETCH_ATTEMPTS + 1):
         try:
             with open_external_url(request, caller=caller, timeout=timeout_seconds) as response:
-                raw_bytes = _read_bounded_response(response, max_bytes=max_bytes)
+                raw_bytes = read_bounded_response(response, max_bytes=max_bytes)
             return parse(raw_bytes)
-        except (OfficialResponseTruncated, TimeoutError, http.client.IncompleteRead, json.JSONDecodeError) as exc:
+        except (ResponseTruncated, TimeoutError, http.client.IncompleteRead, json.JSONDecodeError) as exc:
             failures.append(f"attempt {attempt}: {type(exc).__name__}: {str(exc)[:200]}")
             if attempt < OFFICIAL_FETCH_ATTEMPTS:
                 time.sleep(OFFICIAL_FETCH_BACKOFF_SECONDS * attempt)

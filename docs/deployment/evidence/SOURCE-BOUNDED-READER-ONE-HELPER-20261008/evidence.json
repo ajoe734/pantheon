@@ -6,7 +6,7 @@
     "cause": "Historical code treated len(chunk) < chunk_size as end of stream instead of reading until an empty chunk (b''). Each connector implemented its own copy rather than sharing a single helper."
   },
   "change": [
-    "Created services/source_ingestion/connectors/bounded_reader.py providing the single end-of-stream bounded reader helper (read_bounded_response, _read_bounded_response, OfficialResponseTruncated, ResponseTruncated, declared_content_length, _declared_content_length) that loops until response.read() returns empty bytes (b'') and checks declared Content-Length.",
+    "Created services/source_ingestion/connectors/bounded_reader.py providing the single end-of-stream bounded reader helper (read_bounded_response, ResponseTruncated, declared_content_length) that loops until response.read() returns empty bytes (b'') and checks declared Content-Length.",
     "Updated services/source_ingestion/connectors/taiwan_official.py to import bounded reader and remove duplicate definitions.",
     "Updated services/source_ingestion/connectors/alpha_db.py to import bounded reader and remove duplicate short-read breaking definition.",
     "Updated services/source_ingestion/connectors/social.py to import bounded reader and remove duplicate short-read breaking definition.",

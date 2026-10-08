@@ -35,10 +35,7 @@ from .base import (
     SourceRecord,
     SourceType,
 )
-from .bounded_reader import (
-    read_bounded_response,
-    read_bounded_response as _read_bounded_response,
-)
+from .bounded_reader import read_bounded_response
 from ..external_sources import validate_external_source_record
 
 
