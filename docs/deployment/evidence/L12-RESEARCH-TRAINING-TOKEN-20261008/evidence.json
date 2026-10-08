@@ -20,5 +20,11 @@
     "base_with_new_tests": "with the harness change reverted, test_research_suite_training_token_is_the_issued_worker_principal fails",
     "head": "pytest scripts/test_run_isolated_l12_runtime_e2e.py: 43 passed; scripts/test_current_l12_compose_wiring.py: 8 passed; research suite collects 5 tests"
   },
-  "review_status": "Author validation only; independent exact-head review by the assigned reviewer pending."
+  "review_status": "Author validation only; independent exact-head review by the assigned reviewer pending.",
+  "delivery_verification": {
+    "agent": "Claude",
+    "head": "6d99bc1f5",
+    "command": "python -m pytest -q scripts/test_run_isolated_l12_runtime_e2e.py scripts/test_current_l12_compose_wiring.py",
+    "result": "51 passed (43 + 8), including test_research_suite_training_token_is_the_issued_worker_principal and test_former_published_training_fixture_token_is_rejected"
+  }
 }
