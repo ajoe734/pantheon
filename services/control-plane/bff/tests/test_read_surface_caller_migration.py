@@ -620,6 +620,7 @@ class TestEndpointLevelRetainedCallers(unittest.TestCase):
 
     def setUp(self) -> None:
         from services.control_plane.bff import main as bff_main
+        from services.control_plane.bff.personas import service as persona_service
         from services.control_plane.bff.deployment.router import create_deployment_router
         from services.control_plane.bff.governance.router import create_governance_router
         from services.control_plane.bff.agora.router import create_agora_router
@@ -750,7 +751,7 @@ class TestEndpointLevelRetainedCallers(unittest.TestCase):
                 sse_buffers=bff_main._sse_buffers,
                 sse_subscribers=bff_main._sse_subscribers,
                 gov_bff_action_command=bff_main._gov_bff_action_command,
-                deprecated_bff_path_response=bff_main._deprecated_bff_path_response,
+                deprecated_bff_path_response=persona_service._deprecated_bff_path_response,
                 sem_command_response=bff_main._sem_command_response,
                 stream_generic_events=bff_main.stream_generic_events,
                 surface_degradation_reason=bff_main._surface_degradation_reason,
