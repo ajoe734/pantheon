@@ -984,6 +984,9 @@ def test_terminal_session_recovery_retry_exhaustion_visibly_failed(
     monkeypatch.setattr(worker.urllib.request, "urlopen", service_urlopen)
 
     store = service.TrainingSessionStore(fixture.data_dir)
+    from datetime import timedelta
+    current_time = FIXED_TRUSTED_NOW
+    service._trusted_now = lambda: current_time
 
     # Tick 1: attempt 1/3 fails complete
     tick1 = worker.run_tick(api_url="http://training-session-svc:8099", limit=5)
@@ -1009,6 +1012,14 @@ def test_terminal_session_recovery_retry_exhaustion_visibly_failed(
     assert job2["attempt_count"] == 2
     assert job2["retryable"] is True
     assert job2.get("error_code") is None
+    assert job2.get("lease_expires_at") is not None
+
+    # Duplicate tick before lease expiry finds no claimable jobs
+    dup_tick = worker.run_tick(api_url="http://training-session-svc:8099", limit=5)
+    assert dup_tick["jobs_found"] == 0
+
+    # Advance injected clock past the lease for genuine recovery retry
+    current_time += timedelta(seconds=121)
 
     # Tick 3: attempt 3/3 fails complete
     tick3 = worker.run_tick(api_url="http://training-session-svc:8099", limit=5)
@@ -1022,6 +1033,13 @@ def test_terminal_session_recovery_retry_exhaustion_visibly_failed(
     assert job3["attempt_count"] == 3
     assert job3["retryable"] is False
     assert job3.get("error_code") is None
+
+    # Duplicate tick before lease expiry finds no claimable jobs
+    dup_tick2 = worker.run_tick(api_url="http://training-session-svc:8099", limit=5)
+    assert dup_tick2["jobs_found"] == 0
+
+    # Advance injected clock past the lease for exhaustion
+    current_time += timedelta(seconds=121)
 
     # Tick 4: retry budget exhausted, owner /run persists named failure and worker reads it
     tick4 = worker.run_tick(api_url="http://training-session-svc:8099", limit=5)
@@ -1040,7 +1058,7 @@ def test_terminal_session_recovery_retry_exhaustion_visibly_failed(
     assert job4["retryable"] is False
     assert job4["error_code"] == "terminal_session_completion_exhausted"
     assert "terminal session completion retry budget exhausted" in str(job4["failure_reason"])
-    assert job4["failed_at"] == FIXED_TRUSTED_NOW.isoformat().replace("+00:00", "Z")
+    assert job4["failed_at"] == current_time.isoformat().replace("+00:00", "Z")
 
     # Session stays active
     session_after = store.get_session(session_id)
@@ -1134,12 +1152,20 @@ def test_lost_response_from_final_owner_run_leaves_failure_discoverable(
     monkeypatch.setattr(worker.urllib.request, "urlopen", service_urlopen)
 
     store = service.TrainingSessionStore(fixture.data_dir)
+    from datetime import timedelta
+    current_time = FIXED_TRUSTED_NOW
+    service._trusted_now = lambda: current_time
 
-    # Ticks 1-3: complete fails 3 times
-    for _ in range(3):
+    # Tick 1: attempt 1 fails complete
+    worker.run_tick(api_url="http://training-session-svc:8099", limit=5)
+
+    # Ticks 2-3: advance clock past lease before each retry
+    for _ in range(2):
+        current_time += timedelta(seconds=121)
         worker.run_tick(api_url="http://training-session-svc:8099", limit=5)
 
-    # Tick 4: simulate lost response from final owner /run
+    # Tick 4: advance clock past lease, simulate lost response from final owner /run
+    current_time += timedelta(seconds=121)
     drop_final_run_response = True
     tick4 = worker.run_tick(api_url="http://training-session-svc:8099", limit=5)
     assert tick4["jobs_found"] == 1
@@ -1151,7 +1177,7 @@ def test_lost_response_from_final_owner_run_leaves_failure_discoverable(
     assert job4["status"] == "failed"
     assert job4["error_code"] == "terminal_session_completion_exhausted"
     assert job4["retryable"] is False
-    assert job4["failed_at"] == FIXED_TRUSTED_NOW.isoformat().replace("+00:00", "Z")
+    assert job4["failed_at"] == current_time.isoformat().replace("+00:00", "Z")
 
     # Session remains active
     session_after = store.get_session(session_id)

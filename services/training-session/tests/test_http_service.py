@@ -877,3 +877,146 @@ def test_complete_fails_closed_when_controller_sequence_regresses_or_semantic_au
         comp = client.post(f"/api/training/sessions/{session_id}/complete")
         assert comp.status_code == 409
         assert "evaluation authority is no longer admissible" in comp.text
+
+
+def test_terminal_session_recovery_claim_lease_fences_duplicate_claims_before_expiry() -> None:
+    from datetime import timedelta
+
+    module = _load_service_module()
+    client = TestClient(module.app)
+    current_clock = FIXED_TRUSTED_NOW
+    module._trusted_now = lambda: current_clock
+
+    # 1. Duplicate recovery claims before lease expiry do not consume another attempt or invalidate completion
+    created = client.post(
+        "/api/training/sessions",
+        json={
+            "persona_id": "persona-claim-fence-test",
+            "objective": "Verify recovery claims respect lease fence",
+            "actor_id": "operator-1",
+        },
+    )
+    assert created.status_code == 201
+    session_id = created.json()["session_id"]
+    seed_changed_supported_controls(module, session_id)
+
+    queued = client.post(
+        f"/api/training/sessions/{session_id}/preview-jobs",
+        json={"mode": "refresh", "requested_by": "operator-1", "terminalize_session": True},
+        headers={"Idempotency-Key": "claim-fence-001"},
+    )
+    assert queued.status_code == 201
+    job_id = queued.json()["job_id"]
+
+    # Call 1: initial run completes evaluation
+    run1 = client.post(f"/api/training/preview-jobs/{job_id}/run", json={})
+    assert run1.status_code == 200
+    job1 = run1.json()
+    assert job1["status"] == "completed"
+    assert job1["attempt_count"] == 1
+    assert job1.get("lease_expires_at") is None
+
+    # Call 2: first recovery claim (e.g. lost response before complete)
+    run2 = client.post(f"/api/training/preview-jobs/{job_id}/run", json={})
+    assert run2.status_code == 200
+    job2 = run2.json()
+    assert job2["status"] == "completed"
+    assert job2["reclaimed"] is True
+    assert job2["replayed"] is True
+    assert job2["attempt_count"] == 2
+    assert job2.get("lease_expires_at") is not None
+
+    # Call 3: duplicate claim at same injected clock before expiry returns 409 and does not increment attempts
+    run3 = client.post(f"/api/training/preview-jobs/{job_id}/run", json={})
+    assert run3.status_code == 409
+    assert run3.json()["detail"] == "preview job is not claimable"
+
+    # Call 4: another duplicate claim before expiry (e.g. 30s later) returns 409
+    current_clock += timedelta(seconds=30)
+    run4 = client.post(f"/api/training/preview-jobs/{job_id}/run", json={})
+    assert run4.status_code == 409
+    assert run4.json()["detail"] == "preview job is not claimable"
+
+    # Job in store retains attempt_count=2, completed status, and original evaluation proof
+    stored_job = module.store.get_preview_job(job_id)
+    assert stored_job["status"] == "completed"
+    assert stored_job["attempt_count"] == 2
+    assert stored_job.get("error_code") is None
+
+    # Valid completion succeeds without worker provenance error
+    comp = client.post(f"/api/training/sessions/{session_id}/complete")
+    assert comp.status_code == 201, comp.text
+    assert comp.json()["status"] == "completed"
+    assert comp.json()["ended_at"] is not None
+
+    # Once session is terminal, job is no longer claimable even after lease expiry
+    current_clock += timedelta(seconds=121)
+    run_after_term = client.post(f"/api/training/preview-jobs/{job_id}/run", json={})
+    assert run_after_term.status_code == 200
+    assert run_after_term.json()["replayed"] is True
+
+    # 2. Advance injected clock past lease: genuine recovery and exhaustion still works
+    created2 = client.post(
+        "/api/training/sessions",
+        json={
+            "persona_id": "persona-exhaustion-api-test",
+            "objective": "Verify genuine recovery exhaustion after advancing past lease",
+            "actor_id": "operator-1",
+        },
+    )
+    assert created2.status_code == 201
+    session_id2 = created2.json()["session_id"]
+    seed_changed_supported_controls(module, session_id2)
+
+    queued2 = client.post(
+        f"/api/training/sessions/{session_id2}/preview-jobs",
+        json={"mode": "refresh", "requested_by": "operator-1", "terminalize_session": True},
+        headers={"Idempotency-Key": "claim-fence-002"},
+    )
+    assert queued2.status_code == 201
+    job_id2 = queued2.json()["job_id"]
+
+    # Call 1: initial run
+    res1 = client.post(f"/api/training/preview-jobs/{job_id2}/run", json={})
+    assert res1.status_code == 200
+    assert res1.json()["attempt_count"] == 1
+
+    # Call 2: first recovery claim (attempt 2)
+    res2 = client.post(f"/api/training/preview-jobs/{job_id2}/run", json={})
+    assert res2.status_code == 200
+    assert res2.json()["attempt_count"] == 2
+
+    # Duplicate claim before expiry returns 409
+    dup = client.post(f"/api/training/preview-jobs/{job_id2}/run", json={})
+    assert dup.status_code == 409
+
+    # Advance clock past lease -> second recovery claim succeeds (attempt 3)
+    current_clock += timedelta(seconds=121)
+    res3 = client.post(f"/api/training/preview-jobs/{job_id2}/run", json={})
+    assert res3.status_code == 200
+    assert res3.json()["attempt_count"] == 3
+    assert res3.json()["retryable"] is False
+
+    # Duplicate claim before expiry returns 409
+    dup2 = client.post(f"/api/training/preview-jobs/{job_id2}/run", json={})
+    assert dup2.status_code == 409
+
+    # Advance clock past lease -> attempt budget exhausted (3 >= max 3), job marked failed
+    current_clock += timedelta(seconds=121)
+    res4 = client.post(f"/api/training/preview-jobs/{job_id2}/run", json={})
+    assert res4.status_code == 200
+    failed_job = res4.json()
+    assert failed_job["status"] == "failed"
+    assert failed_job["error_code"] == "terminal_session_completion_exhausted"
+    assert failed_job["retryable"] is False
+    assert failed_job["failed_at"] == current_clock.isoformat().replace("+00:00", "Z")
+
+    # Subsequent claims fail closed
+    res5 = client.post(f"/api/training/preview-jobs/{job_id2}/run", json={})
+    assert res5.status_code == 409
+    assert res5.json()["detail"] == "preview job is not claimable"
+
+    # Session stays active
+    session2 = module.store.get_session(session_id2)
+    assert session2["status"] == "active"
+    assert session2.get("ended_at") is None

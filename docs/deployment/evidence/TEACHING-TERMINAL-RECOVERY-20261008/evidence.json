@@ -11,19 +11,19 @@
   },
   "changes": [
     "services/training-session/main.py: update _job_is_claimable to allow completed jobs when terminalize_session=True and the session has not reached terminal status (status not in TERMINAL_SESSION_STATUSES or ended_at null)",
-    "services/training-session/main.py: update run_preview_job claim mutator to recognize terminal session recovery, increment attempt count bounded by max_attempts, preserve original worker_run_id matching evaluation proof, and return replayed completed record without rerunning evaluation",
+    "services/training-session/main.py: update run_preview_job claim mutator to recognize terminal session recovery, increment attempt count bounded by max_attempts, preserve original worker_run_id matching evaluation proof, set lease_expires_at on recovery claims to fence duplicate claims before expiry, and return replayed completed record without rerunning evaluation",
     "services/training-session/main.py: clear lease_expires_at upon successful preview evaluation completion so recovery is claimable immediately if run response was lost",
     "services/training-session/main.py: upon retry budget exhaustion in run_preview_job, owner persists named nonretryable failure terminal_session_completion_exhausted with failed_at timestamp, retryable=False, and evidence logging, without rerunning evaluation or making another complete attempt",
     "services/training-session/source_dataset_authority.py: separate operational controller_state.sequence_no and requirement_snapshot.sequence into recorded controller_provenance that may only advance, while retaining full payload comparison with narrow sequence normalization to reject changed finished_at, source bytes, tenant, deployment identity, desired_state digest, and policy",
     "services/training-session/preview_eval_worker.py: read and report durable owner failure terminal_session_completion_exhausted from existing /run transaction and queue without adding a third RPC",
-    "services/training-session/tests/test_preview_eval_worker.py: add tests for response-loss recovery across ticks, transient complete failure retry across worker restart, negative preview-only session active preservation, tenant isolation, invalid proof rejection, duplicate completion idempotency, visible retry exhaustion failure, and lost response on final owner run",
+    "services/training-session/tests/test_preview_eval_worker.py: add tests for response-loss recovery across ticks, transient complete failure retry across worker restart, negative preview-only session active preservation, tenant isolation, invalid proof rejection, duplicate completion idempotency, visible retry exhaustion failure, and lost response on final owner run, updating bounded-exhaustion tests to respect the existing recovery lease",
     "services/training-session/tests/test_source_dataset_authority.py: add tests verifying advancing controller and requirement sequences preserve materialized dataset version, sequence regressions fail closed, and semantic authority changes are rejected",
-    "services/training-session/tests/test_http_service.py: add real API evaluate-then-complete tests asserting sequence advancement passes while sequence regression and semantic changes fail closed"
+    "services/training-session/tests/test_http_service.py: add real API evaluate-then-complete tests asserting sequence advancement passes while sequence regression and semantic changes fail closed, plus recovery claim lease fence regression test verifying duplicate claims before expiry return 409 and do not invalidate completion while clock advance past lease allows genuine recovery and exhaustion"
   ],
   "verification": {
     "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest services/training-session/tests/test_preview_eval_worker.py services/training-session/tests/test_teaching_evaluation_readback.py services/training-session/tests/test_http_service.py services/training-session/tests/test_source_dataset_authority.py",
-    "test_count": 101,
-    "passed": 101,
+    "test_count": 102,
+    "passed": 102,
     "failed": 0,
     "returncode": 0
   },

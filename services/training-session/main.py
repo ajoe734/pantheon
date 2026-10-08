@@ -2035,6 +2035,7 @@ def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Di
                 existing["attempt_count"] = attempts
                 existing["last_attempt_at"] = timestamp
                 existing["lease_started_at"] = timestamp
+                existing["lease_expires_at"] = lease_expires_at
                 existing["reclaimed"] = True
                 existing["replayed"] = True
                 existing["retryable"] = attempts < max_attempts
