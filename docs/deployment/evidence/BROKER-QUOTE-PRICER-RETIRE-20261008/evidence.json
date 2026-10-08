@@ -1,0 +1,136 @@
+{
+  "task": "BROKER-QUOTE-PRICER-RETIRE-20261008",
+  "base": "0d1bd805862ac2acc6f922e513a8839d7d6ab750",
+  "removed_sites": [
+    {
+      "file": "services/broker/quote_pricing.py",
+      "before": "lines 1-137 (QuotePricer class, TWSE MIS fallback, streaming integration)",
+      "after": "file deleted"
+    },
+    {
+      "file": "services/broker/streaming_quotes.py",
+      "before": "lines 1-267 (StreamingQuoteManager class, Shioaji streaming tick subscriptions, quote list 報價列)",
+      "after": "file deleted"
+    },
+    {
+      "file": "services/broker/main.py",
+      "before": "imports at 25-27; config and _build_quote_pricer/_QUOTE_PRICER at 34-59; fallback lookup at 129-131; /api/broker/quote-debug route at 151-167",
+      "after": "imports removed; config and pricer removed; submit_paper_order passes req.market_price directly; quote-debug route removed"
+    },
+    {
+      "file": "services/broker/sinopac/adapter.py",
+      "before": "snapshot_price method at lines 595-627",
+      "after": "snapshot_price method removed; other methods unchanged"
+    },
+    {
+      "file": "docker-compose.yml",
+      "before": "services.broker.environment lines 903-906: BROKER_SHIOAJI_SANDBOX_ENABLED, BROKER_SHIOAJI_API_KEY, BROKER_SHIOAJI_SECRET_KEY, BROKER_TW_QUOTE_SEED",
+      "after": "lines removed; broker environment contains exactly PORT, BROKER_PAPER_ENABLED, BROKER_PAPER_STORE_PATH"
+    },
+    {
+      "file": "services/broker/requirements.txt",
+      "before": "line 4: shioaji>=1.2.0,<2.0.0",
+      "after": "shioaji line removed"
+    },
+    {
+      "file": "dependencies/locks/services-broker.txt",
+      "before": "line 7: header primary dependency shioaji; lines 31-32: shioaji==1.7.5 pin and via comment",
+      "after": "header and pin removed; no other line modified"
+    },
+    {
+      "file": "services/broker/test_streaming_quotes.py",
+      "before": "lines 1-96 (6 unit tests for StreamingQuoteManager)",
+      "after": "file deleted"
+    },
+    {
+      "file": "services/broker/test_quote_pricing.py",
+      "before": "lines 1-62 (8 tests: 5 asserting removed QuotePricer/MIS/adapter snapshot and 3 for simulate_paper_order)",
+      "after": "file deleted; 5 removed mechanism tests deleted; 3 simulate_paper_order tests moved to test_broker.py"
+    },
+    {
+      "file": "services/broker/test_broker.py",
+      "before": "lines 139-141 patched broker_main._QUOTE_PRICER.market_price to None in test_market_order_without_price_rejected_and_not_stored",
+      "after": "removed _QUOTE_PRICER patch; kept request and assertions byte-identical; appended 3 moved simulate_paper_order tests"
+    }
+  ],
+  "caller_table_post_api_broker_paper_orders": [
+    {
+      "caller": "services/execution/lean_runtime/paper_runtime.py::SubmitTaiwanBrokerOrder",
+      "sends_market_price": true,
+      "price_source": "Admitted official snapshot close from metadata.market_data (PAPER-TW-EXECUTION-PREREQS-20261007)",
+      "status": "enabled in dev runtime"
+    },
+    {
+      "caller": "services/openclaw-gateway-adapter/paper_broker_adapter.py:213-225",
+      "sends_market_price": false,
+      "price_source": "none",
+      "status": "disabled by literal OPENCLAW_PAPER_ADAPTER_ENABLED: 'false' at docker-compose.yml:839; no deploy script or workflow overrides it; if enabled, MARKET orders fail closed with MARKET_PRICE_UNAVAILABLE"
+    }
+  ],
+  "deleted_tests": [
+    "services/broker/test_streaming_quotes.py::test_seed_symbols_subscribed_on_init",
+    "services/broker/test_streaming_quotes.py::test_ensure_subscribed_growth_bounded",
+    "services/broker/test_streaming_quotes.py::test_reconnect_loop_backoff",
+    "services/broker/test_streaming_quotes.py::test_prices_snapshot_thread_safety",
+    "services/broker/test_streaming_quotes.py::test_session_ok_property",
+    "services/broker/test_streaming_quotes.py::test_close_stops_worker_thread",
+    "services/broker/test_quote_pricing.py::test_mis_parse_uses_last_trade",
+    "services/broker/test_quote_pricing.py::test_mis_parse_falls_back_to_bid_ask_mid",
+    "services/broker/test_quote_pricing.py::test_mis_parse_empty",
+    "services/broker/test_quote_pricing.py::test_quote_pricer_prefers_streaming",
+    "services/broker/test_quote_pricing.py::test_adapter_snapshot_price_returns_last"
+  ],
+  "moved_tests": [
+    {
+      "name": "test_market_fill_uses_market_price",
+      "from": "services/broker/test_quote_pricing.py",
+      "to": "services/broker/test_broker.py",
+      "byte_identical": true
+    },
+    {
+      "name": "test_market_order_without_price_raises_unavailable",
+      "from": "services/broker/test_quote_pricing.py",
+      "to": "services/broker/test_broker.py",
+      "byte_identical": true
+    },
+    {
+      "name": "test_limit_fill_unchanged_by_market_price",
+      "from": "services/broker/test_quote_pricing.py",
+      "to": "services/broker/test_broker.py",
+      "byte_identical": true
+    }
+  ],
+  "grep_counts": {
+    "retired_symbols_in_broker_and_compose": {
+      "pattern": "QuotePricer|StreamingQuoteManager|quote_pricing|streaming_quotes|_QUOTE_PRICER|quote-debug|quote_debug|BROKER_TW_QUOTE_SEED|mis[.]twse[.]com[.]tw|snapshot_price",
+      "before": 30,
+      "after": 0
+    },
+    "word_boundary_full_repo_scope": {
+      "pattern": "\\b(QuotePricer|StreamingQuoteManager|quote_pricing|streaming_quotes|_QUOTE_PRICER|quote-debug|quote_debug|BROKER_TW_QUOTE_SEED|mis[.]twse[.]com[.]tw|snapshot_price)\\b",
+      "before": 28,
+      "after": 0
+    },
+    "exact_regex_with_unrelated_execution_test": {
+      "pattern": "QuotePricer|StreamingQuoteManager|quote_pricing|streaming_quotes|_QUOTE_PRICER|quote-debug|quote_debug|BROKER_TW_QUOTE_SEED|mis[.]twse[.]com[.]tw|snapshot_price",
+      "before": 31,
+      "after": 1,
+      "note": "1 remaining match is services/execution/lean_runtime/test_paper_runtime.py:2751 test_taiwan_market_fill_uses_admitted_snapshot_price, an unrelated test added by PAPER-TW-EXECUTION-PREREQS-20261007 asserting paper fills use the admitted official snapshot price. services/execution is explicitly under DO NOT TOUCH and outside task scope."
+    },
+    "shioaji_in_broker_requirements_and_locks": {
+      "before": 3,
+      "after": 0
+    }
+  },
+  "lock_checker": {
+    "command": "python3 scripts/check_service_lock_shared_deps.py",
+    "base_result": "passed (no errors naming services-broker.txt)",
+    "head_result": "passed (no errors naming services-broker.txt)"
+  },
+  "hosted_facts": [
+    "Hosted dev receives this change only through the next automatic dev pair release that rebuilds the broker image.",
+    "The hosted VM .env may still define BROKER_SHIOAJI_*, but after this change no container receives them.",
+    "Historical evidence that names BROKER_SHIOAJI_* (docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729/applicability-matrix.json) or mis.twse.com.tw (docs/04/pantheon_external_data_source_management_2026-08-24/evidence/SRCM-P1-PROVIDER-COVERAGE-20260824-evidence.json) is intentionally left as history."
+  ],
+  "no_hosted_action": true
+}
