@@ -9,6 +9,7 @@ import os
 import sys
 import tempfile
 import threading
+import types
 import urllib.error
 from contextlib import contextmanager
 from pathlib import Path
@@ -1457,6 +1458,40 @@ def test_loop_12_controller_truth_publication(tmp_path, monkeypatch):
     data = response.json().get("data", {})
     assert data.get("loop_id") == "bff_health_monitoring"
     assert data.get("read_model") == "loop_health"
+
+
+def test_loop_12_controller_truth_reuses_one_writer_lease(tmp_path, monkeypatch):
+    # A new writer per cycle carries a new lease token and is fenced out while
+    # the previous cycle's lease is active, so the monitor keeps one writer.
+    created: List[Any] = []
+
+    class _Writer:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+            self.heartbeats: List[Dict[str, Any]] = []
+            created.append(self)
+
+        async def record_heartbeat(self, **kwargs: Any) -> None:
+            self.heartbeats.append(kwargs)
+
+    fake_loop_control = types.ModuleType("services.loop-control")
+    fake_loop_control.LoopControllerWriter = _Writer
+    monkeypatch.setitem(sys.modules, "services.loop-control", fake_loop_control)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://loop12.invalid/pantheon")
+    monitor = DownstreamHealthMonitor(
+        state_path=str(tmp_path / "downstream_loop12_writer.sqlite3"),
+        incidents_url="",
+    )
+
+    monitor.publish_loop_12_controller_truth()
+    monitor.publish_loop_12_controller_truth()
+
+    assert len(created) == 1
+    assert created[0].kwargs["controller_name"] == health_module.LOOP_12_CONTROLLER_NAME
+    assert len(created[0].heartbeats) == 2
+    heartbeat = created[0].heartbeats[-1]
+    assert heartbeat["desired_state_query"] == health_module.LOOP_12_DESIRED_STATE_QUERY
+    assert heartbeat["actual_state_query"] == health_module.LOOP_12_ACTUAL_STATE_QUERY
 
 
 def test_loop_12_controller_truth_states_conform_to_controller_record_schema(

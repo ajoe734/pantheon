@@ -36,6 +36,7 @@ EXPECTED_IMPLEMENTED_CONTROLLERS: dict[str, str] = {
     "source_ingestion": "source-ingestion-controller",
     "strategy_distillation": "strategy-distillation-controller",
     "alpha_replication": "alpha-replication-controller",
+    "bff_health_monitoring": "bff_downstream_health_monitor",
 }
 
 
@@ -247,8 +248,8 @@ class TestTwelveOwnerCatalogContract:
         assert len(items) == 13
 
         coverage = payload["meta"]["catalog"]["controller_contract_coverage"]
-        assert coverage["declared_controller_count"] == 3
-        assert coverage["no_declared_controller_count"] == 10
+        assert coverage["declared_controller_count"] == 4
+        assert coverage["no_declared_controller_count"] == 9
         assert coverage["incomplete_contract_loop_ids"] == []
 
         for loop_id, expected_name in EXPECTED_IMPLEMENTED_CONTROLLERS.items():
@@ -269,7 +270,6 @@ class TestTwelveOwnerCatalogContract:
             "capital_pool_execution",
             "telemetry_reconciliation",
             "evolution",
-            "bff_health_monitoring",
         ]:
             item = items[loop_id]
             declaration = item["controller_contract_declaration"]
