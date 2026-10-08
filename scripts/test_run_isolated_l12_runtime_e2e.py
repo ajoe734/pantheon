@@ -371,8 +371,81 @@ def test_failure_diagnostics_capture_ps_and_unhealthy_logs(
     assert (tmp_path / "compose-ps.txt").is_file()
     assert (tmp_path / "logs-projector.txt").read_text().endswith("log-tail\n")
     assert not (tmp_path / "logs-ok.txt").exists()
-    log_calls = [c for c in calls if "logs" in c]
-    assert all("--tail" in c and "200" in c and "--no-color" in c for c in log_calls)
+    full_log_calls = [c for c in calls if "logs" in c and "200" in c]
+    assert sorted(c[-1] for c in full_log_calls) == ["projector", "sick"]
+    assert all("--tail" in c and "--no-color" in c for c in full_log_calls)
+    scan_calls = [c for c in calls if "logs" in c and harness.SERVICE_ERROR_SCAN_TAIL in c]
+    assert sorted(c[-1] for c in scan_calls) == ["ok", "projector", "sick"]
+    assert (tmp_path / "service-error-lines.txt").read_text().splitlines() == [
+        "## ok: 0 error-signal line(s)",
+        "## projector: 0 error-signal line(s)",
+        "## sick: 0 error-signal line(s)",
+    ]
+
+
+def test_failure_diagnostics_keep_error_lines_of_healthy_services(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    import json as _json
+
+    rows = [
+        {"Service": "training-session-svc", "State": "running", "Health": "healthy"},
+        {"Service": "training-session-preview-worker", "State": "running", "Health": "healthy"},
+        {"Service": "quiet", "State": "running", "Health": "healthy"},
+    ]
+    worker_log = "\n".join(
+        ["INFO tick ok"]
+        + [f"ERROR job_id=j{i} terminal_session_http_error=409 proof required" for i in range(60)]
+    )
+    logs = {
+        "training-session-svc": "\n".join(
+            [
+                'INFO: 172.18.0.9:4100 - "GET /readyz HTTP/1.1" 200 OK',
+                'INFO: 172.18.0.9:4101 - "POST /api/training/sessions/trn-1/complete HTTP/1.1" 409 Conflict',
+                "Traceback (most recent call last):",
+            ]
+        ),
+        "training-session-preview-worker": worker_log,
+        "quiet": "INFO all good",
+    }
+
+    def fake_run(cmd, **_kwargs):
+        if "ps" in cmd:
+            out = "\n".join(_json.dumps(r) for r in rows)
+        else:
+            out = logs.get(cmd[-1], "")
+        return type("P", (), {"returncode": 0, "stdout": out, "stderr": ""})()
+
+    monkeypatch.setattr(harness.subprocess, "run", fake_run)
+    result = harness._capture_failure_diagnostics("proj", ["a.yml"], {}, tmp_path)
+
+    assert result["captured_services"] == []
+    assert not list(tmp_path.glob("logs-*.txt"))
+    lines = (tmp_path / "service-error-lines.txt").read_text().splitlines()
+    assert "## quiet: 0 error-signal line(s)" in lines
+    svc = lines.index("## training-session-svc: 2 error-signal line(s)")
+    assert lines[svc + 1].endswith("409 Conflict")
+    assert lines[svc + 2] == "Traceback (most recent call last):"
+    worker = lines.index("## training-session-preview-worker: 60 error-signal line(s)")
+    kept = lines[worker + 1 : worker + 1 + harness.SERVICE_ERROR_LINES_PER_SERVICE]
+    assert len(kept) == harness.SERVICE_ERROR_LINES_PER_SERVICE
+    assert kept[-1].startswith("ERROR job_id=j59")
+
+
+def test_service_error_line_matches_worker_json_and_skips_idle_ticks() -> None:
+    match = harness.SERVICE_ERROR_LINE.search
+    failed_tick = (
+        '{"tick": 2, "result": {"jobs_found": 1, "completed": 1, "failed": 1, "errors": '
+        '["job_id=pvjob terminal_session_http_error=409 {\\"detail\\":\\"authority changed\\"}"]}}'
+    )
+    assert match(failed_tick)
+    assert match('{"tick": 3, "result": {"failed": 0, "errors": ["TimeoutError"]}}')
+    assert match('{"tick": 4, "result": {"failed": 2, "errors": []}}')
+    assert match('{"result": {"error": "boom"}}')
+    assert match("asyncio.exceptions.TimeoutError: timed out")
+    assert not match('{"tick": 1, "result": {"jobs_found": 0, "completed": 0, "failed": 0, "errors": []}}')
+    assert not match('{"result": {"error": null}}')
+    assert not match("INFO tick ok")
 
 
 def test_projection_bootstrap_pipes_postgres_config_into_migration(
