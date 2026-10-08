@@ -1,0 +1,9 @@
+{
+  "task_id": "OPS-NATIVE-SUCCESSOR-DELIVERY-RECEIPT-20261008",
+  "change": "record_integration_receipt archives a valid prior landed receipt into integration_receipt_history when a later-generation, different PR/head/merge on the same repository and branch lands; same-generation, foreign, malformed and replay behavior unchanged.",
+  "tests": {
+    "rewrite/test_integration_receipt.py": "94 passed (3 new successor tests)",
+    "scripts/git/test_auto_integrator.py -k receipt": "33 passed"
+  },
+  "not_claimed": "No legacy row recovery executed, no production/capital/hosted approval, no L1-L12 acceptance; activation via original coordination promotion."
+}
