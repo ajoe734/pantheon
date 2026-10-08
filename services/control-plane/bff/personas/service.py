@@ -60,10 +60,8 @@ from ..models import (
     BffErrorPayload,
     CommandReceipt,
     CommandReceiptStatus,
-    CommandResponse,
     CommandResultMeta,
     CommandRoutingPath,
-    CommandStatus,
     CommandSubmissionResponse,
     CommandStatusResponse,
     CommandType,
@@ -90,8 +88,6 @@ from ..models import (
     RejectMutationCommandPayload,
     ReviewMutationCommandPayload,
     ExecuteMutationCommandPayload,
-    StalenessWarning,
-    TargetObject,
     utc_now,
 )
 
@@ -159,7 +155,6 @@ from services.control_plane.bff.command_adapters.service import (
     _resolve_final_idempotency_key,
     _reject_body_idempotency_key,
     _audit_datetime,
-    _check_read_surface_state,
 )
 from services.control_plane.bff.management_read_models.service import (
     _aggregate_group_surface,
@@ -207,7 +202,6 @@ from services.control_plane.bff.persona_provisioning_coordinator import (
     deterministic_provisioning_ids,
 )
 
-from services.control_plane.bff.action_catalog import get_catalog_entry
 
 from ..command_executor import _get_json, _post_json, _runtime_manager_client
 
@@ -940,107 +934,6 @@ def _strategy_persona_idempotency_check(
             suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
         )
     return deepcopy(existing.get("result"))
-
-
-# --- _strategy_persona_action_command ---
-def _strategy_persona_action_command(
-    *,
-    entity_type: ObjectType,
-    entity_id: str,
-    action_id: str,
-    resolved_key: str,
-    identity: OperatorIdentity,
-    payload: Dict[str, Any],
-    command_type: CommandType,
-) -> Dict[str, Any]:
-    """Submit a strategy / persona resource action through the command store
-    and return the final command envelope.
-
-    The /bff/strategies/{id}/actions/{actionId} and /bff/personas/{id}/actions/{actionId}
-    endpoints accept action ids declared in the canonical action catalog
-    (see action_catalog.py). Idempotency is enforced through the
-    `_STRATEGY_PERSONA_BFF_IDEMPOTENCY` ledger so callers receive a stable
-    receipt on safe retries.
-    """
-    request_hash = _stable_json_hash(
-        {
-            "route": f"POST /bff/{entity_type.value.lower()}/{{id}}/actions",
-            "entity_type": entity_type.value,
-            "entity_id": entity_id,
-            "action_id": action_id,
-            "payload": payload,
-        }
-    )
-    cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
-
-    catalog_entry = get_catalog_entry(command_type.value)
-    staleness_warning = _check_read_surface_state()
-    command_id = str(uuid.uuid4())
-    submitted_at = utc_now()
-    target = TargetObject(type=entity_type, id=entity_id)
-    audit_action = _foundation_audit_for_command_record(
-        identity=identity,
-        command_type=command_type,
-        target_type=entity_type,
-        target_id=entity_id,
-        payload={"action_id": action_id, **payload},
-        reason=str(payload.get("reason") or action_id or command_type.value),
-        command_id=command_id,
-        idempotency_key=resolved_key,
-        route=f"POST /bff/{entity_type.value}/{entity_id}/actions/{action_id}",
-        metadata={"action_id": action_id, "catalog_entry": catalog_entry.action_id if catalog_entry else None},
-    )
-    audit_record = {
-        "operator_id": identity.operator_id,
-        "roles_at_submission": identity.roles,
-        "action_id": action_id,
-        "preconditions_checked": ["authentication", "authorization", "idempotency"],
-        "timestamp": submitted_at,
-        "idempotency_key": resolved_key,
-        "request_hash": request_hash,
-        "catalog_entry": catalog_entry.action_id if catalog_entry else None,
-    }
-    foundation_ctx = {
-        "idempotency_record": {
-            "idempotency_key": resolved_key,
-            "request_hash": request_hash,
-            "operation_type": f"bff.{command_type.value}",
-            "target_ref": f"{entity_type.value}:{entity_id}",
-            "trace_id": audit_action.trace_id,
-        },
-        "audit_action": audit_action.to_dict(),
-    }
-    audit_record["foundation"] = foundation_ctx
-    _get_active_command_store().submit_command(
-        command_id=command_id,
-        command_type=command_type,
-        target=target,
-        submitted_at=submitted_at,
-        params={"action_id": action_id, **payload},
-        audit_context=audit_record,
-        foundation_context=foundation_ctx,
-    )
-    result = _project_final_command_response(
-        command_id=command_id,
-        command=command_type,
-        accepted_at=submitted_at,
-        status=CommandStatus.SUBMITTED,
-        staleness_warning=staleness_warning,
-    )
-    payload_dump: Dict[str, Any]
-    if hasattr(result, "model_dump"):
-        payload_dump = result.model_dump(mode="json")
-    elif isinstance(result, dict):
-        payload_dump = result
-    else:
-        payload_dump = {"data": result}
-    _STRATEGY_PERSONA_BFF_IDEMPOTENCY[resolved_key] = {
-        "request_hash": request_hash,
-        "result": payload_dump,
-    }
-    return payload_dump
 
 
 # --- _checkpoint_persona_provisioning_readback ---
@@ -8904,53 +8797,6 @@ _PATH_DEDUPE_DEPRECATED_SINCE = "2026-05-25T08:40:02Z"
 _PATH_DEDUPE_SUNSET_HTTP_DATE = "Mon, 25 May 2026 00:00:00 GMT"
 
 
-# --- _foundation_audit_for_command_record ---
-def _foundation_audit_for_command_record(
-    *,
-    identity: OperatorIdentity,
-    command_type: CommandType,
-    target_type: ObjectType,
-    target_id: str,
-    payload: Dict[str, Any],
-    reason: str,
-    command_id: str,
-    idempotency_key: str,
-    route: str,
-    metadata: Optional[Dict[str, Any]] = None,
-) -> AuditAction:
-    environment = _foundation_environment_scope()
-    actor_ref = _foundation_actor_ref(identity)
-    trace = _build_foundation_trace(
-        environment=environment,
-        actor_ref=actor_ref,
-        trace_id=command_id,
-        correlation_id=command_id,
-        request_id=command_id,
-        idempotency_key=idempotency_key,
-    )
-    audit_metadata = {
-        "route": route,
-        "command": command_type.value,
-        "idempotency_key": idempotency_key,
-    }
-    if metadata:
-        audit_metadata.update({key: value for key, value in metadata.items() if value is not None})
-    return AuditAction.record(
-        actor_ref=actor_ref,
-        action_type="bff.command.accepted",
-        target_ref=f"{target_type.value}:{target_id}",
-        environment=environment,
-        reason=reason,
-        trace=trace,
-        payload={
-            "command": command_type.value,
-            "target": {"type": target_type.value, "id": target_id},
-            "payload": payload,
-        },
-        metadata=audit_metadata,
-    )
-
-
 # --- _list_governance_audit_events ---
 def _list_governance_audit_events(
     *,
@@ -10176,62 +10022,6 @@ def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
     if "overall" in item:
         public_item["overall"] = item.get("overall")
     return public_item
-
-
-# --- _project_final_command_response ---
-def _project_final_command_response(
-    *,
-    command_id: str,
-    command: CommandType,
-    accepted_at: str,
-    status: CommandStatus,
-    staleness_warning: Optional[StalenessWarning],
-    meta: Optional[Dict[str, Any]] = None,
-    deprecation: Optional[Dict[str, Any]] = None,
-) -> CommandResponse[Dict[str, Any]]:
-    final_status = _action_command_status_from_command_status(status)
-    legacy_payload = _project_command_submission_response(
-        command_id=command_id,
-        command=command,
-        accepted_at=accepted_at,
-        status=status,
-        staleness_warning=staleness_warning,
-    ).model_dump()
-    legacy_payload["status"] = final_status.value
-    tracking_url = f"/api/v1/operator/commands/{command_id}"
-    legacy_payload["command_id"] = command_id
-    legacy_payload["commandId"] = command_id
-    legacy_payload["tracking_url"] = tracking_url
-    legacy_payload["trackingUrl"] = tracking_url
-    if isinstance(legacy_payload.get("receipt"), dict):
-        legacy_payload["receipt"]["status"] = final_status.value
-        legacy_payload["receipt"]["tracking_url"] = tracking_url
-        legacy_payload["receipt"]["trackingUrl"] = tracking_url
-    receipts = _command_dual_write_receipts(
-        command_id=command_id,
-        command=command.value,
-        status=final_status.value,
-        accepted_at=accepted_at,
-    )
-    legacy_payload["receipt_dual_write"] = receipts
-    legacy_payload["action_receipt"] = receipts["action_receipt"]
-    legacy_payload["actionReceipt"] = receipts["action_receipt"]
-    legacy_payload["command_receipt"] = receipts["command_receipt"]
-    legacy_payload["commandReceipt"] = receipts["command_receipt"]
-    final_meta = dict(meta or {})
-    if deprecation:
-        legacy_payload["deprecated"] = True
-        legacy_payload["deprecation"] = dict(deprecation)
-        if isinstance(legacy_payload.get("receipt"), dict):
-            legacy_payload["receipt"]["deprecated"] = True
-            legacy_payload["receipt"]["deprecation"] = dict(deprecation)
-        final_meta["deprecated"] = True
-        final_meta["deprecation"] = dict(deprecation)
-    return CommandResponse[Dict[str, Any]](
-        status=final_status,
-        data=legacy_payload,
-        meta=final_meta or None,
-    )
 
 
 # --- _deprecated_bff_path_response ---
