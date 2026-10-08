@@ -3122,18 +3122,35 @@ stage_dev_paper_prerequisite_readiness() {
 
     info "restoring connector ${simulation_connector_id} schedule (enabled=${prior_enabled}, interval=${prior_interval})"
 
-    # Check for CAS conflict if schedule was updated after temporary admission
+    # Verify current schedule state before restore PUT
     local cur_resp cur_code cur_body
     cur_resp="$(curl -sS -w "\n%{http_code}" "${source_ingest_url}/api/source-ingest/connectors/${simulation_connector_id}/schedule" 2>&1 || true)"
     cur_code="$(printf '%s\n' "$cur_resp" | tail -n 1)"
     cur_body="$(printf '%s\n' "$cur_resp" | sed '$d')"
-    if [[ "$cur_code" == "200" && -n "${admitted_updated_at:-}" ]]; then
-      local cur_at
-      cur_at="$(python3 -c 'import json, sys; d=json.loads(sys.argv[1]); print(d.get("schedule", d).get("updated_at") or "")' "$cur_body" 2>/dev/null || true)"
-      if [[ -n "$cur_at" && "$cur_at" != "$admitted_updated_at" ]]; then
-        error "connector ${simulation_connector_id} schedule restore aborted due to CAS conflict (updated_at changed)"
-        return 1
-      fi
+    if [[ "$cur_code" != "200" ]]; then
+      error "failed to read connector ${simulation_connector_id} schedule before restore (http_status=${cur_code}); refusing to overwrite unknown state"
+      return 1
+    fi
+
+    local cur_check
+    cur_check="$(python3 -c '
+import json, sys
+try:
+    cur = (json.loads(sys.argv[1]).get("schedule") or {}).get("updated_at")
+    adm = sys.argv[2].strip()
+    if not isinstance(cur, str) or not cur.strip():
+        sys.exit(2)
+    sys.exit(3 if adm and cur.strip() != adm else 0)
+except Exception:
+    sys.exit(2)
+' "$cur_body" "${admitted_updated_at:-}" 2>/dev/null; echo $?)"
+
+    if [[ "$cur_check" == "3" ]]; then
+      error "connector ${simulation_connector_id} schedule was modified after temporary admission (updated_at changed); refusing to overwrite operator changes"
+      return 1
+    elif [[ "$cur_check" != "0" ]]; then
+      error "connector ${simulation_connector_id} schedule response malformed or missing updated_at; refusing to overwrite unknown state"
+      return 1
     fi
 
     # PUT restore schedule
@@ -3195,32 +3212,13 @@ for label, raw in (("response", sys.argv[3]), ("readback", sys.argv[4])):
     local is_admissible=false
     if [[ -n "$snapshot_resp" ]]; then
       if python3 -c '
-import json, math, sys
-from datetime import datetime, timezone
+import json, sys
+from services.execution.market_snapshot_admission import admit_canonical_source_snapshot
 try:
-    d = json.loads(sys.argv[1])
-    closes = d.get("closes")
-    if not isinstance(closes, list) or len(closes) < 2 or any(isinstance(c, bool) or not isinstance(c, (int, float)) or not math.isfinite(float(c)) or float(c) <= 0 for c in closes):
-        sys.exit(1)
-    if not str(d.get("market") or "").strip():
-        sys.exit(1)
-    ev_str = str(d.get("event_time") or "").strip()
-    if not ev_str:
-        sys.exit(1)
-    ev_dt = datetime.fromisoformat(ev_str.replace("Z", "+00:00"))
-    if ev_dt.tzinfo is None:
-        ev_dt = ev_dt.replace(tzinfo=timezone.utc)
-    age = (datetime.now(timezone.utc) - ev_dt.astimezone(timezone.utc)).total_seconds()
-    if age < 0 or age > 86400:
-        sys.exit(1)
-    chk = str(d.get("checksum") or d.get("data_checksum") or "").strip()
-    snap_id = str(d.get("snapshot_id") or "").strip()
-    if chk and snap_id and chk == snap_id:
-        sys.exit(1)
-    sys.exit(0)
+    sys.exit(0 if admit_canonical_source_snapshot(json.loads(sys.argv[1]), expected_symbol=sys.argv[2]).admitted else 1)
 except Exception:
     sys.exit(1)
-' "$snapshot_resp" 2>/dev/null; then
+' "$snapshot_resp" "$symbol" 2>/dev/null; then
         is_admissible=true
       fi
     fi
@@ -3255,15 +3253,23 @@ import json, sys
 try:
     d = json.loads(sys.argv[1])
     conn = d.get("connector", d)
-    if not isinstance(conn, dict):
+    if not isinstance(conn, dict) or not conn:
         sys.exit(2)
-    meta = conn.get("metadata") or {}
+    status = conn.get("status")
+    if not isinstance(status, str) or not status.strip():
+        sys.exit(2)
+    meta = conn.get("metadata")
+    if meta is not None and not isinstance(meta, dict):
+        sys.exit(2)
+    meta = meta or {}
     if meta.get("operator_stop"):
         sys.exit(3)
-    if conn.get("status") == "disabled":
+    if status == "disabled":
         rec = meta.get("persona_source_reconciliation") or {}
         if not (isinstance(rec, dict) and rec.get("retired_by_authoritative_snapshot") is True):
             sys.exit(3)
+    elif status != "active":
+        sys.exit(2)
     sys.exit(0)
 except Exception:
     sys.exit(2)
@@ -3292,13 +3298,20 @@ except Exception:
       sched_info="$(python3 -c '
 import json, sys
 try:
-    s = json.loads(sys.argv[1]).get("schedule", {})
-    if "enabled" not in s or int(s.get("interval_seconds", 0)) <= 0:
+    d = json.loads(sys.argv[1])
+    s = d.get("schedule")
+    if not isinstance(s, dict) or not s:
         sys.exit(1)
-    en = "true" if s.get("enabled") is True else "false"
+    en = s.get("enabled")
+    if type(en) is not bool:
+        sys.exit(1)
     sec = s.get("interval_seconds")
-    upd = s.get("updated_at") or ""
-    print(f"{en} {sec} {upd}")
+    if type(sec) is not int or isinstance(sec, bool) or sec <= 0:
+        sys.exit(1)
+    upd = s.get("updated_at")
+    if not isinstance(upd, str) or not upd.strip():
+        sys.exit(1)
+    print(f"{"true" if en else "false"} {sec} {upd.strip()}")
 except Exception:
     sys.exit(1)
 ' "$sched_body" 2>/dev/null || true)"
@@ -3332,11 +3345,11 @@ except Exception:
 import json, sys
 try:
     s = json.loads(sys.argv[1]).get("schedule", {})
-    if s.get("enabled") is True:
-        upd = s.get("updated_at") or ""
-        print(f"ok\t{upd}")
+    upd = s.get("updated_at")
+    if s.get("enabled") is True and isinstance(upd, str) and upd.strip():
+        print(f"ok\t{upd.strip()}")
     else:
-        print("error\tschedule not enabled in response")
+        print("error\tschedule not enabled or missing updated_at in response")
 except Exception as e:
     print(f"error\t{e}")
 ' "$adm_body" 2>/dev/null || printf 'error\tfailed to parse admission response')"
@@ -3386,7 +3399,7 @@ else:
 
       info "run-scheduled trigger attempt 1: http_status=${http_code} outcome=${outcome}${diag}"
       if [[ "$outcome" != "refreshed" ]]; then
-        restore_dev_paper_schedule 1 || true
+        restore_dev_paper_schedule 1 || { error "timed out waiting for staged dev paper prerequisite readiness for ${symbol}: ${outcome} (and schedule restore failed)"; return 1; }
         error "timed out waiting for staged dev paper prerequisite readiness for ${symbol}: ${outcome}"
         return 1
       fi
@@ -3396,7 +3409,7 @@ else:
     sleep "$poll_interval"
   done
 
-  restore_dev_paper_schedule 1 || true
+  restore_dev_paper_schedule 1 || { error "timed out waiting for staged dev paper prerequisite readiness for ${symbol}: snapshot still lacks market (and schedule restore failed)"; return 1; }
   error "timed out waiting for staged dev paper prerequisite readiness for ${symbol}: snapshot still lacks market"
   return 1
 }
