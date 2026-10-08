@@ -48,7 +48,11 @@ def _read_json_response(request: urllib.request.Request, timeout_seconds: float)
 
 
 def _authority_headers() -> dict[str, str]:
-    token = str(os.getenv("TRAINING_SESSION_WORKER_TOKEN") or "").strip()
+    # Request-time read so the issuer's rotation/revocation applies without a
+    # restart; a configured but absent/unsafe/malformed file fails closed.
+    from services.service_token_file import configured_service_token
+
+    token = configured_service_token("TRAINING_SESSION_WORKER_TOKEN")
     tenant_id = str(os.getenv("TRAINING_SESSION_TENANT_ID") or "").strip()
     actor_service = str(
         os.getenv("TRAINING_SESSION_WORKER_SERVICE_ID")

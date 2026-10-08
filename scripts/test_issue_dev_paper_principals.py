@@ -197,3 +197,22 @@ def test_training_session_source_reader_principal_is_dedicated_and_mounted():
     assert authority not in training["environment"]
     issuer = compose["services"]["dev-paper-principal-issuer"]["volumes"]
     assert "dev-paper-training-session-tokens:/issued/training-session-svc" in issuer
+
+
+def test_training_preview_worker_principal_is_dedicated_exact_and_mounted():
+    import yaml
+    root = Path(__file__).resolve().parents[1]
+    variable = "TRAINING_SESSION_WORKER_TOKEN"
+    assert CONSUMER_FILES["training-session-preview-worker"] == (variable,)
+    claims = verify(issue_environment(configured(), now=NOW)[variable])
+    assert claims["sub"] == claims["service"] == "training-session-preview-worker"
+    assert claims["roles"] == ["training-service"]
+    assert claims["tenant_id"] == "tenant-dev" and claims["allowed_tenants"] == ["tenant-dev"]
+    assert claims["exp"] - claims["iat"] <= TTL_SECONDS
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text())
+    worker = compose["services"]["training-session-preview-worker"]
+    assert "dev-paper-training-worker-tokens:/run/pantheon-principals:ro" in worker["volumes"]
+    assert worker["environment"][variable + "_FILE"].endswith("/run/pantheon-principals/" + variable + "}")
+    assert variable not in worker["environment"]  # no published fixture token
+    assert "dev-paper-training-worker-tokens:/issued/training-session-preview-worker" in (
+        compose["services"]["dev-paper-principal-issuer"]["volumes"])

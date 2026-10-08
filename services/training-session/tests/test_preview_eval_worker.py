@@ -473,3 +473,57 @@ def test_preview_eval_worker_degrades_health_on_http_401(monkeypatch, tmp_path) 
     assert not alive_path.exists()
 
 
+
+
+def _write_worker_credential(path: Path, value: str) -> None:
+    path.write_text(value, encoding="utf-8")
+    path.chmod(0o600)
+
+
+def test_preview_worker_headers_follow_refreshed_credential_file_without_restart(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_worker_module()
+    credential = tmp_path / "TRAINING_SESSION_WORKER_TOKEN"
+    monkeypatch.setenv("TRAINING_SESSION_WORKER_TOKEN_FILE", str(credential))
+    monkeypatch.setenv("TRAINING_SESSION_WORKER_TOKEN", "stale-env-token")
+    monkeypatch.setenv("TRAINING_SESSION_TENANT_ID", "tenant-dev")
+    monkeypatch.delenv("TRAINING_SESSION_WORKER_SERVICE_ID", raising=False)
+
+    _write_worker_credential(credential, "aaa.bbb.first")
+    first = module._authority_headers()
+    # Atomic replacement as the issuer does; the same process sees the new value.
+    replacement = tmp_path / ".rotating"
+    _write_worker_credential(replacement, "aaa.bbb.second")
+    os.replace(replacement, credential)
+    second = module._authority_headers()
+
+    assert first["Authorization"] == "Bearer aaa.bbb.first"
+    assert second["Authorization"] == "Bearer aaa.bbb.second"
+    assert second["X-Tenant-Id"] == "tenant-dev"
+    assert second["X-Pantheon-Service"] == "training-session-preview-worker"
+
+
+def test_preview_worker_credential_file_fails_closed_without_env_fallback(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_worker_module()
+    credential = tmp_path / "TRAINING_SESSION_WORKER_TOKEN"
+    monkeypatch.setenv("TRAINING_SESSION_WORKER_TOKEN_FILE", str(credential))
+    monkeypatch.setenv("TRAINING_SESSION_WORKER_TOKEN", "stale-env-token")
+    monkeypatch.setenv("TRAINING_SESSION_TENANT_ID", "tenant-dev")
+
+    def denied() -> None:
+        try:
+            module._authority_headers()
+        except RuntimeError as exc:
+            assert "credential unavailable" in str(exc)
+        else:
+            raise AssertionError("worker must fail closed")
+
+    denied()  # absent / revoked (issuer unlinks the file)
+    _write_worker_credential(credential, "has whitespace")  # malformed
+    denied()
+    _write_worker_credential(credential, "aaa.bbb.ccc")
+    credential.chmod(0o644)  # unsafe mode
+    denied()
