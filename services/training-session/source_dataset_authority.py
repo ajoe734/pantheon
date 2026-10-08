@@ -36,6 +36,17 @@ class SourceDatasetAuthorityError(RuntimeError):
     """Raised when source truth cannot be admitted without guessing."""
 
 
+try:
+    from evaluation_authority import AuthorityValidationError, _validate_policy
+except ImportError:
+    import sys
+
+    _service_dir = str(Path(__file__).resolve().parent)
+    if _service_dir not in sys.path:
+        sys.path.insert(0, _service_dir)
+    from evaluation_authority import AuthorityValidationError, _validate_policy
+
+
 HttpGetTransport = Callable[[str], Any]
 
 _UTC = timezone.utc
@@ -138,6 +149,32 @@ def urllib_json_get(
     return _strict_json_loads(text, f"HTTP response from {url}")
 
 
+def validate_policy_authority(
+    policy: Mapping[str, Any],
+    trusted_now: datetime,
+) -> tuple[dict[str, Any], str]:
+    """Validate a threshold policy authority object against trusted_now."""
+    now = _trusted_utc(trusted_now)
+    normalized = _validate_policy(policy, now)
+    digest = stable_json_sha256(policy)
+    return normalized, digest
+
+
+def load_policy_authority(
+    policy_path: str | Path,
+    trusted_now: datetime,
+) -> tuple[dict[str, Any], str]:
+    """Load and validate the threshold policy authority against trusted_now."""
+    path = Path(policy_path)
+    if not path.is_file():
+        raise SourceDatasetAuthorityError(f"policy file does not exist: {policy_path}")
+    raw_text = path.read_text(encoding="utf-8")
+    policy = _strict_json_loads(raw_text, f"policy authority {path.name}")
+    if not isinstance(policy, Mapping):
+        raise SourceDatasetAuthorityError("policy authority must be a JSON object")
+    return validate_policy_authority(policy, trusted_now)
+
+
 def materialize_source_dataset_version(
     *,
     http_get: HttpGetTransport,
@@ -149,6 +186,8 @@ def materialize_source_dataset_version(
     trusted_now: datetime,
     max_readback_age_seconds: int = 300,
     clock: Callable[[], datetime] | None = None,
+    policy_path: str | Path | None = None,
+    policy: Mapping[str, Any] | None = None,
 ) -> MaterializedDatasetVersion:
     """Resolve one terminal source run into an evaluator-compatible DatasetVersion.
 
@@ -165,6 +204,24 @@ def materialize_source_dataset_version(
         # Remote data is produced during the request, so a live clock is
         # sampled after each completed read; an explicit trusted_now stays fixed.
         return _trusted_utc(clock()) if clock is not None else fixed_now
+
+    normalized_policy: dict[str, Any] | None = None
+    policy_digest: str | None = None
+    if policy is not None or policy_path is not None:
+        try:
+            if policy is not None:
+                normalized_policy, policy_digest = validate_policy_authority(
+                    policy, observe_now()
+                )
+            else:
+                assert policy_path is not None
+                normalized_policy, policy_digest = load_policy_authority(
+                    policy_path, observe_now()
+                )
+        except AuthorityValidationError as exc:
+            raise SourceDatasetAuthorityError(
+                f"evaluation policy authority rejected: {exc}"
+            ) from exc
 
     age_limit = _strict_int(
         max_readback_age_seconds,
@@ -244,7 +301,32 @@ def materialize_source_dataset_version(
         expected_market=market,
         trusted_now=observe_now(),
     )
-    records = storage["records"]
+    all_records = storage["records"]
+    policy_selection_binding: dict[str, Any] | None = None
+    policy_selection_digest: str | None = None
+    if normalized_policy is not None:
+        target_universe = list(normalized_policy["required_instruments"])
+        target_set = set(target_universe)
+        observed_instruments = {str(record["instrument"]) for record in all_records}
+        missing_instruments = target_set - observed_instruments
+        if missing_instruments:
+            missing_sorted = sorted(missing_instruments)
+            raise SourceDatasetAuthorityError(
+                f"source storage records missing required policy instrument: {', '.join(missing_sorted)}"
+            )
+        records = [record for record in all_records if str(record["instrument"]) in target_set]
+        policy_selection_binding = {
+            "policy_id": normalized_policy["policy_id"],
+            "policy_version": normalized_policy["policy_version"],
+            "approval_decision_ref": normalized_policy["approval_decision_ref"],
+            "policy_digest": policy_digest,
+            "required_instruments": target_universe,
+            "selected_instruments": sorted({str(r["instrument"]) for r in records}),
+        }
+        policy_selection_digest = stable_json_sha256(policy_selection_binding)
+    else:
+        records = all_records
+
     canonical_bytes = b"".join(_canonical_json_bytes(record) + b"\n" for record in records)
     canonical_digest = hashlib.sha256(canonical_bytes).hexdigest()
     canonical_path = authority_root / f"canonical-ohlcv-{canonical_digest}.jsonl"
@@ -263,6 +345,33 @@ def materialize_source_dataset_version(
     evidence_binding_digest = stable_json_sha256(evidence_bindings)
     readback_ref = readback_url
 
+    metadata_json = {
+        "schema_version": _OUTPUT_SCHEMA,
+        "authority_status": "authoritative",
+        "source_api_url": base_url,
+        "source_connector_id": connector,
+        "source_dataset_id": dataset,
+        "source_dataset_resolution": dataset_resolution,
+        "source_ingest_run_id": run_id,
+        "source_run_ref": run_url,
+        "source_run_finished_at": run["finished_at"],
+        "source_controller_binding_sha256": controller_binding_digest,
+        "source_storage_binding_sha256": storage_binding_digest,
+        "source_evidence_binding_sha256": evidence_binding_digest,
+        "canonical_ohlcv_sha256": canonical_digest,
+        "source_storage_refs": {
+            "raw": storage["raw_refs"],
+            "normalized": storage["normalized_refs"],
+            "feature": storage["feature_refs"],
+        },
+        "source_evidence_bundle_refs": evidence_bindings,
+        "controller_identity": controller_binding,
+        **({
+            "source_policy_selection": policy_selection_binding,
+            "source_policy_selection_sha256": policy_selection_digest,
+        } if policy_selection_binding is not None else {}),
+    }
+
     payload_without_id: dict[str, Any] = {
         "market_scope": [storage["market"]],
         "instrument_scope": sorted({str(record["instrument"]) for record in records}),
@@ -270,28 +379,7 @@ def materialize_source_dataset_version(
         "normalized_dataset_refs": [item["uri"] for item in storage["normalized_refs"]],
         "feature_dataset_refs": [item["uri"] for item in storage["feature_refs"]],
         "frozen_at": storage["created_at"],
-        "metadata_json": {
-            "schema_version": _OUTPUT_SCHEMA,
-            "authority_status": "authoritative",
-            "source_api_url": base_url,
-            "source_connector_id": connector,
-            "source_dataset_id": dataset,
-            "source_dataset_resolution": dataset_resolution,
-            "source_ingest_run_id": run_id,
-            "source_run_ref": run_url,
-            "source_run_finished_at": run["finished_at"],
-            "source_controller_binding_sha256": controller_binding_digest,
-            "source_storage_binding_sha256": storage_binding_digest,
-            "source_evidence_binding_sha256": evidence_binding_digest,
-            "canonical_ohlcv_sha256": canonical_digest,
-            "source_storage_refs": {
-                "raw": storage["raw_refs"],
-                "normalized": storage["normalized_refs"],
-                "feature": storage["feature_refs"],
-            },
-            "source_evidence_bundle_refs": evidence_bindings,
-            "controller_identity": controller_binding,
-        },
+        "metadata_json": metadata_json,
         "created_at": storage["created_at"],
         "source_controller_readback_ref": readback_ref,
         "source_evidence_bundle_ids": evidence_bundle_ids,
@@ -324,6 +412,7 @@ def materialize_source_dataset_version(
             run_id=run_id,
             expected_storage_binding_digest=storage_binding_digest,
             expected_payload=payload,
+            expected_policy_selection_digest=policy_selection_digest,
         )
         _atomic_materialize(canonical_path, canonical_bytes, authority_root)
         _atomic_materialize(dataset_path, dataset_bytes, authority_root)
@@ -1164,6 +1253,7 @@ def _assert_run_not_rebound(
     run_id: str,
     expected_storage_binding_digest: str,
     expected_payload: Mapping[str, Any],
+    expected_policy_selection_digest: str | None = None,
 ) -> None:
     for path in sorted(root.glob("dataset-version-*.json")):
         if path.is_symlink() or not path.is_file():
@@ -1180,12 +1270,14 @@ def _assert_run_not_rebound(
         metadata = existing.get("metadata_json")
         if not isinstance(metadata, Mapping):
             continue
-        same_run = (
+        existing_policy_digest = metadata.get("source_policy_selection_sha256")
+        same_scope = (
             metadata.get("source_connector_id") == connector_id
             and metadata.get("source_dataset_id") == dataset_id
             and metadata.get("source_ingest_run_id") == run_id
+            and existing_policy_digest == expected_policy_selection_digest
         )
-        if not same_run:
+        if not same_scope:
             continue
         if metadata.get("source_storage_binding_sha256") != expected_storage_binding_digest:
             raise SourceDatasetAuthorityError(
