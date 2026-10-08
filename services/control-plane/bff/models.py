@@ -930,18 +930,7 @@ def safe_redact_evidence_refs(
             kwargs["default_kind"] = default_kind
         if kind_map is not None:
             kwargs["kind_map"] = kind_map
-        try:
-            return redact_fn(identity, refs, **kwargs)
-        except TypeError:
-            if "kind_map" in kwargs:
-                kwargs.pop("kind_map")
-                try:
-                    return redact_fn(identity, refs, **kwargs)
-                except TypeError:
-                    pass
-            if "default_kind" in kwargs:
-                kwargs.pop("default_kind")
-            return redact_fn(identity, refs, capabilities=capabilities)
+        return redact_fn(identity, refs, **kwargs)
     except Exception:
         return fail_closed_redacted_refs(refs, default_kind=default_kind, kind_map=kind_map)
 
