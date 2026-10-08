@@ -1,0 +1,17 @@
+{
+  "task_id": "DEV-TW-REFRESH-AUTHORITATIVE-STATE-20261008",
+  "problem": {
+    "refresh_run": "37758391275",
+    "observed": "Formal refresh at fixed 037a88e passed the durable lease wait and official ingestion but failed actual_readback: controller deployment identity missing.",
+    "cause": "The bounded one-shot controller was started with -e SOURCE_INGEST_CONTROLLER_STATE_PATH=/data/source-ingest/bounded-refresh/controller_state.json (and a second ALIVE path), while SourceRuntime authoritative readback reads /data/source-ingest/controller_state.json from docker-compose.yml. Writer id/sequence/runtime-instance therefore differed from the state the API read back, although both persisted deployments had identity_complete=true and the same GIT_SHA/image digest."
+  },
+  "change": "Removed the two redundant -e overrides (controller state path and alive path) from the bounded docker compose run in execute_bounded_source_refresh_entrypoint. The one-shot controller now inherits the sole compose-declared state path, so it writes the authoritative state; the steady controller stays stopped/fenced for the window.",
+  "unchanged": "max_ticks=1, no-build/no-pull, egress allowlist, real reader validation, native steady lease wait and 10s one-shot interval, exact source image/env restore, expected controller id/sequence/deployment identity, CAS/tenant, calendar/freshness and gates. No freshness grace, provider, retry, adapter, wrapper, lock or service added.",
+  "test_changes": "New test_bounded_refresh_controller_writes_the_authoritative_readback_state: asserts docker-compose declares the single authoritative state path for source-ingest and source-ingest-scheduler, and that no bounded compose run overrides SOURCE_INGEST_CONTROLLER_STATE_PATH or ALIVE_PATH. Existing failure/restore tests retained.",
+  "validation": {
+    "before_fix": "new test failed: bounded run carried SOURCE_INGEST_CONTROLLER_STATE_PATH=/data/source-ingest/bounded-refresh/controller_state.json",
+    "after_fix": "pytest scripts/test_dev_tw_market_refresh.py: 21 passed; bash -n scripts/deploy_nonprod_vm.sh ok"
+  },
+  "hosted_followup": "Pending: sole release coordinator runs the official refresh and Root/browser verification after merge. Local script tests and source merge are not hosted success.",
+  "review_status": "Author validation only; independent exact-head review by Antigravity2 pending."
+}

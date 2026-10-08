@@ -663,3 +663,24 @@ def test_bounded_refresh_one_shot_uses_ten_second_controller_interval(tmp_path: 
     runs = [e for e in events if e["event"] == "compose_run"]
     assert len(runs) == 2
     assert {e["interval"] for e in runs} == {"10"}
+
+
+def test_bounded_refresh_controller_writes_the_authoritative_readback_state(tmp_path: Path):
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    authoritative = {
+        compose["services"][name]["environment"]["SOURCE_INGEST_CONTROLLER_STATE_PATH"]
+        for name in ("source-ingest", "source-ingest-scheduler")
+        if "SOURCE_INGEST_CONTROLLER_STATE_PATH" in compose["services"][name].get("environment", {})
+    }
+    assert authoritative == {"/data/source-ingest/controller_state.json"}
+
+    proc, events = _run_refresh_with_steady_lease_env(tmp_path, ["SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS=1"])
+    assert proc.returncode == 0, f"Refresh failed: {proc.stderr}\n{proc.stdout}"
+    runs = [e for e in events if e["event"] == "compose_run"]
+    assert len(runs) == 2
+    for run in runs:
+        overridden = [a for a in run["args"] if a.startswith("SOURCE_INGEST_CONTROLLER_STATE_PATH=")]
+        # The one-shot controller must inherit the compose state path that SourceRuntime reads back;
+        # a second path splits writer identity/sequence from authoritative readback.
+        assert overridden == [], f"bounded controller writes a non-authoritative state path: {overridden}"
+        assert not [a for a in run["args"] if a.startswith("SOURCE_INGEST_CONTROLLER_ALIVE_PATH=")]
