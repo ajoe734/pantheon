@@ -738,6 +738,10 @@ def _validate_supervised_compose_admission(
         )
 
 
+HEARTBEAT_STARTUP_TIMEOUT_SECONDS = 10.0
+HEARTBEAT_STARTUP_DIAGNOSTIC_CHARS = 2000
+
+
 class DevEnvironmentLeaseBusy(RuntimeError):
     """The shared dev environment is currently owned by another workflow."""
 
@@ -787,6 +791,8 @@ class _DevEnvironmentLeaseSession:
         self._state_file = temporary_root / "state.json"
         self._failure_file = temporary_root / "heartbeat-failure.json"
         self._shutdown_file = temporary_root / "heartbeat-shutdown.json"
+        self._identity_file = temporary_root / "heartbeat-identity.json"
+        self._stderr_file = temporary_root / "heartbeat-stderr.log"
         token = _lease_token_from_github_cli()
         self._manager = dev_environment_lease.LeaseManager(
             dev_environment_lease.GitHubClient(token),
@@ -830,26 +836,85 @@ class _DevEnvironmentLeaseSession:
                 str(self._failure_file),
                 "--shutdown-json-out",
                 str(self._shutdown_file),
+                "--identity-json-out",
+                str(self._identity_file),
                 "--token-stdin",
                 "--parent-pid",
                 str(os.getpid()),
             ]
-            self._heartbeat = subprocess.Popen(
-                heartbeat_command,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                text=True,
-            )
+            # The CLI rejects --token-stdin when TOKEN_ENV is inherited, so the
+            # child gets the secret only through stdin.
+            child_env = {
+                key: value
+                for key, value in os.environ.items()
+                if key != dev_environment_lease.TOKEN_ENV
+            }
+            with open(self._stderr_file, "wb") as stderr_sink:
+                self._heartbeat = subprocess.Popen(
+                    heartbeat_command,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.DEVNULL,
+                    stderr=stderr_sink,
+                    text=True,
+                    env=child_env,
+                )
             assert self._heartbeat.stdin is not None
-            self._heartbeat.stdin.write(f"{token}\n")
-            self._heartbeat.stdin.close()
+            try:
+                self._heartbeat.stdin.write(f"{token}\n")
+                self._heartbeat.stdin.close()
+            except OSError:
+                pass  # child already exited; startup verification reports it
+            self._verify_heartbeat_started(token)
             signal.signal(signal.SIGTERM, self._handle_lease_loss)
         except Exception:
             # Acquisition has completed by this point, so a startup failure
             # must release the same owner rather than wait for lease expiry.
             self.close()
             raise
+
+    def _startup_diagnostics(self, token: str) -> str:
+        try:
+            raw = self._stderr_file.read_text(errors="replace")
+        except OSError:
+            return ""
+        text = raw.replace(token, "[redacted]") if token else raw
+        return text.strip()[-HEARTBEAT_STARTUP_DIAGNOSTIC_CHARS:]
+
+    def _verify_heartbeat_started(self, token: str) -> None:
+        """Fail closed unless the heartbeat child is alive and identity-verified."""
+
+        assert self._heartbeat is not None
+        deadline = time.monotonic() + HEARTBEAT_STARTUP_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            exit_code = self._heartbeat.poll()
+            if exit_code is not None:
+                detail = self._startup_diagnostics(token)
+                raise dev_environment_lease.LeaseError(
+                    f"shared dev lease heartbeat exited during startup "
+                    f"(exit {exit_code}): {detail or 'no diagnostics'}"
+                )
+            if self._identity_file.exists():
+                break
+            time.sleep(0.05)
+        else:
+            raise dev_environment_lease.LeaseError(
+                "shared dev lease heartbeat did not report startup identity within "
+                f"{HEARTBEAT_STARTUP_TIMEOUT_SECONDS:g}s"
+            )
+        identity = dev_environment_lease.read_json_file(
+            self._identity_file, "heartbeat identity file"
+        )
+        try:
+            dev_environment_lease.verify_heartbeat_identity(
+                identity,
+                pid=self._heartbeat.pid,
+                expected_cli=str(REPO_ROOT / "scripts" / "dev_environment_lease.py"),
+                state_file=str(self._state_file),
+            )
+        except dev_environment_lease.LeaseError as exc:
+            raise dev_environment_lease.LeaseError(
+                f"shared dev lease heartbeat identity check failed: {exc}"
+            ) from exc
 
     @staticmethod
     def _handle_lease_loss(_signum: int, _frame: Any) -> None:
