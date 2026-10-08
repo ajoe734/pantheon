@@ -1,0 +1,78 @@
+{
+  "task_id": "BFF-CORS-RETIRED-ORIGIN-DEFAULTS-20261007",
+  "title": "Remove the retired sslip.io dev and staging FE origins from the BFF CORS code defaults and both compose defaults",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "change_class": "simplify",
+  "initial_base_sha": "8d9e1047da685c72f444ea68ae64d4b82217bd62",
+  "merge_base_sha": "ebe90c006b718c94d71e36578d70e98733571e45",
+  "base_sha": "ebe90c006b718c94d71e36578d70e98733571e45",
+  "code_head_sha": "828dc11855282eaecb90ba61ad89626f0637b0c0",
+  "head_sha": "828dc11855282eaecb90ba61ad89626f0637b0c0",
+  "summary": "Removed retired sslip.io dev and staging FE origins from BFF CORS defaults in http_security.py, docker-compose.yml, and docker-compose.control.yml, and deleted obsolete test_self_hosted_dev_fe_origin_in_default_origins in test_auth_jwks_strict.py.",
+  "statements": {
+    "hosted_dev_unaffected": "Hosted dev is unaffected because validate_target_selection in scripts/deploy_nonprod_vm.sh requires a non-empty DEV_BFF_CORS_ORIGINS and refuses any sslip.io value before PANTHEON_BFF_CORS_ORIGINS is set.",
+    "production_strict_tradeoff": "After this change production-strict mode no longer strips an explicitly configured copy of the retired dev origin and that this is accepted because no staging or prod VM exists and the deploy-time refusal is the single retired-host mechanism.",
+    "hosted_action": "The task performed no hosted or VM action."
+  },
+  "validation": {
+    "validation_a": {
+      "command": "python3 -m pytest services/control-plane/bff/tests/test_auth_jwks_strict.py services/control-plane/bff/tests/test_unhandled_error_cors.py services/control-plane/bff/tests/test_http_auth_composition_owner.py services/control-plane/bff/test_security_headers.py -q",
+      "base_result": "53 passed, 3 warnings in 29.19s",
+      "head_result": "52 passed, 3 warnings in 31.64s",
+      "failing_ids_base": [],
+      "failing_ids_head": [],
+      "delta": "exactly 1 fewer passed test (test_self_hosted_dev_fe_origin_in_default_origins deleted)",
+      "negative_security_test": "test_self_hosted_dev_fe_origin_filtered_in_production_strict PASSED at head"
+    },
+    "validation_b": {
+      "command": "python3 -m pytest services/control-plane/bff/test_governance_command_submission.py -q -k cors_origin_env_parser",
+      "base_result": "1 passed, 22 deselected, 1 warning in 3.38s",
+      "head_result": "1 passed, 22 deselected, 1 warning in 3.71s"
+    },
+    "validation_c": {
+      "command": "python3 -m pytest scripts/test_deploy_nonprod_bootstrap_contract.py -q -k retired",
+      "base_result": "28 passed, 55 deselected in 4.68s",
+      "head_result": "28 passed, 55 deselected in 4.52s"
+    },
+    "validation_d": {
+      "d1": {
+        "command": "env -u PANTHEON_BFF_CORS_ORIGINS docker compose --env-file /dev/null -f docker-compose.yml --profile root config --format json",
+        "key": "services.operator-bff.environment.PANTHEON_BFF_CORS_ORIGINS",
+        "base_value": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io,https://pantheon-dev.lovable.app,https://pantheon-ai-system-front-dev.lovable.app,https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com",
+        "head_value": "https://pantheon-dev.lovable.app,https://pantheon-ai-system-front-dev.lovable.app,https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com"
+      },
+      "d2": {
+        "command": "env -u PANTHEON_BFF_CORS_ORIGINS PANTHEON_PERSONA_SERVICE_TOKEN=placeholder PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN=placeholder PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL=http://placeholder.invalid docker compose --env-file /dev/null -f docker-compose.control.yml config --format json",
+        "key": "services.operator-bff.environment.PANTHEON_BFF_CORS_ORIGINS",
+        "base_value": "https://pantheon-lupin-staging-fe.104.155.223.192.sslip.io,https://pantheon-ai-system-front-staging-live.lovable.app",
+        "head_value": "https://pantheon-ai-system-front-staging-live.lovable.app"
+      },
+      "d3": {
+        "command": "env -u PANTHEON_BFF_CORS_ORIGINS PANTHEON_PERSONA_SERVICE_TOKEN=placeholder docker compose --env-file env/prod-control.env.example -f docker-compose.control.yml config --quiet",
+        "base_exit_code": 0,
+        "head_exit_code": 0
+      }
+    },
+    "validation_e": {
+      "command": "git grep -n -E 'sslip[.]io|35[.]201[.]204[.]12|104[.]155[.]223[.]192|pantheon-lupin' HEAD -- services/control-plane/bff/core/http_security.py docker-compose.yml docker-compose.control.yml",
+      "base_matches": 4,
+      "head_matches": 0
+    },
+    "validation_f": {
+      "diff_budget_command": "python3 scripts/git/diff_budget.py --base 8d9e1047da685c72f444ea68ae64d4b82217bd62 --head HEAD",
+      "diff_budget_output": {
+        "production": "+2 -6 net -4",
+        "test": "+0 -12 net -12",
+        "docs_evidence": "+0 -0 net +0"
+      },
+      "git_numstat_command": "git diff --numstat 8d9e1047da685c72f444ea68ae64d4b82217bd62 HEAD",
+      "git_numstat_output": {
+        "docker-compose.control.yml": {"added": 1, "deleted": 1},
+        "docker-compose.yml": {"added": 1, "deleted": 1},
+        "services/control-plane/bff/core/http_security.py": {"added": 0, "deleted": 4},
+        "services/control-plane/bff/tests/test_auth_jwks_strict.py": {"added": 0, "deleted": 12}
+      }
+    }
+  }
+}
