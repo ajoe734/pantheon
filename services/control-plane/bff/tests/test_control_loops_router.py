@@ -158,7 +158,9 @@ class MockLoopTruth:
         environment: str,
     ) -> tuple[bool, List[Dict[str, Any]]]:
         assert tenant_id in {"tenant-a", "tenant-dev"}
-        assert environment == "paper"
+        # Controller records are keyed by the deployment environment, not the
+        # authorized trading stage (BFF-LOOP-HEALTH-CONTROLLER-ENVIRONMENT-20261008).
+        assert environment == "dev"
         return False, []
 
     project_canonical_loop_health = staticmethod(
@@ -402,6 +404,7 @@ def test_loop_inventory_and_health_preserve_reusable_truth_contracts() -> None:
     assert health.json()["meta"]["scope"] == {
         "tenant_id": "tenant-a",
         "environment": "paper",
+        "controller_environment": "dev",
         "source": "authenticated_identity_and_deployment_scope",
     }
     assert health.json()["meta"]["surfaces"]["loop_health"]["status"] == "degraded"
