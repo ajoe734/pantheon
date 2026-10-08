@@ -723,6 +723,10 @@ def create_governance_router(
         meta["surfaces"] = surfaces
 
         payload = dict(review)
+        redacted, count = _redact_evidence_field_items(identity, [review.get("trigger_evidence")])
+        if isinstance(review.get("trigger_evidence"), dict):
+            payload["trigger_evidence"] = redacted[0]
+        meta["redacted_evidence_count"] = count
         payload["meta"] = meta
         return payload
 
