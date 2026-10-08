@@ -1,0 +1,62 @@
+{
+  "task_id": "SOURCE-EVIDENCE-PG-CONNECTION-REUSE-20261008",
+  "change_class": "corrective",
+  "summary": "Stop source-ingest startup from opening one Postgres connection per evidence lookup by reusing connection pool and resolving reloaded references in-memory.",
+  "hosted_failure": {
+    "deploy_run_id": "37733353851",
+    "failure_description": "source-ingest-1 startup exceeded ~105s healthcheck grace budget (start_period 5s + 10 retries * 10s), marked unhealthy, blocking 6 core services during docker_compose_up",
+    "operator_profile": {
+      "container_start_time": "05:58:56",
+      "uvicorn_start_time": "06:00:45",
+      "startup_duration_seconds": 109,
+      "psycopg_connect_count": 4365,
+      "psycopg_connect_total_duration_seconds": 137,
+      "cprofile_reload_seconds": 181,
+      "cprofile_total_seconds": 192,
+      "root_cause": "PostgresSourceEvidenceRepository.reload replayed 1108 records through InMemoryEvidenceRepository.add_evidence_item/add_bundle/add_knowledge_object which invoked overridden get_* methods, triggering _read_one and establishing a brand new Postgres connection for every reference lookup"
+    }
+  },
+  "fix": {
+    "startup_replay": "PostgresSourceEvidenceRepository sets _replaying flag during reload(); get_* methods resolve reference validations directly from reloaded in-memory state without Postgres round trips or connection creation",
+    "request_time_connection_reuse": "PostgresSourceEvidenceRepository maintains a LifoQueue connection pool (autocommit=True) in _get_connection, reusing warm connections for request-time reads and writes while preserving fail-closed sanitized exceptions on failure"
+  },
+  "startup_measurements": {
+    "before": {
+      "row_shape": "757 bundles, 117 evidence items, 117 knowledge objects, 117 source records (1108 total)",
+      "connections_opened": 4365,
+      "reload_time_seconds": 181.0,
+      "healthcheck_verdict": "exceeded 105s budget (unhealthy)"
+    },
+    "after": {
+      "row_shape": "757 bundles, 117 evidence items, 117 knowledge objects, 117 source records (1108 total)",
+      "connections_opened": 1,
+      "reload_time_seconds": 0.067,
+      "healthcheck_verdict": "starts inside 0.1s (well inside 105s budget, healthy)"
+    }
+  },
+  "paper_fleet_reconciler_investigation": {
+    "symptom": "GET /api/source-ingest/source-records answered 401 about once per second (667 in 12 minutes)",
+    "caller": "services/execution/lean_runtime/performance_telemetry.py:SourceIngestMarkFetcher._refresh_if_needed",
+    "mechanism": "SourceIngestMarkFetcher._default_fetch_json issues unauthenticated urllib.request to /api/source-ingest/source-records which requires authorization (verify_read_token)",
+    "caused_by_this_change": false,
+    "disposition": "Reported as required by acceptance criterion 5; unchanged here as it is an execution service caller issue pre-dating this task"
+  },
+  "acceptance_verification": {
+    "ac1_startup_reload_in_memory_references": "passed: reload replays stored evidence using in-memory reference lookups; 0 round trips per reference and exactly 1 connection used for 1000 bundles",
+    "ac2_request_time_connection_reuse": "passed: request-time evidence reads reuse pooled connection; cross-process freshness and fail-closed sanitized RuntimeError on DB failure preserved",
+    "ac3_connection_count_and_startup_budget": "passed: reloading 1000 bundles opens at most 1 connection; 757 bundles + 117 items + 117 KOs + 117 sources starts in 0.067s (< 5.0s, well within 105s healthcheck budget)",
+    "ac4_hosted_failure_and_operator_profile": "passed: run 37733353851 and operator profiling recorded with before/after measurements (181s -> 0.067s)",
+    "ac5_paper_fleet_reconciler_caller_report": "passed: caller identified in performance_telemetry.py and documented above",
+    "ac6_no_compressed_code_and_diff_budget": "passed: clean standard code, net prod diff +71 lines <= 80 line budget",
+    "ac7_hosted_track": "recorded as external_wait pending next automatic dev pair release passing docker_compose_up with healthy source-ingest"
+  },
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_pg_connection_reuse.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/test_pg_store.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/test_postgres_store.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/test_service.py"
+    ],
+    "result": "passed (54 passed, 2 skipped, 0 failures)"
+  }
+}
