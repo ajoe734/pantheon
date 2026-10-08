@@ -1,0 +1,78 @@
+{
+  "task_id": "DEV-SOURCE-STARTUP-GRACE-20261008",
+  "title": "Align Source startup grace with measured dev cold start",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "summary": "Align Source Ingestion healthcheck start_period from 5s to 120s in docker-compose.yml to match measured dev cold start of 109s, preserving all readiness predicates and unhealthy rejection behavior.",
+  "problem_statement": "During formal dev Root deployment cutover, measured Source Ingestion cold start took 109 seconds, exceeding the 5-second healthcheck start_period in docker-compose.yml.",
+  "changes": [
+    {
+      "file": "docker-compose.yml",
+      "change": "Updated services.source-ingest.healthcheck.start_period from 5s to 120s while keeping test probe (/readyz), 10s interval, 5s timeout, and 10 retries unchanged."
+    }
+  ],
+  "acceptance_verification": {
+    "criterion_1": {
+      "statement": "Source startup grace 120s with original readiness predicates preserved",
+      "status": "met",
+      "details": "services.source-ingest.healthcheck.start_period set to 120s. Probe test command ('import os, urllib.request; port=os.environ.get(\\'PORT\\',\\'8097\\'); urllib.request.urlopen(f\\'http://127.0.0.1:{port}/readyz\\', timeout=5).read()'), interval (10s), timeout (5s), and retries (10) remain identical."
+    },
+    "criterion_2": {
+      "statement": "Real Compose rendering and existing health tests pass",
+      "status": "met",
+      "details": "docker compose config --quiet and docker compose config source-ingest render start_period: 2m0s (120s) without warnings. services/source_ingestion/test_compose_activation.py (2 passed), services/source_ingestion/tests/test_source_readiness_bounded.py (1 passed), services/source_ingestion/tests/test_usage_health.py (31 passed), and services/source_ingestion/test_service.py (31 passed) pass."
+    },
+    "criterion_3": {
+      "statement": "Exact product review and required CI merge evidence",
+      "status": "in_progress",
+      "details": "Evidence committed to exact PR head; PR will be submitted with auto-merge off and handed off to reviewer Claude for exact-head approval and supervisor integration merge."
+    },
+    "criterion_4": {
+      "statement": "No live mutation or duplicate Root dispatch",
+      "status": "met",
+      "details": "No live VM or container mutations performed; all changes scoped cleanly to task worktree and branch."
+    }
+  },
+  "verification": [
+    {
+      "command": "docker compose config --quiet",
+      "exit_code": 0,
+      "status": "passed"
+    },
+    {
+      "command": "docker compose config source-ingest",
+      "exit_code": 0,
+      "status": "passed",
+      "rendered_start_period": "2m0s"
+    },
+    {
+      "command": "python3 -m pytest services/source_ingestion/test_compose_activation.py",
+      "exit_code": 0,
+      "test_count": 2,
+      "output": "2 passed"
+    },
+    {
+      "command": "python3 -m pytest services/source_ingestion/tests/test_source_readiness_bounded.py",
+      "exit_code": 0,
+      "test_count": 1,
+      "output": "1 passed"
+    },
+    {
+      "command": "python3 -m pytest services/source_ingestion/tests/test_usage_health.py",
+      "exit_code": 0,
+      "test_count": 31,
+      "output": "31 passed"
+    },
+    {
+      "command": "python3 -m pytest services/source_ingestion/test_service.py",
+      "exit_code": 0,
+      "test_count": 31,
+      "output": "31 passed"
+    },
+    {
+      "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD",
+      "exit_code": 0,
+      "status": "passed"
+    }
+  ]
+}
