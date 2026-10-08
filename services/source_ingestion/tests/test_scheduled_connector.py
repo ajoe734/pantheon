@@ -14,6 +14,16 @@ import pytest
 from fastapi.testclient import TestClient
 
 
+def _read_headers(tenant: str = "tenant-a") -> dict[str, str]:
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    token = encode_jwt_hs256(
+        {"sub": "test-reader", "roles": ["operator"], "tenant_id": tenant, "exp": int(__import__("time").time()) + 600},
+        secret=os.environ["PANTHEON_RUNTIME_JWT_SECRET"],
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
 @pytest.fixture()
 def client():
     tempdir = tempfile.mkdtemp(prefix="source_ingest_scheduled_")
@@ -37,23 +47,13 @@ def client():
     module = importlib.reload(module)
 
     try:
-        yield TestClient(module.app), Path(tempdir), module
+        yield TestClient(module.app, headers=_read_headers()), Path(tempdir), module
     finally:
         for key, value in env_backup.items():
             if value is None:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
-
-
-def _read_headers(tenant: str = "tenant-a") -> dict[str, str]:
-    from services.runtime_auth_inbound import encode_jwt_hs256
-
-    token = encode_jwt_hs256(
-        {"sub": "test-reader", "roles": ["operator"], "tenant_id": tenant, "exp": int(__import__("time").time()) + 600},
-        secret=os.environ["PANTHEON_RUNTIME_JWT_SECRET"],
-    )
-    return {"Authorization": f"Bearer {token}"}
 
 
 def _connector(**overrides):

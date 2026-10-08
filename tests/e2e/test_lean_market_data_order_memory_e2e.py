@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -19,6 +21,7 @@ from services.telemetry.feedback_adapter import FeedbackStoreAdapter
 
 
 def test_market_data_to_lean_order_feedback_memory_readback_e2e(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_LIFECYCLE_OUTBOX_PATH", str(tmp_path / "lifecycle-outbox.json"))
     source_client = _source_ingest_client(tmp_path, monkeypatch)
 
     configured = source_client.post(
@@ -161,10 +164,17 @@ def _source_ingest_client(tmp_path, monkeypatch) -> TestClient:
     monkeypatch.setenv("SOURCE_INGEST_DATA_DIR", str(data_dir))
     monkeypatch.setenv("SOURCE_INGEST_MAX_RECORDS", "20")
     monkeypatch.setenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(data_dir / "market-data-store"))
+    secret = os.environ.get("PANTHEON_RUNTIME_JWT_SECRET") or "source-e2e-jwt-secret"
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", secret)
     sys.modules.pop("services.source_ingestion.main", None)
     module = importlib.import_module("services.source_ingestion.main")
     module = importlib.reload(module)
-    return TestClient(module.app)
+    from services.runtime_auth_inbound import encode_jwt_hs256
+    token = encode_jwt_hs256(
+        {"sub": "e2e-operator", "roles": ["operator"], "tenant_id": "tenant-dev", "exp": int(time.time()) + 86400},
+        secret=secret,
+    )
+    return TestClient(module.app, headers={"Authorization": f"Bearer {token}"})
 
 
 def _market_connector() -> dict[str, Any]:
@@ -270,6 +280,8 @@ def _signal_from_row(
         metadata["model_id"] = model_id
     return {
         "signal_id": signal_id,
+        "runtime_id": "paper-runtime-001",
+        "binding_id": "binding-e2e-loop-001",
         "version": "1.0",
         "strategy_id": strategy_id,
         "timestamp": _iso_now(),

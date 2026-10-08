@@ -31,6 +31,17 @@ from services.source_ingestion import main as main_module
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
 
 
+def _read_headers(tenant: str = "tenant-e2e") -> dict[str, str]:
+    import os
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    token = encode_jwt_hs256(
+        {"sub": "test-reader", "roles": ["operator"], "tenant_id": tenant, "exp": int(__import__("time").time()) + 600},
+        secret=os.environ.get("PANTHEON_RUNTIME_JWT_SECRET", "source-test-secret"),
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
 CONNECTOR_ID = "tw-official-market-datasets"
 DATASET = "tw_price_daily"
 
@@ -138,9 +149,10 @@ def test_real_bounded_source_ingestion_tick_persistence_readback_and_distillatio
     monkeypatch.setattr(main_module, "requirement_snapshot_store", requirement_snapshot_store)
     monkeypatch.setattr(main_module, "controller_token", controller_token)
     monkeypatch.setattr(main_module, "market_data_storage_writer", market_data_storage_writer)
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", "source-test-secret")
 
     # 2. Configure connector via FastAPI TestClient (real HTTP/service boundary)
-    client = TestClient(main_module.app)
+    client = TestClient(main_module.app, headers=_read_headers("tenant-e2e"))
     now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     config_resp = client.post(
         "/api/source-ingest/connectors",

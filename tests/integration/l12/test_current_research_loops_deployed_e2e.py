@@ -158,9 +158,13 @@ class DeployedResearchHarness:
         )
 
     def _source_ingest_headers(self) -> dict[str, str]:
-        if not self.source_controller_token:
+        if self.source_controller_token:
+            return {"Authorization": f"Bearer {self.source_controller_token}"}
+        try:
+            from tests.integration.l12.l12_owner_auth import bearer, human_token
+            return bearer(human_token("OPERATOR"))
+        except Exception:
             return {}
-        return {"Authorization": f"Bearer {self.source_controller_token}"}
 
     def _command(self, argv: Sequence[str]) -> str:
         completed = subprocess.run(
@@ -539,6 +543,7 @@ class DeployedResearchHarness:
                 ],
             },
         }
+        headers = self._source_ingest_headers()
         configured = self._at(
             "source.connector_command",
             lambda: self._http_json(
@@ -546,11 +551,11 @@ class DeployedResearchHarness:
                 "/api/source-ingest/connectors",
                 method="POST",
                 payload=connector_payload,
+                headers=headers,
                 expected=(201,),
             ),
         )
         self._require(isinstance(configured, Mapping), "connector command did not return an object")
-        headers = self._source_ingest_headers()
         job_result = self._at(
             "source.manual_pull_job",
             lambda: self._http_json(

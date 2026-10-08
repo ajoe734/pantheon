@@ -48,6 +48,22 @@ APPROVER_TOKEN = "Bearer smoke-approver:approver"
 RUNTIME_TOKEN = "Bearer runtime-control-internal"
 
 
+def _source_write_headers(tenant_id: str = "tenant-dev") -> dict[str, str]:
+    secret = os.environ.get("PANTHEON_RUNTIME_JWT_SECRET")
+    if secret:
+        try:
+            from services.runtime_auth_inbound import encode_jwt_hs256
+
+            token = encode_jwt_hs256(
+                {"sub": "smoke-operator", "roles": ["operator"], "tenant_id": tenant_id, "exp": int(time.time()) + 3600},
+                secret=secret,
+            )
+            return {"Authorization": f"Bearer {token}"}
+        except ImportError:
+            pass
+    return {"Authorization": f"Bearer {tenant_id}:operator"}
+
+
 def _request_json(
     method: str,
     url: str,
@@ -451,6 +467,7 @@ def main() -> int:
             "POST",
             f"{SOURCE_INGEST_URL}/api/source-ingest/connectors",
             body=source_connector_body,
+            headers=_source_write_headers(),
         )
         if status != 201 or configured_source.get("connector", {}).get("connector_id") != "conn-smoke-notes":
             raise RuntimeError(f"source-ingest connector configuration failed: {status} {configured_source}")
@@ -539,6 +556,7 @@ def main() -> int:
         "POST",
         f"{SOURCE_INGEST_URL}/api/source-ingest/connectors",
         body=replay_connector_body,
+        headers=_source_write_headers(),
     )
     if status != 201 or configured_replay_source.get("connector", {}).get("connector_id") != "conn-smoke-replay-notes":
         raise RuntimeError(f"source-ingest replay connector configuration failed: {status} {configured_replay_source}")
@@ -604,6 +622,7 @@ def main() -> int:
         "POST",
         f"{SOURCE_INGEST_URL}/api/source-ingest/connectors",
         body=sched_connector_body,
+        headers=_source_write_headers(),
     )
     if status != 201 or configured_sched.get("connector", {}).get("connector_id") != "conn-smoke-scheduled":
         raise RuntimeError(f"source-ingest scheduled connector configuration failed: {status} {configured_sched}")
@@ -612,6 +631,7 @@ def main() -> int:
         "PUT",
         f"{SOURCE_INGEST_URL}/api/source-ingest/connectors/conn-smoke-scheduled/schedule",
         body={"interval_seconds": 1, "enabled": True},
+        headers=_source_write_headers(),
     )
     if status != 200 or not sched_config.get("schedule", {}).get("enabled"):
         raise RuntimeError(f"source-ingest schedule set failed: {status} {sched_config}")

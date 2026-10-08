@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,10 +16,21 @@ from services.source_ingestion.connectors.taiwan_official import (
 from services.source_ingestion.requirement_state import LatestMarketSnapshotStore
 
 
+def _read_headers(tenant: str = "tenant-a") -> dict[str, str]:
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    token = encode_jwt_hs256(
+        {"sub": "test-reader", "roles": ["operator"], "tenant_id": tenant, "exp": int(__import__("time").time()) + 600},
+        secret=os.environ.get("PANTHEON_RUNTIME_JWT_SECRET", "source-test-secret"),
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
 def _load_source_main(monkeypatch: Any, tmp_path: Path) -> Any:
     monkeypatch.setenv("SOURCE_INGEST_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("SOURCE_INGEST_MAX_RECORDS", "10")
     monkeypatch.setenv("SEARCH_INGEST_NOTIFY_URL", "")
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", "source-test-secret")
     sys.modules.pop("services.source_ingestion.main", None)
     module = importlib.import_module("services.source_ingestion.main")
     return importlib.reload(module)
@@ -96,6 +108,7 @@ def _tw_official_record(*, source_id: str, event_time: str, close: float, calend
 def _ingest_prices(client: TestClient) -> None:
     configured = client.post(
         "/api/source-ingest/connectors",
+        headers=_read_headers(),
         json={
             "connector": _connector(),
             "fetch": {
@@ -258,9 +271,20 @@ def test_tw_execution_alias_reads_only_the_official_twse_snapshot(
     monkeypatch: Any,
 ) -> None:
     module = _load_source_main(monkeypatch, tmp_path)
+    from services.source_ingestion.controller_state import ControllerState, ControllerStateStore
+    ControllerStateStore(module.runtime.CONTROLLER_STATE_PATH).save(
+        ControllerState(
+            controller_id="ctrl-tw-official",
+            controller_name="test-tw-official",
+            environment="test",
+            tenant_id="tenant-dev",
+            deployment={},
+        )
+    )
     client = TestClient(module.app)
     configured = client.post(
         "/api/source-ingest/connectors",
+        headers={"Authorization": f"Bearer {module.controller_token}"},
         json={
             "connector": {
                 "connector_id": "tw-twse-tpex-official-market",
@@ -315,6 +339,7 @@ def test_tw_execution_alias_reads_only_the_official_twse_snapshot(
     assert configured.status_code == 201, configured.text
     ingested = client.post(
         "/api/source-ingest/jobs",
+        headers={"Authorization": f"Bearer {module.controller_token}"},
         json={
             "connector_id": "tw-twse-tpex-official-market",
             "trace_id": "tw-read-alias-contract",

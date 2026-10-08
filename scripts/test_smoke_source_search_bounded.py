@@ -29,6 +29,7 @@ def _persistent_api() -> tuple[dict[str, Any], Any]:
         url: str,
         *,
         body: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
         timeout: float = 10,
     ) -> tuple[int, dict[str, Any]]:
         assert timeout > 0
@@ -171,9 +172,10 @@ def test_request_timeout_is_bounded_and_names_phase_connector_checkpoint(
         _url: str,
         *,
         body: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
         timeout: float = 10,
     ) -> tuple[int, dict[str, Any]]:
-        del body
+        del body, headers
         observed["timeout"] = timeout
         raise TimeoutError("simulated persistent-state timeout")
 

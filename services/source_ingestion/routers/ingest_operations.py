@@ -7,7 +7,7 @@ market snapshots, and audit logging.
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Sequence
 
 from fastapi import APIRouter, Header, HTTPException
 
@@ -32,12 +32,15 @@ from ..requirement_state import MarketSnapshotStateError, RequirementStateError
 if TYPE_CHECKING:
     from ..runtime import SourceIngestionRuntime
 
+_SOURCE_INGEST_READ_ROLES: tuple[str, ...] = ("source_ingest_reader", "operator", "admin", "persona.admin")
+_SOURCE_INGEST_WRITE_ROLES: tuple[str, ...] = ("operator", "admin", "persona.admin")
 
-def _source_read_tenant(authorization: str | None, requested: str | None) -> str:
+
+def _source_read_tenant(authorization: str | None, requested: str | None, *, required_roles: Sequence[str] = _SOURCE_INGEST_READ_ROLES) -> str:
     try:
         context: AuthContext = validate_request_auth(
             authorization=authorization,
-            required_roles=("source_ingest_reader", "operator", "admin", "persona.admin"),
+            required_roles=required_roles,
             env={**os.environ, "PANTHEON_RUNTIME_AUTH_MODE": "strict"},
         )
     except AuthError as exc:
@@ -64,6 +67,13 @@ def _source_read_tenant(authorization: str | None, requested: str | None) -> str
     if not tenant or tenant == "*" or ("*" not in allowed and tenant not in allowed):
         raise HTTPException(status_code=403, detail={"code": "TENANT_SCOPE_DENIED", "message": "An explicitly admitted tenant is required"})
     return tenant
+
+
+def _require_connector_tenant(authorization: str | None, connector: SourceConnector) -> str:
+    tenant = str(connector.metadata.get("tenant_id") or "").strip() or None
+    if not tenant:
+        raise HTTPException(status_code=403, detail={"code": "TENANT_SCOPE_DENIED", "message": "Connector has no bound tenant"})
+    return _source_read_tenant(authorization, tenant, required_roles=_SOURCE_INGEST_WRITE_ROLES)
 
 
 def _owned_evidence_read(repository: Any, method: str, tenant: str, record_id: str | None = None, not_found_msg: str | None = None):
@@ -118,12 +128,30 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
         try:
             with runtime.authoritative_reconcile_lock:
                 proposed = request.connector.to_domain()
-                runtime._fence_managed_connector_mutation(
-                    proposed.connector_id,
-                    authorization,
-                    operation="controller-owned connector configuration",
-                    proposed_connector=proposed,
-                )
+                existing_config = runtime.connector_store.get_config(proposed.connector_id)
+                existing_connector = existing_config.connector if existing_config is not None else None
+                if runtime._is_controller_owned(proposed) or runtime._is_controller_owned(existing_connector):
+                    runtime._fence_managed_connector_mutation(
+                        proposed.connector_id,
+                        authorization,
+                        operation="controller-owned connector configuration",
+                        proposed_connector=proposed,
+                    )
+                else:
+                    explicit_tenant = str(proposed.metadata.get("tenant_id") or "").strip() or None
+                    resolved_tenant = _source_read_tenant(
+                        authorization,
+                        explicit_tenant,
+                        required_roles=_SOURCE_INGEST_WRITE_ROLES,
+                    )
+                    if existing_connector is not None:
+                        existing_tenant = str(existing_connector.metadata.get("tenant_id") or "").strip() or None
+                        if existing_tenant and existing_tenant != resolved_tenant:
+                            raise HTTPException(
+                                status_code=403,
+                                detail={"code": "TENANT_SCOPE_DENIED", "message": "Cannot mutate connector owned by another tenant"},
+                            )
+                    request.connector.metadata["tenant_id"] = resolved_tenant
                 return runtime._configure_connector(request)
         except SourceEvidenceError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -162,11 +190,17 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
     ) -> dict[str, Any]:
         try:
             with runtime.authoritative_reconcile_lock:
-                runtime._fence_managed_connector_mutation(
-                    connector_id,
-                    authorization,
-                    operation="controller-owned connector lifecycle mutation",
-                )
+                config = runtime.connector_store.get_config(connector_id)
+                if config is None:
+                    raise HTTPException(status_code=404, detail="connector config not found")
+                if runtime._is_controller_owned(config.connector):
+                    runtime._fence_managed_connector_mutation(
+                        connector_id,
+                        authorization,
+                        operation="controller-owned connector lifecycle mutation",
+                    )
+                else:
+                    _require_connector_tenant(authorization, config.connector)
                 return runtime._set_connector_lifecycle(connector_id, request)
         except SourceEvidenceError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -406,11 +440,14 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
             )
         try:
             with runtime.authoritative_reconcile_lock:
-                runtime._fence_managed_connector_mutation(
-                    connector_id,
-                    authorization,
-                    operation="controller-owned connector schedule mutation",
-                )
+                if runtime._is_controller_owned(config.connector):
+                    runtime._fence_managed_connector_mutation(
+                        connector_id,
+                        authorization,
+                        operation="controller-owned connector schedule mutation",
+                    )
+                else:
+                    _require_connector_tenant(authorization, config.connector)
                 schedule = runtime.schedule_config_store.upsert_schedule(
                     connector_id,
                     interval_seconds=request.interval_seconds,
