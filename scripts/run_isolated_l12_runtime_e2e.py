@@ -118,6 +118,7 @@ TW_OFFICIAL_PULL_TIMEOUT_SECONDS = 1800
 TW_OFFICIAL_PULL_LEASE_SECONDS = 10
 PROJECTION_BOOTSTRAP_SERVICE = "loop-run-projector-scheduler"
 PRINCIPAL_ISSUER_SERVICE = "dev-paper-principal-issuer"
+TRAINING_WORKER_SERVICE_ID = "training-session-preview-worker"
 ISOLATED_DEV_TENANT = "tenant-dev"
 COMPOSE_ALL_PROFILES = ("--profile", "*")
 ISOLATED_SAFE_CONTROLS = {
@@ -234,9 +235,11 @@ def _mint_projector_service_jwt(
     subject: str = "agora-market-projector",
     roles: tuple[str, ...] = ("source_ingest_reader",),
     ttl_seconds: int | None = None,
+    extra_claims: Mapping[str, Any] | None = None,
 ) -> str:
     header = {"alg": "HS256", "typ": "JWT"}
     claims: dict[str, Any] = {"sub": subject, "roles": list(roles), "tenant_id": tenant_id}
+    claims.update(extra_claims or {})
     if issuer:
         claims["iss"] = issuer
     if audience:
@@ -297,6 +300,17 @@ def _isolated_dev_principal_env(compose_env: Mapping[str, str]) -> dict[str, str
         "PANTHEON_CAPITAL_JWT_SECRET": secret,
     }
     env.update(issue_dev_paper_principals.issue_environment({**env, "PANTHEON_ENV": "dev"}))
+    # The Training API verifies the per-run dev signer (Compose falls back from
+    # TRAINING_SESSION_JWT_SECRET to PANTHEON_DEV_BFF_JWT_SECRET), so the preview
+    # worker must present a token signed by that same signer instead of the
+    # static Compose fixture token.  Strict role, service and tenant claims stay.
+    env["TRAINING_SESSION_WORKER_TOKEN"] = _mint_projector_service_jwt(
+        secret,
+        tenant_id=ISOLATED_DEV_TENANT,
+        subject=TRAINING_WORKER_SERVICE_ID,
+        roles=("training-service",),
+        extra_claims={"service": TRAINING_WORKER_SERVICE_ID},
+    )
     return env
 
 
