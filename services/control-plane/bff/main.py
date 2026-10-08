@@ -653,50 +653,6 @@ def _serialize_foundation_context(context: Dict[str, Any]) -> Dict[str, Any]:
     if context.get("source_route"):
         serialized["source_route"] = context.get("source_route")
     return serialized
-def _foundation_audit_for_command_record(
-    *,
-    identity: OperatorIdentity,
-    command_type: CommandType,
-    target_type: ObjectType,
-    target_id: str,
-    payload: Dict[str, Any],
-    reason: str,
-    command_id: str,
-    idempotency_key: str,
-    route: str,
-    metadata: Optional[Dict[str, Any]] = None,
-) -> AuditAction:
-    environment = _foundation_environment_scope()
-    actor_ref = _foundation_actor_ref(identity)
-    trace = _build_foundation_trace(
-        environment=environment,
-        actor_ref=actor_ref,
-        trace_id=command_id,
-        correlation_id=command_id,
-        request_id=command_id,
-        idempotency_key=idempotency_key,
-    )
-    audit_metadata = {
-        "route": route,
-        "command": command_type.value,
-        "idempotency_key": idempotency_key,
-    }
-    if metadata:
-        audit_metadata.update({key: value for key, value in metadata.items() if value is not None})
-    return AuditAction.record(
-        actor_ref=actor_ref,
-        action_type="bff.command.accepted",
-        target_ref=f"{target_type.value}:{target_id}",
-        environment=environment,
-        reason=reason,
-        trace=trace,
-        payload={
-            "command": command_type.value,
-            "target": {"type": target_type.value, "id": target_id},
-            "payload": payload,
-        },
-        metadata=audit_metadata,
-    )
 def _command_audit_action_from_record(record: Dict[str, Any]) -> Dict[str, Any]:
     foundation = record.get("foundation") if isinstance(record.get("foundation"), dict) else {}
     audit_action = foundation.get("audit_action") if isinstance(foundation.get("audit_action"), dict) else None
@@ -1702,19 +1658,6 @@ _split_claim_string = auth_policy.split_claim_string
 _identity_claim_strings = auth_policy.identity_claim_strings
 _first_nonblank = auth_policy.first_nonblank
 _env_csv = auth_policy.env_csv
-def _parse_rfc3339(value: Any) -> Optional[datetime]:
-    """Best-effort RFC3339/ISO-8601 parse; None on empty or unparseable input.
-
-    Mirrors read_store._parse_rfc3339 so callers in this module resolve a defined
-    symbol. Returning None (rather than raising) keeps malformed optional time
-    filters from surfacing as 500s — an unparseable bound is simply not applied.
-    """
-    if value in (None, ""):
-        return None
-    try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except (ValueError, TypeError):
-        return None
 _bff_me_tenant_payload = auth_policy.bff_me_tenant_payload
 _sem_session_id = auth_policy.get_session_id
 
@@ -1935,14 +1878,6 @@ def _composed_surface_status(
         )
 
     return surface
-def _performance_ranking_source_surface(
-    surface: Dict[str, Any],
-    *,
-    snapshot_at: str,
-) -> Dict[str, Any]:
-    """Add the cross-center confidence vocabulary without changing global envelopes."""
-    from services.control_plane.bff.agora.performance.service import canonical_performance_ranking_source_surface
-    return canonical_performance_ranking_source_surface(surface, snapshot_at=snapshot_at)
 from .personas.service import (
     _extract_ids_from_item,
     _filter_by_common_identifiers,
@@ -3117,59 +3052,6 @@ def _action_command_status_from_command_status(status: CommandStatus) -> ActionC
         raise ValueError(
             f"Command status {status.value!r} cannot be projected as a successful CommandResponse"
         ) from exc
-def _project_final_command_response(
-    *,
-    command_id: str,
-    command: CommandType,
-    accepted_at: str,
-    status: CommandStatus,
-    staleness_warning: Optional[StalenessWarning],
-    meta: Optional[Dict[str, Any]] = None,
-    deprecation: Optional[Dict[str, Any]] = None,
-) -> CommandResponse[Dict[str, Any]]:
-    final_status = _action_command_status_from_command_status(status)
-    legacy_payload = _project_command_submission_response(
-        command_id=command_id,
-        command=command,
-        accepted_at=accepted_at,
-        status=status,
-        staleness_warning=staleness_warning,
-    ).model_dump()
-    legacy_payload["status"] = final_status.value
-    tracking_url = f"/api/v1/operator/commands/{command_id}"
-    legacy_payload["command_id"] = command_id
-    legacy_payload["commandId"] = command_id
-    legacy_payload["tracking_url"] = tracking_url
-    legacy_payload["trackingUrl"] = tracking_url
-    if isinstance(legacy_payload.get("receipt"), dict):
-        legacy_payload["receipt"]["status"] = final_status.value
-        legacy_payload["receipt"]["tracking_url"] = tracking_url
-        legacy_payload["receipt"]["trackingUrl"] = tracking_url
-    receipts = _command_dual_write_receipts(
-        command_id=command_id,
-        command=command.value,
-        status=final_status.value,
-        accepted_at=accepted_at,
-    )
-    legacy_payload["receipt_dual_write"] = receipts
-    legacy_payload["action_receipt"] = receipts["action_receipt"]
-    legacy_payload["actionReceipt"] = receipts["action_receipt"]
-    legacy_payload["command_receipt"] = receipts["command_receipt"]
-    legacy_payload["commandReceipt"] = receipts["command_receipt"]
-    final_meta = dict(meta or {})
-    if deprecation:
-        legacy_payload["deprecated"] = True
-        legacy_payload["deprecation"] = dict(deprecation)
-        if isinstance(legacy_payload.get("receipt"), dict):
-            legacy_payload["receipt"]["deprecated"] = True
-            legacy_payload["receipt"]["deprecation"] = dict(deprecation)
-        final_meta["deprecated"] = True
-        final_meta["deprecation"] = dict(deprecation)
-    return CommandResponse[Dict[str, Any]](
-        status=final_status,
-        data=legacy_payload,
-        meta=final_meta or None,
-    )
 def _check_read_surface_state() -> Optional[StalenessWarning]:
     """
     In production, query the BFF read surface health endpoint.
@@ -3791,16 +3673,13 @@ from .governance.promotion_review import (
     _PROMOTION_REVIEW_REVISION_MARKER,
     _PROMOTION_REVIEW_REVISION_RE,
     _PROMOTION_REVIEW_TARGET_PREFIX,
-    _latest_promotion_review_command as _domain_latest_promotion_review_command,
     _promotion_review_clean_id,
-    _promotion_review_decision_projection as _domain_promotion_review_decision_projection,
     _promotion_review_quarter_from_id,
     _promotion_review_record_revision_id,
     _promotion_review_revision_id,
     _promotion_review_revision_recommendation_id,
     _promotion_review_stage_path,
     _promotion_review_stored_source,
-    _promotion_review_submission_projection as _domain_promotion_review_submission_projection,
     _promotion_review_target_id,
     _raise_if_promotion_review_direct_mutation_requested,
 )
@@ -3808,34 +3687,6 @@ from .governance.promotion_review import (
 _PROMOTION_REVIEW_ACTION_IDS: Set[str] = set(_PM12_QUARTERLY_RECOMMENDATION_ACTION_ORDER)
 
 
-def _promotion_review_submission_projection(
-    review_id: Any,
-    *,
-    include_source_recommendation: bool = False,
-    command_store: Any = None,
-) -> Optional[Dict[str, Any]]:
-    resolved_store = command_store if command_store is not None else globals().get("command_store")
-    return _domain_promotion_review_submission_projection(
-        review_id,
-        include_source_recommendation=include_source_recommendation,
-        command_store=resolved_store,
-    )
-
-
-def _latest_promotion_review_command(
-    review_id: Any,
-    command_store: Any = None,
-) -> Optional[Dict[str, Any]]:
-    resolved_store = command_store if command_store is not None else globals().get("command_store")
-    return _domain_latest_promotion_review_command(review_id, command_store=resolved_store)
-
-
-def _promotion_review_decision_projection(
-    review_id: Any,
-    command_store: Any = None,
-) -> Optional[Dict[str, Any]]:
-    resolved_store = command_store if command_store is not None else globals().get("command_store")
-    return _domain_promotion_review_decision_projection(review_id, command_store=resolved_store)
 def _ops_read_model_entry_for_persona(
     persona_id: str,
     *,
