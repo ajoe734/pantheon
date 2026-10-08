@@ -1,0 +1,7 @@
+{
+  "task_id": "LOCAL-HUMANOPS-MANUAL-TODO-RESUME-20261008",
+  "change": "reopen payload builder permits local Human/Ops to resume its own unheld Human/Ops-owned todo via existing start transition",
+  "tests": "python3 -m unittest scripts.test_ai_status (502 tests OK); new test_local_operator_reopens_own_unheld_manual_todo fails at base, passes at head",
+  "unchanged": "no new command/gate/auth grant; local start not allowlisted; non-local actor, other-owner, waiting_for-other, terminal fences intact",
+  "runtime_promotion": "NOT done; source merge does not promote installed command runtime. Coordinator must promote then reopen existing FE-APPROVAL-BROWSER-ACCEPTANCE-20261004"
+}
