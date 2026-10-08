@@ -579,3 +579,36 @@ def test_suites_read_the_compose_file_list_the_harness_exports(
     for suite in ("human_learning", "research_loops"):
         source = (Path(l12_dir) / f"test_current_{suite}_deployed_e2e.py").read_text()
         assert "compose_file_args()" in source and "PANTHEON_L12_COMPOSE_FILE\"" not in source
+
+
+def test_l12_suites_import_every_owner_auth_helper_they_call() -> None:
+    """L12-RESEARCH-SUITE-IMPORT-20261008: a suite called compose_file_args()
+    without importing it, which only surfaced as a NameError inside the
+    deployed gate.  Catch that class statically in ordinary CI."""
+
+    import ast
+    from pathlib import Path
+
+    l12_dir = Path(harness.__file__).resolve().parents[1] / "tests" / "integration" / "l12"
+    helper_tree = ast.parse((l12_dir / "l12_owner_auth.py").read_text(encoding="utf-8"))
+    helpers = {
+        node.name
+        for node in helper_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    missing = []
+    for suite in sorted(l12_dir.glob("test_*.py")):
+        tree = ast.parse(suite.read_text(encoding="utf-8"))
+        bound = set()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                bound.update(alias.asname or alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                bound.add(node.name)
+        called = {
+            node.func.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        missing.extend(f"{suite.name}: {name}" for name in sorted((called & helpers) - bound))
+    assert not missing, f"L12 suites call l12_owner_auth helpers without importing them: {missing}"
