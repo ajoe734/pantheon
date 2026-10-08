@@ -20,6 +20,7 @@ import task_state_store as store
 HEAD_A = "254d2e7b05096dad3f6c7512db089ae2cbd8fe08"
 MERGE_A = "8f8383b507b1fb631d44422031f01ebea5024d5e"
 HEAD_B = "111111119999888877776666555544443333dead"
+MERGE_B = "2222222299998888777766665555444433332222"
 
 
 def valid_receipt_payload(**overrides) -> dict:
@@ -1321,3 +1322,52 @@ def test_lock_held_by_other_pid_leaves_state_and_v2_journal_unchanged(
 
     assert status_file.read_bytes() == before_state
     assert event_path.read_bytes() == before_events
+
+
+def _record_successor(command_root: Path, task: dict):
+    status_file = _setup_status_file(command_root, task)
+    lock_path = command_root / "lock.json"
+    binding = ir.IntegrationBinding(
+        repository="ajoe734/pantheon", target_branch="dev", pr=5412, head_sha=HEAD_B
+    )
+    with _held_authority(command_root, lock_path) as authority:
+        result = ir.record_integration_receipt(
+            config=_config_for(status_file),
+            task_id="DTG-TEST-1",
+            expected_generation=task["generation"],
+            expected_delivery_binding=binding,
+            observation=ir.RECEIPT_OBSERVATION_PERFORMED_MERGE,
+            merge_commit_sha=MERGE_B,
+            observed_at="2026-10-08T01:00:00Z",
+            status_file=status_file,
+            event_path=None,
+            authority=authority,
+        )
+    return result, json.loads(status_file.read_text(encoding="utf-8"))["tasks"][0]
+
+
+def _successor_row(generation: int, **receipt_overrides) -> dict:
+    return task_row(
+        generation=generation,
+        review_binding={"pr": 5412, "head_sha": HEAD_B, "head_branch": "task/x", "base": "dev"},
+        integration_receipt=valid_receipt_payload(task_generation=1, **receipt_overrides),
+    )
+
+
+def test_successor_receipt_archives_prior_landed_receipt(command_root: Path) -> None:
+    task = _successor_row(2)
+    result, row = _record_successor(command_root, task)
+    assert result.written is True
+    assert row["integration_receipt"]["pr"] == 5412
+    assert row["integration_receipt_history"] == [task["integration_receipt"]]
+    assert row["status"] == "review_approved"
+
+
+def test_successor_receipt_denied_for_same_generation(command_root: Path) -> None:
+    with pytest.raises(ir.IntegrationReceiptConflictError):
+        _record_successor(command_root, _successor_row(1))
+
+
+def test_successor_receipt_denied_for_foreign_repository(command_root: Path) -> None:
+    with pytest.raises(ir.IntegrationReceiptConflictError):
+        _record_successor(command_root, _successor_row(2, repository="ajoe734/other"))

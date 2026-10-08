@@ -39,6 +39,7 @@ import multi_repo_registry
 from rewrite.task_state_store import append_state_commit, snapshot_transaction
 
 RECEIPT_KEY = "integration_receipt"
+RECEIPT_HISTORY_KEY = "integration_receipt_history"
 RECEIPT_VERSION = 1
 RECEIPT_RESULT_LANDED = "landed"
 RECEIPT_OBSERVATION_PERFORMED_MERGE = "performed_merge"
@@ -579,6 +580,22 @@ def record_integration_receipt(
         return result
 
 
+def _is_superseded_by_successor(
+    existing: Mapping[str, Any], candidate: Mapping[str, Any]
+) -> bool:
+    """A valid prior landed receipt from an earlier generation, for a
+    different PR/head/merge on the same repository and branch."""
+
+    return (
+        existing["task_generation"] < candidate["task_generation"]
+        and existing["repository"] == candidate["repository"]
+        and existing["target_branch"] == candidate["target_branch"]
+        and existing["pr"] != candidate["pr"]
+        and existing["head_sha"] != candidate["head_sha"]
+        and existing["merge_commit_sha"] != candidate["merge_commit_sha"]
+    )
+
+
 def _apply_receipt_to_state(
     state: dict[str, Any],
     *,
@@ -652,6 +669,23 @@ def _apply_receipt_to_state(
         if all(existing[field] == candidate_receipt[field] for field in identity_fields):
             return ReceiptWriteResult(
                 task_id=task_id, written=False, replay=True, receipt=existing
+            )
+        if _is_superseded_by_successor(existing, candidate_receipt):
+            # A genuine reopen advanced the generation and a different
+            # delivery landed: keep the prior landed fact auditable in
+            # history instead of letting it block the successor forever.
+            history = task.get(RECEIPT_HISTORY_KEY)
+            if history is None:
+                history = []
+            if not isinstance(history, list):
+                raise IntegrationReceiptConflictError(
+                    f"task {task_id} has a malformed {RECEIPT_HISTORY_KEY}"
+                )
+            history.append(dict(raw_existing))
+            task[RECEIPT_HISTORY_KEY] = history
+            task[RECEIPT_KEY] = candidate_receipt
+            return ReceiptWriteResult(
+                task_id=task_id, written=True, replay=False, receipt=candidate_receipt
             )
         raise IntegrationReceiptConflictError(
             f"task {task_id} already carries a conflicting integration_receipt"
