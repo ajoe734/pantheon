@@ -22,6 +22,16 @@ from services.source_ingestion.market_snapshot import (
 )
 
 
+def _read_headers(tenant: str = "tenant-dev") -> dict[str, str]:
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    token = encode_jwt_hs256(
+        {"sub": "test-scheduler", "roles": ["operator"], "tenant_id": tenant, "exp": int(__import__("time").time()) + 600},
+        secret=os.environ["PANTHEON_RUNTIME_JWT_SECRET"],
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
 @pytest.fixture()
 def client():
     tempdir = tempfile.mkdtemp(prefix="source_ingest_sched_test_")
@@ -31,12 +41,14 @@ def client():
         "SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY": os.environ.get("SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY"),
         "SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS": os.environ.get("SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS"),
         "SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS": os.environ.get("SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS"),
+        "PANTHEON_RUNTIME_JWT_SECRET": os.environ.get("PANTHEON_RUNTIME_JWT_SECRET"),
     }
     os.environ["SOURCE_INGEST_DATA_DIR"] = tempdir
     os.environ["SOURCE_INGEST_MAX_RECORDS"] = "20"
     os.environ["SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY"] = "1"
     os.environ["SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS"] = "2"
     os.environ["SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS"] = "300"
+    os.environ["PANTHEON_RUNTIME_JWT_SECRET"] = "source-test-secret"
 
     sys.modules.pop("services.source_ingestion.main", None)
     module = importlib.import_module("services.source_ingestion.main")
@@ -54,7 +66,7 @@ def client():
     ControllerStateStore(module.runtime.CONTROLLER_STATE_PATH).save(state)
 
     try:
-        yield TestClient(module.app), Path(tempdir), module
+        yield TestClient(module.app, headers=_read_headers()), Path(tempdir), module
     finally:
         for key, value in env_backup.items():
             if value is None:

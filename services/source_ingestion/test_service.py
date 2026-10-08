@@ -14,6 +14,16 @@ import pytest
 from fastapi.testclient import TestClient
 
 
+def _read_headers(tenant: str = "tenant-a", roles: list[str] | None = None) -> dict[str, str]:
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    token = encode_jwt_hs256(
+        {"sub": "test-reader", "roles": roles or ["operator"], "tenant_id": tenant, "exp": int(__import__("time").time()) + 600},
+        secret=os.environ.get("PANTHEON_RUNTIME_JWT_SECRET", "source-test-secret"),
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
 @pytest.fixture()
 def client():
     tempdir = tempfile.mkdtemp(prefix="source_ingest_service_")
@@ -38,7 +48,7 @@ def client():
     module = importlib.reload(module)
 
     try:
-        yield TestClient(module.app), Path(tempdir), module
+        yield TestClient(module.app, headers=_read_headers()), Path(tempdir), module
     finally:
         for key, value in env_backup.items():
             if value is None:
@@ -70,15 +80,6 @@ def _record(**overrides):
     payload["metadata"] = {"tenant_id": "tenant-a", **dict(payload.get("metadata") or {})}
     return payload
 
-
-def _read_headers(tenant: str = "tenant-a") -> dict[str, str]:
-    from services.runtime_auth_inbound import encode_jwt_hs256
-
-    token = encode_jwt_hs256(
-        {"sub": "test-reader", "roles": ["operator"], "tenant_id": tenant, "exp": int(__import__("time").time()) + 600},
-        secret=os.environ["PANTHEON_RUNTIME_JWT_SECRET"],
-    )
-    return {"Authorization": f"Bearer {token}"}
 
 
 def _serve_json(payload: dict, *, robots_txt: str | None = None):
@@ -1497,10 +1498,11 @@ def test_controller_provisioned_official_connector_stamps_requirement_tenant_and
     assert bundle_id not in [b["evidence_bundle_id"] for b in bundles_other.json()["bundles"]]
 
     # 6. Strict tenant isolation: untenanted / anonymous requests rejected
-    assert test_client.get("/api/source-ingest/source-records/tw-official:tw_price_daily:TWSE:2330:2026-10-07").status_code == 401
-    assert test_client.get(f"/api/source-ingest/evidence/bundles/{bundle_id}").status_code == 401
-    assert test_client.get(f"/api/source-ingest/evidence/items/{item_id}").status_code == 401
-    assert test_client.get("/api/source-ingest/evidence/bundles").status_code == 401
+    anon_client = TestClient(module.app)
+    assert anon_client.get("/api/source-ingest/source-records/tw-official:tw_price_daily:TWSE:2330:2026-10-07").status_code == 401
+    assert anon_client.get(f"/api/source-ingest/evidence/bundles/{bundle_id}").status_code == 401
+    assert anon_client.get(f"/api/source-ingest/evidence/items/{item_id}").status_code == 401
+    assert anon_client.get("/api/source-ingest/evidence/bundles").status_code == 401
 
 
 def test_postgres_backend_cross_process_evidence_visibility_via_api():
@@ -1997,6 +1999,136 @@ def test_controller_owned_connector_resolves_only_controller_state_ignoring_env_
     list_dev = test_client.get("/api/source-ingest/evidence/bundles", headers=headers_dev)
     assert list_dev.status_code == 200
     assert bundle_id in [b["evidence_bundle_id"] for b in list_dev.json()["bundles"]]
+
+
+def test_non_controller_connector_requires_write_capable_auth_and_binds_tenant(client) -> None:
+    test_client, _, module = client
+    fetch_payload = {"mode": "static_records", "records": []}
+
+    # AC1 & AC2: Unauthenticated POST rejected with 401
+    anon_client = TestClient(module.app)
+    unauth = anon_client.post(
+        "/api/source-ingest/connectors",
+        json={"connector": _connector(connector_id="conn-unauth-test"), "fetch": fetch_payload},
+    )
+    assert unauth.status_code == 401
+    assert module.connector_store.get_config("conn-unauth-test") is None
+
+    # AC1: Viewer-only role rejected with 403 AUTH_FORBIDDEN
+    viewer_headers = _read_headers(tenant="tenant-dev", roles=["viewer"])
+    viewer_res = test_client.post(
+        "/api/source-ingest/connectors",
+        headers=viewer_headers,
+        json={"connector": _connector(connector_id="conn-viewer-test"), "fetch": fetch_payload},
+    )
+    assert viewer_res.status_code == 403
+    assert viewer_res.json()["detail"]["code"] == "AUTH_FORBIDDEN"
+    assert module.connector_store.get_config("conn-viewer-test") is None
+
+    # AC2: Token without tenant identity rejected with 403 TENANT_SCOPE_DENIED
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    tenantless_token = encode_jwt_hs256(
+        {"sub": "non-tenant-operator", "roles": ["operator"], "exp": int(__import__("time").time()) + 600},
+        secret=os.environ["PANTHEON_RUNTIME_JWT_SECRET"],
+    )
+    no_tenant_res = test_client.post(
+        "/api/source-ingest/connectors",
+        headers={"Authorization": f"Bearer {tenantless_token}"},
+        json={"connector": _connector(connector_id="conn-notenant-test"), "fetch": fetch_payload},
+    )
+    assert no_tenant_res.status_code == 403
+    assert no_tenant_res.json()["detail"]["code"] == "TENANT_SCOPE_DENIED"
+    assert module.connector_store.get_config("conn-notenant-test") is None
+
+    # AC2: Mismatched explicit metadata.tenant_id rejected with 403 TENANT_SCOPE_DENIED
+    mismatch_headers = _read_headers(tenant="tenant-dev")
+    mismatch_res = test_client.post(
+        "/api/source-ingest/connectors",
+        headers=mismatch_headers,
+        json={
+            "connector": _connector(connector_id="conn-mismatch-test", metadata={"tenant_id": "tenant-other"}),
+            "fetch": fetch_payload,
+        },
+    )
+    assert mismatch_res.status_code == 403
+    assert mismatch_res.json()["detail"]["code"] == "TENANT_SCOPE_DENIED"
+    assert module.connector_store.get_config("conn-mismatch-test") is None
+
+    # AC1: Success with write-capable principal binds resolved tenant into metadata.tenant_id
+    success_headers = _read_headers(tenant="tenant-dev", roles=["operator"])
+    success_res = test_client.post(
+        "/api/source-ingest/connectors",
+        headers=success_headers,
+        json={"connector": _connector(connector_id="conn-bound-test", metadata={}), "fetch": fetch_payload},
+    )
+    assert success_res.status_code == 201
+    body = success_res.json()
+    assert body["connector"]["metadata"]["tenant_id"] == "tenant-dev"
+    stored = module.connector_store.get_config("conn-bound-test")
+    assert stored is not None
+    assert stored.connector.metadata["tenant_id"] == "tenant-dev"
+
+
+def test_non_controller_connector_lifecycle_and_schedule_mutation_requires_admitted_tenant(client) -> None:
+    test_client, _, module = client
+    fetch_payload = {"mode": "static_records", "records": []}
+
+    # Configure a connector bound to tenant-dev
+    conn_id = "conn-lifecycle-sched-test"
+    headers_dev = _read_headers(tenant="tenant-dev", roles=["operator"])
+    res = test_client.post(
+        "/api/source-ingest/connectors",
+        headers=headers_dev,
+        json={"connector": _connector(connector_id=conn_id), "fetch": fetch_payload},
+    )
+    assert res.status_code == 201
+
+    headers_other = _read_headers(tenant="tenant-other", roles=["operator"])
+
+    # AC3: Lifecycle mutation with different tenant rejected with 403 TENANT_SCOPE_DENIED
+    life_bad = test_client.put(
+        f"/api/source-ingest/connectors/{conn_id}/lifecycle",
+        headers=headers_other,
+        json={"status": "disabled", "reason": "maintenance"},
+    )
+    assert life_bad.status_code == 403
+    assert life_bad.json()["detail"]["code"] == "TENANT_SCOPE_DENIED"
+
+    # AC3: Lifecycle mutation unauthenticated rejected
+    anon_client = TestClient(module.app)
+    life_unauth = anon_client.put(
+        f"/api/source-ingest/connectors/{conn_id}/lifecycle",
+        json={"status": "disabled", "reason": "maintenance"},
+    )
+    assert life_unauth.status_code == 401
+
+    # AC3: Schedule mutation with different tenant rejected with 403 TENANT_SCOPE_DENIED
+    sched_bad = test_client.put(
+        f"/api/source-ingest/connectors/{conn_id}/schedule",
+        headers=headers_other,
+        json={"interval_seconds": 60, "enabled": True},
+    )
+    assert sched_bad.status_code == 403
+    assert sched_bad.json()["detail"]["code"] == "TENANT_SCOPE_DENIED"
+
+    # AC3: Admitted tenant succeeds for schedule and lifecycle mutations
+    sched_good = test_client.put(
+        f"/api/source-ingest/connectors/{conn_id}/schedule",
+        headers=headers_dev,
+        json={"interval_seconds": 120, "enabled": True},
+    )
+    assert sched_good.status_code == 200
+    assert sched_good.json()["schedule"]["interval_seconds"] == 120
+
+    life_good = test_client.put(
+        f"/api/source-ingest/connectors/{conn_id}/lifecycle",
+        headers=headers_dev,
+        json={"status": "disabled", "reason": "maintenance"},
+    )
+    assert life_good.status_code == 200
+    assert life_good.json()["connector"]["status"] == "disabled"
+
 
 
 
