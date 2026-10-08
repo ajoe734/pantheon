@@ -655,3 +655,73 @@ def test_tw_official_pull_success_does_not_collect_logs(
 
     assert not any("logs" in c for c, _ in calls)
     assert not (tmp_path / "tw-official-pull-source-ingest-logs.txt").exists()
+
+
+def _training_authenticate(monkeypatch: pytest.MonkeyPatch, env: dict, token: str, *, tenant: str = "tenant-dev", service: str = "training-session-preview-worker"):
+    """Run the real Training inbound authority with the Compose verifier wiring."""
+    import sys
+    from pathlib import Path
+
+    service_dir = str(Path(harness.__file__).resolve().parents[1] / "services" / "training-session")
+    monkeypatch.syspath_prepend(service_dir)
+    import inbound_authority
+
+    for key in ("TRAINING_SESSION_JWT_SECRET", "TRAINING_SESSION_JWT_ISSUER", "TRAINING_SESSION_JWT_AUDIENCE",
+                "PANTHEON_RUNTIME_JWT_SECRET", "PANTHEON_RUNTIME_JWT_ISSUER", "PANTHEON_RUNTIME_JWT_AUDIENCE"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("TRAINING_SESSION_AUTH_MODE", "strict")
+    # docker-compose.yml: TRAINING_SESSION_JWT_SECRET defaults to PANTHEON_DEV_BFF_JWT_SECRET.
+    monkeypatch.setenv("TRAINING_SESSION_JWT_SECRET", env["PANTHEON_DEV_BFF_JWT_SECRET"])
+    return inbound_authority.authenticate_training_request(
+        authorization=f"Bearer {token}", mfa_token=None, tenant_id=tenant, actor_service=service,
+        method="GET", path="/api/training/preview-jobs", persistence_enforced=True,
+    )
+
+
+def _composed_isolated_env() -> dict[str, str]:
+    env = {**_isolated_signer_env()}
+    env.update(harness._isolated_dev_principal_env(env))
+    return env
+
+
+def test_preview_worker_token_authenticates_against_the_training_verifier(monkeypatch: pytest.MonkeyPatch) -> None:
+    env = _composed_isolated_env()
+    authority = _training_authenticate(monkeypatch, env, env["TRAINING_SESSION_WORKER_TOKEN"])
+
+    assert authority.actor_service == "training-session-preview-worker"
+    assert authority.tenant_id == "tenant-dev"
+    assert "training-service" in authority.roles
+    claims = _decoded_claims(env["TRAINING_SESSION_WORKER_TOKEN"], env["PANTHEON_DEV_BFF_JWT_SECRET"])
+    assert "*" not in claims["tenant_id"] and claims["roles"] == ["training-service"]
+
+
+def test_preview_worker_token_negative_controls(monkeypatch: pytest.MonkeyPatch) -> None:
+    env = _composed_isolated_env()
+    token = env["TRAINING_SESSION_WORKER_TOKEN"]
+
+    def rejected(token: str = token, **kw):
+        import sys
+
+        error = None
+        try:
+            _training_authenticate(monkeypatch, env, token, **kw)
+        except Exception as exc:  # noqa: BLE001 - narrowed to the authority error below
+            error = exc
+        assert type(error) is sys.modules["inbound_authority"].TrainingInboundAuthorityError
+        return error
+
+    # Wrong signer: the former static Compose fixture token style, signed by another key.
+    foreign = harness._mint_projector_service_jwt(
+        "y" * 64, tenant_id="tenant-dev", subject="training-session-preview-worker",
+        roles=("training-service",), extra_claims={"service": "training-session-preview-worker"},
+    )
+    assert "BAD_SIGNATURE" in str(rejected(token=foreign).code).upper()
+    # Authority is tenant- and service-bound, never wildcard.
+    assert rejected(tenant="tenant-other").status_code == 403
+    assert rejected(service="control-plane-bff").status_code == 403
+    # Wrong role is refused even with the correct signer.
+    unauthorized = harness._mint_projector_service_jwt(
+        env["PANTHEON_DEV_BFF_JWT_SECRET"], tenant_id="tenant-dev", subject="training-session-preview-worker",
+        roles=("source_ingest_reader",), extra_claims={"service": "training-session-preview-worker"},
+    )
+    assert rejected(token=unauthorized).status_code in (401, 403)
