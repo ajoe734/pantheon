@@ -1459,3 +1459,35 @@ def test_loop_12_controller_truth_publication(tmp_path, monkeypatch):
     assert data.get("read_model") == "loop_health"
 
 
+def test_loop_12_controller_truth_states_conform_to_controller_record_schema(
+    tmp_path, monkeypatch
+):
+    health_file = tmp_path / "paper-signal-producer-health.json"
+    health_file.write_text(
+        json.dumps({"worker_name": "paper-signal-producer", "ok": False, "ready": False,
+                    "reason": "artifact_store_missing"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PAPER_PRODUCER_HEALTH_FILE", str(health_file))
+    monitor = DownstreamHealthMonitor(
+        state_path=str(tmp_path / "downstream_loop12_schema.sqlite3"),
+        incidents_url="",
+    )
+    asyncio.run(monitor._probe_all())
+
+    record = monitor.publish_loop_12_controller_truth()
+
+    schema = json.loads(
+        (Path(__file__).parents[3] / "schemas" / "loop-controller-record.schema.json")
+        .read_text(encoding="utf-8")
+    )
+    jsonschema = pytest.importorskip("jsonschema")
+    for field in ("desired_state", "downstream_actual_state"):
+        jsonschema.validate(record[field], schema=schema["properties"][field])
+    assert record["desired_state"]["present"] is True
+    actual = record["downstream_actual_state"]
+    assert actual["status"] == "degraded"
+    assert actual["healthy_targets_count"] < actual["total_targets_count"]
+    assert "paper-signal-producer" in actual["summary"]
+
+
