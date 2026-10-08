@@ -9218,18 +9218,6 @@ def _bff_me_session_payload(identity: OperatorIdentity, *, checked_at: str) -> D
     }
 
 
-def _bff_me_environment_payload() -> Dict[str, Any]:
-    scope = _foundation_environment_scope()
-    stub_auth = _bff_auth_stub_enabled()
-    auth_mode = "stub" if stub_auth else _bff_auth_mode()
-    return {
-        "name": scope.name.value,
-        "deployment_stage": os.getenv("PANTHEON_DEPLOYMENT_STAGE", scope.name.value),
-        "region": scope.region,
-        "timezone": scope.timezone,
-        "auth_mode": auth_mode,
-        "strict_auth": not stub_auth and auth_mode == "strict",
-    }
 
 
 def _bff_me_user_payload(identity: OperatorIdentity) -> Dict[str, Any]:

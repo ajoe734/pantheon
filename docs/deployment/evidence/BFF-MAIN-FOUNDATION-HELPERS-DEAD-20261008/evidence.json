@@ -1,0 +1,29 @@
+{
+  "task_id": "BFF-MAIN-FOUNDATION-HELPERS-DEAD-20261008",
+  "base": "c2028265f",
+  "caller_check": {
+    "method": "repo-wide grep -rn (all file types, incl. lazy imports, strings, getattr/_dep lookups) for each name on the exact base",
+    "result": "every name has only its own definition in main.py / personas/service.py; the only other hits are the deleted test stand-ins (test_bff_write_gap_2026_05_28.py), the dead _bff_me_environment_payload caller of _foundation_environment_scope, and audit catalog/docs text",
+    "names": [
+      "_action_command_status_from_command_status",
+      "_project_command_submission_response",
+      "_command_dual_write_receipts",
+      "_foundation_environment_scope",
+      "_build_foundation_trace",
+      "_foundation_actor_ref",
+      "_bff_me_environment_payload"
+    ],
+    "runtime_manager_untouched": "services/runtime_manager/service.py _foundation_environment_scope and _foundation_actor_ref not modified"
+  },
+  "removed_imports": {
+    "main.py": ["ActorRef", "ActorType", "EnvironmentName", "EnvironmentScope", "TraceContext", "CommandReceipt", "CommandResultMeta", "CommandRoutingPath", "CommandSubmissionResponse"],
+    "test_bff_write_gap_2026_05_28.py": ["EnvironmentScope", "EnvironmentName", "ActorRef", "ActorType", "TraceContext", "persona_service_mod"]
+  },
+  "left_in_place_note": "_COMMAND_RECEIPT_STATUS_MAP, _ACTION_COMMAND_STATUS_MAP and _expected_completion_at in main.py are now only self-referenced; not in scope (surviving definitions not edited)",
+  "tests": {
+    "files": ["test_bff_write_gap_2026_05_28.py", "tests/test_persona_main_residue.py", "tests/test_bff_main_composition.py", "test_bff_strategy_persona_contract.py", "tests/test_main_composition_seam_extraction_002.py"],
+    "base": "129 passed",
+    "head": "129 passed",
+    "interpreter": "PANTHEON_DEPENDENCY_PYTHON (runtime/worker-test-python/current)"
+  }
+}
