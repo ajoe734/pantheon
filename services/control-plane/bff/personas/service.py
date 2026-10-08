@@ -9313,28 +9313,6 @@ _LEGACY_LOOP_RUN_SOURCE = "legacy_incident_backfill"
 _LOOP_RUN_PROJECTION_SCHEMA = "pantheon.loop-run-projection.v1"
 
 
-def _loop_run_truth_source(available: bool) -> tuple[str, str]:
-    """Resolve loop-run provenance without letting incidents shadow truth."""
-    canonical_source = _get_active_read_store().dataset_source("loop_runs")
-    if canonical_source != "missing":
-        return "loop_runs", canonical_source
-    incident_source = _get_active_read_store().dataset_source("incidents")
-    if available and incident_source != "missing":
-        return "incidents", _LEGACY_LOOP_RUN_SOURCE
-    return "loop_runs", "missing"
-
-
-def _loop_run_projection_metadata() -> Dict[str, Any]:
-    getter = getattr(_get_active_read_store(), "loop_run_projection_metadata", None)
-    if not callable(getter):
-        return {}
-    try:
-        metadata = getter()
-    except (OSError, TypeError, ValueError):
-        return {}
-    return dict(metadata) if isinstance(metadata, Mapping) else {}
-
-
 def _loop_run_controller_is_formal(metadata: Mapping[str, Any]) -> bool:
     if str(metadata.get("schema_version") or "") != _LOOP_RUN_PROJECTION_SCHEMA:
         return False
@@ -9408,51 +9386,6 @@ def _dataset_surface_status(
         )
 
     return surface
-
-
-def _loop_run_surface_status(
-    available: bool,
-    *,
-    snapshot_at: Optional[str] = None,
-) -> tuple[str, str, Dict[str, Any]]:
-    dataset, source = _loop_run_truth_source(available)
-    surface = _dataset_surface_status(
-        dataset,
-        snapshot_at=snapshot_at,
-        source=source,
-    )
-    if dataset != "loop_runs" or source == "missing":
-        return dataset, source, surface
-
-    metadata = _loop_run_projection_metadata()
-    controller = metadata.get("controller")
-    controller = dict(controller) if isinstance(controller, Mapping) else {}
-    controller_formal = _loop_run_controller_is_formal(metadata)
-    surface.update(
-        {
-            "projection_schema_version": metadata.get("schema_version"),
-            "projection_generation": metadata.get("generation"),
-            "controller": controller,
-            "accepted_live": controller.get("accepted_live"),
-            "projection_mode": controller.get("mode"),
-            "truth_level": controller.get("truth_level"),
-            "truth_status": "formal" if controller_formal and surface.get("status") == "ok" else "degraded",
-        }
-    )
-    if not controller_formal or surface.get("status") != "ok":
-        surface["status"] = "degraded"
-        surface["controller_note"] = (
-            "Canonical loop-run records remain conclusive, but formal truth requires "
-            "accepted_live=true, status=ready, mode=live, and truth_level=canonical_live."
-        )
-        surface.setdefault(
-            "staleness",
-            {
-                "served_from": source,
-                "last_known_at": snapshot_at or utc_now(),
-            },
-        )
-    return dataset, source, surface
 
 
 def _dataset_source_after_read(dataset: str, *, read_store: Optional[Any] = None) -> str:
@@ -12398,26 +12331,6 @@ def _promotion_review_submission_projection(
             json.dumps(params.get("source_recommendation"))
         )
     return projection
-
-
-# --- _latest_promotion_review_command ---
-def _latest_promotion_review_command(review_id: Any) -> Optional[Dict[str, Any]]:
-    clean_id = _promotion_review_clean_id(review_id)
-    for record in reversed(_get_active_command_store()._get_all_commands()):
-        if (
-            _human_inbox_decision_recommendation_id(record) == clean_id
-            and _human_inbox_decision_projection_from_record(record) is not None
-        ):
-            return record
-    return None
-
-
-# --- _promotion_review_decision_projection ---
-def _promotion_review_decision_projection(review_id: Any) -> Optional[Dict[str, Any]]:
-    record = _latest_promotion_review_command(review_id)
-    if record is None:
-        return None
-    return _human_inbox_decision_projection_from_record(record)
 
 
 # --- _raise_if_promotion_review_direct_mutation_requested ---

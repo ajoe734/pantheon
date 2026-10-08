@@ -1,0 +1,36 @@
+{
+  "task_id": "BFF-MAIN-PERSONA-DEAD-COPIES-20261008",
+  "base": "2f2218e65",
+  "method": "git grep -w over *.py/*.toml/*.yaml/*.yml/*.ts/*.sh at base for every name (calls, imports incl. multi-line and lazy in-function imports, getattr/string constants, decorators); docs yaml entries are metadata only. Not AST-count based.",
+  "deleted": {
+    "main.py": {
+      "_foundation_audit_for_command_record": "only the def; no caller anywhere",
+      "_project_final_command_response": "only the def; no caller anywhere",
+      "_promotion_review_submission_projection": "callers (pm12/service, governance, tests) import from governance.promotion_review, not main",
+      "_latest_promotion_review_command": "same; callers use governance.promotion_review",
+      "_promotion_review_decision_projection": "same; callers use governance.promotion_review",
+      "_parse_rfc3339": "no use in main.py; incidents/router imports incidents.service copy; other modules define their own",
+      "_performance_ranking_source_surface": "personas/routes/ranking.py imports from ..service (service copy stays)"
+    },
+    "personas/service.py": {
+      "_latest_promotion_review_command": "only referenced by service _promotion_review_decision_projection (also deleted); governance has its own",
+      "_promotion_review_decision_projection": "no caller; governance/pm12 use governance.promotion_review",
+      "_loop_run_truth_source": "only used by service _loop_run_surface_status (deleted); main copy is live",
+      "_loop_run_projection_metadata": "same",
+      "_loop_run_surface_status": "no caller in service; main.py:4668 uses main copy"
+    },
+    "main_import_aliases_removed": ["_domain_latest_promotion_review_command", "_domain_promotion_review_decision_projection", "_domain_promotion_review_submission_projection"]
+  },
+  "kept_because_live": {
+    "personas/service.py::_promotion_review_submission_projection": "governance/promotion_review.py:168 lazily imports it from ..personas.service (live; test_main_composition_seam_extraction_002 failed with ImportError when deleted)",
+    "personas/service.py::_read_store_fixture_records": "used by live _tool_fixture_records/_skill_fixture_records (service.py ~6623/6632)"
+  },
+  "follow_up_not_done": "After deleting main._project_final_command_response, main._action_command_status_from_command_status, _project_command_submission_response, _command_dual_write_receipts, _foundation_environment_scope, _build_foundation_trace, _foundation_actor_ref have no remaining reference in main.py (personas/service.py has its own use of _foundation_environment_scope name only). Left untouched per scope; candidates for a later prune after the same string/decorator check.",
+  "line_delta": {"main.py": -149, "personas/service.py": -87},
+  "tests": {
+    "files": ["tests/test_persona_main_residue.py", "tests/test_bff_main_composition.py", "test_bff_strategy_persona_contract.py", "tests/test_bff_test_architecture.py"],
+    "base": "116 passed",
+    "head": "116 passed",
+    "extra": "tests/test_main_composition_seam_extraction_002.py 21 passed on head; scripts/check_product_ownership.py PASS"
+  }
+}
