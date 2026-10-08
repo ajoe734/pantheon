@@ -385,7 +385,7 @@ Recommended GitHub Environments:
 
 - `dev`: no reviewer required; exact-pair admission and the shared environment
   lease remain mandatory before any switch.
-- `staging-live`: no job has used it since 2026-10-08.
+- `staging-live`: no workflow references it since 2026-10-08 (the Stage 0 live-evidence choice was retired the same day); the empty GitHub Environment is removed.
 
 ## Remote deployment identity
 
