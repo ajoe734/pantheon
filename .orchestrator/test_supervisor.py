@@ -16307,6 +16307,147 @@ class ReassignmentLaunchAdmissionRaceTests(unittest.TestCase):
 class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
     """Real isolated two-process CLI/TaskStore/outbox/runner-stop/poll/restart/owner-dispatch flow and crash race tests."""
 
+    # Fixture repositories must not spawn background git work (auto gc,
+    # maintenance, fsmonitor daemon) that can outlive the command that
+    # started it and keep writing into worktree/.git. Git reads these from the
+    # environment, so forked children and their descendants inherit them too.
+    _GIT_QUIET_CONFIG = (
+        ("gc.auto", "0"),
+        ("maintenance.auto", "false"),
+        ("core.fsmonitor", "false"),
+    )
+
+    def setUp(self) -> None:
+        env = {"GIT_CONFIG_COUNT": str(len(self._GIT_QUIET_CONFIG))}
+        for index, (key, value) in enumerate(self._GIT_QUIET_CONFIG):
+            env[f"GIT_CONFIG_KEY_{index}"] = key
+            env[f"GIT_CONFIG_VALUE_{index}"] = value
+        patcher = mock.patch.dict(os.environ, env)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    @staticmethod
+    def _proc_children() -> dict:
+        children: dict = {}
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                stat = (entry / "stat").read_text()
+                ppid = int(stat.rsplit(")", 1)[1].split()[1])
+            except (OSError, ValueError, IndexError):
+                continue
+            children.setdefault(ppid, []).append(int(entry.name))
+        return children
+
+    @classmethod
+    def _descendants(cls, pid: int) -> list:
+        children = cls._proc_children()
+        found: list = []
+        pending = [pid]
+        while pending:
+            for child in children.get(pending.pop(), []):
+                found.append(child)
+                pending.append(child)
+        return found
+
+    @staticmethod
+    def _processes_using(root: Path) -> list:
+        """Return (pid, cmdline) for processes whose cwd or open files are under root."""
+        prefix = str(root)
+        users = []
+        # Ancestors (the test runner, CI shell, sandbox wrapper) may legitimately
+        # hold the temp tree through bind mounts; they are never test leftovers.
+        ancestors = {os.getpid()}
+        pid = os.getpid()
+        while pid > 1:
+            try:
+                pid = int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[1])
+            except (OSError, ValueError, IndexError):
+                break
+            ancestors.add(pid)
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit() or int(entry.name) in ancestors:
+                continue
+            links = [entry / "cwd"]
+            try:
+                links.extend((entry / "fd").iterdir())
+            except OSError:
+                pass
+            for link in links:
+                try:
+                    target = os.readlink(link)
+                except OSError:
+                    continue
+                if target == prefix or target.startswith(prefix + os.sep):
+                    try:
+                        cmdline = (entry / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace").strip()
+                    except OSError:
+                        cmdline = ""
+                    users.append((int(entry.name), cmdline))
+                    break
+        return users
+
+    @staticmethod
+    def _newest_files(root: Path, limit: int = 10) -> list:
+        entries = []
+        for git_dir in root.glob("*/.git"):
+            for path in git_dir.rglob("*"):
+                try:
+                    entries.append((path.stat().st_mtime, str(path)))
+                except OSError:
+                    continue
+        entries.sort(reverse=True)
+        return entries[:limit]
+
+    @classmethod
+    def _sweep_leftovers(cls, root: Path) -> None:
+        """Kill and report anything still holding the temp tree, then remove it.
+
+        Reports which process (pid and command line) and which newest files
+        under worktree/.git were still live, so a cleanup failure names its
+        writer instead of surfacing as a bare rmtree OSError.
+        """
+        leftovers = cls._processes_using(root)
+        if leftovers:
+            sys.stderr.write(
+                f"[two-process cleanup] processes still using {root}: {leftovers}\n"
+                f"[two-process cleanup] newest .git files: {cls._newest_files(root)}\n"
+            )
+            for pid, _cmdline in leftovers:
+                for victim in cls._descendants(pid) + [pid]:
+                    try:
+                        os.kill(victim, signal.SIGKILL)
+                    except OSError:
+                        pass
+            deadline = time.monotonic() + 5
+            while cls._processes_using(root) and time.monotonic() < deadline:
+                time.sleep(0.05)
+        last_error = None
+        for _attempt in range(10):
+            try:
+                shutil.rmtree(root)
+                return
+            except FileNotFoundError:
+                return
+            except OSError as exc:
+                last_error = exc
+                sys.stderr.write(
+                    f"[two-process cleanup] rmtree failed: {exc}; users={cls._processes_using(root)}; "
+                    f"newest .git files={cls._newest_files(root)}\n"
+                )
+                time.sleep(0.2)
+        raise last_error
+
+    @contextmanager
+    def _isolated_tempdir(self):
+        root = Path(tempfile.mkdtemp())
+        try:
+            yield str(root)
+        finally:
+            self._sweep_leftovers(root)
+
+
     @staticmethod
     def _reap(*processes, timeout=5):
         """Join children and prove they exited before the temp tree is removed.
@@ -16318,6 +16459,10 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
         unlucky enough to run under load, not to any change it made.
         """
 
+        descendants = []
+        for process in processes:
+            if process.pid:
+                descendants.extend(RealProcessReviewHandoffRecoveryFlowTests._descendants(process.pid))
         for process in processes:
             process.join(timeout=timeout)
             if process.is_alive():
@@ -16326,6 +16471,11 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
             if process.is_alive():
                 process.kill()
                 process.join(timeout=timeout)
+        for pid in descendants:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
 
 
     @staticmethod
@@ -16350,7 +16500,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
     def test_real_isolated_runner_stop_and_dispatch_flow(self) -> None:
         """Real isolated process: reviewer commits reopen via CLI, runner exits 143, supervisor converges without lost-lease, owner dispatch planned."""
         repo_root = Path(__file__).resolve().parents[1]
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with self._isolated_tempdir() as temp_dir:
             temp_path = Path(temp_dir)
             central = temp_path / "central"
             cmd_root = temp_path / "cmd_root"
@@ -16733,7 +16883,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
     def test_real_runner_queue_receipt_restart_and_dispatch_flow(self) -> None:
         """Real runner process exit, CLI reopen, queue receipt reservation, deduplicated repeated dispatch, and restart preservation."""
         repo_root = Path(__file__).resolve().parents[1]
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with self._isolated_tempdir() as temp_dir:
             temp_path = Path(temp_dir)
             central = temp_path / "central"
             cmd_root = temp_path / "cmd_root"
@@ -17064,7 +17214,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
     def test_real_runner_queue_consumer_launches_exactly_one_owner_across_restart(self) -> None:
         """Real queue consumer: launch exactly one owner worker from queued intent with captured findings across restart."""
         repo_root = Path(__file__).resolve().parents[1]
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with self._isolated_tempdir() as temp_dir:
             temp_path = Path(temp_dir)
             central = temp_path / "central"
             cmd_root = temp_path / "cmd_root"
@@ -17639,7 +17789,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
         """Two-process race ordering 1: Reviewer completes reopen before Recovery CAS; task stays gen 1, reaped cleanly."""
         ctx = multiprocessing.get_context("fork")
         repo_root = Path(__file__).resolve().parents[1]
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with self._isolated_tempdir() as temp_dir:
             temp_path = Path(temp_dir)
             central = temp_path / "central"
             worktree = temp_path / "worktree"
@@ -17891,7 +18041,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
         """Two-process race ordering 2: Recovery CAS fences generation 1 -> 2; concurrent stale reopen refused."""
         ctx = multiprocessing.get_context("fork")
         repo_root = Path(__file__).resolve().parents[1]
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with self._isolated_tempdir() as temp_dir:
             temp_path = Path(temp_dir)
             central = temp_path / "central"
             worktree = temp_path / "worktree"
@@ -18138,7 +18288,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
         """Two-process race ordering: Worker commits handoff before Recovery CAS; worker superseded cleanly."""
         ctx = multiprocessing.get_context("fork")
         repo_root = Path(__file__).resolve().parents[1]
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with self._isolated_tempdir() as temp_dir:
             temp_path = Path(temp_dir)
             central = temp_path / "central"
             cmd_root = temp_path / "cmd_root"
@@ -18319,7 +18469,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
         """Two-process race ordering: Worker commits finalize (done) before Recovery CAS; worker superseded cleanly."""
         ctx = multiprocessing.get_context("fork")
         repo_root = Path(__file__).resolve().parents[1]
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with self._isolated_tempdir() as temp_dir:
             temp_path = Path(temp_dir)
             central = temp_path / "central"
             cmd_root = temp_path / "cmd_root"
@@ -18523,7 +18673,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
         """Operator reassignment is rejected while the original lease is active."""
         ctx = multiprocessing.get_context("fork")
         repo_root = Path(__file__).resolve().parents[1]
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with self._isolated_tempdir() as temp_dir:
             temp_path = Path(temp_dir)
             central = temp_path / "central"
             cmd_root = temp_path / "cmd_root"
@@ -18715,7 +18865,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
         """After settlement, reassignment advances and the old worker cannot reopen."""
         ctx = multiprocessing.get_context("fork")
         repo_root = Path(__file__).resolve().parents[1]
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with self._isolated_tempdir() as temp_dir:
             temp_path = Path(temp_dir)
             central = temp_path / "central"
             cmd_root = temp_path / "cmd_root"
@@ -18900,7 +19050,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
     def test_crash_retry_window_outbox_committed_runner_terminated_receipt_retry(self) -> None:
         """Crash retry window: outbox committed, runner terminated, restart, queue reservation, crash retry, successor execution."""
         repo_root = Path(__file__).resolve().parents[1]
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with self._isolated_tempdir() as temp_dir:
             temp_path = Path(temp_dir)
             central = temp_path / "central"
             cmd_root = temp_path / "cmd_root"
@@ -19279,7 +19429,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
     def test_crash_window_reopen_commit_runner_sigkill_restart(self) -> None:
         """Crash window: Reopen committed, runner abruptly killed via SIGKILL; boot restart reaps cleanly without lost lease."""
         repo_root = Path(__file__).resolve().parents[1]
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with self._isolated_tempdir() as temp_dir:
             temp_path = Path(temp_dir)
             central = temp_path / "central"
             cmd_root = temp_path / "cmd_root"
@@ -21347,6 +21497,20 @@ class ShippedReviewerFallbackPolicyTests(unittest.TestCase):
                 self.assertFalse(
                     {"Codex", "Codex2"} & set(chain),
                     f"lane {lane} still falls back to a stopped Codex reviewer",
+                )
+
+    def test_every_fallback_reviewer_has_its_own_chain(self) -> None:
+        # Replacing an unavailable reviewer reads only that reviewer's own
+        # chain. PiAstra was listed as a fallback reviewer without one, so
+        # once the operator stopped it on 2026-10-07 its reviews sat
+        # unassigned for hours.
+        named = {name for chain in self.fallbacks.values() for name in chain}
+        for name in sorted(named):
+            with self.subTest(reviewer=name):
+                self.assertIn(
+                    name,
+                    self.fallbacks,
+                    f"reviewer {name} has no fallback chain of its own",
                 )
 
     def test_no_lane_falls_back_to_a_reviewer_on_its_own_account(self) -> None:

@@ -27,6 +27,8 @@ from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from starlette.responses import JSONResponse
 
+from services.control_plane.bff.command_adapters.contracts import resolve_final_idempotency_key
+
 from services.control_plane.bff.models import (
     ActionCommandStatus,
     BffActionCatalogEntry,
@@ -139,30 +141,6 @@ def default_bff_error(
     )
 
 
-def resolve_final_idempotency_key(
-    idempotency_key: Optional[str],
-    x_idempotency_key: Optional[str],
-    *,
-    bff_error_fn: Optional[Callable[..., Exception]] = None,
-) -> str:
-    err = bff_error_fn or default_bff_error
-    canonical = str(idempotency_key or "").strip()
-    if canonical:
-        return canonical
-    alias = str(x_idempotency_key or "").strip()
-    if alias:
-        return alias
-    raise err(
-        400,
-        ErrorCode.VALIDATION_FAILED,
-        "Idempotency-Key is required for operator commands",
-        (
-            "Final contract routes require a non-empty Idempotency-Key header; "
-            "X-Idempotency-Key is accepted as a temporary compatibility alias"
-        ),
-        precondition_failed="idempotency_key",
-        suggestion="Retry with Idempotency-Key set to a stable client retry key",
-    )
 
 
 def reject_body_idempotency_key(

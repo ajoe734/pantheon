@@ -1,0 +1,139 @@
+{
+ "task_id": "OPS-STALE-RESURRECTION-PATH-RETIRE-20261007",
+ "owner": "Claude",
+ "reviewer": "Antigravity2",
+ "merge_base": "3200e78174fe6d9fbe3f2cbabb76b658d5637fc9",
+ "note_on_line_refs": "File:line references are at the 54c6ebef9 code named in the task brief; the production line ranges were verified unchanged at merge-base 3200e7817 for scripts/ai_status.py.",
+ "unreachability": {
+  "decisive_barrier_1": {
+   "applies_to": "every row",
+   "claim": "verify_stale_archive_resurrection_proof (scripts/ai_status.py:7549-7660) requires exactly one post-archive import event of type assign/task_imported/import/task_reentered carrying generation, archive_generation and archive_snapshot_sha256. No writer emits it: the only assign writer (4937-4965) emits type assign without generation; reassignments are task_reassigned (not an import type); archive_generation, archive_snapshot_sha256, task_imported and task_reentered occur only in the verifier and the retired audit event.",
+   "audit_scan": {
+    "scan_time": "2026-10-08T00:05Z",
+    "source": "scan by the task author recorded in the task brief; not re-run in this worker (live coordination root is out of bounds)",
+    "sources": 4051,
+    "events": 208018,
+    "assign_events": 523,
+    "import_type_events_with_required_fields": 0,
+    "method": "count by event type field, not raw grep (two permission_hook events quote the strings)"
+   }
+  },
+  "additional_barrier_2": "Since 2f902599f assign refuses to create (4745-4749) or reassign (4869-4876) an archived id, so post-archive Human/Ops hops needed at 7667-7772 cannot be written; Supervisor hops (agent Orchestrator) are rejected at 7733-7738. Pre-2f902599f hops (PPL-ALLOC-007 shape) are not covered by this barrier.",
+  "additional_barrier_3": "done and reconcile_merged_done set archived_at=timestamp (8178, 8256) equal to the producing event ts (8195-8200); those types are not in role_recovery_types (7522-7525), so 7542-7547 rejects the archive's own producing event as an intervening event.",
+  "additional_barrier_4": "The four-field review_evidence equality (7407-7422) includes merge_target_sha, recomputed by _merged_commit from the current ref (6247, 7061), so it mismatches once the target ref advances.",
+  "replay_summary": {
+   "source": "read-only replay by the task author recorded in the task brief (temp copies only)",
+   "archives_with_review_evidence": 14,
+   "merge_target_sha_current_tip": "14 of 14 refused: merge_target_sha mismatch",
+   "merge_target_sha_archived": "13 refused: intervening reconcile_merged_done event detected; PPL-ALLOC-007 refused: intervening reopen event detected",
+   "stale_archive_resurrection_retired_events": 0,
+   "live_rows_colliding_with_archive": 0
+  }
+ },
+ "deleted_symbols": {
+  "functions": [
+   "verify_stale_archive_resurrection_proof",
+   "archive_resurrection_diagnostic",
+   "_assert_audit_proof_range_valid",
+   "_compute_audit_proof_digest",
+   "task_spec_hash"
+  ],
+  "branches_and_fields": [
+   "_validated_same_delivery_archive_recovery: active_gen > archive_gen block and cross-generation docstring; active_gen < archive_gen -> active_gen != archive_gen",
+   "prepare_external_mutation_preflight reconcile_merged_done: is_cross_gen/target_task logic, cross-generation delivery comparison, archive_resurrection_proof/bound_generation/bound_spec_hash/bound_archive_digest/bound_archive_file_sha256(proof)/bound_audit_proof_range payload block",
+   "validate_external_mutation_preflight: bound_generation and bound_spec_hash checks (bound_archive_file_sha256 check kept)",
+   "command_reconcile_merged_done: resurrection_proof branch, recovered_raw filter, stale_archive_resurrection_retired append_log, retired_stale_active_row/archive_resurrection_proof audit fields",
+   "_queue_existing_archive_snapshot: proof pop/fallback and archive_file_sha256 snapshot-key block",
+   "command_show: archive_resurrection_diagnostic attachment"
+  ],
+  "test_hooks": [
+   "PANTHEON_TEST_PREFLIGHT_BARRIER block in main",
+   "LOOP_TEST_RECONCILE_SIGKILL_AFTER clause in run_mutation",
+   "import time",
+   "_status_archive_fault(\"readback\") and (\"receipt\") in recover_status_archive_outbox"
+  ],
+  "test_class": "TestStaleArchiveResurrectionContract (37 tests)"
+ },
+ "relocation_map": {
+  "TestStaleArchiveResurrectionContract::test_command_assign_rejects_terminal_and_archived_tasks (+ barrier assign refusal)": "CanonicalTaskStateAndActivityRecoveryTests::test_command_assign_rejects_terminal_and_archived_tasks (adds archive-only sub-case)",
+  "TestStaleArchiveResurrectionContract::test_negative_archive_byte_drift_after_preflight": "ArchiveCollisionContractTests::test_archive_reconcile_rejects_parent_archive_byte_race",
+  "TestStaleArchiveResurrectionContract::test_negative_active_worker_or_lease": "ArchiveCollisionContractTests::test_archive_reconcile_rejects_active_execution_and_bad_runtime (worker recovery case)",
+  "TestStaleArchiveResurrectionContract::test_negative_corrupt_runtime": "ArchiveCollisionContractTests::test_archive_reconcile_rejects_active_execution_and_bad_runtime (malformed runtime case)",
+  "TestStaleArchiveResurrectionContract (running-worker runtime case, 'active worker' text)": "ArchiveCollisionContractTests::test_archive_reconcile_rejects_active_execution_and_bad_runtime (running worker case)",
+  "TestStaleArchiveResurrectionContract (reopen refusal via CLI, test_negative_authenticated_operator_reopen_after_archive)": "ArchiveWorkflowTests::test_reopen_of_terminal_id_is_refused_by_production_code (command_reopen + canonical_external_mutation_preflight)",
+  "(new, no predecessor)": "ReviewApprovedWorkflowTests::test_reconcile_merged_done_rejects_generation_mismatch_against_archive",
+  "all other deleted tests": "no relocation: they exercised only the retired path or its test hooks"
+ },
+ "regression_variant": "With the active_gen > archive_gen block deleted but 'active_gen < archive_gen' kept (uncommitted variant, restored afterwards), ReviewApprovedWorkflowTests.test_reconcile_merged_done_rejects_generation_mismatch_against_archive FAILS with 'AssertionError: RuntimeError not raised'. With 'active_gen != archive_gen' it passes.",
+ "byte_identity": {
+  "method": "ast.get_source_segment per function name, merge-base vs head",
+  "identical": [
+   "_assert_no_active_execution",
+   "command_retire_archive_collision",
+   "_is_archive_collision",
+   "_assert_collision_fence_idle",
+   "_prepare_archive_collision_fence",
+   "command_archive_collision_fence",
+   "_prepare_archive_collision",
+   "_reconcile_archive_collision",
+   "command_archive_reconcile",
+   "command_assign",
+   "command_reopen",
+   "canonical_external_mutation_preflight",
+   "_verified_owner_reassignment",
+   "_verified_reviewer_reassignment",
+   "task_mutation_cas_digest"
+  ],
+  "new_functions_in_ai_status": [],
+  "test_methods_outside_deleted_class_changed_or_missing": [],
+  "test_methods_added": 5
+ },
+ "validation": {
+  "command": "PYTHONPATH=.orchestrator python3 -m unittest test_pi_worker test_adapter_delivery_policy test_supervisor test_runtime_state test_approval_queue rewrite.test_task_contract test_supervisor_recovery_process_e2e test_supervisor_watchdog scripts.test_ai_status scripts.test_status_command_runtime_pin scripts.test_check_config_drift scripts.test_component_boundary rewrite.test_task_machine",
+  "merge_base_run": {
+   "tests": 1161,
+   "errors": 6,
+   "failures": 0,
+   "failure_set": [
+    "test_check_config_drift (loader _FailedTest: No module named 'pytest')",
+    "5 test_supervisor_recovery_process_e2e errors: base checkout was a git-archive export with an unborn HEAD ('git update-ref refs/remotes/origin/dev HEAD' failed)"
+   ],
+   "followup": "after committing the export, test_supervisor_recovery_process_e2e passes on base; only the timing test below fails"
+  },
+  "head_run": {
+   "tests": 1129,
+   "errors": 1,
+   "failures": 1,
+   "failure_set": [
+    "test_check_config_drift (loader _FailedTest: No module named 'pytest')",
+    "test_supervisor.SupervisorCycleLatencyRecoveryTests.test_supervisor_cycle_metrics_and_latency_under_1600_records_fixture_load (5.6s vs 5.0s bound; timing-sensitive, ran concurrently with the base run)"
+   ],
+   "followup": "the same latency class fails once on the merge-base when run alone and passes on head when run alone: a load-dependent flake unrelated to this change"
+  },
+  "test_count_delta": "1161 - 37 deleted + 5 added = 1129",
+  "scripts_test_ai_status": "merge-base 3200e7817: 532 tests OK (brief cites 529 at 54c6ebef9); head: 500 tests OK (532 - 37 + 5)",
+  "targeted_classes": "CanonicalTaskStateAndActivityRecoveryTests, ArchiveCollisionContractTests, ReviewApprovedWorkflowTests, ArchiveWorkflowTests relocated/new tests: 12 tests OK",
+  "blocked_steps": "The branch-ci pytest list could not run: pytest is not installed in this sandbox (ModuleNotFoundError). Git worktree add was refused (read-only shared .git), so the base ran in a git-archive export with an origin remote.",
+  "git_grep_acceptance_1": "No match in scripts/ai_status.py or scripts/test_ai_status.py for any acceptance-1 string",
+  "git_diff_check": "clean"
+ },
+ "diff_budget_table": {
+  "production": {
+   "added": 10,
+   "deleted": 834,
+   "net": -824
+  },
+  "test": {
+   "added": 168,
+   "deleted": 1527,
+   "net": -1359
+  },
+  "docs_evidence": {
+   "added": 8,
+   "deleted": 51,
+   "net": -43
+  },
+  "note": "measured before this manifest was added"
+ },
+ "docs": "docs/operations/management-ai-openclaw-dev-bridge.md section replaced by a 10-line 'Archive collision dispositions' section; no docs/04, merged-task-archive-reconciliation.md, task-archive-collision-reconciliation.md or other evidence file touched."
+}

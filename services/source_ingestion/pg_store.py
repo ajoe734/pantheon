@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import re
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict
 
@@ -68,6 +70,14 @@ def _scoped_record_id(tenant_id: str | None, record_id: str) -> str:
     return f"@t{len(tenant_id)}:{tenant_id}:{record_id}"
 
 
+def _safe_close(conn: Any) -> None:
+    try:
+        if hasattr(conn, "close"):
+            conn.close()
+    except Exception:
+        pass
+
+
 class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
     """Postgres-backed source evidence store for source-ingest.
 
@@ -80,6 +90,7 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
         dsn: str,
         table: str = "source_ingest.source_evidence",
         bootstrap: bool = True,
+        max_connections: int = 5,
     ) -> None:
         if not dsn:
             raise ValueError("Postgres DSN is required for PostgresSourceEvidenceRepository")
@@ -87,6 +98,8 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
         self.table = _quote_pg(table)
         self.schema = table.split(".", 1)[0] if "." in table else ""
         self.path = f"postgres:{table}"
+        self._pool: queue.LifoQueue = queue.LifoQueue(maxsize=max_connections)
+        self._replaying = False
         super().__init__()
         if bootstrap:
             self._bootstrap()
@@ -102,10 +115,52 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
                 raise RuntimeError(
                     "psycopg is required when SOURCE_INGEST_EVIDENCE_BACKEND=postgres"
                 ) from exc
-        return self._psycopg.connect(self.dsn)
+        conn = self._psycopg.connect(self.dsn)
+        try:
+            conn.autocommit = True
+        except Exception:
+            pass
+        return conn
+
+    @contextmanager
+    def _get_connection(self):
+        conn = None
+        while not self._pool.empty():
+            try:
+                candidate = self._pool.get_nowait()
+            except queue.Empty:
+                break
+            if getattr(candidate, "_pool_dsn", None) != self.dsn or getattr(candidate, "closed", False):
+                _safe_close(candidate)
+                continue
+            conn = candidate
+            break
+
+        if conn is None:
+            conn = self._connect()
+            setattr(conn, "_pool_dsn", self.dsn)
+
+        try:
+            yield conn
+        except Exception:
+            _safe_close(conn)
+            raise
+        else:
+            if not getattr(conn, "closed", False) and getattr(conn, "_pool_dsn", None) == self.dsn:
+                try:
+                    self._pool.put_nowait(conn)
+                except queue.Full:
+                    _safe_close(conn)
+
+    def close(self) -> None:
+        while not self._pool.empty():
+            try:
+                _safe_close(self._pool.get_nowait())
+            except queue.Empty:
+                break
 
     def _bootstrap(self) -> None:
-        with self._connect() as conn:
+        with self._get_connection() as conn:
             if self.schema:
                 conn.execute(f"CREATE SCHEMA IF NOT EXISTS {_quote_pg(self.schema)}")
             conn.execute(
@@ -123,40 +178,44 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
 
     def reload(self) -> None:
         self.clear()
-        with self._connect() as conn:
-            cursor = conn.execute(
-                f"SELECT record_type, payload FROM {self.table} ORDER BY append_id ASC"
-            )
-            rows = cursor.fetchall()
-        records_by_type: Dict[str, list[Any]] = {
-            record_type: [] for record_type in _EVIDENCE_REPLAY_ORDER
-        }
-        for row in rows:
-            record_type = row[0] if isinstance(row, tuple) else row.get("record_type")
-            payload = row[1] if isinstance(row, tuple) else row.get("payload")
-            if isinstance(payload, str):
-                payload = json.loads(payload)
-            normalized_type = str(record_type or "")
-            loader = _EVIDENCE_LOADERS.get(normalized_type)
-            if loader is None or not isinstance(payload, dict):
-                raise EvidenceValidationError(
-                    f"Unsupported source evidence record type from Postgres: {record_type!r}"
+        self._replaying = True
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.execute(
+                    f"SELECT record_type, payload FROM {self.table} ORDER BY append_id ASC"
                 )
-            records_by_type[normalized_type].append(loader(payload))
-        for record_type in _EVIDENCE_REPLAY_ORDER:
-            for obj in records_by_type[record_type]:
-                if isinstance(obj, SourceRecord):
-                    InMemoryEvidenceRepository.add_source_record(self, obj)
-                elif isinstance(obj, EvidenceItem):
-                    InMemoryEvidenceRepository.add_evidence_item(self, obj)
-                elif isinstance(obj, EvidenceBundle):
-                    InMemoryEvidenceRepository.add_bundle(self, obj)
-                elif isinstance(obj, KnowledgeObject):
-                    InMemoryEvidenceRepository.add_knowledge_object(self, obj)
+                rows = cursor.fetchall()
+            records_by_type: Dict[str, list[Any]] = {
+                record_type: [] for record_type in _EVIDENCE_REPLAY_ORDER
+            }
+            for row in rows:
+                record_type = row[0] if isinstance(row, tuple) else row.get("record_type")
+                payload = row[1] if isinstance(row, tuple) else row.get("payload")
+                if isinstance(payload, str):
+                    payload = json.loads(payload)
+                normalized_type = str(record_type or "")
+                loader = _EVIDENCE_LOADERS.get(normalized_type)
+                if loader is None or not isinstance(payload, dict):
+                    raise EvidenceValidationError(
+                        f"Unsupported source evidence record type from Postgres: {record_type!r}"
+                    )
+                records_by_type[normalized_type].append(loader(payload))
+            for record_type in _EVIDENCE_REPLAY_ORDER:
+                for obj in records_by_type[record_type]:
+                    if isinstance(obj, SourceRecord):
+                        InMemoryEvidenceRepository.add_source_record(self, obj)
+                    elif isinstance(obj, EvidenceItem):
+                        InMemoryEvidenceRepository.add_evidence_item(self, obj)
+                    elif isinstance(obj, EvidenceBundle):
+                        InMemoryEvidenceRepository.add_bundle(self, obj)
+                    elif isinstance(obj, KnowledgeObject):
+                        InMemoryEvidenceRepository.add_knowledge_object(self, obj)
+        finally:
+            self._replaying = False
 
     def _upsert(self, record_type: str, record_id: str, payload: Dict[str, Any], tenant_id: str | None = None) -> None:
         scoped_id = _scoped_record_id(tenant_id, record_id)
-        with self._connect() as conn:
+        with self._get_connection() as conn:
             conn.execute(
                 f"""
                 INSERT INTO {self.table} (record_id, record_type, payload)
@@ -235,7 +294,7 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
 
     def _fetch_records(self, sql: str, params: tuple[Any, ...], r_type: str, tenant_id: str | None | _Unscoped = _UNSCOPED) -> list[Any]:
         try:
-            with self._connect() as conn:
+            with self._get_connection() as conn:
                 rows = conn.execute(sql, params).fetchall()
         except Exception as exc:
             raise RuntimeError(f"PostgreSQL evidence query failed: {type(exc).__name__}") from None
@@ -291,30 +350,42 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
         return next((r for r in records if str(r.metadata.get(field) or "") == key), None)
 
     def get_source_record(self, source_id: str, tenant_id: str | None | _Unscoped = _UNSCOPED) -> SourceRecord | None:
+        if getattr(self, "_replaying", False):
+            return super().get_source_record(source_id, tenant_id=tenant_id)
         return self._read_one("source_record", source_id, tenant_id)
 
     def get_source_record_by_dedupe_key(self, source_dedupe_key: str, tenant_id: str | None | _Unscoped = _UNSCOPED) -> SourceRecord | None:
+        if getattr(self, "_replaying", False):
+            return super().get_source_record_by_dedupe_key(source_dedupe_key, tenant_id=tenant_id)
         return self._read_by_dedupe("source_record", "source_dedupe_key", source_dedupe_key, tenant_id)
 
     def list_source_records(self, tenant_id: str | None | _Unscoped = _UNSCOPED) -> List[SourceRecord]:
         return self._read_many("source_record", tenant_id)
 
     def get_evidence_item(self, evidence_item_id: str, tenant_id: str | None | _Unscoped = _UNSCOPED) -> EvidenceItem | None:
+        if getattr(self, "_replaying", False):
+            return super().get_evidence_item(evidence_item_id, tenant_id=tenant_id)
         return self._read_one("evidence_item", evidence_item_id, tenant_id)
 
     def get_evidence_item_by_dedupe_key(self, evidence_dedupe_key: str, tenant_id: str | None | _Unscoped = _UNSCOPED) -> EvidenceItem | None:
+        if getattr(self, "_replaying", False):
+            return super().get_evidence_item_by_dedupe_key(evidence_dedupe_key, tenant_id=tenant_id)
         return self._read_by_dedupe("evidence_item", "evidence_dedupe_key", evidence_dedupe_key, tenant_id)
 
     def list_evidence_items(self, tenant_id: str | None | _Unscoped = _UNSCOPED) -> List[EvidenceItem]:
         return self._read_many("evidence_item", tenant_id)
 
     def get_bundle(self, evidence_bundle_id: str, tenant_id: str | None | _Unscoped = _UNSCOPED) -> EvidenceBundle | None:
+        if getattr(self, "_replaying", False):
+            return super().get_bundle(evidence_bundle_id, tenant_id=tenant_id)
         return self._read_one("evidence_bundle", evidence_bundle_id, tenant_id)
 
     def list_bundles(self, tenant_id: str | None | _Unscoped = _UNSCOPED) -> List[EvidenceBundle]:
         return self._read_many("evidence_bundle", tenant_id)
 
     def get_knowledge_object(self, knowledge_object_id: str, tenant_id: str | None | _Unscoped = _UNSCOPED) -> KnowledgeObject | None:
+        if getattr(self, "_replaying", False):
+            return super().get_knowledge_object(knowledge_object_id, tenant_id=tenant_id)
         return self._read_one("knowledge_object", knowledge_object_id, tenant_id)
 
     def list_knowledge_objects(self, tenant_id: str | None | _Unscoped = _UNSCOPED) -> List[KnowledgeObject]:

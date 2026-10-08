@@ -377,11 +377,17 @@ jobs:
         if: steps.boundary.outputs.delivery_touched == 'true'
         run: |
           PYTHONPATH=.orchestrator python3 -m pytest -q \
+            scripts/test_dev_environment_lease.py \
+            scripts/test_dev_environment_lease_guard.py \
+            scripts/test_dev_environment_lease_deploy_contract.py::test_controller_checkout_is_an_exact_immutable_separate_trust_root \
+            scripts/test_dev_environment_lease_deploy_contract.py::test_controller_checksums_match_pinned_controller_files \
+            scripts/test_dev_environment_lease_deploy_contract.py::test_compensation_and_other_lease_callers_use_the_repaired_controller \
             scripts/test_auto_deploy_dev_pair.py \
             scripts/test_cross_repo_release_controller.py \
             scripts/test_capture_dev_artifact_baseline.py \
             scripts/test_dev_release_artifact_driver.py \
             scripts/test_dev_release_artifacts.py \
+            scripts/test_deploy_nonprod_vm.py::test_paper_fleet_large_monitoring_response_preserves_readiness_gate \
             scripts/test_dev_remote_guarded_exec.py \
             scripts/test_dev_vm_ssh.py \
             scripts/test_dev_direct_ssh_workflow_contract.py \

@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
@@ -690,12 +691,18 @@ def parse_rfc3339(value: Any, *, field_name: str = "timestamp") -> tuple[Optiona
     except ValueError as exc:
         return None, f"{field_name} {text!r} is not valid ISO-8601: {exc}"
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        return None, f"{field_name} {text!r} is naive; timezone offset is required"
     return parsed.astimezone(timezone.utc), None
 
 
-def admit_market_snapshot(
-    snapshot: Any,
+def _is_future_timestamp(ts: datetime, ref_now: datetime) -> bool:
+    if ref_now.microsecond == 0 and ts.microsecond > 0:
+        return ts.replace(microsecond=0) > ref_now
+    return ts > ref_now
+
+
+def _admit_market_snapshot_core(
+    snapshot: Mapping[str, Any],
     *,
     expected_symbol: Optional[str] = None,
     max_age_seconds: int,
@@ -705,47 +712,8 @@ def admit_market_snapshot(
     calendar_evidence: Optional[Any] = None,
     trusted_calendar_pins: Optional[Mapping[str, str]] = None,
 ) -> SnapshotAdmissionDecision:
-    """Pure, side-effect-free admission check for a market snapshot.
-
-    Parameters
-    ----------
-    snapshot : Any
-        Market snapshot mapping (e.g. from Source Ingest or inline market_input).
-    expected_symbol : Optional[str]
-        Expected market symbol (e.g. "AAPL.US").
-    max_age_seconds : int
-        Maximum allowed age in seconds.
-    minimum_closes : int
-        Minimum number of price bars required (default 2).
-    now_iso : Optional[str]
-        Current time for deterministic evaluation. If omitted, uses UTC now.
-    binding_id : Optional[str]
-        Identifier of the binding for logging / error context.
-    trusted_calendar_pins : Optional[Mapping[str, str]]
-        Externally governed version-to-SHA256 pins. Production callers use
-        the module's governed catalog; deterministic tests may inject an
-        isolated trust catalog without accepting pins from snapshot data.
-
-    Returns
-    -------
-    SnapshotAdmissionDecision
-        admitted(...) on success, or rejected(...) with reason_code and detail.
-    """
     b_ctx = f" (binding {binding_id})" if binding_id else ""
 
-    if snapshot is None:
-        return rejected(
-            "market_input_missing",
-            f"market snapshot is missing{b_ctx}",
-        )
-
-    if not isinstance(snapshot, Mapping):
-        return rejected(
-            "market_input_invalid",
-            f"market snapshot must be an object{b_ctx}",
-        )
-
-    # 1. Closes list validation
     closes = snapshot.get("closes")
     if (
         closes is None
@@ -764,8 +732,12 @@ def admit_market_snapshot(
             f"market snapshot requires at least {minimum_closes} closes, got {len(closes)}{b_ctx}",
         )
 
-    normalized_closes: list[float] = []
     for i, c in enumerate(closes):
+        if isinstance(c, bool):
+            return rejected(
+                "market_input_invalid",
+                f"market close at index {i} must be positive finite number ({c!r}){b_ctx}",
+            )
         try:
             val = float(c)
         except (TypeError, ValueError):
@@ -778,23 +750,28 @@ def admit_market_snapshot(
                 "market_input_invalid",
                 f"market close at index {i} must be positive finite number ({val!r}){b_ctx}",
             )
-        normalized_closes.append(val)
 
-    # 2. Symbol validation
     snapshot_symbol = str(snapshot.get("symbol") or "").strip()
-    exp_sym = str(expected_symbol or "").strip()
-    if exp_sym and snapshot_symbol and snapshot_symbol != exp_sym:
+    if not snapshot_symbol:
         return rejected(
-            "market_input_invalid",
-            f"snapshot symbol {snapshot_symbol!r} does not match expected symbol {exp_sym!r}{b_ctx}",
+            "market_input_missing",
+            f"market snapshot is missing required fields: symbol{b_ctx}",
         )
 
-    # 3. Required lineage / identity fields
-    required_fields = ("snapshot_id", "event_time", "source_ref", "lineage")
+    exp_sym = str(expected_symbol or "").strip()
+    if exp_sym and snapshot_symbol != exp_sym:
+        from services.source_ingestion.requirement_state import _market_snapshot_lookup_symbol
+        if _market_snapshot_lookup_symbol(snapshot_symbol) != _market_snapshot_lookup_symbol(exp_sym):
+            return rejected(
+                "market_input_invalid",
+                f"snapshot symbol {snapshot_symbol!r} does not match expected symbol {exp_sym!r}{b_ctx}",
+            )
+
+    required_fields = ("snapshot_id", "event_time", "observed_at", "source_ref", "lineage")
     missing = [f for f in required_fields if snapshot.get(f) in (None, "", [], {})]
     if missing:
         return rejected(
-            "market_input_invalid",
+            "market_input_missing",
             f"market snapshot is missing required fields: {', '.join(missing)}{b_ctx}",
         )
 
@@ -805,7 +782,12 @@ def admit_market_snapshot(
             f"market snapshot snapshot_id must not be empty{b_ctx}",
         )
 
-    # 4. Timestamp & Freshness validation
+    if not isinstance(snapshot.get("lineage"), Mapping):
+        return rejected(
+            "market_input_invalid",
+            f"market snapshot lineage must be an object{b_ctx}",
+        )
+
     event_time_dt, err = parse_rfc3339(snapshot["event_time"], field_name="event_time")
     if err or event_time_dt is None:
         return rejected(
@@ -814,18 +796,24 @@ def admit_market_snapshot(
             snapshot_id=snapshot_id,
         )
 
+    observed_at_dt, err = parse_rfc3339(snapshot["observed_at"], field_name="observed_at")
+    if err or observed_at_dt is None:
+        return rejected(
+            "market_input_invalid",
+            f"invalid observed_at: {err}{b_ctx}",
+            snapshot_id=snapshot_id,
+        )
+
     now_dt: Optional[datetime] = None
     if now_iso:
-        now_dt, err = parse_rfc3339(now_iso, field_name="now")
-        if err or now_dt is None:
-            now_dt = datetime.now(timezone.utc)
-    else:
+        now_dt, _ = parse_rfc3339(now_iso, field_name="now")
+    if now_dt is None:
         now_dt = datetime.now(timezone.utc)
 
     age_seconds = (now_dt - event_time_dt).total_seconds()
     event_time_str = event_time_dt.isoformat().replace("+00:00", "Z")
 
-    if age_seconds < 0:
+    if _is_future_timestamp(event_time_dt, now_dt):
         return rejected(
             "market_input_invalid",
             f"Source snapshot event_time is in the future ({age_seconds:.6f}s){b_ctx}",
@@ -834,29 +822,25 @@ def admit_market_snapshot(
             age_seconds=age_seconds,
         )
 
+    if _is_future_timestamp(observed_at_dt, now_dt):
+        obs_age = (now_dt - observed_at_dt).total_seconds()
+        return rejected(
+            "market_input_invalid",
+            f"Source snapshot observed_at is in the future ({obs_age:.6f}s){b_ctx}",
+            snapshot_id=snapshot_id,
+            event_time=event_time_str,
+            age_seconds=age_seconds,
+        )
+
     if is_taiwan_symbol(snapshot_symbol):
-        observed_at_raw = snapshot.get("observed_at")
-        refresh_dt: Optional[datetime] = None
-        if observed_at_raw not in (None, ""):
-            refresh_dt, refresh_err = parse_rfc3339(observed_at_raw, field_name="observed_at")
-            if refresh_err or refresh_dt is None:
-                return rejected(
-                    "market_input_invalid",
-                    f"invalid observed_at: {refresh_err}{b_ctx}",
-                    snapshot_id=snapshot_id,
-                    event_time=event_time_str,
-                    age_seconds=age_seconds,
-                )
-        ev = calendar_evidence
-        if ev is None:
-            ev = snapshot.get("calendar_evidence")
+        ev = calendar_evidence or snapshot.get("calendar_evidence")
         if ev is None and isinstance(snapshot.get("lineage"), Mapping):
             ev = snapshot["lineage"].get("calendar_evidence")
 
         ok, tw_reason_code, tw_detail = evaluate_taiwan_market_freshness(
             event_time_dt=event_time_dt,
             now_dt=now_dt,
-            refresh_receipt_dt=refresh_dt,
+            refresh_receipt_dt=observed_at_dt,
             lineage=snapshot.get("lineage"),
             max_refresh_age_seconds=max_age_seconds,
             calendar_evidence=ev,
@@ -884,3 +868,139 @@ def admit_market_snapshot(
         event_time=event_time_str,
         age_seconds=age_seconds,
     )
+
+
+def admit_canonical_source_snapshot(
+    snapshot: Any,
+    *,
+    expected_symbol: Optional[str] = None,
+    max_age_seconds: int = 86400,
+    minimum_closes: int = 2,
+    now_iso: Optional[str] = None,
+    binding_id: Optional[str] = None,
+    calendar_evidence: Optional[Any] = None,
+    trusted_calendar_pins: Optional[Mapping[str, str]] = None,
+) -> SnapshotAdmissionDecision:
+    """Validate and admit a canonical Source market snapshot.
+
+    Accepts both the public DTO returned by Source Ingest (LatestMarketSnapshot.to_public_dict)
+    and internal storage snapshots containing points. Validates canonical envelope fields,
+    strict timezone awareness, zero future grace, and delegates to admit_market_snapshot.
+    """
+    b_ctx = f" (binding {binding_id})" if binding_id else ""
+    if snapshot is None:
+        return rejected("market_input_missing", f"market snapshot is missing{b_ctx}")
+    if not isinstance(snapshot, Mapping):
+        return rejected("market_input_invalid", f"market snapshot must be an object{b_ctx}")
+
+    for req in ("schema_version", "snapshot_id", "symbol", "event_time", "observed_at", "market"):
+        if req not in snapshot or snapshot.get(req) in (None, "", [], {}):
+            return rejected("market_input_missing", f"market snapshot is missing required fields: {req}{b_ctx}")
+
+    for f in ("event_time", "observed_at"):
+        _, err = parse_rfc3339(snapshot.get(f), field_name=f)
+        if err:
+            return rejected("market_input_invalid", f"invalid {f}: {err}{b_ctx}")
+
+    from services.source_ingestion.requirement_state import MARKET_SNAPSHOT_SCHEMA_VERSION
+    if snapshot.get("schema_version") != MARKET_SNAPSHOT_SCHEMA_VERSION:
+        return rejected("market_input_invalid", f"unsupported market snapshot schema_version {snapshot.get('schema_version')!r}{b_ctx}")
+
+    snapshot_id = str(snapshot.get("snapshot_id") or "").strip()
+    if not re.fullmatch(r"^mss-[0-9a-f]{24}$", snapshot_id):
+        return rejected("market_input_invalid", f"market snapshot snapshot_id {snapshot_id!r} is invalid; expected mss-<24-hex>{b_ctx}")
+
+    sym = str(snapshot.get("symbol") or "").strip()
+    from services.registry.strategy_artifact import canonical_market_context
+    try:
+        canonical_market_context(str(snapshot.get("market") or "").strip(), symbols=[sym])
+    except Exception as exc:
+        return rejected("market_input_invalid", f"invalid market context {snapshot.get('market')!r}: {exc}{b_ctx}")
+
+    lineage = snapshot.get("lineage")
+    if not isinstance(lineage, Mapping):
+        return rejected("market_input_invalid", f"market snapshot lineage is invalid; expected mapping{b_ctx}")
+    for k in ("source_ids", "connector_ids"):
+        v = lineage.get(k)
+        if not isinstance(v, Sequence) or isinstance(v, (str, bytes)) or not v or not all(isinstance(x, str) and x.strip() for x in v):
+            return rejected("market_input_invalid", f"market snapshot lineage {k} is invalid; expected non-empty sequence of strings{b_ctx}")
+
+    raw_points = snapshot.get("points")
+    if raw_points is not None:
+        if not isinstance(raw_points, Sequence) or isinstance(raw_points, (str, bytes)):
+            return rejected("market_input_missing", f"market snapshot points must be a sequence{b_ctx}")
+        for idx, pt in enumerate(raw_points):
+            if isinstance(pt, Mapping):
+                _, err = parse_rfc3339(pt.get("event_time"), field_name=f"point[{idx}] event_time")
+                if err:
+                    return rejected("market_input_invalid", f"{err}{b_ctx}")
+        from services.source_ingestion.requirement_state import LatestMarketSnapshot, MarketSnapshotStateError
+        try:
+            snap = LatestMarketSnapshot.from_dict(snapshot)
+            public_payload = snap.to_public_dict(requested_symbol=expected_symbol)
+        except MarketSnapshotStateError as exc:
+            return rejected("market_input_invalid", f"Source snapshot canonical validation failed: {exc}{b_ctx}")
+        except Exception as exc:
+            return rejected("market_input_invalid", f"Source snapshot canonical malformed: {exc}{b_ctx}")
+    else:
+        if "source_ref" not in snapshot or not str(snapshot.get("source_ref") or "").strip():
+            return rejected("market_input_missing", f"market snapshot is missing required fields: source_ref{b_ctx}")
+        expected_source_ref = f"source-ingest://snapshots/{snapshot_id}"
+        if str(snapshot.get("source_ref") or "").strip() != expected_source_ref:
+            return rejected("market_input_invalid", f"market snapshot source_ref does not match snapshot_id{b_ctx}")
+        public_payload = dict(snapshot)
+
+    return _admit_market_snapshot_core(
+        public_payload,
+        expected_symbol=expected_symbol,
+        max_age_seconds=max_age_seconds,
+        minimum_closes=minimum_closes,
+        now_iso=now_iso,
+        binding_id=binding_id,
+        calendar_evidence=calendar_evidence or snapshot.get("calendar_evidence"),
+        trusted_calendar_pins=trusted_calendar_pins,
+    )
+
+
+def admit_market_snapshot(
+    snapshot: Any,
+    *,
+    expected_symbol: Optional[str] = None,
+    max_age_seconds: int,
+    minimum_closes: int = 2,
+    now_iso: Optional[str] = None,
+    binding_id: Optional[str] = None,
+    calendar_evidence: Optional[Any] = None,
+    trusted_calendar_pins: Optional[Mapping[str, str]] = None,
+) -> SnapshotAdmissionDecision:
+    """Pure, side-effect-free admission check for a market snapshot."""
+    b_ctx = f" (binding {binding_id})" if binding_id else ""
+    if snapshot is None:
+        return rejected("market_input_missing", f"market snapshot is missing{b_ctx}")
+    if not isinstance(snapshot, Mapping):
+        return rejected("market_input_invalid", f"market snapshot must be an object{b_ctx}")
+
+    snap_id = str(snapshot.get("snapshot_id") or "").strip()
+    source_ref = str(snapshot.get("source_ref") or "").strip()
+    is_source = (
+        "points" in snapshot
+        or "schema_version" in snapshot
+        or bool(re.fullmatch(r"^mss-[0-9a-fA-F]{24}$", snap_id))
+        or bool(re.fullmatch(r"^source-ingest://snapshots/mss-[0-9a-fA-F]{24}$", source_ref))
+    )
+    target_fn = (
+        admit_canonical_source_snapshot
+        if is_source
+        else _admit_market_snapshot_core
+    )
+    return target_fn(
+        snapshot,
+        expected_symbol=expected_symbol,
+        max_age_seconds=max_age_seconds,
+        minimum_closes=minimum_closes,
+        now_iso=now_iso,
+        binding_id=binding_id,
+        calendar_evidence=calendar_evidence,
+        trusted_calendar_pins=trusted_calendar_pins,
+    )
+

@@ -8,6 +8,7 @@ canonical command admission callables by :mod:`control_loops.router`.
 """
 from __future__ import annotations
 
+import asyncio
 import inspect
 import os
 from collections.abc import Mapping, Sequence
@@ -571,6 +572,7 @@ class ControlLoopsService:
                 "scope": {
                     "tenant_id": tenant_id,
                     "environment": environment,
+                    "controller_environment": self.deployed_environment,
                     "source": "authenticated_identity_and_deployment_scope",
                 },
             }
@@ -589,8 +591,10 @@ class ControlLoopsService:
             requested_tenant=requested_tenant,
             requested_environment=requested_environment,
         )
+        # Authorization is by trading stage; controller records are keyed by
+        # the deployment environment every LoopControllerWriter records.
         available, raw_records = await self.loop_truth.fetch_controller_store_health_records(
-            tenant_id, environment
+            tenant_id, self.deployed_environment
         )
         source = "controller_store" if available else "missing"
         records = self.loop_truth.project_canonical_loop_health(
@@ -623,8 +627,10 @@ class ControlLoopsService:
             requested_tenant=requested_tenant,
             requested_environment=requested_environment,
         )
+        # Authorization is by trading stage; controller records are keyed by
+        # the deployment environment every LoopControllerWriter records.
         available, raw_records = await self.loop_truth.fetch_controller_store_health_records(
-            tenant_id, environment
+            tenant_id, self.deployed_environment
         )
         source = "controller_store" if available else "missing"
         record = self.loop_truth.project_canonical_loop_health_entry(
@@ -898,8 +904,11 @@ class ControlLoopsService:
                 "The configured BFF instance has no durable DLQ replay adapter.",
                 precondition_failed="downstream_health_monitor",
             )
+        # The monitor drains the outbox synchronously over HTTP; keep that
+        # work off the event loop thread.
         result = await _resolve(
-            replay(
+            await asyncio.to_thread(
+                replay,
                 actor_id=str(getattr(identity, "operator_id", "")),
                 approval_ref=approval_ref,
                 reason=reason,

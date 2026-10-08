@@ -42,6 +42,17 @@ def client():
     module = importlib.import_module("services.source_ingestion.main")
     module = importlib.reload(module)
 
+    from services.source_ingestion.controller_state import ControllerState, ControllerStateStore
+
+    state = ControllerState(
+        controller_id="ctrl-test-scheduler",
+        controller_name="test-controller",
+        environment="test",
+        tenant_id="tenant-dev",
+        deployment={},
+    )
+    ControllerStateStore(module.runtime.CONTROLLER_STATE_PATH).save(state)
+
     try:
         yield TestClient(module.app), Path(tempdir), module
     finally:

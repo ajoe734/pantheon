@@ -92,7 +92,10 @@ After a crash or partial GitHub failure, rerun the exact same actor/command/
 message so the nonce is replayed. While pending, all other task mutations and
 supervisor dispatch are blocked. A review/status/proof tag without the matching
 canonical intent is not merge authority. A read-only second admission failure
-before any GitHub write safely clears the reservation. Normal approval accepts
+before any GitHub write safely clears the reservation. Only `approve` repeats
+that admission check in phase two; a reviewer `reopen` of a conflicted, moved or
+closed PR skips it and returns the task to the owner, who rebases and hands off
+again. Normal approval accepts
 only an `OPEN` live PR; use `reconcile_merged_done` for an accepted merged PR.
 
 Before owner closeout, inspect the canonical row through the governed command
@@ -417,16 +420,18 @@ task's PR merged before the assigned reviewer finished an independent review
 (for example the delivery repository's required-status-check for Pantheon
 review was never actually satisfiable, or the PR was merged by an identity
 that bypasses branch protection), and the reviewer's real verdict is
-**reject**. The GitHub reject write requires the bound PR to remain open. If
-the exact binding is already merged/closed, `reopen` may use its definitive
-identity-mismatch recovery to remove canonical review/merge authority and
-return the row to implementation, but it records no GitHub reject evidence.
+**reject**. When the review bridge is required, the GitHub reject write needs
+the bound PR to remain open; if the exact binding is already merged/closed,
+`reopen` may use its definitive identity-mismatch recovery to remove canonical
+review/merge authority and return the row to implementation, but it records no
+GitHub reject evidence. In canonical task review mode a reviewer `reopen` makes
+no GitHub call and returns the row to implementation.
 Do not treat the absent GitHub write as proof that the stray merge was undone,
 or as permission to hand-edit state or silently drop the review findings.
 
 The task's own pure lifecycle already has the correct exit for this:
 `supersede` is legal directly from `review` (`.orchestrator/rewrite/task_machine.py`)
-and, unlike `reopen`/`approve`, carries no GitHub PR-liveness check.
+and, unlike `approve`, carries no GitHub PR-liveness check.
 
 ```bash
 AI_NAME=<Reviewer or Owner or Human/Ops> \

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd "${PANTHEON_DEV_REPO:-/home/lupin/pantheon}"
+cd "${PANTHEON_DEV_REPO:?set PANTHEON_DEV_REPO to the dev compose checkout}"
 compose=(docker compose -p pantheon -f docker-compose.yml)
 service=operator-bff
 key="tj-residual-smoke-$(date -u +%Y%m%dT%H%M%SZ)"

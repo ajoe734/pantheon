@@ -1237,12 +1237,10 @@ class SourceIngestionRuntime:
         return self._default_source_provisioning_reconciler()
 
     def _default_source_provisioning_reconciler(self) -> SourceProvisioningReconciler:
-        tenant_id = str(os.getenv("PANTHEON_TENANT_ID") or os.getenv("PANTHEON_BFF_TENANT_ID") or "").strip() or None
         return SourceProvisioningReconciler(
             manager=self.manager,
             connector_store=self.connector_store,
             schedule_store=self.schedule_config_store,
-            tenant_id=tenant_id,
         )
 
     def _desired_state_digest(self, personas: list[dict[str, Any]]) -> str:

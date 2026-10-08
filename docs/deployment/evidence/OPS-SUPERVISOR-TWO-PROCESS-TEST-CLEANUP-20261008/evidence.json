@@ -1,0 +1,19 @@
+{
+  "task_id": "OPS-SUPERVISOR-TWO-PROCESS-TEST-CLEANUP-20261008",
+  "change": ".orchestrator/test_supervisor.py only (no supervisor production code)",
+  "fixes": [
+    "RealProcessReviewHandoffRecoveryFlowTests.setUp exports GIT_CONFIG_* (gc.auto=0, maintenance.auto=false, core.fsmonitor=false) so fixture repos and every forked/spawned descendant run no background git work",
+    "_reap also SIGKILLs the descendants of the reaped children",
+    "_isolated_tempdir replaces tempfile.TemporaryDirectory in the class: on exit it lists processes whose cwd/fds are under the temp dir (excluding ancestors) with cmdline plus newest worktree/.git files, kills them and their descendants, waits, then rmtree with retries (each failure logged with users + newest .git files); ignore_cleanup_errors is not used"
+  ],
+  "diagnosis": "Every run's cleanup found a process still using the temp tree after the test body and _reap: the supervisor-launched native antigravity worker (bwrap ... --log-file <tmp>/central/.orchestrator/logs/*-antigravity-native-*.log, task TASK-QUEUE-001 owned_in_progress_dispatch) started by the restart/owner-dispatch test, plus its shim, with newest files under central/.git/worktrees/task-queue-001. It is a deliberately launched worker outliving the test's own kill list (launched_procs / new_worker_rec pid), so cleanup raced it writing into .git. This is a test-cleanup gap, not a production leak.",
+  "verification": {
+    "command": "python3 -m unittest test_supervisor.RealProcessReviewHandoffRecoveryFlowTests (from .orchestrator)",
+    "consecutive_runs": 20,
+    "passed": 20,
+    "tests_per_run": 17,
+    "rmtree_failures": 0,
+    "log": "runs.log"
+  },
+  "limitation": "Local interpreter python3 was used; the CI run itself could not be executed here."
+}

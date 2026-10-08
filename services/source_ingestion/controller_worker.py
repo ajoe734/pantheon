@@ -23,6 +23,7 @@ from .controller_state import (
     ControllerStateStore,
     parse_utc,
     summarize_actual_readback,
+    summarize_schedule,
     utc_now,
 )
 from .controller_auth import load_controller_token
@@ -228,15 +229,25 @@ def _is_active_persona(persona: Mapping[str, Any]) -> bool:
     return lifecycle != "retired" and status not in {"retired", "archived"}
 
 
-def _requirement_key(req: Mapping[str, Any]) -> tuple:
-    candidates = tuple(str(c).strip() for c in (req.get("connector_candidates") or []))
-    return (
-        str(req.get("market") or "").strip().upper(),
-        str(req.get("dataset") or "").strip().lower(),
-        str(req.get("cadence") or "").strip().lower(),
-        str(req.get("source_class") or "").strip().lower(),
-        candidates,
-    )
+def _is_requirement_held(req: Mapping[str, Any], held_reqs: Sequence[Mapping[str, Any]]) -> bool:
+    req_market = str(req.get("market") or "").strip().upper()
+    req_dataset = str(req.get("dataset") or "").strip().lower()
+    req_cadence = str(req.get("cadence") or "").strip().lower()
+    req_class = str(req.get("source_class") or "").strip().lower()
+    req_cands = {str(c).strip() for c in (req.get("connector_candidates") or [])}
+    req_gates = {str(g).strip() for g in (req.get("policy_gates") or [])}
+    for h in held_reqs:
+        if (
+            str(h.get("market") or "").strip().upper() == req_market
+            and str(h.get("dataset") or "").strip().lower() == req_dataset
+            and str(h.get("cadence") or "").strip().lower() == req_cadence
+            and str(h.get("source_class") or "").strip().lower() == req_class
+        ):
+            h_cands = [str(c).strip() for c in (h.get("connector_candidates") or [])]
+            if h_cands and all(c in req_cands for c in h_cands):
+                if req_gates.issubset({str(g).strip() for g in (h.get("policy_gates") or [])}):
+                    return True
+    return False
 
 
 def load_desired_state(*, timeout_seconds: float = 30.0) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
@@ -273,17 +284,13 @@ def load_desired_state(*, timeout_seconds: float = 30.0) -> tuple[tuple[dict[str
         if holder_idx is not None:
             holder = dict(combined[holder_idx])
             holder_reqs = [dict(r) for r in (holder.get("required_data_sources") or [])]
-            seen_req_keys = {_requirement_key(r) for r in holder_reqs}
             for p in active_personas:
                 for req in (p.get("required_data_sources") or []):
                     if not isinstance(req, Mapping):
                         continue
-                    source_class = str(req.get("source_class") or "").strip().lower()
-                    if source_class not in {"live_pull", "live_push"}:
+                    if str(req.get("source_class") or "").strip().lower() != "live_pull":
                         continue
-                    key = _requirement_key(req)
-                    if key not in seen_req_keys:
-                        seen_req_keys.add(key)
+                    if not _is_requirement_held(req, holder_reqs):
                         holder_reqs.append(dict(req))
             holder["required_data_sources"] = holder_reqs
             combined[holder_idx] = holder
@@ -344,6 +351,14 @@ def reconcile_desired_state(
             "reconcile response is missing authoritative pre/post readback",
             reconcile=response,
         )
+    conflicts = int(summary.get("conflicts") or 0)
+    unsupported = int(summary.get("unsupported") or 0)
+    if conflicts or unsupported:
+        raise ControllerTickError(
+            "reconcile",
+            f"desired-state reconcile failed closed: conflicts={conflicts} unsupported={unsupported}",
+            reconcile=response,
+        )
     accepted_snapshot = response.get("accepted_requirement_snapshot")
     post_snapshot = response.get("post_readback", {}).get("requirement_snapshot")
     if (
@@ -357,14 +372,6 @@ def reconcile_desired_state(
         raise ControllerTickError(
             "reconcile_contract",
             "reconcile response did not durably accept the authoritative requirement snapshot",
-            reconcile=response,
-        )
-    conflicts = int(summary.get("conflicts") or 0)
-    unsupported = int(summary.get("unsupported") or 0)
-    if conflicts or unsupported:
-        raise ControllerTickError(
-            "reconcile",
-            f"desired-state reconcile failed closed: conflicts={conflicts} unsupported={unsupported}",
             reconcile=response,
         )
     requirement_count = sum(
@@ -1859,6 +1866,9 @@ def main() -> int:
             print(_canonical_json({"tick": tick, **result}), flush=True)
         except Exception as exc:
             last_tick_failed = True
+            context = getattr(exc, "context", None)
+            schedule = context.get("schedule") if isinstance(context, Mapping) else None
+            failed_connectors = summarize_schedule(schedule)["failed"] if isinstance(schedule, Mapping) else []
             print(
                 _canonical_json(
                     {
@@ -1867,6 +1877,7 @@ def main() -> int:
                         "stage": getattr(exc, "stage", "controller"),
                         "error": f"{type(exc).__name__}: {exc}",
                         "state_sequence_no": state.sequence_no,
+                        **({"failed_connectors": failed_connectors} if failed_connectors else {}),
                     }
                 ),
                 flush=True,

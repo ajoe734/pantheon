@@ -1,15 +1,14 @@
 """Authoritative real-time quote pricing for paper fills.
 
 The broker is the market boundary, so it owns the quote session. Market paper
-orders are priced from a real-time quote instead of a placeholder:
+orders are priced from a real-time quote:
 
   primary : Shioaji streaming tick (per-tick live price map; the symbol is added
             to the subscription list / 報價列 on first use). Read-only — quotes
             only, no order placement or matching.
   fallback: TWSE MIS public endpoint (~5s snapshot, free, no SDK/session).
 
-Returns None when no source is available, so callers fall back to their own
-placeholder. The streaming path is instant (in-memory map) and is not cached;
+Returns None when no source is available, so callers fail closed. The streaming path is instant (in-memory map) and is not cached;
 only the TWSE MIS HTTP path is TTL-cached.
 """
 from __future__ import annotations

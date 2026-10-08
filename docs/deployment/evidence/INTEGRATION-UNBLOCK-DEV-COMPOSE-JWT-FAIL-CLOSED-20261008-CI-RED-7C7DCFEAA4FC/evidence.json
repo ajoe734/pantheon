@@ -1,0 +1,90 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-DEV-COMPOSE-JWT-FAIL-CLOSED-20261008-CI-RED-7C7DCFEAA4FC",
+  "recorded_at": "2026-10-08T08:09:00Z",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "repository": "ajoe734/pantheon",
+  "base_sha": "ca976d4ddca6aea3b63e2a564e4790172705c67d",
+  "changed_files": [
+    "docs/deployment/evidence/INTEGRATION-UNBLOCK-DEV-COMPOSE-JWT-FAIL-CLOSED-20261008-CI-RED-7C7DCFEAA4FC/evidence.json"
+  ],
+  "source_task": "DEV-COMPOSE-JWT-FAIL-CLOSED-20261008",
+  "source_pr": "https://github.com/ajoe734/pantheon/pull/6385",
+  "original_head": "96958fec774b4d534b9caac46ac993e69cc0e805",
+  "original_base": "d5ac404707cc7b52199d38f22e74a64e8940699f",
+  "root_cause": {
+    "dispatch_reason": "ci-red",
+    "workflow": "Persona Owner Contract",
+    "job": "Persona provisioning owner contracts",
+    "run_id": 37744946076,
+    "run_url": "https://github.com/ajoe734/pantheon/actions/runs/37744946076",
+    "failed_job_id": 113204095015,
+    "failure_analysis": {
+      "step": "Verify real owners, paper scope, renewal and durable receipt reload",
+      "symptom": "Pytest executed 1814 tests across ~11m42s in scripts/ and services/. 1813 passed, but 1 test failed: scripts/test_bootstrap_dev_paper_baseline.py::test_compose_operator_bff_wires_owner_service_jwt_credentials.",
+      "mechanism": "DEV-COMPOSE-JWT-FAIL-CLOSED-20261008 removed published default credentials (pantheon-local-capital-jwt-secret, pantheon-local-registry-jwt-secret, pantheon-local-governance-jwt-secret) across all service blocks in docker-compose.yml so all JWT secrets fail closed when unset. However, scripts/test_bootstrap_dev_paper_baseline.py in test_compose_operator_bff_wires_owner_service_jwt_credentials still contained hardcoded assertions expecting the old published literal defaults (e.g., assert operator_bff_env['PANTHEON_CAPITAL_JWT_SECRET'] == '${PANTHEON_CAPITAL_JWT_SECRET:-${CAPITAL_JWT_SECRET:-pantheon-local-capital-jwt-secret}}'). When .github/workflows/persona-owner-contract.yml ran against PR #6385 (triggered because docker-compose.yml was modified), the assertion failed: AssertionError: assert '${PANTHEON_CAPITAL_JWT_SECRET:-${CAPITAL_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}}' == '${PANTHEON_CAPITAL_JWT_SECRET:-${CAPITAL_JWT_SECRET:-pantheon-local-capital-jwt-secret}}'."
+    },
+    "integrator_disposition": "scripts/git/auto_integrator.py functioned exactly as designed. It inspected PR #6385 checks, identified statusCheckRollup state as red due to the Persona provisioning owner contracts failure, safely refused to merge PR #6385 into dev, and published the unblock task per unblock_contract. dev mainline integrity was preserved. No logic changes to auto_integrator.py are required."
+  },
+  "pr_resolution": {
+    "action": "Updated PR #6385 with scoped fix commit on task/DEV-COMPOSE-JWT-FAIL-CLOSED-20261008",
+    "original_pr_number": 6385,
+    "original_pr_url": "https://github.com/ajoe734/pantheon/pull/6385",
+    "branch": "task/DEV-COMPOSE-JWT-FAIL-CLOSED-20261008",
+    "previous_head_sha": "96958fec774b4d534b9caac46ac993e69cc0e805",
+    "updated_head_sha": "fa713f356461adb24dda78878daee59e392e127a",
+    "fix_commit": {
+      "sha": "fa713f356461adb24dda78878daee59e392e127a",
+      "subject": "DEV-COMPOSE-JWT-FAIL-CLOSED-20261008: fix bootstrap test expectation",
+      "changes": [
+        "scripts/test_bootstrap_dev_paper_baseline.py: Updated test_compose_operator_bff_wires_owner_service_jwt_credentials to assert fail-closed compose JWT secrets for operator-bff, capital, registry, and governance instead of published pantheon-local-* defaults.",
+        "services/control-plane/bff/test_bff_oidc_staging_env_contract.py: Updated test_dev_compose_forwards_bff_auth_env_with_dev_stub_default to assert PANTHEON_BFF_JWT_SECRET matches ${PANTHEON_BFF_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}} without literal default pantheon-local-bff-jwt-secret.",
+        "docs/deployment/evidence/DEV-COMPOSE-JWT-FAIL-CLOSED-20261008/evidence.json: Added triage classifications and updated verification command."
+      ]
+    },
+    "diagnostic_comment_url": "https://github.com/ajoe734/pantheon/pull/6385#issuecomment-6055600211",
+    "status": "unstranded_and_updated"
+  },
+  "integrator_code_assessment": {
+    "code_changed": false,
+    "reason_no_code_change": "scripts/git/auto_integrator.py is working as intended. The serialized integrator correctly rejected the red CI PR and filed the unblock request. All 163 unit tests in scripts/git/test_auto_integrator.py and all 125 tests in scripts/git/test_task_review_merge_gate.py pass cleanly."
+  },
+  "validation": [
+    {
+      "command": "python3 -m unittest scripts/git/test_auto_integrator.py",
+      "exit_code": 0,
+      "result": "Ran 163 tests in 3.426s, OK"
+    },
+    {
+      "command": "python3 -m unittest scripts/git/test_task_review_merge_gate.py",
+      "exit_code": 0,
+      "result": "Ran 125 tests in 11.464s, OK"
+    },
+    {
+      "command": "git push origin fa713f356461adb24dda78878daee59e392e127a:refs/heads/task/DEV-COMPOSE-JWT-FAIL-CLOSED-20261008",
+      "exit_code": 0,
+      "result": "Fast-forward push succeeded, updating PR #6385 head to fa713f356461adb24dda78878daee59e392e127a"
+    },
+    {
+      "command": "gh pr comment 6385",
+      "exit_code": 0,
+      "result": "Diagnostic analysis posted to https://github.com/ajoe734/pantheon/pull/6385#issuecomment-6055600211"
+    }
+  ],
+  "source_review_followup": {
+    "source_task_id": "DEV-COMPOSE-JWT-FAIL-CLOSED-20261008",
+    "owner": "Antigravity2",
+    "reviewer": "Claude",
+    "required_actions": [
+      "PR #6385 head updated to fa713f356461adb24dda78878daee59e392e127a on branch task/DEV-COMPOSE-JWT-FAIL-CLOSED-20261008.",
+      "CI workflow runs triggered on PR #6385 with updated test expectations.",
+      "Source task DEV-COMPOSE-JWT-FAIL-CLOSED-20261008 delivery binding will be refreshed to head fa713f356461adb24dda78878daee59e392e127a for review approval and final integration."
+    ]
+  },
+  "resolution": {
+    "state": "original_pr_updated_and_no_longer_stranded",
+    "acceptance_1_satisfied": true,
+    "acceptance_2_satisfied": true,
+    "summary": "Root cause for DEV-COMPOSE-JWT-FAIL-CLOSED-20261008 integration blocker is documented: DEV-COMPOSE-JWT-FAIL-CLOSED-20261008 made all compose JWT secrets fail-closed by removing published defaults, but scripts/test_bootstrap_dev_paper_baseline.py still asserted the old published literals in test_compose_operator_bff_wires_owner_service_jwt_credentials, causing Persona Owner Contract CI to fail. PR #6385 is updated with fix commit fa713f356461adb24dda78878daee59e392e127a, diagnostic analysis comment is posted, and PR #6385 is no longer stranded. Auto-integrator code verified intact."
+  }
+}

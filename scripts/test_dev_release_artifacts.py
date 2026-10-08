@@ -178,6 +178,31 @@ def test_restore_loads_retained_ids_without_build_pull_or_owner_commands(image_c
     assert set(root.iterdir()) == {root / row["name"] for row in bundle["archives"].values()}
 
 
+def test_restore_health_timeout_preserves_retained_worker_probe(image_case, tmp_path):
+    _, docker, _, _, _, compose = image_case
+    probe = ["CMD", "python", "scripts/run_agora_interaction_worker.py", "--healthcheck"]
+    model = json.loads(compose.read_text())
+    model["services"]["agora-interaction-worker"]["healthcheck"] = {
+        "test": probe, "timeout": "5s", "interval": "30s", "retries": 3,
+    }
+    compose.write_text(json.dumps(model))
+    restore(image_case)
+    override = tmp_path / "readback-override.json"
+    override.write_text(json.dumps(docker.override))
+    # Use Compose itself to prove that changing the timeout keeps the original
+    # probe and failure threshold, rather than disabling or replacing health.
+    result = subprocess.run(
+        ["docker", "compose", "-f", str(compose), "-f", str(override), "config", "--format", "json"],
+        capture_output=True, text=True, check=True,
+    )
+    health = json.loads(result.stdout)["services"]["agora-interaction-worker"]["healthcheck"]
+    assert health["test"] == probe
+    assert health["timeout"] == "30s"
+    assert health["interval"] == "30s"
+    assert health["retries"] == 3
+    assert health.get("disable") is not True
+
+
 @pytest.mark.parametrize("mode", ["lease", "production", "compose", "load", "up", "readback"])
 def test_restore_failures_never_emit_success(image_case, mode):
     _, docker, _, _, _, compose = image_case
@@ -400,77 +425,23 @@ def test_unexpected_data_error_retains_checked_in_source_location():
     assert "fixture-secret" not in json.dumps(row)
 
 
-def test_capture_and_validate_images_accept_drift_recovery_allowed_revisions(tmp_path):
+def test_capture_and_validate_images_reject_conflicting_oci_revisions(tmp_path):
     root = tmp_path / "archives"
     root.mkdir(mode=0o700)
     docker = FakeDocker()
-    drift_sha = "d" * 40
-    docker.images[IDS[0]]["revision"] = drift_sha
+    conflicting_sha = "d" * 40
+    docker.images[IDS[0]]["revision"] = conflicting_sha
     checks = []
     lease = lambda: checks.append(True)
 
-    # Without allowed_revisions, capture rejects the drifted revision
     with pytest.raises(artifacts.ArtifactError, match="observed OCI revision conflicts with baseline"):
         artifacts.capture_images(docker=docker, archive_root=root, source_sha=SOURCE, check_lease=lease)
 
-    # With allowed_revisions containing drift_sha, capture succeeds
-    bundle = artifacts.capture_images(docker=docker, archive_root=root, source_sha=SOURCE,
-                                     check_lease=lease, allowed_revisions=[drift_sha])
-    assert bundle["services"]["operator-bff"]["oci_revision"] == drift_sha
-
-    # validate_images also accepts drift_sha when passed in allowed_revisions
+    docker.images[IDS[0]]["revision"] = SOURCE
+    bundle = artifacts.capture_images(docker=docker, archive_root=root, source_sha=SOURCE, check_lease=lease)
+    bundle["services"]["operator-bff"]["oci_revision"] = conflicting_sha
     raw = artifacts.manifest_bytes(bundle)
-    validated = artifacts.validate_images(raw, expected_sha256=hashlib.sha256(raw).hexdigest(),
-                                          expected_source_sha=SOURCE, archive_root=root,
-                                          allowed_revisions=[drift_sha])
-    assert validated["services"]["operator-bff"]["oci_revision"] == drift_sha
-
-    # validate_images rejects drift_sha if allowed_revisions does not include it
     with pytest.raises(artifacts.ArtifactError, match="invalid observed OCI revision"):
         artifacts.validate_images(raw, expected_sha256=hashlib.sha256(raw).hexdigest(),
                                   expected_source_sha=SOURCE, archive_root=root)
 
-    # restore_images also accepts drift_sha with allowed_revisions
-    compose = tmp_path / "compose.json"
-    compose.write_text(json.dumps({"services": {s: {"build": "."} for s in artifacts.SERVICES}}))
-    restored = artifacts.restore_images(raw, expected_sha256=hashlib.sha256(raw).hexdigest(),
-                                        expected_source_sha=SOURCE, archive_root=root,
-                                        compose_files=((compose, hashlib.sha256(compose.read_bytes()).hexdigest()),),
-                                        docker=docker, check_lease=lease, environment="dev",
-                                        allowed_revisions=[drift_sha])
-    assert restored["image_readback_verified"] is True
-
-
-def test_capture_and_validate_images_under_drift_recovery_source_identity(tmp_path):
-    root = tmp_path / "archives"
-    root.mkdir(mode=0o700)
-    docker = FakeDocker()
-    drift_sha = "d" * 40
-    for image_id in IDS:
-        docker.images[image_id]["revision"] = drift_sha
-    checks = []
-    lease = lambda: checks.append(True)
-
-    # When drift recovery uses the observed live SHA as the bundle source_sha
-    bundle = artifacts.capture_images(docker=docker, archive_root=root, source_sha=drift_sha,
-                                      check_lease=lease, allowed_revisions=[drift_sha])
-    assert bundle["source_sha"] == drift_sha
-    for service in artifacts.SERVICES:
-        assert bundle["services"][service]["oci_revision"] == drift_sha
-
-    raw = artifacts.manifest_bytes(bundle)
-    validated = artifacts.validate_images(raw, expected_sha256=hashlib.sha256(raw).hexdigest(),
-                                          expected_source_sha=drift_sha, archive_root=root,
-                                          allowed_revisions=[drift_sha])
-    assert validated["source_sha"] == drift_sha
-    for service in artifacts.SERVICES:
-        assert validated["services"][service]["oci_revision"] == drift_sha
-
-    compose = tmp_path / "compose.json"
-    compose.write_text(json.dumps({"services": {s: {"build": "."} for s in artifacts.SERVICES}}))
-    restored = artifacts.restore_images(raw, expected_sha256=hashlib.sha256(raw).hexdigest(),
-                                        expected_source_sha=drift_sha, archive_root=root,
-                                        compose_files=((compose, hashlib.sha256(compose.read_bytes()).hexdigest()),),
-                                        docker=docker, check_lease=lease, environment="dev",
-                                        allowed_revisions=[drift_sha])
-    assert restored["image_readback_verified"] is True

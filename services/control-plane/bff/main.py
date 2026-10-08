@@ -234,7 +234,10 @@ from .personas.service import (
     _checkpoint_persona_provisioning_readback,
     _evaluate_persona_provisioning_status,
     _get_persona_directory_snapshot,
+    _incident_home_severity,
     _list_persona_records as _personas_list_persona_records,
+    _loop_run_controller_is_formal,
+    _management_count_by,
     _normalize_lifecycle_state,
     _normalize_risk_level,
     _openclaw_agent_reconcile_request,
@@ -251,6 +254,7 @@ from .personas.service import (
     _persona_record_for_provisioning,
     _persona_record_tenant_id,
     _promotion_review_find,
+    _read_surface_state,
     _reconcile_persona_provisioning_compensation,
     _register_persona_cron_required,
     _remove_persona_cron_required,
@@ -1728,8 +1732,6 @@ def _raise_if_session_logged_out(identity: OperatorIdentity) -> None:
         error_factory=_bff_error,
     )
 _raise_if_session_logged_out._canonical_guard = True
-def _read_surface_state() -> str:
-    return os.getenv("BFF_READ_SURFACE_STATE", "fresh")
 def _meta_staleness() -> Optional[Dict[str, Any]]:
     state = _read_surface_state()
     if state == "fresh":
@@ -1773,18 +1775,6 @@ def _loop_run_projection_metadata() -> Dict[str, Any]:
     except (OSError, TypeError, ValueError):
         return {}
     return dict(metadata) if isinstance(metadata, Mapping) else {}
-def _loop_run_controller_is_formal(metadata: Mapping[str, Any]) -> bool:
-    if str(metadata.get("schema_version") or "") != _LOOP_RUN_PROJECTION_SCHEMA:
-        return False
-    controller = metadata.get("controller")
-    if not isinstance(controller, Mapping):
-        return False
-    return (
-        controller.get("accepted_live") is True
-        and str(controller.get("status") or "").strip().lower() == "ready"
-        and str(controller.get("mode") or "").strip().lower() == "live"
-        and str(controller.get("truth_level") or "").strip().lower() == "canonical_live"
-    )
 from .research.routes.common import format_dataset_surface_status as _format_dataset_surface_status
 
 def _dataset_surface_status(
@@ -1963,19 +1953,6 @@ from .personas.service import (
     _extract_ids_from_item,
     _filter_by_common_identifiers,
 )
-_INCIDENT_SEVERITY_MAP = {
-    "critical": "sev1",
-    "high": "sev1",
-    "medium": "sev2",
-    "low": "sev3",
-    "sev1": "sev1",
-    "sev2": "sev2",
-    "sev3": "sev3",
-}
-def _incident_home_severity(value: Optional[str]) -> Optional[str]:
-    if value is None:
-        return None
-    return _INCIDENT_SEVERITY_MAP.get(str(value).strip().lower(), str(value))
 def _decode_page_token(page_token: Optional[str]) -> int:
     if page_token in (None, ""):
         return 0
@@ -2455,23 +2432,6 @@ def _management_record_time(record: Dict[str, Any]) -> str:
         if value not in (None, ""):
             return str(value)
     return str(record.get("id") or "")
-def _management_number(value: Any) -> Optional[float]:
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value)
-        except ValueError:
-            return None
-    return None
-def _management_avg(values: List[float]) -> Optional[float]:
-    return round(sum(values) / len(values), 6) if values else None
-def _management_count_by(records: List[Dict[str, Any]], field: str) -> Dict[str, int]:
-    counts: Dict[str, int] = {}
-    for record in records:
-        value = str(record.get(field) or "unknown").strip() or "unknown"
-        counts[value] = counts.get(value, 0) + 1
-    return counts
 from .assistant.management_service import _management_json_clone
 from .assistant.management_service import (
     _MANAGEMENT_CAMEL_KEY_RE,
@@ -3216,44 +3176,6 @@ def _project_final_command_response(
         data=legacy_payload,
         meta=final_meta or None,
     )
-def _deprecated_bff_path_response(*, route: str, replacement: str) -> JSONResponse:
-    message = f"{route} is deprecated; use {replacement}."
-    headers = {
-        "Deprecation": "true",
-        "Sunset": _PATH_DEDUPE_SUNSET_HTTP_DATE,
-        "Link": f'<{replacement}>; rel="successor-version"',
-        "Warning": f'299 - "{message}"',
-        "X-Deprecated": "true",
-        "X-Deprecated-At": _PATH_DEDUPE_DEPRECATED_SINCE,
-        "X-Pantheon-Deprecated-Route": route,
-        "X-Pantheon-Replacement-Route": replacement,
-    }
-    return JSONResponse(
-        status_code=410,
-        headers=headers,
-        content={
-            "detail": {
-                "error": {
-                    "code": ErrorCode.OPERATION_NOT_ALLOWED.value,
-                    "message": "Deprecated BFF route",
-                    "details": {
-                        "reason": "route_deprecated",
-                        "route": route,
-                        "replacement": replacement,
-                        "deprecated_since": _PATH_DEDUPE_DEPRECATED_SINCE,
-                    },
-                }
-            },
-            "meta": {
-                "deprecated": True,
-                "deprecation": {
-                    "route": route,
-                    "replacement": replacement,
-                    "deprecated_since": _PATH_DEDUPE_DEPRECATED_SINCE,
-                },
-            },
-        },
-    )
 def _check_read_surface_state() -> Optional[StalenessWarning]:
     """
     In production, query the BFF read surface health endpoint.
@@ -3270,205 +3192,11 @@ def _check_read_surface_state() -> Optional[StalenessWarning]:
             "Verify target state via secondary control path before confirming action."
         ),
     )
-def _management_read_timeout_seconds() -> float:
-    """Bound for offloaded management read aggregation (MGMT-LOAD-005).
-
-    /health and other lightweight routes must stay responsive while shell
-    summary / Evidence / alerts / approvals / jobs fan out concurrently.
-    Those routes run their synchronous read-store aggregation in a worker
-    thread (asyncio.to_thread) instead of inline on the event loop, so a slow
-    backing read cannot delay unrelated coroutines. This timeout bounds how
-    long a route waits before falling back to a degraded response.
-    """
-    try:
-        return max(0.05, float(os.getenv("PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS", "0.6")))
-    except (TypeError, ValueError):
-        return 0.6
-
 from .personas.routes.common import (
-    ManagementReadTimeout as _ManagementReadTimeout,
     ManagementReadSaturated as _ManagementReadSaturated,
-    discard_late_management_read_result as _discard_late_management_read_result,
-    run_management_read as _unbounded_run_management_read,
+    ManagementReadTimeout as _ManagementReadTimeout,
+    run_management_read as _run_management_read,
 )
-
-# BFF-MGMT-READ-DEFECT-REPAIR-001: production management-read capacity bound.
-#
-# `create_management_router(...)` (management_read_models/router.py) offloads
-# every GET route's aggregation onto a worker thread via a single injected
-# `run_management_read` callable (see core/app_factory.py's
-# `_dep("run_management_read")`). Previously that callable resolved straight
-# to `personas.routes.common.run_management_read`, whose `capacity`/
-# `executor` parameters default to `None` -- i.e. an *unbounded*
-# `asyncio.to_thread` fan-out with no concurrency ceiling in production.
-# Named, bounded slot pools (mirroring the existing
-# `_MANAGEMENT_DATA_SOURCES_READ_SLOTS` pattern above) give each read-heavy
-# surface a real, finite budget instead.
-_HUMAN_INBOX_READ_SLOT_COUNT = 4
-_HUMAN_INBOX_READ_SLOTS = threading.BoundedSemaphore(_HUMAN_INBOX_READ_SLOT_COUNT)
-_HUMAN_INBOX_READ_EXECUTOR = ThreadPoolExecutor(
-    max_workers=_HUMAN_INBOX_READ_SLOT_COUNT,
-    thread_name_prefix="bff-human-inbox-read",
-)
-
-_MANAGEMENT_COCKPIT_READ_SLOT_COUNT = 4
-_MANAGEMENT_COCKPIT_READ_SLOTS = threading.BoundedSemaphore(_MANAGEMENT_COCKPIT_READ_SLOT_COUNT)
-_MANAGEMENT_COCKPIT_READ_EXECUTOR = ThreadPoolExecutor(
-    max_workers=_MANAGEMENT_COCKPIT_READ_SLOT_COUNT,
-    thread_name_prefix="bff-mgmt-cockpit-read",
-)
-
-
-def _management_cockpit_read_timeout_seconds() -> float:
-    """Bound for the `/bff/management/cockpit` composition (independent of
-    the generic Management read timeout so cockpit-specific saturation can
-    be tuned/tested without moving every other surface's budget)."""
-    raw = os.getenv("PANTHEON_BFF_COCKPIT_READ_TIMEOUT_SECONDS")
-    if raw is None or not raw.strip():
-        return _management_read_timeout_seconds()
-    try:
-        return max(0.05, float(raw))
-    except (TypeError, ValueError):
-        return _management_read_timeout_seconds()
-
-
-_MANAGEMENT_READ_DEFAULT_SLOT_COUNT = 8
-_MANAGEMENT_READ_DEFAULT_SLOTS = threading.BoundedSemaphore(_MANAGEMENT_READ_DEFAULT_SLOT_COUNT)
-_MANAGEMENT_READ_DEFAULT_EXECUTOR = ThreadPoolExecutor(
-    max_workers=_MANAGEMENT_READ_DEFAULT_SLOT_COUNT,
-    thread_name_prefix="bff-mgmt-read",
-)
-
-
-async def _management_read_dispatch(
-    func: Any,
-    *args: Any,
-    timeout_seconds: Optional[float] = None,
-    capacity: Optional[threading.BoundedSemaphore] = None,
-    executor: Optional[Executor] = None,
-    **kwargs: Any,
-) -> Any:
-    """Bounded `run_management_read` used by every Management-read router.
-
-    Callers that already pick an explicit `capacity`/`executor` pair (e.g.
-    the Source Ingest registry read below) keep that choice untouched.
-    Callers that don't (the generic 17-route Management router, the
-    governance router, etc.) get dispatched to a named capacity pool/executor
-    pair by the target callable's name, so distinct surfaces (human-inbox
-    vs. cockpit vs. everything else) saturate independently -- one slow
-    surface cannot exhaust another surface's budget. Module-global lookups of
-    `_HUMAN_INBOX_READ_SLOTS` / `_MANAGEMENT_COCKPIT_READ_SLOTS` /
-    `_MANAGEMENT_READ_DEFAULT_SLOTS` happen at call time (not captured at
-    import time) so tests can substitute a smaller bound via
-    `monkeypatch.setattr(bff_main, "_HUMAN_INBOX_READ_SLOTS", ...)`.
-    """
-    if capacity is None and executor is None:
-        name = getattr(func, "__name__", "") or getattr(func, "__qualname__", "") or ""
-        if name in ("get_human_inbox", "_bounded_get_human_inbox"):
-            # BFF-MGMT-READ-DEFECT-REPAIR-001 acceptance item 7: the whole
-            # `/bff/management/human-inbox` composition no longer occupies
-            # `_HUMAN_INBOX_READ_SLOTS` itself -- that pool is the real
-            # per-contributor bound for the `persona_readiness` contributor
-            # inside `get_human_inbox` (see
-            # `_bounded_human_inbox_persona_readiness` below). Dispatching
-            # the whole-route call through the *same* BoundedSemaphore would
-            # starve the contributor: the outer acquire already holds the
-            # pool's only slot(s) when the contributor tries to acquire
-            # again from the same call stack, so it would always observe
-            # immediate (and spurious) saturation instead of ever running.
-            capacity, executor = _MANAGEMENT_READ_DEFAULT_SLOTS, _MANAGEMENT_READ_DEFAULT_EXECUTOR
-        elif "human_inbox" in name:
-            capacity, executor = _HUMAN_INBOX_READ_SLOTS, _HUMAN_INBOX_READ_EXECUTOR
-        elif "cockpit" in name:
-            capacity, executor = _MANAGEMENT_COCKPIT_READ_SLOTS, _MANAGEMENT_COCKPIT_READ_EXECUTOR
-        else:
-            capacity, executor = _MANAGEMENT_READ_DEFAULT_SLOTS, _MANAGEMENT_READ_DEFAULT_EXECUTOR
-    return await _unbounded_run_management_read(
-        func,
-        *args,
-        timeout_seconds=timeout_seconds,
-        capacity=capacity,
-        executor=executor,
-        **kwargs,
-    )
-
-
-
-# BFF-MAIN-FINAL-SEAMS-CORRECTIVE-001 AC6: main.py must not redefine a
-# function that already has a canonical owner (`_unbounded_run_management_read`
-# / `personas.routes.common.run_management_read`). `_management_read_dispatch`
-# above is the composition-root wrapper (adds named capacity-pool dispatch);
-# bind it to the public `run_management_read` name via assignment rather than
-# a second `def run_management_read`, so `tests/test_main_composition_seam_extraction_003.py::
-# test_no_duplicate_definitions_in_main_py`'s AST scan (which only looks at
-# `ast.FunctionDef`/`ast.AsyncFunctionDef` nodes) sees no duplicate -- while
-# every caller (`_dep("run_management_read")`, `monkeypatch.setattr(bff_main,
-# "run_management_read", ...)`, etc.) still resolves the identical callable.
-run_management_read = _management_read_dispatch
-_run_management_read = run_management_read
-
-
-def _bounded_human_inbox_persona_readiness(
-    snapshot_at: str,
-    *,
-    read_store: Any = None,
-) -> Tuple[List[Dict[str, Any]], Optional[str]]:
-    """Bounded `persona_readiness` contributor for `/bff/management/human-inbox`.
-
-    BFF-MGMT-READ-DEFECT-REPAIR-001 acceptance item 7: a timed-out or
-    capacity-saturated persona_readiness contributor must degrade on its
-    own (real `read_timeout` / `read_capacity_saturated` reasons, `meta`
-    partial) while sibling Human Inbox contributors (durable promotion
-    reviews, approvals, etc.) stay populated -- not a single all-or-nothing
-    bound around the whole route.
-
-    Runs `_build_persona_readiness_items` (module-global, so tests can
-    substitute a slow/blocked stand-in via
-    `monkeypatch.setattr(bff_main, "_build_persona_readiness_items", ...)`,
-    exactly like `_HUMAN_INBOX_READ_SLOTS`/`_MANAGEMENT_COCKPIT_READ_SLOTS`
-    above) on the dedicated `_HUMAN_INBOX_READ_EXECUTOR`, gated by
-    `_HUMAN_INBOX_READ_SLOTS` and `_human_inbox_surface_timeout_seconds()`.
-
-    This is a plain `concurrent.futures` bound rather than the asyncio
-    `run_management_read` above because callers include synchronous,
-    already-on-the-request-thread code paths
-    (`ManagementService.get_hiq_backlog`/`get_management_cockpit` both call
-    `get_human_inbox()` inline, sometimes directly on the FastAPI event
-    loop thread for `/bff/management/hiq-backlog`) where `asyncio.run()`
-    would raise "cannot be called from a running event loop".
-
-    Returns `(rows, degradation_reason)`; `degradation_reason` is `None` on
-    success, else `"read_timeout"` or `"read_capacity_saturated"`.
-    """
-    capacity = _HUMAN_INBOX_READ_SLOTS
-    executor = _HUMAN_INBOX_READ_EXECUTOR
-    timeout_budget = _human_inbox_surface_timeout_seconds()
-    build_fn = _build_persona_readiness_items
-    if not capacity.acquire(blocking=False):
-        return [], "read_capacity_saturated"
-    try:
-        future = executor.submit(build_fn, snapshot_at, read_store=read_store)
-    except BaseException:
-        capacity.release()
-        raise
-    future.add_done_callback(lambda _future: capacity.release())
-    try:
-        rows = future.result(timeout=timeout_budget)
-        return list(rows or []), None
-    except _FuturesTimeoutError:
-        future.add_done_callback(_discard_late_management_read_result_sync)
-        return [], "read_timeout"
-
-
-def _discard_late_management_read_result_sync(future: Any) -> None:
-    if future.cancelled():
-        return
-    exc = future.exception()
-    if exc is not None:
-        logging.getLogger(__name__).warning(
-            "bff.human_inbox_persona_readiness late worker-thread error after timeout budget: %r",
-            exc,
-        )
 
 
 def _build_management_cockpit_payload(*args: Any, **kwargs: Any) -> Dict[str, Any]:

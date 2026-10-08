@@ -15,6 +15,7 @@ def test_paper_sidecar_submit_store_readback_preserves_correlation(tmp_path):
         symbol="2330",
         qty=1,
         side="buy",
+        market_price=2340.0,
     )
     store = PaperSimulationStore(str(tmp_path / "orders.jsonl"))
     store.submit(order)

@@ -100,6 +100,11 @@ REVIEW_EVIDENCE = {
 }
 
 
+def _verified_tenant(identity: Any, **_: Any) -> Dict[str, str]:
+    """Verified-tenant authority for tenant-scoped reads (fail-closed since 91c68f0ff)."""
+    return {"id": "tenant-test"}
+
+
 # ---------------------------------------------------------------------------
 # Test Fixtures & Mock Stores
 # ---------------------------------------------------------------------------
@@ -171,8 +176,11 @@ class MockManagementReadStore:
     def list_evidence_records(self) -> List[Dict[str, Any]]:
         return self.evidence_records
 
-    def list_personas(self) -> List[Dict[str, Any]]:
+    def list_personas(self, **_kwargs: Any) -> List[Dict[str, Any]]:
         return self.personas
+
+    def list_persona_league(self, **_kwargs: Any) -> List[Dict[str, Any]]:
+        return []
 
     def get_persona(self, persona_id: str) -> Optional[Dict[str, Any]]:
         for p in self.personas:
@@ -438,7 +446,7 @@ def test_risk_radar_and_incident_timeline() -> None:
     """Test GET /bff/management/risk-radar and /bff/management/incident-timeline."""
     mock_store = MockManagementReadStore()
     app = FastAPI()
-    app.include_router(create_management_router(get_read_store=lambda: mock_store))
+    app.include_router(create_management_router(get_read_store=lambda: mock_store, tenant_payload_fn=_verified_tenant))
     client = TestClient(app)
 
     # 1. Risk radar
@@ -564,7 +572,7 @@ def test_operations_read_model_and_degraded_control_guidance() -> None:
     """Test GET /bff/management/operations-read-model/{persona_id} and /api/v1/operator/degraded-control-guidance."""
     mock_store = MockManagementReadStore()
     app = FastAPI()
-    app.include_router(create_management_router(get_read_store=lambda: mock_store))
+    app.include_router(create_management_router(get_read_store=lambda: mock_store, tenant_payload_fn=_verified_tenant))
     client = TestClient(app)
 
     # 1. Operations read model with fallback persona
@@ -595,7 +603,7 @@ def test_operations_read_model_sparse_persona_no_synthetic_data_or_formal_confid
     })
 
     app = FastAPI()
-    app.include_router(create_management_router(get_read_store=lambda: mock_store))
+    app.include_router(create_management_router(get_read_store=lambda: mock_store, tenant_payload_fn=_verified_tenant))
     client = TestClient(app)
 
     resp = client.get("/bff/management/operations-read-model/persona-sparse", headers={"Authorization": "Bearer op-1:operator"})
@@ -649,6 +657,7 @@ def test_operations_read_model_custom_injected_fn() -> None:
 
     app = FastAPI()
     app.include_router(create_management_router(
+        tenant_payload_fn=_verified_tenant,
         get_read_store=lambda: mock_store,
         ops_read_model_entry_fn=custom_ops_entry,
     ))
@@ -1463,7 +1472,7 @@ def test_risk_radar_parity_real_attribution_and_no_synthetic_data() -> None:
 
     store = CustomRiskRadarStore()
     app = FastAPI()
-    app.include_router(create_management_router(get_read_store=lambda: store))
+    app.include_router(create_management_router(get_read_store=lambda: store, tenant_payload_fn=_verified_tenant))
     client = TestClient(app)
 
     resp = client.get("/bff/management/risk-radar", headers={"Authorization": "Bearer op-1:operator"})
@@ -1575,7 +1584,7 @@ def test_all_17_management_router_routes_mounted_and_accessible() -> None:
     """Exhaustive mounted test verifying all 17 catalogued routes return 200 and standard envelope."""
     mock_store = MockManagementReadStore()
     app = FastAPI()
-    app.include_router(create_management_router(get_read_store=lambda: mock_store))
+    app.include_router(create_management_router(get_read_store=lambda: mock_store, tenant_payload_fn=_verified_tenant))
     client = TestClient(app)
 
     concrete_paths = [

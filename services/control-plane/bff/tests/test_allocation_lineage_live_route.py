@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
+from services.rankings.snapshots import snapshot_content_digest
 from services.control_plane.bff.tests.rebalance_authority_test_support import (
     HEADERS,
     CapitalBffAuthorityHarness,
@@ -27,7 +28,12 @@ class _RankingReader:
     """Stands in for the Rankings read store: only the admitted snapshot exists."""
 
     def get_ranking_snapshot(self, snapshot_id: str) -> Optional[Dict[str, Any]]:
-        return {"ranking_snapshot_id": SNAPSHOT_ID, "surface": "quarterly", "items": [ITEM]} if snapshot_id == SNAPSHOT_ID else None
+        if snapshot_id != SNAPSHOT_ID:
+            return None
+        return {
+            "ranking_snapshot_id": SNAPSHOT_ID, "surface": "quarterly", "period": "2026-Q3", "items": [ITEM],
+            "content_digest": snapshot_content_digest([ITEM], surface="quarterly", period="2026-Q3"),
+        }
 
 
 def _evaluate_body(**overrides: Any) -> Dict[str, Any]:

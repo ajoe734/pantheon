@@ -1,0 +1,87 @@
+{
+  "task_id": "DEV-PAPER-PREREQUISITE-OWNER-SAFETY-20261008",
+  "title": "原dev readiness helper沿Source owner fail-closed與restore讀回",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "change_class": "corrective",
+  "status": "review_ready",
+  "summary": "Fixed stage_dev_paper_prerequisite_readiness in scripts/deploy_nonprod_vm.sh along the natural Source owner authority contract without creating second entrypoints, wrappers, or leases. The helper now fails closed on connector read failures or unknown operator stop (refusing write/trigger), fails closed on prior schedule read failures, performs CAS conflict checks using admitted_updated_at, verifies restore PUT and actual owner GET readback, exits non-zero on restore failure, and enforces snapshot admissibility with mandatory event_time, future-date rejection, and fake checksum rejection.",
+  "counterexamples_eliminated": [
+    {
+      "id": "restore-500",
+      "description": "Temporary admission PUT succeeds, but restore PUT returns HTTP 500 or non-200. Previously exited 0 and printed 'readiness satisfied'. Fixed: helper verifies restore PUT status and body, checks GET readback, aborts on failure with exit 1, and never prints readiness satisfied.",
+      "tested_by": "test_stage_dev_paper_prerequisite_readiness_fails_when_restore_put_returns_500"
+    },
+    {
+      "id": "restore-readback-mismatch",
+      "description": "Restore PUT returns 200, but owner GET readback shows enabled/interval was not actually restored to prior state. Fixed: verifies readback values match prior state, aborts on mismatch with exit 1, and never prints readiness satisfied.",
+      "tested_by": "test_stage_dev_paper_prerequisite_readiness_fails_when_restore_readback_mismatches"
+    },
+    {
+      "id": "restore-cas-conflict",
+      "description": "Owner schedule updated_at changes after temporary admission. Fixed: CAS check detects updated_at mismatch before restore PUT, prevents overwriting external operator change, and exits 1.",
+      "tested_by": "test_stage_dev_paper_prerequisite_readiness_fails_on_restore_cas_conflict"
+    },
+    {
+      "id": "unknown-operator-stop",
+      "description": "Reading connector state returns HTTP non-200, malformed JSON, or connection failure. Previously treated unknown stop as not stopped and proceeded to write and trigger. Fixed: fail closed immediately, refuse refresh, zero PUT/POST calls.",
+      "tested_by": [
+        "test_stage_dev_paper_prerequisite_readiness_fails_on_connector_read_server_error",
+        "test_stage_dev_paper_prerequisite_readiness_fails_on_connector_read_malformed_json",
+        "test_stage_dev_paper_prerequisite_readiness_fails_on_transport_failure"
+      ]
+    },
+    {
+      "id": "schedule-read-failed",
+      "description": "Reading prior schedule returns HTTP non-200, malformed JSON, or interval <= 0. Previously defaulted to 'false 86400'. Fixed: fail closed immediately, refuse refresh, zero PUT/POST calls.",
+      "tested_by": [
+        "test_stage_dev_paper_prerequisite_readiness_fails_on_schedule_read_server_error",
+        "test_stage_dev_paper_prerequisite_readiness_fails_on_schedule_read_malformed"
+      ]
+    },
+    {
+      "id": "admission-put-failed",
+      "description": "Temporary admission PUT returns HTTP non-200 or invalid body. Previously ignored and proceeded to trigger run-scheduled. Fixed: fail closed immediately, refuse trigger, zero POST calls.",
+      "tested_by": "test_stage_dev_paper_prerequisite_readiness_fails_on_admission_put_server_error"
+    },
+    {
+      "id": "snapshot-missing-event-time",
+      "description": "Snapshot missing event_time was previously accepted if closes and market were present. Fixed: event_time is strictly mandatory.",
+      "tested_by": "test_stage_dev_paper_prerequisite_readiness_rejects_missing_event_time"
+    },
+    {
+      "id": "snapshot-future-event-time",
+      "description": "Snapshot with future-dated event_time (age < 0) was previously accepted. Fixed: age < 0 rejected.",
+      "tested_by": "test_stage_dev_paper_prerequisite_readiness_rejects_future_event_time"
+    },
+    {
+      "id": "snapshot-fake-checksum",
+      "description": "Snapshot where checksum matches snapshot_id was previously accepted. Fixed: checksum == snapshot_id rejected.",
+      "tested_by": "test_stage_dev_paper_prerequisite_readiness_rejects_fake_checksum"
+    }
+  ],
+  "production_diff_budget": {
+    "budget_net_lines_max": 180,
+    "actual_production_net_lines": 97,
+    "actual_production_additions": 175,
+    "actual_production_deletions": 78,
+    "target_file": "scripts/deploy_nonprod_vm.sh"
+  },
+  "verification_commands": [
+    "bash -n scripts/deploy_nonprod_vm.sh",
+    "$PANTHEON_DEPENDENCY_PYTHON -m pytest scripts/test_deploy_nonprod_vm.py -k 'stage_dev_paper_prerequisite_readiness' -v",
+    "$PANTHEON_DEPENDENCY_PYTHON -m pytest scripts/test_deploy_nonprod_vm.py -v",
+    "$PANTHEON_DEPENDENCY_PYTHON scripts/git/diff_budget.py --base origin/dev"
+  ],
+  "verification_results": {
+    "bash_syntax_check": "passed",
+    "stage_readiness_safety_tests": "24 passed, 51 deselected in 21.17s",
+    "full_deploy_nonprod_vm_tests": "73 passed, 2 skipped in 48.16s",
+    "diff_budget_check": "passed (net production lines: +97 <= 180)"
+  },
+  "artifacts": [
+    "scripts/deploy_nonprod_vm.sh",
+    "scripts/test_deploy_nonprod_vm.py",
+    "docs/deployment/evidence/DEV-PAPER-PREREQUISITE-OWNER-SAFETY-20261008/evidence.json"
+  ]
+}

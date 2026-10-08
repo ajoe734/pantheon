@@ -1,0 +1,21 @@
+{
+  "task_id": "L12-QUALIFICATION-EXPLICIT-CHECKOUT-20261007",
+  "change_class": "corrective",
+  "summary": "Honor exact qualification requested commit instead of ambiguous FETCH_HEAD; resolve requested commit SHA explicitly and checkout target_sha, ensuring mismatch against current dev is rejected safely before resources or lease.",
+  "incident_context": {
+    "symptom": "In run 37666640298, workflow was dispatched with requested payload 679add while workflow head was 0f557 (latest dev). git fetch had two refspecs (origin/dev then requested SHA), and git checkout FETCH_HEAD checked out the first entry (origin/dev 0f557), silently running against latest dev rather than the requested commit.",
+    "root_cause": "git checkout --detach FETCH_HEAD selects the first ref in FETCH_HEAD (refs/remotes/origin/dev), ignoring the second ref (${TARGET_REF}).",
+    "resolution": "Resolve TARGET_REF explicitly with git rev-parse --verify and checkout target_sha. Validate protected dev source guard ensures noncurrent requested SHA is safely rejected before allocating runner resources or taking the qualification lease."
+  },
+  "acceptance_verification": {
+    "ac1_nonempty_requested_source_resolves_and_checkouts_exact_sha": "passed: target_sha resolves once via git rev-parse --verify and checks out exact SHA, preventing FETCH_HEAD multiref override; mismatch is rejected in Validate protected exact dev source before resources or lease",
+    "ac2_preserve_protected_dev_and_github_sha_equality_guard": "passed: origin/dev == GITHUB_SHA == sha equality guard in Validate protected exact dev source is preserved; merged-but-noncurrent requested SHA is safely rejected not silently latest; secrets, clearEnv, denyall, and 240m driver lease unchanged",
+    "ac3_no_duplicate_harness_or_weakening": "passed: no duplicate harness, deploy, FE, compensation, or outer lease; no gate trims or auth weakening",
+    "ac4_local_tempgit_two_commit_fixture": "passed: test_tempgit_multipayload_fetch_and_mismatch_guard demonstrates multipayload fetch origin/dev + oldsha checks out oldsha (not dev_sha), rejects mismatch against current dev, and accepts workflow SHA only when matching protected current dev",
+    "ac5_minimal_corrective_repair": "passed: production code changes in .github/workflows/nonprod-deploy.yml are net +1 line, strictly within the 25 net production line budget"
+  },
+  "local_verification": {
+    "command": ".venv-pantheon/bin/python3 -m pytest -v scripts/test_isolated_l12_provider_workflow.py",
+    "result": "9 passed in 3.13s"
+  }
+}

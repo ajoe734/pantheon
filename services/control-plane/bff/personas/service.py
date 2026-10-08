@@ -3889,30 +3889,10 @@ def _market_persona_required_data_sources(item: dict[str, Any]) -> list[dict[str
                 ],
             },
         ]
-    if market == "US" and os.getenv("PANTHEON_ENV", "").strip().lower() == "dev":
-        # Dev-only: the paper baseline's US persona (bootstrap_dev_paper_baseline.py)
-        # otherwise has no live_pull requirement at all, which left it with no
-        # code-owned market-data connector (DEV-PAPER-MARKET-INPUT-STALENESS-001).
-        # Bound to the dev-only synthetic connector registered in
-        # services/source_ingestion/connector_definitions.py /
-        # persona_source_reconciler.py; never applied outside PANTHEON_ENV=dev.
-        return [
-            {
-                "dataset": "us_price_daily",
-                "market": "US",
-                "cadence": "daily",
-                "source_class": "live_pull",
-                "connector_candidates": [
-                    "dev-paper-us-equity-simulation",
-                ],
-                "policy_gates": [
-                    "require_connector_approved",
-                    "require_schedule_active",
-                    "require_source_health_ok",
-                ],
-            },
-        ]
     return []
+
+
+
 
 
 # --- _persona_create_required_data_sources ---

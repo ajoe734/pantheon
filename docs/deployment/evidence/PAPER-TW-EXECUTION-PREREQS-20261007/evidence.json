@@ -1,0 +1,56 @@
+{
+  "task": "PAPER-TW-EXECUTION-PREREQS-20261007",
+  "base": "027633c6f",
+  "changed_sites": [
+    {"file": "services/execution/lean_runtime/paper_signal_producer.py", "before": "CurrentArtifactStrategy metadata dict 433-451 (no market_data)", "after": "449-453 adds metadata.market_data {close, event_time, source_ref}"},
+    {"file": "services/execution/lean_runtime/paper_runtime.py", "before": "SubmitTaiwanBrokerOrder 402-535, no market_price; 526 quote_source or shioaji_paper_fill", "after": "docstring 407-409; MARKET validation 434-458 in existing try; payload market_price 490-491; _commit_fill 548-553 (MARKET: signal-context as_of/source, LIMIT: paper_limit_fill)"},
+    {"file": "services/broker/paper_simulation.py", "before": "docstring 149-153; fill_price = 100.0 at 170", "after": "docstring 150-151; raise SimulationError MARKET_PRICE_UNAVAILABLE at 170-173"},
+    {"file": "services/broker/quote_pricing.py", "before": "module docstring 3-4, 11-12 mention placeholder", "after": "docstring only; says callers fail closed"},
+    {"file": "services/control-plane/bff/persona_provisioning_coordinator.py", "before": "_paper_universe(record) 1046-1059 always defaults ['SPY']; no second check in transition", "after": "import 23; _paper_universe keyword-only market 1049-1073 (US/absent keeps SPY, TW/CRYPTO/FX raise); transition second call 631 after parent checks and before store.acquire"}
+  ],
+  "replaced_tests": [
+    {"test": "services/broker/test_broker.py::test_market_order_fills_at_placeholder_price", "asserted": "fill_price == 100.0", "replacement": "test_market_order_fills_at_supplied_market_price (fill_price == 187.5, other assertions kept)"},
+    {"test": "services/broker/test_quote_pricing.py::test_market_fill_defaults_when_no_price", "asserted": "fill_price == 100.0", "replacement": "test_market_order_without_price_raises_unavailable (SimulationError MARKET_PRICE_UNAVAILABLE)"}
+  ],
+  "setup_only_changes": [
+    "test_paper_runtime.py: test_taiwan_paper_fill_published_with_shioaji_trade_id, test_taiwan_submit_posts_signal_client_id_and_correlation_envelope, test_taiwan_broker_error_records_rejection, test_taiwan_invalid_broker_fill_is_rejected_without_ledger_mutation (signal context price added)",
+    "test_performance_telemetry.py: test_taiwan_sell_fill_is_signed_and_credits_cash (context market_price 50.0)",
+    "test_broker.py: _PAPER_ORDER fixture gains market_price 187.5",
+    "test_paper_correlation.py: market_price=2340.0",
+    "tests/test_bff_persona_create_paper_bundle.py: success payload gains symbols [2330.TW]"
+  ],
+  "new_tests": [
+    "test_paper_signal_producer.py: test_tw_admitted_snapshot_close_is_carried_as_market_data",
+    "test_paper_runtime.py: TW market fill at admitted price, missing price rejected, LIMIT unchanged, US market_data fills at close",
+    "test_broker.py: market order without price rejected and not stored",
+    "test_persona_provisioning_coordinator.py: TW no symbols, CRYPTO dry-run, US keeps SPY, SPY->TW transition refused, persisted TW entry-call refusal"
+  ],
+  "grep_counts": {
+    "fill_price = 100.0 services/broker": {"before": 1, "after": 0},
+    "shioaji_paper_fill services/execution": {"before": 1, "after": 0},
+    "quote_source paper_runtime.py": {"before": 1, "after": 0},
+    "placeholder services/broker (-i)": {"before": 4, "after": 0}
+  },
+  "diff_budget": "see handoff output of scripts/git/diff_budget.py --base origin/dev --head HEAD",
+  "b2_precedence_note": "transition_legacy_persona_market keeps the entry call _paper_universe(record). A record whose persisted market is TW, CRYPTO or FX and has no symbols fails at the entry call, before the contradiction and idempotent-return checks. Such records are TW-over-SPY. For absent or US persisted markets the existing contradiction and idempotent errors keep precedence.",
+  "expected_side_effects": [
+    "US producer signals now carry market_data, so the executor seeds an authoritative mark and US LEAN paper fills use the admitted snapshot close instead of default_price 100.0 (dev: SPY 520.0 from dev_paper_simulation.py).",
+    "A Taiwan MARKET signal whose market_data lacks close, event_time or source_ref is rejected with tw_invalid_order_input, including BoundedPaperStrategy stimuli with a Taiwan symbol.",
+    "Loop 9 (tests/integration/l12 test_current_runtime_loops_deployed_e2e.py 1114, 1171-1187): the 2330.TW CurrentArtifactStrategy binding is now priced from the admitted snapshot close and still fills, because admission guarantees event_time and source_ref. The gate is not edited; the coordinator's L1-L12 run exercises it."
+  ],
+  "verification": {
+    "passed": ["services/broker (100)", "paper_signal_producer (66)", "paper_runtime + performance_telemetry (90)", "bff coordinator, readback, create_paper_bundle, registry_owner_contract (87)", "executor, signal_consumer, current_artifact_signal, source_ingestion latest_market_snapshot_state", "scripts/test_deploy_nonprod_vm.py -k staged_paper_readiness_ordering or transition_legacy_persona_caller (2)"],
+    "pre_existing_failures": [
+      "test_devloop_wire.py test_15_bindings_each_emit_paper_fill_telemetry and test_15_bindings_each_produce_loop_run_and_trade fail identically on the base (read-only /data/runtime in this sandbox)",
+      "tests/test_persona_paper_owner_lifecycle_contract.py cannot be collected: ModuleNotFoundError psycopg in the worker interpreter"
+    ]
+  },
+  "hosted_facts": [
+    "Hosted proof needs DEV-PAPER-BASELINE-TW-SINGLE-SOURCE-20261007 (still todo) and the daily Taiwan refresh from DEV-TW-REFRESH-WORKFLOW-R2-20261007 (merged as #6328) live, deployed by the single Root coordinator after the full L1-L12 gate.",
+    "After this change no dev caller enabled in repo config reaches QuotePricer: the paper runtime always sends market_price for MARKET orders. The OpenClaw gateway paper adapter (services/openclaw-gateway-adapter/paper_broker_adapter.py:213-223, no market_price) is disabled by OPENCLAW_PAPER_ADAPTER_ENABLED false at docker-compose.yml:839 and not overridden by nonprod-deploy.yml or deploy_nonprod_vm.sh; if enabled its market orders would get MARKET_PRICE_UNAVAILABLE.",
+    "execute-plans persona create sends neither market nor symbols (origin/dev 3b49f1f0c createDefaults.ts 28-67, personas.ts 54-75), so FE-created personas stay on the legacy SPY path.",
+    "A Taiwan stimulus through BoundedPaperStrategy carries no market_data and would be rejected with tw_invalid_order_input; the default stimulus symbol AAPL.US is unaffected.",
+    "The capital pool currency still defaults to USD (persona_provisioning_coordinator.py:1000) while Taiwan fills now debit real TWD prices; a separate item owns that."
+  ],
+  "no_hosted_action": true
+}

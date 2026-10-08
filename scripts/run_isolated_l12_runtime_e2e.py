@@ -101,6 +101,7 @@ STIMULUS_COMPOSE_SERVICES = [
 STIMULUS_PROJECTOR_SERVICE = "source-ingest-agora-projector"
 STIMULUS_SERVICES: dict[str, dict[str, Any]] = {
     "consultation": {"port_var": "CONSULTATION_PORT", "default_port": 18096, "health": "/readyz"},
+    "persona": {"port_var": "PERSONA_PORT", "default_port": 18002, "health": "/readyz"},
     "policy_learning": {"port_var": "POLICY_LEARNING_PORT", "default_port": 18100, "health": "/readyz"},
     "research": {"port_var": "RESEARCH_ORCHESTRATOR_PORT", "default_port": 18101, "health": "/readyz"},
     "training": {"port_var": "TRAINING_SESSION_PORT", "default_port": 18099, "health": "/readyz"},
@@ -286,9 +287,33 @@ def _isolated_dev_principal_env(compose_env: Mapping[str, str]) -> dict[str, str
         "PANTHEON_GOVERNANCE_JWT_SECRET": secret,
         "PANTHEON_GOVERNANCE_JWT_ISSUER": issuer,
         "PANTHEON_GOVERNANCE_JWT_AUDIENCE": audience,
+        "PERSONA_JWT_SECRET": secret,
+        "PERSONA_JWT_ISSUER": issuer,
+        "PERSONA_JWT_AUDIENCE": audience,
+        "PANTHEON_PERSONA_SERVICE_TOKEN": "pantheon-local-persona-service-token",
+        # deploy_nonprod_vm.sh:40,3731 binds Capital's verifier to the same dev
+        # secret that signs the runtime-manager/deployment capital-reader tokens.
+        "CAPITAL_JWT_SECRET": secret,
+        "PANTHEON_CAPITAL_JWT_SECRET": secret,
     }
     env.update(issue_dev_paper_principals.issue_environment({**env, "PANTHEON_ENV": "dev"}))
     return env
+
+
+def _isolated_handoff_env(compose_env: Mapping[str, str]) -> dict[str, str]:
+    """Per-run Agora handoff and policy-learning service credentials and tenants.
+
+    Passed to both the Compose owners and the suites so a local .env or an
+    exported shell variable cannot desynchronize them.
+    """
+    tenant = compose_env["PANTHEON_BFF_TENANT_ID"]
+    return {
+        "AGORA_HANDOFF_SERVICE_TOKEN": secrets.token_urlsafe(32),
+        "POLICY_LEARNING_SERVICE_TOKEN": secrets.token_urlsafe(32),
+        "POLICY_LEARNING_AGORA_TENANT_ID": tenant,
+        "POLICY_LEARNING_SERVICE_TENANTS": tenant,
+        "AGORA_HANDOFF_SERVICE_TENANTS": tenant,
+    }
 
 
 def _isolated_human_token(compose_env: Mapping[str, str], subject: str, *roles: str) -> str:
@@ -387,6 +412,9 @@ def _tw_official_pull_commands(
             project, compose_files, "up", "-d", "--no-deps", "--no-build",
             "--wait", "--wait-timeout", "120", "source-ingest",
         ),
+        "source_ingest_logs": _compose_command(
+            project, compose_files, "logs", "--no-color", "--tail", "400", "source-ingest",
+        ),
         "scheduler_start": _compose_command(
             project, compose_files, "up", "-d", "--no-deps", "--no-build",
             "--wait", "--wait-timeout", "120", TW_OFFICIAL_PULL_SERVICE,
@@ -439,6 +467,14 @@ def _run_tw_official_pull(
     except subprocess.TimeoutExpired as exc:
         failure = f"{TW_OFFICIAL_PULL_SERVICE} tick timed out: {exc}"
     finally:
+        if failure is not None:
+            # Connectors run inside source-ingest; the restore below recreates
+            # that container, so keep its logs (the per-connector error) first.
+            logs = subprocess.run(
+                commands["source_ingest_logs"], env=dict(compose_env),
+                capture_output=True, text=True, check=False,
+            )
+            _capture("source-ingest-logs", logs)
         restore = subprocess.run(
             commands["source_ingest_restore"], env=dict(compose_env),
             capture_output=True, text=True, check=False,
@@ -561,6 +597,10 @@ def _teardown_project(
         "down",
         "--volumes",
         "--remove-orphans",
+        # `local` drops only the <project>-<service> images compose built;
+        # `all` would also remove shared images (postgres, redis, nats, minio).
+        "--rmi",
+        "local",
     )
     process = subprocess.run(
         command,
@@ -1101,6 +1141,7 @@ def main(argv: list[str] | None = None) -> int:
     # the evidence report.
     compose_env["PANTHEON_BFF_JWT_SECRET"] = secrets.token_urlsafe(48)
     compose_env.update(_isolated_dev_principal_env(compose_env))
+    compose_env.update(_isolated_handoff_env(compose_env))
     for port_name, default_port in DEFAULT_PORTS.items():
         if port_name not in compose_env:
             compose_env[port_name] = str(default_port + args.port_offset)
@@ -1146,8 +1187,11 @@ def main(argv: list[str] | None = None) -> int:
     test_env["PANTHEON_L12_SOURCE_READER_TOKEN"] = reader_token
     test_env["PANTHEON_L12_SOURCE_READER_TENANT_ID"] = reader_tenant
     test_env["PANTHEON_L12_TENANT_ID"] = compose_env["PANTHEON_BFF_TENANT_ID"]
+    test_env["PANTHEON_L12_AGORA_HANDOFF_TOKEN"] = compose_env["AGORA_HANDOFF_SERVICE_TOKEN"]
+    test_env["PANTHEON_L12_POLICY_LEARNING_TOKEN"] = compose_env["POLICY_LEARNING_SERVICE_TOKEN"]
+    test_env["PANTHEON_L12_HUMAN_LEARNING_TENANT_ID"] = compose_env["POLICY_LEARNING_AGORA_TENANT_ID"]
     test_env["PANTHEON_L12_OPERATOR_TOKEN"] = _isolated_human_token(
-        compose_env, "l12-domain-suites-operator", "operator"
+        compose_env, "l12-domain-suites-operator", "operator", "persona.admin"
     )
     test_env["PANTHEON_L12_REVIEWER_TOKEN"] = _isolated_human_token(
         compose_env, "l12-domain-suites-reviewer", "governance_reviewer"

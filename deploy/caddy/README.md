@@ -37,16 +37,11 @@ deploy/caddy/sync-caddy.sh \
   app.dev.mvl-cap.tw \
   /var/www/pantheon-dev-fe
 
-# staging-live
-deploy/caddy/sync-caddy.sh \
-  lupin@104.155.223.192 \
-  pantheon-lupin-staging-bff.104.155.223.192.sslip.io \
-  deploy/caddy/staging.Caddyfile.tmpl
+# staging-live: no VM (docs/deployment/vm-dev-staging-prod-management-plan.md § 3.2)
 ```
 
-`scripts/migrate_to_benjamin_cutover.sh` calls this automatically for both envs
-after it updates the GitHub repo variables, so a future cutover re-points the
-cert SNI without manual SSH.
+The former cutover script was deleted. Run `sync-caddy.sh` explicitly after an
+ingress host change.
 
 > SSH note: these VMs reject the default agent key — `sync-caddy.sh` uses
 > `~/.ssh/google_compute_engine` (override with `CADDY_SSH_KEY`).

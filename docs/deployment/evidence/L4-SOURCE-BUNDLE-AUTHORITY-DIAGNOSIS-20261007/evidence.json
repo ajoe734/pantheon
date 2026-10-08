@@ -1,0 +1,37 @@
+{
+  "task_id": "L4-SOURCE-BUNDLE-AUTHORITY-DIAGNOSIS-20261007",
+  "change_class": "corrective",
+  "summary": "Diagnose exact L4 Source evidence bundle binding failure in qualification run 37689932878 at commit 8764ad85 and correct controller-owned scheduled tenant resolution in pipeline producer binding without relaxing authority gates.",
+  "diagnosis": {
+    "run_id": "37689932878",
+    "failure_sha": "8764ad85",
+    "actual_gha_observation": "In qualification run 37689932878 at commit 8764ad85, GHA report/logs captured: 'RuntimeError: Teaching evaluation job failed: evaluation_admission_rejected: source DatasetVersion authority rejected: exactly one source evidence bundle must bind the selected connector run'. Crucially, observed_count and matching_count were NOT present in the raw GHA log capture because _select_evidence_bundles at 8764ad85 emitted only the unadorned error string.",
+    "distinction_reproduction_vs_gha": "The initial manifest attempt in commit c5cbdead conflated local reproduction with raw GHA logs. In actual GHA logs, only the unadorned admission error appeared. The exact observed cardinality (matching_count=0, observed_count=0 for tenant-dev) was identified via local reproduction under the deployment configuration hypothesis, where PANTHEON_TENANT_ID was unset in the source ingestion container environment while training-session queried with X-Tenant-Id: tenant-dev.",
+    "cache_fix_relationship": "In qualification run 37689932878, the PostgreSQL cache fix (PR 6320/6322) did not resolve the L4 failure. A possible contributing defect is not excluded, and no claim is made that the cache fix caused or did not cause the failure; the empirical fact is that the failure persisted at 8764ad85 after the cache fix.",
+    "deployment_config_hypothesis_and_root_cause": "On the producer side, source-ingest runs scheduled connector tw_official_pull without PANTHEON_TENANT_ID in the container environment, and connector.metadata had no explicit tenant_id. Consequently, pipeline.py resolved connector_tenant to None, omitting the tenant stamp on source records and resulting in evidence bundles stored in PostgreSQL with payload->'metadata'->>'tenant_id' as None (untenanted). When training-session queried GET /api/source-ingest/evidence/bundles with header X-Tenant-Id: tenant-dev, PostgreSQL filtered bundles by payload->'metadata'->>'tenant_id' = 'tenant-dev', resulting in zero matching bundles for tenant-dev and causing _select_evidence_bundles to fail closed.",
+    "causal_link": "Producer pipeline did not resolve tenant from authoritative persisted controller state when container environment variable PANTHEON_TENANT_ID was unset, creating an untenanted bundle invisible to tenant-scoped consumer queries.",
+    "previous_attempt_record": "Failed attempt preserved: Commit c5cbdead initially claimed GHA logs reported observed matching_count=0/observed_count=0. Corrected: GHA logs captured only the unadorned admission rejection error; the counts and untenanted bundle mechanism are reproduced locally under the deployment configuration hypothesis. No forged evidence."
+  },
+  "fix": {
+    "producer": "In services/source_ingestion/pipeline.py, introduce _resolve_connector_tenant(connector, runtime) helper. When connector is controller-owned (reconciliation managed by persona_source_provisioning_reconciler) and env vars are unset, fall back to reading tenant_id from runtime.CONTROLLER_STATE_PATH. Apply consistently in both run_job and persist_source_evidence_refs.",
+    "consumer_diagnostics": "In services/training-session/source_dataset_authority.py, enhance _select_evidence_bundles failure message when matching_count != 1 with bounded, redacted diagnostics (matching_count, selected connector, run_id, observed_count, and sample bundle metadata [id, connector, run, tenant]) without exposing tokens, auth headers, or raw payload content.",
+    "fail_closed_invariants": "Strict single bundle requirement, exact connector/run match, tenant isolation, future timestamp rejection, and SHA-256 integrity remain strictly enforced without any test or assertion relaxations."
+  },
+  "acceptance_verification": {
+    "ac1_actual_failure_retained": "passed: Retained actual 37689932878 failure evidence at 8764 and coordinator PG_VISIBILITY_SCOPE_CORRECTION audit; confirmed cache fix did not resolve GHA failure (without claiming cache fix did not cause or was excluded as a contributing defect).",
+    "ac2_exact_cardinality_and_provenance": "passed: Distinguished raw GHA log (unadorned admission error) from local PG reproduction + deployment config hypothesis (untenanted producer bundles yielding matching_count=0 for X-Tenant-Id: tenant-dev). Missing vs duplicate vs other-run explicitly distinguished and preserved.",
+    "ac3_bounded_redacted_diagnostics": "passed: _select_evidence_bundles includes bounded redacted diagnostics (matching_count, selected connector/run, observed_count, sample bundle headers) with zero secrets, auth headers, or raw private corpus.",
+    "ac4_minimal_producer_consumer_binding": "passed: Minimal readable change in pipeline.py (+18 net) and source_dataset_authority.py (+14 net); net +32 production lines, well within <= 100 net budget. No test/assertion relaxations.",
+    "ac5_regression_reader_writer_tests": "passed: Scoped unit and service tests passed (51 passed in test_source_dataset_authority.py, 29 passed in test_service.py). Independent test suite of 101 real PG focused tests (with zero skips) plus forced Source backend 1 PG case passed. Explicitly verified strict SourceState/tenant conflicts negative actual PG readback checks (wrong tenant 404/empty, future timestamp rejected, duplicate matching bundles rejected, adversarial DB failure 503 without stale cache). Acknowledged: local/unit passes do not prove whole L4 or end-to-end causality; fresh protected full whole gate downstream after source integration will test causality.",
+    "ac6_head_review_ready": "passed: Clean git working tree on per-task branch task/L4-SOURCE-BUNDLE-AUTHORITY-DIAGNOSIS-20261007 ready for exact-head review."
+  },
+  "verification": {
+    "commands": [
+      "PYTHONPATH=. /tmp/l12venv/bin/pytest -v services/training-session/tests/test_source_dataset_authority.py",
+      "PYTHONPATH=. /tmp/l12venv/bin/pytest -v services/source_ingestion/test_service.py",
+      "PYTHONPATH=. /tmp/l12venv/bin/pytest -v services/source_ingestion/test_pg_store.py"
+    ],
+    "result": "passed (51 tests passed in test_source_dataset_authority.py; 29 tests passed in test_service.py; 7 passed in test_pg_store.py with real PostgreSQL; total 87 passed, 0 failures, 0 skips; independent 101 real PG focused suite + forced Source backend case passed)",
+    "causality_boundary": "Passing local unit and real-PG integration suites verifies local correctness under the deployment hypothesis, but does NOT prove whole L4 / end-to-end causality on GHA. A fresh protected full whole gate run after source integration into dev is mandatory to test causality."
+  }
+}

@@ -10,7 +10,7 @@ import hashlib
 import json
 import os
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from pydantic import ValidationError
 
@@ -89,6 +89,8 @@ compute_request_hash = stable_json_hash
 def resolve_final_idempotency_key(
     idempotency_key: Optional[str] = None,
     x_idempotency_key: Optional[str] = None,
+    *,
+    bff_error_fn: Optional[Callable[..., Exception]] = None,
 ) -> str:
     """Prefer Idempotency-Key (RFC); accept X-Idempotency-Key as a compatibility alias."""
     canonical = str(idempotency_key or "").strip()
@@ -97,7 +99,7 @@ def resolve_final_idempotency_key(
     alias = str(x_idempotency_key or "").strip()
     if alias:
         return alias
-    raise _bff_error(
+    raise (bff_error_fn or _bff_error)(
         400,
         ErrorCode.VALIDATION_FAILED,
         "Idempotency-Key is required for operator commands",

@@ -1,0 +1,100 @@
+{
+  "task_id": "BFF-APPROVAL-QUEUE-REDACTED-COUNT-TEST-20261007",
+  "title": "Realign the approval-queue page-scoped redaction test with the pending-only queue",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "change_class": "corrective",
+  "base_sha": "4a6f8b1de5285a094a2c8f90d8033a28c9318dee",
+  "head_sha": "54166bb4f8813f18dc88926f91cbd5caf32006dc",
+  "interpreter": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python",
+  "test_command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python -m pytest -q -p no:cacheprovider -o addopts=\"\" services/control-plane/bff/tests/test_governance_evidence_redaction_sweep.py services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_governance_router.py services/control-plane/bff/tests/test_bff_approvals_surface_contract.py services/control-plane/bff/test_pkt006_approval_queue_contract.py",
+  "per_file_results": {
+    "base": {
+      "services/control-plane/bff/tests/test_governance_evidence_redaction_sweep.py": {
+        "passed": 32,
+        "failed": 1
+      },
+      "services/control-plane/bff/tests/test_bff_test_architecture.py": {
+        "passed": 39,
+        "failed": 0
+      },
+      "services/control-plane/bff/tests/test_governance_router.py": {
+        "passed": 9,
+        "failed": 0
+      },
+      "services/control-plane/bff/tests/test_bff_approvals_surface_contract.py": {
+        "passed": 10,
+        "failed": 0
+      },
+      "services/control-plane/bff/test_pkt006_approval_queue_contract.py": {
+        "passed": 2,
+        "failed": 0
+      },
+      "total": {
+        "passed": 92,
+        "failed": 1
+      },
+      "raw_log_sha256": "9b93046c028fbfb9019a8da18af3bd125d0e7801021effb43bccf8a7309401be"
+    },
+    "head": {
+      "services/control-plane/bff/tests/test_governance_evidence_redaction_sweep.py": {
+        "passed": 33,
+        "failed": 0
+      },
+      "services/control-plane/bff/tests/test_bff_test_architecture.py": {
+        "passed": 39,
+        "failed": 0
+      },
+      "services/control-plane/bff/tests/test_governance_router.py": {
+        "passed": 9,
+        "failed": 0
+      },
+      "services/control-plane/bff/tests/test_bff_approvals_surface_contract.py": {
+        "passed": 10,
+        "failed": 0
+      },
+      "services/control-plane/bff/test_pkt006_approval_queue_contract.py": {
+        "passed": 2,
+        "failed": 0
+      },
+      "total": {
+        "passed": 93,
+        "failed": 0
+      },
+      "raw_log_sha256": "fbef40dff40e31c0b49c8a41494de6c2a577a88ad097682e1a677db80a996e98"
+    }
+  },
+  "base_failure": {
+    "test_id": "services/control-plane/bff/tests/test_governance_evidence_redaction_sweep.py::test_governance_approval_queue_redacted_count_scoped_to_returned_page",
+    "failure_message": "AssertionError: assert None (at line 399 assert next_token)",
+    "untouched_base_failures": "none; all other 92 tests passed on the base and remain untouched"
+  },
+  "classification": {
+    "status": "intended_change",
+    "deciding_commit": "224b60032",
+    "justification_references": [
+      "BFF-APPROVAL-QUEUE-PROJECTION-20261007 acceptance 1: 'The approval queue lists only pending decisions where pending means proposed or under_review; decided and revoked decisions never appear'.",
+      "docs/screens/PKT-006-approval-queue.md lines 12 and 16 define the queue as a paginated list of pending approval decisions.",
+      "tests/test_governance_router.py updated the matching expectation in commit 224b60032 (see docs/deployment/evidence/BFF-APPROVAL-QUEUE-PROJECTION-20261007/evidence.json:36-38)."
+    ],
+    "sibling_test_classification_note": "224b60032 labelled the sibling test_governance_router.py expectation real_regression_fix because its production fix lives in that commit while this task changes no production code."
+  },
+  "mutation_proofs": {
+    "raw_log_sha256": "d2899623f2b91c80821f34d6654f56920b74f7918806be57c73312816e74f441",
+    "mutation_a": {
+      "description": "In list_governance_approval_queue (router.py:620), delete ', pending_only=True' from the list_decisions call.",
+      "expected_outcome": "AssertionError: assert 'approval-2' == 'approval-4'",
+      "observed_outcome": "FAILED with AssertionError: assert 'approval-2' == 'approval-4' on page 2 decision_id assertion"
+    },
+    "mutation_b": {
+      "description": "Directly after line 635 in router.py (first occurrence of _redact_evidence_field_items in list_governance_approval_queue), insert '_, total_redacted = _redact_evidence_field_items(identity, items)'.",
+      "expected_outcome": "AssertionError: assert 2 == 0",
+      "observed_outcome": "FAILED with AssertionError: assert 2 == 0 on page 2 redacted_evidence_count assertion"
+    }
+  },
+  "diff_budget": {
+    "command": "python3 scripts/git/diff_budget.py --base 4a6f8b1de5285a094a2c8f90d8033a28c9318dee --head HEAD",
+    "table": "| class | added | deleted | net |\n|---|---|---|---|\n| production | +0 | -0 | +0 |\n| test | +21 | -2 | +19 |\n| docs/evidence | +100 | -0 | +100 |",
+    "production_net": 0
+  }
+}

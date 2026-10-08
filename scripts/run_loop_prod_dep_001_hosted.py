@@ -1278,9 +1278,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--compose-dir",
         type=Path,
-        default=Path(
-            "/home/lupin/pantheon-ci-deploy/managed-deploy-worktrees/dev-root"
-        ),
+        required=True,
     )
     parser.add_argument("--expected-sha", default="")
     parser.add_argument("--deploy-run-id", default="")

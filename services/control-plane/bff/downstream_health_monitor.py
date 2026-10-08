@@ -16,6 +16,9 @@ Key guarantees
   at-least-once with bounded exponential backoff, DLQ, and explicit replay.
 * An incident mapping is not cleared until the incidents authority confirms the
   recovery transition.
+* Undelivered rows with no delivery activity inside the delivery age bound are
+  quarantined instead of being delivered as current health truth; quarantine
+  releases any incident mapping they held so a new failure opens a new incident.
 """
 from __future__ import annotations
 
@@ -44,6 +47,9 @@ INFRASTRUCTURE_HEALTH_PRODUCER = "control-plane-bff"
 INFRASTRUCTURE_HEALTH_PATH = "/api/v1/telemetry/infrastructure-health"
 INFRASTRUCTURE_INCIDENT_PATH = "/api/incidents/consume-infrastructure-health"
 _DELIVERY_HISTORY_RETENTION_SECONDS = 7 * 24 * 60 * 60
+# Undelivered health rows older than this no longer describe current health.
+_DELIVERY_MAX_AGE_SECONDS = 6 * 60 * 60
+_STALE_DELIVERY_ERROR = "stale_beyond_delivery_age_bound"
 _WINDOW_HISTORY_RETENTION_SECONDS = 24 * 60 * 60
 
 # Compatibility exports.  They are deliberately empty/non-trading and must
@@ -158,6 +164,15 @@ _DYNAMIC_URL_EXCLUSIONS = {
 def _utc_now_rfc3339() -> str:
     return (
         datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+def _rfc3339_seconds_ago(seconds: float) -> str:
+    return (
+        datetime.fromtimestamp(time.time() - max(0.0, float(seconds)), tz=timezone.utc)
         .replace(microsecond=0)
         .isoformat()
         .replace("+00:00", "Z")
@@ -1048,24 +1063,60 @@ class _DurableHealthStore:
             connection.commit()
         return dict(row)
 
-    def _dependencies_delivered(
-        self,
-        connection: sqlite3.Connection,
-        dependencies: Sequence[str],
-    ) -> bool:
-        if not dependencies:
-            return True
-        placeholders = ",".join("?" for _ in dependencies)
-        rows = connection.execute(
-            f"""
-            SELECT delivery_id, status
-            FROM delivery_outbox
-            WHERE delivery_id IN ({placeholders})
-            """,
-            tuple(dependencies),
-        ).fetchall()
-        status_by_id = {str(row["delivery_id"]): str(row["status"]) for row in rows}
-        return all(status_by_id.get(item) == "delivered" for item in dependencies)
+    def quarantine_stale(self, *, max_age_seconds: float) -> List[str]:
+        """Quarantine undelivered rows with no delivery activity inside the bound.
+
+        ``updated_at`` is used rather than ``created_at`` so an operator's
+        explicit dead-letter replay (which refreshes it) is still attempted.
+
+        Returns the targets whose incident mapping was released because its
+        open or resolve delivery was quarantined.
+        """
+
+        cutoff = _rfc3339_seconds_ago(max_age_seconds)
+        now = time.time()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                """
+                UPDATE delivery_outbox
+                SET status='quarantined', claim_owner=NULL, claim_token=NULL,
+                    claim_until=NULL, last_error=?, updated_at=?
+                WHERE updated_at < ?
+                  AND (
+                    status IN ('pending', 'retry')
+                    OR (status='claimed' AND COALESCE(claim_until, 0) <= ?)
+                  )
+                RETURNING channel, target_name
+                """,
+                (_STALE_DELIVERY_ERROR, _utc_now_rfc3339(), cutoff, now),
+            ).fetchall()
+            released: List[str] = []
+            for target_name in sorted(
+                {
+                    str(row["target_name"])
+                    for row in rows
+                    if str(row["channel"]) in {"incident_open", "incident_resolve"}
+                }
+            ):
+                cursor = connection.execute(
+                    """
+                    UPDATE incident_mappings
+                    SET status='quarantined', updated_at=?
+                    WHERE target_name=? AND status IN ('opening', 'resolving')
+                    """,
+                    (_utc_now_rfc3339(), target_name),
+                )
+                if cursor.rowcount == 1:
+                    released.append(target_name)
+            connection.commit()
+        if rows:
+            log.warning(
+                "downstream health quarantined %d stale deliveries older than %.0fs",
+                len(rows),
+                max_age_seconds,
+            )
+        return released
 
     def claim_due(
         self,
@@ -1078,23 +1129,30 @@ class _DurableHealthStore:
         now = time.time()
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            # Rows whose dependencies are not delivered are excluded in the
+            # query itself, so a blocked oldest window cannot hide newer due
+            # rows from the drain.
             rows = connection.execute(
                 """
-                SELECT * FROM delivery_outbox
+                SELECT * FROM delivery_outbox AS candidate
                 WHERE (
                     status IN ('pending', 'retry')
                     OR (status='claimed' AND COALESCE(claim_until, 0) <= ?)
                 )
                   AND next_attempt_at <= ?
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM json_each(candidate.dependency_ids_json) AS dependency
+                    LEFT JOIN delivery_outbox AS upstream
+                      ON upstream.delivery_id = dependency.value
+                    WHERE upstream.status IS NOT 'delivered'
+                  )
                 ORDER BY created_at, delivery_id
                 LIMIT ?
                 """,
-                (now, now, max(1, int(limit * 4))),
+                (now, now, max(1, int(limit))),
             ).fetchall()
             for row in rows:
-                dependencies = json.loads(str(row["dependency_ids_json"]) or "[]")
-                if not self._dependencies_delivered(connection, dependencies):
-                    continue
                 token = uuid.uuid4().hex
                 cursor = connection.execute(
                     """
@@ -1186,12 +1244,16 @@ class _DurableHealthStore:
         reason: str,
         event_id: Optional[str] = None,
         channel: Optional[str] = None,
+        max_age_seconds: Optional[float] = None,
     ) -> int:
         conditions = ["status='dead_letter'"]
         params: List[Any] = []
         if event_id:
             conditions.append("event_id=?")
             params.append(event_id)
+        elif max_age_seconds is not None:
+            conditions.append("created_at >= ?")
+            params.append(_rfc3339_seconds_ago(max_age_seconds))
         if channel:
             conditions.append("channel=?")
             params.append(channel)
@@ -1355,6 +1417,7 @@ class _DurableHealthStore:
             "claimed": 0,
             "delivered": 0,
             "dead_letter": 0,
+            "quarantined": 0,
         }
         with self._connect() as connection:
             rows = connection.execute(
@@ -1408,6 +1471,7 @@ class DownstreamHealthMonitor:
         error_rate_min_samples: Optional[int] = None,
         delivery_max_attempts: Optional[int] = None,
         delivery_backoff_seconds: Optional[float] = None,
+        delivery_max_age_seconds: Optional[float] = None,
     ) -> None:
         self._telemetry_url = (
             telemetry_url
@@ -1516,6 +1580,17 @@ class DownstreamHealthMonitor:
                 else os.getenv("PANTHEON_BFF_HEALTH_DELIVERY_BACKOFF_SECONDS", "1")
             ),
         )
+        self._delivery_max_age = max(
+            60.0,
+            float(
+                delivery_max_age_seconds
+                if delivery_max_age_seconds is not None
+                else os.getenv(
+                    "PANTHEON_BFF_HEALTH_DELIVERY_MAX_AGE_SECONDS",
+                    str(_DELIVERY_MAX_AGE_SECONDS),
+                )
+            ),
+        )
         configured_state_path = (
             state_path
             or os.getenv("PANTHEON_BFF_HEALTH_STATE_PATH", "").strip()
@@ -1539,6 +1614,13 @@ class DownstreamHealthMonitor:
         self._task: Optional[asyncio.Task[None]] = None
         self._running = False
         self._last_retention_prune_at = 0.0
+        self._loop_12_truth: Dict[str, Any] = {
+            "status": "not_attempted",
+            "error": None,
+            "attempted_at": None,
+            "published_at": None,
+        }
+        self._loop_12_truth_task: Optional[asyncio.Task[None]] = None
         set_downstream_health_monitor(self)
 
     @property
@@ -1570,13 +1652,15 @@ class DownstreamHealthMonitor:
 
     async def stop(self) -> None:
         self._running = False
-        if self._task is not None and not self._task.done():
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
+        for task in (self._task, self._loop_12_truth_task):
+            if task is not None and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
         self._task = None
+        self._loop_12_truth_task = None
         log.info("DownstreamHealthMonitor stopped instance=%s", self._instance_id)
 
     def _configured_target_json(self) -> List[DownstreamTarget]:
@@ -1780,8 +1864,10 @@ class DownstreamHealthMonitor:
                 "instance_id": self._instance_id,
             },
             "delivery": self._store.delivery_counts(),
+            "delivery_max_age_seconds": self._delivery_max_age,
             "delivery_replays": self._store.list_replay_audit(),
             "incidents": self._store.list_incidents(),
+            "loop_12_controller_truth": dict(self._loop_12_truth),
         }
 
     def get_degraded_targets(self) -> List[str]:
@@ -1865,41 +1951,57 @@ class DownstreamHealthMonitor:
         total_targets = len(targets)
         healthy_targets = sum(1 for t in targets.values() if t.get("ok"))
 
-        dsn = os.environ.get("DATABASE_URL")
-        if dsn:
+        dsn = os.environ.get("DATABASE_URL", "").strip()
+        self._loop_12_truth["attempted_at"] = now_iso
+        if not dsn:
+            self._loop_12_truth.update(status="unconfigured", error="DATABASE_URL is not set")
+        elif self._loop_12_truth_task is not None and not self._loop_12_truth_task.done():
+            pass  # The previous heartbeat is still in flight; do not pile up writers.
+        else:
             try:
-                import sys
-                asyncpg_module = sys.modules.get("asyncpg")
-                if asyncpg_module is not None and getattr(asyncpg_module, "__name__", None) == "asyncpg":
-                    import importlib
-                    loop_control = importlib.import_module("services.loop-control")
-                    writer = loop_control.LoopControllerWriter(
-                        dsn=dsn,
-                        tenant_id=self.tenant_id,
-                        environment=os.environ.get("PANTHEON_ENV", "dev"),
-                        controller_name="bff_downstream_health_monitor",
-                    )
-                    heartbeat_coro = writer.record_heartbeat(
-                        loop_id="bff_health_monitoring",
-                        truth_level="reconciled_live_proof",
-                        desired_state_query="SELECT count(*) FROM bff_downstream_health_targets",
-                        actual_state_query="SELECT count(*) FROM downstream_health_probe_state WHERE ok=1",
-                        desired_state={"probe_targets_count": total_targets},
-                        downstream_actual_state={
-                            "status": "ready" if overall_ok else "degraded",
-                            "healthy_targets_count": healthy_targets,
-                            "total_targets_count": total_targets,
-                            "checked_at": now_iso,
-                        },
-                        evidence_refs=["services/control-plane/bff/downstream_health_monitor.py"],
-                    )
+                import importlib
+
+                loop_control = importlib.import_module("services.loop-control")
+                writer = loop_control.LoopControllerWriter(
+                    dsn=dsn,
+                    tenant_id=self.tenant_id,
+                    environment=os.environ.get("PANTHEON_ENV", "dev"),
+                    controller_name="bff_downstream_health_monitor",
+                )
+                heartbeat_coro = writer.record_heartbeat(
+                    loop_id="bff_health_monitoring",
+                    truth_level="reconciled_live_proof",
+                    desired_state_query="SELECT count(*) FROM bff_downstream_health_targets",
+                    actual_state_query="SELECT count(*) FROM downstream_health_probe_state WHERE ok=1",
+                    desired_state={"probe_targets_count": total_targets},
+                    downstream_actual_state={
+                        "status": "ready" if overall_ok else "degraded",
+                        "healthy_targets_count": healthy_targets,
+                        "total_targets_count": total_targets,
+                        "checked_at": now_iso,
+                    },
+                    evidence_refs=["services/control-plane/bff/downstream_health_monitor.py"],
+                )
+            except Exception as exc:  # noqa: BLE001 - reported in monitor state
+                self._record_loop_12_truth_failure(exc, dsn)
+            else:
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+                if loop is None:
                     try:
-                        loop = asyncio.get_running_loop()
-                        loop.create_task(heartbeat_coro)
-                    except RuntimeError:
                         asyncio.run(heartbeat_coro)
-            except Exception as exc:
-                log.warning("Failed to publish Loop 12 controller truth to database: %s", exc)
+                    except Exception as exc:  # noqa: BLE001 - reported in monitor state
+                        self._record_loop_12_truth_failure(exc, dsn)
+                    else:
+                        self._record_loop_12_truth_published()
+                else:
+                    task = loop.create_task(heartbeat_coro, name="bff-loop-12-controller-truth")
+                    task.add_done_callback(
+                        lambda done: self._record_loop_12_truth_outcome(done, dsn)
+                    )
+                    self._loop_12_truth_task = task
 
         record = {
             "loop_id": "bff_health_monitoring",
@@ -1924,6 +2026,24 @@ class DownstreamHealthMonitor:
             "evidence_refs": ["services/control-plane/bff/downstream_health_monitor.py"],
         }
         return record
+
+    def _record_loop_12_truth_published(self) -> None:
+        self._loop_12_truth.update(
+            status="published", error=None, published_at=_utc_now_rfc3339()
+        )
+
+    def _record_loop_12_truth_failure(self, exc: BaseException, dsn: str) -> None:
+        message = f"{type(exc).__name__}: {exc}".replace(dsn, "<DATABASE_URL>")
+        self._loop_12_truth.update(status="failed", error=message[:500])
+        log.warning("Failed to publish Loop 12 controller truth: %s", message)
+
+    def _record_loop_12_truth_outcome(self, task: "asyncio.Task[Any]", dsn: str) -> None:
+        if task.cancelled():
+            self._loop_12_truth.update(status="failed", error="heartbeat cancelled")
+        elif task.exception() is not None:
+            self._record_loop_12_truth_failure(task.exception(), dsn)
+        else:
+            self._record_loop_12_truth_published()
 
     async def _probe_one(
         self,
@@ -2205,7 +2325,14 @@ class DownstreamHealthMonitor:
                 max_attempts=self._delivery_max_attempts,
             )
 
-        if is_recovery and incident is not None and self._incidents_url:
+        # Queue the resolve only on the opening/open -> resolving transition;
+        # a mapping already resolving has its resolve delivery in the outbox.
+        if (
+            is_recovery
+            and incident is not None
+            and self._incidents_url
+            and str(incident["status"]) in {"opening", "open"}
+        ):
             incident_id = str(incident["incident_id"])
             resolve_delivery_id = f"incident-resolve:{event_id}"
             dependencies = [str(incident["create_delivery_id"])]
@@ -2419,6 +2546,10 @@ class DownstreamHealthMonitor:
         return headers
 
     def _deliver_due_sync(self) -> int:
+        for target_name in self._store.quarantine_stale(
+            max_age_seconds=self._delivery_max_age
+        ):
+            self._open_incident_ids.pop(target_name, None)
         delivered_count = 0
         # Drain newly unblocked dependency stages in the same cycle.  A bounded
         # loop prevents a malformed graph from monopolizing the worker.
@@ -2512,12 +2643,15 @@ class DownstreamHealthMonitor:
         event_id: Optional[str] = None,
         channel: Optional[str] = None,
     ) -> Dict[str, Any]:
+        # Without an explicit event id, only dead letters inside the delivery
+        # age bound are redriven; older rows need an explicit event id.
         replayed = self._store.replay_dead_letters(
             actor_id=actor_id,
             approval_ref=approval_ref,
             reason=reason,
             event_id=event_id,
             channel=channel,
+            max_age_seconds=None if event_id else self._delivery_max_age,
         )
         delivered = self._deliver_due_sync()
         return {
@@ -2525,6 +2659,7 @@ class DownstreamHealthMonitor:
             "delivered_now": delivered,
             "event_id": event_id,
             "channel": channel,
+            "delivery_max_age_seconds": None if event_id else self._delivery_max_age,
             "actor_id": actor_id,
             "approval_ref": approval_ref,
             "delivery": self._store.delivery_counts(),

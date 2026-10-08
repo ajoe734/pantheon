@@ -7,7 +7,7 @@
 set -u
 
 CONTAINER="${PANTHEON_PAPER_FLEET_RECONCILER_CONTAINER:-${PANTHEON_PAPER_RUNTIME_CONTAINER:-pantheon-paper-fleet-reconciler-1}}"
-COMPOSE_DIR="${PANTHEON_COMPOSE_DIR:-/home/lupin/pantheon}"
+COMPOSE_DIR="${PANTHEON_COMPOSE_DIR:-}"
 COMPOSE_SERVICE="${PANTHEON_PAPER_FLEET_RECONCILER_SERVICE:-${PANTHEON_PAPER_RUNTIME_SERVICE:-paper-fleet-reconciler}}"
 
 ts() {
@@ -17,7 +17,7 @@ ts() {
 status="$(docker inspect -f '{{.State.Status}}' "$CONTAINER" 2>/dev/null || true)"
 if [ -z "$status" ]; then
   echo "$(ts) missing $CONTAINER; attempting compose recreate for $COMPOSE_SERVICE"
-  if (cd "$COMPOSE_DIR" && docker compose up -d "$COMPOSE_SERVICE"); then
+  if (cd "${COMPOSE_DIR:?set PANTHEON_COMPOSE_DIR to the dev compose checkout}" && docker compose up -d "$COMPOSE_SERVICE"); then
     echo "$(ts) recreated $COMPOSE_SERVICE as $CONTAINER"
     exit 0
   fi

@@ -1,0 +1,48 @@
+{
+  "task_id": "SOURCE-TENANT-RESOLUTION-SINGLE-PATH-20261008",
+  "change_class": "simplify",
+  "summary": "Converge tenant resolution for controller-owned connectors to a single source of truth: controller_state.json's stripped tenant_id. Delete duplicate env-derived tenant resolution paths (PANTHEON_TENANT_ID, PANTHEON_BFF_TENANT_ID) and reconciler metadata stamping.",
+  "before_after_tenant_resolution": {
+    "before": [
+      "connector.metadata tenant_id (stamped by SourceProvisioningReconciler from source-ingest process env PANTHEON_TENANT_ID / PANTHEON_BFF_TENANT_ID)",
+      "source-ingest process environment variables: PANTHEON_TENANT_ID, then PANTHEON_BFF_TENANT_ID",
+      "tenant_id in controller_state.json (written by source-ingest controller worker)"
+    ],
+    "after": [
+      "controller_state.json tenant_id via read_controller_state(runtime.CONTROLLER_STATE_PATH) as the sole source of truth for controller-owned connectors",
+      "missing or empty controller state fails closed with SourceEvidenceError before scheduler.run_once",
+      "connector.metadata tenant_id ignored for controller-owned connectors; preserved only for non-controller-owned connectors",
+      "env vars PANTHEON_TENANT_ID and PANTHEON_BFF_TENANT_ID deleted from pipeline.py, runtime.py, and persona_source_reconciler.py",
+      "duplicate stamping in persist_source_evidence_refs removed; run_job is the single stamping site"
+    ]
+  },
+  "behaviour_change": "A job for a controller-owned connector with no controller state now fails with SourceEvidenceError instead of persisting untenanted records that strict tenant reads never return (the L4 'exactly one source evidence bundle' symptom).",
+  "diff_budget": {
+    "table": "| class | added | deleted | net |\n|---|---|---|---|\n| production | +9 | -31 | -22 |\n| test | +220 | -38 | +182 |\n| docs/evidence | +49 | -0 | +49 |",
+    "production_net": -22,
+    "production_budget": 0
+  },
+  "acceptance_verification": {
+    "ac1_single_path_controller_state": "passed: pipeline._resolve_connector_tenant resolves controller-owned connectors strictly from read_controller_state(runtime.CONTROLLER_STATE_PATH); raises SourceEvidenceError when missing/empty; ignores env and connector.metadata",
+    "ac2_non_controller_connectors": "passed: non-controller-owned connectors retain metadata tenant_id fallback",
+    "ac3_single_stamping_site": "passed: persist_source_evidence_refs no longer calls resolver or stamps tenant; run_job remains the single stamping site",
+    "ac4_reconciler_cleanup": "passed: SourceProvisioningReconciler tenant_id constructor parameter, env fallback, and metadata stamping removed",
+    "ac5_no_env_or_helper_leaks": "passed: git grep on pipeline.py, runtime.py, persona_source_reconciler.py returns 0 matches for PANTHEON_TENANT_ID, PANTHEON_BFF_TENANT_ID, or resolve_requirement_tenant",
+    "ac6_controller_worker_compose_unchanged": "passed: controller_worker.py, docker-compose.yml, test_compose_activation.py unchanged",
+    "ac7_reconciler_tests_updated": "passed: obsolete metadata stamp test deleted; test_controller_provisioned_official_connector... updated to save ControllerState fixture",
+    "ac8_new_test_service_acceptance": "passed: new tests 8a (no controller state fails closed) and 8b (resolves strictly from controller state, ignoring env and stale metadata) pass",
+    "ac9_worker_tenant_tests_preserved": "passed: test_controller_worker_resolves_tenant_from_bff_tenant_id and test_controller_owned_connector_resolves_tenant_from_controller_state pass unchanged",
+    "ac10_fixture_fixes_and_validation": "passed: candidate tests in test_scheduler.py and test_multi_process_source_reconciliation.py updated with ControllerState fixture; all targeted and regression tests pass",
+    "ac11_diff_budget_negative_net": "passed: net production line count is -22, satisfying simplify limit"
+  },
+  "verification_commands": [
+    "PYTHONPATH=. .venv-pantheon/bin/python3 -m pytest services/source_ingestion/test_service.py",
+    "PYTHONPATH=. .venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_persona_source_reconciler.py",
+    "PYTHONPATH=. .venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_controller_worker.py",
+    "PYTHONPATH=. .venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_controller_worker_manual_once.py",
+    "PYTHONPATH=. .venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_scheduler.py",
+    "PYTHONPATH=. .venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_multi_process_source_reconciliation.py",
+    "PYTHONPATH=. .venv-pantheon/bin/python3 -m pytest services/knowledge/evidence/tests/test_normalization.py",
+    "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD"
+  ]
+}
