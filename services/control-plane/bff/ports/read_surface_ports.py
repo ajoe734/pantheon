@@ -540,7 +540,8 @@ class ReadSurfacePorts:
         if dataset in {"rankings", "ranking_formulas", "rebalances", "capital_allocations", "containments", "evolution_programs", "evolution_decisions"}:
             port = self.persona_capital_runtime.evolution if dataset.startswith("evolution_") else self.persona_capital_runtime.ranking
             status = port.get_surface_status()["surfaces"][dataset]
-            return "missing" if status["status"] == "unavailable" else status["source"]
+            source = status.get("source")
+            return "missing" if source in {None, "missing"} else source
         if dataset in {"approval_decisions", "approval_queue_items", "governance_review_queue_items"}:
             reader = self.ooda_management.review_queue._approval_decisions_reader
             try:
