@@ -158,6 +158,17 @@ def test_deploy_nonprod_vm_script_syntax_and_vacuum_presence() -> None:
     assert "VACUUM;" in script_text
 
 
+def test_deploy_nonprod_vm_wires_dev_reconciliation_drift_postgres_store() -> None:
+    """Acceptance 1, 2: deploy_nonprod_vm.sh wires reconciliation-drift to postgres store with pantheon_app DSN."""
+    script_text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert 'DEV_RECONCILIATION_DRIFT_STORE_BACKEND="${DEV_RECONCILIATION_DRIFT_STORE_BACKEND:-postgres}"' in script_text
+    assert 'DEV_RECONCILIATION_DRIFT_STORE_DSN="${DEV_RECONCILIATION_DRIFT_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}"' in script_text
+    assert 'RECONCILIATION_DRIFT_STORE_BACKEND="${RECONCILIATION_DRIFT_STORE_BACKEND:-$DEV_RECONCILIATION_DRIFT_STORE_BACKEND}"' in script_text
+    assert 'RECONCILIATION_DRIFT_STORE_DSN="${RECONCILIATION_DRIFT_STORE_DSN:-$DEV_RECONCILIATION_DRIFT_STORE_DSN}"' in script_text
+    assert 'RECONCILIATION_DRIFT_STORE_BACKEND="${RECONCILIATION_DRIFT_STORE_BACKEND:-postgres}"' in script_text
+    assert 'RECONCILIATION_DRIFT_STORE_DSN="${RECONCILIATION_DRIFT_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}"' in script_text
+
+
 def test_source_ingestion_remains_reconcile_only_manual() -> None:
     """Source Ingestion in docker-compose.yml must remain reconcile-only / manual.
 

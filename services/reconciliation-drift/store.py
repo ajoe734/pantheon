@@ -28,6 +28,8 @@ class ReconciliationStoreError(RuntimeError):
 
 
 class ReconciliationDriftStore:
+    backend: str = "json"
+
     def __init__(self, data_dir: str | Path) -> None:
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -681,6 +683,8 @@ class ReconciliationDriftStore:
 
 class PostgresReconciliationDriftStore(ReconciliationDriftStore):
     """Postgres owner store for every reconciliation authority record."""
+
+    backend: str = "postgres"
 
     def __init__(
         self,
