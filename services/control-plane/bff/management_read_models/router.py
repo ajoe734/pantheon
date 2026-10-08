@@ -78,20 +78,14 @@ def _get_human_inbox_surface_timeout() -> float:
         return 3.0
 
 
-def _get_management_cockpit_read_timeout() -> float:
+def _get_management_cockpit_read_timeout() -> Optional[float]:
+    raw = os.getenv("PANTHEON_BFF_COCKPIT_READ_TIMEOUT_SECONDS")
+    if raw is None or not raw.strip():
+        return None
     try:
-        import sys
-        main_mod = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
-        if main_mod is not None:
-            fn = getattr(main_mod, "_management_cockpit_read_timeout_seconds", None)
-            if fn is not None:
-                return float(fn())
-    except Exception:
-        pass
-    try:
-        return max(0.05, float(os.getenv("PANTHEON_BFF_COCKPIT_READ_TIMEOUT_SECONDS", "0.6").strip()))
+        return max(0.05, float(raw))
     except (TypeError, ValueError):
-        return 0.6
+        return None
 
 
 class _StoreTimeoutProxy:
