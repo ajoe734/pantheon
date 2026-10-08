@@ -151,6 +151,8 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
 
     bff_env = _env_map(services["operator-bff"])
     assert bff_env["PANTHEON_SOURCE_INGEST_API_URL"] == "http://source-ingest:8097"
+    assert "SOURCE_INGEST_CONTROLLER_TOKEN_FILE" not in bff_env
+    assert not any("source-ingest-data" in str(v) for v in services["operator-bff"].get("volumes", []))
     assert "source-ingest" in services["operator-bff"]["depends_on"]
 
     smoke = (compose_path.parent / "scripts/smoke_honest_stack.py").read_text(encoding="utf-8")
