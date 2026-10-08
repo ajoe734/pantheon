@@ -19,9 +19,6 @@ except ImportError:
 
 
 _DEFAULT_LOVABLE_CORS_ORIGINS: List[str] = [
-    # Pantheon-owned self-hosted dev frontend (execute-plans). Dev-only:
-    # filtered out by production-strict CORS filter below.
-    "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
     # Lovable shared-preview and published URLs.
     "https://preview--pantheon-dev.lovable.app",
     "https://preview--pantheon-ai-system-front-dev.lovable.app",
@@ -48,7 +45,6 @@ _DEV_LOOPBACK_CORS_ORIGINS: List[str] = [
 ]
 
 _DEV_LOVABLE_CORS_ORIGINS: set[str] = {
-    "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
     "https://preview--pantheon-dev.lovable.app",
     "https://preview--pantheon-ai-system-front-dev.lovable.app",
     "https://pantheon-dev.lovable.app",
