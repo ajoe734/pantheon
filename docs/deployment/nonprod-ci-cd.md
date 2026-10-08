@@ -36,6 +36,29 @@ Pantheon Lupin GCP projects and uses GitHub Actions for pinned VM deployment:
 | Pantheon Dev FE Deploy | `execute-plans:.github/workflows/pantheon-dev-fe-deploy.yml` | controller dispatch only | authenticate the exact gate artifact, probe the candidate, then atomically switch the hosted FE |
 | Dev Taiwan Market Daily Refresh | `.github/workflows/dev-tw-market-refresh.yml` | daily `0 7 * * 1-5` (15:00 Asia/Taipei) or manual dispatch | execute bounded TWSE/TPEx market snapshot refresh on dev VM via `deploy_nonprod_vm.sh --refresh-only` |
 
+## Lease recovery from transient GitHub failures
+
+The dev deploy, cross-repository compensation, Agora acceptance and daily
+market-refresh workflows use the same exact immutable lease-controller commit
+and verify its script checksums. Updating `dev_environment_lease.py` alone
+does not activate a fix: update those pins and the compensation fixture fetch
+together. The deployment contract tests compare the pinned controller with the
+shipped implementation so source-only fixes cannot silently remain inactive.
+
+GitHub reads retry HTTP 500/502/503/504 and transport failures at most three
+times, with 1s/2s backoff and a 5s timeout per request. A transient heartbeat
+failure retries one complete renewal after at most 5s, rather than waiting
+another normal 60s interval. An ambiguous write is never blindly replayed:
+renewal re-reads the authoritative lease, revalidates its immutable ownership
+and expiry, and uses the current blob SHA for compare-and-swap.
+
+Authentication failures, malformed leases, changed owners, expired leases and
+CAS conflicts remain terminal. Exhausted retries also fail closed and retain
+the existing quarantine/compensation behavior. No retry extends local expiry
+or uses the runner wall clock as ownership evidence; the GitHub `Date` header
+remains authoritative. Guarded commands retain their periodic remote checks
+and process-group termination on actual ownership or heartbeat loss.
+
 ## OpenClaw acceptance after deployment
 
 The dev release deploys and verifies the exact FE/BFF pair before provider

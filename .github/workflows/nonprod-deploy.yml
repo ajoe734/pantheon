@@ -167,7 +167,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           repository: ajoe734/pantheon
-          ref: 9e564718da8c39199a4c311f1a667b74226e3428
+          ref: aee1243573e29d289dac00be13641bb16be7f6bf
           path: .lease-controller
           fetch-depth: 1
           persist-credentials: false
@@ -760,11 +760,11 @@ jobs:
           unset BASH_ENV ENV PYTHONPATH PYTHONHOME CDPATH
           unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
           controller="${GITHUB_WORKSPACE}/.lease-controller"
-          [[ "$(git -C "${controller}" rev-parse HEAD)" == "9e564718da8c39199a4c311f1a667b74226e3428" ]]
+          [[ "$(git -C "${controller}" rev-parse HEAD)" == "aee1243573e29d289dac00be13641bb16be7f6bf" ]]
           [[ -f "${controller}/scripts/dev_environment_lease.py" && ! -L "${controller}/scripts/dev_environment_lease.py" ]]
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
-            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
+            da9a728ed8cec8e1133b92171e4038f9dc51ef4888911acd02c7e399e54d95ae "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
 
@@ -847,7 +847,7 @@ jobs:
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           [[ -f "${controller}/scripts/dev_environment_lease.py" && ! -L "${controller}/scripts/dev_environment_lease.py" ]]
           printf '%s  %s\n' \
-            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
+            da9a728ed8cec8e1133b92171e4038f9dc51ef4888911acd02c7e399e54d95ae "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           exec {token_fd}<<<"${lease_token}"
@@ -1158,7 +1158,7 @@ jobs:
         run: |
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           printf '%s  %s\n' \
-            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
+            da9a728ed8cec8e1133b92171e4038f9dc51ef4888911acd02c7e399e54d95ae "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           exec "${controller}/scripts/run_with_dev_environment_lease.sh" \
@@ -1310,7 +1310,7 @@ jobs:
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
-            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
+            da9a728ed8cec8e1133b92171e4038f9dc51ef4888911acd02c7e399e54d95ae "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           case "${DEV_AUTH_PROFILE}" in
@@ -1412,7 +1412,7 @@ jobs:
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
-            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
+            da9a728ed8cec8e1133b92171e4038f9dc51ef4888911acd02c7e399e54d95ae "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           # The guard binary above is the immutable pinned trust root; the
@@ -1631,7 +1631,7 @@ jobs:
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
-            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
+            da9a728ed8cec8e1133b92171e4038f9dc51ef4888911acd02c7e399e54d95ae "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
@@ -1730,7 +1730,7 @@ jobs:
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
-            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
+            da9a728ed8cec8e1133b92171e4038f9dc51ef4888911acd02c7e399e54d95ae "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
@@ -1878,7 +1878,7 @@ jobs:
           [[ -f "${controller}/scripts/dev_environment_lease.py" && ! -L "${controller}/scripts/dev_environment_lease.py" ]]
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
-            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
+            da9a728ed8cec8e1133b92171e4038f9dc51ef4888911acd02c7e399e54d95ae "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           case "${DEV_AUTH_PROFILE}" in
@@ -2210,7 +2210,7 @@ jobs:
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           [[ -f "${controller}/scripts/dev_environment_lease.py" && ! -L "${controller}/scripts/dev_environment_lease.py" ]]
           printf '%s  %s\n' \
-            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
+            da9a728ed8cec8e1133b92171e4038f9dc51ef4888911acd02c7e399e54d95ae "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
 
@@ -2326,7 +2326,7 @@ jobs:
             echo "- Rollback BFF baseline: \`${{ steps.rollback_baseline.outputs.sha }}\`"
             echo "- Rollback FE baseline: \`${{ steps.rollback_baseline.outputs.frontend_sha }}\`"
             echo "- Lease: \`${{ steps.lease.outputs.lease_id }}\`"
-            echo "- Controller: \`9e564718da8c39199a4c311f1a667b74226e3428\`"
+            echo "- Controller: \`aee1243573e29d289dac00be13641bb16be7f6bf\`"
             echo "- Target: \`dev/${TARGET_COMPONENT}\`"
             echo "- Deploy deadline: \`${{ vars.DEV_DEPLOY_DEADLINE_SECONDS || '7200' }}s\`"
             echo "- PPL-ALLOC-009 dev proof enabled: \`${PPL_ALLOC_009_DEV_PROOF_ENABLED}\`"
@@ -2369,7 +2369,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           repository: ajoe734/pantheon
-          ref: 9e564718da8c39199a4c311f1a667b74226e3428
+          ref: aee1243573e29d289dac00be13641bb16be7f6bf
           path: .lease-controller
           fetch-depth: 1
           persist-credentials: false

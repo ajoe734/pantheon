@@ -160,6 +160,14 @@ components:
       - scripts/test_auto_deploy_dev_pair.py
       - scripts/cross_repo_release_controller.py
       - scripts/test_cross_repo_release_controller.py
+      - scripts/dev_environment_lease.py
+      - scripts/run_with_dev_environment_lease.sh
+      - scripts/compensate_cross_repo_release.sh
+      - scripts/test_dev_environment_lease.py
+      - scripts/test_dev_environment_lease_guard.py
+      - scripts/test_dev_environment_lease_deploy_contract.py
+      - scripts/test_dev_paper_diagnostics_failure_path.py
+      - scripts/test_nonprod_dev_artifact_workflow.py
       - docs/deployment/nonprod-ci-cd.md
       - scripts/run-acceptance.sh
       - scripts/test_run_acceptance.py
