@@ -508,6 +508,18 @@ def _extract_stage_dev_paper_prerequisite_readiness_func() -> str:
     return script_text[start : end + 2]
 
 
+def _extract_verify_dev_paper_fleet_func() -> str:
+    """Extract verify_dev_paper_fleet function definition from deploy_nonprod_vm.sh."""
+    script_text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = script_text.find("verify_dev_paper_fleet() {")
+    assert start != -1, "verify_dev_paper_fleet() not found in deploy_nonprod_vm.sh"
+    next_func = script_text.find("\nverify_dev_evolution_daily_sweep() {", start)
+    assert next_func != -1, "next function boundary after verify_dev_paper_fleet not found"
+    end = script_text.rfind("\n}\n", start, next_func)
+    assert end != -1, "closing brace for verify_dev_paper_fleet not found"
+    return script_text[start : end + 2]
+
+
 def _write_mock_git(bin_dir: Path, sha: str) -> None:
     mock_git = bin_dir / "git"
     mock_git.write_text(
@@ -4026,3 +4038,138 @@ stage_dev_paper_prerequisite_readiness SPY 5 0
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_verify_dev_paper_fleet_summary_bounded_for_100_workers(tmp_path: Path) -> None:
+    """verify_dev_paper_fleet prints a bounded summary line for 100 workers well under transport limits."""
+    fleet_func = _extract_verify_dev_paper_fleet_func()
+
+    workers = [
+        {
+            "binding_id": f"b-{i:03d}",
+            "runtime_id": f"rt-{i:03d}",
+            "status": "running",
+            "heartbeat_status": "active",
+            "monitoring_session_id": f"prmon-{i:03d}",
+            "restart_count": 0,
+            "last_error": None,
+        }
+        for i in range(100)
+    ]
+    payload = {
+        "ready": True,
+        "live": True,
+        "cycle_count": 10,
+        "worker_count": 100,
+        "running_count": 100,
+        "last_error": None,
+        "monitoring_last_error": None,
+        "workers": workers,
+    }
+    payload_json = json.dumps(payload)
+
+    mock_curl = tmp_path / "curl"
+    mock_curl.write_text(
+        f"""#!/usr/bin/env bash
+printf '%s' '{payload_json}'
+""",
+        encoding="utf-8",
+    )
+    mock_curl.chmod(0o755)
+
+    test_script = tmp_path / "test_verify_paper_fleet.sh"
+    test_script.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+
+export PATH="{tmp_path}:$PATH"
+
+{fleet_func}
+
+verify_dev_paper_fleet
+""",
+        encoding="utf-8",
+    )
+    test_script.chmod(0o755)
+
+    proc = subprocess.run(["bash", str(test_script)], capture_output=True, text=True, check=False)
+    assert proc.returncode == 0, f"script failed: stderr={proc.stderr}, stdout={proc.stdout}"
+
+    stdout_lines = proc.stdout.splitlines()
+    assert any("[info] paper fleet reconciler is ready and all desired workers are active" in line for line in stdout_lines)
+
+    summary_line = None
+    for line in stdout_lines:
+        line_clean = line.strip()
+        if line_clean.startswith("{") and "worker_count" in line_clean:
+            summary_line = line_clean
+            break
+
+    assert summary_line is not None, f"summary JSON line not found in stdout: {proc.stdout}"
+    summary = json.loads(summary_line)
+    assert summary["ready"] is True
+    assert summary["live"] is True
+    assert summary["worker_count"] == 100
+    assert summary["running_count"] == 100
+    assert summary["last_error"] is None
+    assert summary["monitoring_last_error"] is None
+
+    # Every stdout line must be strictly bounded (< 512 bytes, far below 65536 bytes)
+    for line in stdout_lines:
+        assert len(line) < 512, f"stdout line exceeds bound ({len(line)} bytes): {line[:100]}..."
+
+
+def test_verify_dev_paper_fleet_failure_summary_bounded(tmp_path: Path) -> None:
+    """On failure, verify_dev_paper_fleet prints a bounded summary line and exits non-zero."""
+    fleet_func = _extract_verify_dev_paper_fleet_func()
+
+    payload = {
+        "ready": False,
+        "live": True,
+        "cycle_count": 0,
+        "worker_count": 5,
+        "running_count": 2,
+        "last_error": "worker crash loop",
+        "monitoring_last_error": None,
+        "workers": [],
+    }
+    payload_json = json.dumps(payload)
+
+    mock_curl = tmp_path / "curl"
+    mock_curl.write_text(
+        f"""#!/usr/bin/env bash
+printf '%s' '{payload_json}'
+""",
+        encoding="utf-8",
+    )
+    mock_curl.chmod(0o755)
+
+    mock_docker = tmp_path / "docker"
+    mock_docker.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    mock_docker.chmod(0o755)
+
+    test_script = tmp_path / "test_verify_fail.sh"
+    test_script.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+
+export PATH="{tmp_path}:$PATH"
+seq() {{ echo 1; }}
+
+{fleet_func}
+
+verify_dev_paper_fleet
+""",
+        encoding="utf-8",
+    )
+    test_script.chmod(0o755)
+
+    proc = subprocess.run(["bash", str(test_script)], capture_output=True, text=True, check=False)
+    assert proc.returncode == 1
+
+    stdout_lines = proc.stdout.splitlines()
+    for line in stdout_lines:
+        assert len(line) < 512, f"failure stdout line exceeds bound ({len(line)} bytes): {line[:100]}..."
+
