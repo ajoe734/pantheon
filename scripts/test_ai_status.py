@@ -9184,6 +9184,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         import check_commit_trailers
         with (
             mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge),
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=True),
             mock.patch.object(check_commit_trailers, "check_range", return_value=[]),
         ):
             accepted = ai_status.validate_handoff_pr_delivery_binding(
@@ -9314,6 +9315,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         import check_commit_trailers
         with (
             mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge),
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=True),
             mock.patch.object(check_commit_trailers, "check_range", return_value=[]),
         ):
             with self.assertRaisesRegex(SystemExit, "renamed file source 'secret/unauthorized_old.py' is outside"):
@@ -9367,6 +9369,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         import check_commit_trailers
         with (
             mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge),
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=True),
             mock.patch.object(check_commit_trailers, "check_range", return_value=[]),
         ):
             accepted = ai_status.validate_handoff_pr_delivery_binding(
@@ -9457,6 +9460,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         import check_commit_trailers
         with (
             mock.patch.object(ai_status, "_github_review_bridge_module", return_value=mock_bridge),
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=True),
             mock.patch.object(check_commit_trailers, "check_range", return_value=[]),
         ):
             with self.assertRaisesRegex(SystemExit, "GitHub rejected the proposed delivery binding"):
