@@ -36,6 +36,7 @@ os.environ.setdefault("RANKING_STORE_BOOTSTRAP", "0")
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.personas import service as persona_service
 from services.control_plane.bff.core.app_factory import build_bff_app
 from services.control_plane.bff.agora.identity.scope import AgoraScopeResolutionError
 from services.control_plane.bff.agora.router import _raise_scope_error
@@ -272,7 +273,7 @@ class TestOperatorBFF(unittest.TestCase):
             sse_buffers=bff_main._sse_buffers,
             sse_subscribers=bff_main._sse_subscribers,
             gov_bff_action_command=bff_main._gov_bff_action_command,
-            deprecated_bff_path_response=bff_main._deprecated_bff_path_response,
+            deprecated_bff_path_response=persona_service._deprecated_bff_path_response,
             sem_command_response=bff_main._sem_command_response,
             stream_generic_events=bff_main.stream_generic_events,
             surface_degradation_reason=bff_main._surface_degradation_reason,

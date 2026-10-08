@@ -101,3 +101,54 @@ def test_persona_composition_still_fails_closed_for_unresolved_dependencies():
     app_factory = importlib.import_module("services.control_plane.bff.core.app_factory")
     with pytest.raises(app_factory.UnresolvedBffDependency):
         app_factory._resolve_default_dependency("_unregistered_persona_dependency", object())
+
+
+SAFE_DUPLICATE_NAMES = (
+    "_read_surface_state",
+    "_loop_run_controller_is_formal",
+    "_INCIDENT_SEVERITY_MAP",
+    "_incident_home_severity",
+    "_management_number",
+    "_management_avg",
+    "_management_count_by",
+    "_deprecated_bff_path_response",
+)
+
+
+def test_safe_duplicate_names_have_single_persona_service_owner(monkeypatch):
+    import ast
+    import inspect
+
+    main = importlib.import_module("services.control_plane.bff.main")
+    persona_service = importlib.import_module("services.control_plane.bff.personas.service")
+    app_factory = importlib.import_module("services.control_plane.bff.core.app_factory")
+
+    tree = ast.parse(inspect.getsource(main))
+    defined_in_main = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            defined_in_main.add(node.name)
+        elif isinstance(node, ast.Assign):
+            defined_in_main.update(t.id for t in node.targets if isinstance(t, ast.Name))
+    for name in SAFE_DUPLICATE_NAMES:
+        assert name not in defined_in_main, name
+        assert hasattr(persona_service, name), name
+        if name in vars(main):
+            assert vars(main)[name] is getattr(persona_service, name), name
+
+    resolved = {}
+    original_resolver = app_factory._resolve_default_dependency
+
+    def recording_resolver(name, app_deps):
+        value = original_resolver(name, app_deps)
+        resolved[name] = value
+        return value
+
+    monkeypatch.setattr(app_factory, "_resolve_default_dependency", recording_resolver)
+    app_factory.compose_bff_app(app_deps=main.app_deps)
+
+    for name in ("_read_surface_state", "_deprecated_bff_path_response"):
+        assert original_resolver(name, main.app_deps) is getattr(persona_service, name), name
+    for name, value in resolved.items():
+        if name in SAFE_DUPLICATE_NAMES:
+            assert value is getattr(persona_service, name), name
