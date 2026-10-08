@@ -23,12 +23,14 @@ def client():
         "SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY": os.environ.get("SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY"),
         "SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS": os.environ.get("SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS"),
         "SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS": os.environ.get("SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS"),
+        "PANTHEON_RUNTIME_JWT_SECRET": os.environ.get("PANTHEON_RUNTIME_JWT_SECRET"),
     }
     os.environ["SOURCE_INGEST_DATA_DIR"] = tempdir
     os.environ["SOURCE_INGEST_MAX_RECORDS"] = "10"
     os.environ["SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY"] = "1"
     os.environ["SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS"] = "2"
     os.environ["SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS"] = "300"
+    os.environ["PANTHEON_RUNTIME_JWT_SECRET"] = "source-test-secret"
 
     sys.modules.pop("services.source_ingestion.main", None)
     module = importlib.import_module("services.source_ingestion.main")
@@ -44,6 +46,16 @@ def client():
                 os.environ[key] = value
 
 
+def _read_headers(tenant: str = "tenant-a") -> dict[str, str]:
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    token = encode_jwt_hs256(
+        {"sub": "test-reader", "roles": ["operator"], "tenant_id": tenant, "exp": int(__import__("time").time()) + 600},
+        secret=os.environ["PANTHEON_RUNTIME_JWT_SECRET"],
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
 def _connector(**overrides):
     payload = {
         "connector_id": "conn-sched-notes",
@@ -52,6 +64,7 @@ def _connector(**overrides):
         "license_scope": "internal",
     }
     payload.update(overrides)
+    payload["metadata"] = {"tenant_id": "tenant-a", **dict(payload.get("metadata") or {})}
     return payload
 
 
@@ -158,7 +171,7 @@ def test_run_scheduled_runs_due_connector_and_persists_evidence(client) -> None:
     assert receipt_readback.status_code == 200
     assert receipt_readback.json()["receipt"] == receipt
 
-    source = test_client.get("/api/source-ingest/source-records/src-conn-sched-notes-note-1")
+    source = test_client.get("/api/source-ingest/source-records/src-conn-sched-notes-note-1", headers=_read_headers())
     assert source.status_code == 200
 
 
@@ -287,7 +300,6 @@ def test_run_scheduled_exclusive_scope_fails_closed_when_target_is_unavailable(
     test_client, _, _ = client
     connector_id = f"conn-exclusive-{setup}"
     if setup != "missing":
-        connector_overrides = {"status": "disabled"} if setup == "disabled_connector" else {}
         fetch = {"mode": "static_records", "records": []}
         if setup == "fetch_failure":
             fetch.update(
@@ -299,7 +311,7 @@ def test_run_scheduled_exclusive_scope_fails_closed_when_target_is_unavailable(
         configured = test_client.post(
             "/api/source-ingest/connectors",
             json={
-                "connector": _connector(connector_id=connector_id, **connector_overrides),
+                "connector": _connector(connector_id=connector_id),
                 "fetch": fetch,
             },
         )
@@ -309,6 +321,12 @@ def test_run_scheduled_exclusive_scope_fails_closed_when_target_is_unavailable(
             json={"interval_seconds": 60, "enabled": setup != "disabled_schedule"},
         )
         assert scheduled.status_code == 200, scheduled.text
+        if setup == "disabled_connector":
+            lifecycle = test_client.put(
+                f"/api/source-ingest/connectors/{connector_id}/lifecycle",
+                json={"status": "disabled", "reason": "operator test hold"},
+            )
+            assert lifecycle.status_code == 200, lifecycle.text
 
     response = test_client.post(
         "/api/source-ingest/run-scheduled",
@@ -731,7 +749,7 @@ def test_run_scheduled_frontier_retry_backoff_and_dlq_replay_are_durable(client)
     assert done_frontier.status_code == 200
     assert len(done_frontier.json()["frontier"]) == 1
     assert done_frontier.json()["frontier"][0]["trigger_type"] == "dlq_replay"
-    source = test_client.get("/api/source-ingest/source-records/src-conn-sched-replay-note-1")
+    source = test_client.get("/api/source-ingest/source-records/src-conn-sched-replay-note-1", headers=_read_headers())
     assert source.status_code == 200
 
     reloaded = importlib.reload(module)
@@ -1070,7 +1088,7 @@ def test_stale_source_remains_readable_with_explicit_readiness_truth(client) -> 
     assert entry["freshness"]["stale"] is True
     assert entry["freshness"]["age_seconds"] > entry["freshness"]["stale_threshold_seconds"]
 
-    persisted = test_client.get("/api/source-ingest/source-records/src-stale-readable-1")
+    persisted = test_client.get("/api/source-ingest/source-records/src-stale-readable-1", headers=_read_headers())
     assert persisted.status_code == 200
 
 

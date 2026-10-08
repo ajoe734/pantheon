@@ -637,6 +637,39 @@ def test_provider_owned_adapters_execute_bounded_fetches_when_payload_omitted(mo
     assert taifex_records[0].metadata["schema_hash"] == TAIFEX_FUTURES_CHIP_SCHEMA_HASH
 
     # 3. StockTwits adapter bounded fetch (public symbol stream)
+    from contextlib import contextmanager
+    from unittest.mock import MagicMock
+
+    @contextmanager
+    def mock_stocktwits_url(req, *args, **kwargs):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "messages": [
+                {
+                    "id": 55667788,
+                    "body": "$AAPL breaking out above 230 on heavy volume!",
+                    "created_at": "2026-08-24T15:30:00Z",
+                    "user": {
+                        "id": 998877,
+                        "username": "breakout_trader",
+                        "name": "Alex",
+                        "followers": 1250,
+                    },
+                    "symbols": [
+                        {"id": 686, "symbol": "AAPL", "title": "Apple Inc."},
+                    ],
+                    "entities": {
+                        "sentiment": {
+                            "basic": "Bullish",
+                        }
+                    },
+                }
+            ]
+        }).encode("utf-8")
+        yield mock_resp
+
+    monkeypatch.setattr("services.source_ingestion.connectors.social.open_external_url", mock_stocktwits_url)
+
     st_adapter = AdmittedSocialMediaAdapter(max_records=5)
     st_records = execute_provider_owned_adapter(
         connector=st_adapter.connector(),
