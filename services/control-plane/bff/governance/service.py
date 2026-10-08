@@ -1461,6 +1461,8 @@ class GovernanceService:
             "meta": {
                 "snapshot_at": self.utc_now(),
                 "policy": "read_only_governance_ledger",
+                "surfaces": {"governance_ledger": {"status": "ok", "source": "bff_composed"}},
+                "composition_sources": ["GET /bff/audit", "GET /bff/approvals", "GET /bff/v5/interventions"],
                 "filters": {"source_type": source_type, "status": status, "q": q},
             },
         }

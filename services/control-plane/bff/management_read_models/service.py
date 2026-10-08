@@ -2373,69 +2373,86 @@ class ManagementService:
                 if cached.get("store_id") == id(store):
                     return cached["payload"]
 
-        pending_approvals = 0
-        running_jobs = 0
-        open_alerts = 0
-        surfaces: Dict[str, Any] = {}
+        degraded_state = os.getenv("BFF_READ_SURFACE_STATE", "fresh") in {"degraded", "stale"}
 
-        if store is not None:
-            # 1. Approvals
+        def surface_for(dataset: str, failed: bool = False) -> Dict[str, Any]:
+            source = "missing"
+            if store is not None:
+                source = str(store.dataset_source(dataset)) if hasattr(store, "dataset_source") else "service_store"
+            status = "ok"
+            if failed or source in {"missing", "unavailable"}:
+                status = "unavailable"
+            elif degraded_state or source == "local_snapshot":
+                status = "degraded"
+            return {"status": status, "source": source}
+
+        def rows(dataset: str, *readers: Callable[[Any], Any]) -> List[Dict[str, Any]]:
+            """Rows for one dataset via the first reader the store supports, or [] when unavailable."""
+            sources[dataset] = surface_for(dataset)
+            if sources[dataset]["status"] == "unavailable":
+                return []
+            for reader in readers:
+                try:
+                    res = reader(store)
+                except AttributeError:
+                    continue
+                except Exception:
+                    sources[dataset] = surface_for(dataset, failed=True)
+                    return []
+                avail, items = res if isinstance(res, tuple) else (True, res)
+                return [r for r in (items or []) if avail and isinstance(r, dict)]
+            return []
+
+        def count(items: List[Dict[str, Any]], states: set, *fields: str) -> int:
+            return sum(1 for r in items if str(next((r[f] for f in fields if r.get(f)), "")).strip().lower() in states)
+
+        sources: Dict[str, Dict[str, Any]] = {}
+        approvals = rows(
+            "approval_queue_items",
+            lambda st: st.list_approval_queue_items(),
+            lambda st: st.list_approval_records(),
+        )
+        reviews = rows("governance_review_queue_items", lambda st: st.list_governance_review_queue_items())
+        incidents = rows("incidents", lambda st: st.list_incidents())
+        jobs = rows("jobs", lambda st: st.list_jobs_bff(), lambda st: st.list_records("jobs"))
+        pending_states = {"pending", "in_review"}
+        pending_approvals = count(approvals, {*pending_states, "proposed", "under_review", "reviewed"}, "decision_state", "status")
+        open_alerts = (
+            count(incidents, {"open", "in_progress"}, "status")
+            + count(reviews, {*pending_states, "escalated"}, "status")
+            + count(approvals, pending_states, "decision_state")
+        )
+        sources["kill_switch"] = surface_for("kill_switch")
+        if sources["kill_switch"]["status"] != "unavailable" and hasattr(store, "get_kill_switch_status"):
             try:
-                if hasattr(store, "list_approval_queue_items"):
-                    items = store.list_approval_queue_items() or []
-                    pending_approvals += sum(1 for r in items if isinstance(r, dict) and (r.get("decision_state") in ("pending", "open", "in_review") or r.get("status") in ("pending", "open", "in_review")))
-                if hasattr(store, "list_governance_review_queue_items"):
-                    items = store.list_governance_review_queue_items() or []
-                    pending_approvals += sum(1 for r in items if isinstance(r, dict) and r.get("status") in ("pending", "open", "in_review"))
-                if not hasattr(store, "list_approval_queue_items") and not hasattr(store, "list_governance_review_queue_items"):
-                    if hasattr(store, "list_approval_records"):
-                        records = store.list_approval_records() or []
-                        pending_approvals += sum(1 for r in records if isinstance(r, dict) and r.get("status") in ("pending", "in_review", "open"))
-                surfaces["governance_approvals"] = {"status": "ok", "source": "store"}
+                kill = store.get_kill_switch_status() or {}
+                safe_mode = str(kill.get("safe_mode_status") or "").strip().lower()
+                if (
+                    kill.get("active")
+                    or str(kill.get("status") or "").strip().lower() in {"triggered", "cooling_down"}
+                    or safe_mode not in {"", "off", "released", "none", "null"}
+                ):
+                    open_alerts += 1
             except Exception:
-                surfaces["governance_approvals"] = {"status": "unavailable", "source": "error"}
+                sources["kill_switch"] = surface_for("kill_switch", failed=True)
+        running_jobs = count(jobs, {"running", "in_progress", "queued"}, "status")
 
-            # 2. Jobs
-            try:
-                if hasattr(store, "list_jobs_bff"):
-                    jobs = store.list_jobs_bff() or []
-                    running_jobs = sum(1 for j in jobs if isinstance(j, dict) and j.get("status") in ("running", "admitted", "pending"))
-                    surfaces["jobs_read_model"] = {"status": "ok", "source": "store"}
-                elif hasattr(store, "list_records"):
-                    res = store.list_records("jobs")
-                    avail, jobs = res if isinstance(res, tuple) else (True, res)
-                    if avail:
-                        running_jobs = sum(1 for j in (jobs or []) if isinstance(j, dict) and j.get("status") in ("running", "admitted", "pending"))
-                        surfaces["jobs_read_model"] = {"status": "ok", "source": "store"}
-                    else:
-                        surfaces["jobs_read_model"] = {"status": "degraded", "source": "missing"}
-                else:
-                    surfaces["jobs_read_model"] = {"status": "ok", "source": "store"}
-            except Exception:
-                surfaces["jobs_read_model"] = {"status": "unavailable", "source": "error"}
+        def group(name: str, keys: List[str], **extra: Any) -> Dict[str, Any]:
+            surface = _aggregate_group_surface(name, [sources[k] for k in keys], snapshot_at=now_str)
+            surface["freshness"] = {"computed_at": now_str, "ttl_seconds": ttl_seconds, "cache": "miss"}
+            return {**surface, **extra}
 
-            # 3. Alerts / Incidents
-            try:
-                if hasattr(store, "list_incidents"):
-                    incidents = store.list_incidents() or []
-                    open_alerts += sum(1 for a in incidents if isinstance(a, dict) and a.get("status") in ("open", "active", "triggered", "elevated"))
-                elif hasattr(store, "list_incident_alerts"):
-                    alerts = store.list_incident_alerts() or []
-                    open_alerts += sum(1 for a in alerts if isinstance(a, dict) and a.get("status") in ("open", "active", "triggered", "elevated"))
-                elif hasattr(store, "list_records"):
-                    res = store.list_records("incident_alerts")
-                    avail, alerts = res if isinstance(res, tuple) else (True, res)
-                    if avail:
-                        open_alerts += sum(1 for a in (alerts or []) if isinstance(a, dict) and a.get("status") in ("open", "active", "triggered", "elevated"))
-                surfaces["incident_alerts"] = {"status": "ok", "source": "store"}
-            except Exception:
-                surfaces["incident_alerts"] = {"status": "unavailable", "source": "error"}
-        else:
-            surfaces["governance_approvals"] = {"status": "unavailable", "source": "missing"}
-            surfaces["jobs_read_model"] = {"status": "unavailable", "source": "missing"}
-            surfaces["incident_alerts"] = {"status": "unavailable", "source": "missing"}
-
-        shell_surface = _aggregate_group_surface("shell_summary", list(surfaces.values()), snapshot_at=now_str)
+        count_surfaces = {
+            "pending_approvals": group("pending_approvals", ["approval_queue_items"]),
+            "open_alerts": group(
+                "open_alerts",
+                ["incidents", "governance_review_queue_items", "approval_queue_items", "kill_switch"],
+                source="bff_cheap_count",
+            ),
+            "running_jobs": group("running_jobs", ["jobs"]),
+        }
+        shell_surface = _aggregate_group_surface("shell_summary", list(count_surfaces.values()), snapshot_at=now_str)
+        shell_surface["freshness"] = count_surfaces["running_jobs"]["freshness"]
         payload = {
             "counts": {
                 "pending_approvals": pending_approvals,
@@ -2443,10 +2460,7 @@ class ManagementService:
                 "open_alerts": open_alerts,
             },
             "snapshot_at": now_str,
-            "surfaces": {
-                "shell_summary": shell_surface,
-                **surfaces,
-            },
+            "surfaces": {"shell_summary": shell_surface, **count_surfaces},
         }
 
         with _SHELL_SUMMARY_COUNT_CACHE_LOCK:
@@ -2468,6 +2482,7 @@ class ManagementService:
             "operator_id": str(op_id),
             "operatorId": str(op_id),
             "display_name": getattr(identity, "display_name", str(op_id)),
+            "display_label": getattr(identity, "display_name", str(op_id)),
             "displayLabel": getattr(identity, "display_name", str(op_id)),
             "roles": roles,
             "session_kind": session_kind,
@@ -4089,47 +4104,102 @@ class ManagementService:
             except Exception:
                 loop_avail, raw_records = False, []
 
-        filtered = []
-        for index, item in enumerate(raw_records or [], start=1):
-            if not isinstance(item, dict):
-                continue
-            if status and str(item.get("status", "")).lower() != status.lower():
-                continue
-            if runtime_id and str(item.get("runtime_id", "")) != runtime_id:
-                continue
-            if loop_type and str(item.get("loop_type", "")).lower() != loop_type.lower():
-                continue
-            item_copy = dict(item)
-            item_copy["sequence"] = index
-            item_copy["rank"] = index
-            filtered.append(item_copy)
+        def seconds_between(start: Any, end: Any) -> Optional[float]:
+            if not (start and end):
+                return None
+            return round(max((_parse_time(end) - _parse_time(start)).total_seconds(), 0.0), 6)
 
-        filtered.sort(key=lambda x: _parse_time(x.get("event_at") or x.get("created_at") or x.get("timestamp")), reverse=True)
+        statuses = {t.lower() for t in (_split_csv_query(status) or [])}
+        runtimes = set(_split_csv_query(runtime_id) or [])
+        filtered = []
+        for index, record in enumerate(raw_records or [], start=1):
+            if not isinstance(record, dict):
+                continue
+            loop_id = str(_management_first_non_empty(record.get("id"), record.get("loop_run_id"), record.get("run_id"), f"loop-run-{index}"))
+            item_status = _management_normalized_status(record)
+            item_runtime = str(record.get("runtime_id") or "").strip()
+            if (statuses and item_status not in statuses) or (runtimes and item_runtime not in runtimes):
+                continue
+            if loop_type and str(record.get("loop_type", "")).lower() != loop_type.lower():
+                continue
+            queued_at = _management_first_non_empty(record.get("queued_at"), record.get("created_at"))
+            started_at, completed_at = record.get("started_at"), record.get("completed_at")
+            binding_id = str(record.get("binding_id") or "").strip()
+            incident_id = str(_management_first_non_empty(record.get("incident_id"), record.get("derived_from_incident_id")) or "").strip()
+            filtered.append({
+                **record,
+                "id": loop_id,
+                "loop_run_id": loop_id,
+                "status": item_status,
+                "runtime_id": item_runtime or None,
+                "binding_id": binding_id or None,
+                "incident_id": incident_id or None,
+                "queued_at": queued_at,
+                "event_at": completed_at or started_at or queued_at,
+                "queue_lag_seconds": seconds_between(queued_at, started_at),
+                "duration_seconds": seconds_between(started_at, completed_at),
+                "source_refs": {
+                    "loop_run_ids": [loop_id],
+                    "runtime_ids": [item_runtime] if item_runtime else [],
+                    "binding_ids": [binding_id] if binding_id else [],
+                    "incident_ids": [incident_id] if incident_id else [],
+                },
+                "links": {
+                    "loop_run": _management_link("/bff/v5/loop-runs", loop_id),
+                    "runtime": _management_link("/bff/runtimes", item_runtime or None),
+                    "incident": _management_link("/bff/incidents", incident_id or None),
+                },
+            })
+
+        filtered.sort(key=lambda x: (_parse_time(x.get("event_at")), x["loop_run_id"]), reverse=True)
+        for sequence, item in enumerate(filtered, start=1):
+            item["sequence"] = item["rank"] = sequence
         page_items, next_token = _page_slice(filtered, page_token, page_size)
 
-        runs_pm = round(len(filtered) / max(1, window_minutes), 2)
-        status_counts = {
-            "queued": sum(1 for x in filtered if x.get("status") in ("queued", "admitted")),
-            "active": sum(1 for x in filtered if x.get("status") in ("running", "active")),
-            "completed": sum(1 for x in filtered if x.get("status") == "completed"),
-            "failed": sum(1 for x in filtered if x.get("status") == "failed"),
-        }
+        # Rate only counts runs inside the window ending at the latest event.
+        latest = _parse_time(filtered[0]["event_at"]) if filtered else None
+        in_window = [x for x in filtered if latest and (latest - _parse_time(x["event_at"])).total_seconds() <= window_minutes * 60]
+        times = [_parse_time(x["event_at"]) for x in in_window]
+        observed_minutes = round((max(times) - min(times)).total_seconds() / 60.0, 6) if times else None
+        runs_pm = round(len(in_window) / max(observed_minutes or 0.0, 1.0), 6) if times else 0.0
+        status_counts = _management_count_by(filtered, "status")
+        queue_lags = [x["queue_lag_seconds"] for x in filtered if x["queue_lag_seconds"] is not None]
+
+        def in_states(*states: str) -> int:
+            return sum(count for name, count in status_counts.items() if name in states)
 
         summary = {
             "loop_count": len(filtered),
             "total_runs": len(filtered),
             "returned_loop_count": len(page_items),
-            "runtime_count": len({x.get("runtime_id") for x in filtered if x.get("runtime_id")}),
-            "queue_depth": status_counts["queued"],
-            "active_loop_count": status_counts["active"],
-            "completed_loop_count": status_counts["completed"],
-            "failed_loop_count": status_counts["failed"],
+            "runtime_count": len({x["runtime_id"] for x in filtered if x["runtime_id"]}),
+            "queue_depth": in_states("queued", "admitted"),
+            "active_loop_count": in_states("running", "active", "in_progress"),
+            "completed_loop_count": in_states("completed"),
+            "failed_loop_count": in_states("failed"),
             "runs_per_minute": runs_pm,
-            "completed_runs_per_minute": round(status_counts["completed"] / max(1, window_minutes), 2),
-            "observed_window_minutes": window_minutes,
-            "status_counts": status_counts,
+            "completed_runs_per_minute": round(
+                sum(1 for x in in_window if x["status"] == "completed") / max(observed_minutes or 0.0, 1.0), 6
+            ),
+            "observed_window_minutes": observed_minutes,
+            "average_queue_lag_seconds": _management_avg(queue_lags),
+            "max_queue_lag_seconds": max(queue_lags) if queue_lags else None,
+            "queue_lag_sample_count": len(queue_lags),
             "by_status": status_counts,
+            "latest_loop_at": filtered[0]["event_at"] if filtered else None,
+            "basis": "v5_loop_runs_event_window",
         }
+        source = "missing"
+        if store is not None:
+            source = str(store.dataset_source("loop_runs")) if hasattr(store, "dataset_source") else "store"
+        loop_surface = {"status": "ok" if loop_avail else "unavailable", "source": source}
+        throughput_surface = _aggregate_group_surface(
+            "loop_throughput",
+            [loop_surface],
+            snapshot_at=snap,
+            unavailable_message="Loop-throughput aggregate unavailable.",
+            degraded_message="Loop-throughput aggregate is available, but the v5 loop-runs surface is degraded.",
+        )
 
         return {
             "data": {
@@ -4144,10 +4214,11 @@ class ManagementService:
                 "page_size": page_size,
             },
             "meta": {
-                "snapshot_at": snap,
-                "surfaces": {
-                    "loop_throughput": {"status": "ok" if loop_avail else "unavailable", "source": "store" if store else "missing"},
-                },
+                **_snapshot_meta(snap),
+                "surfaces": {"loop_throughput": throughput_surface, "loop_runs": loop_surface},
+                "composition_sources": ["GET /bff/v5/loop-runs", "GET /api/v1/loop-runs", "GET /bff/incidents"],
+                "policy": "read_only_loop_throughput",
+                "filters": {"status": status, "runtime_id": runtime_id},
             },
         }
 
@@ -4776,7 +4847,10 @@ class ManagementService:
             "basis": "incident_case_opened_at_chronology",
         }
 
-        incident_surface = {"status": "ok" if raw_incidents else "unavailable", "source": "store" if store else "missing"}
+        incident_source = "missing"
+        if store is not None:
+            incident_source = str(store.dataset_source("incidents")) if hasattr(store, "dataset_source") else "store"
+        incident_surface = {"status": "ok" if raw_incidents else "unavailable", "source": incident_source}
         timeline_surface = _aggregate_group_surface(
             "incident_timeline",
             [incident_surface],
