@@ -1,0 +1,36 @@
+{
+  "task_id": "BFF-HEALTH-TELEMETRY-PRINCIPAL-20261008",
+  "scope": "source wiring only; hosted acceptance pending for the sole release coordinator",
+  "pre_fix_compose_default_hs256_check": {
+    "signed_by_removed_pantheon-local-telemetry-jwt-secret": true,
+    "verifies_under_current_chain_PANTHEON_TELEMETRY_JWT_SECRET->PANTHEON_DEV_BFF_JWT_SECRET->empty": false,
+    "claim_keys": [
+      "allowed_producers",
+      "allowed_tenants",
+      "roles",
+      "sub"
+    ],
+    "allowed_tenants": [
+      "default"
+    ],
+    "has_exp": false,
+    "values_printed": false
+  },
+  "changes": [
+    "issue_dev_paper_principals: TELEMETRY_PRODUCERS adds PANTHEON_BFF_HEALTH_TELEMETRY_JWT (sub/service control-plane-bff-health-monitor, roles [service], tenant-dev only, allowed_producers [control-plane-bff], scope pantheon:dev-telemetry-health, 24h expiry) to the operator-bff CONSUMER_FILES; healthcheck verifies the claim set; existing refresh/revoke flow",
+    "downstream_health_monitor: token read per delivery via services.service_token_file.configured_service_token; absent/revoked/unsafe/malformed file raises and no env fallback is used when _FILE is configured",
+    "docker-compose: operator-bff uses PANTHEON_BFF_HEALTH_TELEMETRY_JWT_FILE from existing dev-paper-bff-tokens mount; fixture token removed; health tenant defaults to PANTHEON_DEV_BFF_TENANT_ID/tenant-dev",
+    "test_current_l12_compose_wiring: verifies issued tokens against the compose-resolved verifier chain; fails on the pre-fix compose (2 failures observed)",
+    "run_isolated_l12_runtime_e2e: no change needed; issue_environment output already supplies the principal, test asserts no second minter"
+  ],
+  "verification": {
+    "issuer/renewal/compose-wiring/monitor tests": "125 passed",
+    "issuer tests (real telemetry infrastructure-health authority)": "38 passed incl. issued principal accepted; wrong signer 401, foreign tenant 403, wrong producer 403",
+    "isolated L12 harness tests": "38 passed"
+  },
+  "not_claimed": [
+    "hosted accepted",
+    "FULL gate",
+    "deploy"
+  ]
+}
