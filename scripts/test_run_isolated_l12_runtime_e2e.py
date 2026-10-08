@@ -693,6 +693,10 @@ def test_preview_worker_token_authenticates_against_the_training_verifier(monkey
     assert "training-service" in authority.roles
     claims = _decoded_claims(env["TRAINING_SESSION_WORKER_TOKEN"], env["PANTHEON_DEV_BFF_JWT_SECRET"])
     assert "*" not in claims["tenant_id"] and claims["roles"] == ["training-service"]
+    assert claims["allowed_tenants"] == ["tenant-dev"] and claims["service"] == "training-session-preview-worker"
+    # One issuance mechanism: the composer no longer carries its own worker minter.
+    assert "TRAINING_WORKER_SERVICE_ID" not in vars(harness)
+    assert env["TRAINING_SESSION_WORKER_TOKEN_FILE"] == "/run/pantheon-principals/TRAINING_SESSION_WORKER_TOKEN"
 
 
 def test_preview_worker_token_negative_controls(monkeypatch: pytest.MonkeyPatch) -> None:

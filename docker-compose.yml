@@ -39,6 +39,7 @@ services:
       - dev-paper-evolution-tokens:/issued/evolution
       - dev-paper-persona-evaluator-tokens:/issued/persona-evaluator-agent
       - dev-paper-training-session-tokens:/issued/training-session-svc
+      - dev-paper-training-worker-tokens:/issued/training-session-preview-worker
     healthcheck:
       test: ["CMD", "python", "/issuer/issue_dev_paper_principals.py", "--healthcheck"]
       interval: 30s
@@ -575,13 +576,14 @@ services:
       TRAINING_SESSION_PREVIEW_WORKER_BATCH_LIMIT: ${TRAINING_SESSION_PREVIEW_WORKER_BATCH_LIMIT:-10}
       TRAINING_SESSION_PREVIEW_WORKER_TIMEOUT_SECONDS: ${TRAINING_SESSION_PREVIEW_WORKER_TIMEOUT_SECONDS:-30}
       TRAINING_SESSION_PREVIEW_WORKER_ALIVE_PATH: ${TRAINING_SESSION_PREVIEW_WORKER_ALIVE_PATH:-/data/training-session/preview-worker-alive}
-      # HS256 dev service JWT signed by the API's published local/dev secret.
-      # Hosted environments override both the verifier secret and this token.
-      TRAINING_SESSION_WORKER_TOKEN: ${TRAINING_SESSION_WORKER_TOKEN:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhbGxvd2VkX3RlbmFudHMiOlsiKiJdLCJyb2xlcyI6WyJ0cmFpbmluZy1zZXJ2aWNlIl0sInNlcnZpY2UiOiJ0cmFpbmluZy1zZXNzaW9uLXByZXZpZXctd29ya2VyIiwic3ViIjoidHJhaW5pbmctc2Vzc2lvbi1wcmV2aWV3LXdvcmtlciJ9.eb4LoU20NsZEfH8VYjhl1xyOaa37bzzg7yC-D87Uu2g}
+      # Rotating tenant-dev training-service principal from the existing dev
+      # issuer; read per request and fail closed when absent/revoked/malformed.
+      TRAINING_SESSION_WORKER_TOKEN_FILE: ${TRAINING_SESSION_WORKER_TOKEN_FILE:-/run/pantheon-principals/TRAINING_SESSION_WORKER_TOKEN}
       TRAINING_SESSION_TENANT_ID: ${TRAINING_SESSION_TENANT_ID:-${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}}
       TRAINING_SESSION_WORKER_SERVICE_ID: training-session-preview-worker
     volumes:
       - training-session-data:/data/training-session
+      - dev-paper-training-worker-tokens:/run/pantheon-principals:ro
     depends_on:
       training-session-svc:
         condition: service_healthy
@@ -2991,6 +2993,7 @@ volumes:
   dev-paper-evolution-tokens:
   dev-paper-persona-evaluator-tokens:
   dev-paper-training-session-tokens:
+  dev-paper-training-worker-tokens:
   broker-data:
   bff-data:
   capital-data:

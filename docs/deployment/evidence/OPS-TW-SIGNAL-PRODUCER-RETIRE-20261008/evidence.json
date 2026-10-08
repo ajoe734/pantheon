@@ -1,0 +1,96 @@
+{
+  "task_id": "OPS-TW-SIGNAL-PRODUCER-RETIRE-20261008",
+  "base_sha": "c08860ec82ebb413b7b61def20f98edc36f54865",
+  "statement": "No VM, hosted endpoint, or GitHub setting was contacted or changed.",
+  "why_second_unscheduled_signal_path": {
+    "summary": "scripts/tw_signal_producer.py is a second Taiwan signal producer that bypasses snapshot admission and is completely unscheduled.",
+    "facts": [
+      "scripts/tw_signal_producer.py is a second Taiwan signal producer. It runs docker exec pantheon-runtime-manager-1 to read runtime_bindings.json, finds the active runtime-tw-equity-paper binding, reads raw FinMind normalized files with docker exec pantheon-source-ingest-1 cat /data/source-ingest/market_data_store/normalized/taiwanstockprice/..., evaluates the strategy and RPUSHes signals straight into pantheon:signals:pending:<binding_id> through docker exec pantheon-signal-store-1 redis-cli.",
+      "That bypasses the governed path: services/execution/lean_runtime/paper_signal_producer.py CurrentArtifactStrategy admits the official snapshot with admit_market_snapshot and, since PAPER-TW-EXECUTION-PREREQS-20261007, carries the admitted close into the order. The script reads unadmitted raw files and skips admission entirely.",
+      "Nothing runs it. It was a host cron on the retired lupin VM (/home/lupin/paper-loop). On 2026-10-08 the current dev VM user and root crontabs and systemd timers had no entry for it, and this repo has no cron, compose service, workflow or script that calls it. OPS-SCRIPT-RETIRED-HOST-DEFAULTS-20261008 only replaced its hard-coded sys.path.",
+      "No code reads the 2026-08-30 inventories (MONOLITH_SYMBOL_DISPOSITION.json and HISTORICAL_EVIDENCE_INVENTORY.json) that still list these paths; they are historical records and stay unchanged."
+    ]
+  },
+  "deleted_paths": {
+    "scripts/tw_signal_producer.py": {
+      "last_commit_on_base": {
+        "commit": "3fef37eb94b9e6ebdc05de0278619147631f10b8",
+        "author": "Antigravity <antigravity-agent@pantheon.local>",
+        "date": "Thu Oct 8 02:54:47 2026 +0000",
+        "subject": "OPS-SCRIPT-RETIRED-HOST-DEFAULTS-20261008: remove retired host defaults"
+      }
+    },
+    "services/execution/lean_runtime/test_tw_signal_producer.py": {
+      "last_commit_on_base": {
+        "commit": "015c9866c6cd9beb54f5c0b9cc443032897f60cc",
+        "author": "pantheon-release-bot <pantheon-release-bot@users.noreply.github.com>",
+        "date": "Wed Jul 15 05:49:42 2026 +0000",
+        "subject": "EVOLOOP-007: address review feedback and add regression tests"
+      }
+    }
+  },
+  "git_grep_tw_signal_producer": {
+    "command": "git grep -n tw_signal_producer HEAD -- services scripts tests .github docker-compose.yml",
+    "before_base_matches": [
+      "HEAD:scripts/verify_e2e_evolution_loop.py:197:            \"provenance_refs\": [\"host-file:/home/lupin/paper-loop/tw_signal_producer.py\"]",
+      "HEAD:services/execution/lean_runtime/test_tw_signal_producer.py:1:\"\"\"Tests for tw_signal_producer strategy-driven signal generation.\"\"\"",
+      "HEAD:services/execution/lean_runtime/test_tw_signal_producer.py:15:import scripts.tw_signal_producer as tw_signal_producer",
+      "HEAD:services/execution/lean_runtime/test_tw_signal_producer.py:20:    def test_tw_signal_producer_evaluates_and_pushes_successfully(self, mock_run) -> None:",
+      "HEAD:services/execution/lean_runtime/test_tw_signal_producer.py:124:        result = tw_signal_producer.main()",
+      "HEAD:services/execution/lean_runtime/test_tw_signal_producer.py:153:    def test_tw_signal_producer_no_active_binding_fails(self, mock_run) -> None:",
+      "HEAD:services/execution/lean_runtime/test_tw_signal_producer.py:160:        result = tw_signal_producer.main()",
+      "HEAD:services/execution/lean_runtime/test_tw_signal_producer.py:165:    def test_tw_signal_producer_missing_artifact_fails(self, mock_run) -> None:",
+      "HEAD:services/execution/lean_runtime/test_tw_signal_producer.py:183:        result = tw_signal_producer.main()",
+      "HEAD:services/execution/lean_runtime/test_tw_signal_producer.py:188:    def test_tw_signal_producer_insufficient_closes_skips(self, mock_run) -> None:",
+      "HEAD:services/execution/lean_runtime/test_tw_signal_producer.py:255:        result = tw_signal_producer.main()",
+      "HEAD:services/registry/strategy-artifacts/tw-session-momentum-v1.registration.json:98:      \"host-file:/home/lupin/paper-loop/tw_signal_producer.py#sha256=b9f43954395b1b98f3b253ad9e27f7955b37dbee0553bb79a88abe3b99ff2396\","
+    ],
+    "after_head_matches": [
+      "scripts/verify_e2e_evolution_loop.py:197:            \"provenance_refs\": [\"host-file:/home/lupin/paper-loop/tw_signal_producer.py\"]",
+      "services/registry/strategy-artifacts/tw-session-momentum-v1.registration.json:98:      \"host-file:/home/lupin/paper-loop/tw_signal_producer.py#sha256=b9f43954395b1b98f3b253ad9e27f7955b37dbee0553bb79a88abe3b99ff2396\","
+    ],
+    "note": "Only the two historical provenance strings in scripts/verify_e2e_evolution_loop.py and services/registry/strategy-artifacts/tw-session-momentum-v1.registration.json remain, both byte-identical to base."
+  },
+  "pytest_results": {
+    "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/execution/lean_runtime -v",
+    "interpreter": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3",
+    "base_result": "=== 10 failed, 329 passed, 11 errors, 40 subtests passed in 74.22s (0:01:14) ===",
+    "head_result": "=== 10 failed, 325 passed, 11 errors, 40 subtests passed in 81.25s (0:01:21) ===",
+    "deleted_tests": [
+      "services/execution/lean_runtime/test_tw_signal_producer.py::TestTWSignalProducer::test_tw_signal_producer_evaluates_and_pushes_successfully",
+      "services/execution/lean_runtime/test_tw_signal_producer.py::TestTWSignalProducer::test_tw_signal_producer_insufficient_closes_skips",
+      "services/execution/lean_runtime/test_tw_signal_producer.py::TestTWSignalProducer::test_tw_signal_producer_missing_artifact_fails",
+      "services/execution/lean_runtime/test_tw_signal_producer.py::TestTWSignalProducer::test_tw_signal_producer_no_active_binding_fails"
+    ],
+    "pre_existing_failures_identical": [
+      "FAILED services/execution/lean_runtime/test_devloop_wire.py::TestDevloopWire::test_15_bindings_each_emit_paper_fill_telemetry",
+      "FAILED services/execution/lean_runtime/test_devloop_wire.py::TestDevloopWire::test_15_bindings_each_produce_loop_run_and_trade",
+      "FAILED services/execution/lean_runtime/test_paper_runtime_smoke.py::PaperRuntimeSmokeTest::test_bracket_order_canary_stage_is_fail_closed",
+      "FAILED services/execution/lean_runtime/test_paper_runtime_smoke.py::PaperRuntimeSmokeTest::test_bracket_order_smoke_is_logged_not_broker_submitted",
+      "FAILED services/execution/lean_runtime/test_paper_runtime_smoke.py::PaperRuntimeSmokeTest::test_bracket_order_smoke_produces_verifiable_leg_evidence",
+      "FAILED services/execution/lean_runtime/test_paper_runtime_smoke.py::PaperRuntimeSmokeTest::test_paper_smoke_full_pipeline_canonical_evidence_shape",
+      "FAILED services/execution/lean_runtime/test_paper_runtime_smoke.py::PaperRuntimeSmokeTest::test_paper_smoke_produces_fill_evidence_for_buy_signal",
+      "FAILED services/execution/lean_runtime/test_paper_runtime_smoke.py::PaperRuntimeSmokeTest::test_paper_smoke_produces_heartbeat_evidence",
+      "FAILED services/execution/lean_runtime/test_paper_runtime_smoke.py::PaperRuntimeSmokeTest::test_paper_smoke_produces_pnl_evidence",
+      "FAILED services/execution/lean_runtime/test_paper_runtime_smoke.py::PaperRuntimeSmokeTest::test_paper_smoke_produces_position_evidence",
+      "ERROR services/execution/lean_runtime/test_signal_isolation.py::TestRedisPendingSignalStoreClaimVisibility::test_ack_nack_and_dlq_response_loss_has_no_signal_loss_window",
+      "ERROR services/execution/lean_runtime/test_signal_isolation.py::TestRedisPendingSignalStoreClaimVisibility::test_claim_renews_through_execution_longer_than_visibility_ttl",
+      "ERROR services/execution/lean_runtime/test_signal_isolation.py::TestRedisPendingSignalStoreClaimVisibility::test_claim_response_loss_remains_recoverable",
+      "ERROR services/execution/lean_runtime/test_signal_isolation.py::TestRedisPendingSignalStoreClaimVisibility::test_execution_fence_blocks_reclaim_when_heartbeat_renew_raises",
+      "ERROR services/execution/lean_runtime/test_signal_isolation.py::TestRedisPendingSignalStoreClaimVisibility::test_execution_fence_blocks_reclaim_when_heartbeat_renew_returns_false",
+      "ERROR services/execution/lean_runtime/test_signal_isolation.py::TestRedisPendingSignalStoreClaimVisibility::test_live_claim_is_not_stolen_then_crash_claim_is_recovered",
+      "ERROR services/execution/lean_runtime/test_signal_isolation.py::TestRedisPendingSignalStoreClaimVisibility::test_nack_and_dlq_are_atomic_claim_transfers",
+      "ERROR services/execution/lean_runtime/test_signal_isolation.py::TestRedisPendingSignalStoreClaimVisibility::test_slow_rebalance_buffer_cannot_execute_after_claim_reclaim",
+      "ERROR services/execution/lean_runtime/test_signal_isolation.py::TestExecutionErrorDLQ::test_execution_error_atomically_moves_real_redis_claim_to_dlq",
+      "ERROR services/execution/lean_runtime/test_signal_isolation.py::TestExecutionErrorDLQ::test_execution_error_routes_to_dlq",
+      "ERROR services/execution/lean_runtime/test_signal_isolation.py::TestSixBindingRestartIsolationDrill::test_six_binding_restart_isolation"
+    ]
+  },
+  "no_replacement_verification": {
+    "paper_signal_producer_byte_identical": true,
+    "market_snapshot_admission_byte_identical": true,
+    "pending_signal_store_byte_identical": true,
+    "no_cron_or_timer_or_shim_added": true
+  },
+  "diff_budget_table": "| class | added | deleted | net |\n|---|---|---|---|\n| production | +0 | -165 | -165 |\n| test | +0 | -263 | -263 |\n| docs/evidence | +96 | -0 | +96 |"
+}

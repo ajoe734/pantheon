@@ -142,6 +142,25 @@ class TestInvokeStructuredPositive:
         assert body["tools"][0]["name"] == EMIT_EXTRACTION_TOOL_NAME
         assert body["tools"][0]["parameters"] == EXTRACTION_SCHEMA
 
+    def test_each_call_uses_a_fresh_upstream_session_user(self):
+        # A stable `user` reuses one warm CLI session per caller and grows to context_overflow.
+        provider = _make_provider()
+        users = []
+
+        def fake_urlopen(req, timeout=None, deadline=None):
+            users.append(json.loads(req.data.decode("utf-8"))["user"])
+            return _FakeSSEResponse(
+                _tool_call_events(EMIT_EXTRACTION_TOOL_NAME, json.dumps({"title": "x"}))
+            )
+
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
+            for _ in range(2):
+                provider.invoke_structured(
+                    "extract", extraction_schema=EXTRACTION_SCHEMA, operator_id="monitor-agent"
+                )
+        assert len(set(users)) == 2
+        assert all(u.startswith("|monitor-agent|structured-") for u in users)
+
     def test_missing_usage_is_not_reported_as_zero(self):
         provider = _make_provider()
         events = [
