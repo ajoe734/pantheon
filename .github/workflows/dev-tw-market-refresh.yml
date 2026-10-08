@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: ajoe734/pantheon
-          ref: 9e564718da8c39199a4c311f1a667b74226e3428
+          ref: aee1243573e29d289dac00be13641bb16be7f6bf
           path: .lease-controller
           fetch-depth: 1
           persist-credentials: false
@@ -43,9 +43,9 @@ jobs:
           PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
-          [[ "$(git -C "${CONTROLLER}" rev-parse HEAD)" == "9e564718da8c39199a4c311f1a667b74226e3428" ]]
+          [[ "$(git -C "${CONTROLLER}" rev-parse HEAD)" == "aee1243573e29d289dac00be13641bb16be7f6bf" ]]
           printf '%s  %s\n' \
-            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${CONTROLLER}/scripts/dev_environment_lease.py" \
+            da9a728ed8cec8e1133b92171e4038f9dc51ef4888911acd02c7e399e54d95ae "${CONTROLLER}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${CONTROLLER}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           lease_dir="$(mktemp -d "${RUNNER_TEMP}/pantheon-dev-lease-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-XXXXXX")"
