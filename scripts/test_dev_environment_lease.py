@@ -782,7 +782,7 @@ from scripts.test_dev_environment_lease import FakeClient, state_for, manager
 from datetime import datetime, timedelta, timezone
 import argparse
 
-now = datetime.now(timezone.utc)
+now = datetime.fromisoformat({now.isoformat()!r})
 client = FakeClient()
 client.now = now
 client.state = state_for(heartbeat=now, expires=now + timedelta(minutes=5))
