@@ -74,6 +74,7 @@ REQUIRED_COMPOSE_SERVICES = [
     "broker",
     "telemetry",
     "reconciliation-drift-svc",
+    "reconciliation-drift-scheduler",
     "incidents",
     "evolution",
     "operator-bff",

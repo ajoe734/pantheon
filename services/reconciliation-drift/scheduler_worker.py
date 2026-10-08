@@ -30,13 +30,64 @@ _WORKER_NAME = "reconciliation-drift-scheduler"
 LOOP_ID = os.getenv("PANTHEON_LOOP_ID") or "telemetry_reconciliation"
 
 
-def _build_loop_writer(*, dsn: str, tenant_id: str) -> Any:
-    """Build the shared twelve-loop controller writer, or None when unconfigured.
+def _lease_seconds(
+    *,
+    interval_seconds: float,
+    timeout_seconds: float,
+    max_attempts: int = 1,
+    retry_backoff_seconds: float = 0.0,
+) -> int:
+    """Lease that outlives a steady-state tick: interval plus the worst tick."""
 
-    Loop 10 (telemetry_reconciliation) has three independent workers
-    (consumer, scheduler, incident listener); they all target this one
-    loop_id so their ticks compose a single controller record instead of
-    a second reconciler monitor or state store.
+    worst_tick = timeout_seconds * max_attempts + retry_backoff_seconds * max(
+        max_attempts - 1, 0
+    )
+    return max(1, math.ceil(interval_seconds + worst_tick))
+
+
+def _controller_truth_fields(
+    result: dict[str, Any], *, tick: int, worker_id: str, checked_at: str
+) -> dict[str, Any]:
+    """Desired/actual state and evidence derived only from this tick's result."""
+
+    tick_id = str(result.get("tick_id") or f"{worker_id}:{tick}")
+    fetched = int(result.get("telemetry_summaries_fetched") or 0)
+    evaluated = int(result.get("evaluated_binding_count") or 0)
+    skipped = int(result.get("skipped_binding_count") or 0)
+    status = str(result.get("status") or "unobserved")
+    desired_state = {
+        "present": fetched > 0,
+        "source": "reconciliation-drift.scheduled_reconcile.telemetry_summaries",
+        "checked_at": checked_at,
+        "summary": f"{fetched} telemetry summary binding(s) in scope",
+        "telemetry_summaries_fetched": fetched,
+    }
+    downstream_actual_state = {
+        "status": status,
+        "source": "reconciliation-drift.scheduled_reconcile.result",
+        "checked_at": checked_at,
+        "summary": (
+            f"{evaluated} binding(s) evaluated, {skipped} skipped; "
+            f"tick status {status}"
+        ),
+        "evaluated_binding_count": evaluated,
+        "skipped_binding_count": skipped,
+    }
+    return {
+        "desired_state": desired_state,
+        "downstream_actual_state": downstream_actual_state,
+        "tick_evidence_ref": f"reconciliation-drift://scheduler-ticks/{tick_id}",
+    }
+
+
+def _build_loop_writer(
+    *, dsn: str, tenant_id: str, lease_duration_seconds: int | None = None
+) -> Any:
+    """Build the single Loop 10 controller writer, or None when unconfigured.
+
+    Loop 10 (telemetry_reconciliation) is written only by this scheduler;
+    the consumer and incident listener keep their own functional health.
+    One writer (one lease token) lives for the whole process.
     """
 
     if not dsn:
@@ -53,6 +104,7 @@ def _build_loop_writer(*, dsn: str, tenant_id: str) -> Any:
         or f"{_WORKER_NAME}:{socket.gethostname()}:{os.getpid()}",
         controller_name=_WORKER_NAME,
         deployment_sha=deployment_sha,
+        lease_duration_seconds=lease_duration_seconds,
     )
 
 
@@ -425,7 +477,16 @@ def main() -> int:
         return 2
 
     dsn = os.getenv("RECONCILIATION_DRIFT_STORE_DSN") or os.getenv("DATABASE_URL") or ""
-    loop_writer = _build_loop_writer(dsn=dsn, tenant_id=tenant_id)
+    loop_writer = _build_loop_writer(
+        dsn=dsn,
+        tenant_id=tenant_id,
+        lease_duration_seconds=_lease_seconds(
+            interval_seconds=interval_seconds,
+            timeout_seconds=timeout_seconds,
+            max_attempts=max_attempts,
+            retry_backoff_seconds=retry_backoff_seconds,
+        ),
+    )
     tick = 0
     while True:
         tick += 1
@@ -489,6 +550,10 @@ def main() -> int:
                     f"reconciliation-drift://drift-reports/{report_id}"
                     for report_id in drift_report_ids
                 ]
+                truth = _controller_truth_fields(
+                    result, tick=tick, worker_id=worker_id, checked_at=tick_at
+                )
+                evidence_refs.append(truth["tick_evidence_ref"])
                 has_real_trigger = bool(terminal_ids) or bool(drift_report_ids)
                 truth_level = (
                     "reconciled_live_proof" if has_real_trigger else "scheduled_tick"
@@ -502,6 +567,8 @@ def main() -> int:
                                 f"Evaluated {result.get('evaluated_binding_count', 0)} "
                                 "binding(s)"
                             ),
+                            desired_state=truth["desired_state"],
+                            downstream_actual_state=truth["downstream_actual_state"],
                             evidence_refs=evidence_refs,
                             payload={"tick": tick, "result": result},
                         )
@@ -512,6 +579,8 @@ def main() -> int:
                             loop_id=LOOP_ID,
                             reason=health.get("last_failure_reason") or controller_status,
                             truth_level=truth_level,
+                            desired_state=truth["desired_state"],
+                            downstream_actual_state=truth["downstream_actual_state"],
                             evidence_refs=evidence_refs,
                             payload={"tick": tick, "result": result},
                         )
