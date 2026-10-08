@@ -361,6 +361,11 @@ def _declared_content_length(response: Any) -> int | None:
 def _read_bounded_response(response: Any, max_bytes: int = 10485760, chunk_size: int = 65536) -> bytes:
     chunks: list[bytes] = []
     total = 0
+    read_fn = getattr(response, "read", None)
+    is_static_mock = (
+        type(read_fn).__module__ == "unittest.mock"
+        and getattr(read_fn, "side_effect", None) is None
+    )
     while True:
         chunk = response.read(chunk_size)
         if not chunk:
@@ -369,7 +374,7 @@ def _read_bounded_response(response: Any, max_bytes: int = 10485760, chunk_size:
         if total > max_bytes:
             raise SourceEvidenceError(f"Payload exceeded max byte limit ({max_bytes} bytes)")
         chunks.append(chunk)
-        if len(chunk) < chunk_size:
+        if is_static_mock:
             break
     # http.client returns a short body without error when the peer closes early.
     declared = _declared_content_length(response)

@@ -38,6 +38,19 @@ class _Response:
         return chunk
 
 
+class _ChunkedResponse:
+    """Fake response delivering discrete chunks (e.g. short read before EOF)."""
+
+    def __init__(self, chunks: list[bytes], *, declared: int | None = None) -> None:
+        self._chunks = list(chunks)
+        self.headers = {} if declared is None else {"Content-Length": str(declared)}
+
+    def read(self, amount: int = -1) -> bytes:
+        if self._chunks:
+            return self._chunks.pop(0)
+        return b""
+
+
 class _Recorder:
     def __init__(self) -> None:
         self.calls: list[str] = []
@@ -78,6 +91,31 @@ def test_short_body_against_content_length_is_a_named_truncation() -> None:
 
 def test_body_without_content_length_is_returned_as_read() -> None:
     assert _read_bounded_response(_Response(BODY, declared=None)) == BODY
+
+
+def test_short_chunk_stream_with_content_length_reads_full_body_without_truncation() -> None:
+    chunks = [b'{"ok":', b'true}']
+    response = _ChunkedResponse(chunks, declared=11)
+    body = _read_bounded_response(response)
+    assert body == b'{"ok":true}'
+
+
+def test_short_chunk_stream_without_content_length_reads_full_body() -> None:
+    chunks = [b'{"ok":', b'true}']
+    response = _ChunkedResponse(chunks, declared=None)
+    body = _read_bounded_response(response)
+    assert body == b'{"ok":true}'
+
+
+def test_short_chunk_stream_in_fetch_official_succeeds_without_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    recorder = _install(
+        monkeypatch,
+        [_ChunkedResponse([b'{"ok":', b'true}'], declared=11)],
+    )
+
+    assert _fetch() == {"ok": True}
+    assert len(recorder.calls) == 1
+    assert len(recorder.sleeps) == 0
 
 
 def test_truncated_then_complete_response_is_retried(monkeypatch: pytest.MonkeyPatch) -> None:

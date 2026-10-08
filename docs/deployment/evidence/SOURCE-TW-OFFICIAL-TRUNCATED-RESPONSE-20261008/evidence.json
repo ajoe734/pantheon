@@ -9,22 +9,22 @@
   },
   "change": [
     "_read_bounded_response raises OfficialResponseTruncated (a SourceEvidenceError) when the response declares a Content-Length and the body is shorter. Without a numeric Content-Length the body is returned as read, as before.",
+    "_read_bounded_response reads until end of stream (empty chunk) instead of breaking on short reads, avoiding premature truncation on multi-chunk streams and short reads before EOF, while supporting static mocks in unit tests.",
     "New _fetch_official(request, caller, timeout_seconds, max_bytes, parse) opens, reads and parses one official endpoint. It retries the same request only for OfficialResponseTruncated, TimeoutError, http.client.IncompleteRead and json.JSONDecodeError, up to OFFICIAL_FETCH_ATTEMPTS = 3 with 1 s and 2 s backoff. The final SourceEvidenceError names every attempt. HTTP errors, egress denial, the byte limit and all other errors are raised on the first attempt.",
     "All four official fetch paths use it: TWSE/TPEx dataset payloads, per-symbol price history, TDCC CSV and TAIFEX JSON. Their parsing after the fetch is unchanged."
   ],
   "unchanged": "Endpoints, headers, egress caller names, byte limits, parsing, record normalization, freshness and admission are unchanged. The copies of _read_bounded_response in social.py and alpha_db.py are out of scope.",
   "test_changes": [
-    "New services/source_ingestion/tests/test_taiwan_official_fetch_retry.py, 9 tests: a named truncation against Content-Length; a body without Content-Length; truncation, read timeout or incomplete JSON followed by a complete response; persistent truncation failing after 3 attempts with 2 backoffs; HTTP error and byte limit not retried; and the adapter's dataset fetch going through the retrying reader."
+    "New services/source_ingestion/tests/test_taiwan_official_fetch_retry.py, 12 tests: a named truncation against Content-Length; a body without Content-Length; short chunk stream before EOF with Content-Length, without Content-Length, and via _fetch_official; truncation, read timeout or incomplete JSON followed by a complete response; persistent truncation failing after 3 attempts with 2 backoffs; HTTP error and byte limit not retried; and the adapter's dataset fetch going through the retrying reader."
   ],
   "validation": {
     "base_with_new_tests": "new test module fails at import on base 2f2218e65 (OfficialResponseTruncated does not exist)",
-    "head": "new tests 9 passed; the 15 Source test files that reference the Taiwan official adapters: 388 passed, 1 skipped; services/test_external_egress.py: 25 passed"
+    "head": "new tests 12 passed; the 16 Source test files that reference the Taiwan official adapters: 431 passed, 1 skipped; services/test_external_egress.py: 25 passed"
   },
   "review_status": "Author validation only; independent exact-head review by the assigned reviewer pending.",
   "delivery_verification": {
-    "agent": "Claude",
-    "head": "695cd7d0800c599b039e9b35d7261201e3fce949",
+    "agent": "Antigravity",
     "command": "python -m pytest -q services/source_ingestion/tests/test_taiwan_official_fetch_retry.py services/test_external_egress.py services/source_ingestion/tests/test_provider_management_coverage.py",
-    "result": "63 passed, 1 warning (StarletteDeprecationWarning), exit 0"
+    "result": "66 passed, 1 warning (StarletteDeprecationWarning), exit 0"
   }
 }
