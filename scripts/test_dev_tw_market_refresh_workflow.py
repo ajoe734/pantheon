@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -169,3 +170,115 @@ def test_refresh_only_payload_fails_closed_without_managed_worktree(tmp_path: Pa
         assert result.returncode != 0
         assert "no managed deploy worktree containing docker-compose.yml" in result.stdout + result.stderr
         assert "REFRESH_ENTRYPOINT" not in result.stdout
+
+
+STUB_DOCKER = """#!/usr/bin/env bash
+echo "$*" >> "${DOCKER_LOG}"
+case "$*" in
+  *"ps -q source-ingest"*) echo steady-api ;;
+  *"images -q"*) echo "${IMAGE_ID#sha256:}" ;;
+  *"inspect --format {{.Image}}"*) echo "${IMAGE_ID}" ;;
+  *"ps -a -q source-ingest-scheduler"*) echo steady-scheduler ;;
+  *"ps -a -q source-ingest-agora-projector"*) echo steady-projector ;;
+  *"inspect --format {{json .Config.Env}} steady-scheduler"*)
+    if [ -n "${NO_DEPLOY_VALUES:-}" ]; then echo '["A=1"]'; else echo '["PANTHEON_TENANT_ID=tenant-dev","PANTHEON_ENV=dev","GIT_SHA=abc123"]'; fi ;;
+  *"inspect --format {{json .Config.Env}}"*) echo '["A=1"]' ;;
+  "ps -a -q"*) echo "bounded-id" ;;
+  *"inspect --format {{.State.Status}}"*) echo exited ;;
+  *"inspect --format {{.State.ExitCode}}"*) echo "${BOUNDED_EXIT_CODE:-0}" ;;
+esac
+"""
+
+
+def _run_refresh_entrypoint(tmp_path: Path, symbols: str, exit_code: str, extra_env: dict[str, str] | None = None) -> tuple[subprocess.CompletedProcess[str], list[str], Path]:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    names = (
+        "wait_for_bounded_source_refresh_service",
+        "execute_bounded_source_refresh_entrypoint",
+    )
+    functions = []
+    for name in names:
+        match = re.search(rf"^{name}\(\) \{{\n.*?^\}}\n", script, re.S | re.M)
+        assert match, name
+        functions.append(match.group(0))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    docker = bin_dir / "docker"
+    docker.write_text(STUB_DOCKER, encoding="utf-8")
+    docker.chmod(0o755)
+    log = tmp_path / "docker.log"
+    out = tmp_path / "out.json"
+    harness = "\n".join(
+        [
+            "set -uo pipefail",
+            "info() { echo \"$*\"; }",
+            "error() { echo \"ERROR: $*\" >&2; exit 1; }",
+            "sleep() { :; }",
+            "check_taiwan_refresh_preflight() { echo '{\"status\": \"proceed\"}'; }",
+            "validate_source_refresh_profile() { :; }",
+            f"resolve_bounded_source_refresh_active_symbols() {{ export SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS='{symbols}'; }}",
+            "verify_bounded_source_refresh_readback() { :; }",
+            "manage_source_ingest_refresh_runtime() { echo \"manage $2\" >> \"${DOCKER_LOG}\"; }",
+            *functions,
+            f"execute_bounded_source_refresh_entrypoint true {out}",
+        ]
+    )
+    env = {
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "DOCKER_LOG": str(log),
+        "IMAGE_ID": "sha256:" + "a" * 64,
+        "BOUNDED_EXIT_CODE": exit_code,
+        **(extra_env or {}),
+    }
+    result = subprocess.run(["bash", "-c", harness], env=env, cwd=tmp_path, text=True, capture_output=True, check=False)
+    calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+    return result, calls, out
+
+
+def _steady_service_mutations(calls: list[str]) -> list[str]:
+    steady = ("source-ingest-scheduler", "source-ingest-agora-projector")
+    return [
+        call
+        for call in calls
+        if any(re.search(rf"(^| ){verb}( |$)", call) for verb in ("up", "rm", "restart"))
+        and any(re.search(rf"(^| ){service}( |$)", call) for service in steady)
+    ]
+
+
+def test_refresh_skips_without_touching_containers_when_no_taiwan_symbols(tmp_path: Path) -> None:
+    result, calls, out = _run_refresh_entrypoint(tmp_path, "", "0")
+    assert result.returncode == 0, result.stderr
+    assert json.loads(out.read_text(encoding="utf-8")) == {"status": "skipped", "reason": "no_active_taiwan_symbols"}
+    assert calls == []
+
+
+@pytest.mark.parametrize("exit_code,expected_rc", [("0", 0), ("1", 1)])
+def test_refresh_never_replaces_steady_scheduler_or_projector(tmp_path: Path, exit_code: str, expected_rc: int) -> None:
+    result, calls, _ = _run_refresh_entrypoint(tmp_path, "0050.TW", exit_code)
+    assert result.returncode == expected_rc, result.stderr
+    assert _steady_service_mutations(calls) == []
+    runs = [call for call in calls if " run -d " in call]
+    assert len(runs) == 2
+    assert all("--name pantheon-bounded-refresh-" in call for call in runs)
+    assert "manage restore" in calls
+    assert any(call.startswith("rm -f pantheon-bounded-refresh-") for call in calls)
+
+
+@pytest.mark.parametrize("exit_code", ["0", "1"])
+def test_refresh_pauses_and_restarts_same_steady_containers_with_own_state(tmp_path: Path, exit_code: str) -> None:
+    _, calls, _ = _run_refresh_entrypoint(tmp_path, "0050.TW", exit_code)
+    stop = calls.index("stop steady-scheduler steady-projector")
+    assert calls.index("start steady-scheduler steady-projector") > max(
+        i for i, call in enumerate(calls) if " run -d " in call
+    ) > stop
+    assert not any("rm" in call.split() and "steady-" in call for call in calls)
+    runs = [call for call in calls if " run -d " in call]
+    assert all("SOURCE_INGEST_CONTROLLER_STATE_PATH=/data/source-ingest/bounded-refresh/" in c for c in runs)
+    assert not any("/data/source-ingest/controller_state.json" in c for c in calls)
+
+
+def test_refresh_fails_closed_without_steady_deploy_values(tmp_path: Path) -> None:
+    result, calls, _ = _run_refresh_entrypoint(tmp_path, "0050.TW", "0", {"NO_DEPLOY_VALUES": "1"})
+    assert result.returncode != 0
+    assert "steady_scheduler_deploy_values_missing" in result.stderr
+    assert not any(" run -d " in call or call.startswith("stop ") for call in calls)

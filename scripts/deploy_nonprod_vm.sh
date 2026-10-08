@@ -1340,15 +1340,23 @@ wait_for_exact_bff_lifecycle_readiness() {
 
 wait_for_bounded_source_refresh_service() {
   local service="$1"
+  local container_name=""
   local timeout_seconds="${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS}"
   local started_epoch
   local container_id=""
   local state=""
   local exit_code=""
   started_epoch="$(date +%s)"
+  # Refresh-only runs use named one-shot containers so steady services stay untouched.
+  [[ -z "${SOURCE_INGEST_BOUNDED_CONTAINER_PREFIX:-}" ]] \
+    || container_name="${SOURCE_INGEST_BOUNDED_CONTAINER_PREFIX}-${service}"
 
   while (( $(date +%s) - started_epoch < timeout_seconds )); do
-    container_id="$(docker compose -p pantheon -f docker-compose.yml ps -a -q "$service" 2>/dev/null || true)"
+    if [[ -n "$container_name" ]]; then
+      container_id="$(docker ps -a -q --filter "name=^${container_name}\$" 2>/dev/null || true)"
+    else
+      container_id="$(docker compose -p pantheon -f docker-compose.yml ps -a -q "$service" 2>/dev/null || true)"
+    fi
     if [[ -z "$container_id" ]]; then
       sleep 5
       continue
@@ -1867,6 +1875,19 @@ execute_bounded_source_refresh_entrypoint() {
   SOURCE_INGEST_MAX_RECORDS="100"
   validate_source_refresh_profile
   resolve_bounded_source_refresh_active_symbols
+  if [[ -z "${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" ]]; then
+    info "bounded source refresh skipped: no_active_taiwan_symbols"
+    [[ -n "${output_path}" ]] && printf '%s\n' '{"status": "skipped", "reason": "no_active_taiwan_symbols"}' > "${output_path}"
+    rm -f "${steady_env}"
+    return 0
+  fi
+
+  local bounded_services=(source-ingest-scheduler source-ingest-agora-projector) bounded_service
+  local bounded_containers=()
+  SOURCE_INGEST_BOUNDED_CONTAINER_PREFIX="pantheon-bounded-refresh"
+  for bounded_service in "${bounded_services[@]}"; do
+    bounded_containers+=("${SOURCE_INGEST_BOUNDED_CONTAINER_PREFIX}-${bounded_service}")
+  done
 
   local cid running_image_id compose_image_id
   cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null || true)"
@@ -1878,6 +1899,27 @@ execute_bounded_source_refresh_entrypoint() {
   [[ "$compose_image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || error "invalid compose image ID: ${compose_image_id:-missing}"
   [[ "$running_image_id" == "$compose_image_id" ]] || error "running image ID ${running_image_id} != compose image ID ${compose_image_id}"
   docker inspect --format '{{json .Config.Env}}' "$cid" > "${steady_env}"
+
+  # Deploy-time values (tenant, GIT_SHA, ...) only exist on the steady scheduler container.
+  local steady_ids=() steady_id steady_scheduler_env
+  for bounded_service in "${bounded_services[@]}"; do
+    steady_id="$(docker compose -p pantheon -f docker-compose.yml ps -a -q "${bounded_service}" 2>/dev/null || true)"
+    [[ -n "${steady_id}" ]] && steady_ids+=("${steady_id}")
+  done
+  steady_scheduler_env="$(docker inspect --format '{{json .Config.Env}}' "${steady_ids[0]:-}" 2>/dev/null || true)"
+  local deploy_key deploy_value
+  for deploy_key in PANTHEON_TENANT_ID PANTHEON_ENV GIT_SHA IMAGE_DIGEST BUILD_TIME; do
+    deploy_value="$(python3 -c 'import json,sys
+for item in json.loads(sys.argv[1] or "[]"):
+    key, _, value = item.partition("=")
+    if key == sys.argv[2]:
+        print(value)' "${steady_scheduler_env}" "${deploy_key}")"
+    if [[ -z "${deploy_value}" ]]; then
+      [[ "${deploy_key}" == "IMAGE_DIGEST" || "${deploy_key}" == "BUILD_TIME" ]] && continue
+      error "steady source-ingest-scheduler is missing deploy-time value ${deploy_key}; refusing bounded refresh (steady_scheduler_deploy_values_missing)"
+    fi
+    export "${deploy_key}=${deploy_value}"
+  done
 
   restore_bounded_source_refresh() {
     local rc=$?
@@ -1892,28 +1934,40 @@ execute_bounded_source_refresh_entrypoint() {
       SOURCE_INGEST_CONTROLLER_MAX_TICKS=0 SOURCE_INGEST_CONTROLLER_RESTART_POLICY=unless-stopped \
         docker compose -p pantheon -f docker-compose.yml up -d --no-deps --no-build source-ingest >/dev/null 2>&1 || true
     fi
-    COMPOSE_PROFILES="source-ingest-scheduler,workers" \
-      docker compose -p pantheon -f docker-compose.yml rm -f -s source-ingest-scheduler source-ingest-agora-projector >/dev/null 2>&1 || true
+    # Only the named one-shot containers are removed; steady scheduler/projector are never touched.
+    docker rm -f "${bounded_containers[@]}" >/dev/null 2>&1 || true
+    if (( ${#steady_ids[@]} )); then
+      docker start "${steady_ids[@]}" >/dev/null 2>&1 || rc=$?
+    fi
     rm -f "${steady_env:-}"
     return "${rc}"
   }
   trap restore_bounded_source_refresh EXIT INT TERM
 
+  # Stop (not remove) the steady controller/projector so only one controller owns the window.
+  (( ${#steady_ids[@]} )) && docker stop "${steady_ids[@]}" >/dev/null
   manage_source_ingest_refresh_runtime "${steady_env}" "bounded" "${running_image_id}" "${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}"
 
-  COMPOSE_PROFILES="source-ingest-scheduler,workers" \
-  SOURCE_INGEST_CONTROLLER_MODE=reconcile_and_pull \
-  SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=reconciled_live_proof \
-  SOURCE_INGEST_CONTROLLER_MAX_TICKS=1 \
-  SOURCE_INGEST_CONTROLLER_RESTART_POLICY=no \
-  SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
-  SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
-  SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY=1 \
-  SOURCE_INGEST_MAX_RECORDS=100 \
-  SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS="${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" \
-    docker compose -p pantheon -f docker-compose.yml up -d --no-deps --no-build source-ingest-scheduler source-ingest-agora-projector
-  wait_for_bounded_source_refresh_service source-ingest-scheduler
-  wait_for_bounded_source_refresh_service source-ingest-agora-projector
+  docker rm -f "${bounded_containers[@]}" >/dev/null 2>&1 || true
+  for bounded_service in "${bounded_services[@]}"; do
+    COMPOSE_PROFILES="source-ingest-scheduler,workers" \
+    SOURCE_INGEST_CONTROLLER_MODE=reconcile_and_pull \
+    SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=reconciled_live_proof \
+    SOURCE_INGEST_CONTROLLER_MAX_TICKS=1 \
+    SOURCE_INGEST_CONTROLLER_RESTART_POLICY=no \
+    SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
+    SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
+    SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY=1 \
+    SOURCE_INGEST_MAX_RECORDS=100 \
+    SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS="${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" \
+      docker compose -p pantheon -f docker-compose.yml run -d --no-deps \
+        -e SOURCE_INGEST_CONTROLLER_STATE_PATH=/data/source-ingest/bounded-refresh/controller_state.json \
+        -e SOURCE_INGEST_CONTROLLER_ALIVE_PATH=/data/source-ingest/bounded-refresh/controller_alive \
+        --name "${SOURCE_INGEST_BOUNDED_CONTAINER_PREFIX}-${bounded_service}" "${bounded_service}"
+  done
+  for bounded_service in "${bounded_services[@]}"; do
+    wait_for_bounded_source_refresh_service "${bounded_service}"
+  done
 
   verify_bounded_source_refresh_readback "${refresh_started_at}"
   restore_bounded_source_refresh
