@@ -19,5 +19,11 @@
     "base_with_new_tests": "with the harness change reverted, both diagnostics tests fail",
     "head": "pytest scripts/test_run_isolated_l12_runtime_e2e.py: 44 passed"
   },
-  "review_status": "Author validation only; independent exact-head review by the assigned reviewer pending."
+  "review_status": "Author validation only; independent exact-head review by the assigned reviewer pending.",
+  "delivery_verification": {
+    "agent": "Claude",
+    "head": "5fc27b7b68a3bd6eccbc7a819cc373a64d3d7ca6",
+    "command": "uv run --no-project --python 3.12 --with pytest pytest -q scripts/test_run_isolated_l12_runtime_e2e.py",
+    "result": "44 passed in 5.76s"
+  }
 }
