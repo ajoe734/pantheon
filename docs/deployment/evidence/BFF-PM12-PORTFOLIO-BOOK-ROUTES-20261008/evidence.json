@@ -10,32 +10,32 @@
         "totalNav": {
           "reader": "src/management/components/cockpit/TotalCapitalSnapshot.tsx:20, src/lib/v5/management/portfolio.ts:13",
           "owner_source": "capital_pools[].nav",
-          "unavailable_behavior": "When no capital pool provides nav, totalNav is omitted from data so execute-plans adapter management.ts:4054-4061 (summaryLiveOnly) returns null, displaying the unavailable state rather than fabricated 0.0."
+          "unavailable_behavior": "When no capital pool provides nav or coverage is partial (not every contributing pool reports nav), totalNav is omitted from data so execute-plans adapter management.ts:4054-4061 (summaryLiveOnly) returns null, displaying the unavailable state rather than understating whole-portfolio capital."
         },
         "totalCash": {
           "reader": "src/management/components/cockpit/TotalCapitalSnapshot.tsx:21, src/lib/v5/management/portfolio.ts:14",
           "owner_source": "capital_pools[].cash",
-          "unavailable_behavior": "When no capital pool provides cash, returns null rather than defaulting to 0.0."
+          "unavailable_behavior": "When no capital pool provides cash or coverage is partial (not every contributing pool reports cash), returns null rather than defaulting to 0.0 or understating total cash."
         },
         "grossExposure": {
           "reader": "src/management/components/cockpit/TotalCapitalSnapshot.tsx:22, src/lib/v5/management/portfolio.ts:15",
           "owner_source": "entries[].current_exposure (from capital_pools[].current_exposure)",
-          "unavailable_behavior": "When no current_exposure is present across entries, returns null."
+          "unavailable_behavior": "When no current_exposure is present across entries or coverage is partial (not every contributing entry reports current_exposure), returns null."
         },
         "leverage": {
           "reader": "src/management/components/cockpit/TotalCapitalSnapshot.tsx:23, src/lib/v5/management/portfolio.ts:17",
           "owner_source": "grossExposure / totalNav",
-          "unavailable_behavior": "Calculated only when grossExposure is available and totalNav > 0. When totalNav is missing or 0, returns null rather than fabricated 0.0."
+          "unavailable_behavior": "Calculated only when grossExposure is available, totalNav is available with full coverage, and totalNav > 0. When either is partial, missing, or 0, returns null rather than fabricated 0.0."
         },
         "unrealizedPnl": {
           "reader": "src/management/components/cockpit/TotalCapitalSnapshot.tsx:24, src/lib/v5/management/portfolio.ts:18",
           "owner_source": "capital_pools[].unrealized_pnl or telemetry_summaries[].unrealized_pnl",
-          "unavailable_behavior": "When no owner source provides unrealized PnL, returns null rather than substituting cumulative total_pnl."
+          "unavailable_behavior": "When no owner source provides unrealized PnL or coverage across contributing pools is partial, returns null rather than substituting cumulative total_pnl."
         },
         "pnlToday": {
           "reader": "src/management/components/cockpit/TotalCapitalSnapshot.tsx:25, src/lib/v5/management/portfolio.ts:20",
           "owner_source": "capital_pools[].pnl_today (or daily_pnl) or telemetry_summaries[].daily_pnl (or pnl_today)",
-          "unavailable_behavior": "When no owner source provides daily PnL, returns null rather than substituting cumulative total_pnl."
+          "unavailable_behavior": "When no owner source provides daily PnL or coverage across contributing pools is partial, returns null rather than substituting cumulative total_pnl."
         },
         "activeCapitalPools": {
           "reader": "src/management/components/cockpit/TotalCapitalSnapshot.tsx:26, src/lib/v5/management/portfolio.ts:24",
@@ -248,6 +248,11 @@
       "test": "test_bff_pm12_portfolio_book_contract.py::test_portfolio_book_summary_with_honest_daily_and_unrealized_pnl",
       "classification": "intended change",
       "reason": "Verified that when honest nav, cash, daily_pnl, and unrealized_pnl are provided by capital pools and runtime telemetry, they are accurately rolled up into the portfolio-book response."
+    },
+    {
+      "test": "test_bff_pm12_portfolio_book_contract.py::test_portfolio_book_summary_partial_coverage_omits_nav_and_yields_null",
+      "classification": "intended change",
+      "reason": "Verified that when coverage across contributing capital pools is partial, totalNav is omitted from data and partial totals return null rather than understating whole-portfolio capital."
     }
   ],
   "frontend_follow_ups": [
@@ -270,8 +275,8 @@
   "assertions_weakened": false,
   "compressed_code_used": false,
   "verification": {
-    "test_bff_pm12_portfolio_book_contract": "48 passed, 0 failed in 25.50s",
-    "test_bff_mgmt_common_filters": "4 passed, 0 failed in 4.90s",
-    "total": "52 passed, 0 failed in 30.40s"
+    "test_bff_pm12_portfolio_book_contract": "49 passed, 0 failed in 21.30s",
+    "test_bff_mgmt_common_filters": "4 passed, 0 failed in 4.87s",
+    "total": "53 passed, 0 failed in 26.17s"
   }
 }

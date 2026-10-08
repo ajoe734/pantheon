@@ -413,6 +413,48 @@ def test_portfolio_book_summary_with_honest_daily_and_unrealized_pnl(monkeypatch
     assert data["summary"]["total_pnl"] == 25.0
 
 
+def test_portfolio_book_summary_partial_coverage_omits_nav_and_yields_null(monkeypatch) -> None:
+    client = _portfolio_store(
+        monkeypatch,
+        capital_pools=[
+            {
+                "id": "pool-covered",
+                "pool_id": "pool-covered",
+                "name": "Covered Pool",
+                "status": "active",
+                "nav": 150.0,
+                "cash": 45.0,
+                "pnl_today": 7.5,
+                "risk_budget": 100.0,
+                "current_exposure": 35.0,
+                "currency": "USD",
+            },
+            {
+                "id": "pool-uncovered",
+                "pool_id": "pool-uncovered",
+                "name": "Uncovered Pool",
+                "status": "active",
+                "risk_budget": 50.0,
+                "currency": "USD",
+            },
+        ],
+    )
+
+    response = client.get("/bff/management/portfolio-book", headers=HEADERS)
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+
+    # When coverage is partial (only 1 of 2 pools reports nav), totalNav must be omitted
+    assert "totalNav" not in data
+
+    # Partial money figures must be None (JSON null), never understated partial sums
+    assert data["totalCash"] is None
+    assert data["grossExposure"] is None
+    assert data["leverage"] is None
+    assert data["unrealizedPnl"] is None
+    assert data["pnlToday"] is None
+
+
 def test_portfolio_book_requires_read_auth(monkeypatch) -> None:
     client = _portfolio_store(monkeypatch)
 

@@ -1648,34 +1648,46 @@ def _pm12_portfolio_book_response(
             max_util = u
             highest_risk_pool_id = e.get("capital_pool_id") or e.get("id")
 
-    nav_values = [v for p in sources["capital_pools"] if (v := _management_as_float(p.get("nav"))) is not None]
-    total_nav = round(sum(nav_values), 6) if nav_values else None
+    pools = sources["capital_pools"]
+    pool_by_id = {str(p.get("pool_id") or p.get("id") or "").strip(): p for p in pools}
+    contributing_entries = entries
+    contributing_pools = [
+        pool_by_id.get(str(e.get("pool_id") or e.get("id") or "").strip()) or {}
+        for e in contributing_entries
+    ] if contributing_entries else []
 
-    cash_values = [v for p in sources["capital_pools"] if (v := _management_as_float(p.get("cash"))) is not None]
-    total_cash = round(sum(cash_values), 6) if cash_values else None
+    nav_values = [_management_as_float(p.get("nav")) for p in contributing_pools]
+    total_nav = round(sum(nav_values), 6) if (contributing_pools and all(v is not None for v in nav_values)) else None
 
-    exposure_values = [v for e in entries if (v := _management_as_float(e.get("current_exposure"))) is not None]
-    gross_exposure = round(sum(exposure_values), 6) if exposure_values else None
+    cash_values = [_management_as_float(p.get("cash")) for p in contributing_pools]
+    total_cash = round(sum(cash_values), 6) if (contributing_pools and all(v is not None for v in cash_values)) else None
+
+    exposure_values = [_management_as_float(e.get("current_exposure")) for e in contributing_entries]
+    gross_exposure = round(sum(exposure_values), 6) if (contributing_entries and all(v is not None for v in exposure_values)) else None
 
     leverage = round(gross_exposure / total_nav, 2) if gross_exposure is not None and total_nav is not None and total_nav > 0 else None
 
-    pool_unrealized = [v for p in sources["capital_pools"] if (v := _management_as_float(p.get("unrealized_pnl"))) is not None]
-    if pool_unrealized:
-        unrealized_pnl = round(sum(pool_unrealized), 6)
-    elif portfolio_telemetry.get("unrealized_pnl") is not None:
-        unrealized_pnl = portfolio_telemetry["unrealized_pnl"]
-    else:
-        unrealized_pnl = None
+    unrealized_values = []
+    pnl_today_values = []
+    for p, e in zip(contributing_pools, contributing_entries):
+        unrealized = _management_as_float(p.get("unrealized_pnl"))
+        if unrealized is None:
+            tel = e.get("telemetry") or {}
+            unrealized = _management_as_float(tel.get("unrealized_pnl"))
+        if unrealized is None and len(contributing_pools) == 1 and portfolio_telemetry.get("unrealized_pnl") is not None:
+            unrealized = portfolio_telemetry["unrealized_pnl"]
+        unrealized_values.append(unrealized)
 
-    pool_pnl_today = [v for p in sources["capital_pools"] if (v := _management_as_float(p.get("pnl_today") if p.get("pnl_today") is not None else p.get("daily_pnl"))) is not None]
-    if pool_pnl_today:
-        pnl_today = round(sum(pool_pnl_today), 6)
-    elif portfolio_telemetry.get("daily_pnl") is not None:
-        pnl_today = portfolio_telemetry["daily_pnl"]
-    elif portfolio_telemetry.get("pnl_today") is not None:
-        pnl_today = portfolio_telemetry["pnl_today"]
-    else:
-        pnl_today = None
+        daily = _management_as_float(p.get("pnl_today") if p.get("pnl_today") is not None else p.get("daily_pnl"))
+        if daily is None:
+            tel = e.get("telemetry") or {}
+            daily = _management_as_float(tel.get("daily_pnl") if tel.get("daily_pnl") is not None else tel.get("pnl_today"))
+        if daily is None and len(contributing_pools) == 1:
+            daily = portfolio_telemetry.get("daily_pnl") if portfolio_telemetry.get("daily_pnl") is not None else portfolio_telemetry.get("pnl_today")
+        pnl_today_values.append(daily)
+
+    unrealized_pnl = round(sum(unrealized_values), 6) if (contributing_pools and all(v is not None for v in unrealized_values)) else None
+    pnl_today = round(sum(pnl_today_values), 6) if (contributing_pools and all(v is not None for v in pnl_today_values)) else None
 
     summary = {
         "active_capital_pools": active_capital_pools,
