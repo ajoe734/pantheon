@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -3571,6 +3572,49 @@ def test_taiwan_preflight_invalid_calendar_proceeds_and_valid_holiday_still_skip
     assert (result["status"], result["reason"]) == ("skipped", "holiday")
 
 
+def test_deploy_nonprod_vm_taiwan_market_freshness_session_window() -> None:
+    """Nonprod deploy paper snapshot admission accepts Friday receipt across the weekend session window."""
+    from services.execution.market_snapshot_admission import evaluate_taiwan_market_freshness
+    from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
+
+    lineage = {
+        "source_ids": ["tw-official:tw_price_daily:TWSE:0050:receipt-session-window"],
+        "connector_ids": ["tw-twse-tpex-official-market"],
+    }
+    ev = governed_taiwan_calendar_evidence(venue="TWSE", trade_date="2026-10-16")
+    assert ev is not None
+
+    close_fri = datetime.fromisoformat("2026-10-16T05:30:00+00:00")
+    receipt_fri = datetime.fromisoformat("2026-10-16T07:00:00+00:00")
+    # Weekend deploy on Sunday:
+    now_sun = datetime.fromisoformat("2026-10-18T10:00:00+00:00")
+    ok_sun, reason_sun, detail_sun = evaluate_taiwan_market_freshness(
+        event_time_dt=close_fri,
+        now_dt=now_sun,
+        refresh_receipt_dt=receipt_fri,
+        lineage=lineage,
+        max_refresh_age_seconds=86400,
+        calendar_evidence=ev,
+    )
+    assert ok_sun is True
+    assert reason_sun is None
+    assert detail_sun is None
+
+    # Monday morning deploy before 13:30 Asia/Taipei session close:
+    now_mon_morning = datetime.fromisoformat("2026-10-19T02:00:00+00:00")
+    ok_mon, reason_mon, detail_mon = evaluate_taiwan_market_freshness(
+        event_time_dt=close_fri,
+        now_dt=now_mon_morning,
+        refresh_receipt_dt=receipt_fri,
+        lineage=lineage,
+        max_refresh_age_seconds=86400,
+        calendar_evidence=ev,
+    )
+    assert ok_mon is True
+    assert reason_mon is None
+    assert detail_mon is None
+
+
 def test_stage_dev_paper_prerequisite_readiness_rejects_adversarial_counterexample(tmp_path: Path) -> None:
     from http.server import HTTPServer, BaseHTTPRequestHandler
     import threading
@@ -4235,4 +4279,119 @@ verify_dev_paper_fleet
     stdout_lines = proc.stdout.splitlines()
     for line in stdout_lines:
         assert len(line) < 512, f"failure stdout line exceeds bound ({len(line)} bytes): {line[:100]}..."
+
+
+def _extract_resolve_bounded_source_refresh_active_symbols_func() -> str:
+    script_text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = script_text.find("resolve_bounded_source_refresh_active_symbols() {")
+    assert start != -1, "resolve_bounded_source_refresh_active_symbols() not found"
+    next_func = script_text.find("\nverify_bounded_source_refresh_readback() {", start)
+    assert next_func != -1, "next function boundary after resolve_bounded_source_refresh_active_symbols not found"
+    end = script_text.rfind("\n}\n", start, next_func)
+    assert end != -1, "closing brace for resolve_bounded_source_refresh_active_symbols not found"
+    return script_text[start : end + 2]
+
+
+def _run_resolver_bash(
+    tmp_path: Path,
+    bindings: list[dict] | None = None,
+    env_vars: dict[str, str] | None = None,
+) -> tuple[subprocess.CompletedProcess[str], str]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    store_path = tmp_path / "runtime_bindings.json"
+    if bindings is not None:
+        store_path.write_text(json.dumps(bindings), encoding="utf-8")
+
+    mock_docker = bin_dir / "docker"
+    mock_docker.write_text(
+        f"""#!/usr/bin/env python3
+import os, sys, subprocess
+
+args = sys.argv[1:]
+if "run" in args and "runtime-manager" in args:
+    code = sys.stdin.read()
+    env = dict(os.environ)
+    env["PANTHEON_RUNTIME_BINDING_STORE_PATH"] = "{store_path}"
+    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env)
+    sys.stdout.write(proc.stdout)
+    sys.stderr.write(proc.stderr)
+    sys.exit(proc.returncode)
+sys.exit(0)
+""",
+        encoding="utf-8",
+    )
+    mock_docker.chmod(0o755)
+
+    func = _extract_resolve_bounded_source_refresh_active_symbols_func()
+    script = tmp_path / "test_resolver.sh"
+    script.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+
+export PATH="{bin_dir}:$PATH"
+export PANTHEON_DEV_COMPOSE_PROFILES="root,source-ingest-scheduler"
+
+{func}
+
+resolve_bounded_source_refresh_active_symbols
+echo "ACTIVE_SYMBOLS=$SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS"
+""",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+
+    env = dict(os.environ)
+    if env_vars:
+        env.update(env_vars)
+
+    proc = subprocess.run(["bash", str(script)], capture_output=True, text=True, env=env)
+    active = ""
+    for line in proc.stdout.splitlines():
+        if line.startswith("ACTIVE_SYMBOLS="):
+            active = line.partition("=")[2]
+    return proc, active
+
+
+def test_resolve_bounded_source_refresh_active_symbols_no_bindings_returns_baseline_symbol(tmp_path: Path) -> None:
+    proc, active = _run_resolver_bash(tmp_path / "missing", bindings=None)
+    assert proc.returncode == 0, proc.stderr
+    assert active == "2330.TW"
+
+    proc2, active2 = _run_resolver_bash(tmp_path / "empty", bindings=[])
+    assert proc2.returncode == 0, proc2.stderr
+    assert active2 == "2330.TW"
+
+
+def test_resolve_bounded_source_refresh_active_symbols_union_preserves_order_and_no_duplicates(tmp_path: Path) -> None:
+    bindings = [
+        {"deployment_mode": "paper", "status": "active", "symbol": "0050.TW"},
+        {
+            "deployment_mode": "paper",
+            "status": "paused",
+            "symbol": "2317.TW",
+            "metadata": {"session_admission": {"reason_code": "market_input_stale"}},
+        },
+    ]
+    proc, active = _run_resolver_bash(tmp_path / "case1", bindings=bindings)
+    assert proc.returncode == 0, proc.stderr
+    assert active == "0050.TW,2317.TW,2330.TW"
+
+    bindings_with_baseline = [
+        {"deployment_mode": "paper", "status": "active", "symbol": "2330.TW"},
+        {"deployment_mode": "paper", "status": "active", "symbol": "0050.TW"},
+    ]
+    proc2, active2 = _run_resolver_bash(tmp_path / "case2", bindings=bindings_with_baseline)
+    assert proc2.returncode == 0, proc2.stderr
+    assert active2 == "2330.TW,0050.TW"
+
+
+def test_resolve_bounded_source_refresh_active_symbols_empty_when_no_baseline_declared(tmp_path: Path) -> None:
+    proc, active = _run_resolver_bash(
+        tmp_path / "no_baseline", bindings=[], env_vars={"PANTHEON_DEV_PAPER_BASELINE_SYMBOL": ""}
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert active == ""
 

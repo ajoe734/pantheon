@@ -28,6 +28,7 @@ from typing import Any, Callable
 DEFAULT_ALIVE_PATH = "/data/training-session/preview-worker-alive"
 TERMINAL_SESSION_STATUSES = {"completed", "committed", "discarded", "abandoned", "expired"}
 LOOP_ID = "persona_teaching"
+TERMINAL_SESSION_COMPLETION_EXHAUSTED = "terminal_session_completion_exhausted"
 
 
 def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
@@ -48,7 +49,11 @@ def _read_json_response(request: urllib.request.Request, timeout_seconds: float)
 
 
 def _authority_headers() -> dict[str, str]:
-    token = str(os.getenv("TRAINING_SESSION_WORKER_TOKEN") or "").strip()
+    # Request-time read so the issuer's rotation/revocation applies without a
+    # restart; a configured but absent/unsafe/malformed file fails closed.
+    from services.service_token_file import configured_service_token
+
+    token = configured_service_token("TRAINING_SESSION_WORKER_TOKEN")
     tenant_id = str(os.getenv("TRAINING_SESSION_TENANT_ID") or "").strip()
     actor_service = str(
         os.getenv("TRAINING_SESSION_WORKER_SERVICE_ID")
@@ -309,6 +314,7 @@ def run_tick(
     job_ids: list[str] = []
     terminal_sessions: list[dict[str, Any]] = []
     consult_request_ids: list[str] = []
+    named_failures: list[str] = []
 
     try:
         jobs = fetch_claimable_jobs(api_url=api_url, limit=limit, timeout_seconds=timeout_seconds)
@@ -328,6 +334,7 @@ def run_tick(
             "terminal_session_ids": [],
             "terminal_sessions": [],
             "consult_request_ids": [],
+            "named_failures": [],
         }
         if loop_writer is not None:
             _write_loop_result(loop_writer, result)
@@ -347,6 +354,7 @@ def run_tick(
             "terminal_session_ids": [],
             "terminal_sessions": [],
             "consult_request_ids": [],
+            "named_failures": [],
         }
         if loop_writer is not None:
             _write_loop_result(loop_writer, result)
@@ -392,6 +400,8 @@ def run_tick(
             if consult_request_id and consult_request_id not in consult_request_ids:
                 consult_request_ids.append(consult_request_id)
             if result.get("terminalize_session") is True:
+                terminal_error: Exception | None = None
+                terminal_detail: str = ""
                 try:
                     terminal_sessions.append(
                         complete_and_read_terminal_session(
@@ -401,20 +411,38 @@ def run_tick(
                         )
                     )
                 except urllib.error.HTTPError as exc:
-                    failed += 1
-                    detail = exc.read().decode("utf-8", errors="replace")
-                    errors.append(
-                        f"job_id={job_id} terminal_session_http_error={exc.code} {detail}"
-                    )
+                    terminal_error = exc
+                    terminal_detail = exc.read().decode("utf-8", errors="replace")
                 except urllib.error.URLError as exc:
-                    failed += 1
-                    errors.append(f"job_id={job_id} terminal_session_url_error={exc.reason}")
+                    terminal_error = exc
+                    terminal_detail = str(exc.reason)
                 except RuntimeError as exc:
+                    terminal_error = exc
+                    terminal_detail = str(exc)
+
+                if terminal_error is not None:
                     failed += 1
-                    errors.append(f"job_id={job_id} terminal_session_error={exc}")
+                    if isinstance(terminal_error, urllib.error.HTTPError):
+                        errors.append(
+                            f"job_id={job_id} terminal_session_http_error={terminal_error.code} {terminal_detail}"
+                        )
+                    elif isinstance(terminal_error, urllib.error.URLError):
+                        errors.append(
+                            f"job_id={job_id} terminal_session_url_error={terminal_detail}"
+                        )
+                    else:
+                        errors.append(
+                            f"job_id={job_id} terminal_session_error={terminal_detail}"
+                        )
         else:
             failed += 1
-            errors.append(f"job_id={job_id} unexpected_status={result.get('status')!r}")
+            error_code = result.get("error_code")
+            if error_code:
+                if str(error_code) not in named_failures:
+                    named_failures.append(str(error_code))
+                errors.append(f"job_id={job_id} error_code={error_code} status={result.get('status')!r}")
+            else:
+                errors.append(f"job_id={job_id} unexpected_status={result.get('status')!r}")
 
     result = {
         "jobs_found": len(jobs),
@@ -428,6 +456,7 @@ def run_tick(
         "terminal_session_ids": [item["session_id"] for item in terminal_sessions],
         "terminal_sessions": terminal_sessions,
         "consult_request_ids": consult_request_ids,
+        "named_failures": named_failures,
     }
     if loop_writer is not None:
         _write_loop_result(loop_writer, result)

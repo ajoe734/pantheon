@@ -1,0 +1,44 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "DEV-TW-REFRESH-BASELINE-SYMBOL-20261008",
+  "title": "Keep the dev paper baseline Taiwan symbol fresh before any Taiwan persona exists",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "change_class": "corrective",
+  "incident": {
+    "date": "2026-10-08",
+    "deadlock_summary": "After switching dev paper baseline to Taiwan (2330.TW), deploy run 37743441701 (867e829ca, 2026-10-08 07:59Z) passed 'Deploy dev VM stack' and failed 'Ensure governed dev paper baseline under lease'. The persona_provisioning row for persona-f10a7bde4eea7c6ee79e (request market TW, symbols [2330.TW], strategy_family dev_paper_baseline) failed with PERSONA_PROVISIONING_READBACK_FAILED (terminal_reason: 'runtime_binding_failed_or_mismatched,market_input_missing:max_age_seconds=86400'). The only Taiwan snapshot on hosted is a legacy 0050.TW snapshot (event_time 2026-10-02, no calendar evidence); none exists for 2330.TW. Meanwhile, resolve_bounded_source_refresh_active_symbols derived symbols only from active or market_input-paused paper RuntimeBindings; when no binding exists, the refresh skipped (operator run 37723717762 force=true logged 'bounded source refresh skipped: no_active_taiwan_symbols'). Because the baseline persona compensates before any binding stays paused, neither path ever fetched 2330.TW, creating a deadlock.",
+    "deploy_run_id": "37743441701",
+    "deploy_commit": "867e829ca",
+    "refresh_operator_run_id": "37723717762",
+    "persona_id": "persona-f10a7bde4eea7c6ee79e",
+    "failure_code": "PERSONA_PROVISIONING_READBACK_FAILED",
+    "terminal_reason": "runtime_binding_failed_or_mismatched,market_input_missing:max_age_seconds=86400"
+  },
+  "changes": [
+    "Declared DEFAULT_MARKET_SYMBOL = '2330.TW' once in scripts/bootstrap_dev_paper_baseline.py and shared it with parse_args default and ensure_paper_baseline default, eliminating duplicate hard-coded symbol declarations.",
+    "Updated resolve_bounded_source_refresh_active_symbols in scripts/deploy_nonprod_vm.sh to import DEFAULT_MARKET_SYMBOL from scripts.bootstrap_dev_paper_baseline, allowing PANTHEON_DEV_PAPER_BASELINE_SYMBOL override and falling back to DEFAULT_MARKET_SYMBOL.",
+    "If runtime_bindings.json does not exist or has no active/paused bindings, resolve_bounded_source_refresh_active_symbols returns the baseline symbol (2330.TW), preventing 'no_active_taiwan_symbols' skip when starting a fresh dev VM without existing personas.",
+    "When paper Taiwan bindings exist, resolve_bounded_source_refresh_active_symbols returns the union of the active/market-input-paused symbols and the baseline symbol without duplicates, preserving binding symbol order before the baseline symbol.",
+    "In dev, refresh no longer reports skipped no_active_taiwan_symbols when no binding exists. That skip remains only when a deployment explicitly declares no baseline symbol (PANTHEON_DEV_PAPER_BASELINE_SYMBOL='').",
+    "Maintained steady-service protections from DEV-TW-REFRESH-STEADY-SERVICES-20261008 unchanged; kept changes confined to symbol resolution without adding new refresh paths or flags."
+  ],
+  "tests": {
+    "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest scripts/test_dev_tw_market_refresh.py scripts/test_dev_tw_market_refresh_workflow.py scripts/test_source_ingest_deploy_diagnostics_contract.py scripts/test_bootstrap_dev_paper_baseline.py scripts/test_deploy_nonprod_vm.py",
+    "result": "154 passed, 2 skipped",
+    "coverage": "Unit and integration tests verify: (1) resolver with no bindings returns baseline symbol (2330.TW); (2) resolver with Taiwan bindings returns union without duplicates and preserves order before baseline symbol; (3) resolver with no baseline symbol declared returns empty string; (4) refresh-only path with no bindings runs bounded pull for baseline symbol (2330.TW); (5) refresh-only path with no baseline declared skips with no_active_taiwan_symbols; (6) bootstrap declared baseline symbol is shared as CLI default."
+  },
+  "acceptance_status": {
+    "1": "met: resolve_bounded_source_refresh_active_symbols returns union of active/market-input-paused paper Taiwan symbols and dev paper baseline symbol",
+    "2": "met: baseline symbol declared once as DEFAULT_MARKET_SYMBOL in scripts/bootstrap_dev_paper_baseline.py (default 2330.TW) and shared with scripts/deploy_nonprod_vm.sh",
+    "3": "met: in dev the refresh no longer reports skipped no_active_taiwan_symbols when no binding exists; that skip remains only when a deployment declares no baseline symbol; steady-service protections unchanged",
+    "4": "met: unit and integration tests added in test_deploy_nonprod_vm.py, test_dev_tw_market_refresh.py, and test_bootstrap_dev_paper_baseline.py covering no bindings, union ordering, deduplication, refresh-only bounded pull, and skip path",
+    "5": "met: evidence records hosted deadlock (deploy run 37743441701, operator run 37723717762) and post-merge operator dispatch plan",
+    "6": "met: production code changes are 21 net lines, well within net_prod_line_budget of 40 lines, with no compressed code",
+    "7": "external_wait: after operator-dispatched refresh post-merge, the next automatic dev pair release passes the governed dev paper baseline step"
+  },
+  "operator_dispatch_plan": {
+    "action": "After PR merge to dev, operator dispatches dev-tw-market-refresh.yml with force=true to pull 2330.TW snapshot with calendar evidence. Next dev pair release automatically passes Ensure governed dev paper baseline under lease.",
+    "verification_target": "2330.TW snapshot in source-ingest with valid event_time and calendar evidence."
+  }
+}

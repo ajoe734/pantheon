@@ -1231,11 +1231,13 @@ class AssistantOpenClawProvider:
         """
 
         tool_schema = emit_extraction_tool_schema(extraction_schema)
+        # One-shot and stateless: a stable `user` key would reuse one warm CLI
+        # session per caller, accumulating history until context_overflow.
         result = self._invoke_via_http(
             prompt,
             model=model,
             agent_id=agent_id,
-            session_id=session_id,
+            session_id=session_id or f"structured-{uuid.uuid4().hex}",
             mode=mode,
             messages=messages,
             operator_id=operator_id,

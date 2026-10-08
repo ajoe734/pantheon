@@ -40,6 +40,8 @@ READERS = {
     "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-alpha-replication-registry-reader", "registry-reader"),
     "PERSONA_EVALUATOR_BFF_TOKEN": ("pantheon-dev-persona-evaluator-bff-reader", "viewer"),
     "TRAINING_SESSION_SOURCE_READ_TOKEN": ("pantheon-dev-training-session-source-reader", "source_ingest_reader"),
+    # Preview worker -> Training API only: training-service role, no owner/decide roles.
+    "TRAINING_SESSION_WORKER_TOKEN": ("training-session-preview-worker", "training-service"),
     # Persona precondition/CAS owner roles + Governance decision read; no decide/revoke/promotion roles.
     "TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN": (
         "pantheon-dev-training-session-persona-authority", ("persona.admin", "approval_reader")),
@@ -57,6 +59,13 @@ WRITERS = {
         "pantheon:dev-owner-write",
     ),
 }
+# Downstream health monitor -> Telemetry infrastructure-health only. The telemetry
+# verifier needs the service role plus a producer scope inside its own allowlist.
+TELEMETRY_SCOPE = "pantheon:dev-telemetry-health"
+TELEMETRY_PRODUCERS = {
+    "PANTHEON_BFF_HEALTH_TELEMETRY_JWT": (
+        "control-plane-bff-health-monitor", "service", ["control-plane-bff"]),
+}
 CONSUMER_FILES = {
     "deployment": (
         "DEPLOYMENT_REGISTRY_SERVICE_TOKEN",
@@ -69,10 +78,11 @@ CONSUMER_FILES = {
     "persona": ("PERSONA_GOVERNANCE_SERVICE_TOKEN",),
     "capital": ("CAPITAL_GOVERNANCE_SERVICE_TOKEN",),
     "evolution": ("EVOLUTION_GOVERNANCE_SERVICE_TOKEN",),
-    "operator-bff": ("PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN",),
+    "operator-bff": ("PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN", "PANTHEON_BFF_HEALTH_TELEMETRY_JWT"),
     "strategy-distillation-worker": ("DISTILLATION_REGISTRY_SERVICE_TOKEN",),
     "alpha-replication-worker": ("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN",),
     "persona-evaluator-agent": ("PERSONA_EVALUATOR_BFF_TOKEN", "PERSONA_EVALUATOR_GOVERNANCE_TOKEN"),
+    "training-session-preview-worker": ("TRAINING_SESSION_WORKER_TOKEN",),
     "training-session-svc": ("TRAINING_SESSION_SOURCE_READ_TOKEN", "TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN"),
 }
 REFRESH_SECONDS = 60 * 60
@@ -94,13 +104,15 @@ def issue_environment(env: Mapping[str, str], *, now: int | None = None) -> dict
         raise ValueError("Configured dev verifier secret, issuer and audience required")
     issued = int(time.time()) if now is None else now
 
-    def token(subject: str, role: str, scope: str) -> str:
+    def token(subject: str, role: str, scope: str, producers: list[str] | None = None) -> str:
         claims = {
             "sub": subject, "service": subject, "tenant_id": "tenant-dev",
             "allowed_tenants": ["tenant-dev"], "roles": _roles(role), "scope": scope,
             "iss": issuer, "aud": audience, "iat": issued, "nbf": issued,
             "exp": issued + TTL_SECONDS, "jti": secrets.token_hex(16),
         }
+        if producers:
+            claims["allowed_producers"] = list(producers)
         encode = lambda value: base64.urlsafe_b64encode(value).rstrip(b"=")
         encoded = encode(b'{"alg":"HS256","typ":"JWT"}') + b"." + encode(
             json.dumps(claims, sort_keys=True, separators=(",", ":")).encode()
@@ -115,6 +127,10 @@ def issue_environment(env: Mapping[str, str], *, now: int | None = None) -> dict
     values.update({
         variable: token(subject, role, scope)
         for variable, (subject, role, scope) in WRITERS.items()
+    })
+    values.update({
+        variable: token(subject, role, TELEMETRY_SCOPE, producers)
+        for variable, (subject, role, producers) in TELEMETRY_PRODUCERS.items()
     })
     values.update({
         "PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN": token(PAPER_SUBJECT, "automated_gate", PAPER_SCOPE),
@@ -212,6 +228,9 @@ def healthy_files(root: Path, env: Mapping[str, str], *, now: int | None = None)
                 scope = "pantheon:dev-owner-read"
             elif variable in WRITERS:
                 subject, role, scope = WRITERS[variable]
+            elif variable in TELEMETRY_PRODUCERS:
+                subject, role, producers = TELEMETRY_PRODUCERS[variable]
+                scope = TELEMETRY_SCOPE
             else:
                 subject, role = PAPER_SUBJECT, "automated_gate"
                 scope = PAPER_SCOPE
@@ -219,6 +238,8 @@ def healthy_files(root: Path, env: Mapping[str, str], *, now: int | None = None)
                         "tenant_id": "tenant-dev", "allowed_tenants": ["tenant-dev"],
                         "iss": env["PANTHEON_DEV_BFF_JWT_ISSUER"].strip(),
                         "aud": env["PANTHEON_DEV_BFF_JWT_AUDIENCE"].strip()}
+            if variable in TELEMETRY_PRODUCERS:
+                expected["allowed_producers"] = producers
             if any(claims.get(key) != value for key, value in expected.items()):
                 return False
             if not (claims["nbf"] <= issued < claims["exp"] - REFRESH_SECONDS * 2

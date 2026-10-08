@@ -8,5 +8,6 @@
     "scripts/test_openclaw_shared_model_pool_contract.py",
     "stateful provisioned-config -> unchanged admission guard; missing-deny rejection; main/persona preservation; read-failure fail-closed"
   ],
-  "hosted_verification": "NOT YET DONE: workers have no VM access. Required after merge via existing root deploy: deployed dev SHA, live `config get agents.list` showing structured-extraction tools.deny==[\"*\"], successful structured request, and same after redeploy + gateway restart."
+  "hosted_verification": "NOT YET DONE: workers have no VM access. Required after merge via existing root deploy: deployed dev SHA, live `config get agents.list` showing structured-extraction tools.deny==[\"*\"], successful structured request, and same after redeploy + gateway restart.",
+  "context_overflow_cause": "Structured route sent a stable OpenResponses `user` (|<operator>|) because no caller passes session_id, so the Gateway reused one warm claude-cli session per caller; history accumulated (truncated at 5242880 bytes) until context_overflow/FailoverError (60989ms) on 2026-10-08. Fix: invoke_structured mints a fresh per-call session key when none is supplied. Verified by unit test only; hosted verification still pending deploy."
 }

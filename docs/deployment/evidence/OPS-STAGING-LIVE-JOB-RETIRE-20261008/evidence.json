@@ -1,0 +1,243 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "OPS-STAGING-LIVE-JOB-RETIRE-20261008",
+  "title": "Retire the dead deploy-staging-live job and its master push trigger from the nonprod deploy workflow",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "status": "implementation_ready_for_review",
+  "target_repo": "pantheon",
+  "base_sha": "552a5f1812a50fbd42ba63431974c96fd49acf0e",
+  "recorded_at": "2026-10-08T11:02:00Z",
+  "summary": "Retired the dead deploy-staging-live job and master push trigger from .github/workflows/nonprod-deploy.yml, along with staging-live dispatch choices and deleted staging repository variables references across workflow, tests, and documentation. Dev deployment jobs and assertions remain byte-identical.",
+  "scope": {
+    "declared_artifacts": [
+      ".github/workflows/nonprod-deploy.yml",
+      "scripts/test_cross_repo_release_controller.py",
+      "scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py",
+      "scripts/test_deploy_nonprod_bootstrap_contract.py",
+      "scripts/test_dev_environment_lease_deploy_contract.py",
+      "scripts/test_ppl_alloc_009_deploy_proof_gate.py",
+      "docs/deployment/nonprod-ci-cd.md",
+      "docs/deployment/vm-dev-staging-prod-management-plan.md",
+      "docs/conventions/GIT_WORKFLOW.md",
+      "docs/deployment/evidence/OPS-STAGING-LIVE-JOB-RETIRE-20261008/evidence.json"
+    ],
+    "changed_artifacts": [
+      ".github/workflows/nonprod-deploy.yml",
+      "scripts/test_cross_repo_release_controller.py",
+      "scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py",
+      "scripts/test_deploy_nonprod_bootstrap_contract.py",
+      "scripts/test_dev_environment_lease_deploy_contract.py",
+      "scripts/test_ppl_alloc_009_deploy_proof_gate.py",
+      "docs/deployment/nonprod-ci-cd.md",
+      "docs/deployment/vm-dev-staging-prod-management-plan.md",
+      "docs/conventions/GIT_WORKFLOW.md",
+      "docs/deployment/evidence/OPS-STAGING-LIVE-JOB-RETIRE-20261008/evidence.json"
+    ]
+  },
+  "diff_budget": {
+    "change_class": "simplify",
+    "base": "552a5f1812a50fbd42ba63431974c96fd49acf0e"
+  },
+  "test_verification": {
+    "test_environment_provisioning": {
+      "python_interpreter": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3"
+    },
+    "test_set_a": {
+      "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest -p no:cacheprovider -q -rfEs scripts/test_cross_repo_release_controller.py scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py scripts/test_deploy_nonprod_bootstrap_contract.py scripts/test_dev_environment_lease_deploy_contract.py scripts/test_ppl_alloc_009_deploy_proof_gate.py",
+      "test_suite_files": [
+        "scripts/test_cross_repo_release_controller.py",
+        "scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py",
+        "scripts/test_deploy_nonprod_bootstrap_contract.py",
+        "scripts/test_dev_environment_lease_deploy_contract.py",
+        "scripts/test_ppl_alloc_009_deploy_proof_gate.py"
+      ],
+      "baseline_run": {
+        "passed": 433,
+        "failed": 4,
+        "skipped": 2,
+        "total": 439,
+        "failures": [
+          "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_root_deploy_profiles_isolate_persistent_runtime_and_exclude_dormant_smokes",
+          "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_root_active_persistent_runtime_excludes_dormant_and_one_off_profiles",
+          "scripts/test_ppl_alloc_009_deploy_proof_gate.py::test_deploy_script_defaults_false_and_passes_exact_compose_env",
+          "scripts/test_ppl_alloc_009_deploy_proof_gate.py::test_deploy_script_allows_only_clean_strict_dev_root_when_enabled"
+        ],
+        "skipped_ids": [
+          "scripts/test_deploy_nonprod_bootstrap_contract.py::test_database_admin_url_defaults_to_dev_target_if_unset",
+          "scripts/test_deploy_nonprod_bootstrap_contract.py::test_database_admin_url_strict_enforcement"
+        ]
+      },
+      "head_run": {
+        "passed": 432,
+        "failed": 4,
+        "skipped": 2,
+        "total": 438,
+        "removed_test_ids": [
+          "scripts/test_deploy_nonprod_bootstrap_contract.py::test_workflow_staging_step_rejects_bootstrap_flag"
+        ],
+        "failures": [
+          "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_root_deploy_profiles_isolate_persistent_runtime_and_exclude_dormant_smokes",
+          "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_root_active_persistent_runtime_excludes_dormant_and_one_off_profiles",
+          "scripts/test_ppl_alloc_009_deploy_proof_gate.py::test_deploy_script_defaults_false_and_passes_exact_compose_env",
+          "scripts/test_ppl_alloc_009_deploy_proof_gate.py::test_deploy_script_allows_only_clean_strict_dev_root_when_enabled"
+        ],
+        "skipped_ids": [
+          "scripts/test_deploy_nonprod_bootstrap_contract.py::test_database_admin_url_defaults_to_dev_target_if_unset",
+          "scripts/test_deploy_nonprod_bootstrap_contract.py::test_database_admin_url_strict_enforcement"
+        ]
+      }
+    },
+    "test_set_b": {
+      "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest -p no:cacheprovider -q -rfEs scripts/test_agora_compat_manifest.py scripts/test_agora_workshop_restart_persistence_smoke.py scripts/test_auto_deploy_dev_pair.py scripts/test_collect_dev_paper_diagnostics.py scripts/test_deploy_runtime_state_contract.py scripts/test_dev_deploy_worktree_isolation_contract.py scripts/test_dev_direct_ssh_workflow_contract.py scripts/test_dev_paper_release_stimulus.py scripts/test_isolated_l12_provider_workflow.py scripts/test_loop_prod_tel_002_hosted_workflow.py scripts/test_management_ai_postgres_bootstrap_contract.py scripts/test_nonprod_dev_artifact_workflow.py scripts/test_run_loop_prod_tel_002_hosted_probe.py scripts/test_source_ingest_deploy_diagnostics_contract.py scripts/test_verify_agora_current_hosted_acceptance.py scripts/test_verify_product_functional_closure.py scripts/test_wait_for_bff_lifecycle_readiness.py services/control-plane/bff/tests/test_agora_workshop_dev_deploy_config.py services/trade_journey/test_lifecycle_projector_compose.py",
+      "test_suite_files": [
+        "scripts/test_agora_compat_manifest.py",
+        "scripts/test_agora_workshop_restart_persistence_smoke.py",
+        "scripts/test_auto_deploy_dev_pair.py",
+        "scripts/test_collect_dev_paper_diagnostics.py",
+        "scripts/test_deploy_runtime_state_contract.py",
+        "scripts/test_dev_deploy_worktree_isolation_contract.py",
+        "scripts/test_dev_direct_ssh_workflow_contract.py",
+        "scripts/test_dev_paper_release_stimulus.py",
+        "scripts/test_isolated_l12_provider_workflow.py",
+        "scripts/test_loop_prod_tel_002_hosted_workflow.py",
+        "scripts/test_management_ai_postgres_bootstrap_contract.py",
+        "scripts/test_nonprod_dev_artifact_workflow.py",
+        "scripts/test_run_loop_prod_tel_002_hosted_probe.py",
+        "scripts/test_source_ingest_deploy_diagnostics_contract.py",
+        "scripts/test_verify_agora_current_hosted_acceptance.py",
+        "scripts/test_verify_product_functional_closure.py",
+        "scripts/test_wait_for_bff_lifecycle_readiness.py",
+        "services/control-plane/bff/tests/test_agora_workshop_dev_deploy_config.py",
+        "services/trade_journey/test_lifecycle_projector_compose.py"
+      ],
+      "baseline_run": {
+        "passed": 458,
+        "failed": 4,
+        "skipped": 0,
+        "total": 462,
+        "failures": [
+          "services/trade_journey/test_lifecycle_projector_compose.py::test_canonical_lifecycle_projector_is_default_and_owns_both_read_models",
+          "services/trade_journey/test_lifecycle_projector_compose.py::test_default_paper_signal_producer_uses_package_safe_module_entrypoint",
+          "services/trade_journey/test_lifecycle_projector_compose.py::test_lifecycle_projector_capacity_benchmark_is_profile_gated_and_bounded",
+          "services/trade_journey/test_lifecycle_projector_compose.py::test_managed_dev_deploy_forwards_lifecycle_freshness_budget"
+        ]
+      },
+      "head_run": {
+        "passed": 458,
+        "failed": 4,
+        "skipped": 0,
+        "total": 462,
+        "failures": [
+          "services/trade_journey/test_lifecycle_projector_compose.py::test_canonical_lifecycle_projector_is_default_and_owns_both_read_models",
+          "services/trade_journey/test_lifecycle_projector_compose.py::test_default_paper_signal_producer_uses_package_safe_module_entrypoint",
+          "services/trade_journey/test_lifecycle_projector_compose.py::test_lifecycle_projector_capacity_benchmark_is_profile_gated_and_bounded",
+          "services/trade_journey/test_lifecycle_projector_compose.py::test_managed_dev_deploy_forwards_lifecycle_freshness_budget"
+        ]
+      }
+    },
+    "static_validation": {
+      "yaml_syntax_check": {
+        "command": "$PANTHEON_DEPENDENCY_PYTHON -c 'import yaml; yaml.safe_load(open(\".github/workflows/nonprod-deploy.yml\"))'",
+        "status": "passed",
+        "exit_code": 0
+      },
+      "grep_checks": [
+        {
+          "command": "git grep -nE 'deploy-staging-live|staging-live|staging-auto|STAGING_|head_commit|master' -- .github/workflows/nonprod-deploy.yml",
+          "status": "passed",
+          "exit_code": 1,
+          "match_count": 0
+        },
+        {
+          "command": "git grep -n deploy-staging-live -- .github scripts services tests",
+          "status": "passed",
+          "exit_code": 1,
+          "match_count": 0
+        },
+        {
+          "command": "git grep -nE 'vars[.](STAGING_BFF_URL|GCP_DEPLOY_PROJECT_ID|GCP_WIF_PROVIDER|GCP_DEPLOY_SERVICE_ACCOUNT|GCP_SERVICE_ACCOUNT|STAGING_CONTROL_VM|STAGING_EXEC_VM|STAGING_CONTROL_REMOTE_DIR|STAGING_EXEC_REMOTE_DIR|STAGING_EXEC_HEALTH_URL|GCP_PROJECT_ID|GCP_PROJECT_NUMBER|GCP_BUILD_STAGING_BUCKET)([^A-Z0-9_]|$)' -- .github",
+          "status": "passed",
+          "exit_code": 1,
+          "match_count": 0
+        },
+        {
+          "command": "git grep -nwE 'STAGING_BFF_URL|GCP_WIF_PROVIDER|GCP_DEPLOY_SERVICE_ACCOUNT|GCP_SERVICE_ACCOUNT|STAGING_CONTROL_VM|STAGING_EXEC_VM|STAGING_CONTROL_REMOTE_DIR|STAGING_EXEC_REMOTE_DIR|STAGING_EXEC_HEALTH_URL|GCP_PROJECT_ID|GCP_PROJECT_NUMBER|GCP_BUILD_STAGING_BUCKET' -- .github",
+          "status": "passed",
+          "exit_code": 1,
+          "match_count": 0
+        },
+        {
+          "command": "git grep -nE 'environment=staging-live|automatic on .master. pushes|read by the staging-live deploy job|and the staging-live deploy|Staging-live promotion is manual|rolled back independently by manually' -- docs/deployment/nonprod-ci-cd.md",
+          "status": "passed",
+          "exit_code": 1,
+          "match_count": 0
+        },
+        {
+          "command": "git grep -nE 'staging-auto|push on .master.. and|cancel-in-progress. true only for push' -- docs/conventions/GIT_WORKFLOW.md",
+          "status": "passed",
+          "exit_code": 1,
+          "match_count": 0
+        }
+      ]
+    }
+  },
+  "acceptance_checklist": [
+    {
+      "criterion": "1. At the delivered head .github/workflows/nonprod-deploy.yml parses as YAML with exactly the three jobs deploy-dev and coordinate-dev-release and isolated-l12-provider-qualification; workflow_dispatch is its only trigger; the environment input offers only dev; the component input offers only auto and root and bff; and no allow_example_env input exists",
+      "status": "verified"
+    },
+    {
+      "criterion": "2. In .github/workflows/nonprod-deploy.yml the concurrency block reads exactly group: pantheon-nonprod-deploy-${{ inputs.environment }} followed by cancel-in-progress: false; the run-name line equals the merge-base run-name line with only the text github.event.head_commit.message || removed; the component description reads Stack slice to deploy; auto maps to dev/root and the ref description reads Dev requires the exact current Pantheon dev SHA.",
+      "status": "verified"
+    },
+    {
+      "criterion": "3. The text of .github/workflows/nonprod-deploy.yml from the deploy-dev job header through the last line of the isolated-l12-provider-qualification job is byte-identical to the merge base (base lines 120-2721 at c08860ec8) and the file ends with that job and one newline",
+      "status": "verified"
+    },
+    {
+      "criterion": "4. git grep -nE 'deploy-staging-live|staging-live|staging-auto|STAGING_|head_commit|master' HEAD -- .github/workflows/nonprod-deploy.yml returns no match and git grep -n deploy-staging-live HEAD -- .github scripts services tests returns no match",
+      "status": "verified"
+    },
+    {
+      "criterion": "5. git grep -nE 'vars[.](STAGING_BFF_URL|GCP_DEPLOY_PROJECT_ID|GCP_WIF_PROVIDER|GCP_DEPLOY_SERVICE_ACCOUNT|GCP_SERVICE_ACCOUNT|STAGING_CONTROL_VM|STAGING_EXEC_VM|STAGING_CONTROL_REMOTE_DIR|STAGING_EXEC_REMOTE_DIR|STAGING_EXEC_HEALTH_URL|GCP_PROJECT_ID|GCP_PROJECT_NUMBER|GCP_BUILD_STAGING_BUCKET)([^A-Z0-9_]|$)' HEAD -- .github returns no match; and git grep -nwE 'STAGING_BFF_URL|GCP_WIF_PROVIDER|GCP_DEPLOY_SERVICE_ACCOUNT|GCP_SERVICE_ACCOUNT|STAGING_CONTROL_VM|STAGING_EXEC_VM|STAGING_CONTROL_REMOTE_DIR|STAGING_EXEC_REMOTE_DIR|STAGING_EXEC_HEALTH_URL|GCP_PROJECT_ID|GCP_PROJECT_NUMBER|GCP_BUILD_STAGING_BUCKET' HEAD -- .github returns no match (GCP_DEPLOY_PROJECT_ID remains only as the unchanged dev-job env name fed from vars.DEV_GCP_DEPLOY_PROJECT_ID)",
+      "status": "verified"
+    },
+    {
+      "criterion": "6. In scripts/test_cross_repo_release_controller.py and scripts/test_deploy_nonprod_bootstrap_contract.py and scripts/test_dev_environment_lease_deploy_contract.py and scripts/test_ppl_alloc_009_deploy_proof_gate.py every workflow slice that ended at the deploy-staging-live header now runs to the end of the file and the inputs_block slice of test_workflow_declares_dev_only_bootstrap_inputs ends at the first permissions: instead of push:; every assertion statement applied to those slices is byte-identical to the merge base",
+      "status": "verified"
+    },
+    {
+      "criterion": "7. scripts/test_deploy_nonprod_bootstrap_contract.py::test_workflow_staging_step_rejects_bootstrap_flag is the only test function removed and no test function is added or renamed; the only other assertion statements removed are the staging-job assertions of test_nonprod_workflow_has_bounded_dev_permissive_stub_profile (1) and test_workflow_contains_no_retired_project_or_host_fallbacks_in_bootstrap_or_staging (3) and test_dev_and_staging_are_independent_jobs_and_staging_has_no_lease_secret (7) and test_payloads_must_come_from_their_protected_delivery_branches (4) and test_workflow_input_defaults_false_and_is_shape_locked (2); every dev-job and auth and lease and bootstrap assertion in those functions is byte-identical",
+      "status": "verified"
+    },
+    {
+      "criterion": "8. In test_all_third_party_actions_are_full_sha_pinned only the three expected counts change (actions/checkout 7 to 6 and google-github-actions/auth 2 to 1 and google-github-actions/setup-gcloud 2 to 1) and the per-line full 40-hex SHA pin loop is byte-identical",
+      "status": "verified"
+    },
+    {
+      "criterion": "9. Run in a git worktree with the shared worker interpreter and -p no:cacheprovider at the merge base and at the delivered head: for the five edited test files the head per-id outcomes equal the base per-id outcomes minus the removed test id (reference at c08860ec8: base 433 passed and 4 failed and 2 skipped; head 432 passed and the same 4 failed and 2 skipped); for the 19 unedited workflow-reading test files named in next the per-id outcomes are identical (reference 458 passed and 4 failed); the evidence manifest records both runs with their failing ids",
+      "status": "verified"
+    },
+    {
+      "criterion": "10. docs/deployment/nonprod-ci-cd.md states that the deploy-staging-live job and its staging-live dispatch choice and master push trigger were retired on 2026-10-08 and that staging stays unavailable until its future packet; it names all 13 deleted repository variables as deleted on 2026-10-08; and git grep -nE 'environment=staging-live|automatic on .master. pushes|read by the staging-live deploy job|and the staging-live deploy|Staging-live promotion is manual|rolled back independently by manually' HEAD -- docs/deployment/nonprod-ci-cd.md returns no match",
+      "status": "verified"
+    },
+    {
+      "criterion": "11. In docs/deployment/nonprod-ci-cd.md only these parts change: the staging-live intro bullet; the Nonprod Deploy trigger cell of the Workflows table; the lead text and Use list of the Staging-Live Lane section; the variable lists and the staging sentences about GCP_DEPLOY_PROJECT_ID and GCP WIF in Required GitHub Configuration; the staging-live line of Recommended GitHub Environments; the GCP_DEPLOY_SERVICE_ACCOUNT sentence of Remote deployment identity; the staging-live part of Promotion Contract; and the staging-live sentence of Rollback",
+      "status": "verified"
+    },
+    {
+      "criterion": "12. docs/conventions/GIT_WORKFLOW.md changes only the nonprod-deploy.yml trigger cell in section 8 and the staging-live row and paragraph in section 9 and the concurrency item in section 9.1; git grep -nE 'staging-auto|push on .master.. and|cancel-in-progress. true only for push' HEAD -- docs/conventions/GIT_WORKFLOW.md returns no match",
+      "status": "verified"
+    },
+    {
+      "criterion": "13. docs/deployment/vm-dev-staging-prod-management-plan.md gains exactly one added line: a bullet at the end of section 3.2 recording the 2026-10-08 retirement of the deploy-staging-live job and the deletion of the 13 repository variables and that no staging deploy entry exists until ENV-STG-EPHEMERAL-IMPL-001 is implemented and accepted; no other line changes",
+      "status": "verified"
+    },
+    {
+      "criterion": "14. Against the merge base the diff touches only the files named in artifacts; scripts/deploy_nonprod_vm.sh and scripts/validate_split_topology.sh and .github/workflows/stage-0-ci.yml and every file under docs/04 and docs/05 are byte-identical; no workflow or job or input or step or variable or environment or replacement staging mechanism is added",
+      "status": "verified"
+    }
+  ]
+}

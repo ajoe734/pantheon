@@ -8124,7 +8124,10 @@ def prepare_external_mutation_preflight(
             )
         action = "reopen"
         if task.get("status") == "todo":
-            if actor != "Human/Ops" or not local_human_ops_requested() or task.get("waiting_for") != "Human/Ops":
+            own_unheld = owner == "Human/Ops" and not task.get("waiting_for")
+            if actor != "Human/Ops" or not local_human_ops_requested() or (
+                task.get("waiting_for") != "Human/Ops" and not own_unheld
+            ):
                 raise SystemExit("Only local Human/Ops may reopen an operator-held todo task")
             action = "start"
         validate_task_lifecycle_transition(task, action)

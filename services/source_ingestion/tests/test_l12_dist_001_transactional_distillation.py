@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import json
 import multiprocessing as mp
+import os
 import socket
 import threading
 import time
@@ -61,6 +62,7 @@ def _normalized_source(
     source_id: str = "src-dist-001",
     *,
     title: str = "LightGBM TW equity momentum factor paper",
+    tenant_id: str = "test",
     **metadata_overrides: Any,
 ) -> SourceRecord:
     return SourceRecord(
@@ -71,6 +73,7 @@ def _normalized_source(
         content_ref=f"https://doi.org/10.1000/{source_id}",
         status="normalized",
         metadata={
+            "tenant_id": tenant_id,
             "trust_score": 0.8,
             "access_scope": ["research"],
             "license_scope": "internal",
@@ -1204,6 +1207,10 @@ def _registry_service() -> Iterator[str]:
     from services.registry.storage import reset_store
 
     reset_store()
+    prev_backend = os.environ.get("REGISTRY_STORE_BACKEND")
+    prev_token = os.environ.get("DISTILLATION_REGISTRY_SERVICE_TOKEN")
+    os.environ["REGISTRY_STORE_BACKEND"] = "memory"
+    os.environ["DISTILLATION_REGISTRY_SERVICE_TOKEN"] = "test-operator:operator"
     port = _free_port()
     server = uvicorn.Server(
         uvicorn.Config(
@@ -1226,18 +1233,33 @@ def _registry_service() -> Iterator[str]:
         server.should_exit = True
         thread.join(timeout=30)
         reset_store()
+        if prev_backend is None:
+            os.environ.pop("REGISTRY_STORE_BACKEND", None)
+        else:
+            os.environ["REGISTRY_STORE_BACKEND"] = prev_backend
+        if prev_token is None:
+            os.environ.pop("DISTILLATION_REGISTRY_SERVICE_TOKEN", None)
+        else:
+            os.environ["DISTILLATION_REGISTRY_SERVICE_TOKEN"] = prev_token
 
 
-def _http_get_json(url: str) -> dict[str, Any]:
-    with urllib.request.urlopen(url, timeout=10) as response:
+def _http_get_json(url: str, token: str = "test-operator:operator") -> dict[str, Any]:
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=10) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
-def _http_post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
+def _http_post_json(url: str, payload: dict[str, Any], token: str = "test-operator:operator") -> dict[str, Any]:
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     request = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=10) as response:
@@ -1296,18 +1318,15 @@ class TestRealSourceToRegistryService:
                 url: str,
                 payload: dict[str, Any],
             ) -> dict[str, Any]:
+                from services.registry.models import ArtifactState
+                from services.registry.storage import get_store
+
                 original_register(url, payload)
-                advance_url = (
-                    f"{url}/api/registry/strategy-specs/{registry_id}/advance"
-                )
-                _http_post_json(advance_url, {"target_state": "candidate"})
-                _http_post_json(
-                    advance_url,
-                    {
-                        "target_state": "approved",
-                        "approver": "concurrent-reviewer",
-                    },
-                )
+                store = get_store()
+                entry = store.get(registry_id)
+                assert entry is not None
+                entry.artifact_state = ArtifactState.APPROVED
+                store.put(entry)
                 # This is the controller's create-if-absent POST. It must
                 # return the approved entry without replacing it with a draft.
                 return original_register(url, payload)

@@ -26,16 +26,14 @@ deployment:
   script consumed its images.
 - Dev deployment is an explicit exact-pair release from both repositories'
   protected `dev` tips. Publish snapshots never deploy.
-- Staging-live deployment is automatic on `master` pushes and can also be run
-  manually through the protected `staging-live` GitHub Environment. staging-live
-  has no VM ([§ 3.2](vm-dev-staging-prod-management-plan.md)), so this lane has no target VM.
+- There is no staging-live deployment lane. The `deploy-staging-live` job and its `staging-live` dispatch choice and `master` push trigger were retired on 2026-10-08; staging stays unavailable until its future packet ([§ 3.2](vm-dev-staging-prod-management-plan.md)) is implemented.
 
 ## Workflows
 
 | Workflow | File | Trigger | Role |
 | --- | --- | --- | --- |
 | Pantheon Stage 0 CI | `.github/workflows/stage-0-ci.yml` | PR, push, manual | changed target detection, baseline checks, focused verify, Docker build dry-run |
-| Pantheon Nonprod Deploy | `.github/workflows/nonprod-deploy.yml` | hourly paired dev dispatch or manual dev; `master` or manual staging | exact FE/BFF admission, VM checkout-to-commit, compensated FE/BFF switch, health/CORS smoke |
+| Pantheon Nonprod Deploy | `.github/workflows/nonprod-deploy.yml` | hourly paired dev dispatch or manual dev | exact FE/BFF admission, VM checkout-to-commit, compensated FE/BFF switch, health/CORS smoke |
 | Pantheon FE-BFF Integration Gate | `execute-plans:.github/workflows/pantheon-integration-gate.yml` | controller dispatch only for deployable artifacts; PR/push CI remains non-deploying | rebuild and smoke the exact FE SHA against the exact hosted BFF SHA |
 | Pantheon Dev FE Deploy | `execute-plans:.github/workflows/pantheon-dev-fe-deploy.yml` | controller dispatch only | authenticate the exact gate artifact, probe the candidate, then atomically switch the hosted FE |
 | Dev Taiwan Market Daily Refresh | `.github/workflows/dev-tw-market-refresh.yml` | daily `0 7 * * 1-5` (15:00 Asia/Taipei) or manual dispatch | execute bounded TWSE/TPEx market snapshot refresh on dev VM via `deploy_nonprod_vm.sh --refresh-only` |
@@ -305,15 +303,7 @@ Post-deploy smoke:
 
 ## Staging-Live Lane
 
-Staging-live deploy is manual through `Pantheon Nonprod Deploy`.
-
-Use:
-
-- `environment=staging-live`
-- `component=all` for normal promotion
-- `component=exec` only for VM2 execution changes
-- `component=control` only for VM1 control/BFF changes
-- `ref=<verified commit sha>` for pinned promotion
+Retired on 2026-10-08: `Pantheon Nonprod Deploy` has no `deploy-staging-live` job and no `staging-live` dispatch choice or `master` push trigger. Staging stays unavailable until its future packet ([§ 3.2](vm-dev-staging-prod-management-plan.md)) is implemented.
 
 Target:
 
@@ -345,26 +335,17 @@ or VM1 control env. VM2 remains the broker-secret boundary.
 
 ## Required GitHub Configuration
 
-Repository variables read by the staging-live deploy job:
-
-```text
-GCP_WIF_PROVIDER
-GCP_SERVICE_ACCOUNT
-```
+The repository variables that named the retired staging identities (`STAGING_BFF_URL` `GCP_DEPLOY_PROJECT_ID` `GCP_WIF_PROVIDER` `GCP_DEPLOY_SERVICE_ACCOUNT` `GCP_SERVICE_ACCOUNT` `STAGING_CONTROL_VM` `STAGING_EXEC_VM` `STAGING_CONTROL_REMOTE_DIR` `STAGING_EXEC_REMOTE_DIR` `STAGING_EXEC_HEALTH_URL` `GCP_PROJECT_ID` `GCP_PROJECT_NUMBER` `GCP_BUILD_STAGING_BUCKET`) were deleted on 2026-10-08; no workflow reads them.
 
 Optional deploy-specific variable:
 
 ```text
-GCP_DEPLOY_PROJECT_ID
-GCP_DEPLOY_SERVICE_ACCOUNT
 DEV_GCP_DEPLOY_PROJECT_ID
 DEV_GCP_WIF_PROVIDER
 DEV_GCP_DEPLOY_SERVICE_ACCOUNT
 ```
 
-Dev uses its own project and WIF variables so staging-live remains
-independent. The `DEV_GCP_*` variables override the workflow defaults in
-`nonprod-deploy.yml` without changing staging-live promotion. The
+The `DEV_GCP_*` variables override the workflow defaults in `nonprod-deploy.yml`. The
 `DEV_GCP_DEPLOY_PROJECT_ID` and `DEV_GCP_DEPLOY_SERVICE_ACCOUNT` workflow
 fallbacks name the dev project of [§ 3.1](vm-dev-staging-prod-management-plan.md#31-dev). The `DEV_GCP_WIF_PROVIDER` fallback
 names a workload identity pool that § 3.1 does not record, so
@@ -379,7 +360,6 @@ bucket in the image-publishing project (`GCP_PROJECT_ID`) if that workflow is
 ever restored, because the retired workflow's fallback named a bucket in the
 retired `pantheon-benjamin-20260528` project.
 
-`GCP_DEPLOY_PROJECT_ID` remains the staging-live/shared VM project override.
 Dev uses `DEV_GCP_DEPLOY_PROJECT_ID`; this prevents a suspended or stale staging project variable from silently redirecting dev deployment.
 
 Dev VM transport is configured by the protected `dev` GitHub Environment:
@@ -393,9 +373,7 @@ The matching public key is installed once in the `authorized_keys` of the
 account named by `NONPROD_REMOTE_USER` in § 3.1. The workflow materializes both
 files under `RUNNER_TEMP` with mode `0600`; neither file is written into a
 checkout. GCP WIF remains only for the GCP API calls in `Pantheon Nonprod
-Deploy` (the dev release rollback and the staging-live deploy). Staging-live
-continues to use `GCP_WIF_PROVIDER` and falls back from
-`GCP_DEPLOY_SERVICE_ACCOUNT` to `GCP_SERVICE_ACCOUNT`.
+Deploy` (the dev release rollback).
 
 `COORDINATION_REPO_TOKEN` is required by the dev environment lease and by the
 Pantheon controller's exact workflow dispatches into
@@ -407,7 +385,7 @@ Recommended GitHub Environments:
 
 - `dev`: no reviewer required; exact-pair admission and the shared environment
   lease remain mandatory before any switch.
-- `staging-live`: required reviewers enabled.
+- `staging-live`: no workflow references it since 2026-10-08 (the Stage 0 live-evidence choice was retired the same day); the empty GitHub Environment is removed.
 
 ## Remote deployment identity
 
@@ -420,8 +398,7 @@ SSH metadata. Staging-live still requires its deploy identity to reach:
 
 These apply once ephemeral staging exists; staging-live has no VM today.
 
-Use a separate deploy service account if possible, then set
-`GCP_DEPLOY_SERVICE_ACCOUNT` to that account.
+Use a separate deploy service account if possible.
 
 Required staging permissions depend on its VM SSH posture:
 
@@ -445,18 +422,7 @@ VM compose stacks, not read broker secrets from Secret Manager.
 
 An immutable `publish/v*` snapshot is a promotion input and historical source
 identity; it is not a dev deployment. Dev delivery is the explicit exact-pair
-controller run described above. Staging-live promotion consumes `master` or an
-explicit manually selected ref.
-
-Staging-live promotion is manual:
-
-1. Pick the verified commit SHA.
-2. Run `Pantheon Nonprod Deploy` with `environment=staging-live`.
-3. Use `component=all` unless deliberately limiting to VM1 or VM2.
-4. Let the GitHub Environment reviewer gate approve the run.
-5. Confirm the workflow health/CORS smoke passes.
-6. Publish or update the staging Lovable project only after backend staging
-   health is green.
+controller run described above. There is no staging-live promotion lane since the staging-live job was retired on 2026-10-08.
 
 ## Rollback
 
@@ -481,6 +447,4 @@ repositories as needed, then release the new exact `dev` pair. Emergency VM
 snapshot recovery remains an operator procedure and must be followed by a
 controller release that restores repository/deployment identity agreement.
 
-Staging-live can still be rolled back independently by manually dispatching
-`environment=staging-live`, the affected component, and the verified last-good
-SHA. Pantheon dev frontend delivery does not use Lovable publish state.
+Pantheon dev frontend delivery does not use Lovable publish state.

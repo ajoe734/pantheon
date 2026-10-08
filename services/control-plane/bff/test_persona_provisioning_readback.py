@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from services.control_plane.bff.personas import service as personas_service
+from services.control_plane.bff.tests.conftest import make_composed_persona_service
 from services.control_plane.bff.personas.reconciliation import (
     PersonaProvisioningReconciliationMutationPort,
 )
@@ -296,7 +297,11 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> _Harness:
     runtime_client = _RuntimeClient()
 
     monkeypatch.setattr(personas_service, "_get_active_read_store", lambda *_: read_store)
-    monkeypatch.setattr(personas_service, "persona_write_owner", mutation_port, raising=False)
+    monkeypatch.setattr(
+        personas_service,
+        "_composed_persona_service",
+        make_composed_persona_service(read_store=read_store, write_owner=mutation_port),
+    )
     monkeypatch.setattr(
         personas_service,
         "persona_reconciliation_mutation_port",

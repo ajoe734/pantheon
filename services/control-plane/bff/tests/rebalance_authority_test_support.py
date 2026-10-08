@@ -50,6 +50,7 @@ from services.control_plane.bff.command_adapters.router import (
 from services.control_plane.bff.command_adapters.capital_adapter import CapitalOwnerWriter
 from services.control_plane.bff.command_queue import CommandStore
 from services.control_plane.bff.tests.management_projection_test_doubles import PplFixtureBuilder
+from services.control_plane.bff.tests.conftest import make_composed_persona_service
 from services.control_plane.bff.models import ErrorCode, utc_now
 from services.control_plane.bff.ports import ReadSurfacePorts, create_in_memory_read_surface_ports
 
@@ -1386,7 +1387,10 @@ def set_management_nl_read_store(store: Any) -> None:
     management_service = get_management_nl_module()
     import services.control_plane.bff.personas.service as personas_service
     management_service.set_read_store(store)
-    setattr(personas_service, "read_store", store)
+    # Compose the seam app first: composing binds the default PersonaService,
+    # which would otherwise replace the one bound here.
+    get_management_nl_app()
+    setattr(personas_service, "_composed_persona_service", make_composed_persona_service(read_store=store))
     context_svc = getattr(management_service, "_management_ai_context_service", None)
     if context_svc is not None:
         context_svc._get_read_store = (lambda: store) if store is not None else None
@@ -1419,18 +1423,19 @@ def bound_management_nl_store(read_surface: Any) -> Iterator[Any]:
     import services.control_plane.bff.personas.service as personas_service
 
     old_main_store = management_service.get_read_store()
-    old_persona_store = getattr(personas_service, "read_store", None)
+    get_management_nl_app()
+    old_persona_store = getattr(personas_service, "_composed_persona_service", None)
     context_svc = getattr(management_service, "_management_ai_context_service", None)
     old_context_fn = getattr(context_svc, "_get_read_store", None) if context_svc is not None else None
     try:
         management_service.set_read_store(read_surface)
-        setattr(personas_service, "read_store", read_surface)
+        setattr(personas_service, "_composed_persona_service", make_composed_persona_service(read_store=read_surface))
         if context_svc is not None:
             context_svc._get_read_store = (lambda: read_surface) if read_surface is not None else None
         yield read_surface
     finally:
         management_service.set_read_store(old_main_store)
-        setattr(personas_service, "read_store", old_persona_store)
+        setattr(personas_service, "_composed_persona_service", old_persona_store)
         if context_svc is not None:
             context_svc._get_read_store = old_context_fn
 
@@ -1448,7 +1453,8 @@ def management_nl_test_client(
     import services.control_plane.bff.personas.service as personas_service
 
     old_main_store = management_service.get_read_store()
-    old_persona_store = getattr(personas_service, "read_store", None)
+    get_management_nl_app()
+    old_persona_store = getattr(personas_service, "_composed_persona_service", None)
     context_svc = getattr(management_service, "_management_ai_context_service", None)
     old_context_fn = getattr(context_svc, "_get_read_store", None) if context_svc is not None else None
     store = read_surface if read_surface is not None else old_main_store
@@ -1463,14 +1469,14 @@ def management_nl_test_client(
 
     try:
         management_service.set_read_store(store)
-        setattr(personas_service, "read_store", store)
+        setattr(personas_service, "_composed_persona_service", make_composed_persona_service(read_store=store))
         if context_svc is not None:
             context_svc._get_read_store = (lambda: store) if store is not None else None
         client = TestClient(get_management_nl_app(), raise_server_exceptions=raise_server_exceptions)
         yield client
     finally:
         management_service.set_read_store(old_main_store)
-        setattr(personas_service, "read_store", old_persona_store)
+        setattr(personas_service, "_composed_persona_service", old_persona_store)
         if context_svc is not None:
             context_svc._get_read_store = old_context_fn
         if "ask" in management_service._sse_buffers:

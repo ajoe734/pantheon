@@ -237,7 +237,7 @@ def materialize_source_dataset_version(
 
     readback_url = f"{base_url}/api/source-ingest/controller/readback"
     readback = _http_get_object(http_get, readback_url, "controller readback")
-    controller_binding, connector_readback = _validate_controller_readback(
+    controller_binding, connector_readback, controller_provenance = _validate_controller_readback(
         readback,
         connector_id=connector,
         dataset_id=dataset,
@@ -366,6 +366,7 @@ def materialize_source_dataset_version(
         },
         "source_evidence_bundle_refs": evidence_bindings,
         "controller_identity": controller_binding,
+        "controller_provenance": controller_provenance,
         **({
             "source_policy_selection": policy_selection_binding,
             "source_policy_selection_sha256": policy_selection_digest,
@@ -405,15 +406,22 @@ def materialize_source_dataset_version(
     lock_fd = _open_lock_file(lock_path)
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        _assert_run_not_rebound(
+        existing_version = _find_and_validate_existing_run(
             authority_root,
             connector_id=connector,
             dataset_id=dataset,
             run_id=run_id,
             expected_storage_binding_digest=storage_binding_digest,
-            expected_payload=payload,
             expected_policy_selection_digest=policy_selection_digest,
+            expected_payload=payload,
+            current_sequence_no=controller_provenance["sequence_no"],
+            current_requirement_sequence=controller_provenance["requirement_sequence"],
+            canonical_path=canonical_path,
+            canonical_digest=canonical_digest,
         )
+        if existing_version is not None:
+            _atomic_materialize(canonical_path, canonical_bytes, authority_root)
+            return existing_version
         _atomic_materialize(canonical_path, canonical_bytes, authority_root)
         _atomic_materialize(dataset_path, dataset_bytes, authority_root)
     finally:
@@ -462,7 +470,7 @@ def _validate_controller_readback(
         key: _trusted_identity(state.get(key), f"controller_state.{key}")
         for key in ("controller_id", "controller_name", "environment", "tenant_id")
     }
-    identity["sequence_no"] = _strict_int(
+    sequence_no = _strict_int(
         state.get("sequence_no"), "controller_state.sequence_no", minimum=1
     )
     deployment = _required_mapping(state.get("deployment"), "controller_state.deployment")
@@ -500,9 +508,11 @@ def _validate_controller_readback(
         normalized_bindings
     ):
         raise SourceDatasetAuthorityError("requirement snapshot binding_count does not match bindings")
+    requirement_sequence = _strict_int(
+        snapshot.get("sequence"), "requirement_snapshot.sequence", minimum=1
+    )
     snapshot_binding = {
         "schema_version": _REQUIREMENT_SCHEMA,
-        "sequence": _strict_int(snapshot.get("sequence"), "requirement_snapshot.sequence", minimum=1),
         "desired_state_sha256": desired_digest,
         "bindings": dict(sorted(normalized_bindings.items())),
         "binding_count": len(normalized_bindings),
@@ -548,7 +558,11 @@ def _validate_controller_readback(
         "desired_dataset_id": desired_dataset_id,
         "desired_state_sha256": connector_digest,
     }
-    return controller_binding, selected
+    controller_provenance = {
+        "sequence_no": sequence_no,
+        "requirement_sequence": requirement_sequence,
+    }
+    return controller_binding, selected, controller_provenance
 
 
 def _desired_state_digest(desired_state: Mapping[str, Any]) -> str:
@@ -1245,16 +1259,57 @@ def _decode_jsonl(raw_bytes: bytes, *, compression: str, label: str) -> list[Map
     return rows
 
 
-def _assert_run_not_rebound(
+def _extract_provenance_sequences(metadata: Mapping[str, Any]) -> tuple[int | None, int | None]:
+    prov = metadata.get("controller_provenance")
+    if isinstance(prov, Mapping):
+        seq_no = prov.get("sequence_no")
+        req_seq = prov.get("requirement_sequence")
+        return (
+            int(seq_no) if isinstance(seq_no, int) else None,
+            int(req_seq) if isinstance(req_seq, int) else None,
+        )
+    ctrl_id = metadata.get("controller_identity")
+    if isinstance(ctrl_id, Mapping):
+        seq_no = ctrl_id.get("sequence_no")
+        req = ctrl_id.get("requirement_snapshot")
+        req_seq = req.get("sequence") if isinstance(req, Mapping) else None
+        return (
+            int(seq_no) if isinstance(seq_no, int) else None,
+            int(req_seq) if isinstance(req_seq, int) else None,
+        )
+    return None, None
+
+
+def _normalize_payload_for_comparison(payload: Mapping[str, Any]) -> dict[str, Any]:
+    norm = copy.deepcopy(dict(payload))
+    metadata = norm.get("metadata_json")
+    if isinstance(metadata, dict):
+        metadata.pop("controller_provenance", None)
+        controller = metadata.get("controller_identity")
+        if isinstance(controller, dict):
+            controller.pop("sequence_no", None)
+            snapshot = controller.get("requirement_snapshot")
+            if isinstance(snapshot, dict):
+                snapshot.pop("sequence", None)
+            metadata["source_controller_binding_sha256"] = stable_json_sha256(controller)
+    norm["dataset_version_id"] = "normalized"
+    return norm
+
+
+def _find_and_validate_existing_run(
     root: Path,
     *,
     connector_id: str,
     dataset_id: str,
     run_id: str,
     expected_storage_binding_digest: str,
+    expected_policy_selection_digest: str | None,
     expected_payload: Mapping[str, Any],
-    expected_policy_selection_digest: str | None = None,
-) -> None:
+    current_sequence_no: int,
+    current_requirement_sequence: int,
+    canonical_path: Path,
+    canonical_digest: str,
+) -> MaterializedDatasetVersion | None:
     for path in sorted(root.glob("dataset-version-*.json")):
         if path.is_symlink() or not path.is_file():
             raise SourceDatasetAuthorityError("existing DatasetVersion authority is not a regular file")
@@ -1277,16 +1332,42 @@ def _assert_run_not_rebound(
         )
         if not same_run:
             continue
+
         if metadata.get("source_storage_binding_sha256") != expected_storage_binding_digest:
             raise SourceDatasetAuthorityError(
                 "previously materialized source run bytes changed; refusing to rebind immutable run"
             )
         existing_policy_digest = metadata.get("source_policy_selection_sha256")
-        if existing_policy_digest == expected_policy_selection_digest:
-            if stable_json_sha256(existing) != stable_json_sha256(expected_payload):
-                raise SourceDatasetAuthorityError(
-                    "previously materialized source run has differing authority bindings"
-                )
+        if existing_policy_digest != expected_policy_selection_digest:
+            continue
+
+        existing_seq_no, existing_req_seq = _extract_provenance_sequences(metadata)
+        if existing_seq_no is not None and current_sequence_no < existing_seq_no:
+            raise SourceDatasetAuthorityError(
+                f"source controller sequence_no regressed (previously {existing_seq_no}, now {current_sequence_no})"
+            )
+        if existing_req_seq is not None and current_requirement_sequence < existing_req_seq:
+            raise SourceDatasetAuthorityError(
+                f"source requirement sequence regressed (previously {existing_req_seq}, now {current_requirement_sequence})"
+            )
+
+        norm_existing = _normalize_payload_for_comparison(existing)
+        norm_expected = _normalize_payload_for_comparison(expected_payload)
+        if stable_json_sha256(norm_existing) != stable_json_sha256(norm_expected):
+            raise SourceDatasetAuthorityError(
+                "previously materialized source run has differing authority bindings"
+            )
+
+        return MaterializedDatasetVersion(
+            path=path,
+            payload=copy.deepcopy(dict(existing)),
+            payload_sha256=filename_digest,
+            canonical_ohlcv_path=canonical_path,
+            canonical_ohlcv_sha256=canonical_digest,
+            ingest_run_id=run_id,
+        )
+
+    return None
 
 
 def _atomic_materialize(path: Path, content: bytes, root: Path) -> None:

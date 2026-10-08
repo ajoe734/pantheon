@@ -435,7 +435,7 @@ def test_paper_signal_producer_admit_snapshot_with_market_us() -> None:
 
 
 def test_paper_signal_producer_rejects_missing_market_context_fail_closed() -> None:
-    """When snapshot lacks market and binding/artifact lack market, fails closed with market_context_missing."""
+    """When snapshot lacks market and binding/artifact lack market, fails closed with market_input_missing naming the required market field."""
     now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
     reg = load_strategy_artifact_registration(BUILTIN_STRATEGY_ARTIFACT_PATHS[0])
@@ -499,7 +499,8 @@ def test_paper_signal_producer_rejects_missing_market_context_fail_closed() -> N
     strategy = CurrentArtifactStrategy()
     with pytest.raises(SignalDecisionUnavailable) as exc_info:
         strategy(binding, now_iso)
-    assert exc_info.value.code == "market_context_missing"
+    assert exc_info.value.code == "market_input_missing"
+    assert "market" in str(exc_info.value)
 
 
 def test_stored_marketless_spy_snapshot_becomes_market_bearing_and_admits_producer(tmp_path: Path) -> None:
@@ -591,14 +592,16 @@ def test_stored_marketless_spy_snapshot_becomes_market_bearing_and_admits_produc
     strategy = CurrentArtifactStrategy()
     with pytest.raises(SignalDecisionUnavailable) as exc_info:
         strategy(binding, now_iso)
-    assert exc_info.value.code == "market_context_missing"
+    assert exc_info.value.code == "market_input_missing"
+    assert "market" in str(exc_info.value)
 
     producer = PaperSignalProducer(
         store_for=lambda _: InMemoryPendingSignalStore(),
         strategy=strategy,
     )
     assert producer.produce(binding, now_iso) == 0
-    assert "market_context_missing" in producer._degraded_by_binding[binding["binding_id"]]
+    assert "market_input_missing" in producer._degraded_by_binding[binding["binding_id"]]
+    assert "market" in producer._degraded_by_binding[binding["binding_id"]]
 
     # 3. Simulate Source connector authority refresh using DevPaperUsEquitySimulationAdapter
     connector = _DummyConnector(

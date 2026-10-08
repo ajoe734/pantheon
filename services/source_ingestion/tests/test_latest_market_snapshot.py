@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,10 +16,21 @@ from services.source_ingestion.connectors.taiwan_official import (
 from services.source_ingestion.requirement_state import LatestMarketSnapshotStore
 
 
+def _read_headers(tenant: str = "tenant-a") -> dict[str, str]:
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    token = encode_jwt_hs256(
+        {"sub": "test-reader", "roles": ["operator"], "tenant_id": tenant, "exp": int(__import__("time").time()) + 600},
+        secret=os.environ.get("PANTHEON_RUNTIME_JWT_SECRET", "source-test-secret"),
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
 def _load_source_main(monkeypatch: Any, tmp_path: Path) -> Any:
     monkeypatch.setenv("SOURCE_INGEST_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("SOURCE_INGEST_MAX_RECORDS", "10")
     monkeypatch.setenv("SEARCH_INGEST_NOTIFY_URL", "")
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", "source-test-secret")
     sys.modules.pop("services.source_ingestion.main", None)
     module = importlib.import_module("services.source_ingestion.main")
     return importlib.reload(module)
@@ -96,6 +108,7 @@ def _tw_official_record(*, source_id: str, event_time: str, close: float, calend
 def _ingest_prices(client: TestClient) -> None:
     configured = client.post(
         "/api/source-ingest/connectors",
+        headers=_read_headers(),
         json={
             "connector": _connector(),
             "fetch": {
@@ -258,9 +271,20 @@ def test_tw_execution_alias_reads_only_the_official_twse_snapshot(
     monkeypatch: Any,
 ) -> None:
     module = _load_source_main(monkeypatch, tmp_path)
+    from services.source_ingestion.controller_state import ControllerState, ControllerStateStore
+    ControllerStateStore(module.runtime.CONTROLLER_STATE_PATH).save(
+        ControllerState(
+            controller_id="ctrl-tw-official",
+            controller_name="test-tw-official",
+            environment="test",
+            tenant_id="tenant-dev",
+            deployment={},
+        )
+    )
     client = TestClient(module.app)
     configured = client.post(
         "/api/source-ingest/connectors",
+        headers={"Authorization": f"Bearer {module.controller_token}"},
         json={
             "connector": {
                 "connector_id": "tw-twse-tpex-official-market",
@@ -315,6 +339,7 @@ def test_tw_execution_alias_reads_only_the_official_twse_snapshot(
     assert configured.status_code == 201, configured.text
     ingested = client.post(
         "/api/source-ingest/jobs",
+        headers={"Authorization": f"Bearer {module.controller_token}"},
         json={
             "connector_id": "tw-twse-tpex-official-market",
             "trace_id": "tw-read-alias-contract",
@@ -409,3 +434,63 @@ def test_missing_snapshot_has_a_typed_not_found_response(
         "code": "market_snapshot_not_found",
         "symbol": "MISSING.US",
     }
+
+
+def test_refresh_reread_row_without_calendar_evidence_publishes_governed_evidence(
+    tmp_path: Path,
+) -> None:
+    import copy
+    from services.source_ingestion.connectors.taiwan_official import (
+        TWSE_2026_SCHEDULE_CALENDAR_VERSION,
+        TaiwanOfficialMarketDatasetAdapter,
+    )
+
+    store = LatestMarketSnapshotStore(tmp_path / "market-snapshots.jsonl")
+
+    # 1. Stored official row without calendar evidence (pre-fix state for 2026-10-08)
+    adapter = TaiwanOfficialMarketDatasetAdapter(max_records=10)
+    raw_rows = [{"Date": "1151008", "Code": "2330", "ClosingPrice": "955.00"}]
+    initial_records = adapter.records_from_payload(
+        "tw_price_daily",
+        "TWSE",
+        raw_rows,
+        trace_id="trace-initial",
+    )
+    stored_record = copy.deepcopy(initial_records[0])
+    stored_record.metadata.pop("calendar_evidence", None)
+    res1 = store.append_normalized_records(
+        [stored_record],
+        ingest_run_id="run-pre-fix",
+        observed_at="2026-10-08T06:00:00Z",
+    )
+    assert res1["updated_snapshot_count"] == 1
+    prior_snap = store.get("2330.TW")
+    assert prior_snap is not None
+    assert prior_snap.calendar_evidence is None
+
+    # 2. Refresh re-reads the exact official row via the updated adapter
+    refreshed_records = adapter.records_from_payload(
+        "tw_price_daily",
+        "TWSE",
+        raw_rows,
+        trace_id="trace-refresh-re-read",
+    )
+    assert len(refreshed_records) == 1
+    assert "calendar_evidence" in refreshed_records[0].metadata
+    assert refreshed_records[0].source_id == stored_record.source_id
+
+    # 3. Store appends the refreshed record: proves snapshot actually gains evidence
+    res2 = store.append_normalized_records(
+        refreshed_records,
+        ingest_run_id="run-post-fix-refresh",
+        observed_at="2026-10-08T07:00:00Z",
+    )
+    assert res2["updated_snapshot_count"] == 1
+
+    reloaded = LatestMarketSnapshotStore(tmp_path / "market-snapshots.jsonl")
+    updated_snap = reloaded.get("2330.TW")
+    assert updated_snap is not None
+    assert updated_snap.calendar_evidence is not None
+    assert updated_snap.calendar_evidence["version"] == TWSE_2026_SCHEDULE_CALENDAR_VERSION
+    assert "2026-10-09" in updated_snap.calendar_evidence["holidays"]
+    assert "2026-10-08" in updated_snap.calendar_evidence["trading_days"]

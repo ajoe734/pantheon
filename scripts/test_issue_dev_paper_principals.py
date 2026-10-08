@@ -197,3 +197,88 @@ def test_training_session_source_reader_principal_is_dedicated_and_mounted():
     assert authority not in training["environment"]
     issuer = compose["services"]["dev-paper-principal-issuer"]["volumes"]
     assert "dev-paper-training-session-tokens:/issued/training-session-svc" in issuer
+
+
+def test_training_preview_worker_principal_is_dedicated_exact_and_mounted():
+    import yaml
+    root = Path(__file__).resolve().parents[1]
+    variable = "TRAINING_SESSION_WORKER_TOKEN"
+    assert CONSUMER_FILES["training-session-preview-worker"] == (variable,)
+    claims = verify(issue_environment(configured(), now=NOW)[variable])
+    assert claims["sub"] == claims["service"] == "training-session-preview-worker"
+    assert claims["roles"] == ["training-service"]
+    assert claims["tenant_id"] == "tenant-dev" and claims["allowed_tenants"] == ["tenant-dev"]
+    assert claims["exp"] - claims["iat"] <= TTL_SECONDS
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text())
+    worker = compose["services"]["training-session-preview-worker"]
+    assert "dev-paper-training-worker-tokens:/run/pantheon-principals:ro" in worker["volumes"]
+    assert worker["environment"][variable + "_FILE"].endswith("/run/pantheon-principals/" + variable + "}")
+    assert variable not in worker["environment"]  # no published fixture token
+    assert "dev-paper-training-worker-tokens:/issued/training-session-preview-worker" in (
+        compose["services"]["dev-paper-principal-issuer"]["volumes"])
+
+
+def test_bff_health_telemetry_principal_is_exact_and_mounted_for_operator_bff():
+    import yaml
+    root = Path(__file__).resolve().parents[1]
+    variable = "PANTHEON_BFF_HEALTH_TELEMETRY_JWT"
+    assert variable in CONSUMER_FILES["operator-bff"]
+    values = issue_environment(configured(), now=NOW)
+    claims = verify(values[variable])
+    assert claims["sub"] == claims["service"] == "control-plane-bff-health-monitor"
+    assert claims["roles"] == ["service"]
+    assert claims["tenant_id"] == "tenant-dev" and claims["allowed_tenants"] == ["tenant-dev"]
+    assert claims["allowed_producers"] == ["control-plane-bff"]
+    assert 0 < claims["exp"] - claims["iat"] <= TTL_SECONDS
+    assert values[variable + "_FILE"] == "/run/pantheon-principals/" + variable
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text())
+    bff = compose["services"]["operator-bff"]
+    assert "dev-paper-bff-tokens:/run/pantheon-principals:ro" in bff["volumes"]
+    assert bff["environment"][variable + "_FILE"].endswith("/run/pantheon-principals/" + variable + "}")
+    assert variable not in bff["environment"]  # no published fixture token
+
+
+def _telemetry_client():
+    """Real telemetry infrastructure-health authority behind a minimal route."""
+    from flask import Flask, jsonify, request
+    from services.telemetry.auth import (
+        TelemetryAuthorityError, bind_event_producer, request_authority, require_infrastructure_health_authority,
+    )
+
+    app = Flask(__name__)
+
+    @app.post("/ingest")
+    @require_infrastructure_health_authority()
+    def ingest():
+        try:
+            event = bind_event_producer(request.get_json(), request_authority())
+        except TelemetryAuthorityError as exc:
+            payload, status = exc.as_response()
+            return jsonify(payload), status
+        return jsonify({"producer": event["producer"]}), 202
+
+    return app.test_client()
+
+
+def _post_health(monkeypatch, token, *, tenant="tenant-dev", producer="control-plane-bff", secret=KEY):
+    monkeypatch.setenv("PANTHEON_TELEMETRY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_TELEMETRY_JWT_SECRET", secret)  # compose: falls back to the dev signer
+    monkeypatch.setenv("PANTHEON_TELEMETRY_INFRA_PRODUCERS", "control-plane-bff")
+    for name in ("PANTHEON_TELEMETRY_JWT_ISSUER", "PANTHEON_TELEMETRY_JWT_AUDIENCE"):
+        monkeypatch.delenv(name, raising=False)
+    return _telemetry_client().post(
+        "/ingest", json={"producer": producer},
+        headers={"Authorization": "Bearer " + token, "X-Tenant-Id": tenant})
+
+
+def test_telemetry_ingest_accepts_issued_health_principal_and_rejects_others(monkeypatch):
+    token = issue_environment(configured())["PANTHEON_BFF_HEALTH_TELEMETRY_JWT"]
+    accepted = _post_health(monkeypatch, token)
+    assert accepted.status_code == 202 and accepted.get_json() == {"producer": "control-plane-bff"}
+    # Wrong signer: telemetry verifies a different secret than the issuer signed with.
+    assert _post_health(monkeypatch, token, secret="a-different-signer-" * 3).status_code == 401
+    # Foreign tenant and wrong producer are refused with the correct signer.
+    foreign = _post_health(monkeypatch, token, tenant="tenant-other")
+    assert foreign.status_code == 403 and foreign.get_json()["error"]["code"] == "TENANT_FORBIDDEN"
+    producer = _post_health(monkeypatch, token, producer="rogue-probe-agent")
+    assert producer.status_code == 403 and producer.get_json()["error"]["code"] == "PRODUCER_FORBIDDEN"

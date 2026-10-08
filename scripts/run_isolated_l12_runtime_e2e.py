@@ -20,6 +20,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import signal
 import subprocess
@@ -234,9 +235,11 @@ def _mint_projector_service_jwt(
     subject: str = "agora-market-projector",
     roles: tuple[str, ...] = ("source_ingest_reader",),
     ttl_seconds: int | None = None,
+    extra_claims: Mapping[str, Any] | None = None,
 ) -> str:
     header = {"alg": "HS256", "typ": "JWT"}
     claims: dict[str, Any] = {"sub": subject, "roles": list(roles), "tenant_id": tenant_id}
+    claims.update(extra_claims or {})
     if issuer:
         claims["iss"] = issuer
     if audience:
@@ -248,6 +251,17 @@ def _mint_projector_service_jwt(
     c = b64(json.dumps(claims, separators=(",", ":"), sort_keys=True).encode("utf-8"))
     sig = hmac.new(secret.encode("utf-8"), f"{h}.{c}".encode("ascii"), hashlib.sha256).digest()
     return f"{h}.{c}.{b64(sig)}"
+
+
+def _suite_service_token_env(compose_env: Mapping[str, str]) -> dict[str, str]:
+    """Service principals the domain suites present, taken from the composed issuers."""
+    return {
+        "PANTHEON_L12_AGORA_HANDOFF_TOKEN": compose_env["AGORA_HANDOFF_SERVICE_TOKEN"],
+        "PANTHEON_L12_POLICY_LEARNING_TOKEN": compose_env["POLICY_LEARNING_SERVICE_TOKEN"],
+        # The research suite calls the Training API as the preview worker with
+        # the same issuer-issued principal the worker reads from its token file.
+        "PANTHEON_L12_TRAINING_TOKEN": compose_env["TRAINING_SESSION_WORKER_TOKEN"],
+    }
 
 
 def _isolated_reader_token(compose_env: Mapping[str, str], subject: str) -> tuple[str, str]:
@@ -297,6 +311,9 @@ def _isolated_dev_principal_env(compose_env: Mapping[str, str]) -> dict[str, str
         "PANTHEON_CAPITAL_JWT_SECRET": secret,
     }
     env.update(issue_dev_paper_principals.issue_environment({**env, "PANTHEON_ENV": "dev"}))
+    # The preview worker's tenant-dev training-service principal comes from the
+    # same issuer (READERS/CONSUMER_FILES) the dev-paper-principal-issuer service
+    # writes into its read-only mount; no second token minter lives here.
     return env
 
 
@@ -619,6 +636,21 @@ def _teardown_project(
     }
 
 
+# Healthy services can still fail a loop (e.g. an owner answering 409), so a
+# failed run also keeps every service's error-signal lines, bounded per service.
+SERVICE_ERROR_SCAN_TAIL = "1000"
+SERVICE_ERROR_LINES_PER_SERVICE = 40
+# The preview worker logs JSON tick results with no ERROR prefix, so a non-empty
+# "errors"/"error" or a non-zero "failed" counts; idle ticks ("failed": 0,
+# "errors": []) must not.
+SERVICE_ERROR_LINE = re.compile(
+    r"ERROR|CRITICAL|Traceback|Exception|\b\w+Error\b"
+    r"|HTTP/\d(?:\.\d)?\" [45]\d\d"
+    r"|\"errors?\":\s*(?:\[\s*[^\s\]]|\"[^\"]|\{\s*[^\s}])"
+    r"|\"failed\":\s*[1-9]"
+)
+
+
 def _capture_failure_diagnostics(
     project: str,
     compose_files: list[str],
@@ -643,6 +675,7 @@ def _capture_failure_diagnostics(
 
     ps = _capture("compose-ps.txt", "ps", "-a", "--format", "json")
     unhealthy: list[str] = []
+    services: set[str] = set()
     for line in ps.stdout.splitlines():
         try:
             row = json.loads(line)
@@ -651,6 +684,7 @@ def _capture_failure_diagnostics(
         for item in row if isinstance(row, list) else [row]:
             if not isinstance(item, Mapping):
                 continue
+            services.add(str(item.get("Service")))
             health = str(item.get("Health") or "")
             if str(item.get("State")) != "running" or health not in ("", "healthy"):
                 unhealthy.append(str(item.get("Service")))
@@ -659,6 +693,24 @@ def _capture_failure_diagnostics(
         _capture(
             f"logs-{service}.txt", "logs", "--no-color", "--tail", "200", service
         )
+    error_sections: list[str] = []
+    for service in sorted(name for name in services if name and name != "None"):
+        proc = subprocess.run(
+            _compose_command(
+                project, compose_files, *COMPOSE_ALL_PROFILES,
+                "logs", "--no-color", "--tail", SERVICE_ERROR_SCAN_TAIL, service,
+            ),
+            capture_output=True,
+            text=True,
+            check=False,
+            env=dict(compose_env),
+        )
+        hits = [line for line in proc.stdout.splitlines() if SERVICE_ERROR_LINE.search(line)]
+        error_sections.append(f"## {service}: {len(hits)} error-signal line(s)")
+        error_sections.extend(hits[-SERVICE_ERROR_LINES_PER_SERVICE:])
+    (out_dir / "service-error-lines.txt").write_text(
+        "\n".join(error_sections) + "\n", encoding="utf-8"
+    )
     return {"diagnostics_dir": str(out_dir), "captured_services": unhealthy}
 
 
@@ -733,6 +785,10 @@ def _validate_supervised_compose_admission(
         )
 
 
+HEARTBEAT_STARTUP_TIMEOUT_SECONDS = 10.0
+HEARTBEAT_STARTUP_DIAGNOSTIC_CHARS = 2000
+
+
 class DevEnvironmentLeaseBusy(RuntimeError):
     """The shared dev environment is currently owned by another workflow."""
 
@@ -782,6 +838,8 @@ class _DevEnvironmentLeaseSession:
         self._state_file = temporary_root / "state.json"
         self._failure_file = temporary_root / "heartbeat-failure.json"
         self._shutdown_file = temporary_root / "heartbeat-shutdown.json"
+        self._identity_file = temporary_root / "heartbeat-identity.json"
+        self._stderr_file = temporary_root / "heartbeat-stderr.log"
         token = _lease_token_from_github_cli()
         self._manager = dev_environment_lease.LeaseManager(
             dev_environment_lease.GitHubClient(token),
@@ -825,26 +883,85 @@ class _DevEnvironmentLeaseSession:
                 str(self._failure_file),
                 "--shutdown-json-out",
                 str(self._shutdown_file),
+                "--identity-json-out",
+                str(self._identity_file),
                 "--token-stdin",
                 "--parent-pid",
                 str(os.getpid()),
             ]
-            self._heartbeat = subprocess.Popen(
-                heartbeat_command,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                text=True,
-            )
+            # The CLI rejects --token-stdin when TOKEN_ENV is inherited, so the
+            # child gets the secret only through stdin.
+            child_env = {
+                key: value
+                for key, value in os.environ.items()
+                if key != dev_environment_lease.TOKEN_ENV
+            }
+            with open(self._stderr_file, "wb") as stderr_sink:
+                self._heartbeat = subprocess.Popen(
+                    heartbeat_command,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.DEVNULL,
+                    stderr=stderr_sink,
+                    text=True,
+                    env=child_env,
+                )
             assert self._heartbeat.stdin is not None
-            self._heartbeat.stdin.write(f"{token}\n")
-            self._heartbeat.stdin.close()
+            try:
+                self._heartbeat.stdin.write(f"{token}\n")
+                self._heartbeat.stdin.close()
+            except OSError:
+                pass  # child already exited; startup verification reports it
+            self._verify_heartbeat_started(token)
             signal.signal(signal.SIGTERM, self._handle_lease_loss)
         except Exception:
             # Acquisition has completed by this point, so a startup failure
             # must release the same owner rather than wait for lease expiry.
             self.close()
             raise
+
+    def _startup_diagnostics(self, token: str) -> str:
+        try:
+            raw = self._stderr_file.read_text(errors="replace")
+        except OSError:
+            return ""
+        text = raw.replace(token, "[redacted]") if token else raw
+        return text.strip()[-HEARTBEAT_STARTUP_DIAGNOSTIC_CHARS:]
+
+    def _verify_heartbeat_started(self, token: str) -> None:
+        """Fail closed unless the heartbeat child is alive and identity-verified."""
+
+        assert self._heartbeat is not None
+        deadline = time.monotonic() + HEARTBEAT_STARTUP_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            exit_code = self._heartbeat.poll()
+            if exit_code is not None:
+                detail = self._startup_diagnostics(token)
+                raise dev_environment_lease.LeaseError(
+                    f"shared dev lease heartbeat exited during startup "
+                    f"(exit {exit_code}): {detail or 'no diagnostics'}"
+                )
+            if self._identity_file.exists():
+                break
+            time.sleep(0.05)
+        else:
+            raise dev_environment_lease.LeaseError(
+                "shared dev lease heartbeat did not report startup identity within "
+                f"{HEARTBEAT_STARTUP_TIMEOUT_SECONDS:g}s"
+            )
+        identity = dev_environment_lease.read_json_file(
+            self._identity_file, "heartbeat identity file"
+        )
+        try:
+            dev_environment_lease.verify_heartbeat_identity(
+                identity,
+                pid=self._heartbeat.pid,
+                expected_cli=str(REPO_ROOT / "scripts" / "dev_environment_lease.py"),
+                state_file=str(self._state_file),
+            )
+        except dev_environment_lease.LeaseError as exc:
+            raise dev_environment_lease.LeaseError(
+                f"shared dev lease heartbeat identity check failed: {exc}"
+            ) from exc
 
     @staticmethod
     def _handle_lease_loss(_signum: int, _frame: Any) -> None:
@@ -1187,8 +1304,7 @@ def main(argv: list[str] | None = None) -> int:
     test_env["PANTHEON_L12_SOURCE_READER_TOKEN"] = reader_token
     test_env["PANTHEON_L12_SOURCE_READER_TENANT_ID"] = reader_tenant
     test_env["PANTHEON_L12_TENANT_ID"] = compose_env["PANTHEON_BFF_TENANT_ID"]
-    test_env["PANTHEON_L12_AGORA_HANDOFF_TOKEN"] = compose_env["AGORA_HANDOFF_SERVICE_TOKEN"]
-    test_env["PANTHEON_L12_POLICY_LEARNING_TOKEN"] = compose_env["POLICY_LEARNING_SERVICE_TOKEN"]
+    test_env.update(_suite_service_token_env(compose_env))
     test_env["PANTHEON_L12_HUMAN_LEARNING_TENANT_ID"] = compose_env["POLICY_LEARNING_AGORA_TENANT_ID"]
     test_env["PANTHEON_L12_OPERATOR_TOKEN"] = _isolated_human_token(
         compose_env, "l12-domain-suites-operator", "operator", "persona.admin"

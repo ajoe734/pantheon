@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from services.control_plane.bff.personas import PersonaService, create_personas_router
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.tests.conftest import make_composed_persona_service
 
 # Local re-implementation of read_store._load_default_fixture_pack_datasets:
 # merges the same static, committed fixture-pack JSON files directly off
@@ -328,16 +329,16 @@ def test_persona_intent_real_read_surface_ports_empty_and_tenant_review() -> Non
     from services.control_plane.bff.personas import service as ps
 
     real_ports = create_in_memory_read_surface_ports()
-    old_store = ps.read_store
+    old_store = ps._composed_persona_service
     try:
-        ps.read_store = real_ports
+        ps._composed_persona_service = make_composed_persona_service(read_store=real_ports)
         items, p_sessions, t_sessions, agora_sessions = ps._persona_intent_all_items("tenant-review")
         assert items == []
         assert p_sessions == []
         assert t_sessions == []
         assert agora_sessions == []
     finally:
-        ps.read_store = old_store
+        ps._composed_persona_service = old_store
 
 
 def test_persona_intent_real_read_surface_ports_consultation_projection_and_tenant_filtering() -> None:
@@ -381,9 +382,9 @@ def test_persona_intent_real_read_surface_ports_consultation_projection_and_tena
         operations_consultation_kwargs={"consult_requests": consult_requests},
     )
 
-    old_store = ps.read_store
+    old_store = ps._composed_persona_service
     try:
-        ps.read_store = real_ports
+        ps._composed_persona_service = make_composed_persona_service(read_store=real_ports)
 
         # 1. Tenant Alpha query
         items_alpha, _, _, agora_alpha = ps._persona_intent_all_items("tenant-alpha")
@@ -428,7 +429,7 @@ def test_persona_intent_real_read_surface_ports_consultation_projection_and_tena
             assert "agora" in canonical_item
             assert canonical_item["agora"]["mode"] == "agora_session"
     finally:
-        ps.read_store = old_store
+        ps._composed_persona_service = old_store
 
 
 def test_persona_intent_real_domain_consultation_port_store_fallback() -> None:
@@ -481,9 +482,9 @@ def test_persona_intent_real_domain_consultation_port_store_fallback() -> None:
         )
         real_ports.operations_consultation = DomainConsultationPort(client=EmptyClient(), store=canonical_store)
 
-        old_store = ps.read_store
+        old_store = ps._composed_persona_service
         try:
-            ps.read_store = real_ports
+            ps._composed_persona_service = make_composed_persona_service(read_store=real_ports)
             own_items, _, _, _ = ps._persona_intent_all_items("pantheon-dev")
             foreign_items, _, _, _ = ps._persona_intent_all_items("tenant-beta")
 
@@ -521,7 +522,7 @@ def test_persona_intent_real_domain_consultation_port_store_fallback() -> None:
                 assert body["data"]["summary"]["agora_session_count"] == 2
                 assert body["data"]["summary"]["persona_ids"] == ["persona-own"]
         finally:
-            ps.read_store = old_store
+            ps._composed_persona_service = old_store
     finally:
         store_dir.cleanup()
 

@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import http.client
 import io
 import json
 import math
 import os
 import re
+import time
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
@@ -34,6 +36,10 @@ from .base import (
     SourceEvidenceError,
     SourceMetadata,
     SourceRecord,
+)
+from .bounded_reader import (
+    ResponseTruncated,
+    read_bounded_response,
 )
 
 
@@ -121,6 +127,52 @@ _TWSE_2026_LNY_CALENDAR_PAYLOAD: Mapping[str, Any] = {
     "trading_days": ["2026-02-11", "2026-02-23"],
     "venue": "TWSE",
     "version": TWSE_2026_LNY_CALENDAR_VERSION,
+}
+
+TWSE_2026_SCHEDULE_CALENDAR_VERSION = "twse-2026-schedule-v1"
+TWSE_2026_SCHEDULE_CALENDAR_SHA256 = (
+    "69c1a9b5f8cd347faca498ea3ecbc63fc3fe7a7bbb49d1ddb2b50f4cef0c35eb"
+)
+TWSE_2026_SCHEDULE_CALENDAR_FETCHED_AT = "2026-10-08T00:00:00Z"
+_TWSE_2026_SCHEDULE_CALENDAR_PAYLOAD: Mapping[str, Any] = {
+    "authority": "Taiwan Stock Exchange 115 年市場開休市日期",
+    "coverage_end": "2026-12-31",
+    "coverage_start": "2026-02-24",
+    "holidays": {
+        "2026-02-27": {"name": "和平紀念日"},
+        "2026-02-28": {"name": "和平紀念日"},
+        "2026-04-03": {"name": "兒童節及民族掃墓節"},
+        "2026-04-04": {"name": "兒童節及民族掃墓節"},
+        "2026-04-05": {"name": "兒童節及民族掃墓節"},
+        "2026-04-06": {"name": "兒童節及民族掃墓節"},
+        "2026-05-01": {"name": "勞動節"},
+        "2026-06-19": {"name": "端午節"},
+        "2026-09-25": {"name": "中秋節"},
+        "2026-09-28": {"name": "孔子誕辰紀念日/ 教師節"},
+        "2026-10-09": {"name": "國慶日"},
+        "2026-10-10": {"name": "國慶日"},
+        "2026-10-25": {"name": "臺灣光復暨金門古寧頭大捷紀念日"},
+        "2026-10-26": {"name": "臺灣光復暨金門古寧頭大捷紀念日"},
+        "2026-12-25": {"name": "行憲紀念日"},
+    },
+    "market": "TW",
+    "source_url": "https://openapi.twse.com.tw/v1/holidaySchedule/holidaySchedule",
+    "timezone": "Asia/Taipei",
+    "trading_days": [
+        "2026-02-24", "2026-02-25", "2026-02-26",
+        "2026-03-02", "2026-03-03", "2026-03-04", "2026-03-05", "2026-03-06", "2026-03-09", "2026-03-10", "2026-03-11", "2026-03-12", "2026-03-13", "2026-03-16", "2026-03-17", "2026-03-18", "2026-03-19", "2026-03-20", "2026-03-23", "2026-03-24", "2026-03-25", "2026-03-26", "2026-03-27", "2026-03-30", "2026-03-31",
+        "2026-04-01", "2026-04-02", "2026-04-07", "2026-04-08", "2026-04-09", "2026-04-10", "2026-04-13", "2026-04-14", "2026-04-15", "2026-04-16", "2026-04-17", "2026-04-20", "2026-04-21", "2026-04-22", "2026-04-23", "2026-04-24", "2026-04-27", "2026-04-28", "2026-04-29", "2026-04-30",
+        "2026-05-04", "2026-05-05", "2026-05-06", "2026-05-07", "2026-05-08", "2026-05-11", "2026-05-12", "2026-05-13", "2026-05-14", "2026-05-15", "2026-05-18", "2026-05-19", "2026-05-20", "2026-05-21", "2026-05-22", "2026-05-25", "2026-05-26", "2026-05-27", "2026-05-28", "2026-05-29",
+        "2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04", "2026-06-05", "2026-06-08", "2026-06-09", "2026-06-10", "2026-06-11", "2026-06-12", "2026-06-15", "2026-06-16", "2026-06-17", "2026-06-18", "2026-06-22", "2026-06-23", "2026-06-24", "2026-06-25", "2026-06-26", "2026-06-29", "2026-06-30",
+        "2026-07-01", "2026-07-02", "2026-07-03", "2026-07-06", "2026-07-07", "2026-07-08", "2026-07-09", "2026-07-10", "2026-07-13", "2026-07-14", "2026-07-15", "2026-07-16", "2026-07-17", "2026-07-20", "2026-07-21", "2026-07-22", "2026-07-23", "2026-07-24", "2026-07-27", "2026-07-28", "2026-07-29", "2026-07-30", "2026-07-31",
+        "2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07", "2026-08-10", "2026-08-11", "2026-08-12", "2026-08-13", "2026-08-14", "2026-08-17", "2026-08-18", "2026-08-19", "2026-08-20", "2026-08-21", "2026-08-24", "2026-08-25", "2026-08-26", "2026-08-27", "2026-08-28", "2026-08-31",
+        "2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-07", "2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11", "2026-09-14", "2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18", "2026-09-21", "2026-09-22", "2026-09-23", "2026-09-24", "2026-09-29", "2026-09-30",
+        "2026-10-01", "2026-10-02", "2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16", "2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23", "2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30",
+        "2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06", "2026-11-09", "2026-11-10", "2026-11-11", "2026-11-12", "2026-11-13", "2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19", "2026-11-20", "2026-11-23", "2026-11-24", "2026-11-25", "2026-11-26", "2026-11-27", "2026-11-30",
+        "2026-12-01", "2026-12-02", "2026-12-03", "2026-12-04", "2026-12-07", "2026-12-08", "2026-12-09", "2026-12-10", "2026-12-11", "2026-12-14", "2026-12-15", "2026-12-16", "2026-12-17", "2026-12-18", "2026-12-21", "2026-12-22", "2026-12-23", "2026-12-24", "2026-12-28", "2026-12-29", "2026-12-30", "2026-12-31",
+    ],
+    "venue": "TWSE",
+    "version": TWSE_2026_SCHEDULE_CALENDAR_VERSION,
 }
 
 _DATASET_SCHEMA_HASHES = {
@@ -290,20 +342,40 @@ TAIWAN_OFFICIAL_PRICE_HISTORY_ENDPOINTS: Mapping[str, dict[str, Any]] = {
 }
 
 
-def _read_bounded_response(response: Any, max_bytes: int = 10485760, chunk_size: int = 65536) -> bytes:
-    chunks: list[bytes] = []
-    total = 0
-    while True:
-        chunk = response.read(chunk_size)
-        if not chunk:
-            break
-        total += len(chunk)
-        if total > max_bytes:
-            raise SourceEvidenceError(f"Payload exceeded max byte limit ({max_bytes} bytes)")
-        chunks.append(chunk)
-        if len(chunk) < chunk_size:
-            break
-    return b"".join(chunks)
+OFFICIAL_FETCH_ATTEMPTS = 3
+OFFICIAL_FETCH_BACKOFF_SECONDS = 1.0
+
+
+
+
+def _fetch_official(
+    request: urllib.request.Request,
+    *,
+    caller: str,
+    timeout_seconds: float,
+    max_bytes: int,
+    parse: Any,
+) -> Any:
+    """Fetch and parse one official endpoint, retrying only transient body failures.
+
+    Official open-data hosts intermittently close a response early or stall a
+    read; the same request is retried a bounded number of times. HTTP errors,
+    egress denial and the byte limit are raised immediately.
+    """
+    failures: list[str] = []
+    for attempt in range(1, OFFICIAL_FETCH_ATTEMPTS + 1):
+        try:
+            with open_external_url(request, caller=caller, timeout=timeout_seconds) as response:
+                raw_bytes = read_bounded_response(response, max_bytes=max_bytes)
+            return parse(raw_bytes)
+        except (ResponseTruncated, TimeoutError, http.client.IncompleteRead, json.JSONDecodeError) as exc:
+            failures.append(f"attempt {attempt}: {type(exc).__name__}: {str(exc)[:200]}")
+            if attempt < OFFICIAL_FETCH_ATTEMPTS:
+                time.sleep(OFFICIAL_FETCH_BACKOFF_SECONDS * attempt)
+    raise SourceEvidenceError(
+        f"official endpoint {request.full_url} failed after {OFFICIAL_FETCH_ATTEMPTS} attempts: "
+        + "; ".join(failures)
+    )
 
 
 def _taifex_endpoint(dataset: str) -> str:
@@ -378,16 +450,33 @@ def governed_taiwan_calendar_evidence(
     normalized_trade_date = _roc_date_to_iso(trade_date)
     if canonical_venue != "TWSE" or not normalized_trade_date:
         return None
-    if not (
+
+    matched_payload: Mapping[str, Any] | None = None
+    expected_digest: str | None = None
+    fetched_at: str | None = None
+
+    if (
         _TWSE_2026_LNY_CALENDAR_PAYLOAD["coverage_start"]
         <= normalized_trade_date
         <= _TWSE_2026_LNY_CALENDAR_PAYLOAD["coverage_end"]
     ):
+        matched_payload = _TWSE_2026_LNY_CALENDAR_PAYLOAD
+        expected_digest = TWSE_2026_LNY_CALENDAR_SHA256
+        fetched_at = TWSE_2026_LNY_CALENDAR_FETCHED_AT
+    elif (
+        _TWSE_2026_SCHEDULE_CALENDAR_PAYLOAD["coverage_start"]
+        <= normalized_trade_date
+        <= _TWSE_2026_SCHEDULE_CALENDAR_PAYLOAD["coverage_end"]
+    ):
+        matched_payload = _TWSE_2026_SCHEDULE_CALENDAR_PAYLOAD
+        expected_digest = TWSE_2026_SCHEDULE_CALENDAR_SHA256
+        fetched_at = TWSE_2026_SCHEDULE_CALENDAR_FETCHED_AT
+    else:
         return None
 
     canonical_payload = json.loads(
         json.dumps(
-            _TWSE_2026_LNY_CALENDAR_PAYLOAD,
+            matched_payload,
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -402,13 +491,13 @@ def governed_taiwan_calendar_evidence(
             separators=(",", ":"),
         ).encode("utf-8")
     ).hexdigest()
-    if digest != TWSE_2026_LNY_CALENDAR_SHA256:
+    if digest != expected_digest:
         raise SourceEvidenceError(
             "governed TWSE calendar payload digest does not match its exact version pin"
         )
     return {
         **canonical_payload,
-        "fetched_at": TWSE_2026_LNY_CALENDAR_FETCHED_AT,
+        "fetched_at": fetched_at,
         "checksum": digest,
     }
 
@@ -725,7 +814,16 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
                         "version": TWSE_2026_LNY_CALENDAR_VERSION,
                         "sha256": TWSE_2026_LNY_CALENDAR_SHA256,
                         "source_url": _TWSE_2026_LNY_CALENDAR_PAYLOAD["source_url"],
-                    }
+                    },
+                    {
+                        "venue": "TWSE",
+                        "year": 2026,
+                        "coverage_start": _TWSE_2026_SCHEDULE_CALENDAR_PAYLOAD["coverage_start"],
+                        "coverage_end": _TWSE_2026_SCHEDULE_CALENDAR_PAYLOAD["coverage_end"],
+                        "version": TWSE_2026_SCHEDULE_CALENDAR_VERSION,
+                        "sha256": TWSE_2026_SCHEDULE_CALENDAR_SHA256,
+                        "source_url": _TWSE_2026_SCHEDULE_CALENDAR_PAYLOAD["source_url"],
+                    },
                 ],
                 "tier_policy": {
                     "core_universe": ["tw_price_daily", "tw_institutional_flow", "tw_margin_short_balance", "tw_securities_lending", "tw_day_trading"],
@@ -778,13 +876,13 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
                 "User-Agent": "pantheon-source-ingest/0.1",
             },
         )
-        with open_external_url(
+        return _fetch_official(
             request,
             caller="source_ingest.taiwan_official",
-            timeout=timeout_seconds,
-        ) as response:
-            raw_bytes = _read_bounded_response(response, max_bytes=10485760)
-            return json.loads(raw_bytes.decode("utf-8"))
+            timeout_seconds=timeout_seconds,
+            max_bytes=10485760,
+            parse=lambda raw_bytes: json.loads(raw_bytes.decode("utf-8")),
+        )
 
     def price_history_endpoint(
         self,
@@ -834,13 +932,13 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
                 "User-Agent": "pantheon-source-ingest/0.1",
             },
         )
-        with open_external_url(
+        payload = _fetch_official(
             request,
             caller="source_ingest.taiwan_official",
-            timeout=timeout_seconds,
-        ) as response:
-            raw_bytes = _read_bounded_response(response, max_bytes=10485760)
-        payload = json.loads(raw_bytes.decode("utf-8"))
+            timeout_seconds=timeout_seconds,
+            max_bytes=10485760,
+            parse=lambda raw_bytes: json.loads(raw_bytes.decode("utf-8")),
+        )
         if not isinstance(payload, Mapping):
             raise SourceEvidenceError("Taiwan official price history payload must be an object")
         return payload, url
@@ -1521,28 +1619,28 @@ class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
                 "User-Agent": "pantheon-source-ingest/0.1",
             },
         )
-        with open_external_url(
+        text = _fetch_official(
             request,
             caller="source_ingest.tdcc_shareholding",
-            timeout=timeout_seconds,
-        ) as response:
-            raw_bytes = _read_bounded_response(response, max_bytes=5242880)
-            text = raw_bytes.decode("utf-8-sig")
-            reader = csv.DictReader(io.StringIO(text))
-            resolved_symbols = symbols if symbols is not None else self.symbols
-            target_symbols = {str(s).strip().upper() for s in (resolved_symbols or ())} if resolved_symbols else None
-            limit = max_records or self.max_records
-            rows: list[dict[str, Any]] = []
-            for r in reader:
-                row_dict = dict(r)
-                if target_symbols:
-                    sym = _text(_first(row_dict, "證券代號", "Code", "SecuritiesCompanyCode", "Symbol", "股票代號")).upper()
-                    if sym not in target_symbols:
-                        continue
-                rows.append(row_dict)
-                if limit and len(rows) >= limit:
-                    break
-            return rows
+            timeout_seconds=timeout_seconds,
+            max_bytes=5242880,
+            parse=lambda raw_bytes: raw_bytes.decode("utf-8-sig"),
+        )
+        reader = csv.DictReader(io.StringIO(text))
+        resolved_symbols = symbols if symbols is not None else self.symbols
+        target_symbols = {str(s).strip().upper() for s in (resolved_symbols or ())} if resolved_symbols else None
+        limit = max_records or self.max_records
+        rows: list[dict[str, Any]] = []
+        for r in reader:
+            row_dict = dict(r)
+            if target_symbols:
+                sym = _text(_first(row_dict, "證券代號", "Code", "SecuritiesCompanyCode", "Symbol", "股票代號")).upper()
+                if sym not in target_symbols:
+                    continue
+            rows.append(row_dict)
+            if limit and len(rows) >= limit:
+                break
+        return rows
 
     @staticmethod
     def generate_backfill_weeks(start_date: str, end_date: str) -> list[str]:
@@ -1851,17 +1949,17 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                 "User-Agent": "pantheon-source-ingest/0.1",
             },
         )
-        with open_external_url(
+        parsed = _fetch_official(
             request,
             caller="source_ingest.taifex_derivatives",
-            timeout=timeout_seconds,
-        ) as response:
-            raw_bytes = _read_bounded_response(response, max_bytes=2097152)
-            parsed = json.loads(raw_bytes.decode("utf-8-sig"))
-            if isinstance(parsed, list) and (max_records or self.max_records):
-                limit = max_records or self.max_records
-                return parsed[:limit]
-            return parsed
+            timeout_seconds=timeout_seconds,
+            max_bytes=2097152,
+            parse=lambda raw_bytes: json.loads(raw_bytes.decode("utf-8-sig")),
+        )
+        if isinstance(parsed, list) and (max_records or self.max_records):
+            limit = max_records or self.max_records
+            return parsed[:limit]
+        return parsed
 
     @staticmethod
     def is_contract_roll_day(trade_date: str) -> bool:

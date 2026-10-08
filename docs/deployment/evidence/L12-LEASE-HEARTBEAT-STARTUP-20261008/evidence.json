@@ -1,0 +1,8 @@
+{
+  "task_id": "L12-LEASE-HEARTBEAT-STARTUP-20261008",
+  "change": "heartbeat child env drops PANTHEON_ENVIRONMENT_LEASE_TOKEN; token via stdin only; child stderr captured to a private temp file (redacted, bounded); parent verifies startup via existing --identity-json-out and verify_heartbeat_identity within 10s; startup failure releases exact owner and returns 78 before any Compose work",
+  "unchanged": ["scripts/dev_environment_lease.py", "lease TTL", "CAS/owner/expiry/parent-failure signaling"],
+  "tests": "scripts/test_run_isolated_l12_runtime_e2e.py: 41 passed (includes real-child negative-contract test with synthetic token)",
+  "live_deployment_or_credentials_used": false,
+  "hosted_full_retry": "pending; reserved to sole release coordinator"
+}

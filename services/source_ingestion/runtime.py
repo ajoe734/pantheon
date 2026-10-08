@@ -557,10 +557,14 @@ class SourceIngestionRuntime:
                 status_code=403,
                 detail=f"service authorization is invalid for {operation}",
             )
+    CONTROLLER_OWNED_CONNECTOR_IDS = frozenset({"tw-twse-tpex-official-market", "dev-paper-us-equity-simulation"})
+
 
     def _is_controller_owned(self, connector: SourceConnector | None) -> bool:
         if connector is None:
             return False
+        if getattr(connector, "connector_id", None) in self.CONTROLLER_OWNED_CONNECTOR_IDS:
+            return True
         marker = connector.metadata.get(RECONCILIATION_METADATA_KEY)
         return bool(
             isinstance(marker, Mapping)
@@ -589,8 +593,10 @@ class SourceIngestionRuntime:
         proposed_connector: SourceConnector | None = None,
     ) -> None:
         existing = self.connector_store.get_config(connector_id)
-        if self._is_controller_owned(existing.connector if existing is not None else None) or self._is_controller_owned(
-            proposed_connector
+        if (
+            connector_id in self.CONTROLLER_OWNED_CONNECTOR_IDS
+            or self._is_controller_owned(existing.connector if existing is not None else None)
+            or self._is_controller_owned(proposed_connector)
         ):
             self._require_controller_authorization(authorization, operation=operation)
 

@@ -33,6 +33,16 @@ RSS_XML = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
+def _read_headers(tenant: str = "tenant-a") -> dict[str, str]:
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    token = encode_jwt_hs256(
+        {"sub": "test-reader", "roles": ["operator"], "tenant_id": tenant, "exp": int(__import__("time").time()) + 600},
+        secret=os.environ.get("PANTHEON_RUNTIME_JWT_SECRET", "source-test-secret"),
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
 @pytest.fixture()
 def client():
     tempdir = tempfile.mkdtemp(prefix="source_ingest_market_foundation_")
@@ -41,18 +51,20 @@ def client():
         "SOURCE_INGEST_MAX_RECORDS": os.environ.get("SOURCE_INGEST_MAX_RECORDS"),
         "SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY": os.environ.get("SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY"),
         "SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT": os.environ.get("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT"),
+        "PANTHEON_RUNTIME_JWT_SECRET": os.environ.get("PANTHEON_RUNTIME_JWT_SECRET"),
     }
     os.environ["SOURCE_INGEST_DATA_DIR"] = tempdir
     os.environ["SOURCE_INGEST_MAX_RECORDS"] = "20"
     os.environ["SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY"] = "2"
     os.environ["SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT"] = str(Path(tempdir) / "market-data-store")
+    os.environ["PANTHEON_RUNTIME_JWT_SECRET"] = "source-test-secret"
 
     sys.modules.pop("services.source_ingestion.main", None)
     module = importlib.import_module("services.source_ingestion.main")
     module = importlib.reload(module)
 
     try:
-        yield TestClient(module.app), Path(tempdir), module
+        yield TestClient(module.app, headers=_read_headers()), Path(tempdir), module
     finally:
         for key, value in env_backup.items():
             if value is None:

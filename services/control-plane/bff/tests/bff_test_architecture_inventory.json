@@ -2,7 +2,7 @@
   "task_id": "BFF-TEST-ARCH-001",
   "version": "2.0",
   "description": "BFF test architecture inventory. imports_main / disposition are derived from a live AST scan of the tests on disk (see test_bff_test_architecture.py), not self-reported. live_scan_non_whitelisted_main_importer_ceiling is the process-controlled cap on non-whitelisted BFF main importers; it may only be lowered in a PR.",
-  "total_test_files": 388,
+  "total_test_files": 387,
   "migrated_in_task_count": 33,
   "composition_allowlist": [
     "auth/test_composition_root_smoke.py",
@@ -97,7 +97,7 @@
   ],
   "layer_summary": {
     "adapter": 52,
-    "application": 189,
+    "application": 188,
     "composition": 19,
     "hosted": 12,
     "router": 117
@@ -108,7 +108,7 @@
     "hosted": 1
   },
   "disposition_summary": {
-    "DECOUPLED": 324,
+    "DECOUPLED": 323,
     "MIGRATED": 45,
     "ALLOWLIST": 21
   },
@@ -2019,13 +2019,6 @@
       "rationale": "Migrated (BFF-TEST-MIGRATION-REMAINING-IMPORTERS-001): builds its own app via core.app_factory.compose_bff_app(), the real standalone full-app composition root added by BFF-MAIN-FINAL-SEAMS-CORRECTIVE-001. _deprecated_bff_path_response is passed explicitly as an injected keyword dependency, sourced directly from its real, already-extracted production owner (personas.service._deprecated_bff_path_response), instead of relying on core.app_factory._dep()'s fallback to a loaded main module. No main.py reference (static or dynamic) remains in this file."
     },
     {
-      "file": "tests/test_bff_persona_allocation_policy.py",
-      "layer": "application",
-      "imports_main": false,
-      "disposition": "DECOUPLED",
-      "rationale": "Already decoupled from main composition globals"
-    },
-    {
       "file": "tests/test_bff_persona_create_paper_bundle.py",
       "layer": "application",
       "imports_main": false,
@@ -2590,7 +2583,7 @@
       "layer": "application",
       "imports_main": false,
       "disposition": "MIGRATED",
-      "rationale": "Migrated: calls the real services.control_plane.bff.capital.service._pm12_allocation_line_assertion_hash directly; no main.py import remains."
+      "rationale": "Migrated: calls the real services.control_plane.bff.capital.service._pm12_allocation_line_assertion_hash directly; allocation policy logic imports from services.capital.allocation_policy; no main.py import remains."
     },
     {
       "file": "tests/test_project_approvals_regression.py",

@@ -1145,6 +1145,8 @@ def mount_bff_routers(
             command_store=app_deps.command_store,
         ),
     )
+    from ..personas import service as _persona_service_module
+    _persona_service_module._composed_persona_service = persona_service
     from ..runtime.router import create_runtime_router
     runtime_router = create_runtime_router(
         read_surface=app_deps.read_surface,

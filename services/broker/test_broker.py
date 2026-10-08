@@ -20,6 +20,10 @@ _BROKER_DIR = str(Path(__file__).resolve().parent)
 if _BROKER_DIR not in sys.path:
     sys.path.insert(0, _BROKER_DIR)
 
+import pytest
+
+from paper_simulation import SimulationError, simulate_paper_order
+
 _BROKER_MAIN_PATH = Path(__file__).resolve().parent / "main.py"
 _BROKER_MAIN_SPEC = importlib.util.spec_from_file_location("pantheon_broker_sidecar_main", _BROKER_MAIN_PATH)
 if _BROKER_MAIN_SPEC is None or _BROKER_MAIN_SPEC.loader is None:
@@ -132,9 +136,7 @@ class TestBrokerPaperSimulationHappyPath(unittest.TestCase):
                 "/api/broker/paper/orders", params={"capital_pool_id": "pool-no-price"}
             ).json()["orders"]
 
-        with patch.object(broker_main, "_PAPER_ENABLED", True), patch.object(
-            broker_main._QUOTE_PRICER, "market_price", return_value=None
-        ):
+        with patch.object(broker_main, "_PAPER_ENABLED", True):
             before = listed()
             resp = client.post("/api/broker/paper/orders", json=order_req)
             after = listed()
@@ -229,3 +231,23 @@ class TestBrokerPaperOrderListAndGet(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_market_fill_uses_market_price():
+    o = simulate_paper_order(capital_pool_id="p", strategy_id="s", symbol="2330",
+                             qty=1, side="sell", order_type="market", market_price=2340.0)
+    assert o.fill_price == 2340.0
+
+
+def test_market_order_without_price_raises_unavailable():
+    with pytest.raises(SimulationError) as excinfo:
+        simulate_paper_order(capital_pool_id="p", strategy_id="s", symbol="2330",
+                             qty=1, side="buy", order_type="market")
+    assert excinfo.value.error_code == "MARKET_PRICE_UNAVAILABLE"
+
+
+def test_limit_fill_unchanged_by_market_price():
+    o = simulate_paper_order(capital_pool_id="p", strategy_id="s", symbol="2330",
+                             qty=1, side="buy", order_type="limit", limit_price=2300.0, market_price=9999.0)
+    assert o.fill_price == 2300.0
+

@@ -28,6 +28,7 @@ from services.control_plane.bff.personas.service import (
     _persona_record_tenant_id,
 )
 import services.control_plane.bff.personas.service as personas_service
+from services.control_plane.bff.tests.conftest import make_composed_persona_service
 from services.control_plane.bff.trade_journal import _allowed as _trade_journal_allowed
 import services.control_plane.bff.models as bff_models
 from test_agora_persona_interactions import (
@@ -97,7 +98,11 @@ def client(monkeypatch):
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
     global read_store
     read_store = FakeReadStore()
-    personas_service.read_store = read_store
+    monkeypatch.setattr(
+        personas_service,
+        "_composed_persona_service",
+        make_composed_persona_service(read_store=read_store),
+    )
     if interaction_lifecycle.backend == "memory":
         with interaction_lifecycle._lock:
             interaction_lifecycle._requests.clear()
