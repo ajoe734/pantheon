@@ -1,0 +1,14 @@
+{
+  "task_id": "L12-HARNESS-CONSULTATION-OUTCOME-20261008",
+  "follows": "L12-HARNESS-SERVICE-ERROR-LINES-20261008",
+  "failed_run": "FULL 37804528042",
+  "problem": "SERVICE_ERROR_LINE dropped executor tick lines whose only failure signal is an outcome of blocked or dead_letter with a plain detail (errors was empty), so the durable blocked then dead_letter outcome was not retained in service-error-lines.txt.",
+  "change": "One alternative added to the existing SERVICE_ERROR_LINE regex: \"outcome\": \"blocked\"|\"dead_letter\". Last 1000 scan, 40 retained per service, 200-line full logs for unhealthy/exited services and zero-match markers are unchanged. No product runtime change.",
+  "tests": "Positive cases use the blocked/dead_letter shape from consultation-outcome-diagnostic-counterexample.json; completed outcome, empty outcomes and idle zero counts stay unmatched.",
+  "caveat": "The counterexample is synthetic and proves the diagnostic omission only. It is not the formal dead-letter root cause of FULL 37804528042. Product, Root, FULL, browser and rollback authority remains with the original Human/Ops parent.",
+  "validation": {
+    "command": "uv run --no-project --with pytest python -m pytest scripts/test_run_isolated_l12_runtime_e2e.py -q",
+    "result": "45 passed"
+  },
+  "review_status": "Author validation only; native review by Antigravity2 pending."
+}
