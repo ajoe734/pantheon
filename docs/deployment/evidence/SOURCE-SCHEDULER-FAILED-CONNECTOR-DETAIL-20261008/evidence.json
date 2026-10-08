@@ -1,0 +1,27 @@
+{
+  "task_id": "SOURCE-SCHEDULER-FAILED-CONNECTOR-DETAIL-20261008",
+  "base_sha": "84dad5f65",
+  "problem": {
+    "gate_runs": [
+      "37738094930"
+    ],
+    "observed": "The isolated L1-L12 gate's bounded Taiwan official pull failed with {\"error\":\"ControllerTickError: scheduled source tick reported 1 failed connector(s)\",\"stage\":\"schedule\"}. The run's diagnostics held no per-connector reason.",
+    "cause": "The run-scheduled response lists each failed connector with its error, but the tick discards it in three places: the scheduler's failure line prints only the aggregate; summarize_schedule keeps only scalar counts in controller_state; and the scheduling path in pipeline.py, runtime.py and main.py writes no log lines. Capturing source-ingest logs (L12-HARNESS-TW-PULL-DIAGNOSTICS-20261008) therefore cannot recover it either.",
+    "local_reproduction": "On 2026-10-08 at 06:54Z and 06:57Z the same connector (tw-twse-tpex-official-market) was run in-process from dev 3bb8bfb19, with exclusive selection, SOURCE_INGEST_MAX_RECORDS=100, SOURCE_INGEST_TW_HISTORY_SYMBOLS=2330.TW,2317.TW and the Postgres evidence backend on a disposable labelled container. It completed with 100 normalized records and 0 failed, so the gate failure could not be reproduced and its cause remains unknown."
+  },
+  "change": [
+    "controller_state.summarize_schedule keeps a failed list of {connector_id, error}, each field bounded to MAX_TEXT_LENGTH (512) and the list capped at MAX_FAILED_CONNECTORS (16). Re-summarizing a summary is idempotent, so restart reload keeps it.",
+    "controller_worker.main adds failed_connectors (the same bounded list) to the failure line when the raised ControllerTickError carries a schedule response. Other failure lines are byte-for-byte unchanged."
+  ],
+  "unchanged": "Schedule, freshness and admission decisions, exit codes, the run-scheduled API response and every tick stage are unchanged.",
+  "test_changes": [
+    "test_run_controller_tick_reconcile_only_fails_when_egress_free_schedule_fails now returns a failed entry with a 2000-character error and asserts the persisted summary keeps the connector id and a 512-character error, also after reload.",
+    "New test_schedule_summary_bounds_failed_connectors_and_survives_resummary, test_main_failure_line_names_failed_connectors and test_main_failure_line_is_unchanged_without_schedule_context."
+  ],
+  "validation": {
+    "base_with_new_tests": "pytest services/source_ingestion/tests/test_controller_worker.py -k the four tests on base 84dad5f65: 3 failed, 1 passed",
+    "head_focused": "same selection on head: 4 passed",
+    "head_related_suites": "15 Source test files that reference the controller state, worker or readback: 285 passed, 25 failed on head; the same 25 node ids fail on base 84dad5f65 with the change stashed (identical sorted lists). Sampled causes are local-environment: REGISTRY_STORE_BACKEND unset outside the service conftest and 401 from runtime JWT settings."
+  },
+  "review_status": "Author validation only; independent exact-head review by the assigned reviewer pending."
+}
