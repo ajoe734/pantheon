@@ -405,7 +405,9 @@ def test_ppl_alloc_009_governed_paper_chain_applies_without_two_man(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    with CapitalBffAuthorityHarness(tmp_path, seed_allocation=False) as harness:
+    harness = CapitalBffAuthorityHarness(tmp_path, seed_allocation=False)
+    harness.ranking_reader = harness.read_surface  # the owner verifies lineage against the real snapshot
+    with harness:
         _active.harness = harness
         assert harness.client is not None
         assert harness.capital_client is not None
@@ -751,6 +753,7 @@ def test_ranking_tuple_and_snapshot_round_trip_into_rebalance_proposal() -> None
         harness: CapitalBffAuthorityHarness | None = None
         try:
             harness = CapitalBffAuthorityHarness(Path(td))
+            harness.ranking_reader = harness.read_surface  # the owner verifies lineage against the real snapshot
             harness.__enter__()
             _active.harness = harness
             assert harness.client is not None
@@ -951,7 +954,6 @@ def test_ranking_tuple_and_snapshot_round_trip_into_rebalance_proposal() -> None
 
             reloaded = harness.read_surface
             assert reloaded.get_ranking_snapshot(snapshot_id) is not None
-            assert reloaded.get_allocation_evaluation(evaluation_id) is not None
             harness.restart()
             assert harness.client is not None
             client = harness.client
@@ -999,7 +1001,8 @@ def test_ranking_tuple_and_snapshot_round_trip_into_rebalance_proposal() -> None
                 ("current_weight", 0.03, False),
                 ("target_weight", 0.08, True),
                 ("delta", 0.04, False),
-                ("cap_reasons", ["forged-cap"], False),
+                ("cap_reasons", ["forged-cap"], True),
+                ("requires_human_approval", not line.get("requires_human_approval"), True),
                 (
                     "evidence_refs",
                     [*line["evidence_refs"], "forged-evidence"],
@@ -1130,94 +1133,49 @@ def test_ranking_tuple_and_snapshot_round_trip_into_rebalance_proposal() -> None
 
 
 def test_durable_lineage_integrity_fails_closed_after_same_id_store_tamper() -> None:
-    for tamper_target in ("ranking_snapshot", "allocation_evaluation"):
-        with tempfile.TemporaryDirectory() as td:
-            original_store = _active.read_surface
-            harness: CapitalBffAuthorityHarness | None = None
-            try:
-                harness = CapitalBffAuthorityHarness(Path(td), seed_allocation=False)
-                harness.ranking_reader = harness.read_surface
-                harness.__enter__()
-                _active.harness = harness
-                assert harness.client is not None
-                client = harness.client
-                store = harness.read_surface
-                assert isinstance(store, PplProjectionTestDouble)
-                _seed_live_persona(store)
-                ranking = client.get(
-                    "/bff/management/quarterly-ranking",
-                    headers=HEADERS,
-                    params={"quarter": "2026-Q3", "page_size": 200},
-                )
-                assert ranking.status_code == 200, ranking.text
-                snapshot_id = ranking.json()["data"]["ranking_snapshot_id"]
-                live_row = _item_by_persona(
-                    ranking.json()["data"]["items"],
-                    LIVE_PERSONA_ID,
-                )
-                evaluated = client.post(
-                    "/bff/management/allocation-policy/evaluate",
-                    headers=HEADERS,
-                    json={"ranking_snapshot_id": snapshot_id, "rows": [live_row]},
-                )
-                assert evaluated.status_code == 200, evaluated.text
-                evaluation = evaluated.json()["data"]
+    # The stored-evaluation tamper case is retired: no live path reads stored evaluations
+    # (the owner evaluate endpoint is stateless), so only the ranking snapshot can be tampered.
+    with tempfile.TemporaryDirectory() as td:
+        original_store = _active.read_surface
+        harness: CapitalBffAuthorityHarness | None = None
+        try:
+            harness = CapitalBffAuthorityHarness(Path(td), seed_allocation=False)
+            harness.ranking_reader = harness.read_surface
+            harness.__enter__()
+            _active.harness = harness
+            assert harness.client is not None
+            client = harness.client
+            store = harness.read_surface
+            assert isinstance(store, PplProjectionTestDouble)
+            _seed_live_persona(store)
+            ranking = client.get(
+                "/bff/management/quarterly-ranking",
+                headers=HEADERS,
+                params={"quarter": "2026-Q3", "page_size": 200},
+            )
+            assert ranking.status_code == 200, ranking.text
+            snapshot_id = ranking.json()["data"]["ranking_snapshot_id"]
+            live_row = _item_by_persona(ranking.json()["data"]["items"], LIVE_PERSONA_ID)
 
-                if tamper_target == "ranking_snapshot":
-                    store.tamper_ranking_snapshot_item(
-                        snapshot_id,
-                        LIVE_PERSONA_ID,
-                        "stage",
-                        "paper_running",
-                    )
-                else:
-                    evaluation_id = evaluation["allocation_evaluation_id"]
-                    store.tamper_allocation_evaluation_line(
-                        evaluation_id,
-                        0,
-                        "target_weight",
-                        0.99,
-                    )
-                harness.set_read_surface(store.clone_for_restart())
-                harness.ranking_reader = harness.read_surface
-                store = harness.read_surface
+            body = {"ranking_snapshot_id": snapshot_id, "rows": [live_row]}
+            honest = client.post("/bff/management/allocation-policy/evaluate", headers=HEADERS, json=body)
+            assert honest.status_code == 200, honest.text
 
-                if tamper_target == "ranking_snapshot":
-                    rejected = client.post(
-                        "/bff/management/allocation-policy/evaluate",
-                        headers=HEADERS,
-                        json={
-                            "ranking_snapshot_id": snapshot_id,
-                            "rows": [live_row],
-                        },
-                    )
-                else:
-                    rejected = client.post(
-                        "/bff/rebalances",
-                        headers={
-                            **HEADERS,
-                            "Idempotency-Key": "ppl-alloc-012-corrupt-evaluation",
-                        },
-                        json={
-                            "capital_pool_id": "pool-real",
-                            "ranking_snapshot_id": snapshot_id,
-                            "allocation_evaluation_id": evaluation[
-                                "allocation_evaluation_id"
-                            ],
-                            "allocation_policy_version": evaluation[
-                                "allocation_policy_version"
-                            ],
-                            "lines": evaluation["lines"],
-                            "simulation": {"status": "passed"},
-                            "constraints": {"pool_total_max": 1},
-                            "rollback_target": {"snapshot_id": "before-corruption"},
-                        },
-                    )
-                assert rejected.status_code in (409, 422), rejected.text
-            finally:
-                if harness is not None:
-                    harness.__exit__(None, None, None)
-                _active.read_surface = original_store
+            store.tamper_ranking_snapshot_item(snapshot_id, LIVE_PERSONA_ID, "stage", "paper_running")
+            harness.set_read_surface(store.clone_for_restart())
+            harness.ranking_reader = harness.read_surface
+
+            rejected = client.post(
+                "/bff/management/allocation-policy/evaluate",
+                headers=HEADERS,
+                json=body,
+            )
+            assert rejected.status_code == 422, rejected.text
+            assert "integrity" in rejected.text
+        finally:
+            if harness is not None:
+                harness.__exit__(None, None, None)
+            _active.read_surface = original_store
 
 
 def test_binding_weight_mutation_changes_snapshot_and_quarterly_surfaces_converge() -> None:
