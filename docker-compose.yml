@@ -529,11 +529,10 @@ services:
       TRAINING_SESSION_APPROVAL_READBACK_URL_TEMPLATE: ${TRAINING_SESSION_APPROVAL_READBACK_URL_TEMPLATE:-http://governance:8082/api/governance/approvals/{approval_decision_ref}}
       TRAINING_SESSION_PERSONA_TARGET_WRITE_URL_TEMPLATE: ${TRAINING_SESSION_PERSONA_TARGET_WRITE_URL_TEMPLATE:-http://persona:8002/api/personas/{persona_id}/training-target}
       TRAINING_SESSION_PERSONA_TARGET_READBACK_URL_TEMPLATE: ${TRAINING_SESSION_PERSONA_TARGET_READBACK_URL_TEMPLATE:-http://persona:8002/api/personas/{persona_id}/training-target}
-      # L12-MANIFEST-001 dev manifest admission: the persisted teaching API is
-      # strict by default and must render an actual verifier input. This is a
-      # local/dev placeholder secret, not a production credential.
+      # Fail closed: teaching API verifier resolves from service-specific variable
+      # or shared dev BFF JWT secret, ending empty when unset.
       TRAINING_SESSION_AUTH_MODE: ${TRAINING_SESSION_AUTH_MODE:-strict}
-      TRAINING_SESSION_JWT_SECRET: ${TRAINING_SESSION_JWT_SECRET:-pantheon-local-training-session-jwt-secret}
+      TRAINING_SESSION_JWT_SECRET: ${TRAINING_SESSION_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}
     volumes:
       - training-session-data:/data/training-session
       - source-ingest-data:/data/source-ingest:ro
@@ -951,7 +950,7 @@ services:
       # Normal service tokens remain compatible in permissive mode, while the
       # stage-promotion route independently requires a verified JWT MFA claim.
       PANTHEON_RUNTIME_AUTH_MODE: ${PANTHEON_RUNTIME_AUTH_MODE:-permissive}
-      PANTHEON_RUNTIME_JWT_SECRET: ${PANTHEON_BFF_JWT_SECRET:-}
+      PANTHEON_RUNTIME_JWT_SECRET: ${PANTHEON_RUNTIME_JWT_SECRET:-${PANTHEON_BFF_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}}
       PANTHEON_RUNTIME_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}
       PANTHEON_RUNTIME_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}
       PANTHEON_RUNTIME_ROLE_CLAIMS: ${PANTHEON_BFF_ROLE_CLAIMS:-roles,role}
@@ -1010,11 +1009,9 @@ services:
       # minted by scripts/issue_dev_paper_principals.py using
       # PANTHEON_DEV_BFF_JWT_SECRET/ISSUER/AUDIENCE (see the
       # dev-paper-principal-issuer service above), so governance's own
-      # strict-mode verifier must expect that same secret/issuer/audience, not
-      # an unrelated default -- otherwise every dev-paper approval proposal
-      # fails closed with 401 before paper_approval_scope.py's dev-paper grant
-      # check ever runs.
-      PANTHEON_GOVERNANCE_JWT_SECRET: ${PANTHEON_GOVERNANCE_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-pantheon-local-governance-jwt-secret}}
+      # strict-mode verifier expects that same secret/issuer/audience,
+      # failing closed when unset without published default credentials.
+      PANTHEON_GOVERNANCE_JWT_SECRET: ${PANTHEON_GOVERNANCE_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}
       PANTHEON_GOVERNANCE_JWT_ISSUER: ${PANTHEON_GOVERNANCE_JWT_ISSUER:-${PANTHEON_DEV_BFF_JWT_ISSUER:-pantheon-dev-control-plane}}
       PANTHEON_GOVERNANCE_JWT_AUDIENCE: ${PANTHEON_GOVERNANCE_JWT_AUDIENCE:-${PANTHEON_DEV_BFF_JWT_AUDIENCE:-pantheon-dev-owners}}
       PANTHEON_GOVERNANCE_ROLE_CLAIMS: ${PANTHEON_GOVERNANCE_ROLE_CLAIMS:-roles,role}
@@ -1058,7 +1055,7 @@ services:
       PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}
       PANTHEON_TELEMETRY_SERVICE_TENANTS: ${PANTHEON_TELEMETRY_SERVICE_TENANTS:-${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}}
       PANTHEON_TELEMETRY_AUTH_MODE: ${PANTHEON_TELEMETRY_AUTH_MODE:-strict}
-      PANTHEON_TELEMETRY_JWT_SECRET: ${PANTHEON_TELEMETRY_JWT_SECRET:-pantheon-local-telemetry-jwt-secret}
+      PANTHEON_TELEMETRY_JWT_SECRET: ${PANTHEON_TELEMETRY_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}
       PANTHEON_TELEMETRY_INFRA_PRODUCERS: ${PANTHEON_TELEMETRY_INFRA_PRODUCERS:-control-plane-bff}
       PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED: ${PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED:-false}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
@@ -1318,7 +1315,7 @@ services:
       # Kernel capabilities must be supplied explicitly for an authorized
       # operator/admin identity; public viewer sessions remain read-only.
       PANTHEON_BFF_STUB_CAPABILITIES: ${PANTHEON_BFF_STUB_CAPABILITIES:-}
-      PANTHEON_BFF_JWT_SECRET: ${PANTHEON_BFF_JWT_SECRET:-pantheon-local-bff-jwt-secret}
+      PANTHEON_BFF_JWT_SECRET: ${PANTHEON_BFF_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}
       PANTHEON_BFF_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}
       PANTHEON_BFF_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}
       PANTHEON_BFF_JWKS_URI: ${PANTHEON_BFF_JWKS_URI:-}
@@ -1366,16 +1363,10 @@ services:
       PANTHEON_CAPITAL_API_URL: http://capital:8092
       # Persona provisioning's owner transport (_PersonaOwnerHttpTransport in
       # services/control-plane/bff/main.py) signs Capital's strict service JWT
-      # from PANTHEON_CAPITAL_JWT_SECRET, falling back to PANTHEON_BFF_JWT_SECRET
-      # only when unset -- never to capital's own CAPITAL_JWT_SECRET. Capital's
-      # verifier (services/capital/inbound_authority.py) only accepts
-      # CAPITAL_JWT_SECRET. Without this line the two never agreed on a value
-      # (operator-bff fell back to PANTHEON_BFF_JWT_SECRET's default, capital
-      # verified against CAPITAL_JWT_SECRET's different default), so every
-      # persona-provisioning capital-pool creation returned 401 regardless of
-      # the source-provisioning/snapshot fix above -- reproduced end-to-end
-      # while proving DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001 AC5.
-      PANTHEON_CAPITAL_JWT_SECRET: ${PANTHEON_CAPITAL_JWT_SECRET:-${CAPITAL_JWT_SECRET:-pantheon-local-capital-jwt-secret}}
+      # from PANTHEON_CAPITAL_JWT_SECRET, falling back to CAPITAL_JWT_SECRET, then
+      # to the shared dev secret PANTHEON_DEV_BFF_JWT_SECRET, ending empty when unset.
+      # Capital's verifier resolves through the exact same chain.
+      PANTHEON_CAPITAL_JWT_SECRET: ${PANTHEON_CAPITAL_JWT_SECRET:-${CAPITAL_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}}
       # _PersonaOwnerHttpTransport._service_jwt (services/control-plane/bff/main.py)
       # signs iss/aud for EVERY strict owner call (capital, registry, governance)
       # from these two owner-agnostic names, never from a per-owner
@@ -1397,10 +1388,10 @@ services:
       CAPITAL_JWT_AUDIENCE: ${CAPITAL_JWT_AUDIENCE:-${PANTHEON_DEV_BFF_JWT_AUDIENCE:-pantheon-dev-owners}}
       # Owner-specific secrets _service_jwt signs with for the registry and
       # governance owner calls (see the CAPITAL_JWT_SECRET comment above for
-      # the same pattern against capital). Chained to the exact same default
+      # the same pattern against capital). Chained to the exact same resolution
       # each owner's own service block below expects.
-      PANTHEON_REGISTRY_JWT_SECRET: ${PANTHEON_REGISTRY_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-pantheon-local-registry-jwt-secret}}
-      PANTHEON_GOVERNANCE_JWT_SECRET: ${PANTHEON_GOVERNANCE_JWT_SECRET:-pantheon-local-governance-jwt-secret}
+      PANTHEON_REGISTRY_JWT_SECRET: ${PANTHEON_REGISTRY_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}
+      PANTHEON_GOVERNANCE_JWT_SECRET: ${PANTHEON_GOVERNANCE_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}
       PANTHEON_EVOLUTION_API_URL: http://evolution:8093
       PANTHEON_INCIDENTS_API_URL: http://incidents:8090
       PANTHEON_POSTMORTEMS_API_URL: http://postmortems:8091
@@ -1690,7 +1681,7 @@ services:
       PERSONA_AUTH_MODE: ${PERSONA_AUTH_MODE:-strict}
       # Verify the operator JWT the BFF forwards using the BFF's own signing
       # configuration (same secret/issuer/audience the BFF verifies with).
-      PERSONA_JWT_SECRET: ${PERSONA_JWT_SECRET:-${PANTHEON_BFF_JWT_SECRET:-pantheon-local-bff-jwt-secret}}
+      PERSONA_JWT_SECRET: ${PERSONA_JWT_SECRET:-${PANTHEON_BFF_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}}
       PERSONA_JWT_ISSUER: ${PERSONA_JWT_ISSUER:-${PANTHEON_BFF_JWT_ISSUER:-}}
       PERSONA_JWT_AUDIENCE: ${PERSONA_JWT_AUDIENCE:-${PANTHEON_BFF_JWT_AUDIENCE:-}}
       PANTHEON_PERSONA_SERVICE_TOKEN: ${PANTHEON_PERSONA_SERVICE_TOKEN:-pantheon-local-persona-service-token}
@@ -1823,7 +1814,7 @@ services:
       PANTHEON_MEMORY_STORE_BACKEND: ${PANTHEON_MEMORY_STORE_BACKEND:-json}
       PANTHEON_MEMORY_STORE_DSN: ${PANTHEON_MEMORY_STORE_DSN:-}
       PANTHEON_MEMORY_AUTH_MODE: strict
-      PANTHEON_MEMORY_JWT_SECRET: ${PANTHEON_BFF_JWT_SECRET:-}
+      PANTHEON_MEMORY_JWT_SECRET: ${PANTHEON_MEMORY_JWT_SECRET:-${PANTHEON_BFF_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}}
       PANTHEON_MEMORY_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}
       PANTHEON_MEMORY_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}
       PANTHEON_MEMORY_DATA_DIR: /data/memory
@@ -1864,7 +1855,7 @@ services:
       REGISTRY_STORE_BACKEND: ${REGISTRY_STORE_BACKEND:-postgres}
       REGISTRY_STORE_DSN: ${REGISTRY_STORE_DSN:-}
       PANTHEON_REGISTRY_AUTH_MODE: ${PANTHEON_REGISTRY_AUTH_MODE:-strict}
-      PANTHEON_REGISTRY_JWT_SECRET: ${PANTHEON_REGISTRY_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-pantheon-local-registry-jwt-secret}}
+      PANTHEON_REGISTRY_JWT_SECRET: ${PANTHEON_REGISTRY_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}
       # Chained from operator-bff signer values with PANTHEON_DEV_BFF_JWT_ISSUER/AUDIENCE
       # fallback so registry strict-auth matches operator-bff regardless of which var is set.
       PANTHEON_REGISTRY_JWT_ISSUER: ${PANTHEON_REGISTRY_JWT_ISSUER:-${CAPITAL_JWT_ISSUER:-${PANTHEON_DEV_BFF_JWT_ISSUER:-pantheon-dev-control-plane}}}
@@ -1965,11 +1956,11 @@ services:
       # Render strict auth and a local/dev verifier input without enabling live
       # broker or capital-binding writes.
       CAPITAL_AUTH_MODE: ${CAPITAL_AUTH_MODE:-strict}
-      # Persona owner calls originate in the authenticated BFF.  Keep the
+      # Persona owner calls originate in the authenticated BFF. Keep the
       # strict Capital verifier on the same explicitly supplied dev secret and
       # issuer/audience so the BFF can mint a short-lived tenant-bound service
-      # JWT without introducing a second unprovisioned credential.
-      CAPITAL_JWT_SECRET: ${CAPITAL_JWT_SECRET:-pantheon-local-capital-jwt-secret}
+      # JWT without introducing an unprovisioned published credential.
+      CAPITAL_JWT_SECRET: ${PANTHEON_CAPITAL_JWT_SECRET:-${CAPITAL_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}}
       CAPITAL_JWT_ISSUER: ${CAPITAL_JWT_ISSUER:-}
       CAPITAL_JWT_AUDIENCE: ${CAPITAL_JWT_AUDIENCE:-}
       CAPITAL_ROLE_CLAIMS: ${CAPITAL_ROLE_CLAIMS:-roles,role}

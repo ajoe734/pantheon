@@ -654,7 +654,7 @@ def test_compose_operator_bff_wires_owner_service_jwt_credentials() -> None:
 
     operator_bff_env = services["operator-bff"]["environment"]
     assert operator_bff_env["PANTHEON_CAPITAL_JWT_SECRET"] == (
-        "${PANTHEON_CAPITAL_JWT_SECRET:-${CAPITAL_JWT_SECRET:-pantheon-local-capital-jwt-secret}}"
+        "${PANTHEON_CAPITAL_JWT_SECRET:-${CAPITAL_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}}"
     )
     assert operator_bff_env["CAPITAL_JWT_ISSUER"] == (
         "${CAPITAL_JWT_ISSUER:-${PANTHEON_DEV_BFF_JWT_ISSUER:-pantheon-dev-control-plane}}"
@@ -663,17 +663,17 @@ def test_compose_operator_bff_wires_owner_service_jwt_credentials() -> None:
         "${CAPITAL_JWT_AUDIENCE:-${PANTHEON_DEV_BFF_JWT_AUDIENCE:-pantheon-dev-owners}}"
     )
     assert operator_bff_env["PANTHEON_REGISTRY_JWT_SECRET"] == (
-        "${PANTHEON_REGISTRY_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-pantheon-local-registry-jwt-secret}}"
+        "${PANTHEON_REGISTRY_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}"
     )
 
     capital_env = services["capital"]["environment"]
     assert capital_env["CAPITAL_JWT_SECRET"] == (
-        "${CAPITAL_JWT_SECRET:-pantheon-local-capital-jwt-secret}"
+        "${PANTHEON_CAPITAL_JWT_SECRET:-${CAPITAL_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}}"
     )
 
     registry_env = services["registry"]["environment"]
     assert registry_env["PANTHEON_REGISTRY_JWT_SECRET"] == (
-        "${PANTHEON_REGISTRY_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-pantheon-local-registry-jwt-secret}}"
+        "${PANTHEON_REGISTRY_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}"
     )
     assert registry_env["PANTHEON_REGISTRY_JWT_ISSUER"] == (
         "${PANTHEON_REGISTRY_JWT_ISSUER:-${CAPITAL_JWT_ISSUER:-${PANTHEON_DEV_BFF_JWT_ISSUER:-pantheon-dev-control-plane}}}"
@@ -684,7 +684,7 @@ def test_compose_operator_bff_wires_owner_service_jwt_credentials() -> None:
 
     governance_env = services["governance"]["environment"]
     assert governance_env["PANTHEON_GOVERNANCE_JWT_SECRET"] == (
-        "${PANTHEON_GOVERNANCE_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-pantheon-local-governance-jwt-secret}}"
+        "${PANTHEON_GOVERNANCE_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}"
     )
     assert governance_env["PANTHEON_GOVERNANCE_JWT_ISSUER"] == (
         "${PANTHEON_GOVERNANCE_JWT_ISSUER:-${PANTHEON_DEV_BFF_JWT_ISSUER:-pantheon-dev-control-plane}}"
