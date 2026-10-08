@@ -252,12 +252,16 @@ def test_complete_readback_is_required(case, mutation):
 
 def test_predecessor_without_dev_login_registry_is_a_complete_readback(case):
     # Both literal falses together are the image's own declaration that no
-    # dedicated identity exists to log in with; every other pairing above is
-    # still rejected, and the strict-auth denials remain proven.
+    # dedicated identity exists to log in with; restore rejects them because
+    # dev-login proof is required on restore, while verify accepts them.
     value = case["value"]
     value["public"]["dev_login_enabled"] = False
     value["public"]["authenticated_viewer_readback_verified"] = False
-    assert e.validate_readback(value, e.load_evidence(case["env"], "runner-local"), "restore") == value
+    with pytest.raises(e.capture.CaptureError):
+        e.validate_readback(value, e.load_evidence(case["env"], "runner-local"), "restore")
+    no_candidate(case["env"])
+    value.update(operation="verify", pre_restore_source_observations=[])
+    assert e.validate_readback(value, e.load_evidence(case["env"], "runner-local"), "verify") == value
 
 
 def test_validated_readback_is_exclusive_private_and_preserves_all_evidence(case):
