@@ -1321,6 +1321,65 @@ class RuntimeChain:
                 },
             )
 
+            loop10_started = _utc_now()
+            numeric_metric = next(
+                (
+                    (name, value)
+                    for name, value in event.get("metrics", {}).items()
+                    if isinstance(value, (int, float)) and not isinstance(value, bool)
+                ),
+                None,
+            )
+            if numeric_metric is None:
+                raise DeployedProofError("paper fill event has no numeric reconciliation metric")
+            metric_name, observed = numeric_metric
+            baseline = float(observed) + max(abs(float(observed)), 1.0) * 10.0
+            consumed = self.http.request(
+                "reconciliation",
+                "POST",
+                "/api/reconciliation-drift/telemetry-events/consume",
+                body={
+                    "tenant_id": TENANT_ID,
+                    "worker_id": f"{TASK_ID.lower()}-deployed-consumer",
+                    "events": [event],
+                    "baseline_metrics": {metric_name: baseline},
+                    "thresholds": {
+                        metric_name: {
+                            "warning_relative_delta": 0.01,
+                            "critical_relative_delta": 0.02,
+                        }
+                    },
+                },
+                headers=self.reconciliation_headers,
+                expected={201},
+            )
+            if consumed.get("drift_report_count") != 1:
+                raise DeployedProofError(f"runtime event produced no DriftReport: {consumed!r}")
+            drift = consumed["drift_reports"][0]
+            drift_readback = self.http.request(
+                "reconciliation",
+                "GET",
+                f"/api/reconciliation-drift/drift-reports/{drift['drift_report_id']}",
+                headers=self.reconciliation_headers,
+            )
+            incident_cases = consumed.get("incident_cases") or []
+            if incident_cases:
+                incident_id = incident_cases[0].get("incident_id") or incident_cases[0].get("id")
+            else:
+                created_incident = self.http.request(
+                    "incidents",
+                    "POST",
+                    "/api/incidents/consume-drift-report",
+                    body={"drift_report": drift_readback},
+                    expected={200, 201},
+                )
+                incident_id = created_incident["incident_id"]
+            incident = self.http.request(
+                "incidents", "GET", f"/api/incidents/{incident_id}"
+            )
+            if event["event_id"] not in incident.get("telemetry_event_ids", []):
+                raise DeployedProofError("IncidentCase lost the real runtime telemetry event id")
+
             self.evidence.add_case(
                 "loop_10_telemetry_reconciliation_incident",
                 loop=10,
