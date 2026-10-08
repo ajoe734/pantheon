@@ -13,9 +13,9 @@
       "introduced_by_commit": "1dc7c6093620b7b8fdac2ed9440ba29eff8a63d9",
       "task_id": "CAPITAL-GUARD-KERNEL-001"
     },
-    "capital_main_promotion_review_id": {
-      "location": "services/capital/main.py ~1272-1273",
-      "code_fact": "evaluate_allocation_policy in paper mode only verifies that promotion_review_id is non-empty, without checking owner approval or enforcing separation of duties"
+    "capital_main_paper_allocation_checks": {
+      "location": "services/capital/main.py ~1268-1273",
+      "code_fact": "evaluate_allocation_policy in paper mode requires the caller to hold the operator role, requires the paper environment (lineage.paper_environment_allowed), and requires promotion_review_id to be non-empty; none of these three checks is an owner approval or a distinct-actor check"
     },
     "bff_paper_checks_removal": {
       "location": "services/control-plane/bff/command_adapters/preconditions.py",
