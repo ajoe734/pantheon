@@ -1,0 +1,9 @@
+{
+  "task": "BFF-SOURCE-HEALTH-ENVELOPE-20261008",
+  "base": "0edaf3837d00a5f4f8dc402a6d85acb05d8eefba",
+  "scope": "local tests only; no hosted/full-loop claim",
+  "base_result": "test_research_knowledge_source_ports.py: 12 failed, 21 passed (malformed envelope cases returned service_client)",
+  "head_result": "test_research_knowledge_source_ports.py: 33 passed; test_bff_test_architecture/test_owner_read_wiring/test_jobs_source_owner_contract: 95 passed; test_srclive_overlay_contract/test_persona_health_single_owner: 15 passed",
+  "interpreter": "PANTHEON_DEPENDENCY_PYTHON worker-test-python",
+  "preexisting_failures": []
+}

@@ -1,0 +1,37 @@
+{
+  "task_id": "SOURCE-INGEST-MULTIPROCESS-TEST-FLAKE-20261008",
+  "change_class": "corrective",
+  "summary": "Deflake two-process source reconciliation test in required CI smoke acceptance by moving app construction before readiness, adopting two-barrier ready/race synchronization with generous timeouts, surfacing dying worker tracebacks, and removing second-boundary fetch config drift.",
+  "incident_context": {
+    "failing_run": {
+      "run_id": 37781263393,
+      "attempt": 1,
+      "job_id": 113325459871,
+      "job_name": "Smoke acceptance",
+      "head_sha": "530299002acbcd6eaa8bfab86ed6759b777fd043",
+      "failure_symptom": "test_two_process_workers_create_one_connector_schedule_run_and_source_record failed with threading.BrokenBarrierError after 30s timeout while worker 2 was still importing/initializing."
+    },
+    "passing_rerun": {
+      "run_id": 37781263393,
+      "attempt": 2,
+      "job_id": 113328014860,
+      "result": "passed (1026 passed, 4 skipped in 12m6s)"
+    },
+    "root_cause_analysis": "In Python multiprocessing spawn mode, spawned workers do not inherit memory/imports via fork; each child independently bootstraps Python and loads heavy libraries (FastAPI, pydantic, services.source_ingestion.main) from scratch. On a loaded runner with CPU contention, worker 1 completed initialization and entered barrier.wait(timeout=30) while worker 2 was delayed by startup overhead and cold imports, exceeding 30s. Additionally, any pre-barrier failure in one worker caused the other worker to hang until timeout and masked the root cause with BrokenBarrierError. Furthermore, dynamic datetime.now() in MultiprocessProvider.fetch_config() caused intermittent second-boundary config drift resulting in unexpected reconciliation mutations.",
+    "resolution": "1) Pre-import test client and connector fixtures at top-level; 2) construct app and TestClient context prior to signalling readiness; 3) implement ready_barrier (120s timeout) for startup skew tolerance and race_barrier (60s timeout) for simultaneous controller race; 4) abort barriers on child exception so peer worker unblocks immediately; 5) surface dying worker's own traceback prominently in parent assertions; 6) use fixed deterministic available_time in test fixture."
+  },
+  "acceptance_verification": {
+    "ac1_evidence_cites_ci_failure_and_explains_cause": "passed: cited run 37781263393 attempt 1 (job 113325459871) BrokenBarrierError and attempt 2 passing rerun; detailed cold spawn import latency skew and second-boundary fetch drift root causes.",
+    "ac2_workers_race_same_reconcile_and_controller_tick": "passed: both workers synchronize on ready_barrier then race simultaneously through race_barrier; single connector schedule run and single source record guarantees verified.",
+    "ac3_bounded_generous_waits_and_child_traceback_surfaced": "passed: ready_barrier (120s) and race_barrier (60s) tolerate slow runners without unbounded waits; pre-barrier worker failure aborts barriers and parent reports primary root-cause traceback; verified with test_worker_failure_before_barrier_surfaces_own_traceback.",
+    "ac4_repeated_passes_under_cpu_contention": "passed: ran 5 consecutive iterations under 4 CPU burner processes locally with 100% pass rate; no test skipped or removed.",
+    "ac5_exact_reviewed_head_ready": "passed: scoped artifacts limited to test_multi_process_source_reconciliation.py and task evidence.json."
+  },
+  "local_verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -v services/source_ingestion/tests/test_multi_process_source_reconciliation.py",
+      "5 iterations under 4 CPU burner background processes"
+    ],
+    "result": "passed (2 tests passed per iteration, 5/5 under continuous CPU contention)"
+  }
+}

@@ -279,6 +279,16 @@ jobs:
         run: |
           python3 -m unittest scripts.test_branch_ci_gate_selection
 
+      # Unconditional (no path filter): source_ingestion reds came from changes
+      # in other services. Fresh data dir avoids incompatible shared state; the
+      # directory runs alone so no repo-wide conftest masks failures.
+      - name: Run source ingestion tests
+        timeout-minutes: 15
+        run: |
+          SOURCE_INGEST_DATA_DIR="$(mktemp -d)"
+          export SOURCE_INGEST_DATA_DIR
+          python3 -m pytest -q services/source_ingestion/tests
+
       # Run the existing real boundary cases even for a workflow-only change.
       # unittest normally treats skipped tests as success; these are required.
       - name: Verify real worker sandbox boundaries

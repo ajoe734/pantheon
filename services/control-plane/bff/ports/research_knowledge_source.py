@@ -81,6 +81,34 @@ def _naive_utc(dt: Optional[datetime]) -> datetime:
     return dt
 
 
+def _is_valid_health_usage_envelope(payload: Any) -> bool:
+    """Match services/source_ingestion get_health_usage_snapshot; zero sources is valid."""
+    if not isinstance(payload, dict):
+        return False
+    sources = payload.get("sources")
+    summary = payload.get("recommendation_summary")
+    if not isinstance(sources, list) or not isinstance(summary, dict):
+        return False
+    if payload.get("source_count") != len(sources):
+        return False
+    if not all(
+        isinstance(k, str) and isinstance(v, int) and not isinstance(v, bool)
+        for k, v in summary.items()
+    ):
+        return False
+    for row in sources:
+        if not isinstance(row, dict):
+            return False
+        health = row.get("health")
+        if not isinstance(health, dict) or not isinstance(health.get("source_id"), str) or not health["source_id"]:
+            return False
+        if not isinstance(row.get("usage_aggregate_30d"), dict):
+            return False
+        if row.get("recommendation") is not None and not isinstance(row["recommendation"], dict):
+            return False
+    return True
+
+
 class ResearchKnowledgeSourcePort:
     """Typed domain port interface for Research, Knowledge, Memory, Search, and Source reads."""
 
@@ -2665,13 +2693,13 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 "recommendation_summary": {},
             }
         avail, payload = self._http_get(self._source_ingest_service_url, "/api/source-ingest/health-usage-snapshot")
-        if avail and isinstance(payload, dict):
-            sources = list(payload.get("sources") or [])
+        if avail and _is_valid_health_usage_envelope(payload):
+            sources = list(payload["sources"])
             return {
                 "source": "service_client",
                 "source_count": len(sources),
                 "sources": sources,
-                "recommendation_summary": dict(payload.get("recommendation_summary") or {}),
+                "recommendation_summary": dict(payload["recommendation_summary"]),
             }
         return {
             "source": "unavailable",
