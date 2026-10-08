@@ -17,19 +17,27 @@
   "changes": [
     "execute_bounded_source_refresh_entrypoint returns status skipped / reason no_active_taiwan_symbols right after symbol resolution, before any container is created or removed.",
     "The bounded pull runs the scheduler and projector as named one-shot containers (docker compose run -d --no-deps --name pantheon-bounded-refresh-<service>); wait_for_bounded_source_refresh_service finds them by that name.",
-    "restore_bounded_source_refresh removes only the pantheon-bounded-refresh-* one-shots; the 'compose rm -f -s' of the steady services is gone."
+    "restore_bounded_source_refresh removes only the pantheon-bounded-refresh-* one-shots; the 'compose rm -f -s' of the steady services is gone.",
+    "Deploy-time values (PANTHEON_TENANT_ID, PANTHEON_ENV, GIT_SHA, plus IMAGE_DIGEST/BUILD_TIME when present) are read from the running steady source-ingest-scheduler container Config.Env and exported to the one-shots; refresh fails closed with steady_scheduler_deploy_values_missing otherwise, before any container is stopped or created.",
+    "Steady scheduler and projector are stopped (never removed) for the window and started again by id in restore on success and failure, so container ids are unchanged and only one controller runs.",
+    "One-shot scheduler uses its own SOURCE_INGEST_CONTROLLER_STATE_PATH/ALIVE_PATH under /data/source-ingest/bounded-refresh/, never the steady controller_state.json."
   ],
   "tests": {
     "command": "pytest scripts/test_dev_tw_market_refresh.py scripts/test_dev_tw_market_refresh_workflow.py; pytest scripts/test_deploy_nonprod_vm.py -k 'refresh or bounded or taiwan or source'",
-    "result": "26 passed; 6 passed",
-    "coverage": "Stub-docker tests assert no up/rm/stop/restart touches the steady scheduler or projector after a successful and a failed (exit 1) refresh, and that no docker call happens when there are no Taiwan symbols."
+    "result": "88 passed, 2 skipped (scripts/test_dev_tw_market_refresh*.py, scripts/test_deploy_nonprod_vm.py)",
+    "coverage": "Stub-docker tests assert no up/rm/restart touches the steady scheduler or projector after a successful and a failed (exit 1) refresh, and that no docker call happens when there are no Taiwan symbols. Also asserts stop then start of the same steady ids around the run (success and failure), no steady state path in any call, one-shot own state paths, and fail-closed on missing deploy values."
   },
   "acceptance_status": {
-    "1": "met", "2": "met (one-shot containers)", "3": "met", "4": "external_wait: lease heartbeat 'stat is unavailable' lives in the pinned lease controller; needs an operator-dispatched run longer than two heartbeat intervals",
-    "5": "met", "6": "met", "7": "external_wait: operator re-enables the workflow after merge and a scheduled trading-day run must complete without removing steady services"
+    "1": "met",
+    "2": "met (one-shot containers)",
+    "3": "met",
+    "4": "external_wait: lease heartbeat 'stat is unavailable' lives in the pinned lease controller; needs an operator-dispatched run longer than two heartbeat intervals",
+    "5": "met",
+    "6": "met",
+    "7": "external_wait: operator re-enables the workflow after merge and a scheduled trading-day run must complete without removing steady services"
   },
   "known_risks": [
-    "The one-shot scheduler shares persisted controller state with the steady scheduler; tenant env for the one-shot depends on SOURCE-INGEST-TENANT-ENV-20261008 landing in docker-compose.yml.",
+    "Dev has no active paper Taiwan personas today, so on hosted only the skip path can be exercised; the operator will dispatch the branch after redelivery to prove the skip path live (no container touched) before re-enabling the workflow.",
     "The one-shot projector still needs AGORA_PROJECTOR_SERVICE_JWT in the refresh environment."
   ]
 }

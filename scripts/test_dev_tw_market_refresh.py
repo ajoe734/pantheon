@@ -220,6 +220,9 @@ elif args[0] == "inspect":
     if "{{.Image}}" in fmt:
         print(state["image_id"])
         sys.exit(0)
+    elif "Config.Env" in fmt and target == "cid-source-ingest-scheduler":
+        print(json.dumps(["PANTHEON_TENANT_ID=tenant-dev", "PANTHEON_ENV=dev", "GIT_SHA=abc123"]))
+        sys.exit(0)
     elif "Config.Env" in fmt:
         print(json.dumps(state["container_env"]))
         sys.exit(0)

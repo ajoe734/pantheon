@@ -1900,6 +1900,27 @@ execute_bounded_source_refresh_entrypoint() {
   [[ "$running_image_id" == "$compose_image_id" ]] || error "running image ID ${running_image_id} != compose image ID ${compose_image_id}"
   docker inspect --format '{{json .Config.Env}}' "$cid" > "${steady_env}"
 
+  # Deploy-time values (tenant, GIT_SHA, ...) only exist on the steady scheduler container.
+  local steady_ids=() steady_id steady_scheduler_env
+  for bounded_service in "${bounded_services[@]}"; do
+    steady_id="$(docker compose -p pantheon -f docker-compose.yml ps -a -q "${bounded_service}" 2>/dev/null || true)"
+    [[ -n "${steady_id}" ]] && steady_ids+=("${steady_id}")
+  done
+  steady_scheduler_env="$(docker inspect --format '{{json .Config.Env}}' "${steady_ids[0]:-}" 2>/dev/null || true)"
+  local deploy_key deploy_value
+  for deploy_key in PANTHEON_TENANT_ID PANTHEON_ENV GIT_SHA IMAGE_DIGEST BUILD_TIME; do
+    deploy_value="$(python3 -c 'import json,sys
+for item in json.loads(sys.argv[1] or "[]"):
+    key, _, value = item.partition("=")
+    if key == sys.argv[2]:
+        print(value)' "${steady_scheduler_env}" "${deploy_key}")"
+    if [[ -z "${deploy_value}" ]]; then
+      [[ "${deploy_key}" == "IMAGE_DIGEST" || "${deploy_key}" == "BUILD_TIME" ]] && continue
+      error "steady source-ingest-scheduler is missing deploy-time value ${deploy_key}; refusing bounded refresh (steady_scheduler_deploy_values_missing)"
+    fi
+    export "${deploy_key}=${deploy_value}"
+  done
+
   restore_bounded_source_refresh() {
     local rc=$?
     trap - EXIT INT TERM
@@ -1915,11 +1936,16 @@ execute_bounded_source_refresh_entrypoint() {
     fi
     # Only the named one-shot containers are removed; steady scheduler/projector are never touched.
     docker rm -f "${bounded_containers[@]}" >/dev/null 2>&1 || true
+    if (( ${#steady_ids[@]} )); then
+      docker start "${steady_ids[@]}" >/dev/null 2>&1 || rc=$?
+    fi
     rm -f "${steady_env:-}"
     return "${rc}"
   }
   trap restore_bounded_source_refresh EXIT INT TERM
 
+  # Stop (not remove) the steady controller/projector so only one controller owns the window.
+  (( ${#steady_ids[@]} )) && docker stop "${steady_ids[@]}" >/dev/null
   manage_source_ingest_refresh_runtime "${steady_env}" "bounded" "${running_image_id}" "${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}"
 
   docker rm -f "${bounded_containers[@]}" >/dev/null 2>&1 || true
@@ -1935,6 +1961,8 @@ execute_bounded_source_refresh_entrypoint() {
     SOURCE_INGEST_MAX_RECORDS=100 \
     SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS="${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" \
       docker compose -p pantheon -f docker-compose.yml run -d --no-deps \
+        -e SOURCE_INGEST_CONTROLLER_STATE_PATH=/data/source-ingest/bounded-refresh/controller_state.json \
+        -e SOURCE_INGEST_CONTROLLER_ALIVE_PATH=/data/source-ingest/bounded-refresh/controller_alive \
         --name "${SOURCE_INGEST_BOUNDED_CONTAINER_PREFIX}-${bounded_service}" "${bounded_service}"
   done
   for bounded_service in "${bounded_services[@]}"; do
