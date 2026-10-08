@@ -614,7 +614,21 @@ def test_provider_owned_adapters_execute_bounded_fetches_when_payload_omitted(mo
         "smart.tdcc.com.tw,openapi.tdcc.com.tw,openapi.taifex.com.tw,api.stocktwits.com,financialmodelingprep.com",
     )
 
+    from contextlib import contextmanager
+    from unittest.mock import MagicMock
+
     # 1. TDCC adapter bounded fetch
+    @contextmanager
+    def mock_tdcc_url(req, *args, **kwargs):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = (
+            "資料日期,證券代號,持股分級,持股分級說明,人數,股數,占集保庫存數比例%\n"
+            "20261002,2330,1,1-999,100,50000,0.05\n"
+        ).encode("utf-8-sig")
+        yield mock_resp
+
+    monkeypatch.setattr("services.source_ingestion.connectors.taiwan_official.open_external_url", mock_tdcc_url)
+
     tdcc_adapter = TdccShareholdingDistributionAdapter(max_records=5)
     records = execute_provider_owned_adapter(
         connector=tdcc_adapter.connector(),
@@ -626,6 +640,26 @@ def test_provider_owned_adapters_execute_bounded_fetches_when_payload_omitted(mo
     assert records[0].metadata["schema_hash"] == TDCC_SHAREHOLDING_SCHEMA_HASH
 
     # 2. TAIFEX adapter bounded fetch
+    @contextmanager
+    def mock_taifex_url(req, *args, **kwargs):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps([
+            {
+                "Date": "2026-10-08",
+                "Contract": "TX",
+                "ParticipantGroup": "foreign_investors",
+                "LongVolume": 100,
+                "ShortVolume": 80,
+                "NetVolume": 20,
+                "LongOpenInterest": 500,
+                "ShortOpenInterest": 400,
+                "NetOpenInterest": 100,
+            }
+        ]).encode("utf-8-sig")
+        yield mock_resp
+
+    monkeypatch.setattr("services.source_ingestion.connectors.taiwan_official.open_external_url", mock_taifex_url)
+
     taifex_adapter = TaifexDerivativesChipAdapter(max_records=5)
     taifex_records = execute_provider_owned_adapter(
         connector=taifex_adapter.connector(),
@@ -637,8 +671,6 @@ def test_provider_owned_adapters_execute_bounded_fetches_when_payload_omitted(mo
     assert taifex_records[0].metadata["schema_hash"] == TAIFEX_FUTURES_CHIP_SCHEMA_HASH
 
     # 3. StockTwits adapter bounded fetch (public symbol stream)
-    from contextlib import contextmanager
-    from unittest.mock import MagicMock
 
     @contextmanager
     def mock_stocktwits_url(req, *args, **kwargs):
