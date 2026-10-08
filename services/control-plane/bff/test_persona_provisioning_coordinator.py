@@ -1721,6 +1721,7 @@ def test_coordinator_accepts_bare_symbols_with_explicit_market_without_guessing(
             "name": "Trader FX Bare",
             "market": "FX",
             "symbols": ["EURUSD"],
+            "currency": "USD",
             "requested_by": "operator-fx",
             "mandate": "FX paper momentum bare symbols",
         },
@@ -1964,3 +1965,128 @@ def test_transition_persisted_tw_market_without_symbols_fails_at_entry_call() ->
             coordinator.transition_legacy_persona_market(stored, market=supplied)
 
     assert not [key for key in transport.objects if key[1].endswith("-rev1")]
+
+
+def test_coordinator_derives_settlement_currency_for_tw_and_us() -> None:
+    # TW request without currency defaults pool to TWD
+    store, record = _record_and_store({"market": "TW", "symbols": ["2330.TW"]})
+    transport = FakeOwnerTransport()
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+    result = coordinator.coordinate(record)
+    assert result.state == "provisioning"
+    assert _post_payload(transport, "/api/capital-pools")["currency"] == "TWD"
+    assert result.references["capital_pool"]["currency"] == "TWD"
+
+    # TW request with explicit currency "TWD" posts TWD
+    store_tw, record_tw = _record_and_store(
+        {"market": "TW", "symbols": ["2330.TW"], "currency": "TWD"}
+    )
+    transport_tw = FakeOwnerTransport()
+    coordinator_tw = _coordinator(store_tw, transport_tw, _schedule_receipt)
+    result_tw = coordinator_tw.coordinate(record_tw)
+    assert result_tw.state == "provisioning"
+    assert _post_payload(transport_tw, "/api/capital-pools")["currency"] == "TWD"
+    assert result_tw.references["capital_pool"]["currency"] == "TWD"
+
+    # US request with ["SPY"] posts USD
+    store_us, record_us = _record_and_store({"market": "US", "symbols": ["SPY"]})
+    transport_us = FakeOwnerTransport()
+    coordinator_us = _coordinator(store_us, transport_us, _schedule_receipt)
+    result_us = coordinator_us.coordinate(record_us)
+    assert result_us.state == "provisioning"
+    assert _post_payload(transport_us, "/api/capital-pools")["currency"] == "USD"
+    assert result_us.references["capital_pool"]["currency"] == "USD"
+
+
+def test_coordinator_rejects_currency_contradicting_market_settlement() -> None:
+    store, record = _record_and_store(
+        {"market": "TW", "symbols": ["2330.TW"], "currency": "USD"}
+    )
+    transport = FakeOwnerTransport()
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+
+    result = coordinator.coordinate(record)
+    assert result.state == "failed"
+    assert result.error["failed_step"] == "capital_pool"
+    assert "contradicts market 'TW'" in result.error["terminal_reason"]
+    assert transport.mutations[("capital", "/api/capital-pools")] == 0
+
+    with pytest.raises(
+        PersonaProvisioningCoordinationError,
+        match="contradicts market 'TW'",
+    ):
+        coordinator.coordinate(record, dry_run=True)
+
+
+def test_coordinator_handles_crypto_and_fx_currency_and_validates_uppercase() -> None:
+    # FX without currency fails at capital_pool
+    store_fx, record_fx = _record_and_store({"market": "FX", "symbols": ["EURUSD"]})
+    transport_fx = FakeOwnerTransport()
+    coordinator_fx = _coordinator(store_fx, transport_fx, _schedule_receipt)
+    result_fx = coordinator_fx.coordinate(record_fx)
+    assert result_fx.state == "failed"
+    assert result_fx.error["failed_step"] == "capital_pool"
+    assert "cannot be determined" in result_fx.error["terminal_reason"]
+    assert transport_fx.mutations[("capital", "/api/capital-pools")] == 0
+
+    # CRYPTO with currency "USDT" posts USDT
+    store_crypto, record_crypto = _record_and_store(
+        {"market": "CRYPTO", "symbols": ["BTCUSDT"], "currency": "USDT"}
+    )
+    transport_crypto = FakeOwnerTransport()
+    coordinator_crypto = _coordinator(store_crypto, transport_crypto, _schedule_receipt)
+    result_crypto = coordinator_crypto.coordinate(record_crypto)
+    assert result_crypto.state == "provisioning"
+    assert _post_payload(transport_crypto, "/api/capital-pools")["currency"] == "USDT"
+    assert result_crypto.references["capital_pool"]["currency"] == "USDT"
+
+    # TW with currency "twd" fails with canonical uppercase
+    store_lower, record_lower = _record_and_store(
+        {"market": "TW", "symbols": ["2330.TW"], "currency": "twd"}
+    )
+    transport_lower = FakeOwnerTransport()
+    coordinator_lower = _coordinator(store_lower, transport_lower, _schedule_receipt)
+    result_lower = coordinator_lower.coordinate(record_lower)
+    assert result_lower.state == "failed"
+    assert result_lower.error["failed_step"] == "capital_pool"
+    assert "canonical uppercase" in result_lower.error["terminal_reason"]
+    assert transport_lower.mutations[("capital", "/api/capital-pools")] == 0
+
+
+def test_coordinator_rejects_capital_pool_readback_currency_mismatch() -> None:
+    store, record = _record_and_store({"market": "TW", "symbols": ["2330.TW"]})
+    ids = deterministic_provisioning_ids(record)
+    transport = FakeOwnerTransport()
+    transport.objects[("capital", f"/api/capital-pools/{ids.capital_pool_id}")] = {
+        "pool_id": ids.capital_pool_id,
+        "owner_id": record.tenant_id,
+        "owner_type": "org",
+        "status": "active",
+        "single_runtime_enforced": True,
+        "currency": "USD",
+    }
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+
+    result = coordinator.coordinate(record)
+    assert result.state == "failed"
+    assert result.error["failed_step"] == "capital_pool"
+    assert "readback currency 'USD'" in result.error["terminal_reason"]
+    assert transport.mutations[("capital", "/api/capital-pools")] == 0
+
+
+def test_transition_legacy_persona_rejects_pool_currency_mismatching_target_market() -> None:
+    store, record = _record_and_store({"symbols": ["2330.TW"]})
+    transport = FakeOwnerTransport()
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+
+    result = coordinator.coordinate(record)
+    assert result.state == "provisioning"
+    ids = deterministic_provisioning_ids(record)
+
+    with pytest.raises(
+        PersonaProvisioningCoordinationError,
+        match="does not settle market 'TW'",
+    ):
+        coordinator.transition_legacy_persona_market(result, market="TW")
+
+    assert ("registry", f"/api/registry/strategy-artifacts/{ids.strategy_artifact_id}-rev1") not in transport.objects

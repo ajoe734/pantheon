@@ -1,0 +1,70 @@
+{
+  "task": "PAPER-TW-CAPITAL-POOL-CURRENCY-20261008",
+  "base": "88dcfca51031cfa9b3785db66728431f5d3e3dfc",
+  "before_line": {
+    "file": "services/control-plane/bff/persona_provisioning_coordinator.py",
+    "line": 1003,
+    "content": "\"currency\": str(record.request_payload.get(\"currency\") or \"USD\"),"
+  },
+  "resolution_rules": {
+    "_MARKET_SETTLEMENT_CURRENCY": {
+      "US": "USD",
+      "TW": "TWD"
+    },
+    "_capital_pool_currency": "Derives currency from explicit owner market (_explicit_market). For market-less requests, keeps str(requested or 'USD'). For explicit markets with settlement currency (US->USD, TW->TWD), defaults to settlement currency or validates requested currency matches settlement currency, failing closed with PersonaProvisioningCoordinationError on contradiction. For CRYPTO/FX without settlement currency, requires non-blank uppercase requested currency or fails closed. Rejects non-canonical or non-uppercase currency strings.",
+    "_coordinate_capital_pool": "Computes currency = self._capital_pool_currency(record) before building base_payload; validates receipt.get('currency') == currency in readback validation.",
+    "_preview": "Calls self._capital_pool_currency(record) so dry_run rejects contradictory, unresolvable, or malformed market/currency requests identically.",
+    "transition_legacy_persona_market": "Verifies checkpointed capital_pool receipt currency settles the target market (_MARKET_SETTLEMENT_CURRENCY) after paper universe symbols check and before acquiring lease."
+  },
+  "new_tests": [
+    {
+      "id": "services/control-plane/bff/test_persona_provisioning_coordinator.py::test_coordinator_derives_settlement_currency_for_tw_and_us",
+      "result": "PASSED"
+    },
+    {
+      "id": "services/control-plane/bff/test_persona_provisioning_coordinator.py::test_coordinator_rejects_currency_contradicting_market_settlement",
+      "result": "PASSED"
+    },
+    {
+      "id": "services/control-plane/bff/test_persona_provisioning_coordinator.py::test_coordinator_handles_crypto_and_fx_currency_and_validates_uppercase",
+      "result": "PASSED"
+    },
+    {
+      "id": "services/control-plane/bff/test_persona_provisioning_coordinator.py::test_coordinator_rejects_capital_pool_readback_currency_mismatch",
+      "result": "PASSED"
+    },
+    {
+      "id": "services/control-plane/bff/test_persona_provisioning_coordinator.py::test_transition_legacy_persona_rejects_pool_currency_mismatching_target_market",
+      "result": "PASSED"
+    }
+  ],
+  "updated_existing_test": {
+    "id": "services/control-plane/bff/test_persona_provisioning_coordinator.py::test_coordinator_accepts_bare_symbols_with_explicit_market_without_guessing",
+    "change": "Added 'currency': 'USD' to FX request_payload only; assertions unchanged",
+    "result": "PASSED"
+  },
+  "suite_results": {
+    "command": "python -m pytest -q services/control-plane/bff/test_persona_provisioning_coordinator.py services/control-plane/bff/test_persona_provisioning_readback.py services/control-plane/bff/test_loop_prod_per_001_provisioning.py services/control-plane/bff/tests/test_bff_persona_create_paper_bundle.py services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py services/control-plane/bff/tests/test_persona_paper_onboarding_capital_integration.py services/control-plane/bff/tests/test_persona_provisioning_reconcile.py services/execution/lean_runtime/test_current_artifact_signal.py",
+    "summary": "138 passed, 8 warnings in 99.25s",
+    "suites": [
+      "services/control-plane/bff/test_persona_provisioning_coordinator.py (34 passed)",
+      "services/control-plane/bff/test_persona_provisioning_readback.py",
+      "services/control-plane/bff/test_loop_prod_per_001_provisioning.py",
+      "services/control-plane/bff/tests/test_bff_persona_create_paper_bundle.py",
+      "services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py",
+      "services/control-plane/bff/tests/test_persona_paper_onboarding_capital_integration.py",
+      "services/control-plane/bff/tests/test_persona_provisioning_reconcile.py",
+      "services/execution/lean_runtime/test_current_artifact_signal.py"
+    ]
+  },
+  "pre_existing_failures": [],
+  "diff_budget": {
+    "table": "| class | added | deleted | net |\n|---|---|---|---|\n| production | +53 | -3 | +50 |\n| test | +126 | -0 | +126 |\n| docs/evidence | +74 | -0 | +74 |",
+    "production_net_lines": 50,
+    "budget": 60,
+    "status": "passed"
+  },
+  "marketless_note": "Market-less requests (such as execute-plans createEntity and the LOOP-PROD-PER-001 probe which send no market parameter) keep USD by design in this task.",
+  "hosted_verification": "Hosted verification (such as Capital GET of a freshly provisioned TW paper persona pool showing TWD) belongs to the Root exact-pair deployment; no hosted action was performed by this worker.",
+  "no_hosted_action": true
+}
