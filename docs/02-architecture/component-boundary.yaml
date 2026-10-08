@@ -149,6 +149,7 @@ components:
     paths:
       - .github/workflows/
       - scripts/deploy_nonprod_vm.sh
+      - scripts/test_deploy_nonprod_vm.py
       - scripts/bootstrap.sh
       - scripts/db_migrate.sh
       - scripts/test_db_migrate.py

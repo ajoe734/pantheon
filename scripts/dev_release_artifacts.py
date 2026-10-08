@@ -377,7 +377,14 @@ def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str
     with tempfile.TemporaryDirectory(prefix=".restore-", dir=archive_root) as stage:
         override = Path(stage) / "images.json"
         override.write_bytes(manifest_bytes({"services": {
-            service: {"image": row["image_id"], "pull_policy": "never"}
+            service: {
+                "image": row["image_id"], "pull_policy": "never",
+                # Retained worker images import the application in their
+                # original healthcheck (measured ~6s on dev). Keep that exact
+                # check and require healthy, with a bounded execution budget.
+                **({"healthcheck": {"timeout": "30s"}}
+                   if service == "agora-interaction-worker" else {}),
+            }
             for service, row in bundle["services"].items()
         }}))
         command = ["compose", "-p", "pantheon"]

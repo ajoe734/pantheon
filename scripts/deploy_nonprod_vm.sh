@@ -3070,7 +3070,7 @@ verify_dev_paper_fleet() {
 import json
 import sys
 
-payload = json.loads(sys.argv[1])
+payload = json.load(sys.stdin)
 workers = list(payload.get("workers") or [])
 ready = payload.get("ready") is True
 live = payload.get("live") is True
@@ -3080,9 +3080,9 @@ last_error = payload.get("last_error")
 mon_error = payload.get("monitoring_last_error")
 
 print(json.dumps({
-    "last_error": last_error,
+    "last_error": str(last_error)[:256] if last_error is not None else None,
     "live": live,
-    "monitoring_last_error": mon_error,
+    "monitoring_last_error": str(mon_error)[:256] if mon_error is not None else None,
     "ready": ready,
     "running_count": running_count,
     "worker_count": worker_count,
@@ -3096,7 +3096,7 @@ assert int(payload.get("cycle_count") or 0) >= 1
 assert worker_count == running_count
 assert all(worker.get("status") == "running" for worker in workers)
 assert all(worker.get("heartbeat_status") == "active" for worker in workers)
-' "$status" 2>/dev/null)"; then
+' <<< "$status" 2>/dev/null)"; then
       info "paper fleet reconciler is ready and all desired workers are active"
       printf '%s\n' "$summary"
       return 0
