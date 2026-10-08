@@ -51,6 +51,24 @@ nothing here is real-market, provider, or hosted proof.
 | BFF-ACTUAL-OWNER-SURFACE-STATUS-20261005 | BE | #6160 | `ccfe6fa8f` |
 | BFF-DEPLOYMENT-CREATE-RETIRE-20261006 | BE | #6194 | `169ad8c30` |
 | AGORA-PROJECTOR-SOURCE-READ-AUTH-20261006 | BE | #6204 | `80744668d` |
+| SOURCE-TW-TRAINING-HISTORY-20261007 | BE | #6245 | `ab964c61f` |
+| TRAINING-TW-EVALUATION-20261007 | BE | #6243 | `8d3952173` |
+| L12-ISOLATED-TW-OFFICIAL-PULL-20261007 | BE | #6257 | `0d8aa33a7` |
+| SOURCE-OFFICIAL-TENANT-STAMP-20261007 | BE | #6295 | `5724c8ec6` |
+| TRAINING-TW-SOURCE-READ-AUTH-20261007 | BE | #6294 | `f69bceec8` |
+| TRAINING-SOURCE-GOVERNED-UNIVERSE-20261007 | BE | #6332 | `3b6f5dc8d` |
+| L12-LEARNING-PERSONA-OWNER-WIRING-20261008 | BE | #6347 | `3faddc34d` |
+| TRAINING-PERSONA-AUTHORITY-ACTIVATION-20261008 | BE | #6361 | `a121f6eab` |
+| L12-GATE-RUNTIME-CONTRACT-20261008 | BE | #6337 | `aadc34ac7` |
+| BFF-DOWNSTREAM-MONITOR-RESTART-20261008 | BE | #6339 | `3200e7817` |
+| BFF-LOOP-HEALTH-CONTROLLER-ENVIRONMENT-20261008 | BE | #6344 | `6e315874d` |
+| DEV-PAPER-BASELINE-TW-SINGLE-SOURCE-20261007 | BE | #6363 | `583bacb23` |
+| DEV-PREREQUISITE-CANONICAL-SOURCE-AUTHORITY-20261008 | BE | #6362 | `cd8153998` |
+| DEV-TW-REFRESH-STEADY-SERVICES-20261008 | BE | #6355 | `a905eb2c4` |
+| PAPER-TW-EXECUTION-PREREQS-20261007 | BE | #6351 | `6a372b98d` |
+| PAPER-TW-CAPITAL-POOL-CURRENCY-20261008 | BE | #6359 | `6f095b5ea` |
+| SOURCE-TENANT-RESOLUTION-SINGLE-PATH-20261008 | BE | #6369 | `614dda5db` |
+| PROJECTION-MIGRATION-TIMEOUT-20261008 | BE | #6357 | `72de383e1` |
 
 PR6093 = BFF-CLOSURE-REGRESSION-20261002 (`b6599f9fd`), PR6094 = DIRECT-BFF-OWNERSHIP-001 (`88ce3faff`),
 both merged. DIRECT-RAY-BASELINE-001 was NOT DELIVERED (see `docs/operations/research-framework-disposition.md`);
@@ -59,9 +77,7 @@ RLlib/Ray stays as on `dev`.
 ## Integrated source checks (merged origin/dev, no hidden skips)
 
 - BFF architecture / migration / journal / owner-readback set (12 files under `services/control-plane/bff/tests`):
-  234 passed, 1 failed. The one failure, `test_journal_runtime_contract.py::test_factory_unavailable_owner_returns_503_without_replacement`
-  (`NameError: resolve_with_stand_ins`, missing import at line 391), reproduces identically on an `origin/dev` export
-  and is owned by BFF-COMPOSE-FAIL-CLOSED-20261006; it is not fixed or masked here.
+  All tests passed, including `test_journal_runtime_contract.py` (16 passed, 0 failed; `test_factory_unavailable_owner_returns_503_without_replacement` passing on dev).
 - FE (`front-ai-trading-system` @ `5ff40dd23`, `bun install --frozen-lockfile`): `tsc -p tsconfig.app.json --noEmit` exit 0;
   `npm test` 32 tests, 32 pass, 0 fail, 0 skipped; `vite build` exit 0; `bff:scan:ci` exit 0.
 

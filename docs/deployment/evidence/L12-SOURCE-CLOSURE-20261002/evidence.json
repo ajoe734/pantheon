@@ -7,6 +7,6 @@
     "one_shot_projector": "source-ingest-agora-projector removed from STIMULUS_COMPOSE_SERVICES; run via compose run --rm after up --wait, exit code asserted, output saved to diagnostics/",
     "failure_diagnostics": "_capture_failure_diagnostics writes compose ps -a and 200-line log tails of non-healthy/exited services to <evidence dir>/diagnostics before teardown"
   },
-  "tests": "scripts/test_run_isolated_l12_runtime_e2e.py + scripts/test_current_l12_compose_wiring.py: 18 passed",
+  "tests": "scripts/test_run_isolated_l12_runtime_e2e.py + scripts/test_current_l12_compose_wiring.py + services/control-plane/bff/tests/test_latest_dev_six_area_closure.py: 42 passed",
   "not_proven": "live twelve-loop gate; Human/Ops reruns it outside the sandbox"
 }
