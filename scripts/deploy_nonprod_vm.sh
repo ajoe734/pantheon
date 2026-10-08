@@ -1405,25 +1405,43 @@ resolve_bounded_source_refresh_active_symbols() {
       ;;
   esac
 
+  local baseline_env=()
+  if [[ -n "${PANTHEON_DEV_PAPER_BASELINE_SYMBOL+x}" ]]; then
+    baseline_env=(-e "PANTHEON_DEV_PAPER_BASELINE_SYMBOL=${PANTHEON_DEV_PAPER_BASELINE_SYMBOL}")
+  fi
+
   if ! priority_symbols="$(
     docker compose -p pantheon -f docker-compose.yml run --rm --no-deps -T \
+      "${baseline_env[@]}" \
       --entrypoint python runtime-manager - <<'PY'
 import json
 import os
 import re
+import sys
 from pathlib import Path
 
 
-path = Path(os.environ.get("PANTHEON_RUNTIME_BINDING_STORE_PATH", "/data/runtime/runtime_bindings.json"))
-if not path.exists():
-    print("")
-    raise SystemExit(0)
+for candidate in (Path.cwd(), Path("/workspace"), Path(os.environ.get("PANTHEON_REMOTE_DIR", ""))):
+    if (candidate / "scripts" / "bootstrap_dev_paper_baseline.py").exists() and str(candidate) not in sys.path:
+        sys.path.insert(0, str(candidate))
 try:
-    bindings = json.loads(path.read_text(encoding="utf-8"))
-except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-    raise SystemExit(f"active RuntimeBinding store is unreadable: {exc}") from exc
-if not isinstance(bindings, list) or any(not isinstance(binding, dict) for binding in bindings):
-    raise SystemExit("active RuntimeBinding store must contain a JSON list of objects")
+    from scripts.bootstrap_dev_paper_baseline import DEFAULT_MARKET_SYMBOL
+except Exception:
+    DEFAULT_MARKET_SYMBOL = ""
+baseline_symbol = os.environ.get("PANTHEON_DEV_PAPER_BASELINE_SYMBOL")
+if baseline_symbol is None:
+    baseline_symbol = DEFAULT_MARKET_SYMBOL
+baseline_symbol = baseline_symbol.strip().upper()
+
+path = Path(os.environ.get("PANTHEON_RUNTIME_BINDING_STORE_PATH", "/data/runtime/runtime_bindings.json"))
+bindings = []
+if path.exists():
+    try:
+        bindings = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"active RuntimeBinding store is unreadable: {exc}") from exc
+    if not isinstance(bindings, list) or any(not isinstance(binding, dict) for binding in bindings):
+        raise SystemExit("active RuntimeBinding store must contain a JSON list of objects")
 
 _MARKET_INPUT_PAUSE_PREFIX = "market_input_"
 
@@ -1456,6 +1474,9 @@ for binding in bindings:
         continue
     if symbol not in symbols:
         symbols.append(symbol)
+
+if baseline_symbol and re.fullmatch(r"[A-Z0-9_-]+\.(?:TW|TWSE|TWO|TPEX)", baseline_symbol) and baseline_symbol not in symbols:
+    symbols.append(baseline_symbol)
 
 print(",".join(symbols))
 PY

@@ -26,6 +26,7 @@ from typing import Any
 DEFAULT_BASE_URL = "http://127.0.0.1:8001"
 DEFAULT_NAME = "Pantheon Dev Paper Baseline 4"
 DEFAULT_IDEMPOTENCY_KEY = "dev-paper-bootstrap-20261007-operator-a-tw-v4"
+DEFAULT_MARKET_SYMBOL = "2330.TW"
 
 # The BFF only resolves a Persona's reconcile lifecycle to a terminal state
 # (paper_running, or provisioning_failed with a named provisioning_failure_reason)
@@ -272,7 +273,7 @@ def ensure_paper_baseline(
     timeout_seconds: float,
     poll_seconds: float,
     request_timeout_seconds: float,
-    market_symbol: str = "2330.TW",
+    market_symbol: str = DEFAULT_MARKET_SYMBOL,
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
     environ: Mapping[str, str] | None = None,
@@ -662,7 +663,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--request-timeout-seconds", type=float, default=180)
     parser.add_argument(
         "--market-symbol",
-        default="2330.TW",
+        default=DEFAULT_MARKET_SYMBOL,
         help="Market symbol required for the dev paper baseline",
     )
     parser.add_argument(

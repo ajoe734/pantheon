@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -4235,4 +4236,119 @@ verify_dev_paper_fleet
     stdout_lines = proc.stdout.splitlines()
     for line in stdout_lines:
         assert len(line) < 512, f"failure stdout line exceeds bound ({len(line)} bytes): {line[:100]}..."
+
+
+def _extract_resolve_bounded_source_refresh_active_symbols_func() -> str:
+    script_text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = script_text.find("resolve_bounded_source_refresh_active_symbols() {")
+    assert start != -1, "resolve_bounded_source_refresh_active_symbols() not found"
+    next_func = script_text.find("\nverify_bounded_source_refresh_readback() {", start)
+    assert next_func != -1, "next function boundary after resolve_bounded_source_refresh_active_symbols not found"
+    end = script_text.rfind("\n}\n", start, next_func)
+    assert end != -1, "closing brace for resolve_bounded_source_refresh_active_symbols not found"
+    return script_text[start : end + 2]
+
+
+def _run_resolver_bash(
+    tmp_path: Path,
+    bindings: list[dict] | None = None,
+    env_vars: dict[str, str] | None = None,
+) -> tuple[subprocess.CompletedProcess[str], str]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    store_path = tmp_path / "runtime_bindings.json"
+    if bindings is not None:
+        store_path.write_text(json.dumps(bindings), encoding="utf-8")
+
+    mock_docker = bin_dir / "docker"
+    mock_docker.write_text(
+        f"""#!/usr/bin/env python3
+import os, sys, subprocess
+
+args = sys.argv[1:]
+if "run" in args and "runtime-manager" in args:
+    code = sys.stdin.read()
+    env = dict(os.environ)
+    env["PANTHEON_RUNTIME_BINDING_STORE_PATH"] = "{store_path}"
+    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env)
+    sys.stdout.write(proc.stdout)
+    sys.stderr.write(proc.stderr)
+    sys.exit(proc.returncode)
+sys.exit(0)
+""",
+        encoding="utf-8",
+    )
+    mock_docker.chmod(0o755)
+
+    func = _extract_resolve_bounded_source_refresh_active_symbols_func()
+    script = tmp_path / "test_resolver.sh"
+    script.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+
+export PATH="{bin_dir}:$PATH"
+export PANTHEON_DEV_COMPOSE_PROFILES="root,source-ingest-scheduler"
+
+{func}
+
+resolve_bounded_source_refresh_active_symbols
+echo "ACTIVE_SYMBOLS=$SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS"
+""",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+
+    env = dict(os.environ)
+    if env_vars:
+        env.update(env_vars)
+
+    proc = subprocess.run(["bash", str(script)], capture_output=True, text=True, env=env)
+    active = ""
+    for line in proc.stdout.splitlines():
+        if line.startswith("ACTIVE_SYMBOLS="):
+            active = line.partition("=")[2]
+    return proc, active
+
+
+def test_resolve_bounded_source_refresh_active_symbols_no_bindings_returns_baseline_symbol(tmp_path: Path) -> None:
+    proc, active = _run_resolver_bash(tmp_path / "missing", bindings=None)
+    assert proc.returncode == 0, proc.stderr
+    assert active == "2330.TW"
+
+    proc2, active2 = _run_resolver_bash(tmp_path / "empty", bindings=[])
+    assert proc2.returncode == 0, proc2.stderr
+    assert active2 == "2330.TW"
+
+
+def test_resolve_bounded_source_refresh_active_symbols_union_preserves_order_and_no_duplicates(tmp_path: Path) -> None:
+    bindings = [
+        {"deployment_mode": "paper", "status": "active", "symbol": "0050.TW"},
+        {
+            "deployment_mode": "paper",
+            "status": "paused",
+            "symbol": "2317.TW",
+            "metadata": {"session_admission": {"reason_code": "market_input_stale"}},
+        },
+    ]
+    proc, active = _run_resolver_bash(tmp_path / "case1", bindings=bindings)
+    assert proc.returncode == 0, proc.stderr
+    assert active == "0050.TW,2317.TW,2330.TW"
+
+    bindings_with_baseline = [
+        {"deployment_mode": "paper", "status": "active", "symbol": "2330.TW"},
+        {"deployment_mode": "paper", "status": "active", "symbol": "0050.TW"},
+    ]
+    proc2, active2 = _run_resolver_bash(tmp_path / "case2", bindings=bindings_with_baseline)
+    assert proc2.returncode == 0, proc2.stderr
+    assert active2 == "2330.TW,0050.TW"
+
+
+def test_resolve_bounded_source_refresh_active_symbols_empty_when_no_baseline_declared(tmp_path: Path) -> None:
+    proc, active = _run_resolver_bash(
+        tmp_path / "no_baseline", bindings=[], env_vars={"PANTHEON_DEV_PAPER_BASELINE_SYMBOL": ""}
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert active == ""
 
