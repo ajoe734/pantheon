@@ -1,0 +1,129 @@
+{
+ "task": "BFF-GOV-REDACTION-SINGLE-PATH-20261007",
+ "base_sha": "2dd7e691c",
+ "head_sha": "see PR head (commit b9955a283 plus this evidence commit)",
+ "production_net_lines": "-31 (router -8, models -11, service -12); 14 insertions, 45 deletions in governance/ and models.py",
+ "new_cases": {
+  "a_no_retry_single_call": "red on base, green on head",
+  "b_narrow_redactor_no_kind_map_drop": "red on base, green on head",
+  "c_three_routes_raising_redactor": "green on head (parametrized)",
+  "base_run": "head copies of the two test files inside git-archive export of base: 2 failed, 72 passed; head: 74 passed"
+ },
+ "new_sweep_cases": "consultation evidence and approval evidence, low and full: green on head",
+ "behaviour_deltas": [
+  "(a) consult memo and mutation review with capabilities_for_identity raising or None: reason redaction_policy_unavailable instead of insufficient_capability / unresolved_evidence_kind; required_capability, withheld set, count unchanged",
+  "(b) committee_projection via a router built without redact_evidence_refs: GovernanceService._fail_closed_redact_evidence_refs now receives kind_map/default_kind, so synthesis/handoff/audit/rationale refs report mapped kind and required_capability instead of unknown or keyword guess; reason stays redaction_policy_unavailable; withheld set and count unchanged",
+  "(c) production wiring (core/app_factory.py injects models.redact_evidence_refs): no change"
+ ],
+ "route_map": [
+  {
+   "route": "/api/v1/approval-decisions",
+   "test": "tests/test_governance_evidence_redaction_sweep.py::test_approval_decisions_list_redacts_for_low_capability_identity"
+  },
+  {
+   "route": "/api/v1/approval-decisions/{id}",
+   "test": "tests/test_governance_evidence_redaction_sweep.py::test_approval_decision_detail_redacts_for_low_capability_identity"
+  },
+  {
+   "route": "/api/v1/consult/requests/{id}",
+   "test": "tests/test_governance_evidence_redaction_sweep.py::test_get_consult_request_redacts_context_refs_for_low_capability_identity"
+  },
+  {
+   "route": "/api/v1/committees/{id}",
+   "test": "tests/test_evidence_redaction_fail_closed.py::test_committee_projection_wrapper_redacts_for_low_capability_and_passes_for_full"
+  },
+  {
+   "route": "/api/v1/consult/memos/{id}",
+   "test": "tests/test_evidence_redaction_fail_closed.py::test_consult_memo_evidence_redacts_for_low_capability_and_passes_for_full"
+  },
+  {
+   "route": "/api/v1/operator/governance/review-queue",
+   "test": "tests/test_review_queue_evidence_redaction.py (review-queue low-capability cases)"
+  },
+  {
+   "route": "/api/v1/operator/governance/approval-queue",
+   "test": "tests/test_governance_evidence_redaction_sweep.py::test_governance_approval_queue_redacted_count_scoped_to_returned_page"
+  },
+  {
+   "route": "/api/v1/operator/governance/audit",
+   "test": "tests/test_governance_evidence_redaction_sweep.py::test_governance_audit_trail_redacts_for_low_capability_identity"
+  },
+  {
+   "route": "/api/v1/operator/mutation-review/{id}",
+   "test": "tests/test_evidence_redaction_fail_closed.py::test_mutation_review_evidence_redacts_for_low_capability_and_passes_for_full"
+  },
+  {
+   "route": "/api/v1/personas/{id}/consultations",
+   "test": "tests/test_governance_evidence_redaction_sweep.py::test_list_consultations_redacts_for_low_capability_identity"
+  },
+  {
+   "route": "/api/v1/consultations/{sid}",
+   "test": "tests/test_governance_evidence_redaction_sweep.py::test_get_consultation_redacts_for_low_capability_identity"
+  },
+  {
+   "route": "/api/v1/consultations/{sid}/participants",
+   "test": "tests/test_governance_evidence_redaction_sweep.py::test_get_consultation_participants_redacts_for_low_capability_identity"
+  },
+  {
+   "route": "/api/v1/consultations/{sid}/outcome",
+   "test": "tests/test_governance_evidence_redaction_sweep.py::test_get_consultation_outcome_redacts_for_low_capability_identity"
+  },
+  {
+   "route": "/api/v1/consultations/{sid}/evidence",
+   "test": "tests/test_governance_evidence_redaction_sweep.py::test_consultation_evidence_redacts_for_low_capability_identity (new)"
+  },
+  {
+   "route": "/api/v1/consultations/{sid}/transcript",
+   "test": "tests/test_governance_evidence_redaction_sweep.py::test_get_consultation_transcript_redacts_for_low_capability_identity"
+  },
+  {
+   "route": "/bff/approvals",
+   "test": "tests/test_governance_evidence_redaction_sweep.py::test_bff_approvals_list_redacts_for_low_capability_identity"
+  },
+  {
+   "route": "/bff/approvals/{id}",
+   "test": "tests/test_governance_evidence_redaction_sweep.py::test_bff_approval_detail_alias_redacts_for_low_capability_identity"
+  },
+  {
+   "route": "/bff/approvals/{id}/evidence",
+   "test": "tests/test_governance_evidence_redaction_sweep.py::test_bff_approval_evidence_redacts_for_low_capability_identity (new)"
+  },
+  {
+   "route": "/bff/management/governance-ledger",
+   "test": "tests/test_governance_evidence_redaction_sweep.py::test_governance_ledger_redacts_all_three_evidence_sources_for_low_capability_identity"
+  },
+  {
+   "route": "/bff/reviews",
+   "test": "tests/test_review_queue_evidence_redaction.py (/bff/reviews low-capability cases)"
+  },
+  {
+   "route": "/bff/reviews/{id}",
+   "test": "tests/test_review_queue_evidence_redaction.py (/bff/reviews/{id} low-capability cases)"
+  },
+  {
+   "route": "/bff/reviews/{id}/audit",
+   "test": "tests/test_governance_evidence_redaction_sweep.py::test_bff_review_audit_redacts_for_low_capability_identity"
+  }
+ ],
+ "results_per_file": {
+  "head_all_pass": "all listed files pass except the pre-existing failures below",
+  "fail_on_both_sides_identically": {
+   "services/control-plane/bff/test_mgmt_load_005_read_concurrency.py": [
+    "test_jobs_router_returns_narrow_port_records_without_legacy_reader",
+    "test_alerts_timeout_returns_degraded_envelope_without_hanging"
+   ],
+   "services/control-plane/bff/tests/test_read_surface_caller_migration.py": [
+    "test_main_py_all_read_store_attributes_are_inventoried_and_mapped"
+   ],
+   "scripts/test_bff_cw_contract_prerequisite.py": [
+    "test_cw03_record_sponsor_decision_command_reuses_same_read_projection",
+    "test_cw04_default_redactor_fails_closed_without_wired_policy (known, not loosened)"
+   ],
+   "services/control-plane/bff/tests/test_command_adapters_router.py": "9 tenant_scope 403 failures, same 9 on base (500 passed, 1 skipped on both)"
+  },
+  "head_only_failures": [],
+  "base_only_failures": []
+ },
+ "run_notes": "Base was run only for the files that had failures on head (plus the two new-test files); files that fully passed on head cannot have head-only failures. Per-file head counts: approvals_decide 133, decide-adjacent contracts and tests/ files all passed. Raw logs were not persisted (foreground runs); no sha256 recorded.",
+ "left_unchanged": "scripts/test_bff_cw_contract_prerequisite.py not edited; docs/operations/governance-cw-contract-owner.md already describes the router default and memo fail-closed reason accurately; test docstring and section 8 header comment were reworded (callers 1-6)."
+}
