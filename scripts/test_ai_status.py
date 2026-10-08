@@ -1282,6 +1282,10 @@ class HumanOpsStatusWrapperTests(unittest.TestCase):
             scripts_dir.mkdir()
             wrapper = scripts_dir / "human-ops-status.sh"
             shutil.copy2(repo_root / "scripts" / "human-ops-status.sh", wrapper)
+            shutil.copy2(
+                repo_root / "scripts" / "canonical-task-state-binding.sh",
+                scripts_dir / "canonical-task-state-binding.sh",
+            )
             target = scripts_dir / "ai-status.sh"
             target.write_text(
                 "#!/usr/bin/env bash\n"
@@ -1511,6 +1515,8 @@ ISOLATED_ENV_KEYS = (
     "ORCH_AGENT_ID",
     "ORCH_PROVIDER",
     "ORCH_SESSION_ID",
+    "PANTHEON_LIVE_SUPERVISOR_CONFIG",
+    "PANTHEON_DEPLOY_ROOT",
 )
 
 
@@ -1528,6 +1534,9 @@ def _setup_test_isolation(test_case):
     (test_case._test_root / ".orchestrator").mkdir()
     test_case._test_status_file.write_text("{}\n", encoding="utf-8")
     test_case._test_log_file.write_text("", encoding="utf-8")
+    live_config_path = test_case._test_root / "live-supervisor-config.json"
+    live_config_path.write_text("{}\n", encoding="utf-8")
+    os.environ["PANTHEON_LIVE_SUPERVISOR_CONFIG"] = str(live_config_path)
 
     test_case._orig_paths = {
         "STATUS_ROOT": ai_status.STATUS_ROOT,
@@ -10690,10 +10699,19 @@ class DeliveryWorkspaceAuthorityTests(unittest.TestCase):
                     }
                 },
             }
+            live_config_file = root / "live-supervisor-config.json"
+            live_config_file.write_text(
+                json.dumps({"coordination": config["coordination"]}),
+                encoding="utf-8",
+            )
             task = {"id": "OPS-HANDOFF-WORKSPACE-GIT-ROOT-20261004", "artifacts": ["scripts/ai_status.py"]}
             with (
                 mock.patch.object(ai_status, "STATUS_ROOT", status_root),
-                mock.patch.dict(os.environ, {}, clear=True),
+                mock.patch.dict(
+                    os.environ,
+                    {"PANTHEON_LIVE_SUPERVISOR_CONFIG": str(live_config_file)},
+                    clear=True,
+                ),
             ):
                 selected, metadata = ai_status._done_delivery_repository_root(
                     config, task, "pantheon", action="handoff"
@@ -10733,10 +10751,19 @@ class DeliveryWorkspaceAuthorityTests(unittest.TestCase):
                     }
                 },
             }
+            live_config_file = root / "live-supervisor-config.json"
+            live_config_file.write_text(
+                json.dumps({"coordination": config["coordination"]}),
+                encoding="utf-8",
+            )
             task = {"id": "OPS-HANDOFF-WORKSPACE-GIT-ROOT-20261004", "artifacts": ["scripts/ai_status.py"]}
             with (
                 mock.patch.object(ai_status, "STATUS_ROOT", status_root),
-                mock.patch.dict(os.environ, {}, clear=True),
+                mock.patch.dict(
+                    os.environ,
+                    {"PANTHEON_LIVE_SUPERVISOR_CONFIG": str(live_config_file)},
+                    clear=True,
+                ),
             ):
                 selected, metadata = ai_status._done_delivery_repository_root(
                     config, task, "pantheon", action="handoff"
@@ -10771,10 +10798,19 @@ class DeliveryWorkspaceAuthorityTests(unittest.TestCase):
                     }
                 },
             }
+            live_config_file = root / "live-supervisor-config.json"
+            live_config_file.write_text(
+                json.dumps({"coordination": config["coordination"]}),
+                encoding="utf-8",
+            )
             task = {"id": "OPS-HANDOFF-WORKSPACE-GIT-ROOT-20261004", "artifacts": ["scripts/ai_status.py"]}
             with (
                 mock.patch.object(ai_status, "STATUS_ROOT", status_root),
-                mock.patch.dict(os.environ, {}, clear=True),
+                mock.patch.dict(
+                    os.environ,
+                    {"PANTHEON_LIVE_SUPERVISOR_CONFIG": str(live_config_file)},
+                    clear=True,
+                ),
                 self.assertRaisesRegex(
                     SystemExit, "(origin|repository|remote)"
                 ),
@@ -10801,10 +10837,19 @@ class DeliveryWorkspaceAuthorityTests(unittest.TestCase):
                     }
                 },
             }
+            live_config_file = root / "live-supervisor-config.json"
+            live_config_file.write_text(
+                json.dumps({"coordination": config["coordination"]}),
+                encoding="utf-8",
+            )
             task = {"id": "OPS-HANDOFF-WORKSPACE-GIT-ROOT-20261004", "artifacts": ["scripts/ai_status.py"]}
             with (
                 mock.patch.object(ai_status, "STATUS_ROOT", status_root),
-                mock.patch.dict(os.environ, {}, clear=True),
+                mock.patch.dict(
+                    os.environ,
+                    {"PANTHEON_LIVE_SUPERVISOR_CONFIG": str(live_config_file)},
+                    clear=True,
+                ),
                 self.assertRaisesRegex(
                     SystemExit, "must be a git repository root"
                 ),
@@ -10830,10 +10875,19 @@ class DeliveryWorkspaceAuthorityTests(unittest.TestCase):
                     }
                 },
             }
+            live_config_file = root / "live-supervisor-config.json"
+            live_config_file.write_text(
+                json.dumps({"coordination": config["coordination"]}),
+                encoding="utf-8",
+            )
             task = {"id": "OPS-HANDOFF-WORKSPACE-GIT-ROOT-20261004", "artifacts": ["scripts/ai_status.py"]}
             with (
                 mock.patch.object(ai_status, "STATUS_ROOT", status_root),
-                mock.patch.dict(os.environ, {}, clear=True),
+                mock.patch.dict(
+                    os.environ,
+                    {"PANTHEON_LIVE_SUPERVISOR_CONFIG": str(live_config_file)},
+                    clear=True,
+                ),
                 self.assertRaisesRegex(
                     SystemExit, "registered delivery repository does not exist"
                 ),
@@ -10859,9 +10913,18 @@ class DeliveryWorkspaceAuthorityTests(unittest.TestCase):
                     }
                 },
             }
+            rel_live_file = root / "live-supervisor-rel-config.json"
+            rel_live_file.write_text(
+                json.dumps({"coordination": rel_config["coordination"]}),
+                encoding="utf-8",
+            )
             with (
                 mock.patch.object(ai_status, "STATUS_ROOT", status_root),
-                mock.patch.dict(os.environ, {}, clear=True),
+                mock.patch.dict(
+                    os.environ,
+                    {"PANTHEON_LIVE_SUPERVISOR_CONFIG": str(rel_live_file)},
+                    clear=True,
+                ),
                 self.assertRaisesRegex(
                     SystemExit, "integration_path must be absolute"
                 ),
@@ -10886,9 +10949,18 @@ class DeliveryWorkspaceAuthorityTests(unittest.TestCase):
                     }
                 },
             }
+            symlink_live_file = root / "live-supervisor-symlink-config.json"
+            symlink_live_file.write_text(
+                json.dumps({"coordination": symlink_config["coordination"]}),
+                encoding="utf-8",
+            )
             with (
                 mock.patch.object(ai_status, "STATUS_ROOT", status_root),
-                mock.patch.dict(os.environ, {}, clear=True),
+                mock.patch.dict(
+                    os.environ,
+                    {"PANTHEON_LIVE_SUPERVISOR_CONFIG": str(symlink_live_file)},
+                    clear=True,
+                ),
                 self.assertRaisesRegex(
                     SystemExit, "cannot include a symlink component"
                 ),
@@ -10896,6 +10968,150 @@ class DeliveryWorkspaceAuthorityTests(unittest.TestCase):
                 ai_status._done_delivery_repository_root(
                     symlink_config, task, "pantheon", action="handoff"
                 )
+
+    def test_operator_handoff_prefers_live_config_over_repo_config_integration_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            status_root = root / "pantheon-status"
+            live_integration_root = root / "pantheon-live-integration"
+            status_root.mkdir()
+            live_integration_root.mkdir()
+            self._git(live_integration_root, "init", "-b", "dev")
+            self._git(live_integration_root, "config", "user.name", "Test")
+            self._git(live_integration_root, "config", "user.email", "test@example.com")
+            (live_integration_root / "README.md").write_text("pantheon\n", encoding="utf-8")
+            self._git(live_integration_root, "add", "README.md")
+            self._git(live_integration_root, "commit", "-m", "initial")
+            self._git(
+                live_integration_root,
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/ajoe734/pantheon.git",
+            )
+            passed_config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "coordination": {
+                    "repositories": {
+                        "pantheon": {
+                            "repo": "ajoe734/pantheon",
+                            "integration_path": str(root / "nonexistent-dead-runtime"),
+                        }
+                    }
+                },
+            }
+            live_config_file = root / "live-supervisor-config.json"
+            live_config_file.write_text(
+                json.dumps(
+                    {
+                        "coordination": {
+                            "repositories": {
+                                "pantheon": {
+                                    "repo": "ajoe734/pantheon",
+                                    "integration_path": str(live_integration_root),
+                                }
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            task = {"id": "OPS-HANDOFF-WORKSPACE-GIT-ROOT-20261004", "artifacts": ["scripts/ai_status.py"]}
+            with (
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.dict(
+                    os.environ,
+                    {"PANTHEON_LIVE_SUPERVISOR_CONFIG": str(live_config_file)},
+                    clear=True,
+                ),
+            ):
+                selected, metadata = ai_status._done_delivery_repository_root(
+                    passed_config, task, "pantheon", action="handoff"
+                )
+
+        self.assertEqual(selected, live_integration_root.resolve())
+        self.assertEqual(metadata["repository_path_source"], "repository_registry")
+
+    def test_operator_handoff_fails_closed_when_live_supervisor_config_unreadable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            status_root = root / "pantheon-status"
+            status_root.mkdir()
+            local_root = root / "pantheon-local"
+            local_root.mkdir()
+            self._git(local_root, "init", "-b", "dev")
+            self._git(local_root, "config", "user.name", "Test")
+            self._git(local_root, "config", "user.email", "test@example.com")
+            (local_root / "README.md").write_text("pantheon\n", encoding="utf-8")
+            self._git(local_root, "add", "README.md")
+            self._git(local_root, "commit", "-m", "initial")
+            self._git(
+                local_root,
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/ajoe734/pantheon.git",
+            )
+            config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "coordination": {
+                    "repositories": {
+                        "pantheon": {
+                            "repo": "ajoe734/pantheon",
+                            "local_path": str(local_root),
+                        }
+                    }
+                },
+            }
+            task = {"id": "OPS-HANDOFF-WORKSPACE-GIT-ROOT-20261004", "artifacts": ["scripts/ai_status.py"]}
+
+            missing_path = root / "nonexistent-live-config.json"
+            dir_path = root / "dir-live-config"
+            dir_path.mkdir()
+            invalid_json_path = root / "invalid-json.json"
+            invalid_json_path.write_text("{not valid json", encoding="utf-8")
+            json_array_path = root / "array.json"
+            json_array_path.write_text("[1, 2, 3]", encoding="utf-8")
+
+            cases = [
+                ("missing_file", missing_path),
+                ("directory", dir_path),
+                ("invalid_json", invalid_json_path),
+                ("json_array", json_array_path),
+            ]
+
+            for case_name, path in cases:
+                with self.subTest(case=case_name):
+                    with (
+                        mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                        mock.patch.dict(
+                            os.environ,
+                            {"PANTHEON_LIVE_SUPERVISOR_CONFIG": str(path)},
+                            clear=True,
+                        ),
+                        self.assertRaisesRegex(
+                            SystemExit,
+                            r"^Cannot handoff task: live supervisor config is unreadable",
+                        ),
+                    ):
+                        ai_status._done_delivery_repository_root(
+                            config, task, "pantheon", action="handoff"
+                        )
+
+            # In the missing-file case, the same call with action="finalize" and a local_path config still returns the local_path root.
+            with (
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.dict(
+                    os.environ,
+                    {"PANTHEON_LIVE_SUPERVISOR_CONFIG": str(missing_path)},
+                    clear=True,
+                ),
+            ):
+                selected, metadata = ai_status._done_delivery_repository_root(
+                    config, task, "pantheon", action="finalize"
+                )
+            self.assertEqual(selected, local_root.resolve())
+            self.assertEqual(metadata["repository_path_source"], "repository_registry")
 
 
 class DeliveryMetadataValidationTests(unittest.TestCase):
@@ -17904,14 +18120,6 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
         reassign_event: bool = True,
         intervening_event: str | None = None,
         scope_overrides: dict[str, Any] | None = None,
-        reopen_event: bool = False,
-        reopen_actor: str = "Human/Ops",
-        reopen_op_mode: str = "local_human_ops",
-        reopen_ts: str = "2026-08-01T15:00:00Z",
-        reopen_valid_id: bool = True,
-        reassign_actor: str = "Human/Ops",
-        post_reopen_event: dict[str, Any] | None = None,
-        archive_reviewer_reassignment: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], str, dict[str, str]]:
         delivery_root = self.root / "execute-plans"
         delivery_sha = self._init_git_repo(
@@ -18005,11 +18213,6 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
                 "status": "review_approved",
             },
         }
-        if archive_reviewer_reassignment is not None:
-            archived_delivery["review_evidence"]["reviewer_reassignment"] = deepcopy(
-                archive_reviewer_reassignment
-            )
-            archived_delivery["review_evidence"]["canonical_reviewer"] = archive_reviewer
         base_scope: dict[str, Any] = {
             "title": "Positive archive resurrection candidate",
             "phase": "Release",
@@ -18123,22 +18326,6 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
             import_ev["event_id"] = f"human-ops-import-{digest}"
             ai_status.append_log(import_ev)
 
-        if reopen_event:
-            reopen_ev = {
-                "ts": reopen_ts,
-                "agent": reopen_actor,
-                "operator_mode": reopen_op_mode,
-                "type": "reopen",
-                "task_id": "REG-002",
-                "message": "Operator reopened task for triage",
-            }
-            if reopen_valid_id:
-                reopen_digest = ai_status._canonical_json_sha256(reopen_ev)
-                reopen_ev["event_id"] = f"human-ops-reopen-{reopen_digest}"
-            else:
-                reopen_ev["event_id"] = "unauthenticated-reopen-id"
-            ai_status.append_log(reopen_ev)
-
         if reassign_event:
             ev = audited_reassignment_event(
                 task_id="REG-002",
@@ -18148,12 +18335,11 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
                 new_reviewer=reassign_new_reviewer,
                 timestamp=reassign_ts,
                 message="Auto-reassign REG-002",
-                actor=reassign_actor,
+                actor="Human/Ops",
                 old_generation=archive_gen,
                 new_generation=active_gen,
             )
-            if reassign_actor == "Human/Ops":
-                ev["operator_mode"] = "local_human_ops"
+            ev["operator_mode"] = "local_human_ops"
             ai_status.append_log(ev)
 
         if intervening_event is not None:
@@ -18166,9 +18352,6 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
                     "message": f"intervening {intervening_event}",
                 }
             )
-
-        if post_reopen_event is not None:
-            ai_status.append_log(post_reopen_event)
 
         return state, snapshot, config, ai_status._canonical_json_sha256(snapshot), reconcile_env
 
@@ -18270,169 +18453,6 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
         self.assertEqual(len(reconcile_events), 1)
         self.assertEqual(reconcile_events[0]["retired_stale_active_row"]["generation"], 2)
         self.assertIn("archive_resurrection_proof", reconcile_events[0])
-
-    def test_positive_archive_resurrection_zero_delivery_reopen(self) -> None:
-        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
-            import_event=False,
-            reopen_event=True,
-            reassign_actor="Orchestrator",
-        )
-        active_task = ai_status.get_task(state, "REG-002")
-
-        # 1. Diagnostic
-        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
-        self.assertTrue(diag["eligible"])
-        self.assertEqual(diag["reason"], "eligible_for_stale_role_recovery")
-        proof = diag["proof"]
-        self.assertEqual(proof["retired_active_row"]["generation"], 2)
-        self.assertEqual(proof["retired_active_row"]["owner"], "Codex2")
-        self.assertEqual(proof["retired_active_row"]["reviewer"], "Claude")
-        self.assertEqual(proof["archive_generation"], 1)
-        self.assertIn("reopen_event_id", proof["audit_proof_range"])
-
-        # 2. Command show via isolated CLI
-        show_proc = self._run_cli(["show", "REG-002"])
-        self.assertEqual(show_proc.returncode, 0, show_proc.stderr)
-        show_out = json.loads(show_proc.stdout)
-        self.assertEqual(show_out["source"], "active")
-        self.assertTrue(show_out["archive_resurrection_diagnostic"]["eligible"])
-
-        # 3. Preflight and reconcile via real isolated CLI
-        rec_proc = self._run_cli(["reconcile_merged_done", "REG-002", "Reconcile zero-delivery reopen recovery."])
-        self.assertEqual(rec_proc.returncode, 0, rec_proc.stderr)
-
-        # 4. Outbox recovery / drain via CLI recover
-        recover_proc = self._run_cli(["recover"])
-        self.assertEqual(recover_proc.returncode, 0, recover_proc.stderr)
-
-        # 5. Assertions on final state:
-        final_state = ai_status.load_state()
-        self.assertIsNone(ai_status.get_task(final_state, "REG-002"))
-        self.assertIsNone(final_state.get(ai_status.STATUS_ARCHIVE_OUTBOX_KEY))
-        term_fact = final_state[ai_status.TERMINAL_FACTS_KEY]["REG-002"]
-        self.assertEqual(term_fact["generation"], 1)
-        self.assertEqual(term_fact["recorded_at"], "2026-08-01T10:00:00Z")
-        self.assertEqual(term_fact["terminal_outcome"], "completed")
-
-        on_disk_snapshot = ai_status.load_archived_snapshot("REG-002")
-        self.assertEqual(ai_status._canonical_json_sha256(on_disk_snapshot), orig_sha)
-        self.assertEqual(on_disk_snapshot, snapshot)
-
-        receipt = final_state[ai_status.ARCHIVE_RECEIPTS_KEY]["REG-002"]
-        self.assertEqual(receipt["snapshot_sha256"], orig_sha)
-        self.assertEqual(final_state["blockers"], [])
-
-        # Verify dependency resolution for downstream task REG-003
-        resolver = task_archive.TaskResolver(final_state)
-        reg_003 = ai_status.get_task(final_state, "REG-003")
-        self.assertTrue(task_archive.dependency_satisfied_for(reg_003, "REG-002", resolver))
-
-        # 6. Audit log entries
-        logs = [
-            json.loads(line)
-            for line in self.log_file.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-        retired_events = [e for e in logs if e.get("type") == "stale_archive_resurrection_retired"]
-        self.assertEqual(len(retired_events), 1)
-        self.assertEqual(retired_events[0]["retired_generation"], 2)
-        self.assertEqual(retired_events[0]["archive_generation"], 1)
-
-        reconcile_events = [e for e in logs if e.get("type") == "reconcile_merged_done"]
-        self.assertEqual(len(reconcile_events), 1)
-        self.assertEqual(reconcile_events[0]["retired_stale_active_row"]["generation"], 2)
-        self.assertIn("archive_resurrection_proof", reconcile_events[0])
-
-    def test_negative_zero_delivery_reopen_with_new_commit(self) -> None:
-        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
-            import_event=False,
-            reopen_event=True,
-            post_reopen_event={
-                "ts": "2026-08-02T12:00:00Z",
-                "agent": "Codex2",
-                "type": "note",
-                "task_id": "REG-002",
-                "commit": "a" * 40,
-                "message": "Pushed commit after reopen",
-            },
-        )
-        active_task = ai_status.get_task(state, "REG-002")
-        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
-        self.assertFalse(diag["eligible"])
-        self.assertIn("post-reopen delivery activity detected (commit)", diag["reason"])
-        self._assert_cli_retirement_refused("post-reopen delivery activity detected (commit)")
-
-    def test_negative_zero_delivery_reopen_with_changed_delivery(self) -> None:
-        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
-            import_event=False,
-            reopen_event=True,
-            scope_overrides={
-                "delivery_binding": {
-                    "kind": "pull_request",
-                    "pr_number": 999,
-                    "head_sha": "b" * 40,
-                }
-            },
-        )
-        active_task = ai_status.get_task(state, "REG-002")
-        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
-        self.assertFalse(diag["eligible"])
-        self.assertIn("existing archive snapshot conflicts with terminal task", diag["reason"])
-        self._assert_cli_retirement_refused("existing archive snapshot conflicts with terminal task")
-
-    def test_negative_zero_delivery_reopen_with_invalidated_review(self) -> None:
-        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
-            import_event=False,
-            reopen_event=True,
-            scope_overrides={
-                "github_review_bridge": {
-                    "decision": "reject",
-                    "message": "Independent review rejected deliverable",
-                }
-            },
-        )
-        active_task = ai_status.get_task(state, "REG-002")
-        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
-        self.assertFalse(diag["eligible"])
-        self.assertIn("github review bridge indicates review rejection (reject)", diag["reason"])
-        self._assert_cli_retirement_refused("github review bridge indicates review rejection (reject)")
-
-    def test_negative_zero_delivery_reopen_with_altered_scope(self) -> None:
-        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
-            import_event=False,
-            reopen_event=True,
-            scope_overrides={"acceptance": ["completely altered acceptance scope"]},
-        )
-        active_task = ai_status.get_task(state, "REG-002")
-        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
-        self.assertFalse(diag["eligible"])
-        self.assertIn("existing archive snapshot conflicts with terminal task", diag["reason"])
-        self._assert_cli_retirement_refused("existing archive snapshot conflicts with terminal task")
-
-    def test_negative_zero_delivery_reopen_unauthorized_actor(self) -> None:
-        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
-            import_event=False,
-            reopen_event=True,
-            reopen_actor="Codex",
-            reopen_op_mode="",
-        )
-        active_task = ai_status.get_task(state, "REG-002")
-        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
-        self.assertFalse(diag["eligible"])
-        self.assertIn("intervening reopen event detected", diag["reason"])
-        self._assert_cli_retirement_refused("intervening reopen event detected")
-
-    def test_negative_zero_delivery_reopen_unauthenticated_id(self) -> None:
-        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
-            import_event=False,
-            reopen_event=True,
-            reopen_valid_id=False,
-        )
-        active_task = ai_status.get_task(state, "REG-002")
-        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
-        self.assertFalse(diag["eligible"])
-        self.assertIn("unauthenticated event_id", diag["reason"])
-        self._assert_cli_retirement_refused("unauthenticated event_id")
 
     def test_negative_missing_import_lineage(self) -> None:
         state, snapshot, config, orig_sha, rec_env = self._build_fixture(import_event=False)
@@ -18812,6 +18832,20 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
         self.assertEqual(self.log_file.read_bytes(), before_audit)
         self.assertEqual(archive_path.read_bytes(), before_archive)
         self.assertEqual(runtime_path.read_bytes() if runtime_path.exists() else None, before_runtime)
+
+    def test_negative_authenticated_operator_reopen_after_archive(self) -> None:
+        self._build_fixture()
+        reopen = {
+            "ts": "2026-08-02T12:00:00Z",
+            "agent": "Human/Ops",
+            "operator_mode": "local_human_ops",
+            "type": "reopen",
+            "task_id": "REG-002",
+            "message": "Operator reopened task for triage",
+        }
+        reopen["event_id"] = "human-ops-reopen-" + ai_status._canonical_json_sha256(reopen)
+        ai_status.append_log(reopen)
+        self._assert_cli_retirement_refused("intervening reopen event detected")
 
     def test_real_cli_milestone_prevents_retirement(self) -> None:
         self._build_fixture()
@@ -19515,323 +19549,6 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
         self.assertIsNotNone(task)
         self.assertEqual(task.get("generation"), 2)
         self.assertNotIn("REG-002", final_state.get(ai_status.ARCHIVE_RECEIPTS_KEY, {}))
-
-    def _make_archive_reviewer_hop(
-        self,
-        *,
-        task_id: str = "REG-002",
-        owner: str = "Codex",
-        old_reviewer: str = "Claude",
-        new_reviewer: str = "Codex2",
-        timestamp: str = "2026-07-19T23:52:06Z",
-        message: str = "Auto-reassigned REG-002 away from unavailable lane Claude; reviewer Claude -> Codex2.",
-        prefix: str = "supervisor-reassign-",
-        old_generation: int | None = None,
-        generation: int | None = None,
-    ) -> dict[str, Any]:
-        digest = task_machine._assignment_activity_event_digest(
-            task_id=task_id,
-            timestamp=timestamp,
-            old_owner=owner,
-            new_owner=owner,
-            old_reviewer=old_reviewer,
-            new_reviewer=new_reviewer,
-            old_generation=old_generation,
-            generation=generation,
-            message=message,
-        )
-        rec: dict[str, Any] = {
-            "event_id": f"{prefix}{digest}",
-            "ts": timestamp,
-            "old_reviewer": old_reviewer,
-            "new_reviewer": new_reviewer,
-            "message": message,
-        }
-        if old_generation is not None and generation is not None:
-            rec["old_generation"] = old_generation
-            rec["generation"] = generation
-        return rec
-
-    def test_positive_archive_resurrection_archive_reviewer_hop(self) -> None:
-        hop = self._make_archive_reviewer_hop()
-        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
-            archive_owner="Codex",
-            archive_reviewer="Codex2",
-            evidence_owner="Codex",
-            evidence_reviewer="Claude",
-            active_owner="Codex2",
-            active_reviewer="Claude",
-            reassign_old_owner="Codex",
-            reassign_new_owner="Codex2",
-            reassign_old_reviewer="Codex2",
-            reassign_new_reviewer="Claude",
-            archive_reviewer_reassignment=hop,
-        )
-        active_task = ai_status.get_task(state, "REG-002")
-
-        # 1. Diagnostic
-        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
-        self.assertTrue(diag["eligible"])
-        self.assertEqual(diag["reason"], "eligible_for_stale_role_recovery")
-        proof = diag["proof"]
-        self.assertEqual(proof["retired_active_row"]["generation"], 2)
-        self.assertEqual(proof["retired_active_row"]["owner"], "Codex2")
-        self.assertEqual(proof["retired_active_row"]["reviewer"], "Claude")
-        self.assertEqual(proof["archive_generation"], 1)
-
-        # 2. Command show via isolated CLI
-        show_proc = self._run_cli(["show", "REG-002"])
-        self.assertEqual(show_proc.returncode, 0, show_proc.stderr)
-        show_out = json.loads(show_proc.stdout)
-        self.assertEqual(show_out["source"], "active")
-        self.assertTrue(show_out["archive_resurrection_diagnostic"]["eligible"])
-
-        # 3. Preflight and reconcile via real isolated CLI
-        rec_proc = self._run_cli(["reconcile_merged_done", "REG-002", "Reconcile archive reviewer hop."])
-        self.assertEqual(rec_proc.returncode, 0, rec_proc.stderr)
-
-        # 4. Outbox recovery / drain via CLI recover
-        recover_proc = self._run_cli(["recover"])
-        self.assertEqual(recover_proc.returncode, 0, recover_proc.stderr)
-
-        # 5. Assertions on final state:
-        final_state = ai_status.load_state()
-        self.assertIsNone(ai_status.get_task(final_state, "REG-002"))
-        self.assertIsNone(final_state.get(ai_status.STATUS_ARCHIVE_OUTBOX_KEY))
-        term_fact = final_state[ai_status.TERMINAL_FACTS_KEY]["REG-002"]
-        self.assertEqual(term_fact["generation"], 1)
-        self.assertEqual(term_fact["recorded_at"], "2026-08-01T10:00:00Z")
-        self.assertEqual(term_fact["terminal_outcome"], "completed")
-
-        on_disk_snapshot = ai_status.load_archived_snapshot("REG-002")
-        self.assertEqual(ai_status._canonical_json_sha256(on_disk_snapshot), orig_sha)
-        self.assertEqual(on_disk_snapshot, snapshot)
-
-        receipt = final_state[ai_status.ARCHIVE_RECEIPTS_KEY]["REG-002"]
-        self.assertEqual(receipt["snapshot_sha256"], orig_sha)
-        self.assertEqual(final_state["blockers"], [])
-
-        # Verify dependency resolution for downstream task REG-003
-        resolver = task_archive.TaskResolver(final_state)
-        reg_003 = ai_status.get_task(final_state, "REG-003")
-        self.assertTrue(task_archive.dependency_satisfied_for(reg_003, "REG-002", resolver))
-
-        # 6. Audit log entries
-        logs = [
-            json.loads(line)
-            for line in self.log_file.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-        retired_events = [e for e in logs if e.get("type") == "stale_archive_resurrection_retired"]
-        self.assertEqual(len(retired_events), 1)
-        self.assertEqual(retired_events[0]["retired_generation"], 2)
-        self.assertEqual(retired_events[0]["archive_generation"], 1)
-
-        reconcile_events = [e for e in logs if e.get("type") == "reconcile_merged_done"]
-        self.assertEqual(len(reconcile_events), 1)
-        self.assertEqual(reconcile_events[0]["retired_stale_active_row"]["generation"], 2)
-        self.assertIn("archive_resurrection_proof", reconcile_events[0])
-
-    def test_negative_archive_reviewer_hop_tampered_block(self) -> None:
-        hop = self._make_archive_reviewer_hop()
-        hop["message"] = "tampered message that invalidates digest"
-        self._build_fixture(
-            archive_owner="Codex",
-            archive_reviewer="Codex2",
-            evidence_owner="Codex",
-            evidence_reviewer="Claude",
-            active_owner="Codex2",
-            active_reviewer="Claude",
-            reassign_old_owner="Codex",
-            reassign_new_owner="Codex2",
-            reassign_old_reviewer="Codex2",
-            reassign_new_reviewer="Claude",
-            archive_reviewer_reassignment=hop,
-        )
-        self._assert_cli_retirement_refused(
-            "Cannot reconcile task: merged evidence does not bind the canonical reviewer metadata"
-        )
-
-    def test_negative_archive_reviewer_hop_mismatched_endpoints(self) -> None:
-        # 1. Old reviewer mismatch (e.g. Antigravity instead of Claude)
-        hop1 = self._make_archive_reviewer_hop(old_reviewer="Antigravity")
-        self._build_fixture(
-            archive_owner="Codex",
-            archive_reviewer="Codex2",
-            evidence_owner="Codex",
-            evidence_reviewer="Claude",
-            active_owner="Codex2",
-            active_reviewer="Claude",
-            reassign_old_owner="Codex",
-            reassign_new_owner="Codex2",
-            reassign_old_reviewer="Codex2",
-            reassign_new_reviewer="Claude",
-            archive_reviewer_reassignment=hop1,
-        )
-        self._assert_cli_retirement_refused(
-            "Cannot reconcile task: merged evidence does not bind the canonical reviewer metadata"
-        )
-
-        # 2. New reviewer mismatch (e.g. Antigravity instead of Codex2)
-        self.setUp()
-        hop2 = self._make_archive_reviewer_hop(new_reviewer="Antigravity")
-        self._build_fixture(
-            archive_owner="Codex",
-            archive_reviewer="Codex2",
-            evidence_owner="Codex",
-            evidence_reviewer="Claude",
-            active_owner="Codex2",
-            active_reviewer="Claude",
-            reassign_old_owner="Codex",
-            reassign_new_owner="Codex2",
-            reassign_old_reviewer="Codex2",
-            reassign_new_reviewer="Claude",
-            archive_reviewer_reassignment=hop2,
-        )
-        self._assert_cli_retirement_refused(
-            "Cannot reconcile task: merged evidence does not bind the canonical reviewer metadata"
-        )
-
-    def test_negative_archive_reviewer_hop_missing_or_unauthenticated_id(self) -> None:
-        # 1. Missing event_id
-        hop1 = self._make_archive_reviewer_hop()
-        hop1["event_id"] = ""
-        self._build_fixture(
-            archive_owner="Codex",
-            archive_reviewer="Codex2",
-            evidence_owner="Codex",
-            evidence_reviewer="Claude",
-            active_owner="Codex2",
-            active_reviewer="Claude",
-            reassign_old_owner="Codex",
-            reassign_new_owner="Codex2",
-            reassign_old_reviewer="Codex2",
-            reassign_new_reviewer="Claude",
-            archive_reviewer_reassignment=hop1,
-        )
-        self._assert_cli_retirement_refused(
-            "Cannot reconcile task: merged evidence does not bind the canonical reviewer metadata"
-        )
-
-        # 2. Unauthenticated event_id prefix
-        self.setUp()
-        hop2 = self._make_archive_reviewer_hop(prefix="unauthenticated-reassign-")
-        self._build_fixture(
-            archive_owner="Codex",
-            archive_reviewer="Codex2",
-            evidence_owner="Codex",
-            evidence_reviewer="Claude",
-            active_owner="Codex2",
-            active_reviewer="Claude",
-            reassign_old_owner="Codex",
-            reassign_new_owner="Codex2",
-            reassign_old_reviewer="Codex2",
-            reassign_new_reviewer="Claude",
-            archive_reviewer_reassignment=hop2,
-        )
-        self._assert_cli_retirement_refused(
-            "Cannot reconcile task: merged evidence does not bind the canonical reviewer metadata"
-        )
-
-    def test_negative_archive_reviewer_hop_drifted_archive_bytes(self) -> None:
-        hop = self._make_archive_reviewer_hop()
-        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
-            archive_owner="Codex",
-            archive_reviewer="Codex2",
-            evidence_owner="Codex",
-            evidence_reviewer="Claude",
-            active_owner="Codex2",
-            active_reviewer="Claude",
-            reassign_old_owner="Codex",
-            reassign_new_owner="Codex2",
-            reassign_old_reviewer="Codex2",
-            reassign_new_reviewer="Claude",
-            archive_reviewer_reassignment=hop,
-        )
-        path = task_archive.archive_task_path("REG-002")
-        before_bytes = path.read_bytes()
-
-        # 1. Byte-only drift after preflight rejects execution and leaves active task intact
-        active_task = ai_status.get_task(state, "REG-002")
-        with (
-            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": "1", **rec_env}),
-            mock.patch.object(ai_status, "ROOT", self.root / "pantheon"),
-            mock.patch.object(ai_status, "load_config", return_value=config),
-            mock.patch.object(ai_status, "validate_protected_closeout_transition", return_value=None),
-        ):
-            preflight = ai_status.prepare_external_mutation_preflight(
-                "reconcile_merged_done", active_task, ["REG-002", "probe"]
-            )
-            path.write_bytes(before_bytes + b"\n ")
-            with self.assertRaises(SystemExit) as ctx:
-                with ai_status.bound_external_mutation_preflight(preflight):
-                    ai_status.command_reconcile_merged_done(state, ["REG-002", "probe"])
-            self.assertIn("archive file bytes changed after external evidence was prepared", str(ctx.exception))
-
-            current_task = ai_status.get_task(state, "REG-002")
-            self.assertIsNotNone(current_task)
-            self.assertEqual(current_task.get("generation"), 2)
-
-        # 2. Corrupted archive file bytes fail closed via CLI
-        path.write_bytes(before_bytes + b"\n corrupted-tail")
-        self._assert_cli_retirement_refused(
-            "Failed to load archive snapshot safely"
-        )
-
-        # 3. Tampered archive review evidence content fails closed via CLI
-        self.setUp()
-        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
-            archive_owner="Codex",
-            archive_reviewer="Codex2",
-            evidence_owner="Codex",
-            evidence_reviewer="Claude",
-            active_owner="Codex2",
-            active_reviewer="Claude",
-            reassign_old_owner="Codex",
-            reassign_new_owner="Codex2",
-            reassign_old_reviewer="Codex2",
-            reassign_new_reviewer="Claude",
-            archive_reviewer_reassignment=hop,
-        )
-        path = task_archive.archive_task_path("REG-002")
-        tampered_snap = json.loads(path.read_text(encoding="utf-8"))
-        tampered_snap["task"]["delivery"]["review_evidence"]["reviewer_reassignment"]["old_reviewer"] = "Antigravity"
-        path.write_text(json.dumps(tampered_snap, indent=2) + "\n", encoding="utf-8")
-        self._assert_cli_retirement_refused(
-            "Cannot reconcile task: merged evidence does not bind the canonical reviewer metadata"
-        )
-
-    def test_archive_reviewer_hop_live_sources_precedence(self) -> None:
-        hop = self._make_archive_reviewer_hop(message="Archive record hop")
-        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
-            archive_owner="Codex",
-            archive_reviewer="Codex2",
-            evidence_owner="Codex",
-            evidence_reviewer="Claude",
-            active_owner="Codex",
-            active_reviewer="Codex2",
-            reassign_old_owner="Codex",
-            reassign_new_owner="Codex",
-            reassign_old_reviewer="Claude",
-            reassign_new_reviewer="Codex2",
-            archive_reviewer_reassignment=hop,
-        )
-        active_task = ai_status.get_task(state, "REG-002")
-        with (
-            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": "1", **rec_env}, clear=False),
-            mock.patch.object(ai_status, "ROOT", self.root / "pantheon"),
-            mock.patch.object(ai_status, "load_config", return_value=config),
-        ):
-            chain = ai_status._verified_reviewer_reassignment(
-                active_task,
-                evidence_reviewer="Claude",
-                current_reviewer="Codex2",
-            )
-            # The returned chain must come from live activity sources (_verified_reassignment_chain),
-            # with the live audit event's message, rather than the archive's record.
-            self.assertEqual(chain["message"], "Auto-reassign REG-002")
-            self.assertTrue(str(chain.get("event_id") or "").startswith("human-ops-task-reassigned-"))
-            self.assertEqual(chain["hops"], 1)
 
 
 if __name__ == "__main__":

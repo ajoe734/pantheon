@@ -1017,3 +1017,15 @@ def test_build_live_config_retains_declared_task_pr_status_checks(tmp_path):
         "Runtime mirror guard",
         "Smoke acceptance",
     ]
+
+
+def test_shipped_repo_config_has_no_coordination_integration_path() -> None:
+    config_source = Path(__file__).resolve().parents[1] / ".orchestrator" / "config.json"
+    data = json.loads(config_source.read_text(encoding="utf-8"))
+    repositories = data.get("coordination", {}).get("repositories", {})
+    assert repositories, "expected coordination.repositories in shipped config"
+    for name, repo_entry in repositories.items():
+        assert (
+            "integration_path" not in repo_entry
+        ), f"repository {name} must not declare integration_path in repo config"
+

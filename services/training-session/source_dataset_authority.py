@@ -148,6 +148,7 @@ def materialize_source_dataset_version(
     output_root: str | Path,
     trusted_now: datetime,
     max_readback_age_seconds: int = 300,
+    clock: Callable[[], datetime] | None = None,
 ) -> MaterializedDatasetVersion:
     """Resolve one terminal source run into an evaluator-compatible DatasetVersion.
 
@@ -158,7 +159,13 @@ def materialize_source_dataset_version(
 
     if not callable(http_get):
         raise SourceDatasetAuthorityError("http_get must be callable")
-    now = _trusted_utc(trusted_now)
+    fixed_now = _trusted_utc(trusted_now)
+
+    def observe_now() -> datetime:
+        # Remote data is produced during the request, so a live clock is
+        # sampled after each completed read; an explicit trusted_now stays fixed.
+        return _trusted_utc(clock()) if clock is not None else fixed_now
+
     age_limit = _strict_int(
         max_readback_age_seconds,
         "max_readback_age_seconds",
@@ -177,7 +184,7 @@ def materialize_source_dataset_version(
         readback,
         connector_id=connector,
         dataset_id=dataset,
-        trusted_now=now,
+        trusted_now=observe_now(),
         max_age_seconds=age_limit,
     )
 
@@ -199,7 +206,7 @@ def materialize_source_dataset_version(
         connector_id=connector,
         desired_dataset_id=dataset_resolution["desired_dataset_id"],
         normalized_targets=set(dataset_resolution["normalized_targets"]),
-        trusted_now=now,
+        trusted_now=observe_now(),
     )
     run_url = f"{base_url}/api/source-ingest/jobs/{urllib.parse.quote(run_id, safe='')}"
     run_payload = _http_get_object(http_get, run_url, "source ingest run")
@@ -210,7 +217,7 @@ def materialize_source_dataset_version(
         storage_manifest=storage_manifest,
         expected_last_success_at=health_success_at,
         expected_normalized_count=health_row_count,
-        trusted_now=now,
+        trusted_now=observe_now(),
     )
 
     bundles_url = f"{base_url}/api/source-ingest/evidence/bundles"
@@ -219,7 +226,7 @@ def materialize_source_dataset_version(
         bundles_payload,
         connector_id=connector,
         run_id=run_id,
-        trusted_now=now,
+        trusted_now=observe_now(),
     )
     for binding in evidence_bindings:
         bundle_id = str(binding["evidence_bundle_id"])
@@ -235,7 +242,7 @@ def materialize_source_dataset_version(
         normalized_targets=set(dataset_resolution["normalized_targets"]),
         run_id=run_id,
         expected_market=market,
-        trusted_now=now,
+        trusted_now=observe_now(),
         features_required=_connector_declares_features(connector_readback),
     )
     records = storage["records"]

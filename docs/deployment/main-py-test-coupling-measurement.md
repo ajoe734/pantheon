@@ -1,5 +1,7 @@
 # main.py 測試耦合殘量量測
 
+Status: historical measurement at origin/dev 23934f89f; not a plan and proposes no tasks. Superseded by the live AST gate services/control-plane/bff/tests/test_bff_test_architecture.py and its inventory services/control-plane/bff/tests/bff_test_architecture_inventory.json (BFF-TEST-MIGRATION-GATE-CORRECTIVE-001, PR #5864), which branch CI runs.
+
 量測基準：`origin/dev` 23934f89f（V2 writer_order 第 9 步 merge 後），main.py 20,356 行。
 
 ## 這份文件是什麼

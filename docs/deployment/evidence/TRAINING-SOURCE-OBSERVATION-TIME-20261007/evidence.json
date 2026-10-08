@@ -1,0 +1,7 @@
+{
+  "task_id": "TRAINING-SOURCE-OBSERVATION-TIME-20261007",
+  "diagnosis": "GHA 37670329561 L4 rejected 'controller readback captured_at is in the future': trusted_now was taken before the HTTP materialization, while the controller readback captured_at is produced during the request.",
+  "fix": "materialize_source_dataset_version accepts an optional live clock sampled after each completed remote read; explicit trusted_now stays fixed when no clock is given. Future/stale/digest/auth checks unchanged.",
+  "tests": "tests/test_source_dataset_authority.py (+live clock positive and truly-future negative), test_teaching_evaluation_readback.py, test_evaluation_authority.py: 79 passed",
+  "pending": "exact-head independent review, CI, and the original protected dev L1-L12 gate remain outstanding"
+}

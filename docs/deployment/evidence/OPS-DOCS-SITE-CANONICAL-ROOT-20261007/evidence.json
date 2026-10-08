@@ -1,0 +1,76 @@
+{
+  "task_id": "OPS-DOCS-SITE-CANONICAL-ROOT-20261007",
+  "base_commit": "754aba1400a12c72e76df1c9235300231ef172c1",
+  "change_class": "corrective",
+  "net_prod_line_budget": 8,
+  "validation": {
+    "test_human_ops_status": {
+      "command": "python -m pytest -q scripts/test_human_ops_status.py",
+      "base": "4 passed in 1.73s",
+      "head": "8 passed in 6.79s"
+    },
+    "test_dashboard_server": {
+      "command": "python -m pytest -q scripts/test_dashboard_server.py",
+      "base": "2 failed, 24 passed, 10 subtests passed (pre-existing review_gate validation in load_config)",
+      "head": "2 failed, 24 passed, 10 subtests passed (0 new failures, unchanged)"
+    },
+    "test_dashboard_autostart": {
+      "command": "python -m pytest -q scripts/test_dashboard_autostart.py",
+      "base": "3 passed in 1.15s",
+      "head": "3 passed in 1.16s"
+    },
+    "test_component_boundary": {
+      "command": "python -m pytest -q scripts/test_component_boundary.py",
+      "base": "11 passed, 10 subtests passed in 3.37s",
+      "head": "11 passed, 10 subtests passed in 3.42s"
+    },
+    "HumanOpsStatusWrapperTests": {
+      "command": "PYTHONPATH=.orchestrator python -m unittest scripts.test_ai_status.HumanOpsStatusWrapperTests",
+      "base": "Ran 1 test in 0.020s, OK",
+      "head": "Ran 1 test in 0.021s, OK"
+    },
+    "test_human_ops_cli_reopen_reaches_one_worker_through_fresh_scheduler": {
+      "command": "PYTHONPATH=.orchestrator python -m unittest test_supervisor_recovery_process_e2e.SupervisorRecoveryProcessE2ETests.test_human_ops_cli_reopen_reaches_one_worker_through_fresh_scheduler",
+      "base": "Ran 1 test in 16.477s, OK",
+      "head": "Ran 1 test in 10.377s, OK"
+    },
+    "bash_syntax_check": {
+      "command": "bash -n scripts/launch-docs-site.sh scripts/human-ops-status.sh scripts/canonical-task-state-binding.sh",
+      "base": "exit 0 (scripts/launch-docs-site.sh scripts/human-ops-status.sh)",
+      "head": "exit 0 (all three scripts pass syntax check)"
+    },
+    "diff_budget": {
+      "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD --change-class corrective --budget 8",
+      "base_table": "| class | added | deleted | net |\n|---|---|---|---|\n| production | +0 | -0 | +0 |\n| test | +0 | -0 | +0 |\n| docs/evidence | +0 | -0 | +0 |",
+      "head_table": "| class | added | deleted | net |\n|---|---|---|---|\n| production | +46 | -58 | -12 |\n| test | +141 | -1 | +140 |\n| docs/evidence | +97 | -7 | +90 |",
+      "production_net": -12,
+      "budget": 8,
+      "within_budget": true
+    },
+    "base_replay": {
+      "case_a_canonical_root_from_live_config": {
+        "description": "Live config present under temp deploy root; wrong PANTHEON_STATUS_ROOT set.",
+        "base_result": "FAILED: launcher did not pass --repo-root to dashboard_server.py",
+        "head_result": "PASSED: launcher passed --repo-root <canonical_root> and unsets PANTHEON_TASK_STATE_STORE_MODE"
+      },
+      "case_d_sync_state_not_run": {
+        "description": "Ensure launcher does not execute background sync-state.sh.",
+        "base_result": "FAILED: sync-state.sh was invoked in background and wrote sync-marker",
+        "head_result": "PASSED: no sync-marker created after 2s wait"
+      }
+    }
+  },
+  "temp_paths_used": {
+    "deploy_root": "<tmpdir>/deploy, <tmpdir>/deploy-empty, <tmpdir>/deploy-bad, <tmpdir>/current account deploy",
+    "live_config": "<tmpdir>/deploy/runtime/live-supervisor-mainroot-config.json, <tmpdir>/isolated-config.json",
+    "live_environment_untouched": true
+  },
+  "out_of_scope": [
+    "Pre-existing live-config default copies in sync-dev-root.sh, bootstrap-orchestrator-runtime.sh, auto_integrator.py and promote_supervisor_runtime.py",
+    "docs-site/js/dashboard-config.js fetching planning-state.json, which nothing produces",
+    "Registering dashboard scripts themselves in component-boundary.yaml",
+    "The stale sentence in dashboard-autostart-persistence.md lines 26-28 claiming dev root deployment performs installation",
+    "The ./scripts/sync-state.sh lines in AI_COLLABORATION_GUIDE.md command examples at lines 425 and 465",
+    "The /__refresh subprocess branch in dashboard_server.py, which is unreachable for any dev checkout"
+  ]
+}

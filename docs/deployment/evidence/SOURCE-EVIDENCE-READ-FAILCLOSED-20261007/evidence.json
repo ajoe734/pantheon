@@ -1,0 +1,22 @@
+{
+  "task_id": "SOURCE-EVIDENCE-READ-FAILCLOSED-20261007",
+  "change_class": "corrective",
+  "summary": "Fail closed instead of stale Source evidence cache fallback on PostgreSQL read query failures.",
+  "diagnosis": "PR 6320 introduced _fetch_records catching any exception and returning None, with read helpers falling back to private startup in-memory bootcache. When PostgreSQL connection or query failed, this silently served stale evidence from boot instead of failing closed, violating trustworthy evidence read guarantees and potentially masking database outages or serving outdated payloads.",
+  "fix": "Remove silent bootcache fallback on Postgres read query failures in PostgresSourceEvidenceRepository (_read_one, _read_many, _read_by_dedupe). Raise sanitized RuntimeError('PostgreSQL evidence query failed: <ExceptionType>') from None to prevent DSN or secret exposure while ensuring all queries fail closed. API server returns 503 instead of 200 with stale cache when PostgreSQL fails.",
+  "acceptance_verification": {
+    "ac1_fail_closed_no_stale_cache": "passed: any PostgreSQL connection or query failure raises sanitized RuntimeError without DSN/secret exposure; _read_one, _read_many, and _read_by_dedupe fail closed and do not return startup cache",
+    "ac2_cross_process_visibility_preserved": "passed: two independent PostgreSQL instances verify cross-process visibility for source records, items, bundles, and knowledge objects without restart; update/reread/restart and tenant isolation preserved",
+    "ac3_adversarial_api_proof": "passed: adversarial test with loaded bootcache and dropped DB table verifies API returns 503 and cannot return HTTP 200 with stale evidence payload; typed SQL fake exceptions unit test passes",
+    "ac4_l4_authority_intact": "passed: no mandatory L4 source authority, freshness, checksum, or uniqueness weakening; no artificial evidence or manual workaround",
+    "ac5_focused_actual_pg_tests": "passed: 49 tests passed 0 skipped across test_pg_store.py, test_postgres_store.py, and test_service.py against real PostgreSQL; production net diff +1 line <= 45 net budget"
+  },
+  "verification": {
+    "commands": [
+      "TEST_DATABASE_URL=\"postgresql://postgres:postgres@127.0.0.1:25432/postgres\" .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/test_pg_store.py",
+      "TEST_DATABASE_URL=\"postgresql://postgres:postgres@127.0.0.1:25432/postgres\" .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/test_postgres_store.py",
+      "TEST_DATABASE_URL=\"postgresql://postgres:postgres@127.0.0.1:25432/postgres\" .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/test_service.py"
+    ],
+    "result": "passed (7 pg_store tests, 14 postgres_store tests, 28 service tests passed; 49 passed, 0 skipped, 0 failures)"
+  }
+}

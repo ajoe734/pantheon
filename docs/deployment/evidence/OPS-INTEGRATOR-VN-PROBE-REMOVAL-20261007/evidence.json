@@ -1,0 +1,91 @@
+{
+  "task_id": "OPS-INTEGRATOR-VN-PROBE-REMOVAL-20261007",
+  "title": "Remove the auto-integrator -vN PR probe so PR lookup follows only the bound head branch",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "change_class": "simplify",
+  "summary": "Removed redundant -vN superseding PR probe from scripts/git/auto_integrator.py. PR lookup now strictly follows the authoritative head branch and canonical task branch fallback without unprompted iteration over task/<id>-v2..v20. Deleted AmbiguousPullRequests handler on merged lookup in integrate_candidate since merged lookup can no longer raise ambiguity.",
+  "step_0_measurement": {
+    "procedure": "Invoked auto_integrator.fetch_pr_for_task directly with FakeRunner(pr=None, merged_pr=None) for candidate ABC-001 (branch task/ABC-001) for state in ('open', 'merged'). Counted commands starting with ['gh', 'pr', 'list'].",
+    "before_edit": {
+      "unbound": {
+        "open": 20,
+        "merged": 20,
+        "total": 40
+      },
+      "bound_v2": {
+        "open": 21,
+        "merged": 21,
+        "total": 42
+      }
+    },
+    "after_edit": {
+      "unbound": {
+        "open": 1,
+        "merged": 1,
+        "total": 2
+      },
+      "bound_v2": {
+        "open": 2,
+        "merged": 2,
+        "total": 4
+      }
+    }
+  },
+  "base_failure_regression_test": {
+    "test_name": "BoundHeadBranchPrLookupTests.test_unbound_versioned_pr_is_not_probed",
+    "description": "Verifies that an unbound candidate with no PR on its canonical branch does not discover an unbound -v2 PR and returns None with only one gh pr list command per state.",
+    "unmodified_base_result": "FAIL (failures=1)",
+    "traceback": "Traceback (most recent call last):\n  File \"scripts/git/test_auto_integrator.py\", in test_unbound_versioned_pr_is_not_probed\n    self.assertIsNone(pr)\nAssertionError: {'number': 7, 'headRefName': 'task/ABC-001-v2'} is not None"
+  },
+  "validation_commands": {
+    "a": {
+      "command": "PYTHONPATH=.orchestrator python3 -m unittest scripts/git/test_auto_integrator.py scripts/git/test_task_review_merge_gate.py",
+      "passed_tests": 288,
+      "exit_code": 0,
+      "result": "Ran 288 tests in 23.939s, OK"
+    },
+    "b": {
+      "command": "PYTHONPATH=.orchestrator python3 -m unittest test_worker_runner -k test_versioned_replacement_branches_of_the_leased_task_are_writable",
+      "passed_tests": 1,
+      "exit_code": 0,
+      "result": "Ran 1 test in 0.282s, OK"
+    },
+    "c": {
+      "command": "PYTHONPATH=.orchestrator python3 -m unittest test_supervisor -k test_routine_resume_prefers_fixed_versioned_workspace_over_old_branch -k test_routine_resume_does_not_adopt_foreign_branch_or_dirty_version -k test_planned_drain_recovers_original_and_versioned_workspace_wip",
+      "passed_tests": 3,
+      "exit_code": 0,
+      "result": "Ran 3 tests in 3.225s, OK"
+    },
+    "d": {
+      "command": "PYTHONPATH=.orchestrator python3 -m unittest scripts/test_ai_status.py -k test_collect_done_accepts_approved_replacement_branch_of_the_task -k test_collect_done_rejects_approved_branch_of_another_task",
+      "passed_tests": 2,
+      "exit_code": 0,
+      "result": "Ran 2 tests in 0.036s, OK"
+    },
+    "e": {
+      "command": "PYTHONPATH=.orchestrator python3 -m unittest scripts/git/test_task_review_merge_gate.py -k test_concurrent_open_prs_for_one_task_branch_fail_closed -k test_versioned_replacement_branch_allowed_with_bound_approval -k test_versioned_replacement_branch_rejects_approval_for_other_branch -k test_non_numeric_version_suffix_blocks",
+      "passed_tests": 4,
+      "exit_code": 0,
+      "result": "Ran 4 tests in 0.002s, OK"
+    }
+  },
+  "kept_vn_rule_sites": {
+    "scripts/git/auto_integrator.py": [
+      "is_versioned_task_branch (~1093-1096)",
+      "validate_pr (~1175-1187)"
+    ],
+    ".orchestrator/common.py": [
+      "task_branch_matches (~1046-1050)"
+    ],
+    ".orchestrator/worker_runner.py": [
+      "protected replacement branches (~388-399)"
+    ],
+    "scripts/ai_status.py": [
+      "delivery replacement branch validation (~2996-3004)"
+    ],
+    "scripts/git/task_review_merge_gate.py": [
+      "PR replacement head branch check (~982-993)"
+    ]
+  }
+}

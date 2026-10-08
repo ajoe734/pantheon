@@ -1,5 +1,7 @@
 # Staging-Live Topology
 
+Status: partly historical. The VM Inventory, Current Pantheon Layout, Firewall and Ingress Status and Useful Checks sections describe the retired projects pantheon-lupin-dev-20260719 (dev) and pantheon-benjamin-20260528 (staging); every VM, public IP, sslip.io host, /home/lupin path and gcloud/ssh command in them belongs to those projects, and 104.155.223.192 has since been reassigned to a third party; do not deploy to or probe any of them. The Separation Rules, BFF HA/LB Boundary and Compose Contract Verification sections remain the staging design intent. The current dev identity is recorded only in [vm-dev-staging-prod-management-plan.md § 3.1](vm-dev-staging-prod-management-plan.md); § 3.2 records that staging has no VM.
+
 Status date: 2026-08-25
 
 For the current VS Code / LLM agent workflow, also read:
@@ -9,7 +11,7 @@ For the current VS Code / LLM agent workflow, also read:
 
 ## VM Inventory
 
-Active dev GCP project: `pantheon-lupin-dev-20260719`.
+The former dev GCP project `pantheon-lupin-dev-20260719` is retired. The current dev identity is recorded only in [vm-dev-staging-prod-management-plan.md § 3.1](vm-dev-staging-prod-management-plan.md).
 
 The prior shared project `pantheon-benjamin-20260528` is suspended. Its
 staging-live inventory below is retained as the last known topology, but those
@@ -24,13 +26,11 @@ production environments have already been provisioned.
 
 | VM | Zone | Public endpoint | Internal endpoint carried by repo vars | Role |
 | --- | --- | --- | --- | --- |
-| `pantheon-lupin-dev` | `asia-east1-b` | `35.201.204.12` | VM-local BFF `127.0.0.1:18001` | active replacement dev backend and Pantheon-owned FE target |
+| `pantheon-lupin-dev` | `asia-east1-b` | `35.201.204.12` | VM-local BFF `127.0.0.1:18001` | retired dev VM; historical |
 | `pantheon-lupin-staging-control` | `asia-east1-b` | `104.155.223.192` | VM-local BFF `127.0.0.1:38001` | historical staging VM1; suspended project |
 | `pantheon-lupin-staging-exec` | `asia-east1-b` | no public BFF endpoint | runtime-manager `10.50.0.21:28081` | historical staging VM2; suspended project |
 
-Read active dev machine and network inventory from `gcloud compute instances
-list --project=pantheon-lupin-dev-20260719`. Do not reuse the suspended-project
-dev IP `35.201.239.38` as current topology truth.
+Do not read dev inventory from either retired project and do not reuse their dev IPs `35.201.204.12` or `35.201.239.38` as current topology truth.
 
 ## Current Pantheon Layout
 

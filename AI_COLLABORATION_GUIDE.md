@@ -538,9 +538,14 @@ accepting it. In order:
 1. `--dependency-python`
 2. `$PANTHEON_DEPENDENCY_PYTHON` — **this is the one that normally answers for
    an auto worker.** The supervisor exports `worker_runtime.dependency_python`,
-   a shared venv that `sync-dev-root.sh` builds from `scripts/dev/worker-test-requirements.txt`
-   (the same packages the Smoke acceptance CI job installs). Do not build your
-   own venv or `pip install` into `/usr/bin/python3` when it is set.
+   a shared venv that `sync-dev-root.sh` builds via `ensure_worker_test_python.py`
+   from the builder's `REQUIREMENTS`, which include the base Research runtime
+   (`QuantLib`). The exact Research runtime pins therefore also fix shared packages
+   such as `fastapi`, `uvicorn`, `pydantic` and `asyncpg` in that interpreter, so
+   a future pin conflict shows up as a failed builder run at promotion. Scientific
+   framework locks such as `vectorbt` and `statsmodels` stay in their own isolated
+   environments. Do not build your own venv or `pip install` into `/usr/bin/python3`
+   when it is set.
 3. the interpreter you ran the script with
 4. `$VIRTUAL_ENV`
 5. `<checkout>/.venv`
@@ -643,6 +648,9 @@ Do not use `done` as the reviewer.
 
 The internal collaboration panel lives at `docs-site/index.html`.
 
+The canonical status root comes from the live supervisor config, and the
+dashboard serves its own checkout only when no live config exists.
+
 Start it locally with:
 
 ```bash
@@ -659,11 +667,11 @@ The dashboard renders:
 - sprint snapshot
 - recent activity
 
-If the panel looks stale:
-
-```bash
-bash scripts/sync-state.sh
-```
+A stale panel means checking, with ps, that the running dashboard_server.py
+--repo-root is the canonical status root, and that the fleet is writing (the
+supervisor is healthy and the data files' mtimes are recent). A checkout
+without a live config shows only its own committed projection, and nothing
+refreshes it.
 
 ## 7. Prompt Prefix
 

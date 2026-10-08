@@ -497,6 +497,30 @@ def test_future_controller_readback_fails_closed(tmp_path: Path) -> None:
         _materialize(case)
 
 
+def test_live_clock_is_sampled_after_delayed_readback(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    case = _make_case(tmp_path)
+    readback = case.responses[f"{BASE_URL}/api/source-ingest/controller/readback"]
+    readback["captured_at"] = "2026-07-15T12:00:01Z"
+    kwargs = dict(
+        http_get=case.get,
+        source_api_url=BASE_URL,
+        connector_id=CONNECTOR_ID,
+        dataset_id=DATASET_ID,
+        source_volume_root=case.source_root,
+        output_root=case.output_root,
+        trusted_now=NOW,
+    )
+
+    AUTHORITY.materialize_source_dataset_version(clock=lambda: NOW + timedelta(seconds=2), **kwargs)
+    readback["captured_at"] = "2026-07-15T12:00:03Z"
+    with pytest.raises(SourceDatasetAuthorityError, match="future"):
+        AUTHORITY.materialize_source_dataset_version(
+            clock=lambda: NOW + timedelta(seconds=2), **kwargs
+        )
+
+
 def test_catalog_transport_timeout_is_surfaced_without_fallback(tmp_path: Path) -> None:
     case = _make_case(tmp_path)
     catalog_url = f"{BASE_URL}/api/source-ingest/data-sources/financial-catalog"

@@ -1,0 +1,31 @@
+{
+  "task_id": "RUNTIME-BINDING-TENANT-SCOPE-20261007",
+  "reproduction": {
+    "acceptance": [
+      1
+    ],
+    "result": "reproduced",
+    "method": "test_runtime_binding_tenant_scope.py deploys through the real runtime-manager Flask app (real deploy_authority verifier over fixture owners) and lists /api/runtime-bindings, then applies management_service._mgmt_nl_filter_tenant_records. Before the fix the tenant-scoped filter returned [] for a binding whose plan is owned by the tenant.",
+    "cause": "8defb6fd9 made the filter drop tenantless rows; RuntimeBinding rows never carried a tenant, so every tenant saw zero runtime bindings."
+  },
+  "production_fixes": [
+    {
+      "acceptance": [
+        2
+      ],
+      "classification": "real regression fixed in production code",
+      "fix": "deploy_authority reports the canonical DeploymentPlan metadata.tenant_id; runtime-manager main._canonicalize_deploy_body stamps it as binding metadata.tenant_id (caller-supplied tenant is discarded; plan without tenant stays tenantless, nothing guessed); main._stamp_parent_tenant drops any caller tenant_id from promote metadata / rollback replacement_metadata and sets it from the parent binding (tenantless parent stays tenantless)",
+      "test": "services/control-plane/bff/tests/test_runtime_binding_tenant_scope.py"
+    }
+  ],
+  "changed_test_expectations": [],
+  "verification": {
+    "new_tests": "4 passed (deploy, tenantless, rollback, promote); rollback and promote tests fail without the fix",
+    "services/runtime-manager": "224 passed excluding test_stage_promotion_compose.py (2 pre-existing unrelated compose failures, identical on clean tree)",
+    "bff": "BFF code is unchanged; a bounded run hit one unrelated failure (test_journal_runtime_contract factory_unavailable) in code this task does not touch; the full -k 'management or runtime' selection exceeded the 10 minute bound and is not claimed as passed"
+  },
+  "known_gaps": [
+    "Existing persisted bindings stay tenantless; no tenant is guessed or backfilled.",
+    "Not verified on hosted."
+  ]
+}

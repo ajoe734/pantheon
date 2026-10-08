@@ -75,6 +75,8 @@ TERM, installs the V2 config, and launches the exact runtime.
 
 ## Install
 
+The user-systemd watchdog timer fires on the wall-clock minute (`OnCalendar=*-*-* *:*:00`), ensuring it reschedules after a reboot even if the watchdog service never ran. Watchdog installation enables and restarts the timer immediately so updated scheduling takes effect without waiting for the next trigger.
+
 Preferred install:
 
 ```bash
