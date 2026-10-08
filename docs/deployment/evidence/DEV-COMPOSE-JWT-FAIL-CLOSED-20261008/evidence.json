@@ -2,52 +2,168 @@
   "task_id": "DEV-COMPOSE-JWT-FAIL-CLOSED-20261008",
   "change_class": "corrective",
   "net_prod_line_budget": 5,
-  "summary": "Make docker-compose.yml governance and operator-bff PANTHEON_GOVERNANCE_JWT_SECRET fail closed (empty when unset), document explicit secret in .env.example, fix test_stage_promotion_compose.py expectations to match canonical fail-closed compose and consolidated deploy helper, and verify rendered compose for dev profiles.",
+  "summary": "Make all docker-compose.yml JWT secrets fail closed (empty when unset) without published default secrets, align signer and verifier resolution chains to use service-specific variable falling back to shared PANTHEON_DEV_BFF_JWT_SECRET, document explicit secret in .env.example, fix test_stage_promotion_compose.py expectations to match canonical fail-closed compose and consolidated deploy helper, assert no literal defaults in compose JWT secrets, and verify rendered compose for dev profiles in both unset and supplied states.",
   "acceptance_criteria": {
-    "ac1_fail_closed": "No service in docker-compose.yml verifies or signs JWTs with a published default secret; PANTHEON_GOVERNANCE_JWT_SECRET for governance and operator-bff resolves only from explicit environment and is empty (fail closed) when unset.",
+    "ac1_fail_closed": "No service in docker-compose.yml verifies or signs JWTs with a published default secret; all 8 JWT secrets across all services (TRAINING_SESSION_JWT_SECRET, PANTHEON_RUNTIME_JWT_SECRET, PANTHEON_GOVERNANCE_JWT_SECRET, PANTHEON_TELEMETRY_JWT_SECRET, PANTHEON_BFF_JWT_SECRET, PANTHEON_CAPITAL_JWT_SECRET, PANTHEON_REGISTRY_JWT_SECRET, PERSONA_JWT_SECRET, PANTHEON_MEMORY_JWT_SECRET, CAPITAL_JWT_SECRET, PANTHEON_DEPLOYMENT_JWT_SECRET) resolve only from explicit environment or the shared dev secret PANTHEON_DEV_BFF_JWT_SECRET, and are empty (fail closed) when unset.",
     "ac2_env_example": "Local full-stack reproduction that needs the secret gets it from explicit environment documented in .env.example; nothing in the repository supplies a usable default JWT secret.",
-    "ac3_test_passed": "services/runtime-manager/test_stage_promotion_compose.py passes; the deploy canary test checks that every rollout path in scripts/deploy_nonprod_vm.sh goes through with_dev_bff_runtime_env and that the helper sets PANTHEON_CANARY_EXECUTION_ENABLED=false instead of counting literal occurrences.",
+    "ac3_test_passed": "services/runtime-manager/test_stage_promotion_compose.py passes (4 passed); the deploy canary test checks that every rollout path in scripts/deploy_nonprod_vm.sh goes through with_dev_bff_runtime_env and that the helper sets PANTHEON_CANARY_EXECUTION_ENABLED=false; test_compose_jwt_secrets_fail_closed_without_literal_defaults asserts that all compose JWT secrets fail closed without literal defaults.",
     "ac4_deciding_commits_classified": "Each changed test expectation is classified in the evidence with its deciding commit (442327f5b added the published default and a4dcf76ce consolidated the deploy environment into the shared helper).",
-    "ac5_rendered_compose_dev_profiles": "Rendered compose for the dev profiles still starts governance and operator-bff with the secret the deploy script passes (PANTHEON_DEV_BFF_JWT_SECRET) and the evidence shows the rendered values with the secret redacted."
+    "ac5_rendered_compose_dev_profiles": "Rendered compose for the dev profiles shows all 14 JWT secret instances across all services resolve to empty string when unset (fail closed) and to the supplied secret when PANTHEON_DEV_BFF_JWT_SECRET is set as the deploy does, with secrets redacted."
   },
   "triage_classifications": {
     "test_dev_compose_wires_shared_jwt_verification_and_fail_closed_switches": {
       "file": "services/runtime-manager/test_stage_promotion_compose.py",
       "classification": "intended_change",
       "deciding_commit": "442327f5b",
-      "decision": "Commit 442327f5b introduced a fallback to a published default secret (pantheon-local-governance-jwt-secret) in docker-compose.yml for governance and operator-bff. The secret is now made fail-closed (${PANTHEON_GOVERNANCE_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}). The test expectation was updated from the stale 3b9336b0d assertion (${PANTHEON_BFF_JWT_SECRET:-}) to assert the canonical fail-closed expression without published defaults for both governance and operator-bff."
+      "decision": "Commit 442327f5b introduced a fallback to a published default secret (pantheon-local-governance-jwt-secret) in docker-compose.yml for governance and operator-bff. All compose JWT secrets are now made fail-closed (${VAR:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}). The test expectation was updated to assert canonical fail-closed expressions without published defaults."
     },
     "test_dev_deploy_script_explicitly_keeps_canary_disabled": {
       "file": "services/runtime-manager/test_stage_promotion_compose.py",
       "classification": "intended_change",
       "deciding_commit": "a4dcf76ce",
       "decision": "Commit a4dcf76ce consolidated the dev deployment runtime environment into the shared with_dev_bff_runtime_env helper, eliminating duplicate inline environment exports and leaving exactly 1 occurrence of PANTHEON_CANARY_EXECUTION_ENABLED=false in scripts/deploy_nonprod_vm.sh. The test was updated to verify that with_dev_bff_runtime_env explicitly sets PANTHEON_CANARY_EXECUTION_ENABLED=false and that each dev rollout path (root and bff) executes through with_dev_bff_runtime_env."
+    },
+    "test_compose_jwt_secrets_fail_closed_without_literal_defaults": {
+      "file": "services/runtime-manager/test_stage_promotion_compose.py",
+      "classification": "intended_change",
+      "deciding_commit": "operator_pre_review_pr_6385",
+      "decision": "Added regression assertion to ensure all *_JWT_SECRET environment variables across all services in docker-compose.yml fail closed with empty defaults (':-') and do not contain literal default secrets (such as published 'pantheon-local-*' credentials)."
     }
   },
   "rendered_compose_verification": {
     "profile": "root",
     "unset_environment": {
+      "capital": {
+        "CAPITAL_JWT_SECRET": ""
+      },
+      "deployment": {
+        "PANTHEON_DEPLOYMENT_JWT_SECRET": ""
+      },
       "governance": {
         "PANTHEON_GOVERNANCE_JWT_SECRET": ""
       },
-      "operator-bff": {
-        "PANTHEON_GOVERNANCE_JWT_SECRET": ""
+      "memory": {
+        "PANTHEON_MEMORY_JWT_SECRET": ""
       },
-      "status": "empty_fail_closed"
+      "operator-bff": {
+        "PANTHEON_BFF_JWT_SECRET": "",
+        "PANTHEON_CAPITAL_JWT_SECRET": "",
+        "PANTHEON_GOVERNANCE_JWT_SECRET": "",
+        "PANTHEON_REGISTRY_JWT_SECRET": ""
+      },
+      "persona": {
+        "PERSONA_JWT_SECRET": ""
+      },
+      "registry": {
+        "PANTHEON_REGISTRY_JWT_SECRET": ""
+      },
+      "runtime-manager": {
+        "PANTHEON_RUNTIME_JWT_SECRET": ""
+      },
+      "source-ingest": {
+        "PANTHEON_RUNTIME_JWT_SECRET": ""
+      },
+      "telemetry": {
+        "PANTHEON_TELEMETRY_JWT_SECRET": ""
+      },
+      "training-session-svc": {
+        "TRAINING_SESSION_JWT_SECRET": ""
+      },
+      "status": "all_jwt_secrets_empty_fail_closed"
     },
     "deploy_script_environment": {
-      "supplied_secret": "[REDACTED]",
+      "supplied_secret": "PANTHEON_DEV_BFF_JWT_SECRET=[REDACTED]",
+      "capital": {
+        "CAPITAL_JWT_SECRET": "[REDACTED]"
+      },
+      "deployment": {
+        "PANTHEON_DEPLOYMENT_JWT_SECRET": "[REDACTED]"
+      },
       "governance": {
         "PANTHEON_GOVERNANCE_JWT_SECRET": "[REDACTED]"
       },
-      "operator-bff": {
-        "PANTHEON_GOVERNANCE_JWT_SECRET": "[REDACTED]"
+      "memory": {
+        "PANTHEON_MEMORY_JWT_SECRET": "[REDACTED]"
       },
-      "status": "correctly_resolved_from_passed_secret"
+      "operator-bff": {
+        "PANTHEON_BFF_JWT_SECRET": "[REDACTED]",
+        "PANTHEON_CAPITAL_JWT_SECRET": "[REDACTED]",
+        "PANTHEON_GOVERNANCE_JWT_SECRET": "[REDACTED]",
+        "PANTHEON_REGISTRY_JWT_SECRET": "[REDACTED]"
+      },
+      "persona": {
+        "PERSONA_JWT_SECRET": "[REDACTED]"
+      },
+      "registry": {
+        "PANTHEON_REGISTRY_JWT_SECRET": "[REDACTED]"
+      },
+      "runtime-manager": {
+        "PANTHEON_RUNTIME_JWT_SECRET": "[REDACTED]"
+      },
+      "source-ingest": {
+        "PANTHEON_RUNTIME_JWT_SECRET": "[REDACTED]"
+      },
+      "telemetry": {
+        "PANTHEON_TELEMETRY_JWT_SECRET": "[REDACTED]"
+      },
+      "training-session-svc": {
+        "TRAINING_SESSION_JWT_SECRET": "[REDACTED]"
+      },
+      "status": "all_jwt_secrets_resolved_from_passed_secret"
     }
   },
+  "follow_up_non_jwt_service_tokens": {
+    "description": "Out of scope for DEV-COMPOSE-JWT-FAIL-CLOSED-20261008 (which focuses on JWT secrets), but tracked for future fail-closed hardening of non-JWT service bearer tokens across docker-compose.yml.",
+    "tokens": [
+      {
+        "variable_names": ["CONSULTATION_SERVICE_TOKEN", "CONSULTATION_API_TOKEN"],
+        "literal_default": "pantheon-local-consultation-service",
+        "services": ["consultation-analyst-agent", "consultation-risk-agent", "consultation-exec-agent"]
+      },
+      {
+        "variable_names": ["CONSULTATION_PROVIDER_TOKEN"],
+        "literal_default": "pantheon-local-consultation-provider",
+        "services": ["consultation-provider", "ai-service-broker"]
+      },
+      {
+        "variable_names": ["CONSULTATION_HANDOFF_TOKEN"],
+        "literal_default": "pantheon-local-consultation-handoff-token",
+        "services": ["consultation-handoff", "governance"]
+      },
+      {
+        "variable_names": ["PANTHEON_PERSONA_SERVICE_TOKEN", "SOURCE_INGEST_DESIRED_STATE_BEARER_TOKEN", "PERSONA_EVALUATOR_PERSONA_TOKEN"],
+        "literal_default": "pantheon-local-persona-service-token",
+        "services": ["source-ingest", "operator-bff", "backtest", "persona", "persona-evaluator"]
+      },
+      {
+        "variable_names": ["POLICY_LEARNING_SERVICE_TOKEN"],
+        "literal_default": "pantheon-local-policy-learning-service",
+        "services": ["policy-learning", "policy-broker"]
+      },
+      {
+        "variable_names": ["AGORA_HANDOFF_SERVICE_TOKEN"],
+        "literal_default": "pantheon-local-agora-handoff-service-token",
+        "services": ["agora-handoff", "telemetry"]
+      },
+      {
+        "variable_names": ["OPENCLAW_GATEWAY_TOKEN"],
+        "literal_default": "pantheon-local-token",
+        "services": ["openclaw-mock", "openclaw-mock-worker"]
+      },
+      {
+        "variable_names": ["EVOLUTION_AUTH_TOKEN"],
+        "literal_default": "pantheon-local-evolution-service",
+        "services": ["evolution", "backtest-worker", "pipeline-orchestrator", "learning-worker"]
+      },
+      {
+        "variable_names": ["RECONCILIATION_DRIFT_AUTH_TOKEN"],
+        "literal_default": "pantheon-local-reconciliation-drift-service",
+        "services": ["operator-bff", "reconciliation-worker", "position-drift-worker", "portfolio-drift-worker", "pnl-drift-worker", "order-lifecycle-worker"]
+      }
+    ]
+  },
   "local_verification": {
-    "command": ".venv-pantheon/bin/python3 -m pytest -v services/runtime-manager/test_stage_promotion_compose.py",
-    "result": "3 passed"
+    "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest -v services/runtime-manager/test_stage_promotion_compose.py",
+    "result": "4 passed in 1.46s"
   }
 }

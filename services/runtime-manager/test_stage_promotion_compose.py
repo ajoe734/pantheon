@@ -16,7 +16,7 @@ def test_dev_compose_wires_shared_jwt_verification_and_fail_closed_switches():
     bff = compose["services"]["operator-bff"]["environment"]
     worker = compose["services"]["deployment-outbox-consumer"]["environment"]
 
-    assert runtime["PANTHEON_RUNTIME_JWT_SECRET"] == "${PANTHEON_BFF_JWT_SECRET:-}"
+    assert runtime["PANTHEON_RUNTIME_JWT_SECRET"] == "${PANTHEON_RUNTIME_JWT_SECRET:-${PANTHEON_BFF_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}}"
     assert runtime["PANTHEON_CANARY_EXECUTION_ENABLED"] == "${PANTHEON_CANARY_EXECUTION_ENABLED:-false}"
     assert runtime["PANTHEON_LIVE_BROKER_ENABLED"] == "${PANTHEON_LIVE_BROKER_ENABLED:-false}"
     assert governance["PANTHEON_GOVERNANCE_JWT_SECRET"] == "${PANTHEON_GOVERNANCE_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}"
@@ -66,4 +66,34 @@ def test_dev_deploy_script_explicitly_keeps_canary_disabled():
         assert comp_match is not None, f"Rollout path '{component}' not found in deploy script"
         assert "with_dev_bff_runtime_env" in comp_match.group(1), (
             f"Rollout path '{component}' must execute through with_dev_bff_runtime_env"
+        )
+
+
+def test_compose_jwt_secrets_fail_closed_without_literal_defaults():
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    services = compose.get("services", {})
+    jwt_secret_entries = []
+
+    for service_name, service_config in services.items():
+        environment = service_config.get("environment") or {}
+        if isinstance(environment, dict):
+            for var_name, var_value in environment.items():
+                if "JWT_SECRET" in var_name:
+                    jwt_secret_entries.append((service_name, var_name, var_value))
+
+    assert len(jwt_secret_entries) > 0, "No JWT_SECRET entries found in docker-compose.yml"
+
+    for service_name, var_name, var_value in jwt_secret_entries:
+        assert isinstance(var_value, str), f"{service_name}.{var_name} must be a string"
+        assert var_value.startswith("${") and var_value.endswith("}"), (
+            f"{service_name}.{var_name} ({var_value}) must be an interpolation expression"
+        )
+        assert not re.search(r":-[^\$\}]", var_value), (
+            f"{service_name}.{var_name} ({var_value}) contains a literal default"
+        )
+        assert var_value.rstrip("}").endswith(":-"), (
+            f"{service_name}.{var_name} ({var_value}) must end with ':-' before closing braces (fail closed, empty default)"
+        )
+        assert "pantheon-local-" not in var_value, (
+            f"{service_name}.{var_name} ({var_value}) must not contain published default 'pantheon-local-'"
         )
