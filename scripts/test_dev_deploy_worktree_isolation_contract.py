@@ -12,10 +12,6 @@ HOSTED_WORKFLOW = (
     REPO_ROOT / ".github" / "workflows" / "tj-e2e-012-hosted-acceptance.yml"
 )
 STAGE_ZERO_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "stage-0-ci.yml"
-DEPLOYMENT_PROBE = REPO_ROOT / "scripts" / "run_loop_prod_dep_001_hosted.py"
-
-DEPLOY_ROOT = "/home/lupin/pantheon-ci-deploy/managed-deploy-worktrees"
-DEV_ROOT_WORKTREE = f"{DEPLOY_ROOT}/dev-root"
 CONTRACT_VERSION = "dev-root-isolation-v1"
 
 
@@ -144,6 +140,3 @@ def test_hosted_probes_follow_the_isolated_dev_root_worktree() -> None:
             assert "vars.DEV_DEPLOY_WORKTREE_ROOT" in binding
             assert "/home/lupin/" not in binding
             assert "vars.DEV_DEPLOY_WORKTREE_ROOT)" in binding
-
-    probe = DEPLOYMENT_PROBE.read_text(encoding="utf-8")
-    assert DEV_ROOT_WORKTREE in probe

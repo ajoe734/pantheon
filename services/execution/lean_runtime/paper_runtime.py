@@ -404,7 +404,9 @@ class PaperExecutionAlgorithm:
         Taiwan venues are excluded from LEAN Symbol.Create(); execution is
         delegated here to the paper broker (Shioaji sandbox boundary). The fill
         is published on the same telemetry path as LEAN fills, tagged with the
-        broker order id under shioaji_trade_id.
+        broker order id under shioaji_trade_id. MARKET orders are priced only
+        from the admitted market price the signal context carries (market_price,
+        market_price_as_of, market_price_source); without it they are rejected.
         """
         native, exchange = normalize_taiwan_symbol(symbol)
         base_metadata = {
@@ -429,12 +431,31 @@ class PaperExecutionAlgorithm:
             log.warning("[%s] TW order rejected: unsupported quantity_type=%s", signal_id, quantity_type)
             return
 
+        is_market = str(order_type or "MARKET").lower() == "market"
         try:
             qty = _finite_float(
                 quantity,
                 field="Taiwan order quantity",
                 positive=True,
             )
+            if is_market:
+                market_price = _finite_float(
+                    self._current_signal_metadata.get("market_price"),
+                    field="Taiwan admitted market_price",
+                    positive=True,
+                )
+                market_price_as_of = str(
+                    self._current_signal_metadata.get("market_price_as_of") or ""
+                ).strip()
+                market_price_source = str(
+                    self._current_signal_metadata.get("market_price_source") or ""
+                ).strip()
+                if not market_price_as_of or not market_price_source:
+                    raise ValueError(
+                        "Taiwan MARKET order requires an admitted market price "
+                        "(market_price, market_price_as_of, market_price_source) "
+                        "from the signal"
+                    )
             if limit_price is not None:
                 limit_price = _finite_float(
                     limit_price,
@@ -466,6 +487,8 @@ class PaperExecutionAlgorithm:
             payload["correlation_envelope"] = correlation_envelope
         if limit_price is not None:
             payload["limit_price"] = float(limit_price)
+        if is_market:
+            payload["market_price"] = market_price
         try:
             order = self._post_broker_paper_order(broker_url, payload)
         except Exception as exc:
@@ -522,8 +545,12 @@ class PaperExecutionAlgorithm:
             next_quantity=next_quantity,
             next_cash=next_cash,
             execution_price=fill_price,
-            price_as_of=str(order.get("filled_at") or order.get("updated_at") or _iso_now()),
-            price_source=str(order.get("quote_source") or "shioaji_paper_fill"),
+            price_as_of=(
+                market_price_as_of
+                if is_market
+                else str(order.get("filled_at") or order.get("updated_at") or _iso_now())
+            ),
+            price_source=market_price_source if is_market else "paper_limit_fill",
         )
         self._publish(
             "paper_fill_simulated", str(symbol), signed_fill_qty, action,

@@ -797,6 +797,30 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertFalse(telemetry.events[0]["metadata"]["is_real_order"])
         self.assertEqual(telemetry.events[0]["metadata"]["alpha_source"], "llm_research_agent")
 
+    def test_us_signal_with_market_data_fills_at_close_not_default_price(self):
+        signal = self._signal()
+        signal["metadata"] = {
+            "market_data": {
+                "close": 187.5,
+                "event_time": "2026-06-12T20:00:00Z",
+                "source_ref": "source-ingest://snapshots/test-aapl",
+            }
+        }
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([signal]),
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([self._binding()]),
+            telemetry_emitter=_FakeTelemetryEmitter(),
+            poll_interval_seconds=3600,
+            max_batch_size=10,
+        )
+
+        snapshot = service.drain_once()
+
+        fill_event = snapshot["paper_state"]["recent_order_events"][0]
+        self.assertEqual(fill_event["fill_price"], 187.5)
+        self.assertNotEqual(fill_event["fill_price"], 100.0)
+
     def test_hold_llm_signal_records_paper_order_noop_without_fill(self):
         signal = self._signal()
         signal.update(
@@ -2537,6 +2561,13 @@ class TestSubmitTaiwanBrokerOrder(unittest.TestCase):
 
     def test_taiwan_paper_fill_published_with_shioaji_trade_id(self):
         algo, events = self._algo()
+        algo.SetCurrentSignalContext(
+            {
+                "market_price": 2340.0,
+                "market_price_as_of": "2026-06-12T05:30:00Z",
+                "market_price_source": "source-ingest://snapshots/test-2330",
+            }
+        )
         fake_order = {"order_id": "ord-tw-1", "fill_price": 2340.0, "fill_qty": 1, "side": "sell"}
         with patch.object(PaperExecutionAlgorithm, "_post_broker_paper_order",
                           staticmethod(lambda url, payload: fake_order)):
@@ -2566,7 +2597,14 @@ class TestSubmitTaiwanBrokerOrder(unittest.TestCase):
             {"tenant_id": "tenant-1", "environment": "paper"},
             producer="strategy.signal",
         )
-        algo.SetCurrentSignalContext({"correlation_envelope": incoming})
+        algo.SetCurrentSignalContext(
+            {
+                "correlation_envelope": incoming,
+                "market_price": 2340.0,
+                "market_price_as_of": "2026-06-12T05:30:00Z",
+                "market_price_source": "source-ingest://snapshots/test-2330",
+            }
+        )
         captured = {}
 
         def capture(url, payload):
@@ -2588,6 +2626,13 @@ class TestSubmitTaiwanBrokerOrder(unittest.TestCase):
 
     def test_taiwan_broker_error_records_rejection(self):
         algo, events = self._algo()
+        algo.SetCurrentSignalContext(
+            {
+                "market_price": 2340.0,
+                "market_price_as_of": "2026-06-12T05:30:00Z",
+                "market_price_source": "source-ingest://snapshots/test-2330",
+            }
+        )
         def boom(url, payload):
             raise RuntimeError("broker HTTP 403: disabled")
         with patch.object(PaperExecutionAlgorithm, "_post_broker_paper_order",
@@ -2625,6 +2670,13 @@ class TestSubmitTaiwanBrokerOrder(unittest.TestCase):
         for fill in invalid_fills:
             with self.subTest(fill=repr(fill)):
                 algo, events = self._algo()
+                algo.SetCurrentSignalContext(
+                    {
+                        "market_price": 2340.0,
+                        "market_price_as_of": "2026-06-12T05:30:00Z",
+                        "market_price_source": "source-ingest://snapshots/test-2330",
+                    }
+                )
                 response = {"order_id": "ord-invalid", **fill}
                 with patch.object(
                     PaperExecutionAlgorithm,
@@ -2654,6 +2706,79 @@ class TestSubmitTaiwanBrokerOrder(unittest.TestCase):
                     events[0].metadata["reject_reason"],
                     "invalid_taiwan_broker_fill",
                 )
+
+    _TW_MARKET_DATA = {
+        "close": 955.0,
+        "event_time": "2026-06-12T05:30:00Z",
+        "source_ref": "source-ingest://snapshots/mss-official-twse-2330",
+    }
+
+    def _tw_signal(self, **overrides):
+        signal = {
+            "signal_id": "sig-tw-exec-1",
+            "symbol": "2330.TW",
+            "action": "BUY",
+            "direction": "LONG",
+            "quantity": 1,
+            "quantity_type": "SHARES",
+            "order_type": "MARKET",
+            "timestamp": "2026-06-12T05:31:00Z",
+            "metadata": {"market_data": dict(self._TW_MARKET_DATA)},
+        }
+        signal.update(overrides)
+        return signal
+
+    def _execute_tw(self, signal):
+        from services.execution.lean_runtime.executor import execute
+
+        algo, events = self._algo()
+        payloads = []
+
+        def capture(url, payload):
+            payloads.append(payload)
+            return {
+                "order_id": "ord-tw",
+                "fill_price": payload.get("market_price") or payload["limit_price"],
+                "fill_qty": 1,
+            }
+
+        with patch.object(
+            PaperExecutionAlgorithm, "_post_broker_paper_order", staticmethod(capture)
+        ):
+            execute(signal, algo)
+        return algo, events, payloads
+
+    def test_taiwan_market_fill_uses_admitted_snapshot_price(self):
+        algo, events, payloads = self._execute_tw(self._tw_signal())
+
+        self.assertEqual(payloads[0]["market_price"], 955.0)
+        security = algo.Securities["2330.TW"]
+        self.assertEqual(security.MarkAsOf, "2026-06-12T05:30:00Z")
+        self.assertEqual(security.MarkSource, self._TW_MARKET_DATA["source_ref"])
+        fills = [e for e in events if e.event_type == "paper_fill_simulated"]
+        self.assertEqual(len(fills), 1)
+        self.assertEqual(fills[0].fill_price, 955.0)
+
+    def test_taiwan_market_order_without_admitted_price_is_rejected(self):
+        algo, events, payloads = self._execute_tw(self._tw_signal(metadata={}))
+
+        self.assertEqual(payloads, [])
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].event_type, "order_rejection")
+        self.assertEqual(events[0].broker_submission_status, "tw_invalid_order_input")
+        self.assertFalse(events[0].submitted_to_broker)
+        self.assertIn("admitted market", events[0].metadata["diagnostic"])
+        self.assertEqual(algo.performance_ledger()["fill_count"], 0)
+
+    def test_taiwan_limit_order_posts_limit_price_without_market_price(self):
+        algo, events, payloads = self._execute_tw(
+            self._tw_signal(order_type="LIMIT", limit_price=950.0, metadata={})
+        )
+
+        self.assertEqual(payloads[0]["limit_price"], 950.0)
+        self.assertNotIn("market_price", payloads[0])
+        self.assertEqual([e.event_type for e in events], ["paper_fill_simulated"])
+        self.assertEqual(algo.Securities["2330.TW"].MarkSource, "paper_limit_fill")
 
 
 class TestPaperRuntimeLifecycleCursor(unittest.TestCase):

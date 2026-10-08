@@ -160,6 +160,7 @@ def test_bff_management_create_paper_bundle_success() -> None:
             "risk": "low",
             "mandate": "Trade TW equities using daily pricing",
             "market": "TW",
+            "symbols": ["2330.TW"],
         }
 
         resp = client.post(

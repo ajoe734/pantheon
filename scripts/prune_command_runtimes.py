@@ -41,13 +41,6 @@ if str(GIT_SCRIPTS_DIR) not in sys.path:
 
 import auto_integrator  # noqa: E402  (shared stable integration lock)
 
-DEFAULT_COMMAND_RUNTIME_PARENT = Path("/home/lupin/pantheon-ci-deploy/command-runtimes")
-DEFAULT_INTEGRATION_RUNTIME_PARENT = Path(
-    "/home/lupin/pantheon-ci-deploy/integration-runtimes"
-)
-DEFAULT_LIVE_CONFIG = Path(
-    "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json"
-)
 DEFAULT_KEEP = 5
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 
@@ -169,12 +162,12 @@ def plan_deletions(
 
 def _main_locked(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--parent", default=str(DEFAULT_COMMAND_RUNTIME_PARENT))
+    parser.add_argument("--parent", required=True)
     parser.add_argument(
         "--integration-parent",
-        default=str(DEFAULT_INTEGRATION_RUNTIME_PARENT),
+        required=True,
     )
-    parser.add_argument("--live-config", default=str(DEFAULT_LIVE_CONFIG))
+    parser.add_argument("--live-config", required=True)
     parser.add_argument(
         "--status-root",
         required=True,

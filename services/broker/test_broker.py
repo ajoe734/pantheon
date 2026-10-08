@@ -37,6 +37,7 @@ _PAPER_ORDER = {
     "symbol": "AAPL",
     "qty": 10.0,
     "side": "buy",
+    "market_price": 187.5,
 }
 
 
@@ -106,7 +107,7 @@ class TestBrokerLiveOrderAlwaysRejected(unittest.TestCase):
 
 
 class TestBrokerPaperSimulationHappyPath(unittest.TestCase):
-    def test_market_order_fills_at_placeholder_price(self):
+    def test_market_order_fills_at_supplied_market_price(self):
         with patch.object(broker_main, "_PAPER_ENABLED", True):
             resp = client.post("/api/broker/paper/orders", json=_PAPER_ORDER)
         self.assertEqual(resp.status_code, 201)
@@ -119,8 +120,27 @@ class TestBrokerPaperSimulationHappyPath(unittest.TestCase):
         self.assertEqual(order["deployment_stage"], "paper")
         self.assertIsNotNone(order["order_id"])
         self.assertEqual(order["status"], "filled")
-        self.assertEqual(order["fill_price"], 100.0)
+        self.assertEqual(order["fill_price"], 187.5)
         self.assertEqual(order["fill_qty"], 10.0)
+
+    def test_market_order_without_price_rejected_and_not_stored(self):
+        order_req = {k: v for k, v in _PAPER_ORDER.items() if k != "market_price"}
+        order_req["capital_pool_id"] = "pool-no-price"
+
+        def listed():
+            return client.get(
+                "/api/broker/paper/orders", params={"capital_pool_id": "pool-no-price"}
+            ).json()["orders"]
+
+        with patch.object(broker_main, "_PAPER_ENABLED", True), patch.object(
+            broker_main._QUOTE_PRICER, "market_price", return_value=None
+        ):
+            before = listed()
+            resp = client.post("/api/broker/paper/orders", json=order_req)
+            after = listed()
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error_code"], "MARKET_PRICE_UNAVAILABLE")
+        self.assertEqual(after, before)
 
     def test_limit_order_fills_at_limit_price(self):
         order_req = {**_PAPER_ORDER, "side": "sell", "order_type": "limit", "limit_price": 175.50, "symbol": "TSLA"}

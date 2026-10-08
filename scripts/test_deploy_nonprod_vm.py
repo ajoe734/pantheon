@@ -1343,10 +1343,18 @@ def test_verify_exact_component_deployment_staged_paper_readiness_ordering(
 
     # 2. Post-readiness snapshot: contains explicit market="US"
     post_readiness_snapshot = {
+        "schema_version": "source_ingest_latest_market_snapshot.v1",
+        "snapshot_id": "mss-6861736863616e6f6e696361",
         "symbol": "SPY",
+        "event_time": now_utc_str,
+        "observed_at": now_utc_str,
         "closes": [500.0, 502.0],
         "market": "US",
-        "event_time": now_utc_str,
+        "source_ref": "source-ingest://snapshots/mss-6861736863616e6f6e696361",
+        "lineage": {
+            "source_ids": ["us-equity:test"],
+            "connector_ids": ["dev-paper-us-equity-simulation"],
+        },
     }
     binding_post = {
         **binding_pre,
@@ -1369,6 +1377,7 @@ def test_verify_exact_component_deployment_staged_paper_readiness_ordering(
     snapshot_file = tmp_path / "snapshot_state.json"
     snapshot_file.write_text(json.dumps(pre_change_snapshot), encoding="utf-8")
 
+    post_snapshot_json = json.dumps(post_readiness_snapshot)
     mock_curl = bin_dir / "curl"
     mock_curl.write_text(
         f"""#!/usr/bin/env bash
@@ -1378,7 +1387,7 @@ for arg in "$@"; do
     exit 0
   fi
   if [[ "$arg" == *"/api/source-ingest/connectors/dev-paper-us-equity-simulation/schedule"* ]]; then
-    echo '{{"status": "ok", "schedule": {{"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400}}}}'
+    echo '{{"status": "ok", "schedule": {{"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400, "updated_at": "{now_utc_str}"}}}}'
     if [[ " $* " == *"-w "* ]]; then
       echo "200"
     fi
@@ -1393,7 +1402,7 @@ for arg in "$@"; do
   fi
   if [[ "$arg" == *"/api/source-ingest/run-scheduled"* ]]; then
     cat <<'EOF' >"$SNAPSHOT_STATE_FILE"
-{{"symbol": "SPY", "closes": [500.0, 502.0], "market": "US", "event_time": "{now_utc_str}"}}
+{post_snapshot_json}
 EOF
     echo '{{"status": "ok", "summary": {{"total_ran": 1, "total_failed": 0}}}}'
     if [[ " $* " == *"-w "* ]]; then
@@ -1507,6 +1516,7 @@ error() {{ echo "[error] $*" >&2; exit 1; }}
 {verify_def}
 
 export PATH="{bin_dir}:$PATH"
+export PYTHONPATH="{ROOT}:${{PYTHONPATH:-}}"
 export SNAPSHOT_STATE_FILE="{snapshot_file}"
 export PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH="{receipt_path}"
 export PANTHEON_DEV_FRONTEND_SHA="8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf"
@@ -1589,11 +1599,53 @@ def test_bootstrap_dev_paper_baseline_transition_legacy_persona_caller() -> None
     assert coord.calls[0][1] == "US"
 
 
+def _make_test_canonical_snapshot(
+    symbol: str = "SPY",
+    closes: tuple[float, ...] = (500.0, 502.0),
+    event_time: str | None = None,
+    observed_at: str | None = None,
+    market: str = "US",
+    source_id: str = "test-source",
+    connector_id: str = "dev-paper-us-equity-simulation",
+    as_public: bool = True,
+) -> dict[str, Any]:
+    from services.source_ingestion.requirement_state import (
+        LatestMarketSnapshot,
+        MarketSnapshotPoint,
+    )
+    now_dt = datetime.now(timezone.utc)
+    ev_time = event_time or now_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    obs_time = observed_at or now_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    base_dt = datetime.fromisoformat(ev_time.replace("Z", "+00:00"))
+    points = []
+    for i, c in enumerate(closes):
+        pt_dt = base_dt - timedelta(minutes=(len(closes) - 1 - i) * 5)
+        points.append(
+            MarketSnapshotPoint(
+                event_time=pt_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                close=c,
+                source_id=source_id,
+                connector_id=connector_id,
+                content_ref=f"ref-{i}",
+                ingest_run_id=f"run-{i}",
+                market=market,
+            )
+        )
+    snap = LatestMarketSnapshot(
+        symbol=symbol,
+        points=tuple(points),
+        observed_at=obs_time,
+        market=market,
+    )
+    if as_public:
+        return snap.to_public_dict(requested_symbol=symbol)
+    return snap.to_dict()
+
+
 def test_stage_dev_paper_prerequisite_readiness_refreshes_snapshot_with_market(tmp_path: Path) -> None:
     from http.server import HTTPServer, BaseHTTPRequestHandler
     import threading
 
-    now_utc_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     state = {"market": False, "post_calls": 0, "auth": None, "body": None}
 
     class StubHandler(BaseHTTPRequestHandler):
@@ -1603,15 +1655,15 @@ def test_stage_dev_paper_prerequisite_readiness_refreshes_snapshot_with_market(t
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 if state["market"]:
-                    body = f'{{"symbol": "SPY", "closes": [500.0, 502.0], "market": "US", "event_time": "{now_utc_str}"}}'.encode("utf-8")
+                    body = json.dumps(_make_test_canonical_snapshot(symbol="SPY")).encode("utf-8")
                 else:
-                    body = f'{{"symbol": "SPY", "closes": [500.0, 502.0], "event_time": "{now_utc_str}"}}'.encode("utf-8")
+                    body = b'{"symbol": "SPY", "closes": [500.0, 502.0]}'
                 self.wfile.write(body)
             elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation/schedule" in self.path:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400}}')
+                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400, "updated_at": "2026-10-08T01:00:00Z"}}')
             elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation" in self.path:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -1696,7 +1748,7 @@ def test_stage_dev_paper_prerequisite_readiness_fails_on_authentication_rejected
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400}}')
+                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400, "updated_at": "2026-10-08T01:00:00Z"}}')
             elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation" in self.path:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -1770,7 +1822,7 @@ def test_stage_dev_paper_prerequisite_readiness_fails_on_controller_mode_refusal
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400}}')
+                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400, "updated_at": "2026-10-08T01:00:00Z"}}')
             elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation" in self.path:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -1844,7 +1896,7 @@ def test_stage_dev_paper_prerequisite_readiness_fails_when_snapshot_still_lacks_
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400}}')
+                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400, "updated_at": "2026-10-08T01:00:00Z"}}')
             elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation" in self.path:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -1913,13 +1965,13 @@ def test_stage_dev_paper_prerequisite_readiness_fails_on_stale_event_time(tmp_pa
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                # Snapshot has market and closes, but stale event_time older than 86400s
-                self.wfile.write(f'{{"symbol": "SPY", "closes": [500.0, 502.0], "market": "US", "event_time": "{stale_time_str}"}}'.encode("utf-8"))
+                # Canonical snapshot with stale event_time older than 86400s
+                self.wfile.write(json.dumps(_make_test_canonical_snapshot(symbol="SPY", event_time=stale_time_str, observed_at=stale_time_str)).encode("utf-8"))
             elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation/schedule" in self.path:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400}}')
+                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400, "updated_at": "2026-10-08T01:00:00Z"}}')
             elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation" in self.path:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -2011,7 +2063,7 @@ def test_stage_dev_paper_prerequisite_readiness_fails_on_server_error(tmp_path: 
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400}}')
+                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400, "updated_at": "2026-10-08T01:00:00Z"}}')
             elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation" in self.path:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -2078,7 +2130,7 @@ def test_stage_dev_paper_prerequisite_readiness_fails_with_connector_failure_dia
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400}}')
+                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400, "updated_at": "2026-10-08T01:00:00Z"}}')
             elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation" in self.path:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -2139,8 +2191,6 @@ def test_stage_dev_paper_prerequisite_readiness_admits_and_restores_disabled_sch
     from http.server import HTTPServer, BaseHTTPRequestHandler
     import threading
 
-    now_utc_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
     state = {
         "market": False,
         "schedule_puts": [],
@@ -2156,16 +2206,21 @@ def test_stage_dev_paper_prerequisite_readiness_admits_and_restores_disabled_sch
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 if state["market"]:
-                    body = f'{{"symbol": "SPY", "closes": [500.0, 502.0], "market": "US", "event_time": "{now_utc_str}"}}'.encode("utf-8")
+                    body = json.dumps(_make_test_canonical_snapshot(symbol="SPY")).encode("utf-8")
                 else:
-                    body = f'{{"symbol": "SPY", "closes": [500.0, 502.0], "event_time": "{now_utc_str}"}}'.encode("utf-8")
+                    body = b'{"symbol": "SPY", "closes": [500.0, 502.0]}'
                 self.wfile.write(body)
             elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation/schedule" in self.path:
                 state["schedule_gets"] += 1
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": false, "interval_seconds": 86400}}')
+                if len(state["schedule_puts"]) >= 2:
+                    self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": false, "interval_seconds": 86400, "updated_at": "2026-10-08T01:00:02Z"}}')
+                elif len(state["schedule_puts"]) == 1:
+                    self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 1, "updated_at": "2026-10-08T01:00:01Z"}}')
+                else:
+                    self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": false, "interval_seconds": 86400, "updated_at": "2026-10-08T01:00:00Z"}}')
             elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation" in self.path:
                 state["connector_gets"] += 1
                 self.send_response(200)
@@ -2181,6 +2236,7 @@ def test_stage_dev_paper_prerequisite_readiness_admits_and_restores_disabled_sch
                 length = int(self.headers.get("Content-Length", 0))
                 payload = json.loads(self.rfile.read(length).decode("utf-8"))
                 state["schedule_puts"].append(payload)
+                payload["updated_at"] = f"2026-10-08T01:00:0{len(state['schedule_puts'])}Z"
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
@@ -2264,7 +2320,12 @@ def test_stage_dev_paper_prerequisite_readiness_restores_schedule_on_refresh_fai
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": false, "interval_seconds": 86400}}')
+                if len(state["schedule_puts"]) >= 2:
+                    self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": false, "interval_seconds": 86400, "updated_at": "2026-10-08T01:00:02Z"}}')
+                elif len(state["schedule_puts"]) == 1:
+                    self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 1, "updated_at": "2026-10-08T01:00:01Z"}}')
+                else:
+                    self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": false, "interval_seconds": 86400, "updated_at": "2026-10-08T01:00:00Z"}}')
             elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation" in self.path:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -2279,6 +2340,7 @@ def test_stage_dev_paper_prerequisite_readiness_restores_schedule_on_refresh_fai
                 length = int(self.headers.get("Content-Length", 0))
                 payload = json.loads(self.rfile.read(length).decode("utf-8"))
                 state["schedule_puts"].append(payload)
+                payload["updated_at"] = f"2026-10-08T01:00:0{len(state['schedule_puts'])}Z"
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
@@ -2433,7 +2495,7 @@ def test_stage_dev_paper_prerequisite_readiness_fails_on_trigger_transport_failu
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400}}')
+                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400, "updated_at": "2026-10-08T01:00:00Z"}}')
             elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation" in self.path:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -2799,7 +2861,7 @@ def test_stage_dev_paper_prerequisite_readiness_fails_on_admission_put_server_er
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": false, "interval_seconds": 86400}}')
+                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": false, "interval_seconds": 86400, "updated_at": "2026-10-08T01:00:00Z"}}')
             elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation" in self.path:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -2863,7 +2925,6 @@ def test_stage_dev_paper_prerequisite_readiness_fails_when_restore_put_returns_5
     from http.server import HTTPServer, BaseHTTPRequestHandler
     import threading
 
-    now_utc_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     state = {
         "market": False,
         "put_count": 0,
@@ -2876,15 +2937,18 @@ def test_stage_dev_paper_prerequisite_readiness_fails_when_restore_put_returns_5
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 if state["market"]:
-                    body = f'{{"symbol": "SPY", "closes": [500.0, 502.0], "market": "US", "event_time": "{now_utc_str}"}}'.encode("utf-8")
+                    body = json.dumps(_make_test_canonical_snapshot(symbol="SPY")).encode("utf-8")
                 else:
-                    body = f'{{"symbol": "SPY", "closes": [500.0, 502.0], "event_time": "{now_utc_str}"}}'.encode("utf-8")
+                    body = b'{"symbol": "SPY", "closes": [500.0, 502.0]}'
                 self.wfile.write(body)
             elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation/schedule" in self.path:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": false, "interval_seconds": 86400}}')
+                if state["put_count"] >= 1:
+                    self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 1, "updated_at": "2026-10-08T01:00:01Z"}}')
+                else:
+                    self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": false, "interval_seconds": 86400, "updated_at": "2026-10-08T01:00:00Z"}}')
             elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation" in self.path:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -2899,6 +2963,7 @@ def test_stage_dev_paper_prerequisite_readiness_fails_when_restore_put_returns_5
             if state["put_count"] == 1:
                 length = int(self.headers.get("Content-Length", 0))
                 payload = json.loads(self.rfile.read(length).decode("utf-8"))
+                payload["updated_at"] = "2026-10-08T01:00:01Z"
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
@@ -2961,7 +3026,6 @@ def test_stage_dev_paper_prerequisite_readiness_fails_when_restore_readback_mism
     from http.server import HTTPServer, BaseHTTPRequestHandler
     import threading
 
-    now_utc_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     state = {
         "market": False,
         "put_count": 0,
@@ -2974,18 +3038,20 @@ def test_stage_dev_paper_prerequisite_readiness_fails_when_restore_readback_mism
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 if state["market"]:
-                    body = f'{{"symbol": "SPY", "closes": [500.0, 502.0], "market": "US", "event_time": "{now_utc_str}"}}'.encode("utf-8")
+                    body = json.dumps(_make_test_canonical_snapshot(symbol="SPY")).encode("utf-8")
                 else:
-                    body = f'{{"symbol": "SPY", "closes": [500.0, 502.0], "event_time": "{now_utc_str}"}}'.encode("utf-8")
+                    body = b'{"symbol": "SPY", "closes": [500.0, 502.0]}'
                 self.wfile.write(body)
             elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation/schedule" in self.path:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 if state["put_count"] >= 2:
-                    self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400}}')
+                    self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400, "updated_at": "2026-10-08T01:00:02Z"}}')
+                elif state["put_count"] == 1:
+                    self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 1, "updated_at": "2026-10-08T01:00:01Z"}}')
                 else:
-                    self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": false, "interval_seconds": 86400}}')
+                    self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": false, "interval_seconds": 86400, "updated_at": "2026-10-08T01:00:00Z"}}')
             elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation" in self.path:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -2999,6 +3065,7 @@ def test_stage_dev_paper_prerequisite_readiness_fails_when_restore_readback_mism
             state["put_count"] += 1
             length = int(self.headers.get("Content-Length", 0))
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            payload["updated_at"] = f"2026-10-08T01:00:0{state['put_count']}Z"
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -3056,7 +3123,6 @@ def test_stage_dev_paper_prerequisite_readiness_fails_on_restore_cas_conflict(tm
     from http.server import HTTPServer, BaseHTTPRequestHandler
     import threading
 
-    now_utc_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     state = {
         "market": False,
         "put_count": 0,
@@ -3069,9 +3135,9 @@ def test_stage_dev_paper_prerequisite_readiness_fails_on_restore_cas_conflict(tm
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 if state["market"]:
-                    body = f'{{"symbol": "SPY", "closes": [500.0, 502.0], "market": "US", "event_time": "{now_utc_str}"}}'.encode("utf-8")
+                    body = json.dumps(_make_test_canonical_snapshot(symbol="SPY")).encode("utf-8")
                 else:
-                    body = f'{{"symbol": "SPY", "closes": [500.0, 502.0], "event_time": "{now_utc_str}"}}'.encode("utf-8")
+                    body = b'{"symbol": "SPY", "closes": [500.0, 502.0]}'
                 self.wfile.write(body)
             elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation/schedule" in self.path:
                 self.send_response(200)
@@ -3141,7 +3207,7 @@ stage_dev_paper_prerequisite_readiness SPY 10 0
 
         proc = subprocess.run(["bash", str(test_script)], capture_output=True, text=True, check=False)
         assert proc.returncode == 1
-        assert "connector dev-paper-us-equity-simulation schedule restore aborted due to CAS conflict (updated_at changed)" in proc.stderr
+        assert "connector dev-paper-us-equity-simulation schedule was modified after temporary admission (updated_at changed); refusing to overwrite operator changes" in proc.stderr
         assert "readiness satisfied" not in proc.stdout
     finally:
         server.shutdown()
@@ -3158,12 +3224,14 @@ def test_stage_dev_paper_prerequisite_readiness_rejects_missing_event_time(tmp_p
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(b'{"symbol": "SPY", "closes": [500.0, 502.0], "market": "US"}')
+                snap = _make_test_canonical_snapshot(symbol="SPY")
+                del snap["event_time"]
+                self.wfile.write(json.dumps(snap).encode("utf-8"))
             elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation/schedule" in self.path:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400}}')
+                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400, "updated_at": "2026-10-08T01:00:00Z"}}')
             elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation" in self.path:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -3231,12 +3299,13 @@ def test_stage_dev_paper_prerequisite_readiness_rejects_future_event_time(tmp_pa
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(f'{{"symbol": "SPY", "closes": [500.0, 502.0], "market": "US", "event_time": "{future_time_str}"}}'.encode("utf-8"))
+                snap = _make_test_canonical_snapshot(symbol="SPY", event_time=future_time_str)
+                self.wfile.write(json.dumps(snap).encode("utf-8"))
             elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation/schedule" in self.path:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400}}')
+                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400, "updated_at": "2026-10-08T01:00:00Z"}}')
             elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation" in self.path:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -3296,20 +3365,21 @@ def test_stage_dev_paper_prerequisite_readiness_rejects_fake_checksum(tmp_path: 
     from http.server import HTTPServer, BaseHTTPRequestHandler
     import threading
 
-    now_utc_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
     class StubHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             if "/api/source-ingest/snapshots/latest" in self.path:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(f'{{"symbol": "SPY", "closes": [500.0, 502.0], "market": "US", "event_time": "{now_utc_str}", "snapshot_id": "fake_snap_123", "checksum": "fake_snap_123"}}'.encode("utf-8"))
+                snap = _make_test_canonical_snapshot(symbol="SPY")
+                snap["snapshot_id"] = "fake_snap_123"
+                snap["checksum"] = "fake_snap_123"
+                self.wfile.write(json.dumps(snap).encode("utf-8"))
             elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation/schedule" in self.path:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400}}')
+                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400, "updated_at": "2026-10-08T01:00:00Z"}}')
             elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation" in self.path:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -3424,3 +3494,535 @@ def test_taiwan_preflight_invalid_calendar_proceeds_and_valid_holiday_still_skip
     assert (result["status"], result["detail"]) == ("proceed", "calendar pin mismatch")
     result, _ = _run_real_taiwan_preflight(snapshot, calendar_valid=True)
     assert (result["status"], result["reason"]) == ("skipped", "holiday")
+
+
+def test_stage_dev_paper_prerequisite_readiness_rejects_adversarial_counterexample(tmp_path: Path) -> None:
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    import threading
+
+    now_utc_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    class StubHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if "/api/source-ingest/snapshots/latest" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                # PR #6335 / aaaf252ea counterexample: inline fake snapshot with market and event_time but non-canonical
+                self.wfile.write(f'{{"symbol": "SPY", "closes": [500.0, 502.0], "market": "US", "event_time": "{now_utc_str}"}}'.encode("utf-8"))
+            elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation/schedule" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400, "updated_at": "2026-10-08T01:00:00Z"}}')
+            elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status": "ok", "connector": {"connector_id": "dev-paper-us-equity-simulation", "status": "active", "metadata": {"market": "US"}}}')
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def do_POST(self) -> None:
+            if "/api/source-ingest/run-scheduled" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status": "ok", "summary": {"total_ran": 1, "total_failed": 0}}')
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), StubHandler)
+    port = server.server_port
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        stage_def = _extract_stage_dev_paper_prerequisite_readiness_func()
+        test_script = tmp_path / "test_adversarial.sh"
+        test_script.write_text(
+            f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+
+{stage_def}
+
+export SOURCE_INGEST_API_URL="http://127.0.0.1:{port}"
+export SOURCE_INGEST_CONTROLLER_TOKEN="token"
+
+stage_dev_paper_prerequisite_readiness SPY 1 0
+""",
+            encoding="utf-8",
+        )
+        test_script.chmod(0o755)
+
+        proc = subprocess.run(["bash", str(test_script)], capture_output=True, text=True, check=False)
+        assert proc.returncode == 1
+        assert "timed out waiting for staged dev paper prerequisite readiness for SPY: snapshot still lacks market" in proc.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_stage_dev_paper_prerequisite_readiness_rejects_naive_timestamp(tmp_path: Path) -> None:
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    import threading
+
+    class StubHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if "/api/source-ingest/snapshots/latest" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                snap = _make_test_canonical_snapshot(symbol="SPY")
+                # Strip timezone to make naive timestamp
+                snap["event_time"] = "2026-10-08T01:00:00"
+                self.wfile.write(json.dumps(snap).encode("utf-8"))
+            elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation/schedule" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400, "updated_at": "2026-10-08T01:00:00Z"}}')
+            elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status": "ok", "connector": {"connector_id": "dev-paper-us-equity-simulation", "status": "active", "metadata": {"market": "US"}}}')
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def do_POST(self) -> None:
+            if "/api/source-ingest/run-scheduled" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status": "ok", "summary": {"total_ran": 1, "total_failed": 0}}')
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), StubHandler)
+    port = server.server_port
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        stage_def = _extract_stage_dev_paper_prerequisite_readiness_func()
+        test_script = tmp_path / "test_naive_ts.sh"
+        test_script.write_text(
+            f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+
+{stage_def}
+
+export SOURCE_INGEST_API_URL="http://127.0.0.1:{port}"
+export SOURCE_INGEST_CONTROLLER_TOKEN="token"
+
+stage_dev_paper_prerequisite_readiness SPY 1 0
+""",
+            encoding="utf-8",
+        )
+        test_script.chmod(0o755)
+
+        proc = subprocess.run(["bash", str(test_script)], capture_output=True, text=True, check=False)
+        assert proc.returncode == 1
+        assert "timed out waiting for staged dev paper prerequisite readiness for SPY: snapshot still lacks market" in proc.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_stage_dev_paper_prerequisite_readiness_rejects_foreign_symbol(tmp_path: Path) -> None:
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    import threading
+
+    class StubHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if "/api/source-ingest/snapshots/latest" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                snap = _make_test_canonical_snapshot(symbol="QQQ")
+                self.wfile.write(json.dumps(snap).encode("utf-8"))
+            elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation/schedule" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400, "updated_at": "2026-10-08T01:00:00Z"}}')
+            elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status": "ok", "connector": {"connector_id": "dev-paper-us-equity-simulation", "status": "active", "metadata": {"market": "US"}}}')
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def do_POST(self) -> None:
+            if "/api/source-ingest/run-scheduled" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status": "ok", "summary": {"total_ran": 1, "total_failed": 0}}')
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), StubHandler)
+    port = server.server_port
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        stage_def = _extract_stage_dev_paper_prerequisite_readiness_func()
+        test_script = tmp_path / "test_foreign_symbol.sh"
+        test_script.write_text(
+            f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+
+{stage_def}
+
+export SOURCE_INGEST_API_URL="http://127.0.0.1:{port}"
+export SOURCE_INGEST_CONTROLLER_TOKEN="token"
+
+stage_dev_paper_prerequisite_readiness SPY 1 0
+""",
+            encoding="utf-8",
+        )
+        test_script.chmod(0o755)
+
+        proc = subprocess.run(["bash", str(test_script)], capture_output=True, text=True, check=False)
+        assert proc.returncode == 1
+        assert "timed out waiting for staged dev paper prerequisite readiness for SPY: snapshot still lacks market" in proc.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_stage_dev_paper_prerequisite_readiness_rejects_unknown_connector_status(tmp_path: Path) -> None:
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    import threading
+
+    class StubHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if "/api/source-ingest/snapshots/latest" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"symbol": "SPY", "closes": [500.0, 502.0]}')
+            elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status": "ok", "connector": {"connector_id": "dev-paper-us-equity-simulation", "status": "unknown_value", "metadata": {}}}')
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), StubHandler)
+    port = server.server_port
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        stage_def = _extract_stage_dev_paper_prerequisite_readiness_func()
+        test_script = tmp_path / "test_unknown_conn.sh"
+        test_script.write_text(
+            f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+
+{stage_def}
+
+export SOURCE_INGEST_API_URL="http://127.0.0.1:{port}"
+export SOURCE_INGEST_CONTROLLER_TOKEN="token"
+
+stage_dev_paper_prerequisite_readiness SPY 1 0
+""",
+            encoding="utf-8",
+        )
+        test_script.chmod(0o755)
+
+        proc = subprocess.run(["bash", str(test_script)], capture_output=True, text=True, check=False)
+        assert proc.returncode == 1
+        assert "unknown operator stop state for connector dev-paper-us-equity-simulation; refusing prerequisite refresh" in proc.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_stage_dev_paper_prerequisite_readiness_rejects_invalid_schedule_fields(tmp_path: Path) -> None:
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    import threading
+
+    class StubHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if "/api/source-ingest/snapshots/latest" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"symbol": "SPY", "closes": [500.0, 502.0]}')
+            elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation/schedule" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                # String enabled instead of strict bool
+                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": "true", "interval_seconds": 86400, "updated_at": "2026-10-08T01:00:00Z"}}')
+            elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status": "ok", "connector": {"connector_id": "dev-paper-us-equity-simulation", "status": "active", "metadata": {"market": "US"}}}')
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), StubHandler)
+    port = server.server_port
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        stage_def = _extract_stage_dev_paper_prerequisite_readiness_func()
+        test_script = tmp_path / "test_invalid_sched.sh"
+        test_script.write_text(
+            f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+
+{stage_def}
+
+export SOURCE_INGEST_API_URL="http://127.0.0.1:{port}"
+export SOURCE_INGEST_CONTROLLER_TOKEN="token"
+
+stage_dev_paper_prerequisite_readiness SPY 1 0
+""",
+            encoding="utf-8",
+        )
+        test_script.chmod(0o755)
+
+        proc = subprocess.run(["bash", str(test_script)], capture_output=True, text=True, check=False)
+        assert proc.returncode == 1
+        assert "failed to parse connector dev-paper-us-equity-simulation schedule; refusing prerequisite refresh" in proc.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_stage_dev_paper_prerequisite_readiness_restore_refuses_when_get_fails(tmp_path: Path) -> None:
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    import threading
+
+    state = {"market": False, "get_sched_calls": 0}
+
+    class StubHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if "/api/source-ingest/snapshots/latest" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                if state["market"]:
+                    snap = _make_test_canonical_snapshot(symbol="SPY")
+                    self.wfile.write(json.dumps(snap).encode("utf-8"))
+                else:
+                    self.wfile.write(b'{"symbol": "SPY", "closes": [500.0, 502.0]}')
+            elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation/schedule" in self.path:
+                state["get_sched_calls"] += 1
+                if state["get_sched_calls"] == 1:
+                    # Initial schedule: disabled
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": false, "interval_seconds": 86400, "updated_at": "2026-10-08T01:00:00Z"}}')
+                else:
+                    # Restore pre-PUT GET returns 500
+                    self.send_response(500)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"detail": "server error"}')
+            elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status": "ok", "connector": {"connector_id": "dev-paper-us-equity-simulation", "status": "active", "metadata": {"market": "US"}}}')
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def do_PUT(self) -> None:
+            if "/api/source-ingest/connectors/dev-paper-us-equity-simulation/schedule" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400, "updated_at": "2026-10-08T01:00:01Z"}}')
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def do_POST(self) -> None:
+            if "/api/source-ingest/run-scheduled" in self.path:
+                state["market"] = True
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status": "ok", "summary": {"total_ran": 1, "total_failed": 0}}')
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), StubHandler)
+    port = server.server_port
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        stage_def = _extract_stage_dev_paper_prerequisite_readiness_func()
+        test_script = tmp_path / "test_restore_get_fail.sh"
+        test_script.write_text(
+            f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+
+{stage_def}
+
+export SOURCE_INGEST_API_URL="http://127.0.0.1:{port}"
+export SOURCE_INGEST_CONTROLLER_TOKEN="token"
+
+stage_dev_paper_prerequisite_readiness SPY 5 0
+""",
+            encoding="utf-8",
+        )
+        test_script.chmod(0o755)
+
+        proc = subprocess.run(["bash", str(test_script)], capture_output=True, text=True, check=False)
+        assert proc.returncode == 1
+        assert "failed to read connector dev-paper-us-equity-simulation schedule before restore" in proc.stderr
+        assert "refusing to overwrite unknown state" in proc.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_stage_dev_paper_prerequisite_readiness_restore_failure_preserves_error_and_exits_nonzero(tmp_path: Path) -> None:
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    import threading
+
+    state = {"market": False}
+
+    class StubHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if "/api/source-ingest/snapshots/latest" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                if state["market"]:
+                    snap = _make_test_canonical_snapshot(symbol="SPY")
+                    self.wfile.write(json.dumps(snap).encode("utf-8"))
+                else:
+                    self.wfile.write(b'{"symbol": "SPY", "closes": [500.0, 502.0]}')
+            elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation/schedule" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": false, "interval_seconds": 86400, "updated_at": "2026-10-08T01:00:01Z"}}')
+            elif "/api/source-ingest/connectors/dev-paper-us-equity-simulation" in self.path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status": "ok", "connector": {"connector_id": "dev-paper-us-equity-simulation", "status": "active", "metadata": {"market": "US"}}}')
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def do_PUT(self) -> None:
+            if "/api/source-ingest/connectors/dev-paper-us-equity-simulation/schedule" in self.path:
+                if not state["market"]:
+                    # Temporary admission PUT succeeds
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"status": "ok", "schedule": {"connector_id": "dev-paper-us-equity-simulation", "enabled": true, "interval_seconds": 86400, "updated_at": "2026-10-08T01:00:01Z"}}')
+                else:
+                    # Restore PUT returns 500
+                    self.send_response(500)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"detail": "restore failed"}')
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def do_POST(self) -> None:
+            if "/api/source-ingest/run-scheduled" in self.path:
+                state["market"] = True
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status": "ok", "summary": {"total_ran": 1, "total_failed": 0}}')
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), StubHandler)
+    port = server.server_port
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        stage_def = _extract_stage_dev_paper_prerequisite_readiness_func()
+        test_script = tmp_path / "test_restore_put_fail.sh"
+        test_script.write_text(
+            f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+
+{stage_def}
+
+export SOURCE_INGEST_API_URL="http://127.0.0.1:{port}"
+export SOURCE_INGEST_CONTROLLER_TOKEN="token"
+
+stage_dev_paper_prerequisite_readiness SPY 5 0
+""",
+            encoding="utf-8",
+        )
+        test_script.chmod(0o755)
+
+        proc = subprocess.run(["bash", str(test_script)], capture_output=True, text=True, check=False)
+        assert proc.returncode == 1
+        assert "failed to restore connector dev-paper-us-equity-simulation schedule: http_status=500" in proc.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
