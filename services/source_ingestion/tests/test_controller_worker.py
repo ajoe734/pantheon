@@ -1906,10 +1906,17 @@ def test_run_controller_tick_reconcile_only_fails_when_egress_free_schedule_fail
 
     def failing_schedule_tick(**kwargs: Any) -> dict[str, Any]:
         return {
+            "failed": [
+                {
+                    "connector_id": "dev-paper-simulation",
+                    "frontier": {"frontier_id": "frontier-1"},
+                    "error": "provider rejected the request " + "x" * 2000,
+                }
+            ],
             "summary": {
                 "total_ran": 0,
                 "total_failed": 1,
-            }
+            },
         }
 
     monkeypatch.setattr(controller_worker, "load_desired_state", load_desired_state)
@@ -1923,6 +1930,82 @@ def test_run_controller_tick_reconcile_only_fails_when_egress_free_schedule_fail
     assert raised.value.stage == "schedule"
     failure = _call(writer, "failure")
     assert "schedule: scheduled source tick reported 1 failed connector(s)" in failure["reason"]
+    (failed,) = state.schedule["failed"]
+    assert failed["connector_id"] == "dev-paper-simulation"
+    assert failed["error"].startswith("provider rejected the request")
+    assert len(failed["error"]) == controller_state.MAX_TEXT_LENGTH
+    assert set(failed) == {"connector_id", "error"}
+    reloaded = ControllerStateStore(config.state_path).load()
+    assert reloaded is not None and reloaded.schedule["failed"] == state.schedule["failed"]
+
+
+def test_schedule_summary_bounds_failed_connectors_and_survives_resummary() -> None:
+    schedule = {
+        "failed": [{"connector_id": f"connector-{index:02d}", "error": f"error {index}"} for index in range(40)]
+        + ["not-a-mapping"],
+        "summary": {"total_failed": 41},
+    }
+
+    summary = controller_state.summarize_schedule(schedule)
+
+    assert len(summary["failed"]) == controller_state.MAX_FAILED_CONNECTORS
+    assert summary["failed"][0] == {"connector_id": "connector-00", "error": "error 0"}
+    assert controller_state.summarize_schedule(summary) == summary
+    assert controller_state.summarize_schedule({"summary": {"total_failed": 0}})["failed"] == []
+
+
+def _run_main_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    error: Exception,
+) -> dict[str, Any]:
+    def failing_tick(**kwargs: Any) -> dict[str, Any]:
+        raise error
+
+    monkeypatch.setattr(controller_worker, "config_from_env", lambda: _config(tmp_path))
+    monkeypatch.setattr(controller_worker, "_new_state", lambda: _state())
+    monkeypatch.setattr(controller_worker, "build_loop_writer", lambda **kwargs: RecordingWriter([]))
+    monkeypatch.setattr(controller_worker, "run_controller_tick", failing_tick)
+
+    assert controller_worker.main() == 1
+    return json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+
+
+def test_main_failure_line_names_failed_connectors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    error = ControllerTickError(
+        "schedule",
+        "scheduled source tick reported 1 failed connector(s)",
+        schedule={
+            "failed": [{"connector_id": CONNECTOR_ID, "error": "upstream returned HTTP 503"}],
+            "summary": {"total_failed": 1},
+        },
+    )
+
+    line = _run_main_once(tmp_path, monkeypatch, capsys, error)
+
+    assert line["status"] == "failed"
+    assert line["stage"] == "schedule"
+    assert line["failed_connectors"] == [{"connector_id": CONNECTOR_ID, "error": "upstream returned HTTP 503"}]
+
+
+def test_main_failure_line_is_unchanged_without_schedule_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    line = _run_main_once(
+        tmp_path,
+        monkeypatch,
+        capsys,
+        ControllerTickError("reconcile_contract", "reconcile response is missing summary"),
+    )
+
+    assert set(line) == {"tick", "status", "stage", "error", "state_sequence_no"}
 
 
 def test_run_controller_tick_exclusively_selects_governed_bounded_connector(
