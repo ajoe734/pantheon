@@ -280,3 +280,339 @@ def test_concurrent_migration_safety_guard_rejects_synthetic_dollar_quotes_and_d
         )
 
 
+def test_bootstrap_schema_concurrent_failure_preserves_runtime_dml_and_usage_seven_tables():
+    """Acceptance 1, 2, 4: Complete seven-table schema retains runtime SELECT, INSERT, UPDATE, DELETE
+
+    and schema USAGE when concurrent index phase fails. Runtime DDL remains denied.
+    """
+    dsn = os.getenv("TEST_DATABASE_URL")
+    if not dsn:
+        pytest.skip("TEST_DATABASE_URL is not set")
+    import psycopg
+    from psycopg import sql
+    from psycopg.conninfo import make_conninfo, conninfo_to_dict
+    from services.trade_journey.projection_store import (
+        DEFAULT_PROJECTION_SCHEMA,
+        PROJECTION_TABLES,
+        INITIAL_MIGRATION_PATH,
+    )
+    import services.trade_journey.projection_store as ps_mod
+    import tempfile
+    from pathlib import Path
+
+    schema = DEFAULT_PROJECTION_SCHEMA
+    suffix = uuid4().hex[:8]
+    runtime_role = f"unit_rt_{suffix}"
+    migration_role = f"unit_mig_{suffix}"
+
+    parsed = conninfo_to_dict(dsn)
+    db = parsed.get("dbname") or "pantheon"
+
+    with psycopg.connect(dsn, autocommit=True) as admin:
+        admin.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema)))
+        for r in (runtime_role, migration_role):
+            admin.execute(sql.SQL("CREATE ROLE {} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'pw'").format(sql.Identifier(r)))
+        admin.execute(sql.SQL("GRANT {} TO {}").format(sql.Identifier(runtime_role), sql.Identifier(migration_role)))
+        admin.execute(sql.SQL("GRANT CREATE ON DATABASE {} TO {}").format(sql.Identifier(db), sql.Identifier(migration_role)))
+
+        sql_001 = INITIAL_MIGRATION_PATH.read_text(encoding="utf-8").replace(DEFAULT_PROJECTION_SCHEMA, schema)
+        admin.execute(sql_001)
+
+        admin.execute(sql.SQL("ALTER SCHEMA {} OWNER TO {}").format(sql.Identifier(schema), sql.Identifier(runtime_role)))
+        for tbl in PROJECTION_TABLES:
+            admin.execute(sql.SQL("ALTER TABLE {}.{} OWNER TO {}").format(sql.Identifier(schema), sql.Identifier(tbl), sql.Identifier(runtime_role)))
+
+    mig_dsn = make_conninfo(host=parsed.get("host", "127.0.0.1"), port=parsed.get("port", "5432"), dbname=db, user=migration_role, password="pw")
+    rt_dsn = make_conninfo(host=parsed.get("host", "127.0.0.1"), port=parsed.get("port", "5432"), dbname=db, user=runtime_role, password="pw")
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="concurrent-fail-") as tmp:
+            Path(tmp, "001_initial.sql").write_text(sql_001, encoding="utf-8")
+            Path(tmp, "002_concurrent_fail.sql").write_text("-- CONCURRENTLY\nSELECT 1 / 0;\n", encoding="utf-8")
+            orig_dir = ps_mod.MIGRATIONS_DIR
+            try:
+                ps_mod.MIGRATIONS_DIR = Path(tmp)
+                store = ProjectionStore(mig_dsn, schema=schema)
+                with pytest.raises(psycopg.errors.DivisionByZero):
+                    store.bootstrap_schema(runtime_role=runtime_role, reconcile_runtime=True)
+            finally:
+                ps_mod.MIGRATIONS_DIR = orig_dir
+
+        with psycopg.connect(rt_dsn, autocommit=True) as r_conn:
+            has_usage = r_conn.execute("SELECT has_schema_privilege(%s, %s, %s)", (runtime_role, schema, "USAGE")).fetchone()[0]
+            assert has_usage is True, "Runtime role must retain USAGE on schema after concurrent failure"
+
+            for tbl in PROJECTION_TABLES:
+                rows = r_conn.execute(sql.SQL("SELECT 1 FROM {}.{} LIMIT 0").format(sql.Identifier(schema), sql.Identifier(tbl))).fetchall()
+                assert rows == [], f"Runtime role must be able to SELECT from {tbl} after concurrent failure"
+
+            r_conn.execute(sql.SQL("INSERT INTO {}.controller (controller_id, tenant_scope, environment_scope) VALUES ('c1', 't1', 'paper')").format(sql.Identifier(schema)))
+            r_conn.execute(sql.SQL("UPDATE {}.controller SET checkpoint_seq = 1 WHERE controller_id = 'c1'").format(sql.Identifier(schema)))
+            r_conn.execute(sql.SQL("DELETE FROM {}.controller WHERE controller_id = 'c1'").format(sql.Identifier(schema)))
+
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                r_conn.execute(sql.SQL("CREATE TABLE {}.forbidden (val int)").format(sql.Identifier(schema)))
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                r_conn.execute(sql.SQL("ALTER TABLE {}.controller ADD COLUMN bad int").format(sql.Identifier(schema)))
+    finally:
+        with psycopg.connect(dsn, autocommit=True) as admin:
+            admin.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema)))
+            for r in (migration_role, runtime_role):
+                try:
+                    admin.execute(sql.SQL("REVOKE ALL ON DATABASE {} FROM {}").format(sql.Identifier(db), sql.Identifier(r)))
+                    admin.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(r)))
+                    admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(r)))
+                except Exception:
+                    pass
+
+
+def test_bootstrap_schema_partial_grant_failure_rolls_back_authority_and_acl_seven_tables():
+    """Acceptance 1, 2, 4: Partial grant failure in transactional phase rolls back authority
+
+    reconciliation and ACL changes, preserving prior ownership and runtime operations.
+    """
+    dsn = os.getenv("TEST_DATABASE_URL")
+    if not dsn:
+        pytest.skip("TEST_DATABASE_URL is not set")
+    import psycopg
+    from psycopg import sql
+    from psycopg.conninfo import make_conninfo, conninfo_to_dict
+    from services.trade_journey.projection_store import (
+        DEFAULT_PROJECTION_SCHEMA,
+        PROJECTION_TABLES,
+        INITIAL_MIGRATION_PATH,
+    )
+
+    schema = DEFAULT_PROJECTION_SCHEMA
+    suffix = uuid4().hex[:8]
+    runtime_role = f"unit_rt_{suffix}"
+    migration_role = f"unit_mig_{suffix}"
+
+    parsed = conninfo_to_dict(dsn)
+    db = parsed.get("dbname") or "pantheon"
+
+    with psycopg.connect(dsn, autocommit=True) as admin:
+        admin.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema)))
+        for r in (runtime_role, migration_role):
+            admin.execute(sql.SQL("CREATE ROLE {} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'pw'").format(sql.Identifier(r)))
+        admin.execute(sql.SQL("GRANT {} TO {}").format(sql.Identifier(runtime_role), sql.Identifier(migration_role)))
+        admin.execute(sql.SQL("GRANT CREATE ON DATABASE {} TO {}").format(sql.Identifier(db), sql.Identifier(migration_role)))
+
+        sql_001 = INITIAL_MIGRATION_PATH.read_text(encoding="utf-8").replace(DEFAULT_PROJECTION_SCHEMA, schema)
+        admin.execute(sql_001)
+
+        admin.execute(sql.SQL("ALTER SCHEMA {} OWNER TO {}").format(sql.Identifier(schema), sql.Identifier(runtime_role)))
+        for tbl in PROJECTION_TABLES:
+            admin.execute(sql.SQL("ALTER TABLE {}.{} OWNER TO {}").format(sql.Identifier(schema), sql.Identifier(tbl), sql.Identifier(runtime_role)))
+
+    mig_dsn = make_conninfo(host=parsed.get("host", "127.0.0.1"), port=parsed.get("port", "5432"), dbname=db, user=migration_role, password="pw")
+    rt_dsn = make_conninfo(host=parsed.get("host", "127.0.0.1"), port=parsed.get("port", "5432"), dbname=db, user=runtime_role, password="pw")
+
+    def get_owners():
+        with psycopg.connect(dsn, autocommit=True) as conn:
+            return dict(conn.execute(
+                "SELECT 'schema', r.rolname FROM pg_namespace n JOIN pg_roles r ON r.oid=n.nspowner WHERE n.nspname=%s "
+                "UNION ALL SELECT c.relname, r.rolname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+                "JOIN pg_roles r ON r.oid=c.relowner WHERE n.nspname=%s AND c.relkind='r'",
+                (schema, schema),
+            ).fetchall())
+
+    owners_before = get_owners()
+    assert owners_before["schema"] == runtime_role
+    for tbl in PROJECTION_TABLES:
+        assert owners_before[tbl] == runtime_role
+
+    try:
+        store = ProjectionStore(mig_dsn, schema=schema)
+
+        class FailingCursor:
+            def __init__(self, real_cur):
+                self._real = real_cur
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return self._real.__exit__(*args)
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+            def execute(self, query, params=None):
+                q_str = str(query)
+                if "GRANT SELECT, INSERT" in q_str and "event_receipts" in q_str:
+                    raise psycopg.errors.InternalError("Simulated partial grant failure on table event_receipts")
+                return self._real.execute(query, params)
+
+        class FailingConn:
+            def __init__(self, real_conn):
+                self._real = real_conn
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return self._real.__exit__(*args)
+            def cursor(self):
+                return FailingCursor(self._real.cursor())
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+        orig_connect = store._connect_db
+        def patched_connect(*args, **kwargs):
+            c = orig_connect(*args, **kwargs)
+            if not kwargs.get("autocommit", False):
+                return FailingConn(c)
+            return c
+
+        store._connect_db = patched_connect
+
+        with pytest.raises(psycopg.errors.InternalError):
+            store.bootstrap_schema(runtime_role=runtime_role, reconcile_runtime=True)
+
+        owners_after = get_owners()
+        assert owners_after == owners_before, "Ownership must roll back on partial grant failure"
+
+        with psycopg.connect(rt_dsn) as r_conn:
+            for tbl in PROJECTION_TABLES:
+                r_conn.execute(sql.SQL("SELECT 1 FROM {}.{} LIMIT 0").format(sql.Identifier(schema), sql.Identifier(tbl)))
+    finally:
+        with psycopg.connect(dsn, autocommit=True) as admin:
+            admin.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema)))
+            for r in (migration_role, runtime_role):
+                try:
+                    admin.execute(sql.SQL("REVOKE ALL ON DATABASE {} FROM {}").format(sql.Identifier(db), sql.Identifier(r)))
+                    admin.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(r)))
+                    admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(r)))
+                except Exception:
+                    pass
+
+
+def test_bootstrap_schema_concurrent_failure_minimal_controller_preserves_runtime():
+    """Acceptance 1, 2, 4: Minimal controller fixture remains fail-safe under concurrent failure."""
+    dsn = os.getenv("TEST_DATABASE_URL")
+    if not dsn:
+        pytest.skip("TEST_DATABASE_URL is not set")
+    import psycopg
+    from psycopg import sql
+    from psycopg.conninfo import make_conninfo, conninfo_to_dict
+    from services.trade_journey.projection_store import DEFAULT_PROJECTION_SCHEMA
+    import services.trade_journey.projection_store as ps_mod
+    import tempfile
+    from pathlib import Path
+
+    schema = DEFAULT_PROJECTION_SCHEMA
+    suffix = uuid4().hex[:8]
+    runtime_role = f"unit_rt_{suffix}"
+    migration_role = f"unit_mig_{suffix}"
+
+    parsed = conninfo_to_dict(dsn)
+    db = parsed.get("dbname") or "pantheon"
+
+    with psycopg.connect(dsn, autocommit=True) as admin:
+        admin.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema)))
+        for r in (runtime_role, migration_role):
+            admin.execute(sql.SQL("CREATE ROLE {} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'pw'").format(sql.Identifier(r)))
+        admin.execute(sql.SQL("GRANT {} TO {}").format(sql.Identifier(runtime_role), sql.Identifier(migration_role)))
+        admin.execute(sql.SQL("GRANT CREATE ON DATABASE {} TO {}").format(sql.Identifier(db), sql.Identifier(migration_role)))
+        admin.execute(sql.SQL("CREATE SCHEMA {} AUTHORIZATION {}").format(sql.Identifier(schema), sql.Identifier(runtime_role)))
+        admin.execute(sql.SQL("CREATE TABLE {}.controller (value integer)").format(sql.Identifier(schema)))
+        admin.execute(sql.SQL("ALTER TABLE {}.controller OWNER TO {}").format(sql.Identifier(schema), sql.Identifier(runtime_role)))
+
+    mig_dsn = make_conninfo(host=parsed.get("host", "127.0.0.1"), port=parsed.get("port", "5432"), dbname=db, user=migration_role, password="pw")
+    rt_dsn = make_conninfo(host=parsed.get("host", "127.0.0.1"), port=parsed.get("port", "5432"), dbname=db, user=runtime_role, password="pw")
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="concurrent-min-fail-") as tmp:
+            Path(tmp, "999_unit_forced_failure.sql").write_text("-- CONCURRENTLY phase failure injection\nSELECT 1 / 0;\n", encoding="utf-8")
+            orig_dir = ps_mod.MIGRATIONS_DIR
+            try:
+                ps_mod.MIGRATIONS_DIR = Path(tmp)
+                store = ProjectionStore(mig_dsn, schema=schema)
+                with pytest.raises(psycopg.errors.DivisionByZero):
+                    store.bootstrap_schema(runtime_role=runtime_role, reconcile_runtime=True)
+            finally:
+                ps_mod.MIGRATIONS_DIR = orig_dir
+
+        with psycopg.connect(rt_dsn) as r_conn:
+            rows = r_conn.execute(sql.SQL("SELECT value FROM {}.controller").format(sql.Identifier(schema))).fetchall()
+            assert rows == []
+            has_usage = r_conn.execute("SELECT has_schema_privilege(%s, %s, %s)", (runtime_role, schema, "USAGE")).fetchone()[0]
+            assert has_usage is True
+    finally:
+        with psycopg.connect(dsn, autocommit=True) as admin:
+            admin.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema)))
+            for r in (migration_role, runtime_role):
+                try:
+                    admin.execute(sql.SQL("REVOKE ALL ON DATABASE {} FROM {}").format(sql.Identifier(db), sql.Identifier(r)))
+                    admin.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(r)))
+                    admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(r)))
+                except Exception:
+                    pass
+
+
+def test_bootstrap_schema_complete_schema_idempotence_and_denied_ddl():
+    """Acceptance 1, 3, 4: Re-running bootstrap_schema on complete seven-table schema is idempotent;
+
+    runtime role retains DML and is denied DDL authority.
+    """
+    dsn = os.getenv("TEST_DATABASE_URL")
+    if not dsn:
+        pytest.skip("TEST_DATABASE_URL is not set")
+    import psycopg
+    from psycopg import sql
+    from psycopg.conninfo import make_conninfo, conninfo_to_dict
+    from services.trade_journey.projection_store import (
+        DEFAULT_PROJECTION_SCHEMA,
+        PROJECTION_TABLES,
+        INITIAL_MIGRATION_PATH,
+    )
+
+    schema = DEFAULT_PROJECTION_SCHEMA
+    suffix = uuid4().hex[:8]
+    runtime_role = f"unit_rt_{suffix}"
+    migration_role = f"unit_mig_{suffix}"
+
+    parsed = conninfo_to_dict(dsn)
+    db = parsed.get("dbname") or "pantheon"
+
+    with psycopg.connect(dsn, autocommit=True) as admin:
+        admin.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema)))
+        for r in (runtime_role, migration_role):
+            admin.execute(sql.SQL("CREATE ROLE {} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'pw'").format(sql.Identifier(r)))
+        admin.execute(sql.SQL("GRANT {} TO {}").format(sql.Identifier(runtime_role), sql.Identifier(migration_role)))
+        admin.execute(sql.SQL("GRANT CREATE ON DATABASE {} TO {}").format(sql.Identifier(db), sql.Identifier(migration_role)))
+
+        sql_001 = INITIAL_MIGRATION_PATH.read_text(encoding="utf-8").replace(DEFAULT_PROJECTION_SCHEMA, schema)
+        admin.execute(sql_001)
+
+        admin.execute(sql.SQL("ALTER SCHEMA {} OWNER TO {}").format(sql.Identifier(schema), sql.Identifier(runtime_role)))
+        for tbl in PROJECTION_TABLES:
+            admin.execute(sql.SQL("ALTER TABLE {}.{} OWNER TO {}").format(sql.Identifier(schema), sql.Identifier(tbl), sql.Identifier(runtime_role)))
+
+    mig_dsn = make_conninfo(host=parsed.get("host", "127.0.0.1"), port=parsed.get("port", "5432"), dbname=db, user=migration_role, password="pw")
+    rt_dsn = make_conninfo(host=parsed.get("host", "127.0.0.1"), port=parsed.get("port", "5432"), dbname=db, user=runtime_role, password="pw")
+
+    try:
+        store = ProjectionStore(mig_dsn, schema=schema)
+        # First execution: applies migrations and reconciles runtime
+        store.bootstrap_schema(runtime_role=runtime_role, reconcile_runtime=True)
+        # Second execution: idempotent no-op
+        store.bootstrap_schema(runtime_role=runtime_role, reconcile_runtime=True)
+
+        with psycopg.connect(rt_dsn) as r_conn:
+            for tbl in PROJECTION_TABLES:
+                r_conn.execute(sql.SQL("SELECT 1 FROM {}.{} LIMIT 0").format(sql.Identifier(schema), sql.Identifier(tbl)))
+
+            r_conn.execute(sql.SQL("INSERT INTO {}.controller (controller_id, tenant_scope, environment_scope) VALUES ('c1', 't1', 'paper')").format(sql.Identifier(schema)))
+            r_conn.execute(sql.SQL("UPDATE {}.controller SET checkpoint_seq = 2 WHERE controller_id = 'c1'").format(sql.Identifier(schema)))
+            r_conn.execute(sql.SQL("DELETE FROM {}.controller WHERE controller_id = 'c1'").format(sql.Identifier(schema)))
+
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                r_conn.execute(sql.SQL("CREATE TABLE {}.forbidden (val int)").format(sql.Identifier(schema)))
+    finally:
+        with psycopg.connect(dsn, autocommit=True) as admin:
+            admin.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema)))
+            for r in (migration_role, runtime_role):
+                try:
+                    admin.execute(sql.SQL("REVOKE ALL ON DATABASE {} FROM {}").format(sql.Identifier(db), sql.Identifier(r)))
+                    admin.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(r)))
+                    admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(r)))
+                except Exception:
+                    pass
+
+

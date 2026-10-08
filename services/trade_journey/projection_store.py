@@ -582,11 +582,18 @@ class ProjectionStore:
             cur.execute(pgsql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
                 pgsql.Identifier(self.schema), pgsql.Identifier(role)
             ))
+            cur.execute(
+                "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+                "WHERE n.nspname=%s AND c.relkind='r'",
+                (self.schema,),
+            )
+            existing = {r[0] for r in cur.fetchall()}
             for table in PROJECTION_TABLES:
-                cur.execute(pgsql.SQL("GRANT SELECT, INSERT, UPDATE, DELETE ON {}.{} TO {}").format(
-                    pgsql.Identifier(self.schema), pgsql.Identifier(table),
-                    pgsql.Identifier(role),
-                ))
+                if table in existing:
+                    cur.execute(pgsql.SQL("GRANT SELECT, INSERT, UPDATE, DELETE ON {}.{} TO {}").format(
+                        pgsql.Identifier(self.schema), pgsql.Identifier(table),
+                        pgsql.Identifier(role),
+                    ))
 
         with self._connect_db(
             statement_timeout_seconds=stmt_timeout,
@@ -604,7 +611,7 @@ class ProjectionStore:
                     self._reconcile_runtime_ddl(cur, runtime_role)
             for migration_file in tx_files:
                 cur.execute(migration_file.read_text(encoding="utf-8").replace(DEFAULT_PROJECTION_SCHEMA, self.schema))
-            if runtime_role is not None and not concurrent_files:
+            if runtime_role is not None:
                 _apply_grants(cur, runtime_role)
 
         if concurrent_files:
@@ -627,8 +634,6 @@ class ProjectionStore:
                     for stmt in content.split(";"):
                         if stmt.strip():
                             cur.execute(stmt.strip())
-                if runtime_role is not None:
-                    _apply_grants(cur, runtime_role)
 
     def _controller_query(self, *, for_update: bool = False) -> str:
         lock_clause = " FOR UPDATE" if for_update else ""
