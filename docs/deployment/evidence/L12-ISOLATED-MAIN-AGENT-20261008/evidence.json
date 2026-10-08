@@ -1,0 +1,13 @@
+{
+  "task_id": "L12-ISOLATED-MAIN-AGENT-20261008",
+  "scope": "source track only: register existing main identity in the isolated provider bootstrap agents.list alongside structured-extraction. Not real-provider or hosted acceptance; the sole coordinator retains the next FULL run.",
+  "changes": [
+    "scripts/openclaw_isolated_model_bootstrap.py: agents.list is now [{id: main}, structured-extraction deny-all]; main carries no tools override so native policy is inherited. Model pool, unresolved CLAUDE_CODE_OAUTH_TOKEN reference and missing-credential fail-closed are unchanged."
+  ],
+  "verification": {
+    "tests": "scripts/test_openclaw_isolated_model_bootstrap.py updated to assert both identities registered once, structured deny-all, no credential embedded"
+  },
+  "known_gaps": [
+    "Upstream 'Unknown agent main' fix is not verified against a real OpenClaw gateway here; requires coordinator FULL run after review, CI and dev integration."
+  ]
+}
