@@ -1,0 +1,23 @@
+{
+  "task_id": "L12-HARNESS-SERVICE-ERROR-LINES-20261008",
+  "base_sha": "0a2033fbc",
+  "problem": {
+    "gate_run": "37788615565",
+    "observed": "The research stimulus suite ran 4 passed and 1 failed. test_deployed_persona_teaching_identity_chain failed at teaching.authority_actual_state: the preview job was completed and the evaluation validation_status was passed, but TeachingSession trn-20261008-bff922e1cf5c stayed status=active with ended_at=None until the poll timed out.",
+    "missing_evidence": "The worker completes a session through POST /api/training/sessions/{id}/complete and records any error only in its own log. The artifact diagnostics held compose-ps, TW pull files and logs for two exited one-shot services. training-session-preview-worker and training-session-svc were healthy, so _capture_failure_diagnostics kept no log for either and the completion error is not recoverable from the run.",
+    "cause": "_capture_failure_diagnostics writes logs only for services that are not running or not healthy. A healthy owner answering 4xx/5xx, or a worker logging a handled error, leaves no trace."
+  },
+  "change": [
+    "On a failed run the harness now also scans the last 1000 log lines of every compose service listed by ps. It keeps only error-signal lines (ERROR, CRITICAL, Traceback, Exception, or an HTTP access log line with a 4xx/5xx status), at most the last 40 per service, in diagnostics/service-error-lines.txt. A section header per service records the total count, so zero is explicit.",
+    "Unhealthy and exited services still get their full 200-line logs-<service>.txt exactly as before, and healthy services still get no full log file."
+  ],
+  "test_changes": [
+    "test_failure_diagnostics_capture_ps_and_unhealthy_logs now separates the 200-line full-log calls (still only projector and sick) from the 1000-line scan calls (all three services) and checks the zero-count sections.",
+    "New test_failure_diagnostics_keep_error_lines_of_healthy_services: a healthy training-session-svc with a 409 access line and a Traceback, a healthy worker with 60 ERROR lines (40 kept, newest last), and a quiet service with zero."
+  ],
+  "validation": {
+    "base_with_new_tests": "with the harness change reverted, both diagnostics tests fail",
+    "head": "pytest scripts/test_run_isolated_l12_runtime_e2e.py: 44 passed"
+  },
+  "review_status": "Author validation only; independent exact-head review by the assigned reviewer pending."
+}
