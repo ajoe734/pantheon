@@ -1,0 +1,44 @@
+{
+  "task_id": "BFF-CAPITAL-ROUTER-EXPOSURE-TEST-20261008",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "change_class": "corrective",
+  "net_prod_line_budget": 0,
+  "title": "Update the capital router readback test for the PM12 portfolio-book exposure shape",
+  "summary": "Updated services/control-plane/bff/tests/test_capital_router.py test_allocation_and_management_readbacks_retain_pool_and_risk_lineage to align the portfolio-book exposure readback with the PM12 projection shape served since 8d9e1047da (PR #6352) per the 2026-10-07 and 2026-10-08 operator decisions. The test asserts the PM12 exposure shape {data: {id, summary, items}, page_info, meta} with seeded pool identities ('pool-paper', 'pool-paused') and exposure figures, and no longer requires allocation_digest on exposure items (a legacy thin capital-router field unread by execute-plans). Seeded _CapitalStore with runtime bindings so portfolio holdings continue to assert strategy lineage ({'alpha', 'beta'}) under data.items without loosening any assertions. Allocation lineage remains strictly asserted where the capital owner enforces it (allocation_line_digest on evaluate step lines), and 0 production files are modified.",
+  "test_classifications": [
+    {
+      "test": "services/control-plane/bff/tests/test_capital_router.py::test_allocation_and_management_readbacks_retain_pool_and_risk_lineage",
+      "classification": "intended change",
+      "reason": "PR #6352 (merge commit 8d9e1047da) replaced the legacy thin capital-router exposure list with the PM12 projection returning only fields the execute-plans frontend reads, per the 2026-10-07 operator decision. On 2026-10-08 the operator decided to update the test expectation rather than restoring allocation_digest to the exposure projection. The test was rewritten to assert the PM12 envelope ({data: {id, summary, items}, page_info, meta}) and seeded pool identities/figures without allocation_digest. Allocation lineage remains enforced on the evaluate step lines (allocation_line_digest), and holdings strategy lineage ({'alpha', 'beta'}) remains fully asserted under data.items."
+    }
+  ],
+  "assertions_weakened": false,
+  "compressed_code_used": false,
+  "verification": [
+    {
+      "command": "PYTHONPATH=services/control-plane/bff:. pytest services/control-plane/bff/tests/test_capital_router.py -q",
+      "exit_code": 0,
+      "test_count": 13,
+      "output": "13 passed, 3 warnings in 6.82s"
+    },
+    {
+      "command": "PYTHONPATH=services/control-plane/bff:. pytest services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py services/control-plane/bff/test_bff_mgmt_common_filters.py -q",
+      "exit_code": 0,
+      "test_count": 54,
+      "output": "54 passed, 1 warning in 28.45s"
+    },
+    {
+      "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD",
+      "exit_code": 0,
+      "status": "passed"
+    }
+  ],
+  "diff_budget": {
+    "change_class": "corrective",
+    "budget": 0,
+    "production_net_lines": 0,
+    "status": "passed",
+    "note": "Net production line budget 0 strictly satisfied; 0 production files modified."
+  }
+}
