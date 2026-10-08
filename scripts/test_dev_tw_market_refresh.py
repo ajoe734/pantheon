@@ -123,7 +123,17 @@ class _MockSourceIngestHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
+            state_file = getattr(self.server, "state_file", None)
+            unresolved = 0
+            total_dlq = 0
+            if state_file and state_file.exists():
+                state = json.loads(state_file.read_text(encoding="utf-8"))
+                dlq = state.get("dlq_entries") or []
+                total_dlq = len(dlq)
+                unresolved = sum(1 for e in dlq if e.get("status") in ("pending", "replay_failed", "schema_rejected"))
             self.wfile.write(json.dumps({
+                "unresolved_dlq_count": unresolved,
+                "dlq_count": total_dlq,
                 "connectors": [{
                     "connector_id": "tw-twse-tpex-official-market",
                     "freshness": {
@@ -135,6 +145,89 @@ class _MockSourceIngestHandler(BaseHTTPRequestHandler):
                         "source_id": "src-1"
                     }
                 }]
+            }).encode("utf-8"))
+        elif self.path.startswith("/api/source-ingest/dlq"):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            state_file = getattr(self.server, "state_file", None)
+            entries = []
+            if state_file and state_file.exists():
+                state = json.loads(state_file.read_text(encoding="utf-8"))
+                entries = state.get("dlq_entries") or []
+            status_counts = {"pending": 0, "replayed": 0, "duplicate_skipped": 0, "replay_failed": 0, "schema_rejected": 0}
+            for e in entries:
+                st = e.get("status", "pending")
+                status_counts[st] = status_counts.get(st, 0) + 1
+            unresolved = status_counts["pending"] + status_counts["replay_failed"] + status_counts["schema_rejected"]
+            self.wfile.write(json.dumps({
+                "entries": entries,
+                "entry_count": len(entries),
+                "pending_count": status_counts["pending"],
+                "unresolved_count": unresolved,
+                "status_counts": status_counts,
+            }).encode("utf-8"))
+        elif self.path.startswith("/api/source-ingest/frontier"):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            state_file = getattr(self.server, "state_file", None)
+            frontiers = []
+            if state_file and state_file.exists():
+                state = json.loads(state_file.read_text(encoding="utf-8"))
+                frontiers = state.get("frontier") or []
+            self.wfile.write(json.dumps({"frontier": frontiers}).encode("utf-8"))
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_POST(self):
+        if self.path.startswith("/api/source-ingest/dlq/replay"):
+            content_len = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(content_len).decode("utf-8")) if content_len > 0 else {}
+            state_file = getattr(self.server, "state_file", None)
+            replayed_entries = []
+            correlated_resolutions = []
+            if state_file and state_file.exists():
+                state = json.loads(state_file.read_text(encoding="utf-8"))
+                req_ids = set(body.get("entry_ids") or [])
+                entries = state.get("dlq_entries") or []
+                for e in entries:
+                    if e.get("entry_id") in req_ids or (not req_ids and e.get("status") == "pending"):
+                        prev_st = e.get("status", "pending")
+                        e["status"] = "replayed"
+                        e["replay_attempts"] = e.get("replay_attempts", 0) + 1
+                        replayed_entries.append(e.get("entry_id"))
+                        correlated_resolutions.append({
+                            "entry_id": e.get("entry_id"),
+                            "previous_status": prev_st,
+                            "status": "replayed",
+                            "replay_attempts": e["replay_attempts"],
+                        })
+                for f in state.get("frontier") or []:
+                    if f.get("connector_id") == "tw-twse-tpex-official-market" and f.get("status") == "failed":
+                        f["status"] = "done"
+                state.setdefault("replay_calls", []).append(body)
+                state.setdefault("audit_records", []).append({
+                    "action_type": "source_ingestion.scheduled_run.recovered",
+                    "entry_ids": replayed_entries,
+                    "reason": body.get("reason"),
+                    "actor_id": body.get("actor_id"),
+                    "tag": body.get("tag"),
+                })
+                state_file.write_text(json.dumps(state), encoding="utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "summary": {
+                    "total_replayed": len(replayed_entries),
+                    "applied": len(replayed_entries),
+                    "failed": 0,
+                    "correlated_resolution_count": len(correlated_resolutions),
+                },
+                "selected_entry_ids": replayed_entries[:1] if replayed_entries else [],
+                "correlated_resolutions": correlated_resolutions,
             }).encode("utf-8"))
         else:
             self.send_response(404)
@@ -152,6 +245,7 @@ def _setup_refresh_stub_docker(tmp_path: Path, initial_state: dict[str, Any]) ->
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     state_file = tmp_path / "docker_state.json"
+    server.state_file = state_file
     events_file = tmp_path / "docker_events.jsonl"
     output_file = tmp_path / "refresh_output.json"
 
@@ -219,7 +313,11 @@ if args[0] == "compose":
         sys.exit(0)
 
 elif args[0] == "ps":
-    print("bounded-container-id")
+    filter_arg = next((arg.split("name=^")[-1].rstrip("$") for arg in args if "name=^" in arg), "")
+    if filter_arg:
+        print(f"cid-{{filter_arg}}")
+    else:
+        print("bounded-container-id")
     sys.exit(0)
 
 elif args[0] == "rm":
@@ -246,7 +344,13 @@ elif args[0] == "inspect":
         print("exited")
         sys.exit(0)
     elif "State.ExitCode" in fmt:
-        print("0")
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        dlq = state.get("dlq_entries") or []
+        unresolved = sum(1 for e in dlq if e.get("status") in ("pending", "replay_failed", "schema_rejected"))
+        if ("source-ingest-scheduler" in target or target == "bounded-container-id") and unresolved > 0:
+            print("1")
+        else:
+            print("0")
         sys.exit(0)
 
 elif args[0] == "cp":
@@ -738,3 +842,308 @@ def test_bounded_refresh_controller_writes_the_authoritative_readback_state(tmp_
         fresh = readback(run["args"], tmp_path / f"shared{i}")
         assert (fresh["controller_id"], fresh["sequence_no"]) == ("bounded-fresh", 42)
         assert fresh["recent_operations"] == {"op-1": {"status": "succeeded"}}
+
+
+CANONICAL_TW_FAILED_FRONTIER = {
+    "frontier_id": "frontier-94a821378db3",
+    "connector_id": "tw-twse-tpex-official-market",
+    "status": "failed",
+    "attempts": 2,
+    "max_attempts": 2,
+    "ingest_run_id": "ingest-3b2dc4570fc4",
+    "last_error": "external egress denied: code=host_not_allowlisted host='openapi.twse.com.tw' mode=deny caller=source_ingest.taiwan_official detail=set PANTHEON_EXTERNAL_EGRESS=allowlist and add the exact host to PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS url=https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+    "created_at": "2026-10-07T03:12:13Z",
+    "updated_at": "2026-10-07T08:45:12Z",
+}
+
+CANONICAL_TW_PENDING_DLQ_ENTRIES = [
+    {
+        "entry_id": "dlq-264e0aeb6bf7459fa069f50723f02066",
+        "status": "pending",
+        "reason": "external egress denied: code=host_not_allowlisted host='openapi.twse.com.tw' mode=deny caller=source_ingest.taiwan_official detail=set PANTHEON_EXTERNAL_EGRESS=allowlist and add the exact host to PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS url=https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+        "rejected_at": "2026-10-07T03:12:13Z",
+        "replay_attempts": 0,
+        "source_ref": "source_ingest_run:ingest-81f516962093",
+        "event_type": "source_ingestion.scheduled_run_failed",
+        "aggregate_id": "ingest-81f516962093",
+        "payload": {
+            "connector_id": "tw-twse-tpex-official-market",
+            "frontier_id": "frontier-94a821378db3",
+            "ingest_run_id": "ingest-81f516962093",
+            "error": "external egress denied: code=host_not_allowlisted host='openapi.twse.com.tw' mode=deny caller=source_ingest.taiwan_official detail=set PANTHEON_EXTERNAL_EGRESS=allowlist and add the exact host to PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS url=https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+            "attempts": 2,
+            "trigger_type": "scheduled",
+        },
+    },
+    {
+        "entry_id": "dlq-ab7005f4703c448ab7bc22e8cfc48331",
+        "status": "pending",
+        "reason": "external egress denied: code=host_not_allowlisted host='openapi.twse.com.tw' mode=deny caller=source_ingest.taiwan_official detail=set PANTHEON_EXTERNAL_EGRESS=allowlist and add the exact host to PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS url=https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+        "rejected_at": "2026-10-07T08:45:12Z",
+        "replay_attempts": 0,
+        "source_ref": "source_ingest_run:ingest-3b2dc4570fc4",
+        "event_type": "source_ingestion.scheduled_run_failed",
+        "aggregate_id": "ingest-3b2dc4570fc4",
+        "payload": {
+            "connector_id": "tw-twse-tpex-official-market",
+            "frontier_id": "frontier-94a821378db3",
+            "ingest_run_id": "ingest-3b2dc4570fc4",
+            "error": "external egress denied: code=host_not_allowlisted host='openapi.twse.com.tw' mode=deny caller=source_ingest.taiwan_official detail=set PANTHEON_EXTERNAL_EGRESS=allowlist and add the exact host to PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS url=https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+            "attempts": 2,
+            "trigger_type": "scheduled",
+        },
+    },
+]
+
+
+def test_bounded_refresh_reproduces_2_entry_dlq_blocking_terminal_readback(tmp_path: Path):
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+        "dlq_entries": [dict(e) for e in CANONICAL_TW_PENDING_DLQ_ENTRIES],
+        "frontier": [dict(CANONICAL_TW_FAILED_FRONTIER)],
+    }
+    bin_dir, state_file, _events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+
+    # Unforced run: DLQ recovery must not run, so the 2 pending DLQ entries block terminal readback
+    proc = subprocess.run(
+        ["bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--output", str(output_file)],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode != 0, f"Expected unforced refresh to fail closed on unresolved DLQ, got 0:\n{proc.stdout}"
+    assert "bounded source refresh service source-ingest-scheduler exited with code 1" in proc.stderr
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    assert not state.get("replay_calls"), "Unforced run must not invoke DLQ replay API"
+    unresolved = [e for e in state.get("dlq_entries", []) if e.get("status") == "pending"]
+    assert len(unresolved) == 2, f"Both DLQ entries must remain pending: {unresolved}"
+
+
+def test_bounded_refresh_force_recovers_canonical_dlq_entries_via_native_api(tmp_path: Path):
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+        "dlq_entries": [dict(e) for e in CANONICAL_TW_PENDING_DLQ_ENTRIES],
+        "frontier": [dict(CANONICAL_TW_FAILED_FRONTIER)],
+    }
+    bin_dir, state_file, _events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+
+    proc = subprocess.run(
+        ["bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--force", "--output", str(output_file)],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode == 0, f"Refresh failed: {proc.stderr}\n{proc.stdout}"
+    assert output_file.exists()
+    out_data = json.loads(output_file.read_text(encoding="utf-8"))
+    assert out_data.get("status") == "completed"
+
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    replay_calls = state.get("replay_calls", [])
+    assert len(replay_calls) == 1, f"Expected exactly 1 DLQ replay call, got: {replay_calls}"
+    assert set(replay_calls[0].get("entry_ids", [])) == {
+        "dlq-264e0aeb6bf7459fa069f50723f02066",
+        "dlq-ab7005f4703c448ab7bc22e8cfc48331",
+    }
+    assert replay_calls[0].get("actor_id") == "bounded-source-refresh"
+    assert replay_calls[0].get("tag") == "retry_exhausted"
+
+    audits = state.get("audit_records", [])
+    assert len(audits) >= 1
+    assert audits[0]["action_type"] == "source_ingestion.scheduled_run.recovered"
+
+    post_entries = state.get("dlq_entries", [])
+    assert all(e.get("status") == "replayed" for e in post_entries)
+    frontier = (state.get("frontier") or [])[0]
+    assert frontier.get("status") == "done"
+
+
+def test_bounded_refresh_different_connector_dlq_refused_or_left_for_strict_failure(tmp_path: Path):
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+        "dlq_entries": [
+            {
+                "entry_id": "dlq-other-conn-12345",
+                "status": "pending",
+                "reason": "external egress denied: code=host_not_allowlisted host='api.polygon.io'",
+                "event_type": "source_ingestion.scheduled_run_failed",
+                "payload": {
+                    "connector_id": "us-polygon-market",
+                    "frontier_id": "frontier-us-12345",
+                    "error": "external egress denied: code=host_not_allowlisted host='api.polygon.io'",
+                },
+            }
+        ],
+        "frontier": [
+            {
+                "frontier_id": "frontier-us-12345",
+                "connector_id": "us-polygon-market",
+                "status": "failed",
+                "last_error": "external egress denied: code=host_not_allowlisted host='api.polygon.io'",
+            }
+        ],
+    }
+    bin_dir, state_file, _events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+
+    proc = subprocess.run(
+        ["bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--force", "--output", str(output_file)],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode != 0, "Refresh must fail closed when DLQ has different connector failures"
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    assert not state.get("replay_calls"), "Must not replay DLQ entries for different connectors"
+    unresolved = [e for e in state.get("dlq_entries", []) if e.get("status") == "pending"]
+    assert len(unresolved) == 1
+
+
+def test_bounded_refresh_different_failure_reason_dlq_refused_or_left_for_strict_failure(tmp_path: Path):
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+        "dlq_entries": [
+            {
+                "entry_id": "dlq-schema-fail-12345",
+                "status": "pending",
+                "reason": "schema validation error: unexpected null close in daily series",
+                "event_type": "source_ingestion.scheduled_run_failed",
+                "payload": {
+                    "connector_id": "tw-twse-tpex-official-market",
+                    "frontier_id": "frontier-94a821378db3",
+                    "error": "schema validation error: unexpected null close in daily series",
+                },
+            }
+        ],
+        "frontier": [
+            {
+                "frontier_id": "frontier-94a821378db3",
+                "connector_id": "tw-twse-tpex-official-market",
+                "status": "failed",
+                "last_error": "schema validation error: unexpected null close in daily series",
+            }
+        ],
+    }
+    bin_dir, state_file, _events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+
+    proc = subprocess.run(
+        ["bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--force", "--output", str(output_file)],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode != 0, "Refresh must fail closed when DLQ has non-egress failure reasons"
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    assert not state.get("replay_calls"), "Must not replay DLQ entries with non-egress failure reasons"
+
+
+def test_bounded_refresh_running_frontier_dlq_refused_or_left_for_strict_failure(tmp_path: Path):
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+        "dlq_entries": [dict(CANONICAL_TW_PENDING_DLQ_ENTRIES[0])],
+        "frontier": [
+            {
+                "frontier_id": "frontier-94a821378db3",
+                "connector_id": "tw-twse-tpex-official-market",
+                "status": "running",
+                "last_error": CANONICAL_TW_FAILED_FRONTIER["last_error"],
+            }
+        ],
+    }
+    bin_dir, state_file, _events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+
+    proc = subprocess.run(
+        ["bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--force", "--output", str(output_file)],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode != 0, "Refresh must fail closed when frontier is in running state"
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    assert not state.get("replay_calls"), "Must not replay DLQ entries for running frontiers"
+
+
+def test_recover_bounded_source_refresh_dlq_http_contract(tmp_path: Path):
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+        "dlq_entries": [dict(e) for e in CANONICAL_TW_PENDING_DLQ_ENTRIES],
+        "frontier": [dict(CANONICAL_TW_FAILED_FRONTIER)],
+    }
+    bin_dir, state_file, _events_file, _output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+
+    # Extract recover_bounded_source_refresh_dlq function from deploy_nonprod_vm.sh and run it directly
+    code = f"""
+eval "$(sed -n '/^recover_bounded_source_refresh_dlq()/,/^execute_bounded_source_refresh_entrypoint()/p' "{DEPLOY_SCRIPT}" | sed '$d')"
+recover_bounded_source_refresh_dlq "true" "tw-twse-tpex-official-market"
+"""
+    proc = subprocess.run(
+        ["bash", "-c", code],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode == 0, f"Direct recover_bounded_source_refresh_dlq call failed: {proc.stderr}\n{proc.stdout}"
+    assert "recovering 2 eligible egress-denied DLQ entries" in proc.stdout
+    assert "DLQ recovery completed: all 2 entries terminalized" in proc.stdout
+
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    assert len(state.get("replay_calls", [])) == 1
+    call = state["replay_calls"][0]
+    assert call["tag"] == "retry_exhausted"
+    assert call["actor_id"] == "bounded-source-refresh"
+    assert set(call["entry_ids"]) == {
+        "dlq-264e0aeb6bf7459fa069f50723f02066",
+        "dlq-ab7005f4703c448ab7bc22e8cfc48331",
+    }
+
