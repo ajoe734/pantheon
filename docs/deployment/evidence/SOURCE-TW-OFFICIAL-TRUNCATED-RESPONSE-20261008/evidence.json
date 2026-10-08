@@ -1,0 +1,24 @@
+{
+  "task_id": "SOURCE-TW-OFFICIAL-TRUNCATED-RESPONSE-20261008",
+  "base_sha": "2f2218e65",
+  "problem": {
+    "gate_run": "37773115370",
+    "observed": "The isolated gate's bounded Taiwan official pull failed. The scheduler failure line (added by SOURCE-SCHEDULER-FAILED-CONNECTOR-DETAIL-20261008) named tw-twse-tpex-official-market with 'Unterminated string starting at: line 9508 column 164 (char 3624112)'. Gate 37769132664 forty minutes earlier passed the same pull.",
+    "local_reproduction": "Five sequential GETs of https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes from the dev host on 2026-10-08 at about 12:10Z. Each declared Content-Length 4782391 with no Transfer-Encoding. Three bodies were complete. One ended at 3604073 bytes with no exception and failed JSON parsing ('Unterminated string'). One read raised TimeoutError ('The read operation timed out').",
+    "cause": "The official host intermittently ends a response early. http.client returns the short body without IncompleteRead when it is read with read(amt), and _read_bounded_response never compared it with Content-Length. The truncated body was treated as complete and failed in json.loads, which failed the connector run and the whole tick. A read timeout failed the run the same way. None of the four official fetch paths retried."
+  },
+  "change": [
+    "_read_bounded_response raises OfficialResponseTruncated (a SourceEvidenceError) when the response declares a Content-Length and the body is shorter. Without a numeric Content-Length the body is returned as read, as before.",
+    "New _fetch_official(request, caller, timeout_seconds, max_bytes, parse) opens, reads and parses one official endpoint. It retries the same request only for OfficialResponseTruncated, TimeoutError, http.client.IncompleteRead and json.JSONDecodeError, up to OFFICIAL_FETCH_ATTEMPTS = 3 with 1 s and 2 s backoff. The final SourceEvidenceError names every attempt. HTTP errors, egress denial, the byte limit and all other errors are raised on the first attempt.",
+    "All four official fetch paths use it: TWSE/TPEx dataset payloads, per-symbol price history, TDCC CSV and TAIFEX JSON. Their parsing after the fetch is unchanged."
+  ],
+  "unchanged": "Endpoints, headers, egress caller names, byte limits, parsing, record normalization, freshness and admission are unchanged. The copies of _read_bounded_response in social.py and alpha_db.py are out of scope.",
+  "test_changes": [
+    "New services/source_ingestion/tests/test_taiwan_official_fetch_retry.py, 9 tests: a named truncation against Content-Length; a body without Content-Length; truncation, read timeout or incomplete JSON followed by a complete response; persistent truncation failing after 3 attempts with 2 backoffs; HTTP error and byte limit not retried; and the adapter's dataset fetch going through the retrying reader."
+  ],
+  "validation": {
+    "base_with_new_tests": "new test module fails at import on base 2f2218e65 (OfficialResponseTruncated does not exist)",
+    "head": "new tests 9 passed; the 15 Source test files that reference the Taiwan official adapters: 388 passed, 1 skipped; services/test_external_egress.py: 25 passed"
+  },
+  "review_status": "Author validation only; independent exact-head review by the assigned reviewer pending."
+}
