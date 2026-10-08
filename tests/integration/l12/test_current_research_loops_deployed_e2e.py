@@ -32,7 +32,14 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 import pytest
-from l12_owner_auth import approve_registry_entry, bearer, human_token, registry_advance_body, token_subject
+from l12_owner_auth import (
+    approve_registry_entry,
+    bearer,
+    compose_file_args,
+    human_token,
+    registry_advance_body,
+    token_subject,
+)
 
 
 TASK_ID = "L12-GAP-F07-E2E-RESEARCH-20260818"
