@@ -1,0 +1,19 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-L12-CLOSURE-CAPITAL-ATTRIBUTION-20261008-CI-RED-A6D6F6C83116",
+  "blocked_pr": 6435,
+  "blocked_task_id": "L12-CLOSURE-CAPITAL-ATTRIBUTION-20261008",
+  "failing_check": "Branch CI Gate / Smoke acceptance",
+  "failing_test": "services/source_ingestion/tests/test_multi_process_source_reconciliation.py::test_two_process_workers_create_one_connector_schedule_run_and_source_record",
+  "root_cause": "PR #6435 only touched tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py and its task evidence. The CI failure on PR #6435 (run 37820069472) was unrelated to the PR diff: DistillationJobQueue._bootstrap ran `PRAGMA journal_mode = WAL` during parallel worker initialization without handling SQLite busy contention on journal mode switching, causing sqlite3.OperationalError: database is locked.",
+  "resolution": {
+    "fix_task_id": "DISTILL-WAL-INIT-20261008",
+    "fix_pr": 6436,
+    "fix_merged_commit": "7475749a44ed308c3623b1f476f0ed9d6238b6d5",
+    "fix_description": "Added bounded retry on SQLite lock contention during PRAGMA journal_mode = WAL in DistillationJobQueue._bootstrap, plus independent-process cold-start test coverage in test_distillation_queue_lifetime.py.",
+    "original_task_status": "reopened by Human/Ops at 2026-10-08T18:29:14Z with intent to rebase PR #6435 on dev tip (7475749a) containing the fix, re-run CI, and complete independent review with Antigravity2."
+  },
+  "acceptance_criteria_verification": {
+    "root_cause_documented": true,
+    "original_pr_updated_or_superseded": "Reopened and assigned to Claude for rebase on dev tip 7475749a; no longer stranded."
+  }
+}
