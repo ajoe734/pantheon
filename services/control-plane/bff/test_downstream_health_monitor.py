@@ -628,3 +628,56 @@ class TestReplayRouteDoesNotBlockEventLoop:
         result = _run(scenario())
         assert result["data"]["approval_ref"] == "apr-1"
         assert replay_thread["ident"] != loop_thread["ident"]
+
+
+class TestTelemetryTokenFileAuthority:
+    """The telemetry principal is read from its issuer-written file and fails closed."""
+
+    def _monitor(self):
+        return DownstreamHealthMonitor(
+            telemetry_url="http://tel:8080",
+            incidents_url="http://inc:8090",
+            tenant_id="tenant-dev",
+            probe_interval_seconds=9999,
+        )
+
+    def _headers(self, monitor):
+        return monitor._headers_for_delivery(
+            {"event_id": "evt-1", "channel": "telemetry"}
+        )
+
+    def _write(self, path, value, mode=0o600):
+        path.write_text(value)
+        os.chmod(path, mode)
+
+    def test_reads_rotating_file_at_delivery_time(self, tmp_path, monkeypatch):
+        token_file = tmp_path / "PANTHEON_BFF_HEALTH_TELEMETRY_JWT"
+        self._write(token_file, "first.jwt.value")
+        monkeypatch.setenv("PANTHEON_BFF_HEALTH_TELEMETRY_JWT_FILE", str(token_file))
+        monkeypatch.delenv("PANTHEON_BFF_HEALTH_TELEMETRY_JWT", raising=False)
+        monitor = self._monitor()
+        assert self._headers(monitor)["Authorization"] == "Bearer first.jwt.value"
+        self._write(token_file, "second.jwt.value")
+        assert self._headers(monitor)["Authorization"] == "Bearer second.jwt.value"
+
+    @pytest.mark.parametrize("state", ["absent", "revoked", "empty", "malformed", "unsafe"])
+    def test_absent_revoked_or_malformed_file_fails_closed(
+        self, tmp_path, monkeypatch, state
+    ):
+        token_file = tmp_path / "PANTHEON_BFF_HEALTH_TELEMETRY_JWT"
+        if state == "empty":
+            self._write(token_file, "")
+        elif state == "malformed":
+            self._write(token_file, "has whitespace inside")
+        elif state == "unsafe":
+            self._write(token_file, "a.b.c", mode=0o644)
+        elif state == "revoked":
+            self._write(token_file, "a.b.c")
+            token_file.unlink()
+        monkeypatch.setenv("PANTHEON_BFF_HEALTH_TELEMETRY_JWT_FILE", str(token_file))
+        # A stale env credential must never be used instead of the configured file.
+        monkeypatch.setenv("PANTHEON_BFF_HEALTH_TELEMETRY_JWT", "stale.env.token")
+        monkeypatch.setenv("PANTHEON_TELEMETRY_INFRA_SERVICE_JWT", "stale.infra.token")
+        with pytest.raises(RuntimeError) as failure:
+            self._headers(self._monitor())
+        assert "stale" not in str(failure.value)

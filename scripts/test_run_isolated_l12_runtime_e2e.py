@@ -729,3 +729,22 @@ def test_preview_worker_token_negative_controls(monkeypatch: pytest.MonkeyPatch)
         roles=("source_ingest_reader",), extra_claims={"service": "training-session-preview-worker"},
     )
     assert rejected(token=unauthorized).status_code in (401, 403)
+
+
+def test_bff_health_telemetry_principal_comes_from_the_same_issuer_and_verifies() -> None:
+    from services.runtime_auth_inbound import AuthError, validate_request_auth
+
+    env = _composed_isolated_env()
+    token = env["PANTHEON_BFF_HEALTH_TELEMETRY_JWT"]
+    verifier = {"PANTHEON_RUNTIME_AUTH_MODE": "strict",
+                "PANTHEON_RUNTIME_JWT_SECRET": env["PANTHEON_DEV_BFF_JWT_SECRET"]}
+    context = validate_request_auth(authorization=f"Bearer {token}", required_roles=("service",), env=verifier)
+    assert context.claims["allowed_tenants"] == ["tenant-dev"]
+    assert context.claims["allowed_producers"] == ["control-plane-bff"]
+    assert context.actor_id == "control-plane-bff-health-monitor"
+    assert env["PANTHEON_BFF_HEALTH_TELEMETRY_JWT_FILE"] == "/run/pantheon-principals/PANTHEON_BFF_HEALTH_TELEMETRY_JWT"
+    # No second minter: the composer defines no health-telemetry token of its own.
+    assert not [name for name in vars(harness) if "HEALTH_TELEMETRY" in name.upper()]
+    with pytest.raises(AuthError):
+        validate_request_auth(authorization=f"Bearer {token}", required_roles=("service",),
+                              env={**verifier, "PANTHEON_RUNTIME_JWT_SECRET": "z" * 64})

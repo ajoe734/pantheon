@@ -40,6 +40,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
+from services.service_token_file import configured_service_token
+
 log = logging.getLogger(__name__)
 
 INFRASTRUCTURE_HEALTH_SCHEMA_VERSION = "pantheon.infrastructure-health/1"
@@ -1524,14 +1526,8 @@ class DownstreamHealthMonitor:
             or os.getenv("PANTHEON_BFF_HEALTH_PRODUCER", "").strip()
             or INFRASTRUCTURE_HEALTH_PRODUCER
         )
-        self._telemetry_service_jwt = (
-            telemetry_service_jwt
-            if telemetry_service_jwt is not None
-            else (
-                os.getenv("PANTHEON_BFF_HEALTH_TELEMETRY_JWT", "").strip()
-                or os.getenv("PANTHEON_TELEMETRY_INFRA_SERVICE_JWT", "").strip()
-            )
-        )
+        # None means "read the rotating file principal at delivery time".
+        self._telemetry_service_jwt = telemetry_service_jwt
         self._incident_service_token = (
             incident_service_token
             if incident_service_token is not None
@@ -2523,12 +2519,26 @@ class DownstreamHealthMonitor:
             return dict(window)
         return None
 
+    def _resolve_telemetry_service_jwt(self) -> str:
+        """Explicit override, else the file principal; a configured bad file fails closed."""
+        if self._telemetry_service_jwt is not None:
+            return str(self._telemetry_service_jwt).strip()
+        try:
+            return (
+                configured_service_token("PANTHEON_BFF_HEALTH_TELEMETRY_JWT")
+                or os.getenv("PANTHEON_TELEMETRY_INFRA_SERVICE_JWT", "").strip()
+            )
+        except RuntimeError:
+            raise RuntimeError(
+                "PANTHEON_BFF_HEALTH_TELEMETRY_JWT_FILE is absent, unsafe or malformed"
+            ) from None
+
     def _headers_for_delivery(self, delivery: Mapping[str, Any]) -> Dict[str, str]:
         event_id = str(delivery["event_id"])
         channel = str(delivery["channel"])
         headers = {"Idempotency-Key": event_id}
         if channel == "telemetry":
-            token = str(self._telemetry_service_jwt or "").strip()
+            token = self._resolve_telemetry_service_jwt()
             if not token:
                 raise RuntimeError(
                     "PANTHEON_BFF_HEALTH_TELEMETRY_JWT is unconfigured"
