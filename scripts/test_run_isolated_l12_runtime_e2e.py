@@ -432,6 +432,22 @@ def test_failure_diagnostics_keep_error_lines_of_healthy_services(
     assert kept[-1].startswith("ERROR job_id=j59")
 
 
+def test_service_error_line_matches_worker_json_and_skips_idle_ticks() -> None:
+    match = harness.SERVICE_ERROR_LINE.search
+    failed_tick = (
+        '{"tick": 2, "result": {"jobs_found": 1, "completed": 1, "failed": 1, "errors": '
+        '["job_id=pvjob terminal_session_http_error=409 {\\"detail\\":\\"authority changed\\"}"]}}'
+    )
+    assert match(failed_tick)
+    assert match('{"tick": 3, "result": {"failed": 0, "errors": ["TimeoutError"]}}')
+    assert match('{"tick": 4, "result": {"failed": 2, "errors": []}}')
+    assert match('{"result": {"error": "boom"}}')
+    assert match("asyncio.exceptions.TimeoutError: timed out")
+    assert not match('{"tick": 1, "result": {"jobs_found": 0, "completed": 0, "failed": 0, "errors": []}}')
+    assert not match('{"result": {"error": null}}')
+    assert not match("INFO tick ok")
+
+
 def test_projection_bootstrap_pipes_postgres_config_into_migration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

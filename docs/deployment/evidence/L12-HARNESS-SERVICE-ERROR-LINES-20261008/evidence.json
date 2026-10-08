@@ -9,21 +9,22 @@
   },
   "change": [
     "On a failed run the harness now also scans the last 1000 log lines of every compose service listed by ps. It keeps only error-signal lines (ERROR, CRITICAL, Traceback, Exception, or an HTTP access log line with a 4xx/5xx status), at most the last 40 per service, in diagnostics/service-error-lines.txt. A section header per service records the total count, so zero is explicit.",
-    "Unhealthy and exited services still get their full 200-line logs-<service>.txt exactly as before, and healthy services still get no full log file."
+    "Unhealthy and exited services still get their full 200-line logs-<service>.txt exactly as before, and healthy services still get no full log file.",
+    "Correction after 7a3c0341d: the preview worker logs JSON tick results with no ERROR prefix, so SERVICE_ERROR_LINE now also matches a non-empty \"errors\"/\"error\", a non-zero \"failed\", and any *Error name (e.g. TimeoutError). Idle ticks (failed 0, errors []) stay excluded. Same artifact, 1000 scan / 40 retained lines, unhealthy 200-line tails unchanged."
   ],
   "test_changes": [
     "test_failure_diagnostics_capture_ps_and_unhealthy_logs now separates the 200-line full-log calls (still only projector and sick) from the 1000-line scan calls (all three services) and checks the zero-count sections.",
-    "New test_failure_diagnostics_keep_error_lines_of_healthy_services: a healthy training-session-svc with a 409 access line and a Traceback, a healthy worker with 60 ERROR lines (40 kept, newest last), and a quiet service with zero."
+    "New test_failure_diagnostics_keep_error_lines_of_healthy_services: a healthy training-session-svc with a 409 access line and a Traceback, a healthy worker with 60 ERROR lines (40 kept, newest last), and a quiet service with zero.",
+    "New test_service_error_line_matches_worker_json_and_skips_idle_ticks: positive for the terminal_session_http_error=409 worker JSON (counterexample format), TimeoutError, non-zero failed, non-empty error; negative for idle tick, error null, INFO line."
   ],
   "validation": {
     "base_with_new_tests": "with the harness change reverted, both diagnostics tests fail",
-    "head": "pytest scripts/test_run_isolated_l12_runtime_e2e.py: 44 passed"
+    "head": "pytest scripts/test_run_isolated_l12_runtime_e2e.py: 45 passed"
   },
   "review_status": "Author validation only; independent exact-head review by the assigned reviewer pending.",
   "delivery_verification": {
     "agent": "Claude",
-    "head": "5fc27b7b68a3bd6eccbc7a819cc373a64d3d7ca6",
-    "command": "uv run --no-project --python 3.12 --with pytest pytest -q scripts/test_run_isolated_l12_runtime_e2e.py",
-    "result": "44 passed in 5.76s"
+    "command": "uv run --no-project --with pytest python -m pytest scripts/test_run_isolated_l12_runtime_e2e.py -q",
+    "result": "45 passed (head recorded in the commit that follows)"
   }
 }

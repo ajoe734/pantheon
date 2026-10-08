@@ -640,8 +640,14 @@ def _teardown_project(
 # failed run also keeps every service's error-signal lines, bounded per service.
 SERVICE_ERROR_SCAN_TAIL = "1000"
 SERVICE_ERROR_LINES_PER_SERVICE = 40
+# The preview worker logs JSON tick results with no ERROR prefix, so a non-empty
+# "errors"/"error" or a non-zero "failed" counts; idle ticks ("failed": 0,
+# "errors": []) must not.
 SERVICE_ERROR_LINE = re.compile(
-    r"ERROR|CRITICAL|Traceback|Exception|HTTP/\d(?:\.\d)?\" [45]\d\d"
+    r"ERROR|CRITICAL|Traceback|Exception|\b\w+Error\b"
+    r"|HTTP/\d(?:\.\d)?\" [45]\d\d"
+    r"|\"errors?\":\s*(?:\[\s*[^\s\]]|\"[^\"]|\{\s*[^\s}])"
+    r"|\"failed\":\s*[1-9]"
 )
 
 
