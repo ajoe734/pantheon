@@ -59,6 +59,8 @@ def real_registry_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str
     registry_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("PANTHEON_REGISTRY_DATA_DIR", str(registry_dir))
     monkeypatch.setenv("REGISTRY_DATA_DIR", str(registry_dir))
+    monkeypatch.setenv("REGISTRY_STORE_BACKEND", "memory")
+    monkeypatch.setenv("DISTILLATION_REGISTRY_SERVICE_TOKEN", "test-operator:operator")
 
     from services.registry.main import app
 
@@ -84,6 +86,7 @@ def real_registry_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str
 def _normalized_source(
     source_id: str = "src-l12-distill-001",
     title: str = "TW Equity Statistical Arbitrage Signal Paper",
+    tenant_id: str = "test",
 ) -> SourceRecord:
     return SourceRecord(
         source_id=source_id,
@@ -93,6 +96,7 @@ def _normalized_source(
         content_ref=f"https://doi.org/10.1000/{source_id}",
         status="normalized",
         metadata={
+            "tenant_id": tenant_id,
             "trust_score": 0.85,
             "access_scope": ["research"],
             "license_scope": "internal",
@@ -173,7 +177,11 @@ def test_real_source_record_to_registry_draft_integration(
 
     # Query the real HTTP Registry endpoint directly to prove HTTP readback truth
     url = f"{real_registry_server}/api/registry/strategy-specs/{draft['registry_id']}"
-    req = urllib.request.Request(url, method="GET")
+    req = urllib.request.Request(
+        url,
+        headers={"Authorization": "Bearer test-operator:operator"},
+        method="GET",
+    )
     with urllib.request.urlopen(req, timeout=5) as response:
         assert response.status == 200
         data = json.loads(response.read().decode("utf-8"))

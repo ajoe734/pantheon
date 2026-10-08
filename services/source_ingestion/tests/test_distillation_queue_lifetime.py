@@ -216,7 +216,7 @@ def test_controller_reuses_one_queue_across_ticks(tmp_path, monkeypatch):
     monkeypatch.setattr(storage.DistillationJobQueue, "_bootstrap", tracked_bootstrap)
     monkeypatch.setattr(controller, "config_from_env", lambda: config)
     monkeypatch.setattr(controller, "build_loop_writer", lambda **_: SimpleNamespace(record_success=record_success))
-    monkeypatch.setattr(controller, "build_source_evidence_repository", lambda _: SimpleNamespace(list_source_records=lambda: []))
+    monkeypatch.setattr(controller, "read_source_records_for_tenant", lambda **_: [])
     monkeypatch.setattr(controller, "_make_registry_sync", lambda _: lambda request: pytest.fail("no Registry I/O"))
     monkeypatch.setattr(controller.time, "sleep", lambda _: None)
     assert controller.main() == 0
