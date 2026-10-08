@@ -1,0 +1,23 @@
+{
+  "task_id": "L12-HARNESS-TW-PULL-DIAGNOSTICS-20261008",
+  "base_sha": "1fe29310b",
+  "problem": {
+    "gate_runs": ["37738094930", "37736344787"],
+    "observed": "The uploaded diagnostics for the bounded Taiwan official pull contained only the scheduler summary line, e.g. {\"error\":\"ControllerTickError: scheduled source tick reported 1 failed connector(s)\",\"stage\":\"schedule\"}. The per-connector error was not recorded.",
+    "cause": "Connectors execute inside the source-ingest service. _run_tw_official_pull's finally block runs the egress restore (compose up source-ingest), which recreates that container, so its logs from the pull were gone before anyone could read them.",
+    "consequence": "Coordinators had to infer the cause from timing and reason codes; on 2026-10-08 one such inference was wrong and a policy task had to be withdrawn."
+  },
+  "change": [
+    "_tw_official_pull_commands gains source_ingest_logs (compose logs --no-color --tail 400 source-ingest).",
+    "When the tick exits non-zero or times out, the harness saves those logs to diagnostics/tw-official-pull-source-ingest-logs.txt before the restore. Successful pulls run no extra command; failure messages, timeouts and the lease are unchanged."
+  ],
+  "test_changes": [
+    "test_tw_official_pull_fails_on_scheduler_error_and_still_restores now expects four calls (up, tick, logs, restore) and checks the logs come before the restore; it previously asserted three calls.",
+    "New test_tw_official_pull_keeps_source_ingest_logs_when_tick_times_out and test_tw_official_pull_success_does_not_collect_logs."
+  ],
+  "validation": {
+    "base_with_new_tests": "pytest scripts/test_run_isolated_l12_runtime_e2e.py -k tw_official_pull on base 1fe29310b: 2 failed, 6 passed",
+    "head": "pytest -q scripts/test_run_isolated_l12_runtime_e2e.py: 35 passed"
+  },
+  "review_status": "Author validation only; independent exact-head review by the assigned reviewer pending."
+}

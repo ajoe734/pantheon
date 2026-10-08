@@ -412,6 +412,9 @@ def _tw_official_pull_commands(
             project, compose_files, "up", "-d", "--no-deps", "--no-build",
             "--wait", "--wait-timeout", "120", "source-ingest",
         ),
+        "source_ingest_logs": _compose_command(
+            project, compose_files, "logs", "--no-color", "--tail", "400", "source-ingest",
+        ),
         "scheduler_start": _compose_command(
             project, compose_files, "up", "-d", "--no-deps", "--no-build",
             "--wait", "--wait-timeout", "120", TW_OFFICIAL_PULL_SERVICE,
@@ -464,6 +467,14 @@ def _run_tw_official_pull(
     except subprocess.TimeoutExpired as exc:
         failure = f"{TW_OFFICIAL_PULL_SERVICE} tick timed out: {exc}"
     finally:
+        if failure is not None:
+            # Connectors run inside source-ingest; the restore below recreates
+            # that container, so keep its logs (the per-connector error) first.
+            logs = subprocess.run(
+                commands["source_ingest_logs"], env=dict(compose_env),
+                capture_output=True, text=True, check=False,
+            )
+            _capture("source-ingest-logs", logs)
         restore = subprocess.run(
             commands["source_ingest_restore"], env=dict(compose_env),
             capture_output=True, text=True, check=False,
