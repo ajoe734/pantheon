@@ -8,15 +8,15 @@
 set -euo pipefail
 
 TRANSPORT="${PANTHEON_OLD_VM_TRANSPORT:-gcloud}"
-GCP_PROJECT="${PANTHEON_OLD_VM_PROJECT:-pantheon-493602}"
+GCP_PROJECT="${PANTHEON_OLD_VM_PROJECT:-}"
 GCP_ZONE="${PANTHEON_OLD_VM_ZONE:-asia-east1-b}"
-GCP_INSTANCE="${PANTHEON_OLD_VM_INSTANCE:-pantheon-taiwan}"
-GCP_USER="${PANTHEON_OLD_VM_USER:-edna}"
-GCP_ACCOUNT="${PANTHEON_OLD_VM_GCP_ACCOUNT:-edna@cctech-support.com}"
+GCP_INSTANCE="${PANTHEON_OLD_VM_INSTANCE:-}"
+GCP_USER="${PANTHEON_OLD_VM_USER:-}"
+GCP_ACCOUNT="${PANTHEON_OLD_VM_GCP_ACCOUNT:-}"
 GCP_TUNNEL_THROUGH_IAP="${PANTHEON_OLD_VM_TUNNEL_THROUGH_IAP:-0}"
 SOURCE_HOST="${PANTHEON_OLD_VM_HOST:-}"
 SOURCE_HOST_SET=0
-SOURCE_HOME="${PANTHEON_OLD_VM_HOME:-/home/lupin}"
+SOURCE_HOME="${PANTHEON_OLD_VM_HOME:-}"
 TARGET_HOME="${PANTHEON_NEW_VM_HOME:-${HOME}}"
 SSH_BIN="${PANTHEON_OLD_VM_SSH_BIN:-ssh}"
 SSH_PORT="${PANTHEON_OLD_VM_SSH_PORT:-}"
@@ -37,14 +37,14 @@ Usage:
 
 Options:
   --transport ssh|gcloud   How to reach the old VM. Default: gcloud
-  --source-instance NAME   Old GCP VM instance. Default: pantheon-taiwan
-  --project PROJECT        Old GCP project. Default: pantheon-493602
+  --source-instance NAME   Old GCP VM instance. Required with --transport gcloud
+  --project PROJECT        Old GCP project. Required with --transport gcloud
   --zone ZONE              Old GCP zone. Default: asia-east1-b
-  --user USER              Old VM Linux user. Default: edna
-  --gcp-account ACCOUNT    GCP account to use. Default: edna@cctech-support.com
+  --user USER              Old VM Linux user. Required with --transport gcloud
+  --gcp-account ACCOUNT    GCP account to use. Optional
   --tunnel-through-iap     Use IAP for gcloud compute ssh
   --source-host HOST       Old VM SSH target, or user@instance with --transport gcloud
-  --source-home PATH        Old VM home path. Default: /home/lupin
+  --source-home PATH        Old VM home path. Required
   --target-home PATH        New VM home path. Default: $HOME
   --identity-file PATH      SSH identity file for the old VM
   --ssh-port PORT           SSH port for the old VM
@@ -71,14 +71,21 @@ Environment equivalents:
   PANTHEON_DEV_STATE_BACKUP_ROOT
 
 Examples:
-  bash scripts/pull_old_vm_dev_state.sh --dry-run
+  bash scripts/pull_old_vm_dev_state.sh --dry-run \
+    --source-instance <old-instance> \
+    --project <old-project> \
+    --user <old-user> \
+    --source-home <old-home>
   bash scripts/pull_old_vm_dev_state.sh \
-    --source-instance pantheon-taiwan \
-    --project pantheon-493602 \
+    --source-instance <old-instance> \
+    --project <old-project> \
+    --user <old-user> \
+    --source-home <old-home> \
     --zone asia-east1-b
   bash scripts/pull_old_vm_dev_state.sh \
     --transport ssh \
-    --source-host edna@OLD_IP \
+    --source-host <old-user>@<old-host> \
+    --source-home <old-home> \
     --identity-file ~/.ssh/pantheon_gcp_vm_ed25519
 EOF
 }
@@ -212,10 +219,12 @@ fi
 if [[ "${TRANSPORT}" == "ssh" ]]; then
   [[ -n "${SOURCE_HOST}" ]] || error "--source-host is required with --transport ssh"
 fi
-[[ -n "${GCP_USER}" ]] || error "--user is required with --transport gcloud"
-[[ -n "${GCP_INSTANCE}" ]] || error "--source-instance is required with --transport gcloud"
-[[ -n "${GCP_PROJECT}" ]] || error "--project is required with --transport gcloud"
-[[ -n "${GCP_ZONE}" ]] || error "--zone is required with --transport gcloud"
+if [[ "${TRANSPORT}" == "gcloud" ]]; then
+  [[ -n "${GCP_USER}" ]] || error "--user is required with --transport gcloud"
+  [[ -n "${GCP_INSTANCE}" ]] || error "--source-instance is required with --transport gcloud"
+  [[ -n "${GCP_PROJECT}" ]] || error "--project is required with --transport gcloud"
+  [[ -n "${GCP_ZONE}" ]] || error "--zone is required with --transport gcloud"
+fi
 [[ -n "${SOURCE_HOME}" ]] || error "--source-home is required"
 [[ -n "${TARGET_HOME}" ]] || error "--target-home is required"
 [[ -d "${TARGET_HOME}" ]] || error "Target home does not exist: ${TARGET_HOME}"

@@ -73,7 +73,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--project-id",
-        default="pantheon-lupin-dev-20260719",
+        required=True,
     )
     parser.add_argument("--email", required=True)
     parser.add_argument(

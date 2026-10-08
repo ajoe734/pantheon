@@ -2,7 +2,7 @@
 
 Task: `LIFECYCLE-PROJ-RETIRE-001` (predecessor: `LIFECYCLE-PROJ-CUTOVER-001`)
 
-Target: `pantheon-lupin-dev` in `pantheon-lupin-dev-20260719`
+Target: the dev VM recorded in [section 3.1](../deployment/vm-dev-staging-prod-management-plan.md#31-dev); the 2026-08-22 cutover in Sections 1-7 ran on a since-retired project.
 
 Reader backend: `PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND=postgres` (sole canonical reader)
 Last updated: 2026-08-22
@@ -279,7 +279,7 @@ python3 services/trade_journey/hosted_bff_readback.py \
   --output "${CUTOVER_EVIDENCE_ROOT}/hosted-bff-readback.json" \
   --expected-sha "${MERGED_SHA}" \
   --expected-login-identity operator_a \
-  --base-url https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io
+  --base-url <dev-bff-url>
 ```
 
 The proof must correlate exact event IDs, source offsets, stable identity,
