@@ -217,15 +217,19 @@ from .personas.service import (
     PersonaDirectorySnapshot,
     _append_persona_reconcile_diagnostic,
     _checkpoint_persona_provisioning_readback,
+    _composed_surface_status,
+    _dataset_source_after_read,
     _evaluate_persona_provisioning_status,
     _get_persona_directory_snapshot,
     _incident_home_severity,
-    _list_persona_records as _personas_list_persona_records,
+    _list_persona_records,
     _loop_run_controller_is_formal,
     _management_count_by,
+    _meta_staleness,
     _normalize_lifecycle_state,
     _normalize_risk_level,
     _openclaw_agent_reconcile_request,
+    _page_slice,
     _persona_create_required_data_sources,
     _persona_first_evaluation_readback_poll_seconds,
     _persona_first_evaluation_readback_timeout_seconds,
@@ -244,19 +248,6 @@ from .personas.service import (
     _register_persona_cron_required,
     _remove_persona_cron_required,
 )
-def _list_persona_records(
-    tenant_id: Optional[str] = None,
-    read_store: Optional[Any] = None,
-) -> List[Dict[str, Any]]:
-    """Composition-root binding: personas/service.py is the sole owner of this
-    projection; explicitly inject the live ``read_store`` global so callers
-    outside an active PersonaService request context (composition-root and
-    seam-test callers) still resolve against whatever store this module
-    currently holds, matching the injected pattern used by the other main.py
-    consumer seams instead of relying on personas/service.py's own module
-    fallback."""
-    resolved_store = read_store if read_store is not None else globals().get("read_store")
-    return _personas_list_persona_records(tenant_id, read_store=resolved_store)
 try:
     from services.persona.runtime_profile import (
         PersonaRuntimeProfile,
@@ -1609,29 +1600,6 @@ def _raise_if_session_logged_out(identity: OperatorIdentity) -> None:
         error_factory=_bff_error,
     )
 _raise_if_session_logged_out._canonical_guard = True
-def _meta_staleness() -> Optional[Dict[str, Any]]:
-    state = _read_surface_state()
-    if state == "fresh":
-        return None
-    return {
-        "served_from": "cache",
-        "last_known_at": utc_now(),
-    }
-def _surface_status() -> Dict[str, Any]:
-    state = _read_surface_state()
-    if state == "fresh":
-        return {"status": "ok"}
-    if state in {"degraded", "stale"}:
-        return {
-            "status": "degraded",
-            "staleness": _meta_staleness(),
-        }
-    if state == "unavailable":
-        return {
-            "status": "unavailable",
-            "staleness": _meta_staleness(),
-        }
-    return {"status": "ok"}
 _LEGACY_LOOP_RUN_SOURCE = "legacy_incident_backfill"
 _LOOP_RUN_PROJECTION_SCHEMA = "pantheon.loop-run-projection.v1"
 def _loop_run_truth_source(available: bool) -> tuple[str, str]:
@@ -1720,12 +1688,6 @@ def _loop_run_surface_status(
             },
         )
     return dataset, source, surface
-def _dataset_source_after_read(dataset: str) -> str:
-    """Return source provenance without repeating a completed backend read."""
-    cached_source = getattr(read_store, "dataset_source_cached", None)
-    if callable(cached_source):
-        return str(cached_source(dataset) or "missing")
-    return str(read_store.dataset_source(dataset) or "missing")
 def _composed_dataset_surface_status(
     dataset: str,
     records: Sequence[Any],
@@ -1736,7 +1698,7 @@ def _composed_dataset_surface_status(
     surface = _dataset_surface_status(
         dataset,
         snapshot_at=snapshot_at,
-        source=_dataset_source_after_read(dataset),
+        source=_dataset_source_after_read(dataset, read_store=read_store),
     )
     if records and surface.get("source") == "missing":
         return {
@@ -1784,69 +1746,10 @@ def _read_surface_meta(
     if reason is not None:
         meta["degradation"] = {"reason": reason}
     return meta
-def _raise_if_read_surface_unavailable(
-    surface: Dict[str, Any],
-    *,
-    label: str,
-) -> None:
-    if surface.get("status") != "unavailable":
-        return
-    raise _bff_error(
-        503,
-        ErrorCode.DEPENDENCY_UNAVAILABLE,
-        f"{label} read surface unavailable",
-        str(surface.get("message") or surface.get("note") or f"{label} downstream read source is unavailable."),
-        precondition_failed="read_surface_unavailable",
-        suggestion="Verify the owning service URL and health before retrying this read.",
-    )
-def _composed_surface_status(
-    *,
-    snapshot_at: Optional[str] = None,
-    available: bool = True,
-    missing_message: Optional[str] = None,
-) -> Dict[str, Any]:
-    surface = dict(_surface_status())
-    surface["source"] = "bff_composed"
-    if not available:
-        if surface.get("status") == "ok":
-            surface["status"] = "degraded"
-        if missing_message:
-            surface["message"] = missing_message
-        surface.setdefault(
-            "staleness",
-            {"served_from": "unverifiable", "last_known_at": snapshot_at or utc_now()},
-        )
-
-    return surface
 from .personas.service import (
     _extract_ids_from_item,
     _filter_by_common_identifiers,
 )
-def _decode_page_token(page_token: Optional[str]) -> int:
-    if page_token in (None, ""):
-        return 0
-    try:
-        offset = int(page_token)
-    except (TypeError, ValueError) as exc:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid page_token",
-            "page_token must be a non-negative integer offset",
-        ) from exc
-    if offset < 0:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid page_token",
-            "page_token must be a non-negative integer offset",
-        )
-    return offset
-def _page_slice(items: List[Dict[str, Any]], page_token: Optional[str], page_size: int) -> tuple[List[Dict[str, Any]], Optional[str]]:
-    start = _decode_page_token(page_token)
-    end = start + page_size
-    next_page_token = str(end) if end < len(items) else None
-    return items[start:end], next_page_token
 _ALERT_SEVERITY_ORDER = {"critical": 4, "high": 3, "medium": 2, "low": 1}
 _ALERT_CATEGORY_ORDER = {"incident": 4, "kill_switch": 3, "governance": 2, "runtime": 1}
 _RUNTIME_STATUS_ALERT_SEVERITY = {
@@ -4561,7 +4464,7 @@ wire_management_runtime_projections(
     build_operator_alerts_payload=_build_operator_alerts_payload,
     build_management_anomalies_payload=_build_management_anomalies_payload,
     human_inbox_payload=_human_inbox_payload,
-    list_persona_records=_list_persona_records,
+    list_persona_records=lambda tenant_id=None: _list_persona_records(tenant_id, read_store=read_store),
     management_telemetry_rollup=_management_telemetry_rollup,
     dataset_surface_status=_dataset_surface_status,
     assistant_collect_source=_assistant_collect_source,

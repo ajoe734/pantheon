@@ -723,7 +723,19 @@ def _resolve_default_dependency(name: str, app_deps: Any) -> Any:
     if name == "session_lifecycle_store":
         from ..session_lifecycle_store import SessionLifecycleStore
         return SessionLifecycleStore(os.path.join(os.getenv("BFF_DATA_DIR", "/tmp/pantheon/bff"), "session_lifecycle.json"))
-    if name in {"_page_slice", "page_slice_fn", "page_slice"}:
+    if name in {
+        "_list_persona_records",
+        "_meta_staleness",
+        "_surface_status",
+        "_dataset_source_after_read",
+        "_raise_if_read_surface_unavailable",
+        "_composed_surface_status",
+        "_decode_page_token",
+        "_page_slice",
+    }:
+        from ..personas import service as persona_service
+        return getattr(persona_service, name)
+    if name in {"page_slice_fn", "page_slice"}:
         from ..research.routes.common import _default_page_slice
         return _default_page_slice
     if name in {"_snapshot_meta", "snapshot_meta", "snapshot_meta_fn"}:

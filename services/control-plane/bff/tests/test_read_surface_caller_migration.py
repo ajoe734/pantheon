@@ -739,7 +739,7 @@ class TestEndpointLevelRetainedCallers(unittest.TestCase):
                 dataset_surface_status=bff_main._dataset_surface_status,
                 composed_surface_status=bff_main._composed_surface_status,
                 read_surface_meta=bff_main._read_surface_meta,
-                raise_if_read_surface_unavailable=bff_main._raise_if_read_surface_unavailable,
+                raise_if_read_surface_unavailable=persona_service._raise_if_read_surface_unavailable,
                 aggregate_group_surface=bff_main._aggregate_group_surface,
                 split_csv_query=bff_main._split_csv_query,
                 meta_staleness=bff_main._meta_staleness,
