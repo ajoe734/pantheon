@@ -681,29 +681,32 @@ def test_provider_owned_adapters_execute_bounded_fetches_when_payload_omitted(mo
     @contextmanager
     def mock_stocktwits_url(req, *args, **kwargs):
         mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps({
-            "messages": [
-                {
-                    "id": 55667788,
-                    "body": "$AAPL breaking out above 230 on heavy volume!",
-                    "created_at": "2026-08-24T15:30:00Z",
-                    "user": {
-                        "id": 998877,
-                        "username": "breakout_trader",
-                        "name": "Alex",
-                        "followers": 1250,
-                    },
-                    "symbols": [
-                        {"id": 686, "symbol": "AAPL", "title": "Apple Inc."},
-                    ],
-                    "entities": {
-                        "sentiment": {
-                            "basic": "Bullish",
-                        }
-                    },
-                }
-            ]
-        }).encode("utf-8")
+        mock_resp.read.side_effect = [
+            json.dumps({
+                "messages": [
+                    {
+                        "id": 55667788,
+                        "body": "$AAPL breaking out above 230 on heavy volume!",
+                        "created_at": "2026-08-24T15:30:00Z",
+                        "user": {
+                            "id": 998877,
+                            "username": "breakout_trader",
+                            "name": "Alex",
+                            "followers": 1250,
+                        },
+                        "symbols": [
+                            {"id": 686, "symbol": "AAPL", "title": "Apple Inc."},
+                        ],
+                        "entities": {
+                            "sentiment": {
+                                "basic": "Bullish",
+                            }
+                        },
+                    }
+                ]
+            }).encode("utf-8"),
+            b"",
+        ]
         yield mock_resp
 
     monkeypatch.setattr("services.source_ingestion.connectors.social.open_external_url", mock_stocktwits_url)
@@ -738,18 +741,21 @@ def test_provider_owned_adapters_execute_bounded_fetches_when_payload_omitted(mo
     @contextmanager
     def mock_open_external_url(req, *args, **kwargs):
         mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps([
-            {
-                "symbol": "AAPL",
-                "date": "2026-06-10 00:00:00",
-                "rsi": 58.2,
-                "event_time": "2026-06-10T13:30:00Z",
-                "available_time": "2026-06-10T14:00:00Z",
-                "universe": ["US_EQUITY"],
-                "values": {"rsi": 58.2},
-                "units": {"rsi": "index"},
-            }
-        ]).encode("utf-8")
+        mock_resp.read.side_effect = [
+            json.dumps([
+                {
+                    "symbol": "AAPL",
+                    "date": "2026-06-10 00:00:00",
+                    "rsi": 58.2,
+                    "event_time": "2026-06-10T13:30:00Z",
+                    "available_time": "2026-06-10T14:00:00Z",
+                    "universe": ["US_EQUITY"],
+                    "values": {"rsi": 58.2},
+                    "units": {"rsi": "index"},
+                }
+            ]).encode("utf-8"),
+            b"",
+        ]
         yield mock_resp
 
     monkeypatch.setenv("ALPHA_DB_API_KEY", "test_key_123")

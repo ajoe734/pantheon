@@ -10,12 +10,14 @@ import pytest
 
 from services.source_ingestion.connectors import taiwan_official
 from services.source_ingestion.connectors.base import SourceEvidenceError
+from services.source_ingestion.connectors.bounded_reader import (
+    ResponseTruncated,
+    read_bounded_response,
+)
 from services.source_ingestion.connectors.taiwan_official import (
     OFFICIAL_FETCH_ATTEMPTS,
-    OfficialResponseTruncated,
     TaiwanOfficialMarketDatasetAdapter,
     _fetch_official,
-    _read_bounded_response,
 )
 
 BODY = json.dumps([{"Code": "2330", "ClosingPrice": "2550.00"}] * 50).encode("utf-8")
@@ -85,19 +87,19 @@ def _fetch(**overrides: Any) -> Any:
 
 
 def test_short_body_against_content_length_is_a_named_truncation() -> None:
-    with pytest.raises(OfficialResponseTruncated, match=r"read 100 of 4000 declared bytes"):
-        _read_bounded_response(_Response(b"x" * 100, declared=4000))
+    with pytest.raises(ResponseTruncated, match=r"read 100 of 4000 declared bytes"):
+        read_bounded_response(_Response(b"x" * 100, declared=4000))
 
 
 def test_body_without_content_length_is_returned_as_read() -> None:
-    assert _read_bounded_response(_Response(BODY, declared=None)) == BODY
+    assert read_bounded_response(_Response(BODY, declared=None)) == BODY
 
 
 def test_short_chunk_stream_with_content_length_reads_full_body_without_truncation() -> None:
     """A response that returns a short chunk, then more bytes, then b'' must return the full body and not raise with matching Content-Length."""
     chunks = [b'{"ok":', b'true}']
     response = _ChunkedResponse(chunks, declared=11)
-    body = _read_bounded_response(response)
+    body = read_bounded_response(response)
     assert body == b'{"ok":true}'
 
 
@@ -105,7 +107,7 @@ def test_short_chunk_stream_without_content_length_reads_full_body() -> None:
     """A response that returns a short chunk, then more bytes, then b'' must return the full body and not raise without Content-Length."""
     chunks = [b'{"ok":', b'true}']
     response = _ChunkedResponse(chunks, declared=None)
-    body = _read_bounded_response(response)
+    body = read_bounded_response(response)
     assert body == b'{"ok":true}'
 
 
@@ -161,11 +163,11 @@ def test_persistent_truncation_fails_after_bounded_attempts(monkeypatch: pytest.
     with pytest.raises(SourceEvidenceError) as raised:
         _fetch()
 
-    assert not isinstance(raised.value, OfficialResponseTruncated)
+    assert not isinstance(raised.value, ResponseTruncated)
     message = str(raised.value)
     assert f"failed after {OFFICIAL_FETCH_ATTEMPTS} attempts" in message
     for attempt in range(1, OFFICIAL_FETCH_ATTEMPTS + 1):
-        assert f"attempt {attempt}: OfficialResponseTruncated" in message
+        assert f"attempt {attempt}: ResponseTruncated" in message
     assert len(recorder.calls) == OFFICIAL_FETCH_ATTEMPTS
     assert len(recorder.sleeps) == OFFICIAL_FETCH_ATTEMPTS - 1
 
