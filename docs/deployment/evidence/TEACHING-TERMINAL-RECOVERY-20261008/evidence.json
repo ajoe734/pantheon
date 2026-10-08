@@ -1,0 +1,29 @@
+{
+  "task_id": "TEACHING-TERMINAL-RECOVERY-20261008",
+  "scope": "training-session preview job queue terminal recovery; source delivery only",
+  "base_sha": "0a2033fbcba6ee6db6934b75ca9cec4cace91a97",
+  "reproduced_failure": {
+    "artifact_ref": "/tmp/pantheon-l1-l12-resume-20261008/full-37788615565/report.json",
+    "failing_sha": "0aa5aa6b596a939fc03e35f7da583dfeb2508596",
+    "boundary": "research / persona_teaching / teaching.authority_actual_state",
+    "symptom": "evaluation_result passed but TeachingSession remained active/ended_at null after requested terminalize_session=true",
+    "root_cause": "_job_is_claimable excluded all completed jobs, so a terminalize_session=true job whose run response was lost or whose subsequent complete request failed dropped completion and could not be recovered across ticks or worker restarts"
+  },
+  "changes": [
+    "services/training-session/main.py: update _job_is_claimable to allow completed jobs when terminalize_session=True and the session has not reached terminal status (status not in TERMINAL_SESSION_STATUSES or ended_at null)",
+    "services/training-session/main.py: update run_preview_job claim mutator to recognize terminal session recovery, increment attempt count bounded by max_attempts, preserve original worker_run_id matching evaluation proof, and return replayed completed record without rerunning evaluation",
+    "services/training-session/main.py: clear lease_expires_at upon successful preview evaluation completion so recovery is claimable immediately if run response was lost",
+    "services/training-session/tests/test_preview_eval_worker.py: add tests for response-loss recovery across ticks, transient complete failure retry across worker restart, negative preview-only session active preservation, tenant isolation, invalid proof rejection, and duplicate completion idempotency"
+  ],
+  "verification": {
+    "command": ".venv-pantheon/bin/python3 -m pytest -v services/training-session/tests/test_preview_eval_worker.py services/training-session/tests/test_teaching_evaluation_readback.py services/training-session/tests/test_http_service.py",
+    "test_count": 34,
+    "passed": 34,
+    "failed": 0,
+    "returncode": 0
+  },
+  "not_claimed": [
+    "DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 FULL natural browser and rollback obligations remain unfinished",
+    "no VM or hosted FULL or Root dispatch by this worker"
+  ]
+}

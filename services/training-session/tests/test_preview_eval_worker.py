@@ -527,3 +527,397 @@ def test_preview_worker_credential_file_fails_closed_without_env_fallback(
     _write_worker_credential(credential, "aaa.bbb.ccc")
     credential.chmod(0o644)  # unsafe mode
     denied()
+
+
+def test_terminal_session_recovery_replays_after_lost_run_response(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    import urllib.error
+
+    worker = _load_worker_module()
+    service, fixture = _load_service_module(tmp_path)
+    client = TestClient(service.app)
+    monkeypatch.setenv("TRAINING_SESSION_WORKER_TOKEN", "worker:training-service")
+    monkeypatch.setenv("TRAINING_SESSION_TENANT_ID", "tenant-test")
+
+    created = client.post(
+        "/api/training/sessions",
+        json={
+            "persona_id": "persona-recovery-loss",
+            "objective": "Prove lost run response recovery",
+            "actor_id": "operator-1",
+        },
+    )
+    assert created.status_code == 201
+    session_id = created.json()["session_id"]
+    seed_changed_supported_controls(service, session_id)
+    queued = client.post(
+        f"/api/training/sessions/{session_id}/preview-jobs",
+        json={
+            "mode": "refresh",
+            "requested_by": "operator-1",
+            "terminalize_session": True,
+        },
+        headers={"Idempotency-Key": "recovery-loss-key-001"},
+    )
+    assert queued.status_code == 201
+    job_id = queued.json()["job_id"]
+
+    drop_run_response = True
+
+    def service_urlopen(request, timeout):  # noqa: ANN001
+        del timeout
+        nonlocal drop_run_response
+        parsed_path = request.full_url.removeprefix("http://training-session-svc:8099")
+        headers = dict(request.header_items())
+        response = client.request(
+            request.get_method(),
+            parsed_path,
+            content=request.data,
+            headers=headers,
+        )
+        assert response.status_code < 400, response.text
+        if drop_run_response and parsed_path.endswith(f"/api/training/preview-jobs/{job_id}/run"):
+            drop_run_response = False
+            raise urllib.error.URLError("synthetic response lost after owner persisted completed job")
+        return _TestClientResponse(response)
+
+    monkeypatch.setattr(worker.urllib.request, "urlopen", service_urlopen)
+
+    # Tick 1: evaluation succeeds on server, but worker encounters lost response
+    tick1 = worker.run_tick(api_url="http://training-session-svc:8099", limit=5)
+    assert tick1["jobs_found"] == 1
+    assert tick1["job_ids"] == [job_id]
+    assert tick1["completed"] == 0
+    assert tick1["replayed"] == 0
+    assert tick1["failed"] == 1
+    assert any("synthetic response lost after owner persisted completed job" in err for err in tick1["errors"])
+    assert tick1["terminal_session_ids"] == []
+
+    # Durable state after tick 1: job is completed in store, but session is still active
+    store = service.TrainingSessionStore(fixture.data_dir)
+    persisted_job = store.get_preview_job(job_id)
+    assert persisted_job is not None
+    assert persisted_job["status"] == "completed"
+    assert persisted_job["terminalize_session"] is True
+    persisted_session = store.get_session(session_id)
+    assert persisted_session is not None
+    assert persisted_session["status"] == "active"
+    assert persisted_session.get("ended_at") is None
+
+    # Tick 2: job is claimed as replayed recovery; worker completes the terminal session
+    tick2 = worker.run_tick(api_url="http://training-session-svc:8099", limit=5)
+    assert tick2["jobs_found"] == 1
+    assert tick2["job_ids"] == [job_id]
+    assert tick2["completed"] == 1
+    assert tick2["replayed"] == 1
+    assert tick2["failed"] == 0
+    assert tick2["terminal_session_ids"] == [session_id]
+
+    persisted_session_after = store.get_session(session_id)
+    assert persisted_session_after["status"] == "completed"
+    assert persisted_session_after.get("ended_at") == FIXED_TRUSTED_NOW.isoformat().replace("+00:00", "Z")
+
+    # Tick 3: session is terminal, job is no longer claimable
+    tick3 = worker.run_tick(api_url="http://training-session-svc:8099", limit=5)
+    assert tick3["jobs_found"] == 0
+    assert tick3["completed"] == 0
+    assert tick3["failed"] == 0
+
+
+def test_terminal_session_recovery_retries_transient_complete_failure_across_restart(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    import io
+    import urllib.error
+
+    worker = _load_worker_module()
+    service, fixture = _load_service_module(tmp_path)
+    client = TestClient(service.app)
+    monkeypatch.setenv("TRAINING_SESSION_WORKER_TOKEN", "worker:training-service")
+    monkeypatch.setenv("TRAINING_SESSION_TENANT_ID", "tenant-test")
+
+    created = client.post(
+        "/api/training/sessions",
+        json={
+            "persona_id": "persona-transient-fail",
+            "objective": "Prove transient complete failure restart recovery",
+            "actor_id": "operator-1",
+        },
+    )
+    assert created.status_code == 201
+    session_id = created.json()["session_id"]
+    seed_changed_supported_controls(service, session_id)
+    queued = client.post(
+        f"/api/training/sessions/{session_id}/preview-jobs",
+        json={
+            "mode": "refresh",
+            "requested_by": "operator-1",
+            "terminalize_session": True,
+        },
+        headers={"Idempotency-Key": "recovery-transient-key-001"},
+    )
+    assert queued.status_code == 201
+    job_id = queued.json()["job_id"]
+
+    fail_complete = True
+
+    def service_urlopen(request, timeout):  # noqa: ANN001
+        del timeout
+        nonlocal fail_complete
+        parsed_path = request.full_url.removeprefix("http://training-session-svc:8099")
+        headers = dict(request.header_items())
+        if fail_complete and parsed_path.endswith(f"/api/training/sessions/{session_id}/complete"):
+            fail_complete = False
+            fp = io.BytesIO(b'{"detail":"transient backend 503"}')
+            raise urllib.error.HTTPError(
+                request.full_url,
+                503,
+                "Service Unavailable",
+                {"Content-Type": "application/json"},
+                fp,
+            )
+        response = client.request(
+            request.get_method(),
+            parsed_path,
+            content=request.data,
+            headers=headers,
+        )
+        assert response.status_code < 400, response.text
+        return _TestClientResponse(response)
+
+    monkeypatch.setattr(worker.urllib.request, "urlopen", service_urlopen)
+
+    # Tick 1: run_job succeeds, complete_session encounters transient 503
+    tick1 = worker.run_tick(api_url="http://training-session-svc:8099", limit=5)
+    assert tick1["jobs_found"] == 1
+    assert tick1["completed"] == 1
+    assert tick1["failed"] == 1
+    assert tick1["terminal_session_ids"] == []
+    assert any("503" in err for err in tick1["errors"])
+
+    store = service.TrainingSessionStore(fixture.data_dir)
+    session_after_tick1 = store.get_session(session_id)
+    assert session_after_tick1["status"] == "active"
+
+    # Simulate worker restart by reloading worker module
+    restarted_worker = _load_worker_module()
+    monkeypatch.setattr(restarted_worker.urllib.request, "urlopen", service_urlopen)
+
+    # Tick 2: recovered across restart; complete_session now succeeds without re-evaluating
+    tick2 = restarted_worker.run_tick(api_url="http://training-session-svc:8099", limit=5)
+    assert tick2["jobs_found"] == 1
+    assert tick2["completed"] == 1
+    assert tick2["replayed"] == 1
+    assert tick2["failed"] == 0
+    assert tick2["terminal_session_ids"] == [session_id]
+
+    session_after_tick2 = store.get_session(session_id)
+    assert session_after_tick2["status"] == "completed"
+    assert session_after_tick2.get("ended_at") == FIXED_TRUSTED_NOW.isoformat().replace("+00:00", "Z")
+
+
+def test_terminal_session_recovery_negative_preview_only_stays_active(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    worker = _load_worker_module()
+    service, fixture = _load_service_module(tmp_path)
+    client = TestClient(service.app)
+    monkeypatch.setenv("TRAINING_SESSION_WORKER_TOKEN", "worker:training-service")
+    monkeypatch.setenv("TRAINING_SESSION_TENANT_ID", "tenant-test")
+
+    created = client.post(
+        "/api/training/sessions",
+        json={
+            "persona_id": "persona-preview-only",
+            "objective": "Preview only should remain active",
+            "actor_id": "operator-1",
+        },
+    )
+    assert created.status_code == 201
+    session_id = created.json()["session_id"]
+    seed_changed_supported_controls(service, session_id)
+    queued = client.post(
+        f"/api/training/sessions/{session_id}/preview-jobs",
+        json={
+            "mode": "refresh",
+            "requested_by": "operator-1",
+            "terminalize_session": False,
+        },
+        headers={"Idempotency-Key": "preview-only-key-001"},
+    )
+    assert queued.status_code == 201
+
+    def service_urlopen(request, timeout):  # noqa: ANN001
+        del timeout
+        parsed_path = request.full_url.removeprefix("http://training-session-svc:8099")
+        headers = dict(request.header_items())
+        response = client.request(
+            request.get_method(),
+            parsed_path,
+            content=request.data,
+            headers=headers,
+        )
+        assert response.status_code < 400, response.text
+        return _TestClientResponse(response)
+
+    monkeypatch.setattr(worker.urllib.request, "urlopen", service_urlopen)
+
+    tick1 = worker.run_tick(api_url="http://training-session-svc:8099", limit=5)
+    assert tick1["jobs_found"] == 1
+    assert tick1["completed"] == 1
+    assert tick1["terminal_session_ids"] == []
+    assert tick1["failed"] == 0
+
+    store = service.TrainingSessionStore(fixture.data_dir)
+    assert store.get_session(session_id)["status"] == "active"
+
+    # Next tick: completed job with terminalize_session=False is NOT claimable
+    tick2 = worker.run_tick(api_url="http://training-session-svc:8099", limit=5)
+    assert tick2["jobs_found"] == 0
+    assert store.get_session(session_id)["status"] == "active"
+
+
+def test_terminal_session_recovery_tenant_isolation(
+    tmp_path,
+) -> None:
+    service, _fixture = _load_service_module(tmp_path)
+    client = TestClient(service.app)
+
+    # Create session as tenant-alpha
+    created = client.post(
+        "/api/training/sessions",
+        json={
+            "persona_id": "persona-tenant-iso",
+            "objective": "Tenant isolation test",
+            "actor_id": "operator-alpha",
+        },
+        headers={"X-Tenant-Id": "tenant-alpha"},
+    )
+    assert created.status_code == 201
+    session_id = created.json()["session_id"]
+    seed_changed_supported_controls(service, session_id)
+    queued = client.post(
+        f"/api/training/sessions/{session_id}/preview-jobs",
+        json={
+            "mode": "refresh",
+            "requested_by": "operator-alpha",
+            "terminalize_session": True,
+        },
+        headers={"X-Tenant-Id": "tenant-alpha", "Idempotency-Key": "iso-key-001"},
+    )
+    assert queued.status_code == 201
+    job_id = queued.json()["job_id"]
+
+    # Run the job as tenant-alpha to completion
+    ran = client.post(
+        f"/api/training/preview-jobs/{job_id}/run",
+        json={},
+        headers={"X-Tenant-Id": "tenant-alpha"},
+    )
+    assert ran.status_code == 200
+    assert ran.json()["status"] == "completed"
+
+    # Worker from tenant-beta cannot see the claimable job
+    claimable_beta = client.get(
+        "/api/training/preview-jobs",
+        params={"status": "claimable"},
+        headers={"X-Tenant-Id": "tenant-beta"},
+    )
+    assert claimable_beta.status_code == 200
+    assert len(claimable_beta.json()) == 0
+
+    # Worker from tenant-beta cannot run the job
+    run_beta = client.post(
+        f"/api/training/preview-jobs/{job_id}/run",
+        json={},
+        headers={"X-Tenant-Id": "tenant-beta"},
+    )
+    assert run_beta.status_code == 404
+
+    # Worker from tenant-beta cannot complete the session
+    complete_beta = client.post(
+        f"/api/training/sessions/{session_id}/complete",
+        json={},
+        headers={"X-Tenant-Id": "tenant-beta"},
+    )
+    assert complete_beta.status_code == 404
+
+
+def test_terminal_session_recovery_invalid_proof_fails_closed(
+    tmp_path,
+) -> None:
+    service, fixture = _load_service_module(tmp_path)
+    client = TestClient(service.app)
+
+    created = client.post(
+        "/api/training/sessions",
+        json={
+            "persona_id": "persona-invalid-proof",
+            "objective": "Invalid proof must fail closed",
+            "actor_id": "operator-1",
+        },
+    )
+    assert created.status_code == 201
+    session_id = created.json()["session_id"]
+    seed_changed_supported_controls(service, session_id)
+
+    # Clear preview bundle so complete has no proof
+    store = service.TrainingSessionStore(fixture.data_dir)
+    store.put_preview_bundle(session_id, {"session_id": session_id, "preview": {}})
+
+    # Attempting to complete session with invalid / missing proof must fail 409
+    res = client.post(f"/api/training/sessions/{session_id}/complete")
+    assert res.status_code == 409
+    assert "passing worker evaluation proof required" in res.json()["detail"]
+    assert store.get_session(session_id)["status"] == "active"
+
+
+def test_terminal_session_recovery_duplicate_completion_is_idempotent(
+    tmp_path,
+) -> None:
+    service, fixture = _load_service_module(tmp_path)
+    client = TestClient(service.app)
+
+    created = client.post(
+        "/api/training/sessions",
+        json={
+            "persona_id": "persona-dup-comp",
+            "objective": "Duplicate completion idempotency",
+            "actor_id": "operator-1",
+        },
+    )
+    assert created.status_code == 201
+    session_id = created.json()["session_id"]
+    seed_changed_supported_controls(service, session_id)
+
+    queued = client.post(
+        f"/api/training/sessions/{session_id}/preview-jobs",
+        json={"mode": "refresh", "requested_by": "operator-1", "terminalize_session": True},
+        headers={"Idempotency-Key": "dup-comp-001"},
+    )
+    assert queued.status_code == 201
+    job_id = queued.json()["job_id"]
+
+    ran = client.post(f"/api/training/preview-jobs/{job_id}/run", json={})
+    assert ran.status_code == 200
+
+    comp1 = client.post(f"/api/training/sessions/{session_id}/complete")
+    assert comp1.status_code == 201
+
+    store = service.TrainingSessionStore(fixture.data_dir)
+    sess1 = store.get_session(session_id)
+    assert sess1["status"] == "completed"
+
+    # Second complete returns existing replay idempotently
+    comp2 = client.post(f"/api/training/sessions/{session_id}/complete")
+    assert comp2.status_code == 201
+    assert comp2.json()["session_id"] == session_id
+
+    # Claimable jobs endpoint does not return the job since session is already completed
+    claimable = client.get("/api/training/preview-jobs", params={"status": "claimable"})
+    assert claimable.status_code == 200
+    assert job_id not in [j["job_id"] for j in claimable.json()]
