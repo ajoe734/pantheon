@@ -1951,6 +1951,17 @@ for item in json.loads(sys.argv[1] or "[]"):
     export "${deploy_key}=${deploy_value}"
   done
 
+  # A stopped steady controller keeps its loop-control lease until it expires,
+  # and the store has no release, so a bounded controller started earlier is
+  # rejected as a foreign writer (refresh run 37754747898).
+  local steady_lease_seconds=0
+  if (( ${#steady_ids[@]} )); then
+    steady_lease_seconds="$(python3 -c 'import json,sys
+env = dict(item.partition("=")[::2] for item in json.loads(sys.argv[1] or "[]"))
+lease = (env.get("SOURCE_INGEST_CONTROLLER_LEASE_SECONDS") or "").strip()
+print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS") or "60"))' "${steady_scheduler_env}")"
+  fi
+
   restore_bounded_source_refresh() {
     local rc=$?
     trap - EXIT INT TERM
@@ -1976,14 +1987,24 @@ for item in json.loads(sys.argv[1] or "[]"):
 
   # Stop (not remove) the steady controller/projector so only one controller owns the window.
   (( ${#steady_ids[@]} )) && docker stop "${steady_ids[@]}" >/dev/null
+  local steady_stopped_at lease_wait
+  steady_stopped_at="$(date +%s)"
   manage_source_ingest_refresh_runtime "${steady_env}" "bounded" "${running_image_id}" "${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}"
+  lease_wait=$(( steady_lease_seconds + 1 - ($(date +%s) - steady_stopped_at) ))
+  if (( steady_lease_seconds > 0 && lease_wait > 0 )); then
+    info "waiting ${lease_wait}s for the stopped steady source controller lease to expire"
+    sleep "${lease_wait}"
+  fi
 
   docker rm -f "${bounded_containers[@]}" >/dev/null 2>&1 || true
+  # A ten second interval keeps the one-shot lease (twice the interval) short,
+  # so the restored steady scheduler is fenced for at most one tick.
   for bounded_service in "${bounded_services[@]}"; do
     COMPOSE_PROFILES="source-ingest-scheduler,workers" \
     SOURCE_INGEST_CONTROLLER_MODE=reconcile_and_pull \
     SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=reconciled_live_proof \
     SOURCE_INGEST_CONTROLLER_MAX_TICKS=1 \
+    SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS=10 \
     SOURCE_INGEST_CONTROLLER_RESTART_POLICY=no \
     SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
     SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \

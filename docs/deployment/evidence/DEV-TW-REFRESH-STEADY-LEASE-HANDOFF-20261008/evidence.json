@@ -1,0 +1,26 @@
+{
+  "task_id": "DEV-TW-REFRESH-STEADY-LEASE-HANDOFF-20261008",
+  "base_sha": "d60314e7d",
+  "problem": {
+    "refresh_run": "37754747898",
+    "observed": "Dev Taiwan Market Daily Refresh (force=true, 2026-10-08T09:10Z) logged 'bounded source refresh prioritizing active paper symbols: 2330.TW', then 'bounded source refresh service source-ingest-scheduler exited with code 1'. It was the first time the hosted refresh ran the bounded path; every earlier run had skipped with no_active_taiwan_symbols.",
+    "readback": "Hosted /data/source-ingest/bounded-refresh/controller_state.json (read-only): last_failure_stage=controller, last_failure_reason=\"ControllerLeaseConflict: Active lease exists for loop 'source_ingestion'; fenced owner is controller 'source-ingestion-1c877c903a1f:c97d2852aa40', so the stale or foreign writer was rejected.\" 1c877c903a1f is the steady source-ingest-scheduler container.",
+    "cause": "execute_bounded_source_refresh_entrypoint stops the steady scheduler with docker stop and starts the one-shot bounded scheduler about 80 seconds later. The steady controller's loop-control lease is 2 x interval (120 s on hosted) and LoopControllerStore has no release, so the bounded controller arrived while the lease was still active and was rejected as a foreign writer."
+  },
+  "change": [
+    "After the steady scheduler is stopped, the refresh waits until that controller's lease must have expired before starting the bounded run. The lease is SOURCE_INGEST_CONTROLLER_LEASE_SECONDS from the steady container environment, else twice its SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS (default 60), plus one second, minus the time already spent since the stop.",
+    "The one-shot bounded scheduler and projector run with SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS=10, as in the isolated L12 harness pull. Their lease is therefore 20 s, so the restored steady scheduler is fenced for at most one tick."
+  ],
+  "unchanged": "Preflight, symbol resolution, egress allowlist and restore, image identity guards, bounded container names, the steady-service stop/start protections from DEV-TW-REFRESH-STEADY-SERVICES-20261008 and readback verification are unchanged. Without a steady scheduler the refresh already refuses earlier (steady_scheduler_deploy_values_missing), so the wait is only computed when steady containers exist.",
+  "test_changes": [
+    "The stub docker records event times and docker stop. The steady scheduler environment comes from the stub state and defaults to a one-second interval, which keeps existing tests to a ~3 s wait.",
+    "New tests: test_refresh_waits_for_stopped_steady_lease_before_bounded_run (explicit lease 3 s gives a stop-to-run gap of at least 3 s); test_refresh_lease_wait_defaults_to_twice_steady_interval (interval 2 s and no lease gives a gap of at least 4 s); test_bounded_refresh_one_shot_uses_ten_second_controller_interval."
+  ],
+  "validation": {
+    "base_with_new_tests": "pytest scripts/test_dev_tw_market_refresh.py with the deploy script at base d60314e7d: 3 failed, 17 passed",
+    "head": "pytest scripts/test_dev_tw_market_refresh.py: 20 passed",
+    "related": "pytest scripts/test_deploy_nonprod_vm.py scripts/test_source_ingest_deploy_diagnostics_contract.py: 92 passed, 2 skipped; bash -n scripts/deploy_nonprod_vm.sh ok"
+  },
+  "hosted_followup": "After merge, one Dev Taiwan Market Daily Refresh should produce a 2330.TW snapshot. Its 10/08 close comes from the www.twse.com.tw STOCK_DAY history, which already had the 115/10/08 row at 09:10Z. The next dev pair release should then pass the governed dev paper baseline.",
+  "review_status": "Author validation only; independent exact-head review by the assigned reviewer pending."
+}

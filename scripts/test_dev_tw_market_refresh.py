@@ -158,7 +158,7 @@ def _setup_refresh_stub_docker(tmp_path: Path, initial_state: dict[str, Any]) ->
     state_file.write_text(json.dumps(initial_state))
 
     docker_script = f"""#!/usr/bin/env python3
-import json, os, sys, subprocess
+import json, os, sys, subprocess, time
 from pathlib import Path
 
 state_file = Path({repr(str(state_file))})
@@ -166,7 +166,7 @@ events_file = Path({repr(str(events_file))})
 
 def log_event(name, **kwargs):
     with events_file.open("a", encoding="utf-8") as f:
-        f.write(json.dumps({{"event": name, **kwargs}}) + "\\n")
+        f.write(json.dumps({{"event": name, "t": time.time(), **kwargs}}) + "\\n")
 
 args = sys.argv[1:]
 if not args:
@@ -189,7 +189,12 @@ if args[0] == "compose":
                 sys.stderr.write(proc.stderr)
                 sys.exit(proc.returncode)
         else:
-            log_event("compose_run", args=sub, active_symbols=os.environ.get("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS"))
+            log_event(
+                "compose_run",
+                args=sub,
+                active_symbols=os.environ.get("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS"),
+                interval=os.environ.get("SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS"),
+            )
         sys.exit(0)
     elif sub[0] == "ps":
         target = sub[-1]
@@ -221,6 +226,10 @@ elif args[0] == "rm":
     log_event("docker_rm", names=args[2:])
     sys.exit(0)
 
+elif args[0] == "stop":
+    log_event("docker_stop", names=args[1:])
+    sys.exit(0)
+
 elif args[0] == "inspect":
     fmt = args[2] if len(args) > 2 and args[1] == "--format" else ""
     target = args[-1]
@@ -228,7 +237,7 @@ elif args[0] == "inspect":
         print(state["image_id"])
         sys.exit(0)
     elif "Config.Env" in fmt and target == "cid-source-ingest-scheduler":
-        print(json.dumps(["PANTHEON_TENANT_ID=tenant-dev", "PANTHEON_ENV=dev", "GIT_SHA=abc123"]))
+        print(json.dumps(["PANTHEON_TENANT_ID=tenant-dev", "PANTHEON_ENV=dev", "GIT_SHA=abc123", *state.get("steady_lease_env", ["SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS=1"])]))
         sys.exit(0)
     elif "Config.Env" in fmt:
         print(json.dumps(state["container_env"]))
@@ -601,3 +610,56 @@ def test_refresh_only_with_no_bindings_skips_when_no_baseline_declared(tmp_path:
     out_data = json.loads(output_file.read_text(encoding="utf-8"))
     assert out_data.get("status") == "skipped"
     assert out_data.get("reason") == "no_active_taiwan_symbols"
+
+
+def _run_refresh_with_steady_lease_env(tmp_path: Path, steady_lease_env: list[str]) -> tuple[subprocess.CompletedProcess[str], list[dict[str, Any]]]:
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "a" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="],
+        "steady_lease_env": steady_lease_env,
+    }
+    bin_dir, _state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+    proc = subprocess.run(
+        ["bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--force", "--output", str(output_file)],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    events = [json.loads(line) for line in events_file.read_text(encoding="utf-8").splitlines() if line]
+    return proc, events
+
+
+def _steady_stop_to_bounded_run_seconds(events: list[dict[str, Any]]) -> float:
+    stop = next(e for e in events if e["event"] == "docker_stop")
+    first_run = next(e for e in events if e["event"] == "compose_run")
+    return first_run["t"] - stop["t"]
+
+
+def test_refresh_waits_for_stopped_steady_lease_before_bounded_run(tmp_path: Path):
+    proc, events = _run_refresh_with_steady_lease_env(
+        tmp_path, ["SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS=1", "SOURCE_INGEST_CONTROLLER_LEASE_SECONDS=3"]
+    )
+    assert proc.returncode == 0, f"Refresh failed: {proc.stderr}\n{proc.stdout}"
+    assert _steady_stop_to_bounded_run_seconds(events) >= 3
+    assert "for the stopped steady source controller lease to expire" in proc.stdout + proc.stderr
+
+
+def test_refresh_lease_wait_defaults_to_twice_steady_interval(tmp_path: Path):
+    proc, events = _run_refresh_with_steady_lease_env(tmp_path, ["SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS=2"])
+    assert proc.returncode == 0, f"Refresh failed: {proc.stderr}\n{proc.stdout}"
+    assert _steady_stop_to_bounded_run_seconds(events) >= 4
+
+
+def test_bounded_refresh_one_shot_uses_ten_second_controller_interval(tmp_path: Path):
+    proc, events = _run_refresh_with_steady_lease_env(tmp_path, ["SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS=1"])
+    assert proc.returncode == 0, f"Refresh failed: {proc.stderr}\n{proc.stdout}"
+    runs = [e for e in events if e["event"] == "compose_run"]
+    assert len(runs) == 2
+    assert {e["interval"] for e in runs} == {"10"}
