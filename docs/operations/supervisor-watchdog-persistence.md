@@ -46,10 +46,10 @@ remain up while the supervisor and auto workers are dead.
 Supervisor replacement has no incumbent compatibility or rollback path.  The
 only accepted topology is:
 
-- immutable command source: `/home/lupin/pantheon-ci-deploy/command-runtimes/<exact-commit-sha>`;
+- immutable command source: `~/pantheon-ci-deploy/command-runtimes/<exact-commit-sha>`;
 - stable development-tool coordination worktree:
-  `/home/lupin/pantheon-ci-deploy/coordination-root`;
-- mutable staging checkout: `/home/lupin/pantheon-ci-deploy/dev-root`.
+  `~/pantheon-ci-deploy/coordination-root`;
+- mutable staging checkout: `~/pantheon-ci-deploy/dev-root`.
 
 Promotion removes write permission from every non-symlink entry in the exact
 command runtime before stopping the incumbent supervisor. This mode-bit seal
@@ -89,14 +89,14 @@ and `.orchestrator/` directory. Then use explicit roots; neither `dev-root`
 nor the product checkout is valid for runtime coordination:
 
 ```bash
-COORDINATION_ROOT=/home/lupin/pantheon-ci-deploy/coordination-root
+COORDINATION_ROOT=$HOME/pantheon-ci-deploy/coordination-root
 bash scripts/sync-dev-root.sh \
-  /home/lupin/pantheon-ci-deploy/dev-root \
-  /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json \
+  $HOME/pantheon-ci-deploy/dev-root \
+  $HOME/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json \
   "$COORDINATION_ROOT"
 python3 scripts/supervisor_watchdog_install.py \
-  --repo /home/lupin/pantheon-ci-deploy/command-runtimes/<exact-commit-sha> \
-  --config /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json \
+  --repo $HOME/pantheon-ci-deploy/command-runtimes/<exact-commit-sha> \
+  --config $HOME/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json \
   --method auto \
   --start-now
 ```

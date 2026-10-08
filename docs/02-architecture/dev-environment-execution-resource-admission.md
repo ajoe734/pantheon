@@ -6,7 +6,7 @@ Pantheon development workflows involve two distinct execution profiles:
 1. **Isolated Worktree Tasks**: Pure source code changes, unit testing, documentation, and local refactoring that run concurrently across worker worktrees without contending for external shared runtime infrastructure.
 2. **Hosted / Release Tasks**: Tasks that interact with the live shared development environment (`pantheon-dev`), such as BFF/FE deployments, hosted smoke tests, and environment migrations.
 
-Because the `pantheon-dev` target environment is a shared singleton host (`pantheon-lupin-dev` VM), concurrent deployment or verification operations by multiple background workers can collide, invalidate leases, or corrupt in-flight deployments.
+Because the `pantheon-dev` target environment is a shared singleton host (the dev VM recorded in [§ 3.1](../deployment/vm-dev-staging-prod-management-plan.md#31-dev)), concurrent deployment or verification operations by multiple background workers can collide, invalidate leases, or corrupt in-flight deployments.
 
 This architecture introduces **pre-dispatch execution resource admission** in the Pantheon supervisor. It enforces capacity-1 scheduling for tasks claiming the `pantheon-dev` resource *before* any worker is spawned, while allowing unrelated functional worktree tasks to continue executing in parallel up to global and per-lane capacity limits.
 

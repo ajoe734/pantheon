@@ -158,7 +158,9 @@ class MockLoopTruth:
         environment: str,
     ) -> tuple[bool, List[Dict[str, Any]]]:
         assert tenant_id in {"tenant-a", "tenant-dev"}
-        assert environment == "paper"
+        # Controller records are keyed by the deployment environment, not the
+        # authorized trading stage (BFF-LOOP-HEALTH-CONTROLLER-ENVIRONMENT-20261008).
+        assert environment == "dev"
         return False, []
 
     project_canonical_loop_health = staticmethod(
@@ -402,6 +404,7 @@ def test_loop_inventory_and_health_preserve_reusable_truth_contracts() -> None:
     assert health.json()["meta"]["scope"] == {
         "tenant_id": "tenant-a",
         "environment": "paper",
+        "controller_environment": "dev",
         "source": "authenticated_identity_and_deployment_scope",
     }
     assert health.json()["meta"]["surfaces"]["loop_health"]["status"] == "degraded"
@@ -867,3 +870,86 @@ def test_all_loop_truth_callers_share_stage_scope_authorization() -> None:
             )
         )
 
+
+
+def test_loop_health_reads_controller_records_on_the_deployment_environment() -> None:
+    """BFF-LOOP-HEALTH-CONTROLLER-ENVIRONMENT-20261008.
+
+    Every LoopControllerWriter records ``environment`` as the deployment
+    environment (PANTHEON_ENV, ``dev`` on the dev VM).  Loop-health authorizes
+    the requested trading stage but must query the controller store on the
+    deployment environment, otherwise no controller record is ever returned.
+    """
+    import asyncio
+
+    queried: List[tuple[str, str]] = []
+    dev_record = {
+        "loop_id": "bff_health_monitoring",
+        "tenant_id": "tenant-dev",
+        "environment": "dev",
+        "_health_source": "controller_store",
+    }
+
+    class _StoreKeyedLoopTruth:
+        @staticmethod
+        async def fetch_controller_store_health_records(
+            tenant_id: str,
+            environment: str,
+        ) -> tuple[bool, List[Dict[str, Any]]]:
+            queried.append((tenant_id, environment))
+            if (tenant_id, environment) == ("tenant-dev", "dev"):
+                return True, [dict(dev_record)]
+            return False, []
+
+        project_canonical_loop_health = staticmethod(
+            loop_truth_projection.project_canonical_loop_health
+        )
+        project_canonical_loop_health_entry = staticmethod(
+            loop_truth_projection.project_canonical_loop_health_entry
+        )
+
+    service = ControlLoopsService(
+        loop_truth_adapter=_StoreKeyedLoopTruth,
+        deployed_environment="dev",
+    )
+    identity = OperatorIdentity(
+        operator_id="op_controller_env",
+        roles=["operator", "viewer"],
+        mfa_verified=True,
+        claims={"tenant_id": "tenant-dev", "allowed_tenants": ["tenant-dev"]},
+    )
+
+    health = asyncio.run(
+        service.loop_health(
+            identity,
+            requested_tenant="tenant-dev",
+            requested_environment="paper",
+        )
+    )
+    assert queried == [("tenant-dev", "dev")]
+    assert health["meta"]["scope"]["environment"] == "paper"
+    assert health["meta"]["scope"]["controller_environment"] == "dev"
+    assert health["meta"]["coverage"]["raw_health_record_count"] == 1
+    assert health["meta"]["surfaces"]["loop_health"]["source"] == "controller_store"
+
+    detail = asyncio.run(
+        service.loop_health_detail(
+            "bff_health_monitoring",
+            identity,
+            requested_tenant="tenant-dev",
+            requested_environment="paper",
+        )
+    )
+    assert queried[-1] == ("tenant-dev", "dev")
+    assert detail["meta"]["scope"]["controller_environment"] == "dev"
+    assert detail["meta"]["coverage"]["raw_health_record_count"] == 1
+
+    # Stage authorization from authenticated_loop_truth_scope is unchanged.
+    with pytest.raises(Exception):
+        asyncio.run(
+            service.loop_health(
+                identity,
+                requested_tenant="tenant-dev",
+                requested_environment="live",
+            )
+        )
