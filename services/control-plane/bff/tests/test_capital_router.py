@@ -64,6 +64,18 @@ class _CapitalStore:
             {"capital_pool_id": "pool-paper", "strategy_id": "alpha", "target_weight": 0.20, "commission": 12.5},
             {"capital_pool_id": "pool-paper", "strategy_id": "beta", "target_weight": 0.15, "commission": 7.5},
         ]
+        self.bindings: List[Dict[str, Any]] = [
+            {"id": "binding-alpha", "capital_pool_id": "pool-paper", "strategy_id": "alpha"},
+            {"id": "binding-beta", "capital_pool_id": "pool-paper", "strategy_id": "beta"},
+        ]
+        self.deployment_plans: List[Dict[str, Any]] = [
+            {"id": "plan-alpha", "capital_pool_id": "pool-paper", "strategy_id": "alpha", "binding_ids": ["binding-alpha"]},
+            {"id": "plan-beta", "capital_pool_id": "pool-paper", "strategy_id": "beta", "binding_ids": ["binding-beta"]},
+        ]
+        self.runtime_bindings: List[Dict[str, Any]] = [
+            {"id": "rb-alpha", "runtime_id": "runtime-alpha", "capital_pool_id": "pool-paper", "strategy_id": "alpha", "plan_id": "plan-alpha"},
+            {"id": "rb-beta", "runtime_id": "runtime-beta", "capital_pool_id": "pool-paper", "strategy_id": "beta", "plan_id": "plan-beta"},
+        ]
 
     def list_capital_pools(self, **_: Any) -> List[Dict[str, Any]]:
         return list(self.pools.values())
@@ -76,6 +88,15 @@ class _CapitalStore:
             row for row in self.allocation_rows
             if not capital_pool_id or row["capital_pool_id"] == capital_pool_id
         ]
+
+    def list_bindings(self, **_: Any) -> List[Dict[str, Any]]:
+        return list(self.bindings)
+
+    def list_deployment_plans(self, **_: Any) -> List[Dict[str, Any]]:
+        return list(self.deployment_plans)
+
+    def list_runtime_bindings(self, **_: Any) -> List[Dict[str, Any]]:
+        return list(self.runtime_bindings)
 
     def list_rebalances(self, **_: Any) -> List[Dict[str, Any]]:
         return list(self.rebalances.values())
@@ -209,11 +230,34 @@ def test_allocation_and_management_readbacks_retain_pool_and_risk_lineage() -> N
 
     exposure = client.get("/bff/management/portfolio-book/exposure")
     assert exposure.status_code == 200
-    assert exposure.json()["items"][0]["allocation_digest"]
+    exposure_payload = exposure.json()
+    assert set(exposure_payload) == {"data", "page_info", "meta"}
+    assert set(exposure_payload["data"]) == {"id", "items", "summary"}
+    assert "items" not in exposure_payload
+    assert "summary" not in exposure_payload
+    summary = exposure_payload["data"]["summary"]
+    assert exposure_payload["data"]["id"] == "pm12-portfolio-book-exposure"
+    assert summary["exposure_count"] == 2
+    assert [item["pool_id"] for item in exposure_payload["data"]["items"]] == ["pool-paper", "pool-paused"]
+    paper_exposure = exposure_payload["data"]["items"][0]
+    assert paper_exposure["pool_id"] == "pool-paper"
+    assert paper_exposure["capital_pool_id"] == "pool-paper"
+    assert paper_exposure["name"] == "Paper Allocation"
+    assert paper_exposure["status"] == "active"
+    assert paper_exposure["current_exposure"] is None
+    assert paper_exposure["risk_budget"] is None
+    assert paper_exposure["available_budget"] is None
+    assert paper_exposure["risk_budget_utilization"] is None
+    assert paper_exposure["risk_state"] == "unknown"
+    assert "allocation_digest" not in paper_exposure
+    assert exposure_payload["meta"]["surfaces"]["portfolio_book_exposure"]["source"] == "bff_composed"
+    assert exposure_payload["meta"]["surfaces"]["capital_pools"]["source"] == "canonical"
+    assert exposure_payload["meta"]["policy"] == "read_only_portfolio_exposure"
 
     holdings = client.get("/bff/management/portfolio-book/holdings?capital_pool_id=pool-paper")
     assert holdings.status_code == 200
-    assert {row["strategy_id"] for row in holdings.json()["items"]} == {"alpha", "beta"}
+    holdings_payload = holdings.json()
+    assert {row["strategy_id"] for row in holdings_payload["data"]["items"]} == {"alpha", "beta"}
 
     costs = client.get("/bff/management/cost-attribution")
     assert costs.status_code == 200
