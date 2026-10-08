@@ -102,21 +102,77 @@
     "head_log_directory": "/tmp/pi-caller-context-validation/head",
     "post_current_dev_integration": "48 passed after integrating dev 269c32c4: timeout/capacity, Persona owner contract, Human Inbox B3; no additional skips or failures.",
     "results": [
-      {"suite": "tests/test_management_read_timeout_and_capacity.py", "base": "5 passed; new regression separately fails", "head": "6 passed"},
-      {"suite": "tests/test_persona_create_owner_contract.py", "base": "37 passed", "head": "37 passed"},
-      {"suite": "tests/test_bff_b3_human_inbox.py", "base": "5 passed", "head": "5 passed"},
-      {"suite": "tests/test_management_read_models_router.py", "base": "41 passed", "head": "41 passed"},
-      {"suite": "test_bff_promotion_review_governance.py", "base": "13 passed", "head": "13 passed"},
-      {"suite": "tests/test_promotion_review_production_defects.py", "base": "6 passed", "head": "6 passed"},
-      {"suite": "tests/test_bff_management_cockpit.py", "base": "10 passed", "head": "10 passed"},
-      {"suite": "test_mgmt_load_005_read_concurrency.py", "base": "10 passed", "head": "10 passed"},
-      {"suite": "tests/test_management_session_harness.py", "base": "11 passed", "head": "11 passed"},
-      {"suite": "tests/test_owner_read_wiring.py", "base": "27 passed", "head": "27 passed"},
-      {"suite": "tests/test_bff_test_architecture.py", "base": "39 passed", "head": "39 passed"},
-      {"suite": "scripts/test_bff_package_boundary_prerequisite.py", "base": "4 passed, 5 failed", "head": "4 passed, same 5 failed"},
-      {"suite": "services/persona/test_persona_owner_read_roles.py", "base": "10 passed", "head": "10 passed"}
+      {
+        "suite": "tests/test_management_read_timeout_and_capacity.py",
+        "base": "5 passed; new regression separately fails",
+        "head": "6 passed"
+      },
+      {
+        "suite": "tests/test_persona_create_owner_contract.py",
+        "base": "37 passed",
+        "head": "37 passed"
+      },
+      {
+        "suite": "tests/test_bff_b3_human_inbox.py",
+        "base": "5 passed",
+        "head": "5 passed"
+      },
+      {
+        "suite": "tests/test_management_read_models_router.py",
+        "base": "41 passed",
+        "head": "41 passed"
+      },
+      {
+        "suite": "test_bff_promotion_review_governance.py",
+        "base": "13 passed",
+        "head": "13 passed"
+      },
+      {
+        "suite": "tests/test_promotion_review_production_defects.py",
+        "base": "6 passed",
+        "head": "6 passed"
+      },
+      {
+        "suite": "tests/test_bff_management_cockpit.py",
+        "base": "10 passed",
+        "head": "10 passed"
+      },
+      {
+        "suite": "test_mgmt_load_005_read_concurrency.py",
+        "base": "10 passed",
+        "head": "10 passed"
+      },
+      {
+        "suite": "tests/test_management_session_harness.py",
+        "base": "11 passed",
+        "head": "11 passed"
+      },
+      {
+        "suite": "tests/test_owner_read_wiring.py",
+        "base": "27 passed",
+        "head": "27 passed"
+      },
+      {
+        "suite": "tests/test_bff_test_architecture.py",
+        "base": "39 passed",
+        "head": "39 passed"
+      },
+      {
+        "suite": "scripts/test_bff_package_boundary_prerequisite.py",
+        "base": "4 passed, 5 failed",
+        "head": "4 passed, same 5 failed"
+      },
+      {
+        "suite": "services/persona/test_persona_owner_read_roles.py",
+        "base": "10 passed",
+        "head": "10 passed"
+      }
     ],
-    "totals": {"base_passed": 218, "head_passed": 219, "unchanged_environment_failures": 5},
+    "totals": {
+      "base_passed": 218,
+      "head_passed": 219,
+      "unchanged_environment_failures": 5
+    },
     "unchanged_environment_failures": {
       "suite": "scripts/test_bff_package_boundary_prerequisite.py",
       "reason": "Its child interpreters use -I; the shared governed interpreter has dependencies but does not have this task checkout's services package installed. Child imports fail ModuleNotFoundError: services on both base and head. No existing assertion was changed and the shared interpreter was not modified.",
@@ -137,5 +193,17 @@
     "test_deleted": 0,
     "budget_satisfied": true,
     "table": "| class | added | deleted | net |\n|---|---|---|---|\n| production | 6 | 2 | 4 |\n| test | 49 | 0 | 49 |"
+  },
+  "delivery_integration": {
+    "integrated_dev": "0edaf3837d00a5f4f8dc402a6d85acb05d8eefba",
+    "reused_pr_head": "bb7bf9438cd7c1148cd50d36f754db87beb0bfef",
+    "product_diff_changed": false,
+    "focused_tests_on_integrated_head": {
+      "tests/test_management_read_timeout_and_capacity.py": "6 passed",
+      "tests/test_persona_create_owner_contract.py": "37 passed",
+      "tests/test_bff_b3_human_inbox.py": "5 passed",
+      "tests/test_management_read_models_router.py": "41 passed"
+    },
+    "hosted_verified": false
   }
 }
