@@ -35,6 +35,10 @@ from .base import (
     SourceRecord,
     SourceType,
 )
+from .bounded_reader import (
+    read_bounded_response,
+    read_bounded_response as _read_bounded_response,
+)
 from ..external_sources import validate_external_source_record
 
 
@@ -46,20 +50,6 @@ FMP_API_BASE_URL = "https://financialmodelingprep.com/api/v3"
 
 import re
 
-def _read_bounded_response(response: Any, max_bytes: int = 4194304, chunk_size: int = 65536) -> bytes:
-    chunks: list[bytes] = []
-    total = 0
-    while True:
-        chunk = response.read(chunk_size)
-        if not chunk:
-            break
-        total += len(chunk)
-        if total > max_bytes:
-            raise SourceEvidenceError(f"Payload exceeded max byte limit ({max_bytes} bytes)")
-        chunks.append(chunk)
-        if len(chunk) < chunk_size:
-            break
-    return b"".join(chunks)
 
 
 def _validate_or_convert_rfc3339(val: Any, name: str = "available_time") -> str:
@@ -422,7 +412,7 @@ class ExternalAlphaDbAdapter(SourceConnectorProvider):
             caller="source_ingest.alpha_db_vendor",
             timeout=timeout_seconds,
         ) as response:
-            raw_bytes = _read_bounded_response(response, max_bytes=4194304)
+            raw_bytes = read_bounded_response(response, max_bytes=4194304)
             return json.loads(raw_bytes.decode("utf-8"))
 
 
