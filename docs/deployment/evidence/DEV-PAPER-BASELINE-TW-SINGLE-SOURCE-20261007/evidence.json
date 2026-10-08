@@ -1,0 +1,131 @@
+{
+  "task_id": "DEV-PAPER-BASELINE-TW-SINGLE-SOURCE-20261007",
+  "title": "Switch dev paper baseline to Taiwan via governed source path and remove bootstrap / operator-bff source-ingest shortcuts",
+  "change_class": "simplify",
+  "status": "verified",
+  "removed_shortcuts": [
+    {
+      "shortcut": "DEV_US_REQUIRED_DATA_SOURCES",
+      "introducing_commit": "6ff24d822",
+      "canonical_replacement": "Governed desired-state reconcile (controller_worker.load_desired_state merging live_pull persona requirements) with market TW and symbols ['2330.TW']."
+    },
+    {
+      "shortcut": "DEPLOYMENT_REQUIREMENT_HOLDER_ID (in bootstrap)",
+      "introducing_commit": "3d22ab9c0",
+      "canonical_replacement": "Persona-level requirements governed by persona service and canonical source reconcile; bootstrap no longer injects deployment holder requirements."
+    },
+    {
+      "shortcut": "_nudge_run_scheduled",
+      "introducing_commit": "c98be7a98",
+      "canonical_replacement": "Governed bounded refresh and scheduled daily TW source ingestion runs via scheduler service."
+    },
+    {
+      "shortcut": "_nudge_diagnostic_summary",
+      "introducing_commit": "a81e4aad8",
+      "canonical_replacement": "Read-only BFF and source-ingest diagnostics endpoints without bootstrap active nudging."
+    },
+    {
+      "shortcut": "ensure_dev_market_snapshot_ready",
+      "introducing_commit": "c98be7a98",
+      "canonical_replacement": "Natural business chain: governed TW source refresh creates snapshots naturally; paper execution reads admitted snapshots without bootstrap polling loop."
+    },
+    {
+      "shortcut": "source_ingest_controller_token",
+      "introducing_commit": "6ff24d822",
+      "canonical_replacement": "Strict service-token authentication (PANTHEON_SOURCE_INGEST_SERVICE_TOKEN); bootstrap communicates exclusively with BFF."
+    },
+    {
+      "shortcut": "ensure_source_provisioning",
+      "introducing_commit": "6ff24d822",
+      "canonical_replacement": "BFF persona creation triggering governed desired-state reconcile via canonical source management path."
+    },
+    {
+      "shortcut": "--source-ingest-url CLI option",
+      "introducing_commit": "6ff24d822",
+      "canonical_replacement": "Bootstrap communicates exclusively with BFF base URL (--base-url)."
+    },
+    {
+      "shortcut": "--market-input-timeout-seconds CLI option",
+      "introducing_commit": "c98be7a98",
+      "canonical_replacement": "Existing --timeout-seconds for BFF paper bundle creation and reconcile polling."
+    },
+    {
+      "shortcut": "SOURCE_INGEST_CONTROLLER_TOKEN_FILE in operator-bff & source_management_client.py",
+      "introducing_commit": "6d0ba1bb7 / e8d0f1d96",
+      "canonical_replacement": "PANTHEON_SOURCE_INGEST_SERVICE_TOKEN / SOURCE_INGEST_SERVICE_TOKEN / PANTHEON_SERVICE_TOKEN."
+    },
+    {
+      "shortcut": "source-ingest-data volume mount in operator-bff",
+      "introducing_commit": "1c16ef15a",
+      "canonical_replacement": "Operator-bff holds no controller token file or shared volume with source-ingest."
+    },
+    {
+      "shortcut": "Self-test cases 1 through 7 (including 2b, 6b, 6c) in bootstrap",
+      "introducing_commit": "6ff24d822 / a81e4aad8 / c98be7a98",
+      "canonical_replacement": "Lean self-test preserving transition case (Test 9); unit tests in scripts/test_bootstrap_dev_paper_baseline.py."
+    },
+    {
+      "shortcut": "Dev-only US branch of _market_persona_required_data_sources in BFF",
+      "introducing_commit": "6ff24d822 / c98be7a98",
+      "canonical_replacement": "BFF projects no source requirement for market US in dev, staging, or production (returns [])."
+    }
+  ],
+  "git_grep_counts": {
+    "DEV_US_REQUIRED_DATA_SOURCES": {"before": 8, "after": 0},
+    "DEPLOYMENT_REQUIREMENT_HOLDER_ID": {"before": 8, "after": 5},
+    "_nudge_run_scheduled": {"before": 8, "after": 5},
+    "_nudge_diagnostic_summary": {"before": 13, "after": 6},
+    "ensure_dev_market_snapshot_ready": {"before": 32, "after": 17},
+    "source_ingest_controller_token": {"before": 6, "after": 0},
+    "ensure_source_provisioning": {"before": 10, "after": 2},
+    "SOURCE_INGEST_CONTROLLER_TOKEN_FILE": {"before": 20, "after": 16},
+    "--source-ingest-url": {"before": 3, "after": 2},
+    "--market-input-timeout-seconds": {"before": 2, "after": 1}
+  },
+  "deleted_tests": [
+    {"test": "test_market_snapshot_wait_runs_after_persona_creation_never_provisioned_first_run", "symbol_asserted": "ensure_dev_market_snapshot_ready, ensure_source_provisioning"},
+    {"test": "test_market_snapshot_already_fresh_steady_state_does_not_delay_reconcile", "symbol_asserted": "ensure_dev_market_snapshot_ready"},
+    {"test": "test_replay_with_stale_snapshot_still_raises_market_input_stale", "symbol_asserted": "ensure_dev_market_snapshot_ready"},
+    {"test": "test_market_snapshot_wait_nudges_stale_existing_snapshot_then_succeeds", "symbol_asserted": "_nudge_run_scheduled, ensure_dev_market_snapshot_ready"},
+    {"test": "test_market_snapshot_wait_surfaces_nudge_authorization_denial", "symbol_asserted": "_nudge_run_scheduled, _nudge_diagnostic_summary"},
+    {"test": "test_market_snapshot_wait_surfaces_nudge_transport_error", "symbol_asserted": "_nudge_run_scheduled, _nudge_diagnostic_summary"},
+    {"test": "test_market_snapshot_wait_surfaces_nudge_connector_provider_failure", "symbol_asserted": "_nudge_run_scheduled, _nudge_diagnostic_summary"},
+    {"test": "test_market_snapshot_wait_preserves_nudge_failure_across_skipped_poll", "symbol_asserted": "_nudge_run_scheduled, ensure_dev_market_snapshot_ready"},
+    {"test": "test_nudge_diagnostic_summary_ignores_clean_200_with_no_failures", "symbol_asserted": "_nudge_diagnostic_summary"},
+    {"test": "test_nudge_diagnostic_summary_surfaces_transport_error", "symbol_asserted": "_nudge_diagnostic_summary"},
+    {"test": "test_replay_with_missing_snapshot_still_raises_market_snapshot_not_found", "symbol_asserted": "ensure_dev_market_snapshot_ready"},
+    {"test": "test_replay_with_fresh_snapshot_returns_ok_after_one_get", "symbol_asserted": "ensure_dev_market_snapshot_ready"},
+    {"test": "test_source_provisioning_skipped_without_required_data_sources", "symbol_asserted": "ensure_source_provisioning, DEV_US_REQUIRED_DATA_SOURCES"},
+    {"test": "test_source_provisioning_requires_controller_token", "symbol_asserted": "ensure_source_provisioning, source_ingest_controller_token"},
+    {"test": "test_source_provisioning_sends_authoritative_reconcile_request", "symbol_asserted": "ensure_source_provisioning, source_ingest_controller_token"},
+    {"test": "test_source_provisioning_defaults_to_deployment_requirement_holder", "symbol_asserted": "ensure_source_provisioning, DEPLOYMENT_REQUIREMENT_HOLDER_ID"},
+    {"test": "test_source_provisioning_raises_on_unsupported_requirement", "symbol_asserted": "ensure_source_provisioning"},
+    {"test": "test_source_provisioning_raises_on_non_200", "symbol_asserted": "ensure_source_provisioning"},
+    {"test": "test_controller_token_prefers_explicit_env_over_file", "symbol_asserted": "source_ingest_controller_token"},
+    {"test": "test_controller_token_reads_from_file_when_unset", "symbol_asserted": "source_ingest_controller_token, SOURCE_INGEST_CONTROLLER_TOKEN_FILE"},
+    {"test": "test_controller_token_empty_when_unconfigured", "symbol_asserted": "source_ingest_controller_token"},
+    {"test": "test_market_snapshot_wait_rejects_missing_market_context", "symbol_asserted": "ensure_dev_market_snapshot_ready"},
+    {"test": "test_us_persona_simulation_remains_dev_only", "symbol_asserted": "dev-only US simulation projection in BFF"}
+  ],
+  "existing_tw_flow_citations": {
+    "producer_and_signal_flow": [
+      "services/execution/lean_runtime/test_tw_signal_producer.py::TestTWSignalProducer::test_tw_signal_producer_evaluates_and_pushes_successfully",
+      "services/execution/lean_runtime/test_tw_signal_producer.py::TestTWSignalProducer::test_tw_signal_producer_insufficient_closes_skips",
+      "services/execution/lean_runtime/test_tw_signal_producer.py::TestTWSignalProducer::test_tw_signal_producer_missing_artifact_fails",
+      "services/execution/lean_runtime/test_tw_signal_producer.py::TestTWSignalProducer::test_tw_signal_producer_no_active_binding_fails"
+    ],
+    "deployed_e2e_runtime_proof": [
+      "tests/integration/l12/test_current_runtime_loops_deployed_e2e.py::test_loop_08_approved_artifact_creates_exact_runtime_binding",
+      "tests/integration/l12/test_current_runtime_loops_deployed_e2e.py::test_loop_09_current_artifact_drives_paper_runtime_execution",
+      "tests/integration/l12/test_current_runtime_loops_deployed_e2e.py::test_missing_market_symbol_is_not_counted_fleet_ready"
+    ]
+  },
+  "hosted_gates_and_deferred_scope": {
+    "deferred_simulation_retirement_scope": "Phase 2 retires services/source_ingestion/connectors/dev_paper_simulation.py, its connector registration/adapter/reconciler factory, and nonprod VM scripts once the operator retires legacy personas declaring simulation requirements on hosted environments. Premature deletion would cause authoritative reconcile to fail closed against those active legacy personas.",
+    "untouched_files": [
+      "services/source_ingestion/connectors/dev_paper_simulation.py",
+      "scripts/deploy_nonprod_vm.sh"
+    ],
+    "hosted_actions": "None. Strict repo-local execution and validation; no hosted actions performed."
+  }
+}

@@ -119,13 +119,11 @@ def test_explicit_persona_source_selection_is_preserved() -> None:
         assert actual is not requirement
 
 
-def test_us_persona_simulation_remains_dev_only(monkeypatch) -> None:
-    monkeypatch.setenv("PANTHEON_ENV", "dev")
-    requirements = _persona_create_required_data_sources({"market": "US"})
-    assert requirements[0]["connector_candidates"] == ["dev-paper-us-equity-simulation"]
-    for environment in ("staging", "production"):
+def test_us_persona_projects_no_source_requirements_in_any_env(monkeypatch) -> None:
+    for environment in ("dev", "staging", "production"):
         monkeypatch.setenv("PANTHEON_ENV", environment)
         assert _persona_create_required_data_sources({"market": "US"}) == []
+
 
 
 def test_retained_redaction_uses_model_policy_without_data_access() -> None:
