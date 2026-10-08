@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import io
+import ipaddress
 import json
 import os
 from pathlib import Path
 import sys
 import types
+from urllib.parse import urlsplit
 import uuid
 
 import pytest
@@ -1341,13 +1343,119 @@ def test_asyncpg_case_source_verify_source_lineage_unit_rejections(monkeypatch):
     assert exc_info.value.code == "source_checksum_missing"
 
 
+LOOPBACK_HOSTS = frozenset({"localhost", "localhost.localdomain", "127.0.0.1", "::1"})
+
+
+def _is_loopback_host(host: str) -> bool:
+    normalized = (host or "").strip().lower()
+    if normalized in LOOPBACK_HOSTS:
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
+def _validate_owned_loopback_pg_dsn(dsn: str) -> str:
+    """Validate that DSN targets an owned disposable loopback PostgreSQL instance.
+
+    Rejects non-loopback hosts, unknown ownership, query injection options,
+    and non-postgresql schemes without leaking credentials or raw DSN in exceptions.
+    """
+    if not dsn or not dsn.strip():
+        raise ValueError("Test database DSN is empty")
+    try:
+        parsed = urlsplit(dsn.strip())
+    except Exception:
+        raise ValueError("Invalid test database DSN") from None
+
+    if parsed.scheme not in {"postgres", "postgresql"}:
+        raise ValueError("Test database must use postgresql scheme")
+    if parsed.query or parsed.fragment:
+        raise ValueError("Test database DSN must not contain query parameters or fragments")
+
+    host = (parsed.hostname or "").strip().lower()
+    if not host or not _is_loopback_host(host):
+        raise ValueError("Test database must target an owned loopback address")
+
+    # Guard against accidental use of the shared docker-compose dev container (port 15432)
+    # without explicit owned disposable declaration.
+    if parsed.port == 15432:
+        owned_flag = os.getenv("PROBE_TEST_POSTGRES_OWNED") or os.getenv("PANTHEON_TEST_POSTGRES_OWNED")
+        if not (owned_flag and owned_flag.strip().lower() in {"1", "true", "yes", "disposable"}):
+            raise ValueError(
+                "Port 15432 is reserved for shared development container; explicit owned disposable opt-in required"
+            )
+
+    return dsn.strip()
+
+
+def test_owned_loopback_dsn_guard_rejections(monkeypatch):
+    """Fail-closed on non-loopback hosts, non-postgres schemes, query params, and DSN leakage."""
+    monkeypatch.delenv("PROBE_TEST_POSTGRES_OWNED", raising=False)
+    monkeypatch.delenv("PANTHEON_TEST_POSTGRES_OWNED", raising=False)
+    for bad_dsn in (
+        "postgresql://user:pass@192.168.1.10:5432/testdb",
+        "postgresql://user:pass@example.com:5432/testdb",
+        "postgresql://user:pass@10.0.0.1:5432/testdb",
+        "postgresql://user:pass@8.8.8.8:5432/testdb",
+    ):
+        with pytest.raises(ValueError) as exc_info:
+            _validate_owned_loopback_pg_dsn(bad_dsn)
+        msg = str(exc_info.value)
+        assert "owned loopback address" in msg
+        assert "user:pass" not in msg
+        assert "192.168.1.10" not in msg
+        assert "example.com" not in msg
+
+    with pytest.raises(ValueError) as exc_info:
+        _validate_owned_loopback_pg_dsn("mysql://root:secret@127.0.0.1:3306/db")
+    assert "postgresql scheme" in str(exc_info.value)
+    assert "root:secret" not in str(exc_info.value)
+
+    with pytest.raises(ValueError) as exc_info:
+        _validate_owned_loopback_pg_dsn("postgresql://postgres:secret@127.0.0.1:5432/db?sslmode=disable")
+    assert "query parameters" in str(exc_info.value)
+    assert "secret" not in str(exc_info.value)
+
+    with pytest.raises(ValueError) as exc_info:
+        _validate_owned_loopback_pg_dsn("postgresql://postgres:secret@127.0.0.1:15432/postgres")
+    assert "shared development container" in str(exc_info.value)
+    assert "secret" not in str(exc_info.value)
+
+
+def test_owned_loopback_dsn_guard_accepts_valid_loopback(monkeypatch):
+    """Accepts valid loopback endpoints with clean DSN."""
+    valid = "postgresql://postgres:pass@127.0.0.1:32845/postgres"
+    assert _validate_owned_loopback_pg_dsn(valid) == valid
+
+    valid_v6 = "postgresql://postgres:pass@[::1]:32845/postgres"
+    assert _validate_owned_loopback_pg_dsn(valid_v6) == valid_v6
+
+    monkeypatch.setenv("PROBE_TEST_POSTGRES_OWNED", "true")
+    p15432 = "postgresql://postgres:pass@localhost:15432/postgres"
+    assert _validate_owned_loopback_pg_dsn(p15432) == p15432
+
+
 def test_asyncpg_case_source_live_postgres_queries(tmp_path):
     import asyncpg
 
-    dsn = "postgresql://postgres:postgres@127.0.0.1:15432/postgres"
-    schema = "test_bff_live"
-    reg_schema = "test_reg_live"
-    source_schema = "test_src_live"
+    raw_dsn = (
+        os.getenv("PROBE_TEST_POSTGRES_DSN")
+        or os.getenv("PANTHEON_TEST_POSTGRES_DSN")
+        or ""
+    ).strip()
+    if not raw_dsn:
+        pytest.skip(
+            "Explicit owned loopback test PostgreSQL DSN is not configured "
+            "(opt-in via PROBE_TEST_POSTGRES_DSN or PANTHEON_TEST_POSTGRES_DSN)"
+        )
+
+    dsn = _validate_owned_loopback_pg_dsn(raw_dsn)
+    run_id = uuid.uuid4().hex[:12]
+    schema = f"probe_bff_scratch_{run_id}"
+    reg_schema = f"probe_reg_scratch_{run_id}"
+    source_schema = f"probe_src_scratch_{run_id}"
 
     snap_file = tmp_path / "latest_market_snapshots.jsonl"
     snap_store = probe.LatestMarketSnapshotStore(snap_file)
@@ -1368,12 +1476,12 @@ def test_asyncpg_case_source_live_postgres_queries(tmp_path):
     async def run_live():
         conn = await asyncpg.connect(dsn)
         try:
-            await conn.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
-            await conn.execute(f"CREATE SCHEMA IF NOT EXISTS {reg_schema}")
-            await conn.execute(f"CREATE SCHEMA IF NOT EXISTS {source_schema}")
+            await conn.execute(f'CREATE SCHEMA "{schema}"')
+            await conn.execute(f'CREATE SCHEMA "{reg_schema}"')
+            await conn.execute(f'CREATE SCHEMA "{source_schema}"')
 
             await conn.execute(f"""
-                CREATE TABLE IF NOT EXISTS {schema}.persona_provisioning (
+                CREATE TABLE {schema}.persona_provisioning (
                     idempotency_key TEXT PRIMARY KEY,
                     tenant_id TEXT NOT NULL,
                     persona_id TEXT NOT NULL,
@@ -1383,13 +1491,13 @@ def test_asyncpg_case_source_live_postgres_queries(tmp_path):
                 )
             """)
             await conn.execute(f"""
-                CREATE TABLE IF NOT EXISTS {reg_schema}.entries (
+                CREATE TABLE {reg_schema}.entries (
                     record_id TEXT PRIMARY KEY,
                     payload JSONB NOT NULL
                 )
             """)
             await conn.execute(f"""
-                CREATE TABLE IF NOT EXISTS {source_schema}.source_evidence (
+                CREATE TABLE {source_schema}.source_evidence (
                     append_id BIGSERIAL PRIMARY KEY,
                     record_id TEXT NOT NULL,
                     record_type TEXT NOT NULL,
@@ -1401,13 +1509,11 @@ def test_asyncpg_case_source_live_postgres_queries(tmp_path):
             await conn.execute(f"""
                 INSERT INTO {schema}.persona_provisioning (idempotency_key, tenant_id, persona_id, "references", result, state)
                 VALUES ('case-live-01', 'tenant-live', 'persona-01', '{{"runtime_binding_id": "rb-1", "runtime_id": "rt-1", "strategy_artifact_approved": {{"entry": {{"registry_id": "art-live-01", "version": "1.0.0"}}}}}}'::jsonb, '{{"capital_pool_id": "pool-1", "deployment_plan_id": "plan-1", "persona_capital_binding_id": "pcb-1"}}'::jsonb, 'succeeded')
-                ON CONFLICT (idempotency_key) DO UPDATE SET state = 'succeeded'
             """)
 
             await conn.execute(f"""
                 INSERT INTO {reg_schema}.entries (record_id, payload)
                 VALUES ('art-live-01', '{{"checksum": "sha256-live-checksum", "version": "1.0.0", "artifact_state": "approved", "owner_tenant": "tenant-live"}}'::jsonb)
-                ON CONFLICT (record_id) DO UPDATE SET payload = EXCLUDED.payload
             """)
 
             await conn.execute(f"""
@@ -1418,6 +1524,11 @@ def test_asyncpg_case_source_live_postgres_queries(tmp_path):
             await conn.execute(f"""
                 INSERT INTO {source_schema}.source_evidence (record_id, record_type, payload)
                 VALUES ('@t12:tenant-rogue:src-live-01', 'source_record', '{{"source_id": "src-live-01", "connector_id": "conn-live-01", "content_ref": "ref-live-01", "metadata": {{"tenant_id": "tenant-rogue", "source_ingest_run_id": "run-01", "content_hash": "sha256-live-checksum"}}}}'::jsonb)
+            """)
+
+            await conn.execute(f"""
+                INSERT INTO {source_schema}.source_evidence (record_id, record_type, payload)
+                VALUES ('@t13:tenant-live:src-malformed', 'source_record', '{{"source_id": "src-malformed", "connector_id": "conn-live-01", "content_ref": "ref-live-01", "metadata": "corrupted_non_mapping"}}'::jsonb)
             """)
 
             src = probe.AsyncpgCaseSource(
@@ -1460,10 +1571,15 @@ def test_asyncpg_case_source_live_postgres_queries(tmp_path):
             with pytest.raises(probe.ProbeError) as exc_info:
                 await src.verify_source_lineage(lineage, "wrong-tenant")
             assert exc_info.value.code in {"source_tenant_mismatch", "unobserved_source_record"}
+
+            malformed_lineage = dict(lineage, source_ids=["src-malformed"])
+            with pytest.raises(probe.ProbeError) as exc_info:
+                await src.verify_source_lineage(malformed_lineage, "tenant-live")
+            assert exc_info.value.code in {"source_tenant_missing", "unobserved_source_record"}
         finally:
-            await conn.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
-            await conn.execute(f"DROP SCHEMA IF EXISTS {reg_schema} CASCADE")
-            await conn.execute(f"DROP SCHEMA IF EXISTS {source_schema} CASCADE")
+            await conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+            await conn.execute(f'DROP SCHEMA IF EXISTS "{reg_schema}" CASCADE')
+            await conn.execute(f'DROP SCHEMA IF EXISTS "{source_schema}" CASCADE')
             await conn.close()
 
     asyncio.run(run_live())
