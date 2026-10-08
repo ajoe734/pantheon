@@ -65,13 +65,6 @@ OWNER_SERVICES = {
     "alpha_replication": "alpha-replication-worker",
     "persona_teaching": "training-session-preview-worker",
 }
-LOCAL_TRAINING_WORKER_TOKEN = (
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
-    "eyJhbGxvd2VkX3RlbmFudHMiOlsiKiJdLCJyb2xlcyI6WyJ0cmFpbmluZy1zZXJ2aWNlIl0s"
-    "InNlcnZpY2UiOiJ0cmFpbmluZy1zZXNzaW9uLXByZXZpZXctd29ya2VyIiwic3ViIjoidHJh"
-    "aW5pbmctc2Vzc2lvbi1wcmV2aWV3LXdvcmtlciJ9."
-    "eb4LoU20NsZEfH8VYjhl1xyOaa37bzzg7yC-D87Uu2g"
-)
 
 
 def _utc_now() -> str:
@@ -340,9 +333,9 @@ class DeployedResearchHarness:
         return record if isinstance(record, Mapping) else view
 
     def _training_headers(self) -> dict[str, str]:
-        token = os.getenv("PANTHEON_L12_TRAINING_TOKEN", LOCAL_TRAINING_WORKER_TOKEN).strip()
+        token = os.getenv("PANTHEON_L12_TRAINING_TOKEN", "").strip()
         if not token:
-            raise RuntimeError("PANTHEON_L12_TRAINING_TOKEN is empty")
+            raise RuntimeError("PANTHEON_L12_TRAINING_TOKEN is required (per-run Training principal)")
         return {
             "Authorization": token if token.startswith("Bearer ") else f"Bearer {token}",
             "X-Tenant-Id": self.tenant_id,

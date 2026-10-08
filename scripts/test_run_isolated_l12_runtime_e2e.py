@@ -894,6 +894,25 @@ def test_preview_worker_token_negative_controls(monkeypatch: pytest.MonkeyPatch)
     assert rejected(token=unauthorized).status_code in (401, 403)
 
 
+def test_suite_training_token_is_the_issuer_token_and_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    env = _composed_isolated_env()
+    token = harness._isolated_suite_training_token(env)
+    assert token == env["TRAINING_SESSION_WORKER_TOKEN"]
+    authority = _training_authenticate(monkeypatch, env, token)
+    assert authority.actor_service == "training-session-preview-worker" and authority.tenant_id == "tenant-dev"
+    # The retired published fixture style (foreign signer) is still rejected by the real verifier.
+    foreign = harness._mint_projector_service_jwt(
+        "y" * 64, tenant_id="tenant-dev", subject="training-session-preview-worker",
+        roles=("training-service",), extra_claims={"service": "training-session-preview-worker"},
+    )
+    with pytest.raises(Exception) as exc:
+        _training_authenticate(monkeypatch, env, foreign)
+    assert "BAD_SIGNATURE" in str(exc.value.code).upper()
+    for missing in ({}, {"TRAINING_SESSION_WORKER_TOKEN": "  "}):
+        with pytest.raises(RuntimeError):
+            harness._isolated_suite_training_token(missing)
+
+
 def test_bff_health_telemetry_principal_comes_from_the_same_issuer_and_verifies() -> None:
     from services.runtime_auth_inbound import AuthError, validate_request_auth
 
