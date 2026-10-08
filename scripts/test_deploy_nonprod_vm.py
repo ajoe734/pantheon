@@ -3572,6 +3572,49 @@ def test_taiwan_preflight_invalid_calendar_proceeds_and_valid_holiday_still_skip
     assert (result["status"], result["reason"]) == ("skipped", "holiday")
 
 
+def test_deploy_nonprod_vm_taiwan_market_freshness_session_window() -> None:
+    """Nonprod deploy paper snapshot admission accepts Friday receipt across the weekend session window."""
+    from services.execution.market_snapshot_admission import evaluate_taiwan_market_freshness
+    from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
+
+    lineage = {
+        "source_ids": ["tw-official:tw_price_daily:TWSE:0050:receipt-session-window"],
+        "connector_ids": ["tw-twse-tpex-official-market"],
+    }
+    ev = governed_taiwan_calendar_evidence(venue="TWSE", trade_date="2026-10-16")
+    assert ev is not None
+
+    close_fri = datetime.fromisoformat("2026-10-16T05:30:00+00:00")
+    receipt_fri = datetime.fromisoformat("2026-10-16T07:00:00+00:00")
+    # Weekend deploy on Sunday:
+    now_sun = datetime.fromisoformat("2026-10-18T10:00:00+00:00")
+    ok_sun, reason_sun, detail_sun = evaluate_taiwan_market_freshness(
+        event_time_dt=close_fri,
+        now_dt=now_sun,
+        refresh_receipt_dt=receipt_fri,
+        lineage=lineage,
+        max_refresh_age_seconds=86400,
+        calendar_evidence=ev,
+    )
+    assert ok_sun is True
+    assert reason_sun is None
+    assert detail_sun is None
+
+    # Monday morning deploy before 13:30 Asia/Taipei session close:
+    now_mon_morning = datetime.fromisoformat("2026-10-19T02:00:00+00:00")
+    ok_mon, reason_mon, detail_mon = evaluate_taiwan_market_freshness(
+        event_time_dt=close_fri,
+        now_dt=now_mon_morning,
+        refresh_receipt_dt=receipt_fri,
+        lineage=lineage,
+        max_refresh_age_seconds=86400,
+        calendar_evidence=ev,
+    )
+    assert ok_mon is True
+    assert reason_mon is None
+    assert detail_mon is None
+
+
 def test_stage_dev_paper_prerequisite_readiness_rejects_adversarial_counterexample(tmp_path: Path) -> None:
     from http.server import HTTPServer, BaseHTTPRequestHandler
     import threading
