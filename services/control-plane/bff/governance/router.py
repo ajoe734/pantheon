@@ -91,14 +91,6 @@ def _default_read_surface_meta(
     return meta
 
 
-def _default_redact_evidence_refs(
-    identity: Any, refs: List[Dict[str, Any]], *, capabilities: Any = None
-) -> Tuple[List[Dict[str, Any]], int]:
-    return GovernanceService._fail_closed_redact_evidence_refs(
-        identity, refs, capabilities=capabilities
-    )
-
-
 def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
     if not value:
         return None
@@ -149,7 +141,7 @@ def create_governance_router(
     _surface = dataset_surface_status or _default_dataset_surface_status
     _read_meta = read_surface_meta or _default_read_surface_meta
     _staleness = meta_staleness or (lambda: None)
-    _redact = redact_evidence_refs or _default_redact_evidence_refs
+    _redact = redact_evidence_refs or GovernanceService._fail_closed_redact_evidence_refs
     _reject_body_idempotency_key = reject_body_idempotency_key or (lambda payload: None)
     _capabilities = capabilities_for_identity or (lambda identity: [])
     _read_surface_state = read_surface_state or (lambda: "fresh")

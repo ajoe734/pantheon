@@ -200,6 +200,9 @@ class _SweepStore:
     def get_consult_transcript(self, session_id: str, **_: Any) -> Optional[Dict[str, Any]]:
         return copy.deepcopy(_TRANSCRIPT_1) if session_id == "session-1" else None
 
+    def get_consultation_evidence(self, session_id: str) -> Optional[List[Dict[str, Any]]]:
+        return copy.deepcopy(_MIXED_REFS) if session_id == "session-1" else None
+
     def get_consult_request(self, request_id: str) -> Optional[Dict[str, Any]]:
         return copy.deepcopy(_CONSULT_REQUEST_1) if request_id == "consult-req-1" else None
 
@@ -863,3 +866,58 @@ def test_get_consult_request_fails_closed_when_capabilities_unresolvable() -> No
         assert len(refs) == 2
         assert all(ref["redacted"] is True for ref in refs)
         assert payload["meta"]["redacted_evidence_count"] == 2
+
+
+# --- Consultation evidence and approval evidence routes ---------------------
+
+
+def test_consultation_evidence_redacts_for_low_capability_identity() -> None:
+    with _stub_auth_env():
+        client = TestClient(_build_app())
+        response = client.get(
+            "/api/v1/consultations/session-1/evidence",
+            headers={"Authorization": LOW_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        _assert_mixed_refs_redacted_for_low_capability(payload["data"])
+        assert payload["meta"]["supporting_counts"]["redacted_evidence_count"] == 2
+
+
+def test_consultation_evidence_passes_through_for_full_capability_identity() -> None:
+    with _stub_auth_env():
+        client = TestClient(_build_app())
+        response = client.get(
+            "/api/v1/consultations/session-1/evidence",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["data"] == _MIXED_REFS
+        assert payload["meta"]["supporting_counts"]["redacted_evidence_count"] == 0
+
+
+def test_bff_approval_evidence_redacts_for_low_capability_identity() -> None:
+    with _stub_auth_env():
+        client = TestClient(_build_app())
+        response = client.get(
+            "/bff/approvals/approval-1/evidence",
+            headers={"Authorization": LOW_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        _assert_mixed_refs_redacted_for_low_capability(payload["evidence"])
+        assert payload["meta"]["redacted_count"] == 2
+
+
+def test_bff_approval_evidence_passes_through_for_full_capability_identity() -> None:
+    with _stub_auth_env():
+        client = TestClient(_build_app())
+        response = client.get(
+            "/bff/approvals/approval-1/evidence",
+            headers={"Authorization": FULL_CAPABILITY_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["evidence"] == _MIXED_REFS
+        assert payload["meta"]["redacted_count"] == 0
