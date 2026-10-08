@@ -27,6 +27,7 @@ import re
 import threading
 import time
 import uuid
+from contextvars import copy_context
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
@@ -3278,7 +3279,10 @@ class ManagementService:
     def _bounded_persona_readiness_rows(
         self, snapshot_at: str, store: Any
     ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
-        """Read the `persona_readiness` contributor within its own bound."""
+        """Bound the read in a copy of the caller authorization and tenant context.
+
+        With no request context, the owner port uses its configured service principal.
+        """
         capacity = _HUMAN_INBOX_READ_SLOTS
         executor = _HUMAN_INBOX_READ_EXECUTOR
         timeout_budget = human_inbox_surface_timeout_seconds()
@@ -3286,7 +3290,7 @@ class ManagementService:
         if not capacity.acquire(blocking=False):
             return [], "read_capacity_saturated"
         try:
-            future = executor.submit(build_fn, snapshot_at, read_store=store)
+            future = executor.submit(copy_context().run, build_fn, snapshot_at, read_store=store)
         except BaseException:
             capacity.release()
             raise
