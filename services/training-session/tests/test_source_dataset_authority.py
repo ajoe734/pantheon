@@ -683,7 +683,10 @@ CATALOG_URL = f"{BASE_URL}/api/source-ingest/data-sources/financial-catalog"
 TW_INSTRUMENTS = (("2330.TWSE", "2330", 900.0), ("2317.TWSE", "2317", 180.0))
 
 
-def _make_tw_case(tmp_path: Path) -> AuthorityCase:
+def _make_tw_case(
+    tmp_path: Path,
+    instruments: Sequence[tuple[str, str, float]] = TW_INSTRUMENTS,
+) -> AuthorityCase:
     """Rewrite the crypto fixture into the Taiwan normalized_row contract."""
 
     case = _make_case(tmp_path)
@@ -691,7 +694,7 @@ def _make_tw_case(tmp_path: Path) -> AuthorityCase:
     first_date = date(2026, 6, 16)
     for offset in range(30):
         trade_date = (first_date + timedelta(days=offset)).isoformat()
-        for canonical, symbol, base in TW_INSTRUMENTS:
+        for canonical, symbol, base in instruments:
             open_price = base + offset
             normalized_row = {
                 "dataset": "tw_price_daily",
@@ -751,6 +754,8 @@ def _make_tw_case(tmp_path: Path) -> AuthorityCase:
         "features/returns",
     ]
     manifest = connector["source_health"]["metadata"]["storage_refs"]
+    manifest["raw_refs"][0]["row_count"] = len(wrappers)
+    manifest["normalized_refs"][0]["row_count"] = len(wrappers)
     manifest["feature_refs"] = [
         {
             "ref_type": "feature_rows",
@@ -763,6 +768,14 @@ def _make_tw_case(tmp_path: Path) -> AuthorityCase:
         }
     ]
     manifest["summary"]["feature_ref_count"] = 1
+    manifest["summary"]["normalized_row_count"] = len(wrappers)
+    connector["source_health"]["raw_count"] = len(wrappers)
+    connector["source_health"]["normalized_count"] = len(wrappers)
+    connector["source_health"]["row_count_last_run"] = len(wrappers)
+    readback["source_record_count"] = len(wrappers)
+    run_url = f"{BASE_URL}/api/source-ingest/jobs/{RUN_ID}"
+    case.responses[run_url]["run"]["raw_count"] = len(wrappers)
+    case.responses[run_url]["run"]["normalized_count"] = len(wrappers)
     case.responses[CATALOG_URL]["config_templates"][0]["fetch"] = {"datasets": [DESIRED_DATASET_ID]}
     return case
 
@@ -1154,6 +1167,77 @@ def test_cache_isolation_between_different_policy_scopes(tmp_path: Path) -> None
     assert res1.payload_sha256 != res2.payload_sha256
     assert res1.payload["metadata_json"].get("source_policy_selection") is not None
     assert "source_policy_selection" not in res2.payload["metadata_json"]
+
+
+def test_reject_changed_storage_with_different_policy(tmp_path: Path) -> None:
+    instruments = (
+        ("2330.TWSE", "2330", 900.0),
+        ("2317.TWSE", "2317", 180.0),
+        ("2454.TWSE", "2454", 1000.0),
+    )
+    case = _make_tw_case(tmp_path, instruments=instruments)
+    policy_1 = {**_policy(), "required_instruments": ["2317.TWSE", "2330.TWSE"]}
+    policy_path_1 = tmp_path / "tw_policy_1.json"
+    policy_path_1.write_text(json.dumps(policy_1), encoding="utf-8")
+
+    first = _materialize(case, policy_path=policy_path_1)
+    assert first.path.exists()
+
+    rows = [json.loads(line) for line in case.normalized_path.read_text().splitlines()]
+    rows[0]["metadata"]["normalized_row"]["close"] += 1.0
+    _write_jsonl(case.normalized_path, rows)
+
+    policy_2 = {
+        **_policy(),
+        "policy_id": "persona-teaching-evaluation-alt",
+        "approval_decision_ref": "approval:persona-teaching-evaluation:alt",
+        "required_instruments": ["2317.TWSE", "2454.TWSE"],
+    }
+    policy_path_2 = tmp_path / "tw_policy_2.json"
+    policy_path_2.write_text(json.dumps(policy_2), encoding="utf-8")
+
+    with pytest.raises(SourceDatasetAuthorityError, match="source run bytes changed"):
+        _materialize(case, policy_path=policy_path_2)
+
+    assert json.loads(first.path.read_text()) == first.payload
+
+
+def test_allow_identical_storage_with_different_policy_scope(tmp_path: Path) -> None:
+    instruments = (
+        ("2330.TWSE", "2330", 900.0),
+        ("2317.TWSE", "2317", 180.0),
+        ("2454.TWSE", "2454", 1000.0),
+    )
+    case = _make_tw_case(tmp_path, instruments=instruments)
+    policy_1 = {**_policy(), "required_instruments": ["2317.TWSE", "2330.TWSE"]}
+    policy_path_1 = tmp_path / "tw_policy_1.json"
+    policy_path_1.write_text(json.dumps(policy_1), encoding="utf-8")
+
+    policy_2 = {
+        **_policy(),
+        "policy_id": "persona-teaching-evaluation-subset",
+        "approval_decision_ref": "approval:persona-teaching-evaluation:subset",
+        "required_instruments": ["2317.TWSE", "2454.TWSE"],
+    }
+    policy_path_2 = tmp_path / "tw_policy_2.json"
+    policy_path_2.write_text(json.dumps(policy_2), encoding="utf-8")
+
+    res1 = _materialize(case, policy_path=policy_path_1)
+    res2 = _materialize(case, policy_path=policy_path_2)
+
+    assert res1.path != res2.path
+    assert res1.payload_sha256 != res2.payload_sha256
+    assert (
+        res1.payload["metadata_json"]["source_storage_binding_sha256"]
+        == res2.payload["metadata_json"]["source_storage_binding_sha256"]
+    )
+    assert (
+        res1.payload["metadata_json"]["source_policy_selection_sha256"]
+        != res2.payload["metadata_json"]["source_policy_selection_sha256"]
+    )
+    assert res1.payload["instrument_scope"] == ["2317.TWSE", "2330.TWSE"]
+    assert res2.payload["instrument_scope"] == ["2317.TWSE", "2454.TWSE"]
+    assert len(list(case.output_root.glob("dataset-version-*.json"))) == 2
 
 
 def test_feature_refs_required_when_storage_omits_feature_refs(tmp_path: Path) -> None:
