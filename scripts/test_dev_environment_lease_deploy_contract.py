@@ -103,7 +103,7 @@ def test_controller_checksums_match_pinned_controller_files() -> None:
     assert hashlib.sha256((SCRIPTS / "dev_environment_lease.py").read_bytes()).hexdigest() == CONTROLLER_SCRIPT_SHA256
 
 
-def test_compensation_and_other_lease_callers_use_the_repaired_controller() -> None:
+def test_compensation_and_other_lease_callers_use_the_repaired_controller(tmp_path: Path) -> None:
     for relative in (
         ".github/workflows/agora-hosted-acceptance.yml",
         ".github/workflows/dev-tw-market-refresh.yml",
@@ -115,6 +115,33 @@ def test_compensation_and_other_lease_callers_use_the_repaired_controller() -> N
         assert CONTROLLER_WRAPPER_SHA256 in text, relative
     fixture_workflow = (ROOT / ".github/workflows/persona-owner-contract.yml").read_text()
     assert f"git fetch --no-tags --depth=1 origin {CONTROLLER_SHA}" in fixture_workflow
+    _assert_compensation_startup_consumers(tmp_path)
+
+
+def _assert_compensation_startup_consumers(tmp_path: Path) -> None:
+    for index, relative in enumerate(_COMPENSATION_CALLERS):
+        work = tmp_path / f"caller{index}"
+        work.mkdir()
+        # Exact expired predecessor followed by the acquired lease succeeds.
+        ok = _run_compensation_verify(work, relative, "stale_then_current")
+        assert ok.returncode == 0, ok.stderr
+        assert "get_content_calls=3" in ok.stderr
+        # Without the bounded visibility flags the original failure reproduces.
+        unbounded = _run_compensation_verify(work, relative, "stale_then_current", flags=False)
+        assert unbounded.returncode == 75
+        assert "leaseId changed" in unbounded.stderr
+        # A genuine foreign lease is never treated as visibility lag.
+        foreign = _run_compensation_verify(work, relative, "foreign")
+        assert foreign.returncode == 75
+        assert "leaseId changed" in foreign.stderr
+        assert "get_content_calls=1" in foreign.stderr
+        # Exhausted bounded visibility fails closed.
+        exhausted = _run_compensation_verify(work, relative, "exhausted")
+        assert exhausted.returncode == 75
+        assert "bounded timeout" in exhausted.stderr
+    text = (ROOT / "scripts/compensate_cross_repo_release.sh").read_text(encoding="utf-8")
+    assert text.index(_VISIBILITY_FLAGS[0]) < text.index('  "${lease_wrapper}" \\')
+    assert text.count(_VISIBILITY_FLAGS[0]) == 1
 
 
 def test_dev_and_staging_are_independent_jobs_and_staging_has_no_lease_secret() -> None:
@@ -3136,36 +3163,3 @@ _COMPENSATION_CALLERS = (
     ".github/workflows/nonprod-deploy.yml",
     "scripts/compensate_cross_repo_release.sh",
 )
-
-
-@pytest.mark.parametrize("relative", _COMPENSATION_CALLERS)
-def test_compensation_startup_tolerates_exact_expired_predecessor_visibility_lag(
-    tmp_path: Path, relative: str
-) -> None:
-    ok = _run_compensation_verify(tmp_path, relative, "stale_then_current")
-    assert ok.returncode == 0, ok.stderr
-    assert "get_content_calls=3" in ok.stderr
-
-    unbounded = _run_compensation_verify(tmp_path, relative, "stale_then_current", flags=False)
-    assert unbounded.returncode == 75
-    assert "leaseId changed" in unbounded.stderr
-
-
-@pytest.mark.parametrize("relative", _COMPENSATION_CALLERS)
-def test_compensation_startup_fails_closed_on_foreign_lease_or_exhausted_visibility(
-    tmp_path: Path, relative: str
-) -> None:
-    foreign = _run_compensation_verify(tmp_path, relative, "foreign")
-    assert foreign.returncode == 75
-    assert "leaseId changed" in foreign.stderr
-    assert "get_content_calls=1" in foreign.stderr
-
-    exhausted = _run_compensation_verify(tmp_path, relative, "exhausted")
-    assert exhausted.returncode == 75
-    assert "bounded timeout" in exhausted.stderr
-
-
-def test_cross_repo_compensation_verifies_lease_before_first_guarded_command() -> None:
-    text = (ROOT / "scripts/compensate_cross_repo_release.sh").read_text(encoding="utf-8")
-    assert text.index(_VISIBILITY_FLAGS[0]) < text.index('  "${lease_wrapper}" \\')
-    assert text.count(_VISIBILITY_FLAGS[0]) == 1
