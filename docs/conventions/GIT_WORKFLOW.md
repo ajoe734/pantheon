@@ -596,8 +596,9 @@ authorize a switch. The deploy lane must first admit the exact backend/frontend
 pair; inadmissible snapshots remain promotion inputs without creating a deploy
 dispatch. `publish-promote.yml` still opens promote PRs only after its publish
 criteria pass. staging-live is the post-promote pre-production rehearsal —
-`master` push automatically redeploys both
-`pantheon-lupin-staging-{control,exec}` VMs. Production is operator-locked.
+`master` push triggers the staging-live lane of `nonprod-deploy.yml`, but staging
+has no VM ([§ 3.2](../deployment/vm-dev-staging-prod-management-plan.md)), so that
+lane has no target until ephemeral staging exists. Production is operator-locked.
 
 ---
 
