@@ -1,13 +1,17 @@
 import os
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
-from services.trade_journey.projection_store import ProjectionStore
+from services.trade_journey.projection_store import MIGRATIONS_DIR, ProjectionStore
 
 
-def test_migration_002_creates_search_indexes():
+def test_migrations_dir_contains_002():
+    mig_002 = MIGRATIONS_DIR / "002_add_trade_journey_search_indexes.sql"
+    assert mig_002.is_file(), "002_add_trade_journey_search_indexes.sql must exist"
+
+
+def test_bootstrap_schema_applies_002_and_is_idempotent():
     dsn = os.getenv("TEST_DATABASE_URL")
     if not dsn:
         pytest.skip("TEST_DATABASE_URL is not set")
@@ -16,22 +20,11 @@ def test_migration_002_creates_search_indexes():
     schema = f"test_mig002_{uuid4().hex[:8]}"
     store = ProjectionStore(dsn, schema=schema, bootstrap=True)
 
-    migration_file = (
-        Path(__file__).resolve().parents[1]
-        / "migrations"
-        / "002_add_trade_journey_search_indexes.sql"
-    )
-    assert migration_file.is_file(), "002 migration file must exist"
-    migration_sql = migration_file.read_text(encoding="utf-8").replace(
-        "trade_journey_projection", schema
-    )
-
     try:
-        with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
-            # Apply migration twice to verify idempotence
-            cur.execute(migration_sql)
-            cur.execute(migration_sql)
+        # Re-run bootstrap_schema to verify idempotence through real bootstrap path
+        store.bootstrap_schema()
 
+        with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT indexname FROM pg_indexes
@@ -47,3 +40,4 @@ def test_migration_002_creates_search_indexes():
     finally:
         with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
             cur.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+

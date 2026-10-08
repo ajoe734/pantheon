@@ -43,8 +43,18 @@ def test_q_journey_only_exact_emits_equality():
     assert params == ["t", "paper", "tj-1"]
 
 
-def test_q_exact_lookup_emits_index_backed_subquery():
+def test_q_exact_journey_id_emits_equality():
     mock = _MockConn([{"journey_id": "tj-1"}])
+    store = TradeJourneyProjectionStore("dsn", token_secret="s" * 16, connect=lambda *_: mock)
+    clauses, params = store._journey_where(
+        tenant_id="t", environment="paper", filters={"q": "tj-1"}
+    )
+    assert "journey_id = %s" in clauses
+    assert params == ["t", "paper", "tj-1"]
+
+
+def test_q_exact_lookup_emits_index_backed_subquery():
+    mock = _MockConn([])
     store = TradeJourneyProjectionStore("dsn", token_secret="s" * 16, connect=lambda *_: mock)
     clauses, params = store._journey_where(
         tenant_id="t", environment="paper", filters={"q": "ord-1", "q_exact": True}
@@ -73,20 +83,9 @@ def test_real_db_journey_search_exact_and_substring():
     schema = f"test_search_{uuid4().hex[:8]}"
     ProjectionStore(dsn, schema=schema, bootstrap=True)
 
-    migration_file = (
-        Path(__file__).resolve().parents[3]
-        / "trade_journey"
-        / "migrations"
-        / "002_add_trade_journey_search_indexes.sql"
-    )
-    migration_sql = migration_file.read_text(encoding="utf-8").replace(
-        "trade_journey_projection", schema
-    )
-
     now = datetime.now(timezone.utc)
     try:
         with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
-            cur.execute(migration_sql)
             # Insert journeys
             for i in range(1, 11):
                 jid = f"tj-search-{i:03d}"

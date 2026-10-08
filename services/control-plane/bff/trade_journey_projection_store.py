@@ -263,27 +263,29 @@ class TradeJourneyProjectionStore:
             if q_val:
                 q_journey_only = bool(filters.get("q_journey_only"))
                 is_exact = bool(filters.get("q_exact"))
+                is_journey_id = False
                 if not is_exact and not any(ch in q_val for ch in ("%", "_")):
                     if self._one(f"SELECT 1 FROM {self.schema}.journeys WHERE tenant_id=%s AND environment=%s AND journey_id=%s", (tenant_id, environment, q_val)):
-                        is_exact = True
+                        is_exact = is_journey_id = True
                     elif not q_journey_only and self._one(
                         f"SELECT 1 FROM {self.schema}.identity_links WHERE tenant_id=%s AND environment=%s AND identifier_value=%s UNION ALL SELECT 1 FROM {self.schema}.journeys WHERE tenant_id=%s AND environment=%s AND (COALESCE(current_identity_summary -> 'identifiers', current_identity_summary)) @@ ('$.** == ' || to_json(%s::text))::jsonpath LIMIT 1",
                         (tenant_id, environment, q_val, tenant_id, environment, q_val),
                     ):
                         is_exact = True
+                elif is_exact:
+                    is_journey_id = bool(self._one(f"SELECT 1 FROM {self.schema}.journeys WHERE tenant_id=%s AND environment=%s AND journey_id=%s", (tenant_id, environment, q_val)))
                 if is_exact:
-                    if q_journey_only:
+                    if q_journey_only or is_journey_id:
                         clauses.append("journey_id = %s")
                         params.append(q_val)
                     else:
                         clauses.append(
                             f"journey_id IN ("
-                            f"SELECT %s "
-                            f"UNION SELECT link.journey_id FROM {self.schema}.identity_links link WHERE link.tenant_id=%s AND link.environment=%s AND link.identifier_value=%s "
+                            f"SELECT link.journey_id FROM {self.schema}.identity_links link WHERE link.tenant_id=%s AND link.environment=%s AND link.identifier_value=%s "
                             f"UNION SELECT j.journey_id FROM {self.schema}.journeys j WHERE j.tenant_id=%s AND j.environment=%s AND (COALESCE(j.current_identity_summary -> 'identifiers', j.current_identity_summary)) @@ ('$.** == ' || to_json(%s::text))::jsonpath"
                             f")"
                         )
-                        params.extend([q_val, tenant_id, environment, q_val, tenant_id, environment, q_val])
+                        params.extend([tenant_id, environment, q_val, tenant_id, environment, q_val])
                 else:
                     pat = f"%{q_val}%"
                     if q_journey_only:

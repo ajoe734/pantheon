@@ -26,7 +26,14 @@
       "identity_links": 264025
     },
     "before_behaviour": "Full q predicate with ILIKE '%q%' across journeys.journey_id, identity_links.identifier_value, and per-row jsonb_each / jsonb_array_elements_text expansions on current_identity_summary forced sequential table scans and repeated row expansions. Operator measurement on hosted DB showed COUNT(*) alone took 5,697 ms; page query and total count each ran the predicate, causing 20s transport timeouts over 4 retry attempts.",
-    "after_behaviour": "Exact journey_id and identifier_value queries probe indexes and resolve via index-backed subquery with index scans on journeys_pkey, idx_identity_links_tenant_env_value_journey, and idx_journeys_summary_gin, dropping execution time from >1400-5697 ms to <16 ms. Substring search is index-backed by pg_trgm GIN indexes (idx_journeys_journey_id_trgm, idx_identity_links_value_trgm) without redundant per-row jsonb expansion, completing in ~422 ms. Page query and total count share the identical index-backed predicate."
+    "after_behaviour": "Exact journey_id queries resolve via primary key index scan on journeys_pkey (journey_id = q alone) in < 0.5 ms without evaluating subqueries or jsonpath. Exact identifier_value queries probe indexes and resolve via index-backed subquery with index scans on idx_identity_links_tenant_env_value_journey and idx_journeys_summary_gin, where the GIN index serves the jsonpath predicate via Bitmap Index Scan in ~0.04 ms. Substring search is index-backed by pg_trgm GIN indexes (idx_journeys_journey_id_trgm, idx_identity_links_value_trgm) without redundant per-row jsonb expansion. Ordered migrations are wired into bootstrap_schema so migration 002 is always applied during bootstrap."
+  },
+  "gin_index_jsonpath_verification": {
+    "serves_jsonpath_predicate": true,
+    "predicate": "(COALESCE(current_identity_summary -> 'identifiers', current_identity_summary)) @@ ('$.** == ' || to_json(%s::text))::jsonpath",
+    "plan_operation": "Bitmap Index Scan on idx_journeys_summary_gin",
+    "timing_ms": 0.04,
+    "bootstrap_wiring": "Wired ordered forward-only migrations into bootstrap_schema() ensuring 002_add_trade_journey_search_indexes.sql is applied during schema bootstrap."
   },
   "benchmark_explain_analyze": {
     "dataset": {
@@ -42,13 +49,13 @@
         "total": 1402.04
       },
       "after_ms": {
-        "count": 0.43,
-        "page": 14.96,
-        "total": 15.39
+        "count": 0.11,
+        "page": 0.10,
+        "total": 0.21
       },
       "plan_scan_types": {
         "before": ["Seq Scan on journeys", "Parallel Seq Scan on identity_links", "Function Scan on jsonb_each / jsonb_array_elements_text"],
-        "after": ["Index Scan on journeys_pkey", "Index Only Scan on idx_identity_links_tenant_env_value_journey", "Bitmap Index Scan on idx_journeys_summary_gin"]
+        "after": ["Index Only Scan on journeys_pkey", "Index Scan on journeys_pkey"]
       }
     },
     "exact_identifier_value_query": {
@@ -58,13 +65,13 @@
         "total": 1402.04
       },
       "after_ms": {
-        "count": 1.66,
-        "page": 14.70,
-        "total": 16.36
+        "count": 0.52,
+        "page": 0.47,
+        "total": 0.99
       },
       "plan_scan_types": {
         "before": ["Seq Scan on journeys", "Parallel Seq Scan on identity_links", "Function Scan on jsonb_each / jsonb_array_elements_text"],
-        "after": ["Index Only Scan on idx_identity_links_tenant_env_value_journey", "Index Scan on journeys_pkey"]
+        "after": ["Index Only Scan on idx_identity_links_tenant_env_value_journey", "Bitmap Index Scan on idx_journeys_summary_gin", "Index Scan on journeys_pkey"]
       }
     },
     "substring_search_query": {
@@ -74,9 +81,9 @@
         "total": 1402.04
       },
       "after_ms": {
-        "count": 199.10,
-        "page": 223.13,
-        "total": 422.24
+        "count": 18.00,
+        "page": 12.16,
+        "total": 30.16
       },
       "plan_scan_types": {
         "before": ["Seq Scan on journeys", "Parallel Seq Scan on identity_links", "Function Scan on jsonb_each / jsonb_array_elements_text"],
@@ -87,11 +94,11 @@
   "acceptance_criteria_verification": {
     "ac1_exact_lookup_index_backed": {
       "status": "satisfied",
-      "detail": "Trade Journey list requests with q set to an exact journey id or identifier use index-backed lookups (exact journey_id or identity_links value match) avoiding sequential table scans on journeys and per-row jsonb expansions."
+      "detail": "Trade Journey list requests with q set to an exact journey id use journey_id = q alone on journeys_pkey (< 0.5 ms). Exact identifier queries use index-backed lookups on identity_links and summary GIN index."
     },
     "ac2_substring_search_index_backed": {
       "status": "satisfied",
-      "detail": "Substring search is index-backed using pg_trgm GIN indexes added via forward-only migration 002_add_trade_journey_search_indexes.sql. Redundant per-row jsonb identity expansion was eliminated as identity_links covers those identifiers."
+      "detail": "Substring search is index-backed using pg_trgm GIN indexes added via forward-only migration 002 applied via bootstrap_schema. Redundant per-row jsonb identity expansion was eliminated."
     },
     "ac3_shared_predicate_page_and_count": {
       "status": "satisfied",
@@ -99,7 +106,7 @@
     },
     "ac4_explain_analyze_dataset_and_timing": {
       "status": "satisfied",
-      "detail": "Measured on generated dataset of 38,639 journeys and 264,025 identity links. Exact journey ID query total latency dropped from 1,402 ms to 15.39 ms (< 500 ms threshold); exact identifier dropped to 16.36 ms; substring search completes in ~422 ms."
+      "detail": "Measured on generated dataset of 38,639 journeys and 264,025 identity links via real bootstrap path. Exact journey ID query total latency is 0.21 ms (< 500 ms threshold); exact identifier is 0.99 ms; substring search is 30.16 ms."
     },
     "ac5_readback_contract_preserved": {
       "status": "satisfied",
@@ -107,7 +114,7 @@
     },
     "ac6_no_compressed_code": {
       "status": "satisfied",
-      "detail": "Net production code change is +52 lines (+32 in trade_journey_projection_store.py, +20 in migration SQL), strictly within the 60 net line budget with standard clean multiline formatting."
+      "detail": "Net production code change is +52 lines (+34 in bff trade_journey_projection_store.py, -1 in trade_journey projection_store.py, +19 in migration SQL), strictly within the 60 net line budget with standard clean multiline formatting."
     },
     "ac7_hosted_track_external_wait": {
       "status": "satisfied",
@@ -117,11 +124,11 @@
   "validation": [
     {
       "command": "python3 -m pytest -v services/trade_journey/tests/test_journey_search_migration.py",
-      "result": "1 passed in 0.83s"
+      "result": "2 passed in 1.03s"
     },
     {
       "command": "python3 -m pytest -v services/control-plane/bff/tests/test_journey_search_latency.py",
-      "result": "4 passed in 2.77s"
+      "result": "5 passed in 3.81s"
     },
     {
       "command": "python3 -m pytest -v services/control-plane/bff/tests/test_trade_journey_shared_identity_filter.py",
