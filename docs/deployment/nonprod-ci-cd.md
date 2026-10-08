@@ -1,6 +1,8 @@
 # Nonprod CI/CD
 
-Status date: 2026-08-25
+Status: current-state record of the nonprod deploy process. The current dev VM, GCP project, remote user, remote and worktree directories and FE/BFF origins are recorded only in [vm-dev-staging-prod-management-plan.md § 3.1](vm-dev-staging-prod-management-plan.md#31-dev), and a configured value there is not evidence of an accepted served pair. staging-live has no VM ([§ 3.2](vm-dev-staging-prod-management-plan.md)). The retired projects pantheon-lupin-dev-20260719 and pantheon-benjamin-20260528 and their VMs and hosts must not be deployed to or probed.
+
+Status date: 2026-10-08
 
 This is the repo-local CI/CD operating record for Pantheon dev and
 staging-live.
@@ -12,8 +14,9 @@ This file remains the current-state operating truth until each target-plan
 phase has been implemented and accepted; the target plan must not be read as
 proof that staging or production resources already exist.
 
-The current implementation keeps the VM/Compose non-prod topology in the
-Pantheon Lupin GCP projects and uses GitHub Actions for pinned VM deployment:
+The current implementation keeps the VM/Compose non-prod topology in the dev
+GCP project and VM recorded in [§ 3.1](vm-dev-staging-prod-management-plan.md#31-dev) and uses GitHub Actions for pinned VM
+deployment:
 
 - CI remains `Pantheon Stage 0 CI`.
 - There is no image-publish workflow. `Publish images to Artifact Registry`
@@ -24,7 +27,8 @@ Pantheon Lupin GCP projects and uses GitHub Actions for pinned VM deployment:
 - Dev deployment is an explicit exact-pair release from both repositories'
   protected `dev` tips. Publish snapshots never deploy.
 - Staging-live deployment is automatic on `master` pushes and can also be run
-  manually through the protected `staging-live` GitHub Environment.
+  manually through the protected `staging-live` GitHub Environment. staging-live
+  has no VM ([§ 3.2](vm-dev-staging-prod-management-plan.md)), so this lane has no target VM.
 
 ## Workflows
 
@@ -88,19 +92,18 @@ For dev, the script SSHes directly to the fixed VM address through
 protected `dev` GitHub Environment. Staging-live retains `gcloud compute ssh`.
 The script snapshots the current human-facing remote checkout, prepares a managed clean deploy
 worktree, starts the expected Compose stack from the pinned commit, and runs
-health checks. Dev worktrees live under
-`~/pantheon-ci-deploy/managed-deploy-worktrees`; the independently configured
+health checks. Dev worktrees live under `DEV_DEPLOY_WORKTREE_ROOT` (script
+default when unset: `~/pantheon-ci-deploy/managed-deploy-worktrees`); the independently configured
 staging paths retain their established `~/pantheon-ci-deploy` layout. This
 keeps CI deploys from overwriting operator or agent work in the human-facing
-checkout (`/home/lupin/pantheon` on the replacement dev VM).
+checkout (the `DEV_REMOTE_DIR` checkout of [§ 3.1](vm-dev-staging-prod-management-plan.md#31-dev)).
 
-The dev root deployment checkout is
-`/home/lupin/pantheon-ci-deploy/managed-deploy-worktrees/dev-root`. It is
-deliberately separate from the supervisor's installed command root at
-`/home/lupin/pantheon-ci-deploy/dev-root`: deployments detach at the accepted
-backend runtime SHA, while the command root remains pinned to the reviewed
-`origin/dev` command SHA. The remote deploy controller rejects equality,
-parent/child overlap, dot traversal, and symlink aliases before checkout.
+The dev root deployment checkout is `DEV_DEPLOY_WORKTREE_ROOT/dev-root`
+([§ 3.1](vm-dev-staging-prod-management-plan.md#31-dev)). Inside `prepare_deploy_worktree` in `scripts/deploy_nonprod_vm.sh`,
+the block between `BEGIN_DEV_DEPLOY_PATH_ISOLATION_PY` and
+`END_DEV_DEPLOY_PATH_ISOLATION_PY` requires the root and the worktree to be
+absolute paths with no dot traversal and no symlink component. Deployments
+detach at the accepted backend runtime SHA.
 Hosted probes derive their path from the same `DEV_DEPLOY_WORKTREE_ROOT`.
 
 The workflow executes the deployment controller from its protected `dev`
@@ -203,19 +206,19 @@ the remote Compose transaction starts.
 
 Target:
 
-- VM: `pantheon-lupin-dev`
-- GCP project: `pantheon-lupin-dev-20260719`
+- VM, GCP project and public BFF: the dev values recorded in [§ 3.1](vm-dev-staging-prod-management-plan.md#31-dev)
 - compose project: `pantheon`
 - compose file: `docker-compose.yml`
-- public BFF: `https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io`
 
 Guardrails applied by the deploy script:
 
 ```env
 PANTHEON_ENV=dev
 PANTHEON_LIVE_BROKER_ENABLED=false
-PANTHEON_BFF_CORS_ORIGINS=https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io
+PANTHEON_BFF_CORS_ORIGINS=<DEV_BFF_CORS_ORIGINS list>
 ```
+
+The deploy script starts from the workflow `DEV_BFF_CORS_ORIGINS` value, appends `DEV_BFF_CANONICAL_CORS_ORIGIN` and `DEV_BFF_REQUIRED_CORS_ORIGINS` (`append_csv_unique`), exports the result as `PANTHEON_DEV_BFF_CORS_ORIGINS` and passes it as `PANTHEON_BFF_CORS_ORIGINS`.
 
 Agora frontend/BFF deploys generate and pass a candidate-specific compatibility
 manifest before the VM stack is treated as deployable:
@@ -223,7 +226,7 @@ manifest before the VM stack is treated as deployable:
 ```bash
 python3 scripts/agora_compat_manifest.py write \
   --output <candidate-dir>/release-compatibility-manifest.json \
-  --frontend-root /home/lupin/code/execute-plans \
+  --frontend-root <execute-plans-checkout> \
   --backend-dev-ref refs/remotes/origin/dev \
   --frontend-dev-ref refs/remotes/origin/dev \
   --backend-runtime-commit <exact-pantheon-dev-sha> \
@@ -232,7 +235,7 @@ python3 scripts/agora_compat_manifest.py write \
 
 python3 scripts/agora_compat_manifest.py deployment-gate \
   --manifest <candidate-dir>/release-compatibility-manifest.json \
-  --frontend-root /home/lupin/code/execute-plans \
+  --frontend-root <execute-plans-checkout> \
   --backend-dev-ref refs/remotes/origin/dev \
   --frontend-dev-ref refs/remotes/origin/dev \
   --backend-runtime-commit <exact-pantheon-dev-sha> \
@@ -314,11 +317,13 @@ Use:
 
 Target:
 
-- VM1: `pantheon-lupin-staging-control`, compose project `pantheon-control`,
-  `docker-compose.control.yml`
-- VM2: `pantheon-lupin-staging-exec`, compose project `pantheon-exec`,
-  `docker-compose.exec.yml`
-- public BFF: `https://pantheon-lupin-staging-bff.104.155.223.192.sslip.io`
+- none: staging-live has no VM ([§ 3.2](vm-dev-staging-prod-management-plan.md)). The former control and execution VMs
+  and staging BFF host belonged to the retired `pantheon-benjamin-20260528`
+  project, and its former staging IP now belongs to a third party; historical
+  detail lives in [`staging-live-topology.md`](staging-live-topology.md).
+- design intent once ephemeral staging exists:
+  - VM1: compose project `pantheon-control`, `docker-compose.control.yml`
+  - VM2: compose project `pantheon-exec`, `docker-compose.exec.yml`
 
 Normal full deploy order:
 
@@ -358,17 +363,21 @@ DEV_GCP_DEPLOY_SERVICE_ACCOUNT
 ```
 
 Dev uses its own project and WIF variables so staging-live remains
-independent. The `DEV_GCP_*` variables override the dev defaults in
-`nonprod-deploy.yml` without changing staging-live promotion. The current dev
-project (`DEV_GCP_DEPLOY_PROJECT_ID`) is listed in § 3.1 of
-[`vm-dev-staging-prod-management-plan.md`](vm-dev-staging-prod-management-plan.md);
-the dev release job reads `DEV_GCP_WIF_PROVIDER` and
-`DEV_GCP_DEPLOY_SERVICE_ACCOUNT` for its rollback authentication. Values from
-the retired `pantheon-lupin-dev-20260719` and `pantheon-benjamin-20260528`
-projects are not valid targets.
+independent. The `DEV_GCP_*` variables override the workflow defaults in
+`nonprod-deploy.yml` without changing staging-live promotion. The
+`DEV_GCP_DEPLOY_PROJECT_ID` and `DEV_GCP_DEPLOY_SERVICE_ACCOUNT` workflow
+fallbacks name the dev project of [§ 3.1](vm-dev-staging-prod-management-plan.md#31-dev). The `DEV_GCP_WIF_PROVIDER` fallback
+names a workload identity pool that § 3.1 does not record, so
+`DEV_GCP_WIF_PROVIDER` must be set; the dev release job reads it for its
+rollback authentication. `validate_target_selection` in
+`scripts/deploy_nonprod_vm.sh` refuses the retired projects.
 
 `GCP_PROJECT_ID` and `GCP_BUILD_STAGING_BUCKET` were read only by the retired
-image-publish workflow; no workflow reads them now.
+image-publish workflow; no workflow reads them now. `GCP_BUILD_STAGING_BUCKET`
+is the Cloud Build source staging path and has no current value; it must name a
+bucket in the image-publishing project (`GCP_PROJECT_ID`) if that workflow is
+ever restored, because the retired workflow's fallback named a bucket in the
+retired `pantheon-benjamin-20260528` project.
 
 `GCP_DEPLOY_PROJECT_ID` remains the staging-live/shared VM project override.
 Dev uses `DEV_GCP_DEPLOY_PROJECT_ID`; this prevents a suspended or stale staging project variable from silently redirecting dev deployment.
@@ -378,7 +387,7 @@ Dev VM transport is configured by the protected `dev` GitHub Environment:
 - secret `DEV_DEPLOY_SSH_PRIVATE_KEY`: dedicated unencrypted CI private key;
 - variable `DEV_DEPLOY_SSH_KNOWN_HOSTS`: pinned OpenSSH host entry for the
   fixed dev address; and
-- variable `DEV_DEPLOY_SSH_HOST`: the fixed dev address listed in § 3.1.
+- variable `DEV_DEPLOY_SSH_HOST`: the dev address of § 3.1.
 
 The matching public key is installed once in the `authorized_keys` of the
 account named by `NONPROD_REMOTE_USER` in § 3.1. The workflow materializes both
@@ -402,12 +411,14 @@ Recommended GitHub Environments:
 
 ## Remote deployment identity
 
-Dev uses its dedicated public key on `pantheon-lupin-dev`; GitHub's deploy
+Dev uses its dedicated public key on the dev VM of [§ 3.1](vm-dev-staging-prod-management-plan.md#31-dev); GitHub's deploy
 identity does not need Compute Instance Admin or permission to add temporary
 SSH metadata. Staging-live still requires its deploy identity to reach:
 
-- `pantheon-lupin-staging-control`
-- `pantheon-lupin-staging-exec`
+- the staging control VM
+- the staging execution VM
+
+These apply once ephemeral staging exists; staging-live has no VM today.
 
 Use a separate deploy service account if possible, then set
 `GCP_DEPLOY_SERVICE_ACCOUNT` to that account.
@@ -420,7 +431,8 @@ Required staging permissions depend on its VM SSH posture:
   keys.
 - Default Compute service account posture: grant the deploy identity
   `roles/iam.serviceAccountUser` on
-  `41950751674-compute@developer.gserviceaccount.com`, because `gcloud compute
+  `<project-number>-compute@developer.gserviceaccount.com`
+  attached to each staging VM, because `gcloud compute
   ssh` checks access to the service account attached to the VM before adding
   temporary SSH metadata.
 - Cloud Build submitter posture: grant `roles/serviceusage.serviceUsageConsumer`
