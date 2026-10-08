@@ -13,7 +13,7 @@ from write_bff_live_evidence_preflight import REQUIRED_SECRET_ENV_VARS
 
 
 DEFAULT_REPOSITORY = "ajoe734/pantheon"
-DEFAULT_ENVIRONMENTS = ("dev", "staging-live")
+DEFAULT_ENVIRONMENTS = ("dev",)
 
 
 
