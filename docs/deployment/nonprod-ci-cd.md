@@ -16,7 +16,11 @@ The current implementation keeps the VM/Compose non-prod topology in the
 Pantheon Lupin GCP projects and uses GitHub Actions for pinned VM deployment:
 
 - CI remains `Pantheon Stage 0 CI`.
-- Image publishing remains manual through `Publish images to Artifact Registry`.
+- There is no image-publish workflow. `Publish images to Artifact Registry`
+  (`.github/workflows/gcp-deploy.yml`) was retired by
+  OPS-WORKFLOW-DEAD-HOST-DEFAULTS-20261007: its `GCP_*` variables named the
+  retired `pantheon-benjamin-20260528` project, and no dev workflow or deploy
+  script consumed its images.
 - Dev deployment is an explicit exact-pair release from both repositories'
   protected `dev` tips. Publish snapshots never deploy.
 - Staging-live deployment is automatic on `master` pushes and can also be run
@@ -27,7 +31,6 @@ Pantheon Lupin GCP projects and uses GitHub Actions for pinned VM deployment:
 | Workflow | File | Trigger | Role |
 | --- | --- | --- | --- |
 | Pantheon Stage 0 CI | `.github/workflows/stage-0-ci.yml` | PR, push, manual | changed target detection, baseline checks, focused verify, Docker build dry-run |
-| Publish images to Artifact Registry | `.github/workflows/gcp-deploy.yml` | manual | GitHub OIDC to GCP, Cloud Build, Artifact Registry tags, build manifest |
 | Pantheon Nonprod Deploy | `.github/workflows/nonprod-deploy.yml` | hourly paired dev dispatch or manual dev; `master` or manual staging | exact FE/BFF admission, VM checkout-to-commit, compensated FE/BFF switch, health/CORS smoke |
 | Pantheon FE-BFF Integration Gate | `execute-plans:.github/workflows/pantheon-integration-gate.yml` | controller dispatch only for deployable artifacts; PR/push CI remains non-deploying | rebuild and smoke the exact FE SHA against the exact hosted BFF SHA |
 | Pantheon Dev FE Deploy | `execute-plans:.github/workflows/pantheon-dev-fe-deploy.yml` | controller dispatch only | authenticate the exact gate artifact, probe the candidate, then atomically switch the hosted FE |
@@ -337,10 +340,9 @@ or VM1 control env. VM2 remains the broker-secret boundary.
 
 ## Required GitHub Configuration
 
-Repository variables already used by image publishing:
+Repository variables read by the staging-live deploy job:
 
 ```text
-GCP_PROJECT_ID
 GCP_WIF_PROVIDER
 GCP_SERVICE_ACCOUNT
 ```
@@ -348,7 +350,6 @@ GCP_SERVICE_ACCOUNT
 Optional deploy-specific variable:
 
 ```text
-GCP_BUILD_STAGING_BUCKET
 GCP_DEPLOY_PROJECT_ID
 GCP_DEPLOY_SERVICE_ACCOUNT
 DEV_GCP_DEPLOY_PROJECT_ID
@@ -356,34 +357,35 @@ DEV_GCP_WIF_PROVIDER
 DEV_GCP_DEPLOY_SERVICE_ACCOUNT
 ```
 
-After the 2026-07-19 dev-project replacement, dev uses its own project and WIF
-defaults (`pantheon-lupin-dev-20260719`) so staging-live remains independent.
-The `DEV_GCP_*` variables may override those dev-only defaults without changing
-staging-live promotion.
+Dev uses its own project and WIF variables so staging-live remains
+independent. The `DEV_GCP_*` variables override the dev defaults in
+`nonprod-deploy.yml` without changing staging-live promotion. The current dev
+project (`DEV_GCP_DEPLOY_PROJECT_ID`) is listed in § 3.1 of
+[`vm-dev-staging-prod-management-plan.md`](vm-dev-staging-prod-management-plan.md);
+the dev release job reads `DEV_GCP_WIF_PROVIDER` and
+`DEV_GCP_DEPLOY_SERVICE_ACCOUNT` for its rollback authentication. Values from
+the retired `pantheon-lupin-dev-20260719` and `pantheon-benjamin-20260528`
+projects are not valid targets.
 
-`GCP_BUILD_STAGING_BUCKET` is the Cloud Build source staging path used by
-`gcloud builds submit`; the current value is
-`gs://pantheon-benjamin-20260528-pantheon-builds/source`. If it is absent, the
-image publish workflow defaults to that path instead of the absent legacy
-`gs://pantheon-benjamin-20260528_cloudbuild` bucket.
+`GCP_PROJECT_ID` and `GCP_BUILD_STAGING_BUCKET` were read only by the retired
+image-publish workflow; no workflow reads them now.
 
 `GCP_DEPLOY_PROJECT_ID` remains the staging-live/shared VM project override.
-Dev uses `DEV_GCP_DEPLOY_PROJECT_ID` and defaults to
-`pantheon-lupin-dev-20260719`; this prevents a suspended or stale staging
-project variable from silently redirecting dev deployment.
+Dev uses `DEV_GCP_DEPLOY_PROJECT_ID`; this prevents a suspended or stale staging project variable from silently redirecting dev deployment.
 
 Dev VM transport is configured by the protected `dev` GitHub Environment:
 
 - secret `DEV_DEPLOY_SSH_PRIVATE_KEY`: dedicated unencrypted CI private key;
 - variable `DEV_DEPLOY_SSH_KNOWN_HOSTS`: pinned OpenSSH host entry for the
   fixed dev address; and
-- variable `DEV_DEPLOY_SSH_HOST`: `35.201.204.12`.
+- variable `DEV_DEPLOY_SSH_HOST`: the fixed dev address listed in § 3.1.
 
-The matching public key is installed once in the `lupin` account's
-`authorized_keys`. The workflow materializes both files under `RUNNER_TEMP`
-with mode `0600`; neither file is written into a checkout. GCP WIF remains for
-workflows that actually call Cloud Build, Artifact Registry, or another GCP
-API. Staging-live continues to use `GCP_WIF_PROVIDER` and falls back from
+The matching public key is installed once in the `authorized_keys` of the
+account named by `NONPROD_REMOTE_USER` in § 3.1. The workflow materializes both
+files under `RUNNER_TEMP` with mode `0600`; neither file is written into a
+checkout. GCP WIF remains only for the GCP API calls in `Pantheon Nonprod
+Deploy` (the dev release rollback and the staging-live deploy). Staging-live
+continues to use `GCP_WIF_PROVIDER` and falls back from
 `GCP_DEPLOY_SERVICE_ACCOUNT` to `GCP_SERVICE_ACCOUNT`.
 
 `COORDINATION_REPO_TOKEN` is required by the dev environment lease and by the
