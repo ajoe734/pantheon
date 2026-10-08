@@ -4026,3 +4026,87 @@ stage_dev_paper_prerequisite_readiness SPY 5 0
     finally:
         server.shutdown()
         server.server_close()
+
+
+def _extract_paper_fleet_status_funcs() -> str:
+    """Extract log_status_summary and verify_dev_paper_fleet from deploy_nonprod_vm.sh."""
+    script_text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = script_text.find("log_status_summary() {")
+    assert start != -1, "log_status_summary() not found in deploy_nonprod_vm.sh"
+    next_func = script_text.find("\nverify_dev_evolution_daily_sweep() {", start)
+    assert next_func != -1, "verify_dev_evolution_daily_sweep() boundary not found"
+    end = script_text.rfind("\n}\n", start, next_func)
+    return script_text[start : end + 2]
+
+
+def _large_fleet_payload(*, ready: bool, workers: int = 400) -> dict[str, Any]:
+    return {
+        "ready": ready,
+        "live": True,
+        "cycle_count": 21,
+        "worker_count": workers,
+        "running_count": workers,
+        "last_error": None,
+        "monitoring_last_error": None,
+        "monitoring_sessions": [{"session_id": f"s-{i}", "note": "m" * 400} for i in range(workers)],
+        "workers": [
+            {
+                "binding_id": f"rb-{i:04d}",
+                "status": "running",
+                "heartbeat_status": "active",
+                "detail": {"history": ["h" * 200] * 2},
+            }
+            for i in range(workers)
+        ],
+    }
+
+
+def _run_verify_dev_paper_fleet(tmp_path: Path, payload: dict[str, Any]) -> subprocess.CompletedProcess:
+    payload_file = tmp_path / "readyz.json"
+    payload_file.write_text(json.dumps(payload), encoding="utf-8")
+    test_script = tmp_path / "test_fleet_status.sh"
+    test_script.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+curl() {{ cat "{payload_file}"; }}
+docker() {{ :; }}
+sleep() {{ :; }}
+
+{_extract_paper_fleet_status_funcs()}
+
+verify_dev_paper_fleet
+""",
+        encoding="utf-8",
+    )
+    return subprocess.run(["bash", str(test_script)], capture_output=True, text=True, check=False)
+
+
+def test_paper_fleet_status_logging_stays_under_guarded_transport_line_bound(tmp_path: Path) -> None:
+    """DEV-DEPLOY-STATUS-LINE-BOUND-20261008: deploy 37727955933 printed a 79 KiB
+    fleet /readyz payload on one line and dev_remote_guarded_exec rejected it."""
+
+    payload = _large_fleet_payload(ready=True)
+    assert len(json.dumps(payload)) > 200 * 1024
+
+    proc = _run_verify_dev_paper_fleet(tmp_path, payload)
+
+    assert proc.returncode == 0, proc.stderr
+    assert "paper fleet reconciler is ready and all desired workers are active" in proc.stdout
+    assert max(len(line) for line in proc.stdout.splitlines()) < 9 * 1024
+    summary = json.loads(proc.stdout.splitlines()[-1])
+    assert summary["ready"] is True and summary["cycle_count"] == 21
+    assert summary["worker_count"] == 400 and summary["running_count"] == 400
+    assert summary["workers_count"] == 400
+    assert summary["workers"][0] == {"binding_id": "rb-0000", "heartbeat_status": "active", "status": "running"}
+
+
+def test_paper_fleet_readiness_assertions_still_reject_unready_payload(tmp_path: Path) -> None:
+    payload = _large_fleet_payload(ready=False)
+
+    proc = _run_verify_dev_paper_fleet(tmp_path, payload)
+
+    assert proc.returncode == 1
+    assert "paper fleet reconciler did not converge" in proc.stdout
+    assert max(len(line) for line in proc.stdout.splitlines()) < 9 * 1024
+    assert json.loads(proc.stdout.splitlines()[-1])["ready"] is False

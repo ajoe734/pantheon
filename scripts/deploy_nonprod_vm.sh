@@ -3050,17 +3050,75 @@ retire_dormant_and_one_off_profile_containers() {
   fi
 }
 
+log_status_summary() {
+  # dev_remote_guarded_exec.py rejects stdout lines over 64 KiB, and status
+  # payloads such as the paper fleet /readyz grow with the fleet.  Log the
+  # top-level scalars and, for lists, the count plus each item's scalars
+  # (first 30 items, dropped largest-first above 8 KiB) instead of the raw
+  # payload.  The
+  # payload is read from stdin because one argv string is limited to 128 KiB.
+  printf '%s' "$1" | python3 -c '
+import json
+import sys
+
+raw = sys.stdin.read()
+try:
+    payload = json.loads(raw)
+except ValueError:
+    print(json.dumps({"unparsed_bytes": len(raw), "head": raw[:512]}))
+    raise SystemExit(0)
+if not isinstance(payload, dict):
+    print(json.dumps({"type": type(payload).__name__, "bytes": len(raw)}))
+    raise SystemExit(0)
+
+
+def scalar(value):
+    if isinstance(value, str):
+        return value[:300]
+    return value
+
+
+summary = {"payload_bytes": len(raw)}
+for key, value in payload.items():
+    if value is None or isinstance(value, (bool, int, float, str)):
+        summary[key] = scalar(value)
+    elif isinstance(value, list):
+        summary[key + "_count"] = len(value)
+        items = [
+            {k: scalar(v) for k, v in item.items() if v is None or isinstance(v, (bool, int, float, str))}
+            for item in value[:30]
+            if isinstance(item, dict)
+        ]
+        if items:
+            summary[key] = items
+    elif isinstance(value, dict):
+        summary[key + "_keys"] = sorted(value)[:30]
+line = json.dumps(summary, sort_keys=True)
+# Over the cap, drop item details (largest first, workers last) and keep counts.
+detail_keys = sorted(
+    (key for key, value in summary.items() if isinstance(value, list)),
+    key=lambda key: (key == "workers", -len(json.dumps(summary[key]))),
+)
+for key in detail_keys:
+    if len(line) <= 8192:
+        break
+    del summary[key]
+    line = json.dumps(summary, sort_keys=True)
+print(line)
+'
+}
+
 verify_dev_paper_fleet() {
   local attempt
   local status=""
 
   for attempt in $(seq 1 30); do
     status="$(curl -fsS http://127.0.0.1:18011/readyz 2>/dev/null || true)"
-    if python3 -c '
+    if printf '%s' "$status" | python3 -c '
 import json
 import sys
 
-payload = json.loads(sys.argv[1])
+payload = json.loads(sys.stdin.read())
 workers = list(payload.get("workers") or [])
 assert payload.get("ready") is True
 assert payload.get("live") is True
@@ -3070,9 +3128,9 @@ assert int(payload.get("cycle_count") or 0) >= 1
 assert int(payload.get("worker_count") or 0) == int(payload.get("running_count") or 0)
 assert all(worker.get("status") == "running" for worker in workers)
 assert all(worker.get("heartbeat_status") == "active" for worker in workers)
-' "$status" 2>/dev/null; then
+' 2>/dev/null; then
       info "paper fleet reconciler is ready and all desired workers are active"
-      printf '%s\n' "$status"
+      log_status_summary "$status"
       return 0
     fi
     sleep 2
@@ -3081,7 +3139,7 @@ assert all(worker.get("heartbeat_status") == "active" for worker in workers)
   info "paper fleet reconciler did not converge"
   docker compose -p pantheon -f docker-compose.yml ps -a paper-fleet-reconciler || true
   docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=240 paper-fleet-reconciler || true
-  printf '%s\n' "$status"
+  log_status_summary "$status"
   return 1
 }
 
@@ -3126,7 +3184,7 @@ assert int(payload.get("total_sweeps_run") or 0) >= 1
         info "evolution daily sweep scheduler emitted a successful tick"
         printf '%s\n' "$logs"
         info "evolution daily sweep status"
-        printf '%s\n' "$status"
+        log_status_summary "$status"
         return 0
       fi
     fi
@@ -3136,7 +3194,7 @@ assert int(payload.get("total_sweeps_run") or 0) >= 1
   info "evolution daily sweep scheduler did not emit a successful tick"
   "${compose[@]}" ps -a evolution evolution-daily-sweep-scheduler || true
   printf '%s\n' "$logs"
-  printf '%s\n' "$status"
+  log_status_summary "$status"
   return 1
 }
 

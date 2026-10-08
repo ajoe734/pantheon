@@ -1,0 +1,28 @@
+{
+  "task_id": "DEV-DEPLOY-STATUS-LINE-BOUND-20261008",
+  "base_sha": "674fe6253",
+  "hosted_failure": {
+    "deploy_run": "37727955933",
+    "candidate": "ebe90c006",
+    "observed": "After '[remote-deploy] paper fleet reconciler is ready and all desired workers are active' the guarded remote execution failed with DEV_ARTIFACT_OPERATION_FAILED exit 75 at dev_remote_guarded_exec.py:143 (TransportError 'stdout line exceeds bound', 64 KiB per line).",
+    "cause": "verify_dev_paper_fleet printed the whole fleet /readyz payload with printf '%s\\n' \"$status\" on one line.",
+    "hosted_fleet_payload_measured": {"bytes": 79264, "workers": 17, "largest_worker_bytes": 466, "measured_at": "2026-10-08T05:05Z", "method": "read-only GET http://127.0.0.1:8011/api/fleet/state inside the paper-fleet-reconciler container"}
+  },
+  "second_defect": "The readiness assertion passed the payload as one python argv string; above Linux MAX_ARG_STRLEN (128 KiB) python cannot start, so a ready fleet is reported as 'did not converge'.",
+  "base_reproduction": {
+    "method": "Extracted base verify_dev_paper_fleet with curl/docker/sleep stubs and fed a synthetic ready fleet payload",
+    "payload_31091_bytes": "rc 0; longest stdout line 31091 bytes",
+    "payload_379270_bytes": "rc 1 (ready fleet judged not converged because argv exceeded 128 KiB); longest stdout line 379270 bytes"
+  },
+  "change": [
+    "New log_status_summary logs top-level scalars plus list counts and each list item's scalars (first 30 items), reading the payload from stdin; above 8 KiB it drops list details largest-first (workers last) and keeps counts, so the line stays valid JSON.",
+    "verify_dev_paper_fleet (success and failure) and verify_dev_evolution_daily_sweep (success and failure) log the summary instead of the raw payload.",
+    "verify_dev_paper_fleet's readiness assertion reads the payload from stdin; the assertions themselves are unchanged.",
+    "dev_remote_guarded_exec.py and its 64 KiB bound are unchanged."
+  ],
+  "validation": {
+    "command": "pytest -q scripts/test_deploy_nonprod_vm.py -k paper_fleet",
+    "head": "2 passed (ready 200+ KiB payload: rc 0 and every line under 9 KiB with key fields; unready payload: rc 1 and bounded output)"
+  },
+  "review_status": "Author validation only; independent exact-head review by the assigned reviewer pending."
+}
