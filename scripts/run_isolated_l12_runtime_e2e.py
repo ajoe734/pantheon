@@ -642,12 +642,15 @@ SERVICE_ERROR_SCAN_TAIL = "1000"
 SERVICE_ERROR_LINES_PER_SERVICE = 40
 # The preview worker logs JSON tick results with no ERROR prefix, so a non-empty
 # "errors"/"error" or a non-zero "failed" counts; idle ticks ("failed": 0,
-# "errors": []) must not.
+# "errors": []) must not.  The consultation executor puts provider failures
+# only in outcomes[].detail with "errors": [], so a tick that blocked or
+# dead-lettered a request counts too.
 SERVICE_ERROR_LINE = re.compile(
     r"ERROR|CRITICAL|Traceback|Exception|\b\w+Error\b"
     r"|HTTP/\d(?:\.\d)?\" [45]\d\d"
     r"|\"errors?\":\s*(?:\[\s*[^\s\]]|\"[^\"]|\{\s*[^\s}])"
     r"|\"failed\":\s*[1-9]"
+    r"|\"(?:blocked|dead_lettered)\":\s*[1-9]"
 )
 
 

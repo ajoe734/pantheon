@@ -444,6 +444,19 @@ def test_service_error_line_matches_worker_json_and_skips_idle_ticks() -> None:
     assert match('{"result": {"error": "boom"}}')
     assert match("asyncio.exceptions.TimeoutError: timed out")
     assert not match('{"tick": 1, "result": {"jobs_found": 0, "completed": 0, "failed": 0, "errors": []}}')
+    dead_letter_tick = (
+        '{"result": {"blocked": 0, "completed": 0, "dead_lettered": 1, "errors": [], '
+        '"outcomes": [{"request_id": "cr-1", "outcome": "dead_letter", "detail": "provider unavailable"}]}}'
+    )
+    assert match(dead_letter_tick)
+    assert match('{"result": {"blocked": 1, "dead_lettered": 0, "errors": []}}')
+    idle_after_dead_letter = (
+        '{"health": {"functional_health": {"blocked_count": 0, "dead_letter_count": 1}, '
+        '"last_failure_reason": "1 dead-letter item(s)", "total_dead_lettered": 1}, '
+        '"result": {"blocked": 0, "dead_lettered": 0, "errors": [], "outcomes": [], '
+        '"state_counts": {"blocked": 0, "dead_letter": 1}}}'
+    )
+    assert not match(idle_after_dead_letter)
     assert not match('{"result": {"error": null}}')
     assert not match("INFO tick ok")
 
