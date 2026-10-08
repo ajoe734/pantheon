@@ -4,7 +4,7 @@
   "owner": "Antigravity",
   "reviewer": "Claude",
   "repository": "ajoe734/pantheon",
-  "base_sha": "7dbcbd6467afac069fbd713d7c70ca3909ab801d",
+  "base_sha": "867e829cacc887aed82dbe0ae4246a733343a05a",
   "changed_files": [
     "docs/deployment/evidence/INTEGRATION-UNBLOCK-GOV-APPROVAL-SCOPE-PAPER-DOC-20261008-CI-RED-DE3D75ECBCE0/evidence.json"
   ],
