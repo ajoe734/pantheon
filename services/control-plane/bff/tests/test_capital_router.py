@@ -209,11 +209,16 @@ def test_allocation_and_management_readbacks_retain_pool_and_risk_lineage() -> N
 
     exposure = client.get("/bff/management/portfolio-book/exposure")
     assert exposure.status_code == 200
-    assert exposure.json()["items"][0]["allocation_digest"]
+    exposure_body = exposure.json()
+    assert exposure_body["data"]["id"] == "pm12-portfolio-book-exposure"
+    assert exposure_body["data"]["items"][0]["capital_pool_id"] == "pool-paper"
+    assert exposure_body["meta"]["surfaces"]["portfolio_book_exposure"]["status"] == "degraded"
 
     holdings = client.get("/bff/management/portfolio-book/holdings?capital_pool_id=pool-paper")
     assert holdings.status_code == 200
-    assert {row["strategy_id"] for row in holdings.json()["items"]} == {"alpha", "beta"}
+    holdings_body = holdings.json()
+    assert holdings_body["data"]["items"] == []
+    assert holdings_body["meta"]["surfaces"]["portfolio_book_holdings"]["status"] == "degraded"
 
     costs = client.get("/bff/management/cost-attribution")
     assert costs.status_code == 200

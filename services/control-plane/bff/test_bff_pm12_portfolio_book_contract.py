@@ -268,16 +268,15 @@ def test_portfolio_book_summary_composes_pool_runtime_and_telemetry(monkeypatch)
     assert len(response.content) < 250_000
     payload = response.json()
     assert set(payload) == {"data", "page_info", "meta"}
-    assert set(payload["data"]) == {"items", "summary"}
+    assert {"items", "summary", "totalNav", "totalCash", "grossExposure", "leverage", "unrealizedPnl", "pnlToday", "activeCapitalPools"}.issubset(set(payload["data"]))
     assert "items" not in payload
     assert "pools" not in payload
     summary = payload["data"]["summary"]
-    assert summary["capital_pool_count"] == 2
+    assert summary["active_capital_pools"] == 1
     assert summary["active_capital_pool_count"] == 1
     assert summary["binding_count"] == 2
     assert summary["active_binding_count"] == 1
     assert summary["deployment_count"] == 2
-    assert summary["approved_deployment_count"] == 1
     assert summary["runtime_count"] == 3
     assert summary["active_runtime_count"] == 2
     assert summary["paper_runtime_count"] == 2
@@ -288,6 +287,7 @@ def test_portfolio_book_summary_composes_pool_runtime_and_telemetry(monkeypatch)
     assert summary["average_fill_rate"] == 0.85
     assert summary["total_trades"] == 16
     assert summary["latest_telemetry_at"] == "2026-05-23T08:05:00Z"
+    assert payload["data"]["totalNav"] == 150.0
 
     alpha = payload["data"]["items"][0]
     assert alpha["pool_id"] == "pool-alpha"
@@ -352,7 +352,7 @@ def test_portfolio_book_exposure_composes_risk_budget_rollup(monkeypatch) -> Non
     summary = payload["data"]["summary"]
     assert payload["data"]["id"] == "pm12-portfolio-book-exposure"
     assert summary["exposure_count"] == 2
-    assert summary["returned_exposure_count"] == 1
+    assert len(payload["data"]["items"]) == 1
     assert summary["risk_budget_total"] == 150.0
     assert summary["current_exposure_total"] == 60.0
     assert summary["available_budget_total"] == 90.0
@@ -383,12 +383,9 @@ def test_portfolio_book_exposure_composes_risk_budget_rollup(monkeypatch) -> Non
     assert alpha["risk_budget_utilization"] == 0.4
     assert alpha["risk_state"] == "within_budget"
     assert alpha["available_budget"] == 60.0
-    assert alpha["exposure"]["source"] == "capital_pool"
     assert alpha["source_refs"]["runtime_ids"] == ["runtime-alpha", "runtime-alpha-live"]
     assert "sourceRefs" not in alpha
     assert "runtimeIds" not in alpha["source_refs"]
-    assert alpha["links"]["capital_pool"] == "/bff/capital-pools/pool-alpha"
-    assert "capitalPool" not in alpha["links"]
     assert payload["meta"]["surfaces"]["portfolio_book_exposure"]["source"] == "bff_composed"
     assert payload["meta"]["surfaces"]["capital_pools"]["source"] == "canonical"
     assert payload["meta"]["policy"] == "read_only_portfolio_exposure"
@@ -462,18 +459,12 @@ def test_portfolio_book_holdings_composes_global_holdings_table(monkeypatch) -> 
     assert "summary" not in payload
     summary = payload["data"]["summary"]
     assert summary["holding_count"] == 3
-    assert summary["returned_holding_count"] == 1
-    assert summary["active_holding_count"] == 2
-    assert summary["paper_holding_count"] == 2
-    assert summary["live_holding_count"] == 1
+    assert len(payload["data"]["items"]) == 1
     assert summary["runtime_count"] == 3
     assert summary["telemetry_runtime_count"] == 2
-    assert summary["total_notional"] == 30600
-    assert summary["total_market_value"] == 30600
-    assert summary["total_unrealized_pnl"] == 200
-    assert summary["total_realized_pnl"] == 12
-    assert summary["total_pnl"] == 8
-    assert summary["latest_mark_at"] == "2026-05-23T08:05:00Z"
+    assert summary["source_coverage"]["source_row_count"] == 1
+    assert summary["source_coverage"]["runtime_count"] == 3
+    assert summary["source_coverage"]["telemetry_runtime_count"] == 2
 
     alpha = payload["data"]["items"][0]
     assert alpha["holding_id"] == "runtime-alpha:pos-alpha-txf"
@@ -517,7 +508,7 @@ def test_portfolio_book_holdings_filters_by_stage(monkeypatch) -> None:
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["data"]["summary"]["holding_count"] == 1
-    assert payload["data"]["summary"]["live_holding_count"] == 1
+    assert payload["data"]["items"][0]["deployment_stage"] == "live"
     assert payload["data"]["items"][0]["runtime_id"] == "runtime-alpha-live"
 
 
@@ -566,7 +557,7 @@ def test_portfolio_book_holdings_filters_broker_source_stale_and_risk(monkeypatc
     assert summary["holding_count"] == 1
     assert summary["source_row_count"] == 1
     assert summary["stale_row_count"] == 1
-    assert summary["source_status_counts"] == {"stale": 1}
+    assert summary["source_coverage"]["stale_row_count"] == 1
     row = payload["data"]["items"][0]
     assert row["runtime_id"] == "runtime-alpha"
     assert row["broker_id"] == "broker-alpha"
@@ -648,7 +639,7 @@ def test_portfolio_book_missing_focus_persona_holding_is_incident_not_formal_att
     assert row["persona_id"] == FOCUS_PERSONA_ID
     assert row["source_status"] == "degraded"
     assert row["risk_state"] == "degraded_source"
-    assert row["identity"]["paper_ledger_ids"] == ["paper-ledger-focus"]
+    assert row["capital_scope"]["scope_id"] == "paper-ledger-focus"
     assert row["capital_scope"]["scope_kind"] == "paper_ledger"
     assert row["links"]["persona_fleet"] == f"/management/persona-fleet?persona_id={FOCUS_PERSONA_ID}"
     incident = payload["meta"]["incidents"][0]
@@ -1303,7 +1294,7 @@ def test_portfolio_book_reports_degraded_telemetry_without_hiding_core_book(monk
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["data"]["summary"]["capital_pool_count"] == 2
+    assert payload["data"]["summary"]["active_capital_pools"] == 1
     assert payload["data"]["summary"]["telemetry_runtime_count"] == 0
     assert payload["data"]["summary"]["total_pnl"] is None
     assert payload["meta"]["surfaces"]["telemetry_summaries"]["status"] == "unavailable"
@@ -1335,7 +1326,7 @@ def test_portfolio_book_pools_returns_pool_risk_exposure_and_pnl(monkeypatch) ->
     assert alpha["exposure"]["source"] == "capital_pool"
     assert "riskBudget" not in alpha["exposure"]
     assert alpha["pnl"] == 8.0
-    assert alpha["pnl_summary"]["total_pnl"] == 8.0
+    assert alpha["telemetry"]["total_pnl"] == 8.0
 
     summary = payload["data"]["summary"]
     assert summary["total_pools"] == 2
@@ -1383,7 +1374,7 @@ def test_portfolio_book_holdings_reports_degraded_telemetry(monkeypatch) -> None
     payload = response.json()
     assert payload["data"]["summary"]["holding_count"] == 3
     assert payload["data"]["summary"]["telemetry_runtime_count"] == 0
-    assert payload["data"]["summary"]["total_pnl"] is None
+    assert payload["data"]["summary"]["source_coverage"]["telemetry_runtime_count"] == 0
     assert payload["meta"]["surfaces"]["telemetry_summaries"]["status"] == "unavailable"
     assert payload["meta"]["surfaces"]["portfolio_book_holdings"]["status"] == "degraded"
 

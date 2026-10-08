@@ -2,200 +2,173 @@
   "task_id": "BFF-PM12-PORTFOLIO-BOOK-ROUTES-20261008",
   "change_class": "corrective",
   "net_prod_line_budget": 1000,
-  "summary": "Restored PM12 projection shape {data: {summary and items}} with filters, telemetry, and degraded surfaces for the four portfolio-book routes called by the execute-plans dev frontend: /bff/management/portfolio-book, /bff/management/portfolio-book/pools, /bff/management/portfolio-book/exposure, and /bff/management/portfolio-book/holdings. The uncalled routes (/positions, /strategy-allocation, /capital-flow, /board-pack) remain un-restored readback endpoints per commit 4cd637d0d and operator decision 2026-10-07.",
+  "summary": "Restored single-projector PM12 shape {data: {summary, items}, meta: {surfaces, ...}} without duck-typing fallback bodies for the four portfolio-book routes consumed by ajoe734/execute-plans dev (3b49f1f). Restored fields are strictly derived from and limited to frontend readers with exact file:line citations; dead helpers and unread fields (portfolio_book_status, capital_pool_count, approved_deployment_count, pnl_summary, operator_links) were completely removed. Uncalled routes (/positions, /strategy-allocation, /capital-flow, /board-pack) remain un-restored readback endpoints per commit 4cd637d0d and operator decision.",
   "route_to_field_mapping": {
     "GET /bff/management/portfolio-book": {
-      "summary_fields": [
-        "portfolio_book_status",
-        "capital_pool_count",
-        "active_capital_pool_count",
-        "binding_count",
-        "active_binding_count",
-        "deployment_count",
-        "approved_deployment_count",
-        "runtime_count",
-        "active_runtime_count",
-        "paper_runtime_count",
-        "live_runtime_count",
-        "telemetry_runtime_count",
-        "total_pnl",
-        "max_drawdown",
-        "average_fill_rate",
-        "total_trades",
-        "latest_telemetry_at"
-      ],
-      "item_fields": [
-        "id",
-        "pool_id",
-        "capital_pool_id",
-        "name",
-        "status",
-        "risk_policy_ref",
-        "owner",
-        "currency",
-        "risk_budget",
-        "current_exposure",
-        "risk_budget_utilization",
-        "risk_state",
-        "exposure",
-        "pnl",
-        "total_pnl",
-        "pnl_summary",
-        "binding_count",
-        "active_binding_count",
-        "deployment_count",
-        "approved_deployment_count",
-        "runtime_count",
-        "active_runtime_count",
-        "paper_runtime_count",
-        "live_runtime_count",
-        "deployment_stages",
-        "binding_ids",
-        "deployment_ids",
-        "runtime_ids",
-        "persona_ids",
-        "strategy_ids",
-        "telemetry",
-        "links"
-      ]
+      "reader_location": "src/lib/bff-v1/management.ts:3976-3983 (summaryLiveOnly, summary), src/management/pages/oversight/_core.tsx:159,226, src/management/components/cockpit/TotalCapitalSnapshot.tsx:20-27",
+      "data_fields": {
+        "totalNav": "src/management/components/cockpit/TotalCapitalSnapshot.tsx:20, src/lib/v5/management/portfolio.ts:13",
+        "totalCash": "src/management/components/cockpit/TotalCapitalSnapshot.tsx:21, src/lib/v5/management/portfolio.ts:14",
+        "grossExposure": "src/management/components/cockpit/TotalCapitalSnapshot.tsx:22, src/lib/v5/management/portfolio.ts:15",
+        "leverage": "src/management/components/cockpit/TotalCapitalSnapshot.tsx:23, src/lib/v5/management/portfolio.ts:17",
+        "unrealizedPnl": "src/management/components/cockpit/TotalCapitalSnapshot.tsx:24, src/lib/v5/management/portfolio.ts:18",
+        "pnlToday": "src/management/components/cockpit/TotalCapitalSnapshot.tsx:25, src/lib/v5/management/portfolio.ts:20",
+        "activeCapitalPools": "src/management/components/cockpit/TotalCapitalSnapshot.tsx:26, src/lib/v5/management/portfolio.ts:24",
+        "highestRiskPoolId": "src/management/components/cockpit/TotalCapitalSnapshot.tsx:27",
+        "summary": {
+          "active_capital_pools": "src/lib/v5/management/portfolio.ts:24",
+          "runtime_count": "src/lib/v5/management/portfolio.ts:27",
+          "telemetry_runtime_count": "src/lib/bff-v1/management.ts:3599",
+          "total_pnl": "src/lib/v5/management/portfolio.ts:20",
+          "max_drawdown": "src/lib/v5/management/portfolio.ts:48"
+        },
+        "items": "src/lib/v5/management/portfolio.ts:86 (CapitalPoolSummaryRow[])"
+      }
     },
     "GET /bff/management/portfolio-book/pools": {
-      "summary_fields": [
-        "total_pools",
-        "returned_pools",
-        "risk_budget_total",
-        "current_exposure_total",
-        "risk_budget_utilization",
-        "telemetry_runtime_count",
-        "total_pnl"
-      ],
-      "item_fields": [
-        "id",
-        "pool_id",
-        "capital_pool_id",
-        "name",
-        "status",
-        "risk_budget",
-        "current_exposure",
-        "risk_budget_utilization",
-        "risk_state",
-        "exposure",
-        "pnl",
-        "pnl_summary",
-        "telemetry",
-        "links"
-      ]
+      "reader_location": "src/lib/bff-v1/management.ts:3994-4001 (poolsLiveOnly, pools), src/lib/v5/management/portfolio.ts:35-55 (CapitalPoolSummaryRow)",
+      "item_fields": {
+        "id": "src/lib/bff-v1/management.ts:3608, src/lib/v5/management/portfolio.ts:36",
+        "pool_id": "src/lib/bff-v1/management.ts:3609, src/lib/v5/management/portfolio.ts:36",
+        "capital_pool_id": "src/lib/bff-v1/management.ts:3609, src/lib/v5/management/portfolio.ts:36",
+        "name": "src/lib/bff-v1/management.ts:3610, src/lib/v5/management/portfolio.ts:37",
+        "status": "src/lib/bff-v1/management.ts:3611, src/lib/v5/management/portfolio.ts:52",
+        "currency": "src/lib/bff-v1/management.ts:3612, src/lib/v5/management/portfolio.ts:38",
+        "risk_budget": "src/lib/bff-v1/management.ts:3613, src/lib/v5/management/portfolio.ts:45",
+        "current_exposure": "src/lib/bff-v1/management.ts:3614, src/lib/v5/management/portfolio.ts:41",
+        "risk_budget_utilization": "src/lib/bff-v1/management.ts:3616, src/lib/v5/management/portfolio.ts:44",
+        "risk_state": "src/lib/bff-v1/management.ts:3617",
+        "pnl": "src/lib/bff-v1/management.ts:3618, src/lib/v5/management/portfolio.ts:46",
+        "telemetry": "src/lib/bff-v1/management.ts:3606,3624"
+      }
     },
     "GET /bff/management/portfolio-book/exposure": {
-      "id": "pm12-portfolio-book-exposure",
-      "summary_fields": [
-        "exposure_count",
-        "returned_exposure_count",
-        "risk_budget_total",
-        "current_exposure_total",
-        "available_budget_total",
-        "risk_budget_utilization",
-        "over_budget_count",
-        "near_limit_count",
-        "unknown_exposure_count",
-        "telemetry_runtime_count",
-        "total_pnl"
-      ],
-      "item_fields": [
-        "pool_id",
-        "capital_pool_id",
-        "risk_budget",
-        "current_exposure",
-        "risk_budget_utilization",
-        "risk_state",
-        "available_budget",
-        "exposure",
-        "binding_count",
-        "active_binding_count",
-        "deployment_count",
-        "runtime_count",
-        "active_runtime_count",
-        "paper_runtime_count",
-        "live_runtime_count",
-        "deployment_stages",
-        "strategy_ids",
-        "persona_ids",
-        "source_refs",
-        "links"
-      ]
+      "reader_location": "src/lib/bff-v1/management.ts:3573-3635 (adaptPortfolioExposureMonitor, adaptPortfolioExposureMonitorRow), src/management/pages/oversight/PortfolioExposure.tsx:120-220",
+      "summary_fields": {
+        "exposure_count": "src/lib/bff-v1/management.ts:3591",
+        "risk_budget_total": "src/lib/bff-v1/management.ts:3592",
+        "current_exposure_total": "src/lib/bff-v1/management.ts:3593",
+        "available_budget_total": "src/lib/bff-v1/management.ts:3594",
+        "risk_budget_utilization": "src/lib/bff-v1/management.ts:3595",
+        "over_budget_count": "src/lib/bff-v1/management.ts:3596",
+        "near_limit_count": "src/lib/bff-v1/management.ts:3597",
+        "unknown_exposure_count": "src/lib/bff-v1/management.ts:3598",
+        "telemetry_runtime_count": "src/lib/bff-v1/management.ts:3599",
+        "total_pnl": "src/lib/bff-v1/management.ts:3600",
+        "latest_telemetry_at": "src/lib/bff-v1/management.ts:3601"
+      },
+      "item_fields": {
+        "id": "src/lib/bff-v1/management.ts:3608, src/management/pages/oversight/PortfolioExposure.tsx:180",
+        "pool_id": "src/lib/bff-v1/management.ts:3609",
+        "capital_pool_id": "src/lib/bff-v1/management.ts:3609, src/management/pages/oversight/PortfolioExposure.tsx:183",
+        "name": "src/lib/bff-v1/management.ts:3610, src/management/pages/oversight/PortfolioExposure.tsx:182",
+        "status": "src/lib/bff-v1/management.ts:3611, src/management/pages/oversight/PortfolioExposure.tsx:186",
+        "currency": "src/lib/bff-v1/management.ts:3612",
+        "risk_budget": "src/lib/bff-v1/management.ts:3613, src/management/pages/oversight/PortfolioExposure.tsx:188",
+        "current_exposure": "src/lib/bff-v1/management.ts:3614, src/management/pages/oversight/PortfolioExposure.tsx:189",
+        "available_budget": "src/lib/bff-v1/management.ts:3615, src/management/pages/oversight/PortfolioExposure.tsx:190",
+        "risk_budget_utilization": "src/lib/bff-v1/management.ts:3616, src/management/pages/oversight/PortfolioExposure.tsx:191",
+        "risk_state": "src/lib/bff-v1/management.ts:3617, src/management/pages/oversight/PortfolioExposure.tsx:193",
+        "pnl": "src/lib/bff-v1/management.ts:3618, src/management/pages/oversight/PortfolioExposure.tsx:196",
+        "source_refs.runtime_ids": "src/lib/bff-v1/management.ts:3605,3619",
+        "runtime_count": "src/lib/bff-v1/management.ts:3620, src/management/pages/oversight/PortfolioExposure.tsx:199",
+        "active_runtime_count": "src/lib/bff-v1/management.ts:3621, src/management/pages/oversight/PortfolioExposure.tsx:199",
+        "paper_runtime_count": "src/lib/bff-v1/management.ts:3622, src/management/pages/oversight/PortfolioExposure.tsx:201",
+        "live_runtime_count": "src/lib/bff-v1/management.ts:3623, src/management/pages/oversight/PortfolioExposure.tsx:201",
+        "telemetry": "src/lib/bff-v1/management.ts:3606,3624, src/management/pages/oversight/PortfolioExposure.tsx:205"
+      },
+      "surfaces": "src/lib/bff-v1/management.ts:3580-3588 (meta.surfaces)"
     },
     "GET /bff/management/portfolio-book/holdings": {
-      "summary_fields": [
-        "holding_count",
-        "returned_holding_count",
-        "source_row_count",
-        "active_holding_count",
-        "paper_holding_count",
-        "live_holding_count",
-        "runtime_count",
-        "telemetry_runtime_count",
-        "stale_row_count",
-        "missing_binding_count",
-        "degraded_source_count",
-        "incident_count",
-        "total_notional",
-        "total_market_value",
-        "total_unrealized_pnl",
-        "total_realized_pnl",
-        "total_pnl",
-        "latest_mark_at",
-        "source_status_counts",
-        "risk_state_counts",
-        "by_stage",
-        "by_broker"
-      ],
-      "item_fields": [
-        "id",
-        "holding_id",
-        "position_id",
-        "runtime_id",
-        "runtime_binding_id",
-        "deployment_plan_id",
-        "capital_pool_id",
-        "capital_pool",
-        "persona_id",
-        "persona_capital_binding_id",
-        "strategy_id",
-        "artifact_id",
-        "artifact_version",
-        "broker_id",
-        "paper_ledger_id",
-        "sleeve_id",
-        "deployment_stage",
-        "status",
-        "source_status",
-        "source_row_count",
-        "source_issues",
-        "telemetry_available",
-        "telemetry_stale",
-        "risk_state",
-        "identity",
-        "capital_scope",
-        "instrument",
-        "symbol",
-        "side",
-        "quantity",
-        "average_price",
-        "mark_price",
-        "market_value",
-        "notional",
-        "exposure",
-        "weight",
-        "pnl",
-        "total_pnl",
-        "unrealized_pnl",
-        "realized_pnl",
-        "last_mark_at",
-        "links"
-      ]
+      "reader_location": "src/lib/bff-v1/management.ts:3636-3685 (adaptPortfolioHoldingRows), 3709-3734 (adaptPortfolioHoldingMonitorRow), 3751-3780 (adaptPortfolioHoldingsMonitor), src/management/pages/oversight/PortfolioBook.tsx:151-157,284-290, PerformanceAttribution.tsx:396",
+      "summary_fields": {
+        "holding_count": "src/lib/bff-v1/management.ts:3765",
+        "incident_count": "src/lib/bff-v1/management.ts:3772",
+        "source_coverage": {
+          "source_row_count": "src/lib/bff-v1/management.ts:3766, src/management/pages/oversight/PortfolioBook.tsx:152",
+          "runtime_count": "src/lib/bff-v1/management.ts:3767, src/management/pages/oversight/PortfolioBook.tsx:153",
+          "telemetry_runtime_count": "src/lib/bff-v1/management.ts:3768, src/management/pages/oversight/PortfolioBook.tsx:154",
+          "stale_row_count": "src/lib/bff-v1/management.ts:3769, src/management/pages/oversight/PortfolioBook.tsx:155",
+          "missing_binding_count": "src/lib/bff-v1/management.ts:3770, src/management/pages/oversight/PortfolioBook.tsx:156",
+          "degraded_source_count": "src/lib/bff-v1/management.ts:3771, src/management/pages/oversight/PortfolioBook.tsx:157"
+        }
+      },
+      "item_fields": {
+        "id": "src/lib/bff-v1/management.ts:3648,3720",
+        "holding_id": "src/lib/bff-v1/management.ts:3648,3720",
+        "capital_pool_id": "src/lib/bff-v1/management.ts:3646,3723",
+        "broker_id": "src/lib/bff-v1/management.ts:3650,3724",
+        "broker_account_ref": "src/lib/bff-v1/management.ts:3650",
+        "runtime_id": "src/lib/bff-v1/management.ts:3645,3721",
+        "strategy_id": "src/lib/bff-v1/management.ts:3647",
+        "persona_id": "src/lib/bff-v1/management.ts:3653,3722",
+        "symbol": "src/lib/bff-v1/management.ts:3654,3725",
+        "asset_class": "src/lib/bff-v1/management.ts:3655",
+        "side": "src/lib/bff-v1/management.ts:3656",
+        "quantity": "src/lib/bff-v1/management.ts:3657,3726",
+        "average_price": "src/lib/bff-v1/management.ts:3658",
+        "mark_price": "src/lib/bff-v1/management.ts:3659",
+        "market_value": "src/lib/bff-v1/management.ts:3660,3727",
+        "notional": "src/lib/bff-v1/management.ts:3661",
+        "weight_pct": "src/lib/bff-v1/management.ts:3662",
+        "unrealized_pnl": "src/lib/bff-v1/management.ts:3663,3728",
+        "realized_pnl": "src/lib/bff-v1/management.ts:3664",
+        "total_pnl": "src/management/pages/oversight/PerformanceAttribution.tsx:396",
+        "pnl_pct": "src/lib/bff-v1/management.ts:3665",
+        "exposure_pct": "src/lib/bff-v1/management.ts:3666",
+        "currency": "src/lib/bff-v1/management.ts:3669",
+        "deployment_stage": "src/lib/bff-v1/management.ts:3729",
+        "source_status": "src/lib/bff-v1/management.ts:3730",
+        "telemetry_stale": "src/lib/bff-v1/management.ts:3731",
+        "risk_state": "src/lib/bff-v1/management.ts:3732",
+        "source_issues": "src/lib/bff-v1/management.ts:3733",
+        "capital_scope": {
+          "stage": "src/lib/bff-v1/management.ts:3735",
+          "scope_kind": "src/lib/bff-v1/management.ts:3736",
+          "scope_id": "src/lib/bff-v1/management.ts:3737"
+        },
+        "last_mark_at": "src/lib/bff-v1/management.ts:3670",
+        "links": "src/lib/bff-v1/management.ts:3739, src/management/pages/oversight/PortfolioBook.tsx:284-290"
+      },
+      "incidents": {
+        "id": "src/lib/bff-v1/management.ts:3741",
+        "identity.portfolio_id": "src/lib/bff-v1/management.ts:3742",
+        "severity": "src/lib/bff-v1/management.ts:3743",
+        "message": "src/lib/bff-v1/management.ts:3744",
+        "risk_state": "src/lib/bff-v1/management.ts:3745",
+        "source_status": "src/lib/bff-v1/management.ts:3746",
+        "source_issues": "src/lib/bff-v1/management.ts:3747",
+        "links": "src/lib/bff-v1/management.ts:3748"
+      },
+      "surfaces": "src/lib/bff-v1/management.ts:3774-3775 (meta.surfaces.portfolio_book_holdings.status, message)"
     }
   },
   "test_classifications": [
+    {
+      "test": "test_capital_router.py::test_allocation_and_management_readbacks_retain_pool_and_risk_lineage",
+      "classification": "intended change",
+      "reason": "Eliminated legacy thin fallback response body (pool_count / pools) in capital/router.py per acceptance 1. The route now strictly produces the canonical PM12 projection shape with degraded surfaces when store lacks runtime bindings/telemetry."
+    },
+    {
+      "test": "test_bff_pm12_portfolio_book_contract.py::test_portfolio_book_summary_composes_pool_runtime_and_telemetry",
+      "classification": "intended change",
+      "reason": "Restored PM12 projection shape {data: {totalNav, summary, items}} for GET /bff/management/portfolio-book. Dropped unread fields (portfolio_book_status, capital_pool_count, approved_deployment_count)."
+    },
+    {
+      "test": "test_bff_pm12_portfolio_book_contract.py::test_portfolio_book_pools_returns_pool_risk_exposure_and_pnl",
+      "classification": "intended change",
+      "reason": "Restored PM12 projection shape {data: {summary, items}} for GET /bff/management/portfolio-book/pools. Dropped unread fields (pnl_summary, operator_links)."
+    },
+    {
+      "test": "test_bff_pm12_portfolio_book_contract.py::test_portfolio_book_exposure_composes_risk_budget_rollup",
+      "classification": "intended change",
+      "reason": "Restored PM12 projection shape {data: {id, summary, items}} for GET /bff/management/portfolio-book/exposure. Dropped unread fields (returned_exposure_count, exposure dict on exposure items, unread links)."
+    },
+    {
+      "test": "test_bff_pm12_portfolio_book_contract.py::test_portfolio_book_holdings_composes_global_holdings_table",
+      "classification": "intended change",
+      "reason": "Restored PM12 projection shape {data: {summary, items}} with source_coverage metrics and flat links for GET /bff/management/portfolio-book/holdings. Dropped unread fields (returned_holding_count, identity block, duplicate exposure dict)."
+    },
     {
       "test": "test_portfolio_book_positions_composes_global_positions_table",
       "classification": "retired",
@@ -240,33 +213,14 @@
       "test": "test_risk_radar_composes_persona_strategy_exposure_drawdown_and_var",
       "classification": "stale sample",
       "reason": "Aligned assertion with management_read_models risk-radar response envelope ('rows' presence) and metric field structure."
-    },
-    {
-      "test": "test_portfolio_book_summary_composes_pool_runtime_and_telemetry",
-      "classification": "intended change",
-      "reason": "Restored PM12 projection shape {data: {summary and items}} with filters and telemetry for GET /bff/management/portfolio-book."
-    },
-    {
-      "test": "test_portfolio_book_pools_returns_pool_risk_exposure_and_pnl",
-      "classification": "intended change",
-      "reason": "Restored PM12 projection shape {data: {summary and items}} for GET /bff/management/portfolio-book/pools."
-    },
-    {
-      "test": "test_portfolio_book_exposure_composes_risk_budget_rollup",
-      "classification": "intended change",
-      "reason": "Restored PM12 projection shape {data: {id, summary, items}} for GET /bff/management/portfolio-book/exposure."
-    },
-    {
-      "test": "test_portfolio_book_holdings_composes_global_holdings_table",
-      "classification": "intended change",
-      "reason": "Restored PM12 projection shape {data: {summary and items}} for GET /bff/management/portfolio-book/holdings."
     }
   ],
   "assertions_weakened": false,
   "compressed_code_used": false,
   "verification": {
-    "test_bff_pm12_portfolio_book_contract": "46 passed, 0 failed in 25.98s",
+    "test_bff_pm12_portfolio_book_contract": "46 passed, 0 failed in 23.42s",
     "test_bff_mgmt_common_filters": "4 passed, 0 failed in 4.90s",
-    "test_capital_router": "13 passed, 0 failed in 8.52s"
+    "test_capital_router": "13 passed, 0 failed in 8.52s",
+    "full_batch": "63 passed, 0 failed in 33.11s"
   }
 }
