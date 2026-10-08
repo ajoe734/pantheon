@@ -1,0 +1,97 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "SOURCE-INGEST-API-MARKET-TEST-DRIFT-20261008",
+  "title": "Update stale source-ingest API and market admission tests",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "execution",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "d7958d0c1f00fcc495825965760f11d1aeb5147c",
+  "objective": "Align stale source-ingest API, scheduler, and market admission tests with deliberate production changes (tenant-scoped read auth, operator-stop schedule guard, required snapshot market field, and mocked social fetch) without altering production code.",
+  "scope": {
+    "owned": [
+      "services/source_ingestion/tests/test_scheduled_connector.py: Set PANTHEON_RUNTIME_JWT_SECRET in fixture, default tenant_id to tenant-a on test connectors, supply tenant-scoped bearer headers on source-records GETs, and update disabled_connector exclusive-scope test to schedule an enabled connector before stopping it via PUT /lifecycle.",
+      "services/source_ingestion/tests/test_external_source_connectors.py: Set PANTHEON_RUNTIME_JWT_SECRET in _source_ingest_client fixture, supply tenant_id in connector metadata and _read_headers() on source-records and evidence/bundles GETs, and add tenant_id to search query access_context.",
+      "services/source_ingestion/tests/test_latest_market_snapshot_state.py: Update test_paper_signal_producer_rejects_missing_market_context_fail_closed and test_stored_marketless_spy_snapshot_becomes_market_bearing_and_admits_producer to assert market_input_missing with 'market' named in the detail, while preserving proof of subsequent market-bearing admission.",
+      "services/source_ingestion/tests/test_provider_management_coverage.py: Mock open_external_url for TDCC, TAIFEX, and StockTwits provider-owned adapter fetches in test_provider_owned_adapters_execute_bounded_fetches_when_payload_omitted, mirroring the existing FMP step so the test runs completely offline without external network dependency.",
+      "docs/deployment/evidence/SOURCE-INGEST-API-MARKET-TEST-DRIFT-20261008/evidence.json: This evidence manifest."
+    ],
+    "not_changing": [
+      "services/source_ingestion/routers/ingest_operations.py: Unmodified; tenant read auth and operator stop schedule checks remain intact.",
+      "services/source_ingestion/pipeline.py: Unmodified; scheduler exclusive-scope enforcement remains intact.",
+      "services/source_ingestion/runtime.py: Unmodified.",
+      "services/source_ingestion/provider_adapters.py: Unmodified.",
+      "services/source_ingestion/connectors/social.py: Unmodified.",
+      "services/knowledge/evidence/repository.py: Unmodified.",
+      "services/search/main.py: Unmodified.",
+      "services/execution/market_snapshot_admission.py: Unmodified; market required field check in admit_market_snapshot remains intact.",
+      "services/execution/lean_runtime/paper_signal_producer.py: Unmodified.",
+      "services/paper_fleet_reconciler/paper_fleet_reconciler.py: Unmodified."
+    ],
+    "composes_with": [
+      "Tenant-scoped source read auth introduced in 74f1f8386 (RANKING-OWNER-READ-AUTH-SEAMS-20261004).",
+      "Operator-stop schedule guard introduced in 67382fcf4 (DEV-PAPER-SOURCE-SCHEDULE-PREREQUISITE-20261007).",
+      "Canonical market snapshot admission introduced in c0656a1ff (DEV-PREREQUISITE-CANONICAL-SOURCE-AUTHORITY-20261008)."
+    ],
+    "deliberately_not_attempted": []
+  },
+  "implementation": {
+    "root_cause": "Tests in services/source_ingestion/tests drifted from production behavior following three deliberate architectural changes merged without CI running the source_ingestion test suite: (1) 74f1f8386 required tenant-scoped bearer authentication for private source GET endpoints; (2) 67382fcf4 rejected PUT /schedule for connectors with active operator stops; (3) c0656a1ff made 'market' a required field in admit_market_snapshot, returning market_input_missing before reaching market_context_missing; additionally, unmocked TDCC, TAIFEX, and StockTwits HTTP fetches encountered live network dependencies and Cloudflare 403 blocks.",
+    "deciding_commits": [
+      {
+        "commit": "74f1f83868c2bb952d1becc83d54faa85b5a6274",
+        "task_id": "RANKING-OWNER-READ-AUTH-SEAMS-20261004",
+        "classification": "tenant-scoped source read auth",
+        "detail": "Private source-records and evidence bundle GET endpoints enforce tenant authorization against tenant-owned records. Test fixtures now provision PANTHEON_RUNTIME_JWT_SECRET, tag test connectors with tenant_id, send _read_headers() on read endpoints, and supply tenant_id in search access_context."
+      },
+      {
+        "commit": "67382fcf48637ce9249842452b9a09c112393d04",
+        "task_id": "DEV-PAPER-SOURCE-SCHEDULE-PREREQUISITE-20261007",
+        "classification": "operator-stop schedule guard",
+        "detail": "PUT /connectors/{id}/schedule refuses configuration while an operator stop is active. The disabled connector exclusive-scope test now registers an enabled connector, sets its schedule, and then disables it via PUT /lifecycle, verifying fail-closed execution."
+      },
+      {
+        "commit": "c0656a1ff28c8ce42b0497077b4f4ebd4131bbcc",
+        "task_id": "DEV-PREREQUISITE-CANONICAL-SOURCE-AUTHORITY-20261008",
+        "classification": "required snapshot market field",
+        "detail": "admit_market_snapshot requires 'market' as a mandatory snapshot field, failing closed with code 'market_input_missing' and naming 'market' in the detail. Market tests now expect market_input_missing and preserve the proof that subsequent market-bearing records admit the producer."
+      }
+    ],
+    "solution": "Updated only the four test files to match canonical production expectations and mocked the TDCC, TAIFEX, and StockTwits external network requests so provider coverage runs offline. Zero production files modified."
+  },
+  "verification": {
+    "passed": [
+      {
+        "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/source_ingestion/tests/test_scheduled_connector.py",
+        "result": "44 passed, 1 warning"
+      },
+      {
+        "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/source_ingestion/tests/test_external_source_connectors.py",
+        "result": "10 passed, 1 warning"
+      },
+      {
+        "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/source_ingestion/tests/test_latest_market_snapshot_state.py",
+        "result": "16 passed"
+      },
+      {
+        "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/source_ingestion/tests/test_provider_management_coverage.py",
+        "result": "29 passed, 1 warning in 13.06s"
+      },
+      {
+        "command": "SOURCE_INGEST_DATA_DIR=$(mktemp -d) $PANTHEON_DEPENDENCY_PYTHON -m pytest services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_external_source_connectors.py services/source_ingestion/tests/test_latest_market_snapshot_state.py services/source_ingestion/tests/test_provider_management_coverage.py",
+        "result": "99 passed, 1 warning in 55.36s"
+      }
+    ],
+    "runner": {
+      "python": "3.12.3",
+      "pytest": "9.1.1"
+    },
+    "checksums": {
+      "services/source_ingestion/tests/test_scheduled_connector.py": "82b3af0d428b7014306c32bd67370d394b122befd2a68013924572b0c70fc562",
+      "services/source_ingestion/tests/test_external_source_connectors.py": "61a3c7fad4cb467bd32b45fbc1245fb74cc0ec304d7c0019cddb47e1b66886f0",
+      "services/source_ingestion/tests/test_latest_market_snapshot_state.py": "3ae0578a14d0f208cfbe1e6bb26aef878a467818b21d662231d83d79a927fc42",
+      "services/source_ingestion/tests/test_provider_management_coverage.py": "f38a14816e7ff5164faa8f2af3899e83361249c909ad85ecbc4a3b2b4d3f9d5e"
+    }
+  }
+}
