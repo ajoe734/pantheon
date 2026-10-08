@@ -47,14 +47,10 @@ from .service import EventStreamService
 
 from services.control_plane.bff.models import ErrorCode, OperatorIdentity
 
-try:
-    from services.control_plane.bff.auth.policy import (
-        bff_me_tenant_payload as _auth_bff_me_tenant_payload,
-        get_session_state as _auth_get_session_state,
-    )
-except ImportError:
-    _auth_bff_me_tenant_payload = None
-    _auth_get_session_state = None
+from services.control_plane.bff.auth.policy import (
+    bff_me_tenant_payload as _auth_bff_me_tenant_payload,
+    get_session_state as _auth_get_session_state,
+)
 
 log = logging.getLogger(__name__)
 
@@ -169,7 +165,7 @@ def _resolve_caller_tenant_scope(
     Enforces allowed tenant boundaries and fails closed for unauthorized requests.
     """
     session_tenant = None
-    if session_store is not None and _auth_get_session_state is not None:
+    if session_store is not None:
         try:
             s_state = _auth_get_session_state(identity, session_store)
             if isinstance(s_state, dict):
@@ -184,41 +180,40 @@ def _resolve_caller_tenant_scope(
     is_global: bool = False
 
     fn = tenant_payload_fn or _auth_bff_me_tenant_payload
-    if fn is not None:
-        try:
-            policy_ident = identity
-            if not hasattr(identity, "claims") or not isinstance(getattr(identity, "claims", None), dict):
-                claims: Dict[str, Any] = {}
-                t_id = _extract_field(identity, "tenant_id", "tenantId", "tenant")
-                if t_id:
-                    claims["tenant_id"] = t_id
-                t_allowed = getattr(identity, "allowed_tenants", None) or getattr(identity, "allowedTenants", None)
-                if t_allowed:
-                    if isinstance(t_allowed, (list, tuple, set)):
-                        claims["allowed_tenants"] = list(t_allowed)
-                    elif isinstance(t_allowed, str):
-                        claims["allowed_tenants"] = [t.strip() for t in t_allowed.split(",") if t.strip()]
-                op_id = getattr(identity, "operator_id", None) or getattr(identity, "actor_id", "op-user")
-                roles = getattr(identity, "roles", [])
-                if isinstance(roles, set):
-                    roles = sorted(roles)
-                elif not isinstance(roles, list):
-                    roles = list(roles) if roles else ["viewer"]
-                policy_ident = OperatorIdentity(
-                    operator_id=str(op_id),
-                    roles=roles,
-                    claims=claims,
-                    mfa_verified=bool(getattr(identity, "mfa_verified", False)),
-                )
-            t_payload = fn(policy_ident, requested_tenant=target_tenant)
-            effective_tenant = t_payload.get("id")
-            allowed_list = t_payload.get("allowed_ids") or []
-            allowed_tenants = set(allowed_list)
-            is_global = (t_payload.get("scope") == "global") or ("*" in allowed_tenants)
-        except HTTPException:
-            raise
-        except Exception as exc:
-            log.warning("Tenant payload policy resolution fallback: %s", exc)
+    try:
+        policy_ident = identity
+        if not hasattr(identity, "claims") or not isinstance(getattr(identity, "claims", None), dict):
+            claims: Dict[str, Any] = {}
+            t_id = _extract_field(identity, "tenant_id", "tenantId", "tenant")
+            if t_id:
+                claims["tenant_id"] = t_id
+            t_allowed = getattr(identity, "allowed_tenants", None) or getattr(identity, "allowedTenants", None)
+            if t_allowed:
+                if isinstance(t_allowed, (list, tuple, set)):
+                    claims["allowed_tenants"] = list(t_allowed)
+                elif isinstance(t_allowed, str):
+                    claims["allowed_tenants"] = [t.strip() for t in t_allowed.split(",") if t.strip()]
+            op_id = getattr(identity, "operator_id", None) or getattr(identity, "actor_id", "op-user")
+            roles = getattr(identity, "roles", [])
+            if isinstance(roles, set):
+                roles = sorted(roles)
+            elif not isinstance(roles, list):
+                roles = list(roles) if roles else ["viewer"]
+            policy_ident = OperatorIdentity(
+                operator_id=str(op_id),
+                roles=roles,
+                claims=claims,
+                mfa_verified=bool(getattr(identity, "mfa_verified", False)),
+            )
+        t_payload = fn(policy_ident, requested_tenant=target_tenant)
+        effective_tenant = t_payload.get("id")
+        allowed_list = t_payload.get("allowed_ids") or []
+        allowed_tenants = set(allowed_list)
+        is_global = (t_payload.get("scope") == "global") or ("*" in allowed_tenants)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.warning("Tenant payload policy resolution fallback: %s", exc)
 
     if effective_tenant is None and not is_global:
         claims = getattr(identity, "claims", None)
