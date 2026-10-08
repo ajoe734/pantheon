@@ -27,6 +27,8 @@ Verifies the convergence of Management read offloading onto a single bounded
 from __future__ import annotations
 
 import asyncio
+import io
+import json
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -325,4 +327,51 @@ def test_human_inbox_contributor_carries_caller_auth_context_and_projects_live_a
         # 3. Contributing surface status is ok (not degraded)
         surfaces = body["meta"]["surfaces"]
         assert surfaces.get("approval_queue", {}).get("status") == "ok"
+
+
+def test_human_inbox_persona_readiness_reads_persona_owner_with_caller_identity(
+    tmp_path, monkeypatch
+) -> None:
+    """The nested readiness bound must not replace the caller with a service token."""
+    from services.control_plane.bff.ports.persona_write_owner import PersonaRegistryHttpWritePort
+
+    captured_requests = []
+
+    def capture(request, *, timeout):
+        captured_requests.append({
+            "authorization": request.get_header("Authorization"),
+            "tenant": request.get_header("X-tenant-id"),
+            "thread": threading.current_thread().name,
+        })
+        return io.BytesIO(json.dumps([{
+            "persona_id": "persona-tenant-alpha",
+            "name": "Tenant Alpha Persona",
+            "lifecycle_state": "paper_owner",
+            "metadata": {"tenant_id": "tenant-alpha"},
+        }]).encode("utf-8"))
+
+    port = PersonaRegistryHttpWritePort(
+        base_url="http://persona-owner.invalid",
+        service_token="persona-service-token-not-for-callers",
+        opener=capture,
+    )
+    with _isolated_bff(tmp_path) as (client, store):
+        monkeypatch.setattr(
+            store,
+            "list_personas",
+            create_read_surface_ports(persona_registry_store=port).list_personas,
+        )
+        response = client.get(
+            "/bff/management/human-inbox",
+            headers={**HEADERS, "X-Tenant-Id": "tenant-alpha"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert captured_requests, "persona readiness never reached the Persona owner"
+    for request in captured_requests:
+        assert request["authorization"] == HEADERS["Authorization"], captured_requests
+        assert request["authorization"] != "Bearer persona-service-token-not-for-callers"
+        assert request["tenant"] == "tenant-alpha"
+        assert request["thread"].startswith("bff-human-inbox-read")
+    assert response.json()["meta"]["surfaces"]["persona_readiness"]["status"] == "ok"
 

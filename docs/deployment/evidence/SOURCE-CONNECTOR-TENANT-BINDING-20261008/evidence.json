@@ -1,0 +1,66 @@
+{
+  "task_id": "SOURCE-CONNECTOR-TENANT-BINDING-20261008",
+  "change_class": "corrective",
+  "title": "Bind API-created source connectors to the authenticated caller tenant",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "summary": "Enforce tenant binding on API-created source connectors. POST /api/source-ingest/connectors for non-controller connectors requires an authenticated write-capable principal (operator, admin, persona.admin) and binds the resolved caller tenant to connector metadata.tenant_id. Requests with mismatched explicit tenant or unresolvable tenant fail closed with 403 TENANT_SCOPE_DENIED. Lifecycle and schedule writes require a caller admitted for the connector's tenant. Controller-owned connectors continue using the existing controller-token fence. All in-repo callers, e2e clients, and smoke scripts now provide authenticated write headers.",
+  "acceptance_verification": {
+    "ac1_write_capable_auth_and_tenant_binding": "passed: configure_connector requires write-capable role (operator, admin, persona.admin) and stamps resolved caller tenant into connector.metadata['tenant_id']",
+    "ac2_tenant_mismatch_and_unresolvable_rejected": "passed: explicit metadata.tenant_id mismatch or unresolvable tenant raises HTTP 403 TENANT_SCOPE_DENIED and persists nothing",
+    "ac3_lifecycle_and_schedule_mutation_tenant_fence": "passed: set_connector_lifecycle and set_connector_schedule verify caller is admitted for connector's tenant or raise 403 TENANT_SCOPE_DENIED",
+    "ac4_controller_owned_connector_fence_preserved": "passed: tw-twse-tpex-official-market and dev-paper-us-equity-simulation remain governed by existing _fence_managed_connector_mutation and controller token",
+    "ac5_single_auth_path_no_default_fallback": "passed: reuses existing _source_read_tenant and services.runtime_auth_inbound.validate_request_auth; no second auth path or invented default tenant fallback",
+    "ac6_all_in_repo_callers_send_bearer": "passed: shared e2e source client in test_lean_market_data_order_memory_e2e.py, L12 deployed connector command in test_current_research_loops_deployed_e2e.py, and smoke scripts (smoke_honest_stack.py, smoke_source_search_bounded.py, run_source_search_live_connector_smoke.py) send bearer auth",
+    "ac7_tests_and_hosted_readback": "passed: services/source_ingestion/tests, e2e, and l12 tests pass; hosted dev volume inspection confirms no tenantless API connector exists",
+    "ac8_exact_reviewed_head_ready": "passed: all 19 declared scoped artifacts verified; line budget satisfied; ready for per-task PR review and merge"
+  },
+  "hosted_connectors_readback": {
+    "inspection_mode": "read_only_volume_get",
+    "target_volume": "pantheon_source-ingest-data",
+    "store_path": "/data/connector_config.jsonl",
+    "total_connectors": 1,
+    "connectors": [
+      {
+        "connector_id": "tw-twse-tpex-official-market",
+        "controller_owned": true,
+        "managed_by": "persona_source_provisioning_reconciler",
+        "tenant_id_provenance": "controller_state.json",
+        "status": "enabled"
+      }
+    ],
+    "tenantless_api_connectors_count": 0,
+    "migration_required": false
+  },
+  "diff_budget": {
+    "net_prod_line_budget": 60,
+    "production_files_detail": {
+      "services/source_ingestion/routers/ingest_operations.py": {
+        "insertions": 56,
+        "deletions": 19,
+        "net": 37
+      },
+      "services/source_ingestion/runtime.py": {
+        "insertions": 8,
+        "deletions": 2,
+        "net": 6
+      }
+    },
+    "core_production_net_lines": 43,
+    "core_budget_satisfied": true
+  },
+  "verification_commands": [
+    "PYTHONPATH=. pytest services/source_ingestion/test_service.py",
+    "PYTHONPATH=. pytest services/source_ingestion/tests/test_latest_market_snapshot.py",
+    "PYTHONPATH=. pytest services/source_ingestion/tests/test_market_data_foundation.py",
+    "PYTHONPATH=. pytest services/source_ingestion/tests/test_e2e_source_ingest_distillation_acceptance.py",
+    "PYTHONPATH=. pytest services/source_ingestion/tests/test_product_v2_source_distillation_r3.py",
+    "PYTHONPATH=. pytest services/source_ingestion/tests/test_scheduled_connector.py",
+    "PYTHONPATH=. pytest services/source_ingestion/tests/test_scheduler.py",
+    "PYTHONPATH=. pytest services/source_ingestion/tests/test_external_source_connectors.py",
+    "PYTHONPATH=. pytest services/source_ingestion/test_compose_activation.py",
+    "PYTHONPATH=. pytest tests/e2e/test_lean_market_data_order_memory_e2e.py",
+    "PYTHONPATH=. pytest tests/integration/l12/test_current_research_loops_deployed_e2e.py",
+    "PYTHONPATH=. pytest scripts/test_smoke_source_search_bounded.py"
+  ]
+}

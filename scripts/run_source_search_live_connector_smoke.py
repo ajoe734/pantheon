@@ -52,6 +52,22 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _source_write_headers(tenant_id: str = "tenant-dev") -> dict[str, str]:
+    secret = os.environ.get("PANTHEON_RUNTIME_JWT_SECRET")
+    if secret:
+        try:
+            from services.runtime_auth_inbound import encode_jwt_hs256
+
+            token = encode_jwt_hs256(
+                {"sub": "smoke-operator", "roles": ["operator"], "tenant_id": tenant_id, "exp": int(time.time()) + 3600},
+                secret=secret,
+            )
+            return {"Authorization": f"Bearer {token}"}
+        except ImportError:
+            pass
+    return {"Authorization": f"Bearer {tenant_id}:operator"}
+
+
 def _write_evidence(payload: dict[str, Any]) -> None:
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_PATH.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -254,6 +270,7 @@ def run() -> dict[str, Any]:
                 "respect_robots_txt": os.getenv("SOURCE_SEARCH_LIVE_RESPECT_ROBOTS", "true").lower() not in {"0", "false", "no"},
             },
         },
+        headers=_source_write_headers(),
     )
     if status != 201:
         raise RuntimeError(f"connector configuration failed: {status} {configured}")

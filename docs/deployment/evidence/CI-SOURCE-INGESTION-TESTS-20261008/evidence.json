@@ -1,0 +1,19 @@
+{
+  "task_id": "CI-SOURCE-INGESTION-TESTS-20261008",
+  "change": "Smoke acceptance runs services/source_ingestion/tests unconditionally with a fresh mktemp SOURCE_INGEST_DATA_DIR, directory alone, no deselect/ignore flags",
+  "dependencies": "no change; root requirements.txt already suffices (verified in a clean venv: 1014 passed, 4 skipped; skips are environment-conditional: real-PG test and Linux-only guard)",
+  "passing_run": {
+    "pr": "https://github.com/ajoe734/pantheon/pull/6415",
+    "run": "https://github.com/ajoe734/pantheon/actions/runs/37778697992",
+    "head": "d4e9c0dfa0638ea32b7a79876471bd16c8c8823d",
+    "smoke_acceptance_total": "7m46s",
+    "added_minutes_approx": "about 3 (step log timestamps between Verify workflow contract and sandbox boundaries step)"
+  },
+  "failing_proof": {
+    "pr": "https://github.com/ajoe734/pantheon/pull/6418 (draft, closed unmerged, branch deleted)",
+    "run": "https://github.com/ajoe734/pantheon/actions/runs/37779886119",
+    "result": "Smoke acceptance failed: 1 failed, 1014 passed, 4 skipped; step 'Run source ingestion tests' exited non-zero"
+  },
+  "unchanged": ["GitHub branch protection required contexts", ".orchestrator/config.json required_status_checks"],
+  "open_item": "Pantheon canonical review gate needs a review-proof tag for the exact head from the reviewer (Antigravity2) before merge"
+}

@@ -127,18 +127,37 @@ def _is_timeout_error(exc: BaseException) -> bool:
     )
 
 
+def _source_write_headers(tenant_id: str = "tenant-dev") -> dict[str, str]:
+    secret = os.environ.get("PANTHEON_RUNTIME_JWT_SECRET")
+    if secret:
+        try:
+            from services.runtime_auth_inbound import encode_jwt_hs256
+
+            token = encode_jwt_hs256(
+                {"sub": "smoke-operator", "roles": ["operator"], "tenant_id": tenant_id, "exp": int(time.time()) + 3600},
+                secret=secret,
+            )
+            return {"Authorization": f"Bearer {token}"}
+        except ImportError:
+            pass
+    return {"Authorization": f"Bearer {tenant_id}:operator"}
+
+
 def _request_json(
     method: str,
     url: str,
     *,
     body: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
     timeout: float = 10,
 ) -> tuple[int, dict[str, Any]]:
     payload = None if body is None else json.dumps(body).encode("utf-8")
-    headers = {"Accept": "application/json"}
+    request_headers = {"Accept": "application/json"}
     if payload is not None:
-        headers["Content-Type"] = "application/json"
-    request = urllib.request.Request(url, data=payload, headers=headers, method=method)
+        request_headers["Content-Type"] = "application/json"
+    if headers:
+        request_headers.update(headers)
+    request = urllib.request.Request(url, data=payload, headers=request_headers, method=method)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             text = response.read().decode("utf-8")
@@ -160,11 +179,14 @@ def _request_for_phase(
     url: str,
     *,
     body: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
     timeout_seconds: float | None = None,
 ) -> tuple[int, dict[str, Any]]:
     budget.begin_phase(phase, connector_id=connector_id)
     timeout = budget.request_timeout(timeout_seconds)
     try:
+        if headers is not None:
+            return _request_json(method, url, body=body, headers=headers, timeout=timeout)
         return _request_json(method, url, body=body, timeout=timeout)
     except Exception as exc:
         if not _is_timeout_error(exc):
@@ -331,6 +353,7 @@ def main() -> int:
                 "records": [_record(f"src-bounded-static-{suffix}", token)],
             },
         },
+        headers=_source_write_headers(),
     )
     if status != 201 or configured_static.get("fetch", {}).get("mode") != "static_records":
         raise RuntimeError(f"static_records connector configuration failed: {status} {configured_static}")
@@ -383,6 +406,7 @@ def main() -> int:
                     "default_access_scope": ["operator", "research"],
                 },
             },
+            headers=_source_write_headers(),
         )
         if status != 201 or configured_feed.get("fetch", {}).get("mode") != "external_feed":
             raise RuntimeError(f"external_feed connector configuration failed: {status} {configured_feed}")
@@ -467,6 +491,7 @@ def main() -> int:
                 "records": [_record(f"src-bounded-replay-{suffix}", token)],
             },
         },
+        headers=_source_write_headers(),
     )
     if status != 201:
         raise RuntimeError(f"DLQ replay connector configuration failed: {status} {replay_config}")
@@ -517,6 +542,7 @@ def main() -> int:
                 "records": [_record(f"src-bounded-scheduled-{suffix}", token)],
             },
         },
+        headers=_source_write_headers(),
     )
     if status != 201:
         raise RuntimeError(f"scheduled connector configuration failed: {status} {sched_config}")
@@ -528,6 +554,7 @@ def main() -> int:
         "PUT",
         f"{SOURCE_INGEST_URL}/api/source-ingest/connectors/{connector_ids['scheduled']}/schedule",
         body={"interval_seconds": 1, "enabled": True},
+        headers=_source_write_headers(),
     )
     if status != 200 or schedule.get("schedule", {}).get("enabled") is not True:
         raise RuntimeError(f"schedule enable failed: {status} {schedule}")
