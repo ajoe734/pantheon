@@ -3062,26 +3062,43 @@ retire_dormant_and_one_off_profile_containers() {
 verify_dev_paper_fleet() {
   local attempt
   local status=""
+  local summary=""
 
   for attempt in $(seq 1 30); do
     status="$(curl -fsS http://127.0.0.1:18011/readyz 2>/dev/null || true)"
-    if python3 -c '
+    if summary="$(python3 -c '
 import json
 import sys
 
 payload = json.loads(sys.argv[1])
 workers = list(payload.get("workers") or [])
-assert payload.get("ready") is True
-assert payload.get("live") is True
-assert payload.get("last_error") in (None, "")
-assert payload.get("monitoring_last_error") in (None, "")
+ready = payload.get("ready") is True
+live = payload.get("live") is True
+worker_count = int(payload.get("worker_count") or 0)
+running_count = int(payload.get("running_count") or 0)
+last_error = payload.get("last_error")
+mon_error = payload.get("monitoring_last_error")
+
+print(json.dumps({
+    "last_error": last_error,
+    "live": live,
+    "monitoring_last_error": mon_error,
+    "ready": ready,
+    "running_count": running_count,
+    "worker_count": worker_count,
+}, sort_keys=True))
+
+assert ready
+assert live
+assert last_error in (None, "")
+assert mon_error in (None, "")
 assert int(payload.get("cycle_count") or 0) >= 1
-assert int(payload.get("worker_count") or 0) == int(payload.get("running_count") or 0)
+assert worker_count == running_count
 assert all(worker.get("status") == "running" for worker in workers)
 assert all(worker.get("heartbeat_status") == "active" for worker in workers)
-' "$status" 2>/dev/null; then
+' "$status" 2>/dev/null)"; then
       info "paper fleet reconciler is ready and all desired workers are active"
-      printf '%s\n' "$status"
+      printf '%s\n' "$summary"
       return 0
     fi
     sleep 2
@@ -3090,7 +3107,7 @@ assert all(worker.get("heartbeat_status") == "active" for worker in workers)
   info "paper fleet reconciler did not converge"
   docker compose -p pantheon -f docker-compose.yml ps -a paper-fleet-reconciler || true
   docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=240 paper-fleet-reconciler || true
-  printf '%s\n' "$status"
+  printf '%s\n' "${summary:-{\"error\": \"paper fleet reconciler did not converge\", \"live\": false, \"ready\": false}}"
   return 1
 }
 

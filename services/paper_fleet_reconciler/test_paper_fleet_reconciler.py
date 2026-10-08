@@ -2522,6 +2522,93 @@ class TestPaperFleetTaiwanSessionFreshness(unittest.TestCase):
         self.assertEqual(adm["reason_code"], "market_input_calendar_unverifiable")
 
 
+class TestPaperFleetReadyzAndMonitoringSessionBounds(unittest.TestCase):
+    def test_readyz_filters_ended_sessions_and_reports_running_only(self) -> None:
+        from paper_fleet_reconciler import PaperFleetReconciler, _Handler
+
+        with tempfile.TemporaryDirectory() as td:
+            store_path = Path(td) / "monitoring_sessions.json"
+            recon = PaperFleetReconciler(
+                monitoring_session_store_path=str(store_path),
+                leader_store=_unit_leader_store(),
+            )
+
+            # Set up 69 ended and 17 running sessions (reproducing hosted measurement)
+            sessions = {}
+            for i in range(69):
+                sid = f"prmon-ended-{i:03d}"
+                sessions[sid] = {
+                    "session_id": sid,
+                    "id": sid,
+                    "binding_id": f"b-ended-{i % 17}",
+                    "status": "ended",
+                    "ended_at": f"2026-10-07T{i % 24:02d}:00:00Z",
+                    "started_at": f"2026-10-06T{i % 24:02d}:00:00Z",
+                    "ended_reason": "superseded_by_restart",
+                }
+            for i in range(17):
+                sid = f"prmon-running-{i:03d}"
+                sessions[sid] = {
+                    "session_id": sid,
+                    "id": sid,
+                    "binding_id": f"b-running-{i}",
+                    "status": "running",
+                    "ended_at": None,
+                    "started_at": f"2026-10-08T00:{i:02d}:00Z",
+                    "ended_reason": None,
+                }
+            recon._monitoring_sessions = sessions
+            recon._cycle_count = 1
+
+            # Full internal snapshot includes all 86
+            full_snap = recon.snapshot(include_ended_monitoring_sessions=True)
+            self.assertEqual(len(full_snap["monitoring_sessions"]), 86)
+            self.assertEqual(full_snap["monitoring_session_count"], 86)
+            self.assertEqual(full_snap["active_monitoring_session_count"], 17)
+            self.assertEqual(full_snap["ended_monitoring_session_count"], 69)
+
+            # readyz snapshot filters ended sessions to only the 17 running ones
+            readyz_snap = recon.snapshot(include_ended_monitoring_sessions=False)
+            self.assertEqual(len(readyz_snap["monitoring_sessions"]), 17)
+            self.assertEqual(readyz_snap["monitoring_session_count"], 17)
+            self.assertEqual(readyz_snap["active_monitoring_session_count"], 17)
+            self.assertEqual(readyz_snap["ended_monitoring_session_count"], 69)
+            self.assertTrue(all(s.get("active") is True for s in readyz_snap["monitoring_sessions"]))
+            self.assertTrue(all(s.get("status") == "running" for s in readyz_snap["monitoring_sessions"]))
+
+            # Verify HTTP _Handler on /readyz returns only 17 running sessions
+            handler = _Handler.__new__(_Handler)
+            handler.path = "/readyz"
+            written = {}
+
+            def fake_write_json(code: int, body: Dict[str, Any]) -> None:
+                written["code"] = code
+                written["body"] = body
+
+            handler._write_json = fake_write_json
+
+            with patch("paper_fleet_reconciler.get_reconciler", return_value=recon):
+                handler.do_GET()
+
+            self.assertEqual(written["code"], 200)
+            payload = written["body"]
+            self.assertTrue(payload.get("ready"))
+            self.assertTrue(payload.get("live"))
+            self.assertEqual(len(payload["monitoring_sessions"]), 17)
+            self.assertEqual(payload["monitoring_session_count"], 17)
+            self.assertEqual(payload["active_monitoring_session_count"], 17)
+            self.assertEqual(payload["ended_monitoring_session_count"], 69)
+
+            # Persistence capping (AC 3): persisting state caps ended sessions so they do not accumulate without bound
+            recon._persist_monitoring_sessions()
+            persisted = json.loads(store_path.read_text(encoding="utf-8"))
+            persisted_sessions = persisted["monitoring_sessions"]
+            # Active (17) + capped ended (at most 20) <= 37
+            self.assertLessEqual(len(persisted_sessions), 37)
+            ended_persisted = [s for s in persisted_sessions if s.get("status") == "ended"]
+            self.assertLessEqual(len(ended_persisted), 20)
+
+
 if __name__ == "__main__":
     import sys
     sys.path.insert(0, str(Path(__file__).parent))
