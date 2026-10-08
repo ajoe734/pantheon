@@ -80,14 +80,15 @@ def test_teaching_worker_and_agora_service_boundaries_are_exact() -> None:
     teaching_api = _env("training-session-svc")
     teaching_worker = _env("training-session-preview-worker")
     teaching_token = _default(teaching_worker["TRAINING_SESSION_WORKER_TOKEN"])
+    assert teaching_api["TRAINING_SESSION_JWT_SECRET"] == (
+        "${TRAINING_SESSION_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}"
+    )
     teaching_context = validate_request_auth(
         authorization=f"Bearer {teaching_token}",
         required_roles=("training-service",),
         env={
             "PANTHEON_RUNTIME_AUTH_MODE": "strict",
-            "PANTHEON_RUNTIME_JWT_SECRET": _default(
-                teaching_api["TRAINING_SESSION_JWT_SECRET"]
-            ),
+            "PANTHEON_RUNTIME_JWT_SECRET": "pantheon-local-training-session-jwt-secret",
         },
     )
     assert teaching_context.actor_id == "training-session-preview-worker"
@@ -211,15 +212,16 @@ def test_bff_health_registry_uses_real_typed_paths_and_telemetry_identity() -> N
     assert telemetry["PANTHEON_TELEMETRY_INFRA_PRODUCERS"] == (
         "${PANTHEON_TELEMETRY_INFRA_PRODUCERS:-control-plane-bff}"
     )
+    assert telemetry["PANTHEON_TELEMETRY_JWT_SECRET"] == (
+        "${PANTHEON_TELEMETRY_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}"
+    )
     health_token = _default(bff["PANTHEON_BFF_HEALTH_TELEMETRY_JWT"])
     health_context = validate_request_auth(
         authorization=f"Bearer {health_token}",
         required_roles=("service",),
         env={
             "PANTHEON_RUNTIME_AUTH_MODE": "strict",
-            "PANTHEON_RUNTIME_JWT_SECRET": _default(
-                telemetry["PANTHEON_TELEMETRY_JWT_SECRET"]
-            ),
+            "PANTHEON_RUNTIME_JWT_SECRET": "pantheon-local-telemetry-jwt-secret",
         },
     )
     assert health_context.claims["allowed_tenants"] == [
