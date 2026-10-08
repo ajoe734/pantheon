@@ -1,0 +1,20 @@
+{
+  "task_id": "BFF-OWNER-UNAVAILABLE-503-CONSISTENCY-20261007",
+  "decision": "owner unavailable -> 503 DEPENDENCY_UNAVAILABLE retryable (capital convention, ed2951d76); known missing id with available source stays 404",
+  "production_fixes": [
+    {"route": "GET /bff/research-analyses/{id}, /api/v1/research/analyses/{id}", "change": "research/routes/analyses.py maps ResearchNotFoundError to 503 when the research_analyses surface is unavailable (was 404 since the 8/30 router split)"},
+    {"route": "GET /bff/personas/{id}, GET /api/v1/operator/persona-management/{id}", "change": "personas read surface unavailable -> 503 before the 404 (same rule as /api/v1/personas/{id})"},
+    {"route": "GET /bff/strategies/{id}/experiments", "change": "ResearchWriteOwnerUnavailableError mapped to 503"},
+    {"route": "GET /bff/management/quarterly-ranking", "change": "paper fleet reconciler failures raise PaperReconcilerUnavailableError (RuntimeError subclass) and personas/routes/ranking.py maps it to 503 (was 500)"}
+  ],
+  "test_expectation_changes": [
+    {"test": "test_execute_plans_final_detail_missing_source_returns_degraded_dto (renamed ..._returns_503_dependency_unavailable)", "classification": "intended change", "decision": "task BFF-OWNER-UNAVAILABLE-503-CONSISTENCY-20261007 default; capital convention ed2951d76. The 200 degraded DTO contract was replaced by 503 plus retryable; the assertion is stricter on error code, not weaker."},
+    {"test": "test_execute_plans_final_seeded_detail_paths_use_read_model_dtos (fixture only)", "classification": "stale sample", "decision": "persona fixture had no tenant_id so the tenant boundary (_persona_record_tenant_id, 708ee6f41) hid it; seeded tenant pantheon-dev. Tools/skills/MCP are now seeded through the read store consumed by IntegrationsService instead of legacy bff_main registries. Assertions unchanged."}
+  ],
+  "new_tests": "services/control-plane/bff/tests/test_owner_unavailable_503_consistency.py",
+  "verification": {
+    "command": "pytest research_router, console_research_projection, persona_router, pm12_persona_league, read_surface_paper_fleet_owner, read_surface_port_cutover, persona_provisioning_reconcile, owner_unavailable_503_consistency, consol_017_detail_smoke_b, execute_plans_final_live_wiring_contract",
+    "result": "165 passed, 1 skipped, 1 failed",
+    "preexisting_failure": "tests/test_read_surface_port_cutover.py::TestResearchKnowledgeSourcePortCutover::test_knowledge_and_research_lists fails identically on the base branch without these changes (list_research_notes returns 0); not caused by this task and not in its listed test files"
+  }
+}

@@ -212,7 +212,7 @@ jobs:
       - name: Install test dependencies
         run: |
           python3 -m pip install --upgrade pip "setuptools>=68"
-          python3 -m pip install -r requirements.txt pytest
+          python3 -m pip install -r requirements.txt
 
       # Same entry point the auto-worker test bootstrap uses (see
       # AI_COLLABORATION_GUIDE.md § Python Test Environment Provisioning), so CI
@@ -266,23 +266,10 @@ jobs:
             --ro-bind / / --dev-bind /dev /dev --proc /proc -- /bin/true
           echo "Real worker sandbox capability probe passed (exit 0)"
 
-      - name: Install deps (best-effort)
+      - name: Install test dependencies
         run: |
-          if [[ -f requirements.txt ]]; then
-            python3 -m pip install --upgrade pip
-            pip install -r requirements.txt || true
-          fi
-          if [[ -f requirements-dev.txt ]]; then
-            pip install -r requirements-dev.txt || true
-          fi
-          # The tooling smoke imports canonical signature and boundary helpers.
-          # Keep these explicit: requirements.txt intentionally does not pull
-          # product service dependencies into a tooling-only change.
-          python3 -m pip install cryptography pyyaml "pydantic>=2" pytest
-          # BFF test architecture gate below collects services/control-plane/bff/tests/
-          # conftest.py, which imports httpx even though this job does not otherwise
-          # exercise BFF runtime deps.
-          python3 -m pip install httpx fastapi
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt
 
       - name: BFF test architecture gate
         run: |
@@ -361,6 +348,7 @@ jobs:
             .orchestrator/development_bridge/tests/test_dev_bridge_inbox_cli.py \
             .orchestrator/development_bridge/tests/test_dev_bridge_reliability.py \
             .orchestrator/test_worker_runner_heartbeat.py \
+            scripts/dev/test_ensure_worker_test_python.py \
             scripts/test_promote_supervisor_runtime.py \
             scripts/test_provision_live_supervisor_config.py \
             scripts/test_bootstrap_orchestrator_runtime.py \
@@ -389,6 +377,11 @@ jobs:
         if: steps.boundary.outputs.delivery_touched == 'true'
         run: |
           PYTHONPATH=.orchestrator python3 -m pytest -q \
+            scripts/test_dev_environment_lease.py \
+            scripts/test_dev_environment_lease_guard.py \
+            scripts/test_dev_environment_lease_deploy_contract.py::test_controller_checkout_is_an_exact_immutable_separate_trust_root \
+            scripts/test_dev_environment_lease_deploy_contract.py::test_controller_checksums_match_pinned_controller_files \
+            scripts/test_dev_environment_lease_deploy_contract.py::test_compensation_and_other_lease_callers_use_the_repaired_controller \
             scripts/test_auto_deploy_dev_pair.py \
             scripts/test_cross_repo_release_controller.py \
             scripts/test_capture_dev_artifact_baseline.py \

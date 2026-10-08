@@ -799,3 +799,4 @@ def test_us_simulation_connector_not_offered_outside_dev_env(
     assert action.connector_id is None
     assert connector_store.get_config("dev-paper-us-equity-simulation") is None
     assert schedule_store.get_schedule("dev-paper-us-equity-simulation") is None
+

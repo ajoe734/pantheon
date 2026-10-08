@@ -58,7 +58,9 @@ probe (`.orchestrator/provider_permissions.py`) now bind an explicit
 authoritative failure envelope, `detect_worker_failure` falls back to
 scanning that bound native log (newest line first, so a later actual
 failure supersedes an earlier not-logged-in startup notice) for a
-provider-native quota/auth marker; the probe merges the same native log text
+provider-native quota/auth marker. An auth marker followed by a later
+`authenticated successfully` line is superseded, matching the probe lifecycle;
+quota markers are never skipped. The probe merges the same native log text
 into its stdout/stderr classification before deciding readiness. Neither
 path introduces a new classifier, cooldown store, or recovery authority: the
 existing `classify_worker_failure` terminal-quota markers and the existing

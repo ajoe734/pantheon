@@ -1,0 +1,36 @@
+{
+  "task_id": "L12-RESEARCH-SUITE-IMPORT-20261008",
+  "base_sha": "5b5e60669",
+  "failure": {
+    "gate_run": "37731306400",
+    "candidate": "674fe6253",
+    "observed": "FAILED test_current_research_loops_deployed_e2e.py::test_deployed_source_ingestion_identity_chain - first deployed boundary failed: source_ingestion / source.owner_compose_identity: name 'compose_file_args' is not defined",
+    "introduced_by": "ac5c0437f (L12-GATE-RUNTIME-CONTRACT-20261008, PR #6337, merged 2026-10-08 01:41Z) added argv.extend(compose_file_args()) to the research suite without updating its l12_owner_auth import",
+    "why_unnoticed": "The call is inside the deployed-suite path that only runs in the isolated gate; ordinary unit tests and collection do not execute it, and the operator's local runs exercised only the runtime suite."
+  },
+  "change": [
+    "tests/integration/l12/test_current_research_loops_deployed_e2e.py imports compose_file_args from l12_owner_auth.",
+    "scripts/test_run_isolated_l12_runtime_e2e.py gains a static test that parses every tests/integration/l12 suite and fails when a suite calls an l12_owner_auth helper without importing it."
+  ],
+  "validation": {
+    "guard_on_unfixed_suite": "1 failed: ['test_current_research_loops_deployed_e2e.py: compose_file_args'] (commit 1 of this branch)",
+    "harness_tests_at_head": "pytest -q scripts/test_run_isolated_l12_runtime_e2e.py: 33 passed",
+    "collection": "pytest --collect-only tests/integration/l12/: 32 tests collected"
+  },
+  "review_status": "Author validation only; independent exact-head review by the assigned reviewer pending.",
+  "delivery_verification": {
+    "verifier": "Claude",
+    "head": "dda664940e464ce781f4605f3652d500dab3fdc2",
+    "commands": [
+      {
+        "command": "pytest -q scripts/test_run_isolated_l12_runtime_e2e.py",
+        "result": "33 passed"
+      },
+      {
+        "command": "pytest --collect-only tests/integration/l12/",
+        "result": "32 tests collected"
+      }
+    ],
+    "note": "Run via uv ephemeral pytest at head dda664940; no suite or test changed."
+  }
+}

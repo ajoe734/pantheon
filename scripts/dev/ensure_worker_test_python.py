@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Build the shared test interpreter that auto-workers receive as PANTHEON_DEPENDENCY_PYTHON.
 
-Each build lives in ``<parent>/<hash>``, where the hash covers
-scripts/dev/worker-test-requirements.txt and requirements.txt. A build counts only once its
+Each build lives in ``<parent>/<hash>``, where the hash covers every file in
+REQUIREMENTS. A build counts only once its
 ``.ready`` marker exists, and the marker is written after the imports are
 proven. ``<parent>/current`` is switched atomically to the newest ready build,
 so a worker never sees a half-installed venv. The newest few builds are kept
@@ -22,8 +22,12 @@ import sys
 from pathlib import Path
 from typing import Callable
 
-REQUIREMENTS = ("scripts/dev/worker-test-requirements.txt", "requirements.txt")
-PROBE = "import pytest, fastapi, httpx, pydantic, yaml, cryptography, flask, jsonschema"
+REQUIREMENTS = (
+    "requirements.txt",
+    "services/control-plane/bff/requirements.txt",
+    "services/research/runtime-requirements.txt",
+)
+PROBE = "import pytest, fastapi, httpx, pydantic, yaml, cryptography, flask, jsonschema, psycopg, QuantLib, numpy"
 READY = ".ready"
 KEEP = 3
 
@@ -56,7 +60,8 @@ def ensure(
         shutil.rmtree(build, ignore_errors=True)  # leftover from an interrupted build
         run([python, "-m", "venv", str(build)], check=True)
         pip = [str(interpreter), "-m", "pip", "install", "--quiet", "--disable-pip-version-check"]
-        run([*pip, "-r", str(root / REQUIREMENTS[0])], check=True, cwd=root)
+        req_args = [arg for name in REQUIREMENTS for arg in ("-r", str(root / name))]
+        run([*pip, *req_args], check=True, cwd=root)
         run([str(interpreter), "-c", PROBE], check=True)
         (build / READY).write_text(digest + "\n")
 

@@ -377,6 +377,10 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         allowed_host_patterns=("openapi.twse.com.tw", "www.twse.com.tw", "www.tpex.org.tw"),
         definition_state=DefinitionState.SUPPORTED,
         test_manifest_ref="evidence://connector-definition/tw-twse-tpex-official-market",
+        metadata={
+            "feature_targets": ("returns",),
+            "storage_targets": ("normalized/tw_price_daily", "features/returns"),
+        },
     ),
     ConnectorDefinition(
         definition_id="tw-finmind-datasets",

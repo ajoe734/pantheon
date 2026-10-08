@@ -1,0 +1,33 @@
+{
+  "task_id": "TRAINING-TW-FEATURE-DATASET-AUTHORITY-20261007",
+  "change_class": "corrective",
+  "summary": "Repair canonical TW feature DatasetVersion admission by declaring feature_targets and storage_targets on tw-twse-tpex-official-market, generating checksummed returns feature rows in MarketDataStorageWriter, restoring strict feature_refs enforcement in source_dataset_authority, and verifying end-to-end admission through evaluation authority without relaxing schemas or assertions.",
+  "diagnosis": {
+    "run_id": "37697565949",
+    "failure_sha": "a50197cd5c44f15911daa266f28a154bebf01f8e",
+    "actual_gha_observation": "In qualification run 37697565949 at a50197cd5c44f15911daa266f28a154bebf01f8e, L4 preview evaluation job failed with: 'RuntimeError: Teaching evaluation job failed: evaluation_admission_rejected: dataset DatasetVersion schema validation failed at feature_dataset_refs: [] should be non-empty'.",
+    "root_cause": "The TW official market connector (tw-twse-tpex-official-market) did not declare feature_targets in its connector definition or adapter metadata, causing MarketDataStorageWriter to produce empty feature_refs. In commit a1e35f949, source_dataset_authority.py was relaxed to allow empty feature_refs when the connector did not declare feature targets, emitting feature_dataset_refs: []. Downstream, load_evaluation_authority strictly validated against canonical dataset_version.schema.json which enforces minItems: 1 on feature_dataset_refs, failing evaluation admission.",
+    "producer_consumer_mismatch": "Existing MarketDataStorageWriter already supported writing feature target rows to features/{feature_dataset}/date={date}/{run_id}.jsonl, but tw-twse-tpex-official-market metadata was missing feature_targets ('returns') matching active universe policy ('features/returns'). Reconciling the producer metadata with the materializer restored real checksummed feature artifacts without fabricated refs or aliases."
+  },
+  "fix": {
+    "producer": "In services/source_ingestion/connector_definitions.py, declared feature_targets ('returns') and storage_targets ('normalized/tw_price_daily', 'features/returns') on tw-twse-tpex-official-market. In services/source_ingestion/market_data_storage.py, enhanced _feature_targets to inspect storage_targets and connector definition metadata so official market pulls produce real returns feature files.",
+    "materializer": "In services/training-session/source_dataset_authority.py, removed the bypass helper and restored unconditional requirement of non-empty feature_refs with minimum 1 summary count, binding real checksummed feature storage paths into feature_dataset_refs.",
+    "tests_and_gates": "Updated test_source_dataset_authority.py to verify TW materialization produces non-empty feature_dataset_refs and passes strict load_evaluation_authority admission; added regression tests verifying that missing feature_refs and altered feature row artifacts are strictly rejected."
+  },
+  "acceptance_verification": {
+    "ac1_actual_failure_retained": "passed: Retained actual GHA 37697565949 DatasetVersion schema failure and earlier run 37689932878 evidence.",
+    "ac2_real_producer_consumer_reconciled": "passed: Reconciled producer tw-twse-tpex-official-market with declared active universe policy (features/returns -> returns); MarketDataStorageWriter produces real checksummed feature files and storage refs without fabricated URIs.",
+    "ac3_strict_end_to_end_authority": "passed: Reverted materializer relaxation; source_dataset_authority strictly rejects absent or altered feature artifacts and preserves SHA-256 digests, tenant isolation, and timestamps.",
+    "ac4_minimal_readable_repair": "passed: Net production diff is +11 lines (+4 in connector_definitions.py, +25 in market_data_storage.py, -18 in source_dataset_authority.py), well within the <= 220 net production budget. Zero weakened schemas or assertions.",
+    "ac5_regression_and_integration": "passed: 52 tests passed in test_source_dataset_authority.py, 34 passed in evaluation authority and market data foundation suites, 19 passed in test_srcm_p1_contracts.py, 33 passed in taiwan official connectors suite."
+  },
+  "verification": {
+    "commands": [
+      "/tmp/pantheon-pytest-env/bin/pytest services/training-session/tests/test_source_dataset_authority.py",
+      "/tmp/pantheon-pytest-env/bin/pytest services/training-session/tests/test_evaluation_authority.py services/source_ingestion/tests/test_market_data_foundation.py",
+      "/tmp/pantheon-pytest-env/bin/pytest services/source_ingestion/tests/test_srcm_p1_contracts.py",
+      "/tmp/pantheon-pytest-env/bin/pytest services/source_ingestion/tests/test_taiwan_official_connectors.py services/training-session/tests/test_http_service.py"
+    ],
+    "result": "passed (all 138 focused unit, contract, and service tests passed; 0 failures; diff_budget net production 13 lines <= 220 cap)"
+  }
+}

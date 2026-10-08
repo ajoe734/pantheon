@@ -1,11 +1,10 @@
-# Root-level test dependencies for the Pantheon monorepo smoke / CI suite.
+# Shared root test dependency list for the Pantheon monorepo.
 #
-# Installed by branch-ci.yml "Smoke acceptance" job before running
-# scripts/run-acceptance.sh or scripts/ci_stage0.py run-baseline.
+# CI workflows install this file, and scripts/dev/ensure_worker_test_python.py
+# installs it together with services/control-plane/bff/requirements.txt for the
+# worker test interpreter.
 #
 # Service-specific runtime deps live in services/<svc>/requirements.txt.
-# This file covers shared deps needed across multiple services for the
-# test suite that are not yet included in the CI baseline pip installs.
 
 # Flask route tests — services/runtime-manager and services/telemetry
 flask>=3.0,<4.0
@@ -18,3 +17,12 @@ uvicorn>=0.30,<1.0
 
 # Monorepo test runner across CI jobs and task worktrees
 pytest>=8.0.0,<10.0.0
+
+# tooling smoke: signature and boundary helpers
+cryptography
+pyyaml
+pydantic>=2
+
+# BFF test architecture gate: services/control-plane/bff/tests/conftest.py imports httpx
+httpx
+fastapi

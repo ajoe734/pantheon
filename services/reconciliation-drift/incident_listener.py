@@ -103,6 +103,12 @@ def _incident_identity(incident: dict[str, Any]) -> str:
     return f"payload-sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
 
 
+def _is_infrastructure_incident(incident: dict[str, Any]) -> bool:
+    binding = str(incident.get("binding_id") or incident.get("runtime_binding_id") or "")
+    evidence = str(incident.get("evidence_summary") or "")
+    return binding.startswith("infra-subject-") or "non_trading_infrastructure_incident=true" in evidence
+
+
 def _error_record(
     exc: Exception,
     *,
@@ -401,6 +407,8 @@ def run_tick(
     timeout_seconds: float = 30.0,
     max_attempts: int = 1,
     retry_backoff_seconds: float = 0.0,
+    tick_budget_seconds: float = 30.0,
+    on_progress: Callable[[int, str], None] | None = None,
     state: IncidentListenerState | None = None,
     state_path: str | Path | None = None,
     sleep_fn: SleepFn = time.sleep,
@@ -412,9 +420,12 @@ def run_tick(
         raise ValueError("max_attempts must be >= 1")
     if not math.isfinite(retry_backoff_seconds) or retry_backoff_seconds < 0:
         raise ValueError("retry_backoff_seconds must be a finite number >= 0")
+    if tick_budget_seconds <= 0:
+        raise ValueError("tick_budget_seconds must be > 0")
     if state is not None and state_path is not None:
         raise ValueError("pass state or state_path, not both")
 
+    tick_deadline = time.monotonic() + tick_budget_seconds
     listener_state = state or IncidentListenerState(state_path)
     if listener_state.load_error:
         listener_state.reload()
@@ -460,13 +471,31 @@ def run_tick(
 
     # Replay persisted work first.  Current fetch deduplication below prevents a
     # still-open incident from being delivered twice in the same tick.
+    def _notify() -> None:
+        if on_progress:
+            on_progress(len(listener_state.backlog), _utc_now())
+
     initial_backlog = sorted(
         listener_state.backlog.items(),
         key=lambda item: str(item[1].get("first_failed_at") or ""),
     )
     for identity, entry in initial_backlog:
+        if time.monotonic() >= tick_deadline:
+            break
         incident = dict(entry["incident"])
         processed_identities.add(identity)
+        if _is_infrastructure_incident(incident):
+            listener_state.remove_delivery(identity)
+            replayed += 1
+            results.append({
+                "incident_id": identity,
+                "identity": identity,
+                "replayed": True,
+                "acknowledged": True,
+                "result": {"status": "ok", "skipped": True, "not_applicable": True},
+            })
+            _notify()
+            continue
         replay_attempted += 1
         result, op_attempts, op_errors = _retry_operation(
             lambda incident=incident: post_incident_trigger(
@@ -494,6 +523,7 @@ def run_tick(
                         "result": result,
                     }
                 )
+                _notify()
             except Exception as exc:
                 persistence_failed = True
                 errors.append(
@@ -514,35 +544,52 @@ def run_tick(
                     attempt_count=len(op_attempts),
                     failed_at=str(last_error["at"]),
                 )
+                _notify()
             except Exception as exc:
                 persistence_failed = True
                 errors.append(
                     _error_record(exc, attempt=0, phase="persist_state", identity=identity)
                 )
 
-    incidents_result, fetch_attempts, fetch_errors = _retry_operation(
-        lambda: fetch_open_incidents(
-            incidents_url=incidents_url,
-            timeout_seconds=timeout_seconds,
-        ),
-        phase="fetch_incidents",
-        identity=None,
-        max_attempts=max_attempts,
-        retry_backoff_seconds=retry_backoff_seconds,
-        sleep_fn=sleep_fn,
-    )
-    attempts.extend(fetch_attempts)
-    errors.extend(fetch_errors)
-    fetch_failed = incidents_result is None
-    incidents = incidents_result if isinstance(incidents_result, list) else []
+    incidents: list[dict[str, Any]] = []
+    fetch_failed = False
+    if time.monotonic() < tick_deadline:
+        incidents_result, fetch_attempts, fetch_errors = _retry_operation(
+            lambda: fetch_open_incidents(
+                incidents_url=incidents_url,
+                timeout_seconds=timeout_seconds,
+            ),
+            phase="fetch_incidents",
+            identity=None,
+            max_attempts=max_attempts,
+            retry_backoff_seconds=retry_backoff_seconds,
+            sleep_fn=sleep_fn,
+        )
+        attempts.extend(fetch_attempts)
+        errors.extend(fetch_errors)
+        fetch_failed = incidents_result is None
+        incidents = incidents_result if isinstance(incidents_result, list) else []
 
     deduplicated = 0
     for incident in incidents:
+        if time.monotonic() >= tick_deadline:
+            break
         identity = _incident_identity(incident)
         if identity in processed_identities:
             deduplicated += 1
             continue
         processed_identities.add(identity)
+        incident_id = str(incident.get("incident_id") or incident.get("id") or "")
+        if _is_infrastructure_incident(incident):
+            results.append({
+                "incident_id": incident_id or identity,
+                "identity": identity,
+                "replayed": False,
+                "acknowledged": True,
+                "result": {"status": "ok", "skipped": True, "not_applicable": True},
+            })
+            _notify()
+            continue
         result, op_attempts, op_errors = _retry_operation(
             lambda incident=incident: post_incident_trigger(
                 reconciliation_url=reconciliation_url,
@@ -558,7 +605,6 @@ def run_tick(
         attempts.extend(op_attempts)
         errors.extend(op_errors)
         if result is not None:
-            incident_id = str(incident.get("incident_id") or incident.get("id") or "")
             results.append(
                 {
                     "incident_id": incident_id,
@@ -567,6 +613,7 @@ def run_tick(
                     "result": result,
                 }
             )
+            _notify()
         else:
             delivery_failures += 1
             last_error = (
@@ -582,6 +629,7 @@ def run_tick(
                     attempt_count=len(op_attempts),
                     failed_at=str(last_error["at"]),
                 )
+                _notify()
             except Exception as exc:
                 persistence_failed = True
                 errors.append(
@@ -709,6 +757,8 @@ def main() -> int:
         "last_failure_at": None,
         "last_failure_reason": None,
         "controller_status": "starting",
+        "backlog_count": 0,
+        "last_progress_at": None,
         "pid": os.getpid(),
     }
     write_health(health_file, health)
@@ -735,6 +785,9 @@ def main() -> int:
         retry_backoff_seconds = _env_float(
             "RECONCILIATION_DRIFT_INCIDENT_LISTENER_RETRY_BACKOFF_SECONDS", 1.0, minimum=0.0
         )
+        tick_budget_seconds = _env_float(
+            "RECONCILIATION_DRIFT_INCIDENT_LISTENER_TICK_BUDGET_SECONDS", 30.0, minimum=0.001
+        )
     except (TypeError, ValueError) as exc:
         print(json.dumps(_configuration_error(exc), sort_keys=True), flush=True)
         return 2
@@ -747,6 +800,14 @@ def main() -> int:
     dsn = os.getenv("RECONCILIATION_DRIFT_STORE_DSN") or os.getenv("DATABASE_URL") or ""
     loop_writer = _build_loop_writer(dsn=dsn, tenant_id=tenant_id)
     state = IncidentListenerState(state_path)
+    health["backlog_count"] = len(state.backlog)
+    write_health(health_file, health)
+
+    def _record_progress(backlog_count: int, progress_at: str) -> None:
+        health["backlog_count"] = backlog_count
+        health["last_progress_at"] = progress_at
+        write_health(health_file, health)
+
     tick = 0
     while True:
         tick += 1
@@ -756,6 +817,8 @@ def main() -> int:
                 reconciliation_url=reconciliation_url,
                 max_attempts=max_attempts,
                 retry_backoff_seconds=retry_backoff_seconds,
+                tick_budget_seconds=tick_budget_seconds,
+                on_progress=_record_progress,
                 state=state,
             )
         except Exception as exc:  # operational faults must not stop the controller
@@ -765,6 +828,8 @@ def main() -> int:
             except Exception:
                 pass
             backlog_count, oldest_age = state.backlog_metrics(now=error["at"])
+            health["backlog_count"] = backlog_count
+            health["last_progress_at"] = error["at"]
             result = {
                 "status": "error",
                 "controller_status": "unhealthy",
@@ -780,12 +845,15 @@ def main() -> int:
         controller_status = str(result.get("controller_status") or "unhealthy")
         result.setdefault("controller_status", controller_status)
         tick_at = _utc_now()
+        backlog_count = int(result.get("backlog_count") or len(state.backlog))
         health.update(
             {
                 "status": "ok",
                 "ticks": tick,
                 "last_tick_at": tick_at,
                 "controller_status": controller_status,
+                "backlog_count": backlog_count,
+                "last_progress_at": health.get("last_progress_at") or tick_at,
             }
         )
         if controller_status == "healthy":

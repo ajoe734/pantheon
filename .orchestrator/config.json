@@ -101,8 +101,7 @@
   "coordination": {
     "repositories": {
       "pantheon": {
-        "repo": "ajoe734/pantheon",
-        "integration_path": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/integration-runtimes/pantheon/b435986b13d5c323c533225f5ea3f6481d79a1be"
+        "repo": "ajoe734/pantheon"
       },
       "execute_plans": {
         "repo": "ajoe734/execute-plans",
@@ -207,13 +206,11 @@
     "reviewer_fallbacks": {
       "Claude": [
         "Antigravity",
-        "Antigravity2",
-        "PiAstra"
+        "Antigravity2"
       ],
       "Claude2": [
         "Antigravity",
-        "Antigravity2",
-        "PiAstra"
+        "Antigravity2"
       ],
       "Antigravity": [
         "Claude",
@@ -232,6 +229,12 @@
         "Antigravity2"
       ],
       "Codex2": [
+        "Claude",
+        "Claude2",
+        "Antigravity",
+        "Antigravity2"
+      ],
+      "PiAstra": [
         "Claude",
         "Claude2",
         "Antigravity",
@@ -870,13 +873,6 @@
       "secret_env": "PANTHEON_ORCHESTRATOR_SYNC_SECRET"
     },
     "diff_budget": {
-      "enabled": true,
-      "change_classes": [
-        "refactor",
-        "simplify",
-        "corrective"
-      ],
-      "default_net_prod_line_budget": 0,
       "evidence_max_added_lines": 400
     }
   }

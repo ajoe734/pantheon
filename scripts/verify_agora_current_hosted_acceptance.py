@@ -30,8 +30,6 @@ from typing import Any, Callable, Mapping, Optional
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TASK_ID = "AGORA-HOSTED-REAL-ACCEPTANCE-20260815"
 PROGRAM_ID = "agora-product-correction-20260813"
-DEFAULT_DEV_BFF_URL = "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
-DEFAULT_DEV_FE_URL = "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"
 SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -158,8 +156,8 @@ class AcceptanceConfig:
     browser_evidence: Optional[Path] = None
     restart_evidence: Optional[Path] = None
     rollback_evidence: Optional[Path] = None
-    bff_base_url: str = DEFAULT_DEV_BFF_URL
-    fe_base_url: str = DEFAULT_DEV_FE_URL
+    bff_base_url: str = ""
+    fe_base_url: str = ""
     evidence_dir: Path = field(
         default_factory=lambda: REPO_ROOT / "docs" / "deployment" / "evidence" / "agora" / TASK_ID
     )
@@ -918,8 +916,8 @@ def main() -> int:
         default="privileged",
         help="Claim paper-only functional behavior or privileged operator/reviewer proof",
     )
-    parser.add_argument("--bff-url", default=DEFAULT_DEV_BFF_URL)
-    parser.add_argument("--fe-url", default=DEFAULT_DEV_FE_URL)
+    parser.add_argument("--bff-url", required=True)
+    parser.add_argument("--fe-url", required=True)
     parser.add_argument("--expected-bff-sha", required=True)
     parser.add_argument("--expected-fe-sha", required=True)
     parser.add_argument("--service-journey-evidence", required=True, type=Path)

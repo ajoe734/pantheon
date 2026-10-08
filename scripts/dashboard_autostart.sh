@@ -19,11 +19,9 @@
 # to publish.
 set -euo pipefail
 
-# PANTHEON_DASHBOARD_ROOT lets this run from a code root that is not the root it
-# serves. Cron drives it from the auto-synced dev-root against the live status
-# root, the same split the supervisor watchdog uses, so worker churn in the live
-# tree cannot delete the guard. Without the override it manages its own checkout,
-# which silently hijacks the live port when run from a worktree.
+# PANTHEON_DASHBOARD_ROOT selects the checkout whose dashboard code, logs
+# and lock this guard uses, and that served data comes from the canonical
+# binding.
 ROOT_DIR="${PANTHEON_DASHBOARD_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 if [[ ! -d "${ROOT_DIR}/scripts" ]]; then
   echo "PANTHEON_DASHBOARD_ROOT=${ROOT_DIR} is not a pantheon checkout" >&2

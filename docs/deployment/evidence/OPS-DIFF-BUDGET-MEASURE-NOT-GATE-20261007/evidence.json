@@ -1,0 +1,91 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-DIFF-BUDGET-MEASURE-NOT-GATE-20261007",
+  "title": "Diff budget: keep line counts as review evidence and remove the handoff gate",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "development_tooling",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "fab29bf0cc3822fcaafad9413ef92cf379d78bcf",
+  "scope": {
+    "owned": [
+      "scripts/git/diff_budget.py",
+      "scripts/git/test_diff_budget.py",
+      ".orchestrator/rewrite/task_contract.py",
+      ".orchestrator/rewrite/test_task_contract.py",
+      ".orchestrator/watch_events.py",
+      ".orchestrator/test_watch_events.py",
+      ".orchestrator/supervisor.py",
+      "scripts/ai_status.py",
+      ".orchestrator/config.json",
+      "docs/deployment/evidence/OPS-DIFF-BUDGET-MEASURE-NOT-GATE-20261007/evidence.json"
+    ],
+    "not_changing": [
+      ".github/workflows/branch-ci.yml (Diff budget CI step passes no --change-class and keeps working)",
+      "scripts/git/github_review_bridge.py (additions/deletions passthrough stays; it is not a gate)",
+      "docs/02-architecture/phase4-bff-thinning.md",
+      "historical docs/deployment/evidence/* files",
+      "historical task records and archives"
+    ],
+    "composes_with": [
+      "OPS-ARCHIVE-RESURRECTION-RELAXATION-REVERT-20261007",
+      "OPS-SUPERVISOR-SINGLE-PATH-CLEANUP-20261007"
+    ]
+  },
+  "implementation": {
+    "task_contract": "Removed import diff_budget and diff_budget.enforce_handoff call in validate_handoff_pr_delivery_binding. In requires_pr_delivery_binding, removed change_class branch and docstring sentence; required_artifacts logic and call sites untouched.",
+    "diff_budget": "Deleted CHANGE_CLASSES, validate_task_metadata, change_class parameter/branch in violations, enforce_handoff, --change-class, --budget, and enabled switch. violations keeps only evidence-file cap loop. main always runs evidence cap and returns 1 on violation. settings returns only evidence_max_added_lines (400). Updated docstring.",
+    "config": "branch_workflow.diff_budget reduced to only {\"evidence_max_added_lines\": 400}.",
+    "ai_status": "Removed validate_task_metadata call in task_metadata_from_env and deleted _diff_budget_module helper.",
+    "supervisor": "Dropped change_class and net_prod_line_budget from dispatch payload key tuple.",
+    "watch_events": "Deleted budget_args and owner line-limit message. Reworded reviewer dispatch bullet to exact command 'python3 scripts/git/diff_budget.py --base {base} --head {head}' noting supporting evidence and evidence cap exit 1 as reopen reason."
+  },
+  "verification": {
+    "git_grep_forbidden_patterns": {
+      "command": "git grep -n -e enforce_handoff -e validate_task_metadata -e _diff_budget_module -e '--change-class' -e net_prod_line_budget -e 淨行數上限 -e 超過即被擋 -- .orchestrator scripts ':!*test_*'",
+      "base_result": "22 hits across config.json, task_contract.py, supervisor.py, watch_events.py, ai_status.py, and diff_budget.py",
+      "head_result": "empty (exit code 1, 0 matches)"
+    },
+    "diff_budget_table": {
+      "command": "python3 scripts/git/diff_budget.py --base fab29bf0cc3822fcaafad9413ef92cf379d78bcf --head HEAD",
+      "output": "| class | added | deleted | net |\n|---|---|---|---|\n| production | +10 | -114 | -104 |\n| test | +25 | -108 | -83 |\n| docs/evidence | +91 | -0 | +91 |"
+    },
+    "test_comparison": {
+      "pytest": {
+        "command": "PYTHONPATH=.orchestrator python3 -m pytest -q scripts/git/test_diff_budget.py scripts/git/test_github_review_bridge.py scripts/test_provision_live_supervisor_config.py scripts/test_promote_supervisor_runtime.py",
+        "base": "254 passed, 5 subtests passed in 74.54s",
+        "head": "249 passed, 5 subtests passed in 71.40s"
+      },
+      "unittest": {
+        "command": "PYTHONPATH=.orchestrator python3 -m unittest rewrite.test_task_contract test_watch_events test_supervisor scripts.test_ai_status scripts.test_check_config_drift",
+        "base": "Ran 957 tests in 275.976s OK",
+        "head": "Ran 953 tests in 290.006s OK"
+      }
+    },
+    "removed_tests": [
+      "scripts/git/test_diff_budget.py: test_refactor_growth_is_rejected_with_numbers",
+      "scripts/git/test_diff_budget.py: test_refactor_that_deletes_code_passes",
+      "scripts/git/test_diff_budget.py: test_explicit_budget_is_respected",
+      "scripts/git/test_diff_budget.py: test_disabled_config_is_a_no_op",
+      "scripts/git/test_diff_budget.py: MetadataTest (test_valid_metadata_accepted, test_invalid_change_class_rejected, test_empty_change_class_treated_as_none, test_negative_budget_accepted, test_zero_budget_accepted, test_budget_without_change_class_rejected)",
+      ".orchestrator/rewrite/test_task_contract.py: _admit helper",
+      ".orchestrator/rewrite/test_task_contract.py: test_refactor_growth_blocks_handoff",
+      ".orchestrator/rewrite/test_task_contract.py: test_refactor_shrink_is_admitted",
+      ".orchestrator/rewrite/test_task_contract.py: test_change_class_requires_pr_delivery",
+      ".orchestrator/test_watch_events.py: test_owner_dispatch_states_line_budget"
+    ],
+    "preserved_and_adapted_tests": [
+      "scripts/git/test_diff_budget.py: ClassifyTest kept unchanged",
+      "scripts/git/test_diff_budget.py: HandoffAdmissionTests (test_unclassified_task_only_gets_evidence_cap, test_missing_line_counts_fail_closed) calling violations/summarize directly",
+      "scripts/git/test_diff_budget.py: CliTest asserting exit 0 and summary table row '| production | +0 | -8 | -8 |', plus exit 1 assertion on 401 added lines in evidence.json",
+      ".orchestrator/rewrite/test_task_contract.py: HandoffTrailerAdmissionTests (test_handoff_rejects_bad_trailer_with_commit_and_repair_guidance, test_missing_frozen_range_objects_reject_handoff_clearly) with config fixtures updated to {\"branch_workflow\": {}}",
+      ".orchestrator/test_watch_events.py: test_review_dispatch_shows_diff_budget_command asserting exact command ending in head sha with backtick and assertNotIn for '--change-class' and '--budget'"
+    ]
+  },
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Antigravity",
+    "note": "Independently verify: diff_budget line counts stay as review evidence only and are removed as a handoff gate. Confirm scripts/git/diff_budget.py no longer accepts --change-class or --budget, runs evidence-cap check via exit code in CI, and all forbidden gate symbols are removed from .orchestrator and scripts."
+  }
+}

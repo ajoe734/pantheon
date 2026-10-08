@@ -7,8 +7,9 @@ import os
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -156,7 +157,9 @@ class MockLoopTruth:
         tenant_id: str,
         environment: str,
     ) -> tuple[bool, List[Dict[str, Any]]]:
-        assert tenant_id == "tenant-a"
+        assert tenant_id in {"tenant-a", "tenant-dev"}
+        # Controller records are keyed by the deployment environment, not the
+        # authorized trading stage (BFF-LOOP-HEALTH-CONTROLLER-ENVIRONMENT-20261008).
         assert environment == "dev"
         return False, []
 
@@ -229,7 +232,7 @@ def _extract_identity(authorization: Optional[str]) -> OperatorIdentity:
         claims={
             "tenant_id": "tenant-a",
             "allowed_tenants": ["tenant-a"],
-            "allowed_environments": ["dev"],
+            "allowed_environments": ["paper", "broker_sandbox"],
         },
     )
 
@@ -400,7 +403,8 @@ def test_loop_inventory_and_health_preserve_reusable_truth_contracts() -> None:
     assert len(health.json()["items"]) == 12
     assert health.json()["meta"]["scope"] == {
         "tenant_id": "tenant-a",
-        "environment": "dev",
+        "environment": "paper",
+        "controller_environment": "dev",
         "source": "authenticated_identity_and_deployment_scope",
     }
     assert health.json()["meta"]["surfaces"]["loop_health"]["status"] == "degraded"
@@ -452,3 +456,500 @@ def test_openapi_exposes_control_loop_filter_and_scope_parameters() -> None:
         for parameter in spec["paths"]["/bff/v5/loop-health"]["get"]["parameters"]
     }
     assert {"authorization", "X-Tenant-Id", "environment"}.issubset(health_params)
+
+
+class MockTradeJourneyProjectionReader:
+    def __init__(self) -> None:
+        self.recorded_calls: List[Dict[str, Any]] = []
+
+    def get_loop_run(
+        self,
+        *,
+        tenant_id: str,
+        environment: str,
+        loop_run_id: str,
+    ) -> Dict[str, Any]:
+        self.recorded_calls.append(
+            {
+                "method": "get_loop_run",
+                "tenant_id": tenant_id,
+                "environment": environment,
+                "loop_run_id": loop_run_id,
+            }
+        )
+        return {
+            "id": loop_run_id,
+            "loop_run_id": loop_run_id,
+            "tenant_id": tenant_id,
+            "environment": environment,
+            "journey_id": "journey-dev-1",
+            "status": "completed_with_variance",
+            "source": "postgres_lifecycle_projection",
+            "freshness_lineage": {"accepted_live": True, "mode": "live"},
+        }
+
+    def controller_freshness(
+        self,
+        *,
+        tenant_id: str,
+        environment: str,
+    ) -> Dict[str, Any]:
+        return {
+            "accepted_live": True,
+            "status": "ready",
+            "mode": "live",
+            "truth_level": "canonical_live",
+            "deployment_sha": "test-sha",
+            "generation": 1,
+            "checkpoint": 10,
+        }
+
+    def page_loop_runs(
+        self,
+        *,
+        tenant_id: str,
+        environment: str,
+        statuses: Sequence[str],
+        page_size: int,
+        page_token: Optional[str],
+    ) -> tuple[List[Dict[str, Any]], Optional[str]]:
+        self.recorded_calls.append(
+            {
+                "method": "page_loop_runs",
+                "tenant_id": tenant_id,
+                "environment": environment,
+            }
+        )
+        return (
+            [
+                {
+                    "id": "loop-run-dev",
+                    "loop_run_id": "loop-run-dev",
+                    "tenant_id": tenant_id,
+                    "environment": environment,
+                    "journey_id": "journey-dev-1",
+                    "status": "completed_with_variance",
+                    "source": "postgres_lifecycle_projection",
+                }
+            ],
+            None,
+        )
+
+
+def _dev_login_client(
+    *,
+    deployed_environment: str = "dev",
+    served_stages: Optional[Sequence[str]] = None,
+    projection_reader: Optional[Any] = None,
+) -> TestClient:
+    read_store = MockReadStore()
+    if projection_reader is not None:
+        read_store.trade_journey_projection_reader = lambda: projection_reader
+    service = ControlLoopsService(
+        read_store=read_store,
+        loop_truth_adapter=MockLoopTruth,
+        deployed_environment=deployed_environment,
+        served_stages=served_stages,
+    )
+
+    def extract_dev_login_identity(authorization: Optional[str]) -> OperatorIdentity:
+        token = str(authorization or "")
+        return OperatorIdentity(
+            operator_id="operator_a",
+            roles=["operator", "viewer"],
+            mfa_verified=True,
+            claims={
+                "tenant_id": "tenant-dev",
+                "allowed_tenants": ["tenant-dev"],
+            },
+        )
+
+    app = FastAPI()
+    app.include_router(
+        create_control_loops_router(
+            service=service,
+            extract_identity=extract_dev_login_identity,
+        )
+    )
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def test_dev_login_operator_reads_paper_loop_run_and_refuses_live() -> None:
+    projection = MockTradeJourneyProjectionReader()
+    client = _dev_login_client(projection_reader=projection)
+    headers = {"Authorization": "Bearer dev-login-token"}
+
+    resp = client.get(
+        "/bff/v5/loop-runs/loop-run-dev?tenant_id=tenant-dev&environment=paper",
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["loop_run_id"] == "loop-run-dev"
+    assert resp.json()["data"]["environment"] == "paper"
+
+    denied_live = client.get(
+        "/bff/v5/loop-runs/loop-run-dev?tenant_id=tenant-dev&environment=live",
+        headers=headers,
+    )
+    assert denied_live.status_code == 403, denied_live.text
+    assert (
+        denied_live.json()["detail"]["error"]["details"]["precondition_failed"]
+        == "environment_scope"
+    )
+
+    denied_canary = client.get(
+        "/bff/v5/loop-runs/loop-run-dev?tenant_id=tenant-dev&environment=canary",
+        headers=headers,
+    )
+    assert denied_canary.status_code == 403
+    assert (
+        denied_canary.json()["detail"]["error"]["details"]["precondition_failed"]
+        == "environment_scope"
+    )
+
+    denied_dev = client.get(
+        "/bff/v5/loop-runs/loop-run-dev?tenant_id=tenant-dev&environment=dev",
+        headers=headers,
+    )
+    assert denied_dev.status_code == 403
+    assert (
+        denied_dev.json()["detail"]["error"]["details"]["precondition_failed"]
+        == "environment_scope"
+    )
+
+    resp_sandbox = client.get(
+        "/bff/v5/loop-runs/loop-run-dev?tenant_id=tenant-dev&environment=broker_sandbox",
+        headers=headers,
+    )
+    assert resp_sandbox.status_code == 200, resp_sandbox.text
+    assert resp_sandbox.json()["data"]["environment"] == "broker_sandbox"
+
+    resp_default = client.get(
+        "/bff/v5/loop-runs/loop-run-dev?tenant_id=tenant-dev",
+        headers=headers,
+    )
+    assert resp_default.status_code == 200, resp_default.text
+    assert resp_default.json()["data"]["environment"] == "paper"
+
+    list_paper = client.get(
+        "/bff/v5/loop-runs?tenant_id=tenant-dev&environment=paper",
+        headers=headers,
+    )
+    assert list_paper.status_code == 200, list_paper.text
+
+    detail_surface = resp.json()["meta"]["surfaces"]["loop_run_detail"]
+    list_surface = list_paper.json()["meta"]["surfaces"]["loop_runs"]
+    for surface in (detail_surface, list_surface):
+        assert surface["projection_schema_version"] == "pantheon.trade-journey-projection.v1"
+        assert surface["projection_mode"] == "live"
+        assert surface["source"] == "postgres_lifecycle_projection"
+        assert surface["status"] == "ok"
+        assert surface["truth_status"] == "formal"
+        assert surface["accepted_live"] is True
+
+    list_live = client.get(
+        "/bff/v5/loop-runs?tenant_id=tenant-dev&environment=live",
+        headers=headers,
+    )
+    assert list_live.status_code == 403
+    assert (
+        list_live.json()["detail"]["error"]["details"]["precondition_failed"]
+        == "environment_scope"
+    )
+
+
+def test_identity_with_allowed_environments_retains_declared_stages_and_wildcard() -> None:
+    projection = MockTradeJourneyProjectionReader()
+    read_store = MockReadStore()
+    read_store.trade_journey_projection_reader = lambda: projection
+    service = ControlLoopsService(
+        read_store=read_store,
+        deployed_environment="dev",
+    )
+
+    def _client_with_env_claims(allowed_environments: List[str]) -> TestClient:
+        def extractor(_auth: Optional[str]) -> OperatorIdentity:
+            return OperatorIdentity(
+                operator_id="operator_restricted",
+                roles=["operator", "viewer"],
+                mfa_verified=True,
+                claims={
+                    "tenant_id": "tenant-dev",
+                    "allowed_tenants": ["tenant-dev"],
+                    "allowed_environments": allowed_environments,
+                },
+            )
+
+        app = FastAPI()
+        app.include_router(
+            create_control_loops_router(
+                service=service,
+                extract_identity=extractor,
+            )
+        )
+        return TestClient(app, raise_server_exceptions=False)
+
+    client_sandbox = _client_with_env_claims(["broker_sandbox"])
+    resp_paper = client_sandbox.get(
+        "/bff/v5/loop-runs/loop-run-dev?tenant_id=tenant-dev&environment=paper"
+    )
+    assert resp_paper.status_code == 403
+    assert (
+        resp_paper.json()["detail"]["error"]["details"]["precondition_failed"]
+        == "environment_scope"
+    )
+    resp_sb = client_sandbox.get(
+        "/bff/v5/loop-runs/loop-run-dev?tenant_id=tenant-dev&environment=broker_sandbox"
+    )
+    assert resp_sb.status_code == 200
+
+    client_wildcard = _client_with_env_claims(["*"])
+    assert (
+        client_wildcard.get(
+            "/bff/v5/loop-runs/loop-run-dev?tenant_id=tenant-dev&environment=paper"
+        ).status_code
+        == 200
+    )
+    assert (
+        client_wildcard.get(
+            "/bff/v5/loop-runs/loop-run-dev?tenant_id=tenant-dev&environment=broker_sandbox"
+        ).status_code
+        == 200
+    )
+    denied_live = client_wildcard.get(
+        "/bff/v5/loop-runs/loop-run-dev?tenant_id=tenant-dev&environment=live"
+    )
+    assert denied_live.status_code == 403
+    assert (
+        denied_live.json()["detail"]["error"]["details"]["precondition_failed"]
+        == "environment_scope"
+    )
+
+
+def test_non_dev_deployment_serves_only_explicitly_configured_stages_or_fails_closed() -> None:
+    service_unconfigured = ControlLoopsService(deployed_environment="prod")
+    identity = OperatorIdentity(
+        operator_id="op-prod",
+        roles=["operator", "viewer"],
+        mfa_verified=True,
+        claims={"tenant_id": "tenant-prod", "allowed_tenants": ["tenant-prod"]},
+    )
+    for env in ("live", "paper", "broker_sandbox", "canary", None, ""):
+        with pytest.raises(Exception) as exc_info:
+            service_unconfigured.authenticated_loop_truth_scope(
+                identity,
+                requested_tenant="tenant-prod",
+                requested_environment=env,
+            )
+        assert getattr(exc_info.value, "status_code", None) == 403
+
+    service_configured = ControlLoopsService(
+        deployed_environment="prod",
+        served_stages=("live",),
+    )
+    tenant, stage = service_configured.authenticated_loop_truth_scope(
+        identity,
+        requested_tenant="tenant-prod",
+        requested_environment="live",
+    )
+    assert (tenant, stage) == ("tenant-prod", "live")
+
+    tenant_default, stage_default = service_configured.authenticated_loop_truth_scope(
+        identity,
+        requested_tenant="tenant-prod",
+        requested_environment=None,
+    )
+    assert (tenant_default, stage_default) == ("tenant-prod", "live")
+
+    with pytest.raises(Exception) as exc_info:
+        service_configured.authenticated_loop_truth_scope(
+            identity,
+            requested_tenant="tenant-prod",
+            requested_environment="paper",
+        )
+    assert getattr(exc_info.value, "status_code", None) == 403
+
+
+def test_all_loop_truth_callers_share_stage_scope_authorization() -> None:
+    import asyncio
+
+    projection = MockTradeJourneyProjectionReader()
+    read_store = MockReadStore()
+    read_store.trade_journey_projection_reader = lambda: projection
+    service = ControlLoopsService(
+        read_store=read_store,
+        loop_truth_adapter=MockLoopTruth,
+        deployed_environment="dev",
+    )
+    identity = OperatorIdentity(
+        operator_id="op_shared",
+        roles=["operator", "viewer"],
+        mfa_verified=True,
+        claims={"tenant_id": "tenant-dev", "allowed_tenants": ["tenant-dev"]},
+    )
+
+    # 1. loop_health (~line 563)
+    health = asyncio.run(
+        service.loop_health(
+            identity,
+            requested_tenant="tenant-dev",
+            requested_environment="paper",
+        )
+    )
+    assert health["meta"]["scope"]["environment"] == "paper"
+    with pytest.raises(Exception):
+        asyncio.run(
+            service.loop_health(
+                identity,
+                requested_tenant="tenant-dev",
+                requested_environment="live",
+            )
+        )
+
+    # 2. loop_health_detail (~line 597)
+    detail = asyncio.run(
+        service.loop_health_detail(
+            "source_ingestion",
+            identity,
+            requested_tenant="tenant-dev",
+            requested_environment="paper",
+        )
+    )
+    assert detail["meta"]["scope"]["environment"] == "paper"
+    with pytest.raises(Exception):
+        asyncio.run(
+            service.loop_health_detail(
+                "source_ingestion",
+                identity,
+                requested_tenant="tenant-dev",
+                requested_environment="live",
+            )
+        )
+
+    # 3. list_loop_runs (~line 679)
+    runs = asyncio.run(
+        service.list_loop_runs(
+            identity,
+            status=None,
+            tenant_id="tenant-dev",
+            environment="paper",
+            page_token=None,
+            page_size=10,
+        )
+    )
+    assert len(runs["items"]) == 1
+    with pytest.raises(Exception):
+        asyncio.run(
+            service.list_loop_runs(
+                identity,
+                status=None,
+                tenant_id="tenant-dev",
+                environment="live",
+                page_token=None,
+                page_size=10,
+            )
+        )
+
+    # 4. get_loop_run (~line 761)
+    run = asyncio.run(
+        service.get_loop_run(
+            "loop-run-dev",
+            identity,
+            tenant_id="tenant-dev",
+            environment="paper",
+        )
+    )
+    assert run["data"]["environment"] == "paper"
+    with pytest.raises(Exception):
+        asyncio.run(
+            service.get_loop_run(
+                "loop-run-dev",
+                identity,
+                tenant_id="tenant-dev",
+                environment="live",
+            )
+        )
+
+
+
+def test_loop_health_reads_controller_records_on_the_deployment_environment() -> None:
+    """BFF-LOOP-HEALTH-CONTROLLER-ENVIRONMENT-20261008.
+
+    Every LoopControllerWriter records ``environment`` as the deployment
+    environment (PANTHEON_ENV, ``dev`` on the dev VM).  Loop-health authorizes
+    the requested trading stage but must query the controller store on the
+    deployment environment, otherwise no controller record is ever returned.
+    """
+    import asyncio
+
+    queried: List[tuple[str, str]] = []
+    dev_record = {
+        "loop_id": "bff_health_monitoring",
+        "tenant_id": "tenant-dev",
+        "environment": "dev",
+        "_health_source": "controller_store",
+    }
+
+    class _StoreKeyedLoopTruth:
+        @staticmethod
+        async def fetch_controller_store_health_records(
+            tenant_id: str,
+            environment: str,
+        ) -> tuple[bool, List[Dict[str, Any]]]:
+            queried.append((tenant_id, environment))
+            if (tenant_id, environment) == ("tenant-dev", "dev"):
+                return True, [dict(dev_record)]
+            return False, []
+
+        project_canonical_loop_health = staticmethod(
+            loop_truth_projection.project_canonical_loop_health
+        )
+        project_canonical_loop_health_entry = staticmethod(
+            loop_truth_projection.project_canonical_loop_health_entry
+        )
+
+    service = ControlLoopsService(
+        loop_truth_adapter=_StoreKeyedLoopTruth,
+        deployed_environment="dev",
+    )
+    identity = OperatorIdentity(
+        operator_id="op_controller_env",
+        roles=["operator", "viewer"],
+        mfa_verified=True,
+        claims={"tenant_id": "tenant-dev", "allowed_tenants": ["tenant-dev"]},
+    )
+
+    health = asyncio.run(
+        service.loop_health(
+            identity,
+            requested_tenant="tenant-dev",
+            requested_environment="paper",
+        )
+    )
+    assert queried == [("tenant-dev", "dev")]
+    assert health["meta"]["scope"]["environment"] == "paper"
+    assert health["meta"]["scope"]["controller_environment"] == "dev"
+    assert health["meta"]["coverage"]["raw_health_record_count"] == 1
+    assert health["meta"]["surfaces"]["loop_health"]["source"] == "controller_store"
+
+    detail = asyncio.run(
+        service.loop_health_detail(
+            "bff_health_monitoring",
+            identity,
+            requested_tenant="tenant-dev",
+            requested_environment="paper",
+        )
+    )
+    assert queried[-1] == ("tenant-dev", "dev")
+    assert detail["meta"]["scope"]["controller_environment"] == "dev"
+    assert detail["meta"]["coverage"]["raw_health_record_count"] == 1
+
+    # Stage authorization from authenticated_loop_truth_scope is unchanged.
+    with pytest.raises(Exception):
+        asyncio.run(
+            service.loop_health(
+                identity,
+                requested_tenant="tenant-dev",
+                requested_environment="live",
+            )
+        )

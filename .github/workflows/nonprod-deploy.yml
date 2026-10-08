@@ -99,6 +99,11 @@ on:
         required: false
         default: ""
         type: string
+      isolated_provider_qualification:
+        description: "Dev only: run the original isolated L1-L12 stimulus gate with the approved product provider; skips every root deploy, compensation and frontend switch"
+        required: false
+        default: false
+        type: boolean
   push:
     branches:
       - "master"
@@ -114,7 +119,7 @@ concurrency:
 jobs:
   deploy-dev:
     name: Deploy dev under shared environment lease
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.environment == 'dev' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.environment == 'dev' && !inputs.isolated_provider_qualification }}
     runs-on: ubuntu-latest
     # A root deploy rebuilds the complete dev image set on one VM.  The direct
     # SSH deadline below is two hours; the job budget must also leave room for
@@ -162,7 +167,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           repository: ajoe734/pantheon
-          ref: 9e564718da8c39199a4c311f1a667b74226e3428
+          ref: aee1243573e29d289dac00be13641bb16be7f6bf
           path: .lease-controller
           fetch-depth: 1
           persist-credentials: false
@@ -611,8 +616,6 @@ jobs:
           echo "sha=${previous}" >> "${GITHUB_OUTPUT}"
           echo "frontend_sha=${previous_frontend}" >> "${GITHUB_OUTPUT}"
           echo "is_bootstrap=${BOOTSTRAP_EMPTY_HOST:-false}" >> "${GITHUB_OUTPUT}"
-          echo "baseline_source=${baseline_source}" >> "${GITHUB_OUTPUT}"
-          echo "observed_live_bff_sha=${observed_previous}" >> "${GITHUB_OUTPUT}"
 
       - name: Seal exact-pair admission artifact before any dev switch
         id: release_admission_upload
@@ -755,11 +758,11 @@ jobs:
           unset BASH_ENV ENV PYTHONPATH PYTHONHOME CDPATH
           unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
           controller="${GITHUB_WORKSPACE}/.lease-controller"
-          [[ "$(git -C "${controller}" rev-parse HEAD)" == "9e564718da8c39199a4c311f1a667b74226e3428" ]]
+          [[ "$(git -C "${controller}" rev-parse HEAD)" == "aee1243573e29d289dac00be13641bb16be7f6bf" ]]
           [[ -f "${controller}/scripts/dev_environment_lease.py" && ! -L "${controller}/scripts/dev_environment_lease.py" ]]
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
-            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
+            da9a728ed8cec8e1133b92171e4038f9dc51ef4888911acd02c7e399e54d95ae "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
 
@@ -842,7 +845,7 @@ jobs:
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           [[ -f "${controller}/scripts/dev_environment_lease.py" && ! -L "${controller}/scripts/dev_environment_lease.py" ]]
           printf '%s  %s\n' \
-            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
+            da9a728ed8cec8e1133b92171e4038f9dc51ef4888911acd02c7e399e54d95ae "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           exec {token_fd}<<<"${lease_token}"
@@ -1147,13 +1150,11 @@ jobs:
           PANTHEON_DEV_ARTIFACT_CANDIDATE_FRONTEND_SHA: ${{ steps.frontend.outputs.sha }}
           PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}
           PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA: ${{ steps.rollback_baseline.outputs.frontend_sha }}
-          PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE: ${{ steps.rollback_baseline.outputs.baseline_source }}
-          PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA: ${{ steps.rollback_baseline.outputs.observed_live_bff_sha }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           printf '%s  %s\n' \
-            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
+            da9a728ed8cec8e1133b92171e4038f9dc51ef4888911acd02c7e399e54d95ae "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           exec "${controller}/scripts/run_with_dev_environment_lease.sh" \
@@ -1289,8 +1290,6 @@ jobs:
           PANTHEON_DEV_ARTIFACT_CANDIDATE_FRONTEND_SHA: ${{ steps.frontend.outputs.sha }}
           PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}
           PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA: ${{ steps.rollback_baseline.outputs.frontend_sha }}
-          PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE: ${{ steps.rollback_baseline.outputs.baseline_source }}
-          PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA: ${{ steps.rollback_baseline.outputs.observed_live_bff_sha }}
           PANTHEON_DEV_ARTIFACT_MANIFEST_PATH: ${{ steps.artifact_baseline.outputs.manifest_path }}
           PANTHEON_DEV_ARTIFACT_MANIFEST_SHA256: ${{ steps.artifact_baseline.outputs.manifest_sha256 }}
           PANTHEON_DEV_ARTIFACT_DRIVER_PATH: ${{ steps.artifact_baseline.outputs.driver_path }}
@@ -1305,7 +1304,7 @@ jobs:
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
-            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
+            da9a728ed8cec8e1133b92171e4038f9dc51ef4888911acd02c7e399e54d95ae "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           case "${DEV_AUTH_PROFILE}" in
@@ -1407,7 +1406,7 @@ jobs:
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
-            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
+            da9a728ed8cec8e1133b92171e4038f9dc51ef4888911acd02c7e399e54d95ae "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           # The guard binary above is the immutable pinned trust root; the
@@ -1532,22 +1531,24 @@ jobs:
           local_evidence="/tmp/${evidence_name}"
           readback_evidence="/tmp/${readback_name}"
           container_evidence="/tmp/${evidence_name}"
+          case_key="dev-paper-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           printf -v worktree_q '%q' "${DEV_DEPLOY_WORKTREE}"
           printf -v deploy_sha_q '%q' "${DEPLOY_SHA}"
           printf -v remote_evidence_q '%q' "${remote_evidence}"
           printf -v container_evidence_q '%q' "${container_evidence}"
+          printf -v case_key_q '%q' "${case_key}"
           echo "artifact_path=${local_evidence}" >> "$GITHUB_OUTPUT"
           echo "readback_artifact_path=${readback_evidence}" >> "$GITHUB_OUTPUT"
           set +e
           "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/dev_vm_ssh.sh" exec \
-            "set -uo pipefail; cd ${worktree_q} || exit 1; scripts/run_loop_prod_tel_002_hosted_probe.sh --expected-sha ${deploy_sha_q} --container-output ${container_evidence_q} --remote-output ${remote_evidence_q} --timeout-seconds 420 --poll-seconds 5"
+            "set -uo pipefail; cd ${worktree_q} || exit 1; scripts/run_loop_prod_tel_002_hosted_probe.sh --expected-sha ${deploy_sha_q} --container-output ${container_evidence_q} --remote-output ${remote_evidence_q} --timeout-seconds 420 --poll-seconds 5 --mode natural --case-key ${case_key_q}"
           probe_status=$?
           scp_status=0
           "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/dev_vm_ssh.sh" copy-from \
             "${remote_evidence}" "${local_evidence}" || scp_status=$?
           set -e
           if [[ "${scp_status}" -ne 0 || ! -s "${local_evidence}" ]]; then
-            python3 -c 'import sys; from pathlib import Path; from services.trade_journey.hosted_lifecycle_probe import write_failure_artifact; write_failure_artifact(Path(sys.argv[1]), expected_sha=sys.argv[2], code="hosted_probe_transport_error", message="hosted lifecycle evidence transport failed")' "${local_evidence}" "${DEPLOY_SHA}"
+            python3 -c 'import sys; from pathlib import Path; from services.trade_journey.hosted_lifecycle_probe import write_failure_artifact; write_failure_artifact(Path(sys.argv[1]), expected_sha=sys.argv[2], code="hosted_probe_transport_error", message="hosted lifecycle evidence transport failed", mode="natural", case_key=sys.argv[3])' "${local_evidence}" "${DEPLOY_SHA}" "${case_key}"
           fi
           readback_status=0
           python3 -m services.trade_journey.hosted_bff_readback \
@@ -1624,7 +1625,7 @@ jobs:
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
-            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
+            da9a728ed8cec8e1133b92171e4038f9dc51ef4888911acd02c7e399e54d95ae "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
@@ -1723,7 +1724,7 @@ jobs:
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
-            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
+            da9a728ed8cec8e1133b92171e4038f9dc51ef4888911acd02c7e399e54d95ae "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
@@ -1871,7 +1872,7 @@ jobs:
           [[ -f "${controller}/scripts/dev_environment_lease.py" && ! -L "${controller}/scripts/dev_environment_lease.py" ]]
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
-            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
+            da9a728ed8cec8e1133b92171e4038f9dc51ef4888911acd02c7e399e54d95ae "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           case "${DEV_AUTH_PROFILE}" in
@@ -2203,7 +2204,7 @@ jobs:
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           [[ -f "${controller}/scripts/dev_environment_lease.py" && ! -L "${controller}/scripts/dev_environment_lease.py" ]]
           printf '%s  %s\n' \
-            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
+            da9a728ed8cec8e1133b92171e4038f9dc51ef4888911acd02c7e399e54d95ae "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
 
@@ -2319,7 +2320,7 @@ jobs:
             echo "- Rollback BFF baseline: \`${{ steps.rollback_baseline.outputs.sha }}\`"
             echo "- Rollback FE baseline: \`${{ steps.rollback_baseline.outputs.frontend_sha }}\`"
             echo "- Lease: \`${{ steps.lease.outputs.lease_id }}\`"
-            echo "- Controller: \`9e564718da8c39199a4c311f1a667b74226e3428\`"
+            echo "- Controller: \`aee1243573e29d289dac00be13641bb16be7f6bf\`"
             echo "- Target: \`dev/${TARGET_COMPONENT}\`"
             echo "- Deploy deadline: \`${{ vars.DEV_DEPLOY_DEADLINE_SECONDS || '7200' }}s\`"
             echo "- PPL-ALLOC-009 dev proof enabled: \`${PPL_ALLOC_009_DEV_PROOF_ENABLED}\`"
@@ -2362,7 +2363,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           repository: ajoe734/pantheon
-          ref: 9e564718da8c39199a4c311f1a667b74226e3428
+          ref: aee1243573e29d289dac00be13641bb16be7f6bf
           path: .lease-controller
           fetch-depth: 1
           persist-credentials: false
@@ -2624,6 +2625,100 @@ jobs:
           fi
           echo "Frontend admission or switch failed and exact rollback proof is absent." >&2
           exit 75
+
+  isolated-l12-provider-qualification:
+    name: Isolated L1-L12 gate with approved provider
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.environment == 'dev' && inputs.isolated_provider_qualification }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    environment: dev
+    env:
+      TARGET_REF: ${{ inputs.ref || github.sha }}
+      TARGET_COMPONENT: ${{ inputs.component }}
+      ALLOW_DIRTY: ${{ inputs.allow_dirty }}
+      DEV_AUTH_PROFILE: ${{ inputs.dev_auth_profile }}
+    steps:
+      # Plain git keeps the pinned checkout-action inventory unchanged. The
+      # token travels only through git's environment config, never argv.
+      - name: Fetch requested payload
+        env:
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: http.extraheader
+          GH_TOKEN: ${{ github.token }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          basic="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)"
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic ${basic}"
+          git init -q .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch -q origin "+refs/heads/dev:refs/remotes/origin/dev" "${TARGET_REF}"
+          target_sha="$(git rev-parse --verify "${TARGET_REF}^{commit}")"
+          git checkout -q --detach "${target_sha}"
+          git submodule update --init --recursive --depth 1
+
+      - name: Validate protected exact dev source
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          sha="$(git rev-parse HEAD)"
+          trusted_ref="$(git rev-parse refs/remotes/origin/dev)"
+          if [[ ! "${sha}" =~ ^[0-9a-f]{40}$ || "${sha}" != "${trusted_ref}" || "${GITHUB_REF}" != "refs/heads/dev" || "${GITHUB_SHA}" != "${sha}" ]]; then
+            echo "Isolated qualification must run from the exact current Pantheon dev commit ${trusted_ref}; got payload=${sha} workflow_ref=${GITHUB_REF}" >&2
+            exit 1
+          fi
+          if [[ "${TARGET_COMPONENT}" != "auto" || "${ALLOW_DIRTY}" != "false" || "${DEV_AUTH_PROFILE}" != "strict" ]]; then
+            echo "Isolated qualification requires component=auto, allow_dirty=false and strict auth." >&2
+            exit 1
+          fi
+
+      - name: Install harness dependencies
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: python3 -m pip install -r requirements.txt
+
+      - name: Preflight runner resources for full service set
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          echo "=== Runner Disk and Memory Preflight ==="
+          df -h .
+          free -m
+          avail_kb=$(df -k . | awk 'NR==2 {print $4}')
+          if [[ "${avail_kb}" -lt 5242880 ]]; then
+            echo "Insufficient disk space for isolated compose stack: ${avail_kb} KB < 5GB" >&2
+            exit 1
+          fi
+          avail_mem_kb=$(awk '/MemAvailable/ {print $2}' /proc/meminfo || true)
+          if [[ -n "${avail_mem_kb}" && "${avail_mem_kb}" -lt 1048576 ]]; then
+            echo "Insufficient memory for isolated compose stack: ${avail_mem_kb} KB < 1GB" >&2
+            exit 1
+          fi
+
+      # The driver itself owns the shared qualification lease and teardown, so
+      # no outer lease is taken here. The provider credential reaches only the
+      # gateway container environment; the rendered batch holds an unresolved
+      # ${CLAUDE_CODE_OAUTH_TOKEN} reference and no credential value.
+      - name: Run original isolated L1-L12 stimulus gate
+        env:
+          PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN }}
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          batch="$(python3 scripts/openclaw_isolated_model_bootstrap.py)"
+          export PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH="${batch}"
+          [[ -n "${PANTHEON_ENVIRONMENT_LEASE_TOKEN}" ]] || { echo "COORDINATION_REPO_TOKEN is required for the qualification lease." >&2; exit 1; }
+          mkdir -p "${RUNNER_TEMP}/l12-qualification"
+          python3 scripts/run_isolated_l12_runtime_e2e.py \
+            --provision-services --stimulus-gate \
+            --compose-project "l12q${GITHUB_RUN_ID}x${GITHUB_RUN_ATTEMPT}" \
+            --port-offset "$((10000 + GITHUB_RUN_ID % 10 * 1000))" \
+            --ready-timeout 600 \
+            --evidence-output "${RUNNER_TEMP}/l12-qualification/report.json"
+
+      - name: Upload qualification report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: l12-provider-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/l12-qualification/
+          if-no-files-found: warn
 
   deploy-staging-live:
     name: Deploy staging-live (independent environment)

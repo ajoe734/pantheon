@@ -986,3 +986,49 @@ def test_replayed_commit_at_same_generation_and_binding_is_idempotent(owner_env)
     assert second["replayed"] is True
     assert second["target_controller_record_ref"] == first["target_controller_record_ref"]
     assert second["generation"] == first["generation"]
+
+
+def _signed_consumer_token(secret: str, tenant: str, roles: list[str]) -> str:
+    import base64, hashlib, hmac, json, time
+
+    enc = lambda raw: base64.urlsafe_b64encode(raw).rstrip(b"=")
+    now = int(time.time())
+    claims = {
+        "sub": "training-consumer", "service": "training-consumer", "tenant_id": tenant,
+        "allowed_tenants": [tenant], "roles": roles, "iss": "iss", "aud": "aud",
+        "iat": now, "nbf": now, "exp": now + 300,
+    }
+    body = enc(b'{"alg":"HS256","typ":"JWT"}') + b"." + enc(json.dumps(claims).encode())
+    return (body + b"." + enc(hmac.new(secret.encode(), body, hashlib.sha256).digest())).decode()
+
+
+def test_signed_consumer_tenant_claims_fence_header_scope(owner_env, monkeypatch) -> None:
+    client, *_ = owner_env
+    secret = "synthetic-persona-jwt-secret-" * 2
+    monkeypatch.setenv("PERSONA_JWT_SECRET", secret)
+    monkeypatch.setenv("PERSONA_JWT_ISSUER", "iss")
+    monkeypatch.setenv("PERSONA_JWT_AUDIENCE", "aud")
+    url = f"/api/personas/{PERSONA_ID}/training-target"
+
+    def headers(tenant_claim: str, roles: list[str], header_tenant: str) -> dict[str, str]:
+        token = _signed_consumer_token(secret, tenant_claim, roles)
+        return {"Authorization": f"Bearer {token}", "X-Tenant-Id": header_tenant}
+
+    ok = client.get(url, headers=headers(TENANT_ID, ["persona.admin", "approval_reader"], TENANT_ID))
+    assert ok.status_code == 200
+    # Persona record matches the header, but the token is not admitted for that tenant.
+    wrong = client.get(url, headers=headers(OTHER_TENANT_ID, ["persona.admin"], TENANT_ID))
+    assert wrong.status_code == 403 and "TENANT_SCOPE_DENIED" in wrong.json()["detail"]
+    post = client.post(url, headers={**headers(OTHER_TENANT_ID, ["persona.admin"], TENANT_ID), "Idempotency-Key": "k"},
+        json={
+            "persona_id": PERSONA_ID, "tenant_id": TENANT_ID, "session_id": "s",
+            "candidate_digest": "a" * 64, "control_digest": "b" * 64, "proof_digest": "c" * 64,
+            "approval_digest": "d" * 64, "generation": 1, "expected_previous_generation": 0,
+            "expected_precondition_digest": "e" * 64, "expected_precondition_record_ref": "r",
+            "approval_decision_id": "a", "approval_decision_ref": "a",
+            "candidate": {}, "control_state": {}, "evaluation_proof": {"status": "passed"},
+        },
+    )
+    assert post.status_code == 403
+    readonly = client.get(url, headers=headers(TENANT_ID, ["approval_reader"], TENANT_ID))
+    assert readonly.status_code in (401, 403)

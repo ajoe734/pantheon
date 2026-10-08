@@ -567,6 +567,19 @@ class SourceIngestionRuntime:
             and marker.get("managed_by") == "persona_source_provisioning_reconciler"
         )
 
+    def _is_operator_stopped(self, connector: SourceConnector | None) -> bool:
+        if connector is None:
+            return False
+        metadata = dict(connector.metadata or {})
+        if metadata.get("operator_stop"):
+            return True
+        if connector.status == ConnectorStatus.DISABLED:
+            reconciliation = metadata.get(RECONCILIATION_METADATA_KEY)
+            if isinstance(reconciliation, Mapping) and reconciliation.get("retired_by_authoritative_snapshot") is True:
+                return False
+            return True
+        return False
+
     def _fence_managed_connector_mutation(
         self,
         connector_id: str,
@@ -1149,7 +1162,7 @@ class SourceIngestionRuntime:
         for receipt in freshness_snapshot["receipts"]:
             receipts_by_connector.setdefault(receipt.connector_id, []).append(receipt)
         observed_at = datetime.now(timezone.utc)
-        latest_by_connector = self._latest_source_record_by_connector()
+        latest_by_connector = self._latest_source_record_by_connector(receipts_by_connector=receipts_by_connector)
 
         connector_ids = set(configured_by_id)
         connectors = list(self.manager.list_connectors())
@@ -1343,6 +1356,7 @@ class SourceIngestionRuntime:
             "schema_hash",
             "source_ingest_run_id",
             "calendar_evidence",
+            "tenant_id",
         )
         return {
             "source_id": payload["source_id"],
@@ -1353,6 +1367,7 @@ class SourceIngestionRuntime:
             "status": payload["status"],
             "trace_id": payload["trace_id"],
             "created_at": payload["created_at"],
+            "metadata": metadata,
             "provenance": {key: metadata[key] for key in provenance_keys if key in metadata},
         }
 

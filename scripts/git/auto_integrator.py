@@ -1096,41 +1096,6 @@ def is_versioned_task_branch(base_branch: str, head_ref: str) -> bool:
     return re.fullmatch(re.escape(base_branch) + r"-v[0-9]+", head_ref or "") is not None
 
 
-SUPERSEDING_VERSION_MAX = 20
-
-
-def _superseding_version_listing(
-    candidate: TaskCandidate,
-    runner: CommandRunner,
-    *,
-    root: Path = ROOT,
-    state: str = "open",
-) -> list[Mapping[str, Any]]:
-    """Discover PRs (in `state`) from `<branch>-vN` when the exact task branch has none.
-
-    Probes each exact `<branch>-vN` head (N=2..SUPERSEDING_VERSION_MAX) so discovery
-    is task-scoped and never depends on a repository-wide listing window.
-
-    Only the branch binding is widened; the exact-head review gate still applies
-    to whatever PR head this returns.
-    """
-
-    found: list[Mapping[str, Any]] = []
-    for version in range(2, SUPERSEDING_VERSION_MAX + 1):
-        rows = gh_json(
-            runner,
-            [
-                "pr", "list", "--head", f"{candidate.branch}-v{version}",
-                "--base", candidate.target_branch, "--state", state,
-                "--json", "number", "--limit", "10",
-            ],
-            cwd=root,
-        )
-        if isinstance(rows, list):
-            found.extend({"number": row.get("number")} for row in rows if isinstance(row, Mapping))
-    return found
-
-
 def fetch_pr_for_task(
     candidate: TaskCandidate,
     settings: Settings,
@@ -1177,13 +1142,9 @@ def fetch_pr_for_task(
             ],
             cwd=root,
         )
-    superseding = False
-    if not isinstance(listing, list) or not listing:
-        listing = _superseding_version_listing(candidate, runner, root=root, state=state)
-        superseding = True
     if not isinstance(listing, list) or not listing:
         return None
-    if (state == "open" or superseding) and len(listing) > 1:
+    if state == "open" and len(listing) > 1:
         # GitHub ambiguity is never resolved by picking the first row: a second
         # open PR for the same task branch can carry a different head than the
         # one the reviewer approved.
@@ -2619,33 +2580,9 @@ def integrate_candidate(
             commands=runner.commands[:],
         )
     if pr is None:
-        try:
-            merged_pr = fetch_pr_for_task(
-                candidate, settings, runner, root=target_root, state="merged"
-            )
-        except AmbiguousPullRequests as exc:
-            detail = f"{exc}; refusing to choose a merged head for {candidate.task_id}."
-            unblock = (
-                open_unblock_task(
-                    candidate,
-                    "pr-lookup-failed",
-                    detail,
-                    settings,
-                    runner,
-                    root=status_root_dir,
-                    execute=execute,
-                )
-                if open_unblock
-                else None
-            )
-            return IntegrationResult(
-                candidate.task_id,
-                "blocked",
-                detail,
-                unblock_task_id=unblock,
-                dry_run=not execute,
-                commands=runner.commands[:],
-            )
+        merged_pr = fetch_pr_for_task(
+            candidate, settings, runner, root=target_root, state="merged"
+        )
         if merged_pr is not None:
             number = pr_number(merged_pr)
             url = str(merged_pr.get("url") or "")

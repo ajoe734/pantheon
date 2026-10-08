@@ -1,0 +1,16 @@
+{
+  "task_id": "LIFECYCLE-CLOCK-DRIFT-PERSISTENCE-20261007",
+  "owner": "Claude",
+  "root_cause": "materializer snapshot created_at/updated_at took first/last event in causal order; clock drift makes last raw occurred_at < first, so journeys row first_occurred_at > last_occurred_at violated journeys_check1 (first_occurred_at <= last_occurred_at).",
+  "fix": "services/trade_journey/materializer.py: envelope = min/max of parsed raw occurred_at. Timeline causal order, raw event timestamps, clock_drift diagnostic, terminal variance unchanged. No schema, constraint, checkpoint or data change.",
+  "tests": {
+    "added": "services/trade_journey/test_clock_drift.py::test_drifted_envelope_is_bounded_without_falsifying_causal_order",
+    "focused_run": "test_clock_drift, test_materializer, test_lifecycle_projector: 86 passed, 2 skipped",
+    "full_dir": "10 failed / 32 errors, identical to pre-change baseline; all from missing local psycopg/fastapi/uvicorn and compose/deploy-script assertions"
+  },
+  "not_verified": [
+    "real PostgreSQL regression of journeys_check1 (no local postgres/psycopg available)",
+    "duplicate/restart/atomic-rollback against PostgreSQL (existing store tests are skipped without psycopg)",
+    "hosted acceptance: external_wait; full L1-L12 not implied"
+  ]
+}

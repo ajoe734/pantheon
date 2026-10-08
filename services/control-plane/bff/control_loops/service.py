@@ -8,6 +8,7 @@ canonical command admission callables by :mod:`control_loops.router`.
 """
 from __future__ import annotations
 
+import asyncio
 import inspect
 import os
 from collections.abc import Mapping, Sequence
@@ -31,6 +32,8 @@ from services.control_plane.bff.models import ErrorCode
 
 
 _LOOP_RUN_PROJECTION_SCHEMA = "pantheon.loop-run-projection.v1"
+_TRADING_STAGES = frozenset({"paper", "broker_sandbox", "canary", "live"})
+_DEV_SERVED_STAGES: Tuple[str, ...] = ("paper", "broker_sandbox")
 _OODA_STAGE_DEFS = (
     ("observe", "Observe", "telemetry/source/search health"),
     ("orient", "Orient", "active signal/persona proposal count"),
@@ -140,6 +143,7 @@ class ControlLoopsService:
         utc_now_fn: Optional[Callable[[], str]] = None,
         bff_error_fn: Optional[Callable[..., Exception]] = None,
         deployed_environment: Optional[str] = None,
+        served_stages: Optional[Sequence[str]] = None,
     ) -> None:
         self.read_store = read_store or _MissingReadPort()
         self.loop_truth = loop_truth_adapter or default_loop_truth
@@ -151,6 +155,20 @@ class ControlLoopsService:
             if deployed_environment is not None
             else os.environ.get("PANTHEON_ENV", "dev")
         ).strip()
+        if served_stages is not None:
+            self.served_stages: Tuple[str, ...] = tuple(
+                str(s).strip() for s in served_stages if str(s).strip()
+            )
+        elif "PANTHEON_LOOP_TRUTH_SERVED_STAGES" in os.environ:
+            self.served_stages = tuple(
+                s.strip()
+                for s in os.environ["PANTHEON_LOOP_TRUTH_SERVED_STAGES"].split(",")
+                if s.strip()
+            )
+        elif self.deployed_environment == "dev":
+            self.served_stages = _DEV_SERVED_STAGES
+        else:
+            self.served_stages = ()
 
     def _error(self, *args: Any, **kwargs: Any) -> Exception:
         return self.bff_error(*args, **kwargs)
@@ -461,15 +479,22 @@ class ControlLoopsService:
                 "Requested controller truth tenant is outside the authenticated scope",
                 precondition_failed="tenant_scope",
             )
-        environment = str(requested_environment or "").strip() or self.deployed_environment
+        default_stage = self.served_stages[0] if self.served_stages else ""
+        stage = str(requested_environment or "").strip() or default_stage
         allowed_environments = _claim_strings(
             identity, "environment", "environments", "allowed_environments", "allowedEnvironments"
         )
         if allowed_environments:
-            environment_allowed = "*" in allowed_environments or environment in allowed_environments
+            identity_allowed = "*" in allowed_environments or stage in allowed_environments
         else:
-            environment_allowed = environment == self.deployed_environment
-        if not environment or not environment_allowed:
+            identity_allowed = True
+        stage_allowed = (
+            bool(stage)
+            and stage in _TRADING_STAGES
+            and stage in self.served_stages
+            and identity_allowed
+        )
+        if not stage_allowed:
             raise self._error(
                 403,
                 ErrorCode.FORBIDDEN,
@@ -477,7 +502,7 @@ class ControlLoopsService:
                 "Requested controller truth environment is outside the authenticated deployment scope",
                 precondition_failed="environment_scope",
             )
-        return tenant_id, environment
+        return tenant_id, stage
 
     def _loop_health_meta(
         self,
@@ -547,6 +572,7 @@ class ControlLoopsService:
                 "scope": {
                     "tenant_id": tenant_id,
                     "environment": environment,
+                    "controller_environment": self.deployed_environment,
                     "source": "authenticated_identity_and_deployment_scope",
                 },
             }
@@ -565,8 +591,10 @@ class ControlLoopsService:
             requested_tenant=requested_tenant,
             requested_environment=requested_environment,
         )
+        # Authorization is by trading stage; controller records are keyed by
+        # the deployment environment every LoopControllerWriter records.
         available, raw_records = await self.loop_truth.fetch_controller_store_health_records(
-            tenant_id, environment
+            tenant_id, self.deployed_environment
         )
         source = "controller_store" if available else "missing"
         records = self.loop_truth.project_canonical_loop_health(
@@ -599,8 +627,10 @@ class ControlLoopsService:
             requested_tenant=requested_tenant,
             requested_environment=requested_environment,
         )
+        # Authorization is by trading stage; controller records are keyed by
+        # the deployment environment every LoopControllerWriter records.
         available, raw_records = await self.loop_truth.fetch_controller_store_health_records(
-            tenant_id, environment
+            tenant_id, self.deployed_environment
         )
         source = "controller_store" if available else "missing"
         record = self.loop_truth.project_canonical_loop_health_entry(
@@ -660,6 +690,25 @@ class ControlLoopsService:
             surface["status"] = "degraded" if available else "unavailable"
         return surface
 
+    def _postgres_projection_surface(
+        self, controller: Optional[Mapping[str, Any]]
+    ) -> Dict[str, Any]:
+        ctrl = dict(controller or {})
+        formal = (
+            ctrl.get("accepted_live") is True
+            and ctrl.get("status") == "ready"
+            and ctrl.get("mode") == "live"
+        )
+        return {
+            "status": "ok" if formal else "degraded",
+            "source": "postgres_lifecycle_projection",
+            "projection_schema_version": "pantheon.trade-journey-projection.v1",
+            "controller": ctrl,
+            "accepted_live": ctrl.get("accepted_live"),
+            "projection_mode": ctrl.get("mode"),
+            "truth_status": "formal" if formal else "degraded",
+        }
+
     def _projection_reader(self) -> Any:
         provider = getattr(self.read_store, "trade_journey_projection_reader", None)
         return provider() if callable(provider) else None
@@ -706,20 +755,7 @@ class ControlLoopsService:
                 return self._list_envelope(
                     [], dataset="loop_runs", surface_key="loop_runs", source="missing"
                 )
-            formal = (
-                controller.get("accepted_live") is True
-                and controller.get("status") == "ready"
-                and controller.get("mode") == "live"
-            )
-            surface = {
-                "status": "ok" if formal else "degraded",
-                "source": "postgres_lifecycle_projection",
-                "projection_schema_version": "pantheon.trade-journey-projection.v1",
-                "controller": controller,
-                "accepted_live": controller.get("accepted_live"),
-                "projection_mode": controller.get("mode"),
-                "truth_status": "formal" if formal else "degraded",
-            }
+            surface = self._postgres_projection_surface(controller)
             response = self._list_envelope(
                 records,
                 dataset="loop_runs",
@@ -782,18 +818,7 @@ class ControlLoopsService:
                     source="missing",
                     available=False,
                 )
-            formal = (
-                controller.get("accepted_live") is True
-                and controller.get("status") == "ready"
-                and controller.get("mode") == "live"
-            )
-            surface = {
-                "status": "ok" if formal else "degraded",
-                "source": "postgres_lifecycle_projection",
-                "controller": controller,
-                "accepted_live": controller.get("accepted_live"),
-                "truth_status": "formal" if formal else "degraded",
-            }
+            surface = self._postgres_projection_surface(controller)
             return self._detail(
                 record if isinstance(record, Mapping) else None,
                 entity_id=loop_run_id,
@@ -879,8 +904,11 @@ class ControlLoopsService:
                 "The configured BFF instance has no durable DLQ replay adapter.",
                 precondition_failed="downstream_health_monitor",
             )
+        # The monitor drains the outbox synchronously over HTTP; keep that
+        # work off the event loop thread.
         result = await _resolve(
-            replay(
+            await asyncio.to_thread(
+                replay,
                 actor_id=str(getattr(identity, "operator_id", "")),
                 approval_ref=approval_ref,
                 reason=reason,

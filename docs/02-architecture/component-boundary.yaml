@@ -43,6 +43,7 @@ components:
       - .orchestrator/
       - scripts/ai_status.py
       - scripts/human-ops-status.sh
+      - scripts/canonical-task-state-binding.sh
       - scripts/test_human_ops_status.py
       - AGENTS.md
       - scripts/component_boundary.py
@@ -89,11 +90,6 @@ components:
       - docs/orchestrator-portability.md
       - docs/operations/provider-auth-health-contract.md
       - docs/operations/pi-astra-worker.md
-      - docs/deployment/main-py-test-coupling-measurement.md
-      - docs/04/pantheon_architecture_cleanup_rebaseline_2026-09-16/REBASELINE_2026-09-16.md
-      - docs/04/pantheon_architecture_cleanup_rebaseline_2026-09-16/data/
-      # Superseded path retained so the rename classifies on both sides.
-      - docs/deployment/main-py-seam-inventory.md
       - ai-task-archive/
     runtime_required: false
     removal_condition: "all engineering tasks archived and no worker/lease remains"
@@ -164,6 +160,14 @@ components:
       - scripts/test_auto_deploy_dev_pair.py
       - scripts/cross_repo_release_controller.py
       - scripts/test_cross_repo_release_controller.py
+      - scripts/dev_environment_lease.py
+      - scripts/run_with_dev_environment_lease.sh
+      - scripts/compensate_cross_repo_release.sh
+      - scripts/test_dev_environment_lease.py
+      - scripts/test_dev_environment_lease_guard.py
+      - scripts/test_dev_environment_lease_deploy_contract.py
+      - scripts/test_dev_paper_diagnostics_failure_path.py
+      - scripts/test_nonprod_dev_artifact_workflow.py
       - docs/deployment/nonprod-ci-cd.md
       - scripts/run-acceptance.sh
       - scripts/test_run_acceptance.py

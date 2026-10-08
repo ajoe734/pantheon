@@ -91,6 +91,8 @@ DEV_MANAGEMENT_AI_DB_USER="${DEV_MANAGEMENT_AI_DB_USER:-pantheon_management_ai}"
 DEV_MANAGEMENT_AI_DB_PASSWORD="${DEV_MANAGEMENT_AI_DB_PASSWORD:-pantheon_management_ai_dev}"
 DEV_MANAGEMENT_AI_DB_NAME="${DEV_MANAGEMENT_AI_DB_NAME:-pantheon}"
 DEV_MANAGEMENT_AI_DATABASE_URL="${DEV_MANAGEMENT_AI_DATABASE_URL:-}"
+DEV_RECONCILIATION_DRIFT_STORE_BACKEND="${DEV_RECONCILIATION_DRIFT_STORE_BACKEND:-postgres}"
+DEV_RECONCILIATION_DRIFT_STORE_DSN="${DEV_RECONCILIATION_DRIFT_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}"
 DEV_AGORA_PRIVATE_CONTENT_DEV_KEK="${DEV_AGORA_PRIVATE_CONTENT_DEV_KEK:-}"
 DEV_MANAGEMENT_AI_ATTACH_BUCKET="${DEV_MANAGEMENT_AI_ATTACH_BUCKET:-}"
 DEV_MANAGEMENT_AI_ATTACH_LOCATION="${DEV_MANAGEMENT_AI_ATTACH_LOCATION:-asia-east1}"
@@ -175,10 +177,6 @@ validate_artifact_restore_request() {
        "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256:-}" =~ ^[0-9a-f]{64}$ && \
        "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256}" != "$(printf '%064d' 0)" ]] \
       || error "artifact restore requires the external candidate image receipt path and digest"
-  fi
-  if [[ "${PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE:-}" == *+live_bff_drift_recovery ]]; then
-    [[ "${PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA:-}" =~ ^[0-9a-f]{40}$ ]] \
-      || error "artifact restore requires valid 40-hex PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA under drift recovery"
   fi
 }
 
@@ -381,7 +379,6 @@ Environment overrides:
   PANTHEON_DEV_ARTIFACT_ATTEMPT PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA
   PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA PANTHEON_DEV_ARTIFACT_CANDIDATE_FRONTEND_SHA
   PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA
-  PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA
   PANTHEON_DEV_ARTIFACT_GUARD_CHANNEL_FD (created by the VM transport watchdog)
   DEV_DEPLOY_DEADLINE_SECONDS DEV_DEPLOY_TIMEOUT_SECONDS
   PANTHEON_DEPLOY_WORKTREE_ROOT
@@ -417,6 +414,7 @@ Environment overrides:
   DEV_MANAGEMENT_AI_STORE_BACKEND DEV_MANAGEMENT_AI_STORE_SCHEMA
   DEV_MANAGEMENT_AI_DB_USER DEV_MANAGEMENT_AI_DB_PASSWORD DEV_MANAGEMENT_AI_DB_NAME
   DEV_MANAGEMENT_AI_DATABASE_URL
+  DEV_RECONCILIATION_DRIFT_STORE_BACKEND DEV_RECONCILIATION_DRIFT_STORE_DSN
   DEV_AGORA_PRIVATE_CONTENT_DEV_KEK
   DEV_MANAGEMENT_AI_ATTACH_BUCKET DEV_MANAGEMENT_AI_ATTACH_LOCATION
   DEV_APP_DB_USER PANTHEON_APP_DB_USER
@@ -489,6 +487,8 @@ configure_management_ai_dev_env() {
   MANAGEMENT_AI_STORE_BACKEND="${MANAGEMENT_AI_STORE_BACKEND:-$DEV_MANAGEMENT_AI_STORE_BACKEND}"
   MANAGEMENT_AI_STORE_SCHEMA="${MANAGEMENT_AI_STORE_SCHEMA-${DEV_MANAGEMENT_AI_STORE_SCHEMA}}"
   MANAGEMENT_AI_DATABASE_URL="${MANAGEMENT_AI_DATABASE_URL:-$DEV_MANAGEMENT_AI_DATABASE_URL}"
+  RECONCILIATION_DRIFT_STORE_BACKEND="${RECONCILIATION_DRIFT_STORE_BACKEND:-$DEV_RECONCILIATION_DRIFT_STORE_BACKEND}"
+  RECONCILIATION_DRIFT_STORE_DSN="${RECONCILIATION_DRIFT_STORE_DSN:-$DEV_RECONCILIATION_DRIFT_STORE_DSN}"
   # Dev compose has a durable local attachment store; use GCS only when configured.
   PANTHEON_MGMT_AI_ATTACH_BUCKET="${PANTHEON_MGMT_AI_ATTACH_BUCKET:-$DEV_MANAGEMENT_AI_ATTACH_BUCKET}"
 
@@ -714,6 +714,8 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "management_ai_database_url_configured=$([[ -n "${MANAGEMENT_AI_DATABASE_URL:-}" ]] && echo true || echo false)"
   info "management_ai_attach_bucket=${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}"
   info "management_ai_attach_location=${DEV_MANAGEMENT_AI_ATTACH_LOCATION}"
+  info "reconciliation_drift_store_backend=${RECONCILIATION_DRIFT_STORE_BACKEND:-}"
+  info "reconciliation_drift_store_dsn_configured=$([[ -n "${RECONCILIATION_DRIFT_STORE_DSN:-}" ]] && echo true || echo false)"
   info "staging_exec_health_url=${STAGING_EXEC_HEALTH_URL:-}"
   info "staging_bff_cors_origins=${STAGING_BFF_CORS_ORIGINS:-}"
   exit 0
@@ -834,13 +836,31 @@ CONTEXT_PY
 }
 fi
 
+if [[ "${REFRESH_ONLY:-false}" == "true" && -n "${DEV_DEPLOY_SSH_HOST:-}" ]]; then
+  DEPLOY_ENV="dev"
+  COMPONENT="refresh-only"
+  PROJECT_ID="${PROJECT_ID:-pantheon-dev-20260902}"
+  REMOTE_USER="${REMOTE_USER:-${DEV_DEPLOY_SSH_USER:-chloe_ong_dev_cctech_support_com}}"
+  DEV_VM="${DEV_VM:-pantheon-dev-deploy}"
+  DEV_ZONE="${DEV_ZONE:-asia-east1-b}"
+fi
+
 ssh_bash() {
   local vm="$1"
   local zone="$2"
   local remote_dir="$3"
   local remote_component="$4"
-  local command_prefix="" deadline_seconds="${DEV_DEPLOY_DEADLINE_SECONDS:-7200}" remote_command=()
-  if [[ "${remote_component}" != "refresh-only" ]]; then
+  local command_prefix="" deadline_seconds="${DEV_DEPLOY_DEADLINE_SECONDS:-7200}" remote_command=() remote_output=""
+  if [[ "${remote_component}" == "refresh-only" ]]; then
+    [[ -z "${REFRESH_OUTPUT_PATH:-}" ]] || remote_output="/tmp/pantheon-refresh-outcome-${GITHUB_RUN_ID:-$$}.json"
+    command_prefix="PANTHEON_DEPLOY_ENV=$(shell_quote "$DEPLOY_ENV")"
+    command_prefix+=" PANTHEON_DEPLOY_COMPONENT=refresh-only"
+    command_prefix+=" PANTHEON_REMOTE_DIR=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:+${PANTHEON_DEPLOY_WORKTREE_ROOT%/}/dev-root}")"
+    command_prefix+=" PANTHEON_DEPLOY_WORKTREE_ROOT=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:-}")"
+    command_prefix+=" FORCE_REFRESH=$(shell_quote "${FORCE_REFRESH:-false}")"
+    command_prefix+=" REFRESH_OUTPUT_PATH=$(shell_quote "${remote_output}")"
+    command_prefix+=" bash -s"
+  else
     command_prefix="PANTHEON_DEPLOY_ENV=$(shell_quote "$DEPLOY_ENV")"
     command_prefix+=" PANTHEON_DEPLOY_COMPONENT=$(shell_quote "$remote_component")"
     command_prefix+=" PANTHEON_DEPLOY_SHA=$(shell_quote "$DEPLOY_SHA")"
@@ -865,7 +885,6 @@ ssh_bash() {
     PANTHEON_DEV_ARTIFACT_ATTEMPT PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA \
     PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA PANTHEON_DEV_ARTIFACT_CANDIDATE_FRONTEND_SHA \
     PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA \
-    PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA \
     PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID; do
     command_prefix+=" ${artifact_variable}=$(shell_quote "${!artifact_variable:-}")"
   done
@@ -945,6 +964,8 @@ ssh_bash() {
   command_prefix+=" PANTHEON_MANAGEMENT_AI_DB_PASSWORD=$(shell_quote "${DEV_MANAGEMENT_AI_DB_PASSWORD:-}")"
   command_prefix+=" PANTHEON_MANAGEMENT_AI_DB_NAME=$(shell_quote "${DEV_MANAGEMENT_AI_DB_NAME:-}")"
   command_prefix+=" PANTHEON_MANAGEMENT_AI_APP_DB_USER=$(shell_quote "${DEV_APP_DB_USER:-pantheon_app}")"
+  command_prefix+=" RECONCILIATION_DRIFT_STORE_BACKEND=$(shell_quote "${RECONCILIATION_DRIFT_STORE_BACKEND:-}")"
+  command_prefix+=" RECONCILIATION_DRIFT_STORE_DSN=$(shell_quote "${RECONCILIATION_DRIFT_STORE_DSN:-}")"
   command_prefix+=" PANTHEON_STAGING_EXEC_HEALTH_URL=$(shell_quote "${STAGING_EXEC_HEALTH_URL:-}")"
   command_prefix+=" PANTHEON_STAGING_BFF_CORS_ORIGINS=$(shell_quote "${STAGING_BFF_CORS_ORIGINS:-}")"
   command_prefix+=" bash -s"
@@ -966,7 +987,7 @@ ssh_bash() {
   fi
 
   run_remote_payload() {
-    if [[ "${remote_component}" == "refresh-only" ]]; then
+    if [[ "${remote_component}" == "refresh-only" && -z "${DEV_DEPLOY_SSH_HOST:-}" ]]; then
       PANTHEON_DEPLOY_COMPONENT=refresh-only \
       FORCE_REFRESH="${FORCE_REFRESH:-false}" \
       REFRESH_OUTPUT_PATH="${REFRESH_OUTPUT_PATH:-}" \
@@ -976,11 +997,14 @@ ssh_bash() {
     if [[ "${DEPLOY_ENV}" == dev ]]; then
       [[ "${PROJECT_ID}" == pantheon-dev-20260902 && "${vm}" == pantheon-dev-deploy && \
          "${zone}" == asia-east1-b && "${DEV_DEPLOY_SSH_HOST}" == 34.81.52.222 && \
-         "${DEV_DEPLOY_SSH_USER:-${REMOTE_USER}}" == chloe_ong_dev_cctech_support_com && \
-         "${DEV_BFF_PUBLIC_HOST}" == api.dev.mvl-cap.tw && "${DEV_FE_PUBLIC_HOST}" == app.dev.mvl-cap.tw ]] \
+         "${DEV_DEPLOY_SSH_USER:-${REMOTE_USER}}" == chloe_ong_dev_cctech_support_com ]] \
         || { info "guarded artifact transport requires the explicit current dev target" >&2; return 75; }
+      if [[ "${remote_component}" != "refresh-only" ]]; then
+        [[ "${DEV_BFF_PUBLIC_HOST}" == api.dev.mvl-cap.tw && "${DEV_FE_PUBLIC_HOST}" == app.dev.mvl-cap.tw ]] \
+          || { info "guarded artifact transport requires the explicit current dev target" >&2; return 75; }
+      fi
       local -a observer_args=()
-      if [[ "${ARTIFACT_RESTORE}" != true && "${ARTIFACT_VERIFY}" != true ]]; then
+      if [[ "${remote_component}" != "refresh-only" && "${ARTIFACT_RESTORE}" != true && "${ARTIFACT_VERIFY}" != true ]]; then
         prepare_dev_candidate_receipt_context || return $?
         observer_args=(--candidate-receipt-context "${PANTHEON_DEV_ARTIFACT_RUNNER_EVIDENCE_DIR}/context.json"
           --candidate-receipt-output "${PANTHEON_DEV_ARTIFACT_RUNNER_EVIDENCE_DIR}/candidate-receipt.json")
@@ -1021,6 +1045,10 @@ with os.fdopen(fd, "wb") as stream:
             --ssh-helper "${SCRIPT_DIR}/dev_vm_ssh.sh" --script-file "${remote_script}" \
             --deadline-seconds "${deadline_seconds}" "${observer_args[@]}" || transport_status=$?
         fi
+      fi
+      if [[ "${transport_status}" -eq 0 && "${remote_component}" == "refresh-only" && -n "${remote_output:-}" && -n "${REFRESH_OUTPUT_PATH:-}" ]]; then
+        "$SCRIPT_DIR/dev_vm_ssh.sh" copy-from "${remote_output}" "${REFRESH_OUTPUT_PATH}" || true
+        "$SCRIPT_DIR/dev_vm_ssh.sh" exec "rm -f $(shell_quote "${remote_output}")" >/dev/null 2>&1 || true
       fi
       # Only these locally-created, exact private paths are removed; never an
       # evidence directory, receipt, retained VM artifact, or caller path.
@@ -1321,15 +1349,23 @@ wait_for_exact_bff_lifecycle_readiness() {
 
 wait_for_bounded_source_refresh_service() {
   local service="$1"
+  local container_name=""
   local timeout_seconds="${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS}"
   local started_epoch
   local container_id=""
   local state=""
   local exit_code=""
   started_epoch="$(date +%s)"
+  # Refresh-only runs use named one-shot containers so steady services stay untouched.
+  [[ -z "${SOURCE_INGEST_BOUNDED_CONTAINER_PREFIX:-}" ]] \
+    || container_name="${SOURCE_INGEST_BOUNDED_CONTAINER_PREFIX}-${service}"
 
   while (( $(date +%s) - started_epoch < timeout_seconds )); do
-    container_id="$(docker compose -p pantheon -f docker-compose.yml ps -a -q "$service" 2>/dev/null || true)"
+    if [[ -n "$container_name" ]]; then
+      container_id="$(docker ps -a -q --filter "name=^${container_name}\$" 2>/dev/null || true)"
+    else
+      container_id="$(docker compose -p pantheon -f docker-compose.yml ps -a -q "$service" 2>/dev/null || true)"
+    fi
     if [[ -z "$container_id" ]]; then
       sleep 5
       continue
@@ -1750,11 +1786,10 @@ except Exception as exc:
 
 if snap is not None:
     cal = snap.get("calendar_evidence") or (snap.get("lineage") or {}).get("calendar_evidence")
-    if not cal:
-        emit("error", reason="market_input_calendar_unverifiable", detail="snapshot missing required calendar evidence and pins")
-    c_ok, c_err, c_norm = validate_taiwan_calendar_evidence(cal, now_dt=now_u)
+    c_ok, c_err, c_norm = validate_taiwan_calendar_evidence(cal, now_dt=now_u) if cal else (False, "snapshot missing calendar evidence", None)
     if not c_ok:
-        emit("error", reason="market_input_calendar_unverifiable", detail=c_err)
+        print(f"refresh needed: existing snapshot calendar evidence unusable: {c_err}", file=sys.stderr)
+        emit("proceed", reason="calendar_evidence_refresh_needed", detail=str(c_err))
     if d_str in (c_norm.get("holidays") or {}):
         emit("skipped", reason="holiday", checked_at=now_u.isoformat())
     ev_dt = datetime.fromisoformat(snap["event_time"].replace("Z", "+00:00"))
@@ -1849,6 +1884,19 @@ execute_bounded_source_refresh_entrypoint() {
   SOURCE_INGEST_MAX_RECORDS="100"
   validate_source_refresh_profile
   resolve_bounded_source_refresh_active_symbols
+  if [[ -z "${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" ]]; then
+    info "bounded source refresh skipped: no_active_taiwan_symbols"
+    [[ -n "${output_path}" ]] && printf '%s\n' '{"status": "skipped", "reason": "no_active_taiwan_symbols"}' > "${output_path}"
+    rm -f "${steady_env}"
+    return 0
+  fi
+
+  local bounded_services=(source-ingest-scheduler source-ingest-agora-projector) bounded_service
+  local bounded_containers=()
+  SOURCE_INGEST_BOUNDED_CONTAINER_PREFIX="pantheon-bounded-refresh"
+  for bounded_service in "${bounded_services[@]}"; do
+    bounded_containers+=("${SOURCE_INGEST_BOUNDED_CONTAINER_PREFIX}-${bounded_service}")
+  done
 
   local cid running_image_id compose_image_id
   cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null || true)"
@@ -1860,6 +1908,27 @@ execute_bounded_source_refresh_entrypoint() {
   [[ "$compose_image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || error "invalid compose image ID: ${compose_image_id:-missing}"
   [[ "$running_image_id" == "$compose_image_id" ]] || error "running image ID ${running_image_id} != compose image ID ${compose_image_id}"
   docker inspect --format '{{json .Config.Env}}' "$cid" > "${steady_env}"
+
+  # Deploy-time values (tenant, GIT_SHA, ...) only exist on the steady scheduler container.
+  local steady_ids=() steady_id steady_scheduler_env
+  for bounded_service in "${bounded_services[@]}"; do
+    steady_id="$(docker compose -p pantheon -f docker-compose.yml ps -a -q "${bounded_service}" 2>/dev/null || true)"
+    [[ -n "${steady_id}" ]] && steady_ids+=("${steady_id}")
+  done
+  steady_scheduler_env="$(docker inspect --format '{{json .Config.Env}}' "${steady_ids[0]:-}" 2>/dev/null || true)"
+  local deploy_key deploy_value
+  for deploy_key in PANTHEON_TENANT_ID PANTHEON_ENV GIT_SHA IMAGE_DIGEST BUILD_TIME; do
+    deploy_value="$(python3 -c 'import json,sys
+for item in json.loads(sys.argv[1] or "[]"):
+    key, _, value = item.partition("=")
+    if key == sys.argv[2]:
+        print(value)' "${steady_scheduler_env}" "${deploy_key}")"
+    if [[ -z "${deploy_value}" ]]; then
+      [[ "${deploy_key}" == "IMAGE_DIGEST" || "${deploy_key}" == "BUILD_TIME" ]] && continue
+      error "steady source-ingest-scheduler is missing deploy-time value ${deploy_key}; refusing bounded refresh (steady_scheduler_deploy_values_missing)"
+    fi
+    export "${deploy_key}=${deploy_value}"
+  done
 
   restore_bounded_source_refresh() {
     local rc=$?
@@ -1874,28 +1943,40 @@ execute_bounded_source_refresh_entrypoint() {
       SOURCE_INGEST_CONTROLLER_MAX_TICKS=0 SOURCE_INGEST_CONTROLLER_RESTART_POLICY=unless-stopped \
         docker compose -p pantheon -f docker-compose.yml up -d --no-deps --no-build source-ingest >/dev/null 2>&1 || true
     fi
-    COMPOSE_PROFILES="source-ingest-scheduler,workers" \
-      docker compose -p pantheon -f docker-compose.yml rm -f -s source-ingest-scheduler source-ingest-agora-projector >/dev/null 2>&1 || true
+    # Only the named one-shot containers are removed; steady scheduler/projector are never touched.
+    docker rm -f "${bounded_containers[@]}" >/dev/null 2>&1 || true
+    if (( ${#steady_ids[@]} )); then
+      docker start "${steady_ids[@]}" >/dev/null 2>&1 || rc=$?
+    fi
     rm -f "${steady_env:-}"
     return "${rc}"
   }
   trap restore_bounded_source_refresh EXIT INT TERM
 
+  # Stop (not remove) the steady controller/projector so only one controller owns the window.
+  (( ${#steady_ids[@]} )) && docker stop "${steady_ids[@]}" >/dev/null
   manage_source_ingest_refresh_runtime "${steady_env}" "bounded" "${running_image_id}" "${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}"
 
-  COMPOSE_PROFILES="source-ingest-scheduler,workers" \
-  SOURCE_INGEST_CONTROLLER_MODE=reconcile_and_pull \
-  SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=reconciled_live_proof \
-  SOURCE_INGEST_CONTROLLER_MAX_TICKS=1 \
-  SOURCE_INGEST_CONTROLLER_RESTART_POLICY=no \
-  SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
-  SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
-  SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY=1 \
-  SOURCE_INGEST_MAX_RECORDS=100 \
-  SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS="${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" \
-    docker compose -p pantheon -f docker-compose.yml up -d --no-deps --no-build source-ingest-scheduler source-ingest-agora-projector
-  wait_for_bounded_source_refresh_service source-ingest-scheduler
-  wait_for_bounded_source_refresh_service source-ingest-agora-projector
+  docker rm -f "${bounded_containers[@]}" >/dev/null 2>&1 || true
+  for bounded_service in "${bounded_services[@]}"; do
+    COMPOSE_PROFILES="source-ingest-scheduler,workers" \
+    SOURCE_INGEST_CONTROLLER_MODE=reconcile_and_pull \
+    SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=reconciled_live_proof \
+    SOURCE_INGEST_CONTROLLER_MAX_TICKS=1 \
+    SOURCE_INGEST_CONTROLLER_RESTART_POLICY=no \
+    SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
+    SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
+    SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY=1 \
+    SOURCE_INGEST_MAX_RECORDS=100 \
+    SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS="${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" \
+      docker compose -p pantheon -f docker-compose.yml run -d --no-deps \
+        -e SOURCE_INGEST_CONTROLLER_STATE_PATH=/data/source-ingest/bounded-refresh/controller_state.json \
+        -e SOURCE_INGEST_CONTROLLER_ALIVE_PATH=/data/source-ingest/bounded-refresh/controller_alive \
+        --name "${SOURCE_INGEST_BOUNDED_CONTAINER_PREFIX}-${bounded_service}" "${bounded_service}"
+  done
+  for bounded_service in "${bounded_services[@]}"; do
+    wait_for_bounded_source_refresh_service "${bounded_service}"
+  done
 
   verify_bounded_source_refresh_readback "${refresh_started_at}"
   restore_bounded_source_refresh
@@ -2981,26 +3062,43 @@ retire_dormant_and_one_off_profile_containers() {
 verify_dev_paper_fleet() {
   local attempt
   local status=""
+  local summary=""
 
   for attempt in $(seq 1 30); do
     status="$(curl -fsS http://127.0.0.1:18011/readyz 2>/dev/null || true)"
-    if python3 -c '
+    if summary="$(python3 -c '
 import json
 import sys
 
 payload = json.loads(sys.argv[1])
 workers = list(payload.get("workers") or [])
-assert payload.get("ready") is True
-assert payload.get("live") is True
-assert payload.get("last_error") in (None, "")
-assert payload.get("monitoring_last_error") in (None, "")
+ready = payload.get("ready") is True
+live = payload.get("live") is True
+worker_count = int(payload.get("worker_count") or 0)
+running_count = int(payload.get("running_count") or 0)
+last_error = payload.get("last_error")
+mon_error = payload.get("monitoring_last_error")
+
+print(json.dumps({
+    "last_error": last_error,
+    "live": live,
+    "monitoring_last_error": mon_error,
+    "ready": ready,
+    "running_count": running_count,
+    "worker_count": worker_count,
+}, sort_keys=True))
+
+assert ready
+assert live
+assert last_error in (None, "")
+assert mon_error in (None, "")
 assert int(payload.get("cycle_count") or 0) >= 1
-assert int(payload.get("worker_count") or 0) == int(payload.get("running_count") or 0)
+assert worker_count == running_count
 assert all(worker.get("status") == "running" for worker in workers)
 assert all(worker.get("heartbeat_status") == "active" for worker in workers)
-' "$status" 2>/dev/null; then
+' "$status" 2>/dev/null)"; then
       info "paper fleet reconciler is ready and all desired workers are active"
-      printf '%s\n' "$status"
+      printf '%s\n' "$summary"
       return 0
     fi
     sleep 2
@@ -3009,7 +3107,7 @@ assert all(worker.get("heartbeat_status") == "active" for worker in workers)
   info "paper fleet reconciler did not converge"
   docker compose -p pantheon -f docker-compose.yml ps -a paper-fleet-reconciler || true
   docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=240 paper-fleet-reconciler || true
-  printf '%s\n' "$status"
+  printf '%s\n' "${summary:-{\"error\": \"paper fleet reconciler did not converge\", \"live\": false, \"ready\": false}}"
   return 1
 }
 
@@ -3091,6 +3189,98 @@ stage_dev_paper_prerequisite_readiness() {
   local auth_header=()
   [[ -z "$token" ]] || auth_header=(-H "Authorization: Bearer ${token}")
 
+  local simulation_connector_id="dev-paper-us-equity-simulation"
+  local temporary_admission_active="false"
+  local prior_enabled="false"
+  local prior_interval=86400
+  local admitted_updated_at=""
+
+  restore_dev_paper_schedule() {
+    local caller_rc="${1:-0}"
+    trap - EXIT INT TERM
+    [[ "$temporary_admission_active" == "true" ]] || return "$caller_rc"
+
+    info "restoring connector ${simulation_connector_id} schedule (enabled=${prior_enabled}, interval=${prior_interval})"
+
+    # Verify current schedule state before restore PUT
+    local cur_resp cur_code cur_body
+    cur_resp="$(curl -sS -w "\n%{http_code}" "${source_ingest_url}/api/source-ingest/connectors/${simulation_connector_id}/schedule" 2>&1 || true)"
+    cur_code="$(printf '%s\n' "$cur_resp" | tail -n 1)"
+    cur_body="$(printf '%s\n' "$cur_resp" | sed '$d')"
+    if [[ "$cur_code" != "200" ]]; then
+      error "failed to read connector ${simulation_connector_id} schedule before restore (http_status=${cur_code}); refusing to overwrite unknown state"
+      return 1
+    fi
+
+    local cur_check
+    cur_check="$(python3 -c '
+import json, sys
+try:
+    cur = str((json.loads(sys.argv[1]).get("schedule") or {}).get("updated_at") or "").strip()
+    adm = sys.argv[2].strip()
+    if adm and cur and cur != adm:
+        sys.exit(3)
+    sys.exit(0)
+except Exception:
+    sys.exit(2)
+' "$cur_body" "${admitted_updated_at:-}" 2>/dev/null; echo $?)"
+
+    if [[ "$cur_check" == "3" ]]; then
+      error "connector ${simulation_connector_id} schedule was modified after temporary admission (updated_at changed); refusing to overwrite operator changes"
+      return 1
+    elif [[ "$cur_check" != "0" ]]; then
+      error "connector ${simulation_connector_id} schedule response malformed; refusing to overwrite unknown state"
+      return 1
+    fi
+
+    # PUT restore schedule
+    local rest_resp rest_code rest_body
+    rest_resp="$(curl -sS -w "\n%{http_code}" -X PUT "${auth_header[@]}" \
+      -H "Content-Type: application/json" \
+      -d "{\"interval_seconds\": ${prior_interval}, \"enabled\": ${prior_enabled}}" \
+      "${source_ingest_url}/api/source-ingest/connectors/${simulation_connector_id}/schedule" 2>&1 || true)"
+    rest_code="$(printf '%s\n' "$rest_resp" | tail -n 1)"
+    rest_body="$(printf '%s\n' "$rest_resp" | sed '$d')"
+
+    if [[ "$rest_code" != "200" ]]; then
+      error "failed to restore connector ${simulation_connector_id} schedule: http_status=${rest_code}"
+      return 1
+    fi
+
+    # GET readback verification of restored schedule
+    local rb_resp rb_code rb_body
+    rb_resp="$(curl -sS -w "\n%{http_code}" "${source_ingest_url}/api/source-ingest/connectors/${simulation_connector_id}/schedule" 2>&1 || true)"
+    rb_code="$(printf '%s\n' "$rb_resp" | tail -n 1)"
+    rb_body="$(printf '%s\n' "$rb_resp" | sed '$d')"
+
+    if [[ "$rb_code" != "200" ]]; then
+      error "connector ${simulation_connector_id} schedule readback failed: http_status=${rb_code}"
+      return 1
+    fi
+
+    local check_err
+    check_err="$(python3 -c '
+import json, sys
+exp_en, exp_int = sys.argv[1] == "true", int(sys.argv[2])
+for label, raw in (("response", sys.argv[3]), ("readback", sys.argv[4])):
+    try:
+        s = json.loads(raw).get("schedule", {})
+        s_en, s_int = s.get("enabled"), s.get("interval_seconds")
+        if s_en is not exp_en or int(s_int if s_int is not None else -1) != exp_int:
+            sys.exit(f"{label} mismatch: enabled={s_en}, interval={s_int}")
+    except Exception as e:
+        sys.exit(f"{label} malformed: {e}")
+' "$prior_enabled" "$prior_interval" "$rest_body" "$rb_body" 2>&1 || true)"
+
+    if [[ -n "$check_err" ]]; then
+      error "connector ${simulation_connector_id} schedule restore verification failed: ${check_err}"
+      return 1
+    fi
+
+    temporary_admission_active="false"
+    return "$caller_rc"
+  }
+
   local deadline attempt=0 triggered=false
   deadline=$(( $(date +%s) + budget ))
 
@@ -3101,39 +3291,23 @@ stage_dev_paper_prerequisite_readiness() {
 
     local is_admissible=false
     if [[ -n "$snapshot_resp" ]]; then
-      if python3 -c '
-import json, sys, math
-from datetime import datetime, timezone
-raw = sys.argv[1]
+      if PYTHONPATH="${SCRIPT_DIR:-.}/..:${PWD}:${PYTHONPATH:-}" python3 -c '
+import json, sys
+from services.execution.market_snapshot_admission import admit_canonical_source_snapshot
 try:
-    data = json.loads(raw)
+    sys.exit(0 if admit_canonical_source_snapshot(json.loads(sys.argv[1]), expected_symbol=sys.argv[2]).admitted else 1)
 except Exception:
     sys.exit(1)
-closes = data.get("closes")
-if not isinstance(closes, list) or len(closes) < 2:
-    sys.exit(1)
-if any(isinstance(c, bool) or not isinstance(c, (int, float)) or not math.isfinite(float(c)) or float(c) <= 0 for c in closes):
-    sys.exit(1)
-market = data.get("market")
-if not market or not isinstance(market, str) or not market.strip():
-    sys.exit(1)
-ev_str = str(data.get("event_time") or "")
-if ev_str:
-    try:
-        ev_dt = datetime.fromisoformat(ev_str.replace("Z", "+00:00"))
-        now_dt = datetime.now(timezone.utc)
-        age = (now_dt - ev_dt).total_seconds()
-        if age > 86400 or age < 0:
-            sys.exit(1)
-    except Exception:
-        sys.exit(1)
-sys.exit(0)
-' "$snapshot_resp" 2>/dev/null; then
+' "$snapshot_resp" "$symbol" 2>/dev/null; then
         is_admissible=true
       fi
     fi
 
     if [[ "$is_admissible" == "true" ]]; then
+      if ! restore_dev_paper_schedule 0; then
+        error "staged dev paper prerequisite readiness failed for ${symbol}: schedule restore was not verified"
+        return 1
+      fi
       info "staged dev paper prerequisite readiness satisfied for ${symbol}"
       return 0
     fi
@@ -3141,10 +3315,137 @@ sys.exit(0)
     if [[ "$triggered" == "false" ]]; then
       triggered=true
       info "staged dev paper prerequisite snapshot for ${symbol} missing, non-admissible, or lacks market; triggering run-scheduled (attempt 1)"
+
+      # Check if simulation connector is stopped by explicit operator stop (fail-closed)
+      local conn_resp conn_code conn_body
+      conn_resp="$(curl -sS -w "\n%{http_code}" "${source_ingest_url}/api/source-ingest/connectors/${simulation_connector_id}" 2>&1 || true)"
+      conn_code="$(printf '%s\n' "$conn_resp" | tail -n 1)"
+      conn_body="$(printf '%s\n' "$conn_resp" | sed '$d')"
+
+      if [[ "$conn_code" != "200" ]]; then
+        error "failed to read connector ${simulation_connector_id} state (http_status=${conn_code}); refusing prerequisite refresh"
+        return 1
+      fi
+
+      local op_res
+      op_res="$(python3 -c '
+import json, sys
+try:
+    d = json.loads(sys.argv[1])
+    conn = d.get("connector", d)
+    if not isinstance(conn, dict) or not conn:
+        sys.exit(2)
+    status = conn.get("status")
+    if not isinstance(status, str) or not status.strip():
+        sys.exit(2)
+    meta = conn.get("metadata")
+    if meta is not None and not isinstance(meta, dict):
+        sys.exit(2)
+    meta = meta or {}
+    if meta.get("operator_stop"):
+        sys.exit(3)
+    if status == "disabled":
+        rec = meta.get("persona_source_reconciliation") or {}
+        if not (isinstance(rec, dict) and rec.get("retired_by_authoritative_snapshot") is True):
+            sys.exit(3)
+    elif status != "active":
+        sys.exit(2)
+    sys.exit(0)
+except Exception:
+    sys.exit(2)
+' "$conn_body" 2>/dev/null; echo $?)"
+
+      if [[ "$op_res" == "3" ]]; then
+        error "connector ${simulation_connector_id} has explicit operator stop; refusing prerequisite refresh"
+        return 1
+      elif [[ "$op_res" != "0" ]]; then
+        error "unknown operator stop state for connector ${simulation_connector_id}; refusing prerequisite refresh"
+        return 1
+      fi
+
+      # Check prior schedule state (fail-closed)
+      local sched_resp sched_code sched_body
+      sched_resp="$(curl -sS -w "\n%{http_code}" "${source_ingest_url}/api/source-ingest/connectors/${simulation_connector_id}/schedule" 2>&1 || true)"
+      sched_code="$(printf '%s\n' "$sched_resp" | tail -n 1)"
+      sched_body="$(printf '%s\n' "$sched_resp" | sed '$d')"
+
+      if [[ "$sched_code" != "200" ]]; then
+        error "failed to read connector ${simulation_connector_id} schedule (http_status=${sched_code}); refusing prerequisite refresh"
+        return 1
+      fi
+
+      local sched_info
+      sched_info="$(python3 -c '
+import json, sys
+try:
+    d = json.loads(sys.argv[1])
+    s = d.get("schedule")
+    if not isinstance(s, dict) or not s:
+        sys.exit(1)
+    en = s.get("enabled")
+    if type(en) is not bool:
+        sys.exit(1)
+    sec = s.get("interval_seconds")
+    if type(sec) is not int or isinstance(sec, bool) or sec <= 0:
+        sys.exit(1)
+    upd = str(s.get("updated_at") or "").strip()
+    print(f"{"true" if en else "false"} {sec} {upd}")
+except Exception:
+    sys.exit(1)
+' "$sched_body" 2>/dev/null || true)"
+
+      if [[ -z "$sched_info" ]]; then
+        error "failed to parse connector ${simulation_connector_id} schedule; refusing prerequisite refresh"
+        return 1
+      fi
+
+      prior_enabled="$(printf '%s' "$sched_info" | cut -d' ' -f1)"
+      prior_interval="$(printf '%s' "$sched_info" | cut -d' ' -f2)"
+
+      # If prior schedule is disabled, temporarily admit schedule (fail-closed on admission failure)
+      if [[ "$prior_enabled" != "true" ]]; then
+        info "temporarily admitting schedule for connector ${simulation_connector_id} (interval=${prior_interval})"
+        local adm_resp adm_code adm_body
+        adm_resp="$(curl -sS -w "\n%{http_code}" -X PUT "${auth_header[@]}" \
+          -H "Content-Type: application/json" \
+          -d "{\"interval_seconds\": ${prior_interval}, \"enabled\": true}" \
+          "${source_ingest_url}/api/source-ingest/connectors/${simulation_connector_id}/schedule" 2>&1 || true)"
+        adm_code="$(printf '%s\n' "$adm_resp" | tail -n 1)"
+        adm_body="$(printf '%s\n' "$adm_resp" | sed '$d')"
+
+        if [[ "$adm_code" != "200" ]]; then
+          error "temporary schedule admission failed with http_status=${adm_code}; refusing prerequisite refresh"
+          return 1
+        fi
+
+        local adm_eval
+        adm_eval="$(python3 -c '
+import json, sys
+try:
+    s = json.loads(sys.argv[1]).get("schedule", {})
+    upd = s.get("updated_at")
+    if s.get("enabled") is True and isinstance(upd, str) and upd.strip():
+        print(f"ok\t{upd.strip()}")
+    else:
+        print("error\tschedule not enabled or missing updated_at in response")
+except Exception as e:
+    print(f"error\t{e}")
+' "$adm_body" 2>/dev/null || printf 'error\tfailed to parse admission response')"
+
+        if [[ "${adm_eval%%$'\t'*}" != "ok" ]]; then
+          error "temporary schedule admission response invalid (${adm_eval#*$'\t'}); refusing prerequisite refresh"
+          return 1
+        fi
+
+        admitted_updated_at="${adm_eval#*$'\t'}"
+        temporary_admission_active="true"
+        trap 'restore_dev_paper_schedule 1' EXIT INT TERM
+      fi
+
       local trigger_resp http_code trigger_body
       trigger_resp="$(curl -sS -w "\n%{http_code}" -X POST "${auth_header[@]}" \
         -H "Content-Type: application/json" \
-        -d '{"force_connector_ids":["dev-paper-us-equity-simulation"],"exclusive_connector_ids":["dev-paper-us-equity-simulation"]}' \
+        -d "{\"force_connector_ids\":[\"${simulation_connector_id}\"],\"exclusive_connector_ids\":[\"${simulation_connector_id}\"]}" \
         "${source_ingest_url}/api/source-ingest/run-scheduled" 2>&1 || true)"
       http_code="$(printf '%s\n' "$trigger_resp" | tail -n 1)"
       trigger_body="$(printf '%s\n' "$trigger_resp" | sed '$d')"
@@ -3176,6 +3477,7 @@ else:
 
       info "run-scheduled trigger attempt 1: http_status=${http_code} outcome=${outcome}${diag}"
       if [[ "$outcome" != "refreshed" ]]; then
+        restore_dev_paper_schedule 1 || { error "timed out waiting for staged dev paper prerequisite readiness for ${symbol}: ${outcome} (and schedule restore failed)"; return 1; }
         error "timed out waiting for staged dev paper prerequisite readiness for ${symbol}: ${outcome}"
         return 1
       fi
@@ -3185,6 +3487,7 @@ else:
     sleep "$poll_interval"
   done
 
+  restore_dev_paper_schedule 1 || { error "timed out waiting for staged dev paper prerequisite readiness for ${symbol}: snapshot still lacks market (and schedule restore failed)"; return 1; }
   error "timed out waiting for staged dev paper prerequisite readiness for ${symbol}: snapshot still lacks market"
   return 1
 }
@@ -3664,6 +3967,8 @@ with_dev_bff_runtime_env() {
   PANTHEON_RECONCILIATION_DRIFT_API_URL="${PANTHEON_RECONCILIATION_DRIFT_API_URL:-${RECONCILIATION_DRIFT_URL:-http://reconciliation-drift-svc:8102}}" \
   RECONCILIATION_DRIFT_URL="${RECONCILIATION_DRIFT_URL:-http://reconciliation-drift-svc:8102}" \
   RECONCILIATION_DRIFT_AUTH_TOKEN="${RECONCILIATION_DRIFT_AUTH_TOKEN:-pantheon-local-reconciliation-drift-service}" \
+  RECONCILIATION_DRIFT_STORE_BACKEND="${RECONCILIATION_DRIFT_STORE_BACKEND:-postgres}" \
+  RECONCILIATION_DRIFT_STORE_DSN="${RECONCILIATION_DRIFT_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}" \
     "$@"
 }
 
@@ -3693,10 +3998,6 @@ run_dev_artifact_driver() {
     || error "artifact operation requires the remote watchdog's private guard FD"
   [[ -z "${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-}" || "${PANTHEON_DEV_ROLLBACK_BACKEND_SHA}" == "${PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA}" ]] \
     || error "requested rollback SHA differs from the sealed previous backend"
-  if [[ "${PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE:-}" == *+live_bff_drift_recovery ]]; then
-    [[ "${PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA:-}" =~ ^[0-9a-f]{40}$ ]] \
-      || error "sealed artifact operation requires valid 40-hex PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA under drift recovery"
-  fi
 
   # Authenticate the stable driver and its sibling library before executing
   # either. Never import an unverified copy from a candidate or prior checkout.
@@ -3753,14 +4054,6 @@ ARTIFACT_PY
       --candidate-image-manifest-sha256 "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256}")
   fi
 
-  local -a drift_args=()
-  if [[ -n "${PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE:-}" ]]; then
-    drift_args+=(--baseline-source "${PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE}")
-  fi
-  if [[ -n "${PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA:-}" ]]; then
-    drift_args+=(--observed-live-bff-sha "${PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA}")
-  fi
-
   # The trusted driver checks the external manifest seal, all exact identities,
   # immutable prior Compose bytes, guard pulses, image readbacks and owner
   # preservation. It restores allowlisted baseline paths and historical auth
@@ -3782,7 +4075,7 @@ ARTIFACT_PY
       --bff-url "https://${PANTHEON_DEV_BFF_PUBLIC_HOST}" \
       --fe-url "https://${PANTHEON_DEV_FE_PUBLIC_HOST}" \
       --guard-channel-fd "${PANTHEON_DEV_ARTIFACT_GUARD_CHANNEL_FD}" \
-      "${candidate_args[@]}" "${drift_args[@]}"
+      "${candidate_args[@]}"
 }
 
 validate_dev_candidate_override() {
@@ -4072,6 +4365,10 @@ if [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" == true || "${PANTHEON_DEV_ARTIF
   exit 0
 fi
 
+if [[ "${PANTHEON_DEPLOY_COMPONENT}" == refresh-only ]]; then
+  [[ -n "${PANTHEON_REMOTE_DIR:-}" && -f "${PANTHEON_REMOTE_DIR}/docker-compose.yml" ]] \
+    || error "no managed deploy worktree containing docker-compose.yml at '${PANTHEON_REMOTE_DIR:-}' (set DEV_DEPLOY_WORKTREE_ROOT)"
+fi
 cd "${PANTHEON_REMOTE_DIR:-$(pwd)}"
 git rev-parse --is-inside-work-tree >/dev/null
 
@@ -4289,7 +4586,7 @@ REMOTE
 }
 
 if [[ "${REFRESH_ONLY:-false}" == "true" ]]; then
-  ssh_bash "" "" "" refresh-only
+  ssh_bash "${DEV_VM:-}" "${DEV_ZONE:-}" "${DEV_REMOTE_DIR:-}" refresh-only
   exit $?
 fi
 

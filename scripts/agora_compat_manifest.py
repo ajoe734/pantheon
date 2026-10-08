@@ -24,9 +24,7 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST = REPO_ROOT / "docs" / "contracts" / "agora" / "dev-compatibility-manifest.json"
-DEFAULT_FRONTEND_ROOT = Path(
-    os.environ.get("EXECUTE_PLANS_ROOT", "/home/lupin/code/execute-plans")
-).expanduser()
+
 CONTRACT_VERSION = "1.13"
 CONTRACT_FAMILY = f"agora.v{CONTRACT_VERSION}"
 BACKEND_HANDOFF_PATH = "docs/contracts/agora/backend-generation-input.v1_13.json"
@@ -1089,7 +1087,11 @@ def command_deployment_gate(args: argparse.Namespace) -> int:
 
 
 def add_repo_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--frontend-root", default=str(DEFAULT_FRONTEND_ROOT))
+    env_root = os.environ.get("EXECUTE_PLANS_ROOT", "").strip()
+    if env_root:
+        parser.add_argument("--frontend-root", default=str(Path(env_root).expanduser()))
+    else:
+        parser.add_argument("--frontend-root", required=True)
     parser.add_argument("--backend-dev-ref", default=DEFAULT_BACKEND_DEV_REF)
     parser.add_argument("--frontend-dev-ref", default=DEFAULT_FRONTEND_DEV_REF)
 

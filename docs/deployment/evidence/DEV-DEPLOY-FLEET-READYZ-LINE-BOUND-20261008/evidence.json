@@ -1,0 +1,75 @@
+{
+  "task_id": "DEV-DEPLOY-FLEET-READYZ-LINE-BOUND-20261008",
+  "base_sha": "674fe625378fe936923bc1b85ad1debb60f251d0",
+  "change_class": "corrective",
+  "net_prod_line_budget": 40,
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "summary": "Stop dev deploy from failing on oversized paper fleet readyz line by emitting a bounded summary line in verify_dev_paper_fleet, filtering ended sessions in /readyz, and capping persisted ended monitoring sessions.",
+  "scope": [
+    "scripts/deploy_nonprod_vm.sh: verify_dev_paper_fleet emits bounded summary line with ready/live/worker_count/running_count/errors instead of raw full readyz payload",
+    "services/paper_fleet_reconciler/paper_fleet_reconciler.py: /readyz returns only active monitoring sessions with ended count, and persisted state caps ended sessions to 20",
+    "scripts/test_deploy_nonprod_vm.py: tests that summary line stays small (<512 bytes) for 100 workers and on failure",
+    "services/paper_fleet_reconciler/test_paper_fleet_reconciler.py: tests /readyz with 69 ended and 17 running sessions returns only 17 running sessions and caps persisted state",
+    "docs/deployment/evidence/DEV-DEPLOY-FLEET-READYZ-LINE-BOUND-20261008/evidence.json: task evidence manifest"
+  ],
+  "hosted_incident": {
+    "deploy_run_id": 37727955933,
+    "commit_sha": "ebe90c006",
+    "timestamp": "2026-10-08T05:00:00Z",
+    "failure_location": "dev_remote_guarded_exec.py:143",
+    "error_code": "DEV_ARTIFACT_OPERATION_FAILED",
+    "failure_kind": "contract",
+    "failure_stage": "transport",
+    "failure_message": "stdout line exceeds bound",
+    "max_line_length_bytes": 65536,
+    "measurements": {
+      "before": {
+        "readyz_body_bytes": 79293,
+        "monitoring_sessions_bytes": 70581,
+        "monitoring_sessions_total": 86,
+        "ended_monitoring_sessions": 69,
+        "running_monitoring_sessions": 17,
+        "distinct_bindings": 17,
+        "workers_bytes": 7949,
+        "workers_count": 17
+      },
+      "after": {
+        "verify_dev_paper_fleet_summary_bytes": 118,
+        "verify_dev_paper_fleet_max_line_bytes": "<512",
+        "readyz_monitoring_sessions_reported": 17,
+        "persisted_ended_monitoring_sessions_cap": 20
+      }
+    }
+  },
+  "acceptance_criteria": {
+    "ac1": "verify_dev_paper_fleet prints a bounded summary of reconciler readiness (ready, live, worker_count, running_count, last_error, monitoring_last_error) instead of full readyz payload",
+    "ac2": "Paper fleet reconciler /readyz reports only active monitoring sessions; ended sessions are summarized by count",
+    "ac3": "Ended monitoring sessions are capped to 20 in persisted state so they do not accumulate without bound",
+    "ac4": "Tests assert summary line stays small (<512 bytes) for 100 workers and /readyz with 69 ended and 17 running sessions returns only the 17 running ones",
+    "ac5": "Evidence records hosted failure (deploy run 37727955933, DEV_ARTIFACT_OPERATION_FAILED at dev_remote_guarded_exec.py:143 stdout line exceeds bound) and before/after sizes",
+    "ac6": "No compressed code used to meet the line budget (clean PEP 8 and POSIX bash, net production line change: +30 lines <= 40)",
+    "ac7": "Hosted track recorded as external_wait pending the next automatic dev pair release"
+  },
+  "validation": [
+    {
+      "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest scripts/test_deploy_nonprod_vm.py -k test_verify_dev_paper_fleet",
+      "exit_code": 0,
+      "result": "2 passed"
+    },
+    {
+      "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/paper_fleet_reconciler/test_paper_fleet_reconciler.py -k TestPaperFleetReadyzAndMonitoringSessionBounds",
+      "exit_code": 0,
+      "result": "1 passed"
+    },
+    {
+      "command": "python3 $PANTHEON_COMMAND_ROOT/scripts/git/diff_budget.py --base origin/dev --change-class corrective --budget 40",
+      "exit_code": 0,
+      "result": "production net +30 lines (budget 40)"
+    }
+  ],
+  "completion_tracks": {
+    "functional": "done",
+    "hosted": "external_wait"
+  }
+}

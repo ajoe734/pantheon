@@ -34,6 +34,32 @@ from .service import (
     stable_digest,
 )
 
+try:
+    from ..pm12.service import (
+        _pm12_portfolio_book_exposure_response,
+        _pm12_portfolio_book_holdings_response,
+        _pm12_portfolio_book_pools_response,
+        _pm12_portfolio_book_response,
+    )
+except (ImportError, ValueError):
+    from services.control_plane.bff.pm12.service import (
+        _pm12_portfolio_book_exposure_response,
+        _pm12_portfolio_book_holdings_response,
+        _pm12_portfolio_book_pools_response,
+        _pm12_portfolio_book_response,
+    )
+
+
+def _pm12_params(request: Request) -> Tuple[Dict[str, Any], Optional[str], int]:
+    qp = dict(request.query_params)
+    page_token = qp.get("page_token") or qp.get("pageToken")
+    try:
+        page_size = int(qp.get("page_size") or qp.get("pageSize") or 50)
+    except (TypeError, ValueError):
+        page_size = 50
+    return qp, page_token, page_size
+
+
 PageSlice = Callable[[Sequence[Any], Optional[str], int], Tuple[List[Any], Optional[str]]]
 SnapshotMeta = Callable[[str], Dict[str, Any]]
 SurfaceStatus = Callable[..., Dict[str, Any]]
@@ -567,45 +593,49 @@ def create_capital_router(
     # 18. Portfolio book root.
     @router.get("/bff/management/portfolio-book")
     async def bff_management_portfolio_book(
-        authorization: Optional[str] = Header(default=None)
+        request: Request,
+        authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         _require_read(authorization)
-        rows = _portfolio_or_error()
-        return _readback_response({"pools": rows, "pool_count": len(rows)}, meta={"snapshot_at": utc_now(), "policy": "read_only_portfolio_book"})
+        st = resolved_get_read_store()
+        qp, page_token, page_size = _pm12_params(request)
+        return _pm12_portfolio_book_response(st, query_params=qp, page_token=page_token, page_size=page_size, utc_now_fn=utc_now)
 
     # 19. Portfolio pool cards.
     @router.get("/bff/management/portfolio-book/pools")
     async def bff_management_portfolio_book_pools(
-        authorization: Optional[str] = Header(default=None)
+        request: Request,
+        authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         _require_read(authorization)
-        rows = _portfolio_or_error()
-        pools = [row["pool"] for row in rows]
-        return _readback_response(pools, meta={"snapshot_at": utc_now(), "total": len(pools)}, items=pools)
+        st = resolved_get_read_store()
+        qp, page_token, page_size = _pm12_params(request)
+        return _pm12_portfolio_book_pools_response(st, query_params=qp, page_token=page_token, page_size=page_size, utc_now_fn=utc_now)
 
     # 20. Portfolio exposure projection.
     @router.get("/bff/management/portfolio-book/exposure")
     async def bff_management_portfolio_book_exposure(
-        authorization: Optional[str] = Header(default=None)
+        request: Request,
+        authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         _require_read(authorization)
-        rows = _portfolio_or_error()
-        exposure = [{
-            "capital_pool_id": row["capital_pool_id"],
-            "risk_limits": row["risk_limits"],
-            "allocation_count": row["allocation_count"],
-            "allocation_digest": row["allocation_digest"],
-        } for row in rows]
-        return _readback_response(exposure, meta={"snapshot_at": utc_now(), "total": len(exposure)}, items=exposure)
+        st = resolved_get_read_store()
+        qp, page_token, page_size = _pm12_params(request)
+        return _pm12_portfolio_book_exposure_response(st, query_params=qp, page_token=page_token, page_size=page_size, utc_now_fn=utc_now)
 
     # 21. Portfolio holdings are the allocation rows with a durable pool identity.
     @router.get("/bff/management/portfolio-book/holdings")
     async def bff_management_portfolio_book_holdings(
-        capital_pool_id: Optional[str] = None, authorization: Optional[str] = Header(default=None)
+        request: Request,
+        capital_pool_id: Optional[str] = None,
+        authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         _require_read(authorization)
-        holdings = _project_allocations(capital_pool_id)
-        return _readback_response(holdings, meta={"snapshot_at": utc_now(), "total": len(holdings)}, items=holdings)
+        st = resolved_get_read_store()
+        qp, page_token, page_size = _pm12_params(request)
+        if capital_pool_id and not qp.get("capital_pool_id"):
+            qp["capital_pool_id"] = capital_pool_id
+        return _pm12_portfolio_book_holdings_response(st, query_params=qp, page_token=page_token, page_size=page_size, utc_now_fn=utc_now)
 
     # 22. Positions reuse allocation facts but retain the capital risk boundary.
     @router.get("/bff/management/portfolio-book/positions")

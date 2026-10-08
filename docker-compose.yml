@@ -38,6 +38,7 @@ services:
       - dev-paper-capital-tokens:/issued/capital
       - dev-paper-evolution-tokens:/issued/evolution
       - dev-paper-persona-evaluator-tokens:/issued/persona-evaluator-agent
+      - dev-paper-training-session-tokens:/issued/training-session-svc
     healthcheck:
       test: ["CMD", "python", "/issuer/issue_dev_paper_principals.py", "--healthcheck"]
       interval: 30s
@@ -518,14 +519,16 @@ services:
       SOURCE_INGEST_API_URL: ${SOURCE_INGEST_API_URL:-http://source-ingest:8097}
       TRAINING_SESSION_SOURCE_CONNECTOR_ID: ${TRAINING_SESSION_SOURCE_CONNECTOR_ID:-tw-twse-tpex-official-market}
       TRAINING_SESSION_SOURCE_DATASET_ID: ${TRAINING_SESSION_SOURCE_DATASET_ID:-tw_price_daily}
+      TRAINING_SESSION_SOURCE_READ_TOKEN_FILE: ${TRAINING_SESSION_SOURCE_READ_TOKEN_FILE:-/run/pantheon-principals/TRAINING_SESSION_SOURCE_READ_TOKEN}
+      TRAINING_SESSION_SOURCE_READ_TENANT_ID: ${TRAINING_SESSION_SOURCE_READ_TENANT_ID:-${PANTHEON_DEV_BFF_TENANT_ID:-tenant-dev}}
       TRAINING_SESSION_PREVIEW_JOB_MAX_ATTEMPTS: ${TRAINING_SESSION_PREVIEW_JOB_MAX_ATTEMPTS:-3}
       TRAINING_SESSION_PREVIEW_JOB_LEASE_SECONDS: ${TRAINING_SESSION_PREVIEW_JOB_LEASE_SECONDS:-120}
       TRAINING_SESSION_PERSONA_AUTHORITY_TIMEOUT_SECONDS: ${TRAINING_SESSION_PERSONA_AUTHORITY_TIMEOUT_SECONDS:-5}
-      TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN: ${TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN:-}
-      TRAINING_SESSION_PERSONA_READBACK_URL_TEMPLATE: ${TRAINING_SESSION_PERSONA_READBACK_URL_TEMPLATE:-}
-      TRAINING_SESSION_APPROVAL_READBACK_URL_TEMPLATE: ${TRAINING_SESSION_APPROVAL_READBACK_URL_TEMPLATE:-}
-      TRAINING_SESSION_PERSONA_TARGET_WRITE_URL_TEMPLATE: ${TRAINING_SESSION_PERSONA_TARGET_WRITE_URL_TEMPLATE:-}
-      TRAINING_SESSION_PERSONA_TARGET_READBACK_URL_TEMPLATE: ${TRAINING_SESSION_PERSONA_TARGET_READBACK_URL_TEMPLATE:-}
+      TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN_FILE: ${TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN_FILE:-/run/pantheon-principals/TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN}
+      TRAINING_SESSION_PERSONA_READBACK_URL_TEMPLATE: ${TRAINING_SESSION_PERSONA_READBACK_URL_TEMPLATE:-http://persona:8002/api/personas/{persona_id}/training-target}
+      TRAINING_SESSION_APPROVAL_READBACK_URL_TEMPLATE: ${TRAINING_SESSION_APPROVAL_READBACK_URL_TEMPLATE:-http://governance:8082/api/governance/approvals/{approval_decision_ref}}
+      TRAINING_SESSION_PERSONA_TARGET_WRITE_URL_TEMPLATE: ${TRAINING_SESSION_PERSONA_TARGET_WRITE_URL_TEMPLATE:-http://persona:8002/api/personas/{persona_id}/training-target}
+      TRAINING_SESSION_PERSONA_TARGET_READBACK_URL_TEMPLATE: ${TRAINING_SESSION_PERSONA_TARGET_READBACK_URL_TEMPLATE:-http://persona:8002/api/personas/{persona_id}/training-target}
       # L12-MANIFEST-001 dev manifest admission: the persisted teaching API is
       # strict by default and must render an actual verifier input. This is a
       # local/dev placeholder secret, not a production credential.
@@ -534,6 +537,7 @@ services:
     volumes:
       - training-session-data:/data/training-session
       - source-ingest-data:/data/source-ingest:ro
+      - dev-paper-training-session-tokens:/run/pantheon-principals:ro
     ports:
       - "${TRAINING_SESSION_PORT:-18099}:8099"
     depends_on:
@@ -766,6 +770,9 @@ services:
       PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR: ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}
       PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR: ${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}
       PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE: ${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
+      # Isolated qualification only: unset (empty) on root/prod, so the startup
+      # below stays a no-op. Holds a credential-free config batch.
+      PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH: ${PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH:-}
     depends_on:
       openclaw-data-init:
         condition: service_completed_successfully
@@ -777,8 +784,9 @@ services:
         # Management-AI streaming surface before every gateway start so a
         # recreated dev volume cannot regress to a healthy-but-404 gateway.
         # Keep the token in the container environment rather than interpolating
-        # it into the shell command.
-        "node dist/index.js config set gateway.http.endpoints.responses.enabled true --json >/dev/null && exec node dist/index.js gateway --allow-unconfigured --port 18789 --auth token --token \"$$OPENCLAW_GATEWAY_TOKEN\"",
+        # it into the shell command. The opt-in isolated batch is applied here,
+        # before the gateway serves, and fails closed without the credential.
+        "node dist/index.js config set gateway.http.endpoints.responses.enabled true --json >/dev/null && if [ -n \"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\" ]; then [ -n \"$$CLAUDE_CODE_OAUTH_TOKEN\" ] || exit 1; node dist/index.js config set --batch-json \"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\" >/dev/null || exit 1; fi && exec node dist/index.js gateway --allow-unconfigured --port 18789 --auth token --token \"$$OPENCLAW_GATEWAY_TOKEN\"",
       ]
     volumes:
       - openclaw-data:/home/node/.openclaw
@@ -1254,7 +1262,7 @@ services:
       PANTHEON_BFF_PERSONA_SESSION_STORE: /data/bff/persona_sessions.json
       PANTHEON_BFF_PAPER_LIVE_DRIFT_STORE: /data/bff/paper_live_drift_reports.json
       PANTHEON_BFF_V5_INTERVENTION_STORE: /data/bff/v5_interventions.json
-      PANTHEON_BFF_CORS_ORIGINS: ${PANTHEON_BFF_CORS_ORIGINS:-https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io,https://pantheon-dev.lovable.app,https://pantheon-ai-system-front-dev.lovable.app,https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com}
+      PANTHEON_BFF_CORS_ORIGINS: ${PANTHEON_BFF_CORS_ORIGINS:-https://pantheon-dev.lovable.app,https://pantheon-ai-system-front-dev.lovable.app,https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com}
       PANTHEON_BFF_SERVICE_TIMEOUT_SECONDS: "2.0"
       PANTHEON_BFF_HEALTH_PROBE_INTERVAL_SECONDS: ${PANTHEON_BFF_HEALTH_PROBE_INTERVAL_SECONDS:-30}
       # Every configured owner URL has an exact existing health route. This
@@ -1406,18 +1414,6 @@ services:
       PERSONA_EVALUATOR_READ_TOKEN: ${PERSONA_EVALUATOR_READ_TOKEN:-persona-evaluator-read-internal}
       PANTHEON_CONSULTATION_API_URL: http://consultation-svc:8096
       PANTHEON_SOURCE_INGEST_API_URL: http://source-ingest:8097
-      # DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001: the dev paper bootstrap
-      # (scripts/bootstrap_dev_paper_baseline.py) runs inside this container
-      # and must explicitly provision a newly created Persona's declared
-      # source connector via source-ingest's own governed
-      # persona-source-provisioning/reconcile endpoint -- the async BFF
-      # provisioning reconciler never does this, and the source-ingest
-      # scheduler's own tick only reads a static desired-state file that has
-      # no knowledge of Personas created after deployment. Read-only access
-      # to the token source-ingest already creates at startup lets this
-      # container call that mutation endpoint without minting a second,
-      # separately governed credential.
-      SOURCE_INGEST_CONTROLLER_TOKEN_FILE: /data/source-ingest/controller_token
       PANTHEON_SEARCH_API_URL: http://search-svc:8098
       PANTHEON_TRAINING_SESSION_API_URL: http://training-session-svc:8099
       PANTHEON_POLICY_LEARNING_API_URL: http://policy-learning-svc:8100
@@ -1444,7 +1440,6 @@ services:
       - governance-data:/data/governance:ro
       - runtime-data:/data/runtime:ro
       - incident-data:/data/incidents:ro
-      - source-ingest-data:/data/source-ingest:ro
     depends_on:
       registry:
         condition: service_healthy
@@ -2385,8 +2380,8 @@ services:
       RECONCILIATION_DRIFT_DATA_DIR: /data/reconciliation-drift
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
-      # Dev rollback defaults to JSON; staging/prod select postgres via env.
-      RECONCILIATION_DRIFT_STORE_BACKEND: ${RECONCILIATION_DRIFT_STORE_BACKEND:-json}
+      # Dev and control topologies select postgres by default; json remains test/legacy only.
+      RECONCILIATION_DRIFT_STORE_BACKEND: ${RECONCILIATION_DRIFT_STORE_BACKEND:-postgres}
       RECONCILIATION_DRIFT_STORE_DSN: ${RECONCILIATION_DRIFT_STORE_DSN:-}
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
       PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
@@ -3004,6 +2999,7 @@ volumes:
   dev-paper-capital-tokens:
   dev-paper-evolution-tokens:
   dev-paper-persona-evaluator-tokens:
+  dev-paper-training-session-tokens:
   broker-data:
   bff-data:
   capital-data:

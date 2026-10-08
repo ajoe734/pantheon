@@ -36,9 +36,10 @@ class EnsureWorkerTestPythonTests(unittest.TestCase):
         base = Path(self.tmp.name)
         self.root, self.parent = base / "repo", base / "worker-test-python"
         self.root.mkdir()
-        (self.root / "requirements.txt").write_text("flask\n")
-        (self.root / "scripts" / "dev").mkdir(parents=True)
-        (self.root / wtp.REQUIREMENTS[0]).write_text("-r ../../requirements.txt\npytest\n")
+        for name in wtp.REQUIREMENTS:
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("flask\n")
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -69,13 +70,44 @@ class EnsureWorkerTestPythonTests(unittest.TestCase):
         run = FakeRun()
         digests = []
         for n in range(wtp.KEEP + 2):
-            (self.root / wtp.REQUIREMENTS[0]).write_text(f"-r ../../requirements.txt\npytest\n# {n}\n")
+            (self.root / wtp.REQUIREMENTS[0]).write_text(f"flask\n# {n}\n")
             wtp.ensure(self.root, self.parent, python="py", run=run)
             digests.append(wtp.requirements_hash(self.root))
             os.utime(self.parent / digests[-1] / wtp.READY, (n, n))
         self.assertEqual(os.readlink(self.parent / "current"), digests[-1])
         remaining = {p.name for p in self.parent.iterdir() if p.is_dir() and not p.is_symlink()}
         self.assertEqual(remaining, set(digests[-wtp.KEEP:]))
+
+    def test_fresh_build_issues_single_pip_install_with_ordered_requirements(self) -> None:
+        run = FakeRun()
+        wtp.ensure(self.root, self.parent, python="py", run=run)
+        pip_calls = [c for c in run.calls if c[1:4] == ["-m", "pip", "install"]]
+        self.assertEqual(len(pip_calls), 1)
+        r_args = [pip_calls[0][i + 1] for i, arg in enumerate(pip_calls[0]) if arg == "-r"]
+        self.assertEqual(r_args, [str(self.root / name) for name in wtp.REQUIREMENTS])
+
+    def test_each_requirements_entry_change_switches_current_and_passes_flag(self) -> None:
+        run = FakeRun()
+        wtp.ensure(self.root, self.parent, python="py", run=run)
+        prev_hash = wtp.requirements_hash(self.root)
+        self.assertEqual(os.readlink(self.parent / "current"), prev_hash)
+
+        for name in wtp.REQUIREMENTS:
+            path = self.root / name
+            path.write_text(path.read_text() + f"# change {name}\n")
+            new_hash = wtp.requirements_hash(self.root)
+            self.assertNotEqual(new_hash, prev_hash)
+
+            run.calls.clear()
+            result = wtp.ensure(self.root, self.parent, python="py", run=run)
+            self.assertFalse(result["reused"])
+            self.assertEqual(os.readlink(self.parent / "current"), new_hash)
+
+            pip_calls = [c for c in run.calls if c[1:4] == ["-m", "pip", "install"]]
+            self.assertEqual(len(pip_calls), 1)
+            r_args = [pip_calls[0][i + 1] for i, arg in enumerate(pip_calls[0]) if arg == "-r"]
+            self.assertIn(str(path), r_args)
+            prev_hash = new_hash
 
 
 class SupervisorExportTests(unittest.TestCase):

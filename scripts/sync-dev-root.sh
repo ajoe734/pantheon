@@ -261,30 +261,6 @@ install_watchdog() {
   fi
 }
 
-verify_runtime_pointers() {
-  local runtime_root="$1"
-  if [[ -f "$LIVE_CONFIG" ]]; then
-    local live_cmd_root
-    live_cmd_root="$(python3 -B -c "
-import json
-try:
-    with open('$LIVE_CONFIG') as fh:
-        cfg = json.load(fh)
-    cmd = cfg.get('watchdog', {}).get('supervisor_command', [])
-    for part in cmd:
-        if part.endswith('/supervisor.py'):
-            from pathlib import Path
-            print(Path(part).resolve().parent.parent)
-            break
-except Exception:
-    pass
-" 2>/dev/null || true)"
-    if [[ -n "$live_cmd_root" && "$live_cmd_root" != "$runtime_root" ]]; then
-      log "WARNING: live config supervisor_command root ($live_cmd_root) does not match runtime ($runtime_root)"
-    fi
-  fi
-}
-
 install_auto_integrator() {
   local runtime_root="$1"
   local installer="${runtime_root}/scripts/auto_integrator_install.py"
@@ -339,7 +315,6 @@ active_root="$(current_command_root 2>/dev/null || true)"
 if [[ "$active_root" == "$candidate_root" && "$config_drift" -eq 0 ]]; then
   install_watchdog "$candidate_root"
   install_auto_integrator "$candidate_root"
-  verify_runtime_pointers "$candidate_root"
   prune_old_command_runtimes
   log "done (staging=$DEV_ROOT coordination=$COORDINATION_ROOT promotion=no-op-current-runtime)"
   exit 0
@@ -409,7 +384,7 @@ fi
 # (worker_runtime.dependency_python). Without it every worker builds its own
 # venv, and a worker that cannot cannot run tests at all. Non-fatal: workers
 # fall back to provisioning their own interpreter.
-WORKER_TEST_PYTHON_PARENT="${PANTHEON_WORKER_TEST_PYTHON_DIR:-${DEPLOY_ROOT}/runtime/worker-test-python}"
+WORKER_TEST_PYTHON_PARENT="${DEPLOY_ROOT}/runtime/worker-test-python"
 if worker_test_output="$(python3 -B "${candidate_root}/scripts/dev/ensure_worker_test_python.py" \
   --root "$candidate_root" --parent "$WORKER_TEST_PYTHON_PARENT" 2>&1)"; then
   log "worker test interpreter ready: $worker_test_output"
@@ -440,7 +415,6 @@ fi
 # supervisor code, so failures here are logged, never fatal.
 install_watchdog "$candidate_root"
 install_auto_integrator "$candidate_root"
-verify_runtime_pointers "$candidate_root"
 
 prune_old_command_runtimes
 log "done (staging=$DEV_ROOT coordination=$COORDINATION_ROOT promotion=replaced)"

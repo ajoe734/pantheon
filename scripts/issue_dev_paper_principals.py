@@ -39,6 +39,10 @@ READERS = {
     "EVOLUTION_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-evolution-approval-reader", "approval_reader"),
     "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-alpha-replication-registry-reader", "registry-reader"),
     "PERSONA_EVALUATOR_BFF_TOKEN": ("pantheon-dev-persona-evaluator-bff-reader", "viewer"),
+    "TRAINING_SESSION_SOURCE_READ_TOKEN": ("pantheon-dev-training-session-source-reader", "source_ingest_reader"),
+    # Persona precondition/CAS owner roles + Governance decision read; no decide/revoke/promotion roles.
+    "TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN": (
+        "pantheon-dev-training-session-persona-authority", ("persona.admin", "approval_reader")),
 }
 WRITERS = {
     "DISTILLATION_REGISTRY_SERVICE_TOKEN": (
@@ -69,8 +73,13 @@ CONSUMER_FILES = {
     "strategy-distillation-worker": ("DISTILLATION_REGISTRY_SERVICE_TOKEN",),
     "alpha-replication-worker": ("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN",),
     "persona-evaluator-agent": ("PERSONA_EVALUATOR_BFF_TOKEN", "PERSONA_EVALUATOR_GOVERNANCE_TOKEN"),
+    "training-session-svc": ("TRAINING_SESSION_SOURCE_READ_TOKEN", "TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN"),
 }
 REFRESH_SECONDS = 60 * 60
+
+
+def _roles(role: str | tuple[str, ...]) -> list[str]:
+    return [role] if isinstance(role, str) else list(role)
 
 
 def issue_environment(env: Mapping[str, str], *, now: int | None = None) -> dict[str, str]:
@@ -88,7 +97,7 @@ def issue_environment(env: Mapping[str, str], *, now: int | None = None) -> dict
     def token(subject: str, role: str, scope: str) -> str:
         claims = {
             "sub": subject, "service": subject, "tenant_id": "tenant-dev",
-            "allowed_tenants": ["tenant-dev"], "roles": [role], "scope": scope,
+            "allowed_tenants": ["tenant-dev"], "roles": _roles(role), "scope": scope,
             "iss": issuer, "aud": audience, "iat": issued, "nbf": issued,
             "exp": issued + TTL_SECONDS, "jti": secrets.token_hex(16),
         }
@@ -206,7 +215,7 @@ def healthy_files(root: Path, env: Mapping[str, str], *, now: int | None = None)
             else:
                 subject, role = PAPER_SUBJECT, "automated_gate"
                 scope = PAPER_SCOPE
-            expected = {"sub": subject, "service": subject, "roles": [role], "scope": scope,
+            expected = {"sub": subject, "service": subject, "roles": _roles(role), "scope": scope,
                         "tenant_id": "tenant-dev", "allowed_tenants": ["tenant-dev"],
                         "iss": env["PANTHEON_DEV_BFF_JWT_ISSUER"].strip(),
                         "aud": env["PANTHEON_DEV_BFF_JWT_AUDIENCE"].strip()}

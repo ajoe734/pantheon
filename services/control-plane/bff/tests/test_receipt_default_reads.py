@@ -34,7 +34,7 @@ def test_default_readers_preserve_auth_and_availability(monkeypatch, dataset, me
     ports = create_read_surface_ports()
     read = getattr(ports, method)
     assert read() == []
-    assert ports.dataset_source(dataset) == "missing"
+    assert ports.dataset_source(dataset) == "unavailable"
     token = owner_reads.authorization.set("Bearer caller-jwt")
     try:
         assert read()[0].items() >= row.items()
@@ -45,7 +45,7 @@ def test_default_readers_preserve_auth_and_availability(monkeypatch, dataset, me
         assert ports.dataset_source(dataset) != "missing"
         monkeypatch.setattr(owner_reads, "http_request_json", lambda *a, **k: {"error": "unavailable"})
         assert read() == []
-        assert ports.dataset_source(dataset) == "missing"
+        assert ports.dataset_source(dataset) == "unavailable"
     finally:
         owner_reads.authorization.reset(token)
 
@@ -57,3 +57,54 @@ def test_rankings_read_the_same_injected_owner_store():
     rows.clear()
     assert ports.list_rankings() == []
     assert ports.dataset_source("rankings") != "missing"
+
+
+@pytest.mark.parametrize("dataset", [
+    "capital_pools",
+    "bindings",
+    "deployment_plans",
+    "runtime_bindings",
+    "evolution_programs",
+    "evolution_decisions",
+])
+def test_unconfigured_owner_reports_missing(monkeypatch, dataset):
+    for env in ("PANTHEON_CAPITAL_API_URL", "PANTHEON_CAPITAL_SERVICE_URL", "PANTHEON_DEPLOYMENT_API_URL", "PANTHEON_RUNTIME_MANAGER_URL", "PANTHEON_EVOLUTION_API_URL"):
+        monkeypatch.delenv(env, raising=False)
+    token = owner_reads.authorization.set("Bearer caller-jwt")
+    try:
+        ports = create_read_surface_ports()
+        assert ports.dataset_source(dataset) == "missing"
+    finally:
+        owner_reads.authorization.reset(token)
+
+
+def test_failing_pools_read_does_not_mask_readable_bindings():
+    from services.control_plane.bff.ports.persona_capital_runtime import CapitalPoolPort, PersonaCapitalRuntimeDomainPort
+    def boom():
+        raise RuntimeError("pools service down")
+    port = CapitalPoolPort(pools_provider=boom, bindings_provider=lambda: [{"binding_id": "b1"}])
+    status = port.get_surface_status()
+    assert status["source"] == "unavailable"
+    assert status["bindings_source"] == "service"
+    domain_port = PersonaCapitalRuntimeDomainPort(capital_port=port)
+    read_ports = create_read_surface_ports(persona_capital_runtime=domain_port)
+    assert read_ports.dataset_source("capital_pools") == "unavailable"
+    assert read_ports.dataset_source("bindings") == "service"
+
+
+def test_ranking_datasets_owner_down_vs_unconfigured():
+    from services.control_plane.bff.ports.persona_capital_runtime import RankingProjectionPort, PersonaCapitalRuntimeDomainPort
+    def boom():
+        raise RuntimeError("ranking service down")
+    port_down = RankingProjectionPort(rankings_reader=boom, rebalances_reader=boom)
+    domain_down = PersonaCapitalRuntimeDomainPort(ranking_port=port_down)
+    ports_down = create_read_surface_ports(persona_capital_runtime=domain_down)
+    assert ports_down.dataset_source("rankings") == "unavailable"
+    assert ports_down.dataset_source("rebalances") == "unavailable"
+
+    port_unconf = RankingProjectionPort()
+    domain_unconf = PersonaCapitalRuntimeDomainPort(ranking_port=port_unconf)
+    ports_unconf = create_read_surface_ports(persona_capital_runtime=domain_unconf)
+    assert ports_unconf.dataset_source("rankings") == "missing"
+    assert ports_unconf.dataset_source("rebalances") == "missing"
+

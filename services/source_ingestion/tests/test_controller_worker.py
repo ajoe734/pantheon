@@ -2776,3 +2776,368 @@ def test_persona_owner_read_failure_leaves_every_connector_and_schedule_unchange
         persona_server.server_close()
 
 
+def test_controller_worker_resolves_tenant_from_bff_tenant_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("PANTHEON_TENANT_ID", raising=False)
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-dev")
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    assert controller_worker._controller_tenant_id() == "tenant-dev"
+
+    state = controller_worker._new_state()
+    assert state.tenant_id == "tenant-dev"
+
+    refreshed = controller_worker.refresh_runtime_identity(state)
+    assert refreshed.tenant_id == "tenant-dev"
+
+
+def test_persona_with_bff_default_taiwan_requirements_adds_nothing_to_holder(monkeypatch: pytest.MonkeyPatch) -> None:
+    bff_tw_requirements = [
+        {
+            "dataset": "tw_price_daily",
+            "market": "TW",
+            "cadence": "daily",
+            "source_class": "live_pull",
+            "connector_candidates": [
+                "tw-twse-tpex-official-market",
+                "tw-finmind-datasets",
+            ],
+            "policy_gates": [
+                "require_connector_approved",
+                "require_schedule_active",
+                "require_source_health_ok",
+            ],
+        },
+        {
+            "dataset": "tw_broker_top",
+            "market": "TW",
+            "cadence": "daily",
+            "source_class": "live_push",
+            "connector_candidates": [
+                "tw-finmind-broker-daily-report",
+                "tw-finmind-broker-bulk-parquet",
+            ],
+            "policy_gates": [
+                "require_connector_approved",
+                "require_schedule_active",
+                "require_payload_push_health",
+            ],
+        },
+    ]
+    active_persona = {
+        "persona_id": "test-tw-persona",
+        "lifecycle_state": "paper_running",
+        "status": "active",
+        "name": "Taiwan Active Persona",
+        "required_data_sources": bff_tw_requirements,
+    }
+    persona_server, persona_port = _make_stub_persona_server()
+    _StubPersonaOwnerHandler.status_code = 200
+    _StubPersonaOwnerHandler.raw_body = None
+    _StubPersonaOwnerHandler.personas = [active_persona]
+    monkeypatch.setenv("SOURCE_INGEST_DESIRED_STATE_URL", f"http://127.0.0.1:{persona_port}/api/personas")
+
+    try:
+        personas, meta = controller_worker.load_desired_state()
+        holder = next(p for p in personas if str(p.get("persona_id")) == controller_worker.DEPLOYMENT_REQUIREMENT_HOLDER_ID)
+        assert len(holder.get("required_data_sources") or []) == 1
+        assert holder["required_data_sources"][0]["connector_candidates"] == ["tw-twse-tpex-official-market"]
+    finally:
+        persona_server.shutdown()
+        persona_server.server_close()
+
+
+def test_persona_finmind_only_merged_and_fails_closed_with_unsupported_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import socket
+    import threading
+    import time
+    import urllib.request
+    import uvicorn
+    import services.source_ingestion.main as sim
+
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.delenv("FINMIND_API_TOKEN", raising=False)
+    monkeypatch.delenv("TW_FINMIND_API_TOKEN", raising=False)
+
+    data_dir = tmp_path / "source_data"
+    data_dir.mkdir()
+    token = "test-token-1234567890-test-token-1234567890"
+    (data_dir / "controller_token").write_text(token)
+    monkeypatch.setenv("SOURCE_INGEST_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_TOKEN", token)
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_STATE_PATH", str(data_dir / "controller_state.json"))
+
+    runtime = sim.create_runtime(data_dir=data_dir)
+    monkeypatch.setattr(sim, "CONTROLLER_STATE_PATH", data_dir / "controller_state.json")
+    app = sim.create_app(runtime)
+
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    ingest_port = s.getsockname()[1]
+    s.close()
+
+    ingest_config = uvicorn.Config(app, host="127.0.0.1", port=ingest_port, log_level="error")
+    ingest_server = uvicorn.Server(ingest_config)
+    t_ingest = threading.Thread(target=ingest_server.run, daemon=True)
+    t_ingest.start()
+
+    persona_server, persona_port = _make_stub_persona_server()
+
+    finmind_only_req = [
+        {
+            "dataset": "tw_price_daily",
+            "market": "TW",
+            "cadence": "daily",
+            "source_class": "live_pull",
+            "connector_candidates": ["tw-finmind-datasets"],
+            "policy_gates": ["require_connector_approved", "require_schedule_active", "require_source_health_ok"],
+        }
+    ]
+    active_persona = {
+        "persona_id": "dev-paper-finmind-only",
+        "lifecycle_state": "paper_running",
+        "status": "active",
+        "name": "FinMind Only Persona",
+        "required_data_sources": finmind_only_req,
+    }
+    _StubPersonaOwnerHandler.status_code = 200
+    _StubPersonaOwnerHandler.raw_body = None
+    _StubPersonaOwnerHandler.personas = [active_persona]
+
+    for _ in range(50):
+        try:
+            req = urllib.request.Request(f"http://127.0.0.1:{ingest_port}/readyz")
+            resp = urllib.request.urlopen(req, timeout=1)
+            break
+        except Exception:
+            time.sleep(0.05)
+
+    try:
+        monkeypatch.setenv("SOURCE_INGEST_DESIRED_STATE_URL", f"http://127.0.0.1:{persona_port}/api/personas")
+
+        personas, meta = controller_worker.load_desired_state()
+        holder = next(p for p in personas if str(p.get("persona_id")) == controller_worker.DEPLOYMENT_REQUIREMENT_HOLDER_ID)
+        assert len(holder["required_data_sources"]) == 2
+        assert holder["required_data_sources"][1]["connector_candidates"] == ["tw-finmind-datasets"]
+
+        state_path = data_dir / "controller_state.json"
+        alive_path = data_dir / "controller_alive"
+        store = ControllerStateStore(state_path)
+        deployment = _deployment()
+        state = ControllerState(
+            controller_id="test-controller",
+            controller_name="test-controller-name",
+            sequence_no=0,
+            deployment=deployment,
+            tenant_id="default",
+            environment="dev",
+        )
+        store.save(state)
+
+        config = ControllerConfig(
+            api_url=f"http://127.0.0.1:{ingest_port}",
+            database_url="",
+            lease_seconds=60,
+            interval_seconds=60,
+            timeout_seconds=5.0,
+            mode=RECONCILE_ONLY_MODE,
+            truth_level="scheduled_tick",
+            max_ticks=0,
+            state_path=state_path,
+            alive_path=alive_path,
+            controller_token=token,
+            max_concurrency=1,
+        )
+
+        class DummyWriter:
+            async def record_heartbeat(self, *a, **k): pass
+            async def record_tick(self, *a, **k): pass
+            async def record_success(self, *a, **k): pass
+            async def record_failure(self, *a, **k): pass
+            async def record_repair(self, *a, **k): pass
+
+        writer = DummyWriter()
+
+        configs_before = {c.connector.connector_id: c.to_dict() for c in runtime.connector_store.list_configs()}
+        schedules_before = {s.connector_id: s.to_dict() for s in runtime.schedule_config_store.list_schedules()}
+
+        with pytest.raises(ControllerTickError) as exc_info:
+            run_controller_tick(config=config, state=state, store=store, writer=writer)
+        assert exc_info.value.stage == "reconcile"
+        assert "unsupported=1" in str(exc_info.value)
+        summary = (exc_info.value.context.get("reconcile") or {}).get("summary") or {}
+        assert summary.get("unsupported") == 1
+
+        configs_after = {c.connector.connector_id: c.to_dict() for c in runtime.connector_store.list_configs()}
+        schedules_after = {s.connector_id: s.to_dict() for s in runtime.schedule_config_store.list_schedules()}
+
+        assert configs_before == configs_after
+        assert schedules_before == schedules_after
+    finally:
+        ingest_server.should_exit = True
+        persona_server.shutdown()
+        persona_server.server_close()
+
+
+def test_two_controller_ticks_preserve_active_persona_taiwan_schedule(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import socket
+    import threading
+    import time
+    import urllib.request
+    import uvicorn
+    import services.source_ingestion.main as sim
+
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+
+    data_dir = tmp_path / "source_data"
+    data_dir.mkdir()
+    token = "test-token-1234567890-test-token-1234567890"
+    (data_dir / "controller_token").write_text(token)
+    monkeypatch.setenv("SOURCE_INGEST_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_TOKEN", token)
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_STATE_PATH", str(data_dir / "controller_state.json"))
+
+    runtime = sim.create_runtime(data_dir=data_dir)
+    monkeypatch.setattr(sim, "CONTROLLER_STATE_PATH", data_dir / "controller_state.json")
+    app = sim.create_app(runtime)
+
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    ingest_port = s.getsockname()[1]
+    s.close()
+
+    ingest_config = uvicorn.Config(app, host="127.0.0.1", port=ingest_port, log_level="error")
+    ingest_server = uvicorn.Server(ingest_config)
+    t_ingest = threading.Thread(target=ingest_server.run, daemon=True)
+    t_ingest.start()
+
+    persona_server, persona_port = _make_stub_persona_server()
+
+    bff_tw_requirements = [
+        {
+            "dataset": "tw_price_daily",
+            "market": "TW",
+            "cadence": "daily",
+            "source_class": "live_pull",
+            "connector_candidates": [
+                "tw-twse-tpex-official-market",
+                "tw-finmind-datasets",
+            ],
+            "policy_gates": [
+                "require_connector_approved",
+                "require_schedule_active",
+                "require_source_health_ok",
+            ],
+        },
+        {
+            "dataset": "tw_broker_top",
+            "market": "TW",
+            "cadence": "daily",
+            "source_class": "live_push",
+            "connector_candidates": [
+                "tw-finmind-broker-daily-report",
+                "tw-finmind-broker-bulk-parquet",
+            ],
+            "policy_gates": [
+                "require_connector_approved",
+                "require_schedule_active",
+                "require_payload_push_health",
+            ],
+        },
+    ]
+    active_persona = {
+        "persona_id": "dev-paper-active-tw",
+        "lifecycle_state": "paper_running",
+        "status": "active",
+        "name": "Dev Paper Active TW",
+        "required_data_sources": bff_tw_requirements,
+    }
+    _StubPersonaOwnerHandler.status_code = 200
+    _StubPersonaOwnerHandler.raw_body = None
+    _StubPersonaOwnerHandler.personas = [active_persona]
+
+    for _ in range(50):
+        try:
+            req = urllib.request.Request(f"http://127.0.0.1:{ingest_port}/readyz")
+            resp = urllib.request.urlopen(req, timeout=1)
+            break
+        except Exception:
+            time.sleep(0.05)
+
+    try:
+        state_path = data_dir / "controller_state.json"
+        alive_path = data_dir / "controller_alive"
+        store = ControllerStateStore(state_path)
+        deployment = _deployment()
+        state = ControllerState(
+            controller_id="test-controller",
+            controller_name="test-controller-name",
+            sequence_no=0,
+            deployment=deployment,
+            tenant_id="default",
+            environment="dev",
+        )
+        store.save(state)
+
+        config = ControllerConfig(
+            api_url=f"http://127.0.0.1:{ingest_port}",
+            database_url="",
+            lease_seconds=60,
+            interval_seconds=60,
+            timeout_seconds=5.0,
+            mode=RECONCILE_ONLY_MODE,
+            truth_level="scheduled_tick",
+            max_ticks=0,
+            state_path=state_path,
+            alive_path=alive_path,
+            controller_token=token,
+            max_concurrency=1,
+        )
+
+        class DummyWriter:
+            async def record_heartbeat(self, *a, **k): pass
+            async def record_tick(self, *a, **k): pass
+            async def record_success(self, *a, **k): pass
+            async def record_failure(self, *a, **k): pass
+            async def record_repair(self, *a, **k): pass
+
+        writer = DummyWriter()
+        monkeypatch.setenv("SOURCE_INGEST_DESIRED_STATE_URL", f"http://127.0.0.1:{persona_port}/api/personas")
+
+        # Tick 1: Reconciles TW schedule
+        res1 = run_controller_tick(config=config, state=state, store=store, writer=writer)
+        assert res1["status"] == "ok"
+        summary1 = res1.get("reconcile_summary") or {}
+        assert summary1.get("conflicts", 0) == 0
+        assert summary1.get("unsupported", 0) == 0
+
+        sched1 = runtime.schedule_config_store.get_schedule("tw-twse-tpex-official-market")
+        assert sched1 is not None
+        assert sched1.enabled is True
+        cfg1 = runtime.connector_store.get_config("tw-twse-tpex-official-market")
+        assert cfg1 is not None
+        reconcil1 = dict((cfg1.connector.metadata or {}).get("persona_source_reconciliation") or {})
+        assert reconcil1.get("retired_by_authoritative_snapshot") is not True
+
+        # Tick 2: Second tick preserves TW schedule enabled
+        res2 = run_controller_tick(config=config, state=state, store=store, writer=writer)
+        assert res2["status"] == "ok"
+        summary2 = res2.get("reconcile_summary") or {}
+        assert summary2.get("conflicts", 0) == 0
+        assert summary2.get("unsupported", 0) == 0
+
+        sched2 = runtime.schedule_config_store.get_schedule("tw-twse-tpex-official-market")
+        assert sched2 is not None
+        assert sched2.enabled is True
+        cfg2 = runtime.connector_store.get_config("tw-twse-tpex-official-market")
+        assert cfg2 is not None
+        reconcil2 = dict((cfg2.connector.metadata or {}).get("persona_source_reconciliation") or {})
+        assert reconcil2.get("retired_by_authoritative_snapshot") is not True
+    finally:
+        ingest_server.should_exit = True
+        persona_server.shutdown()
+        persona_server.server_close()
+
+
+
+

@@ -1,0 +1,55 @@
+{
+  "task_id": "CAPITAL-ALLOCATION-LINEAGE-INTEGRITY-20261008",
+  "change_class": "corrective",
+  "root_cause": "PR 6280 (BFF-ALLOC-PROJECTION-TESTS-20261007) relaxed lineage test expectations instead of fixing production: the capital owner never recomputed a ranking snapshot content_digest, verify_rebalance_lineage compared only allocation_evaluation_id and target_weight, and the PPL tests stubbed verify_rebalance_lineage and persisted evaluations the product never persists.",
+  "production_fixes": [
+    "services/rankings/snapshots.py: snapshot_content_digest() exposes the writer's digest computation; snapshot_record() uses it (no second copy).",
+    "services/capital/allocation_lineage.py _load_snapshot: recomputes the digest and rejects a mismatch with 422 and an integrity reason.",
+    "services/capital/allocation_lineage.py verify_rebalance_lineage: compares every evaluated line field except _CONTEXT_FIELDS (introduced in 2a87339f8); rows sent to the re-evaluation carry only persona_id and context fields so snapshot-owned values such as target_weight are not echoed back from the proposal."
+  ],
+  "test_classifications": [
+    {
+      "test": "test_ppl_alloc_012_ranking_projection.py test_durable_lineage_integrity_fails_closed_after_same_id_store_tamper (ranking_snapshot)",
+      "classification": "real regression fixed in production code",
+      "decided_by": "PR 6280 relaxed == 422 plus integrity text to in (409, 422) with no evidence entry; the owner now verifies the digest, so the exact 422 and the integrity reason are asserted again",
+      "assertion_weakened": false
+    },
+    {
+      "test": "same test (allocation_evaluation tamper case)",
+      "classification": "retired",
+      "decided_by": "no live path reads stored evaluations: the owner /api/allocation-evaluations endpoint is stateless (services/capital/main.py), and the dead reader pm12/service.py _pm12_allocation_evaluation_record is not routed. The harness no longer persists evaluations the product does not persist.",
+      "assertion_weakened": false
+    },
+    {
+      "test": "test_ppl_alloc_012 round trip: cap_reasons tamper case",
+      "classification": "real regression fixed in production code",
+      "decided_by": "PR 6280 flipped the case to not recompute the digest, so a forged cap_reasons with a valid digest was stored; it recomputes the digest again and is rejected by the field comparison. 2a87339f8 defines _CONTEXT_FIELDS as the only caller-owned fields.",
+      "assertion_weakened": false
+    },
+    {
+      "test": "test_ppl_alloc_012 round trip: requires_human_approval case (PR 6280 swapped it for stage)",
+      "classification": "real regression fixed in production code",
+      "decided_by": "restored with a recomputed digest; stage case kept, so nothing is lost",
+      "assertion_weakened": false
+    },
+    {
+      "test": "PPL-ALLOC-009 paper chain and PPL-ALLOC-012 round trip: ranking_reader=None",
+      "classification": "stale sample",
+      "decided_by": "both now pass a ranking reader so the owner runs the real verify_rebalance_lineage instead of the no-op; the paper branch is also covered in services/capital/test_allocation_lineage_integrity.py",
+      "assertion_weakened": false
+    },
+    {
+      "test": "rebalance_authority_test_support.py: get_ranking_snapshot blanket except; seed baseline",
+      "classification": "stale sample",
+      "decided_by": "the swallow-all except is removed; the seeded baseline has no snapshot and bypasses lineage only while seeding",
+      "assertion_weakened": false
+    },
+    {
+      "test": "test_allocation_lineage_live_route.py _RankingReader",
+      "classification": "stale sample",
+      "decided_by": "the fake snapshot now carries a valid content_digest",
+      "assertion_weakened": false
+    }
+  ],
+  "out_of_scope": "paper operations skip owner approval (capital_guard.py): operator policy, unchanged"
+}

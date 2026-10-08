@@ -36,6 +36,17 @@ class SourceDatasetAuthorityError(RuntimeError):
     """Raised when source truth cannot be admitted without guessing."""
 
 
+try:
+    from evaluation_authority import AuthorityValidationError, _validate_policy
+except ImportError:
+    import sys
+
+    _service_dir = str(Path(__file__).resolve().parent)
+    if _service_dir not in sys.path:
+        sys.path.insert(0, _service_dir)
+    from evaluation_authority import AuthorityValidationError, _validate_policy
+
+
 HttpGetTransport = Callable[[str], Any]
 
 _UTC = timezone.utc
@@ -88,14 +99,40 @@ class MaterializedDatasetVersion:
         }
 
 
-def urllib_json_get(url: str, *, timeout_seconds: float = 5.0) -> Any:
+def source_read_headers(token_file: Any, tenant_id: Any) -> dict[str, str]:
+    """Build source-ingest reader headers from a token file; fail closed if absent."""
+
+    path_text = str(token_file or "").strip()
+    tenant = str(tenant_id or "").strip()
+    if not path_text:
+        raise SourceDatasetAuthorityError("source read token file is required")
+    if not tenant or tenant == "*":
+        raise SourceDatasetAuthorityError("source read tenant is required")
+    from services.service_token_file import configured_service_token
+
+    variable = "TRAINING_SESSION_SOURCE_READ_TOKEN"
+    try:
+        token = configured_service_token(variable, {variable + "_FILE": path_text})
+    except RuntimeError as exc:
+        raise SourceDatasetAuthorityError("source read token file is unavailable or unsafe") from exc
+    if not token:
+        raise SourceDatasetAuthorityError("source read token file is empty or malformed")
+    return {"Authorization": f"Bearer {token}", "X-Tenant-Id": tenant}
+
+
+def urllib_json_get(
+    url: str,
+    *,
+    timeout_seconds: float = 5.0,
+    headers: Mapping[str, str] | None = None,
+) -> Any:
     """Small strict GET transport for callers that do not inject one."""
 
     if not isinstance(timeout_seconds, (int, float)) or isinstance(timeout_seconds, bool):
         raise SourceDatasetAuthorityError("timeout_seconds must be numeric")
     if not math.isfinite(float(timeout_seconds)) or float(timeout_seconds) <= 0:
         raise SourceDatasetAuthorityError("timeout_seconds must be finite and greater than zero")
-    request = urllib.request.Request(url, method="GET")
+    request = urllib.request.Request(url, method="GET", headers=dict(headers or {}))
     try:
         with urllib.request.urlopen(request, timeout=float(timeout_seconds)) as response:  # noqa: S310
             body = response.read(_MAX_FILE_BYTES + 1)
@@ -112,6 +149,32 @@ def urllib_json_get(url: str, *, timeout_seconds: float = 5.0) -> Any:
     return _strict_json_loads(text, f"HTTP response from {url}")
 
 
+def validate_policy_authority(
+    policy: Mapping[str, Any],
+    trusted_now: datetime,
+) -> tuple[dict[str, Any], str]:
+    """Validate a threshold policy authority object against trusted_now."""
+    now = _trusted_utc(trusted_now)
+    normalized = _validate_policy(policy, now)
+    digest = stable_json_sha256(policy)
+    return normalized, digest
+
+
+def load_policy_authority(
+    policy_path: str | Path,
+    trusted_now: datetime,
+) -> tuple[dict[str, Any], str]:
+    """Load and validate the threshold policy authority against trusted_now."""
+    path = Path(policy_path)
+    if not path.is_file():
+        raise SourceDatasetAuthorityError(f"policy file does not exist: {policy_path}")
+    raw_text = path.read_text(encoding="utf-8")
+    policy = _strict_json_loads(raw_text, f"policy authority {path.name}")
+    if not isinstance(policy, Mapping):
+        raise SourceDatasetAuthorityError("policy authority must be a JSON object")
+    return validate_policy_authority(policy, trusted_now)
+
+
 def materialize_source_dataset_version(
     *,
     http_get: HttpGetTransport,
@@ -122,6 +185,9 @@ def materialize_source_dataset_version(
     output_root: str | Path,
     trusted_now: datetime,
     max_readback_age_seconds: int = 300,
+    clock: Callable[[], datetime] | None = None,
+    policy_path: str | Path | None = None,
+    policy: Mapping[str, Any] | None = None,
 ) -> MaterializedDatasetVersion:
     """Resolve one terminal source run into an evaluator-compatible DatasetVersion.
 
@@ -132,7 +198,31 @@ def materialize_source_dataset_version(
 
     if not callable(http_get):
         raise SourceDatasetAuthorityError("http_get must be callable")
-    now = _trusted_utc(trusted_now)
+    fixed_now = _trusted_utc(trusted_now)
+
+    def observe_now() -> datetime:
+        # Remote data is produced during the request, so a live clock is
+        # sampled after each completed read; an explicit trusted_now stays fixed.
+        return _trusted_utc(clock()) if clock is not None else fixed_now
+
+    normalized_policy: dict[str, Any] | None = None
+    policy_digest: str | None = None
+    if policy is not None or policy_path is not None:
+        try:
+            if policy is not None:
+                normalized_policy, policy_digest = validate_policy_authority(
+                    policy, observe_now()
+                )
+            else:
+                assert policy_path is not None
+                normalized_policy, policy_digest = load_policy_authority(
+                    policy_path, observe_now()
+                )
+        except AuthorityValidationError as exc:
+            raise SourceDatasetAuthorityError(
+                f"evaluation policy authority rejected: {exc}"
+            ) from exc
+
     age_limit = _strict_int(
         max_readback_age_seconds,
         "max_readback_age_seconds",
@@ -151,7 +241,7 @@ def materialize_source_dataset_version(
         readback,
         connector_id=connector,
         dataset_id=dataset,
-        trusted_now=now,
+        trusted_now=observe_now(),
         max_age_seconds=age_limit,
     )
 
@@ -173,7 +263,7 @@ def materialize_source_dataset_version(
         connector_id=connector,
         desired_dataset_id=dataset_resolution["desired_dataset_id"],
         normalized_targets=set(dataset_resolution["normalized_targets"]),
-        trusted_now=now,
+        trusted_now=observe_now(),
     )
     run_url = f"{base_url}/api/source-ingest/jobs/{urllib.parse.quote(run_id, safe='')}"
     run_payload = _http_get_object(http_get, run_url, "source ingest run")
@@ -184,7 +274,7 @@ def materialize_source_dataset_version(
         storage_manifest=storage_manifest,
         expected_last_success_at=health_success_at,
         expected_normalized_count=health_row_count,
-        trusted_now=now,
+        trusted_now=observe_now(),
     )
 
     bundles_url = f"{base_url}/api/source-ingest/evidence/bundles"
@@ -193,7 +283,7 @@ def materialize_source_dataset_version(
         bundles_payload,
         connector_id=connector,
         run_id=run_id,
-        trusted_now=now,
+        trusted_now=observe_now(),
     )
     for binding in evidence_bindings:
         bundle_id = str(binding["evidence_bundle_id"])
@@ -209,10 +299,34 @@ def materialize_source_dataset_version(
         normalized_targets=set(dataset_resolution["normalized_targets"]),
         run_id=run_id,
         expected_market=market,
-        trusted_now=now,
-        features_required=_connector_declares_features(connector_readback),
+        trusted_now=observe_now(),
     )
-    records = storage["records"]
+    all_records = storage["records"]
+    policy_selection_binding: dict[str, Any] | None = None
+    policy_selection_digest: str | None = None
+    if normalized_policy is not None:
+        target_universe = list(normalized_policy["required_instruments"])
+        target_set = set(target_universe)
+        observed_instruments = {str(record["instrument"]) for record in all_records}
+        missing_instruments = target_set - observed_instruments
+        if missing_instruments:
+            missing_sorted = sorted(missing_instruments)
+            raise SourceDatasetAuthorityError(
+                f"source storage records missing required policy instrument: {', '.join(missing_sorted)}"
+            )
+        records = [record for record in all_records if str(record["instrument"]) in target_set]
+        policy_selection_binding = {
+            "policy_id": normalized_policy["policy_id"],
+            "policy_version": normalized_policy["policy_version"],
+            "approval_decision_ref": normalized_policy["approval_decision_ref"],
+            "policy_digest": policy_digest,
+            "required_instruments": target_universe,
+            "selected_instruments": sorted({str(r["instrument"]) for r in records}),
+        }
+        policy_selection_digest = stable_json_sha256(policy_selection_binding)
+    else:
+        records = all_records
+
     canonical_bytes = b"".join(_canonical_json_bytes(record) + b"\n" for record in records)
     canonical_digest = hashlib.sha256(canonical_bytes).hexdigest()
     canonical_path = authority_root / f"canonical-ohlcv-{canonical_digest}.jsonl"
@@ -231,6 +345,33 @@ def materialize_source_dataset_version(
     evidence_binding_digest = stable_json_sha256(evidence_bindings)
     readback_ref = readback_url
 
+    metadata_json = {
+        "schema_version": _OUTPUT_SCHEMA,
+        "authority_status": "authoritative",
+        "source_api_url": base_url,
+        "source_connector_id": connector,
+        "source_dataset_id": dataset,
+        "source_dataset_resolution": dataset_resolution,
+        "source_ingest_run_id": run_id,
+        "source_run_ref": run_url,
+        "source_run_finished_at": run["finished_at"],
+        "source_controller_binding_sha256": controller_binding_digest,
+        "source_storage_binding_sha256": storage_binding_digest,
+        "source_evidence_binding_sha256": evidence_binding_digest,
+        "canonical_ohlcv_sha256": canonical_digest,
+        "source_storage_refs": {
+            "raw": storage["raw_refs"],
+            "normalized": storage["normalized_refs"],
+            "feature": storage["feature_refs"],
+        },
+        "source_evidence_bundle_refs": evidence_bindings,
+        "controller_identity": controller_binding,
+        **({
+            "source_policy_selection": policy_selection_binding,
+            "source_policy_selection_sha256": policy_selection_digest,
+        } if policy_selection_binding is not None else {}),
+    }
+
     payload_without_id: dict[str, Any] = {
         "market_scope": [storage["market"]],
         "instrument_scope": sorted({str(record["instrument"]) for record in records}),
@@ -238,28 +379,7 @@ def materialize_source_dataset_version(
         "normalized_dataset_refs": [item["uri"] for item in storage["normalized_refs"]],
         "feature_dataset_refs": [item["uri"] for item in storage["feature_refs"]],
         "frozen_at": storage["created_at"],
-        "metadata_json": {
-            "schema_version": _OUTPUT_SCHEMA,
-            "authority_status": "authoritative",
-            "source_api_url": base_url,
-            "source_connector_id": connector,
-            "source_dataset_id": dataset,
-            "source_dataset_resolution": dataset_resolution,
-            "source_ingest_run_id": run_id,
-            "source_run_ref": run_url,
-            "source_run_finished_at": run["finished_at"],
-            "source_controller_binding_sha256": controller_binding_digest,
-            "source_storage_binding_sha256": storage_binding_digest,
-            "source_evidence_binding_sha256": evidence_binding_digest,
-            "canonical_ohlcv_sha256": canonical_digest,
-            "source_storage_refs": {
-                "raw": storage["raw_refs"],
-                "normalized": storage["normalized_refs"],
-                "feature": storage["feature_refs"],
-            },
-            "source_evidence_bundle_refs": evidence_bindings,
-            "controller_identity": controller_binding,
-        },
+        "metadata_json": metadata_json,
         "created_at": storage["created_at"],
         "source_controller_readback_ref": readback_ref,
         "source_evidence_bundle_ids": evidence_bundle_ids,
@@ -292,6 +412,7 @@ def materialize_source_dataset_version(
             run_id=run_id,
             expected_storage_binding_digest=storage_binding_digest,
             expected_payload=payload,
+            expected_policy_selection_digest=policy_selection_digest,
         )
         _atomic_materialize(canonical_path, canonical_bytes, authority_root)
         _atomic_materialize(dataset_path, dataset_bytes, authority_root)
@@ -649,8 +770,18 @@ def _validate_connector_terminal_truth(
         raise SourceDatasetAuthorityError("latest source record belongs to a different dataset")
     if provenance.get("source_ingest_run_id") != run_id:
         raise SourceDatasetAuthorityError("latest source record belongs to a different run")
-    for field in ("provider", "api_endpoint", "access_scope", "license_scope", "schema_hash"):
+    for field in ("provider", "api_endpoint", "license_scope", "schema_hash"):
         _required_text(provenance.get(field), f"latest_source_record.provenance.{field}")
+    access_scope = provenance.get("access_scope")
+    if isinstance(access_scope, (list, tuple)):
+        if not access_scope:
+            raise SourceDatasetAuthorityError(
+                "latest_source_record.provenance.access_scope must not be empty"
+            )
+        for item in access_scope:
+            _required_text(item, "latest_source_record.provenance.access_scope")
+    else:
+        _required_text(access_scope, "latest_source_record.provenance.access_scope")
     available_at = _parse_timestamp(
         provenance.get("available_time"), "latest_source_record.provenance.available_time"
     )
@@ -755,8 +886,22 @@ def _select_evidence_bundles(
             }
         )
     if len(matches) != 1:
+        observed_summaries: list[str] = []
+        for raw in bundles[:5]:
+            if isinstance(raw, Mapping):
+                meta = raw.get("metadata") if isinstance(raw.get("metadata"), Mapping) else {}
+                bundle_id = str(raw.get("evidence_bundle_id") or "")
+                c_id = str(meta.get("connector_id") or "")
+                r_id = str(meta.get("ingest_run_id") or "")
+                t_id = str(meta.get("tenant_id") or "")
+                observed_summaries.append(f"id={bundle_id}:connector={c_id}:run={r_id}:tenant={t_id}")
+            else:
+                observed_summaries.append("non_object")
+        observed_info = f", observed_bundles_sample=[{', '.join(observed_summaries)}]" if bundles else ""
         raise SourceDatasetAuthorityError(
-            "exactly one source evidence bundle must bind the selected connector run"
+            f"exactly one source evidence bundle must bind the selected connector run "
+            f"(matching_count={len(matches)}, selected connector={connector_id}, run={run_id}; "
+            f"observed_count={len(bundles)}{observed_info})"
         )
     return matches
 
@@ -770,7 +915,6 @@ def _validate_and_read_storage_manifest(
     run_id: str,
     expected_market: str,
     trusted_now: datetime,
-    features_required: bool = True,
 ) -> dict[str, Any]:
     if manifest.get("schema_version") != _STORAGE_SCHEMA or manifest.get("ingest_run_id") != run_id:
         raise SourceDatasetAuthorityError("storage manifest identity mismatch")
@@ -779,19 +923,14 @@ def _validate_and_read_storage_manifest(
         raise SourceDatasetAuthorityError("storage manifest created_at is in the future")
     raw_refs = _storage_ref_array(manifest.get("raw_refs"), "raw_refs")
     normalized_refs = _storage_ref_array(manifest.get("normalized_refs"), "normalized_refs")
-    raw_feature_refs = manifest.get("feature_refs")
-    if features_required or raw_feature_refs not in (None, []):
-        feature_refs = _storage_ref_array(raw_feature_refs, "feature_refs")
-    else:
-        feature_refs = []
+    feature_refs = _storage_ref_array(manifest.get("feature_refs"), "feature_refs")
     summary = _required_mapping(manifest.get("summary"), "storage_manifest.summary")
     for label, refs in (
         ("raw_ref_count", raw_refs),
         ("normalized_ref_count", normalized_refs),
         ("feature_ref_count", feature_refs),
     ):
-        minimum = 0 if label == "feature_ref_count" and not feature_refs else 1
-        if _strict_int(summary.get(label), f"storage_manifest.summary.{label}", minimum=minimum) != len(refs):
+        if _strict_int(summary.get(label), f"storage_manifest.summary.{label}", minimum=1) != len(refs):
             raise SourceDatasetAuthorityError(f"storage manifest {label} does not match refs")
 
     checked_raw: list[dict[str, Any]] = []
@@ -991,15 +1130,6 @@ def _ohlcv_from_wrapper(
     return {"instrument": instrument, "date": date_text, **values}, market
 
 
-def _connector_declares_features(connector_readback: Mapping[str, Any]) -> bool:
-    connector = connector_readback.get("connector")
-    metadata = connector.get("metadata") if isinstance(connector, Mapping) else None
-    if not isinstance(metadata, Mapping):
-        return False
-    targets = metadata.get("feature_targets")
-    return isinstance(targets, Sequence) and not isinstance(targets, (str, bytes)) and bool(targets)
-
-
 def _storage_ref_array(value: Any, label: str) -> list[Mapping[str, Any]]:
     if isinstance(value, (str, bytes)) or not isinstance(value, Sequence) or not value:
         raise SourceDatasetAuthorityError(f"storage manifest {label} must be a non-empty array")
@@ -1123,6 +1253,7 @@ def _assert_run_not_rebound(
     run_id: str,
     expected_storage_binding_digest: str,
     expected_payload: Mapping[str, Any],
+    expected_policy_selection_digest: str | None = None,
 ) -> None:
     for path in sorted(root.glob("dataset-version-*.json")):
         if path.is_symlink() or not path.is_file():
@@ -1150,10 +1281,12 @@ def _assert_run_not_rebound(
             raise SourceDatasetAuthorityError(
                 "previously materialized source run bytes changed; refusing to rebind immutable run"
             )
-        if stable_json_sha256(existing) != stable_json_sha256(expected_payload):
-            raise SourceDatasetAuthorityError(
-                "previously materialized source run has differing authority bindings"
-            )
+        existing_policy_digest = metadata.get("source_policy_selection_sha256")
+        if existing_policy_digest == expected_policy_selection_digest:
+            if stable_json_sha256(existing) != stable_json_sha256(expected_payload):
+                raise SourceDatasetAuthorityError(
+                    "previously materialized source run has differing authority bindings"
+                )
 
 
 def _atomic_materialize(path: Path, content: bytes, root: Path) -> None:
@@ -1379,6 +1512,7 @@ def _text_array(value: Any, label: str) -> list[str]:
 
 __all__ = [
     "HttpGetTransport",
+    "source_read_headers",
     "MaterializedDatasetVersion",
     "SourceDatasetAuthorityError",
     "materialize_source_dataset_version",
