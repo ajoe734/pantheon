@@ -1867,6 +1867,190 @@ if action == "restore":
 PY
 }
 
+recover_bounded_source_refresh_dlq() {
+  local force="${1:-false}"
+  local connector_id="${2:-tw-twse-tpex-official-market}"
+  local timeout_seconds="${3:-${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS:-1800}}"
+  local api_url="${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}"
+
+  if [[ "${force}" != "true" ]]; then
+    return 0
+  fi
+
+  python3 - "${api_url}" "${connector_id}" "${timeout_seconds}" <<'RECOVER_DLQ_PY'
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.request
+
+api_url, connector_id = sys.argv[1:3]
+api_url = api_url.rstrip("/")
+timeout_arg = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else os.environ.get("SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS", "1800")
+try:
+    total_budget = float(timeout_arg)
+except (ValueError, TypeError):
+    total_budget = 1800.0
+
+start_time = time.time()
+
+def request_json(url, data=None, timeout=30):
+    body = json.dumps(data).encode("utf-8") if data is not None else None
+    headers = {"Accept": "application/json"}
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=body, headers=headers)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+def is_egress_denied(text):
+    if not text or not isinstance(text, str):
+        return False
+    lower = text.lower()
+    return "external egress denied" in lower or "host_not_allowlisted" in lower
+
+try:
+    dlq_data = request_json(f"{api_url}/api/source-ingest/dlq", timeout=30)
+    frontier_data = request_json(f"{api_url}/api/source-ingest/frontier", timeout=30)
+except Exception as exc:
+    print(f"[remote-deploy] ERROR: DLQ recovery readback query failed: {exc}", file=sys.stderr)
+    raise SystemExit(1) from exc
+
+pending_entries = [
+    e for e in (dlq_data.get("entries") or [])
+    if isinstance(e, dict) and e.get("status") == "pending"
+]
+if not pending_entries:
+    print("[remote-deploy] no pending DLQ entries; skipping DLQ recovery")
+    sys.exit(0)
+
+frontiers_by_id = {
+    f.get("frontier_id"): f
+    for f in (frontier_data.get("frontier") or [])
+    if isinstance(f, dict) and f.get("frontier_id")
+}
+
+eligible_entry_ids = []
+skipped_entries = []
+
+for entry in pending_entries:
+    entry_id = str(entry.get("entry_id") or "")
+    event = entry.get("event")
+    if not isinstance(event, dict):
+        skipped_entries.append((entry_id, "missing nested event structure in DLQ entry"))
+        continue
+    event_type = event.get("event_type")
+    payload = event.get("payload")
+    if not isinstance(payload, dict):
+        skipped_entries.append((entry_id, "missing payload dict in DLQ event"))
+        continue
+    entry_connector = str(payload.get("connector_id") or "")
+    entry_reason = str(entry.get("reason") or "")
+    entry_error = str(payload.get("error") or "")
+    entry_frontier_id = str(payload.get("frontier_id") or "")
+
+    if entry_connector != connector_id:
+        skipped_entries.append((entry_id, f"different connector ({entry_connector} != {connector_id})"))
+        continue
+    if event_type != "source_ingestion.scheduled_run_failed":
+        skipped_entries.append((entry_id, f"different event_type ({event_type})"))
+        continue
+    if not (is_egress_denied(entry_reason) or is_egress_denied(entry_error)):
+        skipped_entries.append((entry_id, "failure reason is not external egress denial"))
+        continue
+    if not entry_frontier_id or entry_frontier_id not in frontiers_by_id:
+        skipped_entries.append((entry_id, f"frontier {entry_frontier_id} not in frontier readback"))
+        continue
+
+    frontier = frontiers_by_id[entry_frontier_id]
+    frontier_status = str(frontier.get("status") or "")
+    frontier_connector = str(frontier.get("connector_id") or "")
+    frontier_error = str(frontier.get("last_error") or "")
+
+    if frontier_connector != connector_id:
+        skipped_entries.append((entry_id, f"frontier connector ({frontier_connector} != {connector_id})"))
+        continue
+    if frontier_status != "failed":
+        skipped_entries.append((entry_id, f"frontier status is {frontier_status}, not failed"))
+        continue
+    if not is_egress_denied(frontier_error):
+        skipped_entries.append((entry_id, "frontier last_error is not external egress denial"))
+        continue
+
+    eligible_entry_ids.append(entry_id)
+
+for entry_id, reason in skipped_entries:
+    print(f"[remote-deploy] pending DLQ entry {entry_id} not eligible for bounded recovery: {reason}")
+
+if not eligible_entry_ids:
+    print("[remote-deploy] no eligible egress-denied DLQ entries found for recovery")
+    sys.exit(0)
+
+MAX_REPLAY_COUNT = 20
+if len(eligible_entry_ids) > MAX_REPLAY_COUNT:
+    print(f"[remote-deploy] ERROR: eligible DLQ entry count {len(eligible_entry_ids)} exceeds maximum limit {MAX_REPLAY_COUNT}; refusing replay before mutation", file=sys.stderr)
+    raise SystemExit(1)
+
+elapsed = time.time() - start_time
+remaining_budget = total_budget - elapsed
+if remaining_budget <= 0:
+    print(f"[remote-deploy] ERROR: DLQ recovery timeout budget exhausted before replay (budget={total_budget}s, elapsed={elapsed:.2f}s)", file=sys.stderr)
+    raise SystemExit(1)
+
+print(f"[remote-deploy] recovering {len(eligible_entry_ids)} eligible egress-denied DLQ entries for {connector_id}: {eligible_entry_ids}")
+replay_body = {
+    "entry_ids": eligible_entry_ids,
+    "reason": f"bounded Taiwan market refresh: recovering {len(eligible_entry_ids)} eligible egress-denied scheduled ingest DLQ entries",
+    "actor_id": "bounded-source-refresh",
+    "tag": "retry_exhausted",
+}
+
+try:
+    replay_resp = request_json(f"{api_url}/api/source-ingest/dlq/replay", data=replay_body, timeout=remaining_budget)
+except urllib.error.HTTPError as exc:
+    body = exc.read().decode("utf-8", errors="replace")
+    print(f"[remote-deploy] ERROR: DLQ replay API returned HTTP {exc.code}: {body}", file=sys.stderr)
+    raise SystemExit(1) from exc
+except Exception as exc:
+    print(f"[remote-deploy] ERROR: DLQ replay API request failed: {exc}", file=sys.stderr)
+    raise SystemExit(1) from exc
+
+summary = replay_resp.get("summary") or {}
+replayed_count = summary.get("applied", 0) or summary.get("total_replayed", 0)
+correlated_count = summary.get("correlated_resolution_count", 0)
+print(f"[remote-deploy] DLQ replay response: applied={replayed_count} correlated_resolutions={correlated_count}")
+
+try:
+    post_dlq = request_json(f"{api_url}/api/source-ingest/dlq", timeout=30)
+except Exception as exc:
+    print(f"[remote-deploy] ERROR: post-replay DLQ verification read failed: {exc}", file=sys.stderr)
+    raise SystemExit(1) from exc
+
+post_entries = {
+    e.get("entry_id"): e
+    for e in (post_dlq.get("entries") or [])
+    if isinstance(e, dict) and e.get("entry_id")
+}
+
+SUCCESS_STATUSES = {"replayed", "duplicate_skipped"}
+unsuccessful = []
+for eid in eligible_entry_ids:
+    if eid not in post_entries:
+        unsuccessful.append((eid, "missing from post-replay DLQ readback"))
+    else:
+        st = post_entries[eid].get("status")
+        if st not in SUCCESS_STATUSES:
+            unsuccessful.append((eid, f"non-success status '{st}'"))
+
+if unsuccessful:
+    print(f"[remote-deploy] ERROR: DLQ recovery failed: selected entries not successfully terminalized: {unsuccessful}", file=sys.stderr)
+    raise SystemExit(1)
+
+print(f"[remote-deploy] DLQ recovery completed: all {len(eligible_entry_ids)} entries terminalized")
+RECOVER_DLQ_PY
+}
+
 execute_bounded_source_refresh_entrypoint() {
   local force="${1:-false}" output_path="${2:-}" preflight_output preflight_status
   preflight_output="$(check_taiwan_refresh_preflight "${force}")" || error "preflight execution failed: ${preflight_output}"
@@ -1995,6 +2179,8 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
     info "waiting ${lease_wait}s for the stopped steady source controller lease to expire"
     sleep "${lease_wait}"
   fi
+
+  recover_bounded_source_refresh_dlq "${force}" "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" "${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS}"
 
   docker rm -f "${bounded_containers[@]}" >/dev/null 2>&1 || true
   # A ten second interval keeps the one-shot lease (twice the interval) short,
