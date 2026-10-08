@@ -1,0 +1,10 @@
+{
+  "task": "INTEGRATION-UNBLOCK-DEV-TW-REFRESH-STEADY-SERVICES-20261008-CI-RED-308AE502A123",
+  "blockedPr": 6348,
+  "failingCheck": "Smoke acceptance",
+  "failingTest": "scripts/test_dev_environment_lease.py::LeaseManagerTests::test_heartbeat_loop_retries_transient_errors_while_lease_unexpired",
+  "rootCause": "Test flake unrelated to PR #6348: parent and subprocess each called datetime.now(); crossing a one-second boundary made acquiredAt differ (02:39:44Z vs 02:39:45Z), so the lease manager raised immutable-field LeaseLost and the loop exited -15 instead of 0.",
+  "fix": "Pass the parent's `now` into the subprocess script so both sides share one timestamp.",
+  "verification": "PYTHONPATH=scripts python3 -m unittest scripts.test_dev_environment_lease.LeaseManagerTests.test_heartbeat_loop_retries_transient_errors_while_lease_unexpired -> OK; full scripts.test_dev_environment_lease: 30 tests OK on head merged with current dev",
+  "deliveryPr": 6355
+}

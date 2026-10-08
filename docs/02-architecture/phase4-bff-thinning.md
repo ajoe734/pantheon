@@ -2,6 +2,8 @@
 
 狀態：**已核准**（2026-09-30），補入研究單一 owner、Persona 建議替換與 Agora 綜合判斷的任務範圍。原始設計依據為 origin/dev `41774a87f`；本次補充依據為 `648d0f93a`。未另註明的「現況」描述原始設計時的問題，不代表仍未修復；任務登錄、合併、部署及操作驗收分別以各自的實際紀錄為準。
 
+修訂（操作者 2026-10-07 決定）：設計優先，淨行數只作審查證據；OPS-DIFF-BUDGET-MEASURE-NOT-GATE-20261007（#6318）已在 dev 移除 handoff 行數閘門的程式，runtime promotion 後生效。本次只改原則 7、第 7 節前言、行數欄名與 E 批行數說明，其餘核准設計不變。
+
 ## 0. 原則（已核准）
 
 1. **BFF 只做兩件事**：整理讀取資料給前端、把指令轉交給擁有該業務的服務。BFF 不持有業務狀態、不捏造結果。
@@ -10,7 +12,7 @@
 4. **核准＝紀錄＋執行前核對**：沿用 governance 服務已有的核准紀錄與核對函式，不再另建任何核准系統。
 5. **資金護欄是一個小的確定性核心**：放在 capital 服務，不交給 LLM。
 6. **下游不存在或捏造結果的功能直接刪**。
-7. **每筆任務**帶淨行數上限；驗收涵蓋同一業務動作的**所有現存入口**。
+7. **淨行數是審查證據，不是閘門**：只有寫進任務驗收的行數上限才有約束力；驗收涵蓋同一業務動作的**所有現存入口**。
 8. **移交即刪舊實作**：責任轉給 agent 或業務服務的同一筆交付，必須移除原本的判斷、寫入或派送實作；不以雙跑、相容旗標或舊規則 fallback 留下第二個 owner。
 
 ## 1. 核准：紀錄＋核對
@@ -156,25 +158,25 @@ BFF 的資金程式改成純轉送；呼叫不存在函式的 approve 和 two-ma
 
 ## 7. 任務拆分與派工順序
 
-每筆都帶淨行數上限，驗收涵蓋所有入口。
+下表行數欄是派工時的規模參考，交付時作為審查證據；只有寫進該任務驗收的上限才有約束力。驗收涵蓋所有入口。
 
 **A 批：擁有者服務，彼此不重疊，可同時派出**
 
-| 任務 | 服務 | 內容 | 上限 |
+| 任務 | 服務 | 內容 | 行數參考 |
 |---|---|---|---|
 | GOV-APPROVAL-TARGETS-001 | governance | 新增 4 種核准對象型別；決定者不能是提案人 | +120 |
 | EVOLUTION-EXECUTE-APPROVAL-001 | evolution | execute 核對核准；actor 改由 token 取得，不再讀 body 自報的角色 | +60 |
 
 **B 批：擁有者核對（依賴 GOV-APPROVAL-TARGETS-001）**
 
-| 任務 | 內容 | 上限 |
+| 任務 | 內容 | 行數參考 |
 |---|---|---|
 | PERSONA-LIFECYCLE-APPROVAL-VERIFY-001 | persona 服務實作以核准編號授權的轉換 | +60 |
 | CAPITAL-GUARD-KERNEL-001 | capital 服務的 `capital_guard`：核准、kill switch、限額、租戶 | +250 |
 
 **C 批：BFF 轉送（依賴對應的 B 批任務與 BFF-WRAPPER-EDGE-REWRITE-001）**
 
-| 任務 | 內容 | 上限 |
+| 任務 | 內容 | 行數參考 |
 |---|---|---|
 | BFF-APPROVALS-FORWARD-001 | 刪 `_created_approvals`；所有核准入口轉給 governance | 負 |
 | BFF-PERSONA-LIFECYCLE-FORWARD-001 | AdvanceLifecycle 轉給 persona `PATCH /lifecycle`；刪 Observe 和捏造分支 | 負 |
@@ -183,14 +185,14 @@ BFF 的資金程式改成純轉送；呼叫不存在函式的 approve 和 two-ma
 
 **D 批：已合併的研究基礎，不重複派工**
 
-| 任務 | 內容 | 上限 |
+| 任務 | 內容 | 行數參考 |
 |---|---|---|
 | AGORA-SERVANT-RESEARCH-PROPOSAL-001 | #6035：servant 用 structured provider 產生研究計畫草稿，進入「提議中」 | +200 |
 | AGORA-RESEARCH-APPROVAL-ROLE-001 | #6029：研究計畫的核准限定工作坊擁有者或 operator | +30 |
 
 **E 批：補齊責任移交，舊實作必須隨同刪除**
 
-| 任務 | 唯一負責範圍 | 依賴 | 淨 production 行數上限 |
+| 任務 | 唯一負責範圍 | 依賴 | 淨 production 行數參考 |
 |---|---|---|---|
 | BFF-RESEARCH-SINGLE-OWNER-001 | 第 3 節的研究 owner、BFF 寫入／派送移除與同一組 task/run | AGORA-DEAD-SURFACES-REMOVAL-001、BFF-RECEIPT-ONLY-ROUTES-001 | 0；BFF 必須減少 |
 | PERSONA-EVALUATOR-AGENT-002 | 第 2 節的單一 evaluator 與 BFF 建議替換；正式取代 001 | GOV-APPROVAL-TARGETS-001、AGORA-DEAD-SURFACES-REMOVAL-001 | +400；BFF 建議程式必須減少 |
@@ -203,7 +205,7 @@ Agora 清理依賴是為了先完成同區域的刪除，避免並行改寫；�
 - 研究：mounted 測試涵蓋全部保留入口，重複派送只有一次 owner effect；驗證真實 adapter 呼叫、artifact 讀回、失敗與恢復，以及 BFF 不再建立 dispatcher／資料庫 owner。dev 用既有流程提議、人核准、派送一個支援的 non-live 計算，再於刷新及 BFF 重啟後讀回保存的 run／report。
 - Persona：保留原任務的去重、限流、降級不開單及無直接寫入工具測試；新增相同保存建議出現在排名／Human Inbox 的 mounted 測試，以及「只有分數不能自行產生建議」。固定公式的回歸測試保留。dev 以真實證據與 provider 產生建議，刷新仍可讀；由人建立決定，套用轉換則由原 owner 任務負責。
 - Agora：以「結論標籤相同但理由衝突」及「標籤不同但條件相容」驗證結果來自 provider；測試 provider 失敗仍可讀原意見、保存後讀回及重試不重做。dev 以兩個 Persona 的真實意見完成一次 interaction，刷新可讀同一份綜合結果。
-- 三筆都以整筆差異計算上限，搬移同時計入新增與刪除；不得壓縮程式或刪有用測試湊數。分別報告 source、測試、合併、部署與真實操作結果；fixture 成功不能稱為真實 provider／計算驗收。
+- 三筆的行數都以整筆差異計算並作為審查證據，搬移同時計入新增與刪除；上限以各任務驗收寫明者為準；不得壓縮程式或刪有用測試湊數。分別報告 source、測試、合併、部署與真實操作結果；fixture 成功不能稱為真實 provider／計算驗收。
 
 ## 8. 已定案的決定（2026-09-30）
 

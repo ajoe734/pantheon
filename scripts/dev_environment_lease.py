@@ -47,6 +47,9 @@ TOKEN_ENV = "PANTHEON_ENVIRONMENT_LEASE_TOKEN"
 VALID_MODES = frozenset({"qualification", "deployment"})
 SHA40_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 MAX_STDIN_TOKEN_CHARACTERS = 8192
+TRANSIENT_HTTP_STATUSES = frozenset({500, 502, 503, 504})
+HTTP_TIMEOUT_SECONDS = 5
+READ_ATTEMPTS = 3
 ACQUISITION_IMMUTABLE_FIELDS = (
     "schemaVersion",
     "repository",
@@ -87,6 +90,16 @@ class GitHubApiError(LeaseError):
         super().__init__(f"GitHub API {status}: {message}")
         self.status = status
         self.body = body
+
+
+class GitHubTransportError(LeaseError):
+    """A request failed without an authoritative GitHub response."""
+
+
+def is_transient_error(exc: Exception) -> bool:
+    return isinstance(exc, GitHubTransportError) or (
+        isinstance(exc, GitHubApiError) and exc.status in TRANSIENT_HTTP_STATUSES
+    )
 
 
 @dataclass(frozen=True)
@@ -397,6 +410,26 @@ class GitHubClient:
         body: Mapping[str, Any] | None = None,
         allowed: Sequence[int] = (200,),
     ) -> ApiResponse:
+        # Only replay reads here. A failed write may already have committed;
+        # heartbeat recovery must re-read ownership and obtain a fresh CAS SHA.
+        attempts = READ_ATTEMPTS if method == "GET" else 1
+        for attempt in range(attempts):
+            try:
+                return self._request_once(method, route, body=body, allowed=allowed)
+            except (GitHubApiError, GitHubTransportError) as exc:
+                if not is_transient_error(exc) or attempt + 1 == attempts:
+                    raise
+                time.sleep(attempt + 1)
+        raise AssertionError("unreachable")
+
+    def _request_once(
+        self,
+        method: str,
+        route: str,
+        *,
+        body: Mapping[str, Any] | None,
+        allowed: Sequence[int],
+    ) -> ApiResponse:
         data = None
         if body is not None:
             data = json.dumps(body, separators=(",", ":")).encode("utf-8")
@@ -413,7 +446,7 @@ class GitHubClient:
             },
         )
         try:
-            with urllib.request.urlopen(request, timeout=30) as response:
+            with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
                 raw = response.read().decode("utf-8")
                 payload = json.loads(raw) if raw else None
                 headers = {key.lower(): value for key, value in response.headers.items()}
@@ -427,8 +460,10 @@ class GitHubClient:
             except json.JSONDecodeError:
                 payload = raw
             result = ApiResponse(exc.code, headers, payload)
-        except urllib.error.URLError as exc:
-            raise LeaseError(f"GitHub API request failed: {method} {route}: {exc}") from exc
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+            raise GitHubTransportError(
+                f"GitHub API transport failed: {method} {route}"
+            ) from exc
         if result.status not in allowed:
             message = "request failed"
             if isinstance(result.payload, dict) and result.payload.get("message"):
@@ -987,10 +1022,12 @@ def heartbeat_loop(args: argparse.Namespace, manager: LeaseManager) -> int:
             ),
             0o644,
         )
+    sleep_seconds = args.interval_seconds
+    transient_failures = 0
     while not stop:
         slept = 0.0
-        while not stop and slept < args.interval_seconds:
-            interval = min(0.5, args.interval_seconds - slept)
+        while not stop and slept < sleep_seconds:
+            interval = min(0.5, sleep_seconds - slept)
             time.sleep(interval)
             slept += interval
         if stop:
@@ -1003,7 +1040,32 @@ def heartbeat_loop(args: argparse.Namespace, manager: LeaseManager) -> int:
             atomic_write_json(
                 args.state_file, public_state(state, content_sha=content_sha), 0o600
             )
-        except (LeaseLost, LeaseConflict) as exc:
+            transient_failures = 0
+            sleep_seconds = args.interval_seconds
+        except Exception as exc:
+            # A 5xx or ambiguous write is not proof of ownership loss. Retry
+            # one complete renewal promptly, including a fresh authoritative
+            # read/CAS. Never extend local expiry or trust the runner clock.
+            # Reads have their own bounded retry; two renewal attempts keep
+            # this recovery below the normal 120s heartbeat freshness limit.
+            if is_transient_error(exc):
+                transient_failures += 1
+                if transient_failures < 2:
+                    sleep_seconds = min(5.0, args.interval_seconds)
+                    print(
+                        json.dumps(
+                            {
+                                "schemaVersion": SCHEMA_VERSION,
+                                "status": "warning",
+                                "resource": manager.resource,
+                                "detectedAt": utc_iso(datetime.now(timezone.utc)),
+                                "warning": f"transient heartbeat failure (retrying): {exc}",
+                            },
+                            sort_keys=True,
+                        ),
+                        file=sys.stderr,
+                    )
+                    continue
             failure = {
                 "schemaVersion": SCHEMA_VERSION,
                 "status": "lost",
@@ -1023,56 +1085,6 @@ def heartbeat_loop(args: argparse.Namespace, manager: LeaseManager) -> int:
                 except ProcessLookupError:
                     pass
             return 75
-        except Exception as exc:
-            now = datetime.now(timezone.utc)
-            local_expired = True
-            try:
-                local = read_json_file(args.state_file, "lease state file")
-                expires_at = parse_utc_iso(local.get("expiresAt"), "lease state expiresAt")
-                if expires_at > now:
-                    local_expired = False
-            except Exception:
-                pass
-            if local_expired:
-                failure = {
-                    "schemaVersion": SCHEMA_VERSION,
-                    "status": "lost",
-                    "resource": manager.resource,
-                    "repository": manager.repository,
-                    "branch": manager.branch,
-                    "path": manager.path,
-                    "detectedAt": utc_iso(now),
-                    "error": f"transient heartbeat error and local lease expired: {exc}",
-                }
-                if args.failure_json_out:
-                    atomic_write_json(args.failure_json_out, failure, 0o644)
-                print(json.dumps(failure, sort_keys=True), file=sys.stderr)
-                if args.parent_pid:
-                    try:
-                        os.kill(args.parent_pid, signal.SIGTERM)
-                    except ProcessLookupError:
-                        pass
-                return 75
-            print(
-                json.dumps(
-                    {
-                        "schemaVersion": SCHEMA_VERSION,
-                        "status": "warning",
-                        "resource": manager.resource,
-                        "detectedAt": utc_iso(now),
-                        "warning": f"transient heartbeat failure (retrying): {exc}",
-                    },
-                    sort_keys=True,
-                ),
-                file=sys.stderr,
-            )
-            slept = 0.0
-            retry_interval = min(5.0, args.interval_seconds)
-            while not stop and slept < retry_interval:
-                step = min(0.5, retry_interval - slept)
-                time.sleep(step)
-                slept += step
-            continue
     stopped = {
         "schemaVersion": SCHEMA_VERSION,
         "status": "stopped",

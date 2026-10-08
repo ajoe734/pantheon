@@ -30,7 +30,6 @@ from dataclasses import dataclass
 from typing import Any
 
 
-DEFAULT_BASE_URL = "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
 DEFAULT_STUB_TOKEN = "op-dev:admin:mfa"
 
 
@@ -376,8 +375,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--base-url",
-        default=os.getenv("BFF_BASE") or os.getenv("PANTHEON_BFF_BASE_URL") or DEFAULT_BASE_URL,
-        help="Pantheon BFF base URL. Defaults to BFF_BASE/PANTHEON_BFF_BASE_URL or the dev BFF.",
+        default=os.getenv("BFF_BASE") or os.getenv("PANTHEON_BFF_BASE_URL"),
+        help="Pantheon BFF base URL. Defaults to BFF_BASE/PANTHEON_BFF_BASE_URL.",
     )
     parser.add_argument(
         "--token",
@@ -402,7 +401,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=os.getenv("BFF_INSECURE", "1") == "1",
         help="Disable TLS hostname/certificate verification for dev sslip.io probes.",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if not (args.base_url and args.base_url.strip()):
+        parser.error(
+            "--base-url (or BFF_BASE / PANTHEON_BFF_BASE_URL) is required; see "
+            "docs/deployment/vm-dev-staging-prod-management-plan.md section 3.1"
+        )
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:

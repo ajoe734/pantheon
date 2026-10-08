@@ -77,6 +77,7 @@ class HandoffTrailerAdmissionTests(unittest.TestCase):
             mock.patch.object(task_contract, "validate_task_artifact_diff_scope"),
             mock.patch.object(task_contract, "repository_local_path", return_value=task_contract.Path.cwd()),
             mock.patch.object(task_contract._ai_status_module(), "_done_delivery_repository_root", return_value=(task_contract.Path.cwd(), {})),
+            mock.patch.object(task_contract._ai_status_module(), "git_command_succeeds", return_value=True),
             mock.patch.object(bridge, "validate_review_admission", return_value=validated),
             mock.patch.object(bridge, "list_pull_request_files", return_value=[]),
             mock.patch.object(bridge, "revalidate_pull_request_snapshot") as revalidate,
@@ -117,6 +118,7 @@ class HandoffTrailerAdmissionTests(unittest.TestCase):
             mock.patch.object(task_contract, "validate_task_artifact_diff_scope"),
             mock.patch.object(task_contract, "repository_local_path", return_value=task_contract.Path.cwd()),
             mock.patch.object(task_contract._ai_status_module(), "_done_delivery_repository_root", return_value=(task_contract.Path.cwd(), {})),
+            mock.patch.object(task_contract._ai_status_module(), "git_command_succeeds", return_value=True),
             mock.patch.object(bridge, "validate_review_admission", return_value=validated),
             mock.patch.object(bridge, "list_pull_request_files", return_value=[]),
             mock.patch.object(check_commit_trailers, "check_range", side_effect=subprocess.CalledProcessError(128, "git log")),
@@ -501,6 +503,8 @@ class HandoffWorkspaceGitRootAdmissionTests(unittest.TestCase):
                 }
                 try:
                     with mock.patch.object(
+                        ai_status, "git_command_succeeds", return_value=True
+                    ), mock.patch.object(
                         bridge, "validate_review_admission", return_value=unavail_admitted
                     ), mock.patch.object(
                         bridge,
@@ -574,6 +578,135 @@ class HandoffWorkspaceGitRootAdmissionTests(unittest.TestCase):
                             )
                 finally:
                     ai_status._clear_status_command_lease_binding()
+
+
+class HandoffExactHeadFetchTests(unittest.TestCase):
+    """Operator handoff fetches an absent frozen head by SHA, moving no ref."""
+
+    _TRAILERS = "LLM-Agent: Antigravity\nTask-ID: T-1\nReviewer: Antigravity2"
+    _MANIFEST = "docs/evidence/T-1/evidence.json"
+
+    @staticmethod
+    def _git(cwd, *args: str, check: bool = True):
+        import subprocess
+
+        res = subprocess.run(
+            ["git", *args], cwd=cwd, check=check, capture_output=True, text=True
+        )
+        return res.stdout.strip() if check else res.returncode
+
+    def _fixture(self, root):
+        remote = root / "remote"
+        remote.mkdir()
+        self._git(remote, "init", "-b", "dev")
+        self._git(remote, "config", "user.name", "Dev Owner")
+        self._git(remote, "config", "user.email", "dev@example.com")
+        (remote / "README.md").write_text("base\n", encoding="utf-8")
+        self._git(remote, "add", "README.md")
+        self._git(
+            remote,
+            "commit",
+            "-m",
+            "dev base\n\nLLM-Agent: Prior\nTask-ID: PRIOR-001\nReviewer: PriorRev",
+        )
+        base = self._git(remote, "rev-parse", "HEAD")
+        clone = root / "clone"
+        self._git(root, "clone", str(remote), str(clone))
+        self._git(remote, "checkout", "-b", "task/T-1")
+        manifest = remote / self._MANIFEST
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text("evidence\n", encoding="utf-8")
+        self._git(remote, "add", self._MANIFEST)
+        self._git(remote, "commit", "-m", f"T-1: add evidence\n\n{self._TRAILERS}")
+        head = self._git(remote, "rev-parse", "HEAD")
+        self._git(remote, "tag", "-a", "-m", "pr head", "pr-head-tag", head)
+        config = {
+            "coordination": {"repositories": {"pantheon": {"repo": "ajoe734/pantheon"}}},
+            "branch_workflow": {},
+        }
+        task = {"id": "T-1", "artifacts": [self._MANIFEST]}
+        return remote, clone, base, head, config, task
+
+    def _snapshot(self, clone):
+        return (
+            self._git(clone, "for-each-ref"),
+            self._git(clone, "rev-parse", "HEAD"),
+            self._git(clone, "status", "--porcelain", "--untracked-files=all"),
+        )
+
+    def _has(self, clone, sha: str) -> bool:
+        return self._git(clone, "cat-file", "-e", f"{sha}^{{commit}}", check=False) == 0
+
+    def _call(self, root_dir, base, head, config, task):
+        from types import SimpleNamespace
+        from unittest import mock
+        from rewrite import task_contract
+
+        ai_status = task_contract._ai_status_module()
+        bridge = ai_status._github_review_bridge_module()
+        binding = {
+            "pr": 10,
+            "head_sha": head,
+            "head_branch": "task/T-1",
+            "base": "dev",
+            "base_sha": base,
+        }
+        admitted = SimpleNamespace(as_dict=lambda: dict(binding), base_sha=base)
+        with (
+            mock.patch.object(
+                ai_status, "_done_delivery_repository_root", return_value=(root_dir, {})
+            ),
+            mock.patch.object(bridge, "validate_review_admission", return_value=admitted),
+            mock.patch.object(
+                bridge,
+                "list_pull_request_files",
+                return_value=[{"filename": self._MANIFEST, "additions": 1, "deletions": 0}],
+            ),
+            mock.patch.object(bridge, "revalidate_pull_request_snapshot"),
+        ):
+            return task_contract.validate_handoff_pr_delivery_binding(
+                task, config, binding, review_file=self._MANIFEST
+            )
+
+    def test_absent_head_is_fetched_without_moving_anything(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as td:
+            _remote, clone, base, head, config, task = self._fixture(Path(td))
+            self.assertFalse(self._has(clone, head))
+            before = self._snapshot(clone)
+            res = self._call(clone, base, head, config, task)
+            self.assertEqual(res["head_sha"], head)
+            self.assertTrue(self._has(clone, head))
+            self.assertEqual(self._snapshot(clone), before)
+
+    def test_head_missing_everywhere_rejects_and_moves_nothing(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as td:
+            _remote, clone, base, _head, config, task = self._fixture(Path(td))
+            before = self._snapshot(clone)
+            with self.assertRaisesRegex(SystemExit, "cannot validate commit trailer range"):
+                self._call(clone, base, "d" * 40, config, task)
+            self.assertEqual(self._snapshot(clone), before)
+
+    def test_present_head_runs_no_fetch(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+        from rewrite import task_contract
+
+        ai_status = task_contract._ai_status_module()
+        with tempfile.TemporaryDirectory() as td:
+            remote, _clone, base, head, config, task = self._fixture(Path(td))
+            with mock.patch.object(
+                ai_status, "run_git_command", wraps=ai_status.run_git_command
+            ) as run:
+                self._call(remote, base, head, config, task)
+            for call in run.call_args_list:
+                self.assertFalse(call.args[0][:1] == ["fetch"], call)
 
 
 if __name__ == "__main__":

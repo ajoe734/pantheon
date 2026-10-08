@@ -27,8 +27,8 @@
 # Idempotent: re-running with the same host is a no-op for Caddy (cert cached).
 set -euo pipefail
 
-SSH_TARGET="${1:?ssh-target required, e.g. lupin@35.201.204.12}"
-BFF_HOST="${2:?bff-host required, e.g. pantheon-lupin-dev-bff.<ip>.sslip.io}"
+SSH_TARGET="${1:?ssh-target required, e.g. <user>@<dev-ssh-host>}"
+BFF_HOST="${2:?bff-host required, e.g. <bff-public-host>}"
 TEMPLATE="${3:?template path required, e.g. deploy/caddy/dev.Caddyfile.tmpl}"
 FE_HOST="${4:-}"
 FE_ROOT="${5:-${PANTHEON_DEV_FE_ROOT:-/var/www/pantheon-dev-fe}}"

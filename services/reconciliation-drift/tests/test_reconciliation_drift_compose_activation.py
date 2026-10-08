@@ -16,6 +16,18 @@ def test_compose_wires_reconciliation_drift_as_derived_read_model() -> None:
     assert drift["build"]["dockerfile"] == "services/reconciliation-drift/Dockerfile"
     assert drift["environment"]["PORT"] == "8102"
     assert drift["environment"]["RECONCILIATION_DRIFT_DATA_DIR"] == "/data/reconciliation-drift"
+    assert (
+        drift["environment"]["RECONCILIATION_DRIFT_STORE_BACKEND"]
+        == "${RECONCILIATION_DRIFT_STORE_BACKEND:-postgres}"
+    )
+    assert (
+        drift["environment"]["DATABASE_URL"]
+        == "${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}"
+    )
+    assert (
+        drift["environment"]["RECONCILIATION_DRIFT_STORE_DSN"]
+        == "${RECONCILIATION_DRIFT_STORE_DSN:-}"
+    )
     assert drift["environment"]["PANTHEON_TELEMETRY_API_URL"] == "http://telemetry:8083"
     assert drift["environment"]["PANTHEON_LINEAGE_READ_URL"] == "http://lineage-read:8094"
     assert drift["environment"]["PANTHEON_RUNTIME_MANAGER_URL"] == "http://runtime-manager:8081"
@@ -147,3 +159,61 @@ def test_compose_wires_reconciliation_drift_as_derived_read_model() -> None:
     assert smoke["environment"]["RECONCILIATION_DRIFT_URL"] == "http://reconciliation-drift-svc:8102"
     assert smoke["depends_on"]["reconciliation-drift-svc"]["condition"] == "service_healthy"
     assert "reconciliation-drift-data" in compose["volumes"]
+
+
+def test_reconciliation_drift_compose_environment_builds_postgres_store_and_fails_closed_without_dsn(
+    tmp_path: Path,
+) -> None:
+    """Acceptance 1, 2, 3: Dev compose environment selects Postgres store and fails closed without DSN."""
+    import importlib.util
+    import re
+    from unittest import mock
+    import pytest
+
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    drift = compose["services"]["reconciliation-drift-svc"]
+    env_spec = drift["environment"]
+
+    pattern = re.compile(r"^\$\{[^:]+:-([^}]+)\}$")
+    backend_default = pattern.match(env_spec["RECONCILIATION_DRIFT_STORE_BACKEND"]).group(1)
+    db_url_default = pattern.match(env_spec["DATABASE_URL"]).group(1)
+
+    assert backend_default == "postgres"
+    assert db_url_default == "postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon"
+
+    spec = importlib.util.spec_from_file_location(
+        "reconciliation_drift_store_compose_test",
+        ROOT / "services" / "reconciliation-drift" / "store.py",
+    )
+    assert spec and spec.loader
+    store_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(store_mod)
+
+    # 1. Proves the service builds the Postgres store from the dev compose environment
+    with mock.patch.dict(
+        "os.environ",
+        {
+            "RECONCILIATION_DRIFT_STORE_BACKEND": backend_default,
+            "DATABASE_URL": db_url_default,
+            "RECONCILIATION_DRIFT_STORE_BOOTSTRAP": "0",
+        },
+        clear=True,
+    ):
+        store = store_mod.build_reconciliation_drift_store(tmp_path)
+        assert isinstance(store, store_mod.PostgresReconciliationDriftStore)
+        assert getattr(store, "backend", None) == "postgres"
+
+    # 2. Proves it fails closed instead of silently falling back to JSON when the DSN is missing
+    with mock.patch.dict(
+        "os.environ",
+        {
+            "RECONCILIATION_DRIFT_STORE_BACKEND": backend_default,
+        },
+        clear=True,
+    ):
+        with pytest.raises(
+            ValueError,
+            match="RECONCILIATION_DRIFT_STORE_DSN or DATABASE_URL is required for Postgres reconciliation store",
+        ):
+            store_mod.build_reconciliation_drift_store(tmp_path)
+

@@ -9,7 +9,6 @@ drifted, so repeated ticks do not append duplicate JSONL records.
 from __future__ import annotations
 
 import json
-import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -242,19 +241,12 @@ class SourceProvisioningReconciler:
         controller_name: str = DEFAULT_CONTROLLER_NAME,
         provider_factories: Mapping[str, ProviderFactory] | None = None,
         snapshot_store: LatestMarketSnapshotStore | None = None,
-        tenant_id: str | None = None,
     ) -> None:
         self.manager = manager
         self.connector_store = connector_store
         self.schedule_store = schedule_store
         self.controller_name = controller_name
         self.snapshot_store = snapshot_store
-        resolved_tenant = (
-            tenant_id
-            if tenant_id is not None
-            else (os.getenv("PANTHEON_TENANT_ID") or os.getenv("PANTHEON_BFF_TENANT_ID") or None)
-        )
-        self.tenant_id = str(resolved_tenant).strip() if resolved_tenant and str(resolved_tenant).strip() else None
         if self.snapshot_store is None and hasattr(connector_store, "path"):
             candidate_paths = [
                 connector_store.path.parent / "latest_market_snapshots.jsonl",
@@ -586,9 +578,6 @@ class SourceProvisioningReconciler:
             "policy_gates": list(requirement.policy_gates),
             "policy_gate_results": self._policy_gate_results(connector, requirement),
         }
-        if self.tenant_id:
-            desired_state["tenant_id"] = self.tenant_id
-            metadata["tenant_id"] = self.tenant_id
         desired_json = json.dumps(
             desired_state,
             ensure_ascii=False,
@@ -742,7 +731,6 @@ def _without_reconciliation(connector: SourceConnector) -> dict[str, Any]:
     payload = connector.to_dict()
     metadata = dict(payload.get("metadata") or {})
     metadata.pop(RECONCILIATION_METADATA_KEY, None)
-    metadata.pop("tenant_id", None)
     payload["metadata"] = metadata
     return payload
 

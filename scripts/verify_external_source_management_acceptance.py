@@ -42,8 +42,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 TASK_ID = "SRCM-P1-HOSTED-ACCEPTANCE-20260824"
 PROGRAM_ID = "SRCM-PHASE1-20260824"
 DEFAULT_EVIDENCE_DIR = REPO_ROOT / "docs" / "deployment" / "evidence" / "external-source-management-phase1"
-DEFAULT_DEV_BFF_URL = "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
-DEFAULT_DEV_FE_URL = "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"
 DEFAULT_SOURCE_INGEST_URL = "http://127.0.0.1:18097"
 DEFAULT_OPERATOR_TOKEN = os.getenv("PANTHEON_BFF_AUTH_TOKEN") or ""
 
@@ -251,8 +249,8 @@ class SourceManagementAcceptanceError(RuntimeError):
 @dataclass(frozen=True)
 class AcceptanceConfig:
     evidence_dir: Path = DEFAULT_EVIDENCE_DIR
-    dev_bff_url: str = DEFAULT_DEV_BFF_URL
-    dev_fe_url: str = DEFAULT_DEV_FE_URL
+    dev_bff_url: str = ""
+    dev_fe_url: str = ""
     source_ingest_url: str = DEFAULT_SOURCE_INGEST_URL
     expected_bff_sha: str = EXPECTED_BFF_SHA
     expected_fe_sha: str = EXPECTED_FE_SHA
@@ -1665,8 +1663,8 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Verify External Source Management Phase 1 Hosted Acceptance (SD-SRCM-08)")
     parser.add_argument("--evidence-dir", type=Path, default=DEFAULT_EVIDENCE_DIR, help="Path to evidence directory")
-    parser.add_argument("--bff-url", type=str, default=DEFAULT_DEV_BFF_URL, help="Dev BFF URL")
-    parser.add_argument("--fe-url", type=str, default=DEFAULT_DEV_FE_URL, help="Dev FE URL")
+    parser.add_argument("--bff-url", type=str, default="", help="Dev BFF URL")
+    parser.add_argument("--fe-url", type=str, default="", help="Dev FE URL")
     parser.add_argument("--expected-bff-sha", type=str, default=EXPECTED_BFF_SHA, help="Expected BFF commit SHA")
     parser.add_argument("--expected-fe-sha", type=str, default=EXPECTED_FE_SHA, help="Expected FE commit SHA")
     parser.add_argument("--expected-source-definitions-sha", type=str, default=EXPECTED_SOURCE_DEFINITIONS_SHA, help="Expected source definitions commit SHA")
@@ -1685,6 +1683,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     parser.add_argument("--output", type=Path, default=None, help="Optional output path for verification result JSON")
     args = parser.parse_args(argv)
+
+    if not args.offline_only:
+        if not (args.bff_url and args.bff_url.strip()):
+            parser.error(
+                "--bff-url is required unless --offline-only is set; see "
+                "docs/deployment/vm-dev-staging-prod-management-plan.md section 3.1"
+            )
+        if not (args.fe_url and args.fe_url.strip()):
+            parser.error(
+                "--fe-url is required unless --offline-only is set; see "
+                "docs/deployment/vm-dev-staging-prod-management-plan.md section 3.1"
+            )
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 

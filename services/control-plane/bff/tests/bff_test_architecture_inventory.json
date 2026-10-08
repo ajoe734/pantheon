@@ -24,6 +24,7 @@
     "tests/test_persona_main_residue.py",
     "tests/test_main_composition_seam_extraction_002.py",
     "tests/test_main_composition_seam_extraction_003.py",
+    "tests/test_owner_unavailable_503_consistency.py",
     "tests/test_management_read_timeout_and_capacity.py",
     "tests/test_read_store_final_deletion.py",
     "tests/test_read_store_fixture_boundaries.py",

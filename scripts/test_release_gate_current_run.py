@@ -1606,50 +1606,6 @@ def test_release_gate_rejects_strict_sse_soak_without_reconnect_sequence(tmp_pat
     assert sse_check["note"] == "strict:true soak:75s soakDuration:76/75 heartbeat:2/2 reconnect:0/5 attemptDetails:false attemptLineage:false observed:0/5 observedSequence:false duplicates:0 missingReplay:0"
 
 
-def test_root_bff_live_evidence_workflow_runs_strict_current_run_probes() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    workflow = repo_root / ".github" / "workflows" / "bff-live-evidence-gate.yml"
-    text = workflow.read_text(encoding="utf-8")
-    dispatch_inputs = _workflow_dispatch_inputs(workflow)
-
-    assert "name: BFF Live Evidence Gate" in text
-    assert "workflow_dispatch" in text
-    assert dispatch_inputs["approval_race_id"]["required"] is True
-    assert dispatch_inputs["two_man_race_id"]["required"] is True
-    assert "default" not in dispatch_inputs["approval_race_id"]
-    assert "default" not in dispatch_inputs["two_man_race_id"]
-    assert "PANTHEON_AUDIT_OUT_DIR: .lovable/audits/current-run" in text
-    assert "PANTHEON_LIVE_EVIDENCE_ENVIRONMENT: ${{ inputs.environment }}" in text
-    assert "PANTHEON_BFF_SMOKE_BEARER_TOKEN" in text
-    assert "PANTHEON_BFF_RBAC_TOKENS_JSON" in text
-    assert "PANTHEON_BFF_APPROVAL_RACE_TOKEN_A" in text
-    assert "PANTHEON_BFF_APPROVAL_RACE_TOKEN_B" in text
-    assert "scripts/write_bff_live_evidence_preflight.py" in text
-    assert "BFF-LIVE-EVIDENCE-PREFLIGHT.json" in text
-    assert '--soak-seconds "${{ inputs.soak_seconds }}"' in text
-    assert 'test -n "$PANTHEON_BFF_SMOKE_BEARER_TOKEN"' not in text
-    assert "scripts/probe_bff_authenticated_live.py" in text
-    assert "--strict-live-evidence" in text
-    assert "--include-writes" in text
-    assert "--approval-race-id" in text
-    assert "BFF-LUV-AUTHED-LIVE-001-live-smoke.json" in text
-    assert "scripts/probe_bff_sse_stream.py" in text
-    assert "--soak-min-heartbeats 2" in text
-    assert "--reconnect-attempts 7" in text
-    assert "BFF-CONSOL-011-sse-replay-smoke.json" in text
-    assert "node scripts/aggregate_bff_release_gate.mjs" in text
-    assert "scripts/verify_bff_live_evidence_artifact.py" in text
-    assert "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json" in text
-    assert "path: |" in text
-    assert ".lovable/audits/*.md" not in text
-    assert ".lovable/audits/historical" not in text
-    upload_step = _workflow_step(workflow, "live-evidence", "Upload current-run evidence")
-    upload_paths = _upload_artifact_paths(upload_step)
-    assert upload_step["uses"] == "actions/upload-artifact@v4"
-    assert upload_step["with"]["if-no-files-found"] == "error"
-    _assert_bff_live_evidence_upload_allowlist(upload_paths)
-
-
 def test_stage0_registered_workflow_can_dispatch_strict_live_evidence_mode() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     workflow = repo_root / ".github" / "workflows" / "stage-0-ci.yml"

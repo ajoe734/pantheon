@@ -119,9 +119,14 @@ def _pm12_ranking_snapshot_content(
     }
 
 
+def snapshot_content_digest(items, *, surface, period):
+    """The digest the writer stores; readers recompute it to detect a tampered durable snapshot."""
+    return _stable_json_hash(_pm12_ranking_snapshot_content(items, surface=surface, period=period))
+
+
 def snapshot_record(items, *, surface, period, created_at=None):
     content = _pm12_ranking_snapshot_content(items, surface=surface, period=period)
-    digest = _stable_json_hash(content)
+    digest = snapshot_content_digest(items, surface=surface, period=period)
     clean_period = re.sub(r"[^a-z0-9]+", "-", str(period or "current").strip().lower()).strip("-")
     assertions = {}
     for item in items:

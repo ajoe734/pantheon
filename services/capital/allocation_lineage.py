@@ -7,6 +7,7 @@ import os
 from typing import Any, Dict, List
 
 from services.control_plane.bff.ports.rankings import create_ranking_reader
+from services.rankings.snapshots import snapshot_content_digest
 from services.control_plane.bff.persona_allocation_policy import (
     _ALLOCATION_POLICY_VERSION,
     _PAPER_SIMULATION_POLICY_VERSION,
@@ -40,6 +41,11 @@ def _load_snapshot(snapshot_id: str) -> Dict[str, Any]:
         raise AllocationLineageError(f"Ranking snapshot store is unavailable: {exc}", 503) from exc
     if snapshot is None or snapshot.get("surface") != "quarterly":
         raise AllocationLineageError(f"ranking snapshot {snapshot_id!r} is unknown or not allocation eligible")
+    recomputed = snapshot_content_digest(
+        snapshot.get("items") or [], surface=snapshot["surface"], period=snapshot.get("period"))
+    if recomputed != snapshot.get("content_digest"):
+        raise AllocationLineageError(
+            f"ranking snapshot {snapshot_id!r} failed integrity check: content_digest does not match stored content")
     return snapshot
 
 
@@ -98,20 +104,32 @@ def evaluate_allocation(payload: Dict[str, Any], *, paper: bool = False) -> Dict
     }
 
 
+def _same_number(left: Any, right: Any) -> bool:
+    numeric = (int, float)
+    return (isinstance(left, numeric) and isinstance(right, numeric)
+            and not isinstance(left, bool) and not isinstance(right, bool)
+            and math.isclose(left, right, abs_tol=1e-9))
+
+
 def verify_rebalance_lineage(proposal: Dict[str, Any]) -> None:
-    """Reject a proposal whose snapshot, evaluation id or weights the owner cannot reproduce."""
+    """Reject a proposal whose snapshot, evaluation id or any evaluated line field the owner cannot reproduce."""
     lines = proposal["lines"]
     paper = any(line.get("capital_scope") == "paper_ledger" for line in lines)
     evaluated = evaluate_allocation({
         "ranking_snapshot_id": proposal["ranking_snapshot_id"],
         "allocation_policy_version": proposal["allocation_policy_version"],
-        "rows": [{**line, "ranking_snapshot_id": proposal["ranking_snapshot_id"]} for line in lines],
+        "rows": [{"persona_id": line.get("persona_id"), "ranking_snapshot_id": proposal["ranking_snapshot_id"],
+                  **{field: line[field] for field in _CONTEXT_FIELDS if field in line}} for line in lines],
     }, paper=paper)
     if evaluated["allocation_evaluation_id"] != proposal["allocation_evaluation_id"]:
         raise AllocationLineageError("allocation_evaluation_id does not match the owner evaluation of the snapshot")
     for line, expected in zip(lines, evaluated["lines"]):
-        if not math.isclose(float(line["target_weight"]), float(expected["target_weight"]), abs_tol=1e-9):
-            raise AllocationLineageError(f"line for {line['persona_id']!r} does not match the snapshot evaluation")
+        for field, value in expected.items():
+            if field in _CONTEXT_FIELDS:
+                continue
+            if line.get(field) != value and not _same_number(line.get(field), value):
+                raise AllocationLineageError(
+                    f"line for {line['persona_id']!r} {field} does not match the snapshot evaluation")
 
 
 def paper_environment_allowed() -> bool:

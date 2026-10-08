@@ -114,6 +114,10 @@ from services.control_plane.bff.ports.persona_training import (
 )
 
 
+class PaperReconcilerUnavailableError(RuntimeError):
+    """The paper fleet reconciler is unconfigured, unreachable or returned an invalid state."""
+
+
 class ReadSurfacePorts:
     """Unified container for all narrow read-surface domain ports.
 
@@ -536,7 +540,8 @@ class ReadSurfacePorts:
         if dataset in {"rankings", "ranking_formulas", "rebalances", "capital_allocations", "containments", "evolution_programs", "evolution_decisions"}:
             port = self.persona_capital_runtime.evolution if dataset.startswith("evolution_") else self.persona_capital_runtime.ranking
             status = port.get_surface_status()["surfaces"][dataset]
-            return "missing" if status["status"] == "unavailable" else status["source"]
+            source = status.get("source")
+            return "missing" if source in {None, "missing"} else source
         if dataset in {"approval_decisions", "approval_queue_items", "governance_review_queue_items"}:
             reader = self.ooda_management.review_queue._approval_decisions_reader
             try:
@@ -1130,7 +1135,7 @@ class ReadSurfacePorts:
             or os.getenv("PANTHEON_PAPER_FLEET_RECONCILER_URL", "")
         ).strip().rstrip("/")
         if not base_url:
-            raise RuntimeError(
+            raise PaperReconcilerUnavailableError(
                 "PANTHEON_PAPER_FLEET_RECONCILER_URL is not configured"
             )
 
@@ -1145,23 +1150,23 @@ class ReadSurfacePorts:
             with transport(request, timeout=10.0) as resp:
                 status_code = getattr(resp, "status", None) or getattr(resp, "status_code", None) or 200
                 if int(status_code) != 200:
-                    raise RuntimeError(
+                    raise PaperReconcilerUnavailableError(
                         f"paper fleet reconciler returned HTTP {status_code}"
                     )
                 raw = resp.read()
                 data = json.loads(raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw)
         except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
-            raise RuntimeError(
+            raise PaperReconcilerUnavailableError(
                 f"paper fleet reconciler query failed: {exc}"
             ) from exc
 
         if not isinstance(data, Mapping):
-            raise RuntimeError(
+            raise PaperReconcilerUnavailableError(
                 "paper fleet reconciler state response must be a JSON object"
             )
         monitoring_sessions = data.get("monitoring_sessions")
         if not isinstance(monitoring_sessions, list):
-            raise RuntimeError(
+            raise PaperReconcilerUnavailableError(
                 "paper fleet reconciler state response missing 'monitoring_sessions' list"
             )
         return [dict(item) for item in monitoring_sessions if isinstance(item, Mapping)]

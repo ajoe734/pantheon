@@ -68,15 +68,6 @@ def _service_token_from_env() -> Optional[str]:
         raw = os.getenv(name, "").strip()
         if raw:
             return raw
-    token_file = os.getenv("SOURCE_INGEST_CONTROLLER_TOKEN_FILE", "")
-    if token_file and os.path.exists(token_file):
-        try:
-            with open(token_file, "r", encoding="utf-8") as f:
-                token = f.read().strip()
-                if token:
-                    return token
-        except Exception:
-            pass
     return None
 
 

@@ -234,7 +234,10 @@ from .personas.service import (
     _checkpoint_persona_provisioning_readback,
     _evaluate_persona_provisioning_status,
     _get_persona_directory_snapshot,
+    _incident_home_severity,
     _list_persona_records as _personas_list_persona_records,
+    _loop_run_controller_is_formal,
+    _management_count_by,
     _normalize_lifecycle_state,
     _normalize_risk_level,
     _openclaw_agent_reconcile_request,
@@ -251,6 +254,7 @@ from .personas.service import (
     _persona_record_for_provisioning,
     _persona_record_tenant_id,
     _promotion_review_find,
+    _read_surface_state,
     _reconcile_persona_provisioning_compensation,
     _register_persona_cron_required,
     _remove_persona_cron_required,
@@ -1728,8 +1732,6 @@ def _raise_if_session_logged_out(identity: OperatorIdentity) -> None:
         error_factory=_bff_error,
     )
 _raise_if_session_logged_out._canonical_guard = True
-def _read_surface_state() -> str:
-    return os.getenv("BFF_READ_SURFACE_STATE", "fresh")
 def _meta_staleness() -> Optional[Dict[str, Any]]:
     state = _read_surface_state()
     if state == "fresh":
@@ -1773,18 +1775,6 @@ def _loop_run_projection_metadata() -> Dict[str, Any]:
     except (OSError, TypeError, ValueError):
         return {}
     return dict(metadata) if isinstance(metadata, Mapping) else {}
-def _loop_run_controller_is_formal(metadata: Mapping[str, Any]) -> bool:
-    if str(metadata.get("schema_version") or "") != _LOOP_RUN_PROJECTION_SCHEMA:
-        return False
-    controller = metadata.get("controller")
-    if not isinstance(controller, Mapping):
-        return False
-    return (
-        controller.get("accepted_live") is True
-        and str(controller.get("status") or "").strip().lower() == "ready"
-        and str(controller.get("mode") or "").strip().lower() == "live"
-        and str(controller.get("truth_level") or "").strip().lower() == "canonical_live"
-    )
 from .research.routes.common import format_dataset_surface_status as _format_dataset_surface_status
 
 def _dataset_surface_status(
@@ -1963,19 +1953,6 @@ from .personas.service import (
     _extract_ids_from_item,
     _filter_by_common_identifiers,
 )
-_INCIDENT_SEVERITY_MAP = {
-    "critical": "sev1",
-    "high": "sev1",
-    "medium": "sev2",
-    "low": "sev3",
-    "sev1": "sev1",
-    "sev2": "sev2",
-    "sev3": "sev3",
-}
-def _incident_home_severity(value: Optional[str]) -> Optional[str]:
-    if value is None:
-        return None
-    return _INCIDENT_SEVERITY_MAP.get(str(value).strip().lower(), str(value))
 def _decode_page_token(page_token: Optional[str]) -> int:
     if page_token in (None, ""):
         return 0
@@ -2455,23 +2432,6 @@ def _management_record_time(record: Dict[str, Any]) -> str:
         if value not in (None, ""):
             return str(value)
     return str(record.get("id") or "")
-def _management_number(value: Any) -> Optional[float]:
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value)
-        except ValueError:
-            return None
-    return None
-def _management_avg(values: List[float]) -> Optional[float]:
-    return round(sum(values) / len(values), 6) if values else None
-def _management_count_by(records: List[Dict[str, Any]], field: str) -> Dict[str, int]:
-    counts: Dict[str, int] = {}
-    for record in records:
-        value = str(record.get(field) or "unknown").strip() or "unknown"
-        counts[value] = counts.get(value, 0) + 1
-    return counts
 from .assistant.management_service import _management_json_clone
 from .assistant.management_service import (
     _MANAGEMENT_CAMEL_KEY_RE,
@@ -3215,44 +3175,6 @@ def _project_final_command_response(
         status=final_status,
         data=legacy_payload,
         meta=final_meta or None,
-    )
-def _deprecated_bff_path_response(*, route: str, replacement: str) -> JSONResponse:
-    message = f"{route} is deprecated; use {replacement}."
-    headers = {
-        "Deprecation": "true",
-        "Sunset": _PATH_DEDUPE_SUNSET_HTTP_DATE,
-        "Link": f'<{replacement}>; rel="successor-version"',
-        "Warning": f'299 - "{message}"',
-        "X-Deprecated": "true",
-        "X-Deprecated-At": _PATH_DEDUPE_DEPRECATED_SINCE,
-        "X-Pantheon-Deprecated-Route": route,
-        "X-Pantheon-Replacement-Route": replacement,
-    }
-    return JSONResponse(
-        status_code=410,
-        headers=headers,
-        content={
-            "detail": {
-                "error": {
-                    "code": ErrorCode.OPERATION_NOT_ALLOWED.value,
-                    "message": "Deprecated BFF route",
-                    "details": {
-                        "reason": "route_deprecated",
-                        "route": route,
-                        "replacement": replacement,
-                        "deprecated_since": _PATH_DEDUPE_DEPRECATED_SINCE,
-                    },
-                }
-            },
-            "meta": {
-                "deprecated": True,
-                "deprecation": {
-                    "route": route,
-                    "replacement": replacement,
-                    "deprecated_since": _PATH_DEDUPE_DEPRECATED_SINCE,
-                },
-            },
-        },
     )
 def _check_read_surface_state() -> Optional[StalenessWarning]:
     """

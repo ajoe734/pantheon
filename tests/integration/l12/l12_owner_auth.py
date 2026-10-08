@@ -17,6 +17,22 @@ from typing import Any, Callable, Mapping, Sequence
 GovernancePost = Callable[[str, Mapping[str, Any], Mapping[str, str], Sequence[int]], Mapping[str, Any]]
 
 
+def compose_file_args() -> list[str]:
+    """``-f`` arguments for the compose file list the isolated harness exports.
+
+    The harness exports ``PANTHEON_L12_COMPOSE_FILES`` (os.pathsep separated);
+    the singular legacy name is honoured only when the plural one is unset.
+    """
+    raw = os.getenv("PANTHEON_L12_COMPOSE_FILES", "").strip() or os.getenv(
+        "PANTHEON_L12_COMPOSE_FILE", ""
+    ).strip()
+    args: list[str] = []
+    for part in raw.split(os.pathsep):
+        if part.strip():
+            args.extend(["-f", part.strip()])
+    return args
+
+
 def human_token(role: str) -> str:
     token = os.getenv(f"PANTHEON_L12_{role}_TOKEN", "").strip()
     if not token:

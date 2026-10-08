@@ -1,0 +1,287 @@
+{
+  "task_id": "BFF-PM12-PORTFOLIO-BOOK-ROUTES-20261008",
+  "change_class": "corrective",
+  "net_prod_line_budget": 1000,
+  "summary": "Restored single-projector PM12 shape {data: {summary, items}, meta: {surfaces, ...}} without duck-typing fallback bodies for the four portfolio-book routes consumed by ajoe734/execute-plans dev (3b49f1f). Restored fields are strictly derived from and limited to frontend readers with exact file:line citations; dead helpers and unread fields (portfolio_book_status, capital_pool_count, approved_deployment_count, pnl_summary, operator_links) were completely removed. Uncalled routes (/positions, /strategy-allocation, /capital-flow, /board-pack) remain un-restored readback endpoints per commit 4cd637d0d and operator decision.",
+  "route_to_field_mapping": {
+    "GET /bff/management/portfolio-book": {
+      "reader_location": "src/lib/bff-v1/management.ts:3976-3983 (summaryLiveOnly, summary), src/management/pages/oversight/_core.tsx:159,226, src/management/components/cockpit/TotalCapitalSnapshot.tsx:20-27",
+      "data_fields": {
+        "totalNav": {
+          "reader": "src/management/components/cockpit/TotalCapitalSnapshot.tsx:20, src/lib/v5/management/portfolio.ts:13",
+          "owner_source": "capital_pools[].nav",
+          "unavailable_behavior": "When no capital pool provides nav or coverage is partial (not every contributing pool reports nav), totalNav is omitted from data so execute-plans adapter management.ts:4054-4061 (summaryLiveOnly) returns null, displaying the unavailable state rather than understating whole-portfolio capital."
+        },
+        "totalCash": {
+          "reader": "src/management/components/cockpit/TotalCapitalSnapshot.tsx:21, src/lib/v5/management/portfolio.ts:14",
+          "owner_source": "capital_pools[].cash",
+          "unavailable_behavior": "When no capital pool provides cash or coverage is partial (not every contributing pool reports cash), returns null rather than defaulting to 0.0 or understating total cash."
+        },
+        "grossExposure": {
+          "reader": "src/management/components/cockpit/TotalCapitalSnapshot.tsx:22, src/lib/v5/management/portfolio.ts:15",
+          "owner_source": "entries[].current_exposure (from capital_pools[].current_exposure)",
+          "unavailable_behavior": "When no current_exposure is present across entries or coverage is partial (not every contributing entry reports current_exposure), returns null."
+        },
+        "leverage": {
+          "reader": "src/management/components/cockpit/TotalCapitalSnapshot.tsx:23, src/lib/v5/management/portfolio.ts:17",
+          "owner_source": "grossExposure / totalNav",
+          "unavailable_behavior": "Calculated only when grossExposure is available, totalNav is available with full coverage, and totalNav > 0. When either is partial, missing, or 0, returns null rather than fabricated 0.0."
+        },
+        "unrealizedPnl": {
+          "reader": "src/management/components/cockpit/TotalCapitalSnapshot.tsx:24, src/lib/v5/management/portfolio.ts:18",
+          "owner_source": "capital_pools[].unrealized_pnl or telemetry_summaries[].unrealized_pnl",
+          "unavailable_behavior": "When no owner source provides unrealized PnL or coverage across contributing pools is partial, returns null rather than substituting cumulative total_pnl."
+        },
+        "pnlToday": {
+          "reader": "src/management/components/cockpit/TotalCapitalSnapshot.tsx:25, src/lib/v5/management/portfolio.ts:20",
+          "owner_source": "capital_pools[].pnl_today (or daily_pnl) or telemetry_summaries[].daily_pnl (or pnl_today)",
+          "unavailable_behavior": "When no owner source provides daily PnL or coverage across contributing pools is partial, returns null rather than substituting cumulative total_pnl."
+        },
+        "activeCapitalPools": {
+          "reader": "src/management/components/cockpit/TotalCapitalSnapshot.tsx:26, src/lib/v5/management/portfolio.ts:24",
+          "owner_source": "count of capital_pools with status in {'active', 'ready'}"
+        },
+        "highestRiskPoolId": {
+          "reader": "src/management/components/cockpit/TotalCapitalSnapshot.tsx:27",
+          "owner_source": "capital pool id with maximum risk_budget_utilization across entries"
+        },
+        "summary": {
+          "active_capital_pools": "src/lib/v5/management/portfolio.ts:24",
+          "runtime_count": "src/lib/v5/management/portfolio.ts:27",
+          "telemetry_runtime_count": "src/lib/bff-v1/management.ts:3599",
+          "total_pnl": "src/lib/v5/management/portfolio.ts:20 (honest cumulative total_pnl from telemetry rollup)",
+          "max_drawdown": "src/lib/v5/management/portfolio.ts:48"
+        },
+        "items": "src/lib/v5/management/portfolio.ts:86 (CapitalPoolSummaryRow[])"
+      }
+    },
+    "GET /bff/management/portfolio-book/pools": {
+      "reader_location": "src/lib/bff-v1/management.ts:3994-4001 (poolsLiveOnly, pools), src/lib/v5/management/portfolio.ts:35-55 (CapitalPoolSummaryRow)",
+      "item_fields": {
+        "id": "src/lib/bff-v1/management.ts:3608, src/lib/v5/management/portfolio.ts:36",
+        "pool_id": "src/lib/bff-v1/management.ts:3609, src/lib/v5/management/portfolio.ts:36",
+        "capital_pool_id": "src/lib/bff-v1/management.ts:3609, src/lib/v5/management/portfolio.ts:36",
+        "name": "src/lib/bff-v1/management.ts:3610, src/lib/v5/management/portfolio.ts:37",
+        "status": "src/lib/bff-v1/management.ts:3611, src/lib/v5/management/portfolio.ts:52",
+        "currency": "src/lib/bff-v1/management.ts:3612, src/lib/v5/management/portfolio.ts:38",
+        "risk_budget": "src/lib/bff-v1/management.ts:3613, src/lib/v5/management/portfolio.ts:45",
+        "current_exposure": "src/lib/bff-v1/management.ts:3614, src/lib/v5/management/portfolio.ts:41",
+        "risk_budget_utilization": "src/lib/bff-v1/management.ts:3616, src/lib/v5/management/portfolio.ts:44",
+        "risk_state": "src/lib/bff-v1/management.ts:3617",
+        "pnl": "src/lib/bff-v1/management.ts:3618, src/lib/v5/management/portfolio.ts:46",
+        "telemetry": "src/lib/bff-v1/management.ts:3606,3624"
+      }
+    },
+    "GET /bff/management/portfolio-book/exposure": {
+      "reader_location": "src/lib/bff-v1/management.ts:3573-3635 (adaptPortfolioExposureMonitor, adaptPortfolioExposureMonitorRow), src/management/pages/oversight/PortfolioExposure.tsx:120-220",
+      "summary_fields": {
+        "exposure_count": "src/lib/bff-v1/management.ts:3591",
+        "risk_budget_total": "src/lib/bff-v1/management.ts:3592",
+        "current_exposure_total": "src/lib/bff-v1/management.ts:3593",
+        "available_budget_total": "src/lib/bff-v1/management.ts:3594",
+        "risk_budget_utilization": "src/lib/bff-v1/management.ts:3595",
+        "over_budget_count": "src/lib/bff-v1/management.ts:3596",
+        "near_limit_count": "src/lib/bff-v1/management.ts:3597",
+        "unknown_exposure_count": "src/lib/bff-v1/management.ts:3598",
+        "telemetry_runtime_count": "src/lib/bff-v1/management.ts:3599",
+        "total_pnl": "src/lib/bff-v1/management.ts:3600",
+        "latest_telemetry_at": "src/lib/bff-v1/management.ts:3601"
+      },
+      "item_fields": {
+        "id": "src/lib/bff-v1/management.ts:3608, src/management/pages/oversight/PortfolioExposure.tsx:180",
+        "pool_id": "src/lib/bff-v1/management.ts:3609",
+        "capital_pool_id": "src/lib/bff-v1/management.ts:3609, src/management/pages/oversight/PortfolioExposure.tsx:183",
+        "name": "src/lib/bff-v1/management.ts:3610, src/management/pages/oversight/PortfolioExposure.tsx:182",
+        "status": "src/lib/bff-v1/management.ts:3611, src/management/pages/oversight/PortfolioExposure.tsx:186",
+        "currency": "src/lib/bff-v1/management.ts:3612",
+        "risk_budget": "src/lib/bff-v1/management.ts:3613, src/management/pages/oversight/PortfolioExposure.tsx:188",
+        "current_exposure": "src/lib/bff-v1/management.ts:3614, src/management/pages/oversight/PortfolioExposure.tsx:189",
+        "available_budget": "src/lib/bff-v1/management.ts:3615, src/management/pages/oversight/PortfolioExposure.tsx:190",
+        "risk_budget_utilization": "src/lib/bff-v1/management.ts:3616, src/management/pages/oversight/PortfolioExposure.tsx:191",
+        "risk_state": "src/lib/bff-v1/management.ts:3617, src/management/pages/oversight/PortfolioExposure.tsx:193",
+        "pnl": "src/lib/bff-v1/management.ts:3618, src/management/pages/oversight/PortfolioExposure.tsx:196",
+        "source_refs.runtime_ids": "src/lib/bff-v1/management.ts:3605,3619",
+        "runtime_count": "src/lib/bff-v1/management.ts:3620, src/management/pages/oversight/PortfolioExposure.tsx:199",
+        "active_runtime_count": "src/lib/bff-v1/management.ts:3621, src/management/pages/oversight/PortfolioExposure.tsx:199",
+        "paper_runtime_count": "src/lib/bff-v1/management.ts:3622, src/management/pages/oversight/PortfolioExposure.tsx:201",
+        "live_runtime_count": "src/lib/bff-v1/management.ts:3623, src/management/pages/oversight/PortfolioExposure.tsx:201",
+        "telemetry": "src/lib/bff-v1/management.ts:3606,3624, src/management/pages/oversight/PortfolioExposure.tsx:205"
+      },
+      "surfaces": "src/lib/bff-v1/management.ts:3580-3588 (meta.surfaces)"
+    },
+    "GET /bff/management/portfolio-book/holdings": {
+      "reader_location": "src/lib/bff-v1/management.ts:3636-3685 (adaptPortfolioHoldingRows), 3709-3734 (adaptPortfolioHoldingMonitorRow), 3751-3780 (adaptPortfolioHoldingsMonitor), src/management/pages/oversight/PortfolioBook.tsx:151-157,284-290, PerformanceAttribution.tsx:396",
+      "summary_fields": {
+        "holding_count": "src/lib/bff-v1/management.ts:3765",
+        "incident_count": "src/lib/bff-v1/management.ts:3772",
+        "source_coverage": {
+          "source_row_count": "src/lib/bff-v1/management.ts:3766, src/management/pages/oversight/PortfolioBook.tsx:152",
+          "runtime_count": "src/lib/bff-v1/management.ts:3767, src/management/pages/oversight/PortfolioBook.tsx:153",
+          "telemetry_runtime_count": "src/lib/bff-v1/management.ts:3768, src/management/pages/oversight/PortfolioBook.tsx:154",
+          "stale_row_count": "src/lib/bff-v1/management.ts:3769, src/management/pages/oversight/PortfolioBook.tsx:155",
+          "missing_binding_count": "src/lib/bff-v1/management.ts:3770, src/management/pages/oversight/PortfolioBook.tsx:156",
+          "degraded_source_count": "src/lib/bff-v1/management.ts:3771, src/management/pages/oversight/PortfolioBook.tsx:157"
+        }
+      },
+      "item_fields": {
+        "id": "src/lib/bff-v1/management.ts:3648,3720",
+        "holding_id": "src/lib/bff-v1/management.ts:3648,3720",
+        "capital_pool_id": "src/lib/bff-v1/management.ts:3646,3723",
+        "broker_id": "src/lib/bff-v1/management.ts:3650,3724",
+        "broker_account_ref": "src/lib/bff-v1/management.ts:3650",
+        "runtime_id": "src/lib/bff-v1/management.ts:3645,3721",
+        "strategy_id": "src/lib/bff-v1/management.ts:3647",
+        "persona_id": "src/lib/bff-v1/management.ts:3653,3722",
+        "symbol": "src/lib/bff-v1/management.ts:3654,3725",
+        "asset_class": "src/lib/bff-v1/management.ts:3655",
+        "side": "src/lib/bff-v1/management.ts:3656",
+        "quantity": "src/lib/bff-v1/management.ts:3657,3726",
+        "average_price": "src/lib/bff-v1/management.ts:3658",
+        "mark_price": "src/lib/bff-v1/management.ts:3659",
+        "market_value": "src/lib/bff-v1/management.ts:3660,3727",
+        "notional": "src/lib/bff-v1/management.ts:3661",
+        "weight_pct": "src/lib/bff-v1/management.ts:3662",
+        "unrealized_pnl": "src/lib/bff-v1/management.ts:3663,3728",
+        "realized_pnl": "src/lib/bff-v1/management.ts:3664",
+        "total_pnl": "src/management/pages/oversight/PerformanceAttribution.tsx:396",
+        "pnl_pct": "src/lib/bff-v1/management.ts:3665",
+        "exposure_pct": "src/lib/bff-v1/management.ts:3666",
+        "currency": "src/lib/bff-v1/management.ts:3669",
+        "deployment_stage": "src/lib/bff-v1/management.ts:3729",
+        "source_status": "src/lib/bff-v1/management.ts:3730",
+        "telemetry_stale": "src/lib/bff-v1/management.ts:3731",
+        "risk_state": "src/lib/bff-v1/management.ts:3732",
+        "source_issues": "src/lib/bff-v1/management.ts:3733",
+        "capital_scope": {
+          "stage": "src/lib/bff-v1/management.ts:3735",
+          "scope_kind": "src/lib/bff-v1/management.ts:3736",
+          "scope_id": "src/lib/bff-v1/management.ts:3737"
+        },
+        "last_mark_at": "src/lib/bff-v1/management.ts:3670",
+        "links": "src/lib/bff-v1/management.ts:3739, src/management/pages/oversight/PortfolioBook.tsx:284-290"
+      },
+      "incidents": {
+        "id": "src/lib/bff-v1/management.ts:3741",
+        "identity.portfolio_id": "src/lib/bff-v1/management.ts:3742",
+        "severity": "src/lib/bff-v1/management.ts:3743",
+        "message": "src/lib/bff-v1/management.ts:3744",
+        "risk_state": "src/lib/bff-v1/management.ts:3745",
+        "source_status": "src/lib/bff-v1/management.ts:3746",
+        "source_issues": "src/lib/bff-v1/management.ts:3747",
+        "links": "src/lib/bff-v1/management.ts:3748"
+      },
+      "surfaces": "src/lib/bff-v1/management.ts:3774-3775 (meta.surfaces.portfolio_book_holdings.status, message)"
+    }
+  },
+  "test_classifications": [
+    {
+      "test": "test_bff_pm12_portfolio_book_contract.py::test_portfolio_book_summary_composes_pool_runtime_and_telemetry",
+      "classification": "intended change",
+      "reason": "Restored PM12 projection shape {data: {totalNav, summary, items}} for GET /bff/management/portfolio-book. Dropped unread fields (portfolio_book_status, capital_pool_count, approved_deployment_count)."
+    },
+    {
+      "test": "test_bff_pm12_portfolio_book_contract.py::test_portfolio_book_pools_returns_pool_risk_exposure_and_pnl",
+      "classification": "intended change",
+      "reason": "Restored PM12 projection shape {data: {summary, items}} for GET /bff/management/portfolio-book/pools. Dropped unread fields (pnl_summary, operator_links)."
+    },
+    {
+      "test": "test_bff_pm12_portfolio_book_contract.py::test_portfolio_book_exposure_composes_risk_budget_rollup",
+      "classification": "intended change",
+      "reason": "Restored PM12 projection shape {data: {id, summary, items}} for GET /bff/management/portfolio-book/exposure. Dropped unread fields (returned_exposure_count, exposure dict on exposure items, unread links)."
+    },
+    {
+      "test": "test_bff_pm12_portfolio_book_contract.py::test_portfolio_book_holdings_composes_global_holdings_table",
+      "classification": "intended change",
+      "reason": "Restored PM12 projection shape {data: {summary, items}} with source_coverage metrics and flat links for GET /bff/management/portfolio-book/holdings. Dropped unread fields (returned_holding_count, identity block, duplicate exposure dict)."
+    },
+    {
+      "test": "test_portfolio_book_positions_composes_global_positions_table",
+      "classification": "retired",
+      "reason": "PM12 positions projection was deleted in commit 4cd637d0d and intentionally not restored per operator decision 2026-10-07 because execute-plans frontend does not call it. Test updated to assert the active readback contract."
+    },
+    {
+      "test": "test_portfolio_book_positions_filters_by_stage",
+      "classification": "retired",
+      "reason": "PM12 positions projection was deleted in commit 4cd637d0d and intentionally not restored per operator decision 2026-10-07. Test updated to assert the active readback contract with capital_pool_id filter."
+    },
+    {
+      "test": "test_portfolio_book_positions_reports_degraded_telemetry",
+      "classification": "retired",
+      "reason": "PM12 positions projection was deleted in commit 4cd637d0d and intentionally not restored per operator decision 2026-10-07. Capital readback endpoint operates independently of telemetry state."
+    },
+    {
+      "test": "test_strategy_allocation_returns_active_strategy_allocations_with_drift",
+      "classification": "retired",
+      "reason": "PM12 strategy-allocation projection was deleted in commit 4cd637d0d and intentionally not restored per operator decision 2026-10-07. Test updated to assert the active readback contract."
+    },
+    {
+      "test": "test_capital_flow_returns_read_only_capital_flow_projection",
+      "classification": "retired",
+      "reason": "PM12 capital-flow projection was deleted in commit 4cd637d0d and intentionally not restored per operator decision 2026-10-07. Test updated to assert the active readback contract."
+    },
+    {
+      "test": "test_capital_flow_filters_outflows",
+      "classification": "retired",
+      "reason": "PM12 capital-flow projection was deleted in commit 4cd637d0d and intentionally not restored per operator decision 2026-10-07. Test updated to assert the active readback contract."
+    },
+    {
+      "test": "test_management_board_pack_composes_pm12_sections",
+      "classification": "retired",
+      "reason": "PM12 board-pack projection was deleted in commit 4cd637d0d and intentionally not restored per operator decision 2026-10-07. Test updated to assert the active readback contract."
+    },
+    {
+      "test": "PortfolioBookTestReadPorts.list_personas",
+      "classification": "stale sample",
+      "reason": "Test store lacked list_personas required by performance attribution to resolve tenant personas in pantheon-dev tenancy."
+    },
+    {
+      "test": "test_risk_radar_composes_persona_strategy_exposure_drawdown_and_var",
+      "classification": "stale sample",
+      "reason": "Aligned assertion with management_read_models risk-radar response envelope ('rows' presence) and metric field structure."
+    },
+    {
+      "test": "test_bff_pm12_portfolio_book_contract.py::test_portfolio_book_summary_without_nav_cash_or_daily_pnl_yields_null_or_omitted",
+      "classification": "intended change",
+      "reason": "Verified that when core NAV, cash, or daily PnL are not provided by owner sources, totalNav is omitted from data (prompting frontend summaryLiveOnly to return null) and missing figures return null rather than fabricating 0.0 or substituting cumulative total PnL."
+    },
+    {
+      "test": "test_bff_pm12_portfolio_book_contract.py::test_portfolio_book_summary_with_honest_daily_and_unrealized_pnl",
+      "classification": "intended change",
+      "reason": "Verified that when honest nav, cash, daily_pnl, and unrealized_pnl are provided by capital pools and runtime telemetry, they are accurately rolled up into the portfolio-book response."
+    },
+    {
+      "test": "test_bff_pm12_portfolio_book_contract.py::test_portfolio_book_summary_partial_coverage_omits_nav_and_yields_null",
+      "classification": "intended change",
+      "reason": "Verified that when coverage across contributing capital pools is partial, totalNav is omitted from data and partial totals return null rather than understating whole-portfolio capital."
+    },
+    {
+      "test": "test_bff_pm12_portfolio_book_contract.py::test_portfolio_book_summary_filtered_pool_does_not_use_portfolio_telemetry_rollup",
+      "classification": "intended change",
+      "reason": "Verified that when query filters (e.g. strategyId) leave a single pool, unrealizedPnl and pnlToday use only that pool's record and entry telemetry (or null if missing), and never misattribute the whole-portfolio telemetry rollup."
+    }
+  ],
+  "frontend_follow_ups": [
+    {
+      "field": "pnlToday",
+      "reader": "src/management/components/cockpit/TotalCapitalSnapshot.tsx:25",
+      "follow_up": "When runtime telemetry or capital pools do not provide daily PnL, BFF returns null instead of fabricating 0.0 or cumulative PnL. TotalCapitalSnapshot formats summary.pnlToday with fmtUsd() which needs explicit null handling or upstream telemetry ingestion needs to publish daily_pnl."
+    },
+    {
+      "field": "unrealizedPnl",
+      "reader": "src/management/components/cockpit/TotalCapitalSnapshot.tsx:24",
+      "follow_up": "When runtime telemetry or capital pools do not provide unrealized PnL, BFF returns null instead of substituting cumulative total PnL. TotalCapitalSnapshot formats summary.unrealizedPnl with fmtUsd() which needs explicit null handling or upstream telemetry ingestion needs to publish unrealized_pnl."
+    },
+    {
+      "field": "totalCash",
+      "reader": "src/management/components/cockpit/TotalCapitalSnapshot.tsx:21",
+      "follow_up": "When capital pools do not provide cash, BFF returns null instead of defaulting to 0.0. TotalCapitalSnapshot formats summary.totalCash with fmtUsd() which needs explicit null handling or pool source models need to populate cash."
+    }
+  ],
+  "assertions_weakened": false,
+  "compressed_code_used": false,
+  "verification": {
+    "test_bff_pm12_portfolio_book_contract": "50 passed, 0 failed in 22.5s",
+    "test_bff_mgmt_common_filters": "4 passed, 0 failed in 4.9s",
+    "total": "54 passed, 0 failed in 27.43s"
+  }
+}

@@ -65,6 +65,9 @@ from `vm-dev-staging-prod-management-plan.md`, never a retired project or host.
    dist/manifest hashes, prior Compose blob and two allowlisted nonsecret BFF
    config values. Retain images in the VM's private artifact store, outside
    Docker pruning. Upload only the sealed metadata before candidate mutation.
+   Capture admits only a live BFF equal to the admitted previous backend with no
+   observed-live baseline so a drifted live BFF fails closed before mutation;
+   capture, seal-candidate and verify may record an image's literal dev_login_enabled false.
 2. Build the candidate without changing running containers. The stable VM
    driver verifies the candidate Compose service/build ownership and each
    built image's exact source revision. It publishes `candidate-images.json`
@@ -94,6 +97,7 @@ from `vm-dev-staging-prod-management-plan.md`, never a retired project or host.
    provide atomic conditional Compose up, so the outer guard remains necessary.
 7. Verify exact prior image IDs, exact FE target/dist/manifest, the two nonsecret
    config fields and unchanged protected-owner identities during restore.
+   Restore always requires the server-bound viewer readback.
    Require HTTPS source/health, anonymous/invalid-token denial, and server-bound
    authenticated viewer/tenant/session readback. Release/quarantine decisions
    use this complete evidence, never the source SHA alone.
