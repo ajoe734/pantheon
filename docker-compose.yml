@@ -219,7 +219,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-      start_period: 5s
+      start_period: 120s
 
   source-ingest-controller-migrate:
     profiles: ["root", "workers"]
