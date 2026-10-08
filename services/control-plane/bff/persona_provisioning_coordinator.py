@@ -41,6 +41,10 @@ FIRST_EVALUATION_WORKFLOW_ID = "pantheon.persona.first-evaluation"
 APPROVAL_TTL = timedelta(hours=24)
 _GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
 _UNKNOWN_SOURCE_COMMIT = "0" * 40
+# Settlement currency of canonical markets whose paper venue settles in one
+# currency (TW broker fills are TWD; US equities fill in USD). CRYPTO and FX
+# quote per instrument, so they have no market-level currency.
+_MARKET_SETTLEMENT_CURRENCY = {"US": "USD", "TW": "TWD"}
 
 
 class OwnerTransport(Protocol):
@@ -630,6 +634,14 @@ class PersonaProvisioningCoordinator:
 
         self._paper_universe(record, market=canonical_market)
 
+        pool_currency = (record.references.get("capital_pool") or {}).get("currency")
+        settlement = _MARKET_SETTLEMENT_CURRENCY.get(canonical_market)
+        if settlement is None or pool_currency != settlement:
+            raise PersonaProvisioningCoordinationError(
+                f"Capital pool currency {pool_currency!r} does not settle market "
+                f"{canonical_market!r}"
+            )
+
         active = self.store.acquire(
             record.tenant_id,
             record.idempotency_key,
@@ -857,8 +869,7 @@ class PersonaProvisioningCoordinator:
             )
 
     def _preview(self, record: ProvisioningRecord) -> ProvisioningRecord:
-        symbols, _, _ = self._paper_universe(record)
-        self._explicit_market(record, symbols)
+        self._capital_pool_currency(record)
         preview = ProvisioningRecord.from_mapping(record.to_dict())
         ids = deterministic_provisioning_ids(preview)
         preview.state = record.state
@@ -992,6 +1003,7 @@ class PersonaProvisioningCoordinator:
         record: ProvisioningRecord,
         ids: ProvisioningIds,
     ) -> ProvisioningRecord:
+        currency = self._capital_pool_currency(record)
         base_payload: dict[str, Any] = {
             "actor_id": self.actor_id,
             "actor_role": "admin",
@@ -1000,7 +1012,7 @@ class PersonaProvisioningCoordinator:
             "owner_id": record.tenant_id,
             "owner_type": "org",
             "status": "active",
-            "currency": str(record.request_payload.get("currency") or "USD"),
+            "currency": currency,
             "budget": record.request_payload.get("budget"),
             "risk_policy_ref": record.request_payload.get("risk_policy_ref"),
             "single_runtime_enforced": True,
@@ -1029,6 +1041,10 @@ class PersonaProvisioningCoordinator:
             ):
                 raise PersonaProvisioningCoordinationError(
                     "CapitalPool readback does not match the internal paper pool contract"
+                )
+            if receipt.get("currency") != currency:
+                raise PersonaProvisioningCoordinationError(
+                    f"CapitalPool readback currency {receipt.get('currency')!r} does not match {currency!r}"
                 )
 
         receipt = self._create_then_get(
@@ -1094,6 +1110,40 @@ class PersonaProvisioningCoordinator:
             return canonical_market_context(raw, symbols=symbols)
         except StrategyArtifactValidationError as exc:
             raise PersonaProvisioningCoordinationError(str(exc)) from exc
+
+    @classmethod
+    def _capital_pool_currency(cls, record: ProvisioningRecord) -> str:
+        """Pool currency from the explicit owner market; never a guess."""
+
+        symbols, _, _ = cls._paper_universe(record)
+        market = cls._explicit_market(record, symbols)
+        requested = record.request_payload.get("currency")
+        if market is None:
+            # Legacy market-less request (unchanged): its artifact has no
+            # market, so the paper producer fails closed before any fill.
+            return str(requested or "USD")
+        if requested is not None and (
+            not isinstance(requested, str)
+            or not requested
+            or requested != requested.strip().upper()
+        ):
+            raise PersonaProvisioningCoordinationError(
+                f"currency {requested!r} must be a canonical uppercase code"
+            )
+        settlement = _MARKET_SETTLEMENT_CURRENCY.get(market)
+        if settlement is None:
+            if requested is None:
+                raise PersonaProvisioningCoordinationError(
+                    f"Capital pool currency cannot be determined for market {market!r}; "
+                    "the request must state currency"
+                )
+            return requested
+        if requested is not None and requested != settlement:
+            raise PersonaProvisioningCoordinationError(
+                f"currency {requested!r} contradicts market {market!r} "
+                f"settlement currency {settlement!r}"
+            )
+        return settlement
 
     def _strategy_spec_payload(
         self,

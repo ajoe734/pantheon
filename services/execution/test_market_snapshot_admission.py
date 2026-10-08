@@ -217,6 +217,14 @@ def test_public_dto_missing_schema_version_symbol_market_rejected() -> None:
     assert dec_no_sym.reason_code == "market_input_missing"
     assert "symbol" in (dec_no_sym.detail or "")
 
+    # For schema_version, public Source DTO with mss- ID delegates to canonical admission and is rejected
+    pub_no_ver = _make_canonical_snapshot(as_public=True)
+    del pub_no_ver["schema_version"]
+    dec_no_ver = admit_market_snapshot(pub_no_ver, expected_symbol="SPY", max_age_seconds=86400)
+    assert dec_no_ver.admitted is False
+    assert dec_no_ver.reason_code == "market_input_missing"
+    assert "schema_version" in (dec_no_ver.detail or "")
+
     # For market, canonical Source DTO with schema_version delegates to canonical admission
     pub_no_mkt = _make_canonical_snapshot(as_public=True)
     del pub_no_mkt["market"]
@@ -303,4 +311,69 @@ def test_admission_functions_converge_on_missing_observed_at() -> None:
     assert dec_market_raw.admitted is False
     assert dec_market_raw.reason_code == "market_input_missing"
     assert "observed_at" in (dec_market_raw.detail or "")
+
+
+def test_admit_market_snapshot_counterexample_convergence() -> None:
+    # 1. Valid public DTO
+    pub_valid = _make_canonical_snapshot(as_public=True)
+    d_c1 = admit_canonical_source_snapshot(pub_valid, expected_symbol="SPY")
+    d_m1 = admit_market_snapshot(pub_valid, expected_symbol="SPY", max_age_seconds=86400)
+    assert d_c1.admitted is True and d_m1.admitted is True
+
+    # 2. Missing schema_version (the exact PR #6349 reopen counterexample)
+    pub_no_ver = _make_canonical_snapshot(as_public=True)
+    del pub_no_ver["schema_version"]
+    d_c2 = admit_canonical_source_snapshot(pub_no_ver, expected_symbol="SPY")
+    d_m2 = admit_market_snapshot(pub_no_ver, expected_symbol="SPY", max_age_seconds=86400)
+    assert d_c2.admitted is False and d_m2.admitted is False
+    assert d_c2.reason_code == d_m2.reason_code == "market_input_missing"
+    assert "schema_version" in (d_m2.detail or "")
+
+    # 3. Missing observed_at
+    pub_no_obs = _make_canonical_snapshot(as_public=True)
+    del pub_no_obs["observed_at"]
+    d_c3 = admit_canonical_source_snapshot(pub_no_obs, expected_symbol="SPY")
+    d_m3 = admit_market_snapshot(pub_no_obs, expected_symbol="SPY", max_age_seconds=86400)
+    assert d_c3.admitted is False and d_m3.admitted is False
+    assert d_c3.reason_code == d_m3.reason_code == "market_input_missing"
+    assert "observed_at" in (d_m3.detail or "")
+
+    # 4. Wrong schema
+    pub_bad_ver = _make_canonical_snapshot(as_public=True)
+    pub_bad_ver["schema_version"] = 999
+    d_c4 = admit_canonical_source_snapshot(pub_bad_ver, expected_symbol="SPY")
+    d_m4 = admit_market_snapshot(pub_bad_ver, expected_symbol="SPY", max_age_seconds=86400)
+    assert d_c4.admitted is False and d_m4.admitted is False
+    assert d_c4.reason_code == d_m4.reason_code == "market_input_invalid"
+
+    # 5. Boolean closes
+    pub_bool_closes = _make_canonical_snapshot(as_public=True)
+    pub_bool_closes["closes"] = [True, 502.0]
+    d_c5 = admit_canonical_source_snapshot(pub_bool_closes, expected_symbol="SPY")
+    d_m5 = admit_market_snapshot(pub_bool_closes, expected_symbol="SPY", max_age_seconds=86400)
+    assert d_c5.admitted is False and d_m5.admitted is False
+    assert d_c5.reason_code == d_m5.reason_code == "market_input_invalid"
+
+    # 6. Malformed lineage
+    pub_bad_lin = _make_canonical_snapshot(as_public=True)
+    pub_bad_lin["lineage"] = "not_a_dict"
+    d_c6 = admit_canonical_source_snapshot(pub_bad_lin, expected_symbol="SPY")
+    d_m6 = admit_market_snapshot(pub_bad_lin, expected_symbol="SPY", max_age_seconds=86400)
+    assert d_c6.admitted is False and d_m6.admitted is False
+    assert d_c6.reason_code == d_m6.reason_code == "market_input_invalid"
+
+    # 7. Valid non-canonical inline snapshot remains admitted
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    raw_valid = {
+        "snapshot_id": "snap-pass-001",
+        "symbol": "SPY",
+        "event_time": now_iso,
+        "observed_at": now_iso,
+        "source_ref": "custom-ref-001",
+        "lineage": {"source": "manual"},
+        "closes": [500.0, 502.0],
+    }
+    d_raw = admit_market_snapshot(raw_valid, expected_symbol="SPY", max_age_seconds=86400)
+    assert d_raw.admitted is True
+
 
