@@ -1,0 +1,22 @@
+{
+  "task_id": "L12-CLOSURE-CAPITAL-ATTRIBUTION-20261008",
+  "fix_commit": "cf2c99956",
+  "file": "tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py",
+  "failing_gate_run": "37816695009",
+  "references": {
+    "e5cd6a1bc": "ACG-04-008 (ACG-LOOP-PROJECTION-20260828) removed the cross-loop map copying probe failures into the capital row; no capital_pool_execution controller writer exists",
+    "ac5c0437f": "L12-GATE-RUNTIME-CONTRACT-20261008: runtime suite already reads the bff_health_monitoring (Loop 12) row"
+  },
+  "replaced_assertion": {
+    "removed": "failure_attribution.loop_id == \"capital_pool_execution\"",
+    "replacement": [
+      "failure_attribution.loop_id == \"bff_health_monitoring\"",
+      "failure_attribution.status == \"degraded\" (unchanged)",
+      "\"paper-fleet-reconciler\" in failure_attribution.summary (unchanged)",
+      "failure_readback.registry.component_kind == \"capital-worker-api\""
+    ]
+  },
+  "unchanged": "BFF visibility check with target ok == false is kept as-is",
+  "evidence_field_change": "functional_worker_failure.owner_loop -> reporting_loop + target_component_kind",
+  "verification": "python3 -m py_compile tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py: exit 0"
+}
