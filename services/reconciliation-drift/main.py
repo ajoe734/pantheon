@@ -758,9 +758,13 @@ class LiveRunReconciliationBody(BaseModel):
 
 
 DATA_DIR = _data_dir()
-STORE_BACKEND = os.getenv("RECONCILIATION_DRIFT_STORE_BACKEND", "json").strip().lower() or "json"
-PERSISTENCE_POSTURE = require_persistence_posture("reconciliation-drift")
 store = build_reconciliation_drift_store(DATA_DIR)
+STORE_BACKEND = getattr(
+    store,
+    "backend",
+    os.getenv("RECONCILIATION_DRIFT_STORE_BACKEND", "json").strip().lower() or "json",
+)
+PERSISTENCE_POSTURE = require_persistence_posture("reconciliation-drift")
 app = FastAPI(title="Pantheon Reconciliation Drift Service", version="0.1.0")
 
 
