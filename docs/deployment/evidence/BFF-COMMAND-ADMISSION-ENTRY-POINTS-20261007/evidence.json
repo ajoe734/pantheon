@@ -1,0 +1,75 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-COMMAND-ADMISSION-ENTRY-POINTS-20261007",
+  "title": "Close the command admission fixes on every entry point and restore retired-action 410",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "change_class": "corrective",
+  "net_prod_line_budget": 30,
+  "summary": "Move tenant scope gate and route target binding checks after unowned/retired action checks in _submit_command_admission so that retired resource actions return 410 before tenant validation; unify route-target binding and alert-to-incident mapping between incidents/router.py and incident_adapter.py; deduplicate resolve_final_idempotency_key into command_adapters/contracts.py across command_adapters/service.py, assistant/management_service.py, and tools_integrations/service.py while keeping the agora copy unchanged.",
+  "agora_idempotency_copy": {
+    "location": "services/control-plane/bff/agora/service.py:320-334",
+    "precondition_name": "Idempotency-Key",
+    "status": "left unchanged per acceptance criteria 5"
+  },
+  "tenant_resolution": {
+    "helper": "services.control_plane.bff.command_adapters.base.bound_tenant",
+    "caller_resolution": "Resolves caller tenant via bound_tenant and its claim paths (TENANT_PRIMARY_CLAIM_PATHS and TENANT_ALLOWED_CLAIM_PATHS) rather than hand-rolled claim keys",
+    "scope": "Enforced during admission in _submit_command_admission for IncidentAction, RiskAlertAction, and AlertAcknowledge commands across all entry points including POST /bff/v1/commands",
+    "production_caller_tenantless_check": "No production callers of incident/alert commands legitimately lack tenant scope"
+  },
+  "test_expectation_classifications": [
+    {
+      "test": "services/control-plane/bff/tests/test_bff_main_composition.py::test_operator_token_keeps_handler_behavior[POST-/bff/jobs/j1/actions/retry-410-ACTION_RETIRED-payload0]",
+      "classification": "real regression fixed in production code",
+      "details": "Tenant scope gate in submit_resource_action was intercepting tenantless operator tokens and returning 403 Forbidden before retired action checks ran. Moving the tenant check to _submit_command_admission after reject_unowned_action restored the expected 410 ACTION_RETIRED response without weakening any assertions."
+    },
+    {
+      "test": "services/control-plane/bff/tests/test_command_target_binding_entry_points.py::test_v1_commands_reject_body_id_that_differs_from_target",
+      "classification": "intended change with regression coverage",
+      "details": "Verifies that POST /bff/v1/commands rejects body incident_id or alert_id that differs from command target with 422 route_target_mismatch and no downstream write occurs."
+    },
+    {
+      "test": "services/control-plane/bff/tests/test_command_target_binding_entry_points.py::test_v1_commands_null_body_id_acts_on_target",
+      "classification": "intended change with regression coverage",
+      "details": "Verifies that null body id in POST /bff/v1/commands is treated as absent and acts on the target."
+    },
+    {
+      "test": "services/control-plane/bff/tests/test_command_target_binding_entry_points.py::test_tenantless_retired_action_is_410_before_tenant_scope",
+      "classification": "intended change with regression coverage",
+      "details": "Verifies that retired resource action returns 410 ACTION_RETIRED before tenant scope check runs."
+    }
+  ],
+  "verification": {
+    "test_command_target_binding_entry_points": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_command_target_binding_entry_points.py",
+      "passed": 4,
+      "failed": 0,
+      "exit_code": 0
+    },
+    "test_incidents_real_source": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_incidents_real_source.py",
+      "passed": 50,
+      "failed": 0,
+      "exit_code": 0
+    },
+    "test_main_composition_seam_extraction_003": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_main_composition_seam_extraction_003.py",
+      "passed": 29,
+      "failed": 0,
+      "exit_code": 0
+    },
+    "test_bff_main_composition": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_main_composition.py",
+      "passed": 54,
+      "failed": 0,
+      "exit_code": 0
+    },
+    "test_bff_test_architecture": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "passed": 39,
+      "failed": 0,
+      "exit_code": 0
+    }
+  }
+}

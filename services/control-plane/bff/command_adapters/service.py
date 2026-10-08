@@ -66,8 +66,7 @@ except (ImportError, ValueError):
         TargetObject,
         utc_now,
     )
-from ..assistant.management_service import _resolve_final_idempotency_key
-from .base import ActionUnavailableError
+from .base import ActionUnavailableError, bound_tenant
 from .incident_adapter import IncidentRouteRejected, bind_incident_route_target
 from .contracts import (
     _FINAL_COMMAND_ROUTE,
@@ -79,6 +78,7 @@ from .contracts import (
     serialize_foundation_context,
     stable_json_hash,
 )
+_resolve_final_idempotency_key = resolve_final_idempotency_key
 
 _DRAWER_RUNTIME_COMMANDS = {
     CommandType.PAUSE_EXECUTION,
@@ -667,7 +667,7 @@ class CommandAdapterService:
     ) -> JSONResponse:
         payload = dict(payload or {})
         _reject_body_idempotency_key(payload)
-        clean_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        clean_key = resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
         hash_body: Dict[str, Any] = {
             "command": command_type.value,
             "target_type": target_type.value,
@@ -849,27 +849,6 @@ class CommandAdapterService:
         command_type: CommandType, *, authorization: Optional[str] = None,
         background_tasks: Any = None,
     ) -> JSONResponse:
-        claims = getattr(identity, "claims", None) or {}
-        if (
-            getattr(identity, "token_kind", "") == "stub"
-            and not (claims.get("tenant_id") or claims.get("tenantId") or claims.get("tid") or claims.get("tenant_ids"))
-        ):
-            # Owners bind the caller tenant at execution; refuse now rather than admit a command that must fail.
-            raise self._raise_error(
-                403, ErrorCode.FORBIDDEN, "Tenant access denied",
-                "Caller has no verified tenant scope", precondition_failed="tenant_scope",
-            )
-        if command_type in {CommandType.INCIDENT_ACTION, CommandType.RISK_ALERT_ACTION}:
-            try:
-                payload = bind_incident_route_target(
-                    command_type.value, entity_type.value, entity_id, action_id, payload,
-                )
-            except IncidentRouteRejected as exc:
-                raise self._raise_error(
-                    422, ErrorCode.OPERATION_NOT_ALLOWED, "Action target mismatch"
-                    if exc.precondition == "route_target_mismatch" else "Action unavailable",
-                    str(exc), precondition_failed=exc.precondition,
-                ) from exc
         return self.sem_command_response(
             command_type=command_type, target_type=entity_type, target_id=entity_id,
             payload=payload, identity=identity, idempotency_key=resolved_key,
@@ -912,7 +891,7 @@ class CommandAdapterService:
         background = BackgroundTasks()
         if server_generated_target:
             # Stable across replay; the owner still allocates its own resource identity.
-            key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+            key = resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
             target_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{identity.operator_id}:{key}"))
         result = self._submit_command_admission(
             background_tasks=background, authorization=authorization,
@@ -964,7 +943,7 @@ class CommandAdapterService:
         content = json.loads(response.body.decode("utf-8"))
         final_token_id = token_id
         if server_generated and content.get("meta", {}).get("idempotency", {}).get("replayed"):
-            clean_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+            clean_key = resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
             store = self.command_store
             if store is not None:
                 stored = store.get_command_by_idempotency_key(
@@ -1061,7 +1040,7 @@ class CommandAdapterService:
         x_idempotency_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         self.check_operator_role(identity)
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        resolved_key = resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
         _reject_body_idempotency_key(payload)
 
         confirm_token = str(
@@ -1161,7 +1140,7 @@ class CommandAdapterService:
         response: Optional[Response] = None,
     ) -> Any:
         self.check_operator_role(identity)
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        resolved_key = resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
         correlation_id = str(x_correlation_id or "").strip() or str(uuid.uuid4())
         if response is not None:
             response.headers["X-Correlation-Id"] = correlation_id
@@ -1307,6 +1286,27 @@ class CommandAdapterService:
         cmd = normalize_operator_command_payload(payload)
         from .retired import reject_unowned_action
         reject_unowned_action(cmd)
+        if cmd.command in {CommandType.INCIDENT_ACTION, CommandType.RISK_ALERT_ACTION, CommandType.ALERT_ACKNOWLEDGE}:
+            if getattr(identity, "token_kind", "") == "stub":
+                try:
+                    bound_tenant({}, None, authorization)
+                except ActionUnavailableError as exc:
+                    # Owners bind the caller tenant at execution; refuse now rather than admit a command that must fail.
+                    raise self._raise_error(
+                        403, ErrorCode.FORBIDDEN, "Tenant access denied",
+                        "Caller has no verified tenant scope", precondition_failed="tenant_scope",
+                    ) from exc
+            try:
+                cmd.params = bind_incident_route_target(
+                    cmd.command.value, cmd.target.type.value, cmd.target.id,
+                    str(cmd.action or cmd.params.get("action_id") or cmd.command.value), cmd.params,
+                )
+            except IncidentRouteRejected as exc:
+                raise self._raise_error(
+                    422, ErrorCode.OPERATION_NOT_ALLOWED,
+                    "Action target mismatch" if exc.precondition == "route_target_mismatch" else "Action unavailable",
+                    str(exc), precondition_failed=exc.precondition,
+                ) from exc
 
         candidate_key = str(idempotency_key or x_idempotency_key or "").strip() or None
         foundation_context = build_foundation_command_context(
