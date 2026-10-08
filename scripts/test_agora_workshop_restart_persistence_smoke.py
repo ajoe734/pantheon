@@ -234,6 +234,8 @@ def test_branch_ci_gate_installs_fastapi_for_smoke_job() -> None:
     branch_ci = yaml.safe_load((ROOT / ".github" / "workflows" / "branch-ci.yml").read_text(encoding="utf-8"))
     steps = branch_ci["jobs"]["smoke"]["steps"]
     install_step = next(
-        step for step in steps if step.get("name") == "Install deps (best-effort)"
+        step for step in steps if step.get("name") == "Install test dependencies"
     )
-    assert "fastapi" in install_step["run"]
+    assert "-r requirements.txt" in install_step["run"]
+    requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+    assert any(line.strip().startswith("fastapi") for line in requirements)

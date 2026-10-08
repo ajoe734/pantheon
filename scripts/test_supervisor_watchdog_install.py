@@ -54,7 +54,8 @@ def test_render_systemd_timer_runs_every_minute() -> None:
 
     assert f"Unit={SERVICE_NAME}" in timer
     assert "OnBootSec=30s" in timer
-    assert "OnUnitActiveSec=60s" in timer
+    assert "OnCalendar=*-*-* *:*:00" in timer
+    assert "OnUnitActiveSec" not in timer
     assert "Persistent=true" in timer
     assert TIMER_NAME == "pantheon-supervisor-watchdog.timer"
 
@@ -140,3 +141,33 @@ def test_systemd_install_tolerates_missing_crontab(monkeypatch, tmp_path: Path) 
         start_now=False,
     )
     assert mod.current_crontab() == []
+
+
+def test_systemd_install_restarts_timer_after_enable(monkeypatch, tmp_path: Path) -> None:
+    import subprocess
+
+    import supervisor_watchdog_install as mod
+
+    monkeypatch.setattr(mod.Path, "home", lambda: tmp_path)
+    recorded_commands: list[list[str]] = []
+
+    def fake_run(cmd, *args, **kwargs):
+        recorded_commands.append(list(cmd))
+        if cmd[0] == "crontab":
+            raise FileNotFoundError("crontab")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    mod.install_systemd(
+        tmp_path,
+        config_path=None,
+        authority_env_file=tmp_path / "env",
+        dry_run=False,
+        start_now=False,
+    )
+    enable_cmd = ["systemctl", "--user", "enable", "--now", mod.TIMER_NAME]
+    restart_cmd = ["systemctl", "--user", "restart", mod.TIMER_NAME]
+    assert enable_cmd in recorded_commands
+    assert restart_cmd in recorded_commands
+    assert recorded_commands.index(restart_cmd) > recorded_commands.index(enable_cmd)
+

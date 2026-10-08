@@ -50,8 +50,7 @@ Operate Pantheon from this repo. Use `scripts/launch-docs-site.sh`, `scripts/ai-
 
 ## Frontend Cutover
 
-Current frontend work targets `ajoe734/execute-plans`
-(`/home/lupin/code/execute-plans`), not `front-ai-trading-system`.
+Current frontend work targets `ajoe734/execute-plans`, not `front-ai-trading-system`.
 
 `execute-plans` is a separate repository. There must not be an
 `execute-plans/` source tree inside a Pantheon checkout. Do not copy, mirror,
@@ -64,20 +63,19 @@ current Pantheon frontend delivery. Treat that repo name as historical evidence
 only unless a user explicitly asks for archaeology of old delivery notes.
 
 Pantheon dev frontend hosting is no longer Lovable-first. Dev delivery should
-build and serve `execute-plans` from the Pantheon dev environment, with a
-Pantheon-owned FE URL such as
-`https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io` talking to
-`https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io`. Lovable publish state
-is historical/reference evidence only and must not be used as the dev frontend
-source of truth.
+build and serve `execute-plans` from the Pantheon dev environment on a
+Pantheon-owned FE host. The current dev FE and BFF identity is recorded only in
+`docs/deployment/vm-dev-staging-prod-management-plan.md` § 3.1; do not copy
+hostnames from older docs. A configured origin is not evidence that an accepted
+FE/BFF pair is served; that requires the hosted deployment manifest and
+deployment checks. Lovable publish state is historical/reference evidence only
+and must not be used as the dev frontend source of truth.
 
-As of 2026-06-08, the verified dev deployment is:
+Historical verified dev deployment, 2026-06-08 (retired environment):
 
 - Backend/BFF: `pantheon@22b89367a56cdbb4fb8a7345fc7c4ad1d293a118` on `dev`.
 - Frontend: `execute-plans@8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf` on
   `main`.
-- Dev FE: `https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io`.
-- Dev BFF: `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io`.
 
 Do not ask the operator to press Lovable publish as part of Pantheon dev
 delivery. The delivery loop is branch, commit, PR, merge, build, and deploy to

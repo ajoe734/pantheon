@@ -770,6 +770,9 @@ services:
       PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR: ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}
       PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR: ${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}
       PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE: ${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
+      # Isolated qualification only: unset (empty) on root/prod, so the startup
+      # below stays a no-op. Holds a credential-free config batch.
+      PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH: ${PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH:-}
     depends_on:
       openclaw-data-init:
         condition: service_completed_successfully
@@ -781,8 +784,9 @@ services:
         # Management-AI streaming surface before every gateway start so a
         # recreated dev volume cannot regress to a healthy-but-404 gateway.
         # Keep the token in the container environment rather than interpolating
-        # it into the shell command.
-        "node dist/index.js config set gateway.http.endpoints.responses.enabled true --json >/dev/null && exec node dist/index.js gateway --allow-unconfigured --port 18789 --auth token --token \"$$OPENCLAW_GATEWAY_TOKEN\"",
+        # it into the shell command. The opt-in isolated batch is applied here,
+        # before the gateway serves, and fails closed without the credential.
+        "node dist/index.js config set gateway.http.endpoints.responses.enabled true --json >/dev/null && if [ -n \"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\" ]; then [ -n \"$$CLAUDE_CODE_OAUTH_TOKEN\" ] || exit 1; node dist/index.js config set --batch-json \"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\" >/dev/null || exit 1; fi && exec node dist/index.js gateway --allow-unconfigured --port 18789 --auth token --token \"$$OPENCLAW_GATEWAY_TOKEN\"",
       ]
     volumes:
       - openclaw-data:/home/node/.openclaw

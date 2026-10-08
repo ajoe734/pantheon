@@ -104,9 +104,9 @@ class BranchCiGateSelectionTests(unittest.TestCase):
 
     def test_workflow_contract_step_placed_after_dependency_installation(self) -> None:
         names = [s.get("name") for s in self.smoke_steps]
-        self.assertIn("Install deps (best-effort)", names)
+        self.assertIn("Install test dependencies", names)
         self.assertIn(WORKFLOW_CONTRACT_STEP_NAME, names)
-        deps_index = names.index("Install deps (best-effort)")
+        deps_index = names.index("Install test dependencies")
         contract_index = names.index(WORKFLOW_CONTRACT_STEP_NAME)
         self.assertGreater(contract_index, deps_index)
 

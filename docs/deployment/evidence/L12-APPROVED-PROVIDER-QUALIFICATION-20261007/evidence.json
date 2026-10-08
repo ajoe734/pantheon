@@ -1,0 +1,19 @@
+{
+  "task_id": "L12-APPROVED-PROVIDER-QUALIFICATION-20261007",
+  "scope": "source track only: isolated-qualification setup. The original complete L1-L12 gate has not been run and stays pending until a protected dev dispatch produces a genuinely passing report.",
+  "changes": [
+    "nonprod-deploy.yml: new dispatch input isolated_provider_qualification; deploy-dev is skipped when set (so coordinate-dev-release is skipped too); new job isolated-l12-provider-qualification runs the unmodified scripts/run_isolated_l12_runtime_e2e.py --provision-services --stimulus-gate from the exact protected dev SHA with a unique compose project and validated port offset. Preflight validates runner disk and RAM bounds without broad filesystem deletion. The driver owns the shared lease and teardown; no outer lease, root deploy, compensation or frontend switch.",
+    "scripts/openclaw_isolated_model_bootstrap.py: renders the approved model-pool batch by reading MODEL_POOL_BATCH/CLAUDE_TOKEN_BATCH from openclaw-configure-shared-model-pool.sh (no second catalog), plus the deny-all structured-extraction agent; fails closed when the approved token env is absent; embeds no credential value.",
+    "docker-compose.yml: openclaw-gateway applies PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH before the gateway serves, only when non-empty; exits 1 without CLAUDE_CODE_OAUTH_TOKEN. Empty by default so root/prod startup is unchanged."
+  ],
+  "credential_handling": "DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN and COORDINATION_REPO_TOKEN come only from the GitHub dev environment, scoped to the gate step. The token reaches only the gateway container env; on disk it is the unresolved ${CLAUDE_CODE_OAUTH_TOKEN} reference with clearEnv untouched. No native login or other-agent files are read or copied.",
+  "verification": {
+    "new_tests": "scripts/test_openclaw_isolated_model_bootstrap.py and scripts/test_isolated_l12_provider_workflow.py plus existing test_openclaw_shared_model_pool_contract.py: 20 passed",
+    "related_suite": "20 workflow/compose-related test files re-run: the only failures (test_dev_project_cutover_contract x2, test_dev_environment_lease_deploy_contract x2, test_ppl_alloc_009_deploy_proof_gate x2) are identical on the clean base. The new job fetches its payload with plain git (no new actions/checkout) and sits before deploy-staging-live so the pinned-checkout and staging-slice contracts stay green; contract-test files outside the artifact list are untouched",
+    "docker compose config": "docker-compose.yml validates"
+  },
+  "known_gaps": [
+    "Hosted qualification dispatch and the original complete gate result are not run here; the qualification track is pending.",
+    "The gateway startup bootstrap has not been exercised against a real OpenClaw container in this task."
+  ]
+}

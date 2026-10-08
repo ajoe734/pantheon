@@ -78,16 +78,11 @@ class WakeupMessageRoleGuardrailTests(unittest.TestCase):
         )
         message = watch_events.render_wakeup_message(self.config, self.event, "Antigravity")
         self.assertIn(
-            f"diff_budget.py --base {'b' * 40} --head {'c' * 40} --change-class refactor --budget -100",
+            f"diff_budget.py --base {'b' * 40} --head {'c' * 40}`",
             message,
         )
-
-    def test_owner_dispatch_states_line_budget(self) -> None:
-        self.event["reason"] = "owned_in_progress_dispatch"
-        self.event["task"].update({"status": "in_progress", "change_class": "simplify"})
-        message = watch_events.render_wakeup_message(self.config, self.event, "Antigravity")
-        self.assertIn("change_class=simplify", message)
-        self.assertIn("淨行數上限 採設定預設值", message)
+        self.assertNotIn("--change-class", message)
+        self.assertNotIn("--budget", message)
 
     def test_finalize_dispatch_identifies_owner(self) -> None:
         self.event["reason"] = "owned_finalize_dispatch"

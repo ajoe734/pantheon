@@ -1,0 +1,72 @@
+{
+  "task_id": "OPS-WORKER-TEST-PYTHON-RESEARCH-DEPS-20261007",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "change_class": "corrective",
+  "net_prod_line_budget": 5,
+  "title": "Install the base Research runtime in the shared worker test interpreter",
+  "chosen_shape": "A",
+  "chosen_shape_description": "Merged builder installs every REQUIREMENTS entry with its own -r in one pip invocation; scripts/dev/worker-test-requirements.txt no longer exists.",
+  "dry_run_resolve": {
+    "command_with_research": "pip install --dry-run --ignore-installed --report with.json -r requirements.txt -r services/control-plane/bff/requirements.txt -r services/research/runtime-requirements.txt",
+    "sha256_with": "f4de972f83ff69257969dbad201a50e3e5ee4493c235f9c741acd2e88f48dcd5",
+    "resolved_versions_with": {
+      "fastapi": "0.142.2",
+      "uvicorn": "0.54.0",
+      "starlette": "1.7.0",
+      "pydantic": "2.13.5",
+      "numpy": "1.26.4",
+      "quantlib": "1.43",
+      "psycopg": "3.3.6",
+      "asyncpg": "0.31.0"
+    },
+    "command_without_research": "pip install --dry-run --ignore-installed --report without.json -r requirements.txt -r services/control-plane/bff/requirements.txt",
+    "sha256_without": "1b85e2f518fc24a094a3d08e456dbc7105a24d5980c6b7c3df20aa81078561af",
+    "resolved_versions_without": {
+      "fastapi": "0.142.3",
+      "uvicorn": "0.54.0",
+      "starlette": "1.7.0",
+      "pydantic": "2.13.5",
+      "numpy": null,
+      "quantlib": null,
+      "psycopg": "3.3.6",
+      "asyncpg": "0.32.0"
+    },
+    "version_deltas": {
+      "asyncpg": {"with": "0.31.0", "without": "0.32.0"},
+      "fastapi": {"with": "0.142.2", "without": "0.142.3"},
+      "numpy": {"with": "1.26.4", "without": null},
+      "quantlib": {"with": "1.43", "without": null}
+    },
+    "psycopg_already_installed": true,
+    "psycopg_source": "services/control-plane/bff/requirements.txt (psycopg[binary]>=3.1,<4.0)"
+  },
+  "real_build": {
+    "command": "python3 scripts/dev/ensure_worker_test_python.py --root <worktree> --parent <scratch-dir>",
+    "reused": false,
+    "build_size": "288M",
+    "free_disk": "56G",
+    "keep": 3
+  },
+  "research_tests": {
+    "command": "RESEARCH_ORCHESTRATOR_DATA_DIR=$(mktemp -d) <scratch>/current/bin/python3 -m pytest -q services/research/quantlib/test_adapter.py services/research/quantlib/test_production_option_chain.py services/research/tests/test_research_orchestrator_http_service.py services/research/tests/test_research_single_owner_routes.py services/research/tests/test_research_postgres_event_store.py",
+    "passed": 123,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "test_quantlib_backend_skipped": 0,
+    "output_summary": "123 passed, 47 warnings in 55.78s"
+  },
+  "unittest_result": {
+    "command": "python3 -m unittest scripts/dev/test_ensure_worker_test_python.py",
+    "test_count": 7,
+    "exit_code": 0,
+    "output": "Ran 7 tests in 0.602s, OK"
+  },
+  "diff_budget": {
+    "change_class": "corrective",
+    "budget": 5,
+    "net_production_lines": 4,
+    "status": "passed"
+  }
+}

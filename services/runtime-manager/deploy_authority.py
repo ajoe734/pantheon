@@ -567,6 +567,7 @@ def verify_deploy_authorities(
         "persona_capital_binding_status": "active",
         "allowed_deployment_scope": allowed_deployment_scope,
         "single_runtime_enforced": True,
+        "tenant_id": str(plan_metadata.get("tenant_id") or "").strip() or None,
         "deployment_plan_current_stage": plan_current_stage,
         "deployment_plan_binding_id": plan.get("binding_id"),
         "deployment_plan_runtime_lifecycle": dict(plan_runtime_lifecycle),

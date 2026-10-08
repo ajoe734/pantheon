@@ -1,0 +1,119 @@
+{
+  "task_id": "DOCS-TOOLING-BOUNDARY-AND-STATUS-20261007",
+  "base_sha": "b9693e5795d362c49ce1b575ecb6ce9dad3cc945",
+  "change_class": "corrective",
+  "net_prod_line_budget": 0,
+  "summary": "Return coordinator architecture docs to product review and mark retired dev docs historical",
+  "scope": [
+    "docs/02-architecture/component-boundary.yaml",
+    "docs/deployment/main-py-test-coupling-measurement.md",
+    "docs/04/pantheon_architecture_cleanup_rebaseline_2026-09-16/REBASELINE_2026-09-16.md",
+    "README.md",
+    "docs/deployment/bff-https-ingress.md",
+    "docs/deployment/frontend-lovable-environments.md",
+    "docs/deployment/lovable-dev-staging-operating-rules.md",
+    "docs/deployment/staging-live-topology.md",
+    "docs/deployment/evidence/DOCS-TOOLING-BOUNDARY-AND-STATUS-20261007/evidence.json"
+  ],
+  "classifier_verification": {
+    "docs/deployment/main-py-test-coupling-measurement.md": {
+      "before": {
+        "delivery_touched": false,
+        "development_tooling_touched": true,
+        "domains": ["development_tooling"],
+        "paths": [{"components": [{"domain": "development_tooling", "id": "supervisor-and-taskstore"}], "path": "docs/deployment/main-py-test-coupling-measurement.md"}],
+        "product_touched": false,
+        "tooling_only": true,
+        "unknown_paths": []
+      },
+      "after": {
+        "delivery_touched": false,
+        "development_tooling_touched": false,
+        "domains": [],
+        "paths": [{"components": [], "path": "docs/deployment/main-py-test-coupling-measurement.md"}],
+        "product_touched": false,
+        "tooling_only": false,
+        "unknown_paths": ["docs/deployment/main-py-test-coupling-measurement.md"]
+      }
+    },
+    "docs/04/pantheon_architecture_cleanup_rebaseline_2026-09-16/REBASELINE_2026-09-16.md": {
+      "before": {
+        "delivery_touched": false,
+        "development_tooling_touched": true,
+        "domains": ["development_tooling"],
+        "paths": [{"components": [{"domain": "development_tooling", "id": "supervisor-and-taskstore"}], "path": "docs/04/pantheon_architecture_cleanup_rebaseline_2026-09-16/REBASELINE_2026-09-16.md"}],
+        "product_touched": false,
+        "tooling_only": true,
+        "unknown_paths": []
+      },
+      "after": {
+        "delivery_touched": false,
+        "development_tooling_touched": false,
+        "domains": [],
+        "paths": [{"components": [], "path": "docs/04/pantheon_architecture_cleanup_rebaseline_2026-09-16/REBASELINE_2026-09-16.md"}],
+        "product_touched": false,
+        "tooling_only": false,
+        "unknown_paths": ["docs/04/pantheon_architecture_cleanup_rebaseline_2026-09-16/REBASELINE_2026-09-16.md"]
+      }
+    },
+    "docs/04/pantheon_architecture_cleanup_rebaseline_2026-09-16/data/test-coupling-scan-dev-4d78e49fe.json": {
+      "before": {
+        "delivery_touched": false,
+        "development_tooling_touched": true,
+        "domains": ["development_tooling"],
+        "paths": [{"components": [{"domain": "development_tooling", "id": "supervisor-and-taskstore"}], "path": "docs/04/pantheon_architecture_cleanup_rebaseline_2026-09-16/data/test-coupling-scan-dev-4d78e49fe.json"}],
+        "product_touched": false,
+        "tooling_only": true,
+        "unknown_paths": []
+      },
+      "after": {
+        "delivery_touched": false,
+        "development_tooling_touched": false,
+        "domains": [],
+        "paths": [{"components": [], "path": "docs/04/pantheon_architecture_cleanup_rebaseline_2026-09-16/data/test-coupling-scan-dev-4d78e49fe.json"}],
+        "product_touched": false,
+        "tooling_only": false,
+        "unknown_paths": ["docs/04/pantheon_architecture_cleanup_rebaseline_2026-09-16/data/test-coupling-scan-dev-4d78e49fe.json"]
+      }
+    },
+    "docs/deployment/main-py-seam-inventory.md": {
+      "before": {
+        "delivery_touched": false,
+        "development_tooling_touched": true,
+        "domains": ["development_tooling"],
+        "paths": [{"components": [{"domain": "development_tooling", "id": "supervisor-and-taskstore"}], "path": "docs/deployment/main-py-seam-inventory.md"}],
+        "product_touched": false,
+        "tooling_only": true,
+        "unknown_paths": []
+      },
+      "after": {
+        "delivery_touched": false,
+        "development_tooling_touched": false,
+        "domains": [],
+        "paths": [{"components": [], "path": "docs/deployment/main-py-seam-inventory.md"}],
+        "product_touched": false,
+        "tooling_only": false,
+        "unknown_paths": ["docs/deployment/main-py-seam-inventory.md"]
+      }
+    }
+  },
+  "test_verification": {
+    "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest -q scripts/test_component_boundary.py scripts/test_branch_ci_gate_selection.py scripts/git/test_commit_delivery_classification.py",
+    "result": "44 passed, 13 subtests passed"
+  },
+  "diff_budget_verification": {
+    "command": "python3 scripts/git/diff_budget.py --base $B --head HEAD --change-class corrective --budget 0",
+    "production_net_lines": 0,
+    "status": "passed"
+  },
+  "host_check": {
+    "status": "passed",
+    "note": "No new http/https URLs, hostnames, or IPv4 addresses introduced in diff; all occurrences pre-existed in base."
+  },
+  "numstat_verification": {
+    "component_boundary_yaml": "0 added, 5 deleted",
+    "main_py_test_coupling_measurement_md": "2 added, 0 deleted",
+    "rebaseline_2026_09_16_md": "2 added, 0 deleted",
+    "bff_https_ingress_md": "2 added, 0 deleted"
+  }
+}

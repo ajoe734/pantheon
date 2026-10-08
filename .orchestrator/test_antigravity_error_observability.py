@@ -168,6 +168,31 @@ class DetectWorkerFailureNativeLogFallbackTests(unittest.TestCase):
         self.assertIn("individual quota reached", reason.lower())
         self.assertNotIn("not logged into", reason.lower())
 
+    def _native_failure_after_success(self, trailing: list[str]) -> str | None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            worker = self._worker(
+                tmpdir,
+                stream_lines=[{"event": "step_update", "step_update": {"type": "agent_response"}}],
+                native_lines=[
+                    "I1007 07:22:12 printmode.go] Print mode: not authenticated, trying silent auth",
+                    "error getting token source: You are not logged into Antigravity.",
+                    "OAuth: authenticated successfully as user@example.com",
+                    *trailing,
+                ],
+            )
+            return supervisor.detect_worker_failure(worker)
+
+    def test_native_log_auth_marker_superseded_by_later_success_is_not_a_failure(self) -> None:
+        self.assertIsNone(self._native_failure_after_success([]))
+
+    def test_native_log_not_logged_in_after_success_is_still_reported(self) -> None:
+        reason = self._native_failure_after_success(["You are not logged into Antigravity."])
+        self.assertEqual(reason, "You are not logged into Antigravity.")
+
+    def test_native_log_not_authenticated_successfully_after_success_is_still_reported(self) -> None:
+        reason = self._native_failure_after_success(["not authenticated successfully"])
+        self.assertEqual(reason, "not authenticated successfully")
+
     def test_no_native_log_bound_returns_none_like_before(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             worker = self._worker(
@@ -320,10 +345,10 @@ class AntigravityAuthProbeNativeLogBindingTests(unittest.TestCase):
             (0, "OK", "OK", authenticated, "ready"),
             (0, "", "", authenticated, "empty_output"),
             (0, " \n", "", authenticated, "empty_output"),
-            (0, "OK", "OK", startup, "not_logged_in"),
-            (0, "OK", "OK", authenticated + "not authenticated\n", "not_logged_in"),
-            (0, "OK", "OK", authenticated + "not authenticated successfully\n", "not_logged_in"),
-            (0, "OK", "OK", startup + "not authenticated; authenticated successfully\n", "not_logged_in"),
+            (0, "", "", startup, "not_logged_in"),
+            (0, "", "", authenticated + "not authenticated\n", "not_logged_in"),
+            (0, "", "", authenticated + "not authenticated successfully\n", "not_logged_in"),
+            (0, "", "", startup + "not authenticated; authenticated successfully\n", "not_logged_in"),
             (0, "OK", "OK\nnot authenticated", authenticated, "not_logged_in"),
             (1, "OK", "failed", authenticated, "exit_1"),
             (0, "OK", "OK", authenticated + "Individual quota reached\n", "quota_reached"),

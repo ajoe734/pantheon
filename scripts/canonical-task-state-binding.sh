@@ -1,0 +1,31 @@
+# The local operator command is an ingress to the same live TaskStore as the
+# supervisor, not a second root selected by shell variables.  Keep the live
+# config path overrideable for isolated tests, but derive the expected binding
+# once and let ai-status reject any supplied root/journal that disagrees.
+bind_canonical_task_state() {   # $1 = the calling checkout's .orchestrator dir
+  local DEPLOY_ROOT="${PANTHEON_DEPLOY_ROOT:-$HOME/pantheon-ci-deploy}"
+  local live_config="${PANTHEON_LIVE_SUPERVISOR_CONFIG:-$DEPLOY_ROOT/runtime/live-supervisor-mainroot-config.json}"
+  local -a canonical_binding
+  [[ -f "$live_config" && -d "$1" ]] || return 1
+  mapfile -t canonical_binding < <(
+    PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$1" \
+      python3 - "$live_config" <<'PY'
+import json
+import sys
+from common import canonical_task_state_identity
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    config = json.load(handle)
+identity = canonical_task_state_identity(config)
+print(json.dumps(identity, sort_keys=True, separators=(",", ":")))
+print(identity["status_root"])
+print(identity["event_log"])
+PY
+  )
+  [[ "${#canonical_binding[@]}" -eq 3 ]] \
+    || { echo "Failed to derive canonical Human/Ops task-state binding" >&2; exit 1; }
+  export PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON="${canonical_binding[0]}"
+  export PANTHEON_STATUS_ROOT="${canonical_binding[1]}"
+  export PANTHEON_TASK_STATE_EVENT_LOG="${canonical_binding[2]}"
+  export PANTHEON_TASK_STATE_STORE_MODE="authoritative"
+}
