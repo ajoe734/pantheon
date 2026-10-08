@@ -6,14 +6,23 @@ import math
 import os
 from typing import Any, Dict, List
 
-from services.control_plane.bff.ports.rankings import create_ranking_reader
 from services.rankings.snapshots import snapshot_content_digest
-from services.control_plane.bff.persona_allocation_policy import (
-    _ALLOCATION_POLICY_VERSION,
-    _PAPER_SIMULATION_POLICY_VERSION,
-    calculate_paper_simulation_allocations,
-    calculate_target_allocations,
-)
+from services.rankings.store import RankingReadStore
+
+try:
+    from .allocation_policy import (
+        _ALLOCATION_POLICY_VERSION,
+        _PAPER_SIMULATION_POLICY_VERSION,
+        calculate_paper_simulation_allocations,
+        calculate_target_allocations,
+    )
+except ImportError:  # pragma: no cover - flat-module import path
+    from allocation_policy import (  # type: ignore
+        _ALLOCATION_POLICY_VERSION,
+        _PAPER_SIMULATION_POLICY_VERSION,
+        calculate_paper_simulation_allocations,
+        calculate_target_allocations,
+    )
 
 try:
     from .allocation_store import allocation_line_digest, stable_payload_hash
@@ -34,9 +43,30 @@ class AllocationLineageError(ValueError):
         self.status_code = status_code
 
 
+class _RankingReader:
+    def __init__(self, store: RankingReadStore) -> None:
+        self._store = store
+
+    def get_ranking_snapshot(self, ranking_snapshot_id: str) -> Dict[str, Any] | None:
+        record = self._store.get_ranking_snapshot(str(ranking_snapshot_id or ""))
+        if record is None:
+            return None
+        if hasattr(record, "to_canonical_dict"):
+            return record.to_canonical_dict()
+        return record
+
+
+def create_ranking_reader() -> Any:
+    return _RankingReader(RankingReadStore(
+        dsn=os.getenv("RANKING_STORE_DSN") or os.getenv("DATABASE_URL") or "",
+        table=os.getenv("RANKING_STORE_TABLE", "rankings.rankings"),
+    ))
+
+
 def _load_snapshot(snapshot_id: str) -> Dict[str, Any]:
     try:  # the Rankings store is a separate owner; any failure to read it is unavailability
-        snapshot = create_ranking_reader().get_ranking_snapshot(snapshot_id)
+        raw = create_ranking_reader().get_ranking_snapshot(snapshot_id)
+        snapshot = raw.to_canonical_dict() if hasattr(raw, "to_canonical_dict") else raw
     except Exception as exc:
         raise AllocationLineageError(f"Ranking snapshot store is unavailable: {exc}", 503) from exc
     if snapshot is None or snapshot.get("surface") != "quarterly":

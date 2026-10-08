@@ -130,12 +130,6 @@ from .command_executor import (
     _post_json,
     _get_json,
 )
-from .persona_allocation_policy import (
-    build_pm12_allocation_policy_input,
-    calculate_paper_simulation_allocations,
-    calculate_target_allocations,
-    validate_emergency_lines,
-)
 from .paper_eligibility_proof import (
     BENCHMARK_VERSION as _PPL_ALLOC_009_ELIGIBILITY_BENCHMARK_VERSION,
     EXPECTED_IDEMPOTENCY_KEY as _PPL_ALLOC_009_ELIGIBILITY_IDEMPOTENCY_KEY,

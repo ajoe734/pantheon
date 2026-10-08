@@ -1,0 +1,79 @@
+{
+  "task": "CAPITAL-ALLOCATION-POLICY-OWNER-HOME-20261008",
+  "base": "51f4861c3303b9a32fca70214fc057afa9484bc6",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "summary": "Give the allocation calculation one home in the capital owner (services/capital/allocation_policy.py) and remove the owner's imports of BFF code, removing services/control-plane/bff/persona_allocation_policy.py with no re-export shim.",
+  "acceptance_criteria": {
+    "1_single_home_and_legacy_removal": {
+      "status": "PASSED",
+      "details": "calculate_target_allocations, calculate_paper_simulation_allocations, build_pm12_allocation_policy_input, stage_recommendation, and policy version constants moved byte-for-byte to services/capital/allocation_policy.py. services/control-plane/bff/persona_allocation_policy.py removed with no re-export shim."
+    },
+    "2_no_bff_imports_under_capital": {
+      "status": "PASSED",
+      "details": "services/capital/allocation_lineage.py removes all services.control_plane.bff imports. It reads ranking snapshots directly via services.rankings.store.RankingReadStore and imports allocation policy from services.capital.allocation_policy. Zero imports of services.control_plane.bff exist in services/capital."
+    },
+    "3_bff_callers_and_cleanup": {
+      "status": "PASSED",
+      "execute_plans_readers": [
+        "src/test/ppl-alloc-009-recommendation-snapshot.test.ts",
+        "e2e/helpers/pplAlloc009Recommendation.ts",
+        "e2e/ppl-alloc-009-cross-repo-hosted.spec.ts"
+      ],
+      "details": "Because execute-plans has active readers for ranking_item['allocation_policy_input'], services/control-plane/bff/personas/service.py retains this field and imports build_pm12_allocation_policy_input from services.capital.allocation_policy. Unused allocation imports removed from services/control-plane/bff/main.py. validate_emergency_lines was deleted because no production callers remain."
+    },
+    "4_tests_and_inventory_updated": {
+      "status": "PASSED",
+      "details": "Policy tests moved to services/capital/test_allocation_policy.py. BFF tests (test_ppl_alloc_012_ranking_projection.py, test_persona_owner_packaged_transport.py) import from services.capital.allocation_policy. scripts/test_bff_package_boundary_prerequisite.py removed persona_allocation_policy from LOCAL_ROOTS and verified single home in capital. services/control-plane/bff/tests/bff_test_architecture_inventory.json removed test_bff_persona_allocation_policy.py and updated counts (total_test_files: 387, application: 188, DECOUPLED: 323)."
+    },
+    "5_fixture_output_parity": {
+      "status": "PASSED",
+      "details": "Allocation outputs for calculate_target_allocations and calculate_paper_simulation_allocations evaluated against dev baseline fixtures match 100% identically with zero numerical or structural drift."
+    },
+    "6_all_tests_pass": {
+      "status": "PASSED",
+      "results": {
+        "services/capital/test_allocation_policy.py": "13 passed",
+        "services/capital/test_allocation_lineage_integrity.py": "9 passed",
+        "services/capital (full suite)": "368 passed",
+        "services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py": "24 passed",
+        "services/control-plane/bff/tests/test_persona_owner_packaged_transport.py": "2 passed",
+        "services/control-plane/bff/tests/test_bff_test_architecture.py": "39 passed",
+        "scripts/test_bff_package_boundary_prerequisite.py": "9 passed"
+      }
+    },
+    "7_changed_test_expectations_classified": {
+      "status": "PASSED",
+      "classifications": [
+        {
+          "test_file": "scripts/test_bff_package_boundary_prerequisite.py",
+          "item": "SOURCE_PATHS count (51 -> 49)",
+          "classification": "intended_change",
+          "justification": "Commit 0cfb1e2af1a5b3f43da2d067781ec76ccece0e76 (AGORA-DEAD-SURFACES-REMOVAL-001) intentionally deleted dead surfaces services/control-plane/bff/agora/dashboard/router.py and services/control-plane/bff/agora/identity/router.py."
+        },
+        {
+          "test_file": "scripts/test_bff_package_boundary_prerequisite.py",
+          "item": "test_cross_user_forbidden_is_403_without_bare_models_alias",
+          "classification": "intended_change",
+          "justification": "Import of _raise_cross_user_forbidden updated to services.control_plane.bff.agora.strategy_workshop._common after agora.dashboard.router removal. Function signature and contract (403 CROSS_USER_ACCESS_FORBIDDEN) are identical."
+        },
+        {
+          "test_file": "scripts/test_bff_package_boundary_prerequisite.py",
+          "item": "test_representative_negative_branches_keep_exact_contracts",
+          "classification": "intended_change",
+          "justification": "Replaced deleted dashboard router validation test with agora.servant.router.create_servant_router ensure endpoint missing Idempotency-Key header, verifying [422, 'VALIDATION_FAILED', 'Missing required Idempotency-Key header for Agora servant ensure']. Negative branch guarantee remains tested."
+        },
+        {
+          "test_file": "scripts/test_bff_package_boundary_prerequisite.py",
+          "item": "test_internal_imports_do_not_have_namespace_fallbacks",
+          "classification": "stale_sample",
+          "justification": "Accounted for pre-existing lines on dev: services/control-plane/bff/events/router.py:50 (commit f66817c33440, OSS-CORE-BASELINE-001) and services/control-plane/bff/management_read_models/service.py:3528 (commit 301a792a1587, BFF-PROMOTION-REVIEW-DEFECT-REPAIR-001). No assertions weakened."
+        }
+      ]
+    },
+    "8_no_code_compression": {
+      "status": "PASSED",
+      "details": "All files maintain full idiomatic layout, standard indentation, comments, and docstrings. No minification or artificial line budget compression applied."
+    }
+  }
+}
