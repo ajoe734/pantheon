@@ -2130,7 +2130,122 @@ def test_non_controller_connector_lifecycle_and_schedule_mutation_requires_admit
     assert life_good.json()["connector"]["status"] == "disabled"
 
 
+def test_controller_ownership_determined_solely_by_reconciliation_marker(client) -> None:
+    test_client, _, module = client
+    fetch_payload = {"mode": "static_records", "records": []}
+
+    # AC1: Verify CONTROLLER_OWNED_CONNECTOR_IDS is removed
+    assert not hasattr(module.SourceIngestionRuntime, "CONTROLLER_OWNED_CONNECTOR_IDS")
+    assert not hasattr(module.runtime, "CONTROLLER_OWNED_CONNECTOR_IDS")
+
+    # Connector with ID 'tw-twse-tpex-official-market' configured without the reconciliation marker
+    # is treated as a standard tenant connector and does NOT require controller auth
+    headers_dev = _read_headers(tenant="tenant-dev", roles=["operator"])
+    res = test_client.post(
+        "/api/source-ingest/connectors",
+        headers=headers_dev,
+        json={
+            "connector": _connector(
+                connector_id="tw-twse-tpex-official-market",
+                metadata={"dataset": "tw_price_daily"},
+            ),
+            "fetch": fetch_payload,
+        },
+    )
+    assert res.status_code == 201, res.text
+    body = res.json()
+    assert body["connector"]["metadata"]["tenant_id"] == "tenant-dev"
+    assert "persona_source_reconciliation" not in body["connector"]["metadata"]
+
+    # Mutation by admitted tenant succeeds
+    sched_res = test_client.put(
+        "/api/source-ingest/connectors/tw-twse-tpex-official-market/schedule",
+        headers=headers_dev,
+        json={"interval_seconds": 3600, "enabled": True},
+    )
+    assert sched_res.status_code == 200
+
+    # AC2: A connector that carries the reconciliation marker requires controller token
+    from services.source_ingestion.persona_source_reconciler import RECONCILIATION_METADATA_KEY
+
+    reconciled_connector_id = "conn-custom-reconciled"
+    reconciled_payload = {
+        "connector": _connector(
+            connector_id=reconciled_connector_id,
+            metadata={
+                RECONCILIATION_METADATA_KEY: {
+                    "managed_by": "persona_source_provisioning_reconciler",
+                },
+            },
+        ),
+        "fetch": fetch_payload,
+    }
+
+    # Tenant token rejected with 403 (service authorization invalid)
+    res_tenant = test_client.post(
+        "/api/source-ingest/connectors",
+        headers=headers_dev,
+        json=reconciled_payload,
+    )
+    assert res_tenant.status_code == 403
+
+    # Controller token succeeds
+    controller_headers = {"Authorization": f"Bearer {module.controller_token}"}
+    res_ctrl = test_client.post(
+        "/api/source-ingest/connectors",
+        headers=controller_headers,
+        json=reconciled_payload,
+    )
+    assert res_ctrl.status_code == 201
+
+    # Lifecycle and schedule mutations for marker-bearing connector also require controller auth
+    life_bad = test_client.put(
+        f"/api/source-ingest/connectors/{reconciled_connector_id}/lifecycle",
+        headers=headers_dev,
+        json={"status": "disabled", "reason": "test"},
+    )
+    assert life_bad.status_code == 403
+
+    sched_bad = test_client.put(
+        f"/api/source-ingest/connectors/{reconciled_connector_id}/schedule",
+        headers=headers_dev,
+        json={"interval_seconds": 60, "enabled": True},
+    )
+    assert sched_bad.status_code == 403
 
 
+def test_configure_connector_refuses_adopting_tenantless_existing_connector(client) -> None:
+    test_client, _, module = client
+    fetch_payload = {"mode": "static_records", "records": []}
 
+    # AC3: Seed an existing non-controller connector without tenant_id in metadata
+    from services.source_ingestion.connectors import SourceConnector
 
+    legacy_id = "conn-legacy-untenanted"
+    legacy_conn = SourceConnector.from_dict(
+        _connector(connector_id=legacy_id, metadata={"legacy_flag": "true"})
+    )
+    assert not legacy_conn.metadata.get("tenant_id")
+    module.connector_store.upsert_config(legacy_conn, fetch_payload)
+    assert module.connector_store.get_config(legacy_id) is not None
+
+    # Write-capable tenant caller attempts to update the existing tenantless connector
+    headers_dev = _read_headers(tenant="tenant-dev", roles=["operator"])
+    res = test_client.post(
+        "/api/source-ingest/connectors",
+        headers=headers_dev,
+        json={
+            "connector": _connector(connector_id=legacy_id, metadata={"updated": "true"}),
+            "fetch": fetch_payload,
+        },
+    )
+    # AC3: Must fail closed with 403 TENANT_SCOPE_DENIED rather than adopting
+    assert res.status_code == 403
+    detail = res.json().get("detail", {})
+    assert detail.get("code") == "TENANT_SCOPE_DENIED"
+    assert detail.get("message") == "Connector has no bound tenant"
+
+    # Verify connector metadata in store was not modified / adopted
+    stored = module.connector_store.get_config(legacy_id)
+    assert stored is not None
+    assert "tenant_id" not in stored.connector.metadata

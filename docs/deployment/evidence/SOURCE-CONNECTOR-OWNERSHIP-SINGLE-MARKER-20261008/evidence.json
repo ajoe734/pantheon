@@ -1,0 +1,59 @@
+{
+  "task_id": "SOURCE-CONNECTOR-OWNERSHIP-SINGLE-MARKER-20261008",
+  "change_class": "corrective",
+  "title": "Use only the reconciliation marker for controller ownership and refuse adopting tenantless connectors",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "summary": "Remove CONTROLLER_OWNED_CONNECTOR_IDS and every reference to it so controller ownership is governed solely by the single canonical persona_source_reconciliation marker (managed_by=persona_source_provisioning_reconciler). Fix test fixtures to include the reconciliation marker rather than relying on hardcoded connector IDs. Prevent callers from adopting existing tenantless connectors during POST /api/source-ingest/connectors by failing closed with HTTP 403 TENANT_SCOPE_DENIED ('Connector has no bound tenant'). Verify all source_ingestion tests and test_service.py pass with fresh SOURCE_INGEST_DATA_DIR.",
+  "acceptance_verification": {
+    "ac1_controller_owned_connector_ids_removed": "passed: CONTROLLER_OWNED_CONNECTOR_IDS and its uses in _is_controller_owned and _fence_managed_connector_mutation are removed; controller ownership is determined solely by persona_source_reconciliation marker",
+    "ac2_marker_controller_token_fence_preserved": "passed: connectors carrying persona_source_reconciliation marker require controller authorization for configure, lifecycle, and schedule mutations",
+    "ac3_refuse_adopting_tenantless_connectors": "passed: configure_connector rejects mutations to existing non-controller connectors lacking tenant_id with 403 TENANT_SCOPE_DENIED ('Connector has no bound tenant') rather than allowing adoption",
+    "ac4_test_fixtures_use_marker": "passed: test_tw_execution_alias_reads_only_the_official_twse_snapshot in test_latest_market_snapshot.py updated with persona_source_reconciliation marker",
+    "ac5_tests_and_hosted_readback": "passed: services/source_ingestion/tests (1030 passed, 1 skipped) and services/source_ingestion/test_service.py (35 passed) pass with a fresh SOURCE_INGEST_DATA_DIR; hosted readback records existing marker evidence",
+    "ac6_exact_reviewed_head_ready": "passed: scoped artifacts verified within line budget; ready for PR review and merge"
+  },
+  "hosted_connectors_readback": {
+    "inspection_mode": "read_only_get_api_and_volume",
+    "timestamp": "2026-10-08T14:45:00Z",
+    "target_connectors": [
+      {
+        "connector_id": "tw-twse-tpex-official-market",
+        "controller_owned": true,
+        "marker_present": true,
+        "managed_by": "persona_source_provisioning_reconciler"
+      },
+      {
+        "connector_id": "dev-paper-us-equity-simulation",
+        "controller_owned": true,
+        "marker_present": true,
+        "managed_by": "persona_source_provisioning_reconciler"
+      }
+    ],
+    "tenantless_api_connectors_count": 0,
+    "untenanted_connectors_status": "none on hosted dev; conn-dev-product-... is tenant-dev"
+  },
+  "diff_budget": {
+    "net_prod_line_budget": 10,
+    "production_files_detail": {
+      "services/source_ingestion/routers/ingest_operations.py": {
+        "insertions": 6,
+        "deletions": 1,
+        "net": 5
+      },
+      "services/source_ingestion/runtime.py": {
+        "insertions": 1,
+        "deletions": 7,
+        "net": -6
+      }
+    },
+    "core_production_net_lines": -1,
+    "core_budget_satisfied": true
+  },
+  "verification_commands": [
+    "SOURCE_INGEST_DATA_DIR=<fresh_dir> python3 -m pytest services/source_ingestion/test_service.py",
+    "SOURCE_INGEST_DATA_DIR=<fresh_dir> python3 -m pytest services/source_ingestion/tests/test_latest_market_snapshot.py",
+    "SOURCE_INGEST_DATA_DIR=<fresh_dir> python3 -m pytest services/source_ingestion/tests/test_scheduled_connector.py",
+    "SOURCE_INGEST_DATA_DIR=<fresh_dir> python3 -m pytest services/source_ingestion/tests"
+  ]
+}
