@@ -736,3 +736,144 @@ def test_source_authority_read_sends_reader_bearer_and_tenant_or_fails_closed(tm
             raised = exc
     assert raised is not None and "token file" in str(raised)
     assert "headers" not in captured
+
+
+def test_evaluate_then_complete_passes_when_controller_and_requirement_sequences_advance(tmp_path: Path) -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+
+    from test_source_dataset_authority import (
+        _make_case,
+        _policy,
+        BASE_URL,
+        CONNECTOR_ID,
+        DATASET_ID,
+    )
+
+    case = _make_case(tmp_path)
+    policy_path = tmp_path / "threshold_policy.json"
+    policy_path.write_text(json.dumps(_policy()), encoding="utf-8")
+
+    token_file = tmp_path / "reader_token"
+    token_file.write_text("reader.jwt.token\n")
+    token_file.chmod(0o600)
+
+    env = {
+        "TRAINING_SESSION_CANONICAL_DATASET_PATH": "",
+        "SOURCE_INGEST_API_URL": BASE_URL,
+        "TRAINING_SESSION_SOURCE_CONNECTOR_ID": CONNECTOR_ID,
+        "TRAINING_SESSION_SOURCE_DATASET_ID": DATASET_ID,
+        "TRAINING_SESSION_SOURCE_VOLUME_ROOT": str(case.source_root),
+        "TRAINING_SESSION_DATASET_AUTHORITY_OUTPUT_ROOT": str(case.output_root),
+        "TRAINING_SESSION_THRESHOLD_POLICY_PATH": str(policy_path),
+        "TRAINING_SESSION_SOURCE_READ_TOKEN_FILE": str(token_file),
+        "TRAINING_SESSION_SOURCE_READ_TENANT_ID": "tenant-dev",
+    }
+
+    def fake_get(url, *, timeout_seconds, headers=None):
+        return case.get(url)
+
+    with mock.patch.dict("os.environ", env), mock.patch.object(module, "urllib_json_get", fake_get):
+        created = client.post(
+            "/api/training/sessions",
+            json={
+                "persona_id": "persona-seq-test",
+                "objective": "Test sequence advance between eval and complete",
+                "actor_id": "operator-1",
+            },
+        )
+        assert created.status_code == 201
+        session_id = created.json()["session_id"]
+        seed_changed_supported_controls(module, session_id)
+
+        queued = client.post(
+            f"/api/training/sessions/{session_id}/preview-jobs",
+            json={"mode": "refresh", "requested_by": "operator-1", "terminalize_session": True},
+            headers={"Idempotency-Key": "seq-advance-001"},
+        )
+        assert queued.status_code == 201
+        job_id = queued.json()["job_id"]
+
+        run_res = client.post(f"/api/training/preview-jobs/{job_id}/run", json={})
+        assert run_res.status_code == 200
+        assert run_res.json()["status"] == "completed"
+
+        # Advance controller sequence from 42 to 45 and requirement sequence from 7 to 9
+        readback = case.responses[f"{BASE_URL}/api/source-ingest/controller/readback"]
+        readback["controller_state"]["sequence_no"] = 45
+        readback["requirement_snapshot"]["sequence"] = 9
+
+        # Complete succeeds because operational sequences only advanced
+        comp = client.post(f"/api/training/sessions/{session_id}/complete")
+        assert comp.status_code == 201, comp.text
+        assert comp.json()["status"] == "completed"
+
+
+def test_complete_fails_closed_when_controller_sequence_regresses_or_semantic_authority_changes(tmp_path: Path) -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+
+    from test_source_dataset_authority import (
+        _make_case,
+        _policy,
+        BASE_URL,
+        CONNECTOR_ID,
+        DATASET_ID,
+    )
+
+    case = _make_case(tmp_path)
+    policy_path = tmp_path / "threshold_policy.json"
+    policy_path.write_text(json.dumps(_policy()), encoding="utf-8")
+
+    token_file = tmp_path / "reader_token"
+    token_file.write_text("reader.jwt.token\n")
+    token_file.chmod(0o600)
+
+    env = {
+        "TRAINING_SESSION_CANONICAL_DATASET_PATH": "",
+        "SOURCE_INGEST_API_URL": BASE_URL,
+        "TRAINING_SESSION_SOURCE_CONNECTOR_ID": CONNECTOR_ID,
+        "TRAINING_SESSION_SOURCE_DATASET_ID": DATASET_ID,
+        "TRAINING_SESSION_SOURCE_VOLUME_ROOT": str(case.source_root),
+        "TRAINING_SESSION_DATASET_AUTHORITY_OUTPUT_ROOT": str(case.output_root),
+        "TRAINING_SESSION_THRESHOLD_POLICY_PATH": str(policy_path),
+        "TRAINING_SESSION_SOURCE_READ_TOKEN_FILE": str(token_file),
+        "TRAINING_SESSION_SOURCE_READ_TENANT_ID": "tenant-dev",
+    }
+
+    def fake_get(url, *, timeout_seconds, headers=None):
+        return case.get(url)
+
+    with mock.patch.dict("os.environ", env), mock.patch.object(module, "urllib_json_get", fake_get):
+        created = client.post(
+            "/api/training/sessions",
+            json={
+                "persona_id": "persona-regress-test",
+                "objective": "Test sequence regress between eval and complete",
+                "actor_id": "operator-1",
+            },
+        )
+        assert created.status_code == 201
+        session_id = created.json()["session_id"]
+        seed_changed_supported_controls(module, session_id)
+
+        queued = client.post(
+            f"/api/training/sessions/{session_id}/preview-jobs",
+            json={"mode": "refresh", "requested_by": "operator-1", "terminalize_session": True},
+            headers={"Idempotency-Key": "seq-regress-001"},
+        )
+        assert queued.status_code == 201
+        job_id = queued.json()["job_id"]
+
+        run_res = client.post(f"/api/training/preview-jobs/{job_id}/run", json={})
+        assert run_res.status_code == 200
+        assert run_res.json()["status"] == "completed"
+
+        # Regress controller sequence from 42 to 40
+        readback = case.responses[f"{BASE_URL}/api/source-ingest/controller/readback"]
+        readback["controller_state"]["sequence_no"] = 40
+
+        # Complete fails closed with 409
+        comp = client.post(f"/api/training/sessions/{session_id}/complete")
+        assert comp.status_code == 409
+        assert "evaluation authority is no longer admissible" in comp.text

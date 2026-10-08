@@ -921,3 +921,245 @@ def test_terminal_session_recovery_duplicate_completion_is_idempotent(
     claimable = client.get("/api/training/preview-jobs", params={"status": "claimable"})
     assert claimable.status_code == 200
     assert job_id not in [j["job_id"] for j in claimable.json()]
+
+
+def test_terminal_session_recovery_retry_exhaustion_visibly_failed(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    import io
+    import urllib.error
+
+    worker = _load_worker_module()
+    service, fixture = _load_service_module(tmp_path)
+    client = TestClient(service.app)
+    monkeypatch.setenv("TRAINING_SESSION_WORKER_TOKEN", "worker:training-service")
+    monkeypatch.setenv("TRAINING_SESSION_TENANT_ID", "tenant-test")
+
+    created = client.post(
+        "/api/training/sessions",
+        json={
+            "persona_id": "persona-exhaustion-test",
+            "objective": "Verify retry budget exhaustion visibly fails preview job and worker result",
+            "actor_id": "operator-1",
+        },
+    )
+    assert created.status_code == 201
+    session_id = created.json()["session_id"]
+    seed_changed_supported_controls(service, session_id)
+    queued = client.post(
+        f"/api/training/sessions/{session_id}/preview-jobs",
+        json={
+            "mode": "refresh",
+            "requested_by": "operator-1",
+            "terminalize_session": True,
+        },
+        headers={"Idempotency-Key": "exhaustion-key-001"},
+    )
+    assert queued.status_code == 201
+    job_id = queued.json()["job_id"]
+
+    def service_urlopen(request, timeout):  # noqa: ANN001
+        del timeout
+        parsed_path = request.full_url.removeprefix("http://training-session-svc:8099")
+        headers = dict(request.header_items())
+        if parsed_path.endswith(f"/api/training/sessions/{session_id}/complete"):
+            fp = io.BytesIO(b'{"detail":"synthetic repeated 503"}')
+            raise urllib.error.HTTPError(
+                request.full_url,
+                503,
+                "Service Unavailable",
+                {"Content-Type": "application/json"},
+                fp,
+            )
+        response = client.request(
+            request.get_method(),
+            parsed_path,
+            content=request.data,
+            headers=headers,
+        )
+        assert response.status_code < 400, response.text
+        return _TestClientResponse(response)
+
+    monkeypatch.setattr(worker.urllib.request, "urlopen", service_urlopen)
+
+    store = service.TrainingSessionStore(fixture.data_dir)
+
+    # Tick 1: attempt 1/3 fails complete
+    tick1 = worker.run_tick(api_url="http://training-session-svc:8099", limit=5)
+    assert tick1["jobs_found"] == 1
+    assert tick1["completed"] == 1
+    assert tick1["failed"] == 1
+    assert tick1["named_failures"] == []
+    job1 = store.get_preview_job(job_id)
+    assert job1["status"] == "completed"
+    assert job1["attempt_count"] == 1
+    assert job1["retryable"] is True
+    assert job1.get("error_code") is None
+
+    # Tick 2: attempt 2/3 fails complete
+    tick2 = worker.run_tick(api_url="http://training-session-svc:8099", limit=5)
+    assert tick2["jobs_found"] == 1
+    assert tick2["completed"] == 1
+    assert tick2["replayed"] == 1
+    assert tick2["failed"] == 1
+    assert tick2["named_failures"] == []
+    job2 = store.get_preview_job(job_id)
+    assert job2["status"] == "completed"
+    assert job2["attempt_count"] == 2
+    assert job2["retryable"] is True
+    assert job2.get("error_code") is None
+
+    # Tick 3: attempt 3/3 fails complete
+    tick3 = worker.run_tick(api_url="http://training-session-svc:8099", limit=5)
+    assert tick3["jobs_found"] == 1
+    assert tick3["completed"] == 1
+    assert tick3["replayed"] == 1
+    assert tick3["failed"] == 1
+    assert tick3["named_failures"] == []
+    job3 = store.get_preview_job(job_id)
+    assert job3["status"] == "completed"
+    assert job3["attempt_count"] == 3
+    assert job3["retryable"] is False
+    assert job3.get("error_code") is None
+
+    # Tick 4: retry budget exhausted, owner /run persists named failure and worker reads it
+    tick4 = worker.run_tick(api_url="http://training-session-svc:8099", limit=5)
+    assert tick4["jobs_found"] == 1
+    assert tick4["completed"] == 0
+    assert tick4["replayed"] == 1
+    assert tick4["reclaimed"] == 1
+    assert tick4["failed"] == 1
+    assert tick4["named_failures"] == ["terminal_session_completion_exhausted"]
+    assert any("error_code=terminal_session_completion_exhausted" in err for err in tick4["errors"])
+
+    # Job is visibly marked failed with named failure
+    job4 = store.get_preview_job(job_id)
+    assert job4["status"] == "failed"
+    assert job4["attempt_count"] == 3
+    assert job4["retryable"] is False
+    assert job4["error_code"] == "terminal_session_completion_exhausted"
+    assert "terminal session completion retry budget exhausted" in str(job4["failure_reason"])
+    assert job4["failed_at"] == FIXED_TRUSTED_NOW.isoformat().replace("+00:00", "Z")
+
+    # Session stays active
+    session_after = store.get_session(session_id)
+    assert session_after["status"] == "active"
+    assert session_after.get("ended_at") is None
+
+    # Tick 5: job is no longer claimable
+    tick5 = worker.run_tick(api_url="http://training-session-svc:8099", limit=5)
+    assert tick5["jobs_found"] == 0
+    assert tick5["completed"] == 0
+    assert tick5["failed"] == 0
+    assert tick5["errors"] == []
+
+    # Job remains failed in store
+    job5 = store.get_preview_job(job_id)
+    assert job5["status"] == "failed"
+    assert job5["error_code"] == "terminal_session_completion_exhausted"
+
+
+def test_lost_response_from_final_owner_run_leaves_failure_discoverable(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    import io
+    import urllib.error
+
+    worker = _load_worker_module()
+    service, fixture = _load_service_module(tmp_path)
+    client = TestClient(service.app)
+    monkeypatch.setenv("TRAINING_SESSION_WORKER_TOKEN", "worker:training-service")
+    monkeypatch.setenv("TRAINING_SESSION_TENANT_ID", "tenant-test")
+
+    created = client.post(
+        "/api/training/sessions",
+        json={
+            "persona_id": "persona-lost-response-test",
+            "objective": "Verify lost response from final owner /run leaves failure discoverable",
+            "actor_id": "operator-1",
+        },
+    )
+    assert created.status_code == 201
+    session_id = created.json()["session_id"]
+    seed_changed_supported_controls(service, session_id)
+    queued = client.post(
+        f"/api/training/sessions/{session_id}/preview-jobs",
+        json={
+            "mode": "refresh",
+            "requested_by": "operator-1",
+            "terminalize_session": True,
+        },
+        headers={"Idempotency-Key": "lost-resp-key-001"},
+    )
+    assert queued.status_code == 201
+    job_id = queued.json()["job_id"]
+
+    drop_final_run_response = False
+
+    def service_urlopen(request, timeout):  # noqa: ANN001
+        del timeout
+        nonlocal drop_final_run_response
+        parsed_path = request.full_url.removeprefix("http://training-session-svc:8099")
+        headers = dict(request.header_items())
+        if parsed_path.endswith(f"/api/training/sessions/{session_id}/complete"):
+            fp = io.BytesIO(b'{"detail":"synthetic complete failure"}')
+            raise urllib.error.HTTPError(
+                request.full_url,
+                503,
+                "Service Unavailable",
+                {"Content-Type": "application/json"},
+                fp,
+            )
+        response = client.request(
+            request.get_method(),
+            parsed_path,
+            content=request.data,
+            headers=headers,
+        )
+        assert response.status_code < 400, response.text
+        if drop_final_run_response and parsed_path.endswith(f"/api/training/preview-jobs/{job_id}/run"):
+            # Server processed the /run mutation, but client experiences lost response
+            fp = io.BytesIO(b'{"detail":"lost response on final run"}')
+            raise urllib.error.HTTPError(
+                request.full_url,
+                503,
+                "Service Unavailable",
+                {"Content-Type": "application/json"},
+                fp,
+            )
+        return _TestClientResponse(response)
+
+    monkeypatch.setattr(worker.urllib.request, "urlopen", service_urlopen)
+
+    store = service.TrainingSessionStore(fixture.data_dir)
+
+    # Ticks 1-3: complete fails 3 times
+    for _ in range(3):
+        worker.run_tick(api_url="http://training-session-svc:8099", limit=5)
+
+    # Tick 4: simulate lost response from final owner /run
+    drop_final_run_response = True
+    tick4 = worker.run_tick(api_url="http://training-session-svc:8099", limit=5)
+    assert tick4["jobs_found"] == 1
+    assert tick4["failed"] == 1
+    assert any("http_error=503" in err for err in tick4["errors"])
+
+    # Despite lost response, the owner durably committed the named failure!
+    job4 = store.get_preview_job(job_id)
+    assert job4["status"] == "failed"
+    assert job4["error_code"] == "terminal_session_completion_exhausted"
+    assert job4["retryable"] is False
+    assert job4["failed_at"] == FIXED_TRUSTED_NOW.isoformat().replace("+00:00", "Z")
+
+    # Session remains active
+    session_after = store.get_session(session_id)
+    assert session_after["status"] == "active"
+    assert session_after.get("ended_at") is None
+
+    # Subsequent tick: job is no longer claimable
+    tick5 = worker.run_tick(api_url="http://training-session-svc:8099", limit=5)
+    assert tick5["jobs_found"] == 0
+    assert tick5["failed"] == 0
+
