@@ -1880,3 +1880,87 @@ def test_transition_legacy_persona_market_uses_persisted_owner_request_when_mark
 
 
 
+
+
+def _symbolless_record(market: str) -> tuple[TrackingStore, ProvisioningRecord]:
+    return _record_and_store({"market": market})
+
+
+def test_coordinator_tw_without_symbols_fails_before_any_owner_write() -> None:
+    store, record = _symbolless_record("TW")
+    transport = FakeOwnerTransport()
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+
+    result = coordinator.coordinate(record)
+
+    assert result.state == "failed"
+    assert result.error is not None
+    assert result.error["failed_step"] == "capital_pool"
+    assert "symbols are required for market TW" in result.error["terminal_reason"]
+    assert not [key for key in transport.objects if key[0] in ("capital", "registry")]
+
+
+def test_coordinator_dry_run_rejects_crypto_without_symbols() -> None:
+    store, record = _symbolless_record("CRYPTO")
+    coordinator = _coordinator(store, FakeOwnerTransport(), _schedule_receipt)
+
+    with pytest.raises(
+        PersonaProvisioningCoordinationError,
+        match="symbols are required for market CRYPTO",
+    ):
+        coordinator.coordinate(record, dry_run=True)
+
+
+def test_coordinator_us_without_symbols_keeps_legacy_spy_default() -> None:
+    store, record = _symbolless_record("US")
+    transport = FakeOwnerTransport()
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+
+    result = coordinator.coordinate(record)
+
+    assert result.state == "provisioning"
+    ids = deterministic_provisioning_ids(record)
+    view = transport.objects[("registry", f"/api/registry/strategy-artifacts/{ids.strategy_artifact_id}")]
+    parameters = view["entry"]["metadata"]["strategy_artifact"]["parameters"]
+    assert parameters["symbols"] == ["SPY"]
+    assert parameters["market"] == "US"
+
+
+def test_transition_legacy_spy_persona_to_tw_is_refused_without_child_revision() -> None:
+    store, record = _record_and_store()
+    transport = FakeOwnerTransport()
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+    result = coordinator.coordinate(record)
+    assert result.state == "provisioning"
+    registry_before = copy.deepcopy(
+        {key: value for key, value in transport.objects.items() if key[0] == "registry"}
+    )
+
+    with pytest.raises(
+        PersonaProvisioningCoordinationError,
+        match="symbols are required for market TW",
+    ):
+        coordinator.transition_legacy_persona_market(result, market="TW")
+
+    registry_after = {key: value for key, value in transport.objects.items() if key[0] == "registry"}
+    assert registry_after == registry_before
+    assert not [key for key in transport.objects if key[1].endswith("-rev1")]
+
+
+def test_transition_persisted_tw_market_without_symbols_fails_at_entry_call() -> None:
+    store, record = _record_and_store()
+    transport = FakeOwnerTransport()
+    coordinator = _coordinator(store, transport, _schedule_receipt)
+    result = coordinator.coordinate(record)
+    assert result.state == "provisioning"
+    stored = store.get(record.tenant_id, record.idempotency_key)
+    stored.request_payload["market"] = "TW"
+
+    for supplied in (None, "US"):
+        with pytest.raises(
+            PersonaProvisioningCoordinationError,
+            match="symbols are required for market TW",
+        ):
+            coordinator.transition_legacy_persona_market(stored, market=supplied)
+
+    assert not [key for key in transport.objects if key[1].endswith("-rev1")]

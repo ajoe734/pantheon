@@ -20,6 +20,7 @@ from urllib.parse import quote
 from services.registry.strategy_artifact import (
     StrategyArtifactValidationError,
     canonical_market_context,
+    classify_market_token,
     create_market_transition_revision,
 )
 
@@ -627,6 +628,8 @@ class PersonaProvisioningCoordinator:
                 f"contradicts parent artifact market '{parent_market}'"
             )
 
+        self._paper_universe(record, market=canonical_market)
+
         active = self.store.acquire(
             record.tenant_id,
             record.idempotency_key,
@@ -1043,13 +1046,28 @@ class PersonaProvisioningCoordinator:
         )
 
     @staticmethod
-    def _paper_universe(record: ProvisioningRecord) -> tuple[list[str], str, str]:
-        """Symbols, bar frequency and data source shared by the spec and bundle."""
+    def _paper_universe(
+        record: ProvisioningRecord,
+        *,
+        market: str | None = None,
+    ) -> tuple[list[str], str, str]:
+        """Symbols, bar frequency and data source shared by the spec and bundle.
+
+        Missing symbols default to SPY only for the legacy absent/US market.
+        """
 
         symbols = record.request_payload.get("symbols")
         if not isinstance(symbols, list) or not all(
             isinstance(item, str) and item.strip() for item in symbols
         ):
+            category = classify_market_token(
+                market if market is not None else record.request_payload.get("market")
+            )
+            if category not in (None, "US"):
+                raise PersonaProvisioningCoordinationError(
+                    f"paper universe symbols are required for market {category}; "
+                    "no default universe is assumed"
+                )
             symbols = ["SPY"]
         bar_frequency = str(record.request_payload.get("bar_frequency") or "1d")
         data_source = str(

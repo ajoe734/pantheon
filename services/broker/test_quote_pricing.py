@@ -1,7 +1,9 @@
 from unittest.mock import MagicMock
 
+import pytest
+
 from quote_pricing import QuotePricer
-from paper_simulation import simulate_paper_order
+from paper_simulation import SimulationError, simulate_paper_order
 from sinopac.adapter import ShioajiBrokerAdapter
 
 
@@ -37,10 +39,11 @@ def test_market_fill_uses_market_price():
     assert o.fill_price == 2340.0
 
 
-def test_market_fill_defaults_when_no_price():
-    o = simulate_paper_order(capital_pool_id="p", strategy_id="s", symbol="2330",
+def test_market_order_without_price_raises_unavailable():
+    with pytest.raises(SimulationError) as excinfo:
+        simulate_paper_order(capital_pool_id="p", strategy_id="s", symbol="2330",
                              qty=1, side="buy", order_type="market")
-    assert o.fill_price == 100.0
+    assert excinfo.value.error_code == "MARKET_PRICE_UNAVAILABLE"
 
 
 def test_limit_fill_unchanged_by_market_price():
