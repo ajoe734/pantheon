@@ -1228,6 +1228,7 @@ from ..openclaw_ops_client import (
 _extract_identity = auth_policy.extract_identity
 _require_read_role = auth_policy.require_read_role
 _bff_error = auth_policy.bff_error
+from ..command_adapters.contracts import resolve_final_idempotency_key as _resolve_final_idempotency_key  # noqa: E402,F401  re-export for existing callers
 _first_nonblank = auth_policy.first_nonblank
 _capabilities_for_identity = auth_policy.capabilities_for_identity
 from ..models import redact_evidence_refs
@@ -1980,28 +1981,6 @@ def _dry_run_success_response(
         headers=headers,
     )
 
-def _resolve_final_idempotency_key(
-    idempotency_key: Optional[str],
-    x_idempotency_key: Optional[str],
-) -> str:
-    """Prefer Idempotency-Key (RFC); accept X-Idempotency-Key as a compatibility alias."""
-    canonical = str(idempotency_key or "").strip()
-    if canonical:
-        return canonical
-    alias = str(x_idempotency_key or "").strip()
-    if alias:
-        return alias
-    raise _bff_error(
-        400,
-        ErrorCode.VALIDATION_FAILED,
-        "Idempotency-Key is required for operator commands",
-        (
-            "Final contract routes require a non-empty Idempotency-Key header; "
-            "X-Idempotency-Key is accepted as a temporary compatibility alias"
-        ),
-        precondition_failed="idempotency_key",
-        suggestion="Retry with Idempotency-Key set to a stable client retry key",
-    )
 
 def _stable_json_hash(payload: Dict[str, Any]) -> str:
     encoded = json.dumps(
