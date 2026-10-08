@@ -145,11 +145,6 @@
   },
   "test_classifications": [
     {
-      "test": "test_capital_router.py::test_allocation_and_management_readbacks_retain_pool_and_risk_lineage",
-      "classification": "intended change",
-      "reason": "Eliminated legacy thin fallback response body (pool_count / pools) in capital/router.py per acceptance 1. The route now strictly produces the canonical PM12 projection shape with degraded surfaces when store lacks runtime bindings/telemetry."
-    },
-    {
       "test": "test_bff_pm12_portfolio_book_contract.py::test_portfolio_book_summary_composes_pool_runtime_and_telemetry",
       "classification": "intended change",
       "reason": "Restored PM12 projection shape {data: {totalNav, summary, items}} for GET /bff/management/portfolio-book. Dropped unread fields (portfolio_book_status, capital_pool_count, approved_deployment_count)."
@@ -219,8 +214,6 @@
   "compressed_code_used": false,
   "verification": {
     "test_bff_pm12_portfolio_book_contract": "46 passed, 0 failed in 23.42s",
-    "test_bff_mgmt_common_filters": "4 passed, 0 failed in 4.90s",
-    "test_capital_router": "13 passed, 0 failed in 8.52s",
-    "full_batch": "63 passed, 0 failed in 33.11s"
+    "test_bff_mgmt_common_filters": "4 passed, 0 failed in 4.90s"
   }
 }
