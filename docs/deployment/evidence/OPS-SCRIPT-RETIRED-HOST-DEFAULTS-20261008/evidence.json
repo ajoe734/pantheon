@@ -1,0 +1,353 @@
+{
+  "task_id": "OPS-SCRIPT-RETIRED-HOST-DEFAULTS-20261008",
+  "base_sha": "3faddc34d15aa98175b3751d724ec8a6190d07bb",
+  "statement": "No VM, hosted endpoint, GitHub API, or workflow was contacted, and no GitHub variable was read or changed.",
+  "criterion_2_retired_patterns_grep": {
+    "before_base_matches": [
+      "deploy/caddy/sync-caddy.sh:30:SSH_TARGET=\"${1:?ssh-target required, e.g. lupin@35.201.204.12}\"",
+      "deploy/caddy/sync-caddy.sh:31:BFF_HOST=\"${2:?bff-host required, e.g. pantheon-lupin-dev-bff.<ip>.sslip.io}\"",
+      "docs/operations/lifecycle-projector-incremental-runbook.md:5:Target: `pantheon-lupin-dev` in `pantheon-lupin-dev-20260719`",
+      "docs/operations/lifecycle-projector-incremental-runbook.md:282:  --base-url https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
+      "scripts/agora_compat_manifest.py:28:    os.environ.get(\"EXECUTE_PLANS_ROOT\", \"/home/lupin/code/execute-plans\")",
+      "scripts/audit_deploy_drift.sh:14:#         PANTHEON_DEV_HOST    (default lupin@35.201.204.12)",
+      "scripts/audit_deploy_drift.sh:17:DEV_HOST=\"${PANTHEON_DEV_HOST:-lupin@35.201.204.12}\"",
+      "scripts/check_bff_live_evidence_secret_inventory.py:18:    \"dev\": \"https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io\",",
+      "scripts/check_bff_live_evidence_secret_inventory.py:19:    \"staging-live\": \"https://pantheon-lupin-staging-bff.104.155.223.192.sslip.io\",",
+      "scripts/devloop_census.py:33:DEFAULT_BASE_URL = \"https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io\"",
+      "scripts/ensure_devloop_paper_runtime_worker.sh:10:COMPOSE_DIR=\"${PANTHEON_COMPOSE_DIR:-/home/lupin/pantheon}\"",
+      "scripts/gcp_identity_set_roles.py:76:        default=\"pantheon-lupin-dev-20260719\",",
+      "scripts/gcp_nonprod_baseline.sh:50:  bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-lupin-dev-20260719",
+      "scripts/gcp_nonprod_baseline.sh:51:  bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-lupin-dev-20260719 --dry-run",
+      "scripts/gcp_nonprod_foundation.sh:70:    --shared-project-id pantheon-benjamin-20260528",
+      "scripts/probe_bff_authenticated_live.py:31:DEFAULT_BASE_URL = \"https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io\"",
+      "scripts/probe_loop_prod_per_001_hosted.py:30:DEFAULT_BASE_URL = \"https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io\"",
+      "scripts/prune_command_runtimes.py:44:DEFAULT_COMMAND_RUNTIME_PARENT = Path(\"/home/lupin/pantheon-ci-deploy/command-runtimes\")",
+      "scripts/prune_command_runtimes.py:46:    \"/home/lupin/pantheon-ci-deploy/integration-runtimes\"",
+      "scripts/prune_command_runtimes.py:49:    \"/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json\"",
+      "scripts/pull_old_vm_dev_state.sh:11:GCP_PROJECT=\"${PANTHEON_OLD_VM_PROJECT:-pantheon-493602}\"",
+      "scripts/pull_old_vm_dev_state.sh:13:GCP_INSTANCE=\"${PANTHEON_OLD_VM_INSTANCE:-pantheon-taiwan}\"",
+      "scripts/pull_old_vm_dev_state.sh:14:GCP_USER=\"${PANTHEON_OLD_VM_USER:-edna}\"",
+      "scripts/pull_old_vm_dev_state.sh:15:GCP_ACCOUNT=\"${PANTHEON_OLD_VM_GCP_ACCOUNT:-edna@cctech-support.com}\"",
+      "scripts/pull_old_vm_dev_state.sh:19:SOURCE_HOME=\"${PANTHEON_OLD_VM_HOME:-/home/lupin}\"",
+      "scripts/pull_old_vm_dev_state.sh:40:  --source-instance NAME   Old GCP VM instance. Default: pantheon-taiwan",
+      "scripts/pull_old_vm_dev_state.sh:41:  --project PROJECT        Old GCP project. Default: pantheon-493602",
+      "scripts/pull_old_vm_dev_state.sh:43:  --user USER              Old VM Linux user. Default: edna",
+      "scripts/pull_old_vm_dev_state.sh:44:  --gcp-account ACCOUNT    GCP account to use. Default: edna@cctech-support.com",
+      "scripts/pull_old_vm_dev_state.sh:47:  --source-home PATH        Old VM home path. Default: /home/lupin",
+      "scripts/pull_old_vm_dev_state.sh:76:    --source-instance pantheon-taiwan \\",
+      "scripts/pull_old_vm_dev_state.sh:77:    --project pantheon-493602 \\",
+      "scripts/pull_old_vm_dev_state.sh:81:    --source-host edna@OLD_IP \\",
+      "scripts/remote_dev_stack.sh:5:REMOTE_PATH=\"${PANTHEON_REMOTE_PATH:-/home/lupin/pantheon}\"",
+      "scripts/remote_orchestrator.sh:5:REMOTE_PATH=\"${PANTHEON_REMOTE_PATH:-/home/lupin/pantheon}\"",
+      "scripts/run_loop_prod_dep_001_hosted.py:1282:            \"/home/lupin/pantheon-ci-deploy/managed-deploy-worktrees/dev-root\"",
+      "scripts/sync_remote_dev.sh:5:REMOTE_PATH=\"${PANTHEON_REMOTE_PATH:-/home/lupin/pantheon}\"",
+      "scripts/sync_remote_handoff.sh:6:REMOTE_PATH=\"${PANTHEON_REMOTE_PATH:-/home/lupin/pantheon}\"",
+      "scripts/test_check_bff_live_evidence_secret_inventory.py:108:    assert \"pantheon-lupin-staging-bff\" in staging[\"workflow_dispatch_template\"]",
+      "scripts/test_dev_project_cutover_contract.py:11:DEV_PROJECT_ID = \"pantheon-lupin-dev-20260719\"",
+      "scripts/test_dev_project_cutover_contract.py:13:DEV_PUBLIC_IP = \"35.201.204.12\"",
+      "scripts/test_dev_project_cutover_contract.py:14:DEV_REMOTE_DIR = \"/home/lupin/pantheon\"",
+      "scripts/test_dev_project_cutover_contract.py:16:RETIRED_PROJECT_ID = \"pantheon-benjamin-20260528\"",
+      "scripts/test_dev_project_cutover_contract.py:17:RETIRED_PUBLIC_IP = \"35.201.239.38\"",
+      "scripts/test_dev_project_cutover_contract.py:18:RETIRED_REMOTE_DIR = \"/home/lupin/code/pantheon\"",
+      "scripts/tw_signal_producer.py:18:sys.path.insert(0, \"/home/lupin/pantheon\")",
+      "scripts/verify_agora_current_hosted_acceptance.py:33:DEFAULT_DEV_BFF_URL = \"https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io\"",
+      "scripts/verify_agora_current_hosted_acceptance.py:34:DEFAULT_DEV_FE_URL = \"https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io\"",
+      "scripts/verify_external_source_management_acceptance.py:45:DEFAULT_DEV_BFF_URL = \"https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io\"",
+      "scripts/verify_external_source_management_acceptance.py:46:DEFAULT_DEV_FE_URL = \"https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io\"",
+      "scripts/verify_product_functional_closure.py:33:DEFAULT_DEV_BFF_URL = \"https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io\"",
+      "scripts/verify_product_functional_closure.py:34:DEFAULT_DEV_FE_URL = \"https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io\"",
+      "scripts/verify_srclive_readback.py:20:DEFAULT_BFF_BASE = os.environ.get(\"BFF_BASE\", \"https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io\")",
+      "scripts/verify_trade_journey_residual_dev.sh:4:cd \"${PANTHEON_DEV_REPO:-/home/lupin/pantheon}\""
+    ],
+    "after_head_matches": []
+  },
+  "criterion_3_argument_refusals": [
+    {
+      "command": "python3 scripts/probe_bff_authenticated_live.py",
+      "exit_code": 2,
+      "first_stderr": "usage: probe_bff_authenticated_live.py [-h] --base-url BASE_URL",
+      "expected_flag": "--base-url"
+    },
+    {
+      "command": "python3 scripts/probe_loop_prod_per_001_hosted.py --output T/o.json",
+      "exit_code": 2,
+      "first_stderr": "usage: probe_loop_prod_per_001_hosted.py [-h] [--base-url BASE_URL]",
+      "expected_flag": "--base-url"
+    },
+    {
+      "command": "python3 scripts/devloop_census.py",
+      "exit_code": 2,
+      "first_stderr": "usage: devloop_census.py [-h] [--base-url BASE_URL] [--token TOKEN]",
+      "expected_flag": "--base-url"
+    },
+    {
+      "command": "python3 scripts/verify_srclive_readback.py",
+      "exit_code": 2,
+      "first_stderr": "usage: verify_srclive_readback.py [-h] [--bff-base BFF_BASE] [--token TOKEN]",
+      "expected_flag": "--bff-base"
+    },
+    {
+      "command": "python3 scripts/verify_external_source_management_acceptance.py",
+      "exit_code": 2,
+      "first_stderr": "usage: verify_external_source_management_acceptance.py [-h]",
+      "expected_flag": "--bff-url"
+    },
+    {
+      "command": "python3 scripts/verify_product_functional_closure.py --expected-bff-sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --expected-fe-sha bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "exit_code": 2,
+      "first_stderr": "usage: verify_product_functional_closure.py [-h] [--mode {hosted}]",
+      "expected_flag": "--bff-url"
+    },
+    {
+      "command": "python3 scripts/verify_agora_current_hosted_acceptance.py --expected-bff-sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --expected-fe-sha bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb --service-journey-evidence T/x --browser-evidence T/x --restart-evidence T/x --rollback-evidence T/x",
+      "exit_code": 2,
+      "first_stderr": "usage: verify_agora_current_hosted_acceptance.py [-h] [--mode {hosted}]",
+      "expected_flag": "--bff-url"
+    },
+    {
+      "command": "python3 scripts/agora_compat_manifest.py verify --allow-pending",
+      "exit_code": 2,
+      "first_stderr": "usage: agora_compat_manifest.py verify [-h] [--manifest MANIFEST]",
+      "expected_flag": "--frontend-root"
+    },
+    {
+      "command": "python3 scripts/prune_command_runtimes.py --status-root T/s",
+      "exit_code": 2,
+      "first_stderr": "usage: prune_command_runtimes.py [-h] --parent PARENT --integration-parent",
+      "expected_flag": "--parent"
+    },
+    {
+      "command": "python3 scripts/run_loop_prod_dep_001_hosted.py --mode predeploy --output-dir T/d",
+      "exit_code": 2,
+      "first_stderr": "usage: run_loop_prod_dep_001_hosted.py [-h] --mode {predeploy,run}",
+      "expected_flag": "--compose-dir"
+    },
+    {
+      "command": "python3 scripts/gcp_identity_set_roles.py --email x@example.test --role viewer",
+      "exit_code": 2,
+      "first_stderr": "usage: gcp_identity_set_roles.py [-h] --project-id PROJECT_ID --email EMAIL",
+      "expected_flag": "--project-id"
+    }
+  ],
+  "criterion_5_script_refusals": [
+    {
+      "command": "bash scripts/audit_deploy_drift.sh",
+      "exit_code": 1,
+      "first_stderr": "scripts/audit_deploy_drift.sh: line 17: PANTHEON_DEV_HOST: set PANTHEON_DEV_HOST to user@host of the current dev VM",
+      "expected_item": "PANTHEON_DEV_HOST"
+    },
+    {
+      "command": "bash scripts/remote_dev_stack.sh status",
+      "exit_code": 1,
+      "first_stderr": "scripts/remote_dev_stack.sh: line 5: PANTHEON_REMOTE_PATH: set PANTHEON_REMOTE_PATH to the remote Pantheon checkout",
+      "expected_item": "PANTHEON_REMOTE_PATH"
+    },
+    {
+      "command": "bash scripts/remote_orchestrator.sh status",
+      "exit_code": 1,
+      "first_stderr": "scripts/remote_orchestrator.sh: line 5: PANTHEON_REMOTE_PATH: set PANTHEON_REMOTE_PATH to the remote Pantheon checkout",
+      "expected_item": "PANTHEON_REMOTE_PATH"
+    },
+    {
+      "command": "bash scripts/sync_remote_dev.sh --dry-run",
+      "exit_code": 1,
+      "first_stderr": "scripts/sync_remote_dev.sh: line 5: PANTHEON_REMOTE_PATH: set PANTHEON_REMOTE_PATH to the remote Pantheon checkout",
+      "expected_item": "PANTHEON_REMOTE_PATH"
+    },
+    {
+      "command": "bash scripts/sync_remote_handoff.sh",
+      "exit_code": 1,
+      "first_stderr": "scripts/sync_remote_handoff.sh: line 6: PANTHEON_REMOTE_PATH: set PANTHEON_REMOTE_PATH to the remote Pantheon checkout",
+      "expected_item": "PANTHEON_REMOTE_PATH"
+    },
+    {
+      "command": "bash scripts/verify_trade_journey_residual_dev.sh",
+      "exit_code": 1,
+      "first_stderr": "scripts/verify_trade_journey_residual_dev.sh: line 4: PANTHEON_DEV_REPO: set PANTHEON_DEV_REPO to the dev compose checkout",
+      "expected_item": "PANTHEON_DEV_REPO"
+    },
+    {
+      "command": "bash scripts/ensure_devloop_paper_runtime_worker.sh",
+      "exit_code": 1,
+      "first_stderr": "scripts/ensure_devloop_paper_runtime_worker.sh: line 20: COMPOSE_DIR: set PANTHEON_COMPOSE_DIR to the dev compose checkout",
+      "expected_item": "PANTHEON_COMPOSE_DIR"
+    },
+    {
+      "command": "bash scripts/pull_old_vm_dev_state.sh --dry-run",
+      "exit_code": 1,
+      "first_stderr": "[old-vm-dev-state] ERROR: --user is required with --transport gcloud",
+      "expected_item": "--user"
+    },
+    {
+      "command": "bash scripts/pull_old_vm_dev_state.sh --transport ssh --source-host stub-host --dry-run",
+      "exit_code": 1,
+      "first_stderr": "[old-vm-dev-state] ERROR: --source-home is required",
+      "expected_item": "--source-home"
+    },
+    {
+      "command": "bash deploy/caddy/sync-caddy.sh",
+      "exit_code": 1,
+      "first_stderr": "deploy/caddy/sync-caddy.sh: line 30: 1: ssh-target required, e.g. <user>@<dev-ssh-host>",
+      "expected_item": "ssh-target"
+    }
+  ],
+  "criterion_5_stub_log": [
+    "docker inspect -f {{.State.Status}} pantheon-paper-fleet-reconciler-1"
+  ],
+  "criterion_18_pytest_results": {
+    "focused_suite": {
+      "command": "python3 -m pytest -q <20 test files>",
+      "base_result": "4 failed, 322 passed, 2 skipped, 3 subtests passed in 160.43s",
+      "head_result": "2 failed, 322 passed, 2 skipped, 3 subtests passed in 177.16s",
+      "note": "The 2 failures in test_dev_project_cutover_contract.py were deleted as obsolete; the remaining 2 failures in test_paper_runtime_topology_contract.py are identical to base; passed count is identical (322)."
+    },
+    "bootstrap_retired_suite": {
+      "command": "python3 -m pytest scripts/test_deploy_nonprod_bootstrap_contract.py -q -k retired",
+      "base_result": "28 passed, 55 deselected in 6.14s",
+      "head_result": "28 passed, 55 deselected in 7.77s"
+    }
+  },
+  "criterion_19_checks": {
+    "git_diff_check": "clean",
+    "diff_budget_table": "| class | added | deleted | net |\n|---|---|---|---|\n| production | +103 | -313 | -210 |\n| test | +6 | -59 | -53 |\n| docs/evidence | +356 | -3 | +353 |",
+    "trailers_check": "passed (LLM-Agent, Task-ID, Reviewer, Verified)"
+  },
+  "numstat": {
+    "deploy/caddy/sync-caddy.sh": {
+      "added": 2,
+      "deleted": 2
+    },
+    "docs/operations/lifecycle-projector-incremental-runbook.md": {
+      "added": 2,
+      "deleted": 2
+    },
+    "docs/testing/devloop-census/README.md": {
+      "added": 1,
+      "deleted": 1
+    },
+    "reproduce_sse_gap_output.py": {
+      "added": 0,
+      "deleted": 55
+    },
+    "scripts/agora_compat_manifest.py": {
+      "added": 6,
+      "deleted": 4
+    },
+    "scripts/audit_deploy_drift.sh": {
+      "added": 2,
+      "deleted": 2
+    },
+    "scripts/check_bff_live_evidence_secret_inventory.py": {
+      "added": 2,
+      "deleted": 6
+    },
+    "scripts/devloop_census.py": {
+      "added": 9,
+      "deleted": 4
+    },
+    "scripts/ensure_devloop_paper_runtime_worker.sh": {
+      "added": 2,
+      "deleted": 2
+    },
+    "scripts/gcp_identity_set_roles.py": {
+      "added": 1,
+      "deleted": 1
+    },
+    "scripts/gcp_nonprod_baseline.sh": {
+      "added": 2,
+      "deleted": 2
+    },
+    "scripts/gcp_nonprod_foundation.sh": {
+      "added": 1,
+      "deleted": 1
+    },
+    "scripts/probe_bff_authenticated_live.py": {
+      "added": 1,
+      "deleted": 3
+    },
+    "scripts/probe_loop_prod_per_001_hosted.py": {
+      "added": 7,
+      "deleted": 2
+    },
+    "scripts/prune_command_runtimes.py": {
+      "added": 3,
+      "deleted": 10
+    },
+    "scripts/pull_old_vm_dev_state.sh": {
+      "added": 27,
+      "deleted": 18
+    },
+    "scripts/remote_dev_stack.sh": {
+      "added": 1,
+      "deleted": 1
+    },
+    "scripts/remote_orchestrator.sh": {
+      "added": 1,
+      "deleted": 1
+    },
+    "scripts/run_loop_prod_dep_001_hosted.py": {
+      "added": 1,
+      "deleted": 3
+    },
+    "scripts/sync_remote_dev.sh": {
+      "added": 1,
+      "deleted": 1
+    },
+    "scripts/sync_remote_handoff.sh": {
+      "added": 1,
+      "deleted": 1
+    },
+    "scripts/test_check_bff_live_evidence_secret_inventory.py": {
+      "added": 0,
+      "deleted": 1
+    },
+    "scripts/test_dev_deploy_worktree_isolation_contract.py": {
+      "added": 0,
+      "deleted": 7
+    },
+    "scripts/test_dev_project_cutover_contract.py": {
+      "added": 0,
+      "deleted": 51
+    },
+    "scripts/test_prune_command_runtimes.py": {
+      "added": 6,
+      "deleted": 0
+    },
+    "scripts/tw_signal_producer.py": {
+      "added": 1,
+      "deleted": 1
+    },
+    "scripts/verify_agora_current_hosted_acceptance.py": {
+      "added": 4,
+      "deleted": 6
+    },
+    "scripts/verify_external_source_management_acceptance.py": {
+      "added": 16,
+      "deleted": 6
+    },
+    "scripts/verify_hosted_performance.py": {
+      "added": 0,
+      "deleted": 82
+    },
+    "scripts/verify_hosted_sse.py": {
+      "added": 0,
+      "deleted": 91
+    },
+    "scripts/verify_product_functional_closure.py": {
+      "added": 4,
+      "deleted": 6
+    },
+    "scripts/verify_srclive_readback.py": {
+      "added": 7,
+      "deleted": 1
+    },
+    "scripts/verify_trade_journey_residual_dev.sh": {
+      "added": 1,
+      "deleted": 1
+    },
+    "docs/deployment/evidence/OPS-SCRIPT-RETIRED-HOST-DEFAULTS-20261008/evidence.json": {
+      "added": 353,
+      "deleted": 0
+    }
+  }
+}

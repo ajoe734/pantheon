@@ -28,8 +28,6 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 
-DEFAULT_BASE_URL = "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
-
 
 def strict_live_evidence_run() -> dict[str, str]:
     return {
@@ -1428,7 +1426,7 @@ def apply_strict_live_evidence(args: argparse.Namespace) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
+    parser.add_argument("--base-url", required=True)
     parser.add_argument("--output", default="")
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--include-writes", action="store_true")

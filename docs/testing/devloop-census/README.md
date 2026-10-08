@@ -11,7 +11,7 @@ and counts these surfaces:
 - `/bff/incidents`
 - `/api/v1/rollbacks`
 
-Run it against the dev BFF recorded as `DEV_BFF_URL` in [§ 3.1](../../deployment/vm-dev-staging-prod-management-plan.md#31-dev); always set `BFF_BASE`, because the script default names a retired host:
+Run it against the dev BFF recorded as `DEV_BFF_URL` in [§ 3.1](../../deployment/vm-dev-staging-prod-management-plan.md#31-dev); always set `BFF_BASE`, because the script has no default BFF target:
 
 ```bash
 BFF_BASE=<dev-bff-url> \
