@@ -6,8 +6,8 @@
   "reviewer": "Claude",
   "status": "implementation_ready_for_review",
   "target_repo": "pantheon",
-  "base_sha": "3b6f5dc8dee34c3816639678ae963e7c3229f4f7",
-  "recorded_at": "2026-10-08T01:07:30Z",
+  "base_sha": "4a6f8b1de5285a094a2c8f90d8033a28c9318dee",
+  "recorded_at": "2026-10-08T01:20:00Z",
   "summary": "Removed the nonprod-deploy drift-recovery chain (_drift_recovery_source, allowed_revisions, DRIFT_FIELDS, drift_args, PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE, PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA), returning rollback authority strictly to previous_backend_sha. Partially reverted #5908 by requiring viewer dev-login proof on artifact restore while capture, seal-candidate, and verify retain declared literal-false absence recording.",
   "scope": {
     "declared_artifacts": [
@@ -45,7 +45,7 @@
   },
   "diff_budget": {
     "change_class": "simplify",
-    "base": "3b6f5dc8dee34c3816639678ae963e7c3229f4f7",
+    "base": "4a6f8b1de5285a094a2c8f90d8033a28c9318dee",
     "production": {
       "added": 30,
       "deleted": 120,
@@ -57,9 +57,9 @@
       "net": -502
     },
     "docs_evidence": {
-      "added": 142,
+      "added": 209,
       "deleted": 0,
-      "net": 142
+      "net": 209
     }
   },
   "test_verification": {
@@ -81,10 +81,10 @@
       "scripts/test_dev_paper_diagnostics_failure_path.py"
     ],
     "baseline_run": {
-      "passed": 1165,
+      "passed": 1178,
       "failed": 4,
       "skipped": 5,
-      "total": 1174,
+      "total": 1187,
       "failures": [
         "scripts/test_deploy_nonprod_vm.py::test_actual_ssh_command_forwards_drift_metadata",
         "scripts/test_deploy_nonprod_artifact_restore.py::test_actual_ssh_command_forwards_explicit_seal_metadata_but_not_runner_guard_fd",
@@ -93,10 +93,10 @@
       ]
     },
     "head_run": {
-      "passed": 1136,
+      "passed": 1149,
       "failed": 3,
       "skipped": 5,
-      "total": 1144,
+      "total": 1157,
       "failures": [
         "scripts/test_deploy_nonprod_artifact_restore.py::test_actual_ssh_command_forwards_explicit_seal_metadata_but_not_runner_guard_fd",
         "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_root_deploy_profiles_isolate_persistent_runtime_and_exclude_dormant_smokes",
@@ -199,7 +199,7 @@
     {
       "criterion": "17. diff_budget.py exits 0 and line counts recorded",
       "status": "verified",
-      "details": "Production: net -90, Test: net -502, Docs/Evidence: net +142."
+      "details": "Production: net -90, Test: net -502, Docs/Evidence: net +209."
     }
   ]
 }
