@@ -455,6 +455,106 @@ def test_portfolio_book_summary_partial_coverage_omits_nav_and_yields_null(monke
     assert data["pnlToday"] is None
 
 
+def test_portfolio_book_summary_filtered_pool_does_not_use_portfolio_telemetry_rollup(monkeypatch) -> None:
+    client = _portfolio_store(
+        monkeypatch,
+        capital_pools=[
+            {
+                "id": "pool-test-1",
+                "pool_id": "pool-test-1",
+                "name": "Test Pool 1",
+                "status": "active",
+                "nav": 100.0,
+                "cash": 40.0,
+                "risk_budget": 100.0,
+                "current_exposure": 30.0,
+                "currency": "USD",
+                "strategy_id": "strategy-test-1",
+            },
+            {
+                "id": "pool-test-2",
+                "pool_id": "pool-test-2",
+                "name": "Test Pool 2",
+                "status": "active",
+                "nav": 150.0,
+                "cash": 60.0,
+                "risk_budget": 100.0,
+                "current_exposure": 40.0,
+                "currency": "USD",
+                "strategy_id": "strategy-test-2",
+            },
+            {
+                "id": "pool-test-3",
+                "pool_id": "pool-test-3",
+                "name": "Test Pool 3",
+                "status": "active",
+                "nav": 80.0,
+                "cash": 20.0,
+                "risk_budget": 50.0,
+                "current_exposure": 15.0,
+                "currency": "USD",
+                "strategy_id": "strategy-test-3",
+            },
+        ],
+        extra_runtime_bindings=[
+            {
+                "id": "rb-test-1",
+                "runtime_id": "runtime-test-1",
+                "capital_pool_id": "pool-test-1",
+                "status": "running",
+            },
+            {
+                "id": "rb-test-2",
+                "runtime_id": "runtime-test-2",
+                "capital_pool_id": "pool-test-2",
+                "status": "running",
+            },
+            {
+                "id": "rb-test-3",
+                "runtime_id": "runtime-test-3",
+                "capital_pool_id": "pool-test-3",
+                "status": "running",
+            },
+        ],
+        telemetry={
+            "runtime-test-1": {
+                "runtime_id": "runtime-test-1",
+                "pnl": 10.0,
+                "daily_pnl": 4.5,
+                "unrealized_pnl": 12.0,
+            },
+            "runtime-test-2": {
+                "runtime_id": "runtime-test-2",
+                "pnl": 20.0,
+                "daily_pnl": 8.0,
+                "unrealized_pnl": 30.0,
+            },
+            "runtime-test-3": {
+                "runtime_id": "runtime-test-3",
+                "pnl": 5.0,
+            },
+        },
+    )
+
+    # 1. Filter to pool-test-1 via strategyId: assert unrealizedPnl and pnlToday are that pool values, not portfolio rollup (42.0 and 12.5)
+    response = client.get("/bff/management/portfolio-book?strategyId=strategy-test-1", headers=HEADERS)
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert len(data["items"]) == 1
+    assert data["items"][0]["pool_id"] == "pool-test-1"
+    assert data["unrealizedPnl"] == 12.0  # Pool-specific, not 42.0 (12.0 + 30.0)
+    assert data["pnlToday"] == 4.5        # Pool-specific, not 12.5 (4.5 + 8.0)
+
+    # 2. Filter to pool-test-3 (which has no daily or unrealized telemetry): assert values are null, not portfolio rollup
+    response = client.get("/bff/management/portfolio-book?strategyId=strategy-test-3", headers=HEADERS)
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert len(data["items"]) == 1
+    assert data["items"][0]["pool_id"] == "pool-test-3"
+    assert data["unrealizedPnl"] is None  # Null, not 42.0 portfolio rollup
+    assert data["pnlToday"] is None       # Null, not 12.5 portfolio rollup
+
+
 def test_portfolio_book_requires_read_auth(monkeypatch) -> None:
     client = _portfolio_store(monkeypatch)
 

@@ -1674,16 +1674,12 @@ def _pm12_portfolio_book_response(
         if unrealized is None:
             tel = e.get("telemetry") or {}
             unrealized = _management_as_float(tel.get("unrealized_pnl"))
-        if unrealized is None and len(contributing_pools) == 1 and portfolio_telemetry.get("unrealized_pnl") is not None:
-            unrealized = portfolio_telemetry["unrealized_pnl"]
         unrealized_values.append(unrealized)
 
         daily = _management_as_float(p.get("pnl_today") if p.get("pnl_today") is not None else p.get("daily_pnl"))
         if daily is None:
             tel = e.get("telemetry") or {}
             daily = _management_as_float(tel.get("daily_pnl") if tel.get("daily_pnl") is not None else tel.get("pnl_today"))
-        if daily is None and len(contributing_pools) == 1:
-            daily = portfolio_telemetry.get("daily_pnl") if portfolio_telemetry.get("daily_pnl") is not None else portfolio_telemetry.get("pnl_today")
         pnl_today_values.append(daily)
 
     unrealized_pnl = round(sum(unrealized_values), 6) if (contributing_pools and all(v is not None for v in unrealized_values)) else None

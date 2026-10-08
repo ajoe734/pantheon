@@ -253,6 +253,11 @@
       "test": "test_bff_pm12_portfolio_book_contract.py::test_portfolio_book_summary_partial_coverage_omits_nav_and_yields_null",
       "classification": "intended change",
       "reason": "Verified that when coverage across contributing capital pools is partial, totalNav is omitted from data and partial totals return null rather than understating whole-portfolio capital."
+    },
+    {
+      "test": "test_bff_pm12_portfolio_book_contract.py::test_portfolio_book_summary_filtered_pool_does_not_use_portfolio_telemetry_rollup",
+      "classification": "intended change",
+      "reason": "Verified that when query filters (e.g. strategyId) leave a single pool, unrealizedPnl and pnlToday use only that pool's record and entry telemetry (or null if missing), and never misattribute the whole-portfolio telemetry rollup."
     }
   ],
   "frontend_follow_ups": [
@@ -275,8 +280,8 @@
   "assertions_weakened": false,
   "compressed_code_used": false,
   "verification": {
-    "test_bff_pm12_portfolio_book_contract": "49 passed, 0 failed in 21.30s",
-    "test_bff_mgmt_common_filters": "4 passed, 0 failed in 4.87s",
-    "total": "53 passed, 0 failed in 26.17s"
+    "test_bff_pm12_portfolio_book_contract": "50 passed, 0 failed in 22.5s",
+    "test_bff_mgmt_common_filters": "4 passed, 0 failed in 4.9s",
+    "total": "54 passed, 0 failed in 27.43s"
   }
 }
