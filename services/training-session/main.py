@@ -863,6 +863,10 @@ def _load_authority_snapshot(*, trusted_now: datetime, strategy_id: str) -> Eval
                 os.getenv("TRAINING_SESSION_SOURCE_READ_TOKEN_FILE"),
                 os.getenv("TRAINING_SESSION_SOURCE_READ_TENANT_ID"),
             )
+            policy_path = (
+                str(os.getenv("TRAINING_SESSION_THRESHOLD_POLICY_PATH") or "").strip()
+                or None
+            )
             materialized = materialize_source_dataset_version(
                 http_get=lambda url: urllib_json_get(
                     url, timeout_seconds=timeout, headers=read_headers
@@ -874,6 +878,7 @@ def _load_authority_snapshot(*, trusted_now: datetime, strategy_id: str) -> Eval
                 output_root=output_root,
                 trusted_now=trusted_now,
                 clock=_trusted_now,
+                policy_path=policy_path,
             )
         except (SourceDatasetAuthorityError, ValueError) as exc:
             raise AuthorityValidationError(f"source DatasetVersion authority rejected: {exc}") from exc

@@ -19,9 +19,9 @@ if str(SCRIPTS) not in sys.path:
 import dev_environment_lease as lease
 WORKFLOW = ROOT / ".github" / "workflows" / "nonprod-deploy.yml"
 DEPLOY = ROOT / "scripts" / "deploy_nonprod_vm.sh"
-CONTROLLER_SHA = "9e564718da8c39199a4c311f1a667b74226e3428"
+CONTROLLER_SHA = "aee1243573e29d289dac00be13641bb16be7f6bf"
 CONTROLLER_SCRIPT_SHA256 = (
-    "52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048"
+    "da9a728ed8cec8e1133b92171e4038f9dc51ef4888911acd02c7e399e54d95ae"
 )
 CONTROLLER_WRAPPER_SHA256 = (
     "6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2"
@@ -97,6 +97,24 @@ def test_controller_checksums_match_pinned_controller_files() -> None:
     )
     assert dev.count(CONTROLLER_SCRIPT_SHA256) >= 7
     assert dev.count(CONTROLLER_WRAPPER_SHA256) >= 7
+    # A controller-only fix must reach the immutable workflow entry point.
+    # This catches the historical case where local tests covered newer code
+    # but deployments continued executing the older fail-on-first-500 blob.
+    assert hashlib.sha256((SCRIPTS / "dev_environment_lease.py").read_bytes()).hexdigest() == CONTROLLER_SCRIPT_SHA256
+
+
+def test_compensation_and_other_lease_callers_use_the_repaired_controller() -> None:
+    for relative in (
+        ".github/workflows/agora-hosted-acceptance.yml",
+        ".github/workflows/dev-tw-market-refresh.yml",
+        "scripts/compensate_cross_repo_release.sh",
+    ):
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert CONTROLLER_SHA in text, relative
+        assert CONTROLLER_SCRIPT_SHA256 in text, relative
+        assert CONTROLLER_WRAPPER_SHA256 in text, relative
+    fixture_workflow = (ROOT / ".github/workflows/persona-owner-contract.yml").read_text()
+    assert f"git fetch --no-tags --depth=1 origin {CONTROLLER_SHA}" in fixture_workflow
 
 
 def test_dev_and_staging_are_independent_jobs_and_staging_has_no_lease_secret() -> None:

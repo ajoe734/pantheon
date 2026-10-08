@@ -834,13 +834,31 @@ CONTEXT_PY
 }
 fi
 
+if [[ "${REFRESH_ONLY:-false}" == "true" && -n "${DEV_DEPLOY_SSH_HOST:-}" ]]; then
+  DEPLOY_ENV="dev"
+  COMPONENT="refresh-only"
+  PROJECT_ID="${PROJECT_ID:-pantheon-dev-20260902}"
+  REMOTE_USER="${REMOTE_USER:-${DEV_DEPLOY_SSH_USER:-chloe_ong_dev_cctech_support_com}}"
+  DEV_VM="${DEV_VM:-pantheon-dev-deploy}"
+  DEV_ZONE="${DEV_ZONE:-asia-east1-b}"
+fi
+
 ssh_bash() {
   local vm="$1"
   local zone="$2"
   local remote_dir="$3"
   local remote_component="$4"
-  local command_prefix="" deadline_seconds="${DEV_DEPLOY_DEADLINE_SECONDS:-7200}" remote_command=()
-  if [[ "${remote_component}" != "refresh-only" ]]; then
+  local command_prefix="" deadline_seconds="${DEV_DEPLOY_DEADLINE_SECONDS:-7200}" remote_command=() remote_output=""
+  if [[ "${remote_component}" == "refresh-only" ]]; then
+    [[ -z "${REFRESH_OUTPUT_PATH:-}" ]] || remote_output="/tmp/pantheon-refresh-outcome-${GITHUB_RUN_ID:-$$}.json"
+    command_prefix="PANTHEON_DEPLOY_ENV=$(shell_quote "$DEPLOY_ENV")"
+    command_prefix+=" PANTHEON_DEPLOY_COMPONENT=refresh-only"
+    command_prefix+=" PANTHEON_REMOTE_DIR=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:+${PANTHEON_DEPLOY_WORKTREE_ROOT%/}/dev-root}")"
+    command_prefix+=" PANTHEON_DEPLOY_WORKTREE_ROOT=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:-}")"
+    command_prefix+=" FORCE_REFRESH=$(shell_quote "${FORCE_REFRESH:-false}")"
+    command_prefix+=" REFRESH_OUTPUT_PATH=$(shell_quote "${remote_output}")"
+    command_prefix+=" bash -s"
+  else
     command_prefix="PANTHEON_DEPLOY_ENV=$(shell_quote "$DEPLOY_ENV")"
     command_prefix+=" PANTHEON_DEPLOY_COMPONENT=$(shell_quote "$remote_component")"
     command_prefix+=" PANTHEON_DEPLOY_SHA=$(shell_quote "$DEPLOY_SHA")"
@@ -966,7 +984,7 @@ ssh_bash() {
   fi
 
   run_remote_payload() {
-    if [[ "${remote_component}" == "refresh-only" ]]; then
+    if [[ "${remote_component}" == "refresh-only" && -z "${DEV_DEPLOY_SSH_HOST:-}" ]]; then
       PANTHEON_DEPLOY_COMPONENT=refresh-only \
       FORCE_REFRESH="${FORCE_REFRESH:-false}" \
       REFRESH_OUTPUT_PATH="${REFRESH_OUTPUT_PATH:-}" \
@@ -976,11 +994,14 @@ ssh_bash() {
     if [[ "${DEPLOY_ENV}" == dev ]]; then
       [[ "${PROJECT_ID}" == pantheon-dev-20260902 && "${vm}" == pantheon-dev-deploy && \
          "${zone}" == asia-east1-b && "${DEV_DEPLOY_SSH_HOST}" == 34.81.52.222 && \
-         "${DEV_DEPLOY_SSH_USER:-${REMOTE_USER}}" == chloe_ong_dev_cctech_support_com && \
-         "${DEV_BFF_PUBLIC_HOST}" == api.dev.mvl-cap.tw && "${DEV_FE_PUBLIC_HOST}" == app.dev.mvl-cap.tw ]] \
+         "${DEV_DEPLOY_SSH_USER:-${REMOTE_USER}}" == chloe_ong_dev_cctech_support_com ]] \
         || { info "guarded artifact transport requires the explicit current dev target" >&2; return 75; }
+      if [[ "${remote_component}" != "refresh-only" ]]; then
+        [[ "${DEV_BFF_PUBLIC_HOST}" == api.dev.mvl-cap.tw && "${DEV_FE_PUBLIC_HOST}" == app.dev.mvl-cap.tw ]] \
+          || { info "guarded artifact transport requires the explicit current dev target" >&2; return 75; }
+      fi
       local -a observer_args=()
-      if [[ "${ARTIFACT_RESTORE}" != true && "${ARTIFACT_VERIFY}" != true ]]; then
+      if [[ "${remote_component}" != "refresh-only" && "${ARTIFACT_RESTORE}" != true && "${ARTIFACT_VERIFY}" != true ]]; then
         prepare_dev_candidate_receipt_context || return $?
         observer_args=(--candidate-receipt-context "${PANTHEON_DEV_ARTIFACT_RUNNER_EVIDENCE_DIR}/context.json"
           --candidate-receipt-output "${PANTHEON_DEV_ARTIFACT_RUNNER_EVIDENCE_DIR}/candidate-receipt.json")
@@ -1021,6 +1042,10 @@ with os.fdopen(fd, "wb") as stream:
             --ssh-helper "${SCRIPT_DIR}/dev_vm_ssh.sh" --script-file "${remote_script}" \
             --deadline-seconds "${deadline_seconds}" "${observer_args[@]}" || transport_status=$?
         fi
+      fi
+      if [[ "${transport_status}" -eq 0 && "${remote_component}" == "refresh-only" && -n "${remote_output:-}" && -n "${REFRESH_OUTPUT_PATH:-}" ]]; then
+        "$SCRIPT_DIR/dev_vm_ssh.sh" copy-from "${remote_output}" "${REFRESH_OUTPUT_PATH}" || true
+        "$SCRIPT_DIR/dev_vm_ssh.sh" exec "rm -f $(shell_quote "${remote_output}")" >/dev/null 2>&1 || true
       fi
       # Only these locally-created, exact private paths are removed; never an
       # evidence directory, receipt, retained VM artifact, or caller path.
@@ -1750,11 +1775,10 @@ except Exception as exc:
 
 if snap is not None:
     cal = snap.get("calendar_evidence") or (snap.get("lineage") or {}).get("calendar_evidence")
-    if not cal:
-        emit("error", reason="market_input_calendar_unverifiable", detail="snapshot missing required calendar evidence and pins")
-    c_ok, c_err, c_norm = validate_taiwan_calendar_evidence(cal, now_dt=now_u)
+    c_ok, c_err, c_norm = validate_taiwan_calendar_evidence(cal, now_dt=now_u) if cal else (False, "snapshot missing calendar evidence", None)
     if not c_ok:
-        emit("error", reason="market_input_calendar_unverifiable", detail=c_err)
+        print(f"refresh needed: existing snapshot calendar evidence unusable: {c_err}", file=sys.stderr)
+        emit("proceed", reason="calendar_evidence_refresh_needed", detail=str(c_err))
     if d_str in (c_norm.get("holidays") or {}):
         emit("skipped", reason="holiday", checked_at=now_u.isoformat())
     ev_dt = datetime.fromisoformat(snap["event_time"].replace("Z", "+00:00"))
@@ -4161,6 +4185,10 @@ if [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" == true || "${PANTHEON_DEV_ARTIF
   exit 0
 fi
 
+if [[ "${PANTHEON_DEPLOY_COMPONENT}" == refresh-only ]]; then
+  [[ -n "${PANTHEON_REMOTE_DIR:-}" && -f "${PANTHEON_REMOTE_DIR}/docker-compose.yml" ]] \
+    || error "no managed deploy worktree containing docker-compose.yml at '${PANTHEON_REMOTE_DIR:-}' (set DEV_DEPLOY_WORKTREE_ROOT)"
+fi
 cd "${PANTHEON_REMOTE_DIR:-$(pwd)}"
 git rev-parse --is-inside-work-tree >/dev/null
 
@@ -4378,7 +4406,7 @@ REMOTE
 }
 
 if [[ "${REFRESH_ONLY:-false}" == "true" ]]; then
-  ssh_bash "" "" "" refresh-only
+  ssh_bash "${DEV_VM:-}" "${DEV_ZONE:-}" "${DEV_REMOTE_DIR:-}" refresh-only
   exit $?
 fi
 
