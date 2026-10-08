@@ -335,7 +335,9 @@ def test_scheduler_writes_loop_control_success_observation(tmp_path: Path) -> No
     record = fake_writer.written[0]
     assert record["type"] == "success"
     assert record["loop_id"] == scheduler.DEFAULT_LOOP_ID
-    assert record["kwargs"]["evidence_refs"] == ["policy-learning://candidates/cand-1"]
+    refs = record["kwargs"]["evidence_refs"]
+    assert refs[0].startswith("policy-learning://shadow-eval-ticks/")
+    assert refs[1:] == ["policy-learning://candidates/cand-1"]
     assert record["kwargs"]["backlog"] == 1
     assert record["kwargs"]["dlq_count"] == 0
     assert record["kwargs"]["payload"]["cycle"] == cycle
@@ -855,3 +857,105 @@ def test_agora_dataset_resolution_covers_governed_content_shapes() -> None:
             assert exc.reason == "dataset_version_not_found"
         else:  # pragma: no cover - guards the tenant isolation contract
             raise AssertionError("cross-tenant dataset version must not resolve")
+
+
+def _project_published_record(kwargs: dict, *, lease_seconds: int) -> dict:
+    import importlib
+    from datetime import datetime, timedelta, timezone
+
+    if str(_REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(_REPO_ROOT))
+    projector = importlib.import_module("services.loop-control.projector")
+    now = datetime.now(timezone.utc)
+    row = {
+        "last_heartbeat_at": now,
+        "last_success_at": now,
+        "lease_token": "token",
+        "lease_expires_at": now + timedelta(seconds=lease_seconds),
+        "desired_state": kwargs.get("desired_state"),
+        "downstream_actual_state": kwargs.get("downstream_actual_state"),
+        "evidence_refs": kwargs.get("evidence_refs"),
+    }
+    return projector.project_controller_record_to_bff(row, now=now)
+
+
+def test_scheduler_published_record_projects_authoritative_and_healthy(tmp_path: Path) -> None:
+    scheduler = _load_scheduler_module()
+    assert scheduler.DEFAULT_LOOP_ID == "human_imitation_shadow_evaluation"
+    fake_writer = _FakeLoopWriter()
+    built: dict = {}
+
+    def build(**kwargs):
+        built.update(kwargs)
+        return fake_writer
+
+    with mock.patch.dict(
+        "os.environ",
+        {
+            "POLICY_LEARNING_SERVICE_TOKEN": "test-token",
+            "AGORA_HANDOFF_SERVICE_TOKEN": "agora-test-token",
+            "POLICY_LEARNING_AGORA_TENANT_ID": "tenant-observation",
+            "SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS": "3600",
+            "SHADOW_EVAL_SCHEDULER_MAX_TICKS": "1",
+            "SHADOW_EVAL_SCHEDULER_HEALTH_FILE": str(tmp_path / "h.json"),
+            "DATABASE_URL": "postgresql://fake:fake@localhost:5432/fake",
+        },
+        clear=False,
+    ), mock.patch.object(
+        scheduler, "run_recovery", return_value={"status": "ok"}
+    ), mock.patch.object(
+        scheduler, "run_intake_cycle", return_value={"status": "ok", "processed_count": 0}
+    ), mock.patch.object(
+        scheduler, "run_claim_cycle", return_value={"status": "ok", "processed_count": 0}
+    ), mock.patch.object(
+        scheduler, "_build_loop_writer", side_effect=build
+    ):
+        assert scheduler.main() == 0
+
+    assert built["lease_seconds"] >= 3600 + scheduler.TICK_TIMEOUT_SECONDS
+    kwargs = fake_writer.written[0]["kwargs"]
+    projected = _project_published_record(kwargs, lease_seconds=built["lease_seconds"])
+    assert projected["desired_state_presence"]["authoritative"] is True
+    assert projected["downstream_actual_state"]["authoritative"] is True
+    assert projected["evidence_refs"]
+    assert projected["controller_health"]["status"] == "healthy"
+
+
+def test_scheduler_refreshes_heartbeat_while_waiting(tmp_path: Path) -> None:
+    scheduler = _load_scheduler_module()
+    heartbeats: list[dict] = []
+
+    class _Writer(_FakeLoopWriter):
+        async def record_heartbeat(self, *, loop_id: str, **kwargs) -> None:
+            heartbeats.append(kwargs)
+
+    sleeps: list[float] = []
+    with mock.patch.dict(
+        "os.environ",
+        {
+            "POLICY_LEARNING_SERVICE_TOKEN": "test-token",
+            "AGORA_HANDOFF_SERVICE_TOKEN": "agora-test-token",
+            "POLICY_LEARNING_AGORA_TENANT_ID": "tenant-observation",
+            "SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS": "3600",
+            "SHADOW_EVAL_SCHEDULER_MAX_TICKS": "2",
+            "SHADOW_EVAL_SCHEDULER_HEALTH_FILE": str(tmp_path / "h.json"),
+            "DATABASE_URL": "postgresql://fake:fake@localhost:5432/fake",
+        },
+        clear=False,
+    ), mock.patch.object(
+        scheduler, "run_recovery", return_value={"status": "ok"}
+    ), mock.patch.object(
+        scheduler, "run_intake_cycle", return_value={"status": "ok"}
+    ), mock.patch.object(
+        scheduler, "run_claim_cycle", return_value={"status": "ok"}
+    ), mock.patch.object(
+        scheduler, "_build_loop_writer", return_value=_Writer()
+    ), mock.patch.object(scheduler.time, "sleep", side_effect=sleeps.append):
+        assert scheduler.main() == 0
+
+    assert max(sleeps) <= 300
+    assert sum(sleeps) == 3600
+    assert len(heartbeats) == 11
+    projected = _project_published_record(heartbeats[0], lease_seconds=3900)
+    assert projected["desired_state_presence"]["authoritative"] is True
+    assert projected["evidence_refs"]

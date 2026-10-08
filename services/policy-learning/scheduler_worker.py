@@ -66,14 +66,18 @@ AGORA_BFF_URL_ENV = agora_handoff_drainer.AGORA_BFF_URL_ENV
 AGORA_SERVICE_TOKEN_ENV = agora_handoff_drainer.AGORA_SERVICE_TOKEN_ENV
 INTAKE_BATCH_SIZE_ENV = "SHADOW_EVAL_INTAKE_BATCH_SIZE"
 _WORKER_NAME = "policy-learning-shadow-eval-scheduler"
-DEFAULT_LOOP_ID = "policy_learning_shadow_eval"
+DEFAULT_LOOP_ID = "human_imitation_shadow_evaluation"
+# Upper bound of one tick: intake (10s) plus the claim cycle (120s), rounded up.
+TICK_TIMEOUT_SECONDS = 300
+# Longest gap between heartbeats; the projector rejects heartbeats older than 900s.
+HEARTBEAT_REFRESH_SECONDS = 300
 
 
 class SchedulerConfigurationError(RuntimeError):
     """The sidecar is not configured to be a trusted, tenant-bound caller."""
 
 
-def _build_loop_writer(*, dsn: str, tenant_id: str) -> Any:
+def _build_loop_writer(*, dsn: str, tenant_id: str, lease_seconds: int | None = None) -> Any:
     """Return a ``LoopControllerWriter`` bound to this scheduler's identity.
 
     ``services.loop-control`` is a hyphenated package name, so it can only be
@@ -93,7 +97,42 @@ def _build_loop_writer(*, dsn: str, tenant_id: str) -> Any:
         controller_id=os.getenv("POLICY_LEARNING_WORKER_ID") or f"{_WORKER_NAME}:{socket.gethostname()}:{os.getpid()}",
         controller_name=_WORKER_NAME,
         deployment_sha=deployment_sha,
+        lease_duration_seconds=lease_seconds,
     )
+
+
+def _controller_state(
+    *,
+    ok: bool,
+    now_iso: str,
+    tick_id: str,
+    interval_seconds: int,
+    batch_size: int,
+    intake_batch_size: int,
+    result: dict[str, Any],
+    cycle: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
+    """Desired/actual state and evidence for one tick, from values it already read."""
+
+    desired_state = {
+        "present": True,
+        "source": f"{_WORKER_NAME}.configuration",
+        "checked_at": now_iso,
+        "summary": (
+            f"Agora handoff intake batch {intake_batch_size}, shadow-eval claim batch "
+            f"{batch_size}, every {interval_seconds}s"
+        ),
+    }
+    downstream_actual_state = {
+        "status": "ready" if ok else "degraded",
+        "source": "policy-learning.worker_process",
+        "checked_at": now_iso,
+        "summary": (
+            f"Drained {result.get('processed_count', 0)} Agora handoff(s); "
+            f"processed {cycle.get('processed_count', 0)} shadow-eval candidate(s)"
+        ),
+    }
+    return desired_state, downstream_actual_state, [f"policy-learning://shadow-eval-ticks/{tick_id}"]
 
 
 def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
@@ -388,7 +427,12 @@ def main() -> int:
     worker = worker_id()
     health_file = _env_text("SHADOW_EVAL_SCHEDULER_HEALTH_FILE")
     database_url = str(os.getenv("DATABASE_URL") or "")
-    writer = _build_loop_writer(dsn=database_url, tenant_id=tenant_id)
+    # Lease must outlive the wait between ticks plus one tick's work.
+    writer = _build_loop_writer(
+        dsn=database_url,
+        tenant_id=tenant_id,
+        lease_seconds=interval_seconds + TICK_TIMEOUT_SECONDS,
+    )
     loop_id = os.getenv("PANTHEON_LOOP_ID") or DEFAULT_LOOP_ID
     health: dict[str, Any] = {
         "worker_name": _WORKER_NAME,
@@ -410,6 +454,7 @@ def main() -> int:
     tick = 0
     last_success: dict[str, Any] | None = None
     last_failure: dict[str, Any] | None = None
+    last_state: tuple[dict[str, Any], dict[str, Any], list[str]] | None = None
 
     while True:
         tick += 1
@@ -467,7 +512,17 @@ def main() -> int:
                 status_counts = cycle.get("status_counts") if isinstance(cycle, dict) else None
                 status_counts = status_counts if isinstance(status_counts, dict) else {}
                 candidate_ids = cycle.get("candidate_ids") if isinstance(cycle, dict) else None
-                evidence_refs = [
+                desired_state, actual_state, tick_refs = _controller_state(
+                    ok=health["status"] == "ok",
+                    now_iso=health["last_tick_at"],
+                    tick_id=window_tick_id(eval_type="shadow", interval_seconds=interval_seconds, now=time.time()),
+                    interval_seconds=interval_seconds,
+                    batch_size=batch_size,
+                    intake_batch_size=intake_batch_size,
+                    result=result,
+                    cycle=cycle,
+                )
+                evidence_refs = tick_refs + [
                     f"policy-learning://candidates/{candidate_id}"
                     for candidate_id in (candidate_ids or [])
                     if candidate_id
@@ -475,10 +530,13 @@ def main() -> int:
                 backlog = int(status_counts.get("claimed", 0) or 0)
                 dlq_count = int(status_counts.get("failed", 0) or 0)
                 payload = {"result": result, "cycle": cycle, "health": health}
+                last_state = (desired_state, actual_state, tick_refs)
                 if health["status"] == "ok":
                     asyncio.run(
                         writer.record_success(
                             loop_id=loop_id,
+                            desired_state=desired_state,
+                            downstream_actual_state=actual_state,
                             summary=(
                                 f"Drained {result.get('processed_count', 0)} Agora handoff(s); "
                                 f"processed {cycle.get('processed_count', 0)} shadow-eval candidate(s)"
@@ -494,6 +552,8 @@ def main() -> int:
                         writer.record_failure(
                             loop_id=loop_id,
                             reason=str(health.get("last_failure_reason") or "shadow evaluation cycle failed"),
+                            desired_state=desired_state,
+                            downstream_actual_state=actual_state,
                             backlog=backlog,
                             dlq_count=dlq_count,
                             evidence_refs=evidence_refs,
@@ -518,7 +578,25 @@ def main() -> int:
 
         if max_ticks and tick >= max_ticks:
             return 0
-        time.sleep(interval_seconds)
+        remaining = float(interval_seconds)
+        while remaining > 0:
+            nap = min(remaining, HEARTBEAT_REFRESH_SECONDS)
+            time.sleep(nap)
+            remaining -= nap
+            if remaining > 0 and writer is not None and last_state is not None:
+                try:
+                    desired_state, actual_state, tick_refs = last_state
+                    now_iso = _utc_now()
+                    asyncio.run(
+                        writer.record_heartbeat(
+                            loop_id=loop_id,
+                            desired_state={**desired_state, "checked_at": now_iso},
+                            downstream_actual_state={**actual_state, "checked_at": now_iso},
+                            evidence_refs=tick_refs,
+                        )
+                    )
+                except Exception as exc:
+                    print(f"Warning: failed to refresh LoopControllerWriter heartbeat: {exc}", file=sys.stderr)
 
 
 if __name__ == "__main__":  # pragma: no cover
