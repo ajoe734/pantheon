@@ -1,0 +1,205 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "OPS-DEPLOY-DRIFT-RECOVERY-REMOVAL-20261007",
+  "title": "Remove nonprod-deploy drift-recovery chain and require dev-login proof on artifact restore",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "status": "implementation_ready_for_review",
+  "target_repo": "pantheon",
+  "base_sha": "3b6f5dc8dee34c3816639678ae963e7c3229f4f7",
+  "recorded_at": "2026-10-08T01:07:30Z",
+  "summary": "Removed the nonprod-deploy drift-recovery chain (_drift_recovery_source, allowed_revisions, DRIFT_FIELDS, drift_args, PANTHEON_DEV_ARTIFACT_BASELINE_SOURCE, PANTHEON_DEV_ARTIFACT_OBSERVED_LIVE_BFF_SHA), returning rollback authority strictly to previous_backend_sha. Partially reverted #5908 by requiring viewer dev-login proof on artifact restore while capture, seal-candidate, and verify retain declared literal-false absence recording.",
+  "scope": {
+    "declared_artifacts": [
+      ".github/workflows/nonprod-deploy.yml",
+      "scripts/dev_release_artifact_driver.py",
+      "scripts/dev_release_artifacts.py",
+      "scripts/capture_dev_artifact_baseline.py",
+      "scripts/deploy_nonprod_vm.sh",
+      "scripts/dev_artifact_compensation_evidence.py",
+      "scripts/test_dev_release_artifact_driver.py",
+      "scripts/test_dev_release_artifacts.py",
+      "scripts/test_capture_dev_artifact_baseline.py",
+      "scripts/test_deploy_nonprod_vm.py",
+      "scripts/test_deploy_nonprod_env_parity.py",
+      "scripts/test_dev_artifact_compensation_evidence.py",
+      "docs/deployment/dev-exact-artifact-rollback.md",
+      "docs/deployment/evidence/OPS-DEPLOY-DRIFT-RECOVERY-REMOVAL-20261007/evidence.json"
+    ],
+    "changed_artifacts": [
+      ".github/workflows/nonprod-deploy.yml",
+      "scripts/dev_release_artifact_driver.py",
+      "scripts/dev_release_artifacts.py",
+      "scripts/capture_dev_artifact_baseline.py",
+      "scripts/deploy_nonprod_vm.sh",
+      "scripts/dev_artifact_compensation_evidence.py",
+      "scripts/test_dev_release_artifact_driver.py",
+      "scripts/test_dev_release_artifacts.py",
+      "scripts/test_capture_dev_artifact_baseline.py",
+      "scripts/test_deploy_nonprod_vm.py",
+      "scripts/test_deploy_nonprod_env_parity.py",
+      "scripts/test_dev_artifact_compensation_evidence.py",
+      "docs/deployment/dev-exact-artifact-rollback.md",
+      "docs/deployment/evidence/OPS-DEPLOY-DRIFT-RECOVERY-REMOVAL-20261007/evidence.json"
+    ]
+  },
+  "diff_budget": {
+    "change_class": "simplify",
+    "base": "3b6f5dc8dee34c3816639678ae963e7c3229f4f7",
+    "production": {
+      "added": 30,
+      "deleted": 120,
+      "net": -90
+    },
+    "test": {
+      "added": 27,
+      "deleted": 529,
+      "net": -502
+    },
+    "docs_evidence": {
+      "added": 142,
+      "deleted": 0,
+      "net": 142
+    }
+  },
+  "test_verification": {
+    "test_environment_provisioning": {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "python_interpreter": ".venv-pantheon/bin/python3"
+    },
+    "test_suite_files": [
+      "scripts/test_dev_release_artifact_driver.py",
+      "scripts/test_dev_release_artifacts.py",
+      "scripts/test_capture_dev_artifact_baseline.py",
+      "scripts/test_dev_artifact_compensation_evidence.py",
+      "scripts/test_deploy_nonprod_vm.py",
+      "scripts/test_deploy_nonprod_artifact_restore.py",
+      "scripts/test_deploy_nonprod_env_parity.py",
+      "scripts/test_dev_environment_lease_deploy_contract.py",
+      "scripts/test_deploy_nonprod_bootstrap_contract.py",
+      "scripts/test_nonprod_dev_artifact_workflow.py",
+      "scripts/test_dev_paper_diagnostics_failure_path.py"
+    ],
+    "baseline_run": {
+      "passed": 1165,
+      "failed": 4,
+      "skipped": 5,
+      "total": 1174,
+      "failures": [
+        "scripts/test_deploy_nonprod_vm.py::test_actual_ssh_command_forwards_drift_metadata",
+        "scripts/test_deploy_nonprod_artifact_restore.py::test_actual_ssh_command_forwards_explicit_seal_metadata_but_not_runner_guard_fd",
+        "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_root_deploy_profiles_isolate_persistent_runtime_and_exclude_dormant_smokes",
+        "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_root_active_persistent_runtime_excludes_dormant_and_one_off_profiles"
+      ]
+    },
+    "head_run": {
+      "passed": 1136,
+      "failed": 3,
+      "skipped": 5,
+      "total": 1144,
+      "failures": [
+        "scripts/test_deploy_nonprod_artifact_restore.py::test_actual_ssh_command_forwards_explicit_seal_metadata_but_not_runner_guard_fd",
+        "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_root_deploy_profiles_isolate_persistent_runtime_and_exclude_dormant_smokes",
+        "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_root_active_persistent_runtime_excludes_dormant_and_one_off_profiles"
+      ],
+      "pre_existing_failures_explained": "All 3 remaining failures are pre-existing at merge base in this worker environment and are not regressions caused by this task. The 4th pre-existing failure (test_actual_ssh_command_forwards_drift_metadata) was intentionally removed as part of removing the drift-forwarding chain."
+    },
+    "static_validation": {
+      "bash_syntax_check": {
+        "command": "bash -n scripts/deploy_nonprod_vm.sh",
+        "status": "passed"
+      },
+      "yaml_syntax_check": {
+        "command": "python3 -c \"import yaml; yaml.safe_load(open('.github/workflows/nonprod-deploy.yml'))\"",
+        "status": "passed"
+      }
+    }
+  },
+  "acceptance_checklist": [
+    {
+      "criterion": "1. Zero matches for drift tokens and allowed_revisions in production scripts",
+      "status": "verified",
+      "details": "git grep -n -E 'PANTHEON_DEV_ARTIFACT_(BASELINE_SOURCE|OBSERVED_LIVE_BFF_SHA)|baseline_source|baseline-source|observed_live_bff_sha|observed-live-bff-sha|_drift_recovery_source|DRIFT_FIELDS|drift_args|drift_sha|live_bff_drift_recovery' -- scripts/dev_release_artifact_driver.py scripts/dev_release_artifacts.py scripts/capture_dev_artifact_baseline.py scripts/deploy_nonprod_vm.sh returns no match, and git grep -n allowed_revisions -- scripts/dev_release_artifact_driver.py scripts/dev_release_artifacts.py returns no match."
+    },
+    {
+      "criterion": "2. Zero matches for drift tokens in test files",
+      "status": "verified",
+      "details": "git grep -n -E 'drift_args|BASELINE_SOURCE|OBSERVED_LIVE_BFF_SHA|baseline_source|observed_live_bff_sha|--baseline-source|--observed-live-bff-sha|allowed_revisions|_extract_artifact_driver_invocation' -- scripts/test_dev_release_artifact_driver.py scripts/test_dev_release_artifacts.py scripts/test_deploy_nonprod_vm.py scripts/test_deploy_nonprod_env_parity.py returns no match."
+    },
+    {
+      "criterion": "3. nonprod-deploy.yml diff against merge base only deletes the 2 GITHUB_OUTPUT lines and 4 env lines; rollback_baseline classification and rollback-baseline.json write byte-identical",
+      "status": "verified",
+      "details": "git diff against merge base only deletes the two GITHUB_OUTPUT lines and four env lines; rollback_baseline classification and rollback-baseline.json write remain byte-identical."
+    },
+    {
+      "criterion": "4. capture_images, validate_images, restore_images accept no allowed_revisions parameter and accept only None, empty, unknown, or expected source SHA",
+      "status": "verified",
+      "details": "Signatures updated and verified."
+    },
+    {
+      "criterion": "5. dev_release_artifact_driver.py binds public BFF and image bundle source to args.previous_backend_sha; RestoreCAS accepts only previous_backend_sha and candidate_backend_sha; no drift CLI args or env reads",
+      "status": "verified",
+      "details": "Verified in implementation and driver test suite."
+    },
+    {
+      "criterion": "6. capture_dev_artifact_baseline.py neither forwards nor parses drift inputs; seal_result requires previous_backend_sha and never returns drift outputs",
+      "status": "verified",
+      "details": "Verified in implementation and baseline test suite."
+    },
+    {
+      "criterion": "7. deploy_nonprod_vm.sh has no drift check in validate_artifact_restore_request or run_dev_artifact_driver and no drift variable in help or command_prefix; call ends with candidate_args",
+      "status": "verified",
+      "details": "Verified in implementation and deploy tests."
+    },
+    {
+      "criterion": "8. Live BFF differing from previous_backend_sha fails capture with 'public BFF source readback mismatch' before mutation; reproduction test keeps assertions",
+      "status": "verified",
+      "details": "test_drift_reproduction_run_35120908258_without_drift_recovery_fails_closed passes."
+    },
+    {
+      "criterion": "9. Six generic driver cases run in non-drift parametrized test with original expected messages; five deploy call points keep non-drift test asserting expected operation; drift-only tests deleted",
+      "status": "verified",
+      "details": "test_driver_fail_closed_cases and test_all_driver_call_points_use_expected_operation pass."
+    },
+    {
+      "criterion": "10. Driver restore never takes literal-false dev-login skip; test_restore_never_skips_the_viewer_readback proves viewer login requested and raises when not resolved",
+      "status": "verified",
+      "details": "test_restore_never_skips_the_viewer_readback passes."
+    },
+    {
+      "criterion": "11. validate_readback rejects restore readback unless dev_login_enabled and authenticated_viewer_readback_verified are both True; verify accepts both True or both False",
+      "status": "verified",
+      "details": "test_predecessor_without_dev_login_registry_is_a_complete_readback updated and verified."
+    },
+    {
+      "criterion": "12. Real-behaviour tests keep assertions unchanged",
+      "status": "verified",
+      "details": "All real-behaviour tests retained and pass."
+    },
+    {
+      "criterion": "13. OCI revision rejections remain asserted by non-drift test without allowed_revisions",
+      "status": "verified",
+      "details": "test_capture_and_validate_images_reject_conflicting_oci_revisions in test_dev_release_artifacts.py passes."
+    },
+    {
+      "criterion": "14. No new flag, env var, fallback, wrapper, gate, or compatibility layer added; no compressed code; no modifications to other evidence files",
+      "status": "verified",
+      "details": "Verified across all changes."
+    },
+    {
+      "criterion": "15. dev-exact-artifact-rollback.md updated with at most 6 lines describing drift fail-closed behavior and viewer readback requirement on restore",
+      "status": "verified",
+      "details": "Exactly 4 lines added across steps 1 and 7."
+    },
+    {
+      "criterion": "16. 11 pytest suites on committed head show no new failures; bash -n and yaml.safe_load pass; evidence.json records before and after pass/fail counts",
+      "status": "verified",
+      "details": "Verified: 1136 passed, 3 failed (all pre-existing), 5 skipped."
+    },
+    {
+      "criterion": "17. diff_budget.py exits 0 and line counts recorded",
+      "status": "verified",
+      "details": "Production: net -90, Test: net -502, Docs/Evidence: net +142."
+    }
+  ]
+}
