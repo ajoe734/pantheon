@@ -1467,3 +1467,67 @@ def test_select_evidence_bundles_fails_closed_on_future() -> None:
             trusted_now=NOW,
         )
 
+
+def test_advancing_controller_and_requirement_sequences_preserves_dataset_version(tmp_path: Path) -> None:
+    case = _make_tw_case(tmp_path)
+    res1 = _materialize(case)
+    assert res1.path.exists()
+    assert res1.payload["metadata_json"]["controller_provenance"]["sequence_no"] == 42
+    assert res1.payload["metadata_json"]["controller_provenance"]["requirement_sequence"] == 7
+
+    # Advance controller_state.sequence_no from 42 to 43, requirement sequence from 7 to 8
+    readback = case.responses[f"{BASE_URL}/api/source-ingest/controller/readback"]
+    readback["controller_state"]["sequence_no"] = 43
+    readback["requirement_snapshot"]["sequence"] = 8
+
+    res2 = _materialize(case)
+    assert res1.path == res2.path
+    assert res1.payload_sha256 == res2.payload_sha256
+    assert res1.payload == res2.payload
+    assert len(list(case.output_root.glob("dataset-version-*.json"))) == 1
+
+
+def test_regressing_controller_or_requirement_sequence_fails_closed(tmp_path: Path) -> None:
+    case = _make_tw_case(tmp_path)
+    res1 = _materialize(case)
+    assert res1.path.exists()
+
+    readback = case.responses[f"{BASE_URL}/api/source-ingest/controller/readback"]
+    # Regress controller sequence from 42 to 41
+    readback["controller_state"]["sequence_no"] = 41
+    with pytest.raises(SourceDatasetAuthorityError, match="source controller sequence_no regressed"):
+        _materialize(case)
+
+    # Restore controller sequence and regress requirement sequence from 7 to 6
+    readback["controller_state"]["sequence_no"] = 42
+    readback["requirement_snapshot"]["sequence"] = 6
+    with pytest.raises(SourceDatasetAuthorityError, match="source requirement sequence regressed"):
+        _materialize(case)
+
+
+def test_semantic_authority_changes_are_rejected_on_rematerialization(tmp_path: Path) -> None:
+    # 1. Changed tenant
+    case1 = _make_tw_case(tmp_path / "tenant_case")
+    _materialize(case1)
+    readback1 = case1.responses[f"{BASE_URL}/api/source-ingest/controller/readback"]
+    readback1["controller_state"]["tenant_id"] = "tenant-other"
+    with pytest.raises(SourceDatasetAuthorityError, match="differing authority bindings"):
+        _materialize(case1)
+
+    # 2. Changed deployment git_sha
+    case2 = _make_tw_case(tmp_path / "deploy_case")
+    _materialize(case2)
+    readback2 = case2.responses[f"{BASE_URL}/api/source-ingest/controller/readback"]
+    readback2["controller_state"]["deployment"]["git_sha"] = "different-sha"
+    with pytest.raises(SourceDatasetAuthorityError, match="differing authority bindings"):
+        _materialize(case2)
+
+    # 3. Changed desired_state
+    case3 = _make_tw_case(tmp_path / "desired_case")
+    _materialize(case3)
+    readback3 = case3.responses[f"{BASE_URL}/api/source-ingest/controller/readback"]
+    readback3["connectors"][0]["desired_state"]["cadence"] = "hourly"
+    readback3["connectors"][0]["desired_state_sha256"] = _connector_digest(readback3["connectors"][0]["desired_state"])
+    with pytest.raises(SourceDatasetAuthorityError, match="differing authority bindings"):
+        _materialize(case3)
+
