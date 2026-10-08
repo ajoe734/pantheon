@@ -94,6 +94,7 @@ def test_body_without_content_length_is_returned_as_read() -> None:
 
 
 def test_short_chunk_stream_with_content_length_reads_full_body_without_truncation() -> None:
+    """A response that returns a short chunk, then more bytes, then b'' must return the full body and not raise with matching Content-Length."""
     chunks = [b'{"ok":', b'true}']
     response = _ChunkedResponse(chunks, declared=11)
     body = _read_bounded_response(response)
@@ -101,6 +102,7 @@ def test_short_chunk_stream_with_content_length_reads_full_body_without_truncati
 
 
 def test_short_chunk_stream_without_content_length_reads_full_body() -> None:
+    """A response that returns a short chunk, then more bytes, then b'' must return the full body and not raise without Content-Length."""
     chunks = [b'{"ok":', b'true}']
     response = _ChunkedResponse(chunks, declared=None)
     body = _read_bounded_response(response)

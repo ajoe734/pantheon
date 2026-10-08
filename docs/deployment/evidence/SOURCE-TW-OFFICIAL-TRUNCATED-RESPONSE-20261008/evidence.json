@@ -9,7 +9,7 @@
   },
   "change": [
     "_read_bounded_response raises OfficialResponseTruncated (a SourceEvidenceError) when the response declares a Content-Length and the body is shorter. Without a numeric Content-Length the body is returned as read, as before.",
-    "_read_bounded_response reads until end of stream (empty chunk) instead of breaking on short reads, avoiding premature truncation on multi-chunk streams and short reads before EOF, while supporting static mocks in unit tests.",
+    "_read_bounded_response reads until end of stream (empty chunk) without mock detection; the loop ends only on an empty read, avoiding premature truncation on multi-chunk streams and short reads before EOF, while TDCC and TAIFEX mocks in test_provider_management_coverage.py return the body once and then b''.",
     "New _fetch_official(request, caller, timeout_seconds, max_bytes, parse) opens, reads and parses one official endpoint. It retries the same request only for OfficialResponseTruncated, TimeoutError, http.client.IncompleteRead and json.JSONDecodeError, up to OFFICIAL_FETCH_ATTEMPTS = 3 with 1 s and 2 s backoff. The final SourceEvidenceError names every attempt. HTTP errors, egress denial, the byte limit and all other errors are raised on the first attempt.",
     "All four official fetch paths use it: TWSE/TPEx dataset payloads, per-symbol price history, TDCC CSV and TAIFEX JSON. Their parsing after the fetch is unchanged."
   ],
@@ -24,7 +24,7 @@
   "review_status": "Author validation only; independent exact-head review by the assigned reviewer pending.",
   "delivery_verification": {
     "agent": "Antigravity",
-    "command": "python -m pytest -q services/source_ingestion/tests/test_taiwan_official_fetch_retry.py services/test_external_egress.py services/source_ingestion/tests/test_provider_management_coverage.py",
+    "command": "python -m pytest -q services/source_ingestion/tests/test_taiwan_official_fetch_retry.py services/source_ingestion/tests/test_provider_management_coverage.py services/test_external_egress.py",
     "result": "66 passed, 1 warning (StarletteDeprecationWarning), exit 0"
   }
 }
