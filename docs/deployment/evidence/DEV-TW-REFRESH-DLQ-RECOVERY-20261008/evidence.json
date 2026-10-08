@@ -15,18 +15,38 @@
       {
         "entry_id": "dlq-264e0aeb6bf7459fa069f50723f02066",
         "rejected_at": "2026-10-07T03:12:13Z",
-        "connector_id": "tw-twse-tpex-official-market",
-        "frontier_id": "frontier-94a821378db3",
         "status": "pending",
-        "reason": "external egress denied: code=host_not_allowlisted host='openapi.twse.com.tw' mode=deny caller=source_ingest.taiwan_official detail=set PANTHEON_EXTERNAL_EGRESS=allowlist and add the exact host to PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS url=https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+        "reason": "external egress denied: code=host_not_allowlisted host='openapi.twse.com.tw' mode=deny caller=source_ingest.taiwan_official detail=set PANTHEON_EXTERNAL_EGRESS=allowlist and add the exact host to PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS url=https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+        "event": {
+          "event_type": "source_ingestion.scheduled_run_failed",
+          "aggregate_id": "ingest-81f516962093",
+          "payload": {
+            "connector_id": "tw-twse-tpex-official-market",
+            "frontier_id": "frontier-94a821378db3",
+            "ingest_run_id": "ingest-81f516962093",
+            "error": "external egress denied: code=host_not_allowlisted host='openapi.twse.com.tw' mode=deny caller=source_ingest.taiwan_official detail=set PANTHEON_EXTERNAL_EGRESS=allowlist and add the exact host to PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS url=https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+            "attempts": 2,
+            "trigger_type": "scheduled"
+          }
+        }
       },
       {
         "entry_id": "dlq-ab7005f4703c448ab7bc22e8cfc48331",
         "rejected_at": "2026-10-07T08:45:12Z",
-        "connector_id": "tw-twse-tpex-official-market",
-        "frontier_id": "frontier-94a821378db3",
         "status": "pending",
-        "reason": "external egress denied: code=host_not_allowlisted host='openapi.twse.com.tw' mode=deny caller=source_ingest.taiwan_official detail=set PANTHEON_EXTERNAL_EGRESS=allowlist and add the exact host to PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS url=https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+        "reason": "external egress denied: code=host_not_allowlisted host='openapi.twse.com.tw' mode=deny caller=source_ingest.taiwan_official detail=set PANTHEON_EXTERNAL_EGRESS=allowlist and add the exact host to PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS url=https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+        "event": {
+          "event_type": "source_ingestion.scheduled_run_failed",
+          "aggregate_id": "ingest-3b2dc4570fc4",
+          "payload": {
+            "connector_id": "tw-twse-tpex-official-market",
+            "frontier_id": "frontier-94a821378db3",
+            "ingest_run_id": "ingest-3b2dc4570fc4",
+            "error": "external egress denied: code=host_not_allowlisted host='openapi.twse.com.tw' mode=deny caller=source_ingest.taiwan_official detail=set PANTHEON_EXTERNAL_EGRESS=allowlist and add the exact host to PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS url=https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+            "attempts": 2,
+            "trigger_type": "scheduled"
+          }
+        }
       }
     ],
     "canonical_frontier": {
@@ -42,30 +62,35 @@
     "Integrated recover_bounded_source_refresh_dlq into scripts/deploy_nonprod_vm.sh inside execute_bounded_source_refresh_entrypoint.",
     "Execution strictly ordered in the stopped-steady allowlisted egress window: after the steady source controller lease has expired and before bounded one-shot container startup.",
     "Bounded recovery queries native Source API GET /api/source-ingest/dlq and GET /api/source-ingest/frontier to discover pending scheduled ingestion failures.",
-    "Strict filter: only pending entries for connector tw-twse-tpex-official-market with external egress denied reasons matching a failed frontier with external egress denied reasons are eligible.",
-    "Finite selection cap (max 20 entries) dispatched to native POST /api/source-ingest/dlq/replay with explicit entry_ids, actor_id='bounded-source-refresh', and tag='retry_exhausted'.",
+    "Strict filter: only pending entries for connector tw-twse-tpex-official-market with canonical nested event payload and external egress denied reasons matching a failed frontier with external egress denied reasons are eligible.",
+    "Refuses eligible DLQ entry count > 20 before any mutation instead of silently capping and partially replaying.",
+    "Mutation urllib POST timeout derives from the existing bounded refresh budget/deadline (SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS), retaining short read probes and existing outer workflow cap.",
     "Only triggered when --force is explicitly provided; unforced refresh leaves unresolved DLQ entries intact for strict failure.",
-    "Verifies post-replay DLQ terminalization via GET /api/source-ingest/dlq before proceeding to bounded one-shot execution.",
-    "Negative boundaries enforced: entries from different connectors, non-egress failures, or active running frontiers are refused and cause fail-closed.",
+    "Post-replay verification strictly requires each selected entry present with true native success status (replayed or duplicate_skipped), failing closed on missing, pending, replay_failed, or schema_rejected.",
+    "Negative boundaries enforced: entries from different connectors, non-egress failures, active running frontiers, missing nested event structure, non-success post-replay status, overlimit count, or timeout budget exhaustion are refused and cause fail-closed.",
     "Preserved all existing steady container stop/restore lifecycle, exact image IDs, environment restoration, CAS lease bounds, and terminal readback gates with zero new services or background daemons."
   ],
   "acceptance_criteria": {
     "1": "met: Documented original DailyRefresh37764733614 failure, actual_readback 2 unresolved DLQ entries, and canonical receipts from /tmp/pantheon-release-finish-20261008/.",
-    "2": "met: Implemented recover_bounded_source_refresh_dlq using native POST /api/source-ingest/dlq/replay strictly within the stopped-steady allowlisted egress window under existing workflow shared lease.",
-    "3": "met: Native replay terminalizes eligible entries with retained audit and history; unrelated connectors, non-egress error classes, and running frontiers are refused or left for strict failure.",
+    "2": "met: Implemented recover_bounded_source_refresh_dlq using native POST /api/source-ingest/dlq/replay strictly within the stopped-steady allowlisted egress window under existing workflow shared lease; refuses count > 20 before any mutation; derives mutation timeout from bounded refresh budget.",
+    "3": "met: Native replay terminalizes eligible entries with retained audit and history; post-replay verification strictly enforces native success statuses (replayed, duplicate_skipped), failing closed on missing, pending, replay_failed, or schema_rejected; unrelated connectors, non-egress error classes, and running frontiers are refused.",
     "4": "met: Original strict DLQ identity freshness CAS lease ownership and exact-image environment service restoration are preserved unchanged.",
-    "5": "met: Added 6 new regression tests in scripts/test_dev_tw_market_refresh.py covering reproduction, native API recovery, negative boundaries, and HTTP contract; all 27 tests pass cleanly."
+    "5": "met: Added 10 regression tests in scripts/test_dev_tw_market_refresh.py covering reproduction, native API recovery, negative boundaries, timeout budget, missing/non-success readback, overlimit-before-POST, and canonical nested API shape; all 31 tests pass cleanly."
   },
   "tests": {
     "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest scripts/test_dev_tw_market_refresh.py; bash -n scripts/deploy_nonprod_vm.sh",
-    "result": "27 passed in 77.69s; bash -n exit 0",
+    "result": "31 passed in 87.76s; bash -n exit 0",
     "new_tests": [
       "test_bounded_refresh_reproduces_2_entry_dlq_blocking_terminal_readback",
       "test_bounded_refresh_force_recovers_canonical_dlq_entries_via_native_api",
       "test_bounded_refresh_different_connector_dlq_refused_or_left_for_strict_failure",
       "test_bounded_refresh_different_failure_reason_dlq_refused_or_left_for_strict_failure",
       "test_bounded_refresh_running_frontier_dlq_refused_or_left_for_strict_failure",
-      "test_recover_bounded_source_refresh_dlq_http_contract"
+      "test_recover_bounded_source_refresh_dlq_http_contract",
+      "test_recover_bounded_source_refresh_dlq_overlimit_refused_before_post",
+      "test_recover_bounded_source_refresh_dlq_fails_closed_on_non_success_readback",
+      "test_recover_bounded_source_refresh_dlq_fails_closed_on_timeout_budget",
+      "test_recover_bounded_source_refresh_dlq_refuses_flat_legacy_api_shape"
     ]
   },
   "hosted_followup": "Pending: hosted formal refresh recovery execution and Root/FULL browser qualification belong to the sole release coordinator; no live deployment or second qualification by source worker.",

@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 import threading
+import time as time_mod
 from datetime import datetime, time, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -188,25 +189,35 @@ class _MockSourceIngestHandler(BaseHTTPRequestHandler):
             state_file = getattr(self.server, "state_file", None)
             replayed_entries = []
             correlated_resolutions = []
+            target_status = "replayed"
             if state_file and state_file.exists():
                 state = json.loads(state_file.read_text(encoding="utf-8"))
+                delay = state.get("mock_replay_delay_seconds")
+                if delay:
+                    time_mod.sleep(float(delay))
+                target_status = state.get("mock_replay_target_status", "replayed")
+                drop_entries = state.get("mock_replay_drop_entries", False)
                 req_ids = set(body.get("entry_ids") or [])
                 entries = state.get("dlq_entries") or []
-                for e in entries:
-                    if e.get("entry_id") in req_ids or (not req_ids and e.get("status") == "pending"):
-                        prev_st = e.get("status", "pending")
-                        e["status"] = "replayed"
-                        e["replay_attempts"] = e.get("replay_attempts", 0) + 1
-                        replayed_entries.append(e.get("entry_id"))
-                        correlated_resolutions.append({
-                            "entry_id": e.get("entry_id"),
-                            "previous_status": prev_st,
-                            "status": "replayed",
-                            "replay_attempts": e["replay_attempts"],
-                        })
+                if drop_entries:
+                    state["dlq_entries"] = [e for e in entries if e.get("entry_id") not in req_ids]
+                else:
+                    for e in entries:
+                        if e.get("entry_id") in req_ids or (not req_ids and e.get("status") == "pending"):
+                            prev_st = e.get("status", "pending")
+                            e["status"] = target_status
+                            e["replay_attempts"] = e.get("replay_attempts", 0) + 1
+                            replayed_entries.append(e.get("entry_id"))
+                            correlated_resolutions.append({
+                                "entry_id": e.get("entry_id"),
+                                "previous_status": prev_st,
+                                "status": target_status,
+                                "replay_attempts": e["replay_attempts"],
+                            })
                 for f in state.get("frontier") or []:
                     if f.get("connector_id") == "tw-twse-tpex-official-market" and f.get("status") == "failed":
-                        f["status"] = "done"
+                        if target_status in ("replayed", "duplicate_skipped"):
+                            f["status"] = "done"
                 state.setdefault("replay_calls", []).append(body)
                 state.setdefault("audit_records", []).append({
                     "action_type": "source_ingestion.scheduled_run.recovered",
@@ -219,12 +230,14 @@ class _MockSourceIngestHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
+            applied_count = len(replayed_entries) if target_status in ("replayed", "duplicate_skipped") else 0
+            failed_count = len(replayed_entries) if target_status not in ("replayed", "duplicate_skipped") else 0
             self.wfile.write(json.dumps({
                 "summary": {
                     "total_replayed": len(replayed_entries),
-                    "applied": len(replayed_entries),
-                    "failed": 0,
-                    "correlated_resolution_count": len(correlated_resolutions),
+                    "applied": applied_count,
+                    "failed": failed_count,
+                    "correlated_resolution_count": len(correlated_resolutions) if target_status in ("replayed", "duplicate_skipped") else 0,
                 },
                 "selected_entry_ids": replayed_entries[:1] if replayed_entries else [],
                 "correlated_resolutions": correlated_resolutions,
@@ -864,15 +877,17 @@ CANONICAL_TW_PENDING_DLQ_ENTRIES = [
         "rejected_at": "2026-10-07T03:12:13Z",
         "replay_attempts": 0,
         "source_ref": "source_ingest_run:ingest-81f516962093",
-        "event_type": "source_ingestion.scheduled_run_failed",
-        "aggregate_id": "ingest-81f516962093",
-        "payload": {
-            "connector_id": "tw-twse-tpex-official-market",
-            "frontier_id": "frontier-94a821378db3",
-            "ingest_run_id": "ingest-81f516962093",
-            "error": "external egress denied: code=host_not_allowlisted host='openapi.twse.com.tw' mode=deny caller=source_ingest.taiwan_official detail=set PANTHEON_EXTERNAL_EGRESS=allowlist and add the exact host to PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS url=https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
-            "attempts": 2,
-            "trigger_type": "scheduled",
+        "event": {
+            "event_type": "source_ingestion.scheduled_run_failed",
+            "aggregate_id": "ingest-81f516962093",
+            "payload": {
+                "connector_id": "tw-twse-tpex-official-market",
+                "frontier_id": "frontier-94a821378db3",
+                "ingest_run_id": "ingest-81f516962093",
+                "error": "external egress denied: code=host_not_allowlisted host='openapi.twse.com.tw' mode=deny caller=source_ingest.taiwan_official detail=set PANTHEON_EXTERNAL_EGRESS=allowlist and add the exact host to PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS url=https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+                "attempts": 2,
+                "trigger_type": "scheduled",
+            },
         },
     },
     {
@@ -882,15 +897,17 @@ CANONICAL_TW_PENDING_DLQ_ENTRIES = [
         "rejected_at": "2026-10-07T08:45:12Z",
         "replay_attempts": 0,
         "source_ref": "source_ingest_run:ingest-3b2dc4570fc4",
-        "event_type": "source_ingestion.scheduled_run_failed",
-        "aggregate_id": "ingest-3b2dc4570fc4",
-        "payload": {
-            "connector_id": "tw-twse-tpex-official-market",
-            "frontier_id": "frontier-94a821378db3",
-            "ingest_run_id": "ingest-3b2dc4570fc4",
-            "error": "external egress denied: code=host_not_allowlisted host='openapi.twse.com.tw' mode=deny caller=source_ingest.taiwan_official detail=set PANTHEON_EXTERNAL_EGRESS=allowlist and add the exact host to PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS url=https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
-            "attempts": 2,
-            "trigger_type": "scheduled",
+        "event": {
+            "event_type": "source_ingestion.scheduled_run_failed",
+            "aggregate_id": "ingest-3b2dc4570fc4",
+            "payload": {
+                "connector_id": "tw-twse-tpex-official-market",
+                "frontier_id": "frontier-94a821378db3",
+                "ingest_run_id": "ingest-3b2dc4570fc4",
+                "error": "external egress denied: code=host_not_allowlisted host='openapi.twse.com.tw' mode=deny caller=source_ingest.taiwan_official detail=set PANTHEON_EXTERNAL_EGRESS=allowlist and add the exact host to PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS url=https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+                "attempts": 2,
+                "trigger_type": "scheduled",
+            },
         },
     },
 ]
@@ -986,11 +1003,13 @@ def test_bounded_refresh_different_connector_dlq_refused_or_left_for_strict_fail
                 "entry_id": "dlq-other-conn-12345",
                 "status": "pending",
                 "reason": "external egress denied: code=host_not_allowlisted host='api.polygon.io'",
-                "event_type": "source_ingestion.scheduled_run_failed",
-                "payload": {
-                    "connector_id": "us-polygon-market",
-                    "frontier_id": "frontier-us-12345",
-                    "error": "external egress denied: code=host_not_allowlisted host='api.polygon.io'",
+                "event": {
+                    "event_type": "source_ingestion.scheduled_run_failed",
+                    "payload": {
+                        "connector_id": "us-polygon-market",
+                        "frontier_id": "frontier-us-12345",
+                        "error": "external egress denied: code=host_not_allowlisted host='api.polygon.io'",
+                    },
                 },
             }
         ],
@@ -1035,11 +1054,13 @@ def test_bounded_refresh_different_failure_reason_dlq_refused_or_left_for_strict
                 "entry_id": "dlq-schema-fail-12345",
                 "status": "pending",
                 "reason": "schema validation error: unexpected null close in daily series",
-                "event_type": "source_ingestion.scheduled_run_failed",
-                "payload": {
-                    "connector_id": "tw-twse-tpex-official-market",
-                    "frontier_id": "frontier-94a821378db3",
-                    "error": "schema validation error: unexpected null close in daily series",
+                "event": {
+                    "event_type": "source_ingestion.scheduled_run_failed",
+                    "payload": {
+                        "connector_id": "tw-twse-tpex-official-market",
+                        "frontier_id": "frontier-94a821378db3",
+                        "error": "schema validation error: unexpected null close in daily series",
+                    },
                 },
             }
         ],
@@ -1146,4 +1167,181 @@ recover_bounded_source_refresh_dlq "true" "tw-twse-tpex-official-market"
         "dlq-264e0aeb6bf7459fa069f50723f02066",
         "dlq-ab7005f4703c448ab7bc22e8cfc48331",
     }
+
+
+def test_recover_bounded_source_refresh_dlq_overlimit_refused_before_post(tmp_path: Path):
+    # 21 eligible DLQ entries (> 20 limit)
+    dlq_entries = []
+    for i in range(21):
+        dlq_entries.append({
+            "entry_id": f"dlq-entry-{i:03d}",
+            "status": "pending",
+            "reason": CANONICAL_TW_PENDING_DLQ_ENTRIES[0]["reason"],
+            "event": {
+                "event_type": "source_ingestion.scheduled_run_failed",
+                "payload": {
+                    "connector_id": "tw-twse-tpex-official-market",
+                    "frontier_id": "frontier-94a821378db3",
+                    "error": CANONICAL_TW_PENDING_DLQ_ENTRIES[0]["event"]["payload"]["error"],
+                },
+            },
+        })
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+        "dlq_entries": dlq_entries,
+        "frontier": [dict(CANONICAL_TW_FAILED_FRONTIER)],
+    }
+    bin_dir, state_file, _events_file, _output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+
+    code = f"""
+eval "$(sed -n '/^recover_bounded_source_refresh_dlq()/,/^execute_bounded_source_refresh_entrypoint()/p' "{DEPLOY_SCRIPT}" | sed '$d')"
+recover_bounded_source_refresh_dlq "true" "tw-twse-tpex-official-market"
+"""
+    proc = subprocess.run(
+        ["bash", "-c", code],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode != 0, f"Expected overlimit to fail closed, got returncode 0:\n{proc.stdout}"
+    assert "exceeds maximum limit 20; refusing replay before mutation" in proc.stderr
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    assert not state.get("replay_calls"), "Must not execute any DLQ replay POST mutation when count exceeds limit"
+    unresolved = [e for e in state.get("dlq_entries", []) if e.get("status") == "pending"]
+    assert len(unresolved) == 21
+
+
+def test_recover_bounded_source_refresh_dlq_fails_closed_on_non_success_readback(tmp_path: Path):
+    # (a) Replay returns replay_failed (reproducing counterexample source-dlq-6407-replay-failed-counterexample.json)
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+        "dlq_entries": [dict(e) for e in CANONICAL_TW_PENDING_DLQ_ENTRIES],
+        "frontier": [dict(CANONICAL_TW_FAILED_FRONTIER)],
+        "mock_replay_target_status": "replay_failed",
+    }
+    bin_dir, state_file, _events_file, _output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+
+    code = f"""
+eval "$(sed -n '/^recover_bounded_source_refresh_dlq()/,/^execute_bounded_source_refresh_entrypoint()/p' "{DEPLOY_SCRIPT}" | sed '$d')"
+recover_bounded_source_refresh_dlq "true" "tw-twse-tpex-official-market"
+"""
+    proc = subprocess.run(
+        ["bash", "-c", code],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode != 0, f"Expected non-success status to fail closed, got 0:\n{proc.stdout}"
+    assert "DLQ recovery failed: selected entries not successfully terminalized" in proc.stderr
+    assert "non-success status 'replay_failed'" in proc.stderr
+    assert "all 2 entries terminalized" not in proc.stdout
+
+    # (b) Selected entry is dropped / missing from post-replay readback
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    state["mock_replay_target_status"] = "replayed"
+    state["mock_replay_drop_entries"] = True
+    for e in state["dlq_entries"]:
+        e["status"] = "pending"
+    state_file.write_text(json.dumps(state), encoding="utf-8")
+
+    proc_missing = subprocess.run(
+        ["bash", "-c", code],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc_missing.returncode != 0, f"Expected missing entry in readback to fail closed, got 0:\n{proc_missing.stdout}"
+    assert "missing from post-replay DLQ readback" in proc_missing.stderr
+    assert "all 2 entries terminalized" not in proc_missing.stdout
+
+
+def test_recover_bounded_source_refresh_dlq_fails_closed_on_timeout_budget(tmp_path: Path):
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+        "dlq_entries": [dict(e) for e in CANONICAL_TW_PENDING_DLQ_ENTRIES],
+        "frontier": [dict(CANONICAL_TW_FAILED_FRONTIER)],
+        "mock_replay_delay_seconds": 1.0,
+    }
+    bin_dir, _state_file, _events_file, _output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+
+    code = f"""
+eval "$(sed -n '/^recover_bounded_source_refresh_dlq()/,/^execute_bounded_source_refresh_entrypoint()/p' "{DEPLOY_SCRIPT}" | sed '$d')"
+recover_bounded_source_refresh_dlq "true" "tw-twse-tpex-official-market" "0.2"
+"""
+    proc = subprocess.run(
+        ["bash", "-c", code],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode != 0, f"Expected timeout budget exhaustion to fail closed, got 0:\n{proc.stdout}"
+    assert ("DLQ replay API request failed:" in proc.stderr or "timeout budget exhausted" in proc.stderr)
+    assert "all 2 entries terminalized" not in proc.stdout
+
+
+def test_recover_bounded_source_refresh_dlq_refuses_flat_legacy_api_shape(tmp_path: Path):
+    flat_dlq_entries = [
+        {
+            "entry_id": "dlq-flat-legacy-1",
+            "status": "pending",
+            "reason": "external egress denied: code=host_not_allowlisted host='openapi.twse.com.tw'",
+            "event_type": "source_ingestion.scheduled_run_failed",
+            "payload": {
+                "connector_id": "tw-twse-tpex-official-market",
+                "frontier_id": "frontier-94a821378db3",
+                "error": "external egress denied: code=host_not_allowlisted host='openapi.twse.com.tw'",
+            },
+        }
+    ]
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+        "dlq_entries": flat_dlq_entries,
+        "frontier": [dict(CANONICAL_TW_FAILED_FRONTIER)],
+    }
+    bin_dir, state_file, _events_file, _output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+
+    code = f"""
+eval "$(sed -n '/^recover_bounded_source_refresh_dlq()/,/^execute_bounded_source_refresh_entrypoint()/p' "{DEPLOY_SCRIPT}" | sed '$d')"
+recover_bounded_source_refresh_dlq "true" "tw-twse-tpex-official-market"
+"""
+    proc = subprocess.run(
+        ["bash", "-c", code],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert "missing nested event structure in DLQ entry" in proc.stdout
+    assert "no eligible egress-denied DLQ entries found for recovery" in proc.stdout
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    assert not state.get("replay_calls"), "Must not call replay API for entries with missing nested event structure"
+
 
