@@ -22,5 +22,11 @@
     "related": "pytest scripts/test_deploy_nonprod_vm.py scripts/test_source_ingest_deploy_diagnostics_contract.py: 92 passed, 2 skipped; bash -n scripts/deploy_nonprod_vm.sh ok"
   },
   "hosted_followup": "After merge, one Dev Taiwan Market Daily Refresh should produce a 2330.TW snapshot. Its 10/08 close comes from the www.twse.com.tw STOCK_DAY history, which already had the 115/10/08 row at 09:10Z. The next dev pair release should then pass the governed dev paper baseline.",
-  "review_status": "Author validation only; independent exact-head review by the assigned reviewer pending."
+  "review_status": "Author validation only; independent exact-head review by the assigned reviewer pending.",
+  "delivery_verification": {
+    "agent": "Claude",
+    "head": "e0f9259be",
+    "command": "python -m pytest -q scripts/test_dev_tw_market_refresh.py; bash -n scripts/deploy_nonprod_vm.sh",
+    "result": "20 passed (incl. the 3 new lease/interval tests); bash -n ok"
+  }
 }
