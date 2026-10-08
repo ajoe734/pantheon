@@ -10,10 +10,10 @@
     "producer_consumer_mismatch": "The producer correctly produces full market quotes and historical series. Downstream evaluation policy (threshold_policy.json v3.0.0) governs the specific evaluation universe (required_instruments: 2317.TWSE, 2330.TWSE). The materializer previously lacked binding to this approved policy prior to immutable DatasetVersion construction, conflating the raw storage batch with the evaluation universe. Scoping records strictly to policy['required_instruments'] before materialization—while forbidding filtering by observed bar count or quality, and strictly failing closed if any required policy instrument is missing—aligns producer and consumer without weakening any validation or threshold."
   },
   "fix": {
-    "source_dataset_authority": "materialize_source_dataset_version accepts policy_path or policy mapping, validates it against canonical evaluation policy authority schema and digest, scopes records strictly to policy['required_instruments'], enforces that all required instruments are present, stamps source_policy_selection and source_policy_selection_sha256 into DatasetVersion metadata, and includes expected_policy_selection_digest in cache key assertion to isolate cache keys.",
+    "source_dataset_authority": "materialize_source_dataset_version accepts policy_path or policy mapping, validates it against canonical evaluation policy authority schema and digest, scopes records strictly to policy['required_instruments'], enforces that all required instruments are present, stamps source_policy_selection and source_policy_selection_sha256 into DatasetVersion metadata, and includes expected_policy_selection_digest in cache key assertion to isolate cache keys; _assert_run_not_rebound verifies same-run storage binding digest for all same-run materializations before checking policy selection digest, strictly rejecting cross-policy storage tampering.",
     "evaluation_authority": "Retained unchanged; existing evaluation authority strictly verifies >= 30 bars on all instruments in the admitted DatasetVersion, perfectly matching the scoped dataset.",
     "main_service": "In services/training-session/main.py, passed canonical TRAINING_SESSION_THRESHOLD_POLICY_PATH to materialize_source_dataset_version during snapshot loading.",
-    "tests": "Added 6 comprehensive unit and adversarial tests covering: whole-market 1-bar extras with policy selection, actual MarketDataStorageWriter output with multiple instruments and extras, adversarial fail-closed rejection on missing required symbol, adversarial rejection on short symbol (5 bars < 30) at evaluation, adversarial rejection on invalid policy status, and cache key isolation."
+    "tests": "Added 8 comprehensive unit and adversarial tests covering: whole-market 1-bar extras with policy selection, actual MarketDataStorageWriter output with multiple instruments and extras, adversarial fail-closed rejection on missing required symbol, adversarial rejection on short symbol (5 bars < 30) at evaluation, adversarial rejection on invalid policy status, cache key isolation, rejection of changed storage across differing policies, and allowing identical storage across differing policy scopes."
   },
   "acceptance_verification": {
     "ac1_actual_failure_retained": "passed: Retained actual GHA 37702411985 L4 failure observation ('dataset instrument 00400A.TWSE has 1 bars; minimum is 30') and distinguished it from producer hypothesis.",
@@ -29,6 +29,6 @@
       "/tmp/pantheon-pytest-env/bin/pytest services/training-session/tests/",
       "/tmp/pantheon-pytest-env/bin/pytest tests/integration/l12/test_current_research_loops_deployed_e2e.py"
     ],
-    "result": "passed (all 184 training-session tests and e2e integration test passed; 0 failures; production net diff 115 lines <= 220 budget)"
+    "result": "passed (all 186 training-session tests and e2e integration test passed; 0 failures; production net diff well within <= 220 budget)"
   }
 }

@@ -1270,23 +1270,23 @@ def _assert_run_not_rebound(
         metadata = existing.get("metadata_json")
         if not isinstance(metadata, Mapping):
             continue
-        existing_policy_digest = metadata.get("source_policy_selection_sha256")
-        same_scope = (
+        same_run = (
             metadata.get("source_connector_id") == connector_id
             and metadata.get("source_dataset_id") == dataset_id
             and metadata.get("source_ingest_run_id") == run_id
-            and existing_policy_digest == expected_policy_selection_digest
         )
-        if not same_scope:
+        if not same_run:
             continue
         if metadata.get("source_storage_binding_sha256") != expected_storage_binding_digest:
             raise SourceDatasetAuthorityError(
                 "previously materialized source run bytes changed; refusing to rebind immutable run"
             )
-        if stable_json_sha256(existing) != stable_json_sha256(expected_payload):
-            raise SourceDatasetAuthorityError(
-                "previously materialized source run has differing authority bindings"
-            )
+        existing_policy_digest = metadata.get("source_policy_selection_sha256")
+        if existing_policy_digest == expected_policy_selection_digest:
+            if stable_json_sha256(existing) != stable_json_sha256(expected_payload):
+                raise SourceDatasetAuthorityError(
+                    "previously materialized source run has differing authority bindings"
+                )
 
 
 def _atomic_materialize(path: Path, content: bytes, root: Path) -> None:
