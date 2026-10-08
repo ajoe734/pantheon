@@ -233,6 +233,12 @@
         "Claude2",
         "Antigravity",
         "Antigravity2"
+      ],
+      "PiAstra": [
+        "Claude",
+        "Claude2",
+        "Antigravity",
+        "Antigravity2"
       ]
     },
     "max_reassignments_per_cycle": 4,
