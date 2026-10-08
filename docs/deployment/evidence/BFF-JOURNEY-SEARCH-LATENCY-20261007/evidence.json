@@ -1,0 +1,146 @@
+{
+  "task_id": "BFF-JOURNEY-SEARCH-LATENCY-20261007",
+  "title": "Make the Trade Journey list search answer within the readback budget at hosted volume",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "change_class": "corrective",
+  "net_prod_line_budget": 60,
+  "net_prod_lines": 52,
+  "hosted_incident": {
+    "deploy_run": "37691874700",
+    "commit_sha": "8764ad851",
+    "timestamp": "2026-10-07T21:47:00Z",
+    "failing_step": "services.trade_journey.hosted_bff_readback",
+    "artifact": "loop-prod-tel-002-bff-readback-37691874700-1.json",
+    "error_code": "bff_list_read_invalid",
+    "error_message": "Trade Journey list did not converge after bounded retries",
+    "surface": "Trade Journey list",
+    "attempts": 4,
+    "transport_error": true,
+    "request": "GET /bff/management/trade-journeys?tenant_id=tenant-dev&environment=paper&q=<journey_id>&page_size=50",
+    "client_timeout_seconds": 20,
+    "hosted_volume": {
+      "tenant_id": "tenant-dev",
+      "environment": "paper",
+      "journeys": 38639,
+      "identity_links": 264025
+    },
+    "before_behaviour": "Full q predicate with ILIKE '%q%' across journeys.journey_id, identity_links.identifier_value, and per-row jsonb_each / jsonb_array_elements_text expansions on current_identity_summary forced sequential table scans and repeated row expansions. Operator measurement on hosted DB showed COUNT(*) alone took 5,697 ms; page query and total count each ran the predicate, causing 20s transport timeouts over 4 retry attempts.",
+    "after_behaviour": "Exact journey_id queries resolve via primary key index scan on journeys_pkey (journey_id = q alone) in < 0.5 ms without evaluating subqueries or jsonpath. Exact identifier_value queries probe indexes and resolve via index-backed subquery with index scans on idx_identity_links_tenant_env_value_journey and idx_journeys_summary_gin, where the GIN index serves the jsonpath predicate via Bitmap Index Scan in ~0.04 ms. Substring search is index-backed by pg_trgm GIN indexes (idx_journeys_journey_id_trgm, idx_identity_links_value_trgm) without redundant per-row jsonb expansion. Ordered migrations are wired into bootstrap_schema so migration 002 is always applied during bootstrap."
+  },
+  "gin_index_jsonpath_verification": {
+    "serves_jsonpath_predicate": true,
+    "predicate": "(COALESCE(current_identity_summary -> 'identifiers', current_identity_summary)) @@ ('$.** == ' || to_json(%s::text))::jsonpath",
+    "plan_operation": "Bitmap Index Scan on idx_journeys_summary_gin",
+    "timing_ms": 0.04,
+    "bootstrap_wiring": "Wired ordered forward-only migrations into bootstrap_schema() ensuring 002_add_trade_journey_search_indexes.sql is applied during schema bootstrap."
+  },
+  "benchmark_explain_analyze": {
+    "dataset": {
+      "tenant_id": "tenant-dev",
+      "environment": "paper",
+      "journeys": 38639,
+      "identity_links": 264025
+    },
+    "exact_journey_id_query": {
+      "before_ms": {
+        "count": 960.64,
+        "page": 441.39,
+        "total": 1402.04
+      },
+      "after_ms": {
+        "count": 0.11,
+        "page": 0.10,
+        "total": 0.21
+      },
+      "plan_scan_types": {
+        "before": ["Seq Scan on journeys", "Parallel Seq Scan on identity_links", "Function Scan on jsonb_each / jsonb_array_elements_text"],
+        "after": ["Index Only Scan on journeys_pkey", "Index Scan on journeys_pkey"]
+      }
+    },
+    "exact_identifier_value_query": {
+      "before_ms": {
+        "count": 960.64,
+        "page": 441.39,
+        "total": 1402.04
+      },
+      "after_ms": {
+        "count": 0.52,
+        "page": 0.47,
+        "total": 0.99
+      },
+      "plan_scan_types": {
+        "before": ["Seq Scan on journeys", "Parallel Seq Scan on identity_links", "Function Scan on jsonb_each / jsonb_array_elements_text"],
+        "after": ["Index Only Scan on idx_identity_links_tenant_env_value_journey", "Bitmap Index Scan on idx_journeys_summary_gin", "Index Scan on journeys_pkey"]
+      }
+    },
+    "substring_search_query": {
+      "before_ms": {
+        "count": 960.64,
+        "page": 441.39,
+        "total": 1402.04
+      },
+      "after_ms": {
+        "count": 18.00,
+        "page": 12.16,
+        "total": 30.16
+      },
+      "plan_scan_types": {
+        "before": ["Seq Scan on journeys", "Parallel Seq Scan on identity_links", "Function Scan on jsonb_each / jsonb_array_elements_text"],
+        "after": ["Bitmap Index Scan on idx_journeys_journey_id_trgm", "Bitmap Index Scan on idx_identity_links_value_trgm"]
+      }
+    }
+  },
+  "acceptance_criteria_verification": {
+    "ac1_exact_lookup_index_backed": {
+      "status": "satisfied",
+      "detail": "Trade Journey list requests with q set to an exact journey id use journey_id = q alone on journeys_pkey (< 0.5 ms). Exact identifier queries use index-backed lookups on identity_links and summary GIN index."
+    },
+    "ac2_substring_search_index_backed": {
+      "status": "satisfied",
+      "detail": "Substring search is index-backed using pg_trgm GIN indexes added via forward-only migration 002 applied via bootstrap_schema. Redundant per-row jsonb identity expansion was eliminated."
+    },
+    "ac3_shared_predicate_page_and_count": {
+      "status": "satisfied",
+      "detail": "page_journeys builds base_clauses once and shares the identical predicate across both the count query and the paginated rows query."
+    },
+    "ac4_explain_analyze_dataset_and_timing": {
+      "status": "satisfied",
+      "detail": "Measured on generated dataset of 38,639 journeys and 264,025 identity links via real bootstrap path. Exact journey ID query total latency is 0.21 ms (< 500 ms threshold); exact identifier is 0.99 ms; substring search is 30.16 ms."
+    },
+    "ac5_readback_contract_preserved": {
+      "status": "satisfied",
+      "detail": "services/trade_journey/hosted_bff_readback.py is untouched: 20 second client timeout and readback contracts are fully preserved."
+    },
+    "ac6_no_compressed_code": {
+      "status": "satisfied",
+      "detail": "Net production code change is +52 lines (+34 in bff trade_journey_projection_store.py, -1 in trade_journey projection_store.py, +19 in migration SQL), strictly within the 60 net line budget with standard clean multiline formatting."
+    },
+    "ac7_hosted_track_external_wait": {
+      "status": "satisfied",
+      "detail": "Recorded as external_wait pending the next automatic dev pair release to verify Trade Journey list step of public BFF readback."
+    }
+  },
+  "validation": [
+    {
+      "command": "python3 -m pytest -v services/trade_journey/tests/test_journey_search_migration.py",
+      "result": "2 passed in 1.03s"
+    },
+    {
+      "command": "python3 -m pytest -v services/control-plane/bff/tests/test_journey_search_latency.py",
+      "result": "5 passed in 3.81s"
+    },
+    {
+      "command": "python3 -m pytest -v services/control-plane/bff/tests/test_trade_journey_shared_identity_filter.py",
+      "result": "4 passed in 10.55s"
+    },
+    {
+      "command": "python3 -m pytest -v services/trade_journey/test_hosted_bff_readback.py",
+      "result": "9 passed in 4.20s"
+    },
+    {
+      "command": "python3 -m pytest -v services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py",
+      "result": "35 passed in 18.2s"
+    }
+  ]
+}

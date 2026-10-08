@@ -28,10 +28,9 @@ DEFAULT_PROJECTION_TIMEOUT_SECONDS = 10.0
 DEFAULT_PROJECTION_CONNECT_TIMEOUT_SECONDS = 10.0
 DEFAULT_PROJECTION_STATEMENT_TIMEOUT_SECONDS = 10.0
 DEFAULT_PROJECTION_LOCK_TIMEOUT_SECONDS = 10.0
+MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
 INITIAL_MIGRATION_PATH = (
-    Path(__file__).resolve().parent
-    / "migrations"
-    / "001_create_trade_journey_projection_schema.sql"
+    MIGRATIONS_DIR / "001_create_trade_journey_projection_schema.sql"
 )
 
 
@@ -516,8 +515,7 @@ class ProjectionStore:
                          reconcile_runtime: bool = False) -> None:
         """Apply the versioned migration explicitly with migration credentials."""
 
-        sql = INITIAL_MIGRATION_PATH.read_text(encoding="utf-8")
-        sql = sql.replace(DEFAULT_PROJECTION_SCHEMA, self.schema)
+        migration_files = sorted(MIGRATIONS_DIR.glob("*.sql")) if MIGRATIONS_DIR.is_dir() else [INITIAL_MIGRATION_PATH]
         with self._connect_db() as conn, conn.cursor() as cur:
             if runtime_role is not None:
                 # Refuse elevated runtime identities before any DDL or grants.
@@ -530,7 +528,8 @@ class ProjectionStore:
                     raise ValueError("Projection runtime must be an existing non-admin role")
                 if reconcile_runtime:
                     self._reconcile_runtime_ddl(cur, runtime_role)
-            cur.execute(sql)
+            for migration_file in migration_files:
+                cur.execute(migration_file.read_text(encoding="utf-8").replace(DEFAULT_PROJECTION_SCHEMA, self.schema))
             if runtime_role is not None:
                 from psycopg import sql as pgsql
 
