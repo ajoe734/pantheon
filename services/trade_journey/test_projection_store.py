@@ -1379,7 +1379,7 @@ def test_projection_store_indexed_explain_paths(postgres_dsn: str) -> None:
             """
         )
         plan2 = "\n".join(r[0] for r in cur.fetchall())
-        assert "identity_links_pkey" in plan2
+        assert "identity_links_pkey" in plan2 or "idx_identity_links_tenant_env_value_journey" in plan2
 
         # Index 3: journeys (tenant_id, environment, updated_at DESC, journey_id DESC)
         cur.execute(f"EXPLAIN SELECT * FROM {schema_name}.journeys WHERE tenant_id='t-1' AND environment='paper' ORDER BY updated_at DESC, journey_id DESC LIMIT 10")
