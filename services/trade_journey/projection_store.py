@@ -321,7 +321,15 @@ class ProjectionStore:
             raise ValueError("Invalid schema name for ProjectionStore")
         self.dsn = dsn
         self.schema = schema
-        base_timeout = _validate_timeout(timeout_seconds, name="timeout_seconds")
+        base_timeout = (
+            _validate_timeout(
+                timeout_seconds,
+                name="timeout_seconds",
+                default=DEFAULT_PROJECTION_TIMEOUT_SECONDS,
+            )
+            if timeout_seconds is not None
+            else DEFAULT_PROJECTION_TIMEOUT_SECONDS
+        )
         self.connect_timeout_seconds = _validate_timeout(
             connect_timeout_seconds,
             name="connect_timeout_seconds",
@@ -370,7 +378,11 @@ class ProjectionStore:
         options = f"-c statement_timeout={stmt_ms} -c lock_timeout={lock_ms}"
 
         lock = threading.Lock()
-        outcome: dict[str, Any] = {"status": "pending", "conn": None, "error": None}
+        outcome: dict[str, Any] = {
+            "status": "pending",
+            "conn": None,
+            "error": None,
+        }
         done = threading.Event()
 
         def _worker() -> None:
@@ -425,8 +437,12 @@ class ProjectionStore:
         if not done.wait(timeout=self.connect_timeout_seconds):
             conn_to_close = None
             with lock:
-                conn_to_close = outcome["conn"] if outcome["status"] == "success" else None
-                outcome["status"], outcome["conn"] = "timed_out", None
+                if outcome["status"] == "pending":
+                    outcome["status"] = "timed_out"
+                elif outcome["status"] == "success":
+                    outcome["status"] = "timed_out"
+                    conn_to_close = outcome["conn"]
+                    outcome["conn"] = None
             if conn_to_close is not None:
                 threading.Thread(
                     target=_safe_close_conn,
@@ -614,17 +630,22 @@ class ProjectionStore:
                 if runtime_role is not None:
                     _apply_grants(cur, runtime_role)
 
+    def _controller_query(self, *, for_update: bool = False) -> str:
+        lock_clause = " FOR UPDATE" if for_update else ""
+        return (
+            f"SELECT {CONTROLLER_COLUMNS} FROM {self.schema}.controller "
+            f"WHERE controller_id=%s AND tenant_scope=%s AND environment_scope=%s{lock_clause}"
+        )
+
     def get_controller_state(
         self, controller_id: str, tenant_scope: str, environment_scope: str
     ) -> Optional[ControllerStateRow]:
         """Loads controller state row without locking."""
-        sql = f"""
-        SELECT {CONTROLLER_COLUMNS}
-        FROM {self.schema}.controller
-        WHERE controller_id=%s AND tenant_scope=%s AND environment_scope=%s
-        """
         with self._connect_db() as conn, conn.cursor() as cur:
-            cur.execute(sql, (controller_id, tenant_scope, environment_scope))
+            cur.execute(
+                self._controller_query(),
+                (controller_id, tenant_scope, environment_scope),
+            )
             row = cur.fetchone()
             if not row:
                 return None
@@ -711,15 +732,7 @@ class ProjectionStore:
                         "Could not acquire both legacy baseline controller locks"
                     )
 
-            cur.execute(
-                f"""
-                SELECT {CONTROLLER_COLUMNS}
-                FROM {self.schema}.controller
-                WHERE controller_id=%s AND tenant_scope=%s AND environment_scope=%s
-                FOR UPDATE
-                """,
-                controller_args,
-            )
+            cur.execute(self._controller_query(for_update=True), controller_args)
             existing_live = cur.fetchone()
             if existing_live is not None:
                 existing = ControllerStateRow(*existing_live)
@@ -738,15 +751,7 @@ class ProjectionStore:
                     "Live controller already exists and does not match the accepted legacy baseline"
                 )
 
-            cur.execute(
-                f"""
-                SELECT {CONTROLLER_COLUMNS}
-                FROM {self.schema}.controller
-                WHERE controller_id=%s AND tenant_scope=%s AND environment_scope=%s
-                FOR UPDATE
-                """,
-                migration_args,
-            )
+            cur.execute(self._controller_query(for_update=True), migration_args)
             migration_row = cur.fetchone()
             if migration_row is None:
                 raise ProjectionStoreException(
@@ -835,7 +840,7 @@ class ProjectionStore:
                     %s, %s, %s, %s, %s, 0, %s, %s,
                     'recovery', 'repair_only', FALSE, %s, %s, %s, '', 0, %s
                 )
-                RETURNING {controller_columns}
+                RETURNING {CONTROLLER_COLUMNS}
                 """,
                 (
                     controller_id,
@@ -1108,12 +1113,7 @@ class ProjectionStore:
 
                 # 2. Lock controller row FOR UPDATE
                 cur.execute(
-                    f"""
-                    SELECT {CONTROLLER_COLUMNS}
-                    FROM {self.schema}.controller
-                    WHERE controller_id=%s AND tenant_scope=%s AND environment_scope=%s
-                    FOR UPDATE
-                    """,
+                    self._controller_query(for_update=True),
                     (controller_id, tenant_scope, environment_scope),
                 )
                 ctrl_row = cur.fetchone()
@@ -1269,11 +1269,7 @@ class ProjectionStore:
                     # all caller-supplied derived mutations so retries cannot rewrite
                     # stages or aggregates with non-canonical retry payloads.
                     cur.execute(
-                        f"""
-                        SELECT {CONTROLLER_COLUMNS}
-                        FROM {self.schema}.controller
-                        WHERE controller_id=%s AND tenant_scope=%s AND environment_scope=%s
-                        """,
+                        self._controller_query(),
                         (controller_id, tenant_scope, environment_scope),
                     )
                     return ControllerStateRow(*cur.fetchone())

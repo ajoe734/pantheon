@@ -224,3 +224,59 @@ def test_bootstrap_schema_rollback_atomicity_on_failure():
             admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(runtime_role)))
 
 
+def test_concurrent_migrations_do_not_contain_dollar_quotes_or_do_blocks():
+    """Verify that all migrations containing CONCURRENTLY do not contain $$ or DO blocks.
+
+    ProjectionStore.bootstrap_schema splits concurrent migrations naively on ';' to execute
+    statements individually outside transaction blocks. Semicolons inside $$ blocks or DO blocks
+    would be silently broken into invalid statement fragments.
+    """
+    import re
+
+    assert MIGRATIONS_DIR.is_dir()
+    for migration_file in sorted(MIGRATIONS_DIR.glob("*.sql")):
+        content = migration_file.read_text(encoding="utf-8")
+        if "CONCURRENTLY" in content.upper():
+            assert "$$" not in content, (
+                f"Migration {migration_file.name} contains CONCURRENTLY and '$$'; "
+                "cannot safely split on ';' without a proper SQL parser."
+            )
+            assert not re.search(r"\bDO\b", content, re.IGNORECASE), (
+                f"Migration {migration_file.name} contains CONCURRENTLY and a DO block; "
+                "cannot safely split on ';' without a proper SQL parser."
+            )
+
+
+def test_concurrent_migration_safety_guard_rejects_synthetic_dollar_quotes_and_do():
+    """Demonstrate that synthetic migrations with $$ or DO blocks violate the concurrent split guard."""
+    import re
+
+    def assert_concurrent_migration_safe(filename: str, content: str) -> None:
+        if "CONCURRENTLY" in content.upper():
+            assert "$$" not in content, (
+                f"Migration {filename} contains CONCURRENTLY and '$$'; "
+                "cannot safely split on ';' without a proper SQL parser."
+            )
+            assert not re.search(r"\bDO\b", content, re.IGNORECASE), (
+                f"Migration {filename} contains CONCURRENTLY and a DO block; "
+                "cannot safely split on ';' without a proper SQL parser."
+            )
+
+    # Valid concurrent statements pass
+    assert_concurrent_migration_safe("test_ok.sql", "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx ON tbl (col);")
+
+    # Migration with $$ fails
+    with pytest.raises(AssertionError, match="contains CONCURRENTLY and '\\$\\$'"):
+        assert_concurrent_migration_safe(
+            "bad_dollar.sql",
+            "CREATE INDEX CONCURRENTLY idx ON tbl (col);\nCREATE FUNCTION foo() RETURNS void AS $$ BEGIN NULL; END; $$ LANGUAGE plpgsql;",
+        )
+
+    # Migration with DO block fails
+    with pytest.raises(AssertionError, match="contains CONCURRENTLY and a DO block"):
+        assert_concurrent_migration_safe(
+            "bad_do.sql",
+            "CREATE INDEX CONCURRENTLY idx ON tbl (col);\nDO 'BEGIN NULL; END';",
+        )
+
+

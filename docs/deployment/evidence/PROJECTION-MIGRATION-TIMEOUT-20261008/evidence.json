@@ -1,7 +1,7 @@
 {
   "task_id": "PROJECTION-MIGRATION-TIMEOUT-20261008",
   "title": "Run trade journey projection migrations without the 10 second runtime statement timeout",
-  "owner": "Antigravity",
+  "owner": "Antigravity2",
   "reviewer": "Claude",
   "change_class": "corrective",
   "net_prod_line_budget": 40,
@@ -49,7 +49,7 @@
     "ac2_concurrent_and_invalid_index": "Verified: 002_add_trade_journey_search_indexes.sql uses CREATE INDEX CONCURRENTLY IF NOT EXISTS; statements execute individually with autocommit=True; invalid indexes with indisvalid=false are detected and rebuilt concurrently.",
     "ac3_test_timeout_and_idempotency": "Verified: test_bootstrap_schema_raises_timeout_only_for_migrations_mock, test_bootstrap_schema_applies_002_and_is_idempotent, test_bootstrap_schema_detects_and_rebuilds_invalid_index, and test_bootstrap_schema_rollback_atomicity_on_failure all pass with real PostgreSQL.",
     "ac4_evidence": "Verified: hosted failure from deploy run 37717214717 and empirical index build times recorded in evidence.json.",
-    "ac5_no_compressed_code": "Verified: all code follows standard PEP 8 formatting without compressed lines or multiple statements per line; net production lines = +35, within net_prod_line_budget <= 40.",
+    "ac5_no_compressed_code": "Verified: all code follows standard PEP 8 formatting without compressed lines or multiple statements per line; reverted unrelated compression in outcome dict, connect timeout, and base timeout; net production lines = +31, within net_prod_line_budget <= 40.",
     "ac6_hosted_track": "Recorded as external_wait pending the next automatic dev pair release passing projection_bootstrap."
   },
   "hosted_track": {
