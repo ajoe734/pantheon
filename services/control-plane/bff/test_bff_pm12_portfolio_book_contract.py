@@ -82,6 +82,7 @@ class PortfolioBookTestReadPorts(ReadSurfacePorts):
 def _portfolio_store(
     monkeypatch,
     *,
+    capital_pools: list[dict[str, Any]] | None = None,
     telemetry_source: str = "canonical",
     telemetry: dict[str, dict[str, Any]] | None = None,
     drift_reports: dict[str, dict[str, Any]] | None = None,
@@ -92,30 +93,35 @@ def _portfolio_store(
     extra_runtime_bindings: list[dict[str, Any]] | None = None,
 ) -> TestClient:
     store = PortfolioBookTestReadPorts()
-    capital_pools = [
-        {
-            "id": "pool-alpha",
-            "pool_id": "pool-alpha",
-            "name": "Alpha Book",
-            "status": "active",
-            "risk_policy_ref": "risk-alpha",
-            "owner_id": "desk-alpha",
-            "owner_type": "desk",
-            "risk_budget": 100.0,
-            "current_exposure": 40.0,
-            "currency": "USD",
-        },
-        {
-            "id": "pool-beta",
-            "pool_id": "pool-beta",
-            "name": "Beta Book",
-            "status": "suspended",
-            "risk_policy_ref": "risk-beta",
-            "risk_budget": 50.0,
-            "current_exposure": 20.0,
-            "currency": "USD",
-        },
-    ]
+    if capital_pools is None:
+        capital_pools = [
+            {
+                "id": "pool-alpha",
+                "pool_id": "pool-alpha",
+                "name": "Alpha Book",
+                "status": "active",
+                "risk_policy_ref": "risk-alpha",
+                "owner_id": "desk-alpha",
+                "owner_type": "desk",
+                "nav": 100.0,
+                "risk_budget": 100.0,
+                "current_exposure": 40.0,
+                "currency": "USD",
+            },
+            {
+                "id": "pool-beta",
+                "pool_id": "pool-beta",
+                "name": "Beta Book",
+                "status": "suspended",
+                "risk_policy_ref": "risk-beta",
+                "nav": 50.0,
+                "risk_budget": 50.0,
+                "current_exposure": 20.0,
+                "currency": "USD",
+            },
+        ]
+    else:
+        capital_pools = list(capital_pools)
     bindings = [
         {
             "id": "binding-alpha",
@@ -288,6 +294,11 @@ def test_portfolio_book_summary_composes_pool_runtime_and_telemetry(monkeypatch)
     assert summary["total_trades"] == 16
     assert summary["latest_telemetry_at"] == "2026-05-23T08:05:00Z"
     assert payload["data"]["totalNav"] == 150.0
+    assert payload["data"]["totalCash"] is None
+    assert payload["data"]["grossExposure"] == 60.0
+    assert payload["data"]["leverage"] == 0.4
+    assert payload["data"]["unrealizedPnl"] is None
+    assert payload["data"]["pnlToday"] is None
 
     alpha = payload["data"]["items"][0]
     assert alpha["pool_id"] == "pool-alpha"
@@ -307,6 +318,99 @@ def test_portfolio_book_summary_composes_pool_runtime_and_telemetry(monkeypatch)
     assert payload["page_info"] == {"next_page_token": None, "total": 2}
     assert payload["meta"]["surfaces"]["portfolio_book"]["source"] == "bff_composed"
     assert payload["meta"]["surfaces"]["capital_pools"]["source"] == "canonical"
+
+
+def test_portfolio_book_summary_without_nav_cash_or_daily_pnl_yields_null_or_omitted(monkeypatch) -> None:
+    client = _portfolio_store(
+        monkeypatch,
+        capital_pools=[
+            {
+                "id": "pool-bare",
+                "pool_id": "pool-bare",
+                "name": "Bare Pool",
+                "status": "active",
+                "risk_budget": 100.0,
+                "current_exposure": 25.0,
+                "currency": "USD",
+            }
+        ],
+        extra_runtime_bindings=[
+            {
+                "id": "rb-bare",
+                "runtime_id": "runtime-bare",
+                "capital_pool_id": "pool-bare",
+                "status": "running",
+            }
+        ],
+        telemetry={
+            "runtime-bare": {
+                "runtime_id": "runtime-bare",
+                "pnl": 15.0,
+            }
+        },
+    )
+
+    response = client.get("/bff/management/portfolio-book", headers=HEADERS)
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+
+    # When core NAV is unavailable, totalNav must be omitted so execute-plans summaryLiveOnly returns null
+    assert "totalNav" not in data
+
+    # Missing money figures must be None (JSON null), never 0 or 0.0 or substituted
+    assert data["totalCash"] is None
+    assert data["unrealizedPnl"] is None
+    assert data["pnlToday"] is None
+    assert data["leverage"] is None
+
+    # Telemetry cumulative total_pnl is preserved in summary, but never substituted as pnlToday or unrealizedPnl
+    assert data["summary"]["total_pnl"] == 15.0
+
+
+def test_portfolio_book_summary_with_honest_daily_and_unrealized_pnl(monkeypatch) -> None:
+    client = _portfolio_store(
+        monkeypatch,
+        capital_pools=[
+            {
+                "id": "pool-honest",
+                "pool_id": "pool-honest",
+                "name": "Honest Pool",
+                "status": "active",
+                "nav": 200.0,
+                "cash": 50.0,
+                "risk_budget": 100.0,
+                "current_exposure": 40.0,
+                "currency": "USD",
+            }
+        ],
+        extra_runtime_bindings=[
+            {
+                "id": "rb-honest",
+                "runtime_id": "runtime-honest",
+                "capital_pool_id": "pool-honest",
+                "status": "running",
+            }
+        ],
+        telemetry={
+            "runtime-honest": {
+                "runtime_id": "runtime-honest",
+                "pnl": 25.0,
+                "daily_pnl": 5.5,
+                "unrealized_pnl": 12.0,
+            }
+        },
+    )
+
+    response = client.get("/bff/management/portfolio-book", headers=HEADERS)
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["totalNav"] == 200.0
+    assert data["totalCash"] == 50.0
+    assert data["grossExposure"] == 40.0
+    assert data["leverage"] == 0.2
+    assert data["unrealizedPnl"] == 12.0
+    assert data["pnlToday"] == 5.5
+    assert data["summary"]["total_pnl"] == 25.0
 
 
 def test_portfolio_book_requires_read_auth(monkeypatch) -> None:

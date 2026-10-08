@@ -1392,18 +1392,26 @@ def _management_first_float(record: Dict[str, Any], *keys: str) -> Optional[floa
 
 def _management_telemetry_rollup(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     pnl_values: List[float] = []
+    unrealized_values: List[float] = []
+    daily_pnl_values: List[float] = []
     drawdown_values: List[float] = []
     fill_rates: List[float] = []
     total_trades = 0
     latest_collected_at: Optional[str] = None
     for record in records:
         pnl = _management_first_float(record, "pnl", "summary.total_pnl", "summary.pnl")
+        unrealized = _management_first_float(record, "unrealized_pnl", "summary.unrealized_pnl", "metrics.unrealized_pnl")
+        daily = _management_first_float(record, "daily_pnl", "pnl_today", "summary.daily_pnl", "summary.pnl_today", "metrics.daily_pnl")
         drawdown = _management_first_float(record, "drawdown", "max_drawdown", "summary.max_drawdown")
         fill_rate = _management_first_float(record, "fill_rate", "summary.fill_rate")
         trades = _management_first_float(record, "total_trades", "summary.total_trades")
         collected_at = str(record.get("collected_at") or record.get("collectedAt") or record.get("updated_at") or "").strip()
         if pnl is not None:
             pnl_values.append(pnl)
+        if unrealized is not None:
+            unrealized_values.append(unrealized)
+        if daily is not None:
+            daily_pnl_values.append(daily)
         if drawdown is not None:
             drawdown_values.append(drawdown)
         if fill_rate is not None:
@@ -1415,6 +1423,8 @@ def _management_telemetry_rollup(records: List[Dict[str, Any]]) -> Dict[str, Any
     return {
         "runtime_count": len(records),
         "total_pnl": round(sum(pnl_values), 6) if pnl_values else None,
+        "unrealized_pnl": round(sum(unrealized_values), 6) if unrealized_values else None,
+        "daily_pnl": round(sum(daily_pnl_values), 6) if daily_pnl_values else None,
         "max_drawdown": max(drawdown_values) if drawdown_values else None,
         "average_fill_rate": round(sum(fill_rates) / len(fill_rates), 6) if fill_rates else None,
         "total_trades": total_trades,
@@ -1638,12 +1648,34 @@ def _pm12_portfolio_book_response(
             max_util = u
             highest_risk_pool_id = e.get("capital_pool_id") or e.get("id")
 
-    total_nav = round(sum(_management_as_float(p.get("nav") or p.get("risk_budget")) or 0.0 for p in sources["capital_pools"]), 6)
-    total_cash = round(sum(_management_as_float(p.get("cash")) or 0.0 for p in sources["capital_pools"]), 6)
-    gross_exposure = round(sum(_management_as_float(e.get("current_exposure")) or 0.0 for e in entries), 6)
-    leverage = round(gross_exposure / total_nav, 2) if total_nav > 0 else 0.0
-    unrealized_pnl = portfolio_telemetry.get("total_pnl") or 0.0
-    pnl_today = portfolio_telemetry.get("total_pnl") or 0.0
+    nav_values = [v for p in sources["capital_pools"] if (v := _management_as_float(p.get("nav"))) is not None]
+    total_nav = round(sum(nav_values), 6) if nav_values else None
+
+    cash_values = [v for p in sources["capital_pools"] if (v := _management_as_float(p.get("cash"))) is not None]
+    total_cash = round(sum(cash_values), 6) if cash_values else None
+
+    exposure_values = [v for e in entries if (v := _management_as_float(e.get("current_exposure"))) is not None]
+    gross_exposure = round(sum(exposure_values), 6) if exposure_values else None
+
+    leverage = round(gross_exposure / total_nav, 2) if gross_exposure is not None and total_nav is not None and total_nav > 0 else None
+
+    pool_unrealized = [v for p in sources["capital_pools"] if (v := _management_as_float(p.get("unrealized_pnl"))) is not None]
+    if pool_unrealized:
+        unrealized_pnl = round(sum(pool_unrealized), 6)
+    elif portfolio_telemetry.get("unrealized_pnl") is not None:
+        unrealized_pnl = portfolio_telemetry["unrealized_pnl"]
+    else:
+        unrealized_pnl = None
+
+    pool_pnl_today = [v for p in sources["capital_pools"] if (v := _management_as_float(p.get("pnl_today") if p.get("pnl_today") is not None else p.get("daily_pnl"))) is not None]
+    if pool_pnl_today:
+        pnl_today = round(sum(pool_pnl_today), 6)
+    elif portfolio_telemetry.get("daily_pnl") is not None:
+        pnl_today = portfolio_telemetry["daily_pnl"]
+    elif portfolio_telemetry.get("pnl_today") is not None:
+        pnl_today = portfolio_telemetry["pnl_today"]
+    else:
+        pnl_today = None
 
     summary = {
         "active_capital_pools": active_capital_pools,
@@ -1670,19 +1702,22 @@ def _pm12_portfolio_book_response(
         "runtime_bindings": {"status": "ok", "source": dataset_source("runtime_bindings"), "snapshot_at": snapshot_at},
         "telemetry_summaries": {"status": tel_status, "source": tel_src, "snapshot_at": snapshot_at},
     }
+    data: Dict[str, Any] = {
+        "totalCash": total_cash,
+        "grossExposure": gross_exposure,
+        "leverage": leverage,
+        "unrealizedPnl": unrealized_pnl,
+        "pnlToday": pnl_today,
+        "activeCapitalPools": active_capital_pools,
+        "highestRiskPoolId": highest_risk_pool_id,
+        "summary": summary,
+        "items": page_items,
+    }
+    if total_nav is not None:
+        data["totalNav"] = total_nav
+
     return {
-        "data": {
-            "totalNav": total_nav,
-            "totalCash": total_cash,
-            "grossExposure": gross_exposure,
-            "leverage": leverage,
-            "unrealizedPnl": unrealized_pnl,
-            "pnlToday": pnl_today,
-            "activeCapitalPools": active_capital_pools,
-            "highestRiskPoolId": highest_risk_pool_id,
-            "summary": summary,
-            "items": page_items,
-        },
+        "data": data,
         "page_info": {"next_page_token": next_page_token, "total": total},
         "meta": {
             "snapshot_at": snapshot_at,
