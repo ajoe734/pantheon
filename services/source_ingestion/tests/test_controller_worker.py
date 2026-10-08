@@ -1533,10 +1533,10 @@ def test_run_controller_tick_orders_terminal_success_after_readback_validation(
     assert ControllerStateStore(config.state_path).load() == state
     assert events == [
         "store.tick_started",
-        "writer.heartbeat",
-        "writer.tick",
         "read_actual_state",
         "load_desired_state",
+        "writer.heartbeat",
+        "writer.tick",
         "reconcile_desired_state",
         "run_schedule_tick",
         "read_actual_state",
@@ -1576,10 +1576,10 @@ def test_run_controller_tick_reconcile_only_never_executes_provider(
     }
     assert events == [
         "store.tick_started",
-        "writer.heartbeat",
-        "writer.tick",
         "read_actual_state",
         "load_desired_state",
+        "writer.heartbeat",
+        "writer.tick",
         "reconcile_desired_state",
         "read_actual_state",
         "validate_due_state_readback",
@@ -1655,10 +1655,10 @@ def test_run_controller_tick_executes_egress_free_connector_in_reconcile_only(
 
     assert events == [
         "store.tick_started",
-        "writer.heartbeat",
-        "writer.tick",
         "read_actual_state",
         "load_desired_state",
+        "writer.heartbeat",
+        "writer.tick",
         "reconcile_desired_state",
         "run_schedule_tick",
         "read_actual_state",
@@ -2135,15 +2135,11 @@ def test_run_controller_tick_persists_explicit_failure_with_nonterminal_truth(
     assert persisted.total_successes == 0
     assert events == [
         "store.tick_started",
-        "writer.heartbeat",
-        "writer.tick",
         "read_actual_state",
         "load_desired_state",
         "store.failure",
         "writer.failure",
     ]
-    assert _call(writer, "heartbeat")["truth_level"] == "scheduled_tick"
-    assert _call(writer, "tick")["truth_level"] == "scheduled_tick"
     assert _call(writer, "failure")["truth_level"] == "scheduled_tick"
     assert _call(writer, "failure")["kwargs"]["dlq_count"] is None
 
@@ -3224,3 +3220,67 @@ def test_two_controller_ticks_preserve_active_persona_taiwan_schedule(tmp_path: 
 
 
 
+
+
+def test_run_controller_tick_publishes_projector_admissible_truth(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import importlib
+
+    import jsonschema
+
+    events: list[str] = []
+    config = _config(tmp_path)
+    state = _state()
+    store = RecordingStateStore(config.state_path, events)
+    writer = RecordingWriter(events)
+    _patch_successful_tick(monkeypatch, events)
+
+    run_controller_tick(config=config, state=state, store=store, writer=writer)
+
+    schema = json.loads(
+        (Path(__file__).resolve().parents[3] / "schemas" / "loop-controller-record.schema.json").read_text()
+    )
+    projector = importlib.import_module("services.loop-control.projector")
+    for name in ("heartbeat", "success"):
+        published = _call(writer, name)["kwargs"]
+        now = datetime.now(timezone.utc)
+        lease_seconds = published["lease_duration_seconds"]
+        assert lease_seconds >= config.interval_seconds + config.timeout_seconds
+        row = {
+            "loop_id": controller_worker.LOOP_ID,
+            "tenant_id": state.tenant_id,
+            "environment": state.environment,
+            "controller_id": state.controller_id,
+            "controller_name": state.controller_name,
+            "deployment_sha": "test-sha",
+            "desired_state_query": published.get("desired_state_query"),
+            "actual_state_query": published.get("actual_state_query"),
+            "desired_state": published["desired_state"],
+            "downstream_actual_state": published["downstream_actual_state"],
+            "last_heartbeat_at": now,
+            "last_tick_at": None,
+            "last_success_at": now if name == "success" else None,
+            "last_failure_at": None,
+            "last_failure_reason": None,
+            "last_repair_at": None,
+            "last_repair_reason": None,
+            "backlog": published.get("backlog"),
+            "lag": published.get("lag"),
+            "dlq_count": published.get("dlq_count"),
+            "evidence_refs": published["evidence_refs"],
+            "truth_level": _call(writer, name)["truth_level"],
+            "lease_token": "token",
+            "lease_expires_at": now + timedelta(seconds=lease_seconds),
+            "payload": published.get("payload") or {},
+        }
+        jsonschema.Draft7Validator(schema).validate(json.loads(json.dumps(row, default=lambda v: v.isoformat())))
+        # Steady state: next tick is one interval away; record must stay healthy.
+        projected = projector.project_controller_record_to_bff(
+            row, now=now + timedelta(seconds=config.interval_seconds)
+        )
+        assert projected["desired_state_presence"]["authoritative"] is True
+        assert projected["downstream_actual_state"]["authoritative"] is True
+        assert projected["evidence_refs"]
+        assert projected["controller_health"]["status"] == "healthy"

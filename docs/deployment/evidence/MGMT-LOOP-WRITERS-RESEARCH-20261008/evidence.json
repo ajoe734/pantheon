@@ -1,0 +1,31 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "MGMT-LOOP-WRITERS-RESEARCH-20261008",
+  "title": "Source distillation and alpha controllers publish admissible controller truth",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "execution",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "c63c33287",
+  "objective": "Make Loop 1-3 controller writers publish schema-valid desired_state and downstream_actual_state, non-archive per-tick evidence refs, and a lease of at least interval plus tick budget so the loop-control projector reports authoritative presences and healthy status.",
+  "scope": {
+    "owned": [
+      "services/source_ingestion/controller_worker.py: heartbeat/tick/success/repair/failure carry state, tick evidence ref and lease; heartbeat now follows the tick's own reads.",
+      "services/source_ingestion/distillation_controller.py: success carries state, tick evidence ref and lease; failure carries ref and lease.",
+      "services/research/alpha_replication/replication_controller.py: success carries state, tick evidence ref (also when idle) and lease; failure carries ref and lease.",
+      "Matching unit tests feeding published fields through services/loop-control/projector.py and the record schema."
+    ],
+    "not_changing": [
+      "services/loop-control, BFF admission rules, loop catalog.",
+      "Retire-sim edits to controller_worker.py (DEV-PAPER-US-SIM-RETIRE-20261007)."
+    ],
+    "composes_with": ["Loop 12 publish_loop_12_controller_truth shape (PR #6441)."]
+  },
+  "verification": {
+    "commands": [
+      "python -m pytest -q services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_distillation_controller.py services/research/alpha_replication/test_replication_controller.py"
+    ],
+    "result": "134 passed (112 + 11 + 11); new projector assertions fail on base writers (exit 0 on head)"
+  }
+}
