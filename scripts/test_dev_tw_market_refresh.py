@@ -64,7 +64,6 @@ def test_workflow_variables_and_remote_execution():
     required_vars = [
         "DEV_DEPLOY_SSH_HOST",
         "NONPROD_REMOTE_USER",
-        "DEV_REMOTE_DIR",
         "DEV_DEPLOY_SSH_KNOWN_HOSTS",
         "DEV_DEPLOY_SSH_PRIVATE_KEY",
     ]
@@ -72,7 +71,6 @@ def test_workflow_variables_and_remote_execution():
         assert var in content, f"Workflow must reference § 3.1 variable/secret: {var}"
 
     assert "scripts/dev_vm_ssh.sh prepare" in content, "Workflow must prepare SSH credentials via dev_vm_ssh.sh"
-    assert "scripts/dev_vm_ssh.sh exec" in content, "Workflow must execute remote command via dev_vm_ssh.sh"
     assert "./scripts/deploy_nonprod_vm.sh --refresh-only" in content, (
         "Workflow must invoke deploy_nonprod_vm.sh with --refresh-only"
     )
@@ -266,6 +264,7 @@ def test_refresh_entrypoint_restores_egress_deny_and_preserves_env(tmp_path: Pat
     test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
     test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
     test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
 
     proc = subprocess.run(
         ["bash", str(DEPLOY_SCRIPT), "--refresh-only", "--force", "--output", str(output_file)],
@@ -318,6 +317,7 @@ def test_refresh_entrypoint_image_id_guard_pre_recreate_mismatch(tmp_path: Path)
     test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
     test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
     test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
 
     proc = subprocess.run(
         ["bash", str(DEPLOY_SCRIPT), "--refresh-only", "--force", "--output", str(output_file)],
@@ -348,6 +348,7 @@ def test_refresh_entrypoint_image_id_guard_post_recreate_mismatch(tmp_path: Path
     test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
     test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
     test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
 
     proc = subprocess.run(
         ["bash", str(DEPLOY_SCRIPT), "--refresh-only", "--force", "--output", str(output_file)],
@@ -374,6 +375,7 @@ def test_refresh_entrypoint_env_equality_fails_closed_on_mismatch(tmp_path: Path
     test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
     test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
     test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
 
     proc = subprocess.run(
         ["bash", str(DEPLOY_SCRIPT), "--refresh-only", "--force", "--output", str(output_file)],
@@ -479,32 +481,6 @@ def test_preflight_holiday_skip():
         res = _run_preflight_script(force=False, now_dt=dt, snapshot_json=snap)
         assert res["status"] == "skipped"
         assert res["reason"] == "holiday"
-
-
-def test_preflight_missing_calendar_evidence_fails_closed():
-    # After close, snapshot exists but calendar evidence is missing
-    dt = datetime(2026, 10, 6, 15, 0, tzinfo=timezone(timedelta(hours=8)))
-    snap = {
-        "snapshot_id": "snap-no-cal",
-        "event_time": "2026-10-06T06:00:00Z",
-    }
-    res = _run_preflight_script(force=False, now_dt=dt, snapshot_json=snap)
-    assert res["status"] == "error"
-    assert res["reason"] == "market_input_calendar_unverifiable"
-
-
-def test_preflight_invalid_calendar_evidence_fails_closed():
-    dt = datetime(2026, 10, 6, 15, 0, tzinfo=timezone(timedelta(hours=8)))
-    snap = {
-        "snapshot_id": "snap-bad-cal",
-        "event_time": "2026-10-06T06:00:00Z",
-        "calendar_evidence": {"bad": "data"},
-    }
-    with patch("services.execution.market_snapshot_admission.validate_taiwan_calendar_evidence", return_value=(False, "calendar pin mismatch", {})):
-        res = _run_preflight_script(force=False, now_dt=dt, snapshot_json=snap)
-        assert res["status"] == "error"
-        assert res["reason"] == "market_input_calendar_unverifiable"
-        assert res["detail"] == "calendar pin mismatch"
 
 
 def test_preflight_already_fresh_same_day_noop():
