@@ -171,6 +171,7 @@ from services.control_plane.bff.governance.promotion_review import (
 )
 from services.control_plane.bff.ports import (
     ReadSurfacePorts,
+    create_persona_registry_write_owner,
     create_read_surface_ports,
 )
 from services.control_plane.bff.ports.persona_capital_runtime import (
