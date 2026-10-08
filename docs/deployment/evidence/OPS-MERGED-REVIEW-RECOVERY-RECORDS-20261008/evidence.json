@@ -1,0 +1,9 @@
+{
+  "task_id": "OPS-MERGED-REVIEW-RECOVERY-RECORDS-20261008",
+  "change_class": "documentation_only",
+  "note": "Records bind already-recorded V2 journal reviews; no new review decision is made.",
+  "facts": [
+    {"task": "STIMULUS-TRANSPORT-REGRESSION-20261006", "owner": "PiAstra", "reviewer": "Antigravity", "pr": 6189, "pr_head": "3203a172e288be3135b13aedbb525ffc472e7cca", "merge_commit": "355b1d10c3513283aad0f3a0cba33aacc698d4cc", "merged_at": "2026-10-06T09:30:20Z", "journal_review_approved_committed_at": "2026-10-06T09:28:33Z", "manifest": "docs/deployment/evidence/STIMULUS-TRANSPORT-REGRESSION-20261006/evidence.json", "manifest_blob": "24c98ea7ec811c44d195d83ae63166b7debda498", "sources": "gh pr view 6189; V2 journal review_approved event; git rev-parse HEAD:<manifest>; merge commit is ancestor of origin/dev"},
+    {"task": "PERSONA-PROVISION-AUTH-20261005", "owner": "PiAstra", "reviewer": "Antigravity", "pr": 6166, "pr_head": "700eef58d16e69eff9d0a7994da433cfd3525211", "merge_commit": "a4abce7b2cded51b18187b784ca540dff331bbc2", "merged_at": "2026-10-05T11:45:21Z", "journal_review_approved_committed_at": "2026-10-05T11:41:02Z", "manifest": "docs/deployment/evidence/PERSONA-PROVISION-AUTH-20261005/evidence.json", "manifest_blob": "a4739c10a10a692ccb701b155558eba26337efcb", "sources": "gh pr view 6166; V2 journal review_approved event; git rev-parse HEAD:<manifest>; merge commit is ancestor of origin/dev"}
+  ]
+}
