@@ -2,7 +2,7 @@
 set -euo pipefail
 
 HOST="${PANTHEON_REMOTE_HOST:-pantheon-gcp}"
-REMOTE_PATH="${PANTHEON_REMOTE_PATH:-/home/lupin/pantheon}"
+REMOTE_PATH="${PANTHEON_REMOTE_PATH:?set PANTHEON_REMOTE_PATH to the remote Pantheon checkout}"
 MODE="${PANTHEON_REMOTE_SYNC_MODE:-code}"
 DRY_RUN=0
 

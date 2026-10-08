@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOST="${PANTHEON_REMOTE_HOST:-pantheon-gcp}"
-REMOTE_PATH="${PANTHEON_REMOTE_PATH:-/home/lupin/pantheon}"
+REMOTE_PATH="${PANTHEON_REMOTE_PATH:?set PANTHEON_REMOTE_PATH to the remote Pantheon checkout}"
 CURRENT_BRANCH="$(git -C "$ROOT_DIR" branch --show-current)"
 BUNDLE_PATH="/tmp/pantheon-${CURRENT_BRANCH}-handoff.bundle"
 

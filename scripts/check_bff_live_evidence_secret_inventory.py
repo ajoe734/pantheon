@@ -14,10 +14,7 @@ from write_bff_live_evidence_preflight import REQUIRED_SECRET_ENV_VARS
 
 DEFAULT_REPOSITORY = "ajoe734/pantheon"
 DEFAULT_ENVIRONMENTS = ("dev", "staging-live")
-DEFAULT_BFF_BASE_URLS = {
-    "dev": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
-    "staging-live": "https://pantheon-lupin-staging-bff.104.155.223.192.sslip.io",
-}
+
 
 
 def read_json(path: Path) -> Any:
@@ -82,11 +79,10 @@ def setup_commands(repo: str, environment: str) -> list[str]:
 
 
 def dispatch_template(repo: str, environment: str) -> str:
-    base_url = DEFAULT_BFF_BASE_URLS.get(environment, "<bff-base-url>")
     return (
         f"gh workflow run \"Pantheon Stage 0 CI\" --repo {repo} --ref dev "
         f"-f mode=live-evidence -f environment={environment} "
-        f"-f bff_base_url={base_url} "
+        "-f bff_base_url=<bff-base-url> "
         "-f approval_race_id=<expendable-approval-id> "
         "-f two_man_race_id=<expendable-intervention-id> "
         "-f soak_seconds=75"

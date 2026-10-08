@@ -27,7 +27,6 @@ from typing import Any
 
 TASK_ID = "LOOP-PROD-PER-001"
 FIRST_EVALUATION_WORKFLOW_ID = "pantheon.persona.first-evaluation"
-DEFAULT_BASE_URL = "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
 DEFAULT_TENANT_ID = "pantheon-dev"
 
 
@@ -826,7 +825,7 @@ def run_probe(args: argparse.Namespace) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base-url", default=os.getenv("BFF_BASE_URL") or DEFAULT_BASE_URL)
+    parser.add_argument("--base-url", default=os.getenv("BFF_BASE_URL"))
     parser.add_argument("--expected-sha", default=os.getenv("EXPECTED_SHA", ""))
     parser.add_argument("--tenant-id", default=os.getenv("TENANT_ID") or DEFAULT_TENANT_ID)
     parser.add_argument("--run-id", default="")
@@ -834,6 +833,12 @@ def main() -> int:
     parser.add_argument("--poll-seconds", type=int, default=5)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+
+    if not (args.base_url and args.base_url.strip()):
+        parser.error(
+            "--base-url (or BFF_BASE_URL) is required; see "
+            "docs/deployment/vm-dev-staging-prod-management-plan.md section 3.1"
+        )
 
     evidence = run_probe(args)
     args.output.parent.mkdir(parents=True, exist_ok=True)
