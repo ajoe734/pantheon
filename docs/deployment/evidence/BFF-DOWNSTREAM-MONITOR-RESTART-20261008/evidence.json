@@ -1,0 +1,47 @@
+{
+  "task_id": "BFF-DOWNSTREAM-MONITOR-RESTART-20261008",
+  "base_sha": "89cc8b15fe091b1781b4af758e893a6c3fd505ab",
+  "root_cause": {
+    "summary": "No product code started DownstreamHealthMonitor after c1894c3b0 removed 'await downstream_health_monitor.start()' and '.stop()' from the BFF startup/shutdown hooks, so /bff/v5/downstream-health reported every target as not_yet_observed and Loop 12 BFF health monitoring never ran.",
+    "introduced_by": "c1894c3b0 (2026-09-01, OPGAP-BFF-MAIN-ASSEMBLY-V3-20260901 prune dead code in main.py; reached dev via #5529 on 2026-09-03)",
+    "why_unnoticed": "The AST dead-code gate counted name references and could not see decorator registration; later lifespan rebuilds (#5821, #5969) restored only JWKS prewarm and command replay; no test asserted that the lifespan runs background work.",
+    "detected_by": "Static comparison of the isolated runtime suite against current owner code on 2026-10-08; tests/integration/l12 waits 120s on /bff/v5/downstream-health and fails."
+  },
+  "hazards_reproduced_on_base": {
+    "base_run": "pytest services/control-plane/bff/test_downstream_health_monitor.py at 1cf3df4ad (tests only, base code 89cc8b15f): 9 failed, 18 passed",
+    "stale_rows_delivered_as_current": "TestDeliveryAgeBound::test_stale_pending_row_is_quarantined_instead_of_delivered and ::test_quarantined_incident_open_releases_the_mapping_for_a_new_incident failed on base",
+    "head_of_line_stall": "TestDeliveryHeadOfLine::test_blocked_oldest_window_does_not_starve_newer_rows failed on base: 450 older rows blocked by a dead-lettered dependency hid a newer due row from claim_due",
+    "resolve_churn": "TestIncidentResolveTransition::test_repeated_healthy_probes_do_not_requeue_resolve failed on base: three healthy probes queued three incident_resolve rows while the mapping stayed resolving",
+    "loop12_truth_silently_skipped": "TestLoop12ControllerTruthPublication (3 tests) failed on base: no write unless asyncpg was already in sys.modules and no outcome in monitor state",
+    "replay_unbounded_and_on_event_loop": "TestDeadLetterReplayAgeBound::test_replay_without_event_id_skips_rows_older_than_age_bound and TestReplayRouteDoesNotBlockEventLoop::test_replay_runs_in_a_worker_thread failed on base",
+    "lifespan_does_not_run_monitor": "tests/test_bff_lifespan_background_work.py run against the base core/lifespan.py: 2 failed (start and stop); the observed-within-two-intervals test also fails on base because the base create_lifespan has no monitor wiring",
+    "correction": "The 2026-10-06 note pointed at downstream_health_monitor.py ~633 for resolve churn; that line is the legacy outbox migration. The churn came from the recovery path in _handle_probe_result."
+  },
+  "changes": {
+    "services/control-plane/bff/downstream_health_monitor.py": [
+      "Delivery age bound (PANTHEON_BFF_HEALTH_DELIVERY_MAX_AGE_SECONDS, default 21600): each drain first moves pending, retry and expired-claim rows whose updated_at is older than the bound to status quarantined and releases opening/resolving incident mappings they held; quarantined is counted in delivery counts and excluded from backlog.",
+      "claim_due excludes rows with undelivered dependencies inside the SQL query (json_each), so a blocked oldest window no longer starves newer rows; the Python-side _dependencies_delivered filter is removed.",
+      "incident_resolve is queued only on the opening/open -> resolving transition.",
+      "publish_loop_12_controller_truth imports services.loop-control explicitly, keeps the heartbeat task reference, and records published/failed/unconfigured with a DSN-redacted error in get_state()['loop_12_controller_truth'].",
+      "replay_dead_letters without an explicit event_id redrives only dead letters created inside the age bound; an explicit event_id can still redrive an older row."
+    ],
+    "services/control-plane/bff/core/lifespan.py": "create_lifespan starts the downstream health monitor (explicit argument, otherwise the instance its constructor registered) after startup wiring and stops it on shutdown; app.state.downstream_health_monitor exposes it.",
+    "services/control-plane/bff/control_loops/service.py": "The dead-letter replay route runs the monitor's synchronous drain in a worker thread instead of on the event loop.",
+    "main.py": "Not edited; the composition root already constructs and registers exactly one monitor."
+  },
+  "validation": {
+    "interpreter": "local operator .venv Python 3.12 with SQLite 3.45.1; the BFF image is python:3.12-slim (SQLite >= 3.40 supports json_each and RETURNING)",
+    "head_focused": "Included in the combined run; the new hazard and lifespan tests all pass at head.",
+    "combined_command": "pytest -q services/control-plane/bff/test_downstream_health_monitor.py test_bff_downstream_health_monitor.py test_bff_v5_loop_sentinel_contract.py test_current_twelve_owner_truth.py tests/test_control_loops_router.py tests/test_control_loops_evidence_redaction_sweep.py tests/test_bff_lifespan_background_work.py tests/test_http_auth_composition_owner.py tests/test_bff_auth_facade.py tests/test_main_composition_seam_extraction_003.py tests/test_bff_test_architecture.py",
+    "combined_head_result": "269 passed, 11 failed",
+    "pre_existing_failures": "The 11 failures are all in test_current_twelve_owner_truth.py and fail identically on base 89cc8b15f (11 failed, 14 passed when run alone on base); no other failure.",
+    "architecture_gate": "tests/test_bff_test_architecture.py passes; the new suite does not mutate sys.path and does not import main.py",
+    "mutation_check": "Reverting core/lifespan.py to base makes the lifespan tests fail, so removing the start or stop call is caught."
+  },
+  "hosted_backlog_handling": "This task performs no hosted action: no hosted queue was replayed, purged or quarantined. When an exact-pair release containing this change starts the BFF, the first drain quarantines pending/retry rows with no delivery activity inside the age bound (the 2026-10-06 hosted ledger held about 170k such rows) and keeps them in the ledger for audit; dead_letter rows stay dead_letter; replay without event_id only redrives recent dead letters.",
+  "out_of_scope": [
+    "Persona provisioning reconciler loop also removed by c1894c3b0 (separate decision).",
+    "Controller records are written with PANTHEON_ENV while the BFF loop-health read expects the paper stage; not changed here."
+  ],
+  "review_status": "Author validation only; independent exact-head review by the assigned reviewer pending."
+}

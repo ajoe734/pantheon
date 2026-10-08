@@ -285,8 +285,9 @@ def _set_rows(monitor, delivery_ids, **columns):
 
 
 def _age_rows(monitor, delivery_ids, *, seconds):
+    # Never-attempted rows keep updated_at equal to created_at.
     created = _rfc3339(datetime.now(timezone.utc) - timedelta(seconds=seconds))
-    _set_rows(monitor, delivery_ids, created_at=created, next_attempt_at=0)
+    _set_rows(monitor, delivery_ids, created_at=created, updated_at=created, next_attempt_at=0)
 
 
 def _delivery(monitor, delivery_id):
@@ -597,6 +598,7 @@ class TestDeadLetterReplayAgeBound:
             )
 
         assert result["replayed"] == 1
+        assert _delivery(monitor, "telemetry:old-dead")["status"] == "delivered"
 
 
 class TestReplayRouteDoesNotBlockEventLoop:

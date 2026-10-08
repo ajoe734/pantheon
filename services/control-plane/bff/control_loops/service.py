@@ -8,6 +8,7 @@ canonical command admission callables by :mod:`control_loops.router`.
 """
 from __future__ import annotations
 
+import asyncio
 import inspect
 import os
 from collections.abc import Mapping, Sequence
@@ -898,8 +899,11 @@ class ControlLoopsService:
                 "The configured BFF instance has no durable DLQ replay adapter.",
                 precondition_failed="downstream_health_monitor",
             )
+        # The monitor drains the outbox synchronously over HTTP; keep that
+        # work off the event loop thread.
         result = await _resolve(
-            replay(
+            await asyncio.to_thread(
+                replay,
                 actor_id=str(getattr(identity, "operator_id", "")),
                 approval_ref=approval_ref,
                 reason=reason,
