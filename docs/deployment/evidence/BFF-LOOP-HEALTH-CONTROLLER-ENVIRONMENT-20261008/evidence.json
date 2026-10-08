@@ -62,5 +62,18 @@
     "isolated_runtime_suite": "To be recorded by the delivery owner or operator on the rebased head."
   },
   "review_status": "Author validation only; independent exact-head review by the assigned reviewer pending.",
-  "controller_writer_note": "state.environment in replication_controller.py, source_ingestion/controller_worker.py and distillation_controller.py is built from PANTHEON_ENV (or 'dev'), so all ten writers record the deployment environment. Line numbers are at the pre-rebase base 9c5d3fe3e."
+  "controller_writer_note": "state.environment in replication_controller.py, source_ingestion/controller_worker.py and distillation_controller.py is built from PANTHEON_ENV (or 'dev'), so all ten writers record the deployment environment. Line numbers are at the pre-rebase base 9c5d3fe3e.",
+  "delivery_verification": {
+    "verified_by": "Claude",
+    "head": "e7d9b36bd6da5dd0c10b4ffdf208103e9e1c02d7",
+    "command": "pytest -q services/control-plane/bff/test_loop_health_read_model_contract.py services/control-plane/bff/tests/test_control_loops_router.py services/control-plane/bff/test_current_twelve_owner_truth.py services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py",
+    "result": "128 passed, 3 warnings in 135.20s",
+    "product_code_changed": false,
+    "isolated_runtime_suite": "Not run by delivery owner; no hosted action.",
+    "post_merge_rerun": {
+      "merged": "origin/dev (027633c6f) into branch, clean, no conflicts",
+      "tested_head": "merge commit of origin/dev into fa127b680",
+      "result": "128 passed, 3 warnings in 153.98s"
+    }
+  }
 }
