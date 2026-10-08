@@ -1,0 +1,34 @@
+{
+  "task_id": "TRAINING-SOURCE-GOVERNED-UNIVERSE-20261007",
+  "change_class": "corrective",
+  "summary": "Bind Taiwan evaluation dataset materialization to the approved evaluation universe policy before immutable DatasetVersion creation, ensuring whole-market 1-bar extra quotes do not fail downstream evaluation minimum bar thresholds (>= 30 bars), while strictly maintaining fail-closed validation for missing/short policy instruments, checksums, and tenant boundaries.",
+  "diagnosis": {
+    "run_id": "37702411985",
+    "failure_sha": "54c6ebef90a8a7c779d19fee0fce0ae7a2184f81",
+    "actual_gha_observation": "In qualification run 37702411985 at 54c6ebef90a8a7c779d19fee0fce0ae7a2184f81, 6326/6327 passed; after featureRefs boundary was restored, L4 persona_teaching preview evaluation failed at 23:37:36: 'RuntimeError: Teaching evaluation job failed: evaluation_admission_rejected: dataset instrument 00400A.TWSE has 1 bars; minimum is 30'.",
+    "root_cause": "The TW official market connector generates daily snapshot quotes for the broader market (including symbols like 00400A.TWSE with 1 bar for the current date) alongside 30-day historical bars for tracked policy instruments (2330.TWSE, 2317.TWSE). Previously, materialize_source_dataset_version included all normalized records in the storage manifest without scoping to the approved evaluation policy universe before materializing the immutable DatasetVersion. When load_evaluation_authority evaluated the materialized DatasetVersion against threshold_policy.json (which requires min_bars_per_instrument=30 across all instruments in the dataset), it failed on the 1-bar whole-market instrument 00400A.TWSE.",
+    "producer_consumer_mismatch": "The producer correctly produces full market quotes and historical series. Downstream evaluation policy (threshold_policy.json v3.0.0) governs the specific evaluation universe (required_instruments: 2317.TWSE, 2330.TWSE). The materializer previously lacked binding to this approved policy prior to immutable DatasetVersion construction, conflating the raw storage batch with the evaluation universe. Scoping records strictly to policy['required_instruments'] before materialization—while forbidding filtering by observed bar count or quality, and strictly failing closed if any required policy instrument is missing—aligns producer and consumer without weakening any validation or threshold."
+  },
+  "fix": {
+    "source_dataset_authority": "materialize_source_dataset_version accepts policy_path or policy mapping, validates it against canonical evaluation policy authority schema and digest, scopes records strictly to policy['required_instruments'], enforces that all required instruments are present, stamps source_policy_selection and source_policy_selection_sha256 into DatasetVersion metadata, and includes expected_policy_selection_digest in cache key assertion to isolate cache keys.",
+    "evaluation_authority": "Retained unchanged; existing evaluation authority strictly verifies >= 30 bars on all instruments in the admitted DatasetVersion, perfectly matching the scoped dataset.",
+    "main_service": "In services/training-session/main.py, passed canonical TRAINING_SESSION_THRESHOLD_POLICY_PATH to materialize_source_dataset_version during snapshot loading.",
+    "tests": "Added 6 comprehensive unit and adversarial tests covering: whole-market 1-bar extras with policy selection, actual MarketDataStorageWriter output with multiple instruments and extras, adversarial fail-closed rejection on missing required symbol, adversarial rejection on short symbol (5 bars < 30) at evaluation, adversarial rejection on invalid policy status, and cache key isolation."
+  },
+  "acceptance_verification": {
+    "ac1_actual_failure_retained": "passed: Retained actual GHA 37702411985 L4 failure observation ('dataset instrument 00400A.TWSE has 1 bars; minimum is 30') and distinguished it from producer hypothesis.",
+    "ac2_explicit_source_evaluation_selection": "passed: Bound explicit Source evaluation selection to the validated approved active policy (threshold_policy.json) before immutable DatasetVersion creation, with no filtering by observed quality or bar counts.",
+    "ac3_real_producer_consumer_coverage": "passed: Verified with actual MarketDataStorageWriter output combining 2 required historical instruments (>= 30 bars) and whole-market 1-bar extras; missing required symbol fails closed; short symbol fails evaluation minimum 30 bars.",
+    "ac4_preserved_integrity_checks": "passed: Preserved all tenant, auth, temporal, feature, raw bytes checksums, and storage manifest assertions.",
+    "ac5_minimal_diff_and_clean_worktree": "passed: Net production diff is +102 lines (main.py: +5, source_dataset_authority.py: +97), strictly within the <= 220 net line budget for change_class=corrective; perfectly conforms to task artifact contract."
+  },
+  "verification": {
+    "commands": [
+      "/tmp/pantheon-pytest-env/bin/pytest services/training-session/tests/test_source_dataset_authority.py",
+      "/tmp/pantheon-pytest-env/bin/pytest services/training-session/tests/test_evaluation_authority.py services/training-session/tests/test_http_service.py",
+      "/tmp/pantheon-pytest-env/bin/pytest services/training-session/tests/",
+      "/tmp/pantheon-pytest-env/bin/pytest tests/integration/l12/test_current_research_loops_deployed_e2e.py"
+    ],
+    "result": "passed (all 184 training-session tests and e2e integration test passed; 0 failures; production net diff 115 lines <= 220 budget)"
+  }
+}
