@@ -1,0 +1,49 @@
+{
+  "task_id": "GOV-APPROVAL-SCOPE-PAPER-DOC-20261008",
+  "title": "Document that paper capital operations skip owner approval and separation of duties",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "change_class": "corrective",
+  "net_prod_line_budget": 0,
+  "summary": "Documented in services/governance/contract.md (§ Current Approval Policy Scope) that paper capital operations skip owner approval and separation of duties under the 2026-10-06 operator decision and 2026-10-08 operator instruction, citing code locations and historical commits.",
+  "cited_facts_and_sources": {
+    "capital_guard_early_return": {
+      "location": "services/capital/capital_guard.py ~218-224",
+      "code_fact": "is_paper_operation returns early after checking _require_risk_policy when pool.risk_policy_ref is set, bypassing _require_safe_mode and _require_approval",
+      "introduced_by_commit": "1dc7c6093620b7b8fdac2ed9440ba29eff8a63d9",
+      "task_id": "CAPITAL-GUARD-KERNEL-001"
+    },
+    "capital_main_promotion_review_id": {
+      "location": "services/capital/main.py ~1272-1273",
+      "code_fact": "evaluate_allocation_policy in paper mode only verifies that promotion_review_id is non-empty, without checking owner approval or enforcing separation of duties"
+    },
+    "bff_paper_checks_removal": {
+      "location": "services/control-plane/bff/command_adapters/preconditions.py",
+      "code_fact": "Deleted paper_simulation_authority and PAPER_SIMULATION_APPROVAL_APPLY_NOT_DISTINCT checks; classified CommandType.APPROVED_APPLY under owner_verifies_approval, delegating approval verification to Capital owner",
+      "commit": "eedff5c200f23d30421776683bf199ea3939ba1e",
+      "task_id": "BFF-CAPITAL-FORWARD-002"
+    },
+    "operator_decision": {
+      "decision_date": "2026-10-06",
+      "instruction_date": "2026-10-08",
+      "policy": "Approval policy stays as is; document its contractual scope; do not enforce two-man or self-approval rules on paper operations"
+    }
+  },
+  "governance_policy_scope_documented": {
+    "file": "services/governance/contract.md",
+    "section": "Current Approval Policy Scope and Known Integration Gaps (BFF-HUMAN-GATE-TESTS-POLICY-20261006) -> 1. Current Approval Policy Scope",
+    "item": "Paper capital operations bypass of owner approval and separation of duties"
+  },
+  "verification": {
+    "services/governance/test_approval_targets.py": "69 passed",
+    "services/capital/test_capital_guard.py": "42 passed",
+    "services/control-plane/bff/tests/test_capital_owner_forwarding.py": "15 passed"
+  },
+  "production_code_changes": {
+    "net_prod_lines": 0,
+    "files_changed": [
+      "services/governance/contract.md",
+      "docs/deployment/evidence/GOV-APPROVAL-SCOPE-PAPER-DOC-20261008/evidence.json"
+    ]
+  }
+}

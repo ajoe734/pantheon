@@ -426,6 +426,13 @@ By local operator decision (2026-10-06), existing governance approval semantics 
 - **Decision Expiration (`expires_at`)**:
   In the generic governance decision API (`approval_decision.py` ~441), `expires_at` is supplied directly by the decider in `DecideRequest`. Generic governance does not enforce a server-side cap on `expires_at`; only dev paper approvals are capped at 24 hours (`PAPER_APPROVAL_MAX_TTL = timedelta(hours=24)` in `services/governance/paper_approval_scope.py` ~319).
 
+- **Paper capital operations bypass of owner approval and separation of duties**:
+  Capital operations classified as paper (`is_paper_operation` in `services/capital/capital_guard.py` ~218-224, introduced by commit `1dc7c6093` / task `CAPITAL-GUARD-KERNEL-001`) return early after the optional pool risk policy check (`_require_risk_policy`, evaluated only when `pool.risk_policy_ref` is set), skipping safe mode (`_require_safe_mode`) and approval (`_require_approval`). As a result, no owner approval and no separation between proposer and approver is enforced for paper operations.
+  - In `services/capital/capital_guard.py` (~218-224), `is_paper_operation` verifies that the operation belongs to a paper execution context (`capital_pool_activation`, `capital_binding_activation`, or `rebalance_apply`); once satisfied, owner approval is bypassed entirely.
+  - In `services/capital/main.py` (~1272-1273), paper allocation policy evaluation (`evaluate_allocation_policy`) only checks that `promotion_review_id` is non-empty, without enforcing owner approval or distinct-actor validation.
+  - In BFF, commit `eedff5c20` (`eedff5c200f23d30421776683bf199ea3939ba1e`, task `BFF-CAPITAL-FORWARD-002`, 2026-10-01) deleted `paper_simulation_authority` and `PAPER_SIMULATION_APPROVAL_APPLY_NOT_DISTINCT` checks in `services/control-plane/bff/command_adapters/preconditions.py` and placed `CommandType.APPROVED_APPLY` under `owner_verifies_approval`, delegating approval validation to the Capital owner service.
+  Per the 2026-10-06 operator decision (re-affirmed by the 2026-10-08 operator instruction), this approval policy stays as is: this behavior is intentionally preserved unchanged, its contractual scope is documented here, and no two-man or self-approval rules are enforced for paper operations.
+
 ### 2. Known BFF Integration Gaps (Revoke)
 
 - **Self-revoke check field mismatch**:
