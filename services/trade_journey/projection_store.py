@@ -534,8 +534,6 @@ class ProjectionStore:
         lock_timeout_seconds: float | None = None,
     ) -> None:
         """Apply the versioned migration explicitly with migration credentials."""
-        from psycopg import sql as pgsql
-
         stmt_timeout = _validate_timeout(
             statement_timeout_seconds,
             name="statement_timeout_seconds",
@@ -547,13 +545,38 @@ class ProjectionStore:
             default=self.migration_lock_timeout_seconds,
         )
         migration_files = sorted(MIGRATIONS_DIR.glob("*.sql")) if MIGRATIONS_DIR.is_dir() else [INITIAL_MIGRATION_PATH]
+        tx_files = [f for f in migration_files if "CONCURRENTLY" not in f.read_text(encoding="utf-8").upper()]
+        concurrent_files = [f for f in migration_files if "CONCURRENTLY" in f.read_text(encoding="utf-8").upper()]
+
+        def _apply_grants(cur: Any, role: str) -> None:
+            from psycopg import sql as pgsql
+
+            cur.execute(
+                "SELECT has_schema_privilege(%s, n.oid, 'CREATE') OR "
+                "pg_has_role(%s, n.nspowner, 'MEMBER') OR EXISTS ("
+                "SELECT 1 FROM pg_class c WHERE c.relnamespace=n.oid "
+                "AND (pg_has_role(%s, c.relowner, 'MEMBER') OR EXISTS ("
+                "SELECT 1 FROM aclexplode(c.relacl) a WHERE a.privilege_type='TRIGGER' "
+                "AND (a.grantee=0 OR pg_has_role(%s, a.grantee, 'MEMBER'))))) "
+                "FROM pg_namespace n WHERE n.nspname=%s",
+                (role, role, role, role, self.schema),
+            )
+            if cur.fetchone()[0]:
+                raise ValueError("Projection runtime must not hold schema/table DDL authority")
+            cur.execute(pgsql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
+                pgsql.Identifier(self.schema), pgsql.Identifier(role)
+            ))
+            for table in PROJECTION_TABLES:
+                cur.execute(pgsql.SQL("GRANT SELECT, INSERT, UPDATE, DELETE ON {}.{} TO {}").format(
+                    pgsql.Identifier(self.schema), pgsql.Identifier(table),
+                    pgsql.Identifier(role),
+                ))
+
         with self._connect_db(
             statement_timeout_seconds=stmt_timeout,
             lock_timeout_seconds=lk_timeout,
-            autocommit=True,
         ) as conn, conn.cursor() as cur:
             if runtime_role is not None:
-                # Refuse elevated runtime identities before any DDL or grants.
                 cur.execute(
                     "SELECT rolsuper, rolcreaterole, rolcreatedb FROM pg_roles WHERE rolname=%s",
                     (runtime_role,),
@@ -563,43 +586,33 @@ class ProjectionStore:
                     raise ValueError("Projection runtime must be an existing non-admin role")
                 if reconcile_runtime:
                     self._reconcile_runtime_ddl(cur, runtime_role)
-            cur.execute(
-                "SELECT c.relname FROM pg_index i "
-                "JOIN pg_class c ON c.oid = i.indexrelid "
-                "JOIN pg_namespace n ON n.oid = c.relnamespace "
-                "WHERE n.nspname = %s AND NOT i.indisvalid",
-                (self.schema,),
-            )
-            for (idx_name,) in cur.fetchall():
-                cur.execute(pgsql.SQL("REINDEX INDEX CONCURRENTLY {}.{}").format(
-                    pgsql.Identifier(self.schema), pgsql.Identifier(idx_name)
-                ))
-            for migration_file in migration_files:
-                content = migration_file.read_text(encoding="utf-8").replace(DEFAULT_PROJECTION_SCHEMA, self.schema)
-                for stmt in content.split(";"):
-                    if stmt.strip():
-                        cur.execute(stmt.strip())
-            if runtime_role is not None:
+            for migration_file in tx_files:
+                cur.execute(migration_file.read_text(encoding="utf-8").replace(DEFAULT_PROJECTION_SCHEMA, self.schema))
+            if runtime_role is not None and not concurrent_files:
+                _apply_grants(cur, runtime_role)
+
+        if concurrent_files:
+            with self._connect_db(
+                statement_timeout_seconds=stmt_timeout,
+                lock_timeout_seconds=lk_timeout,
+                autocommit=True,
+            ) as conn, conn.cursor() as cur:
                 cur.execute(
-                    "SELECT has_schema_privilege(%s, n.oid, 'CREATE') OR "
-                    "pg_has_role(%s, n.nspowner, 'MEMBER') OR EXISTS ("
-                    "SELECT 1 FROM pg_class c WHERE c.relnamespace=n.oid "
-                    "AND (pg_has_role(%s, c.relowner, 'MEMBER') OR EXISTS ("
-                    "SELECT 1 FROM aclexplode(c.relacl) a WHERE a.privilege_type='TRIGGER' "
-                    "AND (a.grantee=0 OR pg_has_role(%s, a.grantee, 'MEMBER'))))) "
-                    "FROM pg_namespace n WHERE n.nspname=%s",
-                    (runtime_role, runtime_role, runtime_role, runtime_role, self.schema),
+                    "SELECT c.relname FROM pg_index i "
+                    "JOIN pg_class c ON c.oid = i.indexrelid "
+                    "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    "WHERE n.nspname = %s AND NOT i.indisvalid",
+                    (self.schema,),
                 )
-                if cur.fetchone()[0]:
-                    raise ValueError("Projection runtime must not hold schema/table DDL authority")
-                cur.execute(pgsql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
-                    pgsql.Identifier(self.schema), pgsql.Identifier(runtime_role)
-                ))
-                for table in PROJECTION_TABLES:
-                    cur.execute(pgsql.SQL("GRANT SELECT, INSERT, UPDATE, DELETE ON {}.{} TO {}").format(
-                        pgsql.Identifier(self.schema), pgsql.Identifier(table),
-                        pgsql.Identifier(runtime_role),
-                    ))
+                for (idx_name,) in cur.fetchall():
+                    cur.execute(f'REINDEX INDEX CONCURRENTLY "{self.schema}"."{idx_name}"')
+                for migration_file in concurrent_files:
+                    content = migration_file.read_text(encoding="utf-8").replace(DEFAULT_PROJECTION_SCHEMA, self.schema)
+                    for stmt in content.split(";"):
+                        if stmt.strip():
+                            cur.execute(stmt.strip())
+                if runtime_role is not None:
+                    _apply_grants(cur, runtime_role)
 
     def get_controller_state(
         self, controller_id: str, tenant_scope: str, environment_scope: str
@@ -1096,11 +1109,7 @@ class ProjectionStore:
                 # 2. Lock controller row FOR UPDATE
                 cur.execute(
                     f"""
-                    SELECT controller_id, tenant_scope, environment_scope, checkpoint_seq, source_high_watermark,
-                           backlog_count, projection_revision, deployment_sha, mode, status, accepted_live,
-                           last_poll_at, last_success_at, last_live_success_at, last_recovery_at,
-                           last_backfill_at, last_replay_at, last_failure_at, last_error_message,
-                           unresolved_quarantine_count, updated_at
+                    SELECT {CONTROLLER_COLUMNS}
                     FROM {self.schema}.controller
                     WHERE controller_id=%s AND tenant_scope=%s AND environment_scope=%s
                     FOR UPDATE
@@ -1261,11 +1270,7 @@ class ProjectionStore:
                     # stages or aggregates with non-canonical retry payloads.
                     cur.execute(
                         f"""
-                        SELECT controller_id, tenant_scope, environment_scope, checkpoint_seq, source_high_watermark,
-                               backlog_count, projection_revision, deployment_sha, mode, status, accepted_live,
-                               last_poll_at, last_success_at, last_live_success_at, last_recovery_at,
-                               last_backfill_at, last_replay_at, last_failure_at, last_error_message,
-                               unresolved_quarantine_count, updated_at
+                        SELECT {CONTROLLER_COLUMNS}
                         FROM {self.schema}.controller
                         WHERE controller_id=%s AND tenant_scope=%s AND environment_scope=%s
                         """,
@@ -1684,11 +1689,7 @@ class ProjectionStore:
                         unresolved_quarantine_count = %s,
                         updated_at = %s
                     WHERE controller_id=%s AND tenant_scope=%s AND environment_scope=%s
-                    RETURNING controller_id, tenant_scope, environment_scope, checkpoint_seq, source_high_watermark,
-                              backlog_count, projection_revision, deployment_sha, mode, status, accepted_live,
-                              last_poll_at, last_success_at, last_live_success_at, last_recovery_at,
-                              last_backfill_at, last_replay_at, last_failure_at, last_error_message,
-                              unresolved_quarantine_count, updated_at
+                    RETURNING {CONTROLLER_COLUMNS}
                     """,
                     (
                         target_checkpoint_seq,

@@ -77,12 +77,15 @@ def test_bootstrap_schema_raises_timeout_only_for_migrations_mock():
     assert captured_calls[0]["options"] == "-c statement_timeout=5000 -c lock_timeout=3000"
     assert "autocommit" not in captured_calls[0]
 
-    # 2. bootstrap_schema raises timeout to migration statement/lock timeouts and uses autocommit
+    # 2. bootstrap_schema raises timeout to migration statement/lock timeouts (transactional + concurrent phases)
     store.bootstrap_schema()
-    assert len(captured_calls) >= 2
-    migration_call = captured_calls[1]
-    assert migration_call["options"] == "-c statement_timeout=120000 -c lock_timeout=25000"
-    assert migration_call.get("autocommit") is True
+    assert len(captured_calls) >= 3
+    tx_call = captured_calls[1]
+    assert tx_call["options"] == "-c statement_timeout=120000 -c lock_timeout=25000"
+    assert "autocommit" not in tx_call or not tx_call["autocommit"]
+    concurrent_call = captured_calls[2]
+    assert concurrent_call["options"] == "-c statement_timeout=120000 -c lock_timeout=25000"
+    assert concurrent_call.get("autocommit") is True
 
     # 3. Subsequent runtime connection remains at runtime statement timeout
     with store._connect_db() as conn:
@@ -163,4 +166,61 @@ def test_bootstrap_schema_detects_and_rebuilds_invalid_index():
     finally:
         with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
             cur.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+
+
+def test_bootstrap_schema_rollback_atomicity_on_failure():
+    dsn = os.getenv("TEST_DATABASE_URL")
+    if not dsn:
+        pytest.skip("TEST_DATABASE_URL is not set")
+    import psycopg
+    from psycopg import sql
+
+    from services.trade_journey.projection_store import DEFAULT_PROJECTION_SCHEMA
+
+    schema = DEFAULT_PROJECTION_SCHEMA
+    runtime_role = f"unit_rt_{uuid4().hex[:8]}"
+    with psycopg.connect(dsn, autocommit=True) as admin:
+        cur_user = admin.execute("SELECT current_user").fetchone()[0]
+        admin.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema)))
+        admin.execute(sql.SQL("CREATE ROLE {} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE").format(sql.Identifier(runtime_role)))
+        admin.execute(sql.SQL("GRANT {} TO {}").format(sql.Identifier(runtime_role), sql.Identifier(cur_user)))
+        admin.execute(sql.SQL("CREATE SCHEMA {} AUTHORIZATION {}").format(sql.Identifier(schema), sql.Identifier(runtime_role)))
+        admin.execute(sql.SQL("CREATE TABLE {}.controller (value integer)").format(sql.Identifier(schema)))
+        admin.execute(sql.SQL("ALTER TABLE {}.controller OWNER TO {}").format(sql.Identifier(schema), sql.Identifier(runtime_role)))
+
+    try:
+        def get_owners():
+            with psycopg.connect(dsn, autocommit=True) as conn:
+                return dict(conn.execute(
+                    "SELECT 'schema', r.rolname FROM pg_namespace n JOIN pg_roles r ON r.oid=n.nspowner WHERE n.nspname=%s "
+                    "UNION ALL SELECT 'controller', r.rolname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+                    "JOIN pg_roles r ON r.oid=c.relowner WHERE n.nspname=%s AND c.relname='controller'",
+                    (schema, schema),
+                ).fetchall())
+
+        owners_before = get_owners()
+        assert owners_before["schema"] == runtime_role
+        assert owners_before["controller"] == runtime_role
+
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory(prefix="mig-fail-test-") as tmp:
+            Path(tmp, "999_forced_failure.sql").write_text("SELECT 1 / 0;\n", encoding="utf-8")
+            store = ProjectionStore(dsn, schema=schema)
+            import services.trade_journey.projection_store as ps_mod
+            orig_dir = ps_mod.MIGRATIONS_DIR
+            try:
+                ps_mod.MIGRATIONS_DIR = Path(tmp)
+                with pytest.raises(psycopg.errors.DivisionByZero):
+                    store.bootstrap_schema(runtime_role=runtime_role, reconcile_runtime=True)
+            finally:
+                ps_mod.MIGRATIONS_DIR = orig_dir
+
+        owners_after = get_owners()
+        assert owners_after == owners_before, "Ownership must be rolled back on migration failure"
+    finally:
+        with psycopg.connect(dsn, autocommit=True) as admin:
+            admin.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema)))
+            admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(runtime_role)))
+
 
