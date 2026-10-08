@@ -387,6 +387,7 @@ jobs:
             scripts/test_capture_dev_artifact_baseline.py \
             scripts/test_dev_release_artifact_driver.py \
             scripts/test_dev_release_artifacts.py \
+            scripts/test_deploy_nonprod_vm.py::test_paper_fleet_large_monitoring_response_preserves_readiness_gate \
             scripts/test_dev_remote_guarded_exec.py \
             scripts/test_dev_vm_ssh.py \
             scripts/test_dev_direct_ssh_workflow_contract.py \

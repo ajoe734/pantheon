@@ -178,6 +178,31 @@ def test_restore_loads_retained_ids_without_build_pull_or_owner_commands(image_c
     assert set(root.iterdir()) == {root / row["name"] for row in bundle["archives"].values()}
 
 
+def test_restore_health_timeout_preserves_retained_worker_probe(image_case, tmp_path):
+    _, docker, _, _, _, compose = image_case
+    probe = ["CMD", "python", "scripts/run_agora_interaction_worker.py", "--healthcheck"]
+    model = json.loads(compose.read_text())
+    model["services"]["agora-interaction-worker"]["healthcheck"] = {
+        "test": probe, "timeout": "5s", "interval": "30s", "retries": 3,
+    }
+    compose.write_text(json.dumps(model))
+    restore(image_case)
+    override = tmp_path / "readback-override.json"
+    override.write_text(json.dumps(docker.override))
+    # Use Compose itself to prove that changing the timeout keeps the original
+    # probe and failure threshold, rather than disabling or replacing health.
+    result = subprocess.run(
+        ["docker", "compose", "-f", str(compose), "-f", str(override), "config", "--format", "json"],
+        capture_output=True, text=True, check=True,
+    )
+    health = json.loads(result.stdout)["services"]["agora-interaction-worker"]["healthcheck"]
+    assert health["test"] == probe
+    assert health["timeout"] == "30s"
+    assert health["interval"] == "30s"
+    assert health["retries"] == 3
+    assert health.get("disable") is not True
+
+
 @pytest.mark.parametrize("mode", ["lease", "production", "compose", "load", "up", "readback"])
 def test_restore_failures_never_emit_success(image_case, mode):
     _, docker, _, _, _, compose = image_case

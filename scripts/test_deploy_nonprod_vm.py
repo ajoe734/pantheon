@@ -18,6 +18,58 @@ DEPLOY_SCRIPT = ROOT / "scripts" / "deploy_nonprod_vm.sh"
 MIN_POSTGRES_SHM_BYTES = 256 * 1024 * 1024  # 256MB floor
 
 
+@pytest.mark.parametrize("failure,monitoring_bytes", [
+    (None, 80000), (None, 250000), ("not_ready", 80000),
+    ("worker_missing", 80000), ("stale_heartbeat", 80000), ("monitoring_error", 80000),
+])
+def test_paper_fleet_large_monitoring_response_preserves_readiness_gate(
+    tmp_path: Path, failure: str | None, monitoring_bytes: int,
+) -> None:
+    # A real hosted response exceeded the receipt transport's 64 KiB line
+    # limit. Also exceed Linux's per-argument limit: HTTP data belongs on stdin.
+    payload = {
+        "ready": True, "live": True, "last_error": None,
+        "monitoring_last_error": None, "cycle_count": 1,
+        "worker_count": 1, "running_count": 1,
+        "workers": [{"status": "running", "heartbeat_status": "active"}],
+        "monitoring_sessions": [{"diagnostics": "MONITORING_CANARY" + "x" * monitoring_bytes}],
+    }
+    if failure == "not_ready":
+        payload["ready"] = False
+    elif failure == "worker_missing":
+        payload["running_count"] = 0
+    elif failure == "stale_heartbeat":
+        payload["workers"][0]["heartbeat_status"] = "stale"
+    elif failure == "monitoring_error":
+        payload["monitoring_last_error"] = "monitor unavailable " + "x" * monitoring_bytes
+    fixture = tmp_path / "fleet.json"
+    fixture.write_text(json.dumps(payload), encoding="utf-8")
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    function = source.split("verify_dev_paper_fleet() {", 1)[1].split(
+        "\nverify_dev_evolution_daily_sweep()", 1
+    )[0]
+    script = tmp_path / "fleet-gate.sh"
+    script.write_text(
+        'set -euo pipefail\nFLEET_STATUS_FILE="$1"\n'
+        'curl() { cat "$FLEET_STATUS_FILE"; }\n'
+        'sleep() { :; }\ndocker() { :; }\n'
+        'info() { printf "%s\\n" "$*"; }\n'
+        'verify_dev_paper_fleet() {' + function + '\nverify_dev_paper_fleet\n',
+        encoding="utf-8",
+    )
+    result = subprocess.run(["bash", str(script), str(fixture)], capture_output=True, text=True, timeout=20)
+    assert result.returncode == (0 if failure is None else 1), result.stderr
+    assert "MONITORING_CANARY" not in result.stdout
+    assert max(map(len, result.stdout.splitlines())) < 4096
+    if failure is None:
+        summary = next(line for line in result.stdout.splitlines() if line.startswith("{"))
+        assert json.loads(summary)["worker_count"] == 1
+        assert "all desired workers are active" in result.stdout
+    else:
+        assert "did not converge" in result.stdout
+        assert "all desired workers are active" not in result.stdout
+
+
 def parse_shm_size_bytes(value: str | int | None) -> int:
     """Parse Docker / Compose shm_size value to bytes.
 
