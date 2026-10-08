@@ -79,7 +79,7 @@ RUNTIME_CONTROLLER_BINDINGS: dict[str, dict[str, Any]] = {
         "module": "services/source_ingestion/distillation_controller.py",
         "compose_services": ("strategy-distillation-worker",),
         "module_literals": (
-            "list_source_records",
+            "read_source_records_for_tenant",
             "DistillationJobQueue",
             "DISTILLATION_CONTROLLER_STATE_PATH",
             "refresh_runtime_identity",
@@ -93,6 +93,18 @@ RUNTIME_CONTROLLER_BINDINGS: dict[str, dict[str, Any]] = {
             "AlphaReplicationQueue",
             "AlphaRevalidationWorker",
             "ALPHA_REPLICATION_CONTROLLER_STATE_PATH",
+        ),
+    },
+    # Runs inside operator-bff with a fixed name, so no Compose service sets
+    # PANTHEON_CONTROLLER_NAME for it.
+    "bff_health_monitoring": {
+        "controller_name": "bff_downstream_health_monitor",
+        "module": "services/control-plane/bff/downstream_health_monitor.py",
+        "compose_services": (),
+        "module_literals": (
+            "configured downstream health target registry",
+            "/bff/v5/downstream-health",
+            "_loop_12_writer_for",
         ),
     },
 }
