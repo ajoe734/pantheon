@@ -42,7 +42,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 import pytest
 
-from l12_owner_auth import compose_file_args
+from l12_owner_auth import bearer, compose_file_args, human_token, token_subject
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -129,6 +129,9 @@ class DeployedHumanLearningHarness:
         ).rstrip("/")
         self.consultation_url = os.getenv(
             "PANTHEON_L12_CONSULTATION_URL", "http://127.0.0.1:18096"
+        ).rstrip("/")
+        self.persona_url = os.getenv(
+            "PANTHEON_L12_PERSONA_URL", "http://127.0.0.1:18002"
         ).rstrip("/")
         self.bff_bearer = self._resolve_bff_bearer()
         self.agora_handoff_token = os.getenv(
@@ -501,9 +504,63 @@ class DeployedHumanLearningHarness:
             "X-Pantheon-Tenant-Id": self.consultation_tenant_id,
         }
 
+    def _persona_headers(self) -> dict[str, str]:
+        headers = bearer(human_token("OPERATOR"))
+        headers["X-Tenant-Id"] = self.tenant_id
+        return headers
+
+    def _ensure_persona(self, persona_id: str, *, name: str, mandate: str) -> None:
+        headers = self._persona_headers()
+        existing = self._http_json(
+            self.persona_url,
+            f"/api/personas/{urllib.parse.quote(persona_id, safe='')}",
+            headers=headers,
+            expected=(200, 404),
+        )
+        if isinstance(existing, Mapping) and existing.get("persona_id") == persona_id:
+            self._require(
+                existing.get("tenant_id") == self.tenant_id,
+                f"Existing persona {persona_id!r} tenant {existing.get('tenant_id')!r} does not match required tenant {self.tenant_id!r}",
+            )
+            return
+        token = human_token("OPERATOR")
+        actor_id = token_subject(token)
+        self._http_json(
+            self.persona_url,
+            "/api/personas",
+            method="POST",
+            payload={
+                "actor_id": actor_id,
+                "persona_id": persona_id,
+                "name": name,
+                "mandate": mandate,
+                "tenant_id": self.tenant_id,
+                "status": "active",
+            },
+            headers=headers,
+            expected=(201, 409),
+        )
+        readback = self._http_json(
+            self.persona_url,
+            f"/api/personas/{urllib.parse.quote(persona_id, safe='')}",
+            headers=headers,
+            expected=(200,),
+        )
+        self._require(
+            isinstance(readback, Mapping)
+            and readback.get("persona_id") == persona_id
+            and readback.get("tenant_id") == self.tenant_id,
+            f"Persona {persona_id!r} verification readback failed closed: tenant or identity mismatch",
+        )
+
     # -- Loop 5: Agora interaction evidence -> durable handoff -> intake ----
 
     def _case_agora_interaction_evidence(self, case: dict[str, Any]) -> None:
+        self._ensure_persona(
+            "persona-advisor",
+            name="Advisor Persona",
+            mandate="Agora human learning advisor",
+        )
         evidence_id = f"ev-l12-hl-{self.run_token}"
         owners = self._at(
             "agora_and_policy.owner_compose_identities",
