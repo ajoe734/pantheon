@@ -1,4 +1,5 @@
-"""ASGI lifespan helpers for non-blocking provider observability and JWKS prewarm."""
+"""ASGI lifespan helpers for provider observability, JWKS prewarm, command
+replay, and the Loop 12 downstream health monitor."""
 from __future__ import annotations
 
 import asyncio
@@ -158,8 +159,14 @@ def create_lifespan(
     prewarm_jwks: bool = True,
     command_store: Optional[Any] = None,
     process_command: Optional[Callable[[str], Any]] = None,
+    downstream_health_monitor: Optional[Any] = None,
 ):
-    """Return a lifespan that schedules refresh without awaiting first probe and replays recoverable commands."""
+    """Return a lifespan that schedules refresh without awaiting first probe,
+    replays recoverable commands, and runs the downstream health monitor.
+
+    The monitor defaults to the instance registered by its constructor (the
+    BFF composition root builds exactly one).
+    """
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -204,9 +211,20 @@ def create_lifespan(
             )
         app.state.replay_tasks = replay_tasks
 
+        monitor = downstream_health_monitor
+        if monitor is None:
+            from ..downstream_health_monitor import get_downstream_health_monitor
+
+            monitor = get_downstream_health_monitor()
+        app.state.downstream_health_monitor = monitor
+        if monitor is not None:
+            await monitor.start()
+
         try:
             yield
         finally:
+            if monitor is not None:
+                await monitor.stop()
             refresh_task.cancel()
             with suppress(asyncio.CancelledError):
                 await refresh_task
