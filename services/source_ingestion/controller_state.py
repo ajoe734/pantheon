@@ -24,6 +24,7 @@ SCHEMA_VERSION = "source_ingest_controller_state.v2"
 LEGACY_SCHEMA_VERSION = "source_ingest_controller_state.v1"
 MAX_TRACKED_CONNECTORS = 512
 MAX_TEXT_LENGTH = 512
+MAX_FAILED_CONNECTORS = 16
 
 
 class ControllerStateError(RuntimeError):
@@ -265,10 +266,20 @@ def summarize_reconcile(reconcile: Mapping[str, Any] | None) -> dict[str, Any]:
 
 def summarize_schedule(schedule: Mapping[str, Any] | None) -> dict[str, Any]:
     payload = dict(schedule or {})
+    failed = payload.get("failed")
     return {
         "mode": _bounded_text(payload.get("mode")),
         "provider_egress_attempted": bool(payload.get("provider_egress_attempted")),
         "summary": _scalar_summary(payload.get("summary") if isinstance(payload.get("summary"), Mapping) else {}),
+        # Per-connector failure text is the only place the cause survives the tick.
+        "failed": [
+            {
+                "connector_id": _bounded_text(item.get("connector_id")),
+                "error": _bounded_text(item.get("error")),
+            }
+            for item in (failed if isinstance(failed, list) else ())
+            if isinstance(item, Mapping)
+        ][:MAX_FAILED_CONNECTORS],
     }
 
 
