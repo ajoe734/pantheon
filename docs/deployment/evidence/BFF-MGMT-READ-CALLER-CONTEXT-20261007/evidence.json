@@ -1,0 +1,140 @@
+{
+  "task_id": "BFF-MGMT-READ-CALLER-CONTEXT-20261007",
+  "change_class": "corrective",
+  "net_prod_line_budget": 6,
+  "source_baseline": "aece924cf39fdb8ff7e8bf158562aa56f9d3eb7f",
+  "implementation_mode": "Operator explicitly requested direct chatbox implementation; local Human/Ops reserved the existing task. No implementation worker was dispatched for this change.",
+  "summary": "Use the existing copy_context().run mechanism for the nested persona_readiness executor hop, preserving the caller Authorization and selected tenant without changing capacity, timeout, callback or degradation behaviour.",
+  "hosted_verified": false,
+  "limitations": [
+    "Local production-composition tests only; no hosted product mutation, browser journey, provider call or rollback drill was performed by this change.",
+    "The existing PERSONA-OWNER-JWT-VERIFIER-DEV-20261004 hosted dependency and all release obligations remain unchanged. A deployed owner rejecting the forwarded caller JWT must remain unavailable/degraded, never fall back to service authority.",
+    "Independent review and merge are not asserted by this evidence."
+  ],
+  "regression": {
+    "test": "services/control-plane/bff/tests/test_management_read_timeout_and_capacity.py::test_human_inbox_persona_readiness_reads_persona_owner_with_caller_identity",
+    "transport": "Real composed BFF app and ReadSurfacePorts -> PersonaCapitalRuntimeDomainPort -> PersonaFleetPort -> PersonaRegistryHttpWritePort; only the HTTP opener is replaced, with an in-memory JSON response.",
+    "base_exit": 1,
+    "base_observation": {
+      "authorization": "Bearer persona-service-token-not-for-callers",
+      "tenant": null,
+      "thread": "bff-human-inbox-read_0"
+    },
+    "head_exit": 0,
+    "head_assertions": [
+      "HTTP 200 and at least one captured Persona owner request",
+      "Every captured request has exactly the caller Authorization, not the configured service token",
+      "Every request has X-Tenant-Id tenant-alpha and runs on bff-human-inbox-read",
+      "meta.surfaces.persona_readiness.status is ok"
+    ],
+    "base_log": "/tmp/pi-caller-context-base-red.log"
+  },
+  "identity_mapping": [
+    {
+      "contributor": "approvals and governance reviews",
+      "before_and_after": "Caller authorization and tenant via management_read_models/router.py _StoreTimeoutProxy and its existing copied context; unchanged."
+    },
+    {
+      "contributor": "incidents",
+      "before_and_after": "Caller authorization and tenant on the request aggregation thread; unchanged."
+    },
+    {
+      "contributor": "persona_readiness",
+      "before": "Nested executor thread lacks owner_reads authorization/selected_tenant; PersonaRegistryHttpWritePort uses its service token with no selected tenant.",
+      "after": "Nested executor copies the request context, so the port sends caller Authorization and X-Tenant-Id. With no caller context, the unchanged port still uses its service principal for background reads."
+    }
+  ],
+  "entry_points": [
+    {
+      "route": "GET /bff/management/human-inbox",
+      "location": "management_read_models/router.py:1745,1760",
+      "path": "Request -> run_management_read (copied caller context on bff-mgmt-read) -> ManagementService.get_human_inbox -> nested bff-human-inbox-read; this final hop now copies context."
+    },
+    {
+      "route": "GET /bff/management/cockpit",
+      "location": "management_read_models/router.py:1581,1612; service.py:4014",
+      "path": "Request -> run_management_read (copied caller context on bff-mgmt-read) -> cockpit -> get_human_inbox -> nested bff-human-inbox-read; this final hop now copies context."
+    },
+    {
+      "route": "GET /bff/management/human-inbox/{item_id}",
+      "location": "management_read_models/router.py:1783; service.py:3649",
+      "path": "Inline request thread -> get_human_inbox_detail_result -> get_human_inbox -> nested bff-human-inbox-read; this final hop now copies context."
+    },
+    {
+      "route": "GET /bff/management/hiq-backlog",
+      "location": "management_read_models/router.py:1813; service.py:3677",
+      "path": "Inline request thread -> get_hiq_backlog -> get_human_inbox -> nested bff-human-inbox-read; this final hop now copies context."
+    }
+  ],
+  "executor_submit_inventory": [
+    {
+      "file": "services/control-plane/bff/management_read_models/service.py",
+      "line": 3293,
+      "mechanism": "executor.submit(copy_context().run, build_fn, snapshot_at, read_store=store)"
+    },
+    {
+      "file": "services/control-plane/bff/management_read_models/router.py",
+      "line": 100,
+      "mechanism": "_HUMAN_INBOX_CONTRIBUTOR_EXECUTOR.submit(contextvars.copy_context().run, attr, *args, **kwargs); unchanged"
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/common.py",
+      "line": 70,
+      "mechanism": "executor.submit(context.run, call), context = copy_context() at line 67; unchanged"
+    }
+  ],
+  "design_citations": [
+    "docs/deployment/evidence/BFF-TENANT-FALLBACK-AUDIT-20261003/evidence.json: authenticated caller is the only tenant authority",
+    "services/control-plane/bff/ports/persona_write_owner.py module docstring: request-bound reads preserve caller authority; service principal is for background reconciliation",
+    "Archived BFF-HUMAN-INBOX-AUTH-CONTEXT-20261007 acceptance 1: Human Inbox contributor reads run with the caller context"
+  ],
+  "unchanged_behaviour": [
+    "Bounded semaphore acquisition, immediate read_capacity_saturated, four-thread executor, timeout budget, read_timeout, late-result callback and slot release",
+    "No inline read retry, no new wrapper, helper, pool, flag, module, environment variable or BFF-side tenant filter",
+    "No changes to main.py, app_factory.py, governance/human_inbox.py, router.py, personas/routes/common.py, Persona port or owner",
+    "Every pre-existing test/fixture/assertion in the modified test file is unchanged"
+  ],
+  "assistant_path_out_of_scope": "assistant/management_service.py:4324 calls governance/human_inbox.py _human_inbox_payload inline, without this bound; unchanged.",
+  "validation": {
+    "interpreter": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python (governed Python 3.12)",
+    "command": "python -m pytest <each file> -q --tb=short, in separate fresh processes",
+    "base_log_directory": "/tmp/pi-caller-context-validation/base",
+    "head_log_directory": "/tmp/pi-caller-context-validation/head",
+    "results": [
+      {"suite": "tests/test_management_read_timeout_and_capacity.py", "base": "5 passed; new regression separately fails", "head": "6 passed"},
+      {"suite": "tests/test_persona_create_owner_contract.py", "base": "37 passed", "head": "37 passed"},
+      {"suite": "tests/test_bff_b3_human_inbox.py", "base": "5 passed", "head": "5 passed"},
+      {"suite": "tests/test_management_read_models_router.py", "base": "41 passed", "head": "41 passed"},
+      {"suite": "test_bff_promotion_review_governance.py", "base": "13 passed", "head": "13 passed"},
+      {"suite": "tests/test_promotion_review_production_defects.py", "base": "6 passed", "head": "6 passed"},
+      {"suite": "tests/test_bff_management_cockpit.py", "base": "10 passed", "head": "10 passed"},
+      {"suite": "test_mgmt_load_005_read_concurrency.py", "base": "10 passed", "head": "10 passed"},
+      {"suite": "tests/test_management_session_harness.py", "base": "11 passed", "head": "11 passed"},
+      {"suite": "tests/test_owner_read_wiring.py", "base": "27 passed", "head": "27 passed"},
+      {"suite": "tests/test_bff_test_architecture.py", "base": "39 passed", "head": "39 passed"},
+      {"suite": "scripts/test_bff_package_boundary_prerequisite.py", "base": "4 passed, 5 failed", "head": "4 passed, same 5 failed"},
+      {"suite": "services/persona/test_persona_owner_read_roles.py", "base": "10 passed", "head": "10 passed"}
+    ],
+    "totals": {"base_passed": 218, "head_passed": 219, "unchanged_environment_failures": 5},
+    "unchanged_environment_failures": {
+      "suite": "scripts/test_bff_package_boundary_prerequisite.py",
+      "reason": "Its child interpreters use -I; the shared governed interpreter has dependencies but does not have this task checkout's services package installed. Child imports fail ModuleNotFoundError: services on both base and head. No existing assertion was changed and the shared interpreter was not modified.",
+      "tests": [
+        "test_management_consumers_share_canonical_model_identity",
+        "test_missing_internal_dependency_fails_import_instead_of_substituting_models",
+        "test_cross_user_forbidden_is_403_without_bare_models_alias",
+        "test_representative_delayed_and_worker_imports_in_fresh_process",
+        "test_representative_negative_branches_keep_exact_contracts"
+      ]
+    }
+  },
+  "diff_budget": {
+    "production_added": 6,
+    "production_deleted": 2,
+    "production_net": 4,
+    "test_added": 49,
+    "test_deleted": 0,
+    "budget_satisfied": true,
+    "table": "| class | added | deleted | net |\n|---|---|---|---|\n| production | 6 | 2 | 4 |\n| test | 49 | 0 | 49 |"
+  }
+}
