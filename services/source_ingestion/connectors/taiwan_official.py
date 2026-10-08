@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import http.client
 import io
 import json
 import math
 import os
 import re
+import time
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
@@ -336,6 +338,26 @@ TAIWAN_OFFICIAL_PRICE_HISTORY_ENDPOINTS: Mapping[str, dict[str, Any]] = {
 }
 
 
+OFFICIAL_FETCH_ATTEMPTS = 3
+OFFICIAL_FETCH_BACKOFF_SECONDS = 1.0
+
+
+class OfficialResponseTruncated(SourceEvidenceError):
+    """An official endpoint ended the body before its declared Content-Length."""
+
+
+def _declared_content_length(response: Any) -> int | None:
+    headers = getattr(response, "headers", None)
+    value = headers.get("Content-Length") if hasattr(headers, "get") else None
+    if not isinstance(value, (str, int)) or isinstance(value, bool):
+        return None
+    try:
+        declared = int(value)
+    except ValueError:
+        return None
+    return declared if declared >= 0 else None
+
+
 def _read_bounded_response(response: Any, max_bytes: int = 10485760, chunk_size: int = 65536) -> bytes:
     chunks: list[bytes] = []
     total = 0
@@ -347,9 +369,43 @@ def _read_bounded_response(response: Any, max_bytes: int = 10485760, chunk_size:
         if total > max_bytes:
             raise SourceEvidenceError(f"Payload exceeded max byte limit ({max_bytes} bytes)")
         chunks.append(chunk)
-        if len(chunk) < chunk_size:
-            break
+    # http.client returns a short body without error when the peer closes early.
+    declared = _declared_content_length(response)
+    if declared is not None and total < declared:
+        raise OfficialResponseTruncated(
+            f"official response truncated: read {total} of {declared} declared bytes"
+        )
     return b"".join(chunks)
+
+
+def _fetch_official(
+    request: urllib.request.Request,
+    *,
+    caller: str,
+    timeout_seconds: float,
+    max_bytes: int,
+    parse: Any,
+) -> Any:
+    """Fetch and parse one official endpoint, retrying only transient body failures.
+
+    Official open-data hosts intermittently close a response early or stall a
+    read; the same request is retried a bounded number of times. HTTP errors,
+    egress denial and the byte limit are raised immediately.
+    """
+    failures: list[str] = []
+    for attempt in range(1, OFFICIAL_FETCH_ATTEMPTS + 1):
+        try:
+            with open_external_url(request, caller=caller, timeout=timeout_seconds) as response:
+                raw_bytes = _read_bounded_response(response, max_bytes=max_bytes)
+            return parse(raw_bytes)
+        except (OfficialResponseTruncated, TimeoutError, http.client.IncompleteRead, json.JSONDecodeError) as exc:
+            failures.append(f"attempt {attempt}: {type(exc).__name__}: {str(exc)[:200]}")
+            if attempt < OFFICIAL_FETCH_ATTEMPTS:
+                time.sleep(OFFICIAL_FETCH_BACKOFF_SECONDS * attempt)
+    raise SourceEvidenceError(
+        f"official endpoint {request.full_url} failed after {OFFICIAL_FETCH_ATTEMPTS} attempts: "
+        + "; ".join(failures)
+    )
 
 
 def _taifex_endpoint(dataset: str) -> str:
@@ -850,13 +906,13 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
                 "User-Agent": "pantheon-source-ingest/0.1",
             },
         )
-        with open_external_url(
+        return _fetch_official(
             request,
             caller="source_ingest.taiwan_official",
-            timeout=timeout_seconds,
-        ) as response:
-            raw_bytes = _read_bounded_response(response, max_bytes=10485760)
-            return json.loads(raw_bytes.decode("utf-8"))
+            timeout_seconds=timeout_seconds,
+            max_bytes=10485760,
+            parse=lambda raw_bytes: json.loads(raw_bytes.decode("utf-8")),
+        )
 
     def price_history_endpoint(
         self,
@@ -906,13 +962,13 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
                 "User-Agent": "pantheon-source-ingest/0.1",
             },
         )
-        with open_external_url(
+        payload = _fetch_official(
             request,
             caller="source_ingest.taiwan_official",
-            timeout=timeout_seconds,
-        ) as response:
-            raw_bytes = _read_bounded_response(response, max_bytes=10485760)
-        payload = json.loads(raw_bytes.decode("utf-8"))
+            timeout_seconds=timeout_seconds,
+            max_bytes=10485760,
+            parse=lambda raw_bytes: json.loads(raw_bytes.decode("utf-8")),
+        )
         if not isinstance(payload, Mapping):
             raise SourceEvidenceError("Taiwan official price history payload must be an object")
         return payload, url
@@ -1593,28 +1649,28 @@ class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
                 "User-Agent": "pantheon-source-ingest/0.1",
             },
         )
-        with open_external_url(
+        text = _fetch_official(
             request,
             caller="source_ingest.tdcc_shareholding",
-            timeout=timeout_seconds,
-        ) as response:
-            raw_bytes = _read_bounded_response(response, max_bytes=5242880)
-            text = raw_bytes.decode("utf-8-sig")
-            reader = csv.DictReader(io.StringIO(text))
-            resolved_symbols = symbols if symbols is not None else self.symbols
-            target_symbols = {str(s).strip().upper() for s in (resolved_symbols or ())} if resolved_symbols else None
-            limit = max_records or self.max_records
-            rows: list[dict[str, Any]] = []
-            for r in reader:
-                row_dict = dict(r)
-                if target_symbols:
-                    sym = _text(_first(row_dict, "證券代號", "Code", "SecuritiesCompanyCode", "Symbol", "股票代號")).upper()
-                    if sym not in target_symbols:
-                        continue
-                rows.append(row_dict)
-                if limit and len(rows) >= limit:
-                    break
-            return rows
+            timeout_seconds=timeout_seconds,
+            max_bytes=5242880,
+            parse=lambda raw_bytes: raw_bytes.decode("utf-8-sig"),
+        )
+        reader = csv.DictReader(io.StringIO(text))
+        resolved_symbols = symbols if symbols is not None else self.symbols
+        target_symbols = {str(s).strip().upper() for s in (resolved_symbols or ())} if resolved_symbols else None
+        limit = max_records or self.max_records
+        rows: list[dict[str, Any]] = []
+        for r in reader:
+            row_dict = dict(r)
+            if target_symbols:
+                sym = _text(_first(row_dict, "證券代號", "Code", "SecuritiesCompanyCode", "Symbol", "股票代號")).upper()
+                if sym not in target_symbols:
+                    continue
+            rows.append(row_dict)
+            if limit and len(rows) >= limit:
+                break
+        return rows
 
     @staticmethod
     def generate_backfill_weeks(start_date: str, end_date: str) -> list[str]:
@@ -1923,17 +1979,17 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                 "User-Agent": "pantheon-source-ingest/0.1",
             },
         )
-        with open_external_url(
+        parsed = _fetch_official(
             request,
             caller="source_ingest.taifex_derivatives",
-            timeout=timeout_seconds,
-        ) as response:
-            raw_bytes = _read_bounded_response(response, max_bytes=2097152)
-            parsed = json.loads(raw_bytes.decode("utf-8-sig"))
-            if isinstance(parsed, list) and (max_records or self.max_records):
-                limit = max_records or self.max_records
-                return parsed[:limit]
-            return parsed
+            timeout_seconds=timeout_seconds,
+            max_bytes=2097152,
+            parse=lambda raw_bytes: json.loads(raw_bytes.decode("utf-8-sig")),
+        )
+        if isinstance(parsed, list) and (max_records or self.max_records):
+            limit = max_records or self.max_records
+            return parsed[:limit]
+        return parsed
 
     @staticmethod
     def is_contract_roll_day(trade_date: str) -> bool:

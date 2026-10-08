@@ -1,0 +1,38 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "TW-REFRESH-RECEIPT-SESSION-WINDOW-20261008",
+  "title": "Make the Taiwan refresh receipt valid until the next official session closes",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "change_class": "corrective",
+  "session_window_rule": {
+    "freshness_condition": "receipt_dt <= now_dt and (age <= max_refresh_age_seconds or receipt_dt >= latest_completed_official_session_close_utc)",
+    "hard_ceiling_days": 14,
+    "hard_ceiling_seconds": 1209600,
+    "session_close_rule": "13:30 Asia/Taipei (_tw_session_close_utc)",
+    "calendar_evidence_version": "twse-2026-schedule-v1",
+    "unverifiable_weekday_behavior": "market_input_stale_refresh"
+  },
+  "changes": [
+    "Implemented Taiwan refresh receipt session window in evaluate_taiwan_market_freshness in services/execution/market_snapshot_admission.py.",
+    "Preserved flat max_refresh_age_seconds window and enforced hard 14-day ceiling (MAX_TW_REFRESH_RECEIPT_AGE_SECONDS = 14 * 86400).",
+    "Derived completed session boundaries backwards from candidate session date using _tw_session_close_utc, skipping deterministic weekends and verified calendar holidays.",
+    "Ensured completed weekdays that cannot be verified fail closed and keep the receipt stale as market_input_stale_refresh.",
+    "Preserved all existing event-time staleness checks, lineage requirements, future-timestamp guards, and non-Taiwan admission logic unchanged.",
+    "Maintained max_refresh_age_seconds argument across all existing callers without inflating flat windows."
+  ],
+  "acceptance_status": {
+    "1": "met: evaluate_taiwan_market_freshness accepts a refresh receipt that is within max_refresh_age_seconds or that was taken at or after the close of the latest completed official session before now",
+    "2": "met: a receipt older than fourteen days (1209600s) is rejected as market_input_stale_refresh regardless of sessions or max_refresh_age_seconds",
+    "3": "met: sessions between the receipt and now are derived from the same weekday rule and validated governed calendar evidence used for event-time freshness; a completed weekday that cannot be verified keeps the receipt stale (market_input_stale_refresh)",
+    "4": "met: tests pin all four required cases: Friday 2026-10-16 close with Friday 07:00Z receipt is admitted on Monday 2026-10-19T02:00Z; rejected after Monday close; 2026-10-09 holiday with 2026-10-08 post-close receipt admitted on 2026-10-12T03:00Z; receipt before latest close rejected",
+    "5": "met: event-time staleness rules and every typed reason code are unchanged and non-Taiwan admission is unchanged",
+    "6": "met: all existing callers keep their max_refresh_age_seconds argument and their focused tests pass; no caller gets a larger flat window",
+    "7": "pending: exact reviewed head passes required checks and is merged to dev; hosted acceptance stays pending for the release coordinator"
+  },
+  "tests": {
+    "command": "python3 scripts/dev/provision_python_distribution.py && PANTHEON_PY=$(python3 scripts/dev/provision_python_distribution.py --print-python) && $PANTHEON_PY -m pytest -q services/execution/test_market_snapshot_admission.py services/execution/lean_runtime/test_paper_signal_producer.py scripts/test_deploy_nonprod_vm.py",
+    "result": "173 passed, 2 skipped, 6 subtests passed in ~119s"
+  }
+}
+

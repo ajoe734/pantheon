@@ -883,6 +883,24 @@ class TestSharedSnapshotAdmissionDecisions(unittest.TestCase):
         self.assertTrue(dec.admitted)
         self.assertIsNone(dec.reason_code)
 
+    def test_tw_friday_close_admitted_on_monday_morning_with_calendar_evidence(self) -> None:
+        from services.execution.market_snapshot_admission import admit_market_snapshot
+        from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
+
+        # Friday close with Friday 07:00Z receipt is admitted on Monday 02:00Z (67h old)
+        snapshot = self._tw_snapshot("2026-10-16T05:30:00Z", "2026-10-16T07:00:00Z")
+        ev = governed_taiwan_calendar_evidence(venue="TWSE", trade_date="2026-10-16")
+        snapshot["calendar_evidence"] = ev
+        dec = admit_market_snapshot(snapshot, max_age_seconds=86400, now_iso="2026-10-19T02:00:00Z")
+        self.assertTrue(dec.admitted)
+        self.assertIsNone(dec.reason_code)
+
+        # Same receipt is rejected after Monday close (06:00Z)
+        dec_stale = admit_market_snapshot(snapshot, max_age_seconds=86400, now_iso="2026-10-19T06:00:00Z")
+        self.assertFalse(dec_stale.admitted)
+        self.assertEqual(dec_stale.reason_code, "market_input_stale_refresh")
+
+
     def test_tw_same_day_close_rejected_before_session_completion(self) -> None:
         from services.execution.market_snapshot_admission import admit_market_snapshot
 
@@ -1324,6 +1342,19 @@ class TestSharedSnapshotAdmissionDecisions(unittest.TestCase):
         dec = admit_market_snapshot(snapshot, max_age_seconds=86400, now_iso="2026-08-29T12:00:00Z")
         self.assertFalse(dec.admitted)
         self.assertEqual(dec.reason_code, "market_input_stale_refresh")
+
+    def test_tw_receipt_older_than_14_days_rejected(self) -> None:
+        from services.execution.market_snapshot_admission import admit_market_snapshot
+        from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
+
+        snapshot = self._tw_snapshot("2026-10-01T05:30:00Z", "2026-10-01T07:00:00Z")
+        snapshot["calendar_evidence"] = governed_taiwan_calendar_evidence(venue="TWSE", trade_date="2026-10-01")
+        # 15 days later (2026-10-16T02:00:00Z)
+        dec = admit_market_snapshot(snapshot, max_age_seconds=999_999_999, now_iso="2026-10-16T02:00:00Z")
+        self.assertFalse(dec.admitted)
+        self.assertEqual(dec.reason_code, "market_input_stale_refresh")
+        self.assertIn("14 days", str(dec.detail))
+
 
     def test_tw_future_event_time_rejected(self) -> None:
         from services.execution.market_snapshot_admission import admit_market_snapshot

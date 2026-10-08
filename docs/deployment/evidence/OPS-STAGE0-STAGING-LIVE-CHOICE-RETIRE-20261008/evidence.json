@@ -1,0 +1,73 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-STAGE0-STAGING-LIVE-CHOICE-RETIRE-20261008",
+  "title": "Retire the last staging-live references so the empty GitHub Environment can be deleted",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "base_sha": "2f2218e65853ca2c5208e9e1fb8bb197f0a09500",
+  "github_settings": {
+    "changed": false,
+    "note": "This task changed no GitHub setting. The operator will delete the empty staging-live GitHub Environment after this task merges."
+  },
+  "scope": {
+    "owned": [
+      ".github/workflows/stage-0-ci.yml: remove staging-live option from workflow_dispatch environment choices; update bff_base_url description",
+      "scripts/check_bff_live_evidence_secret_inventory.py: change DEFAULT_ENVIRONMENTS from (\"dev\", \"staging-live\") to (\"dev\",)",
+      "docs/deployment/nonprod-ci-cd.md: update Recommended GitHub Environments line for staging-live",
+      "docs/deployment/evidence/OPS-STAGE0-STAGING-LIVE-CHOICE-RETIRE-20261008/evidence.json: task review evidence"
+    ],
+    "not_changing": [
+      "scripts/test_check_bff_live_evidence_secret_inventory.py and scripts/test_write_bff_live_evidence_preflight.py (fixture / explicit flag usage preserved)",
+      "scripts/deploy_nonprod_vm.sh and its tests",
+      ".github/workflows/nonprod-deploy.yml",
+      "docs/04 and docs/05",
+      "stage-0-ci.yml inputs.environment != 'dev' guards, default dev, and concurrency groups"
+    ]
+  },
+  "git_grep_acceptance": {
+    "command": "git grep -n staging-live -- .github scripts/check_bff_live_evidence_secret_inventory.py",
+    "before_at_base": [
+      ".github/workflows/stage-0-ci.yml:31:          - staging-live",
+      "scripts/check_bff_live_evidence_secret_inventory.py:16:DEFAULT_ENVIRONMENTS = (\"dev\", \"staging-live\")"
+    ],
+    "after_at_head": []
+  },
+  "validation": {
+    "interpreter": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3",
+    "yaml_syntax": {
+      "command": "python3 -c 'import yaml; yaml.safe_load(open(\".github/workflows/stage-0-ci.yml\"))'",
+      "status": "passed",
+      "errors": []
+    },
+    "test_suite": {
+      "command": "pytest -p no:cacheprovider -q scripts/test_check_bff_live_evidence_secret_inventory.py scripts/test_write_bff_live_evidence_preflight.py scripts/git/test_git_workflow_helpers.py scripts/test_ci_stage0.py scripts/test_dev_deploy_worktree_isolation_contract.py scripts/test_dev_direct_ssh_workflow_contract.py scripts/test_release_gate_current_run.py scripts/test_verify_hosted_scenarios.py",
+      "base_result": "1 failed, 167 passed, 65 subtests passed in 32.60s",
+      "head_result": "1 failed, 167 passed, 65 subtests passed in 35.34s",
+      "per_id_outcomes_equal": true,
+      "pre_existing_failures": [
+        {
+          "test_id": "scripts/test_release_gate_current_run.py::test_stage0_registered_workflow_can_dispatch_strict_live_evidence_mode",
+          "error": "AssertionError: assert dispatch_inputs['approval_race_id']['required'] is True (False is True)",
+          "cause": "Pre-existing failure on origin/dev: approval_race_id has required: false in stage-0-ci.yml"
+        }
+      ]
+    },
+    "diff_budget": {
+      "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD",
+      "result": {
+        "production": {"added": 2, "deleted": 3, "net": -1},
+        "test": {"added": 0, "deleted": 0, "net": 0},
+        "docs_evidence": {"added": 74, "deleted": 1, "net": 73}
+      }
+    }
+  },
+  "acceptance_checklist": {
+    "1_stage0_ci_options_and_desc": "PASS: stage-0-ci.yml offers only dev in choices; bff_base_url description updated; inputs.environment != dev guards byte-identical",
+    "2_secret_inventory_default_envs": "PASS: DEFAULT_ENVIRONMENTS is ('dev',); no other line changed; explicit --environment works as before",
+    "3_git_grep_no_match": "PASS: git grep -n staging-live HEAD -- .github scripts/check_bff_live_evidence_secret_inventory.py returns no match",
+    "4_tests_pass_equal_outcomes": "PASS: secret inventory tests and preflight tests pass; stage-0-ci.yml referenced tests give identical per-id outcomes to merge base",
+    "5_nonprod_ci_cd_doc": "PASS: only the staging-live line under Recommended GitHub Environments changed",
+    "6_no_new_mechanism": "PASS: no new input/flag/env/environment/workflow/job added; deploy_nonprod_vm.sh, nonprod-deploy.yml, docs/04, docs/05 byte-identical to merge base",
+    "7_evidence_json_recorded": "PASS: base sha, git grep before/after, test results, and no GitHub setting change recorded"
+  }
+}

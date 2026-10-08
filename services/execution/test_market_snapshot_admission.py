@@ -442,3 +442,161 @@ def test_evaluate_taiwan_market_freshness_extended_governed_calendar_2026() -> N
     assert "2026-10-08" in str(detail_missed)
 
 
+def test_taiwan_refresh_receipt_session_window_pinned_cases() -> None:
+    from services.execution.market_snapshot_admission import evaluate_taiwan_market_freshness
+    from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
+
+    lineage = {"connector_ids": ["tw-twse-tpex-official-market"]}
+
+    # Acceptance 4 case 1:
+    # Friday 2026-10-16 close (05:30Z) with Friday 07:00Z receipt (observed_at)
+    # is admitted on Monday 2026-10-19T02:00Z (age = 67h > 24h, admitted).
+    ev_2026_10_16 = governed_taiwan_calendar_evidence(venue="TWSE", trade_date="2026-10-16")
+    assert ev_2026_10_16 is not None
+    close_fri_10_16 = datetime.fromisoformat("2026-10-16T05:30:00+00:00")
+    receipt_fri_07z = datetime.fromisoformat("2026-10-16T07:00:00+00:00")
+    now_mon_02z = datetime.fromisoformat("2026-10-19T02:00:00+00:00")
+
+    ok1, reason1, detail1 = evaluate_taiwan_market_freshness(
+        event_time_dt=close_fri_10_16,
+        now_dt=now_mon_02z,
+        refresh_receipt_dt=receipt_fri_07z,
+        lineage=lineage,
+        max_refresh_age_seconds=86400,
+        calendar_evidence=ev_2026_10_16,
+    )
+    assert ok1 is True
+    assert reason1 is None
+    assert detail1 is None
+
+    # Acceptance 4 case 2:
+    # The same receipt (Friday 07:00Z) is rejected after Monday close (Monday 06:00Z)
+    now_mon_06z = datetime.fromisoformat("2026-10-19T06:00:00+00:00")
+    ok2, reason2, detail2 = evaluate_taiwan_market_freshness(
+        event_time_dt=close_fri_10_16,
+        now_dt=now_mon_06z,
+        refresh_receipt_dt=receipt_fri_07z,
+        lineage=lineage,
+        max_refresh_age_seconds=86400,
+        calendar_evidence=ev_2026_10_16,
+    )
+    assert ok2 is False
+    assert reason2 == "market_input_stale_refresh"
+    assert "maximum is 86400s" in str(detail2)
+
+    # Acceptance 4 case 3:
+    # 2026-10-09 holiday with 2026-10-08 post-close receipt admitted on 2026-10-12T03:00Z
+    # (Thursday close 05:30Z, receipt 07:00Z, age = 92h > 24h, admitted).
+    ev_2026_10_08 = governed_taiwan_calendar_evidence(venue="TWSE", trade_date="2026-10-08")
+    assert ev_2026_10_08 is not None
+    close_thu_10_08 = datetime.fromisoformat("2026-10-08T05:30:00+00:00")
+    receipt_thu_07z = datetime.fromisoformat("2026-10-08T07:00:00+00:00")
+    now_mon_10_12_03z = datetime.fromisoformat("2026-10-12T03:00:00+00:00")
+
+    ok3, reason3, detail3 = evaluate_taiwan_market_freshness(
+        event_time_dt=close_thu_10_08,
+        now_dt=now_mon_10_12_03z,
+        refresh_receipt_dt=receipt_thu_07z,
+        lineage=lineage,
+        max_refresh_age_seconds=86400,
+        calendar_evidence=ev_2026_10_08,
+    )
+    assert ok3 is True
+    assert reason3 is None
+    assert detail3 is None
+
+    # Acceptance 4 case 4:
+    # Receipt taken before the latest close is rejected:
+    # Friday 2026-10-16 05:00Z receipt (predates 05:30Z close) evaluated on Monday 02:00Z.
+    receipt_fri_pre_close = datetime.fromisoformat("2026-10-16T05:00:00+00:00")
+    ok4, reason4, detail4 = evaluate_taiwan_market_freshness(
+        event_time_dt=close_fri_10_16,
+        now_dt=now_mon_02z,
+        refresh_receipt_dt=receipt_fri_pre_close,
+        lineage=lineage,
+        max_refresh_age_seconds=86400,
+        calendar_evidence=ev_2026_10_16,
+    )
+    assert ok4 is False
+    assert reason4 == "market_input_stale_refresh"
+
+
+def test_taiwan_refresh_receipt_14_day_ceiling_rejected() -> None:
+    from services.execution.market_snapshot_admission import evaluate_taiwan_market_freshness
+    from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
+
+    lineage = {"connector_ids": ["tw-twse-tpex-official-market"]}
+    ev = governed_taiwan_calendar_evidence(venue="TWSE", trade_date="2026-10-01")
+    assert ev is not None
+
+    close_10_01 = datetime.fromisoformat("2026-10-01T05:30:00+00:00")
+    # Receipt taken on 2026-10-01T07:00:00Z, now is 2026-10-16T02:00:00Z (age > 14 days)
+    receipt_10_01 = datetime.fromisoformat("2026-10-01T07:00:00+00:00")
+    now_10_16 = datetime.fromisoformat("2026-10-16T02:00:00+00:00")
+
+    # Even with large max_refresh_age_seconds, 14-day hard ceiling rejects as market_input_stale_refresh
+    ok, reason, detail = evaluate_taiwan_market_freshness(
+        event_time_dt=close_10_01,
+        now_dt=now_10_16,
+        refresh_receipt_dt=receipt_10_01,
+        lineage=lineage,
+        max_refresh_age_seconds=999_999_999,
+        calendar_evidence=ev,
+    )
+    assert ok is False
+    assert reason == "market_input_stale_refresh"
+    assert "14 days" in str(detail)
+
+
+def test_taiwan_refresh_receipt_unverifiable_weekday_keeps_receipt_stale() -> None:
+    from services.execution.market_snapshot_admission import (
+        CALENDAR_EVIDENCE_UNVERIFIABLE,
+        evaluate_taiwan_market_freshness,
+    )
+
+    lineage = {"connector_ids": ["tw-twse-tpex-official-market"]}
+    close_thu_10_08 = datetime.fromisoformat("2026-10-08T05:30:00+00:00")
+    receipt_thu_07z = datetime.fromisoformat("2026-10-08T07:00:00+00:00")
+    now_mon_10_12_03z = datetime.fromisoformat("2026-10-12T03:00:00+00:00")
+
+    # When Friday 2026-10-09 cannot be verified with calendar evidence,
+    # the receipt cannot be proven fresh until next session and stays stale.
+    def unverifiable_calendar_lookup(_date_iso: str):
+        return CALENDAR_EVIDENCE_UNVERIFIABLE
+
+    ok, reason, detail = evaluate_taiwan_market_freshness(
+        event_time_dt=close_thu_10_08,
+        now_dt=now_mon_10_12_03z,
+        refresh_receipt_dt=receipt_thu_07z,
+        lineage=lineage,
+        max_refresh_age_seconds=86400,
+        holiday_lookup=unverifiable_calendar_lookup,
+    )
+    assert ok is False
+    assert reason == "market_input_stale_refresh"
+    assert "maximum is 86400s" in str(detail)
+
+
+def test_taiwan_refresh_receipt_within_flat_window_accepted() -> None:
+    from services.execution.market_snapshot_admission import evaluate_taiwan_market_freshness
+
+    lineage = {"connector_ids": ["tw-twse-tpex-official-market"]}
+    close_fri = datetime.fromisoformat("2026-08-28T05:30:00+00:00")
+    receipt_sat = datetime.fromisoformat("2026-08-29T11:00:00+00:00")
+    now_sat = datetime.fromisoformat("2026-08-29T12:00:00+00:00")
+
+    # Within max_refresh_age_seconds (3600s <= 86400s), admitted without calendar evidence
+    ok, reason, detail = evaluate_taiwan_market_freshness(
+        event_time_dt=close_fri,
+        now_dt=now_sat,
+        refresh_receipt_dt=receipt_sat,
+        lineage=lineage,
+        max_refresh_age_seconds=86400,
+        calendar_evidence=None,
+    )
+    assert ok is True
+    assert reason is None
+    assert detail is None
+
+
+
