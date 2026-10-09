@@ -226,10 +226,61 @@ def test_controller_discovers_canonical_id_and_reads_authority_before_success(
     assert writer.failures == []
     assert len(writer.successes) == 1
     assert writer.successes[0]["evidence_refs"] == [
+        f"alpha-replication-controller:{state.controller_id}:tick:{state.sequence_no}",
         f"research-authority://experiment-tasks/{authority_task_id}",
         f"research-authority://experiment-runs/{authority_run_id}",
     ]
     assert str(stale_local_run_path) not in writer.successes[0]["evidence_refs"]
+
+    # Published fields must project as admissible controller truth.
+    import importlib
+    from datetime import datetime, timedelta, timezone
+
+    import jsonschema
+
+    published = writer.successes[0]
+    now = datetime.now(timezone.utc)
+    lease_seconds = published["lease_duration_seconds"]
+    assert lease_seconds >= config.interval_seconds + 30
+    row = {
+        "loop_id": published["loop_id"],
+        "tenant_id": state.tenant_id,
+        "environment": state.environment,
+        "controller_id": state.controller_id,
+        "controller_name": state.controller_name,
+        "deployment_sha": "test-sha",
+        "desired_state_query": None,
+        "actual_state_query": None,
+        "desired_state": published["desired_state"],
+        "downstream_actual_state": published["downstream_actual_state"],
+        "last_heartbeat_at": now,
+        "last_tick_at": None,
+        "last_success_at": now,
+        "last_failure_at": None,
+        "last_failure_reason": None,
+        "last_repair_at": None,
+        "last_repair_reason": None,
+        "backlog": published["backlog"],
+        "lag": None,
+        "dlq_count": None,
+        "evidence_refs": published["evidence_refs"],
+        "truth_level": "reconciled_live_proof",
+        "lease_token": "token",
+        "lease_expires_at": now + timedelta(seconds=lease_seconds),
+        "payload": published["payload"],
+    }
+    schema = json.loads(
+        (Path(__file__).resolve().parents[3] / "schemas" / "loop-controller-record.schema.json").read_text()
+    )
+    jsonschema.Draft7Validator(schema).validate(json.loads(json.dumps(row, default=lambda v: v.isoformat())))
+    projector = importlib.import_module("services.loop-control.projector")
+    projected = projector.project_controller_record_to_bff(
+        row, now=now + timedelta(seconds=config.interval_seconds)
+    )
+    assert projected["desired_state_presence"]["authoritative"] is True
+    assert projected["downstream_actual_state"]["authoritative"] is True
+    assert projected["evidence_refs"]
+    assert projected["controller_health"]["status"] == "healthy"
 
     queued = AlphaReplicationQueue(tmp_path).list_all()[0]
     assert queued["tenant_id"] == "tenant-a"
@@ -291,7 +342,9 @@ def test_controller_evidence_refs_dereference_real_fastapi_authority(
         )
 
     [receipt] = result["reconcile"]["authority_receipts"]
-    evidence_refs = writer.successes[0]["evidence_refs"]
+    all_refs = writer.successes[0]["evidence_refs"]
+    assert all_refs[0].startswith("alpha-replication-controller:")
+    evidence_refs = all_refs[1:]
     assert evidence_refs == [
         (
             "research-authority://experiment-tasks/"
