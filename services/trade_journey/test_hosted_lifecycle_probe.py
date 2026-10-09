@@ -1195,6 +1195,55 @@ def test_normalize_case_record_owner_conflicts_fail_closed():
     }
     assert probe._normalize_case_record(row_pcb_disagree)["persona_capital_binding_id"] == ""
 
+    # Missing owner fields supplied by flat alias when readback exists must fail closed
+    row_pool_missing_flat = _nested_owner_row()
+    del row_pool_missing_flat["references"]["authoritative_readback"]["runtime_binding"]["capital_pool_id"]
+    row_pool_missing_flat["capital_pool_id"] = DEFAULT_TEST_CASE["capital_pool_id"]
+    assert probe._normalize_case_record(row_pool_missing_flat)["capital_pool_id"] == ""
+    case_pool_missing_flat = _case_with_owner_ids(row_pool_missing_flat)
+    assert len(probe._complete_candidates(_natural_lifecycle_rows(), mode="natural", case=case_pool_missing_flat)) == 0
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(cand, case_pool_missing_flat)
+    assert exc_info.value.code == "case_capital_mismatch"
+
+    row_pcb_missing_flat = _nested_owner_row()
+    del row_pcb_missing_flat["references"]["authoritative_readback"]["runtime_binding"]["persona_capital_binding_id"]
+    row_pcb_missing_flat["persona_capital_binding_id"] = DEFAULT_TEST_CASE["persona_capital_binding_id"]
+    assert probe._normalize_case_record(row_pcb_missing_flat)["persona_capital_binding_id"] == ""
+
+    row_plan_missing_flat = _nested_owner_row(
+        deployment={},
+        runtime_binding={
+            "capital_pool_id": DEFAULT_TEST_CASE["capital_pool_id"],
+            "persona_capital_binding_id": DEFAULT_TEST_CASE["persona_capital_binding_id"],
+        },
+    )
+    row_plan_missing_flat["deployment_plan_id"] = DEFAULT_TEST_CASE["deployment_plan_id"]
+    assert probe._normalize_case_record(row_plan_missing_flat)["deployment_plan_id"] == ""
+    case_plan_missing_flat = _case_with_owner_ids(row_plan_missing_flat)
+    assert len(probe._complete_candidates(_natural_lifecycle_rows(), mode="natural", case=case_plan_missing_flat)) == 0
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(cand, case_plan_missing_flat)
+    assert exc_info.value.code == "case_plan_mismatch"
+
+    # Conflicting flat aliases across containers must fail closed
+    row_second_flat_conflict = _nested_owner_row()
+    row_second_flat_conflict["deployment_plan_id"] = DEFAULT_TEST_CASE["deployment_plan_id"]
+    row_second_flat_conflict["references"]["deployment_plan_id"] = "plan-other"
+    assert probe._normalize_case_record(row_second_flat_conflict)["deployment_plan_id"] == ""
+    case_second_flat = _case_with_owner_ids(row_second_flat_conflict)
+    assert len(probe._complete_candidates(_natural_lifecycle_rows(), mode="natural", case=case_second_flat)) == 0
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(cand, case_second_flat)
+    assert exc_info.value.code == "case_plan_mismatch"
+
+    row_flat_only_conflict = {
+        "tenant_id": DEFAULT_TEST_CASE["tenant_id"],
+        "capital_pool_id": DEFAULT_TEST_CASE["capital_pool_id"],
+        "references": {"capital_pool_id": "pool-other"},
+    }
+    assert probe._normalize_case_record(row_flat_only_conflict)["capital_pool_id"] == ""
+
 
 def test_main_cli_mode_and_case_key_validation(tmp_path):
     out_file = tmp_path / "cli_test.json"
