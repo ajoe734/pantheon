@@ -1,0 +1,172 @@
+{
+  "task": "DEV-PAPER-US-SIM-RETIRE-20261007",
+  "removed_paths": [
+    {
+      "path": "services/source_ingestion/connectors/dev_paper_simulation.py",
+      "introduced_by": "c3516e665",
+      "remains": "none; US data is unsupported"
+    },
+    {
+      "path": "connector_definitions.py dev-paper-us-equity-simulation, is_egress_free, is_egress_free_connector_definition",
+      "introduced_by": "c3516e665, 383cbc692"
+    },
+    {
+      "path": "persona_source_reconciler.py simulation wiring (records_from_now patch, _DEV_PAPER_US_DATASETS, snapshot_store, is_dev_environment factory, US branches, _ensure_dev_paper_snapshot)",
+      "introduced_by": "6b83bdd6b, c3516e665"
+    },
+    {
+      "path": "provider_adapters.py _dev_paper_simulation, alias, ALLOWED entry; semantic_extraction.py PERMITTED_LICENSES dev_paper_simulation",
+      "introduced_by": "c3516e665, 681982688"
+    },
+    {
+      "path": "controller_worker.py egress-free reconcile_only branch, executed_connector_ids, _persisted_source_health",
+      "introduced_by": "383cbc692, 07e9096e7"
+    },
+    {
+      "path": "scripts/deploy_nonprod_vm.sh stage_dev_paper_prerequisite_readiness (+restore_dev_paper_schedule, root call and rollback line)",
+      "introduced_by": "3e13b48af, da18e00da, f7a8f2ecc, 67382fcf4, aaaf252ea, DEV-PREREQUISITE-CANONICAL-SOURCE-AUTHORITY-20261008 (09b7a4edc)"
+    }
+  ],
+  "canonical_path_remaining": "reconcile_only controller with zero provider pulls; Taiwan freshness only from the bounded refresh and the daily Taiwan refresh workflow",
+  "git_grep_counts": {
+    "dev_paper_simulation": {
+      "before": 10,
+      "after": 0
+    },
+    "DevPaperUsEquitySimulation": {
+      "before": 28,
+      "after": 0
+    },
+    "DEV_PAPER_SIMULATION": {
+      "before": 25,
+      "after": 0
+    },
+    "_DEV_PAPER_US_DATASETS": {
+      "before": 3,
+      "after": 0
+    },
+    "_ensure_dev_paper_snapshot": {
+      "before": 4,
+      "after": 0
+    },
+    "records_from_now": {
+      "before": 22,
+      "after": 0
+    },
+    "is_dev_environment": {
+      "before": 19,
+      "after": 0
+    },
+    "is_egress_free": {
+      "before": 21,
+      "after": 0
+    },
+    "egress_free_connector_ids": {
+      "before": 5,
+      "after": 0
+    },
+    "executed_connector_ids": {
+      "before": 15,
+      "after": 0
+    },
+    "_persisted_source_health": {
+      "before": 3,
+      "after": 0
+    },
+    "_SOURCE_HEALTH_DERIVED_FIELDS": {
+      "before": 2,
+      "after": 0
+    },
+    "paper_prerequisite_readiness": {
+      "before": 107,
+      "after": 0
+    },
+    "restore_dev_paper_schedule": {
+      "before": 5,
+      "after": 0
+    },
+    "DEV_PAPER_REFRESH_DURATION_SECONDS": {
+      "before": 1,
+      "after": 0
+    },
+    "DEV_PAPER_READINESS_MARGIN_SECONDS": {
+      "before": 1,
+      "after": 0
+    },
+    "dev-paper-us-equity-simulation": {
+      "before": 166,
+      "after": 6
+    }
+  },
+  "deleted_tests": {
+    "test_controller_worker.py": [
+      "test_is_egress_free_connector_definition_classification",
+      "test_due_state_readback_accepts_egress_free_record_progression",
+      "test_due_state_readback_rejects_non_egress_free_in_executed_connector_ids",
+      "test_due_state_readback_rejects_decreased_source_record_count",
+      "test_due_state_readback_rejects_dlq_or_backlog_leak_during_egress_free",
+      "test_due_state_readback_rejects_mutating_non_executed_connector_records",
+      "test_due_state_readback_rejects_mutating_non_executed_connector_health",
+      "test_run_controller_tick_executes_egress_free_connector_in_reconcile_only",
+      "test_run_controller_tick_mixed_connectors_only_executes_egress_free_in_reconcile_only",
+      "test_run_controller_tick_reconcile_only_fails_when_egress_free_schedule_fails",
+      "test_due_state_readback_accepts_staleness_seconds_drift_for_non_executed_connector",
+      "test_due_state_readback_rejects_mutating_non_executed_connector_last_failure_at",
+      "test_run_controller_tick_reconcile_only_accepts_staleness_seconds_drift_for_non_executed_connector",
+      "test_run_controller_tick_reconcile_only_rejects_last_failure_at_drift_for_non_executed_connector",
+      "helpers _simulation_personas/_simulation_desired_meta/_simulation_reconcile/_simulation_connector_readback/_simulation_actual_readback"
+    ],
+    "test_persona_source_reconciler.py": [
+      "test_dev_only_us_simulation_connector_provisioned_when_pantheon_env_dev"
+    ],
+    "test_latest_market_snapshot_state.py": [
+      "test_dev_paper_simulation_adapter_emits_market_in_row_and_metadata",
+      "test_dev_paper_simulation_adapter_fails_closed_without_metadata_market",
+      "test_stored_marketless_spy_snapshot_becomes_market_bearing_and_admits_producer"
+    ],
+    "test_scheduler.py": [
+      "_simulation_connector",
+      "test_bounded_temporary_refresh_and_restoration_with_marketless_snapshot"
+    ],
+    "test_dev_paper_simulation.py": "file deleted",
+    "scripts/test_deploy_nonprod_vm.py": "33 top-level defs referencing stage_dev_paper_prerequisite_readiness/restore_dev_paper_schedule (contract, extractor, staged_paper_readiness_ordering, 30 test_stage_dev_paper_prerequisite_readiness_* incl. 7 added by the canonical-source task) plus helper _make_test_canonical_snapshot, whose only callers were those tests"
+  },
+  "retargeted_tests": {
+    "test_two_controller_ticks_preserve_active_persona_simulation_schedule": "renamed ..._only_schedule; FinMind-only tw_price_daily requirement; assertions unchanged",
+    "test_persona_owner_read_failure_leaves_every_connector_and_schedule_unchanged": "same requirement; added assert tw-finmind-datasets in configs_before",
+    "test_us_simulation_connector_not_offered_outside_dev_env": "renamed test_us_price_daily_requirement_is_unsupported_in_every_environment, parametrized env unset/dev",
+    "test_actual_persona_daily_requirement_prefers_public_source / test_explicit_keyed_selection_does_not_claim_credentials_or_data_are_live": "snapshot_store.reload()=={} replaced by no snapshot jsonl under tmp_path",
+    "test_run_scheduled_exclusive_fails_closed_when_schedule_disabled": "conn-exclusive-disabled static_records market connector; also carries the persona_source_reconciliation managed_by marker so the unchanged controller-token headers are still accepted (a plain connector is rejected 401 AUTH_TOKEN_FORMAT with those headers)",
+    "test_compose_source_ingest_wires_pantheon_env": "docstring reworded only"
+  },
+  "kept_coverage": [
+    "test_verify_exact_component_deployment_paper_signal_producer_unhealthy_prevents_activation",
+    "test_legacy_coordinator_artifact_without_market_fails_closed_market_context_missing",
+    "test_bare_ticker_missing_market_context_fails_closed",
+    "test_paper_signal_producer_rejects_missing_market_context_fail_closed",
+    "test_store_append_normalized_records_extracts_market_from_metadata",
+    "test_store_append_normalized_records_uses_connector_fallback",
+    "test_paper_signal_producer_admit_snapshot_with_market_us"
+  ],
+  "market_snapshot_admission": "H: no code solely for the deleted deploy function; market_snapshot_admission.py and test_market_snapshot_admission.py unchanged. Residual: test_market_snapshot_admission.py:27 default connector_id fixture string 'dev-paper-us-equity-simulation' is outside the criterion-14 allow-list; left unchanged per H, reviewer to decide.",
+  "hosted_facts_not_acted_on": [
+    "2026-10-07T11:00Z 22 of 32 persona-owner personas declared the simulation; operator gate retires them first",
+    "an active persona still declaring the simulation would fail every authoritative tick (unsupported on fresh store; conflicts on hosted dev), stopping Taiwan refresh too",
+    "retirement must converge before deploy: runtime._retire_removed_requirement_bindings re-upserts a non-retired connector and raises once the adapter is gone",
+    "between retirement and this deploy, root deploys roll back at paper_prerequisite_readiness; this deploy ends that window",
+    "hosted simulation config/schedule/SPY snapshots stay as inert history",
+    "legacy SPY paper bindings get no fresh snapshots; paper-fleet-reconciler pauses them (market_input_stale); paper only"
+  ],
+  "verification": {
+    "pytest": "services/source_ingestion/tests all pass (split batches); other listed files 552 passed, 2 failed; paper_fleet_reconciler 63 passed, 1 failed, 2 errors",
+    "pre_existing_on_base": [
+      "test_dev_environment_lease_deploy_contract.py::test_dev_root_deploy_profiles_isolate_persistent_runtime_and_exclude_dormant_smokes",
+      "test_dev_environment_lease_deploy_contract.py::test_dev_root_active_persistent_runtime_excludes_dormant_and_one_off_profiles",
+      "test_paper_fleet_reconciler.py::TestPaperPerformanceComposeWiring::test_fleet_and_static_runtimes_use_canonical_mark_source_and_state_volume",
+      "TestRedisFencedLeaderLease::test_production_builder_uses_shared_redis_fenced_backend (error)",
+      "TestRedisFencedLeaderLease::test_two_real_reconciler_processes_converge_and_stale_token_is_fenced (error)"
+    ],
+    "bash_n": "ok",
+    "bootstrap_self_test": "ok"
+  }
+}

@@ -29,13 +29,6 @@ from services.source_ingestion.controller_worker import (
 )
 
 
-from services.source_ingestion.connector_definitions import (
-    ConnectorDefinition,
-    get_connector_definition,
-    is_egress_free_connector_definition,
-)
-
-
 CONNECTOR_ID = "tw-official-market-datasets"
 DATASET = "tw_price_daily"
 FINAL_TRUTH_LEVEL = "reconciled_live_proof"
@@ -291,139 +284,6 @@ def _simulation_requirement() -> dict[str, Any]:
         "connector_candidates": [SIMULATION_CONNECTOR_ID],
         "policy_gates": ["public-source-only"],
     }
-
-
-def _simulation_personas() -> tuple[dict[str, Any], ...]:
-    return (
-        {
-            "persona_id": "persona-sim-test",
-            "required_data_sources": [_simulation_requirement()],
-        },
-    )
-
-
-def _simulation_desired_meta() -> dict[str, Any]:
-    return {
-        "authority": "file:///simulation-desired-state.json",
-        "transport": "deployment_file",
-        "sha256": "sim-desired-state-sha",
-        "persona_count": 1,
-        "requirement_count": 1,
-        "read_at": "2026-07-14T08:00:00Z",
-    }
-
-
-def _simulation_reconcile() -> dict[str, Any]:
-    return {
-        "desired_state_sha256": "sim-desired-state-sha",
-        "summary": {
-            "persona_count": 1,
-            "total": 1,
-            "satisfied": 1,
-            "mutated": 0,
-            "skipped": 0,
-            "conflicts": 0,
-            "unsupported": 0,
-        },
-        "results": [
-            {
-                "persona_id": "persona-sim-test",
-                "actions": [
-                    {
-                        "dataset": SIMULATION_DATASET,
-                        "connector_id": SIMULATION_CONNECTOR_ID,
-                        "status": "satisfied",
-                    }
-                ],
-            }
-        ],
-    }
-
-
-def _simulation_connector_readback(
-    *,
-    has_record: bool = True,
-    last_success: bool = True,
-) -> dict[str, Any]:
-    return {
-        "connector_id": SIMULATION_CONNECTOR_ID,
-        "configured": True,
-        "desired_state": {
-            "dataset": SIMULATION_DATASET,
-            "market": "US",
-            "cadence": "daily",
-            "source_class": "live_pull",
-            "policy_gates": ["public-source-only"],
-            "policy_gate_results": {
-                "public-source-only": {
-                    "passed": True,
-                    "authority": "connector_auth_policy",
-                }
-            },
-        },
-        "connector": {
-            "connector_id": SIMULATION_CONNECTOR_ID,
-            "auth_type": "none",
-            "secret_ref_id": None,
-        },
-        "schedule": {
-            "connector_id": SIMULATION_CONNECTOR_ID,
-            "enabled": True,
-            "interval_seconds": 86400,
-        },
-        "freshness": {
-            "status": "fresh",
-            "is_due": False,
-            "schedule_enabled": True,
-            "staleness_seconds": 5,
-            "last_ingest_run_id": "run-sim-test",
-            "latest_run": {
-                "ingest_run_id": "run-sim-test",
-                "status": "completed",
-            },
-        },
-        "latest_source_record": (
-            {
-                "source_id": "dev-paper-sim:SPY:20260918",
-                "connector_id": SIMULATION_CONNECTOR_ID,
-                "status": "normalized",
-                "content_ref": "dev-paper://us_price_daily/SPY/2026-09-18",
-                "trace_id": "trace-sim-test",
-                "created_at": "2026-07-14T08:00:04Z",
-            }
-            if has_record
-            else None
-        ),
-        "source_health": (
-            {
-                "source_id": SIMULATION_CONNECTOR_ID,
-                "status": "ok",
-                "checked_at": "2026-07-14T08:00:05Z",
-                "last_success_at": "2026-07-14T08:00:04Z",
-                "metadata": {"last_ingest_run_id": "run-sim-test"},
-            }
-            if last_success
-            else None
-        ),
-    }
-
-
-def _simulation_actual_readback(
-    *,
-    record_count: int = 0,
-    has_sim_record: bool = False,
-    include_official: bool = False,
-) -> dict[str, Any]:
-    base = _actual_readback()
-    base["requirement_snapshot"]["desired_state_sha256"] = "sim-desired-state-sha"
-    connectors = []
-    if include_official:
-        connectors.append(base["connectors"][0])
-    connectors.append(_simulation_connector_readback(has_record=has_sim_record))
-    base["connector_count"] = len(connectors)
-    base["source_record_count"] = record_count
-    base["connectors"] = connectors
-    return base
 
 
 def _validate_terminal_readback(
@@ -912,197 +772,6 @@ def test_due_state_readback_rejects_provider_side_effects(field: str) -> None:
     assert raised.value.stage == "provider_boundary"
 
 
-def test_is_egress_free_connector_definition_classification() -> None:
-    # 1. Dev paper simulation is egress-free
-    sim_def = get_connector_definition(SIMULATION_CONNECTOR_ID)
-    assert sim_def is not None
-    assert sim_def.is_egress_free is True
-    assert is_egress_free_connector_definition(sim_def) is True
-
-    # 2. TW official market is NOT egress-free (declares allowed_host_patterns)
-    official_def = get_connector_definition("tw-twse-tpex-official-market")
-    assert official_def is not None
-    assert official_def.is_egress_free is False
-    assert is_egress_free_connector_definition(official_def) is False
-
-    # 3. Connector with auth_modes other than "none" is NOT egress-free
-    dict_with_auth = {
-        "allowed_host_patterns": [],
-        "auth_modes": ["api_key"],
-        "secret_fields": [],
-    }
-    assert is_egress_free_connector_definition(dict_with_auth) is False
-
-    # 4. Connector with secret_fields is NOT egress-free
-    dict_with_secrets = {
-        "allowed_host_patterns": [],
-        "auth_modes": ["none"],
-        "secret_fields": ["password"],
-    }
-    assert is_egress_free_connector_definition(dict_with_secrets) is False
-
-    # 5. Connector with allowed hosts is NOT egress-free
-    dict_with_hosts = {
-        "allowed_host_patterns": ["example.com"],
-        "auth_modes": ["none"],
-        "secret_fields": [],
-    }
-    assert is_egress_free_connector_definition(dict_with_hosts) is False
-
-    # 6. Minimal dict with no hosts and none auth is egress-free
-    dict_egress_free = {
-        "allowed_host_patterns": [],
-        "auth_modes": ["none"],
-        "secret_fields": [],
-    }
-    assert is_egress_free_connector_definition(dict_egress_free) is True
-
-    # 7. None or invalid object is not egress-free
-    assert is_egress_free_connector_definition(None) is False
-    assert is_egress_free_connector_definition("invalid") is False
-
-
-def test_due_state_readback_accepts_egress_free_record_progression() -> None:
-    pre_actual = _simulation_actual_readback(record_count=0, has_sim_record=False)
-    actual = _simulation_actual_readback(record_count=5, has_sim_record=True)
-
-    _validate_due_state_readback(
-        reconcile=_simulation_reconcile(),
-        pre_actual=pre_actual,
-        actual=actual,
-        expected_controller_id="source-ingestion-test:generation-test",
-        expected_sequence_no=1,
-        expected_deployment=_deployment(),
-        executed_connector_ids=(SIMULATION_CONNECTOR_ID,),
-    )
-
-
-def test_due_state_readback_rejects_non_egress_free_in_executed_connector_ids() -> None:
-    pre_actual = _actual_readback()
-    actual = deepcopy(pre_actual)
-
-    with pytest.raises(ControllerTickError, match="executed non-egress-free connector") as raised:
-        _validate_due_state_readback(
-            reconcile=_reconcile(),
-            pre_actual=pre_actual,
-            actual=actual,
-            expected_controller_id="source-ingestion-test:generation-test",
-            expected_sequence_no=1,
-            expected_deployment=_deployment(),
-            executed_connector_ids=(CONNECTOR_ID,),
-        )
-    assert raised.value.stage == "provider_boundary"
-
-
-def test_due_state_readback_rejects_decreased_source_record_count() -> None:
-    pre_actual = _simulation_actual_readback(record_count=5, has_sim_record=True)
-    actual = _simulation_actual_readback(record_count=4, has_sim_record=True)
-
-    with pytest.raises(ControllerTickError, match="decreased source_record_count") as raised:
-        _validate_due_state_readback(
-            reconcile=_simulation_reconcile(),
-            pre_actual=pre_actual,
-            actual=actual,
-            expected_controller_id="source-ingestion-test:generation-test",
-            expected_sequence_no=1,
-            expected_deployment=_deployment(),
-            executed_connector_ids=(SIMULATION_CONNECTOR_ID,),
-        )
-    assert raised.value.stage == "provider_boundary"
-
-
-@pytest.mark.parametrize("field", ["dlq_count", "frontier_backlog"])
-def test_due_state_readback_rejects_dlq_or_backlog_leak_during_egress_free(field: str) -> None:
-    pre_actual = _simulation_actual_readback(record_count=0, has_sim_record=False)
-    actual = _simulation_actual_readback(record_count=5, has_sim_record=True)
-    actual[field] += 1
-
-    with pytest.raises(ControllerTickError, match="reconcile-only tick changed provider execution state") as raised:
-        _validate_due_state_readback(
-            reconcile=_simulation_reconcile(),
-            pre_actual=pre_actual,
-            actual=actual,
-            expected_controller_id="source-ingestion-test:generation-test",
-            expected_sequence_no=1,
-            expected_deployment=_deployment(),
-            executed_connector_ids=(SIMULATION_CONNECTOR_ID,),
-        )
-    assert raised.value.stage == "provider_boundary"
-
-
-def test_due_state_readback_rejects_mutating_non_executed_connector_records() -> None:
-    pre_actual = _simulation_actual_readback(record_count=1, has_sim_record=False, include_official=True)
-    actual = _simulation_actual_readback(record_count=6, has_sim_record=True, include_official=True)
-    actual["connectors"][0]["latest_source_record"]["source_id"] = "mutated-official-record"
-
-    with pytest.raises(ControllerTickError, match="mutated latest_source_record for non-executed connector") as raised:
-        _validate_due_state_readback(
-            reconcile=_simulation_reconcile(),
-            pre_actual=pre_actual,
-            actual=actual,
-            expected_controller_id="source-ingestion-test:generation-test",
-            expected_sequence_no=1,
-            expected_deployment=_deployment(),
-            executed_connector_ids=(SIMULATION_CONNECTOR_ID,),
-        )
-    assert raised.value.stage == "provider_boundary"
-
-
-def test_due_state_readback_rejects_mutating_non_executed_connector_health() -> None:
-    pre_actual = _simulation_actual_readback(record_count=1, has_sim_record=False, include_official=True)
-    actual = _simulation_actual_readback(record_count=6, has_sim_record=True, include_official=True)
-    actual["connectors"][0]["source_health"]["status"] = "degraded"
-
-    with pytest.raises(ControllerTickError, match="mutated source_health for non-executed connector") as raised:
-        _validate_due_state_readback(
-            reconcile=_simulation_reconcile(),
-            pre_actual=pre_actual,
-            actual=actual,
-            expected_controller_id="source-ingestion-test:generation-test",
-            expected_sequence_no=1,
-            expected_deployment=_deployment(),
-            executed_connector_ids=(SIMULATION_CONNECTOR_ID,),
-        )
-    assert raised.value.stage == "provider_boundary"
-
-
-def test_due_state_readback_accepts_staleness_seconds_drift_for_non_executed_connector() -> None:
-    pre_actual = _simulation_actual_readback(record_count=1, has_sim_record=False, include_official=True)
-    actual = _simulation_actual_readback(record_count=6, has_sim_record=True, include_official=True)
-    pre_actual["connectors"][0]["source_health"]["staleness_seconds"] = 186381
-    actual["connectors"][0]["source_health"]["staleness_seconds"] = 186386
-
-    _validate_due_state_readback(
-        reconcile=_simulation_reconcile(),
-        pre_actual=pre_actual,
-        actual=actual,
-        expected_controller_id="source-ingestion-test:generation-test",
-        expected_sequence_no=1,
-        expected_deployment=_deployment(),
-        executed_connector_ids=(SIMULATION_CONNECTOR_ID,),
-    )
-
-
-def test_due_state_readback_rejects_mutating_non_executed_connector_last_failure_at() -> None:
-    pre_actual = _simulation_actual_readback(record_count=1, has_sim_record=False, include_official=True)
-    actual = _simulation_actual_readback(record_count=6, has_sim_record=True, include_official=True)
-    pre_actual["connectors"][0]["source_health"]["last_failure_at"] = None
-    actual["connectors"][0]["source_health"]["last_failure_at"] = "2026-10-07T12:00:00Z"
-
-    with pytest.raises(ControllerTickError, match="mutated source_health for non-executed connector") as raised:
-        _validate_due_state_readback(
-            reconcile=_simulation_reconcile(),
-            pre_actual=pre_actual,
-            actual=actual,
-            expected_controller_id="source-ingestion-test:generation-test",
-            expected_sequence_no=1,
-            expected_deployment=_deployment(),
-            executed_connector_ids=(SIMULATION_CONNECTOR_ID,),
-        )
-    assert raised.value.stage == "provider_boundary"
-
-
-
 def test_terminal_readback_accepts_resolved_historical_dead_letters() -> None:
     actual = _actual_readback()
     actual["dlq_count"] = 1
@@ -1589,354 +1258,6 @@ def test_run_controller_tick_reconcile_only_never_executes_provider(
     success = _call(writer, "success")
     assert success["truth_level"] == "scheduled_tick"
     assert success["kwargs"]["payload"]["provider_egress_attempted"] is False
-
-
-def test_run_controller_tick_executes_egress_free_connector_in_reconcile_only(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    events: list[str] = []
-    config = _config(
-        tmp_path,
-        truth_level="scheduled_tick",
-        mode=RECONCILE_ONLY_MODE,
-    )
-    state = _state()
-    store = RecordingStateStore(config.state_path, events)
-    writer = RecordingWriter(events)
-
-    scheduled_calls: list[dict[str, Any]] = []
-
-    def load_desired_state(*, timeout_seconds: float) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
-        events.append("load_desired_state")
-        return _simulation_personas(), _simulation_desired_meta()
-
-    def reconcile_desired_state(**kwargs: Any) -> dict[str, Any]:
-        events.append("reconcile_desired_state")
-        return _simulation_reconcile()
-
-    read_count = 0
-
-    def read_actual_state(**kwargs: Any) -> dict[str, Any]:
-        nonlocal read_count
-        read_count += 1
-        events.append("read_actual_state")
-        if read_count == 1:
-            return _simulation_actual_readback(record_count=0, has_sim_record=False)
-        else:
-            return _simulation_actual_readback(record_count=5, has_sim_record=True)
-
-    def run_schedule_tick(**kwargs: Any) -> dict[str, Any]:
-        events.append("run_schedule_tick")
-        scheduled_calls.append(kwargs)
-        return {
-            "summary": {
-                "total_ran": 1,
-                "total_skipped": 0,
-                "total_failed": 0,
-                "total_enqueued": 1,
-            }
-        }
-
-    monkeypatch.setattr(controller_worker, "load_desired_state", load_desired_state)
-    monkeypatch.setattr(controller_worker, "reconcile_desired_state", reconcile_desired_state)
-    monkeypatch.setattr(controller_worker, "read_actual_state", read_actual_state)
-    monkeypatch.setattr(controller_worker, "run_schedule_tick", run_schedule_tick)
-
-    result = run_controller_tick(config=config, state=state, store=store, writer=writer)
-
-    assert result["status"] == "ok"
-    assert result["controller_mode"] == "reconcile_only"
-    assert result["provider_egress_attempted"] is False
-    assert len(scheduled_calls) == 1
-    call = scheduled_calls[0]
-    assert call["force_connector_ids"] == [SIMULATION_CONNECTOR_ID]
-    assert call["exclusive_connector_ids"] == [SIMULATION_CONNECTOR_ID]
-
-    assert events == [
-        "store.tick_started",
-        "read_actual_state",
-        "load_desired_state",
-        "writer.heartbeat",
-        "writer.tick",
-        "reconcile_desired_state",
-        "run_schedule_tick",
-        "read_actual_state",
-        "writer.success",
-        "store.success",
-    ]
-    success = _call(writer, "success")
-    assert success["truth_level"] == "scheduled_tick"
-    assert success["kwargs"]["summary"] == "desired connector and schedule state reconciled; provider egress not attempted"
-    assert success["kwargs"]["payload"]["provider_egress_attempted"] is False
-    assert success["kwargs"]["payload"]["controller_mode"] == "reconcile_only"
-    assert state.schedule["provider_egress_attempted"] is False
-    assert state.schedule["mode"] == "reconcile_only"
-
-
-def test_run_controller_tick_mixed_connectors_only_executes_egress_free_in_reconcile_only(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    events: list[str] = []
-    config = _config(
-        tmp_path,
-        truth_level="scheduled_tick",
-        mode=RECONCILE_ONLY_MODE,
-    )
-    state = _state()
-    store = RecordingStateStore(config.state_path, events)
-    writer = RecordingWriter(events)
-
-    scheduled_calls: list[dict[str, Any]] = []
-
-    def load_desired_state(*, timeout_seconds: float) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
-        return (*_personas(), *_simulation_personas()), _desired_meta()
-
-    def reconcile_desired_state(**kwargs: Any) -> dict[str, Any]:
-        return {
-            "desired_state_sha256": "desired-state-sha",
-            "summary": {"total": 2, "satisfied": 2},
-            "results": [
-                {
-                    "persona_id": "persona-source-test",
-                    "actions": [{"dataset": DATASET, "connector_id": CONNECTOR_ID, "status": "satisfied"}],
-                },
-                {
-                    "persona_id": "persona-sim-test",
-                    "actions": [{"dataset": SIMULATION_DATASET, "connector_id": SIMULATION_CONNECTOR_ID, "status": "satisfied"}],
-                },
-            ],
-        }
-
-    read_count = 0
-
-    def read_actual_state(**kwargs: Any) -> dict[str, Any]:
-        nonlocal read_count
-        read_count += 1
-        base = _actual_readback()
-        base["connectors"].append(_simulation_connector_readback(has_record=(read_count > 1)))
-        base["connector_count"] = 2
-        base["source_record_count"] = 1 if read_count == 1 else 6
-        return base
-
-    def run_schedule_tick(**kwargs: Any) -> dict[str, Any]:
-        scheduled_calls.append(kwargs)
-        return {
-            "summary": {
-                "total_ran": 1,
-                "total_skipped": 0,
-                "total_failed": 0,
-                "total_enqueued": 1,
-            }
-        }
-
-    monkeypatch.setattr(controller_worker, "load_desired_state", load_desired_state)
-    monkeypatch.setattr(controller_worker, "reconcile_desired_state", reconcile_desired_state)
-    monkeypatch.setattr(controller_worker, "read_actual_state", read_actual_state)
-    monkeypatch.setattr(controller_worker, "run_schedule_tick", run_schedule_tick)
-
-    result = run_controller_tick(config=config, state=state, store=store, writer=writer)
-
-    assert result["status"] == "ok"
-    assert result["controller_mode"] == "reconcile_only"
-    assert result["provider_egress_attempted"] is False
-    assert len(scheduled_calls) == 1
-    call = scheduled_calls[0]
-    # Critical: only the egress-free connector is scheduled, NOT the network egress connector
-    assert call["force_connector_ids"] == [SIMULATION_CONNECTOR_ID]
-    assert call["exclusive_connector_ids"] == [SIMULATION_CONNECTOR_ID]
-    assert CONNECTOR_ID not in call["force_connector_ids"]
-    assert CONNECTOR_ID not in call["exclusive_connector_ids"]
-
-
-def test_run_controller_tick_reconcile_only_accepts_staleness_seconds_drift_for_non_executed_connector(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    events: list[str] = []
-    config = _config(
-        tmp_path,
-        truth_level="scheduled_tick",
-        mode=RECONCILE_ONLY_MODE,
-    )
-    state = _state()
-    store = RecordingStateStore(config.state_path, events)
-    writer = RecordingWriter(events)
-
-    def load_desired_state(*, timeout_seconds: float) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
-        return (*_personas(), *_simulation_personas()), _desired_meta()
-
-    def reconcile_desired_state(**kwargs: Any) -> dict[str, Any]:
-        return {
-            "desired_state_sha256": "desired-state-sha",
-            "summary": {"total": 2, "satisfied": 2},
-            "results": [
-                {
-                    "persona_id": "persona-source-test",
-                    "actions": [{"dataset": DATASET, "connector_id": CONNECTOR_ID, "status": "satisfied"}],
-                },
-                {
-                    "persona_id": "persona-sim-test",
-                    "actions": [{"dataset": SIMULATION_DATASET, "connector_id": SIMULATION_CONNECTOR_ID, "status": "satisfied"}],
-                },
-            ],
-        }
-
-    read_count = 0
-
-    def read_actual_state(**kwargs: Any) -> dict[str, Any]:
-        nonlocal read_count
-        read_count += 1
-        base = _actual_readback()
-        base["connectors"][0]["source_health"]["staleness_seconds"] = 186381 if read_count == 1 else 186386
-        base["connectors"].append(_simulation_connector_readback(has_record=(read_count > 1)))
-        base["connector_count"] = 2
-        base["source_record_count"] = 1 if read_count == 1 else 6
-        return base
-
-    def run_schedule_tick(**kwargs: Any) -> dict[str, Any]:
-        return {
-            "summary": {
-                "total_ran": 1,
-                "total_skipped": 0,
-                "total_failed": 0,
-                "total_enqueued": 1,
-            }
-        }
-
-    monkeypatch.setattr(controller_worker, "load_desired_state", load_desired_state)
-    monkeypatch.setattr(controller_worker, "reconcile_desired_state", reconcile_desired_state)
-    monkeypatch.setattr(controller_worker, "read_actual_state", read_actual_state)
-    monkeypatch.setattr(controller_worker, "run_schedule_tick", run_schedule_tick)
-
-    result = run_controller_tick(config=config, state=state, store=store, writer=writer)
-    assert result["status"] == "ok"
-
-
-def test_run_controller_tick_reconcile_only_rejects_last_failure_at_drift_for_non_executed_connector(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    events: list[str] = []
-    config = _config(
-        tmp_path,
-        truth_level="scheduled_tick",
-        mode=RECONCILE_ONLY_MODE,
-    )
-    state = _state()
-    store = RecordingStateStore(config.state_path, events)
-    writer = RecordingWriter(events)
-
-    def load_desired_state(*, timeout_seconds: float) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
-        return (*_personas(), *_simulation_personas()), _desired_meta()
-
-    def reconcile_desired_state(**kwargs: Any) -> dict[str, Any]:
-        return {
-            "desired_state_sha256": "desired-state-sha",
-            "summary": {"total": 2, "satisfied": 2},
-            "results": [
-                {
-                    "persona_id": "persona-source-test",
-                    "actions": [{"dataset": DATASET, "connector_id": CONNECTOR_ID, "status": "satisfied"}],
-                },
-                {
-                    "persona_id": "persona-sim-test",
-                    "actions": [{"dataset": SIMULATION_DATASET, "connector_id": SIMULATION_CONNECTOR_ID, "status": "satisfied"}],
-                },
-            ],
-        }
-
-    read_count = 0
-
-    def read_actual_state(**kwargs: Any) -> dict[str, Any]:
-        nonlocal read_count
-        read_count += 1
-        base = _actual_readback()
-        if read_count > 1:
-            base["connectors"][0]["source_health"]["last_failure_at"] = "2026-10-07T12:00:00Z"
-        base["connectors"].append(_simulation_connector_readback(has_record=(read_count > 1)))
-        base["connector_count"] = 2
-        base["source_record_count"] = 1 if read_count == 1 else 6
-        return base
-
-    def run_schedule_tick(**kwargs: Any) -> dict[str, Any]:
-        return {
-            "summary": {
-                "total_ran": 1,
-                "total_skipped": 0,
-                "total_failed": 0,
-                "total_enqueued": 1,
-            }
-        }
-
-    monkeypatch.setattr(controller_worker, "load_desired_state", load_desired_state)
-    monkeypatch.setattr(controller_worker, "reconcile_desired_state", reconcile_desired_state)
-    monkeypatch.setattr(controller_worker, "read_actual_state", read_actual_state)
-    monkeypatch.setattr(controller_worker, "run_schedule_tick", run_schedule_tick)
-
-    with pytest.raises(ControllerTickError, match="mutated source_health for non-executed connector") as raised:
-        run_controller_tick(config=config, state=state, store=store, writer=writer)
-    assert raised.value.stage == "provider_boundary"
-
-
-
-def test_run_controller_tick_reconcile_only_fails_when_egress_free_schedule_fails(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    events: list[str] = []
-    config = _config(
-        tmp_path,
-        truth_level="scheduled_tick",
-        mode=RECONCILE_ONLY_MODE,
-    )
-    state = _state()
-    store = RecordingStateStore(config.state_path, events)
-    writer = RecordingWriter(events)
-
-    def load_desired_state(*, timeout_seconds: float) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
-        return _simulation_personas(), _simulation_desired_meta()
-
-    def reconcile_desired_state(**kwargs: Any) -> dict[str, Any]:
-        return _simulation_reconcile()
-
-    def read_actual_state(**kwargs: Any) -> dict[str, Any]:
-        return _simulation_actual_readback(record_count=0, has_sim_record=False)
-
-    def failing_schedule_tick(**kwargs: Any) -> dict[str, Any]:
-        return {
-            "failed": [
-                {
-                    "connector_id": "dev-paper-simulation",
-                    "frontier": {"frontier_id": "frontier-1"},
-                    "error": "provider rejected the request " + "x" * 2000,
-                }
-            ],
-            "summary": {
-                "total_ran": 0,
-                "total_failed": 1,
-            },
-        }
-
-    monkeypatch.setattr(controller_worker, "load_desired_state", load_desired_state)
-    monkeypatch.setattr(controller_worker, "reconcile_desired_state", reconcile_desired_state)
-    monkeypatch.setattr(controller_worker, "read_actual_state", read_actual_state)
-    monkeypatch.setattr(controller_worker, "run_schedule_tick", failing_schedule_tick)
-
-    with pytest.raises(ControllerTickError, match="reported 1 failed connector") as raised:
-        run_controller_tick(config=config, state=state, store=store, writer=writer)
-
-    assert raised.value.stage == "schedule"
-    failure = _call(writer, "failure")
-    assert "schedule: scheduled source tick reported 1 failed connector(s)" in failure["reason"]
-    (failed,) = state.schedule["failed"]
-    assert failed["connector_id"] == "dev-paper-simulation"
-    assert failed["error"].startswith("provider rejected the request")
-    assert len(failed["error"]) == controller_state.MAX_TEXT_LENGTH
-    assert set(failed) == {"connector_id", "error"}
-    reloaded = ControllerStateStore(config.state_path).load()
-    assert reloaded is not None and reloaded.schedule["failed"] == state.schedule["failed"]
 
 
 def test_schedule_summary_bounds_failed_connectors_and_survives_resummary() -> None:
@@ -2570,7 +1891,7 @@ def test_load_desired_state_fails_closed_when_persona_owner_returns_malformed_li
         server.server_close()
 
 
-def test_two_controller_ticks_preserve_active_persona_simulation_schedule(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_two_controller_ticks_preserve_active_persona_only_schedule(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import socket
     import threading
     import time
@@ -2579,6 +1900,7 @@ def test_two_controller_ticks_preserve_active_persona_simulation_schedule(tmp_pa
     import services.source_ingestion.main as sim
 
     monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setenv("FINMIND_API_TOKEN", "local-test-token")
 
     data_dir = tmp_path / "source_data"
     data_dir.mkdir()
@@ -2606,11 +1928,11 @@ def test_two_controller_ticks_preserve_active_persona_simulation_schedule(tmp_pa
 
     req_spec = [
         {
-            "dataset": SIMULATION_DATASET,
-            "market": "US",
+            "dataset": "tw_price_daily",
+            "market": "TW",
             "cadence": "daily",
             "source_class": "live_pull",
-            "connector_candidates": [SIMULATION_CONNECTOR_ID],
+            "connector_candidates": ["tw-finmind-datasets"],
             "policy_gates": ["require_connector_approved", "require_schedule_active", "require_source_health_ok"],
         }
     ]
@@ -2697,28 +2019,28 @@ def test_two_controller_ticks_preserve_active_persona_simulation_schedule(tmp_pa
 
         # Tick 1: Provisions and enables the simulation connector schedule with exactly one binding
         run_controller_tick(config=config, state=state, store=store, writer=writer)
-        sched1 = runtime.schedule_config_store.get_schedule(SIMULATION_CONNECTOR_ID)
+        sched1 = runtime.schedule_config_store.get_schedule("tw-finmind-datasets")
         assert sched1 is not None
         assert sched1.enabled is True
-        bindings1 = [k for k, v in runtime.requirement_snapshot_store.latest.bindings.items() if v == SIMULATION_CONNECTOR_ID]
+        bindings1 = [k for k, v in runtime.requirement_snapshot_store.latest.bindings.items() if v == "tw-finmind-datasets"]
         assert len(bindings1) == 1
 
         # Tick 2: Second tick preserves the simulation connector schedule enabled with exactly one binding
         run_controller_tick(config=config, state=state, store=store, writer=writer)
-        sched2 = runtime.schedule_config_store.get_schedule(SIMULATION_CONNECTOR_ID)
+        sched2 = runtime.schedule_config_store.get_schedule("tw-finmind-datasets")
         assert sched2 is not None
         assert sched2.enabled is True
-        bindings2 = [k for k, v in runtime.requirement_snapshot_store.latest.bindings.items() if v == SIMULATION_CONNECTOR_ID]
+        bindings2 = [k for k, v in runtime.requirement_snapshot_store.latest.bindings.items() if v == "tw-finmind-datasets"]
         assert len(bindings2) == 1
         assert bindings1 == bindings2
 
         # Tick 3: Retire all personas -> connector schedule and connector are retired
         _StubPersonaOwnerHandler.personas = [{**p, "lifecycle_state": "retired"} for p in all_personas]
         run_controller_tick(config=config, state=state, store=store, writer=writer)
-        sched3 = runtime.schedule_config_store.get_schedule(SIMULATION_CONNECTOR_ID)
+        sched3 = runtime.schedule_config_store.get_schedule("tw-finmind-datasets")
         assert sched3 is not None
         assert sched3.enabled is False
-        connector_cfg = runtime.connector_store.get_config(SIMULATION_CONNECTOR_ID)
+        connector_cfg = runtime.connector_store.get_config("tw-finmind-datasets")
         assert connector_cfg is not None
         assert connector_cfg.connector.status.value == "disabled"
     finally:
@@ -2736,6 +2058,7 @@ def test_persona_owner_read_failure_leaves_every_connector_and_schedule_unchange
     import services.source_ingestion.main as sim
 
     monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setenv("FINMIND_API_TOKEN", "local-test-token")
 
     data_dir = tmp_path / "source_data"
     data_dir.mkdir()
@@ -2769,11 +2092,11 @@ def test_persona_owner_read_failure_leaves_every_connector_and_schedule_unchange
         "mandate": "Testing",
         "required_data_sources": [
             {
-                "dataset": SIMULATION_DATASET,
-                "market": "US",
+                "dataset": "tw_price_daily",
+                "market": "TW",
                 "cadence": "daily",
                 "source_class": "live_pull",
-                "connector_candidates": [SIMULATION_CONNECTOR_ID],
+                "connector_candidates": ["tw-finmind-datasets"],
                 "policy_gates": ["require_connector_approved", "require_schedule_active", "require_source_health_ok"],
             }
         ],
@@ -2834,6 +2157,7 @@ def test_persona_owner_read_failure_leaves_every_connector_and_schedule_unchange
         run_controller_tick(config=config, state=state, store=store, writer=writer)
 
         configs_before = {c.connector.connector_id: c.to_dict() for c in runtime.connector_store.list_configs()}
+        assert "tw-finmind-datasets" in configs_before
         schedules_before = {s.connector_id: s.to_dict() for s in runtime.schedule_config_store.list_schedules()}
 
         # Owner read now fails

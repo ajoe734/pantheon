@@ -593,13 +593,9 @@ def test_refuses_non_paper_or_live_side_effect_response() -> None:
 
 
 def test_compose_source_ingest_wires_pantheon_env() -> None:
-    """Regression for DEV-PAPER-SNAPSHOT-PRECONDITION-ORDERING-001 P1:
-    services.source_ingestion.persona_source_reconciler.is_dev_environment()
-    reads PANTHEON_ENV from the process environment, but docker-compose.yml's
-    source-ingest service previously omitted it from its environment block,
-    so the real API container never saw PANTHEON_ENV=dev and the dev-only
-    synthetic simulation connector factory stayed disabled regardless of how
-    correct the reconciler/bootstrap code was."""
+    """docker-compose.yml's source-ingest service receives PANTHEON_ENV
+    (default dev) in its environment block, like the other PANTHEON_ENV-scoped
+    services in this file."""
     import yaml
 
     repo_root = Path(__file__).resolve().parents[1]
