@@ -673,12 +673,17 @@ def _normalize_case_record(record: Mapping[str, Any]) -> dict[str, Any]:
     def pick(*keys: str) -> str:
         return next((str(v) for k in keys for v in (record.get(k), refs.get(k), res.get(k), entry.get(k)) if v), "")
 
-    rb = _json_object(refs.get("authoritative_readback") or res.get("authoritative_readback"))
-    bind, dep = _json_object(rb.get("runtime_binding")), _json_object(rb.get("deployment"))
+    rbs = [_json_object(x.get("authoritative_readback")) for x in (refs, res)]
+    deps = [_json_object(rb.get("deployment")) for rb in rbs]
+    binds = [_json_object(rb.get("runtime_binding")) for rb in rbs]
+    has_rb = any(x.get("authoritative_readback") is not None for x in (refs, res))
 
-    def owner(key: str, *nested: Mapping[str, Any]) -> str:
-        vals = {str(m[key]) for m in nested if m.get(key)}
-        return vals.pop() if len(vals) == 1 else ""
+    def owner(key: str, f_key: str, *nested: Mapping[str, Any]) -> str:
+        flats = {str(c[f_key]) for c in (record, refs, res, entry) if c.get(f_key)}
+        r_vals = {str(m[key]) for m in nested if m.get(key)}
+        if has_rb:
+            return r_vals.pop() if len(r_vals) == 1 and (not flats or flats == r_vals) else ""
+        return flats.pop() if len(flats) == 1 else ""
 
     norm = {
         "tenant_id": str(record.get("tenant_id") or ""),
@@ -688,9 +693,9 @@ def _normalize_case_record(record: Mapping[str, Any]) -> dict[str, Any]:
         "artifact_state": str(record.get("artifact_state") or entry.get("artifact_state") or ""),
         "runtime_binding_id": pick("runtime_binding_id"),
         "runtime_id": pick("runtime_id"),
-        "capital_pool_id": pick("capital_pool_id") or owner("capital_pool_id", bind),
-        "deployment_plan_id": pick("deployment_plan_id") or owner("plan_id", dep, bind),
-        "persona_capital_binding_id": pick("persona_capital_binding_id") or owner("persona_capital_binding_id", bind),
+        "capital_pool_id": owner("capital_pool_id", "capital_pool_id", *binds),
+        "deployment_plan_id": owner("plan_id", "deployment_plan_id", *deps, *binds),
+        "persona_capital_binding_id": owner("persona_capital_binding_id", "persona_capital_binding_id", *binds),
         "artifact_id": pick("artifact_id", "registry_id", "strategy_artifact_id"),
         "artifact_version": pick("artifact_version", "version"),
         "artifact_checksum": record.get("artifact_checksum") or entry.get("checksum") or res.get("artifact_checksum"),
