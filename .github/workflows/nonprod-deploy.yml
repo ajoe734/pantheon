@@ -2102,7 +2102,9 @@ jobs:
                 --path .pantheon/environment-leases/pantheon-dev-environment.json \
                 --resource pantheon-dev-environment \
                 --state-file "${rollback_state_file}" \
-                --max-heartbeat-age-seconds 120 >/dev/null
+                --max-heartbeat-age-seconds 120 \
+                --initial-visibility-wait-seconds 15 \
+                --initial-visibility-poll-seconds 1 >/dev/null
 
             export TARGET_ENV=dev
             export PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE="${rollback_state_file}"

@@ -57,28 +57,11 @@ from services.control_plane.bff.models import (
     utc_now,
 )
 from services.control_plane.bff.personas import PersonaService, create_personas_router
-import services.control_plane.bff.personas.service as persona_service_mod
 from services.control_plane.bff.ports import (
     ReadSurfacePorts,
     create_persona_registry_write_owner,
 )
 from services.control_plane.bff.runtime.router import create_runtime_router
-from services.foundation.types import EnvironmentScope, EnvironmentName, ActorRef, ActorType
-from services.foundation.envelopes import TraceContext
-
-# Ensure persona service has foundation helpers populated if missing
-if not hasattr(persona_service_mod, "_foundation_environment_scope"):
-    persona_service_mod._foundation_environment_scope = lambda: EnvironmentScope(name=EnvironmentName.DEV, region=None, timezone="UTC")
-if not hasattr(persona_service_mod, "_foundation_actor_ref"):
-    persona_service_mod._foundation_actor_ref = lambda identity: ActorRef(actor_type=ActorType.USER, actor_id=identity.operator_id, roles=identity.roles)
-if not hasattr(persona_service_mod, "_build_foundation_trace"):
-    persona_service_mod._build_foundation_trace = lambda *, environment, actor_ref, trace_id, correlation_id, request_id, idempotency_key: TraceContext(
-        trace_id=str(trace_id or "t1").strip(),
-        correlation_id=str(correlation_id or trace_id or "c1").strip(),
-        environment=environment,
-        actor_ref=actor_ref,
-        source_system="pantheon-bff",
-    )
 
 _sse_buffers: dict[str, list[tuple[int, dict[str, Any]]]] = {
     "signal": [],

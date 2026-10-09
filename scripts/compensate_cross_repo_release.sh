@@ -218,6 +218,13 @@ for _ in $(seq 1 100); do
   sleep 0.1
 done
 [[ -s "${identity_file}" ]] || die "lease heartbeat identity was not recorded"
+PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+  python3 "${lease_cli}" verify \
+    --repository ajoe734/execute-plans --branch environment-coordination \
+    --path .pantheon/environment-leases/pantheon-dev-environment.json \
+    --resource pantheon-dev-environment --state-file "${state_file}" \
+    --max-heartbeat-age-seconds 120 --initial-visibility-wait-seconds 15 \
+    --initial-visibility-poll-seconds 1 >/dev/null
 
 export TARGET_ENV=dev
 export PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE="${state_file}"

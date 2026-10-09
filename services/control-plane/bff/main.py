@@ -37,20 +37,15 @@ from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from services.foundation import (  # noqa: E402
-    ActorRef,
-    ActorType,
     AuditAction,
     AuthorityScope,
     CommandEnvelope,
-    EnvironmentName,
-    EnvironmentScope,
     ErrorEnvelope,
     ErrorKind,
     FoundationValidationError,
     IdempotencyRecord,
     PolicyDecision,
     PolicyDecisionValue,
-    TraceContext,
     foundation_id,
     sha256_checksum,
 )
@@ -76,13 +71,9 @@ from .models import (
     BffActionCatalogResponse,
     BffErrorEnvelope,
     BffErrorPayload,
-    CommandReceipt,
     CommandReceiptStatus,
     CommandResponse,
-    CommandResultMeta,
-    CommandRoutingPath,
     CommandStatus,
-    CommandSubmissionResponse,
     CommandStatusResponse,
     CommandType,
     DecisionJournalEntryDTO,
@@ -590,57 +581,6 @@ _bff_error = auth_policy.bff_error
 _FINAL_COMMAND_ROUTE = "POST /bff/v1/commands"
 _PATH_DEDUPE_DEPRECATED_SINCE = "2026-05-25T08:40:02Z"
 _PATH_DEDUPE_SUNSET_HTTP_DATE = "Mon, 25 May 2026 00:00:00 GMT"
-def _foundation_environment_scope() -> EnvironmentScope:
-    raw = os.getenv("PANTHEON_ENV", "dev").strip().lower()
-    if "live" in raw:
-        name = EnvironmentName.LIVE
-    elif "canary" in raw:
-        name = EnvironmentName.CANARY
-    elif "paper" in raw:
-        name = EnvironmentName.PAPER
-    elif "sandbox" in raw:
-        name = EnvironmentName.SANDBOX
-    else:
-        name = EnvironmentName.DEV
-    return EnvironmentScope(
-        name=name,
-        region=os.getenv("PANTHEON_REGION") or None,
-        timezone=os.getenv("PANTHEON_TIMEZONE", "UTC"),
-    )
-def _foundation_actor_ref(identity: OperatorIdentity) -> ActorRef:
-    return ActorRef(
-        actor_type=ActorType.USER,
-        actor_id=identity.operator_id,
-        roles=identity.roles,
-    )
-def _build_foundation_trace(
-    *,
-    environment: EnvironmentScope,
-    actor_ref: ActorRef,
-    trace_id: Optional[str],
-    correlation_id: Optional[str],
-    request_id: Optional[str],
-    idempotency_key: Optional[str],
-) -> TraceContext:
-    clean_trace_id = str(trace_id or "").strip()
-    if clean_trace_id:
-        return TraceContext(
-            trace_id=clean_trace_id,
-            correlation_id=str(correlation_id or clean_trace_id).strip(),
-            environment=environment,
-            actor_ref=actor_ref,
-            source_system="pantheon-bff",
-            request_id=str(request_id or "").strip() or None,
-            idempotency_key=str(idempotency_key or "").strip() or None,
-        )
-    return TraceContext.new(
-        environment=environment,
-        actor_ref=actor_ref,
-        source_system="pantheon-bff",
-        correlation_id=str(correlation_id or "").strip() or None,
-        request_id=str(request_id or "").strip() or None,
-        idempotency_key=str(idempotency_key or "").strip() or None,
-    )
 def _serialize_foundation_context(context: Dict[str, Any]) -> Dict[str, Any]:
     serialized = {
         "admission_route": context.get("admission_route"),
@@ -2978,80 +2918,6 @@ def _expected_completion_at(accepted_at: str, estimated_processing_time_ms: int)
         return None
     completed_at = parsed + timedelta(milliseconds=estimated_processing_time_ms)
     return completed_at.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-def _project_command_submission_response(
-    *,
-    command_id: str,
-    command: CommandType,
-    accepted_at: str,
-    status: CommandStatus,
-    staleness_warning: Optional[StalenessWarning],
-) -> CommandSubmissionResponse:
-    receipt_status = _COMMAND_RECEIPT_STATUS_MAP.get(status.value, CommandReceiptStatus.FAILED)
-    meta = CommandResultMeta()
-    receipt = CommandReceipt(
-        receipt_id=command_id,
-        command_id=command_id,
-        command=command.value,
-        status=receipt_status,
-        accepted_at=accepted_at,
-        routing_path=CommandRoutingPath.DIRECT,
-        expected_completion_at=_expected_completion_at(
-            accepted_at,
-            meta.estimated_processing_time_ms,
-        ),
-        error_message=None,
-    )
-    return CommandSubmissionResponse(
-        receipt_id=command_id,
-        command=command.value,
-        status=receipt_status,
-        accepted_at=accepted_at,
-        routing_path=CommandRoutingPath.DIRECT,
-        expected_completion_at=receipt.expected_completion_at,
-        error_message=None,
-        staleness_warning=staleness_warning,
-        receipt=receipt,
-    )
-def _command_dual_write_receipts(
-    *,
-    command_id: str,
-    command: str,
-    status: str,
-    accepted_at: Optional[str] = None,
-) -> Dict[str, Dict[str, Any]]:
-    tracking_url = f"/api/v1/operator/commands/{command_id}"
-    action_receipt = {
-        "receipt_type": "action",
-        "id": command_id,
-        "receipt_id": command_id,
-        "command_id": command_id,
-        "status": status,
-        "trackingUrl": tracking_url,
-        "tracking_url": tracking_url,
-    }
-    command_receipt = {
-        "receipt_type": "command",
-        "receipt_id": command_id,
-        "command_id": command_id,
-        "command": command,
-        "status": status,
-        "trackingUrl": tracking_url,
-        "tracking_url": tracking_url,
-    }
-    if accepted_at:
-        action_receipt["accepted_at"] = accepted_at
-        command_receipt["accepted_at"] = accepted_at
-    return {
-        "action_receipt": action_receipt,
-        "command_receipt": command_receipt,
-    }
-def _action_command_status_from_command_status(status: CommandStatus) -> ActionCommandStatus:
-    try:
-        return _ACTION_COMMAND_STATUS_MAP[status.value]
-    except KeyError as exc:
-        raise ValueError(
-            f"Command status {status.value!r} cannot be projected as a successful CommandResponse"
-        ) from exc
 def _check_read_surface_state() -> Optional[StalenessWarning]:
     """
     In production, query the BFF read surface health endpoint.

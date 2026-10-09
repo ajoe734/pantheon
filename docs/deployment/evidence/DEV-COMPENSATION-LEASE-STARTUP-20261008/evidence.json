@@ -1,0 +1,16 @@
+{
+  "task_id": "DEV-COMPENSATION-LEASE-STARTUP-20261008",
+  "scope": "source-only caller wiring; controller aee124357 and both checksums untouched",
+  "changes": {
+    ".github/workflows/nonprod-deploy.yml": "inline compensation initial verify now passes --initial-visibility-wait-seconds 15 --initial-visibility-poll-seconds 1 (+3/-1)",
+    "scripts/compensate_cross_repo_release.sh": "first guarded-command startup primes one bounded verify with the same 15/1 flags before the wrapper (+7)"
+  },
+  "production_line_growth": 10,
+  "validation": {
+    "command": "pytest scripts/test_dev_environment_lease_deploy_contract.py scripts/test_dev_environment_lease.py scripts/test_dev_environment_lease_guard.py",
+    "result": "new/updated compensation tests pass; 2 unrelated failures in test_dev_root_* (deploy_nonprod_vm.sh/compose profile assertions) are outside the touched files",
+    "syntax": "bash -n compensate_cross_repo_release.sh ok; workflow YAML parses"
+  },
+  "proof_class": "controlled replay: the real pinned-path dev_environment_lease.py CLI/verify code is run against a scripted FakeClient (exact expired predecessor then current; foreign lease; exhausted visibility). Not real hosted proof; no live VM lease mutation, deployment or FULL was performed.",
+  "fail_closed_preserved": ["foreign/unrelated leaseId", "exhausted bounded visibility", "no-flag control still rejects the predecessor"]
+}

@@ -1,0 +1,24 @@
+{
+  "task_id": "BFF-LOOP12-TRUTH-SCHEMA-20261008",
+  "base_sha": "d236998e5",
+  "fix_commit": "0eb350344b0535b85710afea096d8d0082bce08a",
+  "problem": {
+    "gate_run": "37804528042",
+    "observed": "operator-bff log held 40 ValidationError lines: the Loop 12 controller truth published by the downstream health monitor was rejected by schemas/loop-controller-record.schema.json every cycle, so bff_health_monitoring was never written.",
+    "cause": "desired_state lacked present/source/checked_at and downstream_actual_state lacked source; the L12 runtime test also read target counts the projection does not output."
+  },
+  "change": [
+    "downstream_health_monitor.py publishes desired_state and downstream_actual_state with the schema-required fields; the summary names failing probe targets.",
+    "test_current_runtime_loops_deployed_e2e.py waits on status degraded and the reconciler name in summary instead of target counts."
+  ],
+  "test_changes": [
+    "New unit test in test_bff_v5_loop_sentinel_contract.py validates the published records against the schema; it fails on the previous payload with a required-property ValidationError."
+  ],
+  "out_of_scope": "test_loop_catalog_controller_contract_matches_runtime_implementation fails identically on dev.",
+  "delivery_verification": {
+    "agent": "Claude",
+    "command": "python -m pytest services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py -k 'loop_12 or paper_signal_producer or downstream' -q",
+    "result": "4 passed, 32 deselected"
+  },
+  "review_status": "Author validation only; independent review by Antigravity2 pending."
+}
