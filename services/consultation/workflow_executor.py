@@ -44,7 +44,9 @@ from .workflow_state import (
 )
 
 
-def _build_loop_writer(*, dsn: str, tenant_id: str) -> Any:
+def _build_loop_writer(
+    *, dsn: str, tenant_id: str, lease_duration_seconds: int | None = None
+) -> Any:
     if not dsn:
         return None
     module = importlib.import_module("services.loop-control")
@@ -61,7 +63,81 @@ def _build_loop_writer(*, dsn: str, tenant_id: str) -> Any:
         or f"{CONSUMER_NAME}:{socket.gethostname()}:{os.getpid()}",
         controller_name=CONSUMER_NAME,
         deployment_sha=deployment_sha,
+        lease_duration_seconds=lease_duration_seconds,
     )
+
+
+def build_loop_truth(
+    *, result: Mapping[str, Any], health: Mapping[str, Any], checked_at: str
+) -> dict[str, Any]:
+    """Derive the writer fields from values the tick already read."""
+
+    outcomes = [o for o in result.get("outcomes", []) if isinstance(o, dict)]
+    memo_refs = [
+        f"consultation://memos/{o['detail'].split('memo=')[1].split(' ')[0]}"
+        for o in outcomes
+        if o.get("outcome") == "completed" and "memo=" in str(o.get("detail", ""))
+    ]
+    discovered = int(result.get("requests_discovered") or 0)
+    state_counts = result.get("state_counts") or {}
+    ok = health.get("status") == "ok"
+    return {
+        "desired_state": {
+            "present": discovered > 0,
+            "source": "consultation.workflow_state_store",
+            "checked_at": checked_at,
+            "summary": f"{discovered} actionable consultation request(s) discovered",
+        },
+        "downstream_actual_state": {
+            "status": "ready" if ok else "degraded",
+            "source": "consultation.workflow_state_store",
+            "checked_at": checked_at,
+            "summary": (
+                f"completed={result.get('completed', 0)} "
+                f"blocked={result.get('blocked', 0)} "
+                f"dead_letter={state_counts.get('dead_letter', 0)}"
+            ),
+        },
+        # The tick observation ref keeps an idle tick admissible evidence.
+        "evidence_refs": [
+            f"consultation://workflow-ticks/{CONSUMER_NAME}/{checked_at}",
+            *memo_refs,
+        ],
+        "backlog": state_counts.get("in_progress", 0) + state_counts.get("memo_pending", 0),
+        "dlq_count": state_counts.get("dead_letter", 0),
+    }
+
+
+def publish_loop_truth(
+    writer: Any,
+    *,
+    loop_id: str,
+    result: Mapping[str, Any],
+    health: Mapping[str, Any],
+    checked_at: str | None = None,
+) -> None:
+    truth = build_loop_truth(
+        result=result, health=health, checked_at=checked_at or _utc_now()
+    )
+    payload = {"health": dict(health), "result": dict(result)}
+    if health.get("status") == "ok":
+        asyncio.run(
+            writer.record_success(
+                loop_id=loop_id,
+                summary=f"Processed {result.get('completed', 0)} request(s)",
+                payload=payload,
+                **truth,
+            )
+        )
+    else:
+        asyncio.run(
+            writer.record_failure(
+                loop_id=loop_id,
+                reason=health.get("last_failure_reason") or "workflow degraded",
+                payload=payload,
+                **truth,
+            )
+        )
 
 
 
@@ -853,7 +929,12 @@ def main() -> int:
             request_id=request_id,
         )
 
-    writer = _build_loop_writer(dsn=config.database_url, tenant_id=config.tenant_id)
+    # The lease must outlive the gap between ticks plus one tick's timeout.
+    writer = _build_loop_writer(
+        dsn=config.database_url,
+        tenant_id=config.tenant_id,
+        lease_duration_seconds=int(interval_seconds + config.timeout_seconds) + 1,
+    )
     loop_id = os.getenv("PANTHEON_LOOP_ID") or "consultation"
 
     health = initial_health_state(config)
@@ -865,36 +946,9 @@ def main() -> int:
         _write_health(health_file, health)
         if writer is not None:
             try:
-                evidence_refs = [
-                    f"consultation://memos/{outcome['detail'].split('memo=')[1].split(' ')[0]}"
-                    for outcome in result.get("outcomes", [])
-                    if isinstance(outcome, dict) and outcome.get("outcome") == "completed" and "memo=" in outcome.get("detail", "")
-                ]
-                state_counts = result.get("state_counts", {})
-                backlog = state_counts.get("in_progress", 0) + state_counts.get("memo_pending", 0)
-                dlq_count = state_counts.get("dead_letter", 0)
-                if health.get("status") == "ok":
-                    asyncio.run(
-                        writer.record_success(
-                            loop_id=loop_id,
-                            summary=f"Processed {result.get('completed', 0)} request(s)",
-                            backlog=backlog,
-                            dlq_count=dlq_count,
-                            evidence_refs=evidence_refs,
-                            payload={"health": health, "result": result},
-                        )
-                    )
-                else:
-                    asyncio.run(
-                        writer.record_failure(
-                            loop_id=loop_id,
-                            reason=health.get("last_failure_reason") or "workflow degraded",
-                            backlog=backlog,
-                            dlq_count=dlq_count,
-                            evidence_refs=evidence_refs,
-                            payload={"health": health, "result": result},
-                        )
-                    )
+                publish_loop_truth(
+                    writer, loop_id=loop_id, result=result, health=health
+                )
             except Exception as exc:
                 print(f"Warning: failed to write to LoopControllerWriter: {exc}", file=sys.stderr)
         print(

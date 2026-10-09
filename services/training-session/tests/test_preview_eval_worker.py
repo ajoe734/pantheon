@@ -409,7 +409,8 @@ def test_preview_eval_worker_writes_gap_f05_observation_on_success(monkeypatch) 
     assert heartbeat_call["loop_id"] == module.LOOP_ID == "persona_teaching"
     success_call = loop_writer.calls[1][1]
     assert success_call["loop_id"] == "persona_teaching"
-    assert success_call["evidence_refs"] == ["consult-request:creq-teach-obs"]
+    assert success_call["evidence_refs"][1:] == ["consult-request:creq-teach-obs"]
+    assert success_call["evidence_refs"][0].startswith("training-session://preview-eval-ticks/")
     assert success_call["payload"]["job_ids"] == ["pvjob-obs"]
 
 
@@ -1189,3 +1190,75 @@ def test_lost_response_from_final_owner_run_leaves_failure_discoverable(
     assert tick5["jobs_found"] == 0
     assert tick5["failed"] == 0
 
+
+
+def _project_published_row(calls, *, lease_seconds: int) -> dict:
+    import importlib
+    from datetime import datetime, timedelta, timezone
+
+    projector = importlib.import_module("services.loop-control").project_controller_record_to_bff
+    now = datetime.now(timezone.utc)
+    row = {
+        "loop_id": "persona_teaching",
+        "controller_id": "c1",
+        "controller_name": "training-session-preview-eval-worker",
+        "last_heartbeat_at": now,
+        "last_success_at": now,
+        "lease_token": "tok",
+        "lease_expires_at": now + timedelta(seconds=lease_seconds),
+    }
+    for _kind, kwargs in calls:
+        for key in (
+            "desired_state",
+            "downstream_actual_state",
+            "evidence_refs",
+            "desired_state_query",
+            "actual_state_query",
+        ):
+            if kwargs.get(key) is not None:
+                row[key] = kwargs[key]
+    return projector(row, now=now)
+
+
+def test_idle_tick_publishes_admissible_controller_truth(monkeypatch) -> None:
+    import jsonschema
+
+    module = _load_worker_module()
+    monkeypatch.setenv("TRAINING_SESSION_WORKER_TOKEN", "worker:training-service")
+    monkeypatch.setenv("TRAINING_SESSION_TENANT_ID", "tenant-test")
+    loop_writer = _FakeLoopWriter()
+    monkeypatch.setattr(
+        module.urllib.request, "urlopen", lambda request, timeout: _Response([])
+    )
+
+    module.run_tick(api_url="http://training-session-svc:8099", limit=1, loop_writer=loop_writer)
+
+    assert [c[0] for c in loop_writer.calls] == ["record_heartbeat", "record_success"]
+    schema = json.loads(
+        (Path(__file__).resolve().parents[3] / "schemas/loop-controller-record.schema.json").read_text()
+    )
+    for _kind, kwargs in loop_writer.calls:
+        jsonschema.validate(kwargs["desired_state"], schema["properties"]["desired_state"])
+        jsonschema.validate(
+            kwargs["downstream_actual_state"], schema["properties"]["downstream_actual_state"]
+        )
+    projected = _project_published_row(loop_writer.calls, lease_seconds=61)
+    assert projected["desired_state_presence"]["authoritative"] is True
+    assert projected["downstream_actual_state"]["authoritative"] is True
+    assert projected["evidence_refs"]
+    assert projected["controller_health"]["status"] == "healthy"
+
+
+def test_main_requests_lease_covering_interval_plus_timeout(monkeypatch) -> None:
+    module = _load_worker_module()
+    captured = {}
+    monkeypatch.setenv("TRAINING_SESSION_PREVIEW_WORKER_INTERVAL_SECONDS", "30")
+    monkeypatch.setenv("TRAINING_SESSION_PREVIEW_WORKER_TIMEOUT_SECONDS", "20")
+    monkeypatch.setenv("TRAINING_SESSION_PREVIEW_WORKER_MAX_TICKS", "1")
+    monkeypatch.setattr(
+        module, "build_loop_writer", lambda **kw: captured.update(kw) or None
+    )
+    monkeypatch.setattr(module, "run_tick", lambda **kw: {"failed": 0})
+    monkeypatch.setattr(module, "_write_alive", lambda *a, **k: None)
+    module.main()
+    assert captured["lease_duration_seconds"] >= 50
