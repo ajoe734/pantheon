@@ -1028,3 +1028,25 @@ def test_required_compose_services_include_loop_10_scheduler() -> None:
     # The scheduler is the single Loop 10 controller writer; the isolated
     # stack must start it or telemetry_reconciliation has no controller truth.
     assert "reconciliation-drift-scheduler" in harness.REQUIRED_COMPOSE_SERVICES
+
+
+def test_every_declared_controller_writer_service_is_started_by_the_harness() -> None:
+    # Each service is the single writer for a declared catalog controller; the
+    # stimulus stack adds the research/learning/Agora owners on top.
+    required = {
+        "reconciliation-drift-scheduler",
+        "deployment-outbox-consumer",
+        "paper-fleet-reconciler",
+        "evolution-dispatch-worker",
+    }
+    assert required <= set(harness.REQUIRED_COMPOSE_SERVICES)
+    stimulus = {
+        "source-ingest-scheduler",
+        "strategy-distillation-worker",
+        "alpha-replication-worker",
+        "training-session-preview-worker",
+        "policy-learning-shadow-eval-scheduler",
+        "consultation-svc",
+        "agora-interaction-worker",
+    }
+    assert stimulus <= set(harness.STIMULUS_COMPOSE_SERVICES)

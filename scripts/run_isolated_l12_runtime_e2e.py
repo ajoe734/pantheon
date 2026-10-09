@@ -77,6 +77,9 @@ REQUIRED_COMPOSE_SERVICES = [
     "reconciliation-drift-scheduler",
     "incidents",
     "evolution",
+    # Single Loop 11 controller writer; healthy after one error-free poll of
+    # the (empty) dispatch outbox in a fresh stack.
+    "evolution-dispatch-worker",
     "operator-bff",
 ]
 STIMULUS_GATE_SUITE = "tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py"
