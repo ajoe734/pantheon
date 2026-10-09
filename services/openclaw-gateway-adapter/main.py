@@ -1943,14 +1943,19 @@ def _assert_structured_gateway_policy(agent_id: str, *, deadline: float) -> None
     matches = ([item for item in entries if isinstance(item, dict) and item.get("id") == agent_id]
                if isinstance(entries, list) else [])
     tools = matches[0].get("tools") if len(matches) == 1 else None
+    exec_cfg = tools.get("exec") if isinstance(tools, dict) else None
+    exec_safe = (isinstance(exec_cfg, dict)
+                 and exec_cfg.get("security") == "deny"
+                 and exec_cfg.get("ask") == "always")
     defaults = agents.get("defaults") if isinstance(agents, dict) else None
     backends = defaults.get("cliBackends") if isinstance(defaults, dict) else None
     claude = backends.get("claude-cli") if isinstance(backends, dict) else None
     launch_limited = (isinstance(claude, dict)
+                      and claude.get("command") in (None, "claude")
                       and claude.get("args") == _CLAUDE_CLI_TOOLSEARCH_ARGS
                       and claude.get("resumeArgs") == _CLAUDE_CLI_TOOLSEARCH_RESUME_ARGS)
     if (not isinstance(snapshot, dict) or snapshot.get("valid") is not True or not isinstance(tools, dict)
-            or tools.get("deny") != ["*"] or not launch_limited):
+            or tools.get("deny") != ["*"] or not exec_safe or not launch_limited):
         raise GatewayOpenClawProviderError(
             "Extraction requires one verified Gateway agent with tools.deny=['*'] "
             "and a ToolSearch-only claude-cli launch.",

@@ -426,9 +426,11 @@ class TestStructuredEndpointRejectsCallerSuppliedTools:
     definition."""
 
     @staticmethod
-    def _gateway_snapshot(agents, *, args=True, resume_args=True):
+    def _gateway_snapshot(agents, *, args=True, resume_args=True, command=None):
         import main as adapter_main
         backend = {}
+        if command is not None:
+            backend["command"] = command
         if args:
             backend["args"] = adapter_main._CLAUDE_CLI_TOOLSEARCH_ARGS
         if resume_args:
@@ -440,7 +442,8 @@ class TestStructuredEndpointRejectsCallerSuppliedTools:
     def gateway_policy(self):
         import main as adapter_main
         snapshot = self._gateway_snapshot(
-            [{"id": adapter_main.OPENCLAW_STRUCTURED_AGENT_ID, "tools": {"deny": ["*"]}}])
+            [{"id": adapter_main.OPENCLAW_STRUCTURED_AGENT_ID, "tools": {
+                "deny": ["*"], "exec": {"security": "deny", "ask": "always"}}}])
         with patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "_gateway_call", return_value=snapshot) as rpc:
             yield rpc
 
@@ -459,7 +462,8 @@ class TestStructuredEndpointRejectsCallerSuppliedTools:
     def test_gateway_without_toolsearch_limit_is_rejected_before_any_turn(self, gateway_policy, kwargs):
         client, adapter_main = self._client()
         gateway_policy.return_value = self._gateway_snapshot(
-            [{"id": "structured-extraction", "tools": {"deny": ["*"]}}], **kwargs)
+            [{"id": "structured-extraction", "tools": {
+                "deny": ["*"], "exec": {"security": "deny", "ask": "always"}}}], **kwargs)
         with patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "invoke_structured") as invoke:
             response = client.post(
                 "/api/openclaw-adapter/assistant/providers/openclaw/structured",
@@ -480,6 +484,65 @@ class TestStructuredEndpointRejectsCallerSuppliedTools:
         {"valid": True, "config": {"agents": {"list": [
             {"id": "structured-extraction", "tools": {"deny": ["*"]}}, {"id": "structured-extraction"},
         ]}}},
+        # missing_exec_policy (with valid toolsearch launch args)
+        {"valid": True, "config": {"agents": {
+            "defaults": {"cliBackends": {"claude-cli": {
+                "args": [
+                    "-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
+                    "--setting-sources", "user", "--allowedTools", "mcp__openclaw__*",
+                    "--disallowedTools", "ScheduleWakeup,CronCreate,Bash(run_in_background:true),Monitor",
+                    "--tools", "ToolSearch",
+                ],
+                "resumeArgs": [
+                    "-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
+                    "--setting-sources", "user", "--allowedTools", "mcp__openclaw__*",
+                    "--disallowedTools", "ScheduleWakeup,CronCreate,Bash(run_in_background:true),Monitor",
+                    "--tools", "ToolSearch", "--resume", "{sessionId}",
+                ],
+            }}},
+            "list": [{"id": "structured-extraction", "tools": {"deny": ["*"]}}],
+        }}},
+        # full_off_exec_policy (with valid toolsearch launch args)
+        {"valid": True, "config": {"agents": {
+            "defaults": {"cliBackends": {"claude-cli": {
+                "args": [
+                    "-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
+                    "--setting-sources", "user", "--allowedTools", "mcp__openclaw__*",
+                    "--disallowedTools", "ScheduleWakeup,CronCreate,Bash(run_in_background:true),Monitor",
+                    "--tools", "ToolSearch",
+                ],
+                "resumeArgs": [
+                    "-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
+                    "--setting-sources", "user", "--allowedTools", "mcp__openclaw__*",
+                    "--disallowedTools", "ScheduleWakeup,CronCreate,Bash(run_in_background:true),Monitor",
+                    "--tools", "ToolSearch", "--resume", "{sessionId}",
+                ],
+            }}},
+            "list": [{"id": "structured-extraction", "tools": {
+                "deny": ["*"], "exec": {"security": "full", "ask": "off"},
+            }}],
+        }}},
+        # wrong_backend_command
+        {"valid": True, "config": {"agents": {
+            "defaults": {"cliBackends": {"claude-cli": {
+                "command": "not-claude-offline-negative",
+                "args": [
+                    "-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
+                    "--setting-sources", "user", "--allowedTools", "mcp__openclaw__*",
+                    "--disallowedTools", "ScheduleWakeup,CronCreate,Bash(run_in_background:true),Monitor",
+                    "--tools", "ToolSearch",
+                ],
+                "resumeArgs": [
+                    "-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
+                    "--setting-sources", "user", "--allowedTools", "mcp__openclaw__*",
+                    "--disallowedTools", "ScheduleWakeup,CronCreate,Bash(run_in_background:true),Monitor",
+                    "--tools", "ToolSearch", "--resume", "{sessionId}",
+                ],
+            }}},
+            "list": [{"id": "structured-extraction", "tools": {
+                "deny": ["*"], "exec": {"security": "deny", "ask": "always"},
+            }}],
+        }}},
     ])
     def test_unverified_policy_blocks_before_dispatch(self, gateway_policy, snapshot):
         client, adapter_main = self._client()
@@ -495,6 +558,25 @@ class TestStructuredEndpointRejectsCallerSuppliedTools:
         invoke.assert_not_called()
         assert gateway_policy.call_args.args == ("config.get",)
         assert 0 < gateway_policy.call_args.kwargs["timeout_seconds"] <= adapter_main._OPENCLAW_AGENT_PROVIDER._timeout
+
+    @pytest.mark.parametrize("command", [None, "claude"])
+    def test_supported_backend_command_allows_turn(self, gateway_policy, command):
+        from types import SimpleNamespace
+        client, adapter_main = self._client()
+        gateway_policy.return_value = self._gateway_snapshot(
+            [{"id": "structured-extraction", "tools": {
+                "deny": ["*"], "exec": {"security": "deny", "ask": "always"}}}],
+            command=command,
+        )
+        result = SimpleNamespace(to_dict=lambda: {"status": "completed", "output": {"structured_data": {"count": 1}}})
+        with patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "invoke_structured", return_value=result) as invoke:
+            response = client.post(
+                "/api/openclaw-adapter/assistant/providers/openclaw/structured",
+                json={"prompt": "extract", "extraction_schema": EXTRACTION_SCHEMA},
+                headers={"X-Operator-Id": "operator-1"},
+            )
+        assert response.status_code == 200
+        invoke.assert_called_once()
 
     def test_policy_startup_over_ten_seconds_uses_remaining_turn_budget(self, gateway_policy):
         from types import SimpleNamespace

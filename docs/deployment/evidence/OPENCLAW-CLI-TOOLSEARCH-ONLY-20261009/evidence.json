@@ -6,13 +6,13 @@
     "isOpenClawRequestedYolo": "reads agents.list[id].tools.exec; security=deny/ask=always avoids bypassPermissions"
   },
   "override": "CLAUDE_TOOLSEARCH_BATCH in scripts/openclaw-configure-shared-model-pool.sh (also rendered by scripts/openclaw_isolated_model_bootstrap.py) adds --tools ToolSearch to args and resumeArgs, with or without a token",
-  "admission": "main._assert_structured_gateway_policy requires tools.deny == ['*'] plus exact args/resumeArgs from config.get; otherwise 503 OPENCLAW_STRUCTURED_POLICY_DENIED before any turn",
+  "admission": "main._assert_structured_gateway_policy requires tools.deny == ['*'], non-bypass exec policy (security=deny/ask=always), supported backend command (None or 'claude'), and exact args/resumeArgs from config.get; otherwise 503 OPENCLAW_STRUCTURED_POLICY_DENIED before any turn",
   "structured_route": "no tool offered; model answers JSON only; adapter json.loads + schema validation (422 on non-JSON / schema mismatch); data.output.structured_data shape unchanged",
   "tests": {
-    "services/openclaw-gateway-adapter test_main.py + tests/": "333 passed, 26 subtests passed",
+    "services/openclaw-gateway-adapter test_main.py + tests/": "339 passed",
     "scripts/test_openclaw_shared_model_pool_contract.py + test_openclaw_isolated_model_bootstrap.py": "14 passed"
   },
-  "net_production_lines": "+70/-77 (net -7)",
+  "net_production_lines": "+75/-77 (net -2)",
   "not_done": [
     "hosted proof (structured 200 on dev, live launch args) stays with OPENCLAW-STRUCTURED-AGENT-DEV-20261003",
     "standalone docker replay runner in tests/test_openresponses_transport_contract.py (SIMPLIFY_* env, not pytest-collected) still models the old emit_extraction tool",
