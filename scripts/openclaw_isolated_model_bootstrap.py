@@ -19,7 +19,10 @@ from pathlib import Path
 
 POOL_SCRIPT = Path(__file__).with_name("openclaw-configure-shared-model-pool.sh")
 TOKEN_SOURCE_ENV = "PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN"
-STRUCTURED_AGENT = {"id": "structured-extraction", "tools": {"deny": ["*"]}}
+STRUCTURED_AGENT = {
+    "id": "structured-extraction",
+    "tools": {"deny": ["*"], "exec": {"security": "deny", "ask": "always"}},
+}
 MAIN_AGENT = {"id": "main"}  # existing ordinary consumer identity; native policy
 
 
@@ -42,8 +45,10 @@ def render_batch(environ: dict[str, str] | None = None) -> list[dict[str, object
             "approved product provider credential"
         )
     source = POOL_SCRIPT.read_text(encoding="utf-8")
-    batch = _script_batch(source, "MODEL_POOL_BATCH") + _script_batch(
-        source, "CLAUDE_TOKEN_BATCH"
+    batch = (
+        _script_batch(source, "MODEL_POOL_BATCH")
+        + _script_batch(source, "CLAUDE_TOOLSEARCH_BATCH")
+        + _script_batch(source, "CLAUDE_TOKEN_BATCH")
     )
     # A fresh isolated volume has no agents; register the existing main identity
     # (no tools override) plus the deny-all structured agent, each exactly once.

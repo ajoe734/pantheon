@@ -1,10 +1,8 @@
-"""Contract tests for the restricted `emit_extraction` structured-data tool.
+"""Contract tests for the JSON-only structured-data extraction turn.
 
-SIMPLIFY-OPENCLAW-001 part 2: a minimal, server-approved, pure data-emission
-function tool riding the same unified HTTP `/v1/responses` transport. The
-caller supplies only a JSON-schema `parameters` body; the tool name/type/
-description/strict flag are fixed so a caller cannot smuggle in an arbitrary
-shell/tool definition, and the tool call never triggers a domain mutation.
+The model is offered no tool: it answers with one JSON object over the unified
+HTTP `/v1/responses` transport and the adapter validates that answer against
+the caller-supplied extraction schema before returning `structured_data`.
 """
 from __future__ import annotations
 
@@ -20,11 +18,9 @@ if str(ADAPTER_DIR) not in sys.path:
     sys.path.insert(0, str(ADAPTER_DIR))
 
 from assistant_openclaw_provider import (  # noqa: E402
-    EMIT_EXTRACTION_TOOL_NAME,
     AssistantOpenClawProvider,
     OpenClawProviderError,
     _validate_extraction_arguments,
-    emit_extraction_tool_schema,
 )
 
 
@@ -59,19 +55,17 @@ def _make_provider() -> AssistantOpenClawProvider:
     )
 
 
-def _tool_call_events(name: str, arguments: str, call_id: str = "call_1") -> list:
+def _answer_events(text: str) -> list:
     return [
+        {"type": "response.output_text.done", "text": text},
         {
             "type": "response.completed",
             "response": {
                 "status": "completed",
                 "id": "resp_1",
-                "output": [
-                    {"type": "function_call", "name": name, "arguments": arguments, "call_id": call_id}
-                ],
                 "usage": {"input_tokens": 10, "output_tokens": 5},
             },
-        }
+        },
     ]
 
 
@@ -85,62 +79,53 @@ EXTRACTION_SCHEMA = {
 }
 
 
-class TestEmitExtractionToolSchema:
-    def test_schema_is_fixed_shape_regardless_of_caller_input(self):
-        schema = emit_extraction_tool_schema(EXTRACTION_SCHEMA)
-        assert schema["type"] == "function"
-        assert schema["name"] == EMIT_EXTRACTION_TOOL_NAME
-        assert schema["strict"] is True
-        assert schema["parameters"] == EXTRACTION_SCHEMA
-        assert "no domain action is executed" in schema["description"].lower()
-
-    def test_schema_only_exposes_parameters_not_arbitrary_fields(self):
-        # Even if a caller-supplied schema dict smuggles top-level keys, the
-        # emitted tool definition only ever nests them under "parameters".
-        sneaky = {"type": "object", "properties": {}, "command": "rm -rf /"}
-        schema = emit_extraction_tool_schema(sneaky)
-        assert set(schema.keys()) == {"type", "name", "description", "parameters", "strict"}
-        assert schema["parameters"] == sneaky
+def _invoke(provider, events):
+    with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_FakeSSEResponse(events)):
+        return provider.invoke_structured(
+            "extract", extraction_schema=EXTRACTION_SCHEMA, operator_id="op-1"
+        )
 
 
 class TestInvokeStructuredPositive:
-    def test_valid_tool_call_returns_parsed_structured_data(self):
-        provider = _make_provider()
-        events = _tool_call_events(
-            EMIT_EXTRACTION_TOOL_NAME, json.dumps({"title": "Widget", "count": 3})
-        )
-        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_FakeSSEResponse(events)):
-            result = provider.invoke_structured(
-                "extract the widget",
-                extraction_schema=EXTRACTION_SCHEMA,
-                operator_id="op-1",
-            )
+    def test_valid_json_answer_returns_structured_data(self):
+        result = _invoke(_make_provider(), _answer_events(json.dumps({"title": "Widget", "count": 3})))
         assert result.status == "completed"
         assert result.output["structured_data"] == {"title": "Widget", "count": 3}
-        assert result.output["tool_call"]["name"] == EMIT_EXTRACTION_TOOL_NAME
-        assert result.output["tool_call"]["id"] == "call_1"
         assert result.output["usage"] == {"input_tokens": 10, "output_tokens": 5}
         assert result.output["response_id"] == "resp_1"
 
-    def test_pinned_tool_choice_and_tools_sent_on_the_wire(self):
-        provider = _make_provider()
+    def test_no_tool_is_offered_and_schema_is_in_the_prompt(self):
         captured = {}
 
         def fake_urlopen(req, timeout=None, deadline=None):
             captured["body"] = json.loads(req.data.decode("utf-8"))
-            return _FakeSSEResponse(
-                _tool_call_events(EMIT_EXTRACTION_TOOL_NAME, json.dumps({"title": "x"}))
-            )
+            return _FakeSSEResponse(_answer_events(json.dumps({"title": "x"})))
 
         with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
-            provider.invoke_structured(
+            _make_provider().invoke_structured(
                 "extract", extraction_schema=EXTRACTION_SCHEMA, operator_id="op-1"
             )
         body = captured["body"]
-        assert body["tool_choice"] == {"type": "function", "name": EMIT_EXTRACTION_TOOL_NAME}
-        assert len(body["tools"]) == 1
-        assert body["tools"][0]["name"] == EMIT_EXTRACTION_TOOL_NAME
-        assert body["tools"][0]["parameters"] == EXTRACTION_SCHEMA
+        assert "tools" not in body and "tool_choice" not in body
+        assert json.dumps(EXTRACTION_SCHEMA) in body["input"]
+
+    def test_caller_tool_wording_still_gets_json_only_instruction_first(self):
+        captured = {}
+
+        def fake_urlopen(req, timeout=None, deadline=None):
+            captured["body"] = json.loads(req.data.decode("utf-8"))
+            return _FakeSSEResponse(_answer_events(json.dumps({"title": "x"})))
+
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
+            result = _make_provider().invoke_structured(
+                "You MUST call the tool emit_extraction",
+                extraction_schema=EXTRACTION_SCHEMA,
+                operator_id="op-1",
+            )
+        text = captured["body"]["input"]
+        assert text.startswith("No tool is available")
+        assert text.index("answer with the JSON object itself") < text.index("You MUST call")
+        assert result.output["structured_data"] == {"title": "x"}
 
     def test_each_call_uses_a_fresh_upstream_session_user(self):
         # A stable `user` reuses one warm CLI session per caller and grows to context_overflow.
@@ -149,9 +134,7 @@ class TestInvokeStructuredPositive:
 
         def fake_urlopen(req, timeout=None, deadline=None):
             users.append(json.loads(req.data.decode("utf-8"))["user"])
-            return _FakeSSEResponse(
-                _tool_call_events(EMIT_EXTRACTION_TOOL_NAME, json.dumps({"title": "x"}))
-            )
+            return _FakeSSEResponse(_answer_events(json.dumps({"title": "x"})))
 
         with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             for _ in range(2):
@@ -162,153 +145,42 @@ class TestInvokeStructuredPositive:
         assert all(u.startswith("|monitor-agent|structured-") for u in users)
 
     def test_missing_usage_is_not_reported_as_zero(self):
-        provider = _make_provider()
         events = [
-            {
-                "type": "response.completed",
-                "response": {
-                    "status": "completed",
-                    "output": [
-                        {
-                            "type": "function_call",
-                            "name": EMIT_EXTRACTION_TOOL_NAME,
-                            "arguments": json.dumps({"title": "no usage reported"}),
-                            "call_id": "call_2",
-                        }
-                    ],
-                    # deliberately no "usage" key
-                },
-            }
+            {"type": "response.output_text.done", "text": json.dumps({"title": "no usage"})},
+            {"type": "response.completed", "response": {"status": "completed"}},
         ]
-        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_FakeSSEResponse(events)):
-            result = provider.invoke_structured(
-                "extract", extraction_schema=EXTRACTION_SCHEMA, operator_id="op-1"
-            )
-        assert "usage" not in result.output
+        assert "usage" not in _invoke(_make_provider(), events).output
 
 
 class TestInvokeStructuredNegative:
-    def test_no_matching_tool_call_in_response(self):
-        provider = _make_provider()
-        events = [
-            {
-                "type": "response.output_text.done",
-                "text": "I decided to answer in plain text instead.",
-            },
-            {"type": "response.completed", "response": {"status": "completed"}},
-        ]
-        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_FakeSSEResponse(events)):
-            with pytest.raises(OpenClawProviderError) as excinfo:
-                provider.invoke_structured(
-                    "extract", extraction_schema=EXTRACTION_SCHEMA, operator_id="op-1"
-                )
-        assert excinfo.value.error_code == "OPENCLAW_TOOL_NO_MATCH"
-        assert excinfo.value.status_code == 502
+    @pytest.mark.parametrize("text", ["I used ReportFindings instead.", "{not valid json", "```json\n{\"title\": \"x\"}\n```"])
+    def test_non_json_answer_is_rejected(self, text):
+        with pytest.raises(OpenClawProviderError) as excinfo:
+            _invoke(_make_provider(), _answer_events(text))
+        assert excinfo.value.error_code == "OPENCLAW_TOOL_ARGS_INVALID_JSON"
+        assert excinfo.value.status_code == 422
 
-    def test_wrong_tool_name_is_rejected(self):
-        provider = _make_provider()
-        events = _tool_call_events("some_other_tool", json.dumps({"title": "x"}))
-        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_FakeSSEResponse(events)):
-            with pytest.raises(OpenClawProviderError) as excinfo:
-                provider.invoke_structured(
-                    "extract", extraction_schema=EXTRACTION_SCHEMA, operator_id="op-1"
-                )
-        assert excinfo.value.error_code == "OPENCLAW_TOOL_MISMATCH"
+    @pytest.mark.parametrize("answer", [{"count": 3}, {"title": "ok", "count": "3"}, {"title": "ok", "count": True}, ["title"]])
+    def test_schema_invalid_json_is_rejected(self, answer):
+        with pytest.raises(OpenClawProviderError) as excinfo:
+            _invoke(_make_provider(), _answer_events(json.dumps(answer)))
+        assert excinfo.value.error_code == "OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH"
+        assert excinfo.value.status_code == 422
 
-    def test_extra_tool_call_alongside_emit_extraction_is_rejected(self):
-        """SIMPLIFY-OPENCLAW-001 reviewer defect: a pinned client-side
-        `tool_choice` is only a request, not proof the Gateway enforced a
-        single-tool policy. Checking only `function_calls[0]` would silently
-        ignore a second, unauthorized call (e.g. a native/domain tool)
-        emitted alongside the requested `emit_extraction` — this must fail
-        closed instead."""
-        provider = _make_provider()
+    def test_tool_call_alongside_answer_is_rejected(self):
         events = [
+            {"type": "response.output_text.done", "text": json.dumps({"title": "ok"})},
             {
                 "type": "response.completed",
                 "response": {
                     "status": "completed",
-                    "id": "resp_1",
-                    "output": [
-                        {
-                            "type": "function_call",
-                            "name": EMIT_EXTRACTION_TOOL_NAME,
-                            "arguments": json.dumps({"title": "ok"}),
-                            "call_id": "call_1",
-                        },
-                        {
-                            "type": "function_call",
-                            "name": "shell_exec",
-                            "arguments": "{}",
-                            "call_id": "call_2",
-                        },
-                    ],
+                    "output": [{"type": "function_call", "name": "shell_exec", "arguments": "{}", "call_id": "c"}],
                 },
-            }
+            },
         ]
-        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_FakeSSEResponse(events)):
-            with pytest.raises(OpenClawProviderError) as excinfo:
-                provider.invoke_structured(
-                    "extract", extraction_schema=EXTRACTION_SCHEMA, operator_id="op-1"
-                )
+        with pytest.raises(OpenClawProviderError) as excinfo:
+            _invoke(_make_provider(), events)
         assert excinfo.value.error_code == "OPENCLAW_TOOL_MISMATCH"
-
-    def test_invalid_json_arguments_are_rejected(self):
-        provider = _make_provider()
-        events = _tool_call_events(EMIT_EXTRACTION_TOOL_NAME, "{not valid json")
-        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_FakeSSEResponse(events)):
-            with pytest.raises(OpenClawProviderError) as excinfo:
-                provider.invoke_structured(
-                    "extract", extraction_schema=EXTRACTION_SCHEMA, operator_id="op-1"
-                )
-        assert excinfo.value.error_code == "OPENCLAW_TOOL_ARGS_INVALID_JSON"
-        assert excinfo.value.status_code == 422
-
-    def test_missing_required_field_is_rejected(self):
-        provider = _make_provider()
-        events = _tool_call_events(EMIT_EXTRACTION_TOOL_NAME, json.dumps({"count": 3}))
-        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_FakeSSEResponse(events)):
-            with pytest.raises(OpenClawProviderError) as excinfo:
-                provider.invoke_structured(
-                    "extract", extraction_schema=EXTRACTION_SCHEMA, operator_id="op-1"
-                )
-        assert excinfo.value.error_code == "OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH"
-        assert excinfo.value.status_code == 422
-
-    def test_wrong_type_for_declared_property_is_rejected(self):
-        provider = _make_provider()
-        events = _tool_call_events(
-            EMIT_EXTRACTION_TOOL_NAME, json.dumps({"title": "ok", "count": "not-a-number"})
-        )
-        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_FakeSSEResponse(events)):
-            with pytest.raises(OpenClawProviderError) as excinfo:
-                provider.invoke_structured(
-                    "extract", extraction_schema=EXTRACTION_SCHEMA, operator_id="op-1"
-                )
-        assert excinfo.value.error_code == "OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH"
-
-    def test_boolean_is_not_accepted_as_integer(self):
-        provider = _make_provider()
-        events = _tool_call_events(
-            EMIT_EXTRACTION_TOOL_NAME, json.dumps({"title": "ok", "count": True})
-        )
-        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_FakeSSEResponse(events)):
-            with pytest.raises(OpenClawProviderError) as excinfo:
-                provider.invoke_structured(
-                    "extract", extraction_schema=EXTRACTION_SCHEMA, operator_id="op-1"
-                )
-        assert excinfo.value.error_code == "OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH"
-
-    def test_never_spawns_subprocess(self):
-        """`_run_func` raises if called; the structured turn must succeed
-        without any CLI subprocess involvement."""
-        provider = _make_provider()
-        events = _tool_call_events(EMIT_EXTRACTION_TOOL_NAME, json.dumps({"title": "ok"}))
-        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_FakeSSEResponse(events)):
-            result = provider.invoke_structured(
-                "extract", extraction_schema=EXTRACTION_SCHEMA, operator_id="op-1"
-            )
-        assert result.status == "completed"
 
 
 class TestValidateExtractionArgumentsSchemaCoverage:
@@ -553,25 +425,124 @@ class TestStructuredEndpointRejectsCallerSuppliedTools:
     be rejected (422), never silently accepted as an arbitrary tool
     definition."""
 
+    @staticmethod
+    def _gateway_snapshot(agents, *, args=True, resume_args=True, command=None):
+        import main as adapter_main
+        backend = {}
+        if command is not None:
+            backend["command"] = command
+        if args:
+            backend["args"] = adapter_main._CLAUDE_CLI_TOOLSEARCH_ARGS
+        if resume_args:
+            backend["resumeArgs"] = adapter_main._CLAUDE_CLI_TOOLSEARCH_RESUME_ARGS
+        return {"valid": True, "config": {"agents": {
+            "defaults": {"cliBackends": {"claude-cli": backend}}, "list": agents}}}
+
     @pytest.fixture(autouse=True)
     def gateway_policy(self):
         import main as adapter_main
-        with patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "_gateway_call", return_value={
-            "valid": True, "config": {"agents": {"list": [
-                {"id": adapter_main.OPENCLAW_STRUCTURED_AGENT_ID, "tools": {"deny": ["*"]}},
-            ]}},
-        }) as rpc:
+        snapshot = self._gateway_snapshot(
+            [{"id": adapter_main.OPENCLAW_STRUCTURED_AGENT_ID, "tools": {
+                "deny": ["*"], "exec": {"security": "deny", "ask": "always"}}}])
+        with patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "_gateway_call", return_value=snapshot) as rpc:
             yield rpc
+
+    def test_launch_args_carry_toolsearch_limit_and_every_default(self):
+        import main as adapter_main
+        args = adapter_main._CLAUDE_CLI_TOOLSEARCH_ARGS
+        assert args[-2:] == ["--tools", "ToolSearch"]
+        for default in ("-p", "--include-partial-messages", "--verbose", "mcp__openclaw__*",
+                        "ScheduleWakeup,CronCreate,Bash(run_in_background:true),Monitor"):
+            assert default in args
+        assert adapter_main._CLAUDE_CLI_TOOLSEARCH_RESUME_ARGS == args + ["--resume", "{sessionId}"]
+
+    @pytest.mark.parametrize("kwargs", [
+        {"args": False}, {"resume_args": False},
+    ])
+    def test_gateway_without_toolsearch_limit_is_rejected_before_any_turn(self, gateway_policy, kwargs):
+        client, adapter_main = self._client()
+        gateway_policy.return_value = self._gateway_snapshot(
+            [{"id": "structured-extraction", "tools": {
+                "deny": ["*"], "exec": {"security": "deny", "ask": "always"}}}], **kwargs)
+        with patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "invoke_structured") as invoke:
+            response = client.post(
+                "/api/openclaw-adapter/assistant/providers/openclaw/structured",
+                json={"prompt": "extract", "extraction_schema": EXTRACTION_SCHEMA},
+                headers={"X-Operator-Id": "operator-1"},
+            )
+        assert response.status_code == 503
+        assert response.json()["error_code"] == "OPENCLAW_STRUCTURED_POLICY_DENIED"
+        invoke.assert_not_called()
 
     @pytest.mark.parametrize("snapshot", [
         None, {}, {"valid": False},
         {"valid": True, "config": {"agents": {"list": []}}},
+        {"valid": True, "config": {"agents": {"list": [{"id": "structured-extraction", "tools": {"deny": ["*"]}}]}}},
         {"valid": True, "config": {"agents": {"list": [{"id": "structured-extraction"}]}}},
         {"valid": True, "config": {"agents": {"list": [{"id": "other", "tools": {"deny": ["*"]}}]}}},
         {"valid": True, "config": {"agents": {"list": [{"id": "structured-extraction", "tools": {"deny": ["exec"]}}]}}},
         {"valid": True, "config": {"agents": {"list": [
             {"id": "structured-extraction", "tools": {"deny": ["*"]}}, {"id": "structured-extraction"},
         ]}}},
+        # missing_exec_policy (with valid toolsearch launch args)
+        {"valid": True, "config": {"agents": {
+            "defaults": {"cliBackends": {"claude-cli": {
+                "args": [
+                    "-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
+                    "--setting-sources", "user", "--allowedTools", "mcp__openclaw__*",
+                    "--disallowedTools", "ScheduleWakeup,CronCreate,Bash(run_in_background:true),Monitor",
+                    "--tools", "ToolSearch",
+                ],
+                "resumeArgs": [
+                    "-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
+                    "--setting-sources", "user", "--allowedTools", "mcp__openclaw__*",
+                    "--disallowedTools", "ScheduleWakeup,CronCreate,Bash(run_in_background:true),Monitor",
+                    "--tools", "ToolSearch", "--resume", "{sessionId}",
+                ],
+            }}},
+            "list": [{"id": "structured-extraction", "tools": {"deny": ["*"]}}],
+        }}},
+        # full_off_exec_policy (with valid toolsearch launch args)
+        {"valid": True, "config": {"agents": {
+            "defaults": {"cliBackends": {"claude-cli": {
+                "args": [
+                    "-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
+                    "--setting-sources", "user", "--allowedTools", "mcp__openclaw__*",
+                    "--disallowedTools", "ScheduleWakeup,CronCreate,Bash(run_in_background:true),Monitor",
+                    "--tools", "ToolSearch",
+                ],
+                "resumeArgs": [
+                    "-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
+                    "--setting-sources", "user", "--allowedTools", "mcp__openclaw__*",
+                    "--disallowedTools", "ScheduleWakeup,CronCreate,Bash(run_in_background:true),Monitor",
+                    "--tools", "ToolSearch", "--resume", "{sessionId}",
+                ],
+            }}},
+            "list": [{"id": "structured-extraction", "tools": {
+                "deny": ["*"], "exec": {"security": "full", "ask": "off"},
+            }}],
+        }}},
+        # wrong_backend_command
+        {"valid": True, "config": {"agents": {
+            "defaults": {"cliBackends": {"claude-cli": {
+                "command": "not-claude-offline-negative",
+                "args": [
+                    "-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
+                    "--setting-sources", "user", "--allowedTools", "mcp__openclaw__*",
+                    "--disallowedTools", "ScheduleWakeup,CronCreate,Bash(run_in_background:true),Monitor",
+                    "--tools", "ToolSearch",
+                ],
+                "resumeArgs": [
+                    "-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
+                    "--setting-sources", "user", "--allowedTools", "mcp__openclaw__*",
+                    "--disallowedTools", "ScheduleWakeup,CronCreate,Bash(run_in_background:true),Monitor",
+                    "--tools", "ToolSearch", "--resume", "{sessionId}",
+                ],
+            }}},
+            "list": [{"id": "structured-extraction", "tools": {
+                "deny": ["*"], "exec": {"security": "deny", "ask": "always"},
+            }}],
+        }}},
     ])
     def test_unverified_policy_blocks_before_dispatch(self, gateway_policy, snapshot):
         client, adapter_main = self._client()
@@ -587,6 +558,25 @@ class TestStructuredEndpointRejectsCallerSuppliedTools:
         invoke.assert_not_called()
         assert gateway_policy.call_args.args == ("config.get",)
         assert 0 < gateway_policy.call_args.kwargs["timeout_seconds"] <= adapter_main._OPENCLAW_AGENT_PROVIDER._timeout
+
+    @pytest.mark.parametrize("command", [None, "claude"])
+    def test_supported_backend_command_allows_turn(self, gateway_policy, command):
+        from types import SimpleNamespace
+        client, adapter_main = self._client()
+        gateway_policy.return_value = self._gateway_snapshot(
+            [{"id": "structured-extraction", "tools": {
+                "deny": ["*"], "exec": {"security": "deny", "ask": "always"}}}],
+            command=command,
+        )
+        result = SimpleNamespace(to_dict=lambda: {"status": "completed", "output": {"structured_data": {"count": 1}}})
+        with patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "invoke_structured", return_value=result) as invoke:
+            response = client.post(
+                "/api/openclaw-adapter/assistant/providers/openclaw/structured",
+                json={"prompt": "extract", "extraction_schema": EXTRACTION_SCHEMA},
+                headers={"X-Operator-Id": "operator-1"},
+            )
+        assert response.status_code == 200
+        invoke.assert_called_once()
 
     def test_policy_startup_over_ten_seconds_uses_remaining_turn_budget(self, gateway_policy):
         from types import SimpleNamespace
@@ -715,12 +705,12 @@ class TestStructuredEndpointRejectsCallerSuppliedTools:
         assert mocked.call_args.kwargs["agent_id"] == adapter_main.OPENCLAW_STRUCTURED_AGENT_ID
         assert 0 < mocked.call_args.kwargs["timeout_seconds"] <= adapter_main._OPENCLAW_AGENT_PROVIDER._timeout
 
-    def test_schema_invalid_tool_call_is_typed_422_never_500(self):
+    def test_schema_invalid_answer_is_typed_422_never_500(self):
         """A schema-mismatched tool-call response must surface as a typed
         422 OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH through the HTTP endpoint,
         never an uncaught 500 and never a false-positive 200/completed."""
         client, adapter_main = self._client()
-        events = _tool_call_events(EMIT_EXTRACTION_TOOL_NAME, json.dumps({"count": "not-a-number"}))
+        events = _answer_events(json.dumps({"count": "not-a-number"}))
         with (
             patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "_gateway_url", "http://openclaw.test"),
             patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "_token", "test-token"),
