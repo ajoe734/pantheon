@@ -240,6 +240,20 @@ jobs:
     needs:
       - trailers
       - generated-files
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pantheon
+          POSTGRES_PASSWORD: pantheon
+          POSTGRES_DB: source_ingest_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pantheon -d source_ingest_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v6
         with:
@@ -284,10 +298,12 @@ jobs:
       # directory runs alone so no repo-wide conftest masks failures.
       - name: Run source ingestion tests
         timeout-minutes: 15
+        env:
+          SOURCE_INGEST_TEST_POSTGRES_DSN: postgresql://pantheon:pantheon@localhost:5432/source_ingest_test
         run: |
           SOURCE_INGEST_DATA_DIR="$(mktemp -d)"
           export SOURCE_INGEST_DATA_DIR
-          python3 -m pytest -q services/source_ingestion/tests
+          python3 -m pytest -q services/source_ingestion/tests services/source_ingestion/test_*.py
 
       # Run the existing real boundary cases even for a workflow-only change.
       # unittest normally treats skipped tests as success; these are required.
