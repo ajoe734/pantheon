@@ -121,9 +121,23 @@ class BranchCiGateSelectionTests(unittest.TestCase):
         run = step.get("run", "")
         self.assertIn('SOURCE_INGEST_DATA_DIR="$(mktemp -d)"', run)
         self.assertIn("python3 -m pytest -q services/source_ingestion/tests", run)
+        self.assertIn("services/source_ingestion/test_*.py", run)
+        dsn = step.get("env", {}).get("SOURCE_INGEST_TEST_POSTGRES_DSN", "")
+        self.assertTrue(dsn.startswith("postgresql://"))
+        self.assertIn("localhost:5432", dsn)
         pytest_args = run.split("python3 -m pytest", 1)[1]
         for flag in ("--deselect", "--ignore", " -k ", " -m ", "--lf"):
             self.assertNotIn(flag, pytest_args)
+
+    def test_smoke_job_has_healthchecked_postgres_service(self) -> None:
+        postgres = self.smoke_job.get("services", {}).get("postgres")
+        self.assertIsNotNone(postgres, "smoke job must define a postgres service")
+        self.assertIn("--health-cmd", postgres.get("options", ""))
+        self.assertIn("5432:5432", [str(p) for p in postgres.get("ports", [])])
+
+    def test_root_requirements_include_psycopg(self) -> None:
+        text = (WORKFLOW_PATH.parents[2] / "requirements.txt").read_text(encoding="utf-8")
+        self.assertRegex(text, r"(?m)^psycopg\[binary\]")
 
     def test_existing_step_timeouts_preserved(self) -> None:
         step_by_name = {s.get("name"): s for s in self.smoke_steps if s.get("name")}
