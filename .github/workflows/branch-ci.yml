@@ -413,6 +413,7 @@ jobs:
         run: |
           if [[ -x scripts/run-acceptance.sh ]]; then
             ./scripts/run-acceptance.sh smoke
+            python3 -m pytest -q services/trade_journey/test_hosted_lifecycle_probe.py
           elif [[ -f scripts/ci_stage0.py ]]; then
             python3 scripts/ci_stage0.py run-baseline
           else

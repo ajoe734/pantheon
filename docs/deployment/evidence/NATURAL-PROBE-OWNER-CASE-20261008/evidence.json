@@ -1,0 +1,15 @@
+{
+  "task_id": "NATURAL-PROBE-OWNER-CASE-20261008",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "change": "_normalize_case_record reads deployment_plan_id (deployment.plan_id and runtime_binding.plan_id, must agree), capital_pool_id and persona_capital_binding_id from explicit references/result authoritative_readback.runtime_binding; flat fields keep precedence; missing or conflicting values stay empty and fail closed.",
+  "verification": {
+    "probe_test_file_head": "106 passed, 1 skipped (opt-in PostgreSQL test, not run; no shared DB targeted)",
+    "probe_test_file_base_with_new_tests": "2 failed (new nested-shape counterexamples), 104 passed, 1 skipped",
+    "scripts/test_branch_ci_gate_selection.py": "10 passed",
+    "bff_readback_tests": "not run in this worker: no governed interpreter with BFF dependencies available"
+  },
+  "ci": "one pytest invocation of the original probe test file added to the existing Run product or mixed smoke gate step",
+  "hosted": "no hosted stimulus, SSH, deploy or dev mutation performed; hosted acceptance remains pending with the original coordinator",
+  "independent_review": "pending"
+}

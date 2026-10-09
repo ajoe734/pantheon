@@ -44,6 +44,12 @@ from services.service_token_file import configured_service_token
 
 log = logging.getLogger(__name__)
 
+# Loop 12 controller contract; docs/deployment/loop-catalog.registry.json
+# declares the same name and queries for bff_health_monitoring.
+LOOP_12_CONTROLLER_NAME = "bff_downstream_health_monitor"
+LOOP_12_DESIRED_STATE_QUERY = "configured downstream health target registry"
+LOOP_12_ACTUAL_STATE_QUERY = "/bff/v5/downstream-health"
+
 INFRASTRUCTURE_HEALTH_SCHEMA_VERSION = "pantheon.infrastructure-health/1"
 INFRASTRUCTURE_HEALTH_PRODUCER = "control-plane-bff"
 INFRASTRUCTURE_HEALTH_PATH = "/api/v1/telemetry/infrastructure-health"
@@ -1617,6 +1623,8 @@ class DownstreamHealthMonitor:
             "published_at": None,
         }
         self._loop_12_truth_task: Optional[asyncio.Task[None]] = None
+        self._loop_12_writer: Any = None
+        self._loop_12_writer_dsn: Optional[str] = None
         set_downstream_health_monitor(self)
 
     @property
@@ -1977,20 +1985,11 @@ class DownstreamHealthMonitor:
             pass  # The previous heartbeat is still in flight; do not pile up writers.
         else:
             try:
-                import importlib
-
-                loop_control = importlib.import_module("services.loop-control")
-                writer = loop_control.LoopControllerWriter(
-                    dsn=dsn,
-                    tenant_id=self.tenant_id,
-                    environment=os.environ.get("PANTHEON_ENV", "dev"),
-                    controller_name="bff_downstream_health_monitor",
-                )
-                heartbeat_coro = writer.record_heartbeat(
+                heartbeat_coro = self._loop_12_writer_for(dsn).record_heartbeat(
                     loop_id="bff_health_monitoring",
                     truth_level="reconciled_live_proof",
-                    desired_state_query="SELECT count(*) FROM bff_downstream_health_targets",
-                    actual_state_query="SELECT count(*) FROM downstream_health_probe_state WHERE ok=1",
+                    desired_state_query=LOOP_12_DESIRED_STATE_QUERY,
+                    actual_state_query=LOOP_12_ACTUAL_STATE_QUERY,
                     desired_state=desired_state,
                     downstream_actual_state=downstream_actual_state,
                     evidence_refs=["services/control-plane/bff/downstream_health_monitor.py"],
@@ -2021,19 +2020,36 @@ class DownstreamHealthMonitor:
             "tenant_id": self.tenant_id,
             "environment": os.environ.get("PANTHEON_ENV", "dev"),
             "controller_id": f"bff_downstream_health_monitor-{self.instance_id}",
-            "controller_name": "bff_downstream_health_monitor",
+            "controller_name": LOOP_12_CONTROLLER_NAME,
             "deployment_sha": os.environ.get("GIT_SHA", "unknown"),
             "last_heartbeat_at": now_iso,
             "truth_level": "reconciled_live_proof",
             "ready": overall_ok,
             "status": status,
-            "desired_state_query": "SELECT count(*) FROM bff_downstream_health_targets",
-            "actual_state_query": "SELECT count(*) FROM downstream_health_probe_state WHERE ok=1",
+            "desired_state_query": LOOP_12_DESIRED_STATE_QUERY,
+            "actual_state_query": LOOP_12_ACTUAL_STATE_QUERY,
             "desired_state": desired_state,
             "downstream_actual_state": downstream_actual_state,
             "evidence_refs": ["services/control-plane/bff/downstream_health_monitor.py"],
         }
         return record
+
+    def _loop_12_writer_for(self, dsn: str) -> Any:
+        # One writer per monitor keeps one lease fencing token. A new writer
+        # each cycle gets a new token and is rejected while the previous
+        # cycle's lease is still active.
+        if self._loop_12_writer is None or self._loop_12_writer_dsn != dsn:
+            import importlib
+
+            loop_control = importlib.import_module("services.loop-control")
+            self._loop_12_writer = loop_control.LoopControllerWriter(
+                dsn=dsn,
+                tenant_id=self.tenant_id,
+                environment=os.environ.get("PANTHEON_ENV", "dev"),
+                controller_name=LOOP_12_CONTROLLER_NAME,
+            )
+            self._loop_12_writer_dsn = dsn
+        return self._loop_12_writer
 
     def _record_loop_12_truth_published(self) -> None:
         self._loop_12_truth.update(

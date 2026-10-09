@@ -14,6 +14,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -129,6 +130,18 @@ def build_loop_writer(*, dsn: str, state: ControllerState) -> Any:
         controller_name=state.controller_name,
         deployment_sha=str(state.deployment.get("git_sha") or "unknown"),
     )
+
+
+_TICK_TIMEOUT_SECONDS = 30
+
+
+def _controller_lease_seconds(config: ReplicationControllerConfig) -> int:
+    """Lease must outlive one steady-state interval plus one tick budget."""
+    return int(config.interval_seconds) + _TICK_TIMEOUT_SECONDS
+
+
+def _tick_evidence_ref(state: ControllerState) -> str:
+    return f"alpha-replication-controller:{state.controller_id}:tick:{state.sequence_no}"
 
 
 def run_controller_tick(
@@ -270,7 +283,8 @@ def run_controller_tick(
         if writer:
             try:
                 import asyncio
-                evidence_refs: list[str] = []
+                observed_at = datetime.now(timezone.utc).isoformat()
+                evidence_refs: list[str] = [_tick_evidence_ref(state)]
                 for receipt in tick_result.get("authority_receipts", []):
                     task_ref = (
                         "research-authority://experiment-tasks/"
@@ -288,6 +302,25 @@ def run_controller_tick(
                     loop_id=loop_id,
                     summary=f"Processed {tick_result.get('processed')} queue entries",
                     backlog=q_metrics.get("pending", 0),
+                    desired_state={
+                        "present": len(approved_specs) > 0,
+                        "source": "registry.approved_strategy_specs",
+                        "checked_at": observed_at,
+                        "summary": f"{len(approved_specs)} approved StrategySpecs admitted",
+                        "sources": ["registry.approved_strategy_specs"],
+                    },
+                    downstream_actual_state={
+                        "status": "ready",
+                        "source": "alpha-replication.queue_metrics",
+                        "checked_at": observed_at,
+                        "summary": (
+                            f"{actual_meta['queue_pending']} pending, "
+                            f"{actual_meta['queue_revalidated']} revalidated, "
+                            f"{actual_meta['queue_dlq']} dlq"
+                        ),
+                        "sources": ["alpha-replication.queue_metrics"],
+                    },
+                    lease_duration_seconds=_controller_lease_seconds(config),
                     evidence_refs=evidence_refs,
                     payload={
                         "queue": q_metrics,
@@ -306,6 +339,8 @@ def run_controller_tick(
                 asyncio.run(writer.record_failure(
                     loop_id=loop_id,
                     reason=str(exc),
+                    evidence_refs=[_tick_evidence_ref(state)],
+                    lease_duration_seconds=_controller_lease_seconds(config),
                 ))
             except Exception:
                 pass

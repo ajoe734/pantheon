@@ -1,0 +1,9 @@
+{
+  "task_id": "MGMT-LOOP-WRITER-RECONCILIATION-20261008",
+  "summary": "reconciliation-drift-scheduler is the only telemetry_reconciliation controller writer; it publishes desired_state/downstream_actual_state derived from the tick result, a per-tick evidence ref, and a lease >= interval + worst-case tick. Consumer and incident listener no longer build a writer. Isolated harness requires reconciliation-drift-scheduler.",
+  "verification": {
+    "command": "pytest services/reconciliation-drift/tests scripts/test_run_isolated_l12_runtime_e2e.py (excluding compose_activation and telemetry_client_auth, which need yaml/flask absent from the venv)",
+    "result": "163 passed, 1 skipped"
+  },
+  "not_verified": "live FULL Management readback; requires deployment"
+}

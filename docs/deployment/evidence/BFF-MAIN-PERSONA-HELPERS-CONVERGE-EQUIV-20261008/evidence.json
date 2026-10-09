@@ -1,0 +1,127 @@
+{
+  "task_id": "BFF-MAIN-PERSONA-HELPERS-CONVERGE-EQUIV-20261008",
+  "base": "dev 62b8b312f",
+  "moved": {
+    "_list_persona_records": {
+      "bodies_ast_identical": false,
+      "difference": "store binding only: main shim injects main read_store into personas.service._list_persona_records (personas copy is the sole implementation)",
+      "paths": {
+        "base_main_copy": "main.py shim: _personas_list_persona_records(tenant_id, read_store=globals()['read_store']); wired to management_service via wire_management_runtime_projections and resolved by app_factory _dep",
+        "head": "main wire call uses lambda passing read_store=read_store explicitly to personas.service._list_persona_records; app_factory resolves personas.service object"
+      },
+      "definitions_in_head_main": 0,
+      "definitions_in_head_service": 1
+    },
+    "_meta_staleness": {
+      "bodies_ast_identical": true,
+      "difference": null,
+      "paths": {
+        "base_main_copy": "main._read_surface_meta; app_factory _dep for routers",
+        "head": "main imports the personas.service object (same identity); app_factory resolves personas.service"
+      },
+      "definitions_in_head_main": 0,
+      "definitions_in_head_service": 1
+    },
+    "_surface_status": {
+      "bodies_ast_identical": true,
+      "difference": null,
+      "paths": {
+        "base_main_copy": "human_inbox.py imported from ..main",
+        "head": "human_inbox.py imports from ..personas.service"
+      },
+      "definitions_in_head_main": 0,
+      "definitions_in_head_service": 1
+    },
+    "_dataset_source_after_read": {
+      "bodies_ast_identical": false,
+      "difference": "store binding only: main copy reads main's read_store global; personas copy takes read_store=... keyword and resolves via _get_active_read_store",
+      "paths": {
+        "base_main_copy": "main copy read main's read_store global; callers: main._composed_dataset_surface_status, governance/human_inbox.py governance and approval contributors",
+        "head": "all three callers call personas.service._dataset_source_after_read(dataset, read_store=<main read_store>)"
+      },
+      "definitions_in_head_main": 0,
+      "definitions_in_head_service": 1
+    },
+    "_raise_if_read_surface_unavailable": {
+      "bodies_ast_identical": true,
+      "difference": null,
+      "paths": {
+        "base_main_copy": "app_factory _dep from main; smoke_test.py and test_read_surface_caller_migration.py read bff_main attribute",
+        "head": "app_factory resolves personas.service; those two files read persona_service attribute"
+      },
+      "definitions_in_head_main": 0,
+      "definitions_in_head_service": 1
+    },
+    "_composed_surface_status": {
+      "bodies_ast_identical": true,
+      "difference": null,
+      "paths": {
+        "base_main_copy": "main call site in a snapshot payload builder; app_factory _dep",
+        "head": "main imports the personas.service object; app_factory resolves personas.service"
+      },
+      "definitions_in_head_main": 0,
+      "definitions_in_head_service": 1
+    },
+    "_decode_page_token": {
+      "bodies_ast_identical": true,
+      "difference": null,
+      "paths": {
+        "base_main_copy": "only called by main._page_slice",
+        "head": "only personas.service._page_slice"
+      },
+      "definitions_in_head_main": 0,
+      "definitions_in_head_service": 1
+    },
+    "_page_slice": {
+      "bodies_ast_identical": true,
+      "difference": null,
+      "paths": {
+        "base_main_copy": "main call site; human_inbox.py imported from ..main; app_factory _dep with default research _default_page_slice as standalone fallback",
+        "head": "main imports personas.service object; human_inbox.py imports from personas.service; app_factory key '_page_slice' now resolves to personas.service (page_slice/page_slice_fn aliases keep research default)"
+      },
+      "definitions_in_head_main": 0,
+      "definitions_in_head_service": 1
+    }
+  },
+  "kept": {
+    "_dataset_surface_status": {
+      "defined_in_main": true,
+      "why_it_stays": "behaviour differs from the personas/service.py copy (formatter source handling differs)"
+    },
+    "_list_governance_audit_events": {
+      "defined_in_main": true,
+      "why_it_stays": "behaviour differs (incident-port source, Agora merge); test_tenant_fallback_audit.py needs no change"
+    },
+    "_sem_command_response": {
+      "defined_in_main": true,
+      "why_it_stays": "behaviour differs (authorization / dry_run handling)"
+    },
+    "_composed_dataset_surface_status": {
+      "defined_in_main": true,
+      "why_it_stays": "calls main's _dataset_surface_status, which differs; moving it would change behaviour (now passes read_store explicitly to the moved _dataset_source_after_read)"
+    },
+    "_read_surface_meta": {
+      "defined_in_main": true,
+      "why_it_stays": "calls main's _dataset_surface_status, which differs; moving it would change behaviour"
+    }
+  },
+  "audit_management_list_contract": "Script matches the call text '_page_slice(' inside management function bodies and does not depend on where _page_slice is defined; unchanged. Source scan baseline: 0 issues on base and head; scripts/test_audit_management_list_contract.py and test_management_list_contract_guardrail.py pass on head.",
+  "tests": {
+    "command": "worker test interpreter, pytest -q -W ignore --continue-on-collection-errors on the scoped test files + test_persona_main_residue + test_bff_test_architecture + audit script tests",
+    "base": "5 failed, 280 passed, 1 skipped, 1 collection error",
+    "head": "5 failed, 282 passed, 1 skipped, 1 collection error",
+    "identical_failures_on_base_and_head": [
+      "scripts/test_bff_cw_contract_prerequisite.py::test_cw03_record_sponsor_decision_command_reuses_same_read_projection",
+      "scripts/test_bff_cw_contract_prerequisite.py::test_cw04_default_redactor_fails_closed_without_wired_policy",
+      "services/consultation/test_evidence_redaction.py::test_ask_007_publish_redacts_persona_internal_evidence_before_review_queue",
+      "services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_seeded_detail_paths_use_read_model_dtos",
+      "services/control-plane/bff/tests/test_read_surface_caller_migration.py::TestStaticRegressionReadSurfacePorts::test_main_py_all_read_store_attributes_are_inventoried_and_mapped (24 != 25)"
+    ],
+    "identical_collection_error": "services/control-plane/tests/agora/test_cross_user_isolation.py (agora.dashboard ModuleNotFoundError / ValueError at collection, same on base)",
+    "new_tests": [
+      "test_equivalent_helpers_have_single_persona_service_owner_and_kept_names_stay_in_main",
+      "test_former_main_callers_pass_the_main_read_store_explicitly"
+    ],
+    "note": "Three test_read_surface_caller_migration endpoint tests first failed on head because bff_main._raise_if_read_surface_unavailable no longer exists; fixed by using persona_service._raise_if_read_surface_unavailable. Scoped tests that rebind main.read_store/command_store pass unchanged on head, so they were left unchanged."
+  }
+}

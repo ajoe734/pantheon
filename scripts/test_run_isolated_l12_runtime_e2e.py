@@ -1022,3 +1022,9 @@ def test_former_published_training_fixture_token_is_rejected(monkeypatch: pytest
         _training_authenticate(monkeypatch, env, published_fixture)
     assert type(raised.value) is sys.modules["inbound_authority"].TrainingInboundAuthorityError
     assert "BAD_SIGNATURE" in str(raised.value.code).upper()
+
+
+def test_required_compose_services_include_loop_10_scheduler() -> None:
+    # The scheduler is the single Loop 10 controller writer; the isolated
+    # stack must start it or telemetry_reconciliation has no controller truth.
+    assert "reconciliation-drift-scheduler" in harness.REQUIRED_COMPOSE_SERVICES

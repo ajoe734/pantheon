@@ -165,6 +165,56 @@ def test_distillation_controller_tick_success(tmp_path, monkeypatch) -> None:
     assert writer.successes[0]["loop_id"] == "strategy_distillation"
     assert alive_path.exists()
 
+    # Published fields must project as admissible controller truth.
+    import importlib
+    from datetime import datetime, timedelta, timezone
+
+    import jsonschema
+
+    published = writer.successes[0]
+    now = datetime.now(timezone.utc)
+    lease_seconds = published["lease_duration_seconds"]
+    assert lease_seconds >= config.interval_seconds + 30
+    row = {
+        "loop_id": published["loop_id"],
+        "tenant_id": state.tenant_id,
+        "environment": state.environment,
+        "controller_id": state.controller_id,
+        "controller_name": state.controller_name,
+        "deployment_sha": "test-sha",
+        "desired_state_query": None,
+        "actual_state_query": None,
+        "desired_state": published["desired_state"],
+        "downstream_actual_state": published["downstream_actual_state"],
+        "last_heartbeat_at": now,
+        "last_tick_at": None,
+        "last_success_at": now,
+        "last_failure_at": None,
+        "last_failure_reason": None,
+        "last_repair_at": None,
+        "last_repair_reason": None,
+        "backlog": published["backlog"],
+        "lag": None,
+        "dlq_count": None,
+        "evidence_refs": published["evidence_refs"],
+        "truth_level": published["truth_level"],
+        "lease_token": "token",
+        "lease_expires_at": now + timedelta(seconds=lease_seconds),
+        "payload": published["payload"],
+    }
+    schema = json.loads(
+        (Path(__file__).resolve().parents[3] / "schemas" / "loop-controller-record.schema.json").read_text()
+    )
+    jsonschema.Draft7Validator(schema).validate(json.loads(json.dumps(row, default=lambda v: v.isoformat())))
+    projector = importlib.import_module("services.loop-control.projector")
+    # Steady state: the next tick is one interval away; the record must stay healthy.
+    later = now + timedelta(seconds=config.interval_seconds)
+    projected = projector.project_controller_record_to_bff(row, now=later)
+    assert projected["desired_state_presence"]["authoritative"] is True
+    assert projected["downstream_actual_state"]["authoritative"] is True
+    assert projected["evidence_refs"]
+    assert projected["controller_health"]["status"] == "healthy"
+
 
 def test_distillation_controller_tick_processes_pre_admitted_job_without_reenqueue(
     tmp_path, monkeypatch

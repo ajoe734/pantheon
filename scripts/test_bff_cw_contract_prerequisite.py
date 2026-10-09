@@ -1588,7 +1588,8 @@ def test_cw_healthy_genuine_empty_positive() -> None:
 
 @pytest.mark.parametrize("record_state", ["ok", "degraded"])
 def test_production_callback_cannot_override_unavailable_source(record_state: str) -> None:
-    """Production callback main._dataset_surface_status cannot override unavailable source."""
+    """Production callback personas.service._dataset_surface_status cannot override unavailable source."""
+    from services.control_plane.bff.personas.service import _dataset_surface_status
     class _Store:
         def __init__(self, source: str, state: str) -> None:
             self.source, self.state = source, state
@@ -1613,14 +1614,14 @@ def test_production_callback_cannot_override_unavailable_source(record_state: st
 
     identity = type("Identity", (), {"operator_id": "synthetic-reviewer", "roles": {"reviewer", "operator", "approver"}})()
     store = _Store("unavailable", record_state)
-    service = GovernanceService(store, dataset_surface_status=bff_main._dataset_surface_status)
+    service = GovernanceService(store, dataset_surface_status=_dataset_surface_status)
     projection = service.consult_memo_projection("probe", identity=identity)
     app = FastAPI()
     app.include_router(
         create_governance_router(
             get_read_store=lambda: store,
             extract_identity=lambda auth: identity,
-            dataset_surface_status=bff_main._dataset_surface_status,
+            dataset_surface_status=_dataset_surface_status,
         )
     )
     with TestClient(app) as client:

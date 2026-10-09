@@ -723,13 +723,30 @@ def _resolve_default_dependency(name: str, app_deps: Any) -> Any:
     if name == "session_lifecycle_store":
         from ..session_lifecycle_store import SessionLifecycleStore
         return SessionLifecycleStore(os.path.join(os.getenv("BFF_DATA_DIR", "/tmp/pantheon/bff"), "session_lifecycle.json"))
-    if name in {"_page_slice", "page_slice_fn", "page_slice"}:
+    if name in {
+        "_list_persona_records",
+        "_meta_staleness",
+        "_surface_status",
+        "_dataset_source_after_read",
+        "_raise_if_read_surface_unavailable",
+        "_composed_surface_status",
+        "_decode_page_token",
+        "_page_slice",
+        "_dataset_surface_status",
+        "_composed_dataset_surface_status",
+        "_read_surface_meta",
+        "_list_governance_audit_events",
+        "_sem_command_response",
+    }:
+        from ..personas import service as persona_service
+        return getattr(persona_service, name)
+    if name in {"page_slice_fn", "page_slice"}:
         from ..research.routes.common import _default_page_slice
         return _default_page_slice
     if name in {"_snapshot_meta", "snapshot_meta", "snapshot_meta_fn"}:
         from ..models import utc_now
         return lambda *a, **kw: {"snapshot_at": utc_now()}
-    if name in {"_dataset_surface_status", "dataset_surface_status", "dataset_surface_status_fn"}:
+    if name in {"dataset_surface_status", "dataset_surface_status_fn"}:
         from ..research.routes.common import format_dataset_surface_status
         def owner_surface(dataset, **kwargs):
             kwargs.setdefault("source", app_deps.read_surface.dataset_source(dataset))
@@ -1147,6 +1164,7 @@ def mount_bff_routers(
     )
     from ..personas import service as _persona_service_module
     _persona_service_module._composed_persona_service = persona_service
+    _persona_service_module._composed_command_adapter_service = command_adapter_service
     from ..runtime.router import create_runtime_router
     runtime_router = create_runtime_router(
         read_surface=app_deps.read_surface,
