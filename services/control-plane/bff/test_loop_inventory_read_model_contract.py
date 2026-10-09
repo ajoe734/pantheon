@@ -95,6 +95,45 @@ RUNTIME_CONTROLLER_BINDINGS: dict[str, dict[str, Any]] = {
             "ALPHA_REPLICATION_CONTROLLER_STATE_PATH",
         ),
     },
+    # The four writers below run as workers with a fixed or defaulted name; no
+    # Compose service sets PANTHEON_CONTROLLER_NAME for them.
+    "persona_teaching": {
+        "controller_name": "training-session-preview-eval-worker",
+        "module": "services/training-session/preview_eval_worker.py",
+        "compose_services": (),
+        "module_literals": (
+            "claimable preview/eval jobs",
+            "/api/training/preview-jobs?status=claimable",
+        ),
+    },
+    "human_imitation_shadow_evaluation": {
+        "controller_name": "policy-learning-shadow-eval-scheduler",
+        "module": "services/policy-learning/scheduler_worker.py",
+        "compose_services": (),
+        "module_literals": (
+            "policy-learning-shadow-eval-scheduler",
+            "policy-learning.worker_process",
+            ".configuration",
+        ),
+    },
+    "consultation": {
+        "controller_name": "consultation-workflow-executor",
+        "module": "services/consultation/workflow_executor.py",
+        "compose_services": (),
+        "module_literals": (
+            "consultation.workflow_state_store",
+            "build_loop_truth",
+        ),
+    },
+    "telemetry_reconciliation": {
+        "controller_name": "reconciliation-drift-scheduler",
+        "module": "services/reconciliation-drift/scheduler_worker.py",
+        "compose_services": (),
+        "module_literals": (
+            "reconciliation-drift.scheduled_reconcile.telemetry_summaries",
+            "reconciliation-drift.scheduled_reconcile.result",
+        ),
+    },
     # Runs inside operator-bff with a fixed name, so no Compose service sets
     # PANTHEON_CONTROLLER_NAME for it.
     "bff_health_monitoring": {
@@ -490,7 +529,7 @@ def test_loop_inventory_publishes_controller_contract_coverage(monkeypatch) -> N
     assert items["source_ingestion"]["live_status"]["is_reconciled"] is False
     assert items["source_ingestion"]["live_status"]["has_live_evidence"] is False
 
-    undeclared = items["consultation"]["controller_contract_declaration"]
+    undeclared = items["evolution"]["controller_contract_declaration"]
     assert undeclared["status"] == "not_implemented"
     assert undeclared["controller_implemented"] is False
     assert undeclared["contract_complete"] is False
