@@ -124,7 +124,13 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
 
     @contextmanager
     def _get_connection(self):
-        conn = None
+        conn = self._connect()
+        setattr(conn, "_pool_dsn", self.dsn)
+        try:
+            yield conn
+        finally:
+            _safe_close(conn)
+        return
         while not self._pool.empty():
             try:
                 candidate = self._pool.get_nowait()
