@@ -61,7 +61,6 @@ DEFAULT_OPENCLAW_BIN = "openclaw"
 DEFAULT_PRIMARY_MODEL = "anthropic/claude-opus-4-8"
 DEFAULT_FALLBACK_MODELS = ("openai/gpt-5.6-sol", "openai/gpt-5.5")
 CODEX_DELEGATED_KERNEL_MODES = frozenset({"kernel_debug"})
-EMIT_EXTRACTION_TOOL_NAME = "emit_extraction"
 # Canonical docker-compose service name — used when no URL is configured.
 _DEFAULT_GATEWAY_WS_URL = "ws://openclaw-gateway:18789"
 _AGENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -256,24 +255,6 @@ def delegates_kernel_mode_to_codex(mode: str) -> bool:
 
     return str(mode or "").strip().lower() in CODEX_DELEGATED_KERNEL_MODES
 
-
-
-def emit_extraction_tool_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
-    """Build the fixed-shape, server-approved `emit_extraction` function tool.
-
-    The caller supplies only the JSON-schema ``parameters`` body describing
-    the extracted-fields shape; the tool name/type/description/strict flag
-    are fixed so a caller cannot smuggle in an arbitrary shell/tool
-    definition. This is a pure, data-emission-only tool — invoking it never
-    executes a domain action.
-    """
-    return {
-        "type": "function",
-        "name": EMIT_EXTRACTION_TOOL_NAME,
-        "description": "Emit only extracted structured data; no domain action is executed.",
-        "parameters": schema,
-        "strict": True,
-    }
 
 
 _JSON_TYPE_TO_PYTHON = {
@@ -1221,20 +1202,22 @@ class AssistantOpenClawProvider:
         trace_id: Optional[str] = None,
         timeout_seconds: Optional[float] = None,
     ) -> OpenClawProviderResult:
-        """Run one restricted, server-approved, data-only extraction turn.
+        """Run one restricted, data-only extraction turn.
 
-        Uses the same HTTP transport as `invoke()`, with a fixed-shape
-        `emit_extraction` function tool and a pinned tool_choice so the model
-        cannot decline into free text or pick a different tool. The tool call
-        itself never triggers a domain mutation — this method returns parsed
-        structured data only.
+        No tool is offered. The model is instructed to answer with a single
+        JSON object; the text is parsed and validated against the caller's
+        schema, and anything else is rejected before it can reach a caller.
         """
 
-        tool_schema = emit_extraction_tool_schema(extraction_schema)
+        instruction = (
+            "Answer with one JSON object only, no prose and no code fence, "
+            "that satisfies this JSON schema:\n"
+            + json.dumps(extraction_schema, ensure_ascii=False)
+        )
         # One-shot and stateless: a stable `user` key would reuse one warm CLI
         # session per caller, accumulating history until context_overflow.
         result = self._invoke_via_http(
-            prompt,
+            f"{instruction}\n\n{prompt}",
             model=model,
             agent_id=agent_id,
             session_id=session_id or f"structured-{uuid.uuid4().hex}",
@@ -1243,43 +1226,18 @@ class AssistantOpenClawProvider:
             operator_id=operator_id,
             trace_id=trace_id,
             timeout_seconds=timeout_seconds,
-            tools=[tool_schema],
-            tool_choice={"type": "function", "name": EMIT_EXTRACTION_TOOL_NAME},
         )
-        function_calls = result.output.get("function_calls") or []
-        if not function_calls:
+        if result.output.get("function_calls"):
             raise OpenClawProviderError(
-                "no matching tool call in response",
-                status_code=502,
-                error_code="OPENCLAW_TOOL_NO_MATCH",
-            )
-        # A pinned client-side `tool_choice` only requests a preference — it
-        # is not proof the upstream Gateway actually enforced a single-tool
-        # policy. Checking only `function_calls[0]` would silently ignore
-        # any additional call the model emitted (e.g. a native/domain tool
-        # invoked alongside the requested one); every emitted call must be
-        # named `emit_extraction`, and there must be exactly one, or this
-        # fails closed rather than trusting the first entry alone.
-        if len(function_calls) > 1:
-            raise OpenClawProviderError(
-                f"expected exactly one {EMIT_EXTRACTION_TOOL_NAME!r} tool call, got {len(function_calls)}",
+                "structured extraction must not emit tool calls",
                 status_code=502,
                 error_code="OPENCLAW_TOOL_MISMATCH",
             )
-        call = function_calls[0]
-        call_name = call.get("name")
-        if call_name != EMIT_EXTRACTION_TOOL_NAME:
-            raise OpenClawProviderError(
-                f"tool call name {call_name!r} does not match {EMIT_EXTRACTION_TOOL_NAME!r}",
-                status_code=502,
-                error_code="OPENCLAW_TOOL_MISMATCH",
-            )
-        raw_arguments = call.get("arguments")
         try:
-            parsed_arguments = json.loads(raw_arguments if isinstance(raw_arguments, str) else "")
-        except (ValueError, TypeError) as exc:
+            parsed_arguments = json.loads(result.output["json_events"][0]["item"]["text"])
+        except (ValueError, TypeError, KeyError, IndexError) as exc:
             raise OpenClawProviderError(
-                "tool call arguments are not valid JSON",
+                "model answer is not valid JSON",
                 status_code=422,
                 error_code="OPENCLAW_TOOL_ARGS_INVALID_JSON",
             ) from exc
@@ -1287,10 +1245,6 @@ class AssistantOpenClawProvider:
 
         output: Dict[str, Any] = {
             "structured_data": parsed_arguments,
-            "tool_call": {
-                "id": call.get("call_id"),
-                "name": call_name,
-            },
             "agent_id": str(agent_id or self._agent_id).strip(),
             "transport": "responses_http",
         }

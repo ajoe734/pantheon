@@ -30,6 +30,16 @@ CLAUDE_TOKEN_BATCH='[
   {"path":"agents.defaults.cliBackends[\"claude-cli\"].env.CLAUDE_CODE_OAUTH_TOKEN","value":"${CLAUDE_CODE_OAUTH_TOKEN}"}
 ]'
 
+# OpenClaw 2026.7.1 replaces (does not merge) args/resumeArgs from this
+# override, so both lists repeat every registered claude-cli default and add
+# --tools ToolSearch: ToolSearch is the only Claude Code built-in tool for every
+# agent, while OpenClaw MCP tools stay. Applied with or without a token.
+CLAUDE_TOOLSEARCH_BATCH='[
+  {"path":"agents.defaults.cliBackends[\"claude-cli\"].command","value":"claude"},
+  {"path":"agents.defaults.cliBackends[\"claude-cli\"].args","value":["-p","--output-format","stream-json","--include-partial-messages","--verbose","--setting-sources","user","--allowedTools","mcp__openclaw__*","--disallowedTools","ScheduleWakeup,CronCreate,Bash(run_in_background:true),Monitor","--tools","ToolSearch"]},
+  {"path":"agents.defaults.cliBackends[\"claude-cli\"].resumeArgs","value":["-p","--output-format","stream-json","--include-partial-messages","--verbose","--setting-sources","user","--allowedTools","mcp__openclaw__*","--disallowedTools","ScheduleWakeup,CronCreate,Bash(run_in_background:true),Monitor","--tools","ToolSearch","--resume","{sessionId}"]}
+]'
+
 cd "$REPO_ROOT"
 
 compose() {
@@ -42,6 +52,7 @@ openclaw() {
 }
 
 openclaw config set --batch-json "$MODEL_POOL_BATCH"
+openclaw config set --batch-json "$CLAUDE_TOOLSEARCH_BATCH" >/dev/null
 if compose exec -T -u node openclaw-gateway node -e \
   'process.exit(process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim() ? 0 : 1)'; then
   # The argv contains only the literal reference, never the credential value.
@@ -53,8 +64,8 @@ fi
 agents_cfg="$(openclaw config get agents --json)"
 agents_list="$(jq -ce '(if has("list") then .list else [] end) | if type == "array" then . else error("agents.list is not an array") end
   | if any(.[]; .id == "structured-extraction") then
-      map(if .id == "structured-extraction" then .tools = ((.tools // {}) + {"deny":["*"]}) else . end)
-    else . + [{"id":"structured-extraction","tools":{"deny":["*"]}}] end' <<<"$agents_cfg")"
+      map(if .id == "structured-extraction" then .tools = ((.tools // {}) + {"deny":["*"],"exec":{"security":"deny","ask":"always"}}) else . end)
+    else . + [{"id":"structured-extraction","tools":{"deny":["*"],"exec":{"security":"deny","ask":"always"}}}] end' <<<"$agents_cfg")"
 openclaw config set agents.list "$agents_list" --strict-json --replace >/dev/null
 openclaw config validate
 
@@ -83,7 +94,7 @@ jq -e '. == "anthropic/claude-opus-4-8"' <<<"$primary" >/dev/null
 jq -e '. == ["openai/gpt-5.6-sol", "openai/gpt-5.5"]' <<<"$fallbacks" >/dev/null
 jq -e '. == true' <<<"$responses_enabled" >/dev/null
 openclaw config get agents.list --json \
-  | jq -e 'map(select(.id == "structured-extraction")) | length == 1 and .[0].tools.deny == ["*"]' >/dev/null
+  | jq -e 'map(select(.id == "structured-extraction")) | length == 1 and .[0].tools.deny == ["*"] and .[0].tools.exec.security == "deny"' >/dev/null
 for model_ref in \
   openai/gpt-5.6-sol \
   openai/gpt-5.5 \
