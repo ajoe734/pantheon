@@ -22,6 +22,7 @@ import math
 import os
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import deque
 from dataclasses import dataclass
@@ -118,12 +119,16 @@ def _symbol_aliases(value: Any, quote_currency: str | None = None) -> frozenset[
     return frozenset(aliases)
 
 
-def _first(mapping: Mapping[str, Any], keys: Sequence[str]) -> Any:
-    for key in keys:
-        value = mapping.get(key)
-        if value not in (None, "", [], {}):
-            return value
-    return None
+def _same_instrument(requested: str, returned: str) -> bool:
+    left = requested.strip().upper().replace(" ", "")
+    right = returned.strip().upper().replace(" ", "")
+    if left == right:
+        return True
+    # Two different venue-qualified symbols (AAPL.US vs AAPL.TW) share a base
+    # alias but are different instruments.
+    if "." in left and "." in right:
+        return False
+    return bool(_symbol_aliases(left) & _symbol_aliases(right))
 
 
 def _nested_tuple(value: Any) -> Any:
@@ -190,13 +195,14 @@ class ValuationResult:
 
 
 class SourceIngestMarkProvider:
-    """Resolve the latest normalized market marks from source-ingest records.
+    """Resolve the latest market marks from the governed per-symbol snapshot.
 
-    The existing source-ingest read surface is intentionally generic, so this
-    client accepts the normalized row shapes produced by the US/TW/crypto
-    connectors and builds an in-memory latest-mark index.  Network and payload
-    failures are reported as diagnostics; they never result in a fallback
-    price.
+    Each requested symbol is read from
+    ``GET /api/source-ingest/snapshots/latest?symbol=`` (the read-only stored
+    snapshot projection the paper fleet reconciler also reads).  The mark is
+    the snapshot's latest close at its ``event_time`` with the snapshot's
+    ``source_ref``.  Network and payload failures are reported as diagnostics;
+    they never result in a fallback or previously cached price.
     """
 
     def __init__(
@@ -242,11 +248,11 @@ class SourceIngestMarkProvider:
         )
         self._future_tolerance = max(float(future_tolerance_seconds), 0.0)
         self._now = now or (lambda: datetime.now(timezone.utc))
-        self._marks_by_alias: dict[str, MarketMark | None] = {}
-        self._last_refresh_monotonic: float | None = None
+        self._marks_by_symbol: dict[str, MarketMark] = {}
+        self._fetched_monotonic: dict[str, float] = {}
+        self._symbol_errors: dict[str, str] = {}
         self._last_refresh_at: str | None = None
         self._last_error: str | None = None
-        self._record_count = 0
 
     @property
     def enabled(self) -> bool:
@@ -269,20 +275,15 @@ class SourceIngestMarkProvider:
         requested = [str(symbol).strip() for symbol in symbols if str(symbol).strip()]
         if not requested:
             return {}, self.snapshot(requested_symbols=[])
-        self._refresh_if_needed()
+        if not self.enabled:
+            self._last_error = "source_ingest_url_unconfigured"
         resolved: dict[str, MarketMark] = {}
-        for symbol in requested:
-            candidates = [
-                self._marks_by_alias[alias]
-                for alias in _symbol_aliases(symbol)
-                if alias in self._marks_by_alias and self._marks_by_alias[alias] is not None
-            ]
-            candidates = [mark for mark in candidates if mark is not None and self._mark_is_fresh(mark)]
-            if candidates:
-                resolved[symbol] = max(
-                    candidates,
-                    key=lambda mark: _parse_rfc3339(mark.as_of) or datetime.min.replace(tzinfo=timezone.utc),
-                )
+        for symbol in dict.fromkeys(requested):
+            if self.enabled:
+                self._refresh_symbol_if_needed(symbol)
+            mark = self._marks_by_symbol.get(symbol)
+            if mark is not None and self._mark_is_fresh(mark):
+                resolved[symbol] = mark
         diagnostic = self.snapshot(requested_symbols=requested)
         diagnostic["resolved_symbols"] = sorted(resolved)
         diagnostic["missing_symbols"] = sorted(set(requested) - set(resolved))
@@ -295,10 +296,7 @@ class SourceIngestMarkProvider:
             "enabled": self.enabled,
             "last_refresh_at": self._last_refresh_at,
             "last_error": self._last_error,
-            "source_record_count": self._record_count,
-            "indexed_mark_count": len(
-                {id(mark) for mark in self._marks_by_alias.values() if mark is not None}
-            ),
+            "indexed_mark_count": len(self._marks_by_symbol),
             "max_mark_age_seconds": self._max_mark_age,
             "requested_symbols": list(requested_symbols or []),
         }
@@ -310,173 +308,58 @@ class SourceIngestMarkProvider:
         age = (self._now().astimezone(timezone.utc) - observed).total_seconds()
         return -self._future_tolerance <= age <= self._max_mark_age
 
-    def _refresh_if_needed(self) -> None:
-        if not self.enabled:
-            self._last_error = "source_ingest_url_unconfigured"
-            return
+    def _refresh_symbol_if_needed(self, symbol: str) -> None:
         now_monotonic = time.monotonic()
-        if (
-            self._last_refresh_monotonic is not None
-            and now_monotonic - self._last_refresh_monotonic < self._cache_ttl
-        ):
+        fetched = self._fetched_monotonic.get(symbol)
+        if fetched is not None and now_monotonic - fetched < self._cache_ttl:
+            self._sync_last_error()
             return
         try:
             payload = self._fetch_json(
-                f"{self._base_url}/api/source-ingest/source-records",
+                f"{self._base_url}/api/source-ingest/snapshots/latest"
+                f"?symbol={urllib.parse.quote(symbol, safe='')}",
                 self._timeout,
             )
-            records = payload.get("source_records")
-            if not isinstance(records, list):
-                raise ValueError("source-ingest payload missing source_records list")
-            marks = self._index_records(records)
+            mark = self._mark_from_snapshot(symbol, payload)
         except (OSError, ValueError, TypeError, json.JSONDecodeError, urllib.error.URLError) as exc:
             # A failed refresh must not silently reuse a previously cached
             # price as though the canonical source were still available.
-            self._marks_by_alias = {}
-            self._record_count = 0
-            self._last_refresh_monotonic = now_monotonic
-            self._last_refresh_at = utc_now_rfc3339()
-            self._last_error = f"{type(exc).__name__}: {exc}"
-            return
-        self._marks_by_alias = marks
-        self._record_count = len(records)
-        self._last_refresh_monotonic = now_monotonic
+            self._marks_by_symbol.pop(symbol, None)
+            self._symbol_errors[symbol] = f"{symbol}: {type(exc).__name__}: {exc}"
+        else:
+            self._marks_by_symbol[symbol] = mark
+            self._symbol_errors.pop(symbol, None)
+        self._fetched_monotonic[symbol] = now_monotonic
         self._last_refresh_at = utc_now_rfc3339()
-        self._last_error = None
+        self._sync_last_error()
 
-    @classmethod
-    def _index_records(cls, records: Sequence[Any]) -> dict[str, MarketMark | None]:
-        candidates_by_alias: dict[str, list[MarketMark]] = {}
-        for raw_record in records:
-            if not isinstance(raw_record, Mapping):
-                continue
-            if str(raw_record.get("source_type") or "").lower() != "market":
-                continue
-            if str(raw_record.get("status") or "").lower() not in {"normalized", "indexed"}:
-                continue
-            metadata = raw_record.get("metadata")
-            metadata = metadata if isinstance(metadata, Mapping) else {}
-            row_candidates: list[Mapping[str, Any]] = []
-            for key in ("normalized_row", "row", "quote", "market_data", "raw_row"):
-                candidate = metadata.get(key)
-                if isinstance(candidate, Mapping):
-                    row_candidates.append(candidate)
-            row_candidates.extend([metadata, raw_record])
-            for row in row_candidates:
-                mark = cls._mark_from_row(raw_record, metadata, row)
-                if mark is None:
-                    continue
-                for alias in _symbol_aliases(mark.symbol, mark.quote_currency):
-                    candidates_by_alias.setdefault(alias, []).append(mark)
-                break
-
-        indexed: dict[str, MarketMark | None] = {}
-        for alias, candidates in candidates_by_alias.items():
-            identities = {
-                (
-                    mark.symbol.upper(),
-                    (mark.quote_currency or "").upper(),
-                )
-                for mark in candidates
-            }
-            if len(identities) != 1:
-                # A base alias such as ``AAPL`` must not silently pick one
-                # venue when two canonical instruments collide.
-                indexed[alias] = None
-                continue
-            latest_as_of = max(
-                _parse_rfc3339(mark.as_of)
-                or datetime.min.replace(tzinfo=timezone.utc)
-                for mark in candidates
-            )
-            latest = [
-                mark
-                for mark in candidates
-                if _parse_rfc3339(mark.as_of) == latest_as_of
-            ]
-            latest_prices = {mark.price for mark in latest}
-            if len(latest_prices) != 1:
-                # Two different prices for the same instrument and exact
-                # observation boundary have no safe revision precedence.
-                indexed[alias] = None
-                continue
-            # Exact-value duplicates from repeated ingest runs are equivalent.
-            # Pick provenance deterministically so repository ordering cannot
-            # change the emitted evidence.
-            indexed[alias] = min(latest, key=lambda mark: mark.source_ref)
-        return indexed
+    def _sync_last_error(self) -> None:
+        self._last_error = "; ".join(sorted(self._symbol_errors.values())) or None
 
     @staticmethod
-    def _mark_from_row(
-        record: Mapping[str, Any],
-        metadata: Mapping[str, Any],
-        row: Mapping[str, Any],
-    ) -> MarketMark | None:
-        symbol = _first(
-            row,
-            ("symbol_canonical", "canonical_symbol", "symbol", "ticker", "instrument", "pair"),
-        ) or _first(
-            metadata,
-            ("symbol_canonical", "canonical_symbol", "symbol", "ticker", "instrument", "pair"),
-        )
-        price = _finite(
-            _first(row, ("last_price", "market_price", "close", "price", "last", "adjusted_close"))
-        )
-        dataset = str(
-            _first(row, ("dataset", "normalized_dataset", "source_dataset"))
-            or _first(metadata, ("dataset", "normalized_dataset", "source_dataset"))
-            or ""
-        ).lower()
-        if not any(token in dataset for token in ("price", "ohlcv", "quote", "spot")):
-            return None
-        if not symbol or price is None or price <= 0:
-            return None
-        observed = _first(
-            row,
-            (
-                "as_of",
-                "as_of_time",
-                "feature_as_of_time",
-                "event_time",
-                "trade_date",
-                "date",
-                "timestamp",
-                "ts",
-            ),
-        ) or _first(
-            metadata,
-            (
-                "as_of",
-                "as_of_time",
-                "feature_as_of_time",
-                "event_time",
-                "trade_date",
-                "date",
-                "timestamp",
-                "ts",
-            ),
-        )
-        parsed = _parse_rfc3339(observed)
-        if parsed is None:
-            return None
-        raw_source_ref = (
-            record.get("content_ref")
-            or record.get("source_id")
-            or metadata.get("market_data_ref")
-        )
-        source_ref = str(raw_source_ref or "").strip()
+    def _mark_from_snapshot(symbol: str, payload: Any) -> MarketMark:
+        if not isinstance(payload, Mapping):
+            raise ValueError("source-ingest snapshot must be a JSON object")
+        snapshot_symbol = str(payload.get("symbol") or "").strip()
+        if not snapshot_symbol or not _same_instrument(symbol, snapshot_symbol):
+            raise ValueError(
+                f"snapshot symbol {snapshot_symbol!r} does not match requested symbol"
+            )
+        closes = payload.get("closes")
+        price = _finite(closes[-1]) if isinstance(closes, list) and closes else None
+        if price is None or price <= 0:
+            raise ValueError("snapshot has no finite positive latest close")
+        observed = _parse_rfc3339(payload.get("event_time"))
+        if observed is None:
+            raise ValueError("snapshot event_time is missing or invalid")
+        source_ref = str(payload.get("source_ref") or "").strip()
         if not source_ref:
-            return None
+            raise ValueError("snapshot source_ref is missing")
         return MarketMark(
-            symbol=str(symbol),
+            symbol=symbol,
             price=price,
-            as_of=_iso(parsed),
+            as_of=_iso(observed),
             source_ref=source_ref,
-            quote_currency=(
-                str(_first(row, ("quote_currency", "vs_currency"))).upper()
-                if _first(row, ("quote_currency", "vs_currency")) not in (None, "")
-                else None
-            ),
         )
 
 

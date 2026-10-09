@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import tempfile
+import urllib.error
+import urllib.parse
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -20,41 +22,49 @@ from services.execution.lean_runtime.performance_telemetry import (
 _NOW = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
 
 
-def _source_record(
+def _snapshot(
     symbol: str,
     price: float,
-    as_of: str | None,
+    event_time: str = "2026-07-14T11:00:00Z",
     *,
-    source_id: str | None = None,
-    source_type: str = "market",
-    status: str = "normalized",
-    dataset: str = "daily_price",
-    created_at: str = "2026-07-14T11:59:00Z",
+    source_ref: str | None = None,
 ) -> dict:
-    row = {
-        "symbol_canonical": symbol,
-        "close": price,
-        "dataset": dataset,
-    }
-    if as_of is not None:
-        row["as_of"] = as_of
     return {
-        "source_id": source_id or f"source-{symbol}",
-        "content_ref": f"source-ingest://{source_id or symbol}",
-        "source_type": source_type,
-        "status": status,
-        "created_at": created_at,
-        "metadata": {"normalized_row": row},
+        "schema_version": "market-snapshot/v1",
+        "snapshot_id": f"mss-{symbol}",
+        "symbol": symbol,
+        "event_time": event_time,
+        "observed_at": event_time,
+        "closes": [price - 1.0, price],
+        "lineage": {},
+        "source_ref": source_ref or f"source-ingest://snapshots/mss-{symbol}",
     }
 
 
-def _provider(records: list[dict]) -> SourceIngestMarkProvider:
+def _http_error(url: str, code: int) -> urllib.error.HTTPError:
+    return urllib.error.HTTPError(url, code, "x", {}, None)
+
+
+def _provider(
+    snapshots: dict[str, dict | Exception], urls: list[str] | None = None
+) -> SourceIngestMarkProvider:
+    def fetch(url, _timeout):
+        if urls is not None:
+            urls.append(url)
+        symbol = urllib.parse.unquote(url.split("symbol=", 1)[1])
+        response = snapshots.get(symbol)
+        if response is None:
+            raise _http_error(url, 404)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
     return SourceIngestMarkProvider(
         "http://source-ingest:8097",
         cache_ttl_seconds=0,
         max_mark_age_seconds=172800,
         future_tolerance_seconds=300,
-        fetch_json=lambda _url, _timeout: {"source_records": records},
+        fetch_json=fetch,
         now=lambda: _NOW,
     )
 
@@ -72,163 +82,124 @@ def _sample(value: float, as_of: datetime, *, fill_count: int = 1) -> Performanc
 
 
 class SourceIngestMarkProviderTest(unittest.TestCase):
-    def test_only_normalized_market_price_records_with_observation_time_are_admissible(self):
-        missing_source_ref = _source_record(
-            "NOREF.US", 42.0, "2026-07-14T11:00:00Z"
-        )
-        missing_source_ref.pop("source_id")
-        missing_source_ref.pop("content_ref")
-        records = [
-            _source_record("AAPL.US", 211.5, "2026-07-14T11:00:00Z"),
-            _source_record("MSFT.US", 501.0, "2026-07-14T11:00:00Z", source_type="news"),
-            _source_record("NVDA.US", 175.0, "2026-07-14T11:00:00Z", status="rejected"),
-            _source_record("TSLA.US", 320.0, "2026-07-14T11:00:00Z", dataset="fundamentals"),
-            _source_record("BROKEN.US", float("nan"), "2026-07-14T11:00:00Z"),
-            # Ingest availability time is not a market observation time.
-            _source_record("AMZN.US", 230.0, None, created_at="2026-07-14T11:59:00Z"),
-            missing_source_ref,
-        ]
+    def test_default_fetch_reads_per_symbol_snapshot_not_source_records(self):
+        requested_urls: list[str] = []
 
-        marks, diagnostic = _provider(records).resolve(
-            [
-                "AAPL.US",
-                "MSFT.US",
-                "NVDA.US",
-                "TSLA.US",
-                "BROKEN.US",
-                "AMZN.US",
-                "NOREF.US",
-            ]
-        )
+        class _Response:
+            def __enter__(self):
+                return self
 
-        self.assertEqual(set(marks), {"AAPL.US"})
-        self.assertEqual(marks["AAPL.US"].price, 211.5)
-        self.assertEqual(marks["AAPL.US"].as_of, "2026-07-14T11:00:00Z")
+            def __exit__(self, *_exc):
+                return False
+
+            def read(self):
+                return json.dumps(_snapshot("BTC/USD.KRAKEN", 68_500.0)).encode()
+
+        def urlopen(request, timeout):
+            requested_urls.append(request.full_url)
+            return _Response()
+
+        provider = SourceIngestMarkProvider(
+            "http://source-ingest:8097", cache_ttl_seconds=0, now=lambda: _NOW
+        )
+        with patch("urllib.request.urlopen", urlopen):
+            marks, _ = provider.resolve(["BTC/USD.KRAKEN"])
+
         self.assertEqual(
-            diagnostic["missing_symbols"],
-            ["AMZN.US", "BROKEN.US", "MSFT.US", "NOREF.US", "NVDA.US", "TSLA.US"],
+            requested_urls,
+            [
+                "http://source-ingest:8097/api/source-ingest/snapshots/latest"
+                "?symbol=BTC%2FUSD.KRAKEN"
+            ],
         )
+        self.assertIn("BTC/USD.KRAKEN", marks)
 
-    def test_stale_and_future_marks_fail_closed(self):
-        records = [
-            _source_record("FRESH.US", 100.0, "2026-07-14T11:00:00Z"),
-            _source_record("STALE.US", 100.0, "2026-07-12T11:59:59Z"),
-            _source_record("FUTURE.US", 100.0, "2026-07-14T12:05:01Z"),
-        ]
+    def test_200_snapshot_becomes_mark_from_latest_close(self):
+        urls: list[str] = []
+        snapshot = _snapshot("AAPL.US", 211.5, source_ref="source-ingest://snapshots/s1")
+        marks, diagnostic = _provider({"AAPL.US": snapshot}, urls).resolve(["AAPL.US"])
 
-        marks, diagnostic = _provider(records).resolve(["FRESH.US", "STALE.US", "FUTURE.US"])
+        mark = marks["AAPL.US"]
+        self.assertEqual(mark.price, 211.5)
+        self.assertEqual(mark.as_of, "2026-07-14T11:00:00Z")
+        self.assertEqual(mark.source_ref, "source-ingest://snapshots/s1")
+        self.assertEqual(diagnostic["missing_symbols"], [])
+        self.assertIsNone(diagnostic["last_error"])
+        self.assertTrue(all("source-records" not in url for url in urls))
+
+    def test_404_snapshot_is_missing_and_reported(self):
+        marks, diagnostic = _provider({}).resolve(["AAPL.US"])
+
+        self.assertEqual(marks, {})
+        self.assertEqual(diagnostic["missing_symbols"], ["AAPL.US"])
+        self.assertIn("HTTPError", diagnostic["last_error"])
+        self.assertIn("404", diagnostic["last_error"])
+
+    def test_503_snapshot_is_missing_and_reported(self):
+        provider = _provider(
+            {"AAPL.US": _http_error("http://source-ingest:8097/x", 503)}
+        )
+        marks, diagnostic = provider.resolve(["AAPL.US"])
+
+        self.assertEqual(marks, {})
+        self.assertEqual(diagnostic["missing_symbols"], ["AAPL.US"])
+        self.assertIn("503", diagnostic["last_error"])
+
+    def test_stale_and_future_snapshots_fail_closed(self):
+        provider = _provider(
+            {
+                "FRESH.US": _snapshot("FRESH.US", 100.0, "2026-07-14T11:00:00Z"),
+                "STALE.US": _snapshot("STALE.US", 100.0, "2026-07-12T11:59:59Z"),
+                "FUTURE.US": _snapshot("FUTURE.US", 100.0, "2026-07-14T12:05:01Z"),
+            }
+        )
+        marks, diagnostic = provider.resolve(["FRESH.US", "STALE.US", "FUTURE.US"])
 
         self.assertEqual(set(marks), {"FRESH.US"})
         self.assertEqual(diagnostic["missing_symbols"], ["FUTURE.US", "STALE.US"])
 
-    def test_base_symbol_alias_collision_fails_closed_without_hiding_canonical_marks(self):
-        records = [
-            _source_record("AAPL.US", 211.5, "2026-07-14T11:00:00Z", source_id="us-price"),
-            _source_record("AAPL.TW", 812.0, "2026-07-14T11:30:00Z", source_id="tw-price"),
-        ]
-
-        marks, diagnostic = _provider(records).resolve(["AAPL", "AAPL.US", "AAPL.TW"])
-
-        self.assertNotIn("AAPL", marks)
-        self.assertEqual(marks["AAPL.US"].price, 211.5)
-        self.assertEqual(marks["AAPL.TW"].price, 812.0)
-        self.assertEqual(diagnostic["missing_symbols"], ["AAPL"])
-
-    def test_conflicting_prices_at_the_same_observation_time_fail_closed(self):
-        records = [
-            _source_record(
-                "AAPL.US",
-                211.5,
-                "2026-07-14T11:00:00Z",
-                source_id="price-a",
-            ),
-            _source_record(
-                "AAPL.US",
-                212.5,
-                "2026-07-14T11:00:00Z",
-                source_id="price-b",
-            ),
-        ]
-
-        marks, diagnostic = _provider(records).resolve(["AAPL.US"])
+    def test_snapshot_for_a_different_instrument_resolves_to_nothing(self):
+        provider = _provider({"AAPL.US": _snapshot("AAPL.TW", 812.0)})
+        marks, diagnostic = provider.resolve(["AAPL.US"])
 
         self.assertEqual(marks, {})
         self.assertEqual(diagnostic["missing_symbols"], ["AAPL.US"])
+        self.assertIn("does not match requested symbol", diagnostic["last_error"])
 
-    def test_newer_unambiguous_price_supersedes_an_older_conflict(self):
-        records = [
-            _source_record(
-                "AAPL.US",
-                210.0,
-                "2026-07-14T10:00:00Z",
-                source_id="older-a",
-            ),
-            _source_record(
-                "AAPL.US",
-                220.0,
-                "2026-07-14T10:00:00Z",
-                source_id="older-b",
-            ),
-            _source_record(
-                "AAPL.US",
-                215.0,
-                "2026-07-14T11:00:00Z",
-                source_id="latest",
-            ),
-        ]
-
-        marks, diagnostic = _provider(records).resolve(["AAPL.US"])
-
-        self.assertEqual(marks["AAPL.US"].price, 215.0)
-        self.assertEqual(diagnostic["missing_symbols"], [])
-
-    def test_crypto_canonical_symbol_resolves_only_the_matching_quote_pair(self):
-        record = _source_record(
-            "BTC.CRYPTO",
-            68_500.0,
-            "2026-07-14T11:00:00Z",
-            dataset="crypto_spot_price",
+    def test_snapshot_without_price_time_or_source_ref_is_rejected(self):
+        no_ref = _snapshot("NOREF.US", 10.0)
+        no_ref.pop("source_ref")
+        no_time = _snapshot("NOTIME.US", 10.0)
+        no_time["event_time"] = None
+        bad_price = _snapshot("BAD.US", float("nan"))
+        empty = _snapshot("EMPTY.US", 10.0)
+        empty["closes"] = []
+        provider = _provider(
+            {s["symbol"]: s for s in (no_ref, no_time, bad_price, empty)}
         )
-        record["metadata"]["normalized_row"]["vs_currency"] = "usd"
-
-        marks, diagnostic = _provider([record]).resolve(
-            ["BTC/USD.KRAKEN", "BTCUSD", "BTCUSDT"]
+        marks, diagnostic = provider.resolve(
+            ["NOREF.US", "NOTIME.US", "BAD.US", "EMPTY.US"]
         )
 
-        self.assertEqual(set(marks), {"BTC/USD.KRAKEN", "BTCUSD"})
-        self.assertEqual(marks["BTC/USD.KRAKEN"].quote_currency, "USD")
-        self.assertEqual(diagnostic["missing_symbols"], ["BTCUSDT"])
+        self.assertEqual(marks, {})
+        self.assertEqual(len(diagnostic["missing_symbols"]), 4)
 
-    def test_finmind_raw_price_shape_is_admissible_when_normalized_row_is_absent(self):
-        record = {
-            "source_id": "finmind:TaiwanStockPrice:2330",
-            "content_ref": "finmind://data/TaiwanStockPrice/2330/2026-07-14",
-            "source_type": "market",
-            "status": "normalized",
-            "metadata": {
-                "dataset": "TaiwanStockPrice",
-                "symbol": "2330",
-                "event_time": "2026-07-14",
-                "raw_row": {
-                    "stock_id": "2330",
-                    "date": "2026-07-14",
-                    "close": 955.0,
-                },
-            },
-        }
+    def test_cache_ttl_is_per_symbol(self):
+        urls: list[str] = []
+        provider = _provider(
+            {"A.US": _snapshot("A.US", 1.0), "B.US": _snapshot("B.US", 2.0)}, urls
+        )
+        provider._cache_ttl = 3600.0
+        provider.resolve(["A.US"])
+        provider.resolve(["A.US", "B.US"])
 
-        marks, diagnostic = _provider([record]).resolve(["2330.TW"])
-
-        self.assertEqual(marks["2330.TW"].price, 955.0)
-        self.assertEqual(marks["2330.TW"].as_of, "2026-07-14T00:00:00Z")
-        self.assertEqual(diagnostic["missing_symbols"], [])
+        self.assertEqual(len(urls), 2)
+        self.assertTrue(urls[0].endswith("symbol=A.US"))
+        self.assertTrue(urls[1].endswith("symbol=B.US"))
 
     def test_failed_refresh_does_not_reuse_a_previously_cached_mark(self):
         responses = iter(
-            [
-                {"source_records": [_source_record("AAPL.US", 211.5, "2026-07-14T11:00:00Z")]},
-                OSError("source-ingest unavailable"),
-            ]
+            [_snapshot("AAPL.US", 211.5), OSError("source-ingest unavailable")]
         )
 
         def fetch(_url, _timeout):
