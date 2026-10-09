@@ -86,6 +86,24 @@ def test_claude_token_binding_is_narrow_and_reference_only() -> None:
     assert "auth-profiles.json" not in source
 
 
+def test_toolsearch_override_matches_adapter_admission_and_keeps_defaults() -> None:
+    sys.path.insert(0, str(REPO_ROOT / "services" / "openclaw-gateway-adapter"))
+    import main as adapter
+
+    source = CONFIGURE_SCRIPT.read_text(encoding="utf-8")
+    batch = json.loads(re.search(r"CLAUDE_TOOLSEARCH_BATCH='(\[.*?\])'", source, re.DOTALL).group(1))
+    values = {item["path"]: item["value"] for item in batch}
+    prefix = 'agents.defaults.cliBackends["claude-cli"].'
+    assert values[prefix + "args"] == adapter._CLAUDE_CLI_TOOLSEARCH_ARGS
+    assert values[prefix + "resumeArgs"] == adapter._CLAUDE_CLI_TOOLSEARCH_RESUME_ARGS
+    # OpenClaw 2026.7.1 registered defaults must all survive in both lists.
+    defaults = ["-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
+                "--setting-sources", "user", "--allowedTools", "mcp__openclaw__*", "--disallowedTools",
+                "ScheduleWakeup,CronCreate,Bash(run_in_background:true),Monitor"]
+    assert values[prefix + "args"][:len(defaults)] == defaults
+    assert values[prefix + "args"][len(defaults):] == ["--tools", "ToolSearch"]
+
+
 def _run_model_pool_script(
     tmp_path, *, token_present: bool, reject_binding: bool = False,
     agents=None, get_fail: bool = False, raw_state=None,
@@ -176,7 +194,9 @@ def test_optional_claude_token_binds_before_validate_and_restart(tmp_path) -> No
 def test_missing_token_preserves_native_cli_login_path(tmp_path) -> None:
     result, calls = _run_model_pool_script(tmp_path, token_present=False)
     assert result.returncode == 0, result.stderr
-    assert not any("cliBackends" in arg for args in calls for arg in args)
+    bound = [arg for args in calls for arg in args if "cliBackends" in arg]
+    assert all("CLAUDE_CODE_OAUTH_TOKEN" not in arg for arg in bound)
+    assert any('"--tools","ToolSearch"' in arg for arg in bound)
     assert any("restart" in args for args in calls)
 
 
@@ -194,7 +214,9 @@ def _admission(agents):
 
     class Provider:
         def _gateway_call(self, *_a, **_k):
-            return {"valid": True, "config": {"agents": {"list": agents}}}
+            return {"valid": True, "config": {"agents": {"list": agents, "defaults": {"cliBackends": {
+                "claude-cli": {"args": adapter._CLAUDE_CLI_TOOLSEARCH_ARGS,
+                               "resumeArgs": adapter._CLAUDE_CLI_TOOLSEARCH_RESUME_ARGS}}}}}}
 
     saved = adapter._OPENCLAW_AGENT_PROVIDER
     adapter._OPENCLAW_AGENT_PROVIDER = Provider()
@@ -226,8 +248,21 @@ def test_provisioned_config_updates_target_without_dropping_properties(tmp_path)
     assert result.final_agents[0] == existing[0]
     assert result.final_agents[1] == {
         "id": "structured-extraction", "name": "Extractor",
-        "tools": {"allow": ["read"], "alsoAllow": ["lookup"], "deny": ["*"]},
+        "tools": {"allow": ["read"], "alsoAllow": ["lookup"], "deny": ["*"],
+                  "exec": {"security": "deny", "ask": "always"}},
     }
+    _admission(result.final_agents)
+
+
+def test_existing_deny_all_agents_get_exec_policy(tmp_path) -> None:
+    persona = {"id": "persona-opinion-abcdef0123456789abcdef01", "name": "P",
+               "tools": {"allow": [], "deny": ["*"]}}
+    existing = [{"id": "main", "default": True, "tools": {"allow": ["exec"]}}, persona]
+    result, _ = _run_model_pool_script(tmp_path, token_present=False, agents=existing)
+    assert result.returncode == 0, result.stderr
+    assert result.final_agents[0] == existing[0]
+    assert result.final_agents[1] == {**persona, "tools": {
+        "allow": [], "deny": ["*"], "exec": {"security": "deny", "ask": "always"}}}
     _admission(result.final_agents)
 
 
