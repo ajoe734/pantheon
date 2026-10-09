@@ -1210,8 +1210,10 @@ class AssistantOpenClawProvider:
         """
 
         instruction = (
-            "Answer with one JSON object only, no prose and no code fence, "
-            "that satisfies this JSON schema:\n"
+            "No tool is available in this turn. Any request below to call "
+            "emit_extraction or another tool means: answer with the JSON "
+            "object itself. Answer with one JSON object only, no prose and "
+            "no code fence, that satisfies this JSON schema:\n"
             + json.dumps(extraction_schema, ensure_ascii=False)
         )
         # One-shot and stateless: a stable `user` key would reuse one warm CLI
@@ -1234,8 +1236,8 @@ class AssistantOpenClawProvider:
                 error_code="OPENCLAW_TOOL_MISMATCH",
             )
         try:
-            parsed_arguments = json.loads(result.output["json_events"][0]["item"]["text"])
-        except (ValueError, TypeError, KeyError, IndexError) as exc:
+            parsed_arguments = json.loads(self._result_text(result))
+        except ValueError as exc:
             raise OpenClawProviderError(
                 "model answer is not valid JSON",
                 status_code=422,

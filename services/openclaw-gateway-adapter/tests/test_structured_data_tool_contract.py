@@ -109,6 +109,24 @@ class TestInvokeStructuredPositive:
         assert "tools" not in body and "tool_choice" not in body
         assert json.dumps(EXTRACTION_SCHEMA) in body["input"]
 
+    def test_caller_tool_wording_still_gets_json_only_instruction_first(self):
+        captured = {}
+
+        def fake_urlopen(req, timeout=None, deadline=None):
+            captured["body"] = json.loads(req.data.decode("utf-8"))
+            return _FakeSSEResponse(_answer_events(json.dumps({"title": "x"})))
+
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
+            result = _make_provider().invoke_structured(
+                "You MUST call the tool emit_extraction",
+                extraction_schema=EXTRACTION_SCHEMA,
+                operator_id="op-1",
+            )
+        text = captured["body"]["input"]
+        assert text.startswith("No tool is available")
+        assert text.index("answer with the JSON object itself") < text.index("You MUST call")
+        assert result.output["structured_data"] == {"title": "x"}
+
     def test_each_call_uses_a_fresh_upstream_session_user(self):
         # A stable `user` reuses one warm CLI session per caller and grows to context_overflow.
         provider = _make_provider()
