@@ -100,11 +100,8 @@ def snapshot_ref(snapshot: dict[str, Any]) -> str:
     return f"monitor-snapshot-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{digest}"
 
 
-def _format_incident(inc: dict[str, Any]) -> dict[str, Any]:
-    summary = inc.get("evidence_summary")
-    if isinstance(summary, str) and len(summary) > MAX_INCIDENT_SUMMARY_CHARS:
-        summary = summary[:MAX_INCIDENT_SUMMARY_CHARS] + "... [truncated]"
-    return {"title": inc.get("title"), "cluster": inc.get("incident_cluster_id"), "summary": summary}
+def _omitted_note(count: int) -> str:
+    return f"\nOMITTED_INCIDENTS={count} ({count} open incidents omitted / left out due to prompt limit)" if count else ""
 
 
 def build_prompt(snapshot: dict[str, Any], open_incidents: list[dict[str, Any]]) -> str:
@@ -116,18 +113,17 @@ def build_prompt(snapshot: dict[str, Any], open_incidents: list[dict[str, Any]])
     )
     snap = f"\nSNAPSHOT={json.dumps(snapshot)}"
     covered: list[dict[str, Any]] = []
-    omitted = 0
     for inc in open_incidents:
-        cand_covered = covered + [_format_incident(inc)]
-        cand_omitted = len(open_incidents) - len(cand_covered)
-        note = f"\nOMITTED_INCIDENTS={cand_omitted} ({cand_omitted} open incidents omitted / left out due to prompt limit)" if cand_omitted else ""
-        if len(f"{base}OPEN_INCIDENTS={json.dumps(cand_covered)}{note}{snap}") > MAX_PROMPT_CHARS:
-            omitted = len(open_incidents) - len(covered)
+        summary = inc.get("evidence_summary")
+        if isinstance(summary, str) and len(summary) > MAX_INCIDENT_SUMMARY_CHARS:
+            summary = summary[:MAX_INCIDENT_SUMMARY_CHARS] + "... [truncated]"
+        cand = covered + [{"title": inc.get("title"), "cluster": inc.get("incident_cluster_id"), "summary": summary}]
+        note = _omitted_note(len(open_incidents) - len(cand))
+        if len(f"{base}OPEN_INCIDENTS={json.dumps(cand)}{note}{snap}") > MAX_PROMPT_CHARS:
             break
-        covered = cand_covered
-    note = f"\nOMITTED_INCIDENTS={omitted} ({omitted} open incidents omitted / left out due to prompt limit)" if omitted else ""
-    prompt = f"{base}OPEN_INCIDENTS={json.dumps(covered)}{note}{snap}"
-    return prompt[:MAX_PROMPT_CHARS]
+        covered = cand
+    omitted = len(open_incidents) - len(covered)
+    return f"{base}OPEN_INCIDENTS={json.dumps(covered)}{_omitted_note(omitted)}{snap}"[:MAX_PROMPT_CHARS]
 
 
 def ask_agent(prompt: str, adapter_url: str, token: str, fetch: Callable[..., Any] = _http) -> list[dict[str, Any]]:

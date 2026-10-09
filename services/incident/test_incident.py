@@ -697,6 +697,53 @@ class TestIncidentEvidenceMergeBound(unittest.TestCase):
                 {"rec-old-1", "rec-new-1"},
             )
 
+    def test_merge_incident_evidence_truncated_summary_retains_marker_and_whole_field(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = IncidentStore(path=Path(tmpdir) / "incidents.json")
+            inc = _make_incident(
+                incident_id="inc-bound-003",
+                evidence_summary="seed_entry=1",
+            )
+            store.create_incident(inc)
+
+            for i in range(40):
+                incoming = _make_incident(
+                    incident_id="inc-bound-003",
+                    evidence_summary=f"metric_{i}=drawdown; value_{i}=0.{i:03d}; details_{i}=" + ("e" * 300),
+                )
+                store.merge_incident_evidence("inc-bound-003", incoming)
+
+            truncated = store.get_incident("inc-bound-003")
+            self.assertIsNotNone(truncated)
+            self.assertLessEqual(len(truncated.evidence_summary), 4000)
+            self.assertTrue(truncated.evidence_summary.startswith("[older entries dropped] "))
+            tail = truncated.evidence_summary[len("[older entries dropped] "):]
+            first_field = tail.split(";")[0].strip()
+            self.assertTrue(first_field.startswith("metric_"), f"Expected whole field but got: {first_field}")
+            self.assertIn("=", first_field)
+            self.assertTrue(truncated.evidence_summary.endswith("details_39=" + ("e" * 300)))
+
+            short_incoming = _make_incident(
+                incident_id="inc-bound-003",
+                evidence_summary="short_metric=breach",
+            )
+            updated_short = store.merge_incident_evidence("inc-bound-003", short_incoming)
+            self.assertLessEqual(len(updated_short.evidence_summary), 4000)
+            self.assertTrue(updated_short.evidence_summary.startswith("[older entries dropped] "))
+            self.assertTrue(updated_short.evidence_summary.endswith("short_metric=breach"))
+            tail_short = updated_short.evidence_summary[len("[older entries dropped] "):]
+            first_field_short = tail_short.split(";")[0].strip()
+            self.assertTrue(first_field_short.startswith("metric_"), f"Expected whole field but got: {first_field_short}")
+
+            dup_incoming = _make_incident(
+                incident_id="inc-bound-003",
+                evidence_summary="short_metric=breach",
+            )
+            updated_dup = store.merge_incident_evidence("inc-bound-003", dup_incoming)
+            self.assertEqual(updated_dup.evidence_summary, updated_short.evidence_summary)
+            self.assertTrue(updated_dup.evidence_summary.startswith("[older entries dropped] "))
+            self.assertLessEqual(len(updated_dup.evidence_summary), 4000)
+
 
 if __name__ == "__main__":
     unittest.main()
