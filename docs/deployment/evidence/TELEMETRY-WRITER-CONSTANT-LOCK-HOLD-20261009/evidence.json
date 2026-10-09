@@ -1,0 +1,17 @@
+{
+  "task_id": "TELEMETRY-WRITER-CONSTANT-LOCK-HOLD-20261009",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "hosted_observation": "2026-10-09 05:49-06:33Z read-only sampling every 2s of trade_journey_projection.controller: canonical-lifecycle-projector went to status failed with last_error 'TimeoutError: ' 75 times in ~45 min (builds 610ba and fb9f1bb98). _source_writer_fence waits on pg_advisory_xact_lock(hashtext('telemetry_events')) with a 10s wait_for; pantheon-telemetry-1 held the lock with transactions over 5s in wait_event Client while pantheon-loop-run-projector-scheduler-1 waited on Lock. Root 37885008558 failed BFF readback (bff_loop_surface_invalid).",
+  "change": "services/telemetry/ingest_svc.py _postgres_write: one INSERT ... SELECT FROM unnest(...) WITH ORDINALITY ORDER BY ordinality ON CONFLICT (event_id) DO NOTHING RETURNING event_id, ingested_seq; at most one batched conflicting-duplicate query for skipped rows; one pg_notify. Projector, its timeout and the lock key are unchanged.",
+  "statements_while_lock_held": {
+    "before": {"batch_1_new": "lock + 1 insert + notify = 3", "batch_500_new": "lock + 500 inserts + notify = 502", "batch_500_exact_duplicates": "lock + 500 inserts + 500 duplicate checks = 1001"},
+    "after": {"batch_1_new": 3, "batch_500_new": 3, "batch_1_duplicates": 3, "batch_500_duplicates": 3, "max_any_batch": 4}
+  },
+  "verification": {
+    "command": "python3 -m unittest services.telemetry.test_ingest_shock_absorption",
+    "result": "Ran 64 tests, OK",
+    "new_test": "TestPostgresWriteFn.test_postgres_writer_lock_hold_statement_count_is_constant fails on base (verified by reverting ingest_svc.py), passes on head"
+  },
+  "limits": "Unit tests use a recording fake connection; SQL was not executed against a live Postgres here. Hosted proof requires deploy and re-sampling."
+}
