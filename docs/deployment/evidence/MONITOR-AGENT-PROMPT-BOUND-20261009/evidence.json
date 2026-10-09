@@ -1,0 +1,39 @@
+{
+  "task_id": "MONITOR-AGENT-PROMPT-BOUND-20261009",
+  "base_sha": "13128e7ae07324bdc7a13586ed6082784aa000ae",
+  "change_class": "corrective",
+  "net_prod_line_budget": 30,
+  "summary": "Bound monitor-agent structured extraction prompt and open incident evidence summaries to prevent LLM prompt length limit 502 errors.",
+  "scope": [
+    "services/monitor-agent/monitor_agent.py: bound build_prompt with per-incident summary truncation (MAX_INCIDENT_SUMMARY_CHARS = 1000) and total prompt cap (MAX_PROMPT_CHARS = 120000) with omitted incident counting",
+    "services/monitor-agent/test_monitor_agent.py: unit tests for prompt bounding with 50 large incidents and omitted incident counting",
+    "services/incident/incident.py: bound _merge_summary to MAX_EVIDENCE_SUMMARY_LENGTH (4000) with older entries dropped marker and reduce oversized stored summaries on next merge",
+    "services/incident/test_incident.py: unit tests for evidence summary merge bounding at 4000 chars and reduction of pre-existing oversized summaries",
+    "docs/deployment/evidence/MONITOR-AGENT-PROMPT-BOUND-20261009/evidence.json: verification and test classification manifest"
+  ],
+  "acceptance_criteria_verification": {
+    "ac1": "The prompt monitor-agent sends to the structured route stays at or below 120000 characters no matter how many open incidents exist or how long their summaries are; verified in test_build_prompt_bounds_prompt_with_50_large_incidents and test_run_once_sends_bounded_prompt_with_50_large_open_incidents using 50 open incidents each carrying a 200000 character summary.",
+    "ac2": "Each incident in the monitor prompt keeps its title and cluster and a summary cut to a fixed per-incident limit with a visible truncation marker (... [truncated]); incidents left out because of the total limit are counted in the prompt (OMITTED_INCIDENTS count) and not silently dropped. Verified in test_build_prompt_bounds_prompt_with_50_large_incidents and test_build_prompt_counts_omitted_incidents_when_total_limit_exceeded.",
+    "ac3": "An open incident evidence_summary stays at or below 4000 characters however many evidence merges it receives; the newest incoming summary is always present and the kept text marks that older entries were dropped ([older entries dropped] marker). Once dropped, the marker is preserved across subsequent short and duplicate merges, duplicates leave stored summary unchanged, and kept tail aligns at whole field boundaries (; separator) without partial key=value entries. Verified in test_merge_incident_evidence_bounds_evidence_summary_at_4000 and test_merge_incident_evidence_truncated_summary_retains_marker_and_whole_field.",
+    "ac4": "A stored summary that is already longer than the limit is brought within it on its next merge without a data migration; telemetry_event_ids and reconciliation_ids still keep every id. Verified in test_merge_incident_evidence_reduces_existing_oversized_summary with a 100000+ char summary reduced to <= 4000 chars while preserving all IDs.",
+    "ac5": "Tests in the listed test files cover both limits and pass (94 passed); every existing monitor-agent and incident test still passes and no assertion is weakened.",
+    "ac6": "The structured route and the Gateway agent config and the admission guard are not changed.",
+    "ac7": "Net production line change is +28 lines (+14 in incident.py, +14 in monitor_agent.py) against a budget of 30, and no compressed code is used."
+  },
+  "test_expectation_classification": {
+    "status": "no_test_expectations_changed",
+    "details": "All 88 pre-existing unit tests across services/incident/test_incident.py and services/monitor-agent/test_monitor_agent.py continue to pass without modification or weakening. 6 new comprehensive unit tests were added to verify prompt bounding, omitted incident counting, summary merge bounding, reduction of oversized pre-existing summaries, and preservation of marker, duplicate idempotency, and whole field boundaries on truncated summaries."
+  },
+  "validation": [
+    {
+      "suite": "services/incident/test_incident.py",
+      "command": "$PYTHON -m pytest -v services/incident/test_incident.py",
+      "result": "79 passed"
+    },
+    {
+      "suite": "services/monitor-agent/test_monitor_agent.py",
+      "command": "$PYTHON -m pytest -v services/monitor-agent/test_monitor_agent.py",
+      "result": "15 passed"
+    }
+  ]
+}
