@@ -1427,29 +1427,33 @@ class Model(http.server.BaseHTTPRequestHandler):
         )
         delta = {"role": "assistant", "content": "FIXTURE_OK"}
         finish = "stop"
-        if case in ("positive", "invalid", "wrong", "denied") and case not in self.emitted_cases:
+        if case in ("positive", "invalid", "wrong", "missing", "denied") and case not in self.emitted_cases:
             self.emitted_cases.add(case)
-            name = (
-                "exec"
-                if case == "denied"
-                else "wrong_tool" if case == "wrong" else "emit_extraction"
-            )
-            args = '{"value":7}' if case != "invalid" else '{"value":"bad"}'
             if case == "denied":
-                args = '{"command":"touch /tmp/SIMPLIFY_FORBIDDEN"}'
-            delta = {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [
-                    {
-                        "index": 0,
-                        "id": "call_fixture",
-                        "type": "function",
-                        "function": {"name": name, "arguments": args},
-                    }
-                ],
-            }
-            finish = "tool_calls"
+                delta = {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call_fixture",
+                            "type": "function",
+                            "function": {
+                                "name": "exec",
+                                "arguments": '{"command":"touch /tmp/SIMPLIFY_FORBIDDEN"}',
+                            },
+                        }
+                    ],
+                }
+                finish = "tool_calls"
+            elif case == "positive":
+                delta = {"role": "assistant", "content": '{"value":7}'}
+            elif case == "invalid":
+                delta = {"role": "assistant", "content": '{"value":"bad"}'}
+            elif case == "wrong":
+                delta = {"role": "assistant", "content": "not valid json"}
+            elif case == "missing":
+                delta = {"role": "assistant", "content": "{}"}
         usage = {"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110}
         self.send_response(200)
         self.send_header(
@@ -1514,10 +1518,27 @@ def run_pinned_gateway_replay():
                     "model": {"primary": "fixture/fixture-model"},
                     "skipBootstrap": True,
                     "thinkingDefault": "off",
+                    "cliBackends": {
+                        "claude-cli": {
+                            "command": "claude",
+                            "args": [
+                                "-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
+                                "--setting-sources", "user", "--allowedTools", "mcp__openclaw__*",
+                                "--disallowedTools", "ScheduleWakeup,CronCreate,Bash(run_in_background:true),Monitor",
+                                "--tools", "ToolSearch",
+                            ],
+                            "resumeArgs": [
+                                "-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
+                                "--setting-sources", "user", "--allowedTools", "mcp__openclaw__*",
+                                "--disallowedTools", "ScheduleWakeup,CronCreate,Bash(run_in_background:true),Monitor",
+                                "--tools", "ToolSearch", "--resume", "{sessionId}",
+                            ],
+                        }
+                    },
                 },
                 "list": [
-                    {"id": agent, "tools": {"deny": ["*"]}}
-                    for agent in ["main"] + [f"bench-{i}" for i in range(10)]
+                    {"id": agent, "tools": {"deny": ["*"], "exec": {"security": "deny", "ask": "always"}}}
+                    for agent in ["main", "structured-extraction"] + [f"bench-{i}" for i in range(10)]
                 ],
             },
             "models": {
@@ -1543,7 +1564,9 @@ def run_pinned_gateway_replay():
         }
         policy_probe = os.environ.get("SIMPLIFY_POLICY_PROBE")
         if policy_probe == "missing":
-            config["agents"]["list"][0].pop("tools")
+            for agent_entry in config["agents"]["list"]:
+                if agent_entry["id"] in ("main", "structured-extraction"):
+                    agent_entry.pop("tools", None)
         (tmp / "config.json").write_text(json.dumps(config))
         (tmp / "workspace").mkdir()
 
@@ -1639,7 +1662,7 @@ def run_pinned_gateway_replay():
                         else:
                             assert response.status_code == 502, response.text
                             assert response.json()["error_code"] == "OPENCLAW_RESPONSES_FAILED"
-                    assert all(r["tools"] == ["emit_extraction"] for r in Model.records)
+                    assert all(r["tools"] == [] for r in Model.records)
                     assert docker("exec", name, "test", "-e", "/tmp/SIMPLIFY_FORBIDDEN").returncode == 1
                     print("MOUNTED_POLICY_RESULT", json.dumps({"policy": policy_probe, "results": results,
                           "policy_reads": policy_reads, "turn_deadline_seconds": provider._timeout,
@@ -1667,16 +1690,22 @@ def run_pinned_gateway_replay():
                     print(case, "passed", flush=True)
                 except OpenClawProviderError as exc:
                     assert case != "positive", exc.to_payload()
-                    assert exc.error_code == "OPENCLAW_RESPONSES_FAILED", exc.to_payload()
+                    expected_error = {
+                        "invalid": "OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH",
+                        "wrong": "OPENCLAW_TOOL_ARGS_INVALID_JSON",
+                        "missing": "OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH",
+                        "denied": "OPENCLAW_RESPONSES_FAILED",
+                    }.get(case)
+                    assert exc.error_code == expected_error, (case, exc.to_payload())
                     capability[case] = exc.to_payload()
                     print(case, exc.error_code, flush=True)
-            assert all(r["tools"] == ["emit_extraction"] for r in Model.records)
+            assert all(r["tools"] == [] for r in Model.records)
             assert docker("exec", name, "test", "-e", "/tmp/SIMPLIFY_FORBIDDEN").returncode == 1
             gateway_logs = docker("logs", name)
             logs = gateway_logs.stdout + gateway_logs.stderr
             assert "tool policy removed" in logs and "exec" in logs
             capability["native_denial"] = {
-                "advertised_tools": ["emit_extraction"],
+                "advertised_tools": [],
                 "attempted_tool": "exec",
                 "marker_exists": False,
                 "gateway_denial_logged": True,
