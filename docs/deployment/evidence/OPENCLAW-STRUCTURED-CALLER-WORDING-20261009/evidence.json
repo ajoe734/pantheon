@@ -1,0 +1,31 @@
+{
+  "task_id": "OPENCLAW-STRUCTURED-CALLER-WORDING-20261009",
+  "summary": "Remove retired emit_extraction tool references from caller prompts, client docstrings, tests, and integration/operations docs in favor of JSON-only structured answers and ToolSearch-only launch.",
+  "callers_updated": [
+    "services/control-plane/bff/agora/interaction/runner.py",
+    "services/control-plane/bff/agora/servant/research_proposal.py",
+    "services/control-plane/bff/agora/strategy_workshop/semantic_provider.py",
+    "services/control-plane/bff/openclaw_ops_client.py",
+    "services/source_ingestion/semantic_extraction_client.py",
+    "services/source_ingestion/semantic_extraction.py",
+    "services/source_ingestion/tests/test_semantic_extraction.py"
+  ],
+  "docs_updated": [
+    "docs/operations/monitor-agent.md",
+    "integrations/openclaw/integration.md"
+  ],
+  "acceptance": {
+    "no_emit_extraction_in_callers": true,
+    "json_only_and_toolsearch_in_docs": true,
+    "callers_read_structured_data_unchanged": true,
+    "tests_pass_without_weakened_assertions": true,
+    "net_production_lines_non_increasing": true
+  },
+  "tests": {
+    "services/source_ingestion/tests/test_semantic_extraction.py": "33 passed",
+    "services/control-plane/bff/agora/servant/test_servant_research_proposal.py": "8 passed",
+    "services/control-plane/bff agora interaction/workshop tests": "146 passed, 2 skipped",
+    "services/openclaw-gateway-adapter tests": "189 passed"
+  },
+  "net_production_lines": "+8/-8 (net 0)"
+}

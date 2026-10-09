@@ -380,7 +380,7 @@ class OpenClawOpsClient:
         self, *, prompt: str, extraction_schema: Dict[str, Any], operator_id: str,
         trace_id: Optional[str] = None, idempotency_key: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Data-only turn: the adapter pins the single `emit_extraction` tool and rejects any other."""
+        """Data-only turn: asks for one JSON object matching the caller schema and validated by the adapter."""
         headers = {"X-Operator-Id": operator_id}
         if trace_id:
             headers["X-Trace-Id"] = trace_id

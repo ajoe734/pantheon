@@ -648,11 +648,11 @@ class SemanticExtractionResult:
 
 
 # ---------------------------------------------------------------------------
-# Strict Extraction Tool Schema for emit_extraction
+# Strict Extraction Schema for structured extraction
 # ---------------------------------------------------------------------------
 
 def get_semantic_extraction_json_schema(task_type: ExtractionTaskType) -> dict[str, Any]:
-    """Generates the strict JSON Schema for emit_extraction parameters."""
+    """Generates the strict JSON Schema for structured extraction validation."""
     intent_schema = {
         "type": "object",
         "properties": {

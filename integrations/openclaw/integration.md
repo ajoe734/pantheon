@@ -222,18 +222,18 @@ that lack the authenticated operator fail closed as conflicts; they are never
 silently resubmitted or replayed to an unbound actor.
 
 `POST /api/openclaw-adapter/assistant/providers/openclaw/structured` accepts a
-schema for the fixed data-only `emit_extraction` tool. Arbitrary caller tool
-names, tool definitions, tool choice, and unadmitted agents are rejected.
-Returned arguments undergo recursive schema validation; wrong/missing calls
-and invalid arguments are failures, never domain commands. The pinned Gateway
-normally yields a function call in `response.completed` with nested status
-`incomplete`; this tool handback differs from incomplete text generation.
-The adapter retains the function-call identity and reported usage.
+caller-declared `extraction_schema` and asks the model for one JSON object only.
+No tools are offered on this turn: Gateway CLI launches with ToolSearch only,
+and arbitrary caller tool names, tool definitions, and tool choice are rejected.
+The model's JSON-only answer is parsed and validated by the adapter against the
+schema; unexpected tool calls, non-JSON output, and invalid structures are
+failures (never domain commands). The adapter retains reported usage and
+surfaces the validated data in `data.output.structured_data`.
 
 The Gateway agent's own native-tool policy remains a necessary server-side
-boundary: configure the extraction agent with `tools.deny: ["*"]` so only the
-request's data-emission client tool is offered. A client `tool_choice` or
-post-response validation alone cannot prevent native execution. Before each
+boundary: configure the extraction agent with `tools.deny: ["*"]` alongside the
+ToolSearch-only CLI launch so no native execution or shell capability is offered.
+A client prompt or post-response validation alone cannot prevent native execution. Before each
 mounted extraction request, the adapter reads `config.get` through its existing
 administrative Gateway RPC, using the same URL and credential as the HTTP turn.
 The snapshot must be valid and contain exactly one selected default agent with
