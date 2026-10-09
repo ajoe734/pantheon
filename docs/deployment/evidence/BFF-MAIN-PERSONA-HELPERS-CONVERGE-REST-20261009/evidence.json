@@ -1,0 +1,73 @@
+{
+  "task_id": "BFF-MAIN-PERSONA-HELPERS-CONVERGE-REST-20261009",
+  "base": "dev c63c33287",
+  "helpers": {
+    "_dataset_surface_status": {
+      "difference": "main copy: shared format_dataset_surface_status formatter, incident source taken from the incident port, an unavailable/missing source forced to status=unavailable with no staleness. service copy: _surface_status() base, source from store.dataset_source, unavailable source gets a staleness record.",
+      "default_reproduces": "former main.py copy (app_factory _dep consumers, main.py callers, human_inbox)",
+      "explicit_keyword": "service_surface_rules=True on every personas/service.py internal caller and on PersonaService.dataset_surface_status (which is also PersonaService's default self._dataset_surface_status)",
+      "definitions_in_head_main": 0,
+      "definitions_in_head_service": 1
+    },
+    "_composed_dataset_surface_status": {
+      "difference": "main copy called main-rules _dataset_surface_status with main read_store; service copy called service-rules with read_store keyword",
+      "default_reproduces": "former main.py copy",
+      "explicit_keyword": "service_surface_rules=True on the service callers",
+      "definitions_in_head_main": 0,
+      "definitions_in_head_service": 1
+    },
+    "_read_surface_meta": {
+      "difference": "same as _composed_dataset_surface_status: only the nested _dataset_surface_status rules differ",
+      "default_reproduces": "former main.py copy",
+      "explicit_keyword": "service_surface_rules=True on the service callers",
+      "definitions_in_head_main": 0,
+      "definitions_in_head_service": 1
+    },
+    "_list_governance_audit_events": {
+      "difference": "main copy merges Agora events from the main-global agora_audit_store and projects commands via list_projected_governance_audit_events(command_store); service copy has no Agora merge and loops the active command store (same projection)",
+      "default_reproduces": "former main.py copy (console audit reads keep the Agora merge; the store is the AgoraAuditStore main wires into assistant.management_service.get_agora_audit_store())",
+      "explicit_keyword": "include_agora_events=False in personas/routes/detail.py persona audit tab",
+      "definitions_in_head_main": 0,
+      "definitions_in_head_service": 1
+    },
+    "_sem_command_response": {
+      "difference": "main copy delegates to main's fully wired _command_adapter_service and forwards authorization and dry_run; service copy built a request-local CommandAdapterService without validators and did not forward them",
+      "default_reproduces": "former main.py copy: the adapter composed by app_factory (persona service module _composed_command_adapter_service, same object as main._command_adapter_service)",
+      "explicit_keyword": "isolated_adapter=True reproduces the former service adapter (no live service caller on base; personas/routes/ranking.py only imports the name)",
+      "definitions_in_head_main": 0,
+      "definitions_in_head_service": 1
+    }
+  },
+  "consumers": {
+    "core/app_factory.py": "five names added to the persona service resolver branch; the alias branch no longer lists _dataset_surface_status; composition sets personas.service._composed_command_adapter_service next to _composed_persona_service; unresolved names still fail closed",
+    "governance/human_inbox.py": "imports the surface helpers from ..personas.service (main read_store still passed for _dataset_source_after_read)",
+    "smoke_test.py, scripts/test_bff_cw_contract_prerequisite.py, tests/test_read_surface_caller_migration.py, tests/test_bff_main_composition.py": "reach the helpers through personas.service instead of main",
+    "test_bff_strategy_persona_contract.py": "router stand-in uses service.dataset_surface_status to keep service rules",
+    "tests/test_tenant_fallback_audit.py": "AST-extracts the definition from personas/service.py; supplies an empty Agora store; every check kept",
+    "scripts/audit_management_list_contract.py": "unchanged; names none of the five helpers, guardrail summary issues=0 new=0, its tests pass"
+  },
+  "tests": {
+    "new_in": "services/control-plane/bff/tests/test_persona_main_residue.py",
+    "paths": [
+      "dataset/composed/meta rules default vs service_surface_rules",
+      "service internal callers all pass service_surface_rules=True (AST)",
+      "audit merge: console keeps Agora, persona detail passes include_agora_events=False",
+      "_sem_command_response composed adapter vs isolated adapter, fail closed when unwired",
+      "composed app: same read/command store and adapter objects"
+    ]
+  },
+  "verification": {
+    "interpreter": "PANTHEON_DEPENDENCY_PYTHON",
+    "scoped_files_base": "5 failed, 419 passed, 2 skipped, 1 collection error",
+    "scoped_files_head": "5 failed, 424 passed, 2 skipped, 1 collection error",
+    "pre_existing_identical_on_base_and_head": [
+      "scripts/test_bff_cw_contract_prerequisite.py::test_cw03_record_sponsor_decision_command_reuses_same_read_projection",
+      "scripts/test_bff_cw_contract_prerequisite.py::test_cw04_default_redactor_fails_closed_without_wired_policy",
+      "services/consultation/test_evidence_redaction.py::test_ask_007_publish_redacts_persona_internal_evidence_before_review_queue",
+      "services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_seeded_detail_paths_use_read_model_dtos",
+      "services/control-plane/bff/tests/test_read_surface_caller_migration.py::TestStaticRegressionReadSurfacePorts::test_main_py_all_read_store_attributes_are_inventoried_and_mapped",
+      "services/control-plane/tests/agora/test_cross_user_isolation.py (collection error)"
+    ],
+    "other_tests_referencing_the_helpers_base_vs_head": "48 files: 4 failed, 565 passed, 1 skipped on both, same 4 failures"
+  }
+}
