@@ -396,7 +396,6 @@ class SemanticExtractionAdmission:
         "mit",
         "apache-2.0",
         "cc-by-4.0",
-        "dev_paper_simulation",
     })
 
     @classmethod

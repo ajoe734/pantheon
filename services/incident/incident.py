@@ -474,6 +474,9 @@ def build_postmortem_learn_feedback_writeback(
 # IncidentStore — in-memory write-guarded store
 # ---------------------------------------------------------------------------
 
+MAX_EVIDENCE_SUMMARY_LENGTH = 4000
+
+
 class IncidentStore:
     """
     Write-guarded store for IncidentCase and Postmortem records.
@@ -640,11 +643,10 @@ class IncidentStore:
         }
         if not existing.incident_cluster_id and incoming.incident_cluster_id:
             updates["incident_cluster_id"] = incoming.incident_cluster_id
-        if incoming.evidence_summary:
-            updates["evidence_summary"] = _merge_summary(
-                existing.evidence_summary,
-                incoming.evidence_summary,
-            )
+        if incoming.evidence_summary or (
+            existing.evidence_summary and len(existing.evidence_summary) > MAX_EVIDENCE_SUMMARY_LENGTH
+        ):
+            updates["evidence_summary"] = _merge_summary(existing.evidence_summary, incoming.evidence_summary or "")
 
         updated = IncidentCase(**{**existing.to_dict(), **updates})
         errors = validate_incident_case(updated)
@@ -952,11 +954,23 @@ def _max_incident_severity(left: str, right: str) -> str:
     return left if rank.get(left, 0) >= rank.get(right, 0) else right
 
 
-def _merge_summary(existing: Optional[str], incoming: str) -> str:
-    existing = (existing or "").strip()
-    incoming = incoming.strip()
-    if not existing:
-        return incoming
-    if not incoming or incoming in existing:
+def _merge_summary(existing: Optional[str], incoming: str, limit: int = MAX_EVIDENCE_SUMMARY_LENGTH) -> str:
+    existing, incoming = (existing or "").strip(), (incoming or "").strip()
+    if (not incoming or incoming in existing) and len(existing) <= limit:
         return existing
-    return f"{existing}; {incoming}"
+    marker = "[older entries dropped] "
+    clean = existing[len(marker):] if existing.startswith(marker) else existing
+    merged = f"{clean}; {incoming}" if clean and incoming else (incoming or clean)
+    candidate = f"{marker}{merged}" if existing.startswith(marker) else merged
+    if len(candidate) <= limit:
+        return candidate
+    max_tail = limit - len(marker)
+    raw_tail = merged[-max_tail:]
+    if raw_tail.startswith(" ") and len(merged) > max_tail and merged[-max_tail - 1] == ";":
+        tail = raw_tail[1:]
+    else:
+        sep = raw_tail.find("; ")
+        tail = raw_tail[sep + 2:] if sep != -1 else raw_tail
+    if incoming and incoming not in tail:
+        tail = incoming if len(incoming) <= max_tail else incoming[-max_tail:]
+    return f"{marker}{tail}"

@@ -1,0 +1,14 @@
+{
+  "task_id": "SOURCE-CONTROLLER-LEASE-FROM-CONFIG-20261009",
+  "fix_commit": "25afa7c3df3dada8cae94f1bb602eda9e5bb51e1",
+  "base": "7d0228592 (dev); fix commit is a direct child, no rebase needed",
+  "verification": {
+    "command": "pytest services/source_ingestion/tests/test_controller_worker.py -q",
+    "result": "98 passed",
+    "note": "run with uv ad-hoc deps (pytest, jsonschema, pyyaml, uvicorn, asyncpg, fastapi, httpx, pydantic); without them 5 persona/projector tests error on missing imports only"
+  },
+  "acceptance": {
+    "writes_request_config_lease_seconds": "controller_worker.py; harness bounded-pull regression test (interval 10, lease 10, timeout 1800) asserts 10s",
+    "admissibility_test": "still passes, asserts configured lease"
+  }
+}

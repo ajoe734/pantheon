@@ -628,5 +628,123 @@ class TestLineageEdgeCoverage(unittest.TestCase):
         self.assertIsNone(pm.linked_evolution_decision_id)
 
 
+# ---------------------------------------------------------------------------
+# Evidence summary bounding (MONITOR-AGENT-PROMPT-BOUND-20261009)
+# ---------------------------------------------------------------------------
+
+class TestIncidentEvidenceMergeBound(unittest.TestCase):
+    def test_merge_incident_evidence_bounds_evidence_summary_at_4000(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = IncidentStore(path=Path(tmpdir) / "incidents.json")
+            inc = _make_incident(
+                incident_id="inc-bound-001",
+                evidence_summary="Initial breach report",
+                telemetry_event_ids=["te-0"],
+                reconciliation_ids=["rec-0"],
+            )
+            store.create_incident(inc)
+
+            for i in range(1, 30):
+                incoming = _make_incident(
+                    incident_id="inc-bound-001",
+                    evidence_summary=f"Drift report breach #{i} with details: " + ("x" * 200),
+                    telemetry_event_ids=[f"te-{i}"],
+                    reconciliation_ids=[f"rec-{i}"],
+                )
+                updated = store.merge_incident_evidence("inc-bound-001", incoming)
+                self.assertLessEqual(len(updated.evidence_summary), 4000)
+
+            final = store.get_incident("inc-bound-001")
+            self.assertIsNotNone(final)
+            self.assertLessEqual(len(final.evidence_summary), 4000)
+            self.assertIn("[older entries dropped] ", final.evidence_summary)
+            self.assertTrue(final.evidence_summary.endswith("Drift report breach #29 with details: " + ("x" * 200)))
+            for i in range(30):
+                self.assertIn(f"te-{i}", final.telemetry_event_ids)
+                self.assertIn(f"rec-{i}", final.reconciliation_ids)
+            self.assertEqual(len(final.telemetry_event_ids), 30)
+            self.assertEqual(len(final.reconciliation_ids), 30)
+
+    def test_merge_incident_evidence_reduces_existing_oversized_summary(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = IncidentStore(path=Path(tmpdir) / "incidents.json")
+            oversized_summary = "Old drift reports: " + ("drift_entry; " * 15000)
+            self.assertGreater(len(oversized_summary), 100000)
+            inc = _make_incident(
+                incident_id="inc-bound-002",
+                evidence_summary=oversized_summary,
+                telemetry_event_ids=["te-old-1", "te-old-2"],
+                reconciliation_ids=["rec-old-1"],
+            )
+            store.create_incident(inc)
+
+            incoming = _make_incident(
+                incident_id="inc-bound-002",
+                evidence_summary="Newest incoming breach report 2026-10-09",
+                telemetry_event_ids=["te-new-1"],
+                reconciliation_ids=["rec-new-1"],
+            )
+            updated = store.merge_incident_evidence("inc-bound-002", incoming)
+            self.assertLessEqual(len(updated.evidence_summary), 4000)
+            self.assertIn("[older entries dropped] ", updated.evidence_summary)
+            self.assertIn("Newest incoming breach report 2026-10-09", updated.evidence_summary)
+            self.assertEqual(
+                set(updated.telemetry_event_ids),
+                {"te-old-1", "te-old-2", "te-new-1"},
+            )
+            self.assertEqual(
+                set(updated.reconciliation_ids),
+                {"rec-old-1", "rec-new-1"},
+            )
+
+    def test_merge_incident_evidence_truncated_summary_retains_marker_and_whole_field(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = IncidentStore(path=Path(tmpdir) / "incidents.json")
+            inc = _make_incident(
+                incident_id="inc-bound-003",
+                evidence_summary="seed_entry=1",
+            )
+            store.create_incident(inc)
+
+            for i in range(40):
+                incoming = _make_incident(
+                    incident_id="inc-bound-003",
+                    evidence_summary=f"metric_{i}=drawdown; value_{i}=0.{i:03d}; details_{i}=" + ("e" * 300),
+                )
+                store.merge_incident_evidence("inc-bound-003", incoming)
+
+            truncated = store.get_incident("inc-bound-003")
+            self.assertIsNotNone(truncated)
+            self.assertLessEqual(len(truncated.evidence_summary), 4000)
+            self.assertTrue(truncated.evidence_summary.startswith("[older entries dropped] "))
+            tail = truncated.evidence_summary[len("[older entries dropped] "):]
+            first_field = tail.split(";")[0].strip()
+            self.assertTrue(first_field.startswith("metric_"), f"Expected whole field but got: {first_field}")
+            self.assertIn("=", first_field)
+            self.assertTrue(truncated.evidence_summary.endswith("details_39=" + ("e" * 300)))
+
+            short_incoming = _make_incident(
+                incident_id="inc-bound-003",
+                evidence_summary="short_metric=breach",
+            )
+            updated_short = store.merge_incident_evidence("inc-bound-003", short_incoming)
+            self.assertLessEqual(len(updated_short.evidence_summary), 4000)
+            self.assertTrue(updated_short.evidence_summary.startswith("[older entries dropped] "))
+            self.assertTrue(updated_short.evidence_summary.endswith("short_metric=breach"))
+            tail_short = updated_short.evidence_summary[len("[older entries dropped] "):]
+            first_field_short = tail_short.split(";")[0].strip()
+            self.assertTrue(first_field_short.startswith("metric_"), f"Expected whole field but got: {first_field_short}")
+
+            dup_incoming = _make_incident(
+                incident_id="inc-bound-003",
+                evidence_summary="short_metric=breach",
+            )
+            updated_dup = store.merge_incident_evidence("inc-bound-003", dup_incoming)
+            self.assertEqual(updated_dup.evidence_summary, updated_short.evidence_summary)
+            self.assertTrue(updated_dup.evidence_summary.startswith("[older entries dropped] "))
+            self.assertLessEqual(len(updated_dup.evidence_summary), 4000)
+
+
 if __name__ == "__main__":
     unittest.main()
+

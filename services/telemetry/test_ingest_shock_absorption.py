@@ -649,10 +649,10 @@ class TestPostgresWriteFn(unittest.IsolatedAsyncioTestCase):
             def transaction(self):
                 return FakeTransaction()
 
-            async def fetchrow(self, query, *row):
+            async def fetch(self, query, *columns):
                 captured["query"] = query
-                captured["rows"] = [row]
-                return {"ingested_seq": 17}
+                captured["rows"] = list(zip(*columns))
+                return [{"event_id": "postgres-created-at", "ingested_seq": 17}]
 
             async def fetchval(self, query, *row):
                 raise AssertionError("new rows must not run the duplicate equality query")
@@ -691,7 +691,7 @@ class TestPostgresWriteFn(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(captured["notify_in_transaction"])
         self.assertEqual(captured["notify_query"], "SELECT pg_notify($1, $2)")
         self.assertEqual(captured["notify_args"][0], "pantheon_lifecycle_events")
-        self.assertIn("RETURNING ingested_seq", captured["query"])
+        self.assertIn("RETURNING event_id, ingested_seq", captured["query"])
         notification = json.loads(captured["notify_args"][1])
         self.assertEqual(notification["inserted_count"], 1)
         self.assertEqual(notification["first_ingested_seq"], 17)
@@ -719,12 +719,12 @@ class TestPostgresWriteFn(unittest.IsolatedAsyncioTestCase):
             def transaction(self):
                 return FakeTransaction()
 
-            async def fetchrow(self, query, *row):
-                return None
+            async def fetch(self, query, *columns):
+                return []
 
-            async def fetchval(self, query, *row):
+            async def fetchval(self, query, *columns):
                 captured["duplicate_query"] = query
-                return True
+                return None
 
             async def execute(self, query, *args):
                 if "pg_notify" in query:
@@ -745,7 +745,7 @@ class TestPostgresWriteFn(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.count, 0)
         self.assertTrue(captured["transaction_committed"])
         self.assertFalse(captured["notified"])
-        self.assertIn("payload = $4::jsonb", captured["duplicate_query"])
+        self.assertIn("IS DISTINCT FROM t.payload::jsonb", captured["duplicate_query"])
         self.assertTrue(captured["closed"])
 
     async def test_postgres_writer_rolls_back_conflicting_duplicate(self):
@@ -764,14 +764,12 @@ class TestPostgresWriteFn(unittest.IsolatedAsyncioTestCase):
             def transaction(self):
                 return FakeTransaction()
 
-            async def fetchrow(self, query, *row):
+            async def fetch(self, query, *columns):
                 captured["fetchrow_calls"] += 1
-                if captured["fetchrow_calls"] == 1:
-                    return {"ingested_seq": 18}
-                return None
+                return [{"event_id": "postgres-new-before-conflict", "ingested_seq": 18}]
 
-            async def fetchval(self, query, *row):
-                return False
+            async def fetchval(self, query, *columns):
+                return "postgres-conflicting-duplicate"
 
             async def execute(self, query, *args):
                 if "pg_notify" in query:
@@ -794,10 +792,64 @@ class TestPostgresWriteFn(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.success)
         self.assertFalse(result.retryable)
         self.assertIn("conflicting duplicate event_id=postgres-conflicting-duplicate", result.error)
-        self.assertEqual(captured["fetchrow_calls"], 2)
+        self.assertEqual(captured["fetchrow_calls"], 1)
         self.assertTrue(captured["rolled_back"])
         self.assertFalse(captured["notified"])
         self.assertTrue(captured["closed"])
+
+    async def test_postgres_writer_lock_hold_statement_count_is_constant(self):
+        async def run(batch_size: int, duplicates: bool) -> list[str]:
+            statements: list[str] = []
+            state = {"locked": False}
+
+            class FakeTransaction:
+                async def __aenter__(self):
+                    return None
+
+                async def __aexit__(self, exc_type, exc, traceback):
+                    return False
+
+            class FakeConnection:
+                def transaction(self):
+                    return FakeTransaction()
+
+                async def execute(self, query, *args):
+                    statements.append(query)
+
+                async def fetch(self, query, *columns):
+                    assert any("pg_advisory_xact_lock" in q for q in statements)
+                    statements.append(query)
+                    ids = columns[0]
+                    if duplicates:
+                        return []
+                    return [
+                        {"event_id": event_id, "ingested_seq": 100 + i}
+                        for i, event_id in enumerate(ids)
+                    ]
+
+                async def fetchval(self, query, *columns):
+                    statements.append(query)
+                    return None
+
+                async def close(self):
+                    pass
+
+            async def connect(dsn):
+                return FakeConnection()
+
+            batch = [_make_event(event_id=f"count-{i}") for i in range(batch_size)]
+            with patch.dict(sys.modules, {"asyncpg": types.SimpleNamespace(connect=connect)}):
+                result = await build_postgres_write_fn("postgresql://example/db")(batch)
+            self.assertTrue(result.success, result.error)
+            self.assertEqual(result.count, 0 if duplicates else batch_size)
+            return statements
+
+        for duplicates in (False, True):
+            one = await run(1, duplicates)
+            many = await run(500, duplicates)
+            self.assertEqual(len(one), len(many))
+            self.assertLessEqual(len(many), 4)
+            self.assertIn("pg_advisory_xact_lock", one[0])
 
 
 class TestTelemetryIngestService(unittest.IsolatedAsyncioTestCase):
