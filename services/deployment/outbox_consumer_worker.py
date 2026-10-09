@@ -14,8 +14,11 @@ Acceptance (LOOP-AUTO-DEP-001):
 
 from __future__ import annotations
 
+import asyncio
+import importlib
 import json
 import os
+import socket
 import sys
 import time
 import urllib.error
@@ -2772,6 +2775,160 @@ def healthcheck(
     return 0
 
 
+LOOP_ID = "promotion_deployment"
+_LOOP_CLAIM_SOURCE = "deployment.outbox.claim"
+_LOOP_POLL_SOURCE = "deployment.outbox_consumer.run_poll"
+# Documented default: must cover the longest gap between two controller writes
+# (tick interval + a full claim batch of per-event dispatches), so it is a
+# deployment setting and is never derived from the per-request timeout.
+_DEFAULT_LOOP_LEASE_SECONDS = 300
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
+        "+00:00", "Z"
+    )
+
+
+def build_loop_writer(
+    *, consumer_name: str, lease_duration_seconds: int | None = None
+) -> Any | None:
+    """Controller writer for Loop 8; disabled (None) when DATABASE_URL is empty.
+
+    Reuses the shared ``services/loop-control`` store rather than adding a
+    second controller state store.
+    """
+
+    dsn = str(os.getenv("DATABASE_URL") or "").strip()
+    if not dsn:
+        return None
+    module = importlib.import_module("services.loop-control")
+    return module.LoopControllerWriter(
+        dsn,
+        tenant_id=str(
+            os.getenv("PANTHEON_DEPLOYMENT_TENANT_ID")
+            or os.getenv("PANTHEON_TENANT_ID")
+            or "default"
+        ),
+        environment=str(os.getenv("PANTHEON_ENV") or "dev"),
+        controller_id=str(
+            os.getenv("PANTHEON_CONTROLLER_ID")
+            or f"{consumer_name}-{socket.gethostname()}-{os.getpid()}"
+        ),
+        controller_name=consumer_name,
+        deployment_sha=str(
+            os.getenv("PANTHEON_DEPLOYMENT_SHA") or os.getenv("GIT_SHA") or "unknown"
+        ),
+        lease_duration_seconds=lease_duration_seconds,
+    )
+
+
+def _loop_tick_ref(consumer_name: str, tick_at: str) -> str:
+    # Identifies this tick's observation so an idle tick still has evidence.
+    return f"deployment-outbox://consumer-ticks/{consumer_name}/{tick_at}"
+
+
+def build_loop_truth(result: Mapping[str, Any], *, tick_at: str) -> dict[str, Any]:
+    """Controller truth derived only from values the tick already read.
+
+    Per-event rejections, sequence waits and dead letters are downstream
+    state; they are not controller failures.
+    """
+
+    found = int(result.get("events_found") or 0)
+    dead_lettered = int(result.get("dead_lettered") or 0)
+    errors = list(result.get("errors") or [])
+    degraded = bool(errors) or dead_lettered > 0
+    return {
+        "desired_state": {
+            "present": found > 0,
+            "source": _LOOP_CLAIM_SOURCE,
+            "checked_at": tick_at,
+            "summary": f"{found} pending outbox event(s) claimed",
+        },
+        "downstream_actual_state": {
+            "status": "degraded" if degraded else "ready",
+            "source": _LOOP_POLL_SOURCE,
+            "checked_at": tick_at,
+            "summary": (
+                f"consumed={result.get('consumed', 0)} "
+                f"duplicates={result.get('duplicates', 0)} "
+                f"retry_scheduled={result.get('retry_scheduled', 0)} "
+                f"dead_lettered={dead_lettered} "
+                f"skipped_not_due={result.get('skipped_not_due', 0)} "
+                f"errors={len(errors)}"
+            ),
+        },
+        "dlq_count": dead_lettered,
+    }
+
+
+def _loop_write(label: str, coroutine_factory: Any) -> None:
+    try:
+        asyncio.run(coroutine_factory())
+    except Exception as exc:  # noqa: BLE001
+        print(f"Warning: failed to write loop-control {label}: {exc}", file=sys.stderr)
+
+
+def _write_loop_heartbeat(writer: Any, *, consumer_name: str, tick_at: str) -> None:
+    # Liveness only: omits desired/actual so no older observation is re-stamped.
+    _loop_write(
+        "heartbeat",
+        lambda: writer.record_heartbeat(
+            LOOP_ID, evidence_refs=[_loop_tick_ref(consumer_name, tick_at)]
+        ),
+    )
+
+
+def _write_loop_result(
+    writer: Any, result: Mapping[str, Any], *, consumer_name: str, tick_at: str
+) -> None:
+    truth = build_loop_truth(result, tick_at=tick_at)
+    _loop_write(
+        "result",
+        lambda: writer.record_success(
+            LOOP_ID,
+            summary=(
+                f"consumed={result.get('consumed', 0)} "
+                f"events_found={result.get('events_found', 0)}"
+            ),
+            evidence_refs=[_loop_tick_ref(consumer_name, tick_at)],
+            payload={
+                key: result.get(key)
+                for key in (
+                    "events_found",
+                    "consumed",
+                    "duplicates",
+                    "retry_scheduled",
+                    "dead_lettered",
+                    "skipped_not_due",
+                )
+            }
+            | {"error_count": len(result.get("errors") or [])},
+            **truth,
+        ),
+    )
+
+
+def _write_loop_failure(
+    writer: Any, exc: BaseException, *, consumer_name: str, tick_at: str
+) -> None:
+    _loop_write(
+        "failure",
+        lambda: writer.record_failure(
+            LOOP_ID,
+            f"{type(exc).__name__}: {exc}",
+            evidence_refs=[_loop_tick_ref(consumer_name, tick_at)],
+            downstream_actual_state={
+                "status": "degraded",
+                "source": _LOOP_CLAIM_SOURCE,
+                "checked_at": tick_at,
+                "summary": "outbox claim/poll raised",
+            },
+        ),
+    )
+
+
 def main() -> int:
     api_url = os.getenv("DEPLOYMENT_API_URL", "http://127.0.0.1:8095")
     consumer_name = os.getenv("DEPLOYMENT_OUTBOX_CONSUMER_NAME", _CONSUMER_NAME)
@@ -2782,6 +2939,19 @@ def main() -> int:
     retry_delay_seconds = _env_int("DEPLOYMENT_OUTBOX_CONSUMER_RETRY_DELAY_SECONDS", 30, minimum=0)
     health_file = os.getenv("DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE", "")
     aggregate_id = os.getenv("DEPLOYMENT_OUTBOX_CONSUMER_AGGREGATE_ID", "").strip() or None
+    loop_lease_seconds = _env_int(
+        "DEPLOYMENT_OUTBOX_CONSUMER_LOOP_LEASE_SECONDS",
+        _DEFAULT_LOOP_LEASE_SECONDS,
+        minimum=interval_seconds + 1,
+    )
+    # One-shot aggregate runs are not the standing controller: never write.
+    loop_writer = (
+        None
+        if aggregate_id
+        else build_loop_writer(
+            consumer_name=consumer_name, lease_duration_seconds=loop_lease_seconds
+        )
+    )
 
     health: dict[str, Any] = {
         "consumer_name": consumer_name,
@@ -2816,6 +2986,9 @@ def main() -> int:
     tick = 0
     while True:
         tick += 1
+        tick_at = _utc_now_iso()
+        if loop_writer is not None:
+            _write_loop_heartbeat(loop_writer, consumer_name=consumer_name, tick_at=tick_at)
         try:
             result = run_poll(
                 api_url=api_url,
@@ -2856,6 +3029,10 @@ def main() -> int:
                     health["last_idle_success"] = succeeded_at
                 if health_file:
                     _write_health(health_file, health)
+            if loop_writer is not None:
+                _write_loop_result(
+                    loop_writer, result, consumer_name=consumer_name, tick_at=tick_at
+                )
         except Exception as exc:  # noqa: BLE001
             failed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             health["ticks"] = tick
@@ -2864,6 +3041,10 @@ def main() -> int:
             health["status"] = "degraded"
             health["last_failure"] = failed_at
             health["last_failure_reason"] = str(exc)
+            if loop_writer is not None:
+                _write_loop_failure(
+                    loop_writer, exc, consumer_name=consumer_name, tick_at=tick_at
+                )
             if health_file:
                 try:
                     Path(health_file).unlink(missing_ok=True)
