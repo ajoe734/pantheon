@@ -606,18 +606,29 @@ def build_postgres_write_fn(
     if not notify_channel or len(notify_channel.encode("utf-8")) > 63 or "\x00" in notify_channel:
         raise ValueError("notify_channel must be a non-empty Postgres identifier of at most 63 bytes")
 
+    # One statement inserts the whole batch in batch order; RETURNING yields
+    # the rows that were actually inserted (conflicting ids are skipped).
     insert_sql = (
-        f"INSERT INTO {table} "
-        f"(event_id, event_type, created_at, payload) "
-        f"VALUES ($1, $2, $3::timestamptz, $4::jsonb) "
+        f"INSERT INTO {table} (event_id, event_type, created_at, payload) "
+        f"SELECT event_id, event_type, created_at, payload::jsonb "
+        f"FROM unnest($1::text[], $2::text[], $3::timestamptz[], $4::text[]) "
+        f"WITH ORDINALITY AS t(event_id, event_type, created_at, payload, ordinality) "
+        f"ORDER BY ordinality "
         f"ON CONFLICT (event_id) DO NOTHING "
-        f"RETURNING ingested_seq"
+        f"RETURNING event_id, ingested_seq"
     )
-    exact_duplicate_sql = (
-        f"SELECT event_type = $2 "
-        f"AND created_at = $3::timestamptz "
-        f"AND payload = $4::jsonb "
-        f"FROM {table} WHERE event_id = $1"
+    # One statement returns the event_ids of skipped rows that are not exact
+    # duplicates of the committed immutable row.
+    conflicting_duplicate_sql = (
+        f"SELECT t.event_id "
+        f"FROM unnest($1::text[], $2::text[], $3::timestamptz[], $4::text[]) "
+        f"AS t(event_id, event_type, created_at, payload) "
+        f"LEFT JOIN {table} e ON e.event_id = t.event_id "
+        f"WHERE e.event_id IS NULL "
+        f"OR e.event_type IS DISTINCT FROM t.event_type "
+        f"OR e.created_at IS DISTINCT FROM t.created_at "
+        f"OR e.payload IS DISTINCT FROM t.payload::jsonb "
+        f"LIMIT 1"
     )
 
     async def _postgres_write(batch: list[dict[str, Any]]) -> WriteResult:
@@ -638,6 +649,8 @@ def build_postgres_write_fn(
                     for ev in batch
                 ]
                 inserted_sequences: list[int] = []
+                if not rows:
+                    return WriteResult.ok(0)
                 async with conn.transaction():
                     # Sequence values are allocated before commit. Serializing
                     # canonical writer transactions prevents a later sequence
@@ -647,16 +660,27 @@ def build_postgres_write_fn(
                         "SELECT pg_advisory_xact_lock(hashtext($1))",
                         table,
                     )
+                    inserted_rows = await conn.fetch(
+                        insert_sql, *(list(column) for column in zip(*rows))
+                    )
+                    inserted_sequences = [int(r["ingested_seq"]) for r in inserted_rows]
+                    # The first occurrence of an inserted id is the inserted row;
+                    # any later in-batch copy is a skipped duplicate to verify.
+                    pending_ids = {r["event_id"] for r in inserted_rows}
+                    skipped = []
                     for row in rows:
-                        inserted = await conn.fetchrow(insert_sql, *row)
-                        if inserted is not None:
-                            inserted_sequences.append(int(inserted["ingested_seq"]))
-                            continue
-
-                        exact_duplicate = await conn.fetchval(exact_duplicate_sql, *row)
-                        if exact_duplicate is not True:
+                        if row[0] in pending_ids:
+                            pending_ids.discard(row[0])
+                        else:
+                            skipped.append(row)
+                    if skipped:
+                        conflict = await conn.fetchval(
+                            conflicting_duplicate_sql,
+                            *(list(column) for column in zip(*skipped)),
+                        )
+                        if conflict is not None:
                             raise ConflictingTelemetryEventError(
-                                f"conflicting duplicate event_id={row[0]}"
+                                f"conflicting duplicate event_id={conflict}"
                             )
 
                     if inserted_sequences:

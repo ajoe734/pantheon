@@ -19,6 +19,8 @@ from typing import Any, Callable
 MAX_PER_RUN = 5
 MAX_PER_HOUR = 20
 SNAPSHOT_BYTES = 8000  # per source; keeps the prompt bounded
+MAX_PROMPT_CHARS = 120000
+MAX_INCIDENT_SUMMARY_CHARS = 1000
 DEFAULT_SOURCES = {
     "runtime_status": "http://runtime-manager:8081/api/runtime-fleet/desired-state",
     "performance": "http://telemetry:8083/api/telemetry/runtime-summaries",
@@ -98,18 +100,30 @@ def snapshot_ref(snapshot: dict[str, Any]) -> str:
     return f"monitor-snapshot-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{digest}"
 
 
+def _omitted_note(count: int) -> str:
+    return f"\nOMITTED_INCIDENTS={count} ({count} open incidents omitted / left out due to prompt limit)" if count else ""
+
+
 def build_prompt(snapshot: dict[str, Any], open_incidents: list[dict[str, Any]]) -> str:
-    covered = [
-        {"title": i.get("title"), "cluster": i.get("incident_cluster_id"), "summary": i.get("evidence_summary")}
-        for i in open_incidents[:50]
-    ]
-    return (
+    base = (
         "You are a read-only monitor. Compare the snapshot with the open incidents. Report only "
         "anomalies in runtime status, drawdown, fill rate, slippage, persona health or control-loop "
         "health that NO open incident already covers. Reuse the same fingerprint for the same "
         "underlying anomaly. Return an empty findings list when nothing is unexplained.\n"
-        f"OPEN_INCIDENTS={json.dumps(covered)}\nSNAPSHOT={json.dumps(snapshot)}"
     )
+    snap = f"\nSNAPSHOT={json.dumps(snapshot)}"
+    covered: list[dict[str, Any]] = []
+    for inc in open_incidents:
+        summary = inc.get("evidence_summary")
+        if isinstance(summary, str) and len(summary) > MAX_INCIDENT_SUMMARY_CHARS:
+            summary = summary[:MAX_INCIDENT_SUMMARY_CHARS] + "... [truncated]"
+        cand = covered + [{"title": inc.get("title"), "cluster": inc.get("incident_cluster_id"), "summary": summary}]
+        note = _omitted_note(len(open_incidents) - len(cand))
+        if len(f"{base}OPEN_INCIDENTS={json.dumps(cand)}{note}{snap}") > MAX_PROMPT_CHARS:
+            break
+        covered = cand
+    omitted = len(open_incidents) - len(covered)
+    return f"{base}OPEN_INCIDENTS={json.dumps(covered)}{_omitted_note(omitted)}{snap}"[:MAX_PROMPT_CHARS]
 
 
 def ask_agent(prompt: str, adapter_url: str, token: str, fetch: Callable[..., Any] = _http) -> list[dict[str, Any]]:

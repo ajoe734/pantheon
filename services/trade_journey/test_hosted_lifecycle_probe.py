@@ -1075,6 +1075,32 @@ def test_normalize_case_record_from_nested_owner_readback_selects_candidate():
         assert case[k] == DEFAULT_TEST_CASE[k]
     cands = probe._complete_candidates(_natural_lifecycle_rows(), mode="controlled-stimulus")
     probe._validate_natural_candidate(cands[0], case)
+    assert len(probe._complete_candidates(_natural_lifecycle_rows(), mode="natural", case=case)) == 1
+
+    row_res = {
+        "tenant_id": DEFAULT_TEST_CASE["tenant_id"],
+        "references": {},
+        "result": _nested_owner_row()["references"],
+    }
+    case_res = _case_with_owner_ids(row_res)
+    probe._validate_natural_candidate(cands[0], case_res)
+    assert len(probe._complete_candidates(_natural_lifecycle_rows(), mode="natural", case=case_res)) == 1
+
+    row_both = _nested_owner_row()
+    row_both["result"] = _nested_owner_row()["references"]
+    case_both = _case_with_owner_ids(row_both)
+    probe._validate_natural_candidate(cands[0], case_both)
+    assert len(probe._complete_candidates(_natural_lifecycle_rows(), mode="natural", case=case_both)) == 1
+
+    row_flat = {
+        "tenant_id": DEFAULT_TEST_CASE["tenant_id"],
+        "deployment_plan_id": DEFAULT_TEST_CASE["deployment_plan_id"],
+        "capital_pool_id": DEFAULT_TEST_CASE["capital_pool_id"],
+        "persona_capital_binding_id": DEFAULT_TEST_CASE["persona_capital_binding_id"],
+    }
+    case_flat = _case_with_owner_ids(row_flat)
+    probe._validate_natural_candidate(cands[0], case_flat)
+    assert len(probe._complete_candidates(_natural_lifecycle_rows(), mode="natural", case=case_flat)) == 1
 
 
 def test_normalize_case_record_owner_readback_fails_closed():
@@ -1088,6 +1114,135 @@ def test_normalize_case_record_owner_readback_fails_closed():
     with pytest.raises(probe.ProbeError) as exc_info:
         probe._validate_natural_candidate(cands[0], wrong)
     assert exc_info.value.code == "case_capital_mismatch"
+
+
+def test_normalize_case_record_owner_conflicts_fail_closed():
+    cand = probe._complete_candidates(_natural_lifecycle_rows(), mode="controlled-stimulus")[0]
+
+    row_plan_disagree = _nested_owner_row()
+    row_plan_disagree["result"] = {
+        "authoritative_readback": {
+            "deployment": {"plan_id": "plan-other"},
+            "runtime_binding": {"plan_id": "plan-other"},
+        }
+    }
+    assert probe._normalize_case_record(row_plan_disagree)["deployment_plan_id"] == ""
+    case_plan_disagree = _case_with_owner_ids(row_plan_disagree)
+    assert len(probe._complete_candidates(_natural_lifecycle_rows(), mode="natural", case=case_plan_disagree)) == 0
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(cand, case_plan_disagree)
+    assert exc_info.value.code == "case_plan_mismatch"
+
+    row_flat_plan = _nested_owner_row(
+        deployment={"plan_id": "plan-other"},
+        runtime_binding={
+            "plan_id": "plan-other",
+            "capital_pool_id": DEFAULT_TEST_CASE["capital_pool_id"],
+            "persona_capital_binding_id": DEFAULT_TEST_CASE["persona_capital_binding_id"],
+        },
+    )
+    row_flat_plan["deployment_plan_id"] = DEFAULT_TEST_CASE["deployment_plan_id"]
+    assert probe._normalize_case_record(row_flat_plan)["deployment_plan_id"] == ""
+    case_flat_plan = _case_with_owner_ids(row_flat_plan)
+    assert len(probe._complete_candidates(_natural_lifecycle_rows(), mode="natural", case=case_flat_plan)) == 0
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(cand, case_flat_plan)
+    assert exc_info.value.code == "case_plan_mismatch"
+
+    row_pool_disagree = _nested_owner_row()
+    row_pool_disagree["result"] = {
+        "authoritative_readback": {
+            "runtime_binding": {"capital_pool_id": "pool-other"},
+        }
+    }
+    assert probe._normalize_case_record(row_pool_disagree)["capital_pool_id"] == ""
+    case_pool_disagree = _case_with_owner_ids(row_pool_disagree)
+    assert len(probe._complete_candidates(_natural_lifecycle_rows(), mode="natural", case=case_pool_disagree)) == 0
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(cand, case_pool_disagree)
+    assert exc_info.value.code == "case_capital_mismatch"
+
+    row_flat_pool = _nested_owner_row(
+        runtime_binding={
+            "plan_id": DEFAULT_TEST_CASE["deployment_plan_id"],
+            "capital_pool_id": "pool-other",
+            "persona_capital_binding_id": DEFAULT_TEST_CASE["persona_capital_binding_id"],
+        },
+    )
+    row_flat_pool["capital_pool_id"] = DEFAULT_TEST_CASE["capital_pool_id"]
+    assert probe._normalize_case_record(row_flat_pool)["capital_pool_id"] == ""
+    case_flat_pool = _case_with_owner_ids(row_flat_pool)
+    assert len(probe._complete_candidates(_natural_lifecycle_rows(), mode="natural", case=case_flat_pool)) == 0
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(cand, case_flat_pool)
+    assert exc_info.value.code == "case_capital_mismatch"
+
+    row_flat_pcb = _nested_owner_row(
+        runtime_binding={
+            "plan_id": DEFAULT_TEST_CASE["deployment_plan_id"],
+            "capital_pool_id": DEFAULT_TEST_CASE["capital_pool_id"],
+            "persona_capital_binding_id": "pcb-other",
+        },
+    )
+    row_flat_pcb["persona_capital_binding_id"] = DEFAULT_TEST_CASE["persona_capital_binding_id"]
+    assert probe._normalize_case_record(row_flat_pcb)["persona_capital_binding_id"] == ""
+
+    row_pcb_disagree = _nested_owner_row()
+    row_pcb_disagree["result"] = {
+        "authoritative_readback": {
+            "runtime_binding": {"persona_capital_binding_id": "pcb-other"},
+        }
+    }
+    assert probe._normalize_case_record(row_pcb_disagree)["persona_capital_binding_id"] == ""
+
+    # Missing owner fields supplied by flat alias when readback exists must fail closed
+    row_pool_missing_flat = _nested_owner_row()
+    del row_pool_missing_flat["references"]["authoritative_readback"]["runtime_binding"]["capital_pool_id"]
+    row_pool_missing_flat["capital_pool_id"] = DEFAULT_TEST_CASE["capital_pool_id"]
+    assert probe._normalize_case_record(row_pool_missing_flat)["capital_pool_id"] == ""
+    case_pool_missing_flat = _case_with_owner_ids(row_pool_missing_flat)
+    assert len(probe._complete_candidates(_natural_lifecycle_rows(), mode="natural", case=case_pool_missing_flat)) == 0
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(cand, case_pool_missing_flat)
+    assert exc_info.value.code == "case_capital_mismatch"
+
+    row_pcb_missing_flat = _nested_owner_row()
+    del row_pcb_missing_flat["references"]["authoritative_readback"]["runtime_binding"]["persona_capital_binding_id"]
+    row_pcb_missing_flat["persona_capital_binding_id"] = DEFAULT_TEST_CASE["persona_capital_binding_id"]
+    assert probe._normalize_case_record(row_pcb_missing_flat)["persona_capital_binding_id"] == ""
+
+    row_plan_missing_flat = _nested_owner_row(
+        deployment={},
+        runtime_binding={
+            "capital_pool_id": DEFAULT_TEST_CASE["capital_pool_id"],
+            "persona_capital_binding_id": DEFAULT_TEST_CASE["persona_capital_binding_id"],
+        },
+    )
+    row_plan_missing_flat["deployment_plan_id"] = DEFAULT_TEST_CASE["deployment_plan_id"]
+    assert probe._normalize_case_record(row_plan_missing_flat)["deployment_plan_id"] == ""
+    case_plan_missing_flat = _case_with_owner_ids(row_plan_missing_flat)
+    assert len(probe._complete_candidates(_natural_lifecycle_rows(), mode="natural", case=case_plan_missing_flat)) == 0
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(cand, case_plan_missing_flat)
+    assert exc_info.value.code == "case_plan_mismatch"
+
+    # Conflicting flat aliases across containers must fail closed
+    row_second_flat_conflict = _nested_owner_row()
+    row_second_flat_conflict["deployment_plan_id"] = DEFAULT_TEST_CASE["deployment_plan_id"]
+    row_second_flat_conflict["references"]["deployment_plan_id"] = "plan-other"
+    assert probe._normalize_case_record(row_second_flat_conflict)["deployment_plan_id"] == ""
+    case_second_flat = _case_with_owner_ids(row_second_flat_conflict)
+    assert len(probe._complete_candidates(_natural_lifecycle_rows(), mode="natural", case=case_second_flat)) == 0
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(cand, case_second_flat)
+    assert exc_info.value.code == "case_plan_mismatch"
+
+    row_flat_only_conflict = {
+        "tenant_id": DEFAULT_TEST_CASE["tenant_id"],
+        "capital_pool_id": DEFAULT_TEST_CASE["capital_pool_id"],
+        "references": {"capital_pool_id": "pool-other"},
+    }
+    assert probe._normalize_case_record(row_flat_only_conflict)["capital_pool_id"] == ""
 
 
 def test_main_cli_mode_and_case_key_validation(tmp_path):

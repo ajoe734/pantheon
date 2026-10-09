@@ -1,0 +1,60 @@
+{
+  "task": "US-RETIRE-MARKET-FIXTURE-20261009",
+  "title": "Close original US retirement grep fixture residue",
+  "historical_contradiction_explanation": {
+    "background": "In DEV-PAPER-US-SIM-RETIRE-20261007, the simulation adapter, connector, and deploy staging logic were retired from the codebase.",
+    "criterion5_rule": "DEV-PAPER-US-SIM-RETIRE-20261007 criterion 5 required that services/execution/market_snapshot_admission.py and services/execution/test_market_snapshot_admission.py change only by deleting code whose only non-test caller on the base was the deleted deploy function, and when no such code exists both files remain unchanged.",
+    "criterion14_rule": "DEV-PAPER-US-SIM-RETIRE-20261007 criterion 14 required git grep -n dev-paper-us-equity-simulation over services, scripts, tests, .github, docker-compose.yml to match only four allowed fixture locations (SIMULATION_CONNECTOR_ID in test_controller_worker.py, _us_persona fixture and renamed unsupported test in test_persona_source_reconciler.py, and the lineage fixture in test_paper_fleet_reconciler.py).",
+    "contradiction": "services/execution/test_market_snapshot_admission.py:27 (introduced via DEV-PREREQUISITE-CANONICAL-SOURCE-AUTHORITY-20261008) contained a synthetic helper default fixture connector_id: str = 'dev-paper-us-equity-simulation'. Under criterion 5, because no deploy-only code existed in this file, it was left unchanged; but that left a 6th match outside the four allowed locations of criterion 14.",
+    "archived_honesty": "The archived evidence for DEV-PAPER-US-SIM-RETIRE-20261007 honestly reported this residual (after: 6, line 151 note: 'Residual: test_market_snapshot_admission.py:27 default connector_id fixture string dev-paper-us-equity-simulation is outside the criterion-14 allow-list; left unchanged per H, reviewer to decide.') without relabeling or falsifying the unamended criterion 14 regex outcome.",
+    "operator_authorized_follow_up": "Operator explicitly authorized this separate tests-only follow-up task US-RETIRE-MARKET-FIXTURE-20261009 to replace the residual fixture identifier with an existing neutral test-only connector without modifying production code, altering the archived canonical contract, or weakening validation."
+  },
+  "changes": {
+    "services/execution/test_market_snapshot_admission.py": {
+      "line": 27,
+      "before": "    connector_id: str = \"dev-paper-us-equity-simulation\",",
+      "after": "    connector_id: str = \"test-connector\",",
+      "rationale": "Replaced legacy simulation fixture with existing neutral test-only connector identifier test-connector (used in services/search/test_index_pipeline.py). All snapshot admission tests continue to pass identically."
+    }
+  },
+  "diff_budget": {
+    "net_production_lines": 0,
+    "changed_test_lines": 1,
+    "max_allowed_changed_test_lines": 5
+  },
+  "criterion14_validation": {
+    "removed_symbols_grep": {
+      "command": "git grep -n -E 'dev_paper_simulation|DevPaperUsEquitySimulation|DEV_PAPER_SIMULATION|_DEV_PAPER_US_DATASETS|_ensure_dev_paper_snapshot|records_from_now|is_dev_environment|is_egress_free|egress_free_connector_ids|executed_connector_ids|_persisted_source_health|_SOURCE_HEALTH_DERIVED_FIELDS|paper_prerequisite_readiness|restore_dev_paper_schedule|DEV_PAPER_REFRESH_DURATION_SECONDS|DEV_PAPER_READINESS_MARGIN_SECONDS' -- services scripts tests .github docker-compose.yml",
+      "exit_code": 1,
+      "match_count": 0,
+      "output": ""
+    },
+    "legacy_connector_literal_grep": {
+      "command": "git grep -n dev-paper-us-equity-simulation -- services scripts tests .github docker-compose.yml",
+      "exit_code": 0,
+      "match_count": 5,
+      "output_lines": [
+        "services/paper_fleet_reconciler/test_paper_fleet_reconciler.py:2171:            \"lineage\": {\"source\": \"dev-paper-us-equity-simulation\"},",
+        "services/source_ingestion/tests/test_controller_worker.py:36:SIMULATION_CONNECTOR_ID = \"dev-paper-us-equity-simulation\"",
+        "services/source_ingestion/tests/test_persona_source_reconciler.py:746:                \"connector_candidates\": [\"dev-paper-us-equity-simulation\"],",
+        "services/source_ingestion/tests/test_persona_source_reconciler.py:772:    assert connector_store.get_config(\"dev-paper-us-equity-simulation\") is None",
+        "services/source_ingestion/tests/test_persona_source_reconciler.py:773:    assert schedule_store.get_schedule(\"dev-paper-us-equity-simulation\") is None"
+      ],
+      "locations_verification": "All 5 matches correspond strictly to the original four allowed fixture locations defined in DEV-PAPER-US-SIM-RETIRE-20261007 criterion 14. Zero residual matches exist in services/execution/test_market_snapshot_admission.py or anywhere else."
+    }
+  },
+  "verification": {
+    "pytest_test_market_snapshot_admission": {
+      "command": "pytest services/execution/test_market_snapshot_admission.py",
+      "passed": 26,
+      "failed": 0,
+      "exit_code": 0
+    },
+    "pytest_execution_lean_runtime": {
+      "command": "pytest services/execution/lean_runtime/test_current_artifact_signal.py services/execution/lean_runtime/test_paper_signal_producer.py",
+      "passed": 78,
+      "failed": 0,
+      "exit_code": 0
+    }
+  }
+}

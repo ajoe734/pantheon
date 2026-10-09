@@ -24,7 +24,7 @@ def _make_canonical_snapshot(
     observed_at: str | None = None,
     market: str = "US",
     source_id: str = "test-source",
-    connector_id: str = "dev-paper-us-equity-simulation",
+    connector_id: str = "test-connector",
     as_public: bool = False,
 ) -> dict[str, Any]:
     now_dt = datetime.now(timezone.utc)
