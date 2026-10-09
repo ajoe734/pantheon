@@ -1,0 +1,20 @@
+{
+  "task_id": "PAPER-PERF-MARKS-FROM-SNAPSHOT-20261009",
+  "hosted_observation": "2026-10-09 01:1xZ on 610ba4b32: in 6 minutes source-ingest answered 279 GET /api/source-ingest/source-records requests from pantheon-paper-fleet-reconciler-1 (paper_runtime.py workers) with 401; a later 6-minute window saw 364. Since RANKING-OWNER-READ-AUTH-SEAMS (10/04) list_source_records requires Authorization and X-Tenant-Id; SourceIngestMarkProvider sent neither, every refresh failed and performance telemetry had no prices.",
+  "change": "SourceIngestMarkProvider now reads GET /api/source-ingest/snapshots/latest?symbol=<symbol> per requested symbol (mark = closes[-1], as_of = event_time, source_ref = snapshot source_ref). Cache TTL is per symbol. No new credential, env var, fallback or second source. Snapshot quote_currency is not supplied by the payload and is left unset.",
+  "test_results": {
+    "test_performance_telemetry": "25 tests OK on branch; 2 failures + 7 errors on base provider with the new tests",
+    "test_paper_runtime_smoke": "8 failures both on base and on branch (pre-existing, unchanged by this task; that file uses a fixed fake mark provider)"
+  },
+  "replaced_assertions": [
+    {"old": "test_only_normalized_market_price_records_with_observation_time_are_admissible (source_records filtered by source_type/status/dataset/as_of/source_id)", "new": "test_snapshot_without_price_time_or_source_ref_is_rejected + test_200_snapshot_becomes_mark_from_latest_close"},
+    {"old": "test_stale_and_future_marks_fail_closed (source_records)", "new": "test_stale_and_future_snapshots_fail_closed (per-symbol snapshots)"},
+    {"old": "test_base_symbol_alias_collision_fails_closed_without_hiding_canonical_marks", "new": "test_snapshot_for_a_different_instrument_resolves_to_nothing (AAPL.US request answered by AAPL.TW snapshot -> no mark); the Source store owns bare-alias resolution"},
+    {"old": "test_conflicting_prices_at_the_same_observation_time_fail_closed", "new": "removed: a snapshot is a single stored latest value, no multi-record conflict exists"},
+    {"old": "test_newer_unambiguous_price_supersedes_an_older_conflict", "new": "removed: same reason"},
+    {"old": "test_crypto_canonical_symbol_resolves_only_the_matching_quote_pair", "new": "test_default_fetch_reads_per_symbol_snapshot_not_source_records (BTC/USD.KRAKEN, URL-quoted); quote pair resolution is the Source store's"},
+    {"old": "test_finmind_raw_price_shape_is_admissible_when_normalized_row_is_absent", "new": "removed: raw record shapes are no longer read"},
+    {"old": "test_failed_refresh_does_not_reuse_a_previously_cached_mark (source_records payload)", "new": "same name, snapshot payload"},
+    {"old": "(none)", "new": "test_404_snapshot_is_missing_and_reported, test_503_snapshot_is_missing_and_reported, test_cache_ttl_is_per_symbol"}
+  ]
+}
