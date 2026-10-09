@@ -447,7 +447,7 @@ def _fresh_client(td: str) -> TestClient:
         utc_now_fn=utc_now,
         page_slice_fn=personas_service._page_slice,
         snapshot_meta_fn=personas_service._snapshot_meta,
-        dataset_surface_status_fn=personas_service._dataset_surface_status,
+        dataset_surface_status_fn=service.dataset_surface_status,
         raise_if_read_surface_unavailable_fn=personas_service._raise_if_read_surface_unavailable,
         reject_body_idempotency_key_fn=personas_service._reject_body_idempotency_key,
         resolve_final_idempotency_key_fn=personas_service._resolve_final_idempotency_key,

@@ -570,7 +570,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         _require_read_role(identity)
         _ensure_persona_exists(persona_id)
         snapshot_at = utc_now()
-        events = _list_governance_audit_events() or []
+        events = _list_governance_audit_events(include_agora_events=False) or []
         filtered = _filter_audit_events_by_target(events, persona_id)
         return {
             "data": filtered,

@@ -951,8 +951,8 @@ def _human_inbox_governance_contributor(
             read_store = None
     records = list(read_store.list_governance_review_queue_items() or []) if read_store else []
     try:
-        from ..main import _dataset_surface_status, read_store as _main_read_store
-        from ..personas.service import _dataset_source_after_read
+        from ..main import read_store as _main_read_store
+        from ..personas.service import _dataset_source_after_read, _dataset_surface_status
         surface = _dataset_surface_status(
             "governance_review_queue_items",
             snapshot_at=snapshot_at,
@@ -981,8 +981,8 @@ def _human_inbox_approval_contributor(
             read_store = None
     records = list(read_store.list_approval_queue_items() or []) if read_store else []
     try:
-        from ..main import _dataset_surface_status, read_store as _main_read_store
-        from ..personas.service import _dataset_source_after_read
+        from ..main import read_store as _main_read_store
+        from ..personas.service import _dataset_source_after_read, _dataset_surface_status
         surface = _dataset_surface_status(
             "approval_queue_items",
             snapshot_at=snapshot_at,
@@ -1012,7 +1012,7 @@ def _human_inbox_incident_contributor(
     available = bool(read_store and hasattr(read_store, "list_incidents"))
     records = list(read_store.list_incidents() or []) if available else []
     try:
-        from ..main import _dataset_surface_status
+        from ..personas.service import _dataset_surface_status
         surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
     except (ImportError, AttributeError):
         surface = {"status": "ok" if available else "unavailable", "source": "read_store" if available else "missing"}
@@ -1152,7 +1152,7 @@ def _human_inbox_persona_contributor(
 ) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
     rows = list(_build_persona_readiness_items(snapshot_at, read_store=read_store) or [])
     try:
-        from ..main import _composed_dataset_surface_status
+        from ..personas.service import _composed_dataset_surface_status
         surface = _composed_dataset_surface_status(
             "persona_fleet",
             rows,
