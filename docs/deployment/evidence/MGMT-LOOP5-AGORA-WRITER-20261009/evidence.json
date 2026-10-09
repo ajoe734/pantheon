@@ -1,0 +1,32 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "MGMT-LOOP5-AGORA-WRITER-20261009",
+  "title": "Agora interaction worker publishes admissible Loop 5 controller truth",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "execution",
+  "delivery_state": "ready_for_independent_review",
+  "objective": "AgoraInteractionWorker is the single L5 (agora_interaction_evidence) writer, controller_name agora-interaction-worker; desired=claimed interactions, actual=outcome counts + outbox drain.",
+  "scope": {
+    "owned": [
+      "services/control-plane/bff/agora/interaction/worker.py: build_loop_writer/build_loop_truth, per-tick publish in run_once, liveness via _InteractionHeartbeat (omits desired/actual), idle writes throttled to PANTHEON_AGORA_LOOP_HEARTBEAT_SECONDS (default 120, max 300), lease PANTHEON_AGORA_LOOP_LEASE_SECONDS (default 900, >= 2x interval).",
+      "scripts/run_agora_interaction_worker.py: one writer per process, None without PANTHEON_LOOP_CONTROL_DSN/DATABASE_URL."
+    ],
+    "not_changing": ["services/loop-control", "BFF admission rules", "loop catalog", "docker-compose.yml"],
+    "composes_with": ["MGMT-LOOP-CATALOG-DECLARE-2-20261009"]
+  },
+  "published_contract": {
+    "loop_id": "agora_interaction_evidence",
+    "controller_name": "agora-interaction-worker",
+    "desired_source": "agora.interaction_lifecycle_store.claim",
+    "actual_source": "agora.interaction_worker.outcomes",
+    "evidence_ref": "agora-interaction://worker-ticks/{worker_id}/{checked_at}"
+  },
+  "verification": {
+    "commands": [
+      "PYTHONPATH=. pytest services/control-plane/bff/agora/interaction/test_worker.py scripts/test_run_agora_interaction_worker.py services/control-plane/bff/tests/test_agora_interaction_worker_runtime_wiring.py -q"
+    ],
+    "result": "see PR; idle-tick projection accepted by loop_inventory._runtime_controller_record_qualified"
+  }
+}

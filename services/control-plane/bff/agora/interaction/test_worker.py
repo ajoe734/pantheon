@@ -1227,3 +1227,93 @@ def test_compose_worker_env_wires_openclaw_client_and_adapter_service_auth(monke
     assert client.configured and client._base_url == "http://openclaw-gateway-adapter:8104"
     path = "/api/openclaw-adapter/agents/persona-opinion/ensure"
     assert client._assistant_service_headers(path) == {"X-Pantheon-Service-Token": "deploy-secret"}
+
+
+class _FakeLoopWriter:
+    def __init__(self):
+        self.calls = []
+
+    async def record_tick(self, loop_id, **kwargs):
+        self.calls.append(("record_tick", loop_id, kwargs))
+
+    async def record_success(self, loop_id, **kwargs):
+        self.calls.append(("record_success", loop_id, kwargs))
+
+    async def record_heartbeat(self, loop_id, **kwargs):
+        self.calls.append(("record_heartbeat", loop_id, kwargs))
+
+
+def test_idle_tick_truth_is_admitted_by_loop_inventory():
+    import importlib
+    from datetime import timedelta
+
+    from services.control_plane.bff import loop_inventory
+    from services.control_plane.bff.agora.interaction import worker as worker_module
+
+    writer = _FakeLoopWriter()
+    worker = AgoraInteractionWorker(
+        lifecycle_store=InteractionLifecycleStore(), loop_writer=writer, worker_id="w1"
+    )
+    assert worker.run_once() == 0
+    assert worker.run_once() == 0  # idle polls inside the interval do not write again
+    assert [c[0] for c in writer.calls] == ["record_tick"]
+    kind, loop_id, kwargs = writer.calls[0]
+    assert loop_id == worker_module.LOOP_ID == "agora_interaction_evidence"
+    assert kwargs["desired_state"]["present"] is False
+    assert kwargs["evidence_refs"][0].startswith("agora-interaction://worker-ticks/w1/")
+
+    now = datetime.now(timezone.utc)
+    projector = importlib.import_module("services.loop-control").project_controller_record_to_bff
+    projected = projector(
+        {
+            "loop_id": loop_id,
+            "controller_id": "c1",
+            "controller_name": worker_module.CONTROLLER_NAME,
+            "last_heartbeat_at": now,
+            "last_tick_at": now,
+            "lease_token": "tok",
+            "lease_expires_at": now + timedelta(seconds=900),
+            "desired_state": kwargs["desired_state"],
+            "downstream_actual_state": kwargs["downstream_actual_state"],
+            "evidence_refs": kwargs["evidence_refs"],
+        },
+        now=now,
+    )
+    assert loop_inventory._runtime_controller_record_qualified(
+        projected, "controller_store", worker_module.CONTROLLER_NAME
+    )
+
+
+def test_provider_failure_is_downstream_degraded_not_controller_failure(bff_client):
+    client_factory, _ = _make_mock_client(
+        return_values={"macro-quant": RuntimeError("provider quota exceeded")},
+        call_log=[],
+    )
+    submit_resp, _ = _submit_interaction(bff_client, personas=("risk-analyst", "macro-quant"))
+    interaction_id = submit_resp.json()["data"]["interaction_id"]
+    writer = _FakeLoopWriter()
+    worker = AgoraInteractionWorker(
+        lifecycle_store=interaction_lifecycle,
+        workshop_store=workshop_store,
+        read_store=read_store,
+        client_factory=client_factory,
+        loop_writer=writer,
+    )
+    worker.run_once()
+    kind, _, kwargs = writer.calls[-1]
+    assert kind == "record_success"
+    assert kwargs["desired_state"]["present"] is True
+    assert kwargs["downstream_actual_state"]["status"] == "degraded"
+    assert f"agora-interaction://interactions/{interaction_id}" in kwargs["evidence_refs"]
+
+
+def test_loop_lease_is_configured_and_covers_heartbeat_gap(monkeypatch):
+    from services.control_plane.bff.agora.interaction import worker as worker_module
+
+    monkeypatch.delenv("PANTHEON_AGORA_LOOP_LEASE_SECONDS", raising=False)
+    monkeypatch.setenv("PANTHEON_AGORA_LOOP_HEARTBEAT_SECONDS", "9999")
+    assert worker_module.loop_heartbeat_interval_seconds() == 300
+    assert worker_module.loop_lease_seconds() >= 600
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("PANTHEON_LOOP_CONTROL_DSN", raising=False)
+    assert worker_module.build_loop_writer() is None
