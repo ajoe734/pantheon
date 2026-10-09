@@ -1,0 +1,25 @@
+{
+  "task_id": "CI-SOURCE-INGESTION-POSTGRES-20261009",
+  "pr": "https://github.com/ajoe734/pantheon/pull/6459",
+  "reviewed_head_run": "https://github.com/ajoe734/pantheon/actions/runs/37911373251",
+  "skips": {
+    "before": "4 (per task brief: live smoke + PG-backed tests; baseline CI log no longer retrievable)",
+    "after": "1 in services/source_ingestion step (1086 passed, 1 skipped in 202s)",
+    "remaining": [
+      {"test": "PANTHEON_TW_OFFICIAL_LIVE_SMOKE opt-in live test", "justification": "opt-in network smoke, intentionally skipped"}
+    ]
+  },
+  "pg_tests_ran_and_passed": ["test_pg_connection_reuse", "test_pg_store", "test_postgres_store"],
+  "regression_proof": {
+    "pr": "https://github.com/ajoe734/pantheon/pull/6460",
+    "run": "https://github.com/ajoe734/pantheon/actions/runs/37912444441",
+    "change": "pg_store._get_connection opens a new connection per use",
+    "result": "3 failed in test_pg_connection_reuse; Smoke acceptance failed; PR closed unmerged, branch deleted"
+  },
+  "smoke_duration": {
+    "baseline_dev_run_37897505185": "9m23s",
+    "with_postgres_run_37911373251": "8m14s",
+    "note": "Durations vary with runner load; no regression observed (source ingestion step 3m22s)"
+  },
+  "unchanged": "branch protection required contexts and .orchestrator required_status_checks not modified"
+}
