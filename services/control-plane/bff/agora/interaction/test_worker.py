@@ -1314,6 +1314,17 @@ def test_loop_lease_is_configured_and_covers_heartbeat_gap(monkeypatch):
     monkeypatch.setenv("PANTHEON_AGORA_LOOP_HEARTBEAT_SECONDS", "9999")
     assert worker_module.loop_heartbeat_interval_seconds() == 300
     assert worker_module.loop_lease_seconds() >= 600
+    monkeypatch.delenv("PANTHEON_AGORA_LOOP_HEARTBEAT_SECONDS", raising=False)
+    interval = worker_module.loop_heartbeat_interval_seconds()
+    assert interval == 120
+    default_lease = worker_module.loop_lease_seconds()
+    assert default_lease >= 2 * interval
+    assert default_lease < 900 / 2
+    monkeypatch.setenv("PANTHEON_AGORA_LOOP_LEASE_SECONDS", "10")
+    assert worker_module.loop_lease_seconds() == 2 * interval
+    monkeypatch.setenv("PANTHEON_AGORA_LOOP_LEASE_SECONDS", "500")
+    assert worker_module.loop_lease_seconds() == 500
+    monkeypatch.delenv("PANTHEON_AGORA_LOOP_LEASE_SECONDS", raising=False)
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("PANTHEON_LOOP_CONTROL_DSN", raising=False)
     assert worker_module.build_loop_writer() is None

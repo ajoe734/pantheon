@@ -27,8 +27,10 @@ ACTUAL_SOURCE = "agora.interaction_worker.outcomes"
 # Liveness is refreshed at least this often (the brief caps it at 300s).
 MAX_LOOP_HEARTBEAT_SECONDS = 300
 DEFAULT_LOOP_HEARTBEAT_SECONDS = 120
-# Lease covers the longest gap between two writes, never a request timeout.
-DEFAULT_LOOP_LEASE_SECONDS = 900
+# Lease covers the longest gap between two writes (the heartbeat interval), never a
+# request timeout. Default is LOOP_LEASE_INTERVAL_MULTIPLIER x the heartbeat interval so a
+# restarted worker (new lease token) is only fenced out for a short window.
+LOOP_LEASE_INTERVAL_MULTIPLIER = 2
 
 
 def _utc_now() -> str:
@@ -41,10 +43,12 @@ def loop_heartbeat_interval_seconds() -> int:
 
 
 def loop_lease_seconds(heartbeat_interval: Optional[int] = None) -> int:
-    """Configured controller lease (PANTHEON_AGORA_LOOP_LEASE_SECONDS, default 900s)."""
+    """Controller lease: PANTHEON_AGORA_LOOP_LEASE_SECONDS, default 2x the heartbeat interval."""
     interval = heartbeat_interval or loop_heartbeat_interval_seconds()
-    configured = int(os.getenv("PANTHEON_AGORA_LOOP_LEASE_SECONDS", str(DEFAULT_LOOP_LEASE_SECONDS)))
-    return max(configured, 2 * interval)
+    floor = LOOP_LEASE_INTERVAL_MULTIPLIER * interval
+    raw = os.getenv("PANTHEON_AGORA_LOOP_LEASE_SECONDS")
+    configured = int(raw) if raw else floor
+    return max(configured, floor)
 
 
 def build_loop_writer(*, lease_duration_seconds: Optional[int] = None) -> Any:

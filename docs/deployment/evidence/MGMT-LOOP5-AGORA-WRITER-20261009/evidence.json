@@ -10,7 +10,7 @@
   "objective": "AgoraInteractionWorker is the single L5 (agora_interaction_evidence) writer, controller_name agora-interaction-worker; desired=claimed interactions, actual=outcome counts + outbox drain.",
   "scope": {
     "owned": [
-      "services/control-plane/bff/agora/interaction/worker.py: build_loop_writer/build_loop_truth, per-tick publish in run_once, liveness via _InteractionHeartbeat (omits desired/actual), idle writes throttled to PANTHEON_AGORA_LOOP_HEARTBEAT_SECONDS (default 120, max 300), lease PANTHEON_AGORA_LOOP_LEASE_SECONDS (default 900, >= 2x interval).",
+      "services/control-plane/bff/agora/interaction/worker.py: build_loop_writer/build_loop_truth, per-tick publish in run_once, liveness via _InteractionHeartbeat (omits desired/actual), idle writes throttled to PANTHEON_AGORA_LOOP_HEARTBEAT_SECONDS (default 120, max 300), lease PANTHEON_AGORA_LOOP_LEASE_SECONDS (default 2x heartbeat interval = 240s, floor 2x interval).",
       "scripts/run_agora_interaction_worker.py: one writer per process, None without PANTHEON_LOOP_CONTROL_DSN/DATABASE_URL."
     ],
     "not_changing": ["services/loop-control", "BFF admission rules", "loop catalog", "docker-compose.yml"],
