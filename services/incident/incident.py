@@ -640,10 +640,10 @@ class IncidentStore:
         }
         if not existing.incident_cluster_id and incoming.incident_cluster_id:
             updates["incident_cluster_id"] = incoming.incident_cluster_id
-        if incoming.evidence_summary:
+        if incoming.evidence_summary or (existing.evidence_summary and len(existing.evidence_summary) > 4000):
             updates["evidence_summary"] = _merge_summary(
                 existing.evidence_summary,
-                incoming.evidence_summary,
+                incoming.evidence_summary or "",
             )
 
         updated = IncidentCase(**{**existing.to_dict(), **updates})
@@ -952,11 +952,18 @@ def _max_incident_severity(left: str, right: str) -> str:
     return left if rank.get(left, 0) >= rank.get(right, 0) else right
 
 
-def _merge_summary(existing: Optional[str], incoming: str) -> str:
-    existing = (existing or "").strip()
-    incoming = incoming.strip()
-    if not existing:
-        return incoming
-    if not incoming or incoming in existing:
-        return existing
-    return f"{existing}; {incoming}"
+MAX_EVIDENCE_SUMMARY_LENGTH = 4000
+
+
+def _merge_summary(existing: Optional[str], incoming: str, limit: int = 4000) -> str:
+    existing, incoming = (existing or "").strip(), (incoming or "").strip()
+    marker = "[older entries dropped] "
+    if existing.startswith(marker):
+        existing = existing[len(marker):]
+    merged = f"{existing}; {incoming}" if existing and incoming else (incoming or existing)
+    if incoming and incoming in existing and len(existing) <= limit:
+        merged = existing
+    if len(merged) <= limit:
+        return merged
+    tail = merged[-(limit - len(marker)):].lstrip("; ")
+    return f"{marker}{tail}"

@@ -153,3 +153,81 @@ def test_collect_snapshot_sends_source_specific_headers():
     seen = {}
     ma.collect_snapshot(SOURCES, lambda url, headers=None: seen.setdefault(url, headers) or {}, {"performance": {"X-Tenant-Id": "t"}})
     assert seen["http://perf"] == {"X-Tenant-Id": "t"} and seen["http://rt"] is None
+
+
+def test_build_prompt_bounds_prompt_with_50_large_incidents():
+    # AC 1: The prompt monitor-agent sends to the structured route stays at or below 120000 characters
+    # no matter how many open incidents exist or how long their summaries are; a test with 50 open incidents
+    # each carrying a 200000 character summary proves it.
+    # AC 2: Each incident in the monitor prompt keeps its title and cluster and a summary cut to a fixed
+    # per-incident limit with a visible truncation marker.
+    large_summary = "Drift breach threshold: " + ("z" * 200000)
+    incidents = [
+        {
+            "title": f"Incident title {i}",
+            "incident_cluster_id": f"cluster-{i % 5}",
+            "evidence_summary": large_summary,
+        }
+        for i in range(50)
+    ]
+    snapshot = {"s1": "snap1", "s2": "snap2"}
+    prompt = ma.build_prompt(snapshot, incidents)
+
+    assert len(prompt) <= 120000
+    assert "... [truncated]" in prompt
+    for i in range(50):
+        assert f"Incident title {i}" in prompt
+        assert f"cluster-{i % 5}" in prompt
+    assert "OMITTED_INCIDENTS" not in prompt  # all 50 fit when summaries are cut
+
+
+def test_build_prompt_counts_omitted_incidents_when_total_limit_exceeded():
+    # AC 2: incidents left out because of the total limit are counted in the prompt and not silently dropped
+    incidents = [
+        {
+            "title": f"Breach {i} with long descriptive title that takes space in json payload",
+            "incident_cluster_id": f"cluster-{i}",
+            "evidence_summary": f"Summary {i} " + ("k" * 1500),
+        }
+        for i in range(300)
+    ]
+    snapshot = {f"source_{k}": "data" * 1000 for k in range(4)}
+    prompt = ma.build_prompt(snapshot, incidents)
+
+    assert len(prompt) <= 120000
+    assert "OMITTED_INCIDENTS=" in prompt
+    assert "open incidents omitted" in prompt
+    # Check that prompt contains an omitted count > 0
+    import re
+    match = re.search(r"OMITTED_INCIDENTS=(\d+)", prompt)
+    assert match is not None
+    omitted_count = int(match.group(1))
+    assert omitted_count > 0
+    assert omitted_count < 300
+
+
+def test_run_once_sends_bounded_prompt_with_50_large_open_incidents(tmp_path):
+    large_summary = "Drift breach: " + ("w" * 200000)
+    open_incidents = [
+        {
+            "title": f"Title {i}",
+            "incident_cluster_id": f"cluster-{i}",
+            "evidence_summary": large_summary,
+        }
+        for i in range(50)
+    ]
+
+    def fetch(url, data=None, headers=None, timeout=20):
+        if "/structured" in url:
+            fetch.agent_request = data
+            return {"data": {"output": {"structured_data": {"findings": []}}}}
+        if "open_only" in url:
+            return open_incidents
+        return {"ok": True}
+
+    record = _run(tmp_path, fetch)
+    assert record["status"] == "ok"
+    prompt = fetch.agent_request["prompt"]
+    assert len(prompt) <= 120000
+    assert "... [truncated]" in prompt
+
