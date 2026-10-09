@@ -1,0 +1,14 @@
+{
+  "task_id": "DEV-EXISTING-VM-RESTORE-20261009",
+  "observed_at_utc": "2026-10-09T23:31:00Z/2026-10-09T23:45:00Z",
+  "project": "pantheon-dev-20260902",
+  "vm": {"name": "pantheon-dev-deploy", "zone": "asia-east1-b", "instance_id": "7359126697477292303", "status_before": "TERMINATED", "status_after": "RUNNING", "boot_disk": {"name": "pantheon-dev-deploy", "size_gb": 200, "disk_id_after": "8367574921109979407", "note": "pre-start evidence recorded name/size/source only, not disk id; identity matched on instance id + disk source name + size"}, "internal_ip": "10.140.0.2", "external_ip_before": null, "external_ip_after": "35.194.154.62", "static_addresses": []},
+  "billing": {"account": "billingAccounts/017011-E5B441-28904B", "billing_enabled": true, "owner_or_editor_grant_for_billing_admin": false, "relinked_again": false},
+  "lease": {"resource": "pantheon-dev-environment", "repository": "ajoe734/execute-plans", "branch": "environment-coordination", "lease_id": "2e685500-a35a-4f17-8d54-fd690038b1ef", "prior_holder_state": "released (last release l12-compose:manual:l12q37968701984x1)", "acquired": "2026-10-09T23:31:28Z", "released": "2026-10-09T23:35:24Z"},
+  "dns": {"zone": "pantheon-dev-mvl-cap", "records": {"api.dev.mvl-cap.tw.": "A 300 35.194.154.62", "app.dev.mvl-cap.tw.": "A 300 35.194.154.62"}, "previous": "34.81.52.222", "ns_unchanged": true},
+  "github_variables": {"ajoe734/pantheon": ["repo DEV_DEPLOY_SSH_HOST", "env dev DEV_DEPLOY_SSH_HOST", "env dev DEV_DEPLOY_SSH_KNOWN_HOSTS"], "ajoe734/execute-plans": "no IP-bound variables exist (URL-based only); nothing changed"},
+  "ssh": {"strict_host_key_checking": "yes", "known_hosts": "original three pinned public keys re-bound to new host; no keyscan", "result": "Host '35.194.154.62' is known and matches the ED25519 host key (SHA256:BPMef4TY42O3yI4Z0l0xaJg2FxXZF91yk2gnJZ8pCW0)", "authentication": "Permission denied (publickey) - expected: worker has no deploy private key; no credential substituted. Full authenticated deploy-key handshake NOT verified by this worker."},
+  "public_readback": {"app_deployment_json": 200, "api_bff_version": {"http": 200, "source_commit_sha": "610ba4b329945f861953679b7f5270b52f6bdfb4", "auth_mode": "strict", "environment": "dev"}, "method": "curl --resolve to 35.194.154.62"},
+  "retained_failures": ["First curl pair (before --resolve) hit the stale local resolver cache and connected to the released 34.81.52.222; both timed out with no response. Unintended probe of the released address.", "Default snap gcloud wrapper failed with DBus transient scope error; invoked /snap/google-cloud-cli/current/bin/gcloud directly with the same account.", "System ssh_config permissions error; used ssh -F /dev/null (host-key verification unaffected)."],
+  "not_done": ["No latest-dev product delivery or hosted acceptance claimed", "Staging/Prod untouched", "Monday 2026-10-12 TW decision unchanged"]
+}

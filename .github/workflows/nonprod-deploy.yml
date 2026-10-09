@@ -142,7 +142,7 @@ jobs:
       DEV_AUTH_PROFILE: ${{ inputs.dev_auth_profile }}
       PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ inputs.ppl_alloc_009_dev_proof_enabled }}
       BOUNDED_SOURCE_REFRESH_ENABLED: ${{ inputs.run_bounded_source_refresh }}
-      DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST || '34.81.52.222' }}
+      DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST || '35.194.154.62' }}
       DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER }}
       BOOTSTRAP_EMPTY_HOST: ${{ inputs.bootstrap_empty_host || false }}
       BOOTSTRAP_PREDECESSOR_BACKEND_SHA: ${{ inputs.bootstrap_predecessor_backend_sha || '' }}
@@ -2345,7 +2345,7 @@ jobs:
       DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://api.dev.mvl-cap.tw' }}
       DEV_FE_URL: ${{ vars.DEV_FE_URL || 'https://app.dev.mvl-cap.tw' }}
       FRONTEND_REF: ${{ needs.deploy-dev.outputs.frontend_ref }}
-      DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST || '34.81.52.222' }}
+      DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST || '35.194.154.62' }}
       DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER }}
     steps:
       - name: Checkout pinned lease controller
@@ -2479,7 +2479,7 @@ jobs:
         env:
           DEV_DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEV_DEPLOY_SSH_PRIVATE_KEY }}
           DEV_DEPLOY_SSH_KNOWN_HOSTS: ${{ vars.DEV_DEPLOY_SSH_KNOWN_HOSTS }}
-          DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST || '34.81.52.222' }}
+          DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST || '35.194.154.62' }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
