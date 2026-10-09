@@ -1946,6 +1946,28 @@ class DownstreamHealthMonitor:
         targets = state.get("targets", {})
         total_targets = len(targets)
         healthy_targets = sum(1 for t in targets.values() if t.get("ok"))
+        failing_targets = sorted(name for name, t in targets.items() if t.get("ok") is False)
+        status = "ready" if overall_ok else "degraded"
+        actual_summary = f"{healthy_targets} of {total_targets} downstream probe targets healthy"
+        if failing_targets:
+            actual_summary += "; failing: " + ", ".join(failing_targets)
+        # schemas/loop-controller-record.schema.json requires present/status,
+        # source and checked_at; the projector and BFF only pass summary on.
+        desired_state = {
+            "present": total_targets > 0,
+            "source": "operator-bff.downstream_health_target_registry",
+            "checked_at": now_iso,
+            "summary": f"{total_targets} downstream probe targets configured",
+            "probe_targets_count": total_targets,
+        }
+        downstream_actual_state = {
+            "status": status,
+            "source": "operator-bff.downstream_health_probe_store",
+            "checked_at": now_iso,
+            "summary": actual_summary,
+            "healthy_targets_count": healthy_targets,
+            "total_targets_count": total_targets,
+        }
 
         dsn = os.environ.get("DATABASE_URL", "").strip()
         self._loop_12_truth["attempted_at"] = now_iso
@@ -1969,13 +1991,8 @@ class DownstreamHealthMonitor:
                     truth_level="reconciled_live_proof",
                     desired_state_query="SELECT count(*) FROM bff_downstream_health_targets",
                     actual_state_query="SELECT count(*) FROM downstream_health_probe_state WHERE ok=1",
-                    desired_state={"probe_targets_count": total_targets},
-                    downstream_actual_state={
-                        "status": "ready" if overall_ok else "degraded",
-                        "healthy_targets_count": healthy_targets,
-                        "total_targets_count": total_targets,
-                        "checked_at": now_iso,
-                    },
+                    desired_state=desired_state,
+                    downstream_actual_state=downstream_actual_state,
                     evidence_refs=["services/control-plane/bff/downstream_health_monitor.py"],
                 )
             except Exception as exc:  # noqa: BLE001 - reported in monitor state
@@ -2009,16 +2026,11 @@ class DownstreamHealthMonitor:
             "last_heartbeat_at": now_iso,
             "truth_level": "reconciled_live_proof",
             "ready": overall_ok,
-            "status": "ready" if overall_ok else "degraded",
+            "status": status,
             "desired_state_query": "SELECT count(*) FROM bff_downstream_health_targets",
             "actual_state_query": "SELECT count(*) FROM downstream_health_probe_state WHERE ok=1",
-            "desired_state": {"probe_targets_count": total_targets},
-            "downstream_actual_state": {
-                "status": "ready" if overall_ok else "degraded",
-                "healthy_targets_count": healthy_targets,
-                "total_targets_count": total_targets,
-                "checked_at": now_iso,
-            },
+            "desired_state": desired_state,
+            "downstream_actual_state": downstream_actual_state,
             "evidence_refs": ["services/control-plane/bff/downstream_health_monitor.py"],
         }
         return record

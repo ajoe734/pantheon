@@ -445,6 +445,14 @@ def test_service_error_line_matches_worker_json_and_skips_idle_ticks() -> None:
     assert match("asyncio.exceptions.TimeoutError: timed out")
     assert not match('{"tick": 1, "result": {"jobs_found": 0, "completed": 0, "failed": 0, "errors": []}}')
     assert not match('{"result": {"error": null}}')
+    detail = "CONSULTATION_HANDOFF_SINK_URL is not configured; downstream acknowledgement is required"
+    for outcome in ("blocked", "dead_letter"):
+        assert match(
+            '{"errors": [], "outcomes": [{"request_id": "r", "outcome": "%s", "detail": "%s"}]}'
+            % (outcome, detail)
+        )
+    assert not match('{"errors": [], "outcomes": [{"request_id": "r", "outcome": "completed"}]}')
+    assert not match('{"errors": [], "outcomes": [], "blocked": 0, "dead_lettered": 0}')
     assert not match("INFO tick ok")
 
 

@@ -378,20 +378,28 @@ class StimulusDrivenClosureGate:
             (negative.get("next_consumer_readback") or {}).get("failure_attribution"),
             boundary="BFF worker-failure loop attribution",
         )
+        # Component probe failures never manufacture a canonical loop-health
+        # row (management_read_models/loop_truth.py; ACG-04-008 removed the
+        # cross-loop map) and nothing writes a capital_pool_execution
+        # controller record.  The Loop 12 record names the failing target and
+        # the probe registry declares that target a Capital worker.
+        failure_registry = failure_readback.get("registry") or {}
         if (
-            failure_attribution.get("loop_id") != "capital_pool_execution"
+            failure_attribution.get("loop_id") != "bff_health_monitoring"
             or failure_attribution.get("status") != "degraded"
             or "paper-fleet-reconciler" not in str(failure_attribution.get("summary") or "")
+            or failure_registry.get("component_kind") != "capital-worker-api"
         ):
             raise StimulusProofError(
-                "BFF did not attribute the functional paper-fleet failure to Capital loop"
+                "BFF did not attribute the functional paper-fleet failure to the Capital worker"
             )
         self.evidence.management = {
             "canonical_loop_count": len(rows),
             "endpoint": management_readback.get("endpoint"),
             "functional_worker_failure": {
-                "owner_loop": failure_attribution.get("loop_id"),
+                "reporting_loop": failure_attribution.get("loop_id"),
                 "target": "paper-fleet-reconciler",
+                "target_component_kind": failure_registry.get("component_kind"),
                 "target_ok": failure_readback.get("ok"),
                 "summary": failure_attribution.get("summary"),
             },

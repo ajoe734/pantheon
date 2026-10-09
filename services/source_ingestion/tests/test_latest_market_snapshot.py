@@ -13,6 +13,9 @@ from fastapi.testclient import TestClient
 from services.source_ingestion.connectors.taiwan_official import (
     TaiwanOfficialMarketDatasetAdapter,
 )
+from services.source_ingestion.persona_source_reconciler import (
+    RECONCILIATION_METADATA_KEY,
+)
 from services.source_ingestion.requirement_state import LatestMarketSnapshotStore
 
 
@@ -291,7 +294,12 @@ def test_tw_execution_alias_reads_only_the_official_twse_snapshot(
                 "source_type": "market",
                 "provider": "TWSE/TPEx",
                 "license_scope": "official_reference",
-                "metadata": {"dataset": "tw_price_daily"},
+                "metadata": {
+                    "dataset": "tw_price_daily",
+                    RECONCILIATION_METADATA_KEY: {
+                        "managed_by": "persona_source_provisioning_reconciler",
+                    },
+                },
             },
             "fetch": {
                 "mode": "static_records",

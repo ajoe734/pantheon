@@ -146,7 +146,12 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
                     )
                     if existing_connector is not None:
                         existing_tenant = str(existing_connector.metadata.get("tenant_id") or "").strip() or None
-                        if existing_tenant and existing_tenant != resolved_tenant:
+                        if not existing_tenant:
+                            raise HTTPException(
+                                status_code=403,
+                                detail={"code": "TENANT_SCOPE_DENIED", "message": "Connector has no bound tenant"},
+                            )
+                        if existing_tenant != resolved_tenant:
                             raise HTTPException(
                                 status_code=403,
                                 detail={"code": "TENANT_SCOPE_DENIED", "message": "Cannot mutate connector owned by another tenant"},

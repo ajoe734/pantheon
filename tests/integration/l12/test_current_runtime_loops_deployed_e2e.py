@@ -1633,11 +1633,12 @@ class RuntimeChain:
                         ),
                         None,
                     )
+                    # The loop-health projection exposes status/summary, not
+                    # the raw target counts; the monitor names failing targets
+                    # in summary.
                     state = (row or {}).get("downstream_actual_state") or {}
-                    if (
-                        state.get("status") == "degraded"
-                        and int(state.get("healthy_targets_count", 0))
-                        < int(state.get("total_targets_count", 0))
+                    if state.get("status") == "degraded" and "paper-fleet-reconciler" in str(
+                        state.get("summary") or ""
                     ):
                         return {"row": row, "state": state}
                     return None
@@ -1648,13 +1649,7 @@ class RuntimeChain:
                     timeout=120,
                 )
                 capital_loop = monitor_row["row"]
-                downstream_state = {
-                    **monitor_row["state"],
-                    "summary": (
-                        "paper-fleet-reconciler probe failed: "
-                        f"{reconciler_probe.get('failure_reason')}"
-                    ),
-                }
+                downstream_state = monitor_row["state"]
                 self.evidence.add_case(
                     "negative_typed_worker_failure",
                     loop=12,

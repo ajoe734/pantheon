@@ -32,7 +32,10 @@ def test_batch_reuses_approved_pool_and_never_embeds_credential() -> None:
         == "${CLAUDE_CODE_OAUTH_TOKEN}"
     )
     assert not any("clearEnv" in path for path in values)
+    # Both real consumer identities, once each; main keeps native tool policy.
     assert values["agents.list"] == [
-        {"id": "structured-extraction", "tools": {"deny": ["*"]}}
+        {"id": "main"},
+        {"id": "structured-extraction", "tools": {"deny": ["*"]}},
     ]
+    assert [item["path"] for item in batch].count("agents.list") == 1
     assert "sentinel-secret-value" not in json.dumps(batch)

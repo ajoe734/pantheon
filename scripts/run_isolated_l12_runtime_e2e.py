@@ -648,6 +648,7 @@ SERVICE_ERROR_LINE = re.compile(
     r"|HTTP/\d(?:\.\d)?\" [45]\d\d"
     r"|\"errors?\":\s*(?:\[\s*[^\s\]]|\"[^\"]|\{\s*[^\s}])"
     r"|\"failed\":\s*[1-9]"
+    r"|\"outcome\":\s*\"(?:blocked|dead_letter)\""
 )
 
 

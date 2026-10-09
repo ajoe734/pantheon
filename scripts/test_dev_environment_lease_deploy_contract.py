@@ -103,7 +103,7 @@ def test_controller_checksums_match_pinned_controller_files() -> None:
     assert hashlib.sha256((SCRIPTS / "dev_environment_lease.py").read_bytes()).hexdigest() == CONTROLLER_SCRIPT_SHA256
 
 
-def test_compensation_and_other_lease_callers_use_the_repaired_controller() -> None:
+def test_compensation_and_other_lease_callers_use_the_repaired_controller(tmp_path: Path) -> None:
     for relative in (
         ".github/workflows/agora-hosted-acceptance.yml",
         ".github/workflows/dev-tw-market-refresh.yml",
@@ -115,6 +115,33 @@ def test_compensation_and_other_lease_callers_use_the_repaired_controller() -> N
         assert CONTROLLER_WRAPPER_SHA256 in text, relative
     fixture_workflow = (ROOT / ".github/workflows/persona-owner-contract.yml").read_text()
     assert f"git fetch --no-tags --depth=1 origin {CONTROLLER_SHA}" in fixture_workflow
+    _assert_compensation_startup_consumers(tmp_path)
+
+
+def _assert_compensation_startup_consumers(tmp_path: Path) -> None:
+    for index, relative in enumerate(_COMPENSATION_CALLERS):
+        work = tmp_path / f"caller{index}"
+        work.mkdir()
+        # Exact expired predecessor followed by the acquired lease succeeds.
+        ok = _run_compensation_verify(work, relative, "stale_then_current")
+        assert ok.returncode == 0, ok.stderr
+        assert "get_content_calls=3" in ok.stderr
+        # Without the bounded visibility flags the original failure reproduces.
+        unbounded = _run_compensation_verify(work, relative, "stale_then_current", flags=False)
+        assert unbounded.returncode == 75
+        assert "leaseId changed" in unbounded.stderr
+        # A genuine foreign lease is never treated as visibility lag.
+        foreign = _run_compensation_verify(work, relative, "foreign")
+        assert foreign.returncode == 75
+        assert "leaseId changed" in foreign.stderr
+        assert "get_content_calls=1" in foreign.stderr
+        # Exhausted bounded visibility fails closed.
+        exhausted = _run_compensation_verify(work, relative, "exhausted")
+        assert exhausted.returncode == 75
+        assert "bounded timeout" in exhausted.stderr
+    text = (ROOT / "scripts/compensate_cross_repo_release.sh").read_text(encoding="utf-8")
+    assert text.index(_VISIBILITY_FLAGS[0]) < text.index('  "${lease_wrapper}" \\')
+    assert text.count(_VISIBILITY_FLAGS[0]) == 1
 
 
 def test_dev_and_staging_are_independent_jobs_and_staging_has_no_lease_secret() -> None:
@@ -178,8 +205,10 @@ def test_initial_visibility_retry_is_only_on_immediate_post_acquire_verify() -> 
     next_step = dev.index("      - name: Deploy dev VM stack under lease", heartbeat_start)
     initial_verify = dev[heartbeat_start:next_step]
 
-    assert dev.count("--initial-visibility-wait-seconds") == 1
-    assert dev.count("--initial-visibility-poll-seconds") == 1
+    # Exactly the post-acquire verify and the compensation startup verify.
+    assert dev.count("--initial-visibility-wait-seconds") == 2
+    assert dev.count("--initial-visibility-poll-seconds") == 2
+    assert initial_verify.count("--initial-visibility-wait-seconds") == 1
     assert "--initial-visibility-wait-seconds 15" in initial_verify
     assert "--initial-visibility-poll-seconds 1" in initial_verify
     assert initial_verify.index("verify-heartbeat-identity") < initial_verify.index(
@@ -3042,3 +3071,95 @@ def test_restart_admission_removal_is_detected(monkeypatch):
     monkeypatch.setitem(globals(), "_workflow", lambda: source.replace("${AGORA_OUTCOME}", "success"))
     with pytest.raises(AssertionError):
         test_deployment_completion_retains_real_checks_without_provider_gate("root", "AGORA_OUTCOME")
+
+
+_VISIBILITY_FLAGS = (
+    "--initial-visibility-wait-seconds 15",
+    "--initial-visibility-poll-seconds 1",
+)
+_LEASE_SHIM = '''
+import copy, sys, time
+from datetime import timedelta
+sys.path.insert(0, {scripts!r})
+import dev_environment_lease as lease
+import test_dev_environment_lease as fixtures
+
+scenario = {scenario!r}
+now = fixtures.NOW
+pred = fixtures.state_for(
+    owner="pantheon:previous", mode="deployment",
+    lease_id="22222222-2222-4222-8222-222222222222",
+    heartbeat=now - timedelta(minutes=6), expires=now - timedelta(seconds=1),
+)
+current = fixtures.state_for(
+    owner="pantheon:rollback", mode="deployment",
+    lease_id="33333333-3333-4333-8333-333333333333", heartbeat=now,
+)
+foreign = fixtures.state_for(
+    owner="pantheon:foreign", mode="deployment",
+    lease_id="44444444-4444-4444-8444-444444444444", heartbeat=now,
+)
+client = fixtures.FakeClient()
+remote = lambda state, sha: lease.RemoteContent(state=copy.deepcopy(state), content_sha=sha, server_now=now)
+client.scripted_content = {{
+    "stale_then_current": [remote(pred, "1" * 40), remote(pred, "1" * 40), remote(current, "2" * 40)],
+    "foreign": [remote(foreign, "3" * 40)],
+    "exhausted": [remote(pred, "1" * 40)],
+}}[scenario]
+clock = [0.0]
+time.monotonic = lambda: clock[0]
+time.sleep = lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+lease.manager_from_args = lambda args: fixtures.manager(client)
+try:
+    lease.main()
+finally:
+    print("get_content_calls=%d" % client.get_content_calls, file=sys.stderr)
+'''
+
+
+def _compensation_verify_command(relative: str) -> str:
+    text = (ROOT / relative).read_text(encoding="utf-8")
+    if relative.endswith(".yml"):
+        text = text.split("id: deploy_compensation", 1)[1]
+    flag = text.index(_VISIBILITY_FLAGS[0])
+    start = text.rindex('python3 "', 0, flag)
+    end = text.index(">/dev/null", flag)
+    return text[start:end]
+
+
+def _run_compensation_verify(tmp_path: Path, relative: str, scenario: str, *, flags: bool = True):
+    command = _compensation_verify_command(relative)
+    assert all(flag in command for flag in _VISIBILITY_FLAGS)
+    if not flags:
+        for flag in _VISIBILITY_FLAGS:
+            command = command.replace(flag, "")
+    shim = tmp_path / "lease_shim.py"
+    shim.write_text(_LEASE_SHIM.format(scripts=str(SCRIPTS), scenario=scenario), encoding="utf-8")
+    command = re.sub(r'python3 "[^"]+"', f'python3 "{shim}"', command, count=1)
+    import test_dev_environment_lease as fixtures
+    local_state = fixtures.state_for(
+        owner="pantheon:rollback", mode="deployment",
+        lease_id="33333333-3333-4333-8333-333333333333",
+    )
+    local = lease.public_state(local_state, content_sha="2" * 40)
+    local["previousContentSha"] = "1" * 40
+    state_file = tmp_path / "state.json"
+    state_file.write_text(json.dumps(local), encoding="utf-8")
+    env = {
+        **os.environ,
+        "PANTHEON_ENVIRONMENT_LEASE_TOKEN": "t",
+        "lease_token": "t",
+        "state_file": str(state_file),
+        "rollback_state_file": str(state_file),
+        "LEASE_STATE_FILE": str(state_file),
+    }
+    return subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", command + ">/dev/null"],
+        capture_output=True, text=True, env=env, timeout=60,
+    )
+
+
+_COMPENSATION_CALLERS = (
+    ".github/workflows/nonprod-deploy.yml",
+    "scripts/compensate_cross_repo_release.sh",
+)
