@@ -18,7 +18,20 @@ CASES = [
     ("training-session", "training-session-preview-worker", "services.training-session.preview_eval_worker", "build_loop_writer"),
     ("consultation", "consultation-svc", "services.consultation.workflow_executor", "_build_loop_writer"),
     ("reconciliation-drift", "reconciliation-drift-scheduler", "services.reconciliation-drift.scheduler_worker", "_build_loop_writer"),
+    ("control-plane-bff", "agora-interaction-worker", "services.control-plane.bff.agora.interaction.worker", "build_loop_writer"),
+    ("deployment", "deployment-outbox-consumer", "services.deployment.outbox_consumer_worker", "build_loop_writer"),
+    ("paper_fleet_reconciler", "paper-fleet-reconciler", "services.paper_fleet_reconciler.paper_fleet_reconciler", "_build_loop_writer"),
+    ("evolution", "evolution-dispatch-worker", "services.evolution.dispatch_worker", "build_loop_writer"),
 ]
+# Compose env the Loop 5/8/9/11 services must carry: only the DSN (and tenant)
+# variable their merged writer reads, with no release-identity env added.
+COMPOSE_ENV_KEYS = {
+    "control-plane-bff": ("DATABASE_URL", "PANTHEON_TENANT_ID"),
+    "deployment": ("DATABASE_URL", "PANTHEON_DEPLOYMENT_TENANT_ID"),
+    "paper_fleet_reconciler": ("RECONCILER_LOOP_CONTROLLER_DSN", "PANTHEON_TENANT_ID"),
+    "evolution": ("DATABASE_URL", "PANTHEON_TENANT_ID"),
+}
+REQUIREMENTS_PATH = {"control-plane-bff": "control-plane/bff"}
 DSN = "postgresql://image-contract@unused.invalid/isolated"
 SHA = "1" * 40
 
@@ -42,6 +55,17 @@ def _builder(case, monkeypatch, *, configured=True):
         )}
     elif service == "training-session":
         kwargs = {}
+    elif service == "control-plane-bff":
+        kwargs = {}
+    elif service == "deployment":
+        kwargs = {"consumer_name": "deployment-outbox-consumer"}
+    elif service == "paper_fleet_reconciler":
+        kwargs = {
+            "dsn": dsn, "tenant_id": "tenant-image-test",
+            "controller_id": "image-test", "lease_duration_seconds": 120,
+        }
+    elif service == "evolution":
+        kwargs = {"lease_duration_seconds": 120}
     return module, lambda: getattr(module, builder_name)(**kwargs)
 
 
@@ -55,7 +79,12 @@ def test_actual_worker_image_lock_includes_the_shared_writer_driver(case):
     assert "asyncpg==0.31.0" in (ROOT / lock).read_text()
     assert "jsonschema==" in (ROOT / lock).read_text()
     requirement = "runtime-requirements.txt" if service == "research" else "requirements.txt"
-    assert "asyncpg==0.31.0" in (ROOT / "services" / service / requirement).read_text()
+    requirements = (
+        ROOT / "services" / REQUIREMENTS_PATH.get(service, service) / requirement
+    ).read_text()
+    # Some newer service requirement files leave the driver unpinned; the lock
+    # above still pins it.
+    assert ("asyncpg" if service in COMPOSE_ENV_KEYS else "asyncpg==0.31.0") in requirements
 
 
 @pytest.mark.parametrize("case", CASES, ids=[c[0] for c in CASES])
@@ -104,6 +133,13 @@ def test_compose_supplies_existing_dsn_scope_and_release_identity():
     services = json.loads(result.stdout)["services"]
     for service, name, *_ in CASES:
         env = services[name]["environment"]
+        if service in COMPOSE_ENV_KEYS:
+            for key in COMPOSE_ENV_KEYS[service]:
+                expected = DSN if key in {"DATABASE_URL", "RECONCILER_LOOP_CONTROLLER_DSN"} else None
+                assert key in env, (name, key)
+                if expected:
+                    assert env[key] == expected, (name, key)
+            continue
         assert env["DATABASE_URL"] == DSN, name
         assert env["PANTHEON_ENV"] == "image-test", name
         assert env["GIT_SHA"] == SHA, name

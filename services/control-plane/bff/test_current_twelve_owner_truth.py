@@ -38,8 +38,12 @@ EXPECTED_IMPLEMENTED_CONTROLLERS: dict[str, str] = {
     "alpha_replication": "alpha-replication-controller",
     "persona_teaching": "training-session-preview-eval-worker",
     "human_imitation_shadow_evaluation": "policy-learning-shadow-eval-scheduler",
+    "agora_interaction_evidence": "agora-interaction-worker",
     "consultation": "consultation-workflow-executor",
+    "promotion_deployment": "deployment-outbox-consumer",
+    "capital_pool_execution": "paper-fleet-reconciler",
     "telemetry_reconciliation": "reconciliation-drift-scheduler",
+    "evolution": "evolution-dispatch-worker",
     "bff_health_monitoring": "bff_downstream_health_monitor",
 }
 
@@ -252,8 +256,8 @@ class TestTwelveOwnerCatalogContract:
         assert len(items) == 13
 
         coverage = payload["meta"]["catalog"]["controller_contract_coverage"]
-        assert coverage["declared_controller_count"] == 8
-        assert coverage["no_declared_controller_count"] == 5
+        assert coverage["declared_controller_count"] == 12
+        assert coverage["no_declared_controller_count"] == 1
         assert coverage["incomplete_contract_loop_ids"] == []
 
         for loop_id, expected_name in EXPECTED_IMPLEMENTED_CONTROLLERS.items():
@@ -265,18 +269,13 @@ class TestTwelveOwnerCatalogContract:
             assert declaration["missing_contract_fields"] == []
             assert item["owner"]["current_controller_owner"] == expected_name
 
-        for loop_id in [
-            "agora_interaction_evidence",
-            "promotion_deployment",
-            "capital_pool_execution",
-            "evolution",
-        ]:
-            item = items[loop_id]
-            declaration = item["controller_contract_declaration"]
-            assert declaration["status"] == "not_implemented"
-            assert declaration["controller_implemented"] is False
-            assert declaration["contract_complete"] is False
-            assert item["owner"]["current_controller_owner"] is None
+        # Only the composite overlay has no controller declaration.
+        item = items["per_persona_ooda"]
+        declaration = item["controller_contract_declaration"]
+        assert declaration["status"] == "not_implemented"
+        assert declaration["controller_implemented"] is False
+        assert declaration["contract_complete"] is False
+        assert item["owner"]["current_controller_owner"] is None
 
 
 class TestDegradedAndUnobservedProjection:
@@ -500,9 +499,9 @@ class TestTaskArchiveLivenessRejection:
 class TestAllTwelveProductLoopsRuntimeObservations:
     """Validate positive and negative runtime observation acceptance across all twelve loops."""
 
-    @pytest.mark.parametrize("record_kind", ["missing", "healthy", "stale", "degraded", "undeclared"])
+    @pytest.mark.parametrize("record_kind", ["missing", "healthy", "stale", "degraded"])
     def test_health_metadata_matches_admission_without_test_side_rewriting(self, record_kind) -> None:
-        loop_id = "evolution" if record_kind == "undeclared" else "source_ingestion"
+        loop_id = "source_ingestion"
         now = datetime.now(timezone.utc)
         row = _build_valid_controller_row(
             loop_id,
@@ -555,8 +554,10 @@ class TestAllTwelveProductLoopsRuntimeObservations:
         assert payload["meta"]["coverage"]["controller_health_record_count"] == len(
             EXPECTED_IMPLEMENTED_CONTROLLERS
         )
-        assert payload["meta"]["surfaces"]["loop_health"]["status"] == "degraded"
-        assert payload["meta"]["surfaces"]["loop_health"]["accepted_live"] is False
+        # Every canonical loop now declares a controller, so a valid record for
+        # each of the twelve is accepted.
+        assert payload["meta"]["surfaces"]["loop_health"]["status"] == "ok"
+        assert payload["meta"]["surfaces"]["loop_health"]["accepted_live"] is True
 
         items = {item["loop_id"]: item for item in payload["items"]}
         for loop_id in conformance.CANONICAL_LOOP_IDS:
