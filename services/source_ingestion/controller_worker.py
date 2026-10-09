@@ -1519,8 +1519,14 @@ def _write_alive(path: Path | None) -> None:
 
 
 def _controller_lease_seconds(config: ControllerConfig) -> int:
-    """Lease must outlive one steady-state interval plus one tick timeout."""
-    return max(int(config.lease_seconds), int(config.interval_seconds) + int(config.timeout_seconds + 0.999))
+    """Every write holds exactly the configured lease (default 2x interval).
+
+    The isolated harness and the deploy script wait this configured lease
+    before handing the controller loop to another process, so a write must not
+    fence longer. timeout_seconds is a per-request timeout, not a tick length:
+    the bounded Taiwan pull runs with timeout 1800 and lease 10.
+    """
+    return int(config.lease_seconds)
 
 
 def _controller_truth_fields(
