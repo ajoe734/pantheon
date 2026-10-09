@@ -1653,3 +1653,84 @@ def test_scheduled_reconcile_lifecycle_and_incident_budget_bounded_under_cardina
         assert claim_result["acquired"] is True
         assert claim_result["reason"] in {"acquired", "recovered"}
 
+
+
+def _published_loop_10_row(scheduler, result, *, interval, timeout, attempts=1, backoff=0.0):
+    """Run the scheduler's real publish path against a capturing store."""
+    import asyncio
+    import importlib
+    import os
+
+    loop_control = importlib.import_module("services.loop-control")
+    projector = importlib.import_module("services.loop-control.projector")
+    rows: list[dict] = []
+
+    class CapturingStore:
+        def __init__(self, dsn):
+            pass
+
+        async def upsert_record(self, record):
+            rows.append(dict(record))
+
+    with mock.patch.object(loop_control.writer, "LoopControllerStore", CapturingStore):
+        writer = scheduler._build_loop_writer(
+            dsn="postgresql://fake",
+            tenant_id="default",
+            lease_duration_seconds=scheduler._lease_seconds(
+                interval_seconds=interval,
+                timeout_seconds=timeout,
+                max_attempts=attempts,
+                retry_backoff_seconds=backoff,
+            ),
+        )
+        truth = scheduler._controller_truth_fields(
+            result, tick=1, worker_id="w", checked_at=scheduler._utc_now()
+        )
+        asyncio.run(
+            writer.record_success(
+                loop_id="telemetry_reconciliation",
+                truth_level="scheduled_tick",
+                desired_state=truth["desired_state"],
+                downstream_actual_state=truth["downstream_actual_state"],
+                evidence_refs=[truth["tick_evidence_ref"]],
+            )
+        )
+    assert os is not None
+    return projector, rows[0], truth
+
+
+def test_idle_tick_projects_authoritative_healthy_loop_10_record():
+    scheduler = _load_scheduler_module()
+    result = {
+        "status": "ok",
+        "tick_id": "scheduled:default:idle",
+        "telemetry_summaries_fetched": 1,
+        "evaluated_binding_count": 1,
+    }
+    projector, row, truth = _published_loop_10_row(
+        scheduler, result, interval=300, timeout=90
+    )
+    schema = json.loads(
+        (_REPO_ROOT / "schemas" / "loop-controller-record.schema.json").read_text()
+    )
+    for key in ("desired_state", "downstream_actual_state"):
+        jsonschema.validate(
+            truth[key],
+            schema["properties"][key],
+            format_checker=jsonschema.FormatChecker(),
+        )
+    projected = projector.project_controller_record_to_bff(row)
+    assert projected["desired_state_presence"]["authoritative"] is True
+    assert projected["downstream_actual_state"]["authoritative"] is True
+    assert projected["evidence_refs"]
+    assert projected["controller_health"]["status"] == "healthy"
+
+
+def test_lease_covers_interval_plus_tick_timeout():
+    scheduler = _load_scheduler_module()
+    lease = scheduler._lease_seconds(interval_seconds=300, timeout_seconds=90)
+    assert lease >= 390
+    retried = scheduler._lease_seconds(
+        interval_seconds=300, timeout_seconds=90, max_attempts=3, retry_backoff_seconds=1
+    )
+    assert retried >= 300 + 3 * 90
