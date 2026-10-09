@@ -427,11 +427,14 @@ def main() -> int:
     worker = worker_id()
     health_file = _env_text("SHADOW_EVAL_SCHEDULER_HEALTH_FILE")
     database_url = str(os.getenv("DATABASE_URL") or "")
-    # Lease must outlive the wait between ticks plus one tick's work.
+    # The in-wait heartbeat renews the lease at least every
+    # HEARTBEAT_REFRESH_SECONDS, so the lease only has to outlive the longest
+    # gap between renewals plus one tick's work.  A longer lease would block a
+    # restarted scheduler (new lease token) from writing until it expired.
     writer = _build_loop_writer(
         dsn=database_url,
         tenant_id=tenant_id,
-        lease_seconds=interval_seconds + TICK_TIMEOUT_SECONDS,
+        lease_seconds=HEARTBEAT_REFRESH_SECONDS + TICK_TIMEOUT_SECONDS,
     )
     loop_id = os.getenv("PANTHEON_LOOP_ID") or DEFAULT_LOOP_ID
     health: dict[str, Any] = {
@@ -585,13 +588,10 @@ def main() -> int:
             remaining -= nap
             if remaining > 0 and writer is not None and last_state is not None:
                 try:
-                    desired_state, actual_state, tick_refs = last_state
-                    now_iso = _utc_now()
+                    _, _, tick_refs = last_state
                     asyncio.run(
                         writer.record_heartbeat(
                             loop_id=loop_id,
-                            desired_state={**desired_state, "checked_at": now_iso},
-                            downstream_actual_state={**actual_state, "checked_at": now_iso},
                             evidence_refs=tick_refs,
                         )
                     )

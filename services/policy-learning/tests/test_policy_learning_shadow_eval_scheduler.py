@@ -912,7 +912,9 @@ def test_scheduler_published_record_projects_authoritative_and_healthy(tmp_path:
     ):
         assert scheduler.main() == 0
 
-    assert built["lease_seconds"] >= 3600 + scheduler.TICK_TIMEOUT_SECONDS
+    assert built["lease_seconds"] == (
+        scheduler.HEARTBEAT_REFRESH_SECONDS + scheduler.TICK_TIMEOUT_SECONDS
+    )
     kwargs = fake_writer.written[0]["kwargs"]
     projected = _project_published_record(kwargs, lease_seconds=built["lease_seconds"])
     assert projected["desired_state_presence"]["authoritative"] is True
@@ -956,6 +958,9 @@ def test_scheduler_refreshes_heartbeat_while_waiting(tmp_path: Path) -> None:
     assert max(sleeps) <= 300
     assert sum(sleeps) == 3600
     assert len(heartbeats) == 11
-    projected = _project_published_record(heartbeats[0], lease_seconds=3900)
-    assert projected["desired_state_presence"]["authoritative"] is True
-    assert projected["evidence_refs"]
+    for hb in heartbeats:
+        # Omitted optional fields keep the stored observation; the heartbeat
+        # must not re-stamp an observation that was not re-taken.
+        assert "desired_state" not in hb
+        assert "downstream_actual_state" not in hb
+        assert hb["evidence_refs"]
