@@ -2780,6 +2780,28 @@ class TestLoop9ControllerWriter(unittest.TestCase):
         self.assertIsNone(recon._loop_writer)
         recon.reconcile_once()
 
+    def test_writer_built_from_dsn_env_without_injected_writer(self) -> None:
+        import paper_fleet_reconciler as reconciler_module
+        from paper_fleet_reconciler import PaperFleetReconciler
+
+        built: List[Dict[str, Any]] = []
+
+        class _Writer:
+            def __init__(self, dsn: str, **kwargs: Any) -> None:
+                built.append({"dsn": dsn, **kwargs})
+
+        fake_loop_control = SimpleNamespace(LoopControllerWriter=_Writer)
+        env = {k: v for k, v in os.environ.items() if not k.startswith("PANTHEON_CONTROLLER_")}
+        env["RECONCILER_LOOP_CONTROLLER_DSN"] = "postgresql://loop9.invalid/pantheon"
+        with patch.dict(os.environ, env, clear=True), patch.object(
+            reconciler_module.importlib, "import_module", return_value=fake_loop_control
+        ):
+            recon = PaperFleetReconciler(poll_interval_seconds=999, reconciler_id="recon-dsn")
+
+        self.assertIsNotNone(recon._loop_writer)
+        self.assertEqual(len(built), 1)
+        self.assertTrue(built[0]["controller_id"].startswith("recon-dsn:"))
+
     def test_worker_env_excludes_controller_settings(self) -> None:
         from paper_fleet_reconciler import PaperFleetReconciler
 

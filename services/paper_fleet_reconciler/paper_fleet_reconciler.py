@@ -706,13 +706,15 @@ class PaperFleetReconciler:
         )
         self._monitoring_heartbeat_stale_after = max(int(stale_after), 1)
         self._extra_env: Dict[str, str] = dict(extra_env or {})
-        self._init_loop_writer(loop_writer)
 
         # Leader ownership fails closed until a durable backend grants a
         # monotonically fenced lease.  Unit tests opt into the explicit
         # InMemoryFencedLeaderStore; the production singleton always uses Redis
         # (or an explicitly configured locked file backend).
         self._reconciler_id = reconciler_id or f"reconciler-{uuid.uuid4().hex[:8]}"
+        # The DSN-built writer's controller_id uses _reconciler_id, so it must
+        # be set first; earlier the AttributeError silently disabled the writer.
+        self._init_loop_writer(loop_writer)
         self._is_leader = False
         self._leader_store = _coerce_leader_store(leader_store)
         self._leader_lease_ttl = max(

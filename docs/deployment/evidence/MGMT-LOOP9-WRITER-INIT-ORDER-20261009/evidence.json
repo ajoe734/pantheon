@@ -1,0 +1,24 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "MGMT-LOOP9-WRITER-INIT-ORDER-20261009",
+  "title": "Paper fleet reconciler builds its Loop 9 writer after its reconciler id exists",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "execution",
+  "delivery_state": "ready_for_independent_review",
+  "fix_commit": "23f8f6938083c14fc3a936a0f10431664f883783",
+  "scope": {
+    "owned": [
+      "services/paper_fleet_reconciler/paper_fleet_reconciler.py",
+      "services/paper_fleet_reconciler/test_paper_fleet_reconciler.py"
+    ]
+  },
+  "verification": {
+    "command": "pytest services/paper_fleet_reconciler/test_paper_fleet_reconciler.py -q",
+    "result": "1 failed, 74 passed",
+    "known_base_failure": "TestPaperPerformanceComposeWiring::test_fleet_and_static_runtimes_use_canonical_mark_source_and_state_volume fails identically on base 9aecf162f",
+    "note": "The two live-Redis tests did not error in this run; they need no Redis here once pydantic/asyncpg/flask/jsonschema/pyyaml are installed."
+  },
+  "delivery_notes": "Operator commit was fast-forwarded onto current dev (9aecf162f); not rewritten or amended. Only this evidence file was added."
+}
