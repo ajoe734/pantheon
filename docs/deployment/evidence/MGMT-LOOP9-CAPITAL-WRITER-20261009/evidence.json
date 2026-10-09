@@ -1,0 +1,20 @@
+{
+  "task_id": "MGMT-LOOP9-CAPITAL-WRITER-20261009",
+  "loop_id": "capital_pool_execution",
+  "controller_name": "paper-fleet-reconciler",
+  "desired_state_source": "runtime-manager.runtime-fleet.desired-state",
+  "actual_state_source": "paper-fleet-reconciler.worker_inventory",
+  "evidence_ref_pattern": "paper-fleet://reconcile-cycles/{reconciler_id}/{cycle_count}",
+  "env": {
+    "RECONCILER_LOOP_CONTROLLER_DSN": "writer DSN; writer disabled when empty; stripped from worker env",
+    "RECONCILER_LOOP_WRITE_INTERVAL_SECONDS": "default 30",
+    "RECONCILER_LOOP_LEASE_SECONDS": "default 120; raised to max(write interval, poll interval)+1 if smaller",
+    "RECONCILER_LOOP_ID": "default capital_pool_execution"
+  },
+  "verification": {
+    "command": "pytest services/paper_fleet_reconciler/test_paper_fleet_reconciler.py",
+    "result": "72 passed, 2 failed; both failures pre-existing on base (missing yaml/flask in local env)",
+    "new_tests": "TestLoop9ControllerWriter (8 tests, incl. projector + _runtime_controller_record_qualified)"
+  },
+  "not_changed": ["services/loop-control", "BFF admission rules", "loop catalog", "docker-compose.yml"]
+}
