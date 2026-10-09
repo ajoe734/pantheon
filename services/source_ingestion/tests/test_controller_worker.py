@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import stat
 from copy import deepcopy
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -2571,7 +2572,7 @@ def test_run_controller_tick_publishes_projector_admissible_truth(
         published = _call(writer, name)["kwargs"]
         now = datetime.now(timezone.utc)
         lease_seconds = published["lease_duration_seconds"]
-        assert lease_seconds >= config.interval_seconds + config.timeout_seconds
+        assert lease_seconds == config.lease_seconds
         row = {
             "loop_id": controller_worker.LOOP_ID,
             "tenant_id": state.tenant_id,
@@ -2608,3 +2609,29 @@ def test_run_controller_tick_publishes_projector_admissible_truth(
         assert projected["downstream_actual_state"]["authoritative"] is True
         assert projected["evidence_refs"]
         assert projected["controller_health"]["status"] == "healthy"
+
+
+def test_bounded_pull_writes_hold_only_the_configured_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The isolated harness runs the bounded Taiwan pull with interval 10, lease
+    # 10 and a 1800s request timeout, then starts the resident scheduler after
+    # 15s. A write that fenced interval+timeout (1810s) locked it out.
+    harness_pull = replace(_config(tmp_path), interval_seconds=10, lease_seconds=10, timeout_seconds=1800.0)
+    assert controller_worker._controller_lease_seconds(harness_pull) == 10
+
+    events: list[str] = []
+    config = replace(_config(tmp_path), interval_seconds=10, lease_seconds=10)
+    writer = RecordingWriter(events)
+    _patch_successful_tick(monkeypatch, events)
+
+    run_controller_tick(
+        config=config,
+        state=_state(),
+        store=RecordingStateStore(config.state_path, events),
+        writer=writer,
+    )
+
+    for name in ("heartbeat", "tick", "success"):
+        assert _call(writer, name)["kwargs"]["lease_duration_seconds"] == 10
