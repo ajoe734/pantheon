@@ -1,0 +1,28 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "MGMT-LOOP-CATALOG-DECLARE-20261008",
+  "title": "Declare the Loop 4, 6, 7 and 10 controllers in the loop catalog",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "execution",
+  "delivery_state": "ready_for_independent_review",
+  "objective": "Declare persona_teaching, human_imitation_shadow_evaluation, consultation and telemetry_reconciliation as implemented catalog controllers using the names the merged writers record.",
+  "scope": {
+    "owned": [
+      "docs/deployment/loop-catalog.registry.json: controller_contract and current_controller_owner for the four loops (training-session-preview-eval-worker, policy-learning-shadow-eval-scheduler, consultation-workflow-executor, reconciliation-drift-scheduler).",
+      "services/control-plane/bff/test_loop_inventory_read_model_contract.py: four runtime bindings (no Compose service), catalog order, evolution as the undeclared sample.",
+      "services/control-plane/bff/test_current_twelve_owner_truth.py: expected controllers, counts 8 declared / 5 undeclared."
+    ],
+    "not_changing": [
+      "Any writer, admission or projector code.",
+      "docker-compose.yml: none of the four services sets PANTHEON_CONTROLLER_NAME, so compose_services is empty."
+    ]
+  },
+  "verification": {
+    "commands": [
+      "python -m pytest -q services/control-plane/bff/test_loop_inventory_read_model_contract.py services/control-plane/bff/test_current_twelve_owner_truth.py"
+    ],
+    "result": "36 passed, 1 warning (exit 0)"
+  }
+}

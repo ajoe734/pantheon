@@ -267,6 +267,18 @@ _current_persona_service: ContextVar[Optional[Any]] = ContextVar(
 )
 
 
+_composed_command_adapter_service: Optional[Any] = None
+
+
+def _require_composed_command_adapter_service() -> Any:
+    if _composed_command_adapter_service is None:
+        raise RuntimeError(
+            "command adapter requested before the app composed its CommandAdapterService; "
+            "failing closed instead of creating one."
+        )
+    return _composed_command_adapter_service
+
+
 def _require_composed_persona_service(store_name: str) -> Any:
     if _composed_persona_service is None:
         raise RuntimeError(
@@ -2320,6 +2332,7 @@ def _list_strategy_spec_match_candidates(
         "strategy_specs",
         snapshot_at=snapshot_at,
         has_data=_get_active_read_store().dataset_source("strategy_specs") != "missing",
+        service_surface_rules=True,
     )
     return items, surface
 
@@ -2367,6 +2380,7 @@ def _persona_strategy_discovery_payload(
                 "personas",
                 snapshot_at=snapshot_at,
                 has_data=True,
+                service_surface_rules=True,
             ),
             "strategy_spec_seeds": seed_surface,
             "strategy_specs": strategy_spec_surface,
@@ -3313,11 +3327,11 @@ def _persona_intent_surfaces(
     snapshot_at: str,
 ) -> Dict[str, Any]:
     source_surfaces = {
-        "personas": _dataset_surface_status("personas", snapshot_at=snapshot_at),
-        "persona_sessions": _dataset_surface_status("sessions", snapshot_at=snapshot_at),
-        "capability_snapshots": _dataset_surface_status("capability_snapshots", snapshot_at=snapshot_at),
-        "teaching_sessions": _dataset_surface_status("teaching_sessions", snapshot_at=snapshot_at),
-        "agora_sessions": _dataset_surface_status("agora_sessions", snapshot_at=snapshot_at),
+        "personas": _dataset_surface_status("personas", snapshot_at=snapshot_at, service_surface_rules=True),
+        "persona_sessions": _dataset_surface_status("sessions", snapshot_at=snapshot_at, service_surface_rules=True),
+        "capability_snapshots": _dataset_surface_status("capability_snapshots", snapshot_at=snapshot_at, service_surface_rules=True),
+        "teaching_sessions": _dataset_surface_status("teaching_sessions", snapshot_at=snapshot_at, service_surface_rules=True),
+        "agora_sessions": _dataset_surface_status("agora_sessions", snapshot_at=snapshot_at, service_surface_rules=True),
     }
     persona_trace_surface = _aggregate_group_surface(
         "persona_traces",
@@ -5741,9 +5755,10 @@ def _promotion_review_surfaces(
         snapshot_at=snapshot_at,
         has_data=evidence_dataset_available,
         missing_message="Evidence reference read surface is unavailable.",
+        service_surface_rules=True,
     )
-    approval_queue_surface = _dataset_surface_status("approval_queue_items", snapshot_at=snapshot_at)
-    human_gate_surface = _dataset_surface_status("approval_decisions", snapshot_at=snapshot_at)
+    approval_queue_surface = _dataset_surface_status("approval_queue_items", snapshot_at=snapshot_at, service_surface_rules=True)
+    human_gate_surface = _dataset_surface_status("approval_decisions", snapshot_at=snapshot_at, service_surface_rules=True)
     recommendations_surface = _aggregate_group_surface(
         "quarterly_ranking_recommendations",
         [*source_surfaces.values(), formula_surface, evidence_surface, approval_queue_surface, human_gate_surface],
@@ -6042,14 +6057,14 @@ def _pm12_persona_league_rows(
 # --- _pm12_persona_league_source_surfaces ---
 def _pm12_persona_league_source_surfaces(snapshot_at: str, read_store: Optional[Any] = None) -> Dict[str, Dict[str, Any]]:
     return {
-        "personas": _dataset_surface_status("personas", snapshot_at=snapshot_at, read_store=read_store),
+        "personas": _dataset_surface_status("personas", snapshot_at=snapshot_at, read_store=read_store, service_surface_rules=True),
         "route_policies": _composed_surface_status(snapshot_at=snapshot_at),
-        "capability_snapshots": _dataset_surface_status("capability_snapshots", snapshot_at=snapshot_at, read_store=read_store),
-        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at, read_store=read_store),
-        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at, read_store=read_store),
-        "telemetry_summaries": _dataset_surface_status("telemetry_summaries", snapshot_at=snapshot_at, read_store=read_store),
-        "persona_sessions": _dataset_surface_status("persona_sessions", snapshot_at=snapshot_at, read_store=read_store),
-        "teaching_sessions": _dataset_surface_status("teaching_sessions", snapshot_at=snapshot_at, read_store=read_store),
+        "capability_snapshots": _dataset_surface_status("capability_snapshots", snapshot_at=snapshot_at, read_store=read_store, service_surface_rules=True),
+        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at, read_store=read_store, service_surface_rules=True),
+        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at, read_store=read_store, service_surface_rules=True),
+        "telemetry_summaries": _dataset_surface_status("telemetry_summaries", snapshot_at=snapshot_at, read_store=read_store, service_surface_rules=True),
+        "persona_sessions": _dataset_surface_status("persona_sessions", snapshot_at=snapshot_at, read_store=read_store, service_surface_rules=True),
+        "teaching_sessions": _dataset_surface_status("teaching_sessions", snapshot_at=snapshot_at, read_store=read_store, service_surface_rules=True),
         "persona_memory": _composed_surface_status(snapshot_at=snapshot_at),
     }
 
@@ -8243,32 +8258,37 @@ def _persona_fleet_slim_list_payload(
                     rows,
                     snapshot_at=snapshot_at,
                     source="bff_composed_slim_list",
+                    service_surface_rules=True,
                 ),
                 "personas": _composed_dataset_surface_status(
                     "personas",
                     personas,
                     snapshot_at=snapshot_at,
                     source="composed_market_persona_defaults",
+                    service_surface_rules=True,
                 ),
                 "persona_league": _composed_dataset_surface_status(
                     "persona_league",
                     league,
                     snapshot_at=snapshot_at,
                     source="composed_market_persona_defaults",
+                    service_surface_rules=True,
                 ),
                 "capital_pools": _composed_dataset_surface_status(
                     "capital_pools",
                     pools,
                     snapshot_at=snapshot_at,
                     source="composed_market_persona_defaults",
+                    service_surface_rules=True,
                 ),
                 "runtime_bindings": _composed_dataset_surface_status(
                     "runtime_bindings",
                     runtimes,
                     snapshot_at=snapshot_at,
                     source="composed_market_persona_defaults",
+                    service_surface_rules=True,
                 ),
-                "ooda_control_room_status": _dataset_surface_status("ooda_packets", snapshot_at=snapshot_at),
+                "ooda_control_room_status": _dataset_surface_status("ooda_packets", snapshot_at=snapshot_at, service_surface_rules=True),
             },
             "related": {
                 "persona_league": {"href": "/bff/management/persona-league"},
@@ -8325,6 +8345,7 @@ def _persona_league_payload(
             "persona_league",
             snapshot_at=snapshot_at,
             total=total,
+            service_surface_rules=True,
         ),
     }
 
@@ -8803,6 +8824,8 @@ def _list_governance_audit_events(
     to_ts: Optional[datetime] = None,
     include_command_store: bool = True,
     include_fixture_pack: bool = True,
+    include_agora_events: bool = True,
+    agora_audit_store: Optional[Any] = None,
 ) -> List[Dict[str, Any]]:
     events = _get_active_read_store().list_governance_audit_events(
         actor=actor,
@@ -8816,6 +8839,33 @@ def _list_governance_audit_events(
         str(event.get("entry_id") or event.get("auditId") or event.get("id") or index): event
         for index, event in enumerate(events)
     }
+    if include_agora_events:
+        # Agora mutation audits are owned by the dedicated append-only writer,
+        # not by the read-only surface ports.  Merge them into the governance
+        # audit readback so entity links and post-restart queries remain durable.
+        if agora_audit_store is None:
+            from ..assistant.management_service import get_agora_audit_store
+
+            agora_audit_store = get_agora_audit_store()
+        for event in agora_audit_store.list_agora_audit_events(
+            actor=actor,
+            action_types=action_types,
+            target_type=target_type,
+            from_ts=from_ts,
+            to_ts=to_ts,
+        ):
+            if _audit_event_matches(
+                event,
+                actor=actor,
+                action_types=action_types,
+                target_type=target_type,
+                from_ts=from_ts,
+                to_ts=to_ts,
+            ):
+                events_by_id.setdefault(
+                    str(event.get("entry_id") or event.get("auditId") or event.get("id")),
+                    event,
+                )
     if include_command_store:
         for record in _get_active_command_store()._get_all_commands():
             event = _project_command_record_audit_event(record)
@@ -9319,7 +9369,40 @@ def _dataset_surface_status(
     has_data: Optional[bool] = None,
     missing_message: Optional[str] = None,
     source: Optional[str] = None,
+    service_surface_rules: bool = False,
+    **kwargs: Any,
 ) -> Dict[str, Any]:
+    if not service_surface_rules:
+        # Default (former main.py) rules: the shared dataset formatter, incident
+        # source derivation from the incident port, and no staleness for an
+        # unavailable source.
+        from ..research.routes.common import format_dataset_surface_status
+
+        resolved_store = _get_active_read_store(read_store)
+        if source is None:
+            src = getattr(resolved_store, "dataset_source", lambda d: "missing")(dataset) if resolved_store else "missing"
+            if dataset == "incidents":
+                p = (
+                    getattr(getattr(resolved_store, "lifecycle_telemetry_governance", None), "incidents", None)
+                    or getattr(resolved_store, "incident_port", None)
+                    or getattr(resolved_store, "incidents", None)
+                )
+                psrc = getattr(p, "dataset_source", lambda: "missing")() if p else "missing"
+                source = "unavailable" if (psrc == "unavailable" or getattr(p, "_last_error", False)) else (psrc if src in (None, "typed_store") else src)
+            else:
+                source = str(src or "missing")
+        res = format_dataset_surface_status(
+            dataset,
+            snapshot_at=snapshot_at,
+            has_data=has_data,
+            missing_message=missing_message,
+            source=source,
+            utc_now=utc_now,
+            **kwargs,
+        )
+        if source in ("unavailable", "missing"):
+            res.update(status="unavailable", source=source)
+        return res
     surface = dict(_surface_status())
     store = _get_active_read_store(read_store)
     if source is None:
@@ -9390,12 +9473,14 @@ def _composed_dataset_surface_status(
     read_store: Optional[Any] = None,
     snapshot_at: str,
     source: str,
+    service_surface_rules: bool = False,
 ) -> Dict[str, Any]:
     surface = _dataset_surface_status(
         dataset,
         read_store=read_store,
         snapshot_at=snapshot_at,
         source=_dataset_source_after_read(dataset, read_store=read_store),
+        service_surface_rules=service_surface_rules,
     )
     if records and surface.get("source") == "missing":
         return {
@@ -9418,6 +9503,7 @@ def _read_surface_meta(
     missing_message: Optional[str] = None,
     degraded_reason: Optional[str] = None,
     unavailable_reason: Optional[str] = None,
+    service_surface_rules: bool = False,
 ) -> Dict[str, Any]:
     snapshot_at = snapshot_at or utc_now()
     surface = surface or _dataset_surface_status(
@@ -9426,6 +9512,7 @@ def _read_surface_meta(
         snapshot_at=snapshot_at,
         has_data=has_data,
         missing_message=missing_message,
+        service_surface_rules=service_surface_rules,
     )
     meta: Dict[str, Any] = {
         "snapshot_at": snapshot_at,
@@ -12394,14 +12481,23 @@ def _sem_command_response(
     server_generated_target: bool = False,
     trusted_evidence_producer: Optional[str] = None,
     terminal_on_persist: bool = False,
+    authorization: Optional[str] = None,
+    dry_run: bool = False,
+    command_adapter_service: Optional[Any] = None,
+    isolated_adapter: bool = False,
 ) -> JSONResponse:
-    adapter_svc = CommandAdapterService(
-        command_store=_get_active_command_store,
-        read_surface=_get_active_read_store,
-        extract_identity=_extract_identity,
-        bff_error=_bff_error,
-        utc_now=utc_now,
-    )
+    if isolated_adapter:
+        # Former personas/service.py behaviour: a request-local adapter built
+        # from the active stores, without the composed validators.
+        adapter_svc = CommandAdapterService(
+            command_store=_get_active_command_store,
+            read_surface=_get_active_read_store,
+            extract_identity=_extract_identity,
+            bff_error=_bff_error,
+            utc_now=utc_now,
+        )
+    else:
+        adapter_svc = command_adapter_service or _require_composed_command_adapter_service()
     return adapter_svc.sem_command_response(
         command_type=command_type,
         target_type=target_type,
@@ -12414,6 +12510,8 @@ def _sem_command_response(
         server_generated_target=server_generated_target,
         trusted_evidence_producer=trusted_evidence_producer,
         terminal_on_persist=terminal_on_persist,
+        authorization=authorization,
+        dry_run=dry_run,
     )
 
 
@@ -13221,7 +13319,7 @@ class PersonaService:
         self._utc_now = utc_now_fn or _utc_now_rfc3339
         self._bff_error = bff_error_fn or _bff_error
         self._snapshot_meta = snapshot_meta_fn or _snapshot_meta
-        self._dataset_surface_status = dataset_surface_status_fn or _dataset_surface_status
+        self._dataset_surface_status = dataset_surface_status_fn or self.dataset_surface_status
         self._raise_if_read_surface_unavailable = (
             raise_if_read_surface_unavailable_fn or _raise_if_read_surface_unavailable
         )
@@ -13433,6 +13531,7 @@ class PersonaService:
                 missing_message=missing_message,
                 degraded_reason=degraded_reason,
                 unavailable_reason=unavailable_reason,
+                service_surface_rules=True,
             )
         finally:
             _current_persona_service.reset(token)
@@ -13445,16 +13544,18 @@ class PersonaService:
         has_data: Optional[bool] = None,
         missing_message: Optional[str] = None,
         source: Optional[str] = None,
+        read_store: Optional[Any] = None,
     ) -> Dict[str, Any]:
         token = _current_persona_service.set(self)
         try:
             return _dataset_surface_status(
                 dataset,
-                read_store=self._read_store,
+                read_store=read_store if read_store is not None else self._read_store,
                 snapshot_at=snapshot_at,
                 has_data=has_data,
                 missing_message=missing_message,
                 source=source,
+                service_surface_rules=True,
             )
         finally:
             _current_persona_service.reset(token)
@@ -14207,6 +14308,7 @@ class PersonaService:
                 snapshot_at=snap,
                 has_data=evidence_dataset_available,
                 missing_message="Evidence reference read surface is unavailable.",
+                service_surface_rules=True,
             )
             knowledge_surface = _dataset_surface_status(
                 "knowledge_evidence",
@@ -14214,9 +14316,10 @@ class PersonaService:
                 snapshot_at=snap,
                 has_data=evidence_dataset_available,
                 missing_message="Knowledge evidence read surface is unavailable.",
+                service_surface_rules=True,
             )
-            approval_queue_surface = _dataset_surface_status("approval_queue_items", read_store=self._read_store, snapshot_at=snap)
-            human_gate_surface = _dataset_surface_status("approval_decisions", read_store=self._read_store, snapshot_at=snap)
+            approval_queue_surface = _dataset_surface_status("approval_queue_items", read_store=self._read_store, snapshot_at=snap, service_surface_rules=True)
+            human_gate_surface = _dataset_surface_status("approval_decisions", read_store=self._read_store, snapshot_at=snap, service_surface_rules=True)
             human_inbox_surface = _composed_surface_status(
                 snapshot_at=snap,
                 available=(

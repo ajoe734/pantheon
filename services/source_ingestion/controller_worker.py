@@ -1607,6 +1607,51 @@ def _write_alive(path: Path | None) -> None:
     os.replace(temp, path)
 
 
+def _controller_lease_seconds(config: ControllerConfig) -> int:
+    """Lease must outlive one steady-state interval plus one tick timeout."""
+    return max(int(config.lease_seconds), int(config.interval_seconds) + int(config.timeout_seconds + 0.999))
+
+
+def _controller_truth_fields(
+    *,
+    state: ControllerState,
+    desired_meta: Mapping[str, Any],
+    pre_actual: Mapping[str, Any],
+    observed_at: str,
+) -> dict[str, Any]:
+    """Derive record desired/actual state from values this tick already read."""
+    persona_count = int(desired_meta.get("persona_count") or 0)
+    authority = str(desired_meta.get("authority") or "source-ingest.desired_state")
+    actual_source = "source-ingest.controller_readback"
+    unresolved = pre_actual.get("unresolved_dlq_count")
+    return {
+        "desired_state": {
+            "present": persona_count > 0,
+            "source": authority,
+            "checked_at": str(desired_meta.get("read_at") or observed_at),
+            "summary": (
+                f"{persona_count} personas, "
+                f"{int(desired_meta.get('requirement_count') or 0)} data requirements"
+            ),
+            "sources": [authority],
+        },
+        "downstream_actual_state": {
+            "status": "ready" if pre_actual.get("connectors") is not None else "unknown",
+            "source": actual_source,
+            "checked_at": str(pre_actual.get("captured_at") or observed_at),
+            "summary": (
+                f"{int(pre_actual.get('connector_count') or 0)} connectors, "
+                f"{int(pre_actual.get('source_record_count') or 0)} source records, "
+                f"{unresolved if isinstance(unresolved, int) else 'unknown'} unresolved DLQ"
+            ),
+            "sources": [actual_source],
+        },
+        "evidence_refs": [
+            f"source-ingest-controller:{state.controller_id}:tick:{state.sequence_no}",
+        ],
+    }
+
+
 def run_controller_tick(
     *,
     config: ControllerConfig,
@@ -1620,24 +1665,39 @@ def run_controller_tick(
     frontier_recovery: dict[str, Any] = {}
     pre_actual: dict[str, Any] = {}
     actual: dict[str, Any] = {}
+    truth_fields: dict[str, Any] = {}
+    lease_seconds = _controller_lease_seconds(config)
     validated_frontier_backlog = 0
     had_failures = state.consecutive_failures > 0
     state.record_tick_started()
     store.save(state)
     try:
+        pre_actual = read_actual_state(api_url=config.api_url, timeout_seconds=config.timeout_seconds)
+        personas, desired_meta = load_desired_state(timeout_seconds=config.timeout_seconds)
+        truth_fields = _controller_truth_fields(
+            state=state, desired_meta=desired_meta, pre_actual=pre_actual, observed_at=utc_now()
+        )
+        lease_seconds = _controller_lease_seconds(config)
         _async(
             writer.record_heartbeat(
                 LOOP_ID,
                 NON_TERMINAL_TRUTH_LEVEL,
                 desired_state_query="persona/data requirement snapshot",
                 actual_state_query=config.api_url.rstrip("/") + "/api/source-ingest/controller/readback",
-                lease_duration_seconds=config.lease_seconds,
+                lease_duration_seconds=lease_seconds,
                 payload={"deployment": state.deployment, "state_sequence_no": state.sequence_no},
+                **truth_fields,
             )
         )
-        _async(writer.record_tick(LOOP_ID, NON_TERMINAL_TRUTH_LEVEL, payload={"state_sequence_no": state.sequence_no}))
-        pre_actual = read_actual_state(api_url=config.api_url, timeout_seconds=config.timeout_seconds)
-        personas, desired_meta = load_desired_state(timeout_seconds=config.timeout_seconds)
+        _async(
+            writer.record_tick(
+                LOOP_ID,
+                NON_TERMINAL_TRUTH_LEVEL,
+                lease_duration_seconds=lease_seconds,
+                payload={"state_sequence_no": state.sequence_no},
+                **truth_fields,
+            )
+        )
         reconcile = reconcile_desired_state(
             api_url=config.api_url,
             personas=personas,
@@ -1757,7 +1817,11 @@ def run_controller_tick(
                 backlog=validated_frontier_backlog,
                 lag=int(actual.get("max_lag_seconds") or 0),
                 dlq_count=int(actual.get("unresolved_dlq_count") or 0),
-                evidence_refs=[ref for ref in evidence_refs if ref and ref != "None"],
+                desired_state=truth_fields["desired_state"],
+                downstream_actual_state=truth_fields["downstream_actual_state"],
+                lease_duration_seconds=lease_seconds,
+                evidence_refs=truth_fields["evidence_refs"]
+                + [ref for ref in evidence_refs if ref and ref != "None"],
                 payload={
                     "controller_mode": config.mode,
                     "provider_egress_attempted": config.mode == RECONCILE_AND_PULL_MODE,
@@ -1775,7 +1839,11 @@ def run_controller_tick(
                     LOOP_ID,
                     "controller recovered after explicit failed/degraded tick",
                     config.truth_level,
-                    evidence_refs=[ref for ref in evidence_refs if ref and ref != "None"],
+                    desired_state=truth_fields["desired_state"],
+                    downstream_actual_state=truth_fields["downstream_actual_state"],
+                    lease_duration_seconds=lease_seconds,
+                    evidence_refs=truth_fields["evidence_refs"]
+                    + [ref for ref in evidence_refs if ref and ref != "None"],
                 )
             )
         state.record_success(
@@ -1820,6 +1888,7 @@ def run_controller_tick(
                     f"{error.stage}: {error}",
                     NON_TERMINAL_TRUTH_LEVEL,
                     dlq_count=_trusted_unresolved_dlq_count(actual),
+                    lease_duration_seconds=lease_seconds,
                     payload={
                         "failure_stage": error.stage,
                         "state_sequence_no": state.sequence_no,

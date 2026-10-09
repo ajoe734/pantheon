@@ -575,3 +575,60 @@ def test_bounded_blocking_dead_letters_and_operator_replay(
     assert final is not None
     assert final["status"] == "completed"
     assert final["replay_count"] == 1
+
+
+class _RecordingWriter:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    async def record_success(self, **kwargs):
+        self.calls.append(("record_success", kwargs))
+
+    async def record_failure(self, **kwargs):
+        self.calls.append(("record_failure", kwargs))
+
+
+def test_idle_tick_publishes_admissible_controller_truth() -> None:
+    import importlib
+    from datetime import datetime, timedelta, timezone
+
+    from services.consultation.workflow_executor import publish_loop_truth
+
+    writer = _RecordingWriter()
+    result = {
+        "requests_discovered": 0,
+        "completed": 0,
+        "blocked": 0,
+        "outcomes": [],
+        "state_counts": {},
+    }
+    publish_loop_truth(
+        writer,
+        loop_id="consultation",
+        result=result,
+        health={"status": "ok"},
+        checked_at="2026-10-08T00:00:00Z",
+    )
+    kind, kwargs = writer.calls[0]
+    assert kind == "record_success"
+    now = datetime.now(timezone.utc)
+    projector = importlib.import_module("services.loop-control").project_controller_record_to_bff
+    projected = projector(
+        {
+            "loop_id": "consultation",
+            "controller_id": "c1",
+            "controller_name": "consultation-workflow-executor",
+            "last_heartbeat_at": now,
+            "last_success_at": now,
+            "lease_token": "tok",
+            "lease_expires_at": now + timedelta(seconds=61),
+            "desired_state": kwargs["desired_state"],
+            "downstream_actual_state": kwargs["downstream_actual_state"],
+            "evidence_refs": kwargs["evidence_refs"],
+        },
+        now=now,
+    )
+    assert projected["desired_state_presence"]["authoritative"] is True
+    assert projected["downstream_actual_state"]["authoritative"] is True
+    assert projected["evidence_refs"]
+    assert projected["controller_health"]["status"] == "healthy"

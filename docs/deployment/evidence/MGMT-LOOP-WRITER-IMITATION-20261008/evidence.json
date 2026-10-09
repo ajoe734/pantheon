@@ -1,0 +1,29 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "MGMT-LOOP-WRITER-IMITATION-20261008",
+  "title": "Shadow-eval scheduler writes admissible truth under the canonical Loop 6 id",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "execution",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "c63c33287",
+  "objective": "Scheduler publishes loop_id human_imitation_shadow_evaluation with desired/actual state, per-tick evidence ref, a lease of interval+300s, and a heartbeat refresh at most every 300s while waiting.",
+  "scope": {
+    "owned": [
+      "services/policy-learning/scheduler_worker.py",
+      "services/policy-learning/tests/test_policy_learning_shadow_eval_scheduler.py"
+    ],
+    "not_changing": [
+      "services/loop-control",
+      "BFF admission rules",
+      "loop catalog"
+    ]
+  },
+  "verification": {
+    "commands": [
+      "pytest -q services/policy-learning/tests/test_policy_learning_shadow_eval_scheduler.py services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py"
+    ],
+    "result": "44 passed, 4 failed, 1 skipped. The 4 failures (compose renderer/credential tests) fail identically on the base commit and are unrelated. New tests project the published fields through services/loop-control/projector.py: both states authoritative, refs non-empty, controller status healthy; heartbeat refresh test asserts sleeps <=300s and 11 heartbeats per 3600s interval."
+  }
+}

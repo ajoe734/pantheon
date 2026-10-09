@@ -36,6 +36,11 @@ EXPECTED_IMPLEMENTED_CONTROLLERS: dict[str, str] = {
     "source_ingestion": "source-ingestion-controller",
     "strategy_distillation": "strategy-distillation-controller",
     "alpha_replication": "alpha-replication-controller",
+    "persona_teaching": "training-session-preview-eval-worker",
+    "human_imitation_shadow_evaluation": "policy-learning-shadow-eval-scheduler",
+    "consultation": "consultation-workflow-executor",
+    "telemetry_reconciliation": "reconciliation-drift-scheduler",
+    "bff_health_monitoring": "bff_downstream_health_monitor",
 }
 
 
@@ -247,8 +252,8 @@ class TestTwelveOwnerCatalogContract:
         assert len(items) == 13
 
         coverage = payload["meta"]["catalog"]["controller_contract_coverage"]
-        assert coverage["declared_controller_count"] == 3
-        assert coverage["no_declared_controller_count"] == 10
+        assert coverage["declared_controller_count"] == 8
+        assert coverage["no_declared_controller_count"] == 5
         assert coverage["incomplete_contract_loop_ids"] == []
 
         for loop_id, expected_name in EXPECTED_IMPLEMENTED_CONTROLLERS.items():
@@ -261,15 +266,10 @@ class TestTwelveOwnerCatalogContract:
             assert item["owner"]["current_controller_owner"] == expected_name
 
         for loop_id in [
-            "persona_teaching",
             "agora_interaction_evidence",
-            "human_imitation_shadow_evaluation",
-            "consultation",
             "promotion_deployment",
             "capital_pool_execution",
-            "telemetry_reconciliation",
             "evolution",
-            "bff_health_monitoring",
         ]:
             item = items[loop_id]
             declaration = item["controller_contract_declaration"]
@@ -502,7 +502,7 @@ class TestAllTwelveProductLoopsRuntimeObservations:
 
     @pytest.mark.parametrize("record_kind", ["missing", "healthy", "stale", "degraded", "undeclared"])
     def test_health_metadata_matches_admission_without_test_side_rewriting(self, record_kind) -> None:
-        loop_id = "consultation" if record_kind == "undeclared" else "source_ingestion"
+        loop_id = "evolution" if record_kind == "undeclared" else "source_ingestion"
         now = datetime.now(timezone.utc)
         row = _build_valid_controller_row(
             loop_id,

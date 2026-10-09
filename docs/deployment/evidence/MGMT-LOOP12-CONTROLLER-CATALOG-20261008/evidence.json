@@ -1,0 +1,31 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "MGMT-LOOP12-CONTROLLER-CATALOG-20261008",
+  "title": "Declare the Loop 12 controller in the loop catalog and keep one writer lease",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "execution",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "610ba4b32",
+  "objective": "Declare bff_health_monitoring (Loop 12) as an implemented catalog controller and make the downstream health monitor reuse one writer so consecutive cycles keep one lease token.",
+  "scope": {
+    "owned": [
+      "docs/deployment/loop-catalog.registry.json: bff_health_monitoring controller_contract (controller_name bff_downstream_health_monitor, desired/actual/restart/liveness fields) and current_controller_owner.",
+      "services/control-plane/bff/downstream_health_monitor.py: publish controller record with catalog queries; reuse one writer per monitor.",
+      "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py: unit test failing when a new writer is built each cycle.",
+      "services/control-plane/bff/test_loop_inventory_read_model_contract.py and test_current_twelve_owner_truth.py: corrected strategy_distillation literal read_source_records_for_tenant."
+    ],
+    "not_changing": [
+      "Catalog status of any other loop.",
+      "Compose files and admission rules."
+    ],
+    "composes_with": ["Operator commit b0af84369 (PR #6441), delivered unchanged; no rewrite, squash or amend."]
+  },
+  "verification": {
+    "commands": [
+      "python -m pytest -q services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py services/control-plane/bff/test_loop_inventory_read_model_contract.py services/control-plane/bff/test_current_twelve_owner_truth.py"
+    ],
+    "result": "73 passed, 1 warning (exit 0)"
+  }
+}

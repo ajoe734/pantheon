@@ -1046,6 +1046,50 @@ def test_normalize_case_record_from_provisioning_ledger():
     assert normalized["artifact_checksum"] == "sha256-approved"
 
 
+def _nested_owner_row(**over):
+    rb = {
+        "runtime_binding": {
+            "plan_id": DEFAULT_TEST_CASE["deployment_plan_id"],
+            "capital_pool_id": DEFAULT_TEST_CASE["capital_pool_id"],
+            "persona_capital_binding_id": DEFAULT_TEST_CASE["persona_capital_binding_id"],
+        },
+        "deployment": {"plan_id": DEFAULT_TEST_CASE["deployment_plan_id"]},
+    }
+    rb.update(over)
+    return {
+        "tenant_id": DEFAULT_TEST_CASE["tenant_id"],
+        "references": {"authoritative_readback": rb},
+        "result": {},
+    }
+
+
+def _case_with_owner_ids(row):
+    norm = probe._normalize_case_record(row)
+    keys = ("deployment_plan_id", "capital_pool_id", "persona_capital_binding_id")
+    return dict(DEFAULT_TEST_CASE, **{k: norm[k] for k in keys})
+
+
+def test_normalize_case_record_from_nested_owner_readback_selects_candidate():
+    case = _case_with_owner_ids(_nested_owner_row())
+    for k in ("deployment_plan_id", "capital_pool_id", "persona_capital_binding_id"):
+        assert case[k] == DEFAULT_TEST_CASE[k]
+    cands = probe._complete_candidates(_natural_lifecycle_rows(), mode="controlled-stimulus")
+    probe._validate_natural_candidate(cands[0], case)
+
+
+def test_normalize_case_record_owner_readback_fails_closed():
+    row = _nested_owner_row(deployment={"plan_id": "plan-other"})
+    assert probe._normalize_case_record(row)["deployment_plan_id"] == ""
+    row = _nested_owner_row()
+    del row["references"]["authoritative_readback"]["runtime_binding"]["capital_pool_id"]
+    assert probe._normalize_case_record(row)["capital_pool_id"] == ""
+    wrong = dict(_case_with_owner_ids(_nested_owner_row()), capital_pool_id="pool-other")
+    cands = probe._complete_candidates(_natural_lifecycle_rows(), mode="controlled-stimulus")
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(cands[0], wrong)
+    assert exc_info.value.code == "case_capital_mismatch"
+
+
 def test_main_cli_mode_and_case_key_validation(tmp_path):
     out_file = tmp_path / "cli_test.json"
     ret = probe.main(["--expected-sha", "test-sha", "--output", str(out_file), "--mode", "natural"])

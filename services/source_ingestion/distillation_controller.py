@@ -428,6 +428,15 @@ def build_loop_writer(*, dsn: str, state: ControllerState) -> Any:
     )
 
 
+def _controller_lease_seconds(config: DistillationControllerConfig) -> int:
+    """Lease must outlive one steady-state interval plus one tick budget."""
+    return int(config.interval_seconds) + max(30, int(config.lease_seconds))
+
+
+def _controller_tick_evidence_ref(state: ControllerState) -> str:
+    return f"distillation-controller:{state.controller_id}:tick:{state.sequence_no}"
+
+
 def run_controller_tick(
     *,
     config: DistillationControllerConfig,
@@ -544,6 +553,7 @@ def run_controller_tick(
         store.save(state)
         
         # Write success to DB
+        observed_at = utc_now()
         asyncio.run(
             writer.record_success(
                 loop_id=loop_id,
@@ -554,6 +564,25 @@ def run_controller_tick(
                     f"Synced: {run_result.registry_synced}."
                 ),
                 backlog=reconcile_meta.get("enqueued", 0),
+                desired_state={
+                    "present": bool(eligible_ids),
+                    "source": "source-ingest.normalized_source_records",
+                    "checked_at": observed_at,
+                    "summary": f"{len(eligible_ids)} eligible normalized source records",
+                    "sources": ["source-ingest.normalized_source_records"],
+                },
+                downstream_actual_state={
+                    "status": "ready",
+                    "source": "registry.distillation_job_queue",
+                    "checked_at": observed_at,
+                    "summary": (
+                        f"{len(terminal_drafts)} terminal drafts; "
+                        f"{actual_meta['pending_dead_letter_count']} dead letters"
+                    ),
+                    "sources": ["registry.distillation_job_queue"],
+                },
+                evidence_refs=[_controller_tick_evidence_ref(state)],
+                lease_duration_seconds=_controller_lease_seconds(config),
                 payload={
                     "desired": desired_meta,
                     "reconcile": reconcile_meta,
@@ -589,6 +618,8 @@ def run_controller_tick(
                     loop_id=loop_id,
                     reason=f"{stage}: {reason}",
                     truth_level="scheduled_tick",
+                    evidence_refs=[_controller_tick_evidence_ref(state)],
+                    lease_duration_seconds=_controller_lease_seconds(config),
                     payload={
                         "error_stage": stage,
                         "error_reason": reason,

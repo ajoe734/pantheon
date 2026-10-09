@@ -215,17 +215,26 @@ from .personas.reconciliation import (
 from .personas import service as _persona_domain_service
 from .personas.service import (
     PersonaDirectorySnapshot,
+    _composed_dataset_surface_status,
+    _dataset_surface_status,
+    _list_governance_audit_events,
+    _read_surface_meta,
+    _sem_command_response,
     _append_persona_reconcile_diagnostic,
     _checkpoint_persona_provisioning_readback,
+    _composed_surface_status,
+    _dataset_source_after_read,
     _evaluate_persona_provisioning_status,
     _get_persona_directory_snapshot,
     _incident_home_severity,
-    _list_persona_records as _personas_list_persona_records,
+    _list_persona_records,
     _loop_run_controller_is_formal,
     _management_count_by,
+    _meta_staleness,
     _normalize_lifecycle_state,
     _normalize_risk_level,
     _openclaw_agent_reconcile_request,
+    _page_slice,
     _persona_create_required_data_sources,
     _persona_first_evaluation_readback_poll_seconds,
     _persona_first_evaluation_readback_timeout_seconds,
@@ -244,19 +253,6 @@ from .personas.service import (
     _register_persona_cron_required,
     _remove_persona_cron_required,
 )
-def _list_persona_records(
-    tenant_id: Optional[str] = None,
-    read_store: Optional[Any] = None,
-) -> List[Dict[str, Any]]:
-    """Composition-root binding: personas/service.py is the sole owner of this
-    projection; explicitly inject the live ``read_store`` global so callers
-    outside an active PersonaService request context (composition-root and
-    seam-test callers) still resolve against whatever store this module
-    currently holds, matching the injected pattern used by the other main.py
-    consumer seams instead of relying on personas/service.py's own module
-    fallback."""
-    resolved_store = read_store if read_store is not None else globals().get("read_store")
-    return _personas_list_persona_records(tenant_id, read_store=resolved_store)
 try:
     from services.persona.runtime_profile import (
         PersonaRuntimeProfile,
@@ -620,68 +616,6 @@ def _audit_datetime(value: Any) -> Optional[datetime]:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
-from .governance.command_audit import (
-    project_command_record_audit_event as _project_command_record_audit_event,
-    audit_event_matches as _audit_event_matches,
-    list_projected_governance_audit_events as _list_projected_governance_audit_events,
-)
-def _list_governance_audit_events(
-    *,
-    actor: Optional[str] = None,
-    action_types: Optional[List[str]] = None,
-    target_type: Optional[str] = None,
-    from_ts: Optional[datetime] = None,
-    to_ts: Optional[datetime] = None,
-    include_command_store: bool = True,
-    include_fixture_pack: bool = True,
-) -> List[Dict[str, Any]]:
-    events = read_store.list_governance_audit_events(
-        actor=actor,
-        action_types=action_types,
-        target_type=target_type,
-        from_ts=from_ts,
-        to_ts=to_ts,
-        include_fixture_pack=include_fixture_pack,
-    )
-    events_by_id: Dict[str, Dict[str, Any]] = {
-        str(event.get("entry_id") or event.get("auditId") or event.get("id") or index): event
-        for index, event in enumerate(events)
-    }
-    # Agora mutation audits are owned by the dedicated append-only writer,
-    # not by the read-only surface ports.  Merge them into the governance
-    # audit readback so entity links and post-restart queries remain durable.
-    for event in agora_audit_store.list_agora_audit_events(
-        actor=actor,
-        action_types=action_types,
-        target_type=target_type,
-        from_ts=from_ts,
-        to_ts=to_ts,
-    ):
-        if _audit_event_matches(
-            event,
-            actor=actor,
-            action_types=action_types,
-            target_type=target_type,
-            from_ts=from_ts,
-            to_ts=to_ts,
-        ):
-            events_by_id.setdefault(
-                str(event.get("entry_id") or event.get("auditId") or event.get("id")),
-                event,
-            )
-    if include_command_store:
-        for event in _list_projected_governance_audit_events(
-            command_store,
-            actor=actor,
-            action_types=action_types,
-            target_type=target_type,
-            from_ts=from_ts,
-            to_ts=to_ts,
-        ):
-            events_by_id.setdefault(str(event.get("entry_id")), event)
-    merged = list(events_by_id.values())
-    merged.sort(key=lambda event: str(event.get("timestamp") or ""), reverse=True)
-    return json.loads(json.dumps(merged))
 _APPROVE_DEPLOYMENT_REQUIRED = {"deployment_plan_id", "approval_decision"}
 _VALID_APPROVAL_DECISIONS = {"approve", "reject"}
 _APPROVE_DECISION_REQUIRED = {"decision_id"}
@@ -1609,29 +1543,6 @@ def _raise_if_session_logged_out(identity: OperatorIdentity) -> None:
         error_factory=_bff_error,
     )
 _raise_if_session_logged_out._canonical_guard = True
-def _meta_staleness() -> Optional[Dict[str, Any]]:
-    state = _read_surface_state()
-    if state == "fresh":
-        return None
-    return {
-        "served_from": "cache",
-        "last_known_at": utc_now(),
-    }
-def _surface_status() -> Dict[str, Any]:
-    state = _read_surface_state()
-    if state == "fresh":
-        return {"status": "ok"}
-    if state in {"degraded", "stale"}:
-        return {
-            "status": "degraded",
-            "staleness": _meta_staleness(),
-        }
-    if state == "unavailable":
-        return {
-            "status": "unavailable",
-            "staleness": _meta_staleness(),
-        }
-    return {"status": "ok"}
 _LEGACY_LOOP_RUN_SOURCE = "legacy_incident_backfill"
 _LOOP_RUN_PROJECTION_SCHEMA = "pantheon.loop-run-projection.v1"
 def _loop_run_truth_source(available: bool) -> tuple[str, str]:
@@ -1652,31 +1563,6 @@ def _loop_run_projection_metadata() -> Dict[str, Any]:
     except (OSError, TypeError, ValueError):
         return {}
     return dict(metadata) if isinstance(metadata, Mapping) else {}
-from .research.routes.common import format_dataset_surface_status as _format_dataset_surface_status
-
-def _dataset_surface_status(
-    dataset: str,
-    *,
-    snapshot_at: Optional[str] = None,
-    has_data: Optional[bool] = None,
-    missing_message: Optional[str] = None,
-    source: Optional[str] = None,
-    read_store: Optional[Any] = None,
-    **kwargs: Any,
-) -> Dict[str, Any]:
-    resolved_store = read_store if read_store is not None else globals().get("read_store")
-    if source is None:
-        src = getattr(resolved_store, "dataset_source", lambda d: "missing")(dataset) if resolved_store else "missing"
-        if dataset == "incidents":
-            p = getattr(getattr(resolved_store, "lifecycle_telemetry_governance", None), "incidents", None) or getattr(resolved_store, "incident_port", None) or getattr(resolved_store, "incidents", None)
-            psrc = getattr(p, "dataset_source", lambda: "missing")() if p else "missing"
-            source = "unavailable" if (psrc == "unavailable" or getattr(p, "_last_error", False)) else (psrc if src in (None, "typed_store") else src)
-        else:
-            source = str(src or "missing")
-    res = _format_dataset_surface_status(dataset, snapshot_at=snapshot_at, has_data=has_data, missing_message=missing_message, source=source, utc_now=utc_now, **kwargs)
-    if source in ("unavailable", "missing"):
-        res.update(status="unavailable", source=source)
-    return res
 def _loop_run_surface_status(
     available: bool,
     *,
@@ -1720,133 +1606,10 @@ def _loop_run_surface_status(
             },
         )
     return dataset, source, surface
-def _dataset_source_after_read(dataset: str) -> str:
-    """Return source provenance without repeating a completed backend read."""
-    cached_source = getattr(read_store, "dataset_source_cached", None)
-    if callable(cached_source):
-        return str(cached_source(dataset) or "missing")
-    return str(read_store.dataset_source(dataset) or "missing")
-def _composed_dataset_surface_status(
-    dataset: str,
-    records: Sequence[Any],
-    *,
-    snapshot_at: str,
-    source: str,
-) -> Dict[str, Any]:
-    surface = _dataset_surface_status(
-        dataset,
-        snapshot_at=snapshot_at,
-        source=_dataset_source_after_read(dataset),
-    )
-    if records and surface.get("source") == "missing":
-        return {
-            "status": "ok",
-            "source": source,
-            "note": "Composed from governed market-persona read-model defaults.",
-        }
-    return surface
-def _read_surface_meta(
-    dataset: str,
-    surface_key: str,
-    *,
-    snapshot_at: Optional[str] = None,
-    total: Optional[int] = None,
-    surface: Optional[Dict[str, Any]] = None,
-    has_data: Optional[bool] = None,
-    missing_message: Optional[str] = None,
-    degraded_reason: Optional[str] = None,
-    unavailable_reason: Optional[str] = None,
-) -> Dict[str, Any]:
-    snapshot_at = snapshot_at or utc_now()
-    surface = surface or _dataset_surface_status(
-        dataset,
-        snapshot_at=snapshot_at,
-        has_data=has_data,
-        missing_message=missing_message,
-    )
-    meta: Dict[str, Any] = {
-        "snapshot_at": snapshot_at,
-        "surfaces": {
-            surface_key: surface,
-        },
-    }
-    if total is not None:
-        meta["total"] = total
-    staleness = _meta_staleness()
-    if staleness is not None:
-        meta["staleness"] = staleness
-    label = surface_key.replace("_", " ")
-    reason = _surface_degradation_reason(
-        surface,
-        degraded_reason=degraded_reason or f"{label} is degraded and may be stale.",
-        unavailable_reason=unavailable_reason or f"{label} is currently unavailable.",
-    )
-    if reason is not None:
-        meta["degradation"] = {"reason": reason}
-    return meta
-def _raise_if_read_surface_unavailable(
-    surface: Dict[str, Any],
-    *,
-    label: str,
-) -> None:
-    if surface.get("status") != "unavailable":
-        return
-    raise _bff_error(
-        503,
-        ErrorCode.DEPENDENCY_UNAVAILABLE,
-        f"{label} read surface unavailable",
-        str(surface.get("message") or surface.get("note") or f"{label} downstream read source is unavailable."),
-        precondition_failed="read_surface_unavailable",
-        suggestion="Verify the owning service URL and health before retrying this read.",
-    )
-def _composed_surface_status(
-    *,
-    snapshot_at: Optional[str] = None,
-    available: bool = True,
-    missing_message: Optional[str] = None,
-) -> Dict[str, Any]:
-    surface = dict(_surface_status())
-    surface["source"] = "bff_composed"
-    if not available:
-        if surface.get("status") == "ok":
-            surface["status"] = "degraded"
-        if missing_message:
-            surface["message"] = missing_message
-        surface.setdefault(
-            "staleness",
-            {"served_from": "unverifiable", "last_known_at": snapshot_at or utc_now()},
-        )
-
-    return surface
 from .personas.service import (
     _extract_ids_from_item,
     _filter_by_common_identifiers,
 )
-def _decode_page_token(page_token: Optional[str]) -> int:
-    if page_token in (None, ""):
-        return 0
-    try:
-        offset = int(page_token)
-    except (TypeError, ValueError) as exc:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid page_token",
-            "page_token must be a non-negative integer offset",
-        ) from exc
-    if offset < 0:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid page_token",
-            "page_token must be a non-negative integer offset",
-        )
-    return offset
-def _page_slice(items: List[Dict[str, Any]], page_token: Optional[str], page_size: int) -> tuple[List[Dict[str, Any]], Optional[str]]:
-    start = _decode_page_token(page_token)
-    end = start + page_size
-    next_page_token = str(end) if end < len(items) else None
-    return items[start:end], next_page_token
 _ALERT_SEVERITY_ORDER = {"critical": 4, "high": 3, "medium": 2, "low": 1}
 _ALERT_CATEGORY_ORDER = {"incident": 4, "kill_switch": 3, "governance": 2, "runtime": 1}
 _RUNTIME_STATUS_ALERT_SEVERITY = {
@@ -4170,37 +3933,6 @@ def _list_bff_jobs(*, status: Optional[str] = None) -> List[Dict[str, Any]]:
         requested = {s.strip().lower() for s in status.split(",") if s.strip()}
         jobs = [j for j in jobs if str(j.get("status") or "").lower() in requested]
     return sorted(jobs, key=lambda j: str(j.get("created_at") or j.get("submitted_at") or ""), reverse=True)
-def _sem_command_response(
-    *,
-    command_type: CommandType,
-    target_type: ObjectType,
-    target_id: str,
-    payload: Dict[str, Any],
-    identity: OperatorIdentity,
-    idempotency_key: Optional[str],
-    x_idempotency_key: Optional[str] = None,
-    status_code: int = 202,
-    server_generated_target: bool = False,
-    trusted_evidence_producer: Optional[str] = None,
-    terminal_on_persist: bool = False,
-    authorization: Optional[str] = None,
-    dry_run: bool = False,
-) -> JSONResponse:
-    return _command_adapter_service.sem_command_response(
-        command_type=command_type,
-        target_type=target_type,
-        target_id=target_id,
-        payload=payload,
-        identity=identity,
-        idempotency_key=idempotency_key,
-        x_idempotency_key=x_idempotency_key,
-        status_code=status_code,
-        server_generated_target=server_generated_target,
-        trusted_evidence_producer=trusted_evidence_producer,
-        terminal_on_persist=terminal_on_persist,
-        authorization=authorization,
-        dry_run=dry_run,
-    )
 def _guarded_command_confirm_token_id(record: Dict[str, Any]) -> Optional[str]:
     entry = get_catalog_entry(str(record.get("type") or ""))
     if entry is None or not getattr(entry, "requires_confirm_token", False):
@@ -4561,7 +4293,7 @@ wire_management_runtime_projections(
     build_operator_alerts_payload=_build_operator_alerts_payload,
     build_management_anomalies_payload=_build_management_anomalies_payload,
     human_inbox_payload=_human_inbox_payload,
-    list_persona_records=_list_persona_records,
+    list_persona_records=lambda tenant_id=None: _list_persona_records(tenant_id, read_store=read_store),
     management_telemetry_rollup=_management_telemetry_rollup,
     dataset_surface_status=_dataset_surface_status,
     assistant_collect_source=_assistant_collect_source,

@@ -502,10 +502,11 @@ def test_dataset_surface_status_full_app_parity(state: str, monkeypatch: pytest.
     """Verify format_dataset_surface_status and bff_main._dataset_surface_status emit identical results across all states."""
     monkeypatch.setenv("BFF_READ_SURFACE_STATE", state)
     from services.control_plane.bff import main as bff_main
+    from services.control_plane.bff.personas import service as persona_service
     from services.control_plane.bff.research.routes.common import format_dataset_surface_status
 
     for source in ["primary", "local_snapshot", "missing", "legacy_incident_backfill"]:
-        full_res = bff_main._dataset_surface_status("test_ds", snapshot_at="2026-04-20T00:00:00Z", source=source)
+        full_res = persona_service._dataset_surface_status("test_ds", snapshot_at="2026-04-20T00:00:00Z", source=source)
         min_res = format_dataset_surface_status(
             "test_ds", snapshot_at="2026-04-20T00:00:00Z", source=source, utc_now=bff_main.utc_now
         )
