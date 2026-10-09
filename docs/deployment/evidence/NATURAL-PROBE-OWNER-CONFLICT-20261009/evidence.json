@@ -1,0 +1,23 @@
+{
+  "task_id": "NATURAL-PROBE-OWNER-CONFLICT-20261009",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "change": "_normalize_case_record inspects authoritative_readback from both references and result for deployment_plan_id, capital_pool_id, persona_capital_binding_id; disagreeing genuine readbacks or a conflicting flat alias fails closed (empty string) rather than picking an authority matching the candidate; legacy flat fixtures with no owner readback are preserved.",
+  "counterexample_reproduction": {
+    "evidence_reference": "/tmp/pantheon-l1-l12-independent-monitor-20261008/natural-399fb-owner-matrix-00e64ffad0.json",
+    "reproduced_on_dev_clean": {
+      "flat_matches_candidate_but_canonical_owner_differs": "reproduced: base normalized plan_id was plan-paper-001 (selection count 1), masked differing canonical owner; now fails closed with plan_id='', validator error case_plan_mismatch, selection count 0",
+      "references_and_result_authorities_disagree": "reproduced: base normalized plan_id was plan-paper-001 (selection count 1), ignored result; now fails closed with plan_id='', validator error case_plan_mismatch, selection count 0"
+    },
+    "local_evidence_only": "Retained original-fixture counterexamples used as local evidence only; real hosted positive case has agreeing authorities and no flat aliases; never claim conflicts happened hosted."
+  },
+  "verification": {
+    "governed_interpreter": "/tmp/dev-projection-bootstrap-venv/bin/pytest",
+    "probe_test_file_head": "107 passed, 1 skipped (opt-in PostgreSQL test honestly skipped; no shared database targeted)",
+    "services_trade_journey_test_hosted_bff_readback": "9 passed",
+    "scripts_test_branch_ci_gate_selection": "10 passed, 3 subtests passed"
+  },
+  "ci": "pytest invocation of probe, BFF readback, and CI gate selection suites passed",
+  "hosted": "no hosted stimulus, SSH, deploy or dev mutation performed; real hosted positive case has agreeing authorities and no flat aliases; sole release coordinator Claude remains release coordinator; notify exact-head readiness and preserve source integration order",
+  "independent_review": "pending"
+}
