@@ -15,7 +15,6 @@
   "net_production_lines": "+75/-77 (net -2)",
   "not_done": [
     "hosted proof (structured 200 on dev, live launch args) stays with OPENCLAW-STRUCTURED-AGENT-DEV-20261003",
-    "standalone docker replay runner in tests/test_openresponses_transport_contract.py (SIMPLIFY_* env, not pytest-collected) still models the old emit_extraction tool",
     "caller prompts (agora runner/research_proposal/semantic_provider, source_ingestion) still say 'via emit_extraction'; outside this task's contract"
   ]
 }
