@@ -28,8 +28,11 @@ and never bypasses the boundary gate on ``/execute``.
 
 from __future__ import annotations
 
+import asyncio
+import importlib
 import json
 import os
+import socket
 import sys
 import time
 import urllib.error
@@ -56,6 +59,12 @@ from services.evolution.dispatch_receipts import (
 from services.foundation.persistence_posture import require_persistence_posture
 
 _WORKER_NAME = "evolution-dispatch-worker"
+LOOP_ID = "evolution"
+_LOOP_SOURCE = "evolution.dispatch_outbox"
+# The lease must cover the longest gap between two writes: one poll interval
+# plus a whole tick (reconcile + claim + up to a batch of adapter calls). It is
+# configured, never derived from the per-request timeout.
+DEFAULT_LOOP_LEASE_SECONDS = 120
 _ACTOR_ROLE = "evolution_controller"
 
 # Decision states that mean "this intent has nothing left to deliver".
@@ -628,6 +637,101 @@ def healthcheck() -> int:
     return 0
 
 
+def build_loop_writer(*, lease_duration_seconds: int) -> Any | None:
+    """Single per-process Loop 11 writer; None unless fully configured."""
+
+    dsn = str(os.getenv("DATABASE_URL") or "").strip()
+    tenant_id = str(os.getenv("PANTHEON_TENANT_ID") or "").strip()
+    if not dsn or not tenant_id:
+        return None
+    module = importlib.import_module("services.loop-control")
+    return module.LoopControllerWriter(
+        dsn,
+        tenant_id=tenant_id,
+        environment=str(os.getenv("PANTHEON_ENV") or "dev"),
+        controller_id=str(
+            os.getenv("PANTHEON_CONTROLLER_ID")
+            or f"{_WORKER_NAME}-{socket.gethostname()}-{os.getpid()}"
+        ),
+        controller_name=str(os.getenv("PANTHEON_CONTROLLER_NAME") or _WORKER_NAME),
+        deployment_sha=str(
+            os.getenv("PANTHEON_DEPLOYMENT_SHA") or os.getenv("GIT_SHA") or "unknown"
+        ),
+        lease_duration_seconds=lease_duration_seconds,
+    )
+
+
+def _tick_ref(tick_at: str) -> str:
+    # Identifies this tick so an idle tick still carries non-archive evidence.
+    return f"evolution-dispatch://ticks/{_WORKER_NAME}/{tick_at}"
+
+
+def build_loop_truth(result: Mapping[str, Any], *, tick_at: str) -> dict[str, Any]:
+    """Controller truth derived only from values the tick already read."""
+
+    claimed = int(result.get("claimed") or 0)
+    dead_lettered = int(result.get("dead_lettered") or 0)
+    reconcile_failed = any(
+        str(e).startswith("reconcile_error=") for e in result.get("errors") or []
+    )
+    return {
+        "desired_state": {
+            "present": claimed > 0,
+            "source": _LOOP_SOURCE,
+            "checked_at": tick_at,
+            "summary": f"{claimed} due dispatch outbox record(s) claimed",
+        },
+        "downstream_actual_state": {
+            "status": "degraded" if (reconcile_failed or dead_lettered) else "ready",
+            "source": _LOOP_SOURCE,
+            "checked_at": tick_at,
+            "summary": (
+                f"executed={result.get('executed', 0)} pending={result.get('pending', 0)} "
+                f"retried={result.get('retried', 0)} dead_lettered={dead_lettered} "
+                f"compensated={result.get('compensated', 0)} "
+                f"unsupported={result.get('unsupported', 0)} "
+                f"reconcile_error={'yes' if reconcile_failed else 'no'}"
+            ),
+        },
+        "evidence_refs": [_tick_ref(tick_at)],
+    }
+
+
+def publish_loop_heartbeat(writer: Any, *, tick_at: str) -> None:
+    # Liveness only: desired/actual are omitted so an older observation's
+    # checked_at is never re-stamped.
+    try:
+        asyncio.run(writer.record_heartbeat(LOOP_ID, evidence_refs=[_tick_ref(tick_at)]))
+    except Exception as exc:  # noqa: BLE001
+        print(f"Warning: failed to write loop-control heartbeat: {exc}", file=sys.stderr)
+
+
+def publish_loop_truth(writer: Any, result: Mapping[str, Any], *, tick_at: str) -> None:
+    truth = build_loop_truth(result, tick_at=tick_at)
+    claim_errors = [e for e in result.get("errors") or [] if str(e).startswith("claim_error=")]
+    payload = {"counts": {k: result.get(k) for k in (
+        "reconciled", "claimed", "executed", "pending", "retried",
+        "dead_lettered", "compensated", "unsupported")}}
+    try:
+        if claim_errors:
+            asyncio.run(
+                writer.record_failure(
+                    LOOP_ID, "; ".join(claim_errors), payload=payload, **truth
+                )
+            )
+        else:
+            asyncio.run(
+                writer.record_success(
+                    LOOP_ID,
+                    summary=f"claimed={result.get('claimed', 0)} executed={result.get('executed', 0)}",
+                    payload=payload,
+                    **truth,
+                )
+            )
+    except Exception as exc:  # noqa: BLE001
+        print(f"Warning: failed to write loop-control result: {exc}", file=sys.stderr)
+
+
 def main() -> int:
     api_url = os.getenv("EVOLUTION_API_URL", "http://127.0.0.1:8093")
     research_api_url = (
@@ -659,6 +763,14 @@ def main() -> int:
         research_api_url=research_api_url, timeout=timeout_seconds
     )
 
+    loop_writer = build_loop_writer(
+        lease_duration_seconds=_env_int(
+            "EVOLUTION_DISPATCH_LOOP_LEASE_SECONDS",
+            DEFAULT_LOOP_LEASE_SECONDS,
+            minimum=interval_seconds + 1,
+        )
+    )
+
     health: dict[str, Any] = {
         "worker_name": actor_id,
         "status": "starting",
@@ -684,6 +796,9 @@ def main() -> int:
     result: dict[str, Any] = {}
     while True:
         tick += 1
+        tick_at = _utc_now()
+        if loop_writer is not None:
+            publish_loop_heartbeat(loop_writer, tick_at=tick_at)
         try:
             result = run_poll(
                 api_url=api_url,
@@ -728,6 +843,9 @@ def main() -> int:
             }
             if health_file:
                 _write_health(health_file, health)
+
+        if loop_writer is not None:
+            publish_loop_truth(loop_writer, result, tick_at=tick_at)
 
         print(
             json.dumps({"tick": tick, "health": health, "result": result}, sort_keys=True),

@@ -1,0 +1,24 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "MGMT-LOOP11-EVOLUTION-WRITER-20261009",
+  "title": "Evolution dispatch worker publishes admissible Loop 11 controller truth",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "execution",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "246c85746",
+  "objective": "evolution-dispatch-worker is the single Loop 11 writer: desired=claimed due outbox records, actual=executed/pending/retried/dead_lettered/compensated/unsupported, per-tick evidence ref evolution-dispatch://ticks/{worker}/{tick_at}.",
+  "scope": {
+    "owned": [
+      "services/evolution/dispatch_worker.py: build_loop_writer (disabled unless DATABASE_URL and PANTHEON_TENANT_ID), build_loop_truth, publish_loop_heartbeat (liveness only, omits desired/actual), publish_loop_truth; lease from EVOLUTION_DISPATCH_LOOP_LEASE_SECONDS (default 120, must exceed the interval).",
+      "services/evolution/requirements.txt + dependencies/locks/services-evolution.txt: asyncpg, jsonschema; lock regenerated with uv pip compile."
+    ],
+    "not_changing": ["services/loop-control", "BFF admission rules", "loop catalog", "docker-compose.yml", "claim_due tenant scoping", "scheduler_worker.py"],
+    "composes_with": ["MGMT-LOOP-CATALOG-DECLARE-2-20261009"]
+  },
+  "verification": {
+    "commands": ["pytest services/evolution/test_dispatch_worker.py -q"],
+    "result": "57 passed. New tests: idle tick schema-validates, projects through loop-control projector and is accepted by loop_inventory._runtime_controller_record_qualified; heartbeat omits desired/actual; only claim_error is record_failure (reconcile_error/dead letters -> degraded actual); writer disabled without DSN or tenant."
+  }
+}
