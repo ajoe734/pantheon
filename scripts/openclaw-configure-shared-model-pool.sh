@@ -63,9 +63,9 @@ fi
 # Fail closed: a read/shape error must never replace the whole registry.
 agents_cfg="$(openclaw config get agents --json)"
 agents_list="$(jq -ce '(if has("list") then .list else [] end) | if type == "array" then . else error("agents.list is not an array") end
-  | if any(.[]; .id == "structured-extraction") then
-      map(if .id == "structured-extraction" then .tools = ((.tools // {}) + {"deny":["*"],"exec":{"security":"deny","ask":"always"}}) else . end)
-    else . + [{"id":"structured-extraction","tools":{"deny":["*"],"exec":{"security":"deny","ask":"always"}}}] end' <<<"$agents_cfg")"
+  | (if any(.[]; .id == "structured-extraction") then . else . + [{"id":"structured-extraction"}] end)
+  | map(if .id == "structured-extraction" then .tools = ((.tools // {}) + {"deny":["*"]}) else . end)
+  | map(if (.tools.deny? // null) == ["*"] then .tools.exec = {"security":"deny","ask":"always"} else . end)' <<<"$agents_cfg")"
 openclaw config set agents.list "$agents_list" --strict-json --replace >/dev/null
 openclaw config validate
 

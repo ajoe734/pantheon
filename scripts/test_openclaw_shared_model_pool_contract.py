@@ -254,6 +254,18 @@ def test_provisioned_config_updates_target_without_dropping_properties(tmp_path)
     _admission(result.final_agents)
 
 
+def test_existing_deny_all_agents_get_exec_policy(tmp_path) -> None:
+    persona = {"id": "persona-opinion-abcdef0123456789abcdef01", "name": "P",
+               "tools": {"allow": [], "deny": ["*"]}}
+    existing = [{"id": "main", "default": True, "tools": {"allow": ["exec"]}}, persona]
+    result, _ = _run_model_pool_script(tmp_path, token_present=False, agents=existing)
+    assert result.returncode == 0, result.stderr
+    assert result.final_agents[0] == existing[0]
+    assert result.final_agents[1] == {**persona, "tools": {
+        "allow": [], "deny": ["*"], "exec": {"security": "deny", "ask": "always"}}}
+    _admission(result.final_agents)
+
+
 def test_admission_still_rejects_agent_without_deny_all() -> None:
     import pytest
 

@@ -10,9 +10,9 @@
   "structured_route": "no tool offered; model answers JSON only; adapter json.loads + schema validation (422 on non-JSON / schema mismatch); data.output.structured_data shape unchanged",
   "tests": {
     "services/openclaw-gateway-adapter test_main.py + tests/": "333 passed, 26 subtests passed",
-    "scripts/test_openclaw_shared_model_pool_contract.py + test_openclaw_isolated_model_bootstrap.py": "13 passed"
+    "scripts/test_openclaw_shared_model_pool_contract.py + test_openclaw_isolated_model_bootstrap.py": "14 passed"
   },
-  "net_production_lines": "+67/-76 (net -9)",
+  "net_production_lines": "+70/-77 (net -7)",
   "not_done": [
     "hosted proof (structured 200 on dev, live launch args) stays with OPENCLAW-STRUCTURED-AGENT-DEV-20261003",
     "standalone docker replay runner in tests/test_openresponses_transport_contract.py (SIMPLIFY_* env, not pytest-collected) still models the old emit_extraction tool",
