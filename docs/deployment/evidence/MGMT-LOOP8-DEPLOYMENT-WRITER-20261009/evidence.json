@@ -1,0 +1,10 @@
+{
+  "task_id": "MGMT-LOOP8-DEPLOYMENT-WRITER-20261009",
+  "loop_id": "promotion_deployment",
+  "controller_name": "deployment-outbox-consumer",
+  "lease_env": "DEPLOYMENT_OUTBOX_CONSUMER_LOOP_LEASE_SECONDS (default 300, min interval+1)",
+  "tick_evidence_ref": "deployment-outbox://consumer-ticks/{consumer}/{tick_at}",
+  "desired_state_source": "deployment.outbox.claim",
+  "downstream_actual_state_source": "deployment.outbox_consumer.run_poll",
+  "verification": "uv run pytest services/deployment/test_outbox_consumer_worker.py -> 87 passed"
+}

@@ -3109,3 +3109,171 @@ class TestSagaReplayAndReadback:
             res = worker.run_poll(api_url="http://localhost:8095", consumer_name="test-consumer")
             assert res["consumed"] == 1
             mock_dispatch.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Loop 8 controller truth (promotion_deployment)
+# ---------------------------------------------------------------------------
+
+
+class _FakeLoopWriter:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def record_heartbeat(self, loop_id, *a, **kw):
+        self.calls.append(("record_heartbeat", {"loop_id": loop_id, **kw}))
+
+    async def record_success(self, loop_id, *a, **kw):
+        self.calls.append(("record_success", {"loop_id": loop_id, **kw}))
+
+    async def record_failure(self, loop_id, reason, *a, **kw):
+        self.calls.append(("record_failure", {"loop_id": loop_id, "reason": reason, **kw}))
+
+
+def _idle_result() -> dict[str, Any]:
+    return {
+        "events_found": 0,
+        "consumed": 0,
+        "duplicates": 0,
+        "skipped_not_due": 0,
+        "retry_scheduled": 0,
+        "dead_lettered": 0,
+        "errors": [],
+    }
+
+
+def _run_main(worker, monkeypatch, *, writer, run_poll, aggregate_id=""):
+    captured: dict[str, Any] = {}
+
+    def _build(**kw):
+        captured.update(kw)
+        return writer
+
+    monkeypatch.setenv("DEPLOYMENT_OUTBOX_CONSUMER_MAX_TICKS", "1")
+    monkeypatch.setenv("DEPLOYMENT_OUTBOX_CONSUMER_INTERVAL_SECONDS", "10")
+    monkeypatch.setenv("DEPLOYMENT_OUTBOX_CONSUMER_TIMEOUT_SECONDS", "10")
+    monkeypatch.setenv("DEPLOYMENT_OUTBOX_CONSUMER_AGGREGATE_ID", aggregate_id)
+    monkeypatch.setattr(worker, "build_loop_writer", _build)
+    monkeypatch.setattr(worker, "run_poll", run_poll)
+    assert worker.main() == 0
+    return captured
+
+
+def _project(calls, *, lease_seconds: int) -> dict[str, Any]:
+    from datetime import datetime, timedelta, timezone
+
+    projector = importlib.import_module("services.loop-control").project_controller_record_to_bff
+    now = datetime.now(timezone.utc)
+    row = {
+        "loop_id": "promotion_deployment",
+        "controller_id": "c1",
+        "controller_name": "deployment-outbox-consumer",
+        "last_heartbeat_at": now,
+        "last_success_at": now,
+        "lease_token": "tok",
+        "lease_expires_at": now + timedelta(seconds=lease_seconds),
+    }
+    for _kind, kwargs in calls:
+        for key in ("desired_state", "downstream_actual_state", "evidence_refs"):
+            if kwargs.get(key) is not None:
+                row[key] = kwargs[key]
+    return projector(row, now=now)
+
+
+def test_idle_tick_publishes_admissible_loop8_truth(worker, monkeypatch) -> None:
+    import jsonschema
+
+    loop_inventory = importlib.import_module("services.control-plane.bff.loop_inventory")
+    writer = _FakeLoopWriter()
+    _run_main(worker, monkeypatch, writer=writer, run_poll=lambda **kw: _idle_result())
+
+    assert [c[0] for c in writer.calls] == ["record_heartbeat", "record_success"]
+    heartbeat, success = writer.calls[0][1], writer.calls[1][1]
+    assert "desired_state" not in heartbeat and "downstream_actual_state" not in heartbeat
+    schema = json.loads(
+        (Path(__file__).resolve().parents[2] / "schemas/loop-controller-record.schema.json").read_text()
+    )
+    jsonschema.validate(success["desired_state"], schema["properties"]["desired_state"])
+    jsonschema.validate(
+        success["downstream_actual_state"], schema["properties"]["downstream_actual_state"]
+    )
+    assert success["desired_state"]["source"] == "deployment.outbox.claim"
+    assert success["desired_state"]["present"] is False
+    assert success["downstream_actual_state"]["source"] == "deployment.outbox_consumer.run_poll"
+    assert all(
+        ref.startswith("deployment-outbox://consumer-ticks/deployment-outbox-consumer/")
+        for _k, kw in writer.calls
+        for ref in kw["evidence_refs"]
+    )
+
+    projected = _project(writer.calls, lease_seconds=300)
+    assert projected["evidence_refs"]
+    assert loop_inventory._runtime_controller_record_qualified(
+        projected, "controller_store", "deployment-outbox-consumer"
+    )
+
+
+def test_event_rejections_and_dead_letters_are_downstream_not_failures(
+    worker, monkeypatch
+) -> None:
+    writer = _FakeLoopWriter()
+    result = {
+        **_idle_result(),
+        "events_found": 3,
+        "dead_lettered": 1,
+        "errors": ["event_id=e1 sequence_blocked"],
+    }
+    _run_main(worker, monkeypatch, writer=writer, run_poll=lambda **kw: result)
+
+    assert [c[0] for c in writer.calls] == ["record_heartbeat", "record_success"]
+    success = writer.calls[1][1]
+    assert success["desired_state"]["present"] is True
+    assert success["downstream_actual_state"]["status"] == "degraded"
+    assert success["dlq_count"] == 1
+
+
+def test_claim_exception_is_controller_failure(worker, monkeypatch) -> None:
+    writer = _FakeLoopWriter()
+
+    def _boom(**kw):
+        raise RuntimeError("claim refused")
+
+    _run_main(worker, monkeypatch, writer=writer, run_poll=_boom)
+
+    assert [c[0] for c in writer.calls] == ["record_heartbeat", "record_failure"]
+    failure = writer.calls[1][1]
+    assert "claim refused" in failure["reason"]
+    assert failure["evidence_refs"]
+    assert "desired_state" not in failure
+
+
+def test_writer_built_once_with_configured_lease(worker, monkeypatch) -> None:
+    monkeypatch.setenv("DEPLOYMENT_OUTBOX_CONSUMER_LOOP_LEASE_SECONDS", "123")
+    monkeypatch.setenv("DEPLOYMENT_OUTBOX_CONSUMER_TIMEOUT_SECONDS", "7")
+    captured = _run_main(
+        worker, monkeypatch, writer=None, run_poll=lambda **kw: _idle_result()
+    )
+    assert captured["lease_duration_seconds"] == 123
+    monkeypatch.delenv("DEPLOYMENT_OUTBOX_CONSUMER_LOOP_LEASE_SECONDS")
+    captured = _run_main(
+        worker, monkeypatch, writer=None, run_poll=lambda **kw: _idle_result()
+    )
+    assert captured["lease_duration_seconds"] == 300
+
+
+def test_one_shot_aggregate_run_writes_no_controller_record(worker, monkeypatch) -> None:
+    writer = _FakeLoopWriter()
+    captured = _run_main(
+        worker,
+        monkeypatch,
+        writer=writer,
+        run_poll=lambda **kw: _idle_result(),
+        aggregate_id="agg-1",
+    )
+    assert captured == {}
+    assert writer.calls == []
+
+
+def test_loop_writer_disabled_without_database_url(worker, monkeypatch) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    assert worker.build_loop_writer(consumer_name="deployment-outbox-consumer") is None
