@@ -732,6 +732,11 @@ def _resolve_default_dependency(name: str, app_deps: Any) -> Any:
         "_composed_surface_status",
         "_decode_page_token",
         "_page_slice",
+        "_dataset_surface_status",
+        "_composed_dataset_surface_status",
+        "_read_surface_meta",
+        "_list_governance_audit_events",
+        "_sem_command_response",
     }:
         from ..personas import service as persona_service
         return getattr(persona_service, name)
@@ -741,7 +746,7 @@ def _resolve_default_dependency(name: str, app_deps: Any) -> Any:
     if name in {"_snapshot_meta", "snapshot_meta", "snapshot_meta_fn"}:
         from ..models import utc_now
         return lambda *a, **kw: {"snapshot_at": utc_now()}
-    if name in {"_dataset_surface_status", "dataset_surface_status", "dataset_surface_status_fn"}:
+    if name in {"dataset_surface_status", "dataset_surface_status_fn"}:
         from ..research.routes.common import format_dataset_surface_status
         def owner_surface(dataset, **kwargs):
             kwargs.setdefault("source", app_deps.read_surface.dataset_source(dataset))
@@ -1159,6 +1164,7 @@ def mount_bff_routers(
     )
     from ..personas import service as _persona_service_module
     _persona_service_module._composed_persona_service = persona_service
+    _persona_service_module._composed_command_adapter_service = command_adapter_service
     from ..runtime.router import create_runtime_router
     runtime_router = create_runtime_router(
         read_surface=app_deps.read_surface,
