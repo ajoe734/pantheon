@@ -1,0 +1,96 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "RECON-SCHEDULED-INCIDENT-CANONICAL-LINEAGE-20261010",
+  "title": "Repair actual scheduled reconciliation incident causal telemetry and canonical lineage transport",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "base_sha": "86c779825b376bac205122d1e6b28ccf5fd0eba2",
+  "change_class": "corrective",
+  "net_prod_line_budget": 40,
+  "summary": "Repairs scheduled reconciliation incident causal telemetry linking to emit exactly one deterministic causal telemetry event ID from genuine stored owner evidence (last_heartbeat_event_id for runtime health, last_event_id for execution drift) while preserving complete provenance in evaluation records. Fails closed on missing or conflicting owner authority without mismatched cross-anchor fallback. Aligns TelemetryLineageLookup client transport and preserves docker-compose.yml canonical telemetry tenant chain unchanged, passing topology contracts without inventing credentials or falling back to benchmark corpora.",
+  "acceptance_verification": [
+    {
+      "ac": "AC1",
+      "description": "Diagnosed actual evaluations and incident delivery errors with exactly-one telemetry event failure and lineage transport missing errors without requesting VM credential or second lease.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC2",
+      "description": "Repaired _scheduled_drift_report to derive exactly one causal telemetry event ID deterministically (last_heartbeat_event_id for runtime health, last_event_id for execution drift) satisfying incidents consumer cardinality constraint (len == 1) while retaining full evaluation evidence_refs provenance and failing closed without mismatched cross-anchor fallback.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC3",
+      "description": "Aligned TelemetryLineageLookup to resolve PANTHEON_TELEMETRY_API_URL and PANTHEON_INCIDENTS_TENANT_ID with fail-closed error handling and unconfigured tenant remaining empty; preserved docker-compose.yml canonical telemetry tenant chain unchanged without inventing tokens or using corpus fallback as hosted truth.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC4",
+      "description": "Exercised genuine warning and critical incident paths in scheduled reconciliation without changing financial math, thresholds, or personas.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC5",
+      "description": "Six declared artifacts scoped strictly; net production lines (+15) well within budget (<= 40); verified with pytest suite and topology contract.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC6",
+      "description": "Source-only QA delivery ready for independent review and native delivery.",
+      "verdict": "pass"
+    }
+  ],
+  "verification": [
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/pytest services/incident/test_reference_validation.py services/reconciliation-drift/test_reconciliation_drift_http_service.py services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py",
+      "passed": 28,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/pytest services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py services/reconciliation-drift/tests/test_reconciliation_drift_consumer.py",
+      "passed": 42,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/pytest scripts/test_paper_runtime_topology_contract.py",
+      "passed": 3,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    }
+  ],
+  "declared_artifacts": [
+    "services/reconciliation-drift/main.py",
+    "services/incident/reference_validation.py",
+    "docker-compose.yml",
+    "services/reconciliation-drift/test_reconciliation_drift_http_service.py",
+    "services/incident/test_reference_validation.py",
+    "docs/deployment/evidence/RECON-SCHEDULED-INCIDENT-CANONICAL-LINEAGE-20261010/evidence.json"
+  ],
+  "diff_budget": {
+    "net_production_lines": 15,
+    "budget": 40,
+    "verdict": "pass",
+    "files": {
+      "production": [
+        "services/reconciliation-drift/main.py",
+        "services/incident/reference_validation.py",
+        "docker-compose.yml"
+      ],
+      "tests": [
+        "services/incident/test_reference_validation.py",
+        "services/reconciliation-drift/test_reconciliation_drift_http_service.py"
+      ],
+      "evidence": [
+        "docs/deployment/evidence/RECON-SCHEDULED-INCIDENT-CANONICAL-LINEAGE-20261010/evidence.json"
+      ]
+    }
+  }
+}

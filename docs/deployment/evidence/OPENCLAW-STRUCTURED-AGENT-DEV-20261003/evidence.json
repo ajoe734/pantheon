@@ -8,6 +8,25 @@
     "scripts/test_openclaw_shared_model_pool_contract.py",
     "stateful provisioned-config -> unchanged admission guard; missing-deny rejection; main/persona preservation; read-failure fail-closed"
   ],
-  "hosted_verification": "NOT YET DONE: workers have no VM access. Required after merge via existing root deploy: deployed dev SHA, live `config get agents.list` showing structured-extraction tools.deny==[\"*\"], successful structured request, and same after redeploy + gateway restart.",
-  "context_overflow_cause": "Structured route sent a stable OpenResponses `user` (|<operator>|) because no caller passes session_id, so the Gateway reused one warm claude-cli session per caller; history accumulated (truncated at 5242880 bytes) until context_overflow/FailoverError (60989ms) on 2026-10-08. Fix: invoke_structured mints a fresh per-call session key when none is supplied. Verified by unit test only; hosted verification still pending deploy."
+  "hosted_verification": {
+    "source": "Human/Ops hosted track message on this task",
+    "accepted_dev_release_run": "38038892596",
+    "gateway_config_rewritten_by_deploy_path": "2026-10-10T08:56:11Z (after gateway restart at 2026-10-10T08:55:59Z)",
+    "structured_extraction": "tools.deny == [\"*\"]; exec deny/always",
+    "claude_cli_args": "include --tools ToolSearch",
+    "monitor_agent_structured_200": [
+      "2026-10-10T09:10:08Z",
+      "2026-10-10T09:26:04Z",
+      "2026-10-10T09:41:58Z",
+      "2026-10-10T09:58:01Z"
+    ],
+    "live_launch": "2026-10-10T09:57:17Z --tools ToolSearch --permission-mode default",
+    "main_mcp_memory_search": "still reachable, with its pre-existing index error",
+    "follow_up_prs": [
+      "#6455",
+      "#6461",
+      "#6468"
+    ]
+  },
+  "context_overflow_cause": "Two hosted causes on 2026-10-09: (1) the 2.1M-character monitor prompt (fixed by #6455) and (2) the missing client tool (fixed by #6461). Earlier (2026-10-08) hypothesis, kept: stable OpenResponses `user` reused one warm claude-cli session per caller, so history accumulated (truncated at 5242880 bytes) until context_overflow/FailoverError (60989ms); #6401 mints a fresh per-call session key in invoke_structured (unit-tested)."
 }

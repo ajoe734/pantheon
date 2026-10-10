@@ -2562,8 +2562,21 @@ def _scheduled_drift_report(
         return None
     worst = max(failing_checks, key=lambda item: _status_rank(str(item.get("status") or "ok")))
     metric = str(worst.get("metric") or worst.get("check") or "runtime_health")
-    event_id = telemetry_event_ids[0]
-    report_id = f"drift-{_safe_id_component(event_id)}-{_safe_id_component(metric)}"
+    is_health = "lag" in metric or "runtime" in metric
+    causal_anchor = (
+        summary.get("last_heartbeat_event_id")
+        if is_health
+        else summary.get("last_event_id")
+    )
+    if causal_anchor:
+        if causal_anchor not in telemetry_event_ids:
+            return None
+        causal_event_id = causal_anchor
+    elif len(telemetry_event_ids) == 1:
+        causal_event_id = telemetry_event_ids[0]
+    else:
+        return None
+    report_id = f"drift-{_safe_id_component(causal_event_id)}-{_safe_id_component(metric)}"
     cluster_id = f"drift:{_safe_id_component(metric)}"
     severity = _incident_severity(str(worst.get("status") or "warning"))
     return {
@@ -2572,13 +2585,13 @@ def _scheduled_drift_report(
         "recon_run_id": evaluation["evaluation_id"],
         "evaluation_id": evaluation["evaluation_id"],
         "tenant_id": evaluation.get("tenant_id"),
-        "drift_type": "runtime_health" if "lag" in metric or "runtime" in metric else "execution",
+        "drift_type": "runtime_health" if is_health else "execution",
         "incident_cluster_id": cluster_id,
         "scope_ref": required["binding_id"],
         **required,
-        "telemetry_event_ids": telemetry_event_ids,
+        "telemetry_event_ids": [causal_event_id],
         "baseline_ref": str(summary.get("baseline_ref") or "governed-runtime-health-policy"),
-        "current_ref": f"telemetry-runtime-summary:{required['runtime_id']}:{event_id}",
+        "current_ref": f"telemetry-runtime-summary:{required['runtime_id']}:{causal_event_id}",
         "severity": severity,
         "status": "open",
         "recommended_action": "open_incident",
@@ -2592,7 +2605,7 @@ def _scheduled_drift_report(
             ],
         },
         "evidence_refs": [
-            *[f"telemetry_event:{event_id_value}" for event_id_value in telemetry_event_ids],
+            f"telemetry_event:{causal_event_id}",
             f"runtime_binding:{required['binding_id']}",
             f"drift_evaluation:{evaluation['evaluation_id']}",
             f"drift_report:{report_id}",
