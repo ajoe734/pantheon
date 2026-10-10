@@ -233,7 +233,7 @@ from .heartbeat_service import (
     build_telemetry_event_from_runtime_heartbeat,
     heartbeat_status_from_summary,
 )
-from .ingest_svc import TelemetryIngestService, build_postgres_write_fn
+from .ingest_svc import TelemetryIngestService, build_postgres_event_reader, build_postgres_write_fn
 from .lineage_read import LineageReadService
 from .runtime_summary import RuntimeSummaryProjectionStore
 from .trade_episode_projection import TradeEpisodeProjectionStore
@@ -502,8 +502,13 @@ def _build_service(lineage_write_store: LineageReadService | None = None) -> Tel
     corpus reload.
     """
     db_dsn = os.getenv("TELEMETRY_DB_DSN", "")
+    event_reader = None
     if db_dsn:
         write_fn = build_postgres_write_fn(dsn=db_dsn)
+        event_reader, binding_events = build_postgres_event_reader(dsn=db_dsn)
+        if lineage_write_store is not None:
+            lineage_write_store._event_reader = event_reader
+            lineage_write_store._binding_events_reader = binding_events
         log.info("TelemetryIngestService: using Postgres write path (asyncpg)")
     else:
         write_fn = None  # falls back to memory-only dev sink
@@ -585,7 +590,7 @@ def _build_service(lineage_write_store: LineageReadService | None = None) -> Tel
         trade_episode_events_path,
     )
 
-    return TelemetryIngestService(
+    ingest_svc = TelemetryIngestService(
         schema_path=schema_path,
         storage_dir=storage_dir,
         buffer_backend=buffer_backend,
@@ -618,7 +623,11 @@ def _build_service(lineage_write_store: LineageReadService | None = None) -> Tel
         )
         or None,
         infrastructure_health_lease_seconds=infrastructure_health_lease,
+        event_reader=event_reader,
     )
+    if lineage_write_store is not None and getattr(lineage_write_store, "_binding_store", None) is None:
+        lineage_write_store._binding_store = binding_store
+    return ingest_svc
 
 
 def _get_service() -> TelemetryIngestService:
@@ -1177,7 +1186,10 @@ def accepted_event(event_id: str):
     """Return one exact owner-accepted event without summary races."""
 
     svc = _get_service()
-    event = svc.get_accepted_event(event_id, tenant_id=request_tenant_id())
+    try:
+        event = svc.get_accepted_event(event_id, tenant_id=request_tenant_id())
+    except RuntimeError as exc:
+        return jsonify({"error": {"code": "SERVICE_UNAVAILABLE", "message": str(exc)}}), 503
     if event is None:
         return jsonify({
             "error": {

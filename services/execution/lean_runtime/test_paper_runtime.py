@@ -22,6 +22,11 @@ from services.execution.lean_runtime.paper_runtime import (
     PaperRuntimeService,
     RuntimeBindingResolver,
     RuntimeTelemetryEmitter,
+    _extract_verified_bridge,
+)
+from services.execution.lean_runtime.runtime_context import (
+    PantheonRuntimeContext,
+    RuntimeContextSource,
 )
 from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
 from services.execution.lean_runtime.performance_telemetry import MarketMark
@@ -1281,9 +1286,8 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(event["binding_id"], binding["binding_id"])
         self.assertEqual(event["plan_id"], "plan-paper")
         self.assertEqual(event["target"]["artifact_type"], "execution_bundle")
-        self.assertEqual(event["metadata"]["engine_bridge_repo"], "ajoe734/pantheon-lean.git")
-        self.assertEqual(event["metadata"]["engine_bridge_commit"], "abc1234")
-        self.assertEqual(event["metadata"]["context_source"], "launch_manifest")
+        self.assertNotIn("engine_bridge_repo", event["metadata"])
+        self.assertNotIn("engine_bridge_commit", event["metadata"])
 
     def test_reproduces_zero_authoritative_sessions_when_binding_never_resolves(self):
         """LOOP-L08-L09-RUNTIME-PAPER-OWNERS-001 reproduction of root-cause
@@ -2814,6 +2818,351 @@ class TestPaperRuntimeLifecycleCursor(unittest.TestCase):
                 self.assertIn("/bff/management/trade-journeys/events", str(ctx.exception))
 
 
-if __name__ == "__main__":
+class TestPaperRuntimeObservabilityEnvelope(unittest.TestCase):
+    def _identity(self):
+        return RuntimeIdentity.from_env(
+            {
+                "PANTHEON_RUNTIME_ROLE": "pantheon-paper-execution-runtime",
+                "PANTHEON_RUNTIME_MODE": "paper",
+                "PANTHEON_RUNTIME_ID": "rt-test",
+                "PANTHEON_RUNTIME_BINDING_ID": "bind-test",
+                "PANTHEON_DEPLOYMENT_STAGE": "paper",
+                "PANTHEON_RUNTIME_MANAGER_URL": "http://127.0.0.1:18000",
+                "PANTHEON_RUNTIME_MANAGER_TOKEN": "token",
+            }
+        )
 
+    def _binding(self):
+        return {
+            "binding_id": "bind-test",
+            "runtime_id": "rt-test",
+            "capital_pool_id": "pool-paper",
+            "artifact_id": "artifact-paper",
+            "artifact_version": "1.2.3",
+            "deployment_mode": "paper",
+            "plan_id": "plan-paper",
+            "persona_capital_binding_id": "pcb-paper",
+            "status": "active",
+        }
+
+    def test_queue_lag_observed_and_exposed_in_snapshot(self):
+        identity = self._identity()
+        emitter = RuntimeTelemetryEmitter(identity, _FakeBindingResolver(self._binding()))
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([]),
+            identity=identity,
+            runtime_manager_client=_FakeRuntimeManagerClient([]),
+            telemetry_emitter=emitter,
+        )
+        snap0 = service.snapshot()
+        self.assertIsNone(snap0["queue_lag_ms"])
+        self.assertIsNone(snap0["paper_state"]["queue_lag_ms"])
+
+        past_iso = datetime.now(timezone.utc).isoformat()
+        time.sleep(0.005)
+        event = OrderEvent(
+            event_id=str(uuid.uuid4()),
+            event_type="signal_generation",
+            symbol="2330.TW",
+            quantity=100,
+            fill_price=0.0,
+            action="BUY",
+            metadata={"enqueued_at": past_iso},
+        )
+        service._handle_order_event(event)
+
+        self.assertIsNotNone(service._observed_queue_lag_ms)
+        self.assertGreaterEqual(service._observed_queue_lag_ms, 0)
+        snap1 = service.snapshot()
+        self.assertEqual(snap1["queue_lag_ms"], service._observed_queue_lag_ms)
+        self.assertEqual(snap1["paper_state"]["queue_lag_ms"], service._observed_queue_lag_ms)
+
+    def test_queue_lag_degraded_when_missing_or_invalid_timestamp(self):
+        identity = self._identity()
+        emitter = RuntimeTelemetryEmitter(identity, _FakeBindingResolver(self._binding()))
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([]),
+            identity=identity,
+            runtime_manager_client=_FakeRuntimeManagerClient([]),
+            telemetry_emitter=emitter,
+        )
+        event = OrderEvent(
+            event_id=str(uuid.uuid4()),
+            event_type="signal_generation",
+            symbol="2330.TW",
+            quantity=100,
+            fill_price=0.0,
+            action="BUY",
+            metadata={"enqueued_at": "invalid-timestamp"},
+        )
+        service._handle_order_event(event)
+        self.assertIsNone(service._observed_queue_lag_ms)
+        snap = service.snapshot()
+        self.assertIsNone(snap["queue_lag_ms"])
+        self.assertIsNone(snap["paper_state"]["queue_lag_ms"])
+
+    def test_telemetry_emitter_records_delivery_lag(self):
+        identity = replace(self._identity(), telemetry_url="http://telemetry.test")
+        emitter = RuntimeTelemetryEmitter(identity, _FakeBindingResolver(self._binding()))
+        self.assertIsNone(emitter.last_delivery_lag_ms)
+        self.assertIsNone(emitter.snapshot()["delivery_lag_ms"])
+        self.assertIsNone(emitter.snapshot()["event_delivery_lag_ms"])
+
+        response = MagicMock()
+        response.__enter__.return_value.status = 200
+        with patch("urllib.request.urlopen", return_value=response):
+            emitted = emitter.emit_heartbeat()
+        self.assertTrue(emitted)
+        self.assertIsNotNone(emitter.last_delivery_lag_ms)
+        self.assertGreaterEqual(emitter.last_delivery_lag_ms, 0)
+        snap = emitter.snapshot()
+        self.assertEqual(snap["delivery_lag_ms"], emitter.last_delivery_lag_ms)
+        self.assertEqual(snap["event_delivery_lag_ms"], emitter.last_delivery_lag_ms)
+
+    def test_emitter_base_metadata_extracts_bridge_from_binding_metadata(self):
+        identity = self._identity()
+        binding = self._binding()
+        binding["metadata"] = {
+            "engine_bridge_repo": "https://github.com/QuantConnect/Lean.git",
+            "engine_bridge_path": "integrations/lean/pantheon_algo",
+            "engine_bridge_commit": "1234567",
+            "runtime_adapter_version": "0.1.5",
+            "context_source": "binding_metadata",
+        }
+        emitter = RuntimeTelemetryEmitter(identity, _FakeBindingResolver(binding))
+        event = emitter.build_event("heartbeat", {"heartbeat": 1})
+        self.assertIsNotNone(event)
+        meta = event["metadata"]
+        self.assertNotIn("engine_bridge_repo", meta)
+        self.assertNotIn("engine_bridge_path", meta)
+        self.assertNotIn("engine_bridge_commit", meta)
+        self.assertNotIn("runtime_adapter_version", meta)
+        self.assertNotIn("context_source", meta)
+
+    def test_queue_lag_stays_none_when_metadata_empty_or_non_causal(self):
+        identity = self._identity()
+        emitter = RuntimeTelemetryEmitter(identity, _FakeBindingResolver(self._binding()))
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([]),
+            identity=identity,
+            runtime_manager_client=_FakeRuntimeManagerClient([]),
+            telemetry_emitter=emitter,
+        )
+        # Empty metadata: no enqueued_at or causal receipt
+        ev_empty = OrderEvent(
+            event_id=str(uuid.uuid4()),
+            event_type="signal_generation",
+            symbol="2330.TW",
+            quantity=100,
+            fill_price=0.0,
+            action="BUY",
+            metadata={},
+        )
+        service._handle_order_event(ev_empty)
+        self.assertIsNone(service._observed_queue_lag_ms)
+        self.assertIsNone(service.snapshot()["queue_lag_ms"])
+
+        # Generic non-causal timestamp or received_at only
+        past_iso = datetime.now(timezone.utc).isoformat()
+        ev_generic = OrderEvent(
+            event_id=str(uuid.uuid4()),
+            event_type="signal_generation",
+            symbol="2330.TW",
+            quantity=100,
+            fill_price=0.0,
+            action="BUY",
+            metadata={"timestamp": past_iso, "correlation_envelope": {"received_at": past_iso}},
+        )
+        service._handle_order_event(ev_generic)
+        self.assertIsNone(service._observed_queue_lag_ms)
+        self.assertIsNone(service.snapshot()["queue_lag_ms"])
+
+    def test_queue_lag_observed_with_causal_queue_receipt(self):
+        identity = self._identity()
+        emitter = RuntimeTelemetryEmitter(identity, _FakeBindingResolver(self._binding()))
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([]),
+            identity=identity,
+            runtime_manager_client=_FakeRuntimeManagerClient([]),
+            telemetry_emitter=emitter,
+        )
+        past_iso = datetime.now(timezone.utc).isoformat()
+        time.sleep(0.005)
+        ev_receipt = OrderEvent(
+            event_id=str(uuid.uuid4()),
+            event_type="signal_generation",
+            symbol="2330.TW",
+            quantity=100,
+            fill_price=0.0,
+            action="BUY",
+            metadata={"causal_queue_receipt": {"enqueued_at": past_iso}},
+        )
+        service._handle_order_event(ev_receipt)
+        self.assertIsNotNone(service._observed_queue_lag_ms)
+        self.assertGreaterEqual(service._observed_queue_lag_ms, 0)
+        self.assertEqual(service.snapshot()["queue_lag_ms"], service._observed_queue_lag_ms)
+
+    def test_emitter_base_metadata_omits_unverified_or_conflicting_bridge(self):
+        identity = self._identity()
+
+        # Conflicting top-level and metadata bridge repo
+        binding_conflict = self._binding()
+        binding_conflict["engine_bridge_repo"] = "https://github.com/QuantConnect/Lean.git"
+        binding_conflict["metadata"] = {
+            "engine_bridge_repo": "ajoe734/pantheon-lean.git",
+            "engine_bridge_path": "integrations/lean/pantheon_algo",
+            "engine_bridge_commit": "1234567",
+        }
+        emitter = RuntimeTelemetryEmitter(identity, _FakeBindingResolver(binding_conflict))
+        event = emitter.build_event("heartbeat", {"heartbeat": 1})
+        self.assertIsNotNone(event)
+        self.assertNotIn("engine_bridge_repo", event["metadata"])
+
+        # Unverified repo
+        binding_unverified = self._binding()
+        binding_unverified["metadata"] = {
+            "engine_bridge_repo": "https://github.com/unknown/repo.git",
+            "engine_bridge_path": "integrations/lean/pantheon_algo",
+            "engine_bridge_commit": "1234567",
+        }
+        emitter2 = RuntimeTelemetryEmitter(identity, _FakeBindingResolver(binding_unverified))
+        event2 = emitter2.build_event("heartbeat", {"heartbeat": 1})
+        self.assertNotIn("engine_bridge_repo", event2["metadata"])
+
+        # Nonexistent installed path
+        binding_nonexistent = self._binding()
+        binding_nonexistent["metadata"] = {
+            "engine_bridge_repo": "https://github.com/QuantConnect/Lean.git",
+            "engine_bridge_path": "/not-installed-monitor-only-A",
+            "engine_bridge_commit": "1234567",
+        }
+        emitter3 = RuntimeTelemetryEmitter(identity, _FakeBindingResolver(binding_nonexistent))
+        event3 = emitter3.build_event("heartbeat", {"heartbeat": 1})
+        self.assertNotIn("engine_bridge_repo", event3["metadata"])
+        self.assertNotIn("engine_bridge_path", event3["metadata"])
+
+    def test_emitter_base_metadata_omits_catalog_allowed_when_path_not_installed(self):
+        identity = self._identity()
+        binding = self._binding()
+        binding["metadata"] = {
+            "engine_bridge_repo": "https://github.com/QuantConnect/Lean.git",
+            "engine_bridge_path": "Algorithm.Python",
+            "engine_bridge_commit": "a401234",
+        }
+        emitter = RuntimeTelemetryEmitter(identity, _FakeBindingResolver(binding))
+        event = emitter.build_event("heartbeat", {"heartbeat": 1})
+        self.assertIsNotNone(event)
+        self.assertNotIn("engine_bridge_repo", event["metadata"])
+        self.assertNotIn("engine_bridge_path", event["metadata"])
+        self.assertNotIn("engine_bridge_commit", event["metadata"])
+        self.assertNotIn("runtime_adapter_version", event["metadata"])
+        self.assertNotIn("context_source", event["metadata"])
+
+    def test_reconciler_conflict_retains_failclosed_without_inherited_env_fallback(self):
+        from services.paper_fleet_reconciler.paper_fleet_reconciler import PaperFleetReconciler
+        reconciler = PaperFleetReconciler.__new__(PaperFleetReconciler)
+        reconciler._extra_env = {}
+        reconciler._reconciler_id = "rec-test"
+        reconciler._fence_token = 1
+        reconciler._url = None
+        reconciler._token = None
+        reconciler._source_ingest_url = None
+        reconciler._performance_mark_max_age_seconds = 60
+        reconciler._performance_state_root = Path("/tmp")
+
+        binding = {
+            "binding_id": "b-test",
+            "runtime_id": "rt-test",
+            "plan_id": "p-test",
+            "artifact_id": "art-test",
+            "artifact_version": "1.0",
+            "capital_pool_id": "pool-test",
+            "engine_bridge_repo": "https://github.com/QuantConnect/Lean.git",
+            "metadata": {
+                "engine_bridge_repo": "ajoe734/pantheon-lean.git",
+                "engine_bridge_path": "integrations/lean/pantheon_algo",
+                "engine_bridge_commit": "abc1234",
+            },
+        }
+        with unittest.mock.patch.dict(os.environ, {"PANTHEON_ENGINE_BRIDGE_REMOTE": "ajoe734/pantheon-lean.git", "PANTHEON_ENGINE_BRIDGE_COMMIT": "abc1234"}):
+            env = reconciler._build_worker_env(binding)
+            self.assertNotIn("PANTHEON_ENGINE_BRIDGE_REMOTE", env)
+            self.assertNotIn("PANTHEON_ENGINE_BRIDGE_REPO", env)
+            self.assertNotIn("PANTHEON_ENGINE_BRIDGE_SOURCE_PATH", env)
+            self.assertNotIn("PANTHEON_ENGINE_BRIDGE_PATH", env)
+            self.assertNotIn("PANTHEON_ENGINE_BRIDGE_COMMIT", env)
+
+    def test_extract_verified_bridge_rejects_existing_directory_with_arbitrary_unexecuted_commit(self):
+        # AC1 & AC5: existing directory integrations/lean with arbitrary unexecuted commit must fail closed
+        binding_existing = {
+            "engine_bridge_repo": "ajoe734/pantheon-lean.git",
+            "engine_bridge_path": "integrations/lean",
+            "engine_bridge_commit": "a" * 40,
+        }
+        self.assertIsNone(_extract_verified_bridge(binding_existing))
+
+        # Real empty directory (e.g. Algorithm.Python) with arbitrary revision rejects, with clean teardown
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            empty_algo = Path(tmp_dir) / "Algorithm.Python"
+            empty_algo.mkdir()
+            binding_empty = {
+                "engine_bridge_repo": "https://github.com/QuantConnect/Lean.git",
+                "engine_bridge_path": str(empty_algo),
+                "engine_bridge_commit": "f" * 40,
+            }
+            self.assertIsNone(_extract_verified_bridge(binding_empty))
+
+        # Ordinary allowed directory without executed bridge rejects with arbitrary non-a40 revision
+        binding_ord = {
+            "engine_bridge_repo": "ajoe734/pantheon-lean.git",
+            "engine_bridge_path": "integrations/lean",
+            "engine_bridge_commit": "c" * 40,
+        }
+        self.assertIsNone(_extract_verified_bridge(binding_ord))
+
+        # Installed bridge path with arbitrary unexecuted commit must reject
+        binding_unexecuted = {
+            "engine_bridge_repo": "https://github.com/QuantConnect/Lean.git",
+            "engine_bridge_path": "integrations/lean/pantheon_algo",
+            "engine_bridge_commit": "a401234",
+        }
+        self.assertIsNone(_extract_verified_bridge(binding_unexecuted))
+
+    def test_emitter_base_metadata_omits_unverified_bridge_even_with_loaded_runtime_context(self):
+        # AC5: loaded runtime_context cannot publish guessed executed bridge from env manifest strings alone
+        identity = self._identity()
+        raw_ctx = {
+            "runtime_binding_id": "rtb-test",
+            "runtime_id": "rt-test",
+            "deployment_plan_id": "dp-test",
+            "deployment_stage": "paper",
+            "metadata": {
+                "artifact_id": "art-test",
+                "artifact_version": "1.0",
+                "artifact_checksum": "sha256:test",
+                "strategy_id": "strat-test",
+                "capital_pool_id": "pool-test",
+                "engine_bridge_repo": "ajoe734/pantheon-lean.git",
+                "engine_bridge_path": "integrations/lean",
+                "engine_bridge_commit": "d" * 40,
+            },
+        }
+        ctx = PantheonRuntimeContext.from_mapping(
+            raw_ctx,
+            source=RuntimeContextSource.LAUNCH_MANIFEST,
+            expected_stage="paper",
+        )
+        emitter = RuntimeTelemetryEmitter(identity, _FakeBindingResolver(self._binding()), runtime_context=ctx)
+        event = emitter.build_event("heartbeat", {"heartbeat": 1})
+        self.assertIsNotNone(event)
+        self.assertNotIn("engine_bridge_repo", event["metadata"])
+        self.assertNotIn("engine_bridge_path", event["metadata"])
+        self.assertNotIn("engine_bridge_commit", event["metadata"])
+        self.assertNotIn("runtime_adapter_version", event["metadata"])
+        self.assertNotIn("context_source", event["metadata"])
+
+
+if __name__ == "__main__":
     unittest.main()
+
+

@@ -157,7 +157,8 @@ class PantheonRuntimeContext:
                 "persona_capital_binding_id": env.get("PANTHEON_PERSONA_CAPITAL_BINDING_ID"),
             },
             "bridge": {
-                "repo": env.get("PANTHEON_ENGINE_BRIDGE_REMOTE"),
+                "repo": env.get("PANTHEON_ENGINE_BRIDGE_REMOTE")
+                or env.get("PANTHEON_ENGINE_BRIDGE_REPO"),
                 "path": env.get("PANTHEON_ENGINE_BRIDGE_SOURCE_PATH")
                 or env.get("PANTHEON_ENGINE_BRIDGE_PATH"),
                 "commit": env.get("PANTHEON_ENGINE_BRIDGE_COMMIT"),
@@ -250,37 +251,43 @@ def _normalize_payload(value: Mapping[str, Any]) -> dict[str, Any]:
     payload = dict(value)
     if "runtime_context" in payload and isinstance(payload["runtime_context"], Mapping):
         payload = dict(payload["runtime_context"])
+    meta = payload.get("metadata") if isinstance(payload.get("metadata"), Mapping) else {}
+
+    def _g(*keys: str) -> Any:
+        top_v = next((payload[k] for k in keys if k in payload and payload[k] not in (None, "")), None)
+        meta_v = next((meta[k] for k in keys if k in meta and meta[k] not in (None, "")), None)
+        if top_v is not None and meta_v is not None and str(top_v).strip() != str(meta_v).strip():
+            raise RuntimeContextError(f"conflicting provenance for {keys[0]}: top {top_v!r} != metadata {meta_v!r}")
+        return top_v if top_v is not None else meta_v
     if "artifact" not in payload:
         payload["artifact"] = {
-            "artifact_id": payload.get("artifact_id"),
-            "artifact_version": payload.get("artifact_version"),
-            "artifact_checksum": payload.get("artifact_checksum") or payload.get("checksum"),
-            "strategy_id": payload.get("strategy_id"),
+            "artifact_id": _g("artifact_id"),
+            "artifact_version": _g("artifact_version"),
+            "artifact_checksum": _g("artifact_checksum", "checksum"),
+            "strategy_id": _g("strategy_id"),
         }
     if "capital" not in payload:
         payload["capital"] = {
-            "capital_pool_id": payload.get("capital_pool_id"),
-            "persona_capital_binding_id": payload.get("persona_capital_binding_id"),
+            "capital_pool_id": _g("capital_pool_id"),
+            "persona_capital_binding_id": _g("persona_capital_binding_id"),
         }
     if "bridge" not in payload:
         payload["bridge"] = {
-            "repo": payload.get("engine_bridge_repo"),
-            "path": payload.get("engine_bridge_path") or payload.get("engine_bridge_source_path"),
-            "commit": payload.get("engine_bridge_commit"),
-            "runtime_adapter_version": payload.get("runtime_adapter_version") or "0.1.0",
+            "repo": _g("engine_bridge_repo"),
+            "path": _g("engine_bridge_path", "engine_bridge_source_path"),
+            "commit": _g("engine_bridge_commit"),
+            "runtime_adapter_version": _g("runtime_adapter_version") or "0.1.0",
         }
     if "trace" not in payload:
         payload["trace"] = {
-            "trace_id": payload.get("trace_id"),
-            "correlation_id": payload.get("correlation_id") or payload.get("request_id"),
+            "trace_id": _g("trace_id"),
+            "correlation_id": _g("correlation_id", "request_id"),
         }
-    if "runtime_binding_id" not in payload and payload.get("binding_id"):
-        payload["runtime_binding_id"] = payload.get("binding_id")
-    if "deployment_plan_id" not in payload and payload.get("plan_id"):
-        payload["deployment_plan_id"] = payload.get("plan_id")
-    if "deployment_stage" not in payload and payload.get("deployment_mode"):
-        payload["deployment_stage"] = payload.get("deployment_mode")
+    for dst, *srcs in [("runtime_binding_id", "binding_id"), ("deployment_plan_id", "plan_id"), ("deployment_stage", "deployment_mode"), ("runtime_role",)]:
+        if dst not in payload and (val := _g(dst, *srcs)):
+            payload[dst] = val
     return payload
+
 
 
 def _required(mapping: Mapping[str, Any], *paths: str) -> str:
