@@ -12,5 +12,6 @@
     "before": 52, "after": 52,
     "result": "readiness failure errors; container removed by tearDownClass before re-raise"
   },
+  "acceptance": "1-4 met: redis imported before docker run; BaseException cleanup; counts unchanged; proof path untouched",
   "note": "Pre-existing leaked containers (52) left for operator, out of scope."
 }
