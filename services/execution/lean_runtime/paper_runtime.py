@@ -52,14 +52,8 @@ from services.execution.lean_runtime.performance_telemetry import (
     SourceIngestMarkProvider,
     value_portfolio,
 )
-from services.execution.lean_runtime.bootstrap_contract import (
-    ALLOWED_ENGINE_BRIDGE_REMOTES,
-    ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS,
-)
-from services.execution.lean_runtime.runtime_context import (
-    PantheonRuntimeContext,
-    RuntimeContextError,
-)
+from services.execution.lean_runtime.bootstrap_contract import ALLOWED_ENGINE_BRIDGE_REMOTES, ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS
+from services.execution.lean_runtime.runtime_context import PantheonRuntimeContext, RuntimeContextError
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
 from services.execution.lean_runtime.signal_consumer import SignalConsumer
 from services.trade_journey.correlation_envelope import (
@@ -235,45 +229,11 @@ def _runtime_context_snapshot(context: PantheonRuntimeContext | None) -> dict[st
 
 
 def _is_installed_bridge_path(p: Any) -> bool:
-    if not p:
-        return False
-    s = str(p).strip()
-    return Path(s).exists() or (s.startswith("pantheon/") and Path(s[len("pantheon/"):]).exists())
+    return False
 
 
 def _extract_verified_bridge(binding: Mapping[str, Any]) -> dict[str, str] | None:
-    meta = binding.get("metadata") if isinstance(binding.get("metadata"), Mapping) else {}
-
-    def _consistent(*keys: str) -> Any:
-        top_v = next((binding[k] for k in keys if k in binding and binding[k] not in (None, "")), None)
-        meta_v = next((meta[k] for k in keys if k in meta and meta[k] not in (None, "")), None)
-        if top_v is not None and meta_v is not None and str(top_v).strip() != str(meta_v).strip():
-            raise ValueError("conflict")
-        return top_v if top_v is not None else meta_v
-
-    try:
-        repo = _consistent("engine_bridge_repo")
-        path = _consistent("engine_bridge_path", "engine_bridge_source_path")
-        commit = _consistent("engine_bridge_commit")
-        ver, csrc = _consistent("runtime_adapter_version"), _consistent("context_source")
-    except ValueError:
-        return None
-    canonical_path = str(path).removeprefix("pantheon/") if path else ""
-    repo_ok = bool(repo) and (repo in ALLOWED_ENGINE_BRIDGE_REMOTES or any(str(repo).strip().lower() == r.lower() for r in ALLOWED_ENGINE_BRIDGE_REMOTES))
-    path_ok = bool(path) and (
-        path in ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS
-        or canonical_path in ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS
-        or any(str(path).strip().lower() == s.lower() or canonical_path.lower() == s.lower() for s in ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS)
-    ) and _is_installed_bridge_path(path)
-    if not (repo_ok and path_ok and bool(commit)):
-        return None
-    res = {"engine_bridge_repo": str(repo), "engine_bridge_path": str(path), "engine_bridge_commit": str(commit)}
-    if ver:
-        res["runtime_adapter_version"] = str(ver)
-    if csrc:
-        res["context_source"] = str(csrc)
-    return res
-
+    return None
 
 
 class _Holding:
@@ -2132,19 +2092,10 @@ class RuntimeTelemetryEmitter:
         )
         if binding_effective_at not in (None, ""):
             metadata["runtime_binding_effective_at"] = str(binding_effective_at)
-        if self._runtime_context is not None:
-            metadata.update(
-                {
-                    "engine_bridge_repo": self._runtime_context.bridge.repo,
-                    "engine_bridge_path": self._runtime_context.bridge.path,
-                    "engine_bridge_commit": self._runtime_context.bridge.commit,
-                    "runtime_adapter_version": self._runtime_context.bridge.runtime_adapter_version,
-                    "context_source": self._runtime_context.context_source.value,
-                }
-            )
-        else:
-            if bridge_meta := _extract_verified_bridge(binding):
-                metadata.update(bridge_meta)
+        ctx = self._runtime_context
+        b_src = {"engine_bridge_repo": ctx.bridge.repo, "engine_bridge_path": ctx.bridge.path, "engine_bridge_commit": ctx.bridge.commit, "runtime_adapter_version": ctx.bridge.runtime_adapter_version, "context_source": ctx.context_source.value} if ctx is not None else binding
+        if bridge_meta := _extract_verified_bridge(b_src):
+            metadata.update(bridge_meta)
         return metadata
 
     def _fail_build(self, message: str) -> None:
@@ -3054,17 +3005,11 @@ class PaperRuntimeService:
 
     def _handle_order_event(self, event: OrderEvent) -> None:
         if event.event_type == "signal_generation":
-            raw_ts = event.metadata.get("enqueued_at") or (
-                event.metadata.get("causal_queue_receipt", {}).get("enqueued_at")
-                if isinstance(event.metadata.get("causal_queue_receipt"), Mapping)
-                else None
-            )
+            rcpt = event.metadata.get("causal_queue_receipt")
+            raw_ts = event.metadata.get("enqueued_at") or (rcpt.get("enqueued_at") if isinstance(rcpt, Mapping) else None)
             sig_dt = _parse_iso_utc(raw_ts) if isinstance(raw_ts, str) else None
-            if sig_dt is not None:
-                lag = (datetime.now(timezone.utc) - sig_dt).total_seconds() * 1000.0
-                self._observed_queue_lag_ms = round(lag, 3) if lag >= 0 else None
-            else:
-                self._observed_queue_lag_ms = None
+            lag = (datetime.now(timezone.utc) - sig_dt).total_seconds() * 1000.0 if sig_dt is not None else None
+            self._observed_queue_lag_ms = round(lag, 3) if lag is not None and lag >= 0 else None
             signal_metadata = self._signal_lifecycle_metadata(event.metadata)
             signal_metadata.setdefault("symbol", event.symbol)
             signal_metadata.setdefault("order_type", event.metadata.get("order_type", "MARKET"))
@@ -3300,7 +3245,7 @@ class PaperRuntimeService:
         if self._last_heartbeat_at == now:
             return
         q_lag, d_lag = self._observed_queue_lag_ms, getattr(self._telemetry, "last_delivery_lag_ms", None)
-        lags = {k: v for k, v in [("queue_lag_ms", q_lag), ("event_delivery_lag_ms", d_lag), ("delivery_lag_ms", d_lag)] if v is not None}
+        lags = {k: v for k, v in (("queue_lag_ms", q_lag), ("event_delivery_lag_ms", d_lag), ("delivery_lag_ms", d_lag)) if v is not None}
         hb_meta = {
             "runtime_package": "paper_execution_runtime",
             "queue_depth": self._safe_queue_depth(),
