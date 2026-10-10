@@ -240,9 +240,9 @@ class PantheonRuntimeContext:
             raise RuntimeContextError(
                 f"bridge.repo must be one of {sorted(ALLOWED_ENGINE_BRIDGE_REMOTES)!r}, got {self.bridge.repo!r}"
             )
-        if self.bridge.path not in ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS:
+        if not (any(str(self.bridge.path).strip().lower() == s.lower() for s in ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS) or Path(self.bridge.path).exists()):
             raise RuntimeContextError(
-                f"bridge.path must be one of {sorted(ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS)!r}, got {self.bridge.path!r}"
+                f"bridge.path must be one of {sorted(ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS)!r} or exist, got {self.bridge.path!r}"
             )
         _reject_raw_secrets(self.to_dict(), "runtime_context")
 
@@ -252,7 +252,13 @@ def _normalize_payload(value: Mapping[str, Any]) -> dict[str, Any]:
     if "runtime_context" in payload and isinstance(payload["runtime_context"], Mapping):
         payload = dict(payload["runtime_context"])
     meta = payload.get("metadata") if isinstance(payload.get("metadata"), Mapping) else {}
-    _g = lambda *keys: next((v for k in keys if (v := payload.get(k) or meta.get(k))), None)
+
+    def _g(*keys: str) -> Any:
+        top_v = next((payload[k] for k in keys if k in payload and payload[k] not in (None, "")), None)
+        meta_v = next((meta[k] for k in keys if k in meta and meta[k] not in (None, "")), None)
+        if top_v is not None and meta_v is not None and str(top_v).strip() != str(meta_v).strip():
+            raise RuntimeContextError(f"conflicting provenance for {keys[0]}: top {top_v!r} != metadata {meta_v!r}")
+        return top_v if top_v is not None else meta_v
     if "artifact" not in payload:
         payload["artifact"] = {
             "artifact_id": _g("artifact_id"),

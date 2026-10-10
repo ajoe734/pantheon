@@ -2935,6 +2935,108 @@ class TestPaperRuntimeObservabilityEnvelope(unittest.TestCase):
         self.assertEqual(meta["runtime_adapter_version"], "0.1.5")
         self.assertEqual(meta["context_source"], "binding_metadata")
 
+    def test_queue_lag_stays_none_when_metadata_empty_or_non_causal(self):
+        identity = self._identity()
+        emitter = RuntimeTelemetryEmitter(identity, _FakeBindingResolver(self._binding()))
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([]),
+            identity=identity,
+            runtime_manager_client=_FakeRuntimeManagerClient([]),
+            telemetry_emitter=emitter,
+        )
+        # Empty metadata: no enqueued_at or causal receipt
+        ev_empty = OrderEvent(
+            event_id=str(uuid.uuid4()),
+            event_type="signal_generation",
+            symbol="2330.TW",
+            quantity=100,
+            fill_price=0.0,
+            action="BUY",
+            metadata={},
+        )
+        service._handle_order_event(ev_empty)
+        self.assertIsNone(service._observed_queue_lag_ms)
+        self.assertIsNone(service.snapshot()["queue_lag_ms"])
+
+        # Generic non-causal timestamp or received_at only
+        past_iso = datetime.now(timezone.utc).isoformat()
+        ev_generic = OrderEvent(
+            event_id=str(uuid.uuid4()),
+            event_type="signal_generation",
+            symbol="2330.TW",
+            quantity=100,
+            fill_price=0.0,
+            action="BUY",
+            metadata={"timestamp": past_iso, "correlation_envelope": {"received_at": past_iso}},
+        )
+        service._handle_order_event(ev_generic)
+        self.assertIsNone(service._observed_queue_lag_ms)
+        self.assertIsNone(service.snapshot()["queue_lag_ms"])
+
+    def test_queue_lag_observed_with_causal_queue_receipt(self):
+        identity = self._identity()
+        emitter = RuntimeTelemetryEmitter(identity, _FakeBindingResolver(self._binding()))
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([]),
+            identity=identity,
+            runtime_manager_client=_FakeRuntimeManagerClient([]),
+            telemetry_emitter=emitter,
+        )
+        past_iso = datetime.now(timezone.utc).isoformat()
+        time.sleep(0.005)
+        ev_receipt = OrderEvent(
+            event_id=str(uuid.uuid4()),
+            event_type="signal_generation",
+            symbol="2330.TW",
+            quantity=100,
+            fill_price=0.0,
+            action="BUY",
+            metadata={"causal_queue_receipt": {"enqueued_at": past_iso}},
+        )
+        service._handle_order_event(ev_receipt)
+        self.assertIsNotNone(service._observed_queue_lag_ms)
+        self.assertGreaterEqual(service._observed_queue_lag_ms, 0)
+        self.assertEqual(service.snapshot()["queue_lag_ms"], service._observed_queue_lag_ms)
+
+    def test_emitter_base_metadata_omits_unverified_or_conflicting_bridge(self):
+        identity = self._identity()
+
+        # Conflicting top-level and metadata bridge repo
+        binding_conflict = self._binding()
+        binding_conflict["engine_bridge_repo"] = "https://github.com/QuantConnect/Lean.git"
+        binding_conflict["metadata"] = {
+            "engine_bridge_repo": "ajoe734/pantheon-lean.git",
+            "engine_bridge_path": "Lean",
+            "engine_bridge_commit": "1234567",
+        }
+        emitter = RuntimeTelemetryEmitter(identity, _FakeBindingResolver(binding_conflict))
+        event = emitter.build_event("heartbeat", {"heartbeat": 1})
+        self.assertIsNotNone(event)
+        self.assertNotIn("engine_bridge_repo", event["metadata"])
+
+        # Unverified repo
+        binding_unverified = self._binding()
+        binding_unverified["metadata"] = {
+            "engine_bridge_repo": "https://github.com/unknown/repo.git",
+            "engine_bridge_path": "Lean",
+            "engine_bridge_commit": "1234567",
+        }
+        emitter2 = RuntimeTelemetryEmitter(identity, _FakeBindingResolver(binding_unverified))
+        event2 = emitter2.build_event("heartbeat", {"heartbeat": 1})
+        self.assertNotIn("engine_bridge_repo", event2["metadata"])
+
+        # Nonexistent installed path
+        binding_nonexistent = self._binding()
+        binding_nonexistent["metadata"] = {
+            "engine_bridge_repo": "https://github.com/QuantConnect/Lean.git",
+            "engine_bridge_path": "/not-installed-monitor-only-A",
+            "engine_bridge_commit": "1234567",
+        }
+        emitter3 = RuntimeTelemetryEmitter(identity, _FakeBindingResolver(binding_nonexistent))
+        event3 = emitter3.build_event("heartbeat", {"heartbeat": 1})
+        self.assertNotIn("engine_bridge_repo", event3["metadata"])
+        self.assertNotIn("engine_bridge_path", event3["metadata"])
+
 
 if __name__ == "__main__":
     unittest.main()
