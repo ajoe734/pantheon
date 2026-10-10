@@ -445,6 +445,12 @@ class TestLiveLineageWritePathFullStackHTTPRoute(unittest.IsolatedAsyncioTestCas
 
         test_store = build_incident_store(Path(self._tempdir.name) / "incidents.json")
 
+        dummy_sub = lambda topic, eid, payload: None
+        from agora.performance.consumer import get_canonical_performance_transport, register_performance_subscriber
+        transport = get_canonical_performance_transport()
+        if dummy_sub not in transport._subscribers:
+            register_performance_subscriber(dummy_sub)
+
         try:
             with mock.patch.object(incidents_main, "store", test_store), \
                  mock.patch.object(incidents_main, "reference_validator", live_validator):
@@ -515,6 +521,8 @@ class TestLiveLineageWritePathFullStackHTTPRoute(unittest.IsolatedAsyncioTestCas
                 self.assertEqual(replay.status_code, 200, replay.text)
                 self.assertEqual(replay.json()["incident_id"], first.json()["incident_id"])
         finally:
+            if dummy_sub in transport._subscribers:
+                transport._subscribers.remove(dummy_sub)
             await ingest_svc.stop(graceful=True)
 
 
