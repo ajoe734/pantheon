@@ -68,6 +68,10 @@ class _RealRedisDockerTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         super().setUpClass()
+        try:
+            import redis  # noqa: F401
+        except ImportError:
+            raise unittest.SkipTest("redis package is required for real Redis proof")
         if shutil.which("docker") is None:
             raise unittest.SkipTest("docker is required for real Redis proof")
         probe = subprocess.run(
@@ -105,19 +109,20 @@ class _RealRedisDockerTestCase(unittest.TestCase):
         )
         if started.returncode != 0:
             raise unittest.SkipTest(f"could not start Redis container: {started.stderr}")
-        cls.redis_url = f"redis://127.0.0.1:{port}/15"
-        import redis
-
-        client = redis.Redis.from_url(cls.redis_url, decode_responses=True)
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            try:
-                if client.ping():
-                    return
-            except Exception:
-                time.sleep(0.05)
-        cls.tearDownClass()
-        raise RuntimeError("real Redis container did not become ready")
+        try:
+            cls.redis_url = f"redis://127.0.0.1:{port}/15"
+            client = redis.Redis.from_url(cls.redis_url, decode_responses=True)
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                try:
+                    if client.ping():
+                        return
+                except Exception:
+                    time.sleep(0.05)
+            raise RuntimeError("real Redis container did not become ready")
+        except BaseException:
+            cls.tearDownClass()
+            raise
 
     @classmethod
     def tearDownClass(cls) -> None:
