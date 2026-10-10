@@ -315,7 +315,7 @@ def _isolated_dev_principal_env(compose_env: Mapping[str, str]) -> dict[str, str
         "PANTHEON_CAPITAL_JWT_SECRET": secret,
     }
     env.update(issue_dev_paper_principals.issue_environment({**env, "PANTHEON_ENV": "dev"}))
-    # The preview worker's tenant-dev training-service principal comes from the
+    # The preview worker and Agora projector principals come from the
     # same issuer (READERS/CONSUMER_FILES) the dev-paper-principal-issuer service
     # writes into its read-only mount; no second token minter lives here.
     return env
@@ -1462,8 +1462,11 @@ def main(argv: list[str] | None = None) -> int:
                     "[*] Running one-shot Agora projector after market seeding: "
                     f"{' '.join(projector_command)}"
                 )
-                projector_token, projector_tenant = _isolated_reader_token(
-                    compose_env, "agora-market-projector"
+                projector_token = compose_env["AGORA_PROJECTOR_SERVICE_JWT"]
+                projector_tenant = (
+                    compose_env.get("PANTHEON_TENANT_ID")
+                    or compose_env.get("PANTHEON_DEV_BFF_TENANT_ID")
+                    or "tenant-dev"
                 )
                 projector_process = subprocess.run(
                     projector_command,

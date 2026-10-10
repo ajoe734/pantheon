@@ -330,6 +330,17 @@ def test_benchmark_and_static_fallback_opt_in_are_preserved() -> None:
     projector = SERVICES["source-ingest-agora-projector"]
     assert set(projector.get("profiles", [])) == {"source-ingest-scheduler", "workers"}
     assert projector["depends_on"]["source-ingest-scheduler"]["condition"] == "service_healthy"
+    assert _default(_env("source-ingest-agora-projector")["AGORA_PROJECTOR_SERVICE_JWT_FILE"]) == (
+        "/run/pantheon-principals/AGORA_PROJECTOR_SERVICE_JWT"
+    )
+    assert (
+        "dev-paper-agora-projector-tokens:/run/pantheon-principals:ro"
+        in projector["volumes"]
+    )
+    assert (
+        "dev-paper-agora-projector-tokens:/issued/source-ingest-agora-projector"
+        in SERVICES["dev-paper-principal-issuer"]["volumes"]
+    )
 
     exec_compose = yaml.safe_load((ROOT / "docker-compose.exec.yml").read_text(encoding="utf-8"))
     lean_live = exec_compose["services"]["pantheon-lean-live"]
