@@ -1405,7 +1405,148 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
             self.assertTrue(any(m.get("code") == "node_not_found" for m in direct.get("conflict_markers", [])))
             self.assertEqual(direct.get("refs", {}).get("runtime_binding_ids", []), [])
 
+    def test_10_canonical_owner_metadata_tenant_envelope_regressions(self):
+        """Owner top-level and metadata tenant envelope validation: flat-only, metadata-only, matching, conflicting, foreign, missing, and invalid."""
+        fetch_ev, fetch_b = build_postgres_event_reader(self.dsn, table="telemetry_events")
+
+        class EnvelopeBindingStore:
+            def __init__(self, mode: str):
+                self.mode = mode
+
+            def get_binding(self, bid: str):
+                base_data = {
+                    "binding_id": bid,
+                    "runtime_id": "rt-3739472a",
+                    "artifact_id": "artifact-persona-paper-0a906806ac32538fc7df",
+                    "artifact_version": "1.0.0",
+                    "capital_pool_id": "pool-persona-paper-0a906806ac32538fc7df",
+                    "plan_id": "plan-persona-paper-0a906806ac32538fc7df",
+                    "status": "active",
+                }
+                if self.mode == "flat_only":
+                    return {**base_data, "tenant_id": TestTelemetryDurableLineageReadRestart._TENANT, "metadata": {}}
+                if self.mode == "metadata_only_dict":
+                    return {**base_data, "metadata": {"tenant_id": TestTelemetryDurableLineageReadRestart._TENANT}}
+                if self.mode == "metadata_only_namespace":
+                    return types.SimpleNamespace(**base_data, metadata={"tenant_id": TestTelemetryDurableLineageReadRestart._TENANT})
+                if self.mode == "both_matching":
+                    return {**base_data, "tenant_id": TestTelemetryDurableLineageReadRestart._TENANT, "metadata": {"tenant_id": TestTelemetryDurableLineageReadRestart._TENANT}}
+                if self.mode == "conflicting":
+                    return {**base_data, "tenant_id": TestTelemetryDurableLineageReadRestart._TENANT, "metadata": {"tenant_id": TestTelemetryDurableLineageReadRestart._FOREIGN_TENANT}}
+                if self.mode == "foreign_metadata":
+                    return {**base_data, "metadata": {"tenant_id": TestTelemetryDurableLineageReadRestart._FOREIGN_TENANT}}
+                if self.mode == "missing":
+                    return {**base_data, "metadata": {}}
+                if self.mode == "invalid_metadata":
+                    return {**base_data, "metadata": "invalid_not_an_envelope"}
+                if self.mode == "recursive_not_inferred":
+                    return {**base_data, "metadata": {"runtime_context": {"tenant_id": TestTelemetryDurableLineageReadRestart._TENANT}}}
+                return None
+
+        headers = self._auth_headers()
+
+        # Success modes: flat-only, metadata-only dict, metadata-only namespace, both matching
+        for mode in ("flat_only", "metadata_only_dict", "metadata_only_namespace", "both_matching"):
+            _main._lineage_svc = LineageReadService(
+                event_reader=fetch_ev,
+                binding_events_reader=fetch_b,
+                binding_store=EnvelopeBindingStore(mode),
+            )
+            r_trace = self.client.get(f"/api/telemetry/lineage/events/{self._E1_ID}/trace", headers=headers)
+            self.assertEqual(r_trace.status_code, 200, f"mode={mode} expected 200, got {r_trace.status_code}")
+            data = r_trace.get_json()
+            self.assertEqual(data["conflict_markers"], [])
+            upstream_bindings = [node["id"] for node in data.get("upstream_chain", []) if node.get("type") == "runtime_binding"]
+            self.assertIn(self._E1_BINDING, upstream_bindings)
+
+        # Fail-closed 404 modes: conflicting, foreign_metadata, missing, invalid_metadata, recursive_not_inferred
+        for mode in ("conflicting", "foreign_metadata", "missing", "invalid_metadata", "recursive_not_inferred"):
+            _main._lineage_svc = LineageReadService(
+                event_reader=fetch_ev,
+                binding_events_reader=fetch_b,
+                binding_store=EnvelopeBindingStore(mode),
+            )
+            r_trace = self.client.get(f"/api/telemetry/lineage/events/{self._E1_ID}/trace", headers=headers)
+            self.assertEqual(r_trace.status_code, 404, f"mode={mode} expected 404, got {r_trace.status_code}")
+            self.assertEqual(r_trace.get_json()["error"]["code"], "LINEAGE_TARGET_NOT_FOUND")
+
+            direct = _main._lineage_svc.query("telemetry_event_trace", event_id=self._E1_ID, tenant_id=self._TENANT)
+            self.assertTrue(any(m.get("code") == "node_not_found" for m in direct.get("conflict_markers", [])))
+            self.assertEqual(direct.get("refs", {}).get("runtime_binding_ids", []), [])
+
+    def test_11_fresh_reader_recovers_trace_and_paused_projection_with_adapter_metadata_envelope(self):
+        """Fresh LineageReadService after restart recovers event trace and paused binding projection with RuntimeBindingAdapter metadata envelope without re-ingest."""
+        fetch_ev, fetch_b = build_postgres_event_reader(self.dsn, table="telemetry_events")
+
+        class SimulatedRuntimeBindingAdapter:
+            """Simulates actual served537 RuntimeBindingAdapter GET responses (metadata.tenant_id with absent top-level tenant_id)."""
+            def get_binding(self, bid: str):
+                if bid == TestTelemetryDurableLineageReadRestart._E1_BINDING:
+                    return types.SimpleNamespace(
+                        binding_id=bid,
+                        runtime_id="rt-3739472a",
+                        artifact_id="artifact-persona-paper-0a906806ac32538fc7df",
+                        artifact_version="1.0.0",
+                        capital_pool_id="pool-persona-paper-0a906806ac32538fc7df",
+                        plan_id="plan-persona-paper-0a906806ac32538fc7df",
+                        status="active",
+                        metadata={"tenant_id": TestTelemetryDurableLineageReadRestart._TENANT},
+                    )
+                if bid == TestTelemetryDurableLineageReadRestart._E2_BINDING:
+                    return types.SimpleNamespace(
+                        binding_id=bid,
+                        runtime_id="rt-04c8e486",
+                        artifact_id="artifact-persona-paper-c3f293d04cd3cb396e92",
+                        artifact_version="1.0.0",
+                        capital_pool_id="pool-persona-paper-c3f293d04cd3cb396e92",
+                        plan_id="plan-persona-paper-c3f293d04cd3cb396e92",
+                        status="paused",
+                        effective_at="2026-10-07T22:17:32Z",
+                        metadata={"tenant_id": TestTelemetryDurableLineageReadRestart._TENANT},
+                    )
+                return None
+
+        # Fresh lineage service (empty graph/cache simulating service restart)
+        adapter = SimulatedRuntimeBindingAdapter()
+        _main._lineage_svc = LineageReadService(
+            event_reader=fetch_ev,
+            binding_events_reader=fetch_b,
+            binding_store=adapter,
+        )
+        _main._svc = types.SimpleNamespace(
+            get_accepted_event=lambda eid, tenant_id=None: fetch_ev(eid) if (not tenant_id or fetch_ev(eid).get("tenant_id") == tenant_id) else None
+        )
+
+        headers = self._auth_headers()
+
+        # 1. Event trace recovers without re-ingest
+        r_trace = self.client.get(f"/api/telemetry/lineage/events/{self._E1_ID}/trace", headers=headers)
+        self.assertEqual(r_trace.status_code, 200)
+        trace_data = r_trace.get_json()
+        self.assertEqual(trace_data["target_id"], self._E1_ID)
+        self.assertEqual(trace_data["conflict_markers"], [])
+        upstream = [node["id"] for node in trace_data.get("upstream_chain", []) if node.get("type") == "runtime_binding"]
+        self.assertIn(self._E1_BINDING, upstream)
+
+        # 2. Paused binding projection recovers with status='paused' and downstream events
+        r_proj = self.client.get(f"/api/telemetry/lineage/runtime-bindings/{self._E2_BINDING}/projection", headers=headers)
+        self.assertEqual(r_proj.status_code, 200)
+        proj_data = r_proj.get_json()
+        self.assertEqual(proj_data["target_id"], self._E2_BINDING)
+        self.assertEqual(proj_data["binding_status"], "paused")
+        self.assertGreaterEqual(proj_data.get("telemetry_event_count", 0), 1)
+        downstream = [node["id"] for node in proj_data.get("downstream_chain", []) if node.get("type") == "telemetry_event"]
+        self.assertIn(self._E2_ID, downstream)
+
+        # 3. Direct query checks on fresh reader
+        direct_trace = _main._lineage_svc.query("telemetry_event_trace", event_id=self._E1_ID, tenant_id=self._TENANT)
+        self.assertEqual(direct_trace.get("conflict_markers"), [])
+        direct_proj = _main._lineage_svc.query("runtime_binding_projection", binding_id=self._E2_BINDING, tenant_id=self._TENANT)
+        self.assertEqual(direct_proj.get("binding_status"), "paused")
+        self.assertEqual(direct_proj.get("conflict_markers"), [])
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

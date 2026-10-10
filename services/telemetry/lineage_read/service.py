@@ -26,6 +26,7 @@ import logging
 import threading
 from collections import defaultdict, deque
 from collections.abc import Mapping
+from types import SimpleNamespace
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
@@ -3263,19 +3264,22 @@ class LineageReadService:
             b = self._binding_from_source(bid, event, ev_tenant)
         if bid and not b: return
         if b:
-            b_tenant = str((b.get("tenant_id") if isinstance(b, Mapping) else getattr(b, "tenant_id", None)) or "").strip()
+            b_tenant = _owner_tenant(b)
             if not b_tenant or b_tenant != ev_tenant or (tenant_id is not None and b_tenant != str(tenant_id).strip()): return
             if any((b_v := b.get(k) if isinstance(b, Mapping) else getattr(b, k, None)) and (e_v := event.get(k)) and b_v != e_v for k in ("runtime_id", "artifact_id", "artifact_version")): return
+        if not event.get("tenant_id") and ev_tenant:
+            event["tenant_id"] = ev_tenant
         self.admit_telemetry_event(event, b)
 
     def _hydrate_binding(self, binding_id: str, tenant_id: Optional[str] = None) -> None:
         binding = self._resolve_binding(binding_id)
-        b_tenant = str((binding.get("tenant_id") if isinstance(binding, Mapping) else getattr(binding, "tenant_id", None)) or "").strip() if binding else ""
+        b_tenant = _owner_tenant(binding) if binding else ""
         if binding and (not b_tenant or (tenant_id is not None and b_tenant != str(tenant_id).strip())): return
-        try: events = self._binding_events_reader(binding_id, tenant_id=tenant_id) if self._binding_events_reader else []
+        eff_tid = tenant_id or b_tenant or None
+        try: events = self._binding_events_reader(binding_id, tenant_id=eff_tid) if self._binding_events_reader else []
         except TypeError: events = self._binding_events_reader(binding_id) if self._binding_events_reader else []
         if not binding and not events: return
-        if not b_tenant and events:
+        if not b_tenant and not self._binding_store and events:
             b_tenant = str(events[0].get("tenant_id") or (events[0].get("metadata") or {}).get("tenant_id") or "").strip()
         if not b_tenant or (tenant_id is not None and b_tenant != str(tenant_id).strip()): return
         if not binding and not self._binding_store and events: binding = self._binding_from_source(binding_id, events[0], b_tenant)
@@ -3284,6 +3288,8 @@ class LineageReadService:
         for ev in events:
             ev_tenant = str(ev.get("tenant_id") or (ev.get("metadata") or {}).get("tenant_id") or "").strip()
             if ev_tenant == b_tenant and not any((b_v := binding.get(k) if isinstance(binding, Mapping) else getattr(binding, k, None)) and (e_v := ev.get(k)) and b_v != e_v for k in ("runtime_id", "artifact_id", "artifact_version")):
+                if not ev.get("tenant_id") and ev_tenant:
+                    ev["tenant_id"] = ev_tenant
                 self.admit_telemetry_event(ev, binding)
 
     def query(
@@ -3362,6 +3368,17 @@ class LineageReadService:
             raise ValueError(f"Unknown query family: {query_family}")
 
 
+def _owner_tenant(b: Any) -> Optional[str]:
+    if not isinstance(b, (Mapping, SimpleNamespace)): return None
+    top = b.get("tenant_id") if isinstance(b, Mapping) else getattr(b, "tenant_id", None)
+    top_t, meta_t = str(top).strip() if top is not None else "", ""
+    if (meta := b.get("metadata") if isinstance(b, Mapping) else getattr(b, "metadata", None)) is not None:
+        if not isinstance(meta, (Mapping, SimpleNamespace)): return None
+        mv = meta.get("tenant_id") if isinstance(meta, Mapping) else getattr(meta, "tenant_id", None)
+        meta_t = str(mv).strip() if mv is not None else ""
+    return (top_t if top_t == meta_t else None) if (top_t and meta_t) else (top_t or meta_t or None)
+
+
 def _admit_runtime_binding_node(
     graph: LineageGraph,
     binding_id: str,
@@ -3382,7 +3399,7 @@ def _admit_runtime_binding_node(
 
     data = {
         "binding_id": binding_id,
-        "tenant_id": _field("tenant_id") or tenant_id,
+        "tenant_id": _owner_tenant(binding) or (str(tenant_id).strip() if tenant_id else None),
         "runtime_id": _field("runtime_id"),
         "capital_pool_id": _field("capital_pool_id"),
         "artifact_id": _field("artifact_id"),
