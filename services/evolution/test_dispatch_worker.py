@@ -1025,3 +1025,95 @@ def test_worker_uses_configured_http_reader_before_submit(
         server.shutdown()
         thread.join(timeout=5)
         server.server_close()
+
+
+# --- Loop 11 controller truth -------------------------------------------------
+
+
+class _RecordingLoopWriter:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple, dict]] = []
+
+    async def record_success(self, *a, **kw):
+        self.calls.append(("record_success", a, kw))
+
+    async def record_failure(self, *a, **kw):
+        self.calls.append(("record_failure", a, kw))
+
+    async def record_heartbeat(self, *a, **kw):
+        self.calls.append(("record_heartbeat", a, kw))
+
+
+def _idle_result(**overrides):
+    result = {"reconciled": 0, "claimed": 0, "executed": 0, "pending": 0, "retried": 0,
+              "dead_lettered": 0, "compensated": 0, "unsupported": 0, "errors": [], "items": []}
+    result.update(overrides)
+    return result
+
+
+def test_idle_tick_loop_truth_is_admitted_by_bff() -> None:
+    import importlib
+    import json
+    import jsonschema
+
+    from services.control_plane.bff import loop_inventory
+
+    tick_at = "2026-10-09T00:00:00Z"
+    writer = _RecordingLoopWriter()
+    dispatch_worker.publish_loop_truth(writer, _idle_result(), tick_at=tick_at)
+    kind, args, kwargs = writer.calls[0]
+    assert kind == "record_success" and args == ("evolution",)
+    assert kwargs["evidence_refs"] == [f"evolution-dispatch://ticks/evolution-dispatch-worker/{tick_at}"]
+
+    schema = json.loads((Path(__file__).resolve().parents[2] / "schemas/loop-controller-record.schema.json").read_text())
+    for key in ("desired_state", "downstream_actual_state"):
+        jsonschema.validate(kwargs[key], {**schema, **schema["properties"][key]})
+
+    now = datetime.now(timezone.utc)
+    projector = importlib.import_module("services.loop-control").project_controller_record_to_bff
+    projected = projector(
+        {
+            "loop_id": "evolution", "controller_id": "c1",
+            "controller_name": "evolution-dispatch-worker",
+            "last_heartbeat_at": now, "last_success_at": now,
+            "lease_token": "tok", "lease_expires_at": now + timedelta(seconds=61),
+            "desired_state": kwargs["desired_state"],
+            "downstream_actual_state": kwargs["downstream_actual_state"],
+            "evidence_refs": kwargs["evidence_refs"],
+        },
+        now=now,
+    )
+    assert loop_inventory._runtime_controller_record_qualified(
+        projected, "controller_store", "evolution-dispatch-worker"
+    )
+
+
+def test_loop_heartbeat_omits_desired_and_actual() -> None:
+    writer = _RecordingLoopWriter()
+    dispatch_worker.publish_loop_heartbeat(writer, tick_at="2026-10-09T00:00:00Z")
+    kind, _, kwargs = writer.calls[0]
+    assert kind == "record_heartbeat"
+    assert "desired_state" not in kwargs and "downstream_actual_state" not in kwargs
+    assert kwargs["evidence_refs"]
+
+
+def test_only_claim_error_is_controller_failure() -> None:
+    writer = _RecordingLoopWriter()
+    dispatch_worker.publish_loop_truth(
+        writer, _idle_result(errors=["reconcile_error=boom"], dead_lettered=1), tick_at="t1")
+    kind, _, kwargs = writer.calls[0]
+    assert kind == "record_success"
+    assert kwargs["downstream_actual_state"]["status"] == "degraded"
+
+    writer = _RecordingLoopWriter()
+    dispatch_worker.publish_loop_truth(writer, _idle_result(errors=["claim_error=down"]), tick_at="t2")
+    assert writer.calls[0][0] == "record_failure"
+
+
+def test_loop_writer_disabled_without_dsn_or_tenant(monkeypatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", "")
+    monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-a")
+    assert dispatch_worker.build_loop_writer(lease_duration_seconds=120) is None
+    monkeypatch.setenv("DATABASE_URL", "postgresql://x/y")
+    monkeypatch.delenv("PANTHEON_TENANT_ID")
+    assert dispatch_worker.build_loop_writer(lease_duration_seconds=120) is None

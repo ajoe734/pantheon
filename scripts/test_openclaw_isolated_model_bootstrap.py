@@ -35,7 +35,11 @@ def test_batch_reuses_approved_pool_and_never_embeds_credential() -> None:
     # Both real consumer identities, once each; main keeps native tool policy.
     assert values["agents.list"] == [
         {"id": "main"},
-        {"id": "structured-extraction", "tools": {"deny": ["*"]}},
+        {"id": "structured-extraction",
+         "tools": {"deny": ["*"], "exec": {"security": "deny", "ask": "always"}}},
     ]
+    # Same global ToolSearch-only launch as the shared deploy path.
+    assert values['agents.defaults.cliBackends["claude-cli"].args'][-2:] == ["--tools", "ToolSearch"]
+    assert values['agents.defaults.cliBackends["claude-cli"].resumeArgs'][-4:-2] == ["--tools", "ToolSearch"]
     assert [item["path"] for item in batch].count("agents.list") == 1
     assert "sentinel-secret-value" not in json.dumps(batch)

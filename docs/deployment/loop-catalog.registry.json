@@ -257,7 +257,7 @@
         "domain": "agora_control_plane",
         "service_or_doc": "services/control-plane/specs/agora",
         "authoritative_write_owner": "Agora interaction evidence and governed dataset stores",
-        "current_controller_owner": null
+        "current_controller_owner": "agora-interaction-worker"
       },
       "trigger_model": {
         "primary": "command-driven",
@@ -294,14 +294,14 @@
         "query_status": "planned"
       },
       "controller_contract": {
-        "status": "not_implemented",
-        "controller_name": null,
-        "desired_state_query": null,
-        "actual_state_query": null,
+        "status": "implemented",
+        "controller_name": "agora-interaction-worker",
+        "desired_state_query": "agora.interaction_lifecycle_store.claim",
+        "actual_state_query": "agora.interaction_worker.outcomes",
         "idempotency_key": "planned: interaction_id + extraction_kind + target_dataset",
         "duplicate_event_policy": "planned: duplicate interaction events must not duplicate training examples or handoffs",
-        "restart_behavior": null,
-        "liveness_metric": null,
+        "restart_behavior": "Reload durable controller state from the loop-control store; a restarted worker takes a new lease token once the previous lease expires and republishes the controller record on its next tick.",
+        "liveness_metric": "last_heartbeat_at",
         "operator_truth_projection": "planned: LOOP-AUTO-KNOW-004 and LOOP-AUTO-BFF-001"
       }
     },
@@ -436,7 +436,7 @@
         "domain": "governance_deployment",
         "service_or_doc": "services/control-plane/governance",
         "authoritative_write_owner": "approval, deployment plan, saga, and runtime binding stores",
-        "current_controller_owner": null
+        "current_controller_owner": "deployment-outbox-consumer"
       },
       "trigger_model": {
         "primary": "command-driven async saga",
@@ -471,14 +471,14 @@
         "query_status": "planned"
       },
       "controller_contract": {
-        "status": "not_implemented",
-        "controller_name": null,
-        "desired_state_query": null,
-        "actual_state_query": null,
+        "status": "implemented",
+        "controller_name": "deployment-outbox-consumer",
+        "desired_state_query": "deployment.outbox.claim",
+        "actual_state_query": "deployment.outbox_consumer.run_poll",
         "idempotency_key": "planned: deployment_plan_id + artifact_snapshot_id + target_stage",
         "duplicate_event_policy": "planned: duplicate outbox events must not create duplicate runtime bindings",
-        "restart_behavior": null,
-        "liveness_metric": null,
+        "restart_behavior": "Reload durable controller state from the loop-control store; a restarted worker takes a new lease token once the previous lease expires and republishes the controller record on its next tick.",
+        "liveness_metric": "last_heartbeat_at",
         "operator_truth_projection": "planned: LOOP-AUTO-DEP-004 and LOOP-AUTO-BFF-001"
       }
     },
@@ -495,7 +495,7 @@
         "domain": "runtime_manager",
         "service_or_doc": "services/runtime-manager",
         "authoritative_write_owner": "runtime binding and supervised runtime worker stores",
-        "current_controller_owner": null
+        "current_controller_owner": "paper-fleet-reconciler"
       },
       "trigger_model": {
         "primary": "continuous runtime loop",
@@ -531,14 +531,14 @@
         "query_status": "planned"
       },
       "controller_contract": {
-        "status": "not_implemented",
-        "controller_name": null,
-        "desired_state_query": null,
-        "actual_state_query": null,
+        "status": "implemented",
+        "controller_name": "paper-fleet-reconciler",
+        "desired_state_query": "runtime-manager.runtime-fleet.desired-state",
+        "actual_state_query": "paper-fleet-reconciler.worker_inventory",
         "idempotency_key": "planned: runtime_binding_id + runtime_stage + policy_version",
         "duplicate_event_policy": "planned: duplicate fleet ticks must converge to exactly one worker per active binding",
-        "restart_behavior": null,
-        "liveness_metric": null,
+        "restart_behavior": "Reload durable controller state from the loop-control store; a restarted worker takes a new lease token once the previous lease expires and republishes the controller record on its next tick.",
+        "liveness_metric": "last_heartbeat_at",
         "operator_truth_projection": "planned: LOOP-AUTO-RT-005 and LOOP-AUTO-BFF-001"
       }
     },
@@ -614,7 +614,7 @@
         "domain": "evolution",
         "service_or_doc": "services/evolution",
         "authoritative_write_owner": "EvolutionDecision and governed action dispatch stores",
-        "current_controller_owner": null
+        "current_controller_owner": "evolution-dispatch-worker"
       },
       "trigger_model": {
         "primary": "threshold-triggered plus daily sweep",
@@ -648,14 +648,14 @@
         "query_status": "planned"
       },
       "controller_contract": {
-        "status": "not_implemented",
-        "controller_name": null,
-        "desired_state_query": null,
-        "actual_state_query": null,
+        "status": "implemented",
+        "controller_name": "evolution-dispatch-worker",
+        "desired_state_query": "evolution.dispatch_outbox",
+        "actual_state_query": "evolution.dispatch_outbox",
         "idempotency_key": "planned: evolution_target_id + incident_cluster_id + observation_window",
         "duplicate_event_policy": "planned: duplicate postmortem or sweep ticks must converge to one active decision per target",
-        "restart_behavior": null,
-        "liveness_metric": null,
+        "restart_behavior": "Reload durable controller state from the loop-control store; a restarted worker takes a new lease token once the previous lease expires and republishes the controller record on its next tick.",
+        "liveness_metric": "last_heartbeat_at",
         "operator_truth_projection": "planned: LOOP-AUTO-EVO-005 and LOOP-AUTO-BFF-001"
       }
     },

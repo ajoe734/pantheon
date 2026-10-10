@@ -2609,6 +2609,220 @@ class TestPaperFleetReadyzAndMonitoringSessionBounds(unittest.TestCase):
             self.assertLessEqual(len(ended_persisted), 20)
 
 
+class _FakeLoopWriter:
+    def __init__(self) -> None:
+        self.calls: List[tuple] = []
+
+    async def record_success(self, **kwargs: Any) -> None:
+        self.calls.append(("record_success", kwargs))
+
+    async def record_failure(self, **kwargs: Any) -> None:
+        self.calls.append(("record_failure", kwargs))
+
+    async def record_heartbeat(self, **kwargs: Any) -> None:
+        self.calls.append(("record_heartbeat", kwargs))
+
+
+def _loop_reconciler(writer, state, spawned, **kwargs):
+    from paper_fleet_reconciler import PaperFleetReconciler
+
+    class _R(PaperFleetReconciler):
+        def _fetch_fleet_state(inner_self):
+            if state.get("fail"):
+                with inner_self._lock:
+                    inner_self._last_error = "fleet desired state fetch failed: simulated"
+                return None
+            return (list(state["bindings"]), set())
+
+        def _spawn(inner_self, binding_id, port, env):
+            proc = _FakeProcess(pid=500 + len(spawned))
+            spawned.append(proc)
+            return proc
+
+    kwargs.setdefault("poll_interval_seconds", 1)
+    return _R(
+        worker_base_port=9900,
+        restart_backoff_seconds=0,
+        drain_timeout_seconds=1,
+        leader_store=_unit_leader_store(),
+        loop_writer=writer,
+        **kwargs,
+    )
+
+
+class TestLoop9ControllerWriter(unittest.TestCase):
+    def test_idle_cycle_is_admissible_after_projection(self) -> None:
+        import importlib
+
+        import jsonschema
+
+        writer = _FakeLoopWriter()
+        recon = _loop_reconciler(writer, {"bindings": []}, [])
+        recon.reconcile_once()
+
+        self.assertEqual([c[0] for c in writer.calls], ["record_success"])
+        kwargs = writer.calls[0][1]
+        schema = json.loads(
+            (REPO_ROOT / "schemas/loop-controller-record.schema.json").read_text()
+        )
+        jsonschema.validate(kwargs["desired_state"], schema["properties"]["desired_state"])
+        jsonschema.validate(
+            kwargs["downstream_actual_state"],
+            schema["properties"]["downstream_actual_state"],
+        )
+        self.assertTrue(
+            kwargs["evidence_refs"][0].startswith(
+                f"paper-fleet://reconcile-cycles/{recon._reconciler_id}/"
+            )
+        )
+
+        loop_control = importlib.import_module("services.loop-control")
+        inventory = importlib.import_module("services.control-plane.bff.loop_inventory")
+        now = datetime.now(timezone.utc)
+        row = {
+            "loop_id": kwargs["loop_id"],
+            "controller_id": "c1",
+            "controller_name": "paper-fleet-reconciler",
+            "last_heartbeat_at": now,
+            "last_success_at": now,
+            "lease_token": "tok",
+            "lease_expires_at": now + timedelta(seconds=recon._loop_lease_seconds),
+            "desired_state": kwargs["desired_state"],
+            "downstream_actual_state": kwargs["downstream_actual_state"],
+            "evidence_refs": kwargs["evidence_refs"],
+        }
+        projected = loop_control.project_controller_record_to_bff(row, now=now)
+        self.assertTrue(
+            inventory._runtime_controller_record_qualified(
+                projected, "controller_store", "paper-fleet-reconciler"
+            )
+        )
+
+    def test_unconverged_binding_is_downstream_degraded_not_failure(self) -> None:
+        writer = _FakeLoopWriter()
+        spawned: list = []
+        recon = _loop_reconciler(writer, {"bindings": [_make_binding("b-1")]}, spawned)
+        spawned_proc_before = len(spawned)
+        recon.reconcile_once()
+        self.assertGreater(len(spawned), spawned_proc_before)
+        kind, kwargs = writer.calls[-1]
+        self.assertEqual(kind, "record_success")
+        self.assertEqual(kwargs["downstream_actual_state"]["status"], "ready")
+
+        # Worker dies: desired binding no longer has exactly one running worker.
+        from paper_fleet_reconciler import build_loop_truth
+
+        truth = build_loop_truth(
+            desired_binding_ids=["b-1", "b-2"],
+            workers=[{"binding_id": "b-1", "status": "running"}],
+            reconciler_id="r",
+            cycle_count=3,
+            checked_at="2026-10-09T00:00:00Z",
+        )
+        self.assertEqual(truth["downstream_actual_state"]["status"], "degraded")
+        self.assertEqual(truth["backlog"], 1)
+        dup = build_loop_truth(
+            desired_binding_ids=["b-1"],
+            workers=[
+                {"binding_id": "b-1", "status": "running"},
+                {"binding_id": "b-1", "status": "running"},
+            ],
+            reconciler_id="r",
+            cycle_count=3,
+            checked_at="2026-10-09T00:00:00Z",
+        )
+        self.assertEqual(dup["downstream_actual_state"]["status"], "degraded")
+
+    def test_failed_fetch_is_recorded_as_controller_failure(self) -> None:
+        writer = _FakeLoopWriter()
+        recon = _loop_reconciler(writer, {"bindings": [], "fail": True}, [])
+        recon.reconcile_once()
+        kind, kwargs = writer.calls[0]
+        self.assertEqual(kind, "record_failure")
+        self.assertIn("fetch failed", kwargs["reason"])
+        self.assertIsNone(kwargs["desired_state"])
+        self.assertTrue(kwargs["evidence_refs"])
+
+    def test_writes_throttled_with_one_second_poll(self) -> None:
+        writer = _FakeLoopWriter()
+        recon = _loop_reconciler(writer, {"bindings": []}, [])
+        for _ in range(5):
+            recon.reconcile_once()
+        self.assertEqual(len(writer.calls), 1)
+        recon._loop_write_interval = 0.0
+        recon.reconcile_once()
+        self.assertEqual(len(writer.calls), 2)
+
+    def test_follower_never_writes(self) -> None:
+        writer = _FakeLoopWriter()
+        store = _unit_leader_store()
+        leader = _loop_reconciler(None, {"bindings": []}, [], reconciler_id="leader")
+        leader._leader_store = store
+        self.assertTrue(leader.try_acquire_lease())
+        follower = _loop_reconciler(writer, {"bindings": []}, [], reconciler_id="follower")
+        follower._leader_store = store
+        follower.reconcile_once()
+        follower.reconcile_once()
+        self.assertEqual(writer.calls, [])
+
+    def test_lease_is_configured_and_covers_write_gap(self) -> None:
+        with patch.dict(os.environ, {"RECONCILER_LOOP_WRITE_INTERVAL_SECONDS": "300"}):
+            recon = _loop_reconciler(_FakeLoopWriter(), {"bindings": []}, [])
+        self.assertGreater(recon._loop_lease_seconds, 300)
+        with patch.dict(os.environ, {}, clear=False):
+            default = _loop_reconciler(_FakeLoopWriter(), {"bindings": []}, [])
+        self.assertEqual(default._loop_lease_seconds, 120)
+
+    def test_writer_disabled_without_dsn(self) -> None:
+        env = {k: v for k, v in os.environ.items() if k != "RECONCILER_LOOP_CONTROLLER_DSN"}
+        with patch.dict(os.environ, env, clear=True):
+            recon = _loop_reconciler(None, {"bindings": []}, [])
+        self.assertIsNone(recon._loop_writer)
+        recon.reconcile_once()
+
+    def test_writer_built_from_dsn_env_without_injected_writer(self) -> None:
+        import paper_fleet_reconciler as reconciler_module
+        from paper_fleet_reconciler import PaperFleetReconciler
+
+        built: List[Dict[str, Any]] = []
+
+        class _Writer:
+            def __init__(self, dsn: str, **kwargs: Any) -> None:
+                built.append({"dsn": dsn, **kwargs})
+
+        fake_loop_control = SimpleNamespace(LoopControllerWriter=_Writer)
+        env = {k: v for k, v in os.environ.items() if not k.startswith("PANTHEON_CONTROLLER_")}
+        env["RECONCILER_LOOP_CONTROLLER_DSN"] = "postgresql://loop9.invalid/pantheon"
+        with patch.dict(os.environ, env, clear=True), patch.object(
+            reconciler_module.importlib, "import_module", return_value=fake_loop_control
+        ):
+            recon = PaperFleetReconciler(poll_interval_seconds=999, reconciler_id="recon-dsn")
+
+        self.assertIsNotNone(recon._loop_writer)
+        self.assertEqual(len(built), 1)
+        self.assertTrue(built[0]["controller_id"].startswith("recon-dsn:"))
+
+    def test_worker_env_excludes_controller_settings(self) -> None:
+        from paper_fleet_reconciler import PaperFleetReconciler
+
+        with patch.dict(
+            os.environ,
+            {
+                "RECONCILER_LOOP_CONTROLLER_DSN": "postgresql://secret",
+                "PANTHEON_CONTROLLER_ID": "x",
+                "PANTHEON_CONTROLLER_LEASE_SECONDS": "5",
+            },
+        ):
+            recon = PaperFleetReconciler(
+                poll_interval_seconds=999,
+                extra_env={"PANTHEON_CONTROLLER_NAME": "leak"},
+                loop_writer=_FakeLoopWriter(),
+            )
+            env = recon._build_worker_env(_make_binding("b-env"))
+        self.assertNotIn("RECONCILER_LOOP_CONTROLLER_DSN", env)
+        self.assertFalse([k for k in env if k.startswith("PANTHEON_CONTROLLER_")])
+
+
 if __name__ == "__main__":
     import sys
     sys.path.insert(0, str(Path(__file__).parent))

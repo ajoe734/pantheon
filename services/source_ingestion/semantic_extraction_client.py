@@ -351,7 +351,7 @@ class SemanticExtractionClient:
         task_type = request.normalized_task_type()
         instructions = [
             f"You are a strict financial knowledge extractor performing task: {task_type.value}.",
-            "You MUST call the tool `emit_extraction` with valid structured arguments strictly conforming to its schema.",
+            "You MUST answer with one JSON object only, strictly conforming to the extraction schema.",
             "Rules:",
             "1. Ground all extracted fields in the source text. Provide `source_spans` for every extracted field.",
             "   Each span must have `start_char` and `end_char` exactly indexing the characters in the source text, and `exact_text`.",

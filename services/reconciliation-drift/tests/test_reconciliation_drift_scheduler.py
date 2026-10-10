@@ -1734,3 +1734,86 @@ def test_lease_covers_interval_plus_tick_timeout():
         interval_seconds=300, timeout_seconds=90, max_attempts=3, retry_backoff_seconds=1
     )
     assert retried >= 300 + 3 * 90
+
+
+def _publish_tick_and_admit(result):
+    """Publish through the real helper, project, then run BFF admission."""
+    import asyncio
+    import importlib
+
+    scheduler = _load_scheduler_module()
+    loop_control = importlib.import_module("services.loop-control")
+    projector = importlib.import_module("services.loop-control.projector")
+    inventory = importlib.import_module("services.control-plane.bff.loop_inventory")
+    rows: list[dict] = []
+
+    class CapturingStore:
+        def __init__(self, dsn):
+            pass
+
+        async def upsert_record(self, record):
+            rows.append(dict(record))
+
+    with mock.patch.object(loop_control.writer, "LoopControllerStore", CapturingStore):
+        writer = scheduler._build_loop_writer(
+            dsn="postgresql://fake", tenant_id="default", lease_duration_seconds=390
+        )
+        asyncio.run(
+            scheduler._publish_loop_record(
+                writer, result, tick=1, worker_id="w", checked_at=scheduler._utc_now()
+            )
+        )
+    projected = projector.project_controller_record_to_bff(rows[0])
+    qualified = inventory._runtime_controller_record_qualified(
+        projected, "controller_store", scheduler._WORKER_NAME
+    )
+    source = inventory._truth_source_from_profile(
+        "reconciled_live_proof", projected, "controller_store", scheduler._WORKER_NAME
+    )
+    return rows[0], projected, qualified, source
+
+
+def test_clean_no_drift_tick_is_admitted_as_live_truth():
+    row, projected, qualified, source = _publish_tick_and_admit(
+        {
+            "status": "ok",
+            "controller_status": "healthy",
+            "tick_id": "scheduled:default:clean",
+            "telemetry_summaries_fetched": 2,
+            "evaluated_binding_count": 2,
+        }
+    )
+    assert row["truth_level"] == "reconciled_live_proof"
+    assert qualified is True
+    assert source["accepted_as_live"] is True
+
+
+def test_degraded_downstream_tick_is_success_and_admitted_as_live_truth():
+    row, projected, qualified, source = _publish_tick_and_admit(
+        {
+            "status": "degraded",
+            "controller_status": "degraded",
+            "tick_id": "scheduled:default:degraded",
+            "telemetry_summaries_fetched": 0,
+            "evaluated_binding_count": 0,
+            "errors": [],
+        }
+    )
+    assert row["truth_level"] == "reconciled_live_proof"
+    assert projected["controller_health"]["status"] == "healthy"
+    assert projected["downstream_actual_state"]["status"] == "degraded"
+    assert qualified is True
+    assert source["accepted_as_live"] is True
+
+
+def test_controller_error_tick_is_recorded_as_failure():
+    row, projected, qualified, _ = _publish_tick_and_admit(
+        {
+            "status": "error",
+            "controller_status": "unhealthy",
+            "tick_id": "scheduled:default:err",
+            "errors": [{"detail": "boom"}],
+        }
+    )
+    assert projected["controller_health"]["status"] == "unhealthy"
+    assert qualified is False

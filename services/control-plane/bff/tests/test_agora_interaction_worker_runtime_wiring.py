@@ -206,3 +206,9 @@ def test_canonical_persona_client_unconfigured_fails_closed() -> None:
     finally:
         os.environ.clear()
         os.environ.update(orig)
+
+
+def test_launcher_builds_one_optional_loop_writer() -> None:
+    source = LAUNCHER.read_text(encoding="utf-8")
+    assert source.count("build_loop_writer()") == 1
+    assert "loop_writer=build_loop_writer()" in source

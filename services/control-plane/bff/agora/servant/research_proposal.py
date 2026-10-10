@@ -9,7 +9,7 @@ from services.research.constants import ALLOWLISTED_STAGE_BACKENDS
 
 _INSTRUCTION = (
     "Draft a research plan (spec_version '1.0') for the request below. "
-    "Return it only through the emit_extraction tool; do not run anything.\n\n"
+    "Answer with one JSON object only that satisfies the schema; do not run anything.\n\n"
 )
 
 
@@ -43,7 +43,7 @@ def research_plan_extraction_schema() -> Dict[str, Any]:
 
 
 def _invoke_structured(client: OpenClawOpsClient, *, prompt: str, operator_id: str, trace_id: Optional[str]) -> Dict[str, Any]:
-    """Data-only turn: the adapter pins the single `emit_extraction` tool and rejects any other."""
+    """Data-only turn: asks for one JSON object matching the caller schema and validated by the adapter."""
     headers = {"X-Operator-Id": operator_id}
     if trace_id:
         headers["X-Trace-Id"] = trace_id

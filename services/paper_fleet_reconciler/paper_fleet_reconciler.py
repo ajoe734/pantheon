@@ -33,14 +33,26 @@ Environment variables consumed by the reconciler:
   SIGNAL_STORE_URL                  forwarded to each worker
   WORKER_SCRIPT_PATH                override path to paper_runtime.py
   HOST / PORT                       reconciler HTTP interface (default 0.0.0.0/8011)
+  RECONCILER_LOOP_CONTROLLER_DSN    Loop 9 controller-record database DSN; the
+                                     writer is disabled when empty.  Never
+                                     forwarded to worker subprocesses.
+  RECONCILER_LOOP_WRITE_INTERVAL_SECONDS
+                                     minimum gap between controller writes
+                                     (default 30)
+  RECONCILER_LOOP_LEASE_SECONDS     requested controller lease (default 120);
+                                     raised to cover the write gap when smaller
+  RECONCILER_LOOP_ID                loop id written (default capital_pool_execution)
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import importlib
 import json
 import logging
 import os
 import re
+import socket
 import subprocess
 import sys
 import threading
@@ -67,6 +79,92 @@ _DEFAULT_WORKER_SCRIPT = str(
 )
 
 log = logging.getLogger(__name__)
+
+
+_LOOP_CONTROLLER_NAME = "paper-fleet-reconciler"
+_LOOP_DEFAULT_ID = "capital_pool_execution"
+_LOOP_DEFAULT_WRITE_INTERVAL_SECONDS = 30.0
+_LOOP_DEFAULT_LEASE_SECONDS = 120
+_LOOP_DESIRED_SOURCE = "runtime-manager.runtime-fleet.desired-state"
+_LOOP_ACTUAL_SOURCE = "paper-fleet-reconciler.worker_inventory"
+# Env that must never reach a paper_runtime worker subprocess.
+_LOOP_WRITER_ENV_KEY = "RECONCILER_LOOP_CONTROLLER_DSN"
+_CONTROLLER_ENV_PREFIX = "PANTHEON_CONTROLLER_"
+
+
+def _build_loop_writer(
+    *,
+    dsn: str,
+    tenant_id: str,
+    controller_id: str,
+    lease_duration_seconds: int,
+) -> Any:
+    """Build the one process-wide controller writer; None when no DSN is set."""
+    if not dsn:
+        return None
+    module = importlib.import_module("services.loop-control")
+    deployment_sha = str(
+        os.getenv("PANTHEON_DEPLOYMENT_SHA") or os.getenv("GIT_SHA") or "unknown"
+    )
+    return module.LoopControllerWriter(
+        dsn,
+        tenant_id=tenant_id,
+        environment=os.getenv("PANTHEON_ENV", "dev"),
+        controller_id=controller_id,
+        controller_name=_LOOP_CONTROLLER_NAME,
+        deployment_sha=deployment_sha,
+        lease_duration_seconds=lease_duration_seconds,
+    )
+
+
+def build_loop_truth(
+    *,
+    desired_binding_ids: Optional[List[str]],
+    workers: List[Dict[str, Any]],
+    reconciler_id: str,
+    cycle_count: int,
+    checked_at: str,
+) -> Dict[str, Any]:
+    """Derive writer fields from values the reconcile cycle already read.
+
+    ``desired_binding_ids`` is None when the desired-state fetch failed.
+    Converged means every desired binding has exactly one running worker.
+    """
+    evidence = [f"paper-fleet://reconcile-cycles/{reconciler_id}/{cycle_count}"]
+    if desired_binding_ids is None:
+        return {
+            "desired_state": None,
+            "downstream_actual_state": None,
+            "evidence_refs": evidence,
+        }
+    running: Dict[str, int] = {}
+    for worker in workers:
+        if worker.get("status") == "running":
+            bid = str(worker.get("binding_id") or "")
+            running[bid] = running.get(bid, 0) + 1
+    unconverged = sorted(
+        bid for bid in desired_binding_ids if running.get(bid, 0) != 1
+    )
+    total = len(desired_binding_ids)
+    return {
+        "desired_state": {
+            "present": total > 0,
+            "source": _LOOP_DESIRED_SOURCE,
+            "checked_at": checked_at,
+            "summary": f"{total} admitted paper binding(s) desired",
+        },
+        "downstream_actual_state": {
+            "status": "ready" if not unconverged else "degraded",
+            "source": _LOOP_ACTUAL_SOURCE,
+            "checked_at": checked_at,
+            "summary": (
+                f"{total - len(unconverged)}/{total} desired binding(s) have "
+                "exactly one running worker"
+            ),
+        },
+        "evidence_refs": evidence,
+        "backlog": len(unconverged),
+    }
 
 
 def _iso_now() -> str:
@@ -518,6 +616,7 @@ class PaperFleetReconciler:
         store: Optional[Any] = None,
         extra_env: Optional[Dict[str, str]] = None,
         market_input_bootstrap_grace_seconds: Optional[float] = None,
+        loop_writer: Optional[Any] = None,
     ) -> None:
         self._store = store
         self._url = (
@@ -613,6 +712,9 @@ class PaperFleetReconciler:
         # InMemoryFencedLeaderStore; the production singleton always uses Redis
         # (or an explicitly configured locked file backend).
         self._reconciler_id = reconciler_id or f"reconciler-{uuid.uuid4().hex[:8]}"
+        # The DSN-built writer's controller_id uses _reconciler_id, so it must
+        # be set first; earlier the AttributeError silently disabled the writer.
+        self._init_loop_writer(loop_writer)
         self._is_leader = False
         self._leader_store = _coerce_leader_store(leader_store)
         self._leader_lease_ttl = max(
@@ -698,6 +800,88 @@ class PaperFleetReconciler:
                 )
 
     # ------------------------------------------------------------------
+    # Loop 9 controller truth (leader only)
+    # ------------------------------------------------------------------
+
+    def _init_loop_writer(self, loop_writer: Any) -> None:
+        self._loop_id = os.getenv("RECONCILER_LOOP_ID") or _LOOP_DEFAULT_ID
+        self._loop_write_interval = max(
+            _as_float(
+                os.getenv("RECONCILER_LOOP_WRITE_INTERVAL_SECONDS"),
+                _LOOP_DEFAULT_WRITE_INTERVAL_SECONDS,
+            ),
+            0.0,
+        )
+        # The lease must outlive the longest gap between two writes: the
+        # throttle interval or the poll period, whichever is larger.
+        longest_gap = max(self._loop_write_interval, self._poll_interval)
+        self._loop_lease_seconds = max(
+            _as_int(
+                os.getenv("RECONCILER_LOOP_LEASE_SECONDS"),
+                _LOOP_DEFAULT_LEASE_SECONDS,
+            ),
+            int(longest_gap) + 1,
+        )
+        self._loop_last_write_monotonic: Optional[float] = None
+        if loop_writer is not None:
+            self._loop_writer = loop_writer
+            return
+        try:
+            self._loop_writer = _build_loop_writer(
+                dsn=os.getenv(_LOOP_WRITER_ENV_KEY, "").strip(),
+                tenant_id=self._telemetry_tenant_id or "default",
+                controller_id=os.getenv("PANTHEON_CONTROLLER_ID")
+                or f"{self._reconciler_id}:{socket.gethostname()}:{os.getpid()}",
+                lease_duration_seconds=self._loop_lease_seconds,
+            )
+        except Exception as exc:  # noqa: BLE001 - writer must not stop reconciling
+            log.warning("loop controller writer disabled: %s", exc)
+            self._loop_writer = None
+
+    def _publish_loop_truth(
+        self,
+        desired: Optional[Dict[str, Dict[str, Any]]],
+        *,
+        failure_reason: Optional[str] = None,
+    ) -> None:
+        """Leader-only, throttled controller write; never raises."""
+        writer = self._loop_writer
+        if writer is None or not self._is_leader:
+            return
+        now = time.monotonic()
+        last = self._loop_last_write_monotonic
+        if last is not None and now - last < self._loop_write_interval:
+            return
+        try:
+            with self._lock:
+                workers = self._snapshot()["workers"] if desired is not None else []
+            truth = build_loop_truth(
+                desired_binding_ids=(
+                    sorted(desired) if desired is not None else None
+                ),
+                workers=workers,
+                reconciler_id=self._reconciler_id,
+                cycle_count=self._cycle_count + 1,
+                checked_at=_iso_now(),
+            )
+            if desired is None:
+                coro = writer.record_failure(
+                    loop_id=self._loop_id,
+                    reason=failure_reason or "fleet desired state fetch failed",
+                    **truth,
+                )
+            else:
+                coro = writer.record_success(
+                    loop_id=self._loop_id,
+                    summary="reconcile cycle completed",
+                    **truth,
+                )
+            asyncio.run(coro)
+            self._loop_last_write_monotonic = now
+        except Exception as exc:  # noqa: BLE001
+            log.warning("failed to write loop controller record: %s", exc)
+
+    # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
@@ -744,6 +928,8 @@ class PaperFleetReconciler:
             return self.snapshot()
 
         fleet = self._fetch_fleet_state()
+        if fleet is None:
+            self._publish_loop_truth(None, failure_reason=self._last_error)
         # fleet is None when the fetch failed — must not evict existing workers
         # in that case, since we have no reliable picture of desired state.
         bindings = fleet[0] if fleet is not None else None
@@ -967,6 +1153,7 @@ class PaperFleetReconciler:
                         )
 
                 self._last_error = None
+                self._publish_loop_truth(desired)
 
             self._cycle_count += 1
             self._last_reconcile_at = _iso_now()
@@ -999,6 +1186,10 @@ class PaperFleetReconciler:
     def _build_worker_env(self, binding: Dict[str, Any]) -> Dict[str, str]:
         env = dict(os.environ)
         env.update(self._extra_env)
+        # The controller-record DSN and identity are the reconciler's alone.
+        for key in list(env):
+            if key == _LOOP_WRITER_ENV_KEY or key.startswith(_CONTROLLER_ENV_PREFIX):
+                del env[key]
         env.update(
             {
                 "PANTHEON_RUNTIME_BINDING_ID": str(binding.get("binding_id") or ""),

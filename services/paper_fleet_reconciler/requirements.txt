@@ -2,4 +2,6 @@
 # The reconciler itself uses only stdlib; these packages are needed by
 # paper_runtime.py workers launched inside the same container.
 redis>=5.0.4
+# Loop 9 controller writer (services/loop-control store).
+asyncpg>=0.29.0
 jsonschema>=4.21.0
