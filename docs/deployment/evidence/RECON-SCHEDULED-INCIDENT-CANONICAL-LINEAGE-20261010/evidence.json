@@ -4,7 +4,7 @@
   "title": "Repair actual scheduled reconciliation incident causal telemetry and canonical lineage transport",
   "owner": "Antigravity2",
   "reviewer": "Antigravity",
-  "base_sha": "3672903890397464596e8b4ea51cf2b81f572df2",
+  "base_sha": "86c779825b376bac205122d1e6b28ccf5fd0eba2",
   "change_class": "corrective",
   "net_prod_line_budget": 40,
   "summary": "Repairs scheduled reconciliation incident causal telemetry linking to emit exactly one deterministic causal telemetry event ID from genuine stored owner evidence while preserving complete provenance in evaluation records. Aligns TelemetryLineageLookup and Compose service tenant configuration to support canonical lineage transport fail-closed without inventing credentials or falling back to benchmark corpora.",
