@@ -27,6 +27,15 @@ WORKFLOW_CONTRACT_STEP_NAME = "Verify workflow contract"
 EXPECTED_CONTRACT_TEST_COMMAND = "python3 -m unittest scripts.test_branch_ci_gate_selection"
 EXPECTED_SMOKE_JOB_TIMEOUT_MINUTES = 30
 SOURCE_INGESTION_STEP_NAME = "Run source ingestion tests"
+COMPOSE_CONTRACT_STEP_NAME = "Run compose contract tests"
+COMPOSE_CONTRACT_TEST_FILES = (
+    "scripts/test_paper_runtime_topology_contract.py",
+    "services/evolution/test_compose_activation.py",
+    "services/openclaw-gateway-adapter/test_compose_activation.py",
+    "services/paper_fleet_reconciler/test_paper_fleet_reconciler.py::TestPaperPerformanceComposeWiring",
+    "services/trade_journey/test_lifecycle_projector_compose.py",
+    "tests/integration/test_product_functional_compose_contract.py",
+)
 
 
 def _load_workflow() -> dict:
@@ -123,6 +132,23 @@ class BranchCiGateSelectionTests(unittest.TestCase):
         self.assertIn("python3 -m pytest -q services/source_ingestion/tests", run)
         self.assertIn("services/source_ingestion/test_*.py", run)
         dsn = step.get("env", {}).get("SOURCE_INGEST_TEST_POSTGRES_DSN", "")
+        self.assertTrue(dsn.startswith("postgresql://"))
+        self.assertIn("localhost:5432", dsn)
+        pytest_args = run.split("python3 -m pytest", 1)[1]
+        for flag in ("--deselect", "--ignore", " -k ", " -m ", "--lf"):
+            self.assertNotIn(flag, pytest_args)
+
+    def test_compose_contract_step_pinned(self) -> None:
+        names = [s.get("name") for s in self.smoke_steps]
+        self.assertIn(COMPOSE_CONTRACT_STEP_NAME, names)
+        step = self.smoke_steps[names.index(COMPOSE_CONTRACT_STEP_NAME)]
+        self.assertNotIn("if", step, "compose contract tests must run unconditionally")
+        self.assertFalse(step.get("continue-on-error", False))
+        self.assertGreater(names.index(COMPOSE_CONTRACT_STEP_NAME), names.index("Install test dependencies"))
+        run = step.get("run", "")
+        for test_file in COMPOSE_CONTRACT_TEST_FILES:
+            self.assertIn(test_file, run)
+        dsn = step.get("env", {}).get("DATABASE_URL", "")
         self.assertTrue(dsn.startswith("postgresql://"))
         self.assertIn("localhost:5432", dsn)
         pytest_args = run.split("python3 -m pytest", 1)[1]

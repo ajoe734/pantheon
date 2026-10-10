@@ -1,0 +1,14 @@
+{
+  "task_id": "COMPOSE-CONTRACT-TESTS-CURRENT-20261010",
+  "base": "dev 0170f9ac6 (includes #6478)",
+  "local_result": "73 passed, 2 skipped, 1 failed (7 files incl. scripts/test_deploy_nonprod_vm.py); scripts.test_branch_ci_gate_selection 13 OK",
+  "local_failure": "test_rendered_compose_operator_bff_readiness_with_postgres_reader needs a real PostgreSQL at DATABASE_URL; proven only by the CI step, which has the smoke-job postgres service",
+  "profile_assertions": "'profiles not in X' replaced by 'root in X[profiles]' (service starts in default root deployment)",
+  "non_profile_explanations": {
+    "topology_contract": "scripts/test_paper_runtime_topology_contract.py: anchor is now 'run_dev_candidate_compose up -d'; ordering before retire/verify still holds",
+    "freshness_budget": "test_managed_dev_deploy_forwards_lifecycle_freshness_budget unmodified; behaviour restored by #6478",
+    "rendered_readiness": "needs PostgreSQL; provided by CI step via DATABASE_URL",
+    "registry_url": "tests/integration/test_product_functional_compose_contract.py: value is env-wrapped ${PANTHEON_REGISTRY_API_URL:-http://registry:8087}, same default"
+  },
+  "root_profile_note": "openclaw-gateway/adapter/data-init are now in the root profile via management-ai"
+}

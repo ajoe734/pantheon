@@ -12,8 +12,9 @@ ENSURE_WORKER = ROOT / "scripts" / "ensure_devloop_paper_runtime_worker.sh"
 def test_default_root_stack_uses_binding_scoped_paper_fleet() -> None:
     services = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))["services"]
 
-    assert "profiles" not in services["paper-fleet-reconciler"]
-    assert "profiles" not in services["paper-signal-producer"]
+    # Default root deployment membership is the "root" profile.
+    assert "root" in services["paper-fleet-reconciler"]["profiles"]
+    assert "root" in services["paper-signal-producer"]["profiles"]
     producer = services["paper-signal-producer"]
     assert producer["healthcheck"]["test"] == [
         "CMD",
@@ -62,9 +63,7 @@ def test_dev_deploy_retires_static_worker_and_verifies_fleet() -> None:
     assert "verify_dev_paper_fleet()" in deploy
     assert "http://127.0.0.1:18011/readyz" in deploy
     assert 'worker.get("heartbeat_status") == "active"' in deploy
-    compose_up = root_case.index(
-        "docker compose -p pantheon -f docker-compose.yml up -d"
-    )
+    compose_up = root_case.index("run_dev_candidate_compose up -d \\\n")
     assert compose_up < root_case.index("retire_legacy_static_paper_runtime")
     assert compose_up < root_case.index("verify_dev_paper_fleet")
 
