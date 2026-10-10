@@ -1,0 +1,98 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "TELEMETRY-DURABLE-LINEAGE-READ-RESTART-20261010",
+  "title": "Restore canonical PG lineage reads after telemetry process restart",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "base_sha": "c6cb2323c4759d06cf73c0492b87af9e63b61d81",
+  "change_class": "corrective",
+  "net_prod_line_budget": 120,
+  "summary": "Restores canonical PostgreSQL lineage reads after telemetry service restart or cache loss. Implements tenant-scoped, fetch-bounded build_postgres_event_reader in services/telemetry/ingest_svc.py to query stored events and binding events from PostgreSQL with explicit parameter filtering. Wires on-demand event and binding hydration into LineageReadService (services/telemetry/lineage_read/service.py) resolving immutable provenance directly from PostgreSQL and the authoritative RuntimeBinding store without re-ingest or live replay. Enforces strict provenance validation: unverified bindings without authoritative backing or persisted status fail closed (404) without manufacturing active state, resolving the exact 961 coordinator counterexample. Preserves paused historical canonical bindings as read-only history without reactivation. Enforces strict fail-closed tenant scoping (HTTP 404) and PostgreSQL unavailability (HTTP 503). Uses an owned disposable PostgreSQL container for test verification without falling back to shared/hosted DSNs or deleting real records.",
+  "acceptance_verification": [
+    {
+      "ac": "AC1",
+      "description": "Source-only restart counterexample reproduction without speculative incident repair. Kept #6486 DONE cardinality and tenant fix intact; existing telemetry owner and Postgres only.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC2",
+      "description": "Reproduced immutable acknowledged C6 event d39cabae-3276-4af1-a017-f4c171161ad4 (tenant-dev) and paused binding 63be event 69fff59d-83c9-4cf6-b4a7-9deb5d0a5236: both return 404 before PG reader hydration on fresh process instance and resolve with 200 after restart.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC3",
+      "description": "Fixed canonical lineage reader to resolve durable accepted Postgres event and binding identity after fresh process or cache loss without replay or re-ingest into live memory. Supported paused historical canonical bindings as read-only history (status: paused) without reactivating or changing them. Unverified bindings without status fail closed without manufacturing active status.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC4",
+      "description": "Preserved strict explicit tenant and environment scope and shared-token allowlist. SQL reader is tenant-scoped and fetch-bounded. Unknown or foreign tenant target fails closed with 404; PG unavailable fails closed with 503.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC5",
+      "description": "Preserved immutable accepted payloads and PG truth, avoiding unbounded whole-database graph bootstrapping and SQL per historical row. Reused bounded tenant-scoped queries and validated live-lineage builders.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC6",
+      "description": "Actual owner-data persistence and restart regression tested against owned disposable PostgreSQL container: event trace and runtime binding projection resolve the stored event without re-ingest after new reader/service instance; wrong tenant returns 404; unavailable PG returns 503; unverified binding without status returns 404. Test harness cleans up owned container without touching shared DSNs.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC7",
+      "description": "Only six declared files touched; net production lines (+115) strictly within budget (<= 120). No credentials, capital, governance, or market schedule changes.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC8",
+      "description": "Source-only QA delivery ready for independent review and native delivery.",
+      "verdict": "pass"
+    }
+  ],
+  "verification": [
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m unittest services.telemetry.test_main_routes",
+      "passed": 38,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m unittest services.telemetry.test_lineage_write_path",
+      "passed": 7,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    }
+  ],
+  "declared_artifacts": [
+    "services/telemetry/main.py",
+    "services/telemetry/ingest_svc.py",
+    "services/telemetry/lineage_read/service.py",
+    "services/telemetry/test_main_routes.py",
+    "services/telemetry/test_lineage_write_path.py",
+    "docs/deployment/evidence/TELEMETRY-DURABLE-LINEAGE-READ-RESTART-20261010/evidence.json"
+  ],
+  "diff_budget": {
+    "net_production_lines": 115,
+    "budget": 120,
+    "verdict": "pass",
+    "files": {
+      "production": [
+        "services/telemetry/main.py",
+        "services/telemetry/ingest_svc.py",
+        "services/telemetry/lineage_read/service.py"
+      ],
+      "tests": [
+        "services/telemetry/test_main_routes.py",
+        "services/telemetry/test_lineage_write_path.py"
+      ],
+      "evidence": [
+        "docs/deployment/evidence/TELEMETRY-DURABLE-LINEAGE-READ-RESTART-20261010/evidence.json"
+      ]
+    }
+  }
+}
