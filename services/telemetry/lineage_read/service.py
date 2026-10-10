@@ -3240,9 +3240,9 @@ class LineageReadService:
         return fn(bid) if callable(fn) else None
 
     def _binding_from_source(self, bid: str, data: dict[str, Any], tenant: Any) -> Optional[dict[str, Any]]:
-        if not (status := data.get("binding_status") or data.get("status")): return None
+        if not tenant or not (status := data.get("binding_status") or data.get("status")): return None
         return {
-            "binding_id": bid, "tenant_id": tenant,
+            "binding_id": bid, "tenant_id": str(tenant).strip(),
             "runtime_id": data.get("runtime_id"), "artifact_id": data.get("artifact_id"),
             "artifact_version": data.get("artifact_version"), "capital_pool_id": data.get("capital_pool_id"),
             "plan_id": data.get("plan_id") or data.get("deployment_plan_id"),
@@ -3254,29 +3254,36 @@ class LineageReadService:
         if not self._event_reader: return
         try: event = self._event_reader(event_id, tenant_id=tenant_id)
         except TypeError: event = self._event_reader(event_id)
-        if not event or (tenant_id is not None and (event.get("tenant_id") or (event.get("metadata") or {}).get("tenant_id")) != tenant_id):
-            return
+        if not event: return
+        ev_tenant = str(event.get("tenant_id") or (event.get("metadata") or {}).get("tenant_id") or "").strip()
+        if not ev_tenant or (tenant_id is not None and ev_tenant != str(tenant_id).strip()): return
         bid = event.get("binding_id") or event.get("runtime_binding_id")
         b = self._resolve_binding(bid) if bid else None
-        if bid and not b: b = self._binding_from_source(bid, event, event.get("tenant_id"))
+        if bid and not b and not self._binding_store:
+            b = self._binding_from_source(bid, event, ev_tenant)
         if bid and not b: return
+        if b:
+            b_tenant = str((b.get("tenant_id") if isinstance(b, Mapping) else getattr(b, "tenant_id", None)) or "").strip()
+            if not b_tenant or b_tenant != ev_tenant or (tenant_id is not None and b_tenant != str(tenant_id).strip()): return
+            if any((b_v := b.get(k) if isinstance(b, Mapping) else getattr(b, k, None)) and (e_v := event.get(k)) and b_v != e_v for k in ("runtime_id", "artifact_id", "artifact_version")): return
         self.admit_telemetry_event(event, b)
 
     def _hydrate_binding(self, binding_id: str, tenant_id: Optional[str] = None) -> None:
         binding = self._resolve_binding(binding_id)
-        if binding and tenant_id is not None and (binding.get("tenant_id") if isinstance(binding, Mapping) else getattr(binding, "tenant_id", None)) != tenant_id:
-            return
+        b_tenant = str((binding.get("tenant_id") if isinstance(binding, Mapping) else getattr(binding, "tenant_id", None)) or "").strip() if binding else ""
+        if binding and (not b_tenant or (tenant_id is not None and b_tenant != str(tenant_id).strip())): return
         try: events = self._binding_events_reader(binding_id, tenant_id=tenant_id) if self._binding_events_reader else []
         except TypeError: events = self._binding_events_reader(binding_id) if self._binding_events_reader else []
         if not binding and not events: return
-        b_tenant = (binding.get("tenant_id") if isinstance(binding, Mapping) else getattr(binding, "tenant_id", None)) or (events[0].get("tenant_id") or (events[0].get("metadata") or {}).get("tenant_id") if events else None)
-        if tenant_id is not None and b_tenant != tenant_id: return
-        if not binding and events: binding = self._binding_from_source(binding_id, events[0], b_tenant)
+        if not b_tenant and events:
+            b_tenant = str(events[0].get("tenant_id") or (events[0].get("metadata") or {}).get("tenant_id") or "").strip()
+        if not b_tenant or (tenant_id is not None and b_tenant != str(tenant_id).strip()): return
+        if not binding and not self._binding_store and events: binding = self._binding_from_source(binding_id, events[0], b_tenant)
         if not binding: return
         _admit_runtime_binding_node(self.graph, binding_id, binding, tenant_id=b_tenant)
         for ev in events:
-            ev_tenant = ev.get("tenant_id") or (ev.get("metadata") or {}).get("tenant_id")
-            if tenant_id is None or ev_tenant == tenant_id:
+            ev_tenant = str(ev.get("tenant_id") or (ev.get("metadata") or {}).get("tenant_id") or "").strip()
+            if ev_tenant == b_tenant and not any((b_v := binding.get(k) if isinstance(binding, Mapping) else getattr(binding, k, None)) and (e_v := ev.get(k)) and b_v != e_v for k in ("runtime_id", "artifact_id", "artifact_version")):
                 self.admit_telemetry_event(ev, binding)
 
     def query(
