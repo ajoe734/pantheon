@@ -318,6 +318,57 @@ class PantheonRuntimeContextTests(unittest.TestCase):
         context = PantheonRuntimeContext.from_env(env_dict)
         self.assertEqual(context.bridge.repo, PANTHEON_LEAN_REMOTE)
 
+    def test_runtime_context_rejects_conflicting_provenance(self):
+        raw = {
+            "runtime_binding_id": "rtb-meta-001",
+            "runtime_id": "rt-meta-001",
+            "deployment_plan_id": "dp-meta-001",
+            "deployment_stage": "paper",
+            "engine_bridge_repo": PANTHEON_LEAN_REMOTE,
+            "metadata": {
+                "artifact_id": "art-meta",
+                "artifact_version": "2.0.0",
+                "artifact_checksum": "sha256:meta",
+                "strategy_id": "strat-meta",
+                "capital_pool_id": "pool-meta-001",
+                "engine_bridge_repo": "https://github.com/QuantConnect/Lean.git",
+                "engine_bridge_path": PANTHEON_LEAN_SOURCE_PATH,
+                "engine_bridge_commit": "def5678",
+            },
+        }
+        with self.assertRaises(RuntimeContextError) as ctx:
+            PantheonRuntimeContext.from_mapping(
+                raw,
+                source=RuntimeContextSource.LAUNCH_MANIFEST,
+                expected_stage="paper",
+            )
+        self.assertIn("conflicting", str(ctx.exception).lower())
+
+    def test_runtime_context_rejects_uninstalled_bridge_path(self):
+        raw = {
+            "runtime_binding_id": "rtb-meta-001",
+            "runtime_id": "rt-meta-001",
+            "deployment_plan_id": "dp-meta-001",
+            "deployment_stage": "paper",
+            "metadata": {
+                "artifact_id": "art-meta",
+                "artifact_version": "2.0.0",
+                "artifact_checksum": "sha256:meta",
+                "strategy_id": "strat-meta",
+                "capital_pool_id": "pool-meta-001",
+                "engine_bridge_repo": PANTHEON_LEAN_REMOTE,
+                "engine_bridge_path": "/not-installed-monitor-only-A",
+                "engine_bridge_commit": "def5678",
+            },
+        }
+        with self.assertRaises(RuntimeContextError) as ctx:
+            PantheonRuntimeContext.from_mapping(
+                raw,
+                source=RuntimeContextSource.LAUNCH_MANIFEST,
+                expected_stage="paper",
+            )
+        self.assertIn("bridge.path", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

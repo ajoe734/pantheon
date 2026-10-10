@@ -66,6 +66,8 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import fcntl
 
+from services.execution.lean_runtime.paper_runtime import _extract_verified_bridge
+
 from services.execution.market_snapshot_admission import (
     SnapshotAdmissionDecision,
     admit_market_snapshot,
@@ -1232,18 +1234,33 @@ class PaperFleetReconciler:
             env["PANTHEON_PERFORMANCE_STATE_PATH"] = str(
                 self._performance_state_root / _binding_state_filename(binding_id)
             )
+        for k in (
+            "PANTHEON_ENGINE_BRIDGE_REMOTE",
+            "PANTHEON_ENGINE_BRIDGE_REPO",
+            "PANTHEON_ENGINE_BRIDGE_SOURCE_PATH",
+            "PANTHEON_ENGINE_BRIDGE_PATH",
+            "PANTHEON_ENGINE_BRIDGE_COMMIT",
+            "PANTHEON_RUNTIME_ADAPTER_VERSION",
+            "PANTHEON_CONTEXT_SOURCE",
+        ):
+            env.pop(k, None)
         meta = binding.get("metadata") if isinstance(binding.get("metadata"), dict) else {}
-        repo = binding.get("engine_bridge_repo") or meta.get("engine_bridge_repo") or env.get("PANTHEON_ENGINE_BRIDGE_REMOTE") or env.get("PANTHEON_ENGINE_BRIDGE_REPO")
-        path = binding.get("engine_bridge_path") or binding.get("engine_bridge_source_path") or meta.get("engine_bridge_path") or meta.get("engine_bridge_source_path") or env.get("PANTHEON_ENGINE_BRIDGE_SOURCE_PATH") or env.get("PANTHEON_ENGINE_BRIDGE_PATH")
-        commit = binding.get("engine_bridge_commit") or meta.get("engine_bridge_commit") or env.get("PANTHEON_ENGINE_BRIDGE_COMMIT")
-        ver = binding.get("runtime_adapter_version") or meta.get("runtime_adapter_version") or env.get("PANTHEON_RUNTIME_ADAPTER_VERSION")
-        chk = binding.get("artifact_checksum") or meta.get("artifact_checksum") or binding.get("checksum") or meta.get("checksum") or env.get("PANTHEON_ARTIFACT_CHECKSUM")
-        sid = binding.get("strategy_id") or meta.get("strategy_id") or env.get("PANTHEON_STRATEGY_ID")
-        role = binding.get("runtime_role") or meta.get("runtime_role") or env.get("PANTHEON_RUNTIME_ROLE")
-        csrc = binding.get("context_source") or meta.get("context_source") or env.get("PANTHEON_CONTEXT_SOURCE")
-        for k, v in [("PANTHEON_ENGINE_BRIDGE_REMOTE", repo), ("PANTHEON_ENGINE_BRIDGE_REPO", repo), ("PANTHEON_ENGINE_BRIDGE_SOURCE_PATH", path), ("PANTHEON_ENGINE_BRIDGE_PATH", path), ("PANTHEON_ENGINE_BRIDGE_COMMIT", commit), ("PANTHEON_RUNTIME_ADAPTER_VERSION", ver), ("PANTHEON_ARTIFACT_CHECKSUM", chk), ("PANTHEON_STRATEGY_ID", sid), ("PANTHEON_RUNTIME_ROLE", role), ("PANTHEON_CONTEXT_SOURCE", csrc)]:
-            if v not in (None, ""):
-                env[k] = str(v)
+        if bridge := _extract_verified_bridge(binding):
+            env["PANTHEON_ENGINE_BRIDGE_REMOTE"] = env["PANTHEON_ENGINE_BRIDGE_REPO"] = bridge["engine_bridge_repo"]
+            env["PANTHEON_ENGINE_BRIDGE_SOURCE_PATH"] = env["PANTHEON_ENGINE_BRIDGE_PATH"] = bridge["engine_bridge_path"]
+            env["PANTHEON_ENGINE_BRIDGE_COMMIT"] = bridge["engine_bridge_commit"]
+            if ver := bridge.get("runtime_adapter_version"):
+                env["PANTHEON_RUNTIME_ADAPTER_VERSION"] = ver
+            if csrc := bridge.get("context_source"):
+                env["PANTHEON_CONTEXT_SOURCE"] = csrc
+        for k, src in (
+            ("PANTHEON_ARTIFACT_CHECKSUM", ("artifact_checksum", "checksum")),
+            ("PANTHEON_STRATEGY_ID", ("strategy_id",)),
+            ("PANTHEON_RUNTIME_ROLE", ("runtime_role",)),
+        ):
+            val = next((binding[s] for s in src if s in binding and binding[s] not in (None, "")), None) or next((meta[s] for s in src if s in meta and meta[s] not in (None, "")), None)
+            if val:
+                env[k] = str(val)
         return env
 
     def _start_worker(
