@@ -1,0 +1,35 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "MGMT-LOOP-CATALOG-DECLARE-2-20261009",
+  "title": "Declare the Loop 5, 8, 9 and 11 controllers and wire their runtime env",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "execution",
+  "delivery_state": "ready_for_independent_review",
+  "objective": "Declare agora_interaction_evidence, promotion_deployment, capital_pool_execution and evolution as implemented catalog controllers using the names the merged writers record, and give the three writers the env they read.",
+  "scope": {
+    "owned": [
+      "docs/deployment/loop-catalog.registry.json: controller_contract and current_controller_owner for agora-interaction-worker, deployment-outbox-consumer, paper-fleet-reconciler, evolution-dispatch-worker. Queries are the writers' own source labels (agora.interaction_lifecycle_store.claim / agora.interaction_worker.outcomes, deployment.outbox.claim / deployment.outbox_consumer.run_poll, runtime-manager.runtime-fleet.desired-state / paper-fleet-reconciler.worker_inventory, evolution.dispatch_outbox).",
+      "docker-compose.yml: DATABASE_URL on deployment-outbox-consumer, RECONCILER_LOOP_CONTROLLER_DSN on paper-fleet-reconciler (the dedicated DSN var the writer reads and strips from worker envs), PANTHEON_TENANT_ID on evolution-dispatch-worker. No other env change.",
+      "scripts/run_isolated_l12_runtime_e2e.py: evolution-dispatch-worker added to the waited REQUIRED_COMPOSE_SERVICES; scripts/test_run_isolated_l12_runtime_e2e.py fails if any controller writer service is removed from the harness lists.",
+      "scripts/test_loop_writer_image_contracts.py: CASES cover the four new writers.",
+      "Bff contract tests: four runtime bindings (compose_services empty), twelve declared / one undeclared (composite overlay)."
+    ],
+    "not_changing": [
+      "Any writer, admission or projector code."
+    ]
+  },
+  "design_notes": [
+    "evolution-dispatch-worker is waited: its healthcheck passes after one error-free poll, and in a fresh stack the dispatch outbox is empty and the evolution service is already in the waited set. Not executed in a fresh Compose stack in this task; the operator verifies the next FULL Management readback.",
+    "agora-interaction-worker was already in STIMULUS_COMPOSE_SERVICES; deployment-outbox-consumer and paper-fleet-reconciler were already in REQUIRED_COMPOSE_SERVICES.",
+    "No Compose service sets PANTHEON_CONTROLLER_NAME for the four writers, so compose_services is empty and the reverse-direction check is unchanged.",
+    "The 'undeclared' record_kind case of the health-metadata test is removed: no canonical loop is undeclared any more and the composite overlay has no loop-health detail route."
+  ],
+  "verification": {
+    "commands": [
+      "python -m pytest -q scripts/test_loop_writer_image_contracts.py scripts/test_run_isolated_l12_runtime_e2e.py tests/test_loop_catalog_registry.py services/control-plane/bff/test_loop_inventory_read_model_contract.py services/control-plane/bff/test_current_twelve_owner_truth.py"
+    ],
+    "result": "134 passed, 2 warnings (exit 0)"
+  }
+}

@@ -80,6 +80,78 @@ def _controller_truth_fields(
     }
 
 
+_CONTROLLER_FAILURE_STATUSES = {
+    "deferred",
+    "error",
+    "failed",
+    "failure",
+    "invalid_config",
+    "unavailable",
+    "unhealthy",
+}
+
+
+def _loop_truth_level(result: dict[str, Any]) -> str:
+    """Live proof once the scheduled reconcile completed and read summaries."""
+
+    has_trigger = bool(result.get("terminal_incident_ids")) or bool(
+        result.get("drift_report_ids")
+    )
+    read_summaries = "telemetry_summaries_fetched" in result
+    return "reconciled_live_proof" if has_trigger or read_summaries else "scheduled_tick"
+
+
+async def _publish_loop_record(
+    loop_writer: Any,
+    result: dict[str, Any],
+    *,
+    tick: int,
+    worker_id: str,
+    checked_at: str,
+    failure_reason: str | None = None,
+) -> None:
+    """Publish one tick. Downstream degradation is not a controller failure."""
+
+    controller_status = str(result.get("controller_status") or "unhealthy")
+    terminal_ids = [str(i) for i in (result.get("terminal_incident_ids") or []) if i]
+    drift_report_ids = [str(i) for i in (result.get("drift_report_ids") or []) if i]
+    evidence_refs = [
+        f"reconciliation-drift://incidents/{i}" for i in terminal_ids
+    ] + [f"reconciliation-drift://drift-reports/{i}" for i in drift_report_ids]
+    truth = _controller_truth_fields(
+        result, tick=tick, worker_id=worker_id, checked_at=checked_at
+    )
+    evidence_refs.append(truth["tick_evidence_ref"])
+    downstream_status = str(result.get("status") or "").lower()
+    failed = (
+        controller_status in _CONTROLLER_FAILURE_STATUSES
+        or downstream_status in _CONTROLLER_FAILURE_STATUSES
+        or bool(result.get("errors"))
+    )
+    truth_level = _loop_truth_level(result)
+    if not failed:
+        await loop_writer.record_success(
+            loop_id=LOOP_ID,
+            truth_level=truth_level,
+            summary=f"Evaluated {result.get('evaluated_binding_count', 0)} binding(s)",
+            desired_state=truth["desired_state"],
+            downstream_actual_state=truth["downstream_actual_state"],
+            evidence_refs=evidence_refs,
+            payload={"tick": tick, "result": result},
+        )
+    else:
+        await loop_writer.record_failure(
+            loop_id=LOOP_ID,
+            reason=failure_reason or controller_status,
+            truth_level=truth_level,
+            desired_state=truth["desired_state"],
+            downstream_actual_state=truth["downstream_actual_state"],
+            evidence_refs=evidence_refs,
+            payload={"tick": tick, "result": result},
+        )
+
+
+
 def _build_loop_writer(
     *, dsn: str, tenant_id: str, lease_duration_seconds: int | None = None
 ) -> Any:
@@ -533,58 +605,16 @@ def main() -> int:
         write_health(health_file, health)
         if loop_writer is not None:
             try:
-                terminal_ids = [
-                    str(item)
-                    for item in (result.get("terminal_incident_ids") or [])
-                    if item
-                ]
-                drift_report_ids = [
-                    str(item)
-                    for item in (result.get("drift_report_ids") or [])
-                    if item
-                ]
-                evidence_refs = [
-                    f"reconciliation-drift://incidents/{incident_id}"
-                    for incident_id in terminal_ids
-                ] + [
-                    f"reconciliation-drift://drift-reports/{report_id}"
-                    for report_id in drift_report_ids
-                ]
-                truth = _controller_truth_fields(
-                    result, tick=tick, worker_id=worker_id, checked_at=tick_at
-                )
-                evidence_refs.append(truth["tick_evidence_ref"])
-                has_real_trigger = bool(terminal_ids) or bool(drift_report_ids)
-                truth_level = (
-                    "reconciled_live_proof" if has_real_trigger else "scheduled_tick"
-                )
-                if controller_status == "healthy":
-                    asyncio.run(
-                        loop_writer.record_success(
-                            loop_id=LOOP_ID,
-                            truth_level=truth_level,
-                            summary=(
-                                f"Evaluated {result.get('evaluated_binding_count', 0)} "
-                                "binding(s)"
-                            ),
-                            desired_state=truth["desired_state"],
-                            downstream_actual_state=truth["downstream_actual_state"],
-                            evidence_refs=evidence_refs,
-                            payload={"tick": tick, "result": result},
-                        )
+                asyncio.run(
+                    _publish_loop_record(
+                        loop_writer,
+                        result,
+                        tick=tick,
+                        worker_id=worker_id,
+                        checked_at=tick_at,
+                        failure_reason=health.get("last_failure_reason"),
                     )
-                else:
-                    asyncio.run(
-                        loop_writer.record_failure(
-                            loop_id=LOOP_ID,
-                            reason=health.get("last_failure_reason") or controller_status,
-                            truth_level=truth_level,
-                            desired_state=truth["desired_state"],
-                            downstream_actual_state=truth["downstream_actual_state"],
-                            evidence_refs=evidence_refs,
-                            payload={"tick": tick, "result": result},
-                        )
-                    )
+                )
             except Exception as exc:
                 print(
                     f"Warning: failed to write to LoopControllerWriter: {exc}",

@@ -207,7 +207,7 @@ def _synthesize(
         "Synthesize the independent Persona opinions below into one judgment: recommendation, options, "
         "no_consensus or more_research_required, with a summary, agreements (statements) and disagreements "
         "(opinion_ids, cause, detail giving the rationale). Judge by the reasons, not the conclusion labels. "
-        "Reference only evidence supplied in the opinions. Return only through emit_extraction.\n\n"
+        "Reference only evidence supplied in the opinions. Answer with one JSON object only that satisfies the schema.\n\n"
         + json.dumps(opinions, sort_keys=True, default=str)
     )
     invocation = {

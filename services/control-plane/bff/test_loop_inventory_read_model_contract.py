@@ -95,7 +95,7 @@ RUNTIME_CONTROLLER_BINDINGS: dict[str, dict[str, Any]] = {
             "ALPHA_REPLICATION_CONTROLLER_STATE_PATH",
         ),
     },
-    # The four writers below run as workers with a fixed or defaulted name; no
+    # The writers below run as workers with a fixed or defaulted name; no
     # Compose service sets PANTHEON_CONTROLLER_NAME for them.
     "persona_teaching": {
         "controller_name": "training-session-preview-eval-worker",
@@ -104,6 +104,15 @@ RUNTIME_CONTROLLER_BINDINGS: dict[str, dict[str, Any]] = {
         "module_literals": (
             "claimable preview/eval jobs",
             "/api/training/preview-jobs?status=claimable",
+        ),
+    },
+    "agora_interaction_evidence": {
+        "controller_name": "agora-interaction-worker",
+        "module": "services/control-plane/bff/agora/interaction/worker.py",
+        "compose_services": (),
+        "module_literals": (
+            "agora.interaction_lifecycle_store.claim",
+            "agora.interaction_worker.outcomes",
         ),
     },
     "human_imitation_shadow_evaluation": {
@@ -125,6 +134,25 @@ RUNTIME_CONTROLLER_BINDINGS: dict[str, dict[str, Any]] = {
             "build_loop_truth",
         ),
     },
+    "promotion_deployment": {
+        "controller_name": "deployment-outbox-consumer",
+        "module": "services/deployment/outbox_consumer_worker.py",
+        "compose_services": (),
+        "module_literals": (
+            "deployment.outbox.claim",
+            "deployment.outbox_consumer.run_poll",
+        ),
+    },
+    "capital_pool_execution": {
+        "controller_name": "paper-fleet-reconciler",
+        "module": "services/paper_fleet_reconciler/paper_fleet_reconciler.py",
+        "compose_services": (),
+        "module_literals": (
+            "runtime-manager.runtime-fleet.desired-state",
+            "paper-fleet-reconciler.worker_inventory",
+            "RECONCILER_LOOP_CONTROLLER_DSN",
+        ),
+    },
     "telemetry_reconciliation": {
         "controller_name": "reconciliation-drift-scheduler",
         "module": "services/reconciliation-drift/scheduler_worker.py",
@@ -133,6 +161,12 @@ RUNTIME_CONTROLLER_BINDINGS: dict[str, dict[str, Any]] = {
             "reconciliation-drift.scheduled_reconcile.telemetry_summaries",
             "reconciliation-drift.scheduled_reconcile.result",
         ),
+    },
+    "evolution": {
+        "controller_name": "evolution-dispatch-worker",
+        "module": "services/evolution/dispatch_worker.py",
+        "compose_services": (),
+        "module_literals": ("evolution.dispatch_outbox",),
     },
     # Runs inside operator-bff with a fixed name, so no Compose service sets
     # PANTHEON_CONTROLLER_NAME for it.
@@ -529,7 +563,7 @@ def test_loop_inventory_publishes_controller_contract_coverage(monkeypatch) -> N
     assert items["source_ingestion"]["live_status"]["is_reconciled"] is False
     assert items["source_ingestion"]["live_status"]["has_live_evidence"] is False
 
-    undeclared = items["evolution"]["controller_contract_declaration"]
+    undeclared = items["per_persona_ooda"]["controller_contract_declaration"]
     assert undeclared["status"] == "not_implemented"
     assert undeclared["controller_implemented"] is False
     assert undeclared["contract_complete"] is False

@@ -1,8 +1,11 @@
 """Durable Agora Persona interaction background worker."""
 from __future__ import annotations
 
+import asyncio
+import importlib
 import logging
 import os
+import socket
 import threading
 import time
 import uuid
@@ -17,8 +20,85 @@ from .store import InteractionLifecycleStore
 logger = logging.getLogger("agora.interaction.worker")
 
 
+LOOP_ID = "agora_interaction_evidence"
+CONTROLLER_NAME = "agora-interaction-worker"
+DESIRED_SOURCE = "agora.interaction_lifecycle_store.claim"
+ACTUAL_SOURCE = "agora.interaction_worker.outcomes"
+# Liveness is refreshed at least this often (the brief caps it at 300s).
+MAX_LOOP_HEARTBEAT_SECONDS = 300
+DEFAULT_LOOP_HEARTBEAT_SECONDS = 120
+# Lease covers the longest gap between two writes (the heartbeat interval), never a
+# request timeout. Default is LOOP_LEASE_INTERVAL_MULTIPLIER x the heartbeat interval so a
+# restarted worker (new lease token) is only fenced out for a short window.
+LOOP_LEASE_INTERVAL_MULTIPLIER = 2
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def loop_heartbeat_interval_seconds() -> int:
+    raw = os.getenv("PANTHEON_AGORA_LOOP_HEARTBEAT_SECONDS", str(DEFAULT_LOOP_HEARTBEAT_SECONDS))
+    return max(1, min(int(raw), MAX_LOOP_HEARTBEAT_SECONDS))
+
+
+def loop_lease_seconds(heartbeat_interval: Optional[int] = None) -> int:
+    """Controller lease: PANTHEON_AGORA_LOOP_LEASE_SECONDS, default 2x the heartbeat interval."""
+    interval = heartbeat_interval or loop_heartbeat_interval_seconds()
+    floor = LOOP_LEASE_INTERVAL_MULTIPLIER * interval
+    raw = os.getenv("PANTHEON_AGORA_LOOP_LEASE_SECONDS")
+    configured = int(raw) if raw else floor
+    return max(configured, floor)
+
+
+def build_loop_writer(*, lease_duration_seconds: Optional[int] = None) -> Any:
+    """One writer per process; None (disabled) when no DSN is configured."""
+    dsn = str(os.getenv("PANTHEON_LOOP_CONTROL_DSN") or os.getenv("DATABASE_URL") or "").strip()
+    if not dsn:
+        return None
+    module = importlib.import_module("services.loop-control")
+    return module.LoopControllerWriter(
+        dsn,
+        tenant_id=str(os.getenv("PANTHEON_TENANT_ID") or "default"),
+        environment=str(os.getenv("PANTHEON_ENV") or "dev"),
+        controller_id=str(
+            os.getenv("PANTHEON_CONTROLLER_ID")
+            or f"{CONTROLLER_NAME}-{socket.gethostname()}-{os.getpid()}"
+        ),
+        controller_name=CONTROLLER_NAME,
+        deployment_sha=str(os.getenv("PANTHEON_DEPLOYMENT_SHA") or os.getenv("GIT_SHA") or "unknown"),
+        lease_duration_seconds=lease_duration_seconds or loop_lease_seconds(),
+    )
+
+
+def build_loop_truth(
+    *, worker_id: str, claimed: int, outcomes: Dict[str, int], interaction_ids: List[str],
+    outbox_drained: int, checked_at: str,
+) -> Dict[str, Any]:
+    """Derive writer fields only from values the tick already read."""
+    bad = outcomes.get("degraded", 0) + outcomes.get("failed", 0)
+    return {
+        "desired_state": {
+            "present": claimed > 0,
+            "source": DESIRED_SOURCE,
+            "checked_at": checked_at,
+            "summary": f"{claimed} interaction(s) claimed",
+        },
+        # Provider failure is downstream state, not a controller failure.
+        "downstream_actual_state": {
+            "status": "degraded" if bad else "ready",
+            "source": ACTUAL_SOURCE,
+            "checked_at": checked_at,
+            "summary": (
+                f"completed={outcomes.get('completed', 0)} degraded={outcomes.get('degraded', 0)} "
+                f"failed={outcomes.get('failed', 0)} outbox_drained={outbox_drained}"
+            ),
+        },
+        "evidence_refs": [
+            f"agora-interaction://worker-ticks/{worker_id}/{checked_at}",
+            *[f"agora-interaction://interactions/{i}" for i in interaction_ids],
+        ],
+    }
 
 
 class _InteractionHeartbeat:
@@ -30,11 +110,15 @@ class _InteractionHeartbeat:
         interaction_id: str,
         lease_owner: str,
         lease_duration_seconds: int = 300,
+        liveness: Optional[Callable[[], None]] = None,
+        liveness_interval: float = float(MAX_LOOP_HEARTBEAT_SECONDS),
     ) -> None:
         self.store = store
         self.interaction_id = interaction_id
         self.lease_owner = lease_owner
         self.lease_duration_seconds = lease_duration_seconds
+        self.liveness = liveness
+        self.liveness_interval = liveness_interval
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
@@ -42,15 +126,27 @@ class _InteractionHeartbeat:
         interval = max(0.5, self.lease_duration_seconds / 3.0)
 
         def _loop() -> None:
-            while not self._stop_event.wait(timeout=interval):
-                try:
-                    self.store.heartbeat_interaction(
-                        self.interaction_id,
-                        lease_owner=self.lease_owner,
-                        lease_duration_seconds=self.lease_duration_seconds,
-                    )
-                except Exception as exc:
-                    logger.debug("Heartbeat renewal error on %s: %s", self.interaction_id, exc)
+            tick = min(interval, self.liveness_interval) if self.liveness else interval
+            next_lease = time.monotonic() + interval
+            next_live = time.monotonic() + self.liveness_interval
+            while not self._stop_event.wait(timeout=tick):
+                now = time.monotonic()
+                if now >= next_lease:
+                    next_lease = now + interval
+                    try:
+                        self.store.heartbeat_interaction(
+                            self.interaction_id,
+                            lease_owner=self.lease_owner,
+                            lease_duration_seconds=self.lease_duration_seconds,
+                        )
+                    except Exception as exc:
+                        logger.debug("Heartbeat renewal error on %s: %s", self.interaction_id, exc)
+                if self.liveness is not None and now >= next_live:
+                    next_live = now + self.liveness_interval
+                    try:
+                        self.liveness()
+                    except Exception as exc:
+                        logger.debug("Loop liveness error on %s: %s", self.interaction_id, exc)
 
         self._thread = threading.Thread(
             target=_loop,
@@ -82,7 +178,16 @@ class AgoraInteractionWorker:
         worker_id: Optional[str] = None,
         lease_duration_seconds: int = 300,
         store: Optional[Any] = None,
+        loop_writer: Optional[Any] = None,
+        loop_heartbeat_seconds: Optional[int] = None,
     ) -> None:
+        self.loop_writer = loop_writer
+        self.loop_heartbeat_seconds = (
+            loop_heartbeat_seconds if loop_heartbeat_seconds is not None
+            else loop_heartbeat_interval_seconds()
+        )
+        self._tick: Optional[Dict[str, Any]] = None
+        self._last_loop_write = 0.0
         self.lifecycle_store = lifecycle_store or store
         self.workshop_store = workshop_store
         self.read_store = read_store
@@ -161,8 +266,54 @@ class AgoraInteractionWorker:
             with self._lock:
                 self._metrics["lease_recoveries"] += 1
 
+        if self._tick is not None:
+            self._tick["claimed"] += 1
+            self._tick["ids"].append(str(resource.get("interaction_id")))
         return self._execute_and_finalize(resource)
 
+    # -- loop controller truth -------------------------------------------------
+
+    def _loop_write(self, method: str, *args: Any, **kwargs: Any) -> None:
+        if self.loop_writer is None:
+            return
+        try:
+            asyncio.run(getattr(self.loop_writer, method)(LOOP_ID, *args, **kwargs))
+            self._last_loop_write = time.monotonic()
+        except Exception as exc:
+            logger.warning("Failed to write loop controller truth: %s", exc)
+
+    def _loop_liveness(self) -> None:
+        """Liveness only: omits desired/actual so no older checked_at is re-stamped."""
+        self._loop_write(
+            "record_heartbeat",
+            evidence_refs=[f"agora-interaction://worker-heartbeats/{self.worker_id}/{_utc_now()}"],
+        )
+
+    def _publish_tick(self, tick: Dict[str, Any], outbox_drained: int) -> None:
+        if self.loop_writer is None:
+            return
+        idle = tick["claimed"] == 0
+        # Idle 1s polls must not write every poll.
+        if idle and self._last_loop_write and (
+            time.monotonic() - self._last_loop_write < self.loop_heartbeat_seconds
+        ):
+            return
+        truth = build_loop_truth(
+            worker_id=self.worker_id,
+            claimed=tick["claimed"],
+            outcomes=tick["outcomes"],
+            interaction_ids=tick["ids"],
+            outbox_drained=outbox_drained,
+            checked_at=_utc_now(),
+        )
+        if idle:
+            self._loop_write("record_tick", **truth)
+        else:
+            self._loop_write(
+                "record_success",
+                summary=f"Processed {tick['claimed']} interaction(s)",
+                **truth,
+            )
 
     def process_interaction(
         self,
@@ -226,6 +377,8 @@ class AgoraInteractionWorker:
                 interaction_id,
                 self.worker_id,
                 self.lease_duration_seconds,
+                liveness=self._loop_liveness if self.loop_writer is not None else None,
+                liveness_interval=float(self.loop_heartbeat_seconds),
             ):
                 result = run_selected_persona_interaction(
                     workshop_store=self.workshop_store,
@@ -254,6 +407,7 @@ class AgoraInteractionWorker:
                 )
             elapsed = time.monotonic() - start_time
             final_status = result.get("status", "completed")
+            self._count_outcome(final_status)
 
             with self._lock:
                 self._metrics["admissions_processed"] += 1
@@ -272,6 +426,7 @@ class AgoraInteractionWorker:
 
         except Exception as exc:
             elapsed = time.monotonic() - start_time
+            self._count_outcome("failed")
             logger.exception("Worker execution error on interaction %s: %s", interaction_id, exc)
             with self._lock:
                 self._metrics["failed_count"] += 1
@@ -283,6 +438,12 @@ class AgoraInteractionWorker:
             )
             raise
 
+    def _count_outcome(self, final_status: Any) -> None:
+        if self._tick is None:
+            return
+        key = final_status if final_status in {"completed", "degraded"} else "failed"
+        self._tick["outcomes"][key] = self._tick["outcomes"].get(key, 0) + 1
+
     def run_once(
         self,
         *,
@@ -292,13 +453,22 @@ class AgoraInteractionWorker:
     ) -> int:
         """Process eligible pending interactions up to limit and drain research outbox."""
         processed = 0
-        while processed < limit:
-            res = self.claim_and_process_one(tenant_id=tenant_id, user_id=user_id)
-            if res is None:
-                break
-            processed += 1
-        processed += self.drain_outbox(tenant_id=tenant_id, user_id=user_id, limit=limit)
-        return processed
+        tick: Dict[str, Any] = {"claimed": 0, "outcomes": {}, "ids": []}
+        self._tick = tick
+        drained = 0
+        try:
+            while processed < limit:
+                res = self.claim_and_process_one(tenant_id=tenant_id, user_id=user_id)
+                if res is None:
+                    break
+                processed += 1
+            drained = self.drain_outbox(tenant_id=tenant_id, user_id=user_id, limit=limit)
+            processed += drained
+            return processed
+        finally:
+            # A raising interaction is still published (as downstream degraded).
+            self._tick = None
+            self._publish_tick(tick, drained)
 
     def run_loop(
         self,

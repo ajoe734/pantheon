@@ -204,10 +204,10 @@ class TestSemanticExtractionClientBoundedFailures:
         assert res.failure_code == ExtractionFailureCode.INVALID_SCHEMA.value
 
     def test_wrong_tool_mapped_to_failure(self):
-        # Transport returns wrong tool name
+        # Transport reports tool call emitted on structured extraction turn
         def wrong_tool_transport(payload: dict) -> dict:
             raise SemanticExtractionClientError(
-                "tool call name 'execute_shell' does not match 'emit_extraction'",
+                "structured extraction must not emit tool calls",
                 ExtractionFailureCode.WRONG_TOOL,
                 502,
             )

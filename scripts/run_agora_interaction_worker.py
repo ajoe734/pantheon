@@ -61,7 +61,7 @@ def main() -> int:
     from agora.governance.store import ProposalStore
     from agora.interaction.persona_client import build_canonical_persona_client
     from agora.interaction.store import InteractionLifecycleStore
-    from agora.interaction.worker import AgoraInteractionWorker
+    from agora.interaction.worker import AgoraInteractionWorker, build_loop_writer
     from agora.research.routes.common import publish_research_progress
     from agora.research.store import (
         MemoryResearchPlanStore,
@@ -155,6 +155,8 @@ def main() -> int:
         research_store=research_store,
         dataset_store=dataset_store,
         worker_id=os.getenv("PANTHEON_AGORA_WORKER_ID", "agora-interaction-worker"),
+        # One writer per process; None while no loop-control DSN is configured.
+        loop_writer=build_loop_writer(),
     )
 
     stop_event = threading.Event()

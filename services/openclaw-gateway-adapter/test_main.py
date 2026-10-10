@@ -2068,7 +2068,8 @@ class TestGovernedServantAgentSync(unittest.TestCase):
         # runtime projections.
         runtime_agents[0].update(json.loads(json.dumps(adapter_main._PERSONA_OPINION_RUNTIME_POLICY)))
         for agent in runtime_agents:
-            self.assertEqual(agent["tools"], {"allow": [], "deny": ["*"]})
+            self.assertEqual(
+                agent["tools"], {"allow": [], "deny": ["*"], "exec": {"security": "deny", "ask": "always"}})
             self.assertEqual(agent["skills"], [])
             self.assertFalse(agent["memorySearch"]["enabled"])
             self.assertEqual(agent["memorySearch"]["sources"], [])

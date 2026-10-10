@@ -13,6 +13,10 @@ anyio==4.15.1
     #   -c dependencies/constraints-core.txt
     #   httpx
     #   starlette
+asyncpg==0.31.0
+    # via
+    #   -c dependencies/constraints-core.txt
+    #   -r services/deployment/requirements.txt
 attrs==26.1.0
     # via
     #   jsonschema

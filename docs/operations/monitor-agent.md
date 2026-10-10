@@ -17,10 +17,11 @@ anomalies that no open incident already explains. It can do nothing else.
    Custom `MONITOR_AGENT_SOURCES_JSON` entries keep the same source names.
 2. Ask one agent through the openclaw gateway adapter
    (`/assistant/providers/openclaw/structured`) to compare the snapshot with the
-   open incidents. That route pins a data-only `emit_extraction` tool and the
-   adapter verifies the gateway agent has `tools.deny=["*"]`, so the agent has no
-   tool that changes trading, runtime or capital state; it can only return
-   `findings` (`fingerprint`, `title`, `severity`, `rationale`).
+   open incidents. That route offers no tools: the Gateway CLI launches with
+   ToolSearch only, and the adapter requires a JSON-only answer validated against
+   the caller schema while verifying the gateway agent has `tools.deny=["*"]`.
+   The agent has no tool that changes trading, runtime or capital state; it can
+   only return `findings` (`fingerprint`, `title`, `severity`, `rationale`).
 3. POST each finding to `POST /api/incidents/consume-agent-finding` with the
    snapshot reference. A finding whose fingerprint matches an open incident
    merges its evidence into that incident (HTTP 200) instead of creating

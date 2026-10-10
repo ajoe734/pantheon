@@ -886,8 +886,8 @@ class AssistantProviderStructuredInvokeRequest(BaseModel):
     """Restricted structured-data extraction request.
 
     Accepts only a caller-declared JSON-schema `parameters` body
-    (`extraction_schema`) for the fixed, server-approved `emit_extraction`
-    tool. A caller may never supply its own `tools`/`tool_choice` — that
+    (`extraction_schema`); the model answers with JSON only and the adapter
+    validates it against that schema. A caller may never supply its own `tools`/`tool_choice` — that
     would let it smuggle in an arbitrary shell/tool definition.
     """
 
@@ -1829,9 +1829,9 @@ def invoke_openclaw_structured_provider(
 
     Accepts only a caller-declared JSON-schema `parameters` body
     (`extraction_schema`) — never a full arbitrary tool/tool-list (rejected
-    with 422 by the request model above). The model is pinned to the fixed
-    `emit_extraction` tool via `invoke_structured`; this endpoint returns
-    parsed structured data only and never executes a domain action.
+    with 422 by the request model above). The model answers with JSON only,
+    which `invoke_structured` validates against the schema; this endpoint
+    returns validated structured data only and never executes a domain action.
 
     Read the selected Gateway's native-tool policy before dispatch. Missing,
     mismatched or unavailable policy denies extraction before model execution.
@@ -1903,13 +1903,27 @@ def invoke_openclaw_structured_provider(
     return JSONResponse(status_code=200, content={"status": "ok", "data": result.to_dict()})
 
 
+# OpenClaw 2026.7.1 replaces args/resumeArgs wholesale from the cliBackends
+# override, so the launch is verified as the registered defaults plus ToolSearch
+# as the only built-in tool. Must match CLAUDE_TOOLSEARCH_BATCH in
+# scripts/openclaw-configure-shared-model-pool.sh.
+_CLAUDE_CLI_TOOLSEARCH_ARGS = [
+    "-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
+    "--setting-sources", "user", "--allowedTools", "mcp__openclaw__*",
+    "--disallowedTools", "ScheduleWakeup,CronCreate,Bash(run_in_background:true),Monitor",
+    "--tools", "ToolSearch",
+]
+_CLAUDE_CLI_TOOLSEARCH_RESUME_ARGS = _CLAUDE_CLI_TOOLSEARCH_ARGS + ["--resume", "{sessionId}"]
+
+
 def _assert_structured_gateway_policy(agent_id: str, *, deadline: float) -> None:
     """Read policy from the same authenticated Gateway as the HTTP turn.
 
     This is an administrative, read-only RPC, not an agent CLI turn. Never
     trust caller metadata, a local config mirror, or a cached successful probe.
     No public arbitrary-RPC route is added. Deny-all takes precedence over
-    other tool profiles/allow lists in the pinned Gateway.
+    other tool profiles/allow lists in the pinned Gateway, and the claude-cli
+    launch must offer no built-in tool other than ToolSearch.
     """
     try:
         snapshot = _OPENCLAW_AGENT_PROVIDER._gateway_call(
@@ -1929,10 +1943,22 @@ def _assert_structured_gateway_policy(agent_id: str, *, deadline: float) -> None
     matches = ([item for item in entries if isinstance(item, dict) and item.get("id") == agent_id]
                if isinstance(entries, list) else [])
     tools = matches[0].get("tools") if len(matches) == 1 else None
+    exec_cfg = tools.get("exec") if isinstance(tools, dict) else None
+    exec_safe = (isinstance(exec_cfg, dict)
+                 and exec_cfg.get("security") == "deny"
+                 and exec_cfg.get("ask") == "always")
+    defaults = agents.get("defaults") if isinstance(agents, dict) else None
+    backends = defaults.get("cliBackends") if isinstance(defaults, dict) else None
+    claude = backends.get("claude-cli") if isinstance(backends, dict) else None
+    launch_limited = (isinstance(claude, dict)
+                      and claude.get("command") in (None, "claude")
+                      and claude.get("args") == _CLAUDE_CLI_TOOLSEARCH_ARGS
+                      and claude.get("resumeArgs") == _CLAUDE_CLI_TOOLSEARCH_RESUME_ARGS)
     if (not isinstance(snapshot, dict) or snapshot.get("valid") is not True or not isinstance(tools, dict)
-            or tools.get("deny") != ["*"]):
+            or tools.get("deny") != ["*"] or not exec_safe or not launch_limited):
         raise GatewayOpenClawProviderError(
-            "Extraction requires one verified Gateway agent with tools.deny=['*'].",
+            "Extraction requires one verified Gateway agent with tools.deny=['*'] "
+            "and a ToolSearch-only claude-cli launch.",
             status_code=503, error_code="OPENCLAW_STRUCTURED_POLICY_DENIED",
         )
 
@@ -2543,7 +2569,7 @@ def _gateway_state_agent_runner(args: List[str]) -> "subprocess.CompletedProcess
 
 
 _PERSONA_OPINION_RUNTIME_POLICY = {
-    "tools": {"allow": [], "deny": ["*"]},
+    "tools": {"allow": [], "deny": ["*"], "exec": {"security": "deny", "ask": "always"}},
     "skills": [],
     "memorySearch": {
         "enabled": False,
