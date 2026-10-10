@@ -711,6 +711,39 @@ def build_postgres_write_fn(
     return _postgres_write
 
 
+def build_postgres_event_reader(
+    dsn: str,
+    table: str = "telemetry_events",
+) -> tuple[Callable[[str], Optional[dict[str, Any]]], Callable[[str], list[dict[str, Any]]]]:
+    """Build durable event and binding readers querying canonical PostgreSQL."""
+    import asyncpg, concurrent.futures, json as _json
+
+    async def _fetch(sql: str, *args: Any) -> list[dict[str, Any]]:
+        conn = await asyncpg.connect(dsn, timeout=5.0)
+        try:
+            return [_json.loads(r["payload"]) if isinstance(r["payload"], str) else r["payload"] for r in await conn.fetch(sql, *args)]
+        finally:
+            await conn.close()
+
+    def _sync(sql: str, *args: Any) -> list[dict[str, Any]]:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        try:
+            if loop and loop.is_running():
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    return pool.submit(lambda: asyncio.run(_fetch(sql, *args))).result(timeout=5.0)
+            return asyncio.run(_fetch(sql, *args))
+        except Exception as exc:
+            raise RuntimeError(f"PostgreSQL lineage store unavailable: {exc}") from exc
+
+    return (
+        lambda eid: (r[0] if (r := _sync(f"SELECT payload FROM {table} WHERE event_id = $1 LIMIT 1", str(eid).strip())) else None) if str(eid or "").strip() else None,
+        lambda bid: _sync(f"SELECT payload FROM {table} WHERE payload->>'binding_id' = $1 OR payload->>'runtime_binding_id' = $1 ORDER BY created_at DESC LIMIT 100", str(bid).strip()) if str(bid or "").strip() else [],
+    )
+
+
 # ---------------------------------------------------------------------------
 # Main service
 # ---------------------------------------------------------------------------
@@ -764,6 +797,7 @@ class TelemetryIngestService:
         dlq_replay_tag_filter: Optional[str] = None,
         infrastructure_health_ledger_path: Optional[str] = None,
         infrastructure_health_lease_seconds: Optional[float] = None,
+        event_reader: Optional[Callable[[str], Optional[dict[str, Any]]]] = None,
     ):
         """
         Parameters
@@ -891,6 +925,7 @@ class TelemetryIngestService:
         self._runtime_summary_store = runtime_summary_store
         self._trade_episode_projection_store = trade_episode_projection_store
         self._lineage_write_store = lineage_write_store
+        self._event_reader = event_reader
 
         # Write function
         self._write_fn = write_fn or self._default_write_fn
@@ -1835,6 +1870,8 @@ class TelemetryIngestService:
         if not clean_event_id:
             return None
         event = self._seen_event_ids.get(clean_event_id)
+        if event is None and self._event_reader is not None:
+            event = self._event_reader(clean_event_id)
         if (
             event is not None
             and tenant_id is not None

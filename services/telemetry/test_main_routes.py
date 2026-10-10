@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 import services.telemetry.main as _main
 from services.runtime_auth_inbound import encode_jwt_hs256
-from services.telemetry.ingest_svc import TelemetryIngestService
+from services.telemetry.ingest_svc import TelemetryIngestService, build_postgres_event_reader
 from services.telemetry.heartbeat_service import build_telemetry_event_from_runtime_heartbeat
 from services.telemetry.lineage_read import LineageReadService
 from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
@@ -1016,5 +1016,273 @@ class TestMainRoutes(unittest.TestCase):
         self.assertEqual(proj["instrument_id"], "SPY")
 
 
+class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
+    """Reproduces and resolves the lineage read restart gap across telemetry restarts.
+
+    Acceptance criteria:
+    - Counterexample reproduction:
+      - Event d39cabae-3276-4af1-a017-f4c171161ad4 (active binding rb-d16978f8faaa402090d9f8d3fb04936d)
+      - Event 69fff59d-83c9-4cf6-b4a7-9deb5d0a5236 (paused binding rb-63be17dc01eb40b48b3302e218079b70)
+    - Before wiring Postgres or with fresh in-memory service: 404 (LINEAGE_TARGET_NOT_FOUND).
+    - After restart with Postgres event reader wired: 200 with resolved trace and projection.
+    - Paused binding maintains read-only historical status 'paused'.
+    - Unknown or foreign tenant target fails closed with 404.
+    - Unavailable Postgres fails closed with 503 (LINEAGE_UNAVAILABLE / SERVICE_UNAVAILABLE).
+    """
+
+    _E1_ID = "d39cabae-3276-4af1-a017-f4c171161ad4"
+    _E1_BINDING = "rb-d16978f8faaa402090d9f8d3fb04936d"
+    _E2_ID = "69fff59d-83c9-4cf6-b4a7-9deb5d0a5236"
+    _E2_BINDING = "rb-63be17dc01eb40b48b3302e218079b70"
+    _TENANT = "tenant-dev"
+    _FOREIGN_TENANT = "tenant-foreign"
+
+    @classmethod
+    def setUpClass(cls):
+        cls._orig_auth_mode = os.environ.get("PANTHEON_TELEMETRY_AUTH_MODE")
+        cls._orig_allowed_tenants = os.environ.get("PANTHEON_TELEMETRY_ALLOWED_TENANTS")
+        cls._orig_svc = _main._svc
+        cls._orig_lineage_svc = _main._lineage_svc
+
+        os.environ["PANTHEON_TELEMETRY_AUTH_MODE"] = "permissive"
+        os.environ["PANTHEON_TELEMETRY_ALLOWED_TENANTS"] = f"{cls._TENANT},{cls._FOREIGN_TENANT}"
+
+        cls.dsn = cls._find_pg_dsn()
+        if not cls.dsn:
+            raise unittest.SkipTest("No PostgreSQL database available for durable lineage restart test")
+
+        cls._init_db_events()
+        cls.client = _main.app.test_client()
+
+    @classmethod
+    def tearDownClass(cls):
+        if cls._orig_auth_mode is not None:
+            os.environ["PANTHEON_TELEMETRY_AUTH_MODE"] = cls._orig_auth_mode
+        else:
+            os.environ.pop("PANTHEON_TELEMETRY_AUTH_MODE", None)
+
+        if cls._orig_allowed_tenants is not None:
+            os.environ["PANTHEON_TELEMETRY_ALLOWED_TENANTS"] = cls._orig_allowed_tenants
+        else:
+            os.environ.pop("PANTHEON_TELEMETRY_ALLOWED_TENANTS", None)
+
+        _main._svc = cls._orig_svc
+        _main._lineage_svc = cls._orig_lineage_svc
+
+        if cls.dsn:
+            cls._clean_db_events()
+
+    @classmethod
+    def _find_pg_dsn(cls) -> str | None:
+        candidates = [
+            os.getenv("TELEMETRY_TEST_PG_DSN"),
+            os.getenv("TELEMETRY_DB_DSN"),
+            "postgresql://postgres:pw@127.0.0.1:55432/postgres",
+            os.getenv("DATABASE_URL"),
+            "postgresql://pantheon:pantheon@localhost:5432/source_ingest_test",
+        ]
+        import asyncpg
+        for c in candidates:
+            if not c:
+                continue
+            try:
+                async def _probe():
+                    conn = await asyncpg.connect(c, timeout=2.0)
+                    await conn.close()
+                asyncio.run(_probe())
+                return c
+            except Exception:
+                continue
+        return None
+
+    @classmethod
+    def _init_db_events(cls):
+        import asyncpg
+        import datetime
+        import json
+
+        async def _setup():
+            conn = await asyncpg.connect(cls.dsn)
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS telemetry_events (
+                    event_id TEXT PRIMARY KEY,
+                    event_type TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL,
+                    payload JSONB NOT NULL,
+                    ingested_seq BIGSERIAL,
+                    ingested_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+                )
+            ''')
+            ev1 = {
+                "event_id": cls._E1_ID,
+                "event_type": "heartbeat",
+                "created_at": "2026-10-10T13:36:04Z",
+                "tenant_id": cls._TENANT,
+                "binding_id": cls._E1_BINDING,
+                "runtime_id": "rt-3739472a",
+                "artifact_id": "artifact-persona-paper-0a906806ac32538fc7df",
+                "artifact_version": "1.0.0",
+                "capital_pool_id": "pool-persona-paper-0a906806ac32538fc7df",
+                "plan_id": "plan-persona-paper-0a906806ac32538fc7df",
+                "persona_capital_binding_id": "pcb-persona-paper-0a906806ac32538fc7df",
+                "deployment_mode": "paper",
+                "status": "active",
+            }
+            ev2 = {
+                "event_id": cls._E2_ID,
+                "event_type": "heartbeat",
+                "created_at": "2026-10-10T00:00:11Z",
+                "tenant_id": cls._TENANT,
+                "binding_id": cls._E2_BINDING,
+                "runtime_id": "rt-04c8e486",
+                "artifact_id": "artifact-persona-paper-c3f293d04cd3cb396e92",
+                "artifact_version": "1.0.0",
+                "capital_pool_id": "pool-persona-paper-c3f293d04cd3cb396e92",
+                "plan_id": "plan-persona-paper-c3f293d04cd3cb396e92",
+                "persona_capital_binding_id": "pcb-persona-paper-c3f293d04cd3cb396e92",
+                "deployment_mode": "paper",
+                "status": "paused",
+                "effective_at": "2026-10-07T22:17:32Z",
+            }
+            for ev in [ev1, ev2]:
+                dt = datetime.datetime.fromisoformat(ev["created_at"].replace("Z", "+00:00"))
+                await conn.execute(f'''
+                    INSERT INTO telemetry_events (event_id, event_type, created_at, payload)
+                    VALUES ('{ev["event_id"]}', '{ev["event_type"]}', '{dt.isoformat()}', '{json.dumps(ev)}')
+                    ON CONFLICT (event_id) DO UPDATE SET payload = EXCLUDED.payload
+                ''')
+            await conn.close()
+
+        asyncio.run(_setup())
+
+    @classmethod
+    def _clean_db_events(cls):
+        import asyncpg
+        async def _cleanup():
+            try:
+                conn = await asyncpg.connect(cls.dsn)
+                await conn.execute(f'''
+                    DELETE FROM telemetry_events WHERE event_id IN ('{cls._E1_ID}', '{cls._E2_ID}')
+                ''')
+                await conn.close()
+            except Exception:
+                pass
+        asyncio.run(_cleanup())
+
+    def _auth_headers(self, tenant: str | None = None) -> dict[str, str]:
+        return {
+            "Authorization": "Bearer telemetry-test:operator",
+            "X-Tenant-Id": tenant or self._TENANT,
+        }
+
+    def test_01_pre_restart_without_pg_reader_returns_404(self):
+        """Before PG reader is wired or after memory-only cache flush, endpoints fail closed with 404."""
+        _main._lineage_svc = LineageReadService()
+        _main._svc = types.SimpleNamespace(get_accepted_event=lambda eid, tenant_id=None: None)
+
+        headers = self._auth_headers()
+        r_trace = self.client.get(f"/api/telemetry/lineage/events/{self._E1_ID}/trace", headers=headers)
+        self.assertEqual(r_trace.status_code, 404)
+        self.assertEqual(r_trace.get_json()["error"]["code"], "LINEAGE_TARGET_NOT_FOUND")
+
+        r_proj = self.client.get(f"/api/telemetry/lineage/runtime-bindings/{self._E2_BINDING}/projection", headers=headers)
+        self.assertEqual(r_proj.status_code, 404)
+        self.assertEqual(r_proj.get_json()["error"]["code"], "LINEAGE_TARGET_NOT_FOUND")
+
+        r_evt = self.client.get(f"/api/telemetry/events/{self._E1_ID}", headers=headers)
+        self.assertEqual(r_evt.status_code, 404)
+        self.assertEqual(r_evt.get_json()["error"]["code"], "TELEMETRY_EVENT_NOT_FOUND")
+
+    def test_02_post_restart_with_pg_reader_resolves_event_trace_200(self):
+        """After restart with PG reader wired, event trace resolves without re-ingest."""
+        fetch_ev, fetch_b = build_postgres_event_reader(self.dsn, table="telemetry_events")
+        _main._lineage_svc = LineageReadService(event_reader=fetch_ev, binding_events_reader=fetch_b)
+        _main._svc = types.SimpleNamespace(
+            get_accepted_event=lambda eid, tenant_id=None: fetch_ev(eid) if (not tenant_id or fetch_ev(eid).get("tenant_id") == tenant_id) else None
+        )
+
+        headers = self._auth_headers()
+        resp = self.client.get(f"/api/telemetry/lineage/events/{self._E1_ID}/trace", headers=headers)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertEqual(data["target_id"], self._E1_ID)
+        self.assertEqual(data["conflict_markers"], [])
+        upstream_bindings = [node["id"] for node in data.get("upstream_chain", []) if node.get("type") == "runtime_binding"]
+        self.assertIn(self._E1_BINDING, upstream_bindings)
+
+    def test_03_post_restart_with_pg_reader_resolves_paused_binding_projection_200(self):
+        """After restart with PG reader, paused binding projection resolves with status='paused'."""
+        fetch_ev, fetch_b = build_postgres_event_reader(self.dsn, table="telemetry_events")
+        _main._lineage_svc = LineageReadService(event_reader=fetch_ev, binding_events_reader=fetch_b)
+        _main._svc = types.SimpleNamespace(
+            get_accepted_event=lambda eid, tenant_id=None: fetch_ev(eid) if (not tenant_id or fetch_ev(eid).get("tenant_id") == tenant_id) else None
+        )
+
+        headers = self._auth_headers()
+        resp = self.client.get(f"/api/telemetry/lineage/runtime-bindings/{self._E2_BINDING}/projection", headers=headers)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertEqual(data["target_id"], self._E2_BINDING)
+        self.assertEqual(data["binding_status"], "paused")
+        self.assertGreaterEqual(data.get("telemetry_event_count", 0), 1)
+        downstream_events = [node["id"] for node in data.get("downstream_chain", []) if node.get("type") == "telemetry_event"]
+        self.assertIn(self._E2_ID, downstream_events)
+
+    def test_04_post_restart_with_pg_reader_resolves_accepted_event_200(self):
+        """After restart with PG reader, accepted event route returns exact stored payload."""
+        fetch_ev, fetch_b = build_postgres_event_reader(self.dsn, table="telemetry_events")
+        _main._lineage_svc = LineageReadService(event_reader=fetch_ev, binding_events_reader=fetch_b)
+        _main._svc = types.SimpleNamespace(
+            get_accepted_event=lambda eid, tenant_id=None: fetch_ev(eid) if (not tenant_id or fetch_ev(eid).get("tenant_id") == tenant_id) else None
+        )
+
+        headers = self._auth_headers()
+        resp = self.client.get(f"/api/telemetry/events/{self._E1_ID}", headers=headers)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertEqual(data["event_id"], self._E1_ID)
+        self.assertEqual(data["binding_id"], self._E1_BINDING)
+        self.assertEqual(data["tenant_id"], self._TENANT)
+
+    def test_05_foreign_tenant_fails_closed_with_404(self):
+        """Foreign tenant request cannot access stored event or binding and fails closed with 404."""
+        fetch_ev, fetch_b = build_postgres_event_reader(self.dsn, table="telemetry_events")
+        _main._lineage_svc = LineageReadService(event_reader=fetch_ev, binding_events_reader=fetch_b)
+        _main._svc = types.SimpleNamespace(
+            get_accepted_event=lambda eid, tenant_id=None: fetch_ev(eid) if (not tenant_id or fetch_ev(eid).get("tenant_id") == tenant_id) else None
+        )
+
+        foreign_headers = self._auth_headers(tenant=self._FOREIGN_TENANT)
+
+        r_trace = self.client.get(f"/api/telemetry/lineage/events/{self._E1_ID}/trace", headers=foreign_headers)
+        self.assertEqual(r_trace.status_code, 404)
+        self.assertEqual(r_trace.get_json()["error"]["code"], "LINEAGE_TARGET_NOT_FOUND")
+
+        r_proj = self.client.get(f"/api/telemetry/lineage/runtime-bindings/{self._E2_BINDING}/projection", headers=foreign_headers)
+        self.assertEqual(r_proj.status_code, 404)
+        self.assertEqual(r_proj.get_json()["error"]["code"], "LINEAGE_TARGET_NOT_FOUND")
+
+        r_evt = self.client.get(f"/api/telemetry/events/{self._E1_ID}", headers=foreign_headers)
+        self.assertEqual(r_evt.status_code, 404)
+        self.assertEqual(r_evt.get_json()["error"]["code"], "TELEMETRY_EVENT_NOT_FOUND")
+
+    def test_06_unavailable_postgres_fails_closed_with_503(self):
+        """Unreachable Postgres causes lineage queries and event reads to fail closed with 503."""
+        unreachable_dsn = "postgresql://postgres:pw@127.0.0.1:59999/postgres"
+        bad_ev, bad_b = build_postgres_event_reader(unreachable_dsn)
+        _main._lineage_svc = LineageReadService(event_reader=bad_ev, binding_events_reader=bad_b)
+        _main._svc = types.SimpleNamespace(get_accepted_event=lambda eid, tenant_id=None: bad_ev(eid))
+
+        headers = self._auth_headers()
+        r_trace = self.client.get(f"/api/telemetry/lineage/events/{self._E1_ID}/trace", headers=headers)
+        self.assertEqual(r_trace.status_code, 503)
+        self.assertEqual(r_trace.get_json()["error"]["code"], "LINEAGE_UNAVAILABLE")
+
+        r_evt = self.client.get(f"/api/telemetry/events/{self._E1_ID}", headers=headers)
+        self.assertEqual(r_evt.status_code, 503)
+        self.assertEqual(r_evt.get_json()["error"]["code"], "SERVICE_UNAVAILABLE")
+
+
 if __name__ == "__main__":
     unittest.main()
+

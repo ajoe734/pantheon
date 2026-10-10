@@ -27,7 +27,7 @@ import threading
 from collections import defaultdict, deque
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 log = logging.getLogger(__name__)
 
@@ -3132,7 +3132,13 @@ class LineageReadService:
         result = service.query("runtime_binding_projection", binding_id="rb-alpha-live-001")
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        event_reader: Optional[Callable[[str], Optional[dict[str, Any]]]] = None,
+        binding_events_reader: Optional[Callable[[str], list[dict[str, Any]]]] = None,
+        binding_store: Optional[Any] = None,
+    ) -> None:
         self.graph = LineageGraph()
         self.traverser = LineageTraverser(self.graph)
         self.projection = ProjectionBuilder()
@@ -3141,6 +3147,9 @@ class LineageReadService:
         # threads (ingest's asyncio loop thread vs. Flask request threads)
         # against the same in-memory graph instance.
         self._lock = threading.RLock()
+        self._event_reader = event_reader
+        self._binding_events_reader = binding_events_reader
+        self._binding_store = binding_store
 
     def load_corpus(self, corpus: dict[str, Any]) -> None:
         """Load a LIN-001A benchmark corpus into the service."""
@@ -3233,6 +3242,45 @@ class LineageReadService:
                     to_id=persona_capital_binding_id,
                 ))
 
+    def _resolve_binding(self, bid: str) -> Optional[Any]:
+        if not (bid and self._binding_store):
+            return None
+        fn = getattr(self._binding_store, "get_binding", getattr(self._binding_store, "get", None))
+        return fn(bid) if callable(fn) else None
+
+    def _binding_from_source(self, bid: str, data: dict[str, Any], tenant: Any) -> dict[str, Any]:
+        return {
+            "binding_id": bid, "tenant_id": tenant,
+            "runtime_id": data.get("runtime_id"), "artifact_id": data.get("artifact_id"),
+            "artifact_version": data.get("artifact_version"), "capital_pool_id": data.get("capital_pool_id"),
+            "plan_id": data.get("plan_id") or data.get("deployment_plan_id"),
+            "persona_capital_binding_id": data.get("persona_capital_binding_id"),
+            "status": data.get("binding_status") or data.get("status") or "active",
+        }
+
+    def _hydrate_event(self, event_id: str, tenant_id: Optional[str] = None) -> None:
+        if not self._event_reader or not (event := self._event_reader(event_id)):
+            return
+        if tenant_id is not None and event.get("tenant_id") != tenant_id:
+            return
+        bid = event.get("binding_id") or event.get("runtime_binding_id")
+        b = self._resolve_binding(bid) or (self._binding_from_source(bid, event, event.get("tenant_id")) if bid else None)
+        self.admit_telemetry_event(event, b)
+
+    def _hydrate_binding(self, binding_id: str, tenant_id: Optional[str] = None) -> None:
+        binding = self._resolve_binding(binding_id)
+        events = self._binding_events_reader(binding_id) if self._binding_events_reader else []
+        if not binding and not events:
+            return
+        b_tenant = (binding.get("tenant_id") if isinstance(binding, Mapping) else getattr(binding, "tenant_id", None)) or (events[0].get("tenant_id") if events else None)
+        if tenant_id is not None and b_tenant != tenant_id:
+            return
+        binding = binding or self._binding_from_source(binding_id, events[0], b_tenant)
+        _admit_runtime_binding_node(self.graph, binding_id, binding, tenant_id=b_tenant)
+        for ev in events:
+            if tenant_id is None or ev.get("tenant_id") == tenant_id:
+                self.admit_telemetry_event(ev, binding)
+
     def query(
         self,
         query_family: str,
@@ -3273,6 +3321,10 @@ class LineageReadService:
             Projection payload matching the LIN-001A corpus shape.
         """
         with self._lock:
+            if query_family == "telemetry_event_trace" and event_id and self.graph.get_node(NODE_TELEMETRY_EVENT, event_id) is None:
+                self._hydrate_event(event_id, tenant_id)
+            elif query_family == "runtime_binding_projection" and binding_id and self.graph.get_node(NODE_RUNTIME_BINDING, binding_id) is None:
+                self._hydrate_binding(binding_id, tenant_id)
             traverser = self.traverser
             if tenant_id is not None:
                 normalized_tenant_id = str(tenant_id).strip()
