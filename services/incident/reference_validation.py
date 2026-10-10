@@ -102,6 +102,7 @@ class _TelemetryLineageLookup:
             base_url
             or os.getenv("PANTHEON_TELEMETRY_URL", "")
             or os.getenv("PANTHEON_TELEMETRY_BASE_URL", "")
+            or os.getenv("PANTHEON_TELEMETRY_API_URL", "")
         ).strip().rstrip("/")
         self._base_url = env_base_url
         self._service_token = (
@@ -112,7 +113,8 @@ class _TelemetryLineageLookup:
         self._tenant_id = (
             tenant_id
             if tenant_id is not None
-            else os.getenv("PANTHEON_TENANT_ID", "")
+            else os.getenv("PANTHEON_INCIDENTS_TENANT_ID", "")
+            or os.getenv("PANTHEON_TENANT_ID", "")
             or os.getenv("PANTHEON_BFF_TENANT_ID", "")
         ).strip()
         self._timeout_seconds = int(
