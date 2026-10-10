@@ -1125,7 +1125,7 @@ def test_dev_root_deploy_profiles_isolate_persistent_runtime_and_exclude_dormant
     dormant smoke and optional integration profiles from default rollout."""
     deploy_script = DEPLOY.read_text(encoding="utf-8")
 
-    assert 'PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-openclaw}"' in deploy_script
+    assert 'PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-root}"' in deploy_script
     for dormant_or_smoke_profile in (
         "dormant-smoke",
         "activation-ready-smoke",
@@ -1174,7 +1174,7 @@ def test_dev_root_deploy_migration_cleanup_retires_inactive_profile_containers()
 
 
 def test_dev_root_active_persistent_runtime_excludes_dormant_and_one_off_profiles() -> None:
-    """Parsing docker-compose.yml with default openclaw profile must prove that the active
+    """Parsing docker-compose.yml with default root profile must prove that the active
     persistent runtime includes all required loop services and strictly excludes all dormant,
     smoke, benchmark, and legacy profile services."""
     import yaml
@@ -1183,7 +1183,7 @@ def test_dev_root_active_persistent_runtime_excludes_dormant_and_one_off_profile
     data = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
     services = data.get("services", {})
 
-    active_profile = "openclaw"
+    active_profile = "root"
     active_services = []
     excluded_services = []
 
