@@ -229,35 +229,11 @@ def _runtime_context_snapshot(context: PantheonRuntimeContext | None) -> dict[st
 
 
 def _is_installed_bridge_path(p: Any) -> bool:
-    if not p: return False
-    clean = str(p).strip().removeprefix("pantheon/")
-    if clean == "lean" and (Path(str(p).strip()).exists() or Path("lean").exists()): return True
-    t = Path(str(p).strip()) if Path(str(p).strip()).exists() else Path(clean)
-    return t.is_dir() and ((t / "base.py").exists() or (t.name == "pantheon_algo" and any(t.iterdir())))
+    return False
 
 
 def _extract_verified_bridge(binding: Mapping[str, Any]) -> dict[str, str] | None:
-    meta = binding.get("metadata") if isinstance(binding.get("metadata"), Mapping) else {}
-
-    def _c(*keys: str) -> Any:
-        top = next((binding[k] for k in keys if k in binding and binding[k] not in (None, "")), None)
-        sub = next((meta[k] for k in keys if k in meta and meta[k] not in (None, "")), None)
-        if top is not None and sub is not None and str(top).strip() != str(sub).strip(): raise ValueError
-        return top if top is not None else sub
-
-    try:
-        repo, path, commit = _c("engine_bridge_repo"), _c("engine_bridge_path", "engine_bridge_source_path"), _c("engine_bridge_commit")
-        ver, csrc = _c("runtime_adapter_version"), _c("context_source")
-    except ValueError:
-        return None
-    canon = str(path).removeprefix("pantheon/") if path else ""
-    if not (bool(repo) and any(str(repo).strip().lower() == r.lower() for r in ALLOWED_ENGINE_BRIDGE_REMOTES)
-            and bool(path) and (path in ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS or canon in ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS)
-            and _is_installed_bridge_path(path) and commit): return None
-    res = {"engine_bridge_repo": str(repo), "engine_bridge_path": str(path), "engine_bridge_commit": str(commit)}
-    if ver: res["runtime_adapter_version"] = str(ver)
-    if csrc: res["context_source"] = str(csrc)
-    return res
+    return None
 
 
 class _Holding:

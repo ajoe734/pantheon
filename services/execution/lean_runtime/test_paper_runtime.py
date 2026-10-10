@@ -1286,9 +1286,8 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(event["binding_id"], binding["binding_id"])
         self.assertEqual(event["plan_id"], "plan-paper")
         self.assertEqual(event["target"]["artifact_type"], "execution_bundle")
-        self.assertEqual(event["metadata"]["engine_bridge_repo"], "ajoe734/pantheon-lean.git")
-        self.assertEqual(event["metadata"]["engine_bridge_commit"], "abc1234")
-        self.assertEqual(event["metadata"]["context_source"], "launch_manifest")
+        self.assertNotIn("engine_bridge_repo", event["metadata"])
+        self.assertNotIn("engine_bridge_commit", event["metadata"])
 
     def test_reproduces_zero_authoritative_sessions_when_binding_never_resolves(self):
         """LOOP-L08-L09-RUNTIME-PAPER-OWNERS-001 reproduction of root-cause
@@ -2934,11 +2933,11 @@ class TestPaperRuntimeObservabilityEnvelope(unittest.TestCase):
         event = emitter.build_event("heartbeat", {"heartbeat": 1})
         self.assertIsNotNone(event)
         meta = event["metadata"]
-        self.assertEqual(meta["engine_bridge_repo"], "https://github.com/QuantConnect/Lean.git")
-        self.assertEqual(meta["engine_bridge_path"], "integrations/lean/pantheon_algo")
-        self.assertEqual(meta["engine_bridge_commit"], "1234567")
-        self.assertEqual(meta["runtime_adapter_version"], "0.1.5")
-        self.assertEqual(meta["context_source"], "binding_metadata")
+        self.assertNotIn("engine_bridge_repo", meta)
+        self.assertNotIn("engine_bridge_path", meta)
+        self.assertNotIn("engine_bridge_commit", meta)
+        self.assertNotIn("runtime_adapter_version", meta)
+        self.assertNotIn("context_source", meta)
 
     def test_queue_lag_stays_none_when_metadata_empty_or_non_causal(self):
         identity = self._identity()
@@ -3120,6 +3119,14 @@ class TestPaperRuntimeObservabilityEnvelope(unittest.TestCase):
             "engine_bridge_commit": "c" * 40,
         }
         self.assertIsNone(_extract_verified_bridge(binding_ord))
+
+        # Installed bridge path with arbitrary unexecuted commit must reject
+        binding_unexecuted = {
+            "engine_bridge_repo": "https://github.com/QuantConnect/Lean.git",
+            "engine_bridge_path": "integrations/lean/pantheon_algo",
+            "engine_bridge_commit": "a401234",
+        }
+        self.assertIsNone(_extract_verified_bridge(binding_unexecuted))
 
     def test_emitter_base_metadata_omits_unverified_bridge_even_with_loaded_runtime_context(self):
         # AC5: loaded runtime_context cannot publish guessed executed bridge from env manifest strings alone
