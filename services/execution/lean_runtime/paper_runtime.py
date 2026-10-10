@@ -52,7 +52,10 @@ from services.execution.lean_runtime.performance_telemetry import (
     SourceIngestMarkProvider,
     value_portfolio,
 )
-from services.execution.lean_runtime.runtime_context import PantheonRuntimeContext
+from services.execution.lean_runtime.runtime_context import (
+    PantheonRuntimeContext,
+    RuntimeContextError,
+)
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
 from services.execution.lean_runtime.signal_consumer import SignalConsumer
 from services.trade_journey.correlation_envelope import (
@@ -136,6 +139,15 @@ def _parse_ledger_timestamp(value: Any, *, field: str) -> tuple[str, datetime]:
             f"paper performance ledger {field} must include a timezone"
         )
     return normalized, parsed.astimezone(timezone.utc)
+
+
+def _parse_iso_utc(value: Any) -> datetime | None:
+    try:
+        p = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+        return (p if p.tzinfo else p.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
+    except Exception:
+        return None
+
 
 
 def _runtime_context_identity_env(
@@ -1745,6 +1757,7 @@ class RuntimeTelemetryEmitter:
         self._sent = 0
         self._failed = 0
         self._last_error: str | None = None
+        self.last_delivery_lag_ms: float | None = None
 
     @property
     def enabled(self) -> bool:
@@ -2003,11 +2016,13 @@ class RuntimeTelemetryEmitter:
             headers=headers,
             method="POST",
         )
+        t0 = time.monotonic()
         try:
             with urllib.request.urlopen(request, timeout=self._timeout) as response:
                 status_code = getattr(response, "status", 200)
                 if status_code not in {200, 202}:
                     raise RuntimeError(f"telemetry ingest returned HTTP {status_code}")
+            self.last_delivery_lag_ms = round((time.monotonic() - t0) * 1000.0, 3)
         except urllib.error.HTTPError as exc:
             self._failed += 1
             self._last_error = f"HTTPError {exc.code}: {exc.reason}"
@@ -2035,8 +2050,10 @@ class RuntimeTelemetryEmitter:
             metadata={"runtime_package": "paper_execution_runtime"},
         )
 
-    def emit_heartbeat(self, metadata: dict[str, Any] | None = None) -> bool:
-        return self.emit("heartbeat", {"heartbeat": 1}, metadata=metadata)
+    def emit_heartbeat(
+        self, metadata: dict[str, Any] | None = None, extra_metrics: dict[str, Any] | None = None
+    ) -> bool:
+        return self.emit("heartbeat", {"heartbeat": 1, **(extra_metrics or {})}, metadata=metadata)
 
     def emit_pnl_snapshot(
         self,
@@ -2080,20 +2097,14 @@ class RuntimeTelemetryEmitter:
                 }
             )
         else:
+            m = binding.get("metadata") if isinstance(binding.get("metadata"), Mapping) else {}
+            _f = lambda *keys: next((v for k in keys if (v := binding.get(k) or m.get(k) or os.getenv(k))), None)
             candidates = {
-                "engine_bridge_repo": binding.get("engine_bridge_repo")
-                or os.getenv("PANTHEON_ENGINE_BRIDGE_REMOTE")
-                or os.getenv("PANTHEON_ENGINE_BRIDGE_REPO"),
-                "engine_bridge_path": binding.get("engine_bridge_path")
-                or os.getenv("PANTHEON_ENGINE_BRIDGE_SOURCE_PATH")
-                or os.getenv("PANTHEON_ENGINE_BRIDGE_PATH"),
-                "engine_bridge_commit": binding.get("engine_bridge_commit")
-                or os.getenv("PANTHEON_ENGINE_BRIDGE_COMMIT"),
-                "runtime_adapter_version": binding.get("runtime_adapter_version")
-                or os.getenv("PANTHEON_RUNTIME_ADAPTER_VERSION"),
-                "context_source": binding.get("context_source")
-                or os.getenv("PANTHEON_CONTEXT_SOURCE")
-                or "env_vars",
+                "engine_bridge_repo": _f("engine_bridge_repo", "PANTHEON_ENGINE_BRIDGE_REMOTE", "PANTHEON_ENGINE_BRIDGE_REPO"),
+                "engine_bridge_path": _f("engine_bridge_path", "engine_bridge_source_path", "PANTHEON_ENGINE_BRIDGE_SOURCE_PATH", "PANTHEON_ENGINE_BRIDGE_PATH"),
+                "engine_bridge_commit": _f("engine_bridge_commit", "PANTHEON_ENGINE_BRIDGE_COMMIT"),
+                "runtime_adapter_version": _f("runtime_adapter_version", "PANTHEON_RUNTIME_ADAPTER_VERSION"),
+                "context_source": _f("context_source", "PANTHEON_CONTEXT_SOURCE") or "env_vars",
             }
             metadata.update({key: str(value) for key, value in candidates.items() if value})
         return metadata
@@ -2110,6 +2121,8 @@ class RuntimeTelemetryEmitter:
             "sent": self._sent,
             "failed": self._failed,
             "last_error": self._last_error,
+            "delivery_lag_ms": self.last_delivery_lag_ms,
+            "event_delivery_lag_ms": self.last_delivery_lag_ms,
         }
 
 
@@ -2447,6 +2460,13 @@ class PaperRuntimeService:
         max_batch_size: int | None = None,
         lifecycle_outbox_path: str | os.PathLike[str] | None = None,
     ) -> None:
+        self._observed_queue_lag_ms: float | None = None
+        if runtime_context is None:
+            mf, stg = os.getenv("PANTHEON_RUNTIME_CONTEXT_MANIFEST"), os.getenv("PANTHEON_DEPLOYMENT_STAGE") or os.getenv("PANTHEON_RUNTIME_MODE")
+            try:
+                runtime_context = PantheonRuntimeContext.from_manifest(mf, expected_stage=stg) if mf and os.path.exists(mf) else PantheonRuntimeContext.from_env(os.environ, expected_stage=stg)
+            except RuntimeContextError:
+                runtime_context = None
         self._runtime_context = runtime_context
         identity_env = (
             _runtime_context_identity_env(runtime_context, os.environ)
@@ -2718,6 +2738,8 @@ class PaperRuntimeService:
                     "delivery_error": self._lifecycle_delivery_error,
                 }
             )
+            d_lag = getattr(self._telemetry, "last_delivery_lag_ms", None)
+            lags = {"queue_lag_ms": self._observed_queue_lag_ms, "event_delivery_lag_ms": d_lag, "delivery_lag_ms": d_lag}
             return {
                 **self._identity.to_health_payload(),
                 "status": (
@@ -2738,6 +2760,7 @@ class PaperRuntimeService:
                 "runtime_context": _runtime_context_snapshot(self._runtime_context),
                 "binding_lookup": self._binding_resolver.snapshot(),
                 "telemetry": self._telemetry.snapshot(),
+                **lags,
                 "lifecycle_outbox": lifecycle_outbox,
                 "paper_state": {
                     "started_at": self._started_at,
@@ -2748,6 +2771,7 @@ class PaperRuntimeService:
                     "poll_count": self._poll_count,
                     "processed_signal_count": self._processed_signal_count,
                     "execution_event_count": self._execution_event_count,
+                    **lags,
                     "bracket_order_execution_enabled": bool(
                         getattr(self._algo, "BracketOrderExecutionEnabled", False)
                     ),
@@ -2992,6 +3016,9 @@ class PaperRuntimeService:
 
     def _handle_order_event(self, event: OrderEvent) -> None:
         if event.event_type == "signal_generation":
+            raw_ts = event.metadata.get("enqueued_at") or event.metadata.get("timestamp") or (event.metadata.get("correlation_envelope") or {}).get("received_at") or event.created_at
+            if (sig_dt := _parse_iso_utc(raw_ts)) and (lag := (datetime.now(timezone.utc) - sig_dt).total_seconds() * 1000.0) >= 0:
+                self._observed_queue_lag_ms = round(lag, 3)
             signal_metadata = self._signal_lifecycle_metadata(event.metadata)
             signal_metadata.setdefault("symbol", event.symbol)
             signal_metadata.setdefault("order_type", event.metadata.get("order_type", "MARKET"))
@@ -3226,17 +3253,23 @@ class PaperRuntimeService:
         now = _iso_now()
         if self._last_heartbeat_at == now:
             return
-        emitted = self._telemetry.emit_heartbeat(
-            metadata={
-                "runtime_package": "paper_execution_runtime",
-                "queue_depth": self._safe_queue_depth(),
-                "is_real_order": False,
-                "is_real_capital": False,
-                "sim_fill_flag": False,
-                "capital_scale_pct": 0,
-                "performance_telemetry": dict(self._performance_telemetry),
-            },
-        )
+        q_lag, d_lag = self._observed_queue_lag_ms, getattr(self._telemetry, "last_delivery_lag_ms", None)
+        lags = {k: v for k, v in [("queue_lag_ms", q_lag), ("event_delivery_lag_ms", d_lag), ("delivery_lag_ms", d_lag)] if v is not None}
+        hb_meta = {
+            "runtime_package": "paper_execution_runtime",
+            "queue_depth": self._safe_queue_depth(),
+            "is_real_order": False,
+            "is_real_capital": False,
+            "sim_fill_flag": False,
+            "capital_scale_pct": 0,
+            "performance_telemetry": dict(self._performance_telemetry),
+            "runtime_heartbeat": {"connectivity_status": "connected" if self._last_error is None else "degraded", "broker_status": "not_applicable", **lags},
+            **lags,
+        }
+        try:
+            emitted = self._telemetry.emit_heartbeat(metadata=hb_meta, extra_metrics=lags)
+        except TypeError:
+            emitted = self._telemetry.emit_heartbeat(metadata=hb_meta)
         if emitted:
             self._last_heartbeat_at = now
 
