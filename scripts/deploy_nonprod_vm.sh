@@ -602,7 +602,7 @@ case "$DEPLOY_ENV" in
     if [[ -z "${DEV_VM+x}" ]]; then DEV_VM="pantheon-dev-deploy"; fi
     if [[ -z "${DEV_ZONE+x}" ]]; then DEV_ZONE="asia-east1-b"; fi
     if [[ -z "${DEV_REMOTE_DIR+x}" ]]; then DEV_REMOTE_DIR="/home/chloe_ong_dev_cctech_support_com/pantheon"; fi
-    if [[ -z "${DEV_DEPLOY_SSH_HOST+x}" ]]; then DEV_DEPLOY_SSH_HOST="34.81.52.222"; fi
+    if [[ -z "${DEV_DEPLOY_SSH_HOST+x}" ]]; then DEV_DEPLOY_SSH_HOST="35.194.154.62"; fi
     if [[ -z "${DEV_BFF_CANONICAL_CORS_ORIGIN+x}" ]]; then DEV_BFF_CANONICAL_CORS_ORIGIN="https://app.dev.mvl-cap.tw"; fi
     if [[ -z "${DEV_BFF_REQUIRED_CORS_ORIGINS+x}" ]]; then DEV_BFF_REQUIRED_CORS_ORIGINS="https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com"; fi
     if [[ -z "${DEV_BFF_CORS_ORIGINS+x}" ]]; then
@@ -996,7 +996,7 @@ ssh_bash() {
     fi
     if [[ "${DEPLOY_ENV}" == dev ]]; then
       [[ "${PROJECT_ID}" == pantheon-dev-20260902 && "${vm}" == pantheon-dev-deploy && \
-         "${zone}" == asia-east1-b && "${DEV_DEPLOY_SSH_HOST}" == 34.81.52.222 && \
+         "${zone}" == asia-east1-b && "${DEV_DEPLOY_SSH_HOST}" == 35.194.154.62 && \
          "${DEV_DEPLOY_SSH_USER:-${REMOTE_USER}}" == chloe_ong_dev_cctech_support_com ]] \
         || { info "guarded artifact transport requires the explicit current dev target" >&2; return 75; }
       if [[ "${remote_component}" != "refresh-only" ]]; then

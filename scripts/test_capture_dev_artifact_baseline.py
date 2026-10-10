@@ -59,7 +59,7 @@ def test_direct_artifact_entrypoints_import_siblings_without_cwd_shadowing(
 def environment(identity=None):
     result = {"TARGET_ENV": "dev", "GCP_DEPLOY_PROJECT_ID": "pantheon-dev-20260902",
               "DEV_VM": "pantheon-dev-deploy", "DEV_ZONE": "asia-east1-b",
-              "DEV_DEPLOY_SSH_HOST": "34.81.52.222", "DEV_DEPLOY_SSH_USER": c.VM_HOME.name,
+              "DEV_DEPLOY_SSH_HOST": "35.194.154.62", "DEV_DEPLOY_SSH_USER": c.VM_HOME.name,
               "PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID": GUARD_ID,
               "DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID": "fixture-viewer", "DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET": VIEWER_SECRET,
               "DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET": "fixture-write-credential-must-not-travel",
