@@ -4285,6 +4285,11 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # the compose default (`unknown`) and make the exact-SHA readiness gate
     # impossible to satisfy.
     export GIT_SHA="${PANTHEON_DEPLOY_SHA}"
+    # Same reasoning for the projector freshness budget: the forced projector
+    # recreate below runs without the first `compose up` command prefix and
+    # would otherwise fall back to the compose default (120s) instead of the
+    # configured dev budget.
+    export LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="${PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS}"
     # Runtime authority reads and the durable outbox consumer must use the
     # same tenant as the BFF that creates the dev DeploymentPlans. Otherwise
     # healthy workers poll the generic Compose tenant (default) indefinitely.
