@@ -222,6 +222,14 @@ def test_deploy_nonprod_vm_wires_dev_reconciliation_drift_postgres_store() -> No
     assert 'RECONCILIATION_DRIFT_STORE_DSN="${RECONCILIATION_DRIFT_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}"' in script_text
 
 
+def test_lifecycle_projector_restarts_automatically() -> None:
+    """The incremental projector must come back after a host restart."""
+    compose_data = yaml.safe_load(COMPOSE_PATH.read_text(encoding="utf-8"))
+    projector = compose_data["services"]["loop-run-projector-scheduler"]
+
+    assert projector.get("restart") == "${LIFECYCLE_PROJECTOR_RESTART_POLICY:-unless-stopped}"
+
+
 def test_source_ingestion_remains_reconcile_only_manual() -> None:
     """Source Ingestion in docker-compose.yml must remain reconcile-only / manual.
 

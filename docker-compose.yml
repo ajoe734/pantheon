@@ -1572,11 +1572,11 @@ services:
       args:
         GIT_SHA: ${GIT_SHA:-unknown}
     command: ["python", "-m", "services.trade_journey.lifecycle_projector", "run"]
-    # Emergency containment for the legacy full-history projector. It can
-    # otherwise consume the host while loading/copying unbounded state.
-    # Fail stopped at the cgroup boundary until the incremental replacement
-    # is delivered; the last atomic projection remains readable by the BFF.
-    restart: "${LIFECYCLE_PROJECTOR_RESTART_POLICY:-no}"
+    # The projector is the incremental relational writer (bounded batches), so
+    # it restarts after a host or daemon restart like the other steady
+    # controllers; BFF /readyz depends on it. mem_limit still bounds a leak at
+    # the cgroup boundary.
+    restart: "${LIFECYCLE_PROJECTOR_RESTART_POLICY:-unless-stopped}"
     mem_limit: ${LIFECYCLE_PROJECTOR_MEMORY_LIMIT:-16g}
     stop_grace_period: 30s
     environment:
