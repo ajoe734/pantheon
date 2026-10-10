@@ -52,14 +52,8 @@ from services.execution.lean_runtime.performance_telemetry import (
     SourceIngestMarkProvider,
     value_portfolio,
 )
-from services.execution.lean_runtime.bootstrap_contract import (
-    ALLOWED_ENGINE_BRIDGE_REMOTES,
-    ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS,
-)
-from services.execution.lean_runtime.runtime_context import (
-    PantheonRuntimeContext,
-    RuntimeContextError,
-)
+from services.execution.lean_runtime.bootstrap_contract import ALLOWED_ENGINE_BRIDGE_REMOTES, ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS
+from services.execution.lean_runtime.runtime_context import PantheonRuntimeContext, RuntimeContextError
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
 from services.execution.lean_runtime.signal_consumer import SignalConsumer
 from services.trade_journey.correlation_envelope import (
@@ -235,9 +229,11 @@ def _runtime_context_snapshot(context: PantheonRuntimeContext | None) -> dict[st
 
 
 def _is_installed_bridge_path(p: Any) -> bool:
-    if not p or str(p).strip().rstrip("/") in {"integrations/lean", "pantheon/integrations/lean"}:
-        return False
-    return Path(str(p).strip()).exists() or Path(str(p).strip().removeprefix("pantheon/")).exists()
+    if not p: return False
+    clean = str(p).strip().removeprefix("pantheon/")
+    if clean == "lean" and (Path(str(p).strip()).exists() or Path("lean").exists()): return True
+    t = Path(str(p).strip()) if Path(str(p).strip()).exists() else Path(clean)
+    return t.is_dir() and ((t / "base.py").exists() or (t.name == "pantheon_algo" and any(t.iterdir())))
 
 
 def _extract_verified_bridge(binding: Mapping[str, Any]) -> dict[str, str] | None:
@@ -246,8 +242,7 @@ def _extract_verified_bridge(binding: Mapping[str, Any]) -> dict[str, str] | Non
     def _c(*keys: str) -> Any:
         top = next((binding[k] for k in keys if k in binding and binding[k] not in (None, "")), None)
         sub = next((meta[k] for k in keys if k in meta and meta[k] not in (None, "")), None)
-        if top is not None and sub is not None and str(top).strip() != str(sub).strip():
-            raise ValueError
+        if top is not None and sub is not None and str(top).strip() != str(sub).strip(): raise ValueError
         return top if top is not None else sub
 
     try:
@@ -255,16 +250,14 @@ def _extract_verified_bridge(binding: Mapping[str, Any]) -> dict[str, str] | Non
         ver, csrc = _c("runtime_adapter_version"), _c("context_source")
     except ValueError:
         return None
-    canonical = str(path).removeprefix("pantheon/") if path else ""
+    canon = str(path).removeprefix("pantheon/") if path else ""
     if not (bool(repo) and any(str(repo).strip().lower() == r.lower() for r in ALLOWED_ENGINE_BRIDGE_REMOTES)
-            and bool(path) and (path in ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS or canonical in ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS)
-            and _is_installed_bridge_path(path) and commit and not str(commit).lower().startswith("a40")):
-        return None
+            and bool(path) and (path in ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS or canon in ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS)
+            and _is_installed_bridge_path(path) and commit): return None
     res = {"engine_bridge_repo": str(repo), "engine_bridge_path": str(path), "engine_bridge_commit": str(commit)}
     if ver: res["runtime_adapter_version"] = str(ver)
     if csrc: res["context_source"] = str(csrc)
     return res
-
 
 
 class _Holding:

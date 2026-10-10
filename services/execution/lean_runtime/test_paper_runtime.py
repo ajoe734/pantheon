@@ -3094,29 +3094,32 @@ class TestPaperRuntimeObservabilityEnvelope(unittest.TestCase):
             self.assertNotIn("PANTHEON_ENGINE_BRIDGE_COMMIT", env)
 
     def test_extract_verified_bridge_rejects_existing_directory_with_arbitrary_unexecuted_commit(self):
-        # AC1 & AC5: existing directory integrations/lean with arbitrary a40 commit must fail closed
-        binding_a40 = {
+        # AC1 & AC5: existing directory integrations/lean with arbitrary unexecuted commit must fail closed
+        binding_existing = {
             "engine_bridge_repo": "ajoe734/pantheon-lean.git",
             "engine_bridge_path": "integrations/lean",
-            "engine_bridge_commit": "a401234",
+            "engine_bridge_commit": "a" * 40,
         }
-        self.assertIsNone(_extract_verified_bridge(binding_a40))
+        self.assertIsNone(_extract_verified_bridge(binding_existing))
 
-        # Ordinary allowed directory without installed bridge files must reject even with non-a40 commit
+        # Real empty directory (e.g. Algorithm.Python) with arbitrary revision rejects, with clean teardown
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            empty_algo = Path(tmp_dir) / "Algorithm.Python"
+            empty_algo.mkdir()
+            binding_empty = {
+                "engine_bridge_repo": "https://github.com/QuantConnect/Lean.git",
+                "engine_bridge_path": str(empty_algo),
+                "engine_bridge_commit": "f" * 40,
+            }
+            self.assertIsNone(_extract_verified_bridge(binding_empty))
+
+        # Ordinary allowed directory without executed bridge rejects with arbitrary non-a40 revision
         binding_ord = {
             "engine_bridge_repo": "ajoe734/pantheon-lean.git",
             "engine_bridge_path": "integrations/lean",
-            "engine_bridge_commit": "abc1234",
+            "engine_bridge_commit": "c" * 40,
         }
         self.assertIsNone(_extract_verified_bridge(binding_ord))
-
-        # Installed bridge path with arbitrary unexecuted a40 commit must reject
-        binding_unexecuted = {
-            "engine_bridge_repo": "https://github.com/QuantConnect/Lean.git",
-            "engine_bridge_path": "integrations/lean/pantheon_algo",
-            "engine_bridge_commit": "a401234",
-        }
-        self.assertIsNone(_extract_verified_bridge(binding_unexecuted))
 
     def test_emitter_base_metadata_omits_unverified_bridge_even_with_loaded_runtime_context(self):
         # AC5: loaded runtime_context cannot publish guessed executed bridge from env manifest strings alone
@@ -3134,7 +3137,7 @@ class TestPaperRuntimeObservabilityEnvelope(unittest.TestCase):
                 "capital_pool_id": "pool-test",
                 "engine_bridge_repo": "ajoe734/pantheon-lean.git",
                 "engine_bridge_path": "integrations/lean",
-                "engine_bridge_commit": "a401234",
+                "engine_bridge_commit": "d" * 40,
             },
         }
         ctx = PantheonRuntimeContext.from_mapping(

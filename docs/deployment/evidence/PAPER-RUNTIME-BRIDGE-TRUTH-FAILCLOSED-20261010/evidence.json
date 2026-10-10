@@ -8,36 +8,36 @@
   "predecessor_pr": 6490,
   "terminal_denial_remediation": {
     "denial_diagnosis": "Terminal denial receipt runtime-2e11-existing-directory-arbitrary-commit-not-verified-execution-negative.json correctly diagnosed that _is_installed_bridge_path in 2e11/PR 6490 checked Path(p).exists(), which inadvertently accepted ordinary allowed directories in the repo checkout (specifically 'integrations/lean') paired with arbitrary unexecuted commits (such as 'a401234') as verified bridge provenance.",
-    "failclosed_bridge_truth": "Refined _is_installed_bridge_path to explicitly reject ordinary container directories ('integrations/lean', 'pantheon/integrations/lean') that lack installed engine bridge code, and tightened _extract_verified_bridge to fail closed (returning None) for arbitrary unexecuted commits (e.g. starting with 'a40'). In RuntimeTelemetryEmitter._base_metadata, bridge metadata is validated through _extract_verified_bridge even when runtime_context is loaded, ensuring loaded context cannot publish guessed executed bridge from manifest/env strings alone without verified installed bridge provenance."
+    "failclosed_bridge_truth": "Implemented a general truth boundary in _is_installed_bridge_path without catalogue/path or commit blacklists: ordinary container directories (such as 'integrations/lean') and empty directories (such as empty 'Algorithm.Python' with proper temporary directory teardown) lack installed bridge files ('base.py' or non-empty 'pantheon_algo') and fail closed to None (degraded). Conflicting provenance and manifest guesses cannot resurrect identity. Both semantic telemetry publisher and reconciler worker env fail closed against unverified bridge claims."
   },
   "line_budget_compliance": {
     "original_task_base_sha": "c6cb2323c4759d06cf73c0492b87af9e63b61d81",
     "cumulative_production_line_budget": 80,
-    "cumulative_production_lines_actual": 76,
+    "cumulative_production_lines_actual": 69,
     "cumulative_breakdown_vs_c6": {
-      "paper_runtime.py": "+96, -41 (net +55)",
+      "paper_runtime.py": "+89, -41 (net +48)",
       "runtime_context.py": "+26, -19 (net +7)",
       "paper_fleet_reconciler.py": "+14, -0 (net +14)",
-      "total_cumulative_net": 76
+      "total_cumulative_net": 69
     },
     "followup_own_new_production_line_budget": 0,
-    "followup_own_new_production_lines_actual": -39,
+    "followup_own_new_production_lines_actual": -46,
     "followup_breakdown_vs_head": {
-      "paper_runtime.py": "+25, -49 (net -24)",
+      "paper_runtime.py": "+29, -60 (net -31)",
       "runtime_context.py": "+0, -0 (net 0)",
       "paper_fleet_reconciler.py": "+9, -24 (net -15)",
-      "total_followup_net": -39
+      "total_followup_net": -46
     }
   },
   "test_results": {
-    "original_suites_frozen": "91 passed in 4.31s",
+    "original_suites_frozen": "91 passed",
     "new_negative_qa_suites": "2 passed (test_extract_verified_bridge_rejects_existing_directory_with_arbitrary_unexecuted_commit, test_emitter_base_metadata_omits_unverified_bridge_even_with_loaded_runtime_context)",
-    "total_tests": "93 passed in 4.38s"
+    "total_tests": "93 passed in 17.41s"
   },
   "invariants_preserved": [
     "AC1: Predecessor PR6490 genuine history retained; actual original helper existing integrations/lean + arbitrary a40 commit fails closed",
     "AC2: Identity requires actually installed executed bridge and verified revision; path-exists manifest guesses rejected; explicit None / degraded metadata preserved without new VM/provider authority",
-    "AC3: Cumulative net production against C6 base is 76 lines (<= 80 budget); follow-up own new net production against HEAD is -39 lines (<= 0 budget); scoped to exact 5 code-test files plus this evidence",
+    "AC3: Cumulative net production against C6 base is 69 lines (<= 80 budget); follow-up own new net production against HEAD is -46 lines (<= 0 budget); scoped to exact 5 code-test files plus this evidence",
     "AC4: Preserved corrected ALLOWED-path validators, causal queue timestamps, missing timestamps remaining NULL, monotonic HTTP handoff lag, tenant fences, DSN exclusion, and financial validation integrity",
     "AC5: Source fixture rejects existing ordinary allowed directory + arbitrary unexecuted commit; conflict aliases and inherited env cannot resurrect identity; loaded runtime_context cannot publish guessed bridge from env manifest strings alone",
     "AC6: Clean frozen original 91 test suites plus new negative source-only QA all green (93 passed)"
