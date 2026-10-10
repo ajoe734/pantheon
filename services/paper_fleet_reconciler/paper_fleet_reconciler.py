@@ -66,10 +66,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import fcntl
 
-from services.execution.lean_runtime.bootstrap_contract import (
-    ALLOWED_ENGINE_BRIDGE_REMOTES,
-    ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS,
-)
+from services.execution.lean_runtime.paper_runtime import _extract_verified_bridge
 
 from services.execution.market_snapshot_admission import (
     SnapshotAdmissionDecision,
@@ -1237,41 +1234,33 @@ class PaperFleetReconciler:
             env["PANTHEON_PERFORMANCE_STATE_PATH"] = str(
                 self._performance_state_root / _binding_state_filename(binding_id)
             )
+        for k in (
+            "PANTHEON_ENGINE_BRIDGE_REMOTE",
+            "PANTHEON_ENGINE_BRIDGE_REPO",
+            "PANTHEON_ENGINE_BRIDGE_SOURCE_PATH",
+            "PANTHEON_ENGINE_BRIDGE_PATH",
+            "PANTHEON_ENGINE_BRIDGE_COMMIT",
+            "PANTHEON_RUNTIME_ADAPTER_VERSION",
+            "PANTHEON_CONTEXT_SOURCE",
+        ):
+            env.pop(k, None)
         meta = binding.get("metadata") if isinstance(binding.get("metadata"), dict) else {}
-        def _get_consistent(*keys: str) -> Any:
-            top_v = next((binding[k] for k in keys if k in binding and binding[k] not in (None, "")), None)
-            meta_v = next((meta[k] for k in keys if k in meta and meta[k] not in (None, "")), None)
-            if top_v is not None and meta_v is not None and str(top_v).strip() != str(meta_v).strip():
-                return None
-            return top_v if top_v is not None else meta_v
-
-        repo = _get_consistent("engine_bridge_repo") or env.get("PANTHEON_ENGINE_BRIDGE_REMOTE") or env.get("PANTHEON_ENGINE_BRIDGE_REPO")
-        path = _get_consistent("engine_bridge_path", "engine_bridge_source_path") or env.get("PANTHEON_ENGINE_BRIDGE_SOURCE_PATH") or env.get("PANTHEON_ENGINE_BRIDGE_PATH")
-        commit = _get_consistent("engine_bridge_commit") or env.get("PANTHEON_ENGINE_BRIDGE_COMMIT")
-        ver = _get_consistent("runtime_adapter_version") or env.get("PANTHEON_RUNTIME_ADAPTER_VERSION")
-        chk = _get_consistent("artifact_checksum", "checksum") or env.get("PANTHEON_ARTIFACT_CHECKSUM")
-        sid = _get_consistent("strategy_id") or env.get("PANTHEON_STRATEGY_ID")
-        role = _get_consistent("runtime_role") or env.get("PANTHEON_RUNTIME_ROLE")
-        csrc = _get_consistent("context_source") or env.get("PANTHEON_CONTEXT_SOURCE")
-
-        repo_ok = bool(repo) and (repo in ALLOWED_ENGINE_BRIDGE_REMOTES or any(str(repo).strip().lower() == r.lower() for r in ALLOWED_ENGINE_BRIDGE_REMOTES))
-        path_ok = bool(path) and (any(str(path).strip().lower() == s.lower() for s in ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS) or os.path.exists(str(path)))
-        if repo_ok and path_ok and bool(commit):
-            env["PANTHEON_ENGINE_BRIDGE_REMOTE"] = str(repo)
-            env["PANTHEON_ENGINE_BRIDGE_REPO"] = str(repo)
-            env["PANTHEON_ENGINE_BRIDGE_SOURCE_PATH"] = str(path)
-            env["PANTHEON_ENGINE_BRIDGE_PATH"] = str(path)
-            env["PANTHEON_ENGINE_BRIDGE_COMMIT"] = str(commit)
-            if ver:
-                env["PANTHEON_RUNTIME_ADAPTER_VERSION"] = str(ver)
-            if csrc:
-                env["PANTHEON_CONTEXT_SOURCE"] = str(csrc)
-        if chk:
-            env["PANTHEON_ARTIFACT_CHECKSUM"] = str(chk)
-        if sid:
-            env["PANTHEON_STRATEGY_ID"] = str(sid)
-        if role:
-            env["PANTHEON_RUNTIME_ROLE"] = str(role)
+        if bridge := _extract_verified_bridge(binding):
+            env["PANTHEON_ENGINE_BRIDGE_REMOTE"] = env["PANTHEON_ENGINE_BRIDGE_REPO"] = bridge["engine_bridge_repo"]
+            env["PANTHEON_ENGINE_BRIDGE_SOURCE_PATH"] = env["PANTHEON_ENGINE_BRIDGE_PATH"] = bridge["engine_bridge_path"]
+            env["PANTHEON_ENGINE_BRIDGE_COMMIT"] = bridge["engine_bridge_commit"]
+            if ver := bridge.get("runtime_adapter_version"):
+                env["PANTHEON_RUNTIME_ADAPTER_VERSION"] = ver
+            if csrc := bridge.get("context_source"):
+                env["PANTHEON_CONTEXT_SOURCE"] = csrc
+        for k, src in (
+            ("PANTHEON_ARTIFACT_CHECKSUM", ("artifact_checksum", "checksum")),
+            ("PANTHEON_STRATEGY_ID", ("strategy_id",)),
+            ("PANTHEON_RUNTIME_ROLE", ("runtime_role",)),
+        ):
+            val = next((binding[s] for s in src if s in binding and binding[s] not in (None, "")), None) or next((meta[s] for s in src if s in meta and meta[s] not in (None, "")), None)
+            if val:
+                env[k] = str(val)
         return env
 
     def _start_worker(

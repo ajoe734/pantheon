@@ -240,9 +240,9 @@ class PantheonRuntimeContext:
             raise RuntimeContextError(
                 f"bridge.repo must be one of {sorted(ALLOWED_ENGINE_BRIDGE_REMOTES)!r}, got {self.bridge.repo!r}"
             )
-        if not (any(str(self.bridge.path).strip().lower() == s.lower() for s in ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS) or Path(self.bridge.path).exists()):
+        if self.bridge.path not in ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS:
             raise RuntimeContextError(
-                f"bridge.path must be one of {sorted(ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS)!r} or exist, got {self.bridge.path!r}"
+                f"bridge.path must be one of {sorted(ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS)!r}, got {self.bridge.path!r}"
             )
         _reject_raw_secrets(self.to_dict(), "runtime_context")
 

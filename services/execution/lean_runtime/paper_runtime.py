@@ -234,6 +234,48 @@ def _runtime_context_snapshot(context: PantheonRuntimeContext | None) -> dict[st
     }
 
 
+def _is_installed_bridge_path(p: Any) -> bool:
+    if not p:
+        return False
+    s = str(p).strip()
+    return Path(s).exists() or (s.startswith("pantheon/") and Path(s[len("pantheon/"):]).exists())
+
+
+def _extract_verified_bridge(binding: Mapping[str, Any]) -> dict[str, str] | None:
+    meta = binding.get("metadata") if isinstance(binding.get("metadata"), Mapping) else {}
+
+    def _consistent(*keys: str) -> Any:
+        top_v = next((binding[k] for k in keys if k in binding and binding[k] not in (None, "")), None)
+        meta_v = next((meta[k] for k in keys if k in meta and meta[k] not in (None, "")), None)
+        if top_v is not None and meta_v is not None and str(top_v).strip() != str(meta_v).strip():
+            raise ValueError("conflict")
+        return top_v if top_v is not None else meta_v
+
+    try:
+        repo = _consistent("engine_bridge_repo")
+        path = _consistent("engine_bridge_path", "engine_bridge_source_path")
+        commit = _consistent("engine_bridge_commit")
+        ver, csrc = _consistent("runtime_adapter_version"), _consistent("context_source")
+    except ValueError:
+        return None
+    canonical_path = str(path).removeprefix("pantheon/") if path else ""
+    repo_ok = bool(repo) and (repo in ALLOWED_ENGINE_BRIDGE_REMOTES or any(str(repo).strip().lower() == r.lower() for r in ALLOWED_ENGINE_BRIDGE_REMOTES))
+    path_ok = bool(path) and (
+        path in ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS
+        or canonical_path in ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS
+        or any(str(path).strip().lower() == s.lower() or canonical_path.lower() == s.lower() for s in ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS)
+    ) and _is_installed_bridge_path(path)
+    if not (repo_ok and path_ok and bool(commit)):
+        return None
+    res = {"engine_bridge_repo": str(repo), "engine_bridge_path": str(path), "engine_bridge_commit": str(commit)}
+    if ver:
+        res["runtime_adapter_version"] = str(ver)
+    if csrc:
+        res["context_source"] = str(csrc)
+    return res
+
+
+
 class _Holding:
     def __init__(self, quantity: float = 0.0) -> None:
         self.Quantity = quantity
@@ -2101,31 +2143,8 @@ class RuntimeTelemetryEmitter:
                 }
             )
         else:
-            m = binding.get("metadata") if isinstance(binding.get("metadata"), Mapping) else {}
-            def _consistent(*keys: str) -> Any:
-                top_v = next((binding[k] for k in keys if k in binding and binding[k] not in (None, "")), None)
-                meta_v = next((m[k] for k in keys if k in m and m[k] not in (None, "")), None)
-                if top_v is not None and meta_v is not None and str(top_v).strip() != str(meta_v).strip():
-                    return None
-                return top_v if top_v is not None else meta_v
-
-            repo = _consistent("engine_bridge_repo")
-            path = _consistent("engine_bridge_path", "engine_bridge_source_path")
-            commit = _consistent("engine_bridge_commit")
-            ver = _consistent("runtime_adapter_version") or "0.1.0"
-            csrc = _consistent("context_source") or "binding_metadata"
-            repo_ok = bool(repo) and (repo in ALLOWED_ENGINE_BRIDGE_REMOTES or any(str(repo).strip().lower() == r.lower() for r in ALLOWED_ENGINE_BRIDGE_REMOTES))
-            path_ok = bool(path) and (any(str(path).strip().lower() == s.lower() for s in ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS) or os.path.exists(str(path)))
-            if repo_ok and path_ok and bool(commit):
-                metadata.update(
-                    {
-                        "engine_bridge_repo": str(repo),
-                        "engine_bridge_path": str(path),
-                        "engine_bridge_commit": str(commit),
-                        "runtime_adapter_version": str(ver),
-                        "context_source": str(csrc),
-                    }
-                )
+            if bridge_meta := _extract_verified_bridge(binding):
+                metadata.update(bridge_meta)
         return metadata
 
     def _fail_build(self, message: str) -> None:

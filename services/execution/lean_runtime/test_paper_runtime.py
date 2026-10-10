@@ -2920,7 +2920,7 @@ class TestPaperRuntimeObservabilityEnvelope(unittest.TestCase):
         binding = self._binding()
         binding["metadata"] = {
             "engine_bridge_repo": "https://github.com/QuantConnect/Lean.git",
-            "engine_bridge_path": "Lean",
+            "engine_bridge_path": "integrations/lean/pantheon_algo",
             "engine_bridge_commit": "1234567",
             "runtime_adapter_version": "0.1.5",
             "context_source": "binding_metadata",
@@ -2930,7 +2930,7 @@ class TestPaperRuntimeObservabilityEnvelope(unittest.TestCase):
         self.assertIsNotNone(event)
         meta = event["metadata"]
         self.assertEqual(meta["engine_bridge_repo"], "https://github.com/QuantConnect/Lean.git")
-        self.assertEqual(meta["engine_bridge_path"], "Lean")
+        self.assertEqual(meta["engine_bridge_path"], "integrations/lean/pantheon_algo")
         self.assertEqual(meta["engine_bridge_commit"], "1234567")
         self.assertEqual(meta["runtime_adapter_version"], "0.1.5")
         self.assertEqual(meta["context_source"], "binding_metadata")
@@ -3006,7 +3006,7 @@ class TestPaperRuntimeObservabilityEnvelope(unittest.TestCase):
         binding_conflict["engine_bridge_repo"] = "https://github.com/QuantConnect/Lean.git"
         binding_conflict["metadata"] = {
             "engine_bridge_repo": "ajoe734/pantheon-lean.git",
-            "engine_bridge_path": "Lean",
+            "engine_bridge_path": "integrations/lean/pantheon_algo",
             "engine_bridge_commit": "1234567",
         }
         emitter = RuntimeTelemetryEmitter(identity, _FakeBindingResolver(binding_conflict))
@@ -3018,7 +3018,7 @@ class TestPaperRuntimeObservabilityEnvelope(unittest.TestCase):
         binding_unverified = self._binding()
         binding_unverified["metadata"] = {
             "engine_bridge_repo": "https://github.com/unknown/repo.git",
-            "engine_bridge_path": "Lean",
+            "engine_bridge_path": "integrations/lean/pantheon_algo",
             "engine_bridge_commit": "1234567",
         }
         emitter2 = RuntimeTelemetryEmitter(identity, _FakeBindingResolver(binding_unverified))
@@ -3037,7 +3037,59 @@ class TestPaperRuntimeObservabilityEnvelope(unittest.TestCase):
         self.assertNotIn("engine_bridge_repo", event3["metadata"])
         self.assertNotIn("engine_bridge_path", event3["metadata"])
 
+    def test_emitter_base_metadata_omits_catalog_allowed_when_path_not_installed(self):
+        identity = self._identity()
+        binding = self._binding()
+        binding["metadata"] = {
+            "engine_bridge_repo": "https://github.com/QuantConnect/Lean.git",
+            "engine_bridge_path": "Algorithm.Python",
+            "engine_bridge_commit": "a401234",
+        }
+        emitter = RuntimeTelemetryEmitter(identity, _FakeBindingResolver(binding))
+        event = emitter.build_event("heartbeat", {"heartbeat": 1})
+        self.assertIsNotNone(event)
+        self.assertNotIn("engine_bridge_repo", event["metadata"])
+        self.assertNotIn("engine_bridge_path", event["metadata"])
+        self.assertNotIn("engine_bridge_commit", event["metadata"])
+        self.assertNotIn("runtime_adapter_version", event["metadata"])
+        self.assertNotIn("context_source", event["metadata"])
+
+    def test_reconciler_conflict_retains_failclosed_without_inherited_env_fallback(self):
+        from services.paper_fleet_reconciler.paper_fleet_reconciler import PaperFleetReconciler
+        reconciler = PaperFleetReconciler.__new__(PaperFleetReconciler)
+        reconciler._extra_env = {}
+        reconciler._reconciler_id = "rec-test"
+        reconciler._fence_token = 1
+        reconciler._url = None
+        reconciler._token = None
+        reconciler._source_ingest_url = None
+        reconciler._performance_mark_max_age_seconds = 60
+        reconciler._performance_state_root = Path("/tmp")
+
+        binding = {
+            "binding_id": "b-test",
+            "runtime_id": "rt-test",
+            "plan_id": "p-test",
+            "artifact_id": "art-test",
+            "artifact_version": "1.0",
+            "capital_pool_id": "pool-test",
+            "engine_bridge_repo": "https://github.com/QuantConnect/Lean.git",
+            "metadata": {
+                "engine_bridge_repo": "ajoe734/pantheon-lean.git",
+                "engine_bridge_path": "integrations/lean/pantheon_algo",
+                "engine_bridge_commit": "abc1234",
+            },
+        }
+        with unittest.mock.patch.dict(os.environ, {"PANTHEON_ENGINE_BRIDGE_REMOTE": "ajoe734/pantheon-lean.git", "PANTHEON_ENGINE_BRIDGE_COMMIT": "abc1234"}):
+            env = reconciler._build_worker_env(binding)
+            self.assertNotIn("PANTHEON_ENGINE_BRIDGE_REMOTE", env)
+            self.assertNotIn("PANTHEON_ENGINE_BRIDGE_REPO", env)
+            self.assertNotIn("PANTHEON_ENGINE_BRIDGE_SOURCE_PATH", env)
+            self.assertNotIn("PANTHEON_ENGINE_BRIDGE_PATH", env)
+            self.assertNotIn("PANTHEON_ENGINE_BRIDGE_COMMIT", env)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
