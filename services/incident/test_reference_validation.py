@@ -312,6 +312,81 @@ class TestTelemetryLineageLookupAuthority(unittest.TestCase):
 
         self.assertEqual(urlopen.call_args.kwargs["timeout"], 73)
 
+    def test_http_lookup_resolves_telemetry_api_url_and_incident_tenant(self):
+        class _Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return None
+
+            def read(self):
+                return b'{"target_id":"binding-001"}'
+
+        with patch.dict(
+            "os.environ",
+            {
+                "PANTHEON_TELEMETRY_URL": "",
+                "PANTHEON_TELEMETRY_BASE_URL": "",
+                "PANTHEON_TELEMETRY_API_URL": "http://telemetry-api:8083",
+                "PANTHEON_INCIDENTS_TENANT_ID": "tenant-incidents-prod",
+                "PANTHEON_TENANT_ID": "",
+                "PANTHEON_BFF_TENANT_ID": "",
+            },
+        ):
+            lookup = _TelemetryLineageLookup()
+            self.assertEqual(lookup._base_url, "http://telemetry-api:8083")
+            self.assertEqual(lookup._tenant_id, "tenant-incidents-prod")
+            with patch("urllib.request.urlopen", return_value=_Response()) as urlopen:
+                lookup.runtime_binding_projection("binding-001")
+            req = urlopen.call_args.args[0]
+            self.assertEqual(req.get_header("X-tenant-id"), "tenant-incidents-prod")
+
+    def test_http_lookup_unconfigured_tenant_remains_empty(self):
+        with patch.dict(
+            "os.environ",
+            {
+                "PANTHEON_INCIDENTS_TENANT_ID": "",
+                "PANTHEON_TENANT_ID": "",
+                "PANTHEON_BFF_TENANT_ID": "",
+            },
+        ):
+            lookup = _TelemetryLineageLookup(base_url="http://telemetry:8083")
+            self.assertEqual(lookup._tenant_id, "")
+
+    def test_http_lookup_fail_closed_on_http_error(self):
+        import urllib.error
+
+        lookup = _TelemetryLineageLookup(base_url="http://telemetry:8083")
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=urllib.error.HTTPError(
+                url="http://telemetry:8083",
+                code=400,
+                msg="TENANT_REQUIRED",
+                hdrs={},  # type: ignore[arg-type]
+                fp=None,
+            ),
+        ):
+            with self.assertRaises(CanonicalReferenceError) as ctx:
+                lookup.runtime_binding_projection("binding-001")
+            self.assertIn("HTTP 400", str(ctx.exception))
+
+        # 404 returns None cleanly
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=urllib.error.HTTPError(
+                url="http://telemetry:8083",
+                code=404,
+                msg="Not Found",
+                hdrs={},  # type: ignore[arg-type]
+                fp=None,
+            ),
+        ):
+            result = lookup.runtime_binding_projection("binding-001")
+            self.assertIsNone(result)
+
 
 if __name__ == "__main__":
     unittest.main()
+

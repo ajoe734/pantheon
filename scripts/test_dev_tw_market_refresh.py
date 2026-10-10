@@ -347,6 +347,9 @@ elif args[0] == "inspect":
     if "{{.Image}}" in fmt:
         print(state["image_id"])
         sys.exit(0)
+    elif "org.opencontainers.image.revision" in fmt:
+        print(state.get("projector_image_sha", "abc123"))
+        sys.exit(0)
     elif "Config.Env" in fmt and target == "cid-source-ingest-scheduler":
         print(json.dumps(["PANTHEON_TENANT_ID=tenant-dev", "PANTHEON_ENV=dev", "GIT_SHA=abc123", *state.get("steady_lease_env", ["SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS=1"])]))
         sys.exit(0)
@@ -402,8 +405,12 @@ def _deploy_script_without_readback(tmp_path: Path) -> Path:
     content = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     needle = '  verify_bounded_source_refresh_readback "${refresh_started_at}"\n'
     assert needle in content
+    content = content.replace(needle, "")
+    preflight_needle = '  preflight_output="$(check_taiwan_refresh_preflight "${force}")"'
+    assert preflight_needle in content
+    content = content.replace(preflight_needle, '  preflight_output=\'{"status": "proceed"}\'')
     patched = scripts / DEPLOY_SCRIPT.name
-    patched.write_text(content.replace(needle, ""), encoding="utf-8")
+    patched.write_text(content, encoding="utf-8")
     return patched
 
 
@@ -1343,5 +1350,33 @@ recover_bounded_source_refresh_dlq "true" "tw-twse-tpex-official-market"
     assert "no eligible egress-denied DLQ entries found for recovery" in proc.stdout
     state = json.loads(state_file.read_text(encoding="utf-8"))
     assert not state.get("replay_calls"), "Must not call replay API for entries with missing nested event structure"
+
+
+def test_bounded_refresh_stale_projector_image_guard_fails_closed(tmp_path: Path):
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+        "projector_image_sha": "stale-sha-2026-10-05",
+    }
+    bin_dir, state_file, _events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+
+    proc = subprocess.run(
+        ["bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--force", "--output", str(output_file)],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode != 0, f"Expected refresh to fail closed on stale projector image, got 0:\n{proc.stdout}"
+    assert "stale_projector_image" in proc.stderr
+    assert "source-ingest-agora-projector image revision stale-sha-2026-10-05 != expected abc123" in proc.stderr
+
 
 

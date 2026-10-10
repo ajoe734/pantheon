@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 import io
 import ipaddress
 import json
@@ -912,7 +913,7 @@ def test_counterexample_rejected_in_natural_mode(tmp_path):
     assert artifact["outcome"] == "failed"
     assert artifact["mode"] == "natural"
     assert artifact["governed_case_key"] == DEFAULT_TEST_CASE_KEY
-    assert artifact["failure"]["code"] == "no_complete_paper_aggregate"
+    assert artifact["failure"]["code"] == "invalid_producer"
 
 
 def test_counterexample_accepted_in_controlled_stimulus_mode(tmp_path):
@@ -1991,6 +1992,213 @@ def test_source_api_full_dto_producer_to_verifier(monkeypatch):
     assert snap["snapshot_id"] == prov["market_input_snapshot_id"]
     assert snap["checksum"] == DEFAULT_TEST_SNAPSHOT["checksum"]
     probe._bind_source_snapshot(snap, prov)
+
+
+def _taiwan_snapshot_and_rows(
+    *,
+    trade_date: str = "2026-10-08",
+    event_time: str = "2026-10-08T05:30:00Z",
+    observed_at: str = "2026-10-10T03:12:00Z",
+    signal_event_time_base: str = "2026-10-10T03:15:0",
+    with_evidence: bool = True,
+    evidence_in_lineage: bool = False,
+):
+    from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
+    from services.source_ingestion.requirement_state import MARKET_SNAPSHOT_SCHEMA_VERSION
+
+    ev = (
+        governed_taiwan_calendar_evidence(venue="TWSE", trade_date=trade_date)
+        if with_evidence
+        else None
+    )
+    lineage = {
+        "source_ids": ["tw-official:twse:stock_day_all"],
+        "connector_ids": ["tw-twse-tpex-official-market"],
+        "content_refs": ["ref-tw-001"],
+        "ingest_run_ids": ["run-tw-001"],
+    }
+    if with_evidence and evidence_in_lineage:
+        lineage["calendar_evidence"] = ev
+
+    snap_id = "mss-30acb1675bc853346f828b8d"
+    snap = {
+        "schema_version": MARKET_SNAPSHOT_SCHEMA_VERSION,
+        "snapshot_id": snap_id,
+        "symbol": "2330.TW",
+        "market": "TW",
+        "event_time": event_time,
+        "observed_at": observed_at,
+        "source_ref": f"source-ingest://snapshots/{snap_id}",
+        "closes": [950.0, 960.0],
+        "lineage": lineage,
+        "checksum": "chk-30acb1675bc853346f828b8d-dummy",
+        "data_checksum": "chk-30acb1675bc853346f828b8d-dummy",
+    }
+    if with_evidence and not evidence_in_lineage:
+        snap["calendar_evidence"] = ev
+
+    rows = _natural_lifecycle_rows()
+    for i, row in enumerate(rows, start=1):
+        ts = f"{signal_event_time_base}{i}Z"
+        row["created_at"] = ts
+        p = row["payload"]
+        p["created_at"] = ts
+        p["correlation_envelope"]["event_time"] = ts
+        p["correlation_envelope"]["received_at"] = ts
+        if p["event_type"] == "signal_generation":
+            p["raw_symbol"] = "2330.TW"
+            p["market_input_ref"] = snap["source_ref"]
+            p["market_input_snapshot_id"] = snap["snapshot_id"]
+            p["market_input_observed_at"] = snap["observed_at"]
+            p["market_input_event_time"] = snap["event_time"]
+            p["market_input_lineage"] = snap["lineage"]
+            p["market_input_checksum"] = snap["checksum"]
+
+    case = dict(DEFAULT_TEST_CASE, source_snapshot=snap)
+    return snap, rows, case
+
+
+def test_natural_probe_taiwan_calendar_evidence_passes_after_holiday(tmp_path):
+    snap, rows, case = _taiwan_snapshot_and_rows(with_evidence=True, evidence_in_lineage=False)
+    now_dt = datetime.fromisoformat("2026-10-10T04:00:00+00:00")
+
+    # Stage 1 filter succeeds
+    cands = probe._complete_candidates(rows, mode="natural", case=case, now_dt=now_dt)
+    assert len(cands) == 1
+
+    # Stage 2 validation succeeds with explicit calendar evidence
+    probe._validate_natural_candidate(cands[0], case=case, now_dt=now_dt, snap=snap, require_snapshot=True)
+
+    # Full probe execute passes
+    case_key = "dev-paper-release-tw-passed-1"
+    case["idempotency_key"] = case_key
+    case_source = InMemoryCaseSource({case_key: case}, {snap["snapshot_id"]: snap})
+    root, pub_rows = _publish(tmp_path, rows=rows)
+    out = tmp_path / "out.json"
+    code, artifact = asyncio.run(
+        probe.execute(
+            source=FakeSource(len(pub_rows), pub_rows),
+            projection_root=root,
+            case_source=case_source,
+            expected_sha="deployed-sha",
+            output=out,
+            timeout_seconds=0.1,
+            poll_seconds=0.01,
+            case_key=case_key,
+            now_dt=now_dt,
+        )
+    )
+    assert code == 0
+    assert artifact["outcome"] == "passed"
+
+
+def test_natural_probe_taiwan_lineage_calendar_evidence_passes_after_holiday():
+    snap, rows, case = _taiwan_snapshot_and_rows(with_evidence=True, evidence_in_lineage=True)
+    now_dt = datetime.fromisoformat("2026-10-10T04:00:00+00:00")
+    cands = probe._complete_candidates(rows, mode="natural", case=case, now_dt=now_dt)
+    assert len(cands) == 1
+    probe._validate_natural_candidate(cands[0], case=case, now_dt=now_dt, snap=snap, require_snapshot=True)
+
+
+def test_natural_probe_taiwan_snapshot_without_calendar_evidence_fails_calendar_unverifiable(tmp_path):
+    snap, rows, case = _taiwan_snapshot_and_rows(with_evidence=False)
+    now_dt = datetime.fromisoformat("2026-10-10T04:00:00+00:00")
+
+    # Stage 1 filter does not reject Taiwan candidate for missing calendar evidence
+    cands = probe._complete_candidates(rows, mode="natural", case=case, now_dt=now_dt)
+    assert len(cands) == 1
+
+    # Stage 2 validation with bound snapshot fails closed
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(cands[0], case=case, now_dt=now_dt, snap=snap, require_snapshot=True)
+    assert exc_info.value.code == "market_input_calendar_unverifiable"
+    assert "2026-10-09" in exc_info.value.safe_message
+
+    # Full probe execute reports last natural rejection in failure artifact
+    case_key = "dev-paper-release-tw-missing-ev-1"
+    case["idempotency_key"] = case_key
+    case_source = InMemoryCaseSource({case_key: case}, {snap["snapshot_id"]: snap})
+    root, pub_rows = _publish(tmp_path, rows=rows)
+    out = tmp_path / "out.json"
+    code, artifact = asyncio.run(
+        probe.execute(
+            source=FakeSource(len(pub_rows), pub_rows),
+            projection_root=root,
+            case_source=case_source,
+            expected_sha="deployed-sha",
+            output=out,
+            timeout_seconds=0.1,
+            poll_seconds=0.01,
+            case_key=case_key,
+            now_dt=now_dt,
+        )
+    )
+    assert code == 1
+    assert artifact["outcome"] == "failed"
+    assert artifact["failure"]["code"] == "market_input_calendar_unverifiable"
+    assert "2026-10-09" in artifact["failure"]["message"]
+
+
+def test_natural_probe_taiwan_missed_regular_weekday_fails_stale(tmp_path):
+    # 2026-10-07 close evaluated on 2026-10-10, missing regular trading session on 2026-10-08
+    snap, rows, case = _taiwan_snapshot_and_rows(
+        trade_date="2026-10-07",
+        event_time="2026-10-07T05:30:00Z",
+        with_evidence=True,
+    )
+    now_dt = datetime.fromisoformat("2026-10-10T04:00:00+00:00")
+
+    case_key = "dev-paper-release-tw-stale-1"
+    case["idempotency_key"] = case_key
+    case_source = InMemoryCaseSource({case_key: case}, {snap["snapshot_id"]: snap})
+    root, pub_rows = _publish(tmp_path, rows=rows)
+    out = tmp_path / "out.json"
+    code, artifact = asyncio.run(
+        probe.execute(
+            source=FakeSource(len(pub_rows), pub_rows),
+            projection_root=root,
+            case_source=case_source,
+            expected_sha="deployed-sha",
+            output=out,
+            timeout_seconds=0.1,
+            poll_seconds=0.01,
+            case_key=case_key,
+            now_dt=now_dt,
+        )
+    )
+    assert code == 1
+    assert artifact["outcome"] == "failed"
+    assert artifact["failure"]["code"] == "market_input_stale"
+    assert "2026-10-08" in artifact["failure"]["message"]
+
+
+def test_natural_probe_reports_last_natural_rejection_when_candidate_fails_stage1(tmp_path):
+    # Candidate with non-approved artifact state fails stage 1 and reports artifact_not_approved
+    snap, rows, case = _taiwan_snapshot_and_rows(with_evidence=True)
+    case["artifact_state"] = "draft"
+    case_key = "dev-paper-release-tw-draft-1"
+    case["idempotency_key"] = case_key
+    case_source = InMemoryCaseSource({case_key: case}, {snap["snapshot_id"]: snap})
+    now_dt = datetime.fromisoformat("2026-10-10T04:00:00+00:00")
+    root, pub_rows = _publish(tmp_path, rows=rows)
+    out = tmp_path / "out.json"
+    code, artifact = asyncio.run(
+        probe.execute(
+            source=FakeSource(len(pub_rows), pub_rows),
+            projection_root=root,
+            case_source=case_source,
+            expected_sha="deployed-sha",
+            output=out,
+            timeout_seconds=0.1,
+            poll_seconds=0.01,
+            case_key=case_key,
+            now_dt=now_dt,
+        )
+    )
+    assert code == 1
+    assert artifact["outcome"] == "failed"
+    assert artifact["failure"]["code"] == "artifact_not_approved"
+
 
 
 

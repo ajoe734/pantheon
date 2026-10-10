@@ -9,11 +9,18 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+
+_ROOT = Path(__file__).resolve().parents[1]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from services.service_token_file import configured_service_token
 
 
 CONNECTOR_ID = "tw-twse-tpex-official-market"
@@ -23,11 +30,12 @@ SOURCE_TIMESTAMP_FUTURE_TOLERANCE_SECONDS = 300
 
 
 def _fetch_source_ingest_json(url: str) -> Any:
-    cred = str(
-        os.getenv("AGORA_PROJECTOR_SERVICE_JWT")
-        or os.getenv("PANTHEON_AGORA_PROJECTOR_SERVICE_JWT")
-        or ""
-    ).strip()
+    try:
+        cred = configured_service_token("AGORA_PROJECTOR_SERVICE_JWT")
+    except RuntimeError as exc:
+        raise RuntimeError(f"AGORA_PROJECTOR_SERVICE_JWT is required: {exc}") from exc
+    if not cred:
+        cred = str(os.getenv("PANTHEON_AGORA_PROJECTOR_SERVICE_JWT") or "").strip()
     if not cred:
         raise RuntimeError("AGORA_PROJECTOR_SERVICE_JWT is required")
     tenant = str(os.getenv("PANTHEON_TENANT_ID") or "").strip()

@@ -2183,6 +2183,16 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
   recover_bounded_source_refresh_dlq "${force}" "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" "${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS}"
 
   docker rm -f "${bounded_containers[@]}" >/dev/null 2>&1 || true
+
+  COMPOSE_PROFILES="source-ingest-scheduler,workers" GIT_SHA="${GIT_SHA}" \
+  BUILD_TIME="${BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" \
+    docker compose -p pantheon -f docker-compose.yml build source-ingest-agora-projector \
+    || error "failed to build source-ingest-agora-projector image"
+  local projector_img_id projector_img_sha
+  projector_img_id="$(COMPOSE_PROFILES="source-ingest-scheduler,workers" docker compose -p pantheon -f docker-compose.yml images -q source-ingest-agora-projector 2>/dev/null | head -n 1 || true)"
+  projector_img_sha="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${projector_img_id}" 2>/dev/null || true)"
+  [[ -n "${projector_img_id}" && "${projector_img_sha}" == "${GIT_SHA}" ]] || error "source-ingest-agora-projector image revision ${projector_img_sha:-missing} != expected ${GIT_SHA} (stale_projector_image)"
+
   # A ten second interval keeps the one-shot lease (twice the interval) short,
   # so the restored steady scheduler is fenced for at most one tick.
   for bounded_service in "${bounded_services[@]}"; do
