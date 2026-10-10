@@ -1,0 +1,17 @@
+{
+  "task_id": "TEST-REDIS-CONTAINER-LEAK-20261010",
+  "interpreter": "/usr/bin/python3 (no redis package; runtime/worker-test-python/current not present in this worker host)",
+  "command_count": "docker ps -q --filter name=l12-cap- | wc -l",
+  "missing_redis_runs": [
+    {"file": "services/paper_fleet_reconciler/test_paper_fleet_reconciler.py", "before": 52, "after": 52, "result": "redis proof class skipped (SkipTest); 2 unrelated errors from missing asyncpg/flask"},
+    {"file": "services/execution/lean_runtime/test_signal_isolation.py", "before": 52, "after": 52, "result": "OK, skipped=3"}
+  ],
+  "failure_path_run": {
+    "file": "services/paper_fleet_reconciler/test_paper_fleet_reconciler.py",
+    "method": "stub redis module whose ping always raises, so container starts but readiness times out",
+    "before": 52, "after": 52,
+    "result": "readiness failure errors; container removed by tearDownClass before re-raise"
+  },
+  "acceptance": "1-4 met: redis imported before docker run; BaseException cleanup; counts unchanged; proof path untouched",
+  "note": "Pre-existing leaked containers (52) left for operator, out of scope."
+}
