@@ -4347,13 +4347,12 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       run_dev_candidate_compose up -d \
       || rollback_dev_bff_on_failure "docker_compose_up"
     # `up -d --build` only recreates a container Compose judges to need it.
-    # The legacy lifecycle projector runs with `restart: no` (deliberate
-    # anti-OOM containment: it can otherwise consume the host, so it is never
-    # auto-restarted) -- if it hung or died mid-poll on a prior deploy without
-    # its config changing, Compose leaves the stale/hung container in place
-    # and the exact-SHA readiness gate below can never observe a fresh
-    # publish. Force it every root deploy so a wedged projector cannot
-    # silently survive across deploys.
+    # The incremental lifecycle projector restarts automatically
+    # (unless-stopped) with a bounded mem_limit, but a restart policy does not
+    # replace a hung-but-running container. If it wedged mid-poll on a prior
+    # deploy without its config changing, Compose leaves it in place and the
+    # exact-SHA readiness gate below can never observe a fresh publish. Force
+    # it every root deploy so a wedged projector cannot silently survive.
     run_dev_candidate_compose up -d --force-recreate --no-deps loop-run-projector-scheduler \
       || rollback_dev_bff_on_failure "projector_recreate"
     # Phase 4: Post-Deploy Bounded Verification
