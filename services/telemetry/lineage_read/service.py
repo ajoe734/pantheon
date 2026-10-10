@@ -27,7 +27,7 @@ import threading
 from collections import defaultdict, deque
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 log = logging.getLogger(__name__)
 
@@ -3132,15 +3132,16 @@ class LineageReadService:
         result = service.query("runtime_binding_projection", binding_id="rb-alpha-live-001")
     """
 
-    def __init__(self) -> None:
-        self.graph = LineageGraph()
-        self.traverser = LineageTraverser(self.graph)
-        self.projection = ProjectionBuilder()
-        # LIN-003: guards graph mutation (live event/binding admission) against
-        # concurrent reads from the HTTP query surface — both run on separate
-        # threads (ingest's asyncio loop thread vs. Flask request threads)
-        # against the same in-memory graph instance.
-        self._lock = threading.RLock()
+    def __init__(
+        self,
+        *,
+        event_reader: Optional[Callable[[str], Optional[dict[str, Any]]]] = None,
+        binding_events_reader: Optional[Callable[[str], list[dict[str, Any]]]] = None,
+        binding_store: Optional[Any] = None,
+    ) -> None:
+        self.graph, self.projection = LineageGraph(), ProjectionBuilder()
+        self.traverser, self._lock = LineageTraverser(self.graph), threading.RLock()
+        self._event_reader, self._binding_events_reader, self._binding_store = event_reader, binding_events_reader, binding_store
 
     def load_corpus(self, corpus: dict[str, Any]) -> None:
         """Load a LIN-001A benchmark corpus into the service."""
@@ -3233,6 +3234,58 @@ class LineageReadService:
                     to_id=persona_capital_binding_id,
                 ))
 
+    def _resolve_binding(self, bid: str) -> Optional[Any]:
+        if not (bid and self._binding_store): return None
+        fn = getattr(self._binding_store, "get_binding", getattr(self._binding_store, "get", None))
+        return fn(bid) if callable(fn) else None
+
+    def _binding_from_source(self, bid: str, data: dict[str, Any], tenant: Any) -> Optional[dict[str, Any]]:
+        if not tenant or not (status := data.get("binding_status") or data.get("status")): return None
+        return {
+            "binding_id": bid, "tenant_id": str(tenant).strip(),
+            "runtime_id": data.get("runtime_id"), "artifact_id": data.get("artifact_id"),
+            "artifact_version": data.get("artifact_version"), "capital_pool_id": data.get("capital_pool_id"),
+            "plan_id": data.get("plan_id") or data.get("deployment_plan_id"),
+            "persona_capital_binding_id": data.get("persona_capital_binding_id"),
+            "status": str(status).strip(),
+        }
+
+    def _hydrate_event(self, event_id: str, tenant_id: Optional[str] = None) -> None:
+        if not self._event_reader: return
+        try: event = self._event_reader(event_id, tenant_id=tenant_id)
+        except TypeError: event = self._event_reader(event_id)
+        if not event: return
+        ev_tenant = str(event.get("tenant_id") or (event.get("metadata") or {}).get("tenant_id") or "").strip()
+        if not ev_tenant or (tenant_id is not None and ev_tenant != str(tenant_id).strip()): return
+        bid = event.get("binding_id") or event.get("runtime_binding_id")
+        b = self._resolve_binding(bid) if bid else None
+        if bid and not b and not self._binding_store:
+            b = self._binding_from_source(bid, event, ev_tenant)
+        if bid and not b: return
+        if b:
+            b_tenant = str((b.get("tenant_id") if isinstance(b, Mapping) else getattr(b, "tenant_id", None)) or "").strip()
+            if not b_tenant or b_tenant != ev_tenant or (tenant_id is not None and b_tenant != str(tenant_id).strip()): return
+            if any((b_v := b.get(k) if isinstance(b, Mapping) else getattr(b, k, None)) and (e_v := event.get(k)) and b_v != e_v for k in ("runtime_id", "artifact_id", "artifact_version")): return
+        self.admit_telemetry_event(event, b)
+
+    def _hydrate_binding(self, binding_id: str, tenant_id: Optional[str] = None) -> None:
+        binding = self._resolve_binding(binding_id)
+        b_tenant = str((binding.get("tenant_id") if isinstance(binding, Mapping) else getattr(binding, "tenant_id", None)) or "").strip() if binding else ""
+        if binding and (not b_tenant or (tenant_id is not None and b_tenant != str(tenant_id).strip())): return
+        try: events = self._binding_events_reader(binding_id, tenant_id=tenant_id) if self._binding_events_reader else []
+        except TypeError: events = self._binding_events_reader(binding_id) if self._binding_events_reader else []
+        if not binding and not events: return
+        if not b_tenant and events:
+            b_tenant = str(events[0].get("tenant_id") or (events[0].get("metadata") or {}).get("tenant_id") or "").strip()
+        if not b_tenant or (tenant_id is not None and b_tenant != str(tenant_id).strip()): return
+        if not binding and not self._binding_store and events: binding = self._binding_from_source(binding_id, events[0], b_tenant)
+        if not binding: return
+        _admit_runtime_binding_node(self.graph, binding_id, binding, tenant_id=b_tenant)
+        for ev in events:
+            ev_tenant = str(ev.get("tenant_id") or (ev.get("metadata") or {}).get("tenant_id") or "").strip()
+            if ev_tenant == b_tenant and not any((b_v := binding.get(k) if isinstance(binding, Mapping) else getattr(binding, k, None)) and (e_v := ev.get(k)) and b_v != e_v for k in ("runtime_id", "artifact_id", "artifact_version")):
+                self.admit_telemetry_event(ev, binding)
+
     def query(
         self,
         query_family: str,
@@ -3273,6 +3326,10 @@ class LineageReadService:
             Projection payload matching the LIN-001A corpus shape.
         """
         with self._lock:
+            if query_family == "telemetry_event_trace" and event_id and self.graph.get_node(NODE_TELEMETRY_EVENT, event_id) is None:
+                self._hydrate_event(event_id, tenant_id)
+            elif query_family == "runtime_binding_projection" and binding_id and self.graph.get_node(NODE_RUNTIME_BINDING, binding_id) is None:
+                self._hydrate_binding(binding_id, tenant_id)
             traverser = self.traverser
             if tenant_id is not None:
                 normalized_tenant_id = str(tenant_id).strip()

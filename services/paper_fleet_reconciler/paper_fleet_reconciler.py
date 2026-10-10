@@ -66,6 +66,8 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import fcntl
 
+from services.execution.lean_runtime.paper_runtime import _extract_verified_bridge
+
 from services.execution.market_snapshot_admission import (
     SnapshotAdmissionDecision,
     admit_market_snapshot,
@@ -1232,6 +1234,18 @@ class PaperFleetReconciler:
             env["PANTHEON_PERFORMANCE_STATE_PATH"] = str(
                 self._performance_state_root / _binding_state_filename(binding_id)
             )
+        for k in ("PANTHEON_ENGINE_BRIDGE_REMOTE", "PANTHEON_ENGINE_BRIDGE_REPO", "PANTHEON_ENGINE_BRIDGE_SOURCE_PATH", "PANTHEON_ENGINE_BRIDGE_PATH", "PANTHEON_ENGINE_BRIDGE_COMMIT", "PANTHEON_RUNTIME_ADAPTER_VERSION", "PANTHEON_CONTEXT_SOURCE"):
+            env.pop(k, None)
+        meta = binding.get("metadata") if isinstance(binding.get("metadata"), dict) else {}
+        if b := _extract_verified_bridge(binding):
+            env["PANTHEON_ENGINE_BRIDGE_REMOTE"] = env["PANTHEON_ENGINE_BRIDGE_REPO"] = b["engine_bridge_repo"]
+            env["PANTHEON_ENGINE_BRIDGE_SOURCE_PATH"] = env["PANTHEON_ENGINE_BRIDGE_PATH"] = b["engine_bridge_path"]
+            env["PANTHEON_ENGINE_BRIDGE_COMMIT"] = b["engine_bridge_commit"]
+            if ver := b.get("runtime_adapter_version"): env["PANTHEON_RUNTIME_ADAPTER_VERSION"] = ver
+            if csrc := b.get("context_source"): env["PANTHEON_CONTEXT_SOURCE"] = csrc
+        for k, src in (("PANTHEON_ARTIFACT_CHECKSUM", ("artifact_checksum", "checksum")), ("PANTHEON_STRATEGY_ID", ("strategy_id",)), ("PANTHEON_RUNTIME_ROLE", ("runtime_role",))):
+            if val := next((binding[s] for s in src if s in binding and binding[s] not in (None, "")), None) or next((meta[s] for s in src if s in meta and meta[s] not in (None, "")), None):
+                env[k] = str(val)
         return env
 
     def _start_worker(

@@ -1,0 +1,41 @@
+{
+  "task_id": "PAPER-RUNTIME-REAL-OBSERVABILITY-ENVELOPE-20261010",
+  "title": "Publish genuine paper runtime bridge and causal lag observations",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "status": "ready_for_review",
+  "root_cause_analysis": {
+    "bridge_identity_absence": "PaperFleetReconciler._worker_env previously omitted forwarding verified engine bridge and context metadata from binding / binding.metadata, resulting in worker runtime context loaded: false and bridge reporting degraded in owner evaluation.",
+    "context_bootstrap": "PaperRuntimeService did not initialize PantheonRuntimeContext from manifest or environment when runtime_context was not explicitly injected, preventing fallback telemetry from accessing bridge attributes.",
+    "causal_lag_absence": "PaperRuntimeService did not measure causal queue lag strictly from genuine signal enqueue timestamps, and previously risked falling back to generic event timestamps; RuntimeTelemetryEmitter did not record genuine HTTP delivery latency, leaving delivery_lag_ms / event_delivery_lag_ms absent.",
+    "unverified_and_conflicting_bridge_remediation": "Binding metadata presence is not installed/executed bridge provenance. Catalog tags or nonexistent paths must not derive false healthy bridge status. Conflicting top-level vs metadata values or unverified repo / nonexistent installed paths must fail closed and remain degraded/omitted rather than falling back to inherited environment variables or guessing defaults."
+  },
+  "remediation": {
+    "paper_fleet_reconciler": "In _worker_env, clear inherited bridge env vars, use _extract_verified_bridge to verify bridge repo against ALLOWED_ENGINE_BRIDGE_REMOTES and path against ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS with actual installed existence on disk. Retain conflict fail-closed without falling back to inherited env. Only inject verified bridge environment variables when authentic, leaving absent/unverified bridge degraded.",
+    "runtime_context": "In _normalize_payload, check for conflicts between top-level binding and metadata values, raising RuntimeContextError on conflict; preserve strict validation semantics requiring bridge.path in ALLOWED_ENGINE_BRIDGE_SOURCE_PATHS without validator widening or casefold.",
+    "telemetry_emitter": "Record monotonic roundtrip elapsed time across urllib.request.urlopen in emit_payload as last_delivery_lag_ms; expose in snapshot; support extra_metrics in emit_heartbeat; in _base_metadata use _extract_verified_bridge to omit conflicting, unverified, uninstalled or absent bridge attributes without guessing adapter versions or context sources so bridge status stays degraded.",
+    "paper_runtime": "Initialize PantheonRuntimeContext from manifest/env if omitted in PaperRuntimeService; measure causal queue lag strictly from genuine signal enqueue observations (enqueued_at or causal_queue_receipt); missing/unverifiable timestamps stay strictly None/degraded without fallback to generic event timestamps or creation times."
+  },
+  "line_budget_compliance": {
+    "net_production_lines_allowed": 80,
+    "net_production_lines_actual": 69,
+    "breakdown": {
+      "paper_runtime.py": "+59, -13 (net +46)",
+      "runtime_context.py": "+7, -1 (net +6)",
+      "paper_fleet_reconciler.py": "+28, -11 (net +17)",
+      "total_net": 69
+    }
+  },
+  "test_results": {
+    "services/execution/lean_runtime/test_paper_runtime.py": "75 passed (including queue lag degraded/causal receipt tests, catalog-known-not-installed omission, conflict fail-closed without inherited env fallback, and unverified/conflicting bridge omission tests)",
+    "services/execution/lean_runtime/test_runtime_context.py": "16 passed (including conflicting provenance and uninstalled bridge path rejection tests)",
+    "total": "91 passed, 27 subtests passed in 17.62s"
+  },
+  "invariants_preserved": [
+    "Strict tenant/environment isolation preserved",
+    "Zero financial validator, cash/price arithmetic, or threshold modifications",
+    "Missing timestamps and unobserved telemetry delivery remain explicit None/null (degraded state), never faked or defaulted to 0",
+    "Unverified, conflicting, or nonexistent bridge paths stay degraded and do not emit false healthy bridge telemetry or fall back to inherited env",
+    "No external credentials, tokens, or live trading routes altered"
+  ]
+}
