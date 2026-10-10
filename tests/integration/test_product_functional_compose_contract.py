@@ -47,7 +47,7 @@ def test_source_default_is_zero_egress_and_snapshot_state_is_durable() -> None:
 
     # Reconciliation is the default service behavior. A pull requires the
     # explicit bounded deployment profile and exact allowlists.
-    assert "profiles" not in scheduler
+    assert "root" in scheduler["profiles"]
     assert scheduler_env["SOURCE_INGEST_CONTROLLER_MODE"] == (
         "${SOURCE_INGEST_CONTROLLER_MODE:-reconcile_only}"
     )
@@ -63,7 +63,7 @@ def test_agora_management_and_provider_use_exact_healthy_owners() -> None:
     bff_env = _environment(bff)
 
     expected_owner_urls = {
-        "PANTHEON_REGISTRY_API_URL": "http://registry:8087",
+        "PANTHEON_REGISTRY_API_URL": "${PANTHEON_REGISTRY_API_URL:-http://registry:8087}",
         "PANTHEON_CONSULTATION_API_URL": "http://consultation-svc:8096",
         "PANTHEON_SOURCE_INGEST_API_URL": "http://source-ingest:8097",
         "PANTHEON_RESEARCH_ORCHESTRATOR_API_URL": "http://research-orchestrator-svc:8101",
@@ -119,7 +119,7 @@ def test_only_dynamic_executable_paper_fleet_is_default_and_is_source_bound() ->
 
     fleet_env = _environment(fleet)
     producer_env = _environment(producer)
-    assert "profiles" not in fleet
+    assert "root" in fleet["profiles"]
     assert static_runtime["profiles"] == ["static-paper-runtime"]
     assert fleet_env["PANTHEON_SOURCE_INGEST_URL"] == "http://source-ingest:8097"
     assert fleet_env["PANTHEON_PERFORMANCE_STATE_ROOT"] == "/data/runtime/paper-performance"
@@ -153,9 +153,16 @@ def test_legacy_profiles_remain_explicit_compatibility_or_operator_paths() -> No
     # reconciler is the sole default paper owner.
     assert services["pantheon-paper-runtime"]["profiles"] == ["static-paper-runtime"]
     assert services["source-ingest-agora-projector"]["profiles"] == [
-        "source-ingest-scheduler"
+        "source-ingest-scheduler",
+        "workers",
     ]
-    assert services["openclaw-gateway"]["profiles"] == ["openclaw"]
+    assert "root" not in services["source-ingest-agora-projector"]["profiles"]
+    # OpenClaw now ships in the default root deployment via management-ai.
+    assert services["openclaw-gateway"]["profiles"] == [
+        "management-ai",
+        "openclaw",
+        "root",
+    ]
 
 
 def test_dev_login_ttl_contract_supports_bounded_proof_window() -> None:

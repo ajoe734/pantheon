@@ -1,0 +1,38 @@
+{
+  "task_id": "AGORA-PROJECTOR-HOSTED-PRINCIPAL-20261010",
+  "scope": "hosted dev agora projector source read principal and image freshness",
+  "hosted_dev_incident": {
+    "run_id": 38019541689,
+    "workflow": "Dev Taiwan Market Daily Refresh",
+    "commit": "b3424c06f",
+    "failure_summary": "pantheon-bounded-refresh-source-ingest-agora-projector exited 1: urllib HTTPError 401 from GET /api/source-ingest/source-records in scripts/project_market_data_to_bff_agora_surfaces.py _get_source_records (unauthenticated)",
+    "stale_image_evidence": {
+      "image": "pantheon-source-ingest-agora-projector:latest",
+      "built_at": "2026-10-05T08:06:00Z",
+      "cause": "service profiles ['source-ingest-scheduler', 'workers'] are outside the Root deploy build set and bounded refresh path used docker compose run without building"
+    },
+    "credential_evidence": {
+      "missing_credential": "AGORA_PROJECTOR_SERVICE_JWT",
+      "precedent_gap": "AGORA-PROJECTOR-SOURCE-READ-AUTH-20261006 (#6204) introduced authenticated reads but hosted dev provisioning follow-up was uncreated"
+    }
+  },
+  "changes": [
+    "issue_dev_paper_principals: added AGORA_PROJECTOR_SERVICE_JWT to READERS (role source_ingest_reader, tenant-dev, scope pantheon:dev-owner-read, 24h expiry) and mounted into source-ingest-agora-projector via CONSUMER_FILES",
+    "docker-compose.yml: mounted dev-paper-agora-projector-tokens into source-ingest-agora-projector at /run/pantheon-principals:ro; configured AGORA_PROJECTOR_SERVICE_JWT_FILE; added GIT_SHA/BUILD_TIME build args and build.labels org.opencontainers.image.revision",
+    "scripts/project_market_data_to_bff_agora_surfaces.py: reads credential through services.service_token_file.configured_service_token; dynamic file rotation supported; absent/unsafe/malformed/empty file fails closed naming AGORA_PROJECTOR_SERVICE_JWT with no env fallback when _FILE is configured",
+    "scripts/deploy_nonprod_vm.sh: execute_bounded_source_refresh_entrypoint builds source-ingest-agora-projector with GIT_SHA and verifies org.opencontainers.image.revision matches GIT_SHA before running, failing closed with stale_projector_image otherwise",
+    "scripts/run_isolated_l12_runtime_e2e.py: stimulus gate resolves AGORA_PROJECTOR_SERVICE_JWT directly from compose_env (issued by issue_dev_paper_principals) with no second minter"
+  ],
+  "verification": {
+    "scripts/test_project_market_data_to_bff_agora_surfaces.py": "28 passed",
+    "scripts/test_issue_dev_paper_principals.py": "40 passed",
+    "scripts/test_current_l12_compose_wiring.py": "8 passed",
+    "scripts/test_run_isolated_l12_runtime_e2e.py": "48 passed",
+    "scripts/test_dev_tw_market_refresh.py": "32 passed"
+  },
+  "not_claimed": [
+    "hosted accepted",
+    "FULL gate",
+    "deploy"
+  ]
+}

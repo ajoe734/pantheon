@@ -222,6 +222,29 @@ def test_deploy_nonprod_vm_wires_dev_reconciliation_drift_postgres_store() -> No
     assert 'RECONCILIATION_DRIFT_STORE_DSN="${RECONCILIATION_DRIFT_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}"' in script_text
 
 
+def test_lifecycle_projector_restarts_automatically() -> None:
+    """The incremental projector must come back after a host restart."""
+    compose_data = yaml.safe_load(COMPOSE_PATH.read_text(encoding="utf-8"))
+    projector = compose_data["services"]["loop-run-projector-scheduler"]
+
+    assert projector.get("restart") == "${LIFECYCLE_PROJECTOR_RESTART_POLICY:-unless-stopped}"
+
+
+def test_root_deploy_exports_projector_freshness_budget_before_forced_recreate() -> None:
+    """The forced projector recreate must inherit the dev freshness budget."""
+    script_text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    root_block = script_text.split("\n  root)\n", 1)[1]
+    export_line = (
+        'export LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS='
+        '"${PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS}"'
+    )
+    recreate = "run_dev_candidate_compose up -d --force-recreate --no-deps loop-run-projector-scheduler"
+    assert export_line in root_block
+    assert recreate in root_block
+    assert root_block.index(export_line) < root_block.index(recreate)
+    assert root_block.index(export_line) < root_block.index("run_dev_candidate_compose up -d \\\n")
+
+
 def test_source_ingestion_remains_reconcile_only_manual() -> None:
     """Source Ingestion in docker-compose.yml must remain reconcile-only / manual.
 
@@ -351,7 +374,7 @@ def test_deploy_nonprod_vm_dev_requires_artifact_admission_without_staging_vars(
     assert proc.returncode != 0
     assert "candidate evidence directory must be canonical and absolute" in proc.stderr
     assert "unbound variable" not in proc.stderr
-    assert "direct ssh chloe_ong_dev_cctech_support_com@34.81.52.222 component=root" in proc.stdout
+    assert "direct ssh chloe_ong_dev_cctech_support_com@35.194.154.62 component=root" in proc.stdout
     assert "deployment complete:" not in proc.stdout
     assert not args_file.exists()
     assert not stdin_file.exists()

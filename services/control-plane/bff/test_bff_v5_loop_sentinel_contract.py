@@ -1097,6 +1097,47 @@ def test_l12_bff_complete_registry_and_error_rate_spike(
     assert error_events[0]["observation"]["error_rate"] == pytest.approx(2 / 3)
 
 
+def test_error_rate_window_overlapping_emission_queues_one_delivery(tmp_path):
+    monitor = _health_monitor(
+        tmp_path,
+        incidents_url="",
+        error_rate_window_seconds=300,
+        error_rate_threshold=0.5,
+        error_rate_min_samples=1,
+    )
+
+    def window(samples: int) -> Dict[str, Any]:
+        return {
+            "window_started_at": "2026-10-10T00:00:00Z",
+            "last_status_code": 503,
+            "latency_ms": float(samples),
+            "last_observed_at": "2026-10-10T00:00:05Z",
+            "last_detail": "spike",
+            "sample_count": samples,
+            "failure_count": samples,
+            "error_rate": 1.0,
+        }
+
+    async def drive() -> None:
+        with patch.object(health_module, "_post_json", return_value=(True, 202)):
+            await asyncio.gather(
+                monitor._emit_error_rate_window(
+                    target_name="source-ingest", window=window(3)
+                ),
+                monitor._emit_error_rate_window(
+                    target_name="source-ingest", window=window(4)
+                ),
+            )
+
+    asyncio.run(drive())
+    deliveries = [
+        d
+        for d in monitor._store.list_deliveries()
+        if d["channel"] == "telemetry"
+    ]
+    assert len(deliveries) == 1
+
+
 def test_l12_bff_real_target_stop_and_recovery_resolves_durable_mapping(
     tmp_path,
     monkeypatch,

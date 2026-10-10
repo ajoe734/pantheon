@@ -1,0 +1,11 @@
+{
+  "task_id": "LIFECYCLE-PROJECTOR-AUTO-RESTART-20261010",
+  "change": "loop-run-projector-scheduler default restart policy no -> unless-stopped (LIFECYCLE_PROJECTOR_RESTART_POLICY); mem_limit, healthcheck, environment unchanged; forced recreate on root deploy kept",
+  "reason": "2026-10-09 VM restart left the projector Exited(137); BFF /readyz 503 for ~40 minutes until manual docker start",
+  "verification": {
+    "new_test": "scripts/test_deploy_nonprod_vm.py::test_lifecycle_projector_restarts_automatically passes on head; base compose has ':-no' so it fails there",
+    "updated_test": "services/trade_journey/test_lifecycle_projector_compose.py restart assertion updated (that file has 3 pre-existing profiles-assertion failures unrelated to this change)",
+    "full_file_run": "scripts/test_deploy_nonprod_vm.py: 47 passed, 2 skipped, 1 failed (test_paper_signal_producer_binding_recovery_and_health_lifecycle: ModuleNotFoundError services/execution/artifact_loader.py in the scratch venv, unrelated to compose restart policy)"
+  },
+  "not_done": ["No hosted deploy performed"]
+}

@@ -1,0 +1,11 @@
+{
+  "task_id": "DEPLOY-ROOT-PROJECTOR-FRESHNESS-EXPORT-20261010",
+  "change": "root case exports LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS next to GIT_SHA",
+  "tests": {
+    "head": "scripts/test_deploy_nonprod_vm.py: 49 passed, 2 skipped",
+    "base": "new test fails without the deploy script change"
+  },
+  "occurrences_of_prefix_form_in_root_block": 2,
+  "unforwarded_first_up_prefix_vars_read_by_projector": ["PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED"],
+  "notes": "Forced recreate gets compose default false for PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED (first up passes true); reported, not changed. COMPOSE_PROFILES also not set on the recreate. Other projector env (TELEMETRY_DB_DSN, LIFECYCLE_PROJECTOR_*) is not in the first-up prefix."
+}

@@ -1,0 +1,26 @@
+{
+  "task_id": "NATURAL-PROBE-TW-CALENDAR-EVIDENCE-20261010",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "change": "The natural lifecycle probe now evaluates Taiwan market-session freshness using the calendar evidence carried by the bound market snapshot (calendar_evidence or lineage.calendar_evidence) through the canonical admit_market_snapshot admission rule, with no duplicate freshness logic. The snapshot-less first-stage candidate filter defers calendar-unverifiable rejections while still enforcing strict official Taiwan lineage and timing boundaries; the calendar-aware check runs when the snapshot is bound and fails closed. Candidate rejections in the first and second stages are captured so that when no candidate passes, the failure artifact reports the exact last natural rejection code and detail instead of the generic no_complete_paper_aggregate code.",
+  "diagnosis_and_incident": {
+    "deploy_run_id": "38022534873",
+    "deploy_commit": "615851aeb",
+    "case_key": "dev-paper-release-38022534873-1",
+    "incident_summary": "Dev canonical paper lifecycle hosted probe failed with no_complete_paper_aggregate for case dev-paper-release-38022534873-1 despite paper lifecycle completing: paper-signal-producer enqueued signals every minute for the case binding, telemetry_events recorded 19 full chains (04:18:51Z-04:36:50Z), and trade_journey_projection held journeys for runs -2 and -8 with 8 stages and loop_runs completed_with_variance live/accepted.",
+    "offline_replay": "Replay of the probe on those rows demonstrated both completed chains passed structure and identity checks, but were discarded by _validate_natural_candidate calling evaluate_taiwan_market_freshness without snapshot calendar evidence; the gap loop reached 2026-10-09 (TWSE National Day makeup holiday) and returned market_input_calendar_unverifiable. Furthermore, _complete_candidates swallowed the ProbeError, emitting the generic no_complete_paper_aggregate in the failure artifact."
+  },
+  "acceptance_verification": {
+    "ac1_canonical_admission_rule": "Verified: natural probe delegates Taiwan market freshness to admit_market_snapshot with calendar_evidence resolved from snapshot_to_bind or snapshot_to_bind.lineage.",
+    "ac2_first_stage_deferral": "Verified: first-stage candidate filter (_complete_candidates) does not reject Taiwan candidates for missing calendar evidence (market_input_calendar_unverifiable); strict check runs where snapshot is bound.",
+    "ac3_failure_artifact_reporting": "Verified: candidate rejections in _complete_candidates and run_probe update last_error, reporting the exact failure code (e.g. market_input_calendar_unverifiable, invalid_producer, artifact_not_approved) instead of generic no_complete_paper_aggregate.",
+    "ac4_regression_tests": "Verified: test_natural_probe_taiwan_calendar_evidence_passes_after_holiday (passes with 2026-10-08 close on 2026-10-10 using twse-2026-schedule-v1), test_natural_probe_taiwan_snapshot_without_calendar_evidence_fails_calendar_unverifiable (fails market_input_calendar_unverifiable), and test_natural_probe_taiwan_missed_regular_weekday_fails_stale (fails market_input_stale)."
+  },
+  "verification": {
+    "probe_test_file": "112 passed, 1 skipped (opt-in PostgreSQL test honestly skipped; no shared database targeted)",
+    "market_snapshot_admission_test_file": "26 passed",
+    "scripts_test_branch_ci_gate_selection": "10 passed, 3 subtests passed"
+  },
+  "net_production_lines": 26,
+  "hosted": "no VM writes, SSH, deploy, or live trading performed; hosted acceptance is the next dev deploy passing the natural probe."
+}

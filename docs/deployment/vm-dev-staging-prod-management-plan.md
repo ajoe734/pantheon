@@ -79,12 +79,30 @@ GitHub API `repos/ajoe734/pantheon/actions/variables/{name}` 唯讀取得以下
 非秘密設定；這是 **configured identity**，不是 DNS／HTTPS、hosted pair 或產品驗收通過證據。
 此次清理沒有連線舊 VM，也沒有修改任何 GitHub 變數或雲端資源。
 
+2026-10-09 復原紀錄（`DEV-EXISTING-VM-RESTORE-20261009`）：Billing 重新綁定後，同一台
+VM `pantheon-dev-deploy`（instance id `7359126697477292303`、同一顆 200 GB 開機碟）由
+TERMINATED 以 `instances start` 啟動，未重建 VM／磁碟，也未配置保留靜態 IP。啟動後的臨時外部 IP
+為 `35.194.154.62`（舊的 `34.81.52.222` 已釋放，不得探測）。`api.dev.mvl-cap.tw` 與
+`app.dev.mvl-cap.tw` 的 A record 已改為新 IP（TTL 300、NS 不變），`DEV_DEPLOY_SSH_HOST`
+（repo 與 `dev` environment）及 `DEV_DEPLOY_SSH_KNOWN_HOSTS` 已同步；known_hosts 沿用原本釘選的三把
+公開 host key（ecdsa／rsa／ed25519），未使用 ssh-keyscan。證據見
+`docs/deployment/evidence/DEV-EXISTING-VM-RESTORE-20261009/evidence.json`。
+
+2026-10-10 操作者要求後，`35.194.154.62` 已由臨時 IP 原地升級為保留靜態位址
+`pantheon-dev-deploy-ip`（region `asia-east1`，`EXTERNAL`，使用者為 `pantheon-dev-deploy`），
+IP 未改變、VM 未重啟。之後 VM 停止再啟動仍保有同一 IP，DNS 與 `DEV_DEPLOY_SSH_HOST`
+不需再同步；VM 停止期間保留位址仍會計費。部署腳本中「目前 dev 目標」的固定比對
+（`scripts/deploy_nonprod_vm.sh` 的 `ssh_bash`、`scripts/capture_dev_artifact_baseline.py`
+的 `require_guarded_dev`、`scripts/dev_release_artifact_driver.py` 的 public probe 允許清單）
+已同步改為此 IP。若日後要更換 dev IP，必須同時改這三處、DNS A record 與兩組
+`DEV_DEPLOY_SSH_HOST`／`DEV_DEPLOY_SSH_KNOWN_HOSTS` 變數。
+
 | GitHub repository variable | 已設定值 |
 | --- | --- |
 | `DEV_GCP_DEPLOY_PROJECT_ID` | `pantheon-dev-20260902` |
 | `DEV_VM` | `pantheon-dev-deploy` |
 | `DEV_ZONE` | `asia-east1-b` |
-| `DEV_DEPLOY_SSH_HOST` | `34.81.52.222` |
+| `DEV_DEPLOY_SSH_HOST` | `35.194.154.62` |
 | `NONPROD_REMOTE_USER` | `chloe_ong_dev_cctech_support_com` |
 | `DEV_REMOTE_DIR` | `/home/chloe_ong_dev_cctech_support_com/pantheon` |
 | `DEV_DEPLOY_WORKTREE_ROOT` | `/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/managed-deploy-worktrees` |

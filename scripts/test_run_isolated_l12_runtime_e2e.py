@@ -943,6 +943,16 @@ def test_preview_worker_token_authenticates_against_the_training_verifier(monkey
     assert env["TRAINING_SESSION_WORKER_TOKEN_FILE"] == "/run/pantheon-principals/TRAINING_SESSION_WORKER_TOKEN"
 
 
+def test_agora_projector_token_is_issued_from_the_same_issuer_with_no_second_minter() -> None:
+    env = _composed_isolated_env()
+    token = env["AGORA_PROJECTOR_SERVICE_JWT"]
+    claims = _decoded_claims(token, env["PANTHEON_DEV_BFF_JWT_SECRET"])
+    assert claims["sub"] == claims["service"] == "pantheon-dev-agora-projector-reader"
+    assert claims["roles"] == ["source_ingest_reader"]
+    assert claims["tenant_id"] == "tenant-dev" and claims["allowed_tenants"] == ["tenant-dev"]
+    assert env["AGORA_PROJECTOR_SERVICE_JWT_FILE"] == "/run/pantheon-principals/AGORA_PROJECTOR_SERVICE_JWT"
+
+
 def test_preview_worker_token_negative_controls(monkeypatch: pytest.MonkeyPatch) -> None:
     env = _composed_isolated_env()
     token = env["TRAINING_SESSION_WORKER_TOKEN"]
