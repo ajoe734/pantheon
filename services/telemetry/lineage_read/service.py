@@ -3370,12 +3370,12 @@ class LineageReadService:
 
 def _owner_tenant(b: Any) -> Optional[str]:
     if not isinstance(b, (Mapping, SimpleNamespace)): return None
-    top = b.get("tenant_id") if isinstance(b, Mapping) else getattr(b, "tenant_id", None)
-    top_t, meta_t = str(top).strip() if top is not None else "", ""
-    if (meta := b.get("metadata") if isinstance(b, Mapping) else getattr(b, "metadata", None)) is not None:
-        if not isinstance(meta, (Mapping, SimpleNamespace)): return None
-        mv = meta.get("tenant_id") if isinstance(meta, Mapping) else getattr(meta, "tenant_id", None)
-        meta_t = str(mv).strip() if mv is not None else ""
+    _val = lambda x: (True, x.strip()) if isinstance(x, str) and x.strip() else (x is None, "")
+    ok1, top_t = _val(b.get("tenant_id") if isinstance(b, Mapping) else getattr(b, "tenant_id", None))
+    meta = b.get("metadata") if isinstance(b, Mapping) else getattr(b, "metadata", None)
+    if not ok1 or (meta is not None and not isinstance(meta, (Mapping, SimpleNamespace))): return None
+    ok2, meta_t = _val(meta.get("tenant_id") if isinstance(meta, Mapping) else getattr(meta, "tenant_id", None)) if meta is not None else (True, "")
+    if not ok2: return None
     return (top_t if top_t == meta_t else None) if (top_t and meta_t) else (top_t or meta_t or None)
 
 

@@ -7,7 +7,7 @@
   "base_sha": "537d2caa1976a243ece63a2d1c3f1f7a8d92381b",
   "change_class": "corrective",
   "net_prod_line_budget": 20,
-  "summary": "Supports canonical owner metadata.tenant_id on durable lineage reads without defaulting. In services/telemetry/lineage_read/service.py, adds explicit _owner_tenant envelope validation to honor both top-level tenant_id and metadata.tenant_id for Mapping and SimpleNamespace owner envelopes. Validates that if both top-level and metadata tenant IDs are present, they must be equal. Missing, foreign, conflicting, or invalid owner scopes fail closed with HTTP 404 (LINEAGE_TARGET_NOT_FOUND) without inferring tenant from request, environment, or event. Applies canonical owner scope validation to event hydration, binding hydration, and runtime binding graph node admission while preserving runtime/artifact/version qualification and actual paused binding status without ACTIVE fallback. Preserves immutable tenant-scoped PostgreSQL truth and the 5.0s bounded fetch deadline. Adds test_10 for explicit flat-only, metadata-only (dict and SimpleNamespace), matching, conflicting, foreign, missing, and invalid envelope regressions and test_11 for fresh-reader recovery of event trace and paused binding projection without re-ingest in services/telemetry/test_main_routes.py. Keeps net production diff strictly within <=20 lines budget (+17 net lines).",
+  "summary": "Supports canonical owner metadata.tenant_id on durable lineage reads without defaulting. In services/telemetry/lineage_read/service.py, adds explicit _owner_tenant envelope validation to honor both top-level tenant_id and metadata.tenant_id for Mapping and SimpleNamespace owner envelopes. Strictly rejects non-string present top-level and metadata tenant fields (e.g. numeric, boolean, or empty values) before normalization, failing closed. Validates that if both top-level and metadata tenant IDs are present, they must be equal. Missing, foreign, conflicting, or invalid owner scopes fail closed with HTTP 404 (LINEAGE_TARGET_NOT_FOUND) without inferring tenant from request, environment, or event. Applies canonical owner scope validation to event hydration, binding hydration, and runtime binding graph node admission while preserving runtime/artifact/version qualification and actual paused binding status without ACTIVE fallback. Preserves immutable tenant-scoped PostgreSQL truth and the 5.0s bounded fetch deadline. Adds test_10 for explicit flat-only, metadata-only (dict and SimpleNamespace), matching, conflicting, foreign, missing, numeric, boolean, empty, and invalid envelope regressions and test_11 for fresh-reader recovery of event trace and paused binding projection without re-ingest in services/telemetry/test_main_routes.py. Keeps net production diff strictly within <=20 lines budget (+17 net lines).",
   "acceptance_verification": [
     {
       "ac": "AC1",
@@ -42,7 +42,7 @@
     {
       "ac": "AC7",
       "description": "Genuine exact-head assigned review plus current required CI and canonical integration; SOURCE ONLY no VM/provider/hosted/browser/release authority; sole coordinator retains all hosted work.",
-      "verdict": "pass"
+      "verdict": "pending"
     }
   ],
   "verification": [

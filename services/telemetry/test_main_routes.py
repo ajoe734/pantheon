@@ -1441,6 +1441,16 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
                     return {**base_data, "metadata": "invalid_not_an_envelope"}
                 if self.mode == "recursive_not_inferred":
                     return {**base_data, "metadata": {"runtime_context": {"tenant_id": TestTelemetryDurableLineageReadRestart._TENANT}}}
+                if self.mode == "numeric_metadata":
+                    return {**base_data, "metadata": {"tenant_id": 123}}
+                if self.mode == "numeric_toplevel":
+                    return {**base_data, "tenant_id": 123}
+                if self.mode == "empty_metadata":
+                    return {**base_data, "metadata": {"tenant_id": ""}}
+                if self.mode == "empty_toplevel":
+                    return {**base_data, "tenant_id": ""}
+                if self.mode == "boolean_metadata":
+                    return {**base_data, "metadata": {"tenant_id": True}}
                 return None
 
         headers = self._auth_headers()
@@ -1459,8 +1469,8 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
             upstream_bindings = [node["id"] for node in data.get("upstream_chain", []) if node.get("type") == "runtime_binding"]
             self.assertIn(self._E1_BINDING, upstream_bindings)
 
-        # Fail-closed 404 modes: conflicting, foreign_metadata, missing, invalid_metadata, recursive_not_inferred
-        for mode in ("conflicting", "foreign_metadata", "missing", "invalid_metadata", "recursive_not_inferred"):
+        # Fail-closed 404 modes: conflicting, foreign_metadata, missing, invalid_metadata, recursive_not_inferred, numeric/empty/boolean
+        for mode in ("conflicting", "foreign_metadata", "missing", "invalid_metadata", "recursive_not_inferred", "numeric_metadata", "numeric_toplevel", "empty_metadata", "empty_toplevel", "boolean_metadata"):
             _main._lineage_svc = LineageReadService(
                 event_reader=fetch_ev,
                 binding_events_reader=fetch_b,
@@ -1473,6 +1483,10 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
             direct = _main._lineage_svc.query("telemetry_event_trace", event_id=self._E1_ID, tenant_id=self._TENANT)
             self.assertTrue(any(m.get("code") == "node_not_found" for m in direct.get("conflict_markers", [])))
             self.assertEqual(direct.get("refs", {}).get("runtime_binding_ids", []), [])
+            if mode == "numeric_metadata":
+                direct_num = _main._lineage_svc.query("telemetry_event_trace", event_id=self._E1_ID, tenant_id="123")
+                self.assertTrue(any(m.get("code") == "node_not_found" for m in direct_num.get("conflict_markers", [])))
+                self.assertEqual(direct_num.get("refs", {}).get("runtime_binding_ids", []), [])
 
     def test_11_fresh_reader_recovers_trace_and_paused_projection_with_adapter_metadata_envelope(self):
         """Fresh LineageReadService after restart recovers event trace and paused binding projection with RuntimeBindingAdapter metadata envelope without re-ingest."""
