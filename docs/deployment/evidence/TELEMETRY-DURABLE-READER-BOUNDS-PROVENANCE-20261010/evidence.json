@@ -1,0 +1,100 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "TELEMETRY-DURABLE-READER-BOUNDS-PROVENANCE-20261010",
+  "title": "Bound durable telemetry PG fetch and validate owner provenance",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "base_sha": "aac72d48c9bd88be3b1c5dd03186669501bebca3",
+  "change_class": "corrective",
+  "net_prod_line_budget": 30,
+  "summary": "Enforces bounded execution on durable PostgreSQL event queries and validates owner and binding/runtime/artifact provenance during lineage hydration. In services/telemetry/ingest_svc.py, binds asyncpg fetch operations with timeout=5.0 and ensures ThreadPoolExecutor shuts down without blocking so ACCESS EXCLUSIVE locks or slow queries fail closed with RuntimeError within the 5s bound. In services/telemetry/lineage_read/service.py, validates that events and their referenced bindings share canonical owner tenant identity and matching runtime and artifact IDs before admitting them into the running graph during durable hydration. Unknown or foreign ownership fails closed with HTTP 404 (LINEAGE_TARGET_NOT_FOUND) and unavailable PostgreSQL fails closed with HTTP 503 (LINEAGE_UNAVAILABLE). Adds owned disposable PG lock deadline regression (test_08) and mismatched/missing provenance regressions (test_09) in services/telemetry/test_main_routes.py. Confirms clean container resource teardown and net production change strictly within <=30 lines budget.",
+  "acceptance_verification": [
+    {
+      "ac": "AC1",
+      "description": "Source-only bounded follow-up to delivered TELEMETRY-DURABLE-LINEAGE-READ-RESTART-20261010 PR6487 / 51ef57af. Preserves genuine assigned review and passing currentCI and previous missing-status failclosed fix.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC2",
+      "description": "Concrete owned PG16 lock deadline regression: under real ACCESS EXCLUSIVE lock, fetch fails closed with RuntimeError in <=5s bound instead of waiting for lock release (6.3s) and returning row. Both sync path and ThreadPoolExecutor bounded with non-blocking teardown.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC3",
+      "description": "Concrete provenance validation: validates actual canonical owner tenant, binding, runtime, and artifact provenance before event admission in all new durable hydration paths. Foreign or unknown ownership fails closed with 404 and PG unavailable fails closed with 503. Valid paused historical bindings stay read-only.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC4",
+      "description": "Only four declared artifacts touched, net production lines (+8) strictly within <=30 budget. Preserved validated immutable accepted PG payloads, ordering, CAS/fencing, DLQ, auth shared-token allowlists. No VM/hosted/provider/credential/finance operations.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC5",
+      "description": "Exact owned disposable PG lock deadline regression (test_08) and mismatched/missing provenance regressions (test_09) added to test_main_routes.py. Rerun original telemetry routes and live-lineage-write path (47 passed). Own container resources torn down cleanly.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC6",
+      "description": "Source-only QA delivery ready for independent review and native delivery.",
+      "verdict": "pass"
+    }
+  ],
+  "verification": [
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m unittest services.telemetry.test_main_routes",
+      "passed": 40,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m unittest services.telemetry.test_lineage_write_path",
+      "passed": 7,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m unittest services.incident.test_reference_validation",
+      "passed": 13,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m unittest services.incident.test_incident",
+      "passed": 80,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    }
+  ],
+  "declared_artifacts": [
+    "services/telemetry/ingest_svc.py",
+    "services/telemetry/lineage_read/service.py",
+    "services/telemetry/test_main_routes.py",
+    "docs/deployment/evidence/TELEMETRY-DURABLE-READER-BOUNDS-PROVENANCE-20261010/evidence.json"
+  ],
+  "diff_budget": {
+    "net_production_lines": 8,
+    "budget": 30,
+    "verdict": "pass",
+    "files": {
+      "production": [
+        "services/telemetry/ingest_svc.py",
+        "services/telemetry/lineage_read/service.py"
+      ],
+      "tests": [
+        "services/telemetry/test_main_routes.py"
+      ],
+      "evidence": [
+        "docs/deployment/evidence/TELEMETRY-DURABLE-READER-BOUNDS-PROVENANCE-20261010/evidence.json"
+      ]
+    }
+  }
+}

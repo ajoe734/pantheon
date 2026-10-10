@@ -1321,6 +1321,90 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
         self.assertIsNone(direct_proj.get("binding_status"))
         self.assertTrue(any(m.get("code") == "node_not_found" for m in direct_proj.get("conflict_markers", [])))
 
+    def test_08_owned_pg_exclusive_lock_fetch_deadline_fails_closed_within_bounds(self):
+        """Under concurrent ACCESS EXCLUSIVE table lock, fetch fails closed within 5.5s with RuntimeError."""
+        import threading, time, asyncio, asyncpg
+        held = threading.Event()
+
+        async def _hold():
+            conn = await asyncpg.connect(self.dsn)
+            try:
+                async with conn.transaction():
+                    await conn.execute("LOCK TABLE telemetry_events IN ACCESS EXCLUSIVE MODE")
+                    held.set()
+                    await asyncio.sleep(6.0)
+            finally:
+                await conn.close()
+
+        t = threading.Thread(target=lambda: asyncio.run(_hold()))
+        t.start()
+        try:
+            self.assertTrue(held.wait(5.0))
+            fetch_ev, _ = build_postgres_event_reader(self.dsn, table="telemetry_events")
+            start = time.monotonic()
+            with self.assertRaises(RuntimeError):
+                fetch_ev(self._E1_ID, tenant_id=self._TENANT)
+            elapsed = time.monotonic() - start
+            self.assertLess(elapsed, 5.5, f"fetch did not time out within bounded deadline: {elapsed}s")
+            self.assertGreaterEqual(elapsed, 4.5, f"fetch deadline unexpectedly short: {elapsed}s")
+        finally:
+            t.join()
+
+    def test_09_mismatched_and_missing_provenance_fails_closed_with_404(self):
+        """Mismatched canonical owner tenant, runtime, artifact, or missing binding fails closed with 404."""
+        fetch_ev, fetch_b = build_postgres_event_reader(self.dsn, table="telemetry_events")
+
+        class FixtureBindingStore:
+            def __init__(self, mode: str):
+                self.mode = mode
+
+            def get_binding(self, bid: str):
+                if self.mode == "missing":
+                    return None
+                if self.mode == "foreign":
+                    return {
+                        "binding_id": bid,
+                        "tenant_id": TestTelemetryDurableLineageReadRestart._FOREIGN_TENANT,
+                        "runtime_id": "rt-3739472a",
+                        "artifact_id": "artifact-persona-paper-0a906806ac32538fc7df",
+                        "artifact_version": "1.0.0",
+                        "status": "active",
+                    }
+                if self.mode == "mismatched_runtime":
+                    return {
+                        "binding_id": bid,
+                        "tenant_id": TestTelemetryDurableLineageReadRestart._TENANT,
+                        "runtime_id": "rt-different",
+                        "artifact_id": "artifact-persona-paper-0a906806ac32538fc7df",
+                        "artifact_version": "1.0.0",
+                        "status": "active",
+                    }
+                if self.mode == "mismatched_artifact":
+                    return {
+                        "binding_id": bid,
+                        "tenant_id": TestTelemetryDurableLineageReadRestart._TENANT,
+                        "runtime_id": "rt-3739472a",
+                        "artifact_id": "artifact-different",
+                        "artifact_version": "1.0.0",
+                        "status": "active",
+                    }
+                return None
+
+        headers = self._auth_headers()
+        for mode in ("foreign", "mismatched_runtime", "mismatched_artifact", "missing"):
+            _main._lineage_svc = LineageReadService(
+                event_reader=fetch_ev,
+                binding_events_reader=fetch_b,
+                binding_store=FixtureBindingStore(mode),
+            )
+            r_trace = self.client.get(f"/api/telemetry/lineage/events/{self._E1_ID}/trace", headers=headers)
+            self.assertEqual(r_trace.status_code, 404, f"mode={mode} expected 404, got {r_trace.status_code}")
+            self.assertEqual(r_trace.get_json()["error"]["code"], "LINEAGE_TARGET_NOT_FOUND")
+
+            direct = _main._lineage_svc.query("telemetry_event_trace", event_id=self._E1_ID, tenant_id=self._TENANT)
+            self.assertTrue(any(m.get("code") == "node_not_found" for m in direct.get("conflict_markers", [])))
+            self.assertEqual(direct.get("refs", {}).get("runtime_binding_ids", []), [])
+
 
 if __name__ == "__main__":
     unittest.main()
