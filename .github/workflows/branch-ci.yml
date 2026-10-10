@@ -305,6 +305,22 @@ jobs:
           export SOURCE_INGEST_DATA_DIR
           python3 -m pytest -q services/source_ingestion/tests services/source_ingestion/test_*.py
 
+      # Unconditional (no path filter): these pin deploy guarantees (profiles,
+      # mark source, state volumes) that went stale for days because no
+      # workflow ran them. PostgreSQL backs the rendered BFF readiness test.
+      - name: Run compose contract tests
+        timeout-minutes: 10
+        env:
+          DATABASE_URL: postgresql://pantheon:pantheon@localhost:5432/source_ingest_test
+        run: |
+          python3 -m pytest -q \
+            scripts/test_paper_runtime_topology_contract.py \
+            services/evolution/test_compose_activation.py \
+            services/openclaw-gateway-adapter/test_compose_activation.py \
+            services/paper_fleet_reconciler/test_paper_fleet_reconciler.py::TestPaperPerformanceComposeWiring \
+            services/trade_journey/test_lifecycle_projector_compose.py \
+            tests/integration/test_product_functional_compose_contract.py
+
       # Run the existing real boundary cases even for a workflow-only change.
       # unittest normally treats skipped tests as success; these are required.
       - name: Verify real worker sandbox boundaries
