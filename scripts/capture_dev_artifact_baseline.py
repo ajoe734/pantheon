@@ -87,7 +87,7 @@ def identity_from_environment(env: dict[str, str]) -> dict[str, str]:
 def require_guarded_dev(env: dict[str, str]) -> str:
     expected = {"TARGET_ENV": "dev", "GCP_DEPLOY_PROJECT_ID": "pantheon-dev-20260902",
                 "DEV_VM": "pantheon-dev-deploy", "DEV_ZONE": "asia-east1-b",
-                "DEV_DEPLOY_SSH_HOST": "34.81.52.222",
+                "DEV_DEPLOY_SSH_HOST": "35.194.154.62",
                 "DEV_DEPLOY_SSH_USER": VM_HOME.name}
     if any(env.get(key) != value for key, value in expected.items()):
         raise CaptureError("artifact capture requires the explicit current dev target")

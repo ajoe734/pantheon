@@ -602,7 +602,7 @@ case "$DEPLOY_ENV" in
     if [[ -z "${DEV_VM+x}" ]]; then DEV_VM="pantheon-dev-deploy"; fi
     if [[ -z "${DEV_ZONE+x}" ]]; then DEV_ZONE="asia-east1-b"; fi
     if [[ -z "${DEV_REMOTE_DIR+x}" ]]; then DEV_REMOTE_DIR="/home/chloe_ong_dev_cctech_support_com/pantheon"; fi
-    if [[ -z "${DEV_DEPLOY_SSH_HOST+x}" ]]; then DEV_DEPLOY_SSH_HOST="34.81.52.222"; fi
+    if [[ -z "${DEV_DEPLOY_SSH_HOST+x}" ]]; then DEV_DEPLOY_SSH_HOST="35.194.154.62"; fi
     if [[ -z "${DEV_BFF_CANONICAL_CORS_ORIGIN+x}" ]]; then DEV_BFF_CANONICAL_CORS_ORIGIN="https://app.dev.mvl-cap.tw"; fi
     if [[ -z "${DEV_BFF_REQUIRED_CORS_ORIGINS+x}" ]]; then DEV_BFF_REQUIRED_CORS_ORIGINS="https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com"; fi
     if [[ -z "${DEV_BFF_CORS_ORIGINS+x}" ]]; then
@@ -996,7 +996,7 @@ ssh_bash() {
     fi
     if [[ "${DEPLOY_ENV}" == dev ]]; then
       [[ "${PROJECT_ID}" == pantheon-dev-20260902 && "${vm}" == pantheon-dev-deploy && \
-         "${zone}" == asia-east1-b && "${DEV_DEPLOY_SSH_HOST}" == 34.81.52.222 && \
+         "${zone}" == asia-east1-b && "${DEV_DEPLOY_SSH_HOST}" == 35.194.154.62 && \
          "${DEV_DEPLOY_SSH_USER:-${REMOTE_USER}}" == chloe_ong_dev_cctech_support_com ]] \
         || { info "guarded artifact transport requires the explicit current dev target" >&2; return 75; }
       if [[ "${remote_component}" != "refresh-only" ]]; then
@@ -2183,6 +2183,16 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
   recover_bounded_source_refresh_dlq "${force}" "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" "${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS}"
 
   docker rm -f "${bounded_containers[@]}" >/dev/null 2>&1 || true
+
+  COMPOSE_PROFILES="source-ingest-scheduler,workers" GIT_SHA="${GIT_SHA}" \
+  BUILD_TIME="${BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" \
+    docker compose -p pantheon -f docker-compose.yml build source-ingest-agora-projector \
+    || error "failed to build source-ingest-agora-projector image"
+  local projector_img_id projector_img_sha
+  projector_img_id="$(COMPOSE_PROFILES="source-ingest-scheduler,workers" docker compose -p pantheon -f docker-compose.yml images -q source-ingest-agora-projector 2>/dev/null | head -n 1 || true)"
+  projector_img_sha="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${projector_img_id}" 2>/dev/null || true)"
+  [[ -n "${projector_img_id}" && "${projector_img_sha}" == "${GIT_SHA}" ]] || error "source-ingest-agora-projector image revision ${projector_img_sha:-missing} != expected ${GIT_SHA} (stale_projector_image)"
+
   # A ten second interval keeps the one-shot lease (twice the interval) short,
   # so the restored steady scheduler is fenced for at most one tick.
   for bounded_service in "${bounded_services[@]}"; do
@@ -4285,6 +4295,11 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # the compose default (`unknown`) and make the exact-SHA readiness gate
     # impossible to satisfy.
     export GIT_SHA="${PANTHEON_DEPLOY_SHA}"
+    # Same reasoning for the projector freshness budget: the forced projector
+    # recreate below runs without the first `compose up` command prefix and
+    # would otherwise fall back to the compose default (120s) instead of the
+    # configured dev budget.
+    export LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="${PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS}"
     # Runtime authority reads and the durable outbox consumer must use the
     # same tenant as the BFF that creates the dev DeploymentPlans. Otherwise
     # healthy workers poll the generic Compose tenant (default) indefinitely.
@@ -4347,13 +4362,12 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       run_dev_candidate_compose up -d \
       || rollback_dev_bff_on_failure "docker_compose_up"
     # `up -d --build` only recreates a container Compose judges to need it.
-    # The legacy lifecycle projector runs with `restart: no` (deliberate
-    # anti-OOM containment: it can otherwise consume the host, so it is never
-    # auto-restarted) -- if it hung or died mid-poll on a prior deploy without
-    # its config changing, Compose leaves the stale/hung container in place
-    # and the exact-SHA readiness gate below can never observe a fresh
-    # publish. Force it every root deploy so a wedged projector cannot
-    # silently survive across deploys.
+    # The incremental lifecycle projector restarts automatically
+    # (unless-stopped) with a bounded mem_limit, but a restart policy does not
+    # replace a hung-but-running container. If it wedged mid-poll on a prior
+    # deploy without its config changing, Compose leaves it in place and the
+    # exact-SHA readiness gate below can never observe a fresh publish. Force
+    # it every root deploy so a wedged projector cannot silently survive.
     run_dev_candidate_compose up -d --force-recreate --no-deps loop-run-projector-scheduler \
       || rollback_dev_bff_on_failure "projector_recreate"
     # Phase 4: Post-Deploy Bounded Verification

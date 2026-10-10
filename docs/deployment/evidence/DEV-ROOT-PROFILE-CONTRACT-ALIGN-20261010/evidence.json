@@ -1,0 +1,62 @@
+{
+  "task_id": "DEV-ROOT-PROFILE-CONTRACT-ALIGN-20261010",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "title": "Align original default-root profile deployment contracts",
+  "timestamp": "2026-10-10T04:17:30Z",
+  "base_commit": "615851aeb180843051db052d9e6c25a93cb87415",
+  "net_prod_line_budget": 0,
+  "changed_test_lines": 3,
+  "summary": "Aligned two original root deployment contract tests in scripts/test_dev_environment_lease_deploy_contract.py with the actual default root compose profile. Replaced stale openclaw defaults with root while preserving all 32 required persistent runtime service assertions and 13 dormant/smoke/benchmark legacy exclusion assertions. Production delta is zero; exactly 3 test lines were changed.",
+  "acceptance_criteria_verification": {
+    "1_reproduce_original_failing_cases": {
+      "satisfied": true,
+      "base_commit": "615851aeb180843051db052d9e6c25a93cb87415",
+      "command": "/tmp/pantheon-worker-worktrees/pantheon/dev-root-profile-contract-align-20261010/.venv-pantheon/bin/python3 -m pytest -v scripts/test_dev_environment_lease_deploy_contract.py -k 'test_dev_root_deploy_profiles_isolate_persistent_runtime_and_exclude_dormant_smokes or test_dev_root_active_persistent_runtime_excludes_dormant_and_one_off_profiles'",
+      "failure_frames": [
+        {
+          "test": "test_dev_root_deploy_profiles_isolate_persistent_runtime_and_exclude_dormant_smokes",
+          "line": 1128,
+          "error": "AssertionError: assert 'PANTHEON_DEV_COMPOSE_PROFILES=\"${PANTHEON_DEV_COMPOSE_PROFILES:-openclaw}\"' in deploy_script"
+        },
+        {
+          "test": "test_dev_root_active_persistent_runtime_excludes_dormant_and_one_off_profiles",
+          "line": 1232,
+          "error": "AssertionError: Required persistent service source-ingest missing from active runtime\nassert 'source-ingest' in ['openclaw-data-init', 'openclaw-gateway', 'openclaw-gateway-adapter']"
+        }
+      ]
+    },
+    "2_align_profile_literals_preserve_assertions": {
+      "satisfied": true,
+      "aligned_literals": [
+        "PANTHEON_DEV_COMPOSE_PROFILES=\"${PANTHEON_DEV_COMPOSE_PROFILES:-root}\"",
+        "active_profile = \"root\""
+      ],
+      "preserved_persistent_services_count": 32,
+      "preserved_dormant_and_one_off_exclusions_count": 13
+    },
+    "3_production_delta_zero_and_test_line_budget": {
+      "satisfied": true,
+      "production_files_changed": 0,
+      "production_delta_lines": 0,
+      "test_lines_changed": 3,
+      "budget_max": 4
+    },
+    "4_full_guard_contract_run": {
+      "satisfied": true,
+      "command": "/tmp/pantheon-worker-worktrees/pantheon/dev-root-profile-contract-align-20261010/.venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_environment_lease_deploy_contract.py",
+      "result": "241 passed in 67.63s",
+      "exit_code": 0,
+      "skipped_or_weakened_assertions": 0
+    },
+    "5_no_live_mutation": {
+      "satisfied": true,
+      "note": "No live deployment, lease, credential, or resource mutation performed; no new dispatcher or harness introduced."
+    }
+  },
+  "verification": {
+    "reproduction_run": "2 failed, 239 deselected in 1.35s",
+    "two_aligned_cases_run": "2 passed, 239 deselected in 1.23s",
+    "full_contract_suite_run": "241 passed in 67.63s"
+  }
+}

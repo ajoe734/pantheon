@@ -40,6 +40,7 @@ services:
       - dev-paper-persona-evaluator-tokens:/issued/persona-evaluator-agent
       - dev-paper-training-session-tokens:/issued/training-session-svc
       - dev-paper-training-worker-tokens:/issued/training-session-preview-worker
+      - dev-paper-agora-projector-tokens:/issued/source-ingest-agora-projector
     healthcheck:
       test: ["CMD", "python", "/issuer/issue_dev_paper_principals.py", "--healthcheck"]
       interval: 30s
@@ -297,6 +298,11 @@ services:
     build:
       context: .
       dockerfile: services/source_ingestion/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
+      labels:
+        org.opencontainers.image.revision: ${GIT_SHA:-unknown}
     command: ["python", "scripts/project_market_data_to_bff_agora_surfaces.py"]
     restart: "no"
     profiles: ["source-ingest-scheduler", "workers"]
@@ -304,10 +310,12 @@ services:
       SOURCE_INGEST_URL: http://source-ingest:8097
       OUT_DIR: /data/bff
       AGORA_MARKET_STALE_THRESHOLD_SECONDS: ${AGORA_MARKET_STALE_THRESHOLD_SECONDS:-86400}
+      AGORA_PROJECTOR_SERVICE_JWT_FILE: ${AGORA_PROJECTOR_SERVICE_JWT_FILE:-/run/pantheon-principals/AGORA_PROJECTOR_SERVICE_JWT}
       AGORA_PROJECTOR_SERVICE_JWT: ${AGORA_PROJECTOR_SERVICE_JWT:-${PANTHEON_AGORA_PROJECTOR_SERVICE_JWT:-}}
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-}}
     volumes:
       - bff-data:/data/bff
+      - dev-paper-agora-projector-tokens:/run/pantheon-principals:ro
     depends_on:
       source-ingest:
         condition: service_healthy
@@ -1572,11 +1580,11 @@ services:
       args:
         GIT_SHA: ${GIT_SHA:-unknown}
     command: ["python", "-m", "services.trade_journey.lifecycle_projector", "run"]
-    # Emergency containment for the legacy full-history projector. It can
-    # otherwise consume the host while loading/copying unbounded state.
-    # Fail stopped at the cgroup boundary until the incremental replacement
-    # is delivered; the last atomic projection remains readable by the BFF.
-    restart: "${LIFECYCLE_PROJECTOR_RESTART_POLICY:-no}"
+    # The projector is the incremental relational writer (bounded batches), so
+    # it restarts after a host or daemon restart like the other steady
+    # controllers; BFF /readyz depends on it. mem_limit still bounds a leak at
+    # the cgroup boundary.
+    restart: "${LIFECYCLE_PROJECTOR_RESTART_POLICY:-unless-stopped}"
     mem_limit: ${LIFECYCLE_PROJECTOR_MEMORY_LIMIT:-16g}
     stop_grace_period: 30s
     environment:
@@ -2995,6 +3003,7 @@ volumes:
   dev-paper-persona-evaluator-tokens:
   dev-paper-training-session-tokens:
   dev-paper-training-worker-tokens:
+  dev-paper-agora-projector-tokens:
   broker-data:
   bff-data:
   capital-data:

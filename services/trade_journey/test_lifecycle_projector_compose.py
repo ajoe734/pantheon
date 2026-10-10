@@ -13,8 +13,8 @@ def test_canonical_lifecycle_projector_is_default_and_owns_both_read_models():
     projector = services["loop-run-projector-scheduler"]
     environment = projector["environment"]
 
-    assert "profiles" not in projector
-    assert projector["restart"] == "${LIFECYCLE_PROJECTOR_RESTART_POLICY:-no}"
+    assert "root" in projector["profiles"]
+    assert projector["restart"] == "${LIFECYCLE_PROJECTOR_RESTART_POLICY:-unless-stopped}"
     assert projector["mem_limit"] == "${LIFECYCLE_PROJECTOR_MEMORY_LIMIT:-16g}"
     assert projector["build"]["dockerfile"] == "services/telemetry/Dockerfile"
     assert projector["command"] == [
@@ -102,7 +102,7 @@ def test_default_paper_signal_producer_uses_package_safe_module_entrypoint():
     producer = compose["services"]["paper-signal-producer"]
     environment = producer["environment"]
 
-    assert "profiles" not in producer
+    assert "root" in producer["profiles"]
     assert producer["restart"] == "unless-stopped"
     assert producer["command"] == [
         "python",
@@ -159,7 +159,7 @@ def test_lifecycle_projector_capacity_benchmark_is_profile_gated_and_bounded():
     default_services = yaml.safe_load(
         (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     )["services"]
-    assert "profiles" not in default_services["loop-run-projector-scheduler"]
+    assert "root" in default_services["loop-run-projector-scheduler"]["profiles"]
 
 
 def test_hosted_lifecycle_probe_uses_mfa_bound_governed_operator():

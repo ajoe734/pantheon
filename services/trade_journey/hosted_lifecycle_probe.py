@@ -24,6 +24,7 @@ from typing import Any, Awaitable, Callable, Mapping, Sequence
 import uuid
 
 from services.execution.market_snapshot_admission import (
+    admit_market_snapshot,
     evaluate_taiwan_market_freshness,
     is_taiwan_symbol,
     parse_rfc3339,
@@ -364,6 +365,7 @@ def _complete_candidates(
     mode: str = "natural",
     case: Mapping[str, Any] | None = None,
     now_dt: datetime | None = None,
+    rejections: list[ProbeError] | None = None,
 ) -> list[dict[str, Any]]:
     groups: dict[tuple[str, ...], dict[str, Any]] = {}
     for row in rows:
@@ -480,7 +482,9 @@ def _complete_candidates(
             if mode == "natural":
                 try:
                     _validate_natural_candidate(group, case, now_dt=now_dt, require_snapshot=False)
-                except ProbeError:
+                except ProbeError as exc:
+                    if rejections is not None:
+                        rejections.append(exc)
                     continue
             group["selected_events"] = selected
             group["max_ingested_seq"] = max(item["ingested_seq"] for item in selected)
@@ -631,7 +635,7 @@ def _validate_natural_candidate(
         ok, r_code, detail = evaluate_taiwan_market_freshness(
             event_time_dt=t_evt, now_dt=now_dt, refresh_receipt_dt=t_obs, lineage=lineage, max_refresh_age_seconds=int(max_age_seconds)
         )
-        if not ok:
+        if not ok and r_code != "market_input_calendar_unverifiable":
             raise ProbeError("invalid_freshness", f"Taiwan market freshness rejected: {r_code} - {detail}")
 
     if case is not None:
@@ -657,6 +661,22 @@ def _validate_natural_candidate(
             raise ProbeError("source_snapshot_missing", "case source_snapshot proof is missing")
         if isinstance(snapshot_to_bind, Mapping):
             _bind_source_snapshot(snapshot_to_bind, prov)
+            if is_taiwan_symbol(prov.get("raw_symbol") or ""):
+                lin = snapshot_to_bind.get("lineage")
+                cal_ev = snapshot_to_bind.get("calendar_evidence") or (lin.get("calendar_evidence") if isinstance(lin, Mapping) else None)
+                decision = admit_market_snapshot(
+                    snapshot_to_bind,
+                    expected_symbol=prov.get("raw_symbol"),
+                    max_age_seconds=int(max_age_seconds),
+                    now_iso=now_dt.isoformat(),
+                    binding_id=prov.get("binding_id"),
+                    calendar_evidence=cal_ev,
+                )
+                if not decision.admitted and (require_snapshot or decision.reason_code != "market_input_calendar_unverifiable"):
+                    raise ProbeError(
+                        decision.reason_code or "invalid_freshness",
+                        f"Taiwan market freshness rejected: {decision.reason_code} - {decision.detail}",
+                    )
         if snap is not None and isinstance(case.get("source_snapshot"), Mapping):
             _bind_source_snapshot(case["source_snapshot"], prov)
             s_chk = snap.get("checksum") or snap.get("data_checksum")
@@ -1101,6 +1121,7 @@ async def run_probe(
     baseline_high_watermark: int | None = None,
     mode: str = "natural",
     case_key: str | None = None,
+    now_dt: datetime | None = None,
     sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> dict[str, Any]:
@@ -1139,7 +1160,10 @@ async def run_probe(
             ) from exc
         if observed_baseline_high_watermark is None:
             observed_baseline_high_watermark = high
-        candidates = _complete_candidates(rows, mode=mode, case=case)
+        cand_rejections: list[ProbeError] = []
+        candidates = _complete_candidates(rows, mode=mode, case=case, now_dt=now_dt, rejections=cand_rejections)
+        if cand_rejections:
+            last_error = cand_rejections[-1]
         if candidates:
             for candidate in candidates:
                 try:
@@ -1158,7 +1182,7 @@ async def run_probe(
                             )
                         if snap is None:
                             raise ProbeError("source_snapshot_missing", "source snapshot proof could not be verified from source authority")
-                        trusted_now = datetime.now(timezone.utc)
+                        trusted_now = now_dt or datetime.now(timezone.utc)
                         _validate_natural_candidate(
                             candidate,
                             case=case,
@@ -1277,6 +1301,7 @@ async def execute(
     baseline_high_watermark: int | None = None,
     mode: str = "natural",
     case_key: str | None = None,
+    now_dt: datetime | None = None,
     sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> tuple[int, dict[str, Any]]:
@@ -1292,6 +1317,7 @@ async def execute(
             baseline_high_watermark=baseline_high_watermark,
             mode=mode,
             case_key=case_key,
+            now_dt=now_dt,
             sleeper=sleeper,
             monotonic=monotonic,
         )

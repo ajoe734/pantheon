@@ -1,0 +1,13 @@
+{
+  "task_id": "LIFECYCLE-PROJECTOR-RESTART-TEST-ALIGN-20261010",
+  "change": "services/trade_journey/test_lifecycle_projector_compose.py:17 restart assertion ':-no' -> ':-unless-stopped' to match docker-compose.yml line 1579",
+  "verification": "One-off python snippet loading docker-compose.yml confirmed services.loop-run-projector-scheduler.restart == '${LIFECYCLE_PROJECTOR_RESTART_POLICY:-unless-stopped}'. The test function itself still stops earlier at line 16 and pytest is not installed in this environment.",
+  "pre_existing_failures_not_touched": [
+    "line 16: 'profiles' not in projector assertion",
+    "paper-signal-producer profile assertion",
+    "capacity-benchmark profile assertion",
+    "managed dev deploy freshness budget count",
+    "rendered compose readiness test needing a Postgres DSN"
+  ],
+  "not_done": ["File is not run by CI; none of the 5 pre-existing failures were fixed"]
+}

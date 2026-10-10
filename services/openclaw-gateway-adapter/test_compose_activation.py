@@ -37,11 +37,11 @@ def test_compose_wires_openclaw_gateway_adapter_without_broker_activation() -> N
     assert "/healthz" not in healthcheck
 
     init = services["openclaw-data-init"]
-    assert init["profiles"] == ["openclaw"]
+    assert init["profiles"] == ["management-ai", "openclaw", "root"]
     assert "chown -R 1000:1000 /home/node/.openclaw" in " ".join(init["command"])
 
     upstream = services["openclaw-gateway"]
-    assert upstream["profiles"] == ["openclaw"]
+    assert upstream["profiles"] == ["management-ai", "openclaw", "root"]
     assert upstream["image"] == f"pantheon-openclaw-gateway:{OPENCLAW_VERSION}"
     assert upstream["build"]["args"] == {
         "ANTHROPIC_CLAUDE_CODE_NPM_VERSION": "2.1.216",
@@ -55,7 +55,7 @@ def test_compose_wires_openclaw_gateway_adapter_without_broker_activation() -> N
     upstream_healthcheck = " ".join(upstream["healthcheck"]["test"])
     assert "/readyz" in upstream_healthcheck
     assert "/healthz" not in upstream_healthcheck
-    assert "profiles" not in adapter
+    assert adapter["profiles"] == ["management-ai", "openclaw", "root"]
     assert adapter["environment"]["OPENCLAW_BROKER_SIDECAR_URL"] == "http://broker:8102"
     assert adapter["environment"]["OPENCLAW_RUNTIME_MANAGER_URL"] == "http://runtime-manager:8081"
     assert adapter["environment"]["PANTHEON_RUNTIME_MANAGER_TOKEN"] == "runtime-control-internal"
@@ -104,7 +104,7 @@ def test_compose_wires_openclaw_gateway_adapter_without_broker_activation() -> N
     assert broker["build"]["dockerfile"] == "services/broker/Dockerfile"
     assert broker["environment"]["PORT"] == "8102"
     assert broker["environment"]["BROKER_PAPER_ENABLED"] == "${BROKER_PAPER_ENABLED:-false}"
-    assert "profiles" not in broker
+    assert "root" in broker["profiles"]
 
     smoke = services["smoke-stack"]
     assert smoke["environment"]["OPENCLAW_GATEWAY_ADAPTER_URL"] == "http://openclaw-gateway-adapter:8104"

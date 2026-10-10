@@ -863,5 +863,75 @@ def test_projector_foreign_tenant_fails_closed(monkeypatch: pytest.MonkeyPatch) 
 def test_projector_never_falls_back_to_unauthenticated_read(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AGORA_PROJECTOR_SERVICE_JWT", raising=False)
     monkeypatch.delenv("PANTHEON_AGORA_PROJECTOR_SERVICE_JWT", raising=False)
+    monkeypatch.delenv("AGORA_PROJECTOR_SERVICE_JWT_FILE", raising=False)
     with pytest.raises(RuntimeError, match="AGORA_PROJECTOR_SERVICE_JWT is required"):
         _fetch_source_ingest_json("http://127.0.0.1:9999")
+
+
+def test_projector_reads_credential_from_configured_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    secret = "secret-projector-file-test"
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", secret)
+    monkeypatch.setenv("PANTHEON_RUNTIME_AUTH_MODE", "strict")
+    server = http.server.HTTPServer(("127.0.0.1", 0), _MockSourceIngestHandler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    base_url = f"http://127.0.0.1:{server.server_port}"
+    token_file = tmp_path / "AGORA_PROJECTOR_SERVICE_JWT"
+    token_file.write_text(_mint_projector_service_jwt(secret, tenant_id="tenant-dev"), encoding="utf-8")
+    token_file.chmod(0o600)
+    try:
+        monkeypatch.setenv("AGORA_PROJECTOR_SERVICE_JWT_FILE", str(token_file))
+        monkeypatch.delenv("AGORA_PROJECTOR_SERVICE_JWT", raising=False)
+        monkeypatch.delenv("PANTHEON_AGORA_PROJECTOR_SERVICE_JWT", raising=False)
+        monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-dev")
+        records = _get_source_records(base_url)
+        assert len(records) == 1
+
+        # Dynamic rotation: file content updates and next fetch reads the renewed token without process restart
+        renewed_token = _mint_projector_service_jwt(secret, tenant_id="tenant-dev", subject="renewed-projector")
+        token_file.write_text(renewed_token, encoding="utf-8")
+        token_file.chmod(0o600)
+        records_after_rotation = _get_source_records(base_url)
+        assert len(records_after_rotation) == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_projector_missing_or_unsafe_credential_file_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-dev")
+    missing_file = tmp_path / "missing_token"
+    monkeypatch.setenv("AGORA_PROJECTOR_SERVICE_JWT_FILE", str(missing_file))
+    with pytest.raises(RuntimeError, match="AGORA_PROJECTOR_SERVICE_JWT is required"):
+        _get_source_records("http://127.0.0.1:9999")
+
+    unsafe_file = tmp_path / "unsafe_token"
+    unsafe_file.write_text("dummy-token", encoding="utf-8")
+    unsafe_file.chmod(0o666)
+    monkeypatch.setenv("AGORA_PROJECTOR_SERVICE_JWT_FILE", str(unsafe_file))
+    with pytest.raises(RuntimeError, match="AGORA_PROJECTOR_SERVICE_JWT is required"):
+        _get_source_records("http://127.0.0.1:9999")
+
+    empty_file = tmp_path / "empty_token"
+    empty_file.write_text("", encoding="utf-8")
+    empty_file.chmod(0o600)
+    monkeypatch.setenv("AGORA_PROJECTOR_SERVICE_JWT_FILE", str(empty_file))
+    with pytest.raises(RuntimeError, match="AGORA_PROJECTOR_SERVICE_JWT is required"):
+        _get_source_records("http://127.0.0.1:9999")
+
+    whitespace_file = tmp_path / "whitespace_token"
+    whitespace_file.write_text("bad token with spaces", encoding="utf-8")
+    whitespace_file.chmod(0o600)
+    monkeypatch.setenv("AGORA_PROJECTOR_SERVICE_JWT_FILE", str(whitespace_file))
+    with pytest.raises(RuntimeError, match="AGORA_PROJECTOR_SERVICE_JWT is required"):
+        _get_source_records("http://127.0.0.1:9999")
+
+
+def test_projector_never_falls_back_to_env_when_file_configured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-dev")
+    monkeypatch.setenv("AGORA_PROJECTOR_SERVICE_JWT", "fallback-token-should-not-be-used")
+    missing_file = tmp_path / "missing_token"
+    monkeypatch.setenv("AGORA_PROJECTOR_SERVICE_JWT_FILE", str(missing_file))
+    with pytest.raises(RuntimeError, match="AGORA_PROJECTOR_SERVICE_JWT is required"):
+        _get_source_records("http://127.0.0.1:9999")
+

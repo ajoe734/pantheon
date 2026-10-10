@@ -1613,6 +1613,7 @@ class DownstreamHealthMonitor:
             for name, value in self._store.list_incidents().items()
             if str(value["status"]) in {"opening", "open", "resolving"}
         }
+        self._error_windows_in_flight: set[tuple[str, str]] = set()
         self._task: Optional[asyncio.Task[None]] = None
         self._running = False
         self._last_retention_prune_at = 0.0
@@ -2405,6 +2406,10 @@ class DownstreamHealthMonitor:
         window: Mapping[str, Any],
     ) -> None:
         window_started_at = str(window["window_started_at"])
+        flight_key = (target_name, window_started_at)
+        if flight_key in self._error_windows_in_flight:
+            return
+        self._error_windows_in_flight.add(flight_key)
         if not self._store.claim_window(
             target_name=target_name,
             probe_kind="error_rate",
@@ -2412,6 +2417,7 @@ class DownstreamHealthMonitor:
             owner_id=self._instance_id,
             lease_seconds=max(self._http_timeout * 2, self._probe_interval),
         ):
+            self._error_windows_in_flight.discard(flight_key)
             return
         result = DownstreamProbeResult(
             target_name=target_name,
@@ -2484,6 +2490,7 @@ class DownstreamHealthMonitor:
                 window_started_at=window_started_at,
                 owner_id=self._instance_id,
             )
+            self._error_windows_in_flight.discard(flight_key)
 
     def record_downstream_outcome(
         self,

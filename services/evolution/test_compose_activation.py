@@ -12,7 +12,7 @@ def test_daily_sweep_scheduler_is_enabled_by_default_in_root_compose() -> None:
     compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
     scheduler = compose["services"]["evolution-daily-sweep-scheduler"]
 
-    assert "profiles" not in scheduler
+    assert "root" in scheduler["profiles"]
     assert scheduler["build"]["dockerfile"] == "services/evolution/Dockerfile"
     assert scheduler["command"] == ["python", "-m", "services.evolution.scheduler_worker"]
     assert scheduler["restart"] == "unless-stopped"
@@ -69,7 +69,7 @@ def test_threshold_sweep_producer_compose_shape_matches_acceptance_criteria() ->
     compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
     producer = compose["services"]["evolution-threshold-sweep-producer"]
 
-    assert "profiles" not in producer  # default-on, not opt-in
+    assert "root" in producer["profiles"]  # default-on, not opt-in
     assert producer["build"]["dockerfile"] == "services/evolution/Dockerfile"
     assert producer["command"] == ["python", "-m", "services.evolution.threshold_sweep_worker"]
     assert producer["restart"] == "unless-stopped"
@@ -116,7 +116,7 @@ def test_dispatch_worker_is_enabled_by_default_in_root_compose() -> None:
     compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
     worker = compose["services"]["evolution-dispatch-worker"]
 
-    assert "profiles" not in worker
+    assert "root" in worker["profiles"]
     assert worker["build"]["dockerfile"] == "services/evolution/Dockerfile"
     assert worker["command"] == [
         "python",
