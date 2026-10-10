@@ -3139,17 +3139,9 @@ class LineageReadService:
         binding_events_reader: Optional[Callable[[str], list[dict[str, Any]]]] = None,
         binding_store: Optional[Any] = None,
     ) -> None:
-        self.graph = LineageGraph()
-        self.traverser = LineageTraverser(self.graph)
-        self.projection = ProjectionBuilder()
-        # LIN-003: guards graph mutation (live event/binding admission) against
-        # concurrent reads from the HTTP query surface — both run on separate
-        # threads (ingest's asyncio loop thread vs. Flask request threads)
-        # against the same in-memory graph instance.
-        self._lock = threading.RLock()
-        self._event_reader = event_reader
-        self._binding_events_reader = binding_events_reader
-        self._binding_store = binding_store
+        self.graph, self.projection = LineageGraph(), ProjectionBuilder()
+        self.traverser, self._lock = LineageTraverser(self.graph), threading.RLock()
+        self._event_reader, self._binding_events_reader, self._binding_store = event_reader, binding_events_reader, binding_store
 
     def load_corpus(self, corpus: dict[str, Any]) -> None:
         """Load a LIN-001A benchmark corpus into the service."""
@@ -3243,42 +3235,48 @@ class LineageReadService:
                 ))
 
     def _resolve_binding(self, bid: str) -> Optional[Any]:
-        if not (bid and self._binding_store):
-            return None
+        if not (bid and self._binding_store): return None
         fn = getattr(self._binding_store, "get_binding", getattr(self._binding_store, "get", None))
         return fn(bid) if callable(fn) else None
 
-    def _binding_from_source(self, bid: str, data: dict[str, Any], tenant: Any) -> dict[str, Any]:
+    def _binding_from_source(self, bid: str, data: dict[str, Any], tenant: Any) -> Optional[dict[str, Any]]:
+        if not (status := data.get("binding_status") or data.get("status")): return None
         return {
             "binding_id": bid, "tenant_id": tenant,
             "runtime_id": data.get("runtime_id"), "artifact_id": data.get("artifact_id"),
             "artifact_version": data.get("artifact_version"), "capital_pool_id": data.get("capital_pool_id"),
             "plan_id": data.get("plan_id") or data.get("deployment_plan_id"),
             "persona_capital_binding_id": data.get("persona_capital_binding_id"),
-            "status": data.get("binding_status") or data.get("status") or "active",
+            "status": str(status).strip(),
         }
 
     def _hydrate_event(self, event_id: str, tenant_id: Optional[str] = None) -> None:
-        if not self._event_reader or not (event := self._event_reader(event_id)):
-            return
-        if tenant_id is not None and event.get("tenant_id") != tenant_id:
+        if not self._event_reader: return
+        try: event = self._event_reader(event_id, tenant_id=tenant_id)
+        except TypeError: event = self._event_reader(event_id)
+        if not event or (tenant_id is not None and (event.get("tenant_id") or (event.get("metadata") or {}).get("tenant_id")) != tenant_id):
             return
         bid = event.get("binding_id") or event.get("runtime_binding_id")
-        b = self._resolve_binding(bid) or (self._binding_from_source(bid, event, event.get("tenant_id")) if bid else None)
+        b = self._resolve_binding(bid) if bid else None
+        if bid and not b: b = self._binding_from_source(bid, event, event.get("tenant_id"))
+        if bid and not b: return
         self.admit_telemetry_event(event, b)
 
     def _hydrate_binding(self, binding_id: str, tenant_id: Optional[str] = None) -> None:
         binding = self._resolve_binding(binding_id)
-        events = self._binding_events_reader(binding_id) if self._binding_events_reader else []
-        if not binding and not events:
+        if binding and tenant_id is not None and (binding.get("tenant_id") if isinstance(binding, Mapping) else getattr(binding, "tenant_id", None)) != tenant_id:
             return
-        b_tenant = (binding.get("tenant_id") if isinstance(binding, Mapping) else getattr(binding, "tenant_id", None)) or (events[0].get("tenant_id") if events else None)
-        if tenant_id is not None and b_tenant != tenant_id:
-            return
-        binding = binding or self._binding_from_source(binding_id, events[0], b_tenant)
+        try: events = self._binding_events_reader(binding_id, tenant_id=tenant_id) if self._binding_events_reader else []
+        except TypeError: events = self._binding_events_reader(binding_id) if self._binding_events_reader else []
+        if not binding and not events: return
+        b_tenant = (binding.get("tenant_id") if isinstance(binding, Mapping) else getattr(binding, "tenant_id", None)) or (events[0].get("tenant_id") or (events[0].get("metadata") or {}).get("tenant_id") if events else None)
+        if tenant_id is not None and b_tenant != tenant_id: return
+        if not binding and events: binding = self._binding_from_source(binding_id, events[0], b_tenant)
+        if not binding: return
         _admit_runtime_binding_node(self.graph, binding_id, binding, tenant_id=b_tenant)
         for ev in events:
-            if tenant_id is None or ev.get("tenant_id") == tenant_id:
+            ev_tenant = ev.get("tenant_id") or (ev.get("metadata") or {}).get("tenant_id")
+            if tenant_id is None or ev_tenant == tenant_id:
                 self.admit_telemetry_event(ev, binding)
 
     def query(

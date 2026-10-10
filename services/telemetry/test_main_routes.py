@@ -1034,8 +1034,11 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
     _E1_BINDING = "rb-d16978f8faaa402090d9f8d3fb04936d"
     _E2_ID = "69fff59d-83c9-4cf6-b4a7-9deb5d0a5236"
     _E2_BINDING = "rb-63be17dc01eb40b48b3302e218079b70"
+    _E_UNVERIFIED_ID = "evt-monitor-negative-961-unverified"
+    _E_UNVERIFIED_BINDING = "rb-monitor-negative-961-unverified"
     _TENANT = "tenant-dev"
     _FOREIGN_TENANT = "tenant-foreign"
+    _container_name: str | None = None
 
     @classmethod
     def setUpClass(cls):
@@ -1049,7 +1052,7 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
 
         cls.dsn = cls._find_pg_dsn()
         if not cls.dsn:
-            raise unittest.SkipTest("No PostgreSQL database available for durable lineage restart test")
+            raise unittest.SkipTest("No owned disposable PostgreSQL available for durable lineage restart test")
 
         cls._init_db_events()
         cls.client = _main.app.test_client()
@@ -1069,30 +1072,50 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
         _main._svc = cls._orig_svc
         _main._lineage_svc = cls._orig_lineage_svc
 
-        if cls.dsn:
-            cls._clean_db_events()
+        if cls._container_name:
+            import subprocess
+            subprocess.run(["docker", "rm", "-f", cls._container_name], check=False, capture_output=True)
 
     @classmethod
     def _find_pg_dsn(cls) -> str | None:
-        candidates = [
-            os.getenv("TELEMETRY_TEST_PG_DSN"),
-            os.getenv("TELEMETRY_DB_DSN"),
-            "postgresql://postgres:pw@127.0.0.1:55432/postgres",
-            os.getenv("DATABASE_URL"),
-            "postgresql://pantheon:pantheon@localhost:5432/source_ingest_test",
-        ]
-        import asyncpg
-        for c in candidates:
-            if not c:
-                continue
+        explicit = os.getenv("TELEMETRY_TEST_PG_DSN")
+        if explicit:
+            return explicit
+        import shutil, socket, subprocess, time, uuid, asyncpg
+        if shutil.which("docker") is None:
+            return None
+        probe = subprocess.run(["docker", "info"], check=False, capture_output=True, text=True)
+        if probe.returncode != 0:
+            return None
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = int(sock.getsockname()[1])
+        cls._container_name = f"pantheon-lineage-qa-{uuid.uuid4().hex[:10]}"
+        started = subprocess.run(
+            [
+                "docker", "run", "--rm", "-d",
+                "--name", cls._container_name,
+                "-e", "POSTGRES_PASSWORD=postgres",
+                "-p", f"127.0.0.1:{port}:5432",
+                "postgres:16-alpine",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if started.returncode != 0:
+            return None
+        dsn = f"postgresql://postgres:postgres@127.0.0.1:{port}/postgres"
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
             try:
                 async def _probe():
-                    conn = await asyncpg.connect(c, timeout=2.0)
+                    conn = await asyncpg.connect(dsn, timeout=1.0)
                     await conn.close()
                 asyncio.run(_probe())
-                return c
+                return dsn
             except Exception:
-                continue
+                time.sleep(0.3)
         return None
 
     @classmethod
@@ -1126,7 +1149,7 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
                 "plan_id": "plan-persona-paper-0a906806ac32538fc7df",
                 "persona_capital_binding_id": "pcb-persona-paper-0a906806ac32538fc7df",
                 "deployment_mode": "paper",
-                "status": "active",
+                "binding_status": "active",
             }
             ev2 = {
                 "event_id": cls._E2_ID,
@@ -1141,10 +1164,18 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
                 "plan_id": "plan-persona-paper-c3f293d04cd3cb396e92",
                 "persona_capital_binding_id": "pcb-persona-paper-c3f293d04cd3cb396e92",
                 "deployment_mode": "paper",
-                "status": "paused",
+                "binding_status": "paused",
                 "effective_at": "2026-10-07T22:17:32Z",
             }
-            for ev in [ev1, ev2]:
+            ev3_unverified = {
+                "event_id": cls._E_UNVERIFIED_ID,
+                "event_type": "heartbeat",
+                "created_at": "2026-10-10T12:00:00Z",
+                "tenant_id": cls._TENANT,
+                "binding_id": cls._E_UNVERIFIED_BINDING,
+                "runtime_id": "rt-unverified",
+            }
+            for ev in [ev1, ev2, ev3_unverified]:
                 dt = datetime.datetime.fromisoformat(ev["created_at"].replace("Z", "+00:00"))
                 await conn.execute(f'''
                     INSERT INTO telemetry_events (event_id, event_type, created_at, payload)
@@ -1155,19 +1186,6 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
 
         asyncio.run(_setup())
 
-    @classmethod
-    def _clean_db_events(cls):
-        import asyncpg
-        async def _cleanup():
-            try:
-                conn = await asyncpg.connect(cls.dsn)
-                await conn.execute(f'''
-                    DELETE FROM telemetry_events WHERE event_id IN ('{cls._E1_ID}', '{cls._E2_ID}')
-                ''')
-                await conn.close()
-            except Exception:
-                pass
-        asyncio.run(_cleanup())
 
     def _auth_headers(self, tenant: str | None = None) -> dict[str, str]:
         return {
@@ -1281,6 +1299,27 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
         r_evt = self.client.get(f"/api/telemetry/events/{self._E1_ID}", headers=headers)
         self.assertEqual(r_evt.status_code, 503)
         self.assertEqual(r_evt.get_json()["error"]["code"], "SERVICE_UNAVAILABLE")
+
+    def test_07_unverified_binding_without_status_fails_closed_with_404_not_manufactured_active(self):
+        """Unverified binding without authoritative store or persisted status fails closed with 404, not manufactured active."""
+        fetch_ev, fetch_b = build_postgres_event_reader(self.dsn, table="telemetry_events")
+        _main._lineage_svc = LineageReadService(event_reader=fetch_ev, binding_events_reader=fetch_b)
+        _main._svc = types.SimpleNamespace(
+            get_accepted_event=lambda eid, tenant_id=None: fetch_ev(eid, tenant_id=tenant_id)
+        )
+
+        headers = self._auth_headers()
+        r_proj = self.client.get(f"/api/telemetry/lineage/runtime-bindings/{self._E_UNVERIFIED_BINDING}/projection", headers=headers)
+        self.assertEqual(r_proj.status_code, 404)
+        self.assertEqual(r_proj.get_json()["error"]["code"], "LINEAGE_TARGET_NOT_FOUND")
+
+        r_trace = self.client.get(f"/api/telemetry/lineage/events/{self._E_UNVERIFIED_ID}/trace", headers=headers)
+        self.assertEqual(r_trace.status_code, 404)
+        self.assertEqual(r_trace.get_json()["error"]["code"], "LINEAGE_TARGET_NOT_FOUND")
+
+        direct_proj = _main._lineage_svc.query("runtime_binding_projection", binding_id=self._E_UNVERIFIED_BINDING, tenant_id=self._TENANT)
+        self.assertIsNone(direct_proj.get("binding_status"))
+        self.assertTrue(any(m.get("code") == "node_not_found" for m in direct_proj.get("conflict_markers", [])))
 
 
 if __name__ == "__main__":

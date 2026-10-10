@@ -714,8 +714,8 @@ def build_postgres_write_fn(
 def build_postgres_event_reader(
     dsn: str,
     table: str = "telemetry_events",
-) -> tuple[Callable[[str], Optional[dict[str, Any]]], Callable[[str], list[dict[str, Any]]]]:
-    """Build durable event and binding readers querying canonical PostgreSQL."""
+) -> tuple[Callable[..., Optional[dict[str, Any]]], Callable[..., list[dict[str, Any]]]]:
+    """Build durable, tenant-scoped, and fetch-bounded event and binding readers querying canonical PostgreSQL."""
     import asyncpg, concurrent.futures, json as _json
 
     async def _fetch(sql: str, *args: Any) -> list[dict[str, Any]]:
@@ -738,10 +738,23 @@ def build_postgres_event_reader(
         except Exception as exc:
             raise RuntimeError(f"PostgreSQL lineage store unavailable: {exc}") from exc
 
-    return (
-        lambda eid: (r[0] if (r := _sync(f"SELECT payload FROM {table} WHERE event_id = $1 LIMIT 1", str(eid).strip())) else None) if str(eid or "").strip() else None,
-        lambda bid: _sync(f"SELECT payload FROM {table} WHERE payload->>'binding_id' = $1 OR payload->>'runtime_binding_id' = $1 ORDER BY created_at DESC LIMIT 100", str(bid).strip()) if str(bid or "").strip() else [],
-    )
+    def _fetch_event(eid: str, tenant_id: Optional[str] = None) -> Optional[dict[str, Any]]:
+        if not (clean_eid := str(eid or "").strip()):
+            return None
+        tid = str(tenant_id or "").strip()
+        sql = f"SELECT payload FROM {table} WHERE event_id = $1" + (" AND (payload->>'tenant_id' = $2 OR payload->'metadata'->>'tenant_id' = $2) LIMIT 1" if tid else " LIMIT 1")
+        r = _sync(sql, clean_eid, tid) if tid else _sync(sql, clean_eid)
+        return r[0] if r else None
+
+    def _fetch_binding_events(bid: str, tenant_id: Optional[str] = None, limit: int = 50) -> list[dict[str, Any]]:
+        if not (clean_bid := str(bid or "").strip()):
+            return []
+        fetch_lim, tid = min(max(1, int(limit or 50)), 100), str(tenant_id or "").strip()
+        cond = " AND (payload->>'tenant_id' = $2 OR payload->'metadata'->>'tenant_id' = $2) ORDER BY created_at DESC LIMIT $3"
+        sql = f"SELECT payload FROM {table} WHERE (payload->>'binding_id' = $1 OR payload->>'runtime_binding_id' = $1)" + (cond if tid else " ORDER BY created_at DESC LIMIT $2")
+        return _sync(sql, clean_bid, tid, fetch_lim) if tid else _sync(sql, clean_bid, fetch_lim)
+
+    return _fetch_event, _fetch_binding_events
 
 
 # ---------------------------------------------------------------------------
@@ -1871,7 +1884,10 @@ class TelemetryIngestService:
             return None
         event = self._seen_event_ids.get(clean_event_id)
         if event is None and self._event_reader is not None:
-            event = self._event_reader(clean_event_id)
+            try:
+                event = self._event_reader(clean_event_id, tenant_id=tenant_id)
+            except TypeError:
+                event = self._event_reader(clean_event_id)
         if (
             event is not None
             and tenant_id is not None

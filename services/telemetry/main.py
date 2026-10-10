@@ -233,11 +233,7 @@ from .heartbeat_service import (
     build_telemetry_event_from_runtime_heartbeat,
     heartbeat_status_from_summary,
 )
-from .ingest_svc import (
-    TelemetryIngestService,
-    build_postgres_event_reader,
-    build_postgres_write_fn,
-)
+from .ingest_svc import TelemetryIngestService, build_postgres_event_reader, build_postgres_write_fn
 from .lineage_read import LineageReadService
 from .runtime_summary import RuntimeSummaryProjectionStore
 from .trade_episode_projection import TradeEpisodeProjectionStore
