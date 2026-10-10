@@ -721,19 +721,20 @@ def build_postgres_event_reader(
     async def _fetch(sql: str, *args: Any) -> list[dict[str, Any]]:
         conn = await asyncpg.connect(dsn, timeout=5.0)
         try:
-            return [_json.loads(r["payload"]) if isinstance(r["payload"], str) else r["payload"] for r in await conn.fetch(sql, *args)]
+            records = await conn.fetch(sql, *args, timeout=5.0)
+            return [_json.loads(r["payload"]) if isinstance(r["payload"], str) else r["payload"] for r in records]
         finally:
-            await conn.close()
+            try: await conn.close(timeout=1.0)
+            except Exception: conn.terminate()
 
     def _sync(sql: str, *args: Any) -> list[dict[str, Any]]:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
+        try: loop = asyncio.get_running_loop()
+        except RuntimeError: loop = None
         try:
             if loop and loop.is_running():
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    return pool.submit(lambda: asyncio.run(_fetch(sql, *args))).result(timeout=5.0)
+                pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                try: return pool.submit(lambda: asyncio.run(_fetch(sql, *args))).result(timeout=5.0)
+                finally: pool.shutdown(wait=False, cancel_futures=True)
             return asyncio.run(_fetch(sql, *args))
         except Exception as exc:
             raise RuntimeError(f"PostgreSQL lineage store unavailable: {exc}") from exc
