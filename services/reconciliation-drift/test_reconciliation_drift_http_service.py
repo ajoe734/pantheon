@@ -206,6 +206,96 @@ class TestScheduledDriftReportCausalLineage(unittest.TestCase):
             build_incident_from_drift_report(bad_report)
         self.assertIn("drift report must link exactly one telemetry_event_id", str(ctx.exception))
 
+    def test_scheduled_drift_report_fails_closed_when_causal_anchor_missing_in_multi_event(self) -> None:
+        summary = dict(self.summary_base)
+        summary["last_heartbeat_event_id"] = None
+        evaluation: Dict[str, Any] = {
+            "evaluation_id": "eval-sched-003",
+            "binding_id": "bind-sched-001",
+            "runtime_id": "rt-sched-001",
+            "tenant_id": "default",
+            "reconciliation_checks": [
+                {"check": "runtime_health_summary", "status": "warning", "metric": "queue_lag_ms"}
+            ],
+            "drift_checks": [],
+        }
+        report = _scheduled_drift_report(
+            summary=summary,
+            evaluation=evaluation,
+            telemetry_event_ids=["evt-base-001", "evt-base-002"],
+            timestamp="2026-10-10T10:00:00Z",
+        )
+        self.assertIsNone(report)
+
+    def test_scheduled_drift_report_fails_closed_when_causal_anchor_not_in_telemetry_events(self) -> None:
+        summary = dict(self.summary_base)
+        summary["last_heartbeat_event_id"] = "evt-foreign-unobserved"
+        evaluation: Dict[str, Any] = {
+            "evaluation_id": "eval-sched-004",
+            "binding_id": "bind-sched-001",
+            "runtime_id": "rt-sched-001",
+            "tenant_id": "default",
+            "reconciliation_checks": [
+                {"check": "runtime_health_summary", "status": "warning", "metric": "queue_lag_ms"}
+            ],
+            "drift_checks": [],
+        }
+        report = _scheduled_drift_report(
+            summary=summary,
+            evaluation=evaluation,
+            telemetry_event_ids=["evt-base-001", "evt-base-002"],
+            timestamp="2026-10-10T10:00:00Z",
+        )
+        self.assertIsNone(report)
+
+    def test_scheduled_drift_report_legacy_single_event_succeeds(self) -> None:
+        summary = dict(self.summary_base)
+        summary["last_heartbeat_event_id"] = None
+        summary["last_event_id"] = None
+        evaluation: Dict[str, Any] = {
+            "evaluation_id": "eval-sched-005",
+            "binding_id": "bind-sched-001",
+            "runtime_id": "rt-sched-001",
+            "tenant_id": "default",
+            "reconciliation_checks": [
+                {"check": "runtime_health_summary", "status": "warning", "metric": "queue_lag_ms"}
+            ],
+            "drift_checks": [],
+        }
+        report = _scheduled_drift_report(
+            summary=summary,
+            evaluation=evaluation,
+            telemetry_event_ids=["evt-legacy-only-001"],
+            timestamp="2026-10-10T10:00:00Z",
+        )
+        self.assertIsNotNone(report)
+        assert report is not None
+        self.assertEqual(report["telemetry_event_ids"], ["evt-legacy-only-001"])
+        self.assertEqual(report["evidence_refs"][0], "telemetry_event:evt-legacy-only-001")
+
+    def test_scheduled_drift_report_no_cross_anchor_fallback(self) -> None:
+        # Health check with execution event present but no heartbeat event must not cross-fall back
+        summary = dict(self.summary_base)
+        summary["last_heartbeat_event_id"] = None
+        summary["last_event_id"] = "evt-trade-only"
+        evaluation: Dict[str, Any] = {
+            "evaluation_id": "eval-sched-006",
+            "binding_id": "bind-sched-001",
+            "runtime_id": "rt-sched-001",
+            "tenant_id": "default",
+            "reconciliation_checks": [
+                {"check": "runtime_health_summary", "status": "warning", "metric": "queue_lag_ms"}
+            ],
+            "drift_checks": [],
+        }
+        report = _scheduled_drift_report(
+            summary=summary,
+            evaluation=evaluation,
+            telemetry_event_ids=["evt-trade-only", "evt-other"],
+            timestamp="2026-10-10T10:00:00Z",
+        )
+        self.assertIsNone(report)
+
 
 if __name__ == "__main__":
     unittest.main()

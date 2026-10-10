@@ -342,7 +342,7 @@ class TestTelemetryLineageLookupAuthority(unittest.TestCase):
             req = urlopen.call_args.args[0]
             self.assertEqual(req.get_header("X-tenant-id"), "tenant-incidents-prod")
 
-    def test_http_lookup_defaults_tenant_to_default(self):
+    def test_http_lookup_unconfigured_tenant_remains_empty(self):
         with patch.dict(
             "os.environ",
             {
@@ -352,7 +352,7 @@ class TestTelemetryLineageLookupAuthority(unittest.TestCase):
             },
         ):
             lookup = _TelemetryLineageLookup(base_url="http://telemetry:8083")
-            self.assertEqual(lookup._tenant_id, "default")
+            self.assertEqual(lookup._tenant_id, "")
 
     def test_http_lookup_fail_closed_on_http_error(self):
         import urllib.error

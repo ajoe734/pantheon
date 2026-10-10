@@ -116,8 +116,7 @@ class _TelemetryLineageLookup:
             else os.getenv("PANTHEON_INCIDENTS_TENANT_ID", "")
             or os.getenv("PANTHEON_TENANT_ID", "")
             or os.getenv("PANTHEON_BFF_TENANT_ID", "")
-            or "default"
-        ).strip() or "default"
+        ).strip()
         self._timeout_seconds = int(
             timeout_seconds
             if timeout_seconds is not None

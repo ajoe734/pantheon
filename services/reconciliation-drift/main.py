@@ -2563,12 +2563,19 @@ def _scheduled_drift_report(
     worst = max(failing_checks, key=lambda item: _status_rank(str(item.get("status") or "ok")))
     metric = str(worst.get("metric") or worst.get("check") or "runtime_health")
     is_health = "lag" in metric or "runtime" in metric
-    causal_candidate = (
-        (summary.get("last_heartbeat_event_id") or summary.get("last_event_id"))
+    causal_anchor = (
+        summary.get("last_heartbeat_event_id")
         if is_health
-        else (summary.get("last_event_id") or summary.get("last_heartbeat_event_id"))
+        else summary.get("last_event_id")
     )
-    causal_event_id = causal_candidate if causal_candidate in telemetry_event_ids else telemetry_event_ids[0]
+    if causal_anchor:
+        if causal_anchor not in telemetry_event_ids:
+            return None
+        causal_event_id = causal_anchor
+    elif len(telemetry_event_ids) == 1:
+        causal_event_id = telemetry_event_ids[0]
+    else:
+        return None
     report_id = f"drift-{_safe_id_component(causal_event_id)}-{_safe_id_component(metric)}"
     cluster_id = f"drift:{_safe_id_component(metric)}"
     severity = _incident_severity(str(worst.get("status") or "warning"))
