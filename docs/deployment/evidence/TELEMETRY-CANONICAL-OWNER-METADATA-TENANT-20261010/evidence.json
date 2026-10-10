@@ -1,0 +1,103 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "TELEMETRY-CANONICAL-OWNER-METADATA-TENANT-20261010",
+  "title": "Support actual canonical owner metadata tenant on durable lineage reads without defaulting",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "base_sha": "537d2caa1976a243ece63a2d1c3f1f7a8d92381b",
+  "change_class": "corrective",
+  "net_prod_line_budget": 20,
+  "summary": "Supports canonical owner metadata.tenant_id on durable lineage reads without defaulting. In services/telemetry/lineage_read/service.py, adds explicit _owner_tenant envelope validation to honor both top-level tenant_id and metadata.tenant_id for Mapping and SimpleNamespace owner envelopes. Strictly rejects non-string present top-level and metadata tenant fields (e.g. numeric, boolean, or empty values) before normalization, failing closed. Validates that if both top-level and metadata tenant IDs are present, they must be equal. Missing, foreign, conflicting, or invalid owner scopes fail closed with HTTP 404 (LINEAGE_TARGET_NOT_FOUND) without inferring tenant from request, environment, or event. Applies canonical owner scope validation to event hydration, binding hydration, and runtime binding graph node admission while preserving runtime/artifact/version qualification and actual paused binding status without ACTIVE fallback. Preserves immutable tenant-scoped PostgreSQL truth and the 5.0s bounded fetch deadline. Adds test_10 for explicit flat-only, metadata-only (dict and SimpleNamespace), matching, conflicting, foreign, missing, numeric, boolean, empty, and invalid envelope regressions and test_11 for fresh-reader recovery of event trace and paused binding projection without re-ingest in services/telemetry/test_main_routes.py. Keeps net production diff strictly within <=20 lines budget (+17 net lines).",
+  "acceptance_verification": [
+    {
+      "ac": "AC1",
+      "description": "Bounded follow-up to delivered TELEMETRY-DURABLE-READER-BOUNDS-PROVENANCE-20261010 / PR6489 after authoritative terminal reopen denial; retain predecessor DONE and its genuine QA/review.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC2",
+      "description": "Actual served537 original RuntimeBindingAdapter GET exposes metadata.tenant_id=tenant-dev with absent top-level tenant_id; original accepted PG d39/951c/69fff rows retain tenant-dev but canonical historical event traces remain404 after actual restart.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC3",
+      "description": "Honor only explicit supported owner top-level tenant_id and metadata.tenant_id for Mapping and SimpleNamespace envelopes; both present must be equal; missing/foreign/conflicting/invalid owner scope remains fail-closed404; never infer tenant from request/env/event or arbitrary recursive search.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC4",
+      "description": "Apply the same canonical owner scope validation to event hydration and binding hydration while preserving runtime/artifact/version qualification and actual paused status; no ACTIVE fallback or arbitrary first-event/cross-anchor/default authority.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC5",
+      "description": "Preserve immutable tenant-scoped PG truth; no re-ingest/replay/cache-seeding/schema/row rewrite/shared DSN/fallback corpus; keep original5s fetch deadline/cancellation/close/terminate and all original authorization/404/503 behavior.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC6",
+      "description": "Only three declared files and new net production<=20 against current dev537; preserve and run all original reader route/write/incident tests with owned explicit loopback PG only and no skips/assertion weakening; add actual metadata-envelope flat-only/conflicting/foreign/missing regressions including fresh-reader recovery without re-ingest.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC7",
+      "description": "Genuine exact-head assigned review plus current required CI and canonical integration; SOURCE ONLY no VM/provider/hosted/browser/release authority; sole coordinator retains all hosted work.",
+      "verdict": "pending"
+    }
+  ],
+  "verification": [
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m unittest services.telemetry.test_main_routes",
+      "passed": 42,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m unittest services.telemetry.test_lineage_write_path",
+      "passed": 7,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m unittest services.incident.test_reference_validation",
+      "passed": 13,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m unittest services.incident.test_incident",
+      "passed": 80,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    }
+  ],
+  "declared_artifacts": [
+    "services/telemetry/lineage_read/service.py",
+    "services/telemetry/test_main_routes.py",
+    "docs/deployment/evidence/TELEMETRY-CANONICAL-OWNER-METADATA-TENANT-20261010/evidence.json"
+  ],
+  "diff_budget": {
+    "net_production_lines": 17,
+    "budget": 20,
+    "verdict": "pass",
+    "files": {
+      "production": [
+        "services/telemetry/lineage_read/service.py"
+      ],
+      "tests": [
+        "services/telemetry/test_main_routes.py"
+      ],
+      "evidence": [
+        "docs/deployment/evidence/TELEMETRY-CANONICAL-OWNER-METADATA-TENANT-20261010/evidence.json"
+      ]
+    }
+  }
+}
