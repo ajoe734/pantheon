@@ -181,7 +181,7 @@ class HTTP:
 
 def _url(value, kind):
     parsed = urllib.parse.urlsplit(value)
-    allowed = {"127.0.0.1", "localhost", "34.81.52.222", "api.dev.mvl-cap.tw" if kind == "bff" else "app.dev.mvl-cap.tw"}
+    allowed = {"127.0.0.1", "localhost", "35.194.154.62", "api.dev.mvl-cap.tw" if kind == "bff" else "app.dev.mvl-cap.tw"}
     if (parsed.hostname not in allowed or parsed.scheme not in {"http", "https"} or
         parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in ("", "/")):
         raise a.ArtifactError("public probe endpoint is outside the fixed dev boundary")

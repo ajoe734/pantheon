@@ -351,7 +351,7 @@ def test_deploy_nonprod_vm_dev_requires_artifact_admission_without_staging_vars(
     assert proc.returncode != 0
     assert "candidate evidence directory must be canonical and absolute" in proc.stderr
     assert "unbound variable" not in proc.stderr
-    assert "direct ssh chloe_ong_dev_cctech_support_com@34.81.52.222 component=root" in proc.stdout
+    assert "direct ssh chloe_ong_dev_cctech_support_com@35.194.154.62 component=root" in proc.stdout
     assert "deployment complete:" not in proc.stdout
     assert not args_file.exists()
     assert not stdin_file.exists()

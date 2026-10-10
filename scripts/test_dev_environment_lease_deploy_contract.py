@@ -749,7 +749,7 @@ def test_dev_deploy_guarded_ssh_terminates_transport_on_deadline(
     key_file.write_text("dummy-key\n", encoding="utf-8")
     key_file.chmod(0o600)
     known_hosts.write_text(
-        "34.81.52.222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGdummy\n",
+        "35.194.154.62 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGdummy\n",
         encoding="utf-8",
     )
     known_hosts.chmod(0o600)
@@ -770,7 +770,7 @@ def test_dev_deploy_guarded_ssh_terminates_transport_on_deadline(
         "PROJECT_ID": "pantheon-dev-20260902",
         "REMOTE_USER": "chloe_ong_dev_cctech_support_com",
         "DEV_VM": "pantheon-dev-deploy", "DEV_ZONE": "asia-east1-b",
-        "DEV_DEPLOY_SSH_HOST": "34.81.52.222",
+        "DEV_DEPLOY_SSH_HOST": "35.194.154.62",
         "DEV_BFF_PUBLIC_HOST": "api.dev.mvl-cap.tw",
         "DEV_FE_PUBLIC_HOST": "app.dev.mvl-cap.tw",
         "PANTHEON_DEV_ARTIFACT_RUNNER_EVIDENCE_DIR": str(tmp_path / "candidate"),
