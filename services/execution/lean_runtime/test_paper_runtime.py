@@ -2814,6 +2814,128 @@ class TestPaperRuntimeLifecycleCursor(unittest.TestCase):
                 self.assertIn("/bff/management/trade-journeys/events", str(ctx.exception))
 
 
-if __name__ == "__main__":
+class TestPaperRuntimeObservabilityEnvelope(unittest.TestCase):
+    def _identity(self):
+        return RuntimeIdentity.from_env(
+            {
+                "PANTHEON_RUNTIME_ROLE": "pantheon-paper-execution-runtime",
+                "PANTHEON_RUNTIME_MODE": "paper",
+                "PANTHEON_RUNTIME_ID": "rt-test",
+                "PANTHEON_RUNTIME_BINDING_ID": "bind-test",
+                "PANTHEON_DEPLOYMENT_STAGE": "paper",
+                "PANTHEON_RUNTIME_MANAGER_URL": "http://127.0.0.1:18000",
+                "PANTHEON_RUNTIME_MANAGER_TOKEN": "token",
+            }
+        )
 
+    def _binding(self):
+        return {
+            "binding_id": "bind-test",
+            "runtime_id": "rt-test",
+            "capital_pool_id": "pool-paper",
+            "artifact_id": "artifact-paper",
+            "artifact_version": "1.2.3",
+            "deployment_mode": "paper",
+            "plan_id": "plan-paper",
+            "persona_capital_binding_id": "pcb-paper",
+            "status": "active",
+        }
+
+    def test_queue_lag_observed_and_exposed_in_snapshot(self):
+        identity = self._identity()
+        emitter = RuntimeTelemetryEmitter(identity, _FakeBindingResolver(self._binding()))
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([]),
+            identity=identity,
+            runtime_manager_client=_FakeRuntimeManagerClient([]),
+            telemetry_emitter=emitter,
+        )
+        snap0 = service.snapshot()
+        self.assertIsNone(snap0["queue_lag_ms"])
+        self.assertIsNone(snap0["paper_state"]["queue_lag_ms"])
+
+        past_iso = datetime.now(timezone.utc).isoformat()
+        time.sleep(0.005)
+        event = OrderEvent(
+            event_id=str(uuid.uuid4()),
+            event_type="signal_generation",
+            symbol="2330.TW",
+            quantity=100,
+            fill_price=0.0,
+            action="BUY",
+            metadata={"enqueued_at": past_iso},
+        )
+        service._handle_order_event(event)
+
+        self.assertIsNotNone(service._observed_queue_lag_ms)
+        self.assertGreaterEqual(service._observed_queue_lag_ms, 0)
+        snap1 = service.snapshot()
+        self.assertEqual(snap1["queue_lag_ms"], service._observed_queue_lag_ms)
+        self.assertEqual(snap1["paper_state"]["queue_lag_ms"], service._observed_queue_lag_ms)
+
+    def test_queue_lag_degraded_when_missing_or_invalid_timestamp(self):
+        identity = self._identity()
+        emitter = RuntimeTelemetryEmitter(identity, _FakeBindingResolver(self._binding()))
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([]),
+            identity=identity,
+            runtime_manager_client=_FakeRuntimeManagerClient([]),
+            telemetry_emitter=emitter,
+        )
+        event = OrderEvent(
+            event_id=str(uuid.uuid4()),
+            event_type="signal_generation",
+            symbol="2330.TW",
+            quantity=100,
+            fill_price=0.0,
+            action="BUY",
+            metadata={"enqueued_at": "invalid-timestamp"},
+        )
+        service._handle_order_event(event)
+        self.assertIsNone(service._observed_queue_lag_ms)
+        snap = service.snapshot()
+        self.assertIsNone(snap["queue_lag_ms"])
+        self.assertIsNone(snap["paper_state"]["queue_lag_ms"])
+
+    def test_telemetry_emitter_records_delivery_lag(self):
+        identity = replace(self._identity(), telemetry_url="http://telemetry.test")
+        emitter = RuntimeTelemetryEmitter(identity, _FakeBindingResolver(self._binding()))
+        self.assertIsNone(emitter.last_delivery_lag_ms)
+        self.assertIsNone(emitter.snapshot()["delivery_lag_ms"])
+        self.assertIsNone(emitter.snapshot()["event_delivery_lag_ms"])
+
+        response = MagicMock()
+        response.__enter__.return_value.status = 200
+        with patch("urllib.request.urlopen", return_value=response):
+            emitted = emitter.emit_heartbeat()
+        self.assertTrue(emitted)
+        self.assertIsNotNone(emitter.last_delivery_lag_ms)
+        self.assertGreaterEqual(emitter.last_delivery_lag_ms, 0)
+        snap = emitter.snapshot()
+        self.assertEqual(snap["delivery_lag_ms"], emitter.last_delivery_lag_ms)
+        self.assertEqual(snap["event_delivery_lag_ms"], emitter.last_delivery_lag_ms)
+
+    def test_emitter_base_metadata_extracts_bridge_from_binding_metadata(self):
+        identity = self._identity()
+        binding = self._binding()
+        binding["metadata"] = {
+            "engine_bridge_repo": "https://github.com/QuantConnect/Lean.git",
+            "engine_bridge_path": "Lean",
+            "engine_bridge_commit": "1234567",
+            "runtime_adapter_version": "0.1.5",
+            "context_source": "binding_metadata",
+        }
+        emitter = RuntimeTelemetryEmitter(identity, _FakeBindingResolver(binding))
+        event = emitter.build_event("heartbeat", {"heartbeat": 1})
+        self.assertIsNotNone(event)
+        meta = event["metadata"]
+        self.assertEqual(meta["engine_bridge_repo"], "https://github.com/QuantConnect/Lean.git")
+        self.assertEqual(meta["engine_bridge_path"], "Lean")
+        self.assertEqual(meta["engine_bridge_commit"], "1234567")
+        self.assertEqual(meta["runtime_adapter_version"], "0.1.5")
+        self.assertEqual(meta["context_source"], "binding_metadata")
+
+
+if __name__ == "__main__":
     unittest.main()
+
