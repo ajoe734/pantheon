@@ -282,3 +282,27 @@ def test_telemetry_ingest_accepts_issued_health_principal_and_rejects_others(mon
     assert foreign.status_code == 403 and foreign.get_json()["error"]["code"] == "TENANT_FORBIDDEN"
     producer = _post_health(monkeypatch, token, producer="rogue-probe-agent")
     assert producer.status_code == 403 and producer.get_json()["error"]["code"] == "PRODUCER_FORBIDDEN"
+
+
+def test_agora_projector_principal_is_exact_and_mounted_for_projector():
+    import yaml
+    root = Path(__file__).resolve().parents[1]
+    variable = "AGORA_PROJECTOR_SERVICE_JWT"
+    assert CONSUMER_FILES["source-ingest-agora-projector"] == (variable,)
+    values = issue_environment(configured(), now=NOW)
+    claims = verify(values[variable])
+    assert claims["sub"] == claims["service"] == "pantheon-dev-agora-projector-reader"
+    assert claims["roles"] == ["source_ingest_reader"]
+    assert claims["tenant_id"] == "tenant-dev" and claims["allowed_tenants"] == ["tenant-dev"]
+    assert claims["scope"] == "pantheon:dev-owner-read"
+    assert 0 < claims["exp"] - claims["iat"] <= TTL_SECONDS
+    assert values[variable + "_FILE"] == "/run/pantheon-principals/" + variable
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text())
+    projector = compose["services"]["source-ingest-agora-projector"]
+    assert "dev-paper-agora-projector-tokens:/run/pantheon-principals:ro" in projector["volumes"]
+    assert projector["environment"][variable + "_FILE"].endswith("/run/pantheon-principals/" + variable + "}")
+    assert "dev-paper-agora-projector-tokens:/issued/source-ingest-agora-projector" in (
+        compose["services"]["dev-paper-principal-issuer"]["volumes"]
+    )
+    assert "dev-paper-agora-projector-tokens" in compose["volumes"]
+
