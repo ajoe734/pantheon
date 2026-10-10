@@ -14,7 +14,7 @@ def test_canonical_lifecycle_projector_is_default_and_owns_both_read_models():
     environment = projector["environment"]
 
     assert "profiles" not in projector
-    assert projector["restart"] == "${LIFECYCLE_PROJECTOR_RESTART_POLICY:-no}"
+    assert projector["restart"] == "${LIFECYCLE_PROJECTOR_RESTART_POLICY:-unless-stopped}"
     assert projector["mem_limit"] == "${LIFECYCLE_PROJECTOR_MEMORY_LIMIT:-16g}"
     assert projector["build"]["dockerfile"] == "services/telemetry/Dockerfile"
     assert projector["command"] == [
