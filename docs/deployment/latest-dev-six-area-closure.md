@@ -173,10 +173,17 @@ RLlib/Ray stays as on `dev`.
   - Authenticated GET Adoption: `GET Source` records and controller readback succeeded before and after rotation.
   - Issuer Health: Signature valid, fixed grant valid, headroom healthcheck exit 0.
   - Boundary Limitation: Confirms single consumer adoption across one natural rotation; does NOT claim projector adoption, infinite continuity, or training job completion; zero forced mint, restart, or secret export.
-- **Human Approval Votes**:
-  - Governance case: `approval-paper-human-quorum-closeout-20261010-v1` observed at 13:37:29Z.
-  - Required votes: 2 real, eligible, distinct non-proposer human votes.
-  - Observed votes: 0 votes cast; status pending (version 1); zero AI votes / PATCH / new browser.
+- **Human Approval Votes & Capital Policy Convergence (Parent AC4)**:
+  - Historical Fixture Observation (at 13:37:29Z):
+    - Governance case: `approval-paper-human-quorum-closeout-20261010-v1` observed at 13:37:29Z.
+    - Historical status: pending (version 1), 0 votes cast; zero AI votes / PATCH / new browser.
+    - Disposition: Retained as obsolete historical fixture with zero votes; no fabricated cancellation (remains historically pending with zero votes, not approved/cancelled).
+  - Operator Policy Clarification (Timestamped: 2026-10-11):
+    - User explicitly rejected demanding two human approvers for this ordinary dev/paper closeout and instructed to fix it; this supersedes the earlier blanket two-human interpretation; do not ask the operator to find a second human.
+    - Capital Policy Convergence: Existing `services/capital/capital_guard.py:is_paper_operation/authorize` already allows correctly scoped paper pool activation, paper_owner binding, and paper_ledger rebalance without Capital approval (`is_paper_operation` returns True when `execution_context=paper` with paper-only allocations and bindings, allowing authorization without `_require_approval`); no new approval bypass, scope, or issuer is added, and live/canary controls remain intact.
+    - Existing `CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001 AC3` explicitly requires paper onboarding without Capital approval.
+    - Fixture Assessment: Chatbox-created fixture `approval-paper-human-quorum-closeout-20261010-v1` is an inappropriate capital_pool_activation/increase fixture: its pool only had `paper_only`/`is_real_capital` labels and omitted the actual `execution_context=paper` owner contract. It is not counted as a release blocker, and no votes will be sought on this fixture.
+    - Real Non-Capital Business Approval UI Policy: Real non-capital business approval UI acceptance uses the existing one-authorized-human policy for its actual target; retains true login, owner version/readback, tenant, idempotency, persistence, and no-proxy-vote requirements.
 
 ### Area 5: Rollback Verification & Hosted Obligation Status Update (Parent AC5)
 - **Rollback Verification**: Exact prior FE/BFF artifact rollback and reactivation with readback while preserving acknowledged data remains unexecuted / unverified on live dev VM.
@@ -199,7 +206,7 @@ RLlib/Ray stays as on `dev`.
 - **Remaining Obligations (Overall Status INCOMPLETE)**:
   1. **FULL Loop Qualification**: Provider weekly quota limit on FULL job reset Oct 12 12:00 UTC (unverified / availability not guaranteed). Root 38102321809 skipped FULL; Root 38124492288 skipped FULL.
   2. **Taiwan Natural Market Data**: Mandatory Oct 12 NEW natural TW market data arrival, freshness verification, and downstream pipeline processing.
-  3. **Human Approval Votes**: Two real, eligible, distinct non-proposer human votes required on Governance approval case.
+  3. **Human Approval & Paper Onboarding Policy**: Real non-capital business approval UI acceptance requires one authorized human under existing policy (retaining true login, owner version/readback, tenant, idempotency, persistence, and no-proxy-vote requirements); genuine paper onboarding requires zero Capital approval per `services/capital/capital_guard.py:is_paper_operation` and `CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001 AC3`. Obsolete pending fixture `approval-paper-human-quorum-closeout-20261010-v1` is not a release blocker.
   4. **Positive Financial Accounting**: Positive financial reconciliation, ledger balancing, and variance resolution.
   5. **Main Provider & Pinned Replay**: Original main post-config / provider execution, pinned Docker replay, and legacy US scope limitations.
   6. **Exact Sealed Bytes Roundtrip**: Exact prior-to-same FINAL sealed bytes roundtrip and preservation of all acknowledged data on hosted dev VM.
@@ -270,3 +277,4 @@ Note: Root pair release admission (Root run 38102321809: 420598fe + 79aacd97) do
 - **2026-10-11T14:45:14Z**: Task `TEST-REDIS-CONTAINER-LEAK-20261010` native SUPERSEDED by parent `DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002` (terminal_outcome: superseded); PR #6481 CLOSED unmerged at 14:48:05Z (head `3da34d4f...` retained, bad trailers/force hook denial preserved).
 - **2026-10-11T14:45:20Z**: Task `WORKER-NATIVE-SOURCE-REWORK-BINDING-20261011` native SUPERSEDED by parent `DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002` (terminal_outcome: superseded; cumulative budget 40/40, net budget 0 unchanged, native consumer/grant not implemented/activated).
 - **2026-10-11T14:50:00Z**: Child task `DEV-SIX-AREA-SOURCE-ADOPTION-CHECKPOINT-20261011` publishes honest timestamped partial source adoption checkpoint across all 4 declared repository artifacts. Overall status remains honestly INCOMPLETE.
+- **2026-10-11T15:05:00Z**: Operator policy clarification recorded for Area 4 (Parent AC4) and Area 6: User explicitly rejected demanding two human approvers for ordinary dev/paper closeout; paper onboarding requires zero Capital approval per `services/capital/capital_guard.py:is_paper_operation`, and real non-capital business approval UI requires one authorized human. Pending fixture `approval-paper-human-quorum-closeout-20261010-v1` is an obsolete zero-vote fixture, not a release blocker.

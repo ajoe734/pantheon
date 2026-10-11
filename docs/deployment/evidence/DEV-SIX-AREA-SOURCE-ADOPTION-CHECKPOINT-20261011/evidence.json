@@ -189,7 +189,17 @@
         "version": 1,
         "human_votes_observed": 0,
         "ai_votes_cast": 0,
-        "new_browser_journey": false
+        "new_browser_journey": false,
+        "fixture_disposition": "obsolete historical fixture with zero votes; omitted actual execution_context=paper owner contract; retained without fabricated cancellation; not a release blocker",
+        "operator_policy_clarification_20261011": {
+          "timestamp": "2026-10-11",
+          "operator_instruction": "User explicitly rejected demanding two human approvers for ordinary dev/paper closeout; supersedes earlier blanket two-human interpretation",
+          "capital_paper_onboarding_approval_required": 0,
+          "capital_guard_policy": "services/capital/capital_guard.py:is_paper_operation/authorize allows correctly scoped paper pool activation, paper_owner binding and paper_ledger rebalance without Capital approval; CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001 AC3 explicitly requires paper onboarding without Capital approval",
+          "non_capital_business_approval_policy": "Real non-capital business approval UI acceptance uses existing one-authorized-human policy for its actual target; retains true login, owner version/readback, tenant, idempotency, persistence and no-proxy-vote",
+          "current_required_votes": 1
+        },
+        "current_required_votes": 1
       }
     },
     "management_loop_health": {
@@ -234,8 +244,8 @@
       "detail": "Mandatory Oct 12 NEW natural Taiwan market data arrival, freshness verification, and downstream pipeline consumption"
     },
     {
-      "item": "human_approval_votes",
-      "detail": "Two real eligible distinct non-proposer human votes required on Governance approval case"
+      "item": "human_approval_and_paper_onboarding_policy",
+      "detail": "One authorized human required for real non-capital business approval UI acceptance (retaining true login, owner version/readback, tenant, idempotency, persistence, no-proxy-vote); zero Capital approval required for genuine paper onboarding per services/capital/capital_guard.py:is_paper_operation and CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001 AC3; obsolete fixture approval-paper-human-quorum-closeout-20261010-v1 is not a release blocker"
     },
     {
       "item": "positive_financial_reconciliation",
