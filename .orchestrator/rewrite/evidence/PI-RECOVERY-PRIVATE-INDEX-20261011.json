@@ -1,0 +1,26 @@
+{
+  "task_id": "PI-RECOVERY-PRIVATE-INDEX-20261011",
+  "implementation_author": "Pi chatbox, explicitly operator-authorized direct tooling repair; no worker impersonation",
+  "references": ["WORKER-CURRENTBASE-PUBLICATION-FENCES-20261011", "WORKER-NATIVE-SOURCE-REWORK-BINDING-20261011", "DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002"],
+  "scope": [".orchestrator/rewrite/worker_workspace.py", ".orchestrator/rewrite/test_worker_workspace.py", ".orchestrator/rewrite/evidence/PI-RECOVERY-PRIVATE-INDEX-20261011.json"],
+  "repair": "Replace predictable globally writable /tmp recovery index with TemporaryDirectory (0700) and context-managed cleanup before provenance publication. Preserve all authority/publication/lease/source/base/path guards and original exports.",
+  "source_change": {"production_added": 3, "production_removed": 3, "net": 0, "original_cumulative_helper_net_cap": 40, "cap_not_expanded": true},
+  "validation": {
+    "owned_original_Git_fixtures_only": true,
+    "original_workspace_tests_retained": 51,
+    "new_regressions": 2,
+    "total_passed": 53,
+    "duration_seconds": 29.736,
+    "exit": 0,
+    "private_directory_mode": "0700",
+    "preexisting_global_index_collision_bytes_preserved": true,
+    "private_directory_removed_after_publication_denial": true,
+    "private_directory_removed_after_read_tree_failure": true,
+    "source_HEAD_and_current_dev_unchanged_on_denial": true,
+    "old_source_valid_invocation_regressions": "Both fail on predictable global index/private-mode assertions; original legitimate recovery controls retained separately.",
+    "diagnostic_history": "Initial regression invocation used unimported patch and was invalid. It was corrected to existing mock.patch, then both genuine RED cases and complete GREEN suite rerun.",
+    "external_receipts": "/tmp/pantheon-pi-direct-20261011T1135Z/"
+  },
+  "not_claimed": ["canonical source-rework grant", "lost-lease receipt", "native consumer binding", "runtime policy promotion", "supervisor restart", "hosted product FULL", "final six-area acceptance"],
+  "workflow": "Direct tooling delivery to dev; mechanical delivery:tooling PR only if required by branch-protected GitHub Actions. No reviewer or canonical review-proof attestation manufactured."
+}
