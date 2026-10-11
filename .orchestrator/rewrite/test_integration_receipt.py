@@ -79,6 +79,8 @@ def test_parse_accepts_valid_receipt(mutate) -> None:
     [
         ("version", 2),
         ("version", "1"),
+        ("version", True),
+        ("version", 1.0),
         ("result", "merged"),
         ("observation", "force_pushed"),
         ("task_generation", 0),

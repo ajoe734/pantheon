@@ -186,7 +186,7 @@ def parse_integration_receipt(raw: Any) -> dict[str, Any] | None:
     if not isinstance(raw, Mapping):
         return None
     try:
-        if raw.get("version") != RECEIPT_VERSION:
+        if type(raw.get("version")) is not int or raw.get("version") != RECEIPT_VERSION:
             return None
         if raw.get("result") != RECEIPT_RESULT_LANDED:
             return None

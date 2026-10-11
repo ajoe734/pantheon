@@ -1,0 +1,24 @@
+{
+  "task_id": "PI-LANDED-REOPEN-GENERATION-20261011",
+  "delivery_class": "development_tooling",
+  "authority": "Actual operator direct-implementation instruction in original Pi session, 2026-10-11T11:34:59.357Z; AGENTS Explicit Operator Bypass and direct tooling delivery",
+  "source_only": true,
+  "production_files": ["scripts/ai_status.py", ".orchestrator/rewrite/integration_receipt.py"],
+  "test_files": ["scripts/test_ai_status.py", ".orchestrator/rewrite/test_integration_receipt.py"],
+  "defect": "Native reopen reused a generation already occupied by a genuine landed receipt. A later distinct reviewed delivery then conflicts with that immutable same-generation receipt.",
+  "repair": "A legal native reopen advances only a generation with its own valid landed receipt, preserving the receipt and fencing the durable requeue intent to the new generation. Subsequent legal source reopens without another landed receipt do not advance again. Stored receipt schema version must be an actual integer, never bool or float.",
+  "validation": {
+    "original_complete_modules": ["scripts/test_ai_status.py", ".orchestrator/rewrite/test_integration_receipt.py"],
+    "result": "600 passed, 370 subtests passed",
+    "seconds": 122.78,
+    "history": "Initial added repeated-reopen control attempted an illegal in_progress transition: 1 failed, 599 passed. Corrected the fixture to a later legal review handoff without another merge; no product policy relaxation.",
+    "fixtures": "Original isolated task/Git/lock/TaskStore fixtures; no hosted or shared task mutation"
+  },
+  "not_claimed": [
+    "Repair of the already-existing generation-3 conflict for PR6504",
+    "Loaded supervisor promotion or native source-rework consumer integration",
+    "Original Redis task completion or old PR6481 disposition",
+    "Hosted FULL, new paired deployment, rollback roundtrip, owner-data preservation or total acceptance"
+  ],
+  "overall_project": "INCOMPLETE"
+}
