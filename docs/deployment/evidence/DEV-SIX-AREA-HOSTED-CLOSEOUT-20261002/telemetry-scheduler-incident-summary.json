@@ -1,5 +1,5 @@
 {
-  "at": "2026-10-11T04:04:45.000000+00:00",
+  "at": "2026-10-11T04:40:00.000000+00:00",
   "historical_pg_lineage_cold_read": {
     "telemetry_restart_utc": "2026-10-11T01:49:17Z",
     "cold_read_http_status": 200,
@@ -11,7 +11,8 @@
     "total_loops": 12,
     "accepted_healthy_loops": 11,
     "unhealthy_loop_id": "telemetry_reconciliation",
-    "rejection_reason": "record lacks accepted current controller-runtime provenance"
+    "rejection_characterization": "fresh unhealthy functional result from current owner receipts (not merely stale unobserved provenance rejection); 2 incident timeouts and 18 visibility deferrals active",
+    "rejection_reason": "record lacks accepted current controller-runtime provenance and exhibits failing binding projections"
   },
   "scheduler_unhealthy_state": {
     "incident_timeouts_count": 2,
@@ -50,10 +51,10 @@
   "reopen_and_successor_tasks": {
     "terminal_denial": "preserved",
     "successor_task": "RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011",
+    "pending_pr": 6495,
+    "head_sha": "14de008e4bd5786eca8c2870c3afd35a32c784b0",
     "assigned_worker": "Antigravity2",
-    "worker_pid": 2773328,
-    "budget": "9 files, production net <= 120 lines",
-    "status": "source rework active",
+    "status": "source rework active; numeric tenant coercion and pair deadline counter rework pending; no total PASS",
     "queued_followup_task": "TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011",
     "queued_condition": "waiting for BE 6495 genuine DONE to serialize overlapping writer"
   }

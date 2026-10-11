@@ -1,13 +1,14 @@
 # Latest Dev Six-Area Closure Checkpoint (DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002)
 
-Checkpoint timestamp: 2026-10-11T04:20:00Z (Taipei: 2026-10-11 12:20)
+Checkpoint timestamp: 2026-10-11T04:40:00Z (Taipei: 2026-10-11 12:40)
 Status: **INCOMPLETE** (Honest Current Evidence Checkpoint, Not Final Acceptance)
 Parent task: `DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002` (Generation 16, Owner: `Human/Ops`, Reviewer: `Codex2`)
 Child task: `DEV-SIX-AREA-EVIDENCE-CHECKPOINT-20261011` (Owner: `Antigravity2`, Reviewer: `Antigravity`, documentation-only)
 
-Scope: Documentation-only source checkpoint. Zero production delta. Simulation remains `is_real=false`;
-nothing here is real-market, provider, or hosted proof. This task does NOT accept closeout or replace
-parent independent final acceptance or release owner authority.
+Scope: Documentation-only source checkpoint. Zero production delta. In trading execution, `is_real=false`
+refers to simulated / paper execution orders (no real-market capital or production trading). Hosted testbed
+receipts (authenticated GETs, API probes, and browser journeys) are documented as genuine testbed evidence.
+This task does NOT accept closeout or replace parent independent final acceptance or release owner authority.
 
 ## Predecessor delivery identities (merged on origin/dev)
 
@@ -77,19 +78,25 @@ parent independent final acceptance or release owner authority.
 | PROJECTION-MIGRATION-TIMEOUT-20261008 | BE | #6357 | `72de383e1` |
 | TELEMETRY-CANONICAL-OWNER-METADATA-TENANT-20261010 | BE | #6494 | `420598fe6` |
 | FE-GOVERNANCE-OWNER-READABLE-DETAIL-20261010 | FE / dev-deploy (not a BE-repo merge) | - | not verifiable from BE source; Human/Ops dispatch truth: done (FE PR #830, merge 79aacd97) |
-| FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011 | FE / dev-deploy (not a BE-repo merge) | - | not verifiable from BE source; Human/Ops dispatch truth: merged (FE PR #831, merge 3fa4b1aa) |
+| FE-GOVERNANCE-CANONICAL-AUDIT-READBACK-20261011 | FE / dev-deploy (not a BE-repo merge) | - | not verifiable from BE source; Human/Ops dispatch truth: done (FE PR #831, merge 3fa4b1aa, native DONE 04:13:17) |
+| FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011 | FE / dev-deploy (not a BE-repo merge) | - | not verifiable from BE source; pending PR #832 (head 88b5c615) |
 
 PR6093 = BFF-CLOSURE-REGRESSION-20261002 (`b6599f9fd`), PR6094 = DIRECT-BFF-OWNERSHIP-001 (`88ce3faff`),
 both merged. DIRECT-RAY-BASELINE-001 was NOT DELIVERED (see `docs/operations/research-framework-disposition.md`);
 RLlib/Ray stays as on `dev`.
 
-## Six-Area Evaluation Matrix
+## Six-Area Evaluation Matrix (Canonical Parent ACs)
 
-### Area 1: Release & Environment Control Plane
+### Area 1: Release Owner Coordination, Environment Lease & Governed Deployment Gate (Parent AC1)
+- **Governance Alignment**: Manual central release/acceptance checkpoint only; coordinates with existing release owner `Human/Ops` under preserved per-operation authorization.
+- **Workflow & Lease**: Governed through `.github/workflows/nonprod-deploy.yml` and the single dev environment lease.
+- **Safety Boundaries**: Zero worker VM access, zero parallel root release, and zero fabricated human business approvals.
+
+### Area 2: Pinned & Gated Exact Latest-Dev FE/BFF Pair, Hosted Identities & Sealed Artifacts (Parent AC2)
 - **Hosted Pair Deployment**: Root run `38102321809`, FE gate run `38103669914`, FE deploy run `38104566256`.
 - **Controller Admission**: Accepted at `2026-10-11T02:33:31Z` with BE `420598fe` + FE `79aacd97`.
 - **Candidate Digest**: `488b5e461c9583e261bddf2d7ad7ac8afe7e92dab677338fdb7634f437a14341`.
-- **Artifacts Verification**: All 7 Root artifacts independently verified against GitHub API hash and size.
+- **Artifacts Verification**: All 7 Root artifacts independently verified against GitHub API hash and size:
   - `pantheon-cross-repo-release-38102321809-1` (6679 bytes, SHA256 `aa31a97ef12ba2163916756811bc8a027c22518b916bbb1273ef338920b85a5f`)
   - `pantheon-dev-artifact-candidate-38102321809-1` (1074 bytes, SHA256 `f2473ee7cf4ceb8b6e732d4073005f687a6e606b9592638746980bce72a342e8`)
   - `pantheon-dev-release-admission-38102321809-1` (5353 bytes, SHA256 `576039306378dfb2a1f88cd67d93cb25fa1f07d4ee14d74a903615f24fae5d41`)
@@ -105,8 +112,9 @@ RLlib/Ray stays as on `dev`.
 - **FULL Loop Qualification State**: In Root run 38102321809, the FULL job was **SKIPPED** (not qualified).
 - **Prior FULL Failure**: Run 38092806870 failed due to upstream provider weekly quota limit, reported reset on `2026-10-12T12:00:00Z` (availability not guaranteed).
 
-### Area 2: Browser Journeys & Persistence
-- **Workshop Journey (run 38109227221)**:
+### Area 3: Hosted Harness, Twelve-Loop Causal Chain & Journey Verification (Parent AC3)
+- **Causal Chain Truth**: Incomplete. No ALL-loop browser proof or FULL loop qualification exists on a fresh causal chain.
+- **Workshop Persistence Journey (run 38109227221)**:
   - Operation: `803e8330-75e4-4d31-83fd-57f48b0ee1c3`
   - Target: Workshop `295726c7-47b5-4516-a74a-c5ba8765ee48`
   - Title: `Workshop persistence journey 994e6c0b-b056-4bad-9686-ef68d4c273c6` (SHA256: `f697a21ccd124c051cf40715d1fd622d0314f8af2d0c7cd9c7c13682cf9c3093`)
@@ -114,77 +122,98 @@ RLlib/Ray stays as on `dev`.
   - Result: 13 of 13 real steps **PASS** (version pair before/after, first login, owner readback, UI navigation, real reload, after reload readback, sign out, session invalidation, fresh anonymous context, second login, reopen UI, fresh context readback).
   - BFF Restart: Independent BFF restart at `2026-10-11T01:58:33.264523039Z` observed after acknowledged save at `2026-10-09T01:16:15.438Z`.
   - Hash Retention: Full content hash `b241...2490` identical across restart. Note: this hash is a later full digest, NOT original save-time hash; zero create/PATCH/resave executed.
-  - Scope Limit: Does not prove Governance, all owner data, or rollback PASS.
+  - Scope Boundary: Proves workshop persistence journey only; does NOT prove Governance, all owner data, or rollback PASS.
 - **Governance Review Journey (run 38108525681)**:
   - Operation: `1638df31-eaeb-4f87-ba78-8ace7b8b0850`
   - Result: Steps 1-7 PASS, step 8 `navigate_governance_case_ui_first` **FAILED**.
-  - Negative Evidence: Endpoint `GET /bff/audit` returned HTTP 200 with 12 items having `target_id`. Frontend `GovernanceReview.tsx` accessed `e.target.includes`, causing `TypeError: Cannot read properties of undefined (reading 'includes')`.
-  - Reopen Disposition: Terminal reopen DENIED; referenced successor task `FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011` created and dispatched to `Antigravity2` (PID 2775529, 6 files, production net <= 40 lines), currently in source rework (not reviewed or deployed).
+  - Hosted Failure: Hosted Playwright browser execution failed at UI navigation step 8; the Playwright run artifact did not capture the hosted browser console error stack trace.
+  - Source AST Counter: Complete original AST inspection of `GovernanceReview.tsx` revealed `audit.filter((e) => e.target.includes(id)...)` accessing undefined `e.target` because `GET /bff/audit` returns `target_id`, causing `TypeError: Cannot read properties of undefined (reading 'includes')`. Both hosted UI failure and source AST counter are clearly labeled.
+  - Reopen Disposition: Terminal reopen DENIED; referenced successor task `FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011` created and dispatched to `Antigravity2` (PID 2775529), pending PR #832 (head `88b5c615`), currently in source rework (not reviewed or deployed).
+- **All-Loop Browser Proof**: NONE. There is no product Research, provider/Alpha, Capital, or human imitation browser proof across all loops. Each loop's browser state is `NOT_PROVEN` unless backed by its own exact receipt (L4 workshop journey PASS, Governance FAIL).
+- **Legacy US Persona Bindings**:
+  - Audit Scope: 25 archived Persona IDs cross-referenced against runtime owner `metadata.persona_id`.
+  - Matched Bindings: 24 matched bindings (7 retired, 1 failed, 16 paused [15 with explicit `market_input_stale` canonical session admission; 1 paused cause unknown]).
+  - Unmatched Personas: 1 unmatched (`persona-0f94f05389a7e092b469`).
+  - Worker Presence: All 24 matched bindings have `worker_present: false` (zero active workers).
+  - Runtime Commands: Zero commands issued (no pause, retire, or capital commands; paused state NOT claimed to be irreversible terminal).
+  - Historical Data Clarification: Historical "1191" figure represents 10-minute SPY snapshot polls in logs, NOT 1191 runtime bindings. Actual runtime binding count is 46, of which 24 match legacy US personas.
 
-### Area 3: Telemetry, PG Lineage & Scheduler
+### Area 4: Saved Owner State Persistence Across Restart, Fault Visibility & Human Approval (Parent AC4)
 - **Historical PG Lineage Cold Read**: Following telemetry process restart at `2026-10-11T01:49:17Z`, historical incident canonical traces and binding projections (including `d39` and `69fff`) returned HTTP 200 (recovered from prior 404) without database mutation or synthetic replay.
-- **Live Management Health**: 11 of 12 loops reported healthy. Loop 10 (`telemetry_reconciliation`) remains unobserved / rejected due to lack of accepted current controller-runtime provenance.
-- **Scheduler Unhealthy State**: 2 incident timeouts and 18 visibility deferrals active.
+- **Live Management Health**: 11 of 12 loops reported healthy.
+- **Loop 10 (Telemetry Reconciliation) Fresh Unhealthy Functional Result**:
+  - Loop 10 latest status is a fresh unhealthy functional result from current owner receipts, not merely stale unobserved provenance rejection.
+  - 2 incident timeouts and 18 visibility deferrals active.
   - Evaluated bindings: `rb-52d16f8d2ace4104868caf3f3fc4c898` and `rb-5354aba551124647a7d93774317bd43d`.
   - Event traces PASS (1.527s, 3.066s), but binding projections returned HTTP 503 (5.086s, 7.718s).
   - PostgreSQL READONLY query confirmed durable ingested order: `3445658 < 4005801` and `3457957 < 4005806`.
   - PostgreSQL EXPLAIN (not ANALYZE) confirmed costly `created_at` index scan on OR runtime binding query without dedicated index; no held blocking table lock detected.
-  - Reopen Disposition: Terminal denial preserved; referenced successor task `RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011` dispatched to `Antigravity2` (PID 2773328, 9 files, production net <= 120 lines), currently in source rework.
+  - Reopen Disposition: Terminal denial preserved; referenced successor task `RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011` pending PR #6495 (head `14de008e`), currently in source rework under `Antigravity2`. Numeric tenant coercion and pair deadline counter rework remain; no total PASS.
   - Task `TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011` (4 files, net 40 lines) queued, waiting for BE #6495 genuine completion to avoid conflicting table updates.
+- **Training Consumer Token Rotation**:
+  - Consumer Service: `training-session-svc` on same running instance, reading mount `/run/pantheon-principals/TRAINING_SESSION_SOURCE_READ_TOKEN`.
+  - Natural Rotation: Natural scheduled rotation occurring before 24h expiry, NOT an expiration event, observed between `2026-10-11T02:45:46Z` and `2026-10-11T03:45:46Z`.
+    - Before: mtime `02:45:46Z`, token SHA `81f18536...`, `iat: 1791686746`, `exp: 1791773146`.
+    - After: mtime `03:45:46Z`, token SHA `a34bfdb5...`, `iat: 1791690346`, `exp: 1791776746`.
+    - `iat` advanced by 1 hour (3600s), while `exp` remains 24 hours out; rotation occurred prior to expiration.
+  - Identity & Claims: Same finite principal (`pantheon-dev-training-session-svc`), scope (`pantheon:dev-owner-read`), aud (`bff-operators`), tenant (`tenant-dev`).
+  - Authenticated GET Adoption: `GET Source` records and controller readback succeeded before and after rotation.
+  - Issuer Health: Signature valid, fixed grant valid, headroom healthcheck exit 0.
+  - Boundary Limitation: Confirms single consumer adoption across one natural rotation; does NOT claim projector adoption, infinite continuity, or training job completion; zero forced mint, restart, or secret export.
+- **Human Approval Votes**: Two real, eligible, distinct human votes required on Governance approval case; zero votes cast.
 
-### Area 4: Training Consumer Token Rotation
-- **Consumer Service**: `training-session-svc` on same running instance, reading mount `/run/pantheon-principals/TRAINING_SESSION_SOURCE_READ_TOKEN`.
-- **Natural Rotation**: Natural token rotation observed between `2026-10-11T02:45:46Z` and `2026-10-11T03:45:46Z`.
-  - Before: mtime `02:45:46Z`, token SHA `81f18536...`, `iat: 1791686746`, `exp: 1791773146`.
-  - After: mtime `03:45:46Z`, token SHA `a34bfdb5...`, `iat: 1791690346`, `exp: 1791776746`.
-- **Identity & Claims**: Same finite principal (`pantheon-dev-training-session-svc`), scope (`pantheon:dev-owner-read`), aud (`bff-operators`), tenant (`tenant-dev`).
-- **Authenticated GET Adoption**: `GET Source` records and controller readback succeeded before and after rotation.
-- **Issuer Health**: Signature valid, fixed grant valid, headroom healthcheck exit 0.
-- **Boundary Limitation**: Confirms single consumer adoption across one natural rotation; does NOT claim projector adoption, infinite continuity, or training job completion; zero forced mint, restart, or secret export.
+### Area 5: Rollback Verification & Hosted Obligation Status Update (Parent AC5)
+- **Rollback Verification**: Exact prior FE/BFF artifact rollback and reactivation with readback while preserving acknowledged data remains unexecuted / unverified in this checkpoint.
+- **Hosted Obligations**: Hosted obligations for Agora, Persona, Research, and FE approval remain open; they are NOT updated or closed. Source task merges or historical S5 reports do not satisfy hosted closure.
 
-### Area 5: Legacy US Persona Bindings
-- **Audit Scope**: 25 archived Persona IDs cross-referenced against runtime owner `metadata.persona_id`.
-- **Matched Bindings**: 24 matched bindings:
-  - 7 retired
-  - 1 failed
-  - 16 paused (15 with explicit `market_input_stale` canonical session admission; 1 paused cause unknown)
-- **Unmatched Personas**: 1 unmatched (`persona-0f94f05389a7e092b469`).
-- **Worker Presence**: All 24 matched bindings have `worker_present: false` (zero active workers).
-- **Runtime Commands**: Zero commands issued (no pause, retire, or capital commands; paused state NOT claimed to be irreversible terminal).
-- **Historical Data Clarification**: Historical "1191" figure represents 10-minute SPY snapshot polls in logs, NOT 1191 runtime bindings. Actual runtime binding count is 46, of which 24 match legacy US personas.
-
-### Area 6: Overall Completion Truth & Remaining Obligations
-The overall status remains **INCOMPLETE**. The parent task `DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002` retains Generation 16, owner `Human/Ops`, and reviewer `Codex2`. The following 9 explicit obligations remain unfulfilled before final acceptance can be considered:
-1. **FULL Loop Qualification**: Provider weekly quota limit on FULL job reset Oct 12 12:00 UTC (not guaranteed availability). Root 38102321809 skipped FULL.
-2. **Taiwan Natural Market Data**: Mandatory Oct 12 NEW natural TW market data arrival, freshness verification, and downstream pipeline processing.
-3. **Human Approval Votes**: Two real, eligible, distinct human votes required on Governance approval case.
-4. **Positive Financial Accounting**: Positive financial reconciliation, ledger balancing, and variance resolution.
-5. **Main Provider & Pinned Replay**: Original main post-config / provider execution and pinned Docker replay.
-6. **Legacy US Scope Limitations**: Formal retirement and terminal disposition of legacy US bindings without runtime commands.
-7. **Exact Sealed Bytes Roundtrip**: Exact prior-to-same FINAL sealed bytes roundtrip and all acknowledged data retention.
-8. **Redis Governed Branch**: Redis test container cleanup tool PR #6481 resolution.
-9. **Independent Final Acceptance**: Independent final acceptance by parent reviewer `Codex2` and release owner `Human/Ops`.
+### Area 6: Matrix Publication & Independent Review Evidence (Parent AC6)
+- **Scoped Artifacts**: Documentation-only checkpoint published across the 3 declared repository locations:
+  - `docs/deployment/latest-dev-six-area-closure.md`
+  - `docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json`
+  - 7 supporting JSON receipts under `docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/` (total 9 doc-only files)
+- **Zero Production Delta**: Zero production code modified (`production_delta = 0`).
+- **Independent Review**: Assigned reviewer `Antigravity` for child task `DEV-SIX-AREA-EVIDENCE-CHECKPOINT-20261011`.
+- **Remaining Obligations (Overall Status INCOMPLETE)**:
+  1. **FULL Loop Qualification**: Provider weekly quota limit on FULL job reset Oct 12 12:00 UTC (not guaranteed availability). Root 38102321809 skipped FULL.
+  2. **Taiwan Natural Market Data**: Mandatory Oct 12 NEW natural TW market data arrival, freshness verification, and downstream pipeline processing.
+  3. **Human Approval Votes**: Two real, eligible, distinct human votes required on Governance approval case.
+  4. **Positive Financial Accounting**: Positive financial reconciliation, ledger balancing, and variance resolution.
+  5. **Main Provider & Pinned Replay**: Original main post-config / provider execution and pinned Docker replay.
+  6. **Legacy US Scope Limitations**: Formal retirement and terminal disposition of legacy US bindings without runtime commands.
+  7. **Exact Sealed Bytes Roundtrip**: Exact prior-to-same FINAL sealed bytes roundtrip and all acknowledged data retention.
+  8. **Redis Governed Branch**: Redis test container cleanup tool PR #6481 resolution.
+  9. **Independent Final Acceptance**: Independent final acceptance by parent reviewer `Codex2` and release owner `Human/Ops`.
 
 ## Operational L1-L12 Ledger
 
 | Loop | Name | Source Delivery | Controller Admission | Served Pair | Browser Verified | FULL Qualified | Final Acceptance |
 |---|---|---|---|---|---|---|---|
-| L1 | source_ingestion | DONE | accepted | `420598fe` + `79aacd97` | PASS | SKIPPED | INCOMPLETE |
-| L2 | strategy_distillation | DONE | accepted | `420598fe` + `79aacd97` | PASS | SKIPPED | INCOMPLETE |
-| L3 | alpha_replication | DONE | accepted | `420598fe` + `79aacd97` | PASS | SKIPPED | INCOMPLETE |
-| L4 | persona_teaching | DONE | accepted | `420598fe` + `79aacd97` | PASS | SKIPPED | INCOMPLETE |
-| L5 | agora_interaction_evidence | DONE | accepted | `420598fe` + `79aacd97` | PASS | SKIPPED | INCOMPLETE |
-| L6 | human_imitation_shadow_eval | DONE | accepted | `420598fe` + `79aacd97` | PASS | SKIPPED | INCOMPLETE |
-| L7 | consultation | DONE | accepted | `420598fe` + `79aacd97` | PASS | SKIPPED | INCOMPLETE |
-| L8 | promotion_deployment | DONE | accepted | `420598fe` + `79aacd97` | PASS | SKIPPED | INCOMPLETE |
-| L9 | capital_pool_execution | DONE | accepted | `420598fe` + `79aacd97` | PASS | SKIPPED | INCOMPLETE |
-| L10 | telemetry_reconciliation | IN_REWORK | unobserved | `420598fe` + `79aacd97` | FAIL (step 8) | SKIPPED | INCOMPLETE |
-| L11 | evolution | DONE | accepted | `420598fe` + `79aacd97` | PASS | SKIPPED | INCOMPLETE |
-| L12 | bff_health_monitoring | DONE | accepted | `420598fe` + `79aacd97` | PASS | SKIPPED | INCOMPLETE |
+| L1 | source_ingestion | PREDECESSOR_MERGED | accepted | `420598fe` + `79aacd97` | NOT_PROVEN | SKIPPED | INCOMPLETE |
+| L2 | strategy_distillation | PREDECESSOR_MERGED | accepted | `420598fe` + `79aacd97` | NOT_PROVEN | SKIPPED | INCOMPLETE |
+| L3 | alpha_replication | PREDECESSOR_MERGED | accepted | `420598fe` + `79aacd97` | NOT_PROVEN | SKIPPED | INCOMPLETE |
+| L4 | persona_teaching | PREDECESSOR_MERGED | accepted | `420598fe` + `79aacd97` | PASS (Workshop run 38109227221) | SKIPPED | INCOMPLETE |
+| L5 | agora_interaction_evidence | PREDECESSOR_MERGED | accepted | `420598fe` + `79aacd97` | NOT_PROVEN | SKIPPED | INCOMPLETE |
+| L6 | human_imitation_shadow_eval | PREDECESSOR_MERGED | accepted | `420598fe` + `79aacd97` | NOT_PROVEN | SKIPPED | INCOMPLETE |
+| L7 | consultation | PREDECESSOR_MERGED | accepted | `420598fe` + `79aacd97` | NOT_PROVEN | SKIPPED | INCOMPLETE |
+| L8 | promotion_deployment | PREDECESSOR_MERGED | accepted | `420598fe` + `79aacd97` | NOT_PROVEN | SKIPPED | INCOMPLETE |
+| L9 | capital_pool_execution | PREDECESSOR_MERGED | accepted | `420598fe` + `79aacd97` | NOT_PROVEN | SKIPPED | INCOMPLETE |
+| L10 | telemetry_reconciliation | IN_REWORK | unobserved / unhealthy | `420598fe` + `79aacd97` | FAIL (run 38108525681 step 8 UI) | SKIPPED | INCOMPLETE |
+| L11 | evolution | PREDECESSOR_MERGED | accepted | `420598fe` + `79aacd97` | NOT_PROVEN | SKIPPED | INCOMPLETE |
+| L12 | bff_health_monitoring | PREDECESSOR_MERGED | accepted | `420598fe` + `79aacd97` | NOT_PROVEN | SKIPPED | INCOMPLETE |
+
+Note: Source delivery distinguishes genuine task-specific receipts from global inheritance. Browser verification
+is NOT_PROVEN for all loops lacking an exact loop browser run; only L4 workshop journey (13 steps PASS) and
+Governance journey (7 PASS, step 8 FAIL) have browser test receipts.
 
 ## Integrated Source Checks
 
 - BFF test suite (12 files under `services/control-plane/bff/tests`): 100% passed on `origin/dev`, including `test_latest_dev_six_area_closure.py`.
 - Frontend (`execute-plans` @ `79aacd97`): `tsc`, unit tests (54 pass + 1 Playwright discovery), and build exit 0.
-- Source tasks BE #6494 (`420598fe`), FE #830 (`79aacd97`), FE #831 (`3fa4b1aa`), BE #6495 (`adb0ea4b0`) documented.
+- Source tasks status:
+  - BE #6494 (`TELEMETRY-CANONICAL-OWNER-METADATA-TENANT-20261010`): merged `420598fe`, 142 passed, canonical DONE.
+  - FE #830 (`FE-GOVERNANCE-OWNER-READABLE-DETAIL-20261010`): merged `79aacd97`, 54 passed + 1 discovery, archived DONE.
+  - FE #831 (`FE-GOVERNANCE-CANONICAL-AUDIT-READBACK-20261011`): merged `3fa4b1aa` (at 04:10:14Z, native DONE 04:13:17), 67 passed + 1 discovery, canonical DONE.
+  - BE #6495 (`RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011`): pending PR #6495 (head `14de008e`), 182 passed (39 pytest recon + 50 unittest routes/write + 93 unittest incident); earlier pytest 240s timeout retained as invocation timeout not product deadlock; numeric tenant coercion and pair deadline counter rework pending in source rework, no total PASS.
+  - FE #832 (`FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011`): pending PR #832 (head `88b5c615`), source rework active.
+  - `TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011`: queued, waiting for 6495 writer-order.
 - No product or frontend source modified in this task. Production line budget net change: 0 lines.

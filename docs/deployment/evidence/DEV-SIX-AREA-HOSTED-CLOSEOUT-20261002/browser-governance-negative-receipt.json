@@ -26,6 +26,10 @@
     "state": "pending",
     "content_sha256": "15ede1dd0017537cd3d4f2f416ec2a30f098c3ae69ce67aadcff0047bbcb42ed"
   },
+  "coexisting_evidence_labels": {
+    "hosted_browser_failure": "run 38108525681 executed 7 PASS then UI navigation FAIL at step 8 navigate_governance_case_ui_first; hosted Playwright run log did not capture hosted browser console error stack",
+    "source_ast_counter": "complete original AST inspection of GovernanceReview.tsx revealed audit.filter((e) => e.target.includes(id)...) accesses undefined e.target because GET /bff/audit returns target_id"
+  },
   "root_cause_analysis": {
     "endpoint": "GET /bff/audit",
     "http_status": 200,
@@ -39,9 +43,9 @@
   "reopen_and_successor_status": {
     "terminal_reopen": "DENIED",
     "successor_task": "FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011",
+    "pending_pr": 832,
+    "head_sha": "88b5c6152500d17c2c119b10bdbae33943259810",
     "assigned_worker": "Antigravity2",
-    "worker_pid": 2775529,
-    "budget": "6 files, production net <= 40 lines",
-    "status": "source rework active, not reviewed or deployed"
+    "status": "source rework active, pending PR #832, not reviewed or deployed"
   }
 }

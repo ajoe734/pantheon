@@ -8,6 +8,7 @@
   },
   "natural_rotation_window": {
     "rotation_window_utc": "2026-10-11T02:45:46Z -> 2026-10-11T03:45:46Z",
+    "rotation_characterization": "natural scheduled rotation occurring before 24h expiry, NOT an expiration event (iat advanced after 1h from 1791686746 to 1791690346; exp remains 24h from issuance)",
     "before": {
       "captured_at": "2026-10-11T03:36:43.857920+00:00",
       "file_mtime_utc": "2026-10-11T02:45:46.324767+00:00",
@@ -44,6 +45,8 @@
   "verification_assertions": {
     "sha_changed": true,
     "iat_advanced": true,
+    "rotation_before_24h_expiry": true,
+    "not_expiration_event": true,
     "same_finite_principal": true,
     "same_scope_and_tenant": true,
     "new_consumer_token_matches_issuer_file": true,

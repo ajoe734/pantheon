@@ -1,7 +1,7 @@
 {
   "task": "DEV-SIX-AREA-EVIDENCE-CHECKPOINT-20261011",
   "parent_task": "DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002",
-  "checkpoint_timestamp": "2026-10-11T04:20:00Z",
+  "checkpoint_timestamp": "2026-10-11T04:40:00Z",
   "status": "INCOMPLETE",
   "documentation_only": true,
   "production_delta": 0,
@@ -10,15 +10,34 @@
     "owner": "Human/Ops",
     "reviewer": "Codex2",
     "acceptance_criteria_count": 6,
+    "canonical_parent_acceptance_areas": [
+      "AC1: Manual central release/acceptance checkpoint only; release owner coordination, nonprod-deploy.yml, environment lease; no worker VM access or parallel root release or fabricated human business approval",
+      "AC2: Pin and gate one exact latest-dev FE/BFF pair and actual owner/worker image identities after all source work; verify hosted manifest, served identities, safe write/strict auth/CORS posture; preserve incumbent artifacts",
+      "AC3: Use existing hosted harnesses with new specifically authorized labelled paper fixtures to prove all twelve loops on one fresh causal chain and Management/Agora/Persona/Research/approval journeys; actual provider results required where specified",
+      "AC4: Verify saved owner state after refresh and independent process restart plus tenant/auth/idempotency/version conflicts and provider failure visibility; genuine separate humans make business approvals; no existing dev pools or real capital effects",
+      "AC5: Exercise exact prior FE/BFF artifact rollback and reactivation with readback while preserving acknowledged data; update existing Agora/Persona/Research/FE approval hosted obligations only after real proof",
+      "AC6: Publish the exact PR/merge/run/artifact/readback matrix and independently reviewed scoped evidence; all mandatory items must pass for overall completion"
+    ],
     "scoped_artifacts": [
       "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/",
       "docs/deployment/latest-dev-six-area-closure.md",
       "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json"
     ],
-    "closure_authority_note": "Child task DEV-SIX-AREA-EVIDENCE-CHECKPOINT-20261011 documents honest incomplete checkpoint only; does NOT accept closeout or replace parent independent final acceptance or release owner"
+    "closure_authority_note": "Child task DEV-SIX-AREA-EVIDENCE-CHECKPOINT-20261011 documents honest incomplete checkpoint only; does NOT accept closeout or replace parent independent final acceptance or release owner authority"
   },
   "six_area_checkpoint_matrix": {
-    "area_1_release_and_controller_admission": {
+    "ac1_release_owner_coordination_and_governed_deployment_gate": {
+      "parent_area": "AC1: Release owner coordination, environment lease & governed deployment gate",
+      "status": "COORDINATED_CENTRAL_NONPROD_LEASE_PRESERVED",
+      "release_owner": "Human/Ops",
+      "workflow": ".github/workflows/nonprod-deploy.yml",
+      "worker_vm_access": false,
+      "parallel_root_release": false,
+      "fabricated_human_business_approvals": false,
+      "environment_lease": "single dev nonprod lease preserved; no parallel deployment"
+    },
+    "ac2_pinned_fe_bff_pair_and_sealed_artifacts": {
+      "parent_area": "AC2: Pinned & gated exact latest-dev FE/BFF pair, hosted identities & sealed artifacts",
       "status": "PARTIAL_SERVED_PAIR_ACCEPTED_FULL_SKIPPED",
       "root_run_id": 38102321809,
       "fe_gate_run_id": 38103669914,
@@ -42,8 +61,10 @@
       "prior_full_run_id": 38092806870,
       "prior_full_failure_reason": "weekly provider quota limit reported reset Oct 12 12:00 UTC (availability not guaranteed)"
     },
-    "area_2_browser_journeys_and_persistence": {
-      "status": "PARTIAL_WORKSHOP_PASS_GOVERNANCE_FAIL",
+    "ac3_hosted_harness_and_twelve_loop_causal_chain": {
+      "parent_area": "AC3: Hosted harness, twelve-loop causal chain & journey verification",
+      "status": "PARTIAL_WORKSHOP_PASS_GOVERNANCE_FAIL_ALL_LOOPS_NOT_PROVEN",
+      "causal_chain_state": "INCOMPLETE; no ALL-loop browser proof or FULL qualification exists",
       "workshop_journey": {
         "browser_run_id": 38109227221,
         "operation_id": "803e8330-75e4-4d31-83fd-57f48b0ee1c3",
@@ -55,96 +76,124 @@
         "observed_bff_owner_restart": "2026-10-11T01:58:33.264523039Z",
         "acknowledged_save_before_restart": "2026-10-09T01:16:15.438Z",
         "hash_retention_truth": "post-save BFF restart verified with later full content hash b241...2490, NOT original save-time full hash; zero create/PATCH/resave",
-        "scope_boundary": "does not prove Governance, all owner data, or rollback PASS"
+        "scope_boundary": "proves Workshop persistence journey on workshop 295; does NOT prove Governance, all owner data, or rollback PASS"
       },
       "governance_journey": {
         "browser_run_id": 38108525681,
         "status": "FAILED",
         "steps_passed": 7,
         "failed_step": "navigate_governance_case_ui_first",
-        "failure_root_cause": "GET /bff/audit 200 returned 12 items with target_id, but GovernanceReview.tsx executed e.target.includes causing TypeError: Cannot read properties of undefined (reading 'includes')",
+        "hosted_failure_label": "run 38108525681 executed 7 PASS then UI navigation FAIL at step 8 navigate_governance_case_ui_first; hosted Playwright run log did not capture hosted browser console error stack",
+        "source_ast_counter_label": "complete original AST inspection of GovernanceReview.tsx revealed audit.filter((e) => e.target.includes(id)...) accesses undefined e.target because GET /bff/audit returns target_id, causing TypeError: Cannot read properties of undefined (reading 'includes')",
         "reopen_resolution": "terminal reopen DENIED; referenced successor task created",
         "successor_task": "FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011",
-        "successor_status": "source rework active under Antigravity2 (PID 2775529), production net <= 40 lines, not reviewed or deployed"
+        "pending_pr": 832,
+        "successor_status": "source rework active under Antigravity2 (PID 2775529), pending PR #832 (head 88b5c615), not reviewed or deployed"
+      },
+      "all_loop_browser_proof": "NONE; no product Research, provider/Alpha, Capital, or human imitation browser proof exists; each loop browser state is NOT_PROVEN except L4 workshop PASS and Governance FAIL",
+      "legacy_us_persona_bindings": {
+        "archived_personas_audited": 25,
+        "matched_runtime_bindings": 24,
+        "binding_state_breakdown": {
+          "retired": 7,
+          "failed": 1,
+          "paused": 16
+        },
+        "paused_admission_reasons": {
+          "market_input_stale": 15,
+          "cause_unknown": 1
+        },
+        "unmatched_original_personas": [
+          "persona-0f94f05389a7e092b469"
+        ],
+        "active_workers_count": 0,
+        "runtime_commands_issued": "none (no pause, retire, or capital commands; paused state NOT claimed to be irreversible terminal)",
+        "historical_figure_correction": "historical 1191 represents 10-minute SPY snapshot polls in logs, NOT 1191 runtime bindings"
       }
     },
-    "area_3_telemetry_pg_lineage_and_scheduler": {
-      "status": "PARTIAL_LINEAGE_READ_RECOVERED_SCHEDULER_UNHEALTHY",
+    "ac4_saved_owner_state_persistence_and_fault_visibility": {
+      "parent_area": "AC4: Saved owner state persistence across restart, fault visibility & human approval",
+      "status": "PARTIAL_RESTART_PERSISTENCE_PROVEN_FAULT_UNHEALTHY_HUMAN_VOTES_ZERO",
       "historical_pg_lineage": {
         "telemetry_process_restart": "2026-10-11T01:49:17Z",
         "cold_read_result": "HTTP 200 for historical incident canonical traces and binding projections (d39 and 69fff recovered from prior 404)",
         "pg_mutation": false
       },
-      "live_management_status": "11 of 12 healthy; telemetry_reconciliation unobserved (lacks accepted current controller-runtime provenance)",
-      "scheduler_health": {
-        "status": "unhealthy",
+      "live_management_health": {
+        "healthy_loops_count": 11,
+        "total_loops_count": 12,
+        "loop_10_status": "fresh unhealthy functional result from current owner receipts (not merely stale unobserved provenance rejection)",
         "incident_timeouts": 2,
         "visibility_deferrals": 18,
-        "sample_bindings": [
-          "rb-52d16f8d2ace4104868caf3f3fc4c898",
-          "rb-5354aba551124647a7d93774317bd43d"
-        ],
-        "event_traces_timing": "PASS (1.527s, 3.066s)",
-        "binding_projections_status": "HTTP 503 (5.086s, 7.718s)",
-        "pg_durable_order_verified": "3445658 < 4005801 and 3457957 < 4005806",
-        "pg_explain_analysis": "costly created_at index filter for OR runtime binding missing index; no held blocking table lock",
-        "reopen_resolution": "terminal denial preserved; referenced successor task created",
+        "binding_projections": "HTTP 503 (5.086s, 7.718s) on rb-52d16f8d and rb-5354aba5 while event traces PASS (1.527s, 3.066s)",
+        "pg_durable_order": "READONLY verified 3445658 < 4005801 and 3457957 < 4005806",
+        "pg_explain": "EXPLAIN (not ANALYZE) confirmed costly created_at index scan on OR runtime binding query without dedicated index; no held blocking table lock",
         "successor_task": "RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011",
-        "successor_status": "source rework active under Antigravity2 (PID 2773328), production net <= 120 lines",
+        "pending_pr": 6495,
+        "head_sha": "14de008e4bd5786eca8c2870c3afd35a32c784b0",
+        "status": "source rework active; numeric tenant coercion and pair deadline counter rework pending; no total PASS",
         "queued_task": "TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011 (waiting for 6495 writer-order)"
+      },
+      "training_consumer_token_rotation": {
+        "service": "training-session-svc",
+        "instance_continuity": "same running instance across rotation",
+        "mount_path": "/run/pantheon-principals/TRAINING_SESSION_SOURCE_READ_TOKEN",
+        "rotation_window_utc": "2026-10-11T02:45:46Z -> 2026-10-11T03:45:46Z",
+        "rotation_type": "natural scheduled rotation occurring before 24h expiry, NOT an expiration event (iat advanced after 1h from 1791686746 to 1791690346; exp remains 24h from issuance)",
+        "principal_claims": {
+          "sub": "pantheon-dev-training-session-svc",
+          "scope": "pantheon:dev-owner-read",
+          "aud": "bff-operators",
+          "tenant_id": "tenant-dev",
+          "roles": ["source_ingest_reader"]
+        },
+        "authenticated_get_adoption": {
+          "source_records_get_before": true,
+          "source_records_get_after": true,
+          "controller_readback_get_before": true,
+          "controller_readback_get_after": true
+        },
+        "issuer_healthcheck": {
+          "signature_valid": true,
+          "fixed_grant_valid": true,
+          "headroom_exit_code": 0
+        },
+        "boundary_limitation": "proves single consumer adoption across one natural rotation; does NOT claim projector adoption, infinite continuity, or training job completion; zero forced mint, restart, or secret export"
+      },
+      "human_approval_votes": {
+        "required_votes": 2,
+        "eligible_distinct_humans": 2,
+        "observed_votes": 0,
+        "status": "pending; zero votes cast"
       }
     },
-    "area_4_training_consumer_token_rotation": {
-      "status": "PROVEN_SINGLE_CONSUMER_ONE_ROTATION",
-      "service": "training-session-svc",
-      "instance_continuity": "same running instance across rotation",
-      "mount_path": "/run/pantheon-principals/TRAINING_SESSION_SOURCE_READ_TOKEN",
-      "rotation_window_utc": "2026-10-11T02:45:46Z -> 2026-10-11T03:45:46Z",
-      "rotation_type": "natural expiration and rotation; SHA changed, iat advanced (1791686746 -> 1791690346)",
-      "principal_claims": {
-        "sub": "pantheon-dev-training-session-svc",
-        "scope": "pantheon:dev-owner-read",
-        "aud": "bff-operators",
-        "tenant_id": "tenant-dev",
-        "roles": [
-          "source_ingest_reader"
-        ]
+    "ac5_rollback_verification_and_hosted_obligation_status": {
+      "parent_area": "AC5: Rollback verification & hosted obligation status update",
+      "status": "UNEXECUTED_OBLIGATIONS_REMAIN_OPEN",
+      "prior_artifact_rollback": "unexecuted; exact prior FE/BFF artifact rollback and reactivation with readback while preserving acknowledged data remains unverified",
+      "hosted_obligations_status": {
+        "agora": "OPEN / INCOMPLETE",
+        "persona": "OPEN / INCOMPLETE",
+        "research": "OPEN / INCOMPLETE",
+        "fe_approval": "OPEN / INCOMPLETE"
       },
-      "authenticated_get_adoption": {
-        "source_records_get_before": true,
-        "source_records_get_after": true,
-        "controller_readback_get_before": true,
-        "controller_readback_get_after": true
-      },
-      "issuer_healthcheck": {
-        "signature_valid": true,
-        "fixed_grant_valid": true,
-        "headroom_exit_code": 0
-      },
-      "boundary_limitation": "proves single consumer adoption across one natural rotation; does NOT claim projector adoption, infinite continuity, or training job completion; zero forced mint, restart, or secret export"
+      "premature_closure_guard": "hosted obligations NOT updated or closed; source task completion or historical reports do not satisfy hosted closure"
     },
-    "area_5_legacy_us_persona_bindings": {
-      "status": "CLASSIFIED_ZERO_WORKERS_NO_COMMANDS",
-      "archived_personas_audited": 25,
-      "matched_runtime_bindings": 24,
-      "binding_state_breakdown": {
-        "retired": 7,
-        "failed": 1,
-        "paused": 16
-      },
-      "paused_admission_reasons": {
-        "market_input_stale": 15,
-        "cause_unknown": 1
-      },
-      "unmatched_original_personas": [
-        "persona-0f94f05389a7e092b469"
+    "ac6_matrix_publication_and_independent_review_evidence": {
+      "parent_area": "AC6: Matrix publication & independent review evidence",
+      "status": "HONEST_INCOMPLETE_CHECKPOINT_PUBLISHED",
+      "published_artifacts": [
+        "docs/deployment/latest-dev-six-area-closure.md",
+        "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json",
+        "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/browser-governance-negative-receipt.json",
+        "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/browser-workshop295-receipt.json",
+        "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/legacy-us-persona-binding-summary.json",
+        "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/root38102321809-receipt.json",
+        "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/source-delivery-ledger.json",
+        "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/telemetry-scheduler-incident-summary.json",
+        "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/training-consumer-rotation-receipt.json"
       ],
-      "active_workers_count": 0,
-      "runtime_commands_issued": "none (no pause, retire, or capital commands; paused state NOT claimed to be irreversible terminal)",
-      "historical_figure_correction": "historical 1191 represents 10-minute SPY snapshot polls, NOT 1191 runtime bindings"
-    },
-    "area_6_overall_completion_truth_and_remaining_obligations": {
-      "status": "INCOMPLETE",
+      "production_delta_lines": 0,
       "unfulfilled_obligations": [
         {
           "item": "full_loop_qualification",
@@ -201,17 +250,25 @@
       "status": "archived DONE"
     },
     "fe_pr_831": {
-      "task": "FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011",
-      "head": "491",
+      "task": "FE-GOVERNANCE-CANONICAL-AUDIT-READBACK-20261011",
+      "head": "491afee8",
       "merge_commit": "3fa4b1aa",
+      "merged_at": "2026-10-11T04:10:14Z",
+      "native_done_at": "2026-10-11T04:13:17Z",
       "tests": "67 passed + 1 discovery",
-      "notes": "numeric-missing-conflicting audit identity counter and AST TypeError remain in source rework; referenced successor pending"
+      "status": "canonical DONE"
     },
     "be_pr_6495": {
       "task": "RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011",
-      "head": "adb0ea4b0",
-      "tests": "182 passed under unittest; earlier pytest 240s timeout retained as invocation not proven product deadlock",
-      "notes": "numeric tenant coercion and pair deadline counter rework remain"
+      "head": "14de008e",
+      "tests": "182 passed (39 pytest recon + 50 unittest routes/write + 93 unittest incident); earlier pytest 240s timeout retained as invocation timeout not proven product deadlock",
+      "notes": "numeric tenant coercion and pair deadline counter rework remain in source rework; no total PASS"
+    },
+    "fe_pr_832": {
+      "task": "FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011",
+      "head": "88b5c615",
+      "status": "pending PR #832",
+      "notes": "TypeError fix on e.target.includes to use target_id with fail-closed audit validation; pending review"
     },
     "telemetry_indexed_binding_task": {
       "task": "TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011",
@@ -222,120 +279,120 @@
     {
       "loop": "L1",
       "name": "source_ingestion",
-      "source_status": "DONE",
+      "source_status": "PREDECESSOR_MERGED",
       "controller_admission": "accepted",
       "served_pair": "420598fe + 79aacd97",
-      "browser_verified": true,
+      "browser_verified": "NOT_PROVEN",
       "full_qualified": false,
       "final_acceptance": false
     },
     {
       "loop": "L2",
       "name": "strategy_distillation",
-      "source_status": "DONE",
+      "source_status": "PREDECESSOR_MERGED",
       "controller_admission": "accepted",
       "served_pair": "420598fe + 79aacd97",
-      "browser_verified": true,
+      "browser_verified": "NOT_PROVEN",
       "full_qualified": false,
       "final_acceptance": false
     },
     {
       "loop": "L3",
       "name": "alpha_replication",
-      "source_status": "DONE",
+      "source_status": "PREDECESSOR_MERGED",
       "controller_admission": "accepted",
       "served_pair": "420598fe + 79aacd97",
-      "browser_verified": true,
+      "browser_verified": "NOT_PROVEN",
       "full_qualified": false,
       "final_acceptance": false
     },
     {
       "loop": "L4",
       "name": "persona_teaching",
-      "source_status": "DONE",
+      "source_status": "PREDECESSOR_MERGED",
       "controller_admission": "accepted",
       "served_pair": "420598fe + 79aacd97",
-      "browser_verified": true,
+      "browser_verified": "PASS (Workshop persistence journey run 38109227221, 13 steps pass across BFF restart)",
       "full_qualified": false,
       "final_acceptance": false
     },
     {
       "loop": "L5",
       "name": "agora_interaction_evidence",
-      "source_status": "DONE",
+      "source_status": "PREDECESSOR_MERGED",
       "controller_admission": "accepted",
       "served_pair": "420598fe + 79aacd97",
-      "browser_verified": true,
+      "browser_verified": "NOT_PROVEN",
       "full_qualified": false,
       "final_acceptance": false
     },
     {
       "loop": "L6",
       "name": "human_imitation_shadow_evaluation",
-      "source_status": "DONE",
+      "source_status": "PREDECESSOR_MERGED",
       "controller_admission": "accepted",
       "served_pair": "420598fe + 79aacd97",
-      "browser_verified": true,
+      "browser_verified": "NOT_PROVEN",
       "full_qualified": false,
       "final_acceptance": false
     },
     {
       "loop": "L7",
       "name": "consultation",
-      "source_status": "DONE",
+      "source_status": "PREDECESSOR_MERGED",
       "controller_admission": "accepted",
       "served_pair": "420598fe + 79aacd97",
-      "browser_verified": true,
+      "browser_verified": "NOT_PROVEN",
       "full_qualified": false,
       "final_acceptance": false
     },
     {
       "loop": "L8",
       "name": "promotion_deployment",
-      "source_status": "DONE",
+      "source_status": "PREDECESSOR_MERGED",
       "controller_admission": "accepted",
       "served_pair": "420598fe + 79aacd97",
-      "browser_verified": true,
+      "browser_verified": "NOT_PROVEN",
       "full_qualified": false,
       "final_acceptance": false
     },
     {
       "loop": "L9",
       "name": "capital_pool_execution",
-      "source_status": "DONE",
+      "source_status": "PREDECESSOR_MERGED",
       "controller_admission": "accepted",
       "served_pair": "420598fe + 79aacd97",
-      "browser_verified": true,
+      "browser_verified": "NOT_PROVEN",
       "full_qualified": false,
       "final_acceptance": false
     },
     {
       "loop": "L10",
       "name": "telemetry_reconciliation",
-      "source_status": "IN_REWORK",
-      "controller_admission": "unobserved",
+      "source_status": "IN_REWORK (BE 6494 merged, BE 6495 in rework, indexed-binding queued)",
+      "controller_admission": "unobserved / fresh unhealthy functional result",
       "served_pair": "420598fe + 79aacd97",
-      "browser_verified": false,
+      "browser_verified": "FAIL (run 38108525681 step 8 UI failure; telemetry recon fresh unhealthy functional result)",
       "full_qualified": false,
       "final_acceptance": false
     },
     {
       "loop": "L11",
       "name": "evolution",
-      "source_status": "DONE",
+      "source_status": "PREDECESSOR_MERGED",
       "controller_admission": "accepted",
       "served_pair": "420598fe + 79aacd97",
-      "browser_verified": true,
+      "browser_verified": "NOT_PROVEN",
       "full_qualified": false,
       "final_acceptance": false
     },
     {
       "loop": "L12",
       "name": "bff_health_monitoring",
-      "source_status": "DONE",
+      "source_status": "PREDECESSOR_MERGED",
       "controller_admission": "accepted",
       "served_pair": "420598fe + 79aacd97",
-      "browser_verified": true,
+      "browser_verified": "NOT_PROVEN",
       "full_qualified": false,
       "final_acceptance": false
     }
