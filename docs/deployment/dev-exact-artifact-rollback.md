@@ -98,6 +98,17 @@ from `vm-dev-staging-prod-management-plan.md`, never a retired project or host.
 7. Verify exact prior image IDs, exact FE target/dist/manifest, the two nonsecret
    config fields and unchanged protected-owner identities during restore.
    Restore always requires the server-bound viewer readback.
+8. Return to the same admitted final sealed candidate bytes (`restore-final` or
+   `restore --target final`). Rollback recovery or drill closeout must
+   authenticate the retained `candidate-bundle.json` and its immutable archives
+   in the private artifact root before switching. The live FE symlink must
+   already point to the admitted candidate frontend target and pass dist/manifest
+   checks. Strict runtime auth posture, CAS check over admitted prior/candidate
+   images, and unchanged protected-owner identities are required before any
+   recreate. Docker recreate uses exact image overrides with
+   `--no-build --pull never --no-deps`, without rebuilding, pulling, or
+   resealing. Readback verifies the exact candidate image IDs, candidate backend
+   version, and authenticated viewer readback.
    Require HTTPS source/health, anonymous/invalid-token denial, and server-bound
    authenticated viewer/tenant/session readback. Release/quarantine decisions
    use this complete evidence, never the source SHA alone.

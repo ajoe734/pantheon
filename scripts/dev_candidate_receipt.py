@@ -28,6 +28,7 @@ except ImportError:
 
 PREFIX = b"PANTHEON_ARTIFACT_CANDIDATE_SEAL_V1 "
 SCHEMA = "pantheon.dev-candidate-image-admission.v1"
+SCHEMA_V2 = "pantheon.dev-candidate-image-admission.v2"
 SERVICES = ("operator-bff", "agora-interaction-worker", "loop-run-projector-scheduler")
 
 
@@ -75,11 +76,15 @@ def validate_receipt(result: dict, context: dict) -> str:
     exact_keys(result, ("candidate_image_manifest_path", "candidate_image_manifest_sha256", "candidate_image_manifest",
                         "candidate_image_override_path", "candidate_image_override_sha256"))
     record = result["candidate_image_manifest"]
-    exact_keys(record, ("schema_version", "environment", "project_id", "vm", "identity", "seal_lease_id",
-                        "sealed_at", "baseline_manifest_sha256", "candidate_compose_sha256", "image_override_sha256", "services"))
-    if (record["schema_version"] != SCHEMA or record["environment"] != "dev" or
-        record["project_id"] != "pantheon-dev-20260902" or record["vm"] != "pantheon-dev-deploy" or
-        record["identity"] != identity or record["seal_lease_id"] != context["guard_lease_id"] or
+    schema = record.get("schema_version") if isinstance(record, dict) else None
+    if schema not in (SCHEMA, SCHEMA_V2): raise CaptureError("candidate receipt schema mismatch")
+    keys = ("schema_version", "environment", "project_id", "vm", "identity", "seal_lease_id",
+            "sealed_at", "baseline_manifest_sha256", "candidate_compose_sha256", "image_override_sha256", "services")
+    exact_keys(record, keys if schema == SCHEMA else keys + ("candidate_bundle_sha256",))
+    if schema == SCHEMA_V2: matches(record["candidate_bundle_sha256"], r"[0-9a-f]{64}")
+    if (record["environment"] != "dev" or record["project_id"] != "pantheon-dev-20260902" or
+        record["vm"] != "pantheon-dev-deploy" or record["identity"] != identity or
+        record["seal_lease_id"] != context["guard_lease_id"] or
         record["baseline_manifest_sha256"] != context["baseline_manifest_sha256"]):
         raise CaptureError("candidate receipt differs from the guarded admission")
     matches(record["sealed_at"], r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
@@ -152,9 +157,11 @@ def finalize(context_path: Path, receipt_path: Path, output_path: Path) -> None:
     # a second admission path that repairs or accepts a differently encoded file.
     if receipt_path.read_bytes() != encoded(result):
         raise CaptureError("retained receipt bytes are not canonical")
+    record = result["candidate_image_manifest"]
     outputs = {key: result[key] for key in ("candidate_image_manifest_path",
                "candidate_image_override_path", "candidate_image_override_sha256")}
     outputs.update(candidate_image_manifest_sha256=sealed, receipt_file=str(receipt_path))
+    if "candidate_bundle_sha256" in record: outputs["candidate_bundle_sha256"] = record["candidate_bundle_sha256"]
     if any(not isinstance(value, str) or "\n" in value or "\r" in value for value in outputs.values()):
         raise CaptureError("invalid candidate workflow output")
     with output_path.open("a", encoding="utf-8") as stream:

@@ -153,10 +153,12 @@ validate_artifact_restore_request() {
     || error "artifact restore and verify modes are mutually exclusive"
   [[ "${DEPLOY_ENV}:${COMPONENT}" == dev:bff && "${ALLOW_DIRTY}" != true ]] \
     || error "artifact restore requires a clean explicit dev:bff target"
-  [[ "${DEPLOY_SHA}" == "${PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA:-}" ]] \
-    || error "artifact restore SHA must match the sealed previous backend"
-  local name
-  for name in MANIFEST_SHA256 DRIVER_SHA256 LIBRARY_SHA256 CANDIDATE_ID; do
+  local expected_backend="${PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA:-}"
+  [[ "${ARTIFACT_TARGET:-baseline}" != "final" ]] || expected_backend="${PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA:-}"
+  [[ "${DEPLOY_SHA}" == "${expected_backend}" ]] || error "artifact restore SHA must match the admitted backend"
+  local name sha256_names="MANIFEST_SHA256 DRIVER_SHA256 LIBRARY_SHA256 CANDIDATE_ID"
+  [[ "${ARTIFACT_TARGET:-baseline}" != "final" ]] || sha256_names+=" FE_MANIFEST_SHA256 FE_DIST_SHA256"
+  for name in ${sha256_names}; do
     local variable="PANTHEON_DEV_ARTIFACT_${name}"
     [[ "${!variable:-}" =~ ^[0-9a-f]{64}$ && "${!variable}" != "$(printf '%064d' 0)" ]] \
       || error "artifact restore requires ${variable}"
@@ -555,6 +557,8 @@ while [[ $# -gt 0 ]]; do
       ARTIFACT_RESTORE=true
       shift
       ;;
+    --artifact-restore-final)
+      ARTIFACT_RESTORE=true; ARTIFACT_TARGET=final; shift ;;
     --artifact-verify)
       ARTIFACT_VERIFY=true
       shift
@@ -873,6 +877,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEV_ROLLBACK_BACKEND_SHA=$(shell_quote "${DEV_ROLLBACK_BACKEND_SHA:-}")"
   command_prefix+=" PANTHEON_DEV_ARTIFACT_RESTORE=$(shell_quote "${ARTIFACT_RESTORE}")"
   command_prefix+=" PANTHEON_DEV_ARTIFACT_VERIFY=$(shell_quote "${ARTIFACT_VERIFY}")"
+  command_prefix+=" PANTHEON_DEV_ARTIFACT_TARGET=$(shell_quote "${ARTIFACT_TARGET:-baseline}")"
   # Explicit nonsecret contract only. The remote watchdog creates the private
   # guard FD; a runner FD number is not a remotely inherited descriptor.
   local artifact_variable
@@ -885,7 +890,7 @@ ssh_bash() {
     PANTHEON_DEV_ARTIFACT_ATTEMPT PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA \
     PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA PANTHEON_DEV_ARTIFACT_CANDIDATE_FRONTEND_SHA \
     PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA \
-    PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID; do
+    PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256 PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256 PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID; do
     command_prefix+=" ${artifact_variable}=$(shell_quote "${!artifact_variable:-}")"
   done
   command_prefix+=" PANTHEON_GITHUB_TOKEN=$(shell_quote "${GITHUB_TOKEN:-}")"
@@ -3889,7 +3894,7 @@ run_dev_artifact_driver() {
     dev:root|dev:bff) ;;
     *) error "artifact operations are restricted to dev root/bff" ;;
   esac
-  [[ "${operation}" == restore || "${operation}" == verify || "${operation}" == seal-candidate ]] \
+  [[ "${operation}" == restore || "${operation}" == verify || "${operation}" == seal-candidate || "${operation}" == restore-final ]] \
     || error "unsupported sealed artifact operation"
   [[ "${PANTHEON_DEV_BFF_AUTH_MODE:-}" == strict && "${PANTHEON_DEV_BFF_AUTH_STUB:-}" == false ]] \
     || error "artifact operations require strict non-stub auth"
@@ -3956,13 +3961,20 @@ ARTIFACT_PY
       || { info "candidate source differs from artifact admission" >&2; return 75; }
     compose_file="${PWD}/docker-compose.yml"
     runtime_sha="${PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA}"
-  elif [[ "${operation}" == restore ]]; then
+  elif [[ "${operation}" == restore || "${operation}" == restore-final ]]; then
     [[ "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH:-}" == /* && \
        "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256:-}" =~ ^[0-9a-f]{64}$ && \
        "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256}" != "$(printf '%064d' 0)" ]] \
       || { info "restore requires the externally retained candidate image receipt" >&2; return 75; }
     candidate_args=(--candidate-image-manifest "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH}"
       --candidate-image-manifest-sha256 "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256}")
+    if [[ "${operation}" == restore-final ]]; then
+      compose_file="${PWD}/docker-compose.yml"
+      runtime_sha="${PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA}"
+      [[ "${PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256:-}" =~ ^[0-9a-f]{64}$ && "${PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] \
+        || { info "restore-final requires external FE manifest and dist digests" >&2; return 75; }
+      candidate_args+=(--target final --fe-manifest-sha256 "${PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256}" --fe-dist-sha256 "${PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256}")
+    fi
   fi
 
   # The trusted driver checks the external manifest seal, all exact identities,
@@ -4264,12 +4276,13 @@ start_dev_paper_principal_issuer() {
 if [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" == true || "${PANTHEON_DEV_ARTIFACT_VERIFY:-false}" == true ]]; then
   [[ "${PANTHEON_DEPLOY_ENV}:${PANTHEON_DEPLOY_COMPONENT}" == dev:bff ]] \
     || error "external artifact restore requires dev:bff"
-  [[ "${PANTHEON_DEPLOY_SHA}" == "${PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA:-}" ]] \
-    || error "external artifact restore target differs from sealed previous backend"
-  [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" != true || "${PANTHEON_DEV_ARTIFACT_VERIFY:-false}" != true ]] \
-    || error "artifact modes are mutually exclusive"
+  expected_sha="${PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA:-}"
+  [[ "${PANTHEON_DEV_ARTIFACT_TARGET:-baseline}" != "final" ]] || expected_sha="${PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA:-}"
+  [[ "${PANTHEON_DEPLOY_SHA}" == "${expected_sha}" ]] || error "external artifact restore target differs from admitted backend"
+  [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" != true || "${PANTHEON_DEV_ARTIFACT_VERIFY:-false}" != true ]] || error "artifact modes are mutually exclusive"
   artifact_operation=verify
   [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" != true ]] || artifact_operation=restore
+  [[ "${PANTHEON_DEV_ARTIFACT_TARGET:-baseline}" != "final" || "${artifact_operation}" != "restore" ]] || artifact_operation=restore-final
   artifact_readback="$(run_dev_artifact_driver "${artifact_operation}")" || exit $?
   printf 'PANTHEON_ARTIFACT_READBACK_V1 %s\n' "${artifact_readback}"
   info "component bff exact artifact ${artifact_operation} completed"

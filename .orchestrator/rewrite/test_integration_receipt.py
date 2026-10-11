@@ -79,6 +79,8 @@ def test_parse_accepts_valid_receipt(mutate) -> None:
     [
         ("version", 2),
         ("version", "1"),
+        ("version", True),
+        ("version", 1.0),
         ("result", "merged"),
         ("observation", "force_pushed"),
         ("task_generation", 0),
@@ -1324,7 +1326,7 @@ def test_lock_held_by_other_pid_leaves_state_and_v2_journal_unchanged(
     assert event_path.read_bytes() == before_events
 
 
-def _record_successor(command_root: Path, task: dict):
+def _record_successor(command_root: Path, task: dict, event_path: Path | None = None):
     status_file = _setup_status_file(command_root, task)
     lock_path = command_root / "lock.json"
     binding = ir.IntegrationBinding(
@@ -1340,7 +1342,7 @@ def _record_successor(command_root: Path, task: dict):
             merge_commit_sha=MERGE_B,
             observed_at="2026-10-08T01:00:00Z",
             status_file=status_file,
-            event_path=None,
+            event_path=event_path,
             authority=authority,
         )
     return result, json.loads(status_file.read_text(encoding="utf-8"))["tasks"][0]
@@ -1361,6 +1363,70 @@ def test_successor_receipt_archives_prior_landed_receipt(command_root: Path) -> 
     assert row["integration_receipt"]["pr"] == 5412
     assert row["integration_receipt_history"] == [task["integration_receipt"]]
     assert row["status"] == "review_approved"
+
+
+def _reviewed_legacy_successor() -> dict:
+    task = _successor_row(1)
+    task["delivery_binding"] = {
+        **task["review_binding"], "kind": "pull_request",
+        "base_sha": task["integration_receipt"]["merge_commit_sha"],
+    }
+    return task
+
+
+def test_reviewed_legacy_successor_preserves_receipt_with_native_authority(command_root: Path) -> None:
+    task = _reviewed_legacy_successor()
+    original = dict(task["integration_receipt"])
+    result, row = _record_successor(command_root, task)
+    assert result.written and not result.replay
+    assert row["integration_receipt_history"] == [original]
+    assert row["integration_receipt"]["pr"] == 5412
+    assert row["generation"] == 1
+    assert row["status"] == "review_approved"
+    assert row["delivery_binding"] == task["delivery_binding"]
+    replay, replay_row = _record_successor(command_root, row)
+    assert replay.replay and not replay.written
+    assert replay_row["integration_receipt_history"] == [original]
+
+
+def test_reviewed_legacy_successor_uses_immutable_v2_journal(command_root: Path) -> None:
+    task = _reviewed_legacy_successor()
+    event_path = command_root / "task-state.jsonl"
+    store.append_state_commit(event_path, {"tasks": [task]}, source="test-seed")
+    result, row = _record_successor(command_root, task, event_path)
+    assert result.written
+    events = store.load_events(event_path)
+    assert len(events) == 2
+    assert events[0]["state"]["tasks"][0] == task
+    assert events[1]["source"] == "canonical_auto_integrator"
+    assert events[1]["state"]["tasks"][0] == row
+    assert row["integration_receipt_history"] == [task["integration_receipt"]]
+    replay, _ = _record_successor(command_root, row, event_path)
+    assert replay.replay and len(store.load_events(event_path)) == 2
+
+
+@pytest.mark.parametrize("field,value", [
+    ("kind", "artifact"), ("base_sha", HEAD_A), ("base_sha", None),
+    ("pr", 123), ("head_sha", HEAD_A), ("head_branch", "task/foreign"),
+    ("base", "master"),
+])
+def test_reviewed_legacy_successor_bad_binding_does_not_mutate(command_root: Path, field, value) -> None:
+    task = _reviewed_legacy_successor()
+    task["delivery_binding"][field] = value
+    before = json.dumps(task, sort_keys=True)
+    with pytest.raises(ir.IntegrationReceiptConflictError):
+        _record_successor(command_root, task)
+    assert json.dumps(task, sort_keys=True) == before
+    assert json.loads((command_root / "ai-status.json").read_text())["tasks"][0] == task
+
+
+@pytest.mark.parametrize("status", ["in_progress", "review"])
+def test_reviewed_legacy_successor_requires_current_review_approval(command_root: Path, status) -> None:
+    task = _reviewed_legacy_successor()
+    task["status"] = status
+    with pytest.raises(ir.IntegrationReceiptConflictError):
+        _record_successor(command_root, task)
+    assert json.loads((command_root / "ai-status.json").read_text())["tasks"][0] == task
 
 
 def test_successor_receipt_denied_for_same_generation(command_root: Path) -> None:

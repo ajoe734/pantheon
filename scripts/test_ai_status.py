@@ -9715,6 +9715,43 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(pending[0]["from"], "Claude")
         self.assertEqual(pending[0]["to"], "Codex")
 
+    def test_reopen_after_landed_receipt_advances_generation_and_preserves_receipt(self) -> None:
+        task = self.state["tasks"][0]
+        task.update(status="review", generation=3)
+        receipt = {
+            "version": 1, "result": "landed", "observation": "performed_merge",
+            "task_generation": 3, "repository": "ajoe734/pantheon", "target_branch": "dev",
+            "pr": 6502, "head_sha": "a" * 40, "merge_commit_sha": "b" * 40,
+            "observed_at": "2026-10-11T10:25:20Z", "source": "canonical_auto_integrator",
+        }
+        task["integration_receipt"] = deepcopy(receipt)
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            _command_reopen(self.state, ["REG-002", "Owned source-only generation regression"])
+        self.assertEqual(task["generation"], 4)
+        self.assertEqual(task[ai_status.REVIEW_REQUEUE_INTENT_KEY]["task_generation"], 4)
+        self.assertEqual(task["integration_receipt"], receipt)
+        self.assertNotIn(ai_status.DELIVERY_BINDING_KEY, task)
+        self.assertNotIn(ai_status.APPROVAL_BINDING_KEY, task)
+        task["status"] = "review"  # A later legal source handoff, without another merge.
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            _command_reopen(self.state, ["REG-002", "Same successor, still no new merge"])
+        self.assertEqual(task["generation"], 4)
+        self.assertEqual(task[ai_status.REVIEW_REQUEUE_INTENT_KEY]["task_generation"], 4)
+        self.assertEqual(task["integration_receipt"], receipt)
+
+    def test_reopen_without_valid_landed_receipt_does_not_invent_generation(self) -> None:
+        for receipt in (None, {"version": 99, "result": "landed"}, {"result": "landed"},
+                        {"version": True, "result": "landed"}, {"version": 1.0, "result": "landed"}):
+            with self.subTest(receipt=receipt):
+                state = deepcopy(self.state)
+                task = state["tasks"][0]
+                task.update(status="review", generation=3)
+                task["integration_receipt"] = deepcopy(receipt)
+                with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+                    _command_reopen(state, ["REG-002", "Owned invalid receipt control"])
+                self.assertEqual(task["generation"], 3)
+                self.assertEqual(task[ai_status.REVIEW_REQUEUE_INTENT_KEY]["task_generation"], 3)
+                self.assertEqual(task["integration_receipt"], receipt)
 
     def test_same_second_reopens_receive_distinct_nonce_intents(self) -> None:
         task = self.state["tasks"][0]
