@@ -1,9 +1,10 @@
 # Latest Dev Six-Area Closure Checkpoint (DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002)
 
-Checkpoint timestamp: 2026-10-11T04:40:00Z (Taipei: 2026-10-11 12:40)
-Status: **INCOMPLETE** (Honest Current Evidence Checkpoint, Not Final Acceptance)
+Checkpoint timestamp: 2026-10-11T15:16:00Z (Taipei: 2026-10-11 23:16)
+Status: **INCOMPLETE** (Honest Current Partial Source Adoption Checkpoint, Not Final Acceptance)
 Parent task: `DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002` (Generation 16, Owner: `Human/Ops`, Reviewer: `Codex2`)
-Child task: `DEV-SIX-AREA-EVIDENCE-CHECKPOINT-20261011` (Owner: `Antigravity2`, Reviewer: `Antigravity`, documentation-only)
+Child task: `DEV-SIX-AREA-SOURCE-ADOPTION-CHECKPOINT-20261011` (Owner: `Antigravity2`, Reviewer: `Antigravity`, documentation-only)
+Predecessor checkpoint: `DEV-SIX-AREA-EVIDENCE-CHECKPOINT-20261011` (PR #6496 merged at `654bb38d13ce9f40d682b0fe5d2bda16bd43e49b`, historical 04:40:00Z snapshot preserved)
 
 Scope: Documentation-only source checkpoint. Zero production delta. In trading execution, `is_real=false`
 refers to simulated / paper execution orders (no real-market capital or production trading). Hosted testbed
@@ -77,9 +78,18 @@ This task does NOT accept closeout or replace parent independent final acceptanc
 | SOURCE-TENANT-RESOLUTION-SINGLE-PATH-20261008 | BE | #6369 | `614dda5db` |
 | PROJECTION-MIGRATION-TIMEOUT-20261008 | BE | #6357 | `72de383e1` |
 | TELEMETRY-CANONICAL-OWNER-METADATA-TENANT-20261010 | BE | #6494 | `420598fe6` |
-| FE-GOVERNANCE-OWNER-READABLE-DETAIL-20261010 | FE / dev-deploy (not a BE-repo merge) | - | not verifiable from BE source; UNVERIFIED historic (Human/Ops dispatch truth: done), not current canonical DONE; summary current provider product tasks still due (FE PR #830, merge 79aacd97f770dafb58471bba59d2fc9b98b4dff5) |
-| FE-GOVERNANCE-CANONICAL-AUDIT-READBACK-20261011 | FE / dev-deploy (not a BE-repo merge) | - | not verifiable from BE source; UNVERIFIED historic (Human/Ops dispatch truth: done), not current canonical DONE; summary current provider product tasks still due (FE PR #831, merge 3fa4b1aab4877786e109f66156018213e4c4cb95, native DONE 04:13:17) |
-| FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011 | FE / dev-deploy (not a BE-repo merge) | - | not verifiable from BE source; pending PR #832 (head 88b5c6152500d17c2c119b10bdbae33943259810) |
+| FE-GOVERNANCE-OWNER-READABLE-DETAIL-20261010 | FE | #830 | `79aacd97f` |
+| FE-GOVERNANCE-CANONICAL-AUDIT-READBACK-20261011 | FE | #831 | `3fa4b1aab` |
+| DEV-SEALED-FINAL-ARTIFACT-RETURN-20261011 | BE | #6504 | `50f0cbeea` |
+| PI-REDIS-PROOF-CLEANUP-20261011 | BE | #6505 | `100b88c88` |
+| PI-RECOVERY-PRIVATE-INDEX-20261011 | BE | #6506 | `bb044b67e` |
+| PI-LANDED-REOPEN-GENERATION-20261011 | BE | #6507 | `d0695d2c8` |
+| RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011 | BE | #6495 | `f1f6c32ca` |
+| FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011 | FE | #832 | `4211acdf3` |
+| TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011 | BE | #6497 | `c69d90931` |
+| RECON-CURRENT-OWNER-ANCHORS-FAILCLOSED-20261011 | BE | #6498 | `9c15f1d9b` |
+| TEST-REDIS-CONTAINER-LEAK-20261010 | BE | #6481 | not verifiable from BE source; native SUPERSEDED by parent DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 at 14:45:14Z (PR #6481 closed unmerged, head 3da34d4f1c6e7f272242a2c40092bd689bb79f05 retained) |
+| WORKER-NATIVE-SOURCE-REWORK-BINDING-20261011 | BE | - | not verifiable from BE source; native SUPERSEDED by parent DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 at 14:45:20Z (net production budget 0, cumulative 40 unchanged, native consumer not implemented) |
 
 PR6093 = BFF-CLOSURE-REGRESSION-20261002 (`b6599f9fd`), PR6094 = DIRECT-BFF-OWNERSHIP-001 (`88ce3faff`),
 both merged. DIRECT-RAY-BASELINE-001 was NOT DELIVERED (see `docs/operations/research-framework-disposition.md`);
@@ -95,6 +105,9 @@ RLlib/Ray stays as on `dev`.
 ### Area 2: Pinned & Gated Exact Latest-Dev FE/BFF Pair, Hosted Identities & Sealed Artifacts (Parent AC2)
 - **Hosted Pair Deployment**: Root run `38102321809`, FE gate run `38103669914`, FE deploy run `38104566256`.
 - **Controller Admission**: Accepted at `2026-10-11T02:33:31Z` with BE `420598fe` + FE `79aacd97`.
+- **Actual TLS Hosted Pair (Readback at 13:36:22Z)**: `https://app.dev.mvl-cap.tw/deployment.json` confirmed active dev frontend serving `79aacd97f770dafb58471bba59d2fc9b98b4dff5` and dev BFF at `420598fe643be541ca28419a1abe4b03acb2dd73`.
+- **Attempted Root Run 38124492288**: Executed on candidate pair BE `8f532314a0aaa34ac4621c8fcbb4f35e5d9e5ea4` + FE `4211acdf31f9a28bd63f3d64fe0e6e23f98d395a`. Whole outcome FAILED paper probe; FULL and exact pair admission SKIPPED. Six original artifacts API hash and size verified; public compensation restored exact baseline `420598fe` + `79aacd97`. Quarantine TTL is NOT release acceptance.
+- **Current Committed Source**: Source currently at BE `d0695d2c89a1fdcaac1eea56309532fda3fabf2e` + FE `4211acdf31f9a28bd63f3d64fe0e6e23f98d395a`. Both remain undeployed and unqualified on dev hosting. Reread remote after doc delivery; do NOT claim `d069` is FINAL.
 - **Candidate Digest**: `488b5e461c9583e261bddf2d7ad7ac8afe7e92dab677338fdb7634f437a14341`.
 - **Artifacts Verification**: All 7 Root artifacts independently verified against GitHub API hash and size:
   - `pantheon-cross-repo-release-38102321809-1` (6679 bytes, SHA256 `aa31a97ef12ba2163916756811bc8a027c22518b916bbb1273ef338920b85a5f`)
@@ -109,8 +122,8 @@ RLlib/Ray stays as on `dev`.
   - `loop-run-projector-scheduler`: `sha256:a07b15f5991e9eca7bf99ca40d62890de5a81462a783ab4eccb2d9306b9c5e7e`
   - `operator-bff`: `sha256:353dc659c2384411e55bbed103b0aca04fe38536a4172e01c182f8ae1cd45819`
 - **Frontend Seal**: 32 sealed files in `pantheon-dev-fe-deploy-evidence-attempt-1` (run 38104566256, 53335 bytes, SHA256 `15b1a3f78e7b15caf8d48e05917a220de385253995f0104afd7198aa53b70f7f`) all match.
-- **FULL Loop Qualification State**: In Root run 38102321809, the FULL job was **SKIPPED** (not qualified).
-- **Prior FULL Failure**: Run 38092806870 failed due to upstream provider weekly quota limit, reported reset on `2026-10-12T12:00:00Z` (availability not guaranteed).
+- **FULL Loop Qualification State**: In Root run 38102321809, the FULL job was **SKIPPED** (not qualified). In Root run 38124492288, the FULL job was also **SKIPPED**.
+- **Prior FULL Failure**: Run 38092806870 failed due to upstream provider weekly quota limit, reported reset on `2026-10-12T12:00:00Z` (unverified / availability not guaranteed).
 
 ### Area 3: Hosted Harness, Twelve-Loop Causal Chain & Journey Verification (Parent AC3)
 - **Causal Chain Truth**: Incomplete. No ALL-loop browser proof or FULL loop qualification exists on a fresh causal chain.
@@ -121,87 +134,102 @@ RLlib/Ray stays as on `dev`.
   - Content SHA256: `b241456e7d88c7468b8cb01d58129ebf639d8c0590bb301797e0ad09ffd02490`
   - Result: 13 of 13 real steps **PASS** (version pair before/after, first login, owner readback, UI navigation, real reload, after reload readback, sign out, session invalidation, fresh anonymous context, second login, reopen UI, fresh context readback).
   - BFF Restart: Independent BFF restart at `2026-10-11T01:58:33.264523039Z` observed after acknowledged save at `2026-10-09T01:16:15.438Z`.
-  - Hash Retention: Full content hash `b241...2490` identical across restart. Note: this hash is a later full digest, NOT original save-time hash; zero create/PATCH/resave executed.
+  - Hash Retention: Full content hash `b241...2490` identical across restart (confirmed in 13:37Z operator GET readback). Note: this hash is a later full digest, NOT original save-time hash; zero create/PATCH/resave executed.
   - Scope Boundary: Proves workshop persistence journey only; does NOT prove Governance, all owner data, or rollback PASS.
 - **Governance Review Journey (run 38108525681)**:
   - Operation: `1638df31-eaeb-4f87-ba78-8ace7b8b0850`
   - Result: Steps 1-7 PASS, step 8 `navigate_governance_case_ui_first` **FAILED**.
   - Hosted Failure: Hosted Playwright browser execution failed at UI navigation step 8; the Playwright run artifact did not capture the hosted browser console error stack trace.
   - Source AST Counter: Complete original AST inspection of `GovernanceReview.tsx` revealed `audit.filter((e) => e.target.includes(id)...)` accessing undefined `e.target` because `GET /bff/audit` returns `target_id`, causing `TypeError: Cannot read properties of undefined (reading 'includes')`. Both hosted UI failure and source AST counter are clearly labeled.
-  - Reopen Disposition: Terminal reopen DENIED; referenced successor task `FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011` created and dispatched to `Antigravity2` (PID 2775529), pending PR #832 (head `88b5c6152500d17c2c119b10bdbae33943259810`), currently in source rework (not reviewed or deployed).
+  - Reopen Disposition: Terminal reopen DENIED; referenced successor task `FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011` was completed and merged in FE PR #832 (frozen head `1e2aa7d7e1085ba085a2ad820dc95cb3806a4a86` -> merge commit `4211acdf31f9a28bd63f3d64fe0e6e23f98d395a` at 05:05:14Z, native DONE gen 2 at 05:07:19Z, 75 originals + 1 discovery PASS, cumulative net production budget 26 <= 40). The 04:40 snapshot (head `88b5c6152500d17c2c119b10bdbae33943259810` pending in source rework under Antigravity2 PID 2775529) is preserved in explicitly labelled 04:40 historical record, not current fields. Landed source delivery is now merged into frontend dev; however, hosted dev VM still serves older pair `420598fe` + `79aacd97` (undeployed on hosted dev VM, not hosted acceptance).
 - **All-Loop Browser Proof**: NONE. There is no product Research, provider/Alpha, Capital, or human imitation browser proof across all loops. All loop browser states in the operational L1-L12 ledger remain NOT_PROVEN / not_applicable without loop-specific UI proof. Workshop persistence journey (13 PASS) and Governance journey (7 PASS, step 8 FAIL) are retained and evaluated separately as cross-cutting AC3/AC4 journey receipts, not loop-specific proofs for L4 (persona_teaching) or L10 (telemetry_reconciliation).
-- **Legacy US Persona Bindings**:
-  - Audit Scope: 25 archived Persona IDs cross-referenced against runtime owner `metadata.persona_id`.
-  - Matched Bindings: 24 matched bindings (7 retired, 1 failed, 16 paused [15 with explicit `market_input_stale` canonical session admission; 1 paused cause unknown]).
+- **Legacy US Persona Bindings (Fleet Owner GET 14:25:01Z)**:
+  - Audit Scope: 25 archived Persona IDs cross-referenced against runtime owner `metadata.persona_id` with configured remote auth (`require_remote: true`, `allow_local: false`, default principal assertion passing).
+  - Matched Bindings: 24 matched bindings (7 retired, 1 failed, 16 paused [15 with explicit `market_input_stale` canonical session admission; 1 paused cause unknown, `rb-b5299c1b77f149feb9174e935032fb52`]).
   - Unmatched Personas: 1 unmatched (`persona-0f94f05389a7e092b469`).
+  - Unknown Owner Scope: 0.
   - Worker Presence: All 24 matched bindings have `worker_present: false` (zero active workers).
   - Runtime Commands: Zero commands issued (no pause, retire, or capital commands; paused state NOT claimed to be irreversible terminal).
-  - Historical Data Clarification: Historical "1191" figure represents 10-minute SPY snapshot polls in logs, NOT 1191 runtime bindings. Actual runtime binding count is 46, of which 24 match legacy US personas.
+  - Collector Disposition: Wrong runtime-container collector refused missing PANTHEON_RUNTIME_MANAGER_URL and failed closed unused; correct configured Fleet-owner remote auth succeeded without fallback or credential export.
+  - Historical Data Clarification: Historical "1191" figure represents 10-minute SPY snapshot polls in logs, NOT 1191 runtime bindings. Actual runtime binding count is 47, of which 24 match legacy US personas.
 
 ### Area 4: Saved Owner State Persistence Across Restart, Fault Visibility & Human Approval (Parent AC4)
 - **Historical PG Lineage Cold Read**: Following telemetry process restart at `2026-10-11T01:49:17Z`, historical incident canonical traces and binding projections (including `d39` and `69fff`) returned HTTP 200 (recovered from prior 404) without database mutation or synthetic replay.
-- **Live Management Health**: 11 of 12 loops reported healthy.
+- **Live Management Health (Readback at 13:37:00Z)**: 11 of 12 loops reported healthy.
 - **Loop 10 (Telemetry Reconciliation) Fresh Unhealthy Functional Result**:
-  - Loop 10 latest status is a fresh unhealthy functional result from current owner receipts, not merely stale unobserved provenance rejection.
-  - 2 incident timeouts and 18 visibility deferrals active.
-  - Evaluated bindings: `rb-52d16f8d2ace4104868caf3f3fc4c898` and `rb-5354aba551124647a7d93774317bd43d`.
-  - Event traces PASS (1.527s, 3.066s), but binding projections returned HTTP 503 (5.086s, 7.718s).
-  - PostgreSQL READONLY query confirmed durable ingested order: `3445658 < 4005801` and `3457957 < 4005806`.
-  - PostgreSQL EXPLAIN (not ANALYZE) confirmed costly `created_at` index scan on OR runtime binding query without dedicated index; no held blocking table lock detected.
-  - Reopen Disposition: Terminal denial preserved; referenced successor task `RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011` pending PR #6495 (head `14de008e`), currently in source rework under `Antigravity2`. Numeric tenant coercion and pair deadline counter rework remain; no total PASS.
-  - Task `TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011` (4 files, net 40 lines) queued, waiting for BE #6495 genuine completion to avoid conflicting table updates.
+  - Loop 10 latest status at 13:37:00Z is an unhealthy provenance result: record rejected because it lacks accepted current controller-runtime provenance (`record_accepted: false`).
+  - Historical 09:21 12/12 report is NOT transferred; does not constitute 12 scenario / browser / FULL qualification.
+  - Historical 04:40:00Z incident timing diagnostics (from `telemetry-scheduler-incident-summary.json`, preserved as historical checkpoint): 2 incident timeouts and 18 visibility deferrals; evaluated bindings `rb-52d16f8d2ace4104868caf3f3fc4c898` and `rb-5354aba551124647a7d93774317bd43d`; event traces PASS (1.527s, 3.066s), but binding projections returned HTTP 503 (5.086s, 7.718s); PostgreSQL READONLY query confirmed durable ingested order: `3445658 < 4005801` and `3457957 < 4005806`; PostgreSQL EXPLAIN (not ANALYZE) confirmed costly `created_at` index scan on OR runtime binding query without dedicated index; no held blocking table lock detected.
+  - Reopen Disposition: Terminal denial preserved; referenced successor tasks `RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011` (PR #6495, frozen head `e8411fbe59f1199028684aa7efe6e49f2f5868dc` -> merge commit `f1f6c32cab68c449dc0e7a462940de6a193d1412` at 05:15:20Z, native DONE gen 2, 185 original tests PASS, net 118 <= 120), `TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011` (PR #6497, frozen head `95ca929b6ed9016615f3db12d8fbdbb8246533fd` -> merge commit `c69d90931d57b5ca7a792fd65431f3c4faad247b` at 05:40:20Z, native DONE gen 1 at 05:43:14Z, 144 original tests PASS, net 17 <= 40), and `RECON-CURRENT-OWNER-ANCHORS-FAILCLOSED-20261011` (PR #6498, frozen head `c357437b1d6f219480f92f2e13ac5015c2a929d6` -> merge commit `9c15f1d9bdef2c3e9011c7a893b6c6521520f59f` at 05:45:19Z, native DONE gen 1 at 05:46:52Z, 190 original tests PASS, net 1 <= 2, cumulative 119 <= 120) are now merged in dev. The 04:40 snapshot (PR #6495 head `14de008e4bd5786eca8c2870c3afd35a32c784b0` in source rework, 183 passed; `TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011` queued waiting for 6495 writer-order) is preserved in explicitly labelled 04:40 historical record, not erased. Landed source deliveries are merged in source but remain undeployed on hosted dev VM (serving `420598fe` + `79aacd97`, where Loop 10 remains UNHEALTHY; not hosted acceptance). Fresh 13:37 readback showing 11/12 healthy and Loop 10 rejected remains separate from these source completions and separately dated older incident timing diagnostics.
 - **Training Consumer Token Rotation**:
   - Consumer Service: `training-session-svc` on same running instance, reading mount `/run/pantheon-principals/TRAINING_SESSION_SOURCE_READ_TOKEN`.
   - Natural Rotation: Natural scheduled rotation occurring before 24h expiry, NOT an expiration event, observed between `2026-10-11T02:45:46Z` and `2026-10-11T03:45:46Z`.
     - Before: mtime `02:45:46Z`, token SHA `81f18536...`, `iat: 1791686746`, `exp: 1791773146`.
     - After: mtime `03:45:46Z`, token SHA `a34bfdb5...`, `iat: 1791690346`, `exp: 1791776746`.
     - `iat` advanced by 1 hour (3600s), while `exp` remains 24 hours out; rotation occurred prior to expiration.
-  - Identity & Claims: Same finite principal (`pantheon-dev-training-session-svc`), scope (`pantheon:dev-owner-read`), aud (`bff-operators`), tenant (`tenant-dev`).
+  - Identity & Claims: Exact authenticated public claims from original receipt: `sub: "pantheon-dev-training-session-svc"`, `scope: "pantheon:dev-owner-read"`, `aud: "bff-operators"`, `tenant_id: "tenant-dev"`, `roles: ["source_ingest_reader"]`. No guessed subject or tenant.
   - Authenticated GET Adoption: `GET Source` records and controller readback succeeded before and after rotation.
   - Issuer Health: Signature valid, fixed grant valid, headroom healthcheck exit 0.
   - Boundary Limitation: Confirms single consumer adoption across one natural rotation; does NOT claim projector adoption, infinite continuity, or training job completion; zero forced mint, restart, or secret export.
-- **Human Approval Votes**: Two real, eligible, distinct human votes required on Governance approval case; zero votes cast.
+- **Human Approval Votes & Capital Policy Convergence (Parent AC4)**:
+  - Historical Fixture Observation (at 13:37:29Z):
+    - Governance case: `approval-paper-human-quorum-closeout-20261010-v1` observed at 13:37:29Z.
+    - Historical status: pending (version 1), 0 votes cast; zero AI votes / PATCH / new browser.
+    - Disposition: Retained as obsolete historical fixture with zero votes; no fabricated cancellation (remains historically pending with zero votes, not approved/cancelled).
+  - Operator Policy Clarification (Timestamped: 2026-10-11T15:02:00Z):
+    - User explicitly rejected demanding two human approvers for this ordinary dev/paper closeout and instructed to fix it; this supersedes the earlier blanket two-human interpretation; do not ask the operator to find a second human.
+    - Capital Policy Convergence: Existing `services/capital/capital_guard.py:is_paper_operation/authorize` already allows correctly scoped paper pool activation, paper_owner binding, and paper_ledger rebalance without Capital approval (`is_paper_operation` returns True when `execution_context=paper` with paper-only allocations and bindings, allowing authorization without `_require_approval`); no new approval bypass, scope, or issuer is added, and live/canary controls remain intact.
+    - Existing `CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001 AC3` explicitly requires paper onboarding without Capital approval.
+    - Fixture Assessment: Chatbox-created fixture `approval-paper-human-quorum-closeout-20261010-v1` is an inappropriate capital_pool_activation/increase fixture: its pool only had `paper_only`/`is_real_capital` labels and omitted the actual `execution_context=paper` owner contract. It is not counted as a release blocker, and no votes will be sought on this fixture.
+    - Real Non-Capital Business Approval UI Policy: Real non-capital business approval UI acceptance uses the existing one-authorized-human policy for its actual target; retains true login, owner version/readback, tenant, idempotency, persistence, and no-proxy-vote requirements.
 
 ### Area 5: Rollback Verification & Hosted Obligation Status Update (Parent AC5)
-- **Rollback Verification**: Exact prior FE/BFF artifact rollback and reactivation with readback while preserving acknowledged data remains unexecuted / unverified in this checkpoint.
-- **Hosted Obligations**: Hosted obligations for Agora, Persona, Research, and FE approval remain open; they are NOT updated or closed. Source task merges or historical S5 reports do not satisfy hosted closure.
+- **Rollback Verification**: Exact prior FE/BFF artifact rollback and reactivation with readback while preserving acknowledged data remains unexecuted / unverified on live dev VM.
+- **Native Task Delivery (DEV-SEALED-FINAL-ARTIFACT-RETURN-20261011)**:
+  - PR #6504, head `401de086463b4c07a55f9b5a597aa8ad41e43adf` merged into dev via merge commit `50f0cbeea4c6809596191cb40255ee53ef1fe7b4`.
+  - Canonical auto integrator receipt recorded at `2026-10-11T13:45:07Z` (gen 3), preserving previous integration receipt from PR #6502 (`1e190839...` -> `c94fa491...`).
+  - Owner finalizer lease `evt-20261011T134515Z-46134bbc` / `antigravity2-20261011T134529Z-44a787a9` / PID 3554711 archived DONE at `2026-10-11T13:47:54Z`.
+  - Completed delivery augmenting the artifact driver with a supported exact same sealed candidate bytes return path and mandatory fail-closed FE digests (`--fe-manifest-sha256`, `--fe-dist-sha256`).
+- **Hosted Obligations**: Hosted obligations for Agora, Persona, Research, and FE approval remain open; they are NOT updated or closed. Source task merges or loaded tooling promotion do not satisfy hosted closure or product acceptance.
 
 ### Area 6: Matrix Publication & Independent Review Evidence (Parent AC6)
-- **Scoped Artifacts**: Documentation-only checkpoint published across the 3 declared repository locations:
+- **Scoped Artifacts**: Documentation-only checkpoint published across the declared repository locations:
   - `docs/deployment/latest-dev-six-area-closure.md`
   - `docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json`
-  - 7 supporting JSON receipts under `docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/` (total 9 doc-only files)
+  - `docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/source-delivery-ledger.json`
+  - `docs/deployment/evidence/DEV-SIX-AREA-SOURCE-ADOPTION-CHECKPOINT-20261011/evidence.json`
+  - Supporting JSON receipts under `docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/`
 - **Zero Production Delta**: Zero production code modified (`production_delta = 0`).
-- **Independent Review**: Assigned reviewer `Antigravity` for child task `DEV-SIX-AREA-EVIDENCE-CHECKPOINT-20261011`.
+- **Independent Review**: Assigned reviewer `Antigravity` for child task `DEV-SIX-AREA-SOURCE-ADOPTION-CHECKPOINT-20261011`.
 - **Remaining Obligations (Overall Status INCOMPLETE)**:
-  1. **FULL Loop Qualification**: Provider weekly quota limit on FULL job reset Oct 12 12:00 UTC (not guaranteed availability). Root 38102321809 skipped FULL.
+  1. **FULL Loop Qualification**: Provider weekly quota limit on FULL job reset Oct 12 12:00 UTC (unverified / availability not guaranteed). Root 38102321809 skipped FULL; Root 38124492288 skipped FULL.
   2. **Taiwan Natural Market Data**: Mandatory Oct 12 NEW natural TW market data arrival, freshness verification, and downstream pipeline processing.
-  3. **Human Approval Votes**: Two real, eligible, distinct human votes required on Governance approval case.
+  3. **Human Approval & Paper Onboarding Policy**: Real non-capital business approval UI acceptance requires one authorized human under existing policy (retaining true login, owner version/readback, tenant, idempotency, persistence, and no-proxy-vote requirements); genuine paper onboarding requires zero Capital approval per `services/capital/capital_guard.py:is_paper_operation` and `CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001 AC3`. Obsolete pending fixture `approval-paper-human-quorum-closeout-20261010-v1` is not a release blocker.
   4. **Positive Financial Accounting**: Positive financial reconciliation, ledger balancing, and variance resolution.
-  5. **Main Provider & Pinned Replay**: Original main post-config / provider execution and pinned Docker replay.
-  6. **Legacy US Scope Limitations**: Formal retirement and terminal disposition of legacy US bindings without runtime commands.
-  7. **Exact Sealed Bytes Roundtrip**: Exact prior-to-same FINAL sealed bytes roundtrip and all acknowledged data retention.
-  8. **Redis Governed Branch**: Redis test container cleanup tool PR #6481 resolution.
-  9. **Independent Final Acceptance**: Independent final acceptance by parent reviewer `Codex2` and release owner `Human/Ops`.
+  5. **Main Provider & Pinned Replay**: Original main post-config / provider execution, pinned Docker replay, and legacy US scope limitations.
+  6. **Exact Sealed Bytes Roundtrip**: Exact prior-to-same FINAL sealed bytes roundtrip and preservation of all acknowledged data on hosted dev VM.
+  7. **Latest Own Pair Root Seals & Governance Browser**: Latest own pair Root seals and image-served 12-loop + Governance browser qualification.
+  8. **Final Repository Artifact Updates**: Final repository artifact updates across all declared paths.
+  9. **Independent Final Acceptance**: Independent final acceptance by parent reviewer `Codex2` and release owner `Human/Ops` across all six areas.
 
 ## Operational L1-L12 Ledger
 
 | Loop | Name | Source Delivery | Served Pair (Release Admission) | Loop Owner Admission / Health | Browser Verified | FULL Qualified | Final Acceptance |
 |---|---|---|---|---|---|---|---|
-| L1 | source_ingestion | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
-| L2 | strategy_distillation | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
-| L3 | alpha_replication | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
-| L4 | persona_teaching | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof (Workshop 295 persistence journey run 38109227221 is evaluated separately in AC3/AC4, not loop-specific teaching proof) | SKIPPED | INCOMPLETE |
-| L5 | agora_interaction_evidence | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
-| L6 | human_imitation_shadow_eval | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
-| L7 | consultation | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
-| L8 | promotion_deployment | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
-| L9 | capital_pool_execution | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
-| L10 | telemetry_reconciliation | IN_REWORK (BE 6494 merged, BE 6495 in rework, indexed-binding queued) | `420598fe` + `79aacd97` (Root 38102321809 accepted) | UNHEALTHY / unobserved (fresh functional failure: 2 incident timeouts, 18 visibility deferrals active; BE 6495 in rework) | NOT_PROVEN / not_applicable without loop-specific UI proof (Governance review journey run 38108525681 is evaluated separately in AC3, not loop-specific telemetry proof) | SKIPPED | INCOMPLETE |
-| L11 | evolution | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
-| L12 | bff_health_monitoring | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
+| L1 | source_ingestion | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact `420598fe` + `79aacd97`) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
+| L2 | strategy_distillation | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact `420598fe` + `79aacd97`) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
+| L3 | alpha_replication | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact `420598fe` + `79aacd97`) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
+| L4 | persona_teaching | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact `420598fe` + `79aacd97`) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof (Workshop 295 persistence journey run 38109227221 is evaluated separately in AC3/AC4, not loop-specific teaching proof) | SKIPPED | INCOMPLETE |
+| L5 | agora_interaction_evidence | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact `420598fe` + `79aacd97`) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
+| L6 | human_imitation_shadow_eval | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact `420598fe` + `79aacd97`) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
+| L7 | consultation | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact `420598fe` + `79aacd97`) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
+| L8 | promotion_deployment | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact `420598fe` + `79aacd97`) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
+| L9 | capital_pool_execution | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact `420598fe` + `79aacd97`) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
+| L10 | telemetry_reconciliation | PREDECESSOR_MERGED (BE 6494, 6495, 6497, 6498 and FE 832 merged; undeployed on dev VM) | `420598fe` + `79aacd97` (Root 38102321809 accepted; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact `420598fe` + `79aacd97`) | UNHEALTHY / unobserved (13:37 controller report rejected: lacks accepted current controller-runtime provenance [record_accepted: false]; landed source deliveries undeployed on dev VM; not hosted acceptance; historical 04:40:00Z incident timeouts/visibility deferrals diagnostics kept separately as 04:40 checkpoint) | NOT_PROVEN / not_applicable without loop-specific UI proof (Governance review journey run 38108525681 is evaluated separately in AC3, not loop-specific telemetry proof) | SKIPPED | INCOMPLETE |
+| L11 | evolution | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact `420598fe` + `79aacd97`) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
+| L12 | bff_health_monitoring | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact `420598fe` + `79aacd97`) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
 
-Note: Root pair release admission (Root run 38102321809: 420598fe + 79aacd97) does NOT imply loop-level controller admission. Loop owner health is evaluated separately; only L10 has observed fresh unhealthy functional results, while L1-L9, L11, L12 loop admissions remain unproven / not qualified without FULL run. All loops browser_verified remain NOT_PROVEN / not_applicable without loop-specific UI proof (Workshop 295 journey and Governance journey are cross-cutting journey receipts in AC3/AC4, not loop-specific proofs for L4 or L10).
+Note: Root pair release admission (Root run 38102321809: 420598fe + 79aacd97; Root run 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact 420598fe + 79aacd97) does NOT imply loop-level controller admission. Loop owner health is evaluated separately; only L10 has observed fresh unhealthy functional results (13:37 controller-runtime provenance rejected; historical 04:40:00Z incident timeouts/visibility deferrals diagnostics kept separately as 04:40 checkpoint), while L1-L9, L11, L12 loop admissions remain unproven / not qualified without FULL run. All loops browser_verified remain NOT_PROVEN / not_applicable without loop-specific UI proof (Workshop 295 journey and Governance journey are cross-cutting journey receipts in AC3/AC4, not loop-specific proofs for L4 or L10).
 
 ## Integrated Source Checks
 
@@ -211,9 +239,25 @@ Note: Root pair release admission (Root run 38102321809: 420598fe + 79aacd97) do
   - BE #6494 (`TELEMETRY-CANONICAL-OWNER-METADATA-TENANT-20261010`): merged `420598fe643be541ca28419a1abe4b03acb2dd73` (head `9d7092a3945dbdbb94a9122dd832b5bbf9acba26`), 142 passed, canonical DONE.
   - FE #830 (`FE-GOVERNANCE-OWNER-READABLE-DETAIL-20261010`): merged `79aacd97f770dafb58471bba59d2fc9b98b4dff5` (head `753bd23928d87af1d761975ee703e8d8568248d0`), 54 passed + 1 discovery, archived DONE.
   - FE #831 (`FE-GOVERNANCE-CANONICAL-AUDIT-READBACK-20261011`): merged `3fa4b1aab4877786e109f66156018213e4c4cb95` (head `491afee837bfee57b24016a6fa9a552e747b6a44`, at 04:10:14Z, native DONE 04:13:17), 67 passed + 1 discovery, canonical DONE.
-  - BE #6495 (`RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011`): pending PR #6495 (head `14de008e4bd5786eca8c2870c3afd35a32c784b0`), 183 passed = 40 pytest recon + 50 unittest routes/write + 93 unittest incident; numeric tenant fixed; remaining TypeError legacy unscoped two 2.6s 5.200431 deadline counter (elapsed 5.200s > 5s budget); earlier adb0 history retained: 182 passed (39 pytest recon + 50 unittest routes/write + 93 unittest incident) and earlier pytest 240s timeout retained as invocation timeout not product deadlock; numeric tenant coercion and pair deadline counter rework pending in source rework under Antigravity2 (PID 2773328), no total PASS.
-  - FE #832 (`FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011`): pending PR #832 (head `88b5c6152500d17c2c119b10bdbae33943259810`), source rework active under Antigravity2 (PID 2775529).
-  - `TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011`: queued, waiting for 6495 writer-order.
+  - Pi #6505 (`PI-REDIS-PROOF-CLEANUP-20261011`): merged `100b88c88555beba8991bd4c63d2a81b728be053` (frozen head `f5f2f5554d5168f509ef9fbc6ca3669611f6b59a`), 125 real Redis tests pass 0 skip, 118 AST test bodies unchanged, missing-redis 105 tests 4 explicit SkipTest unchanged 67 preexisting containers, 7 boundary tests + 4 start/failure cases clean.
+  - Pi #6506 (`PI-RECOVERY-PRIVATE-INDEX-20261011`): merged `bb044b67e25196c84a45db61f2bb091d0c0997f6` (head `0bb607d713eac2ca22ea4fc5fb2198ea826f4d42`), mechanical delivery tooling.
+  - Pi #6507 (`PI-LANDED-REOPEN-GENERATION-20261011`): merged `d0695d2c89a1fdcaac1eea56309532fda3fabf2e` (frozen head `429457494bb11c3e635a6eb277b37f1aaaec7214`), 786 passed 1031 subtests in 160.83s; 3 required CI passed, mechanical delivery tooling only.
+  - Loaded Supervisor Runtime Promotion: `d0695d2c89a1fdcaac1eea56309532fda3fabf2e` promoted at 13:44:32Z, supervisor PID 3553496 healthy/caught up V2 (37801 events), same integrator, 0 deletions.
+  - BE #6504 (`DEV-SEALED-FINAL-ARTIFACT-RETURN-20261011`): merged `50f0cbeea4c6809596191cb40255ee53ef1fe7b4` (head `401de086463b4c07a55f9b5a597aa8ad41e43adf`), canonical auto integrator receipt at 13:45:07Z, gen 3, previous receipt PR #6502 `1e190839...` -> `c94fa491...` preserved, owner finalizer lease `evt-20261011T134515Z-46134bbc` / `antigravity2-20261011T134529Z-44a787a9` / PID 3554711 archived DONE at 13:47:54Z.
+  - Native Task Superseded: `TEST-REDIS-CONTAINER-LEAK-20261010` (owner Claude, reviewer Antigravity, terminal outcome superseded by parent at 14:45:14Z; PR #6481 CLOSED unmerged at 14:48:05Z, head `3da34d4f...` retained, bad trailers/force hook denial preserved; no implemented native consumer claim).
+  - Native Task Superseded: `WORKER-NATIVE-SOURCE-REWORK-BINDING-20261011` (owner Antigravity2, reviewer Antigravity, terminal outcome superseded by parent at 14:45:20Z; cumulative budget 40/40, net budget 0 unchanged, no +35 grant implemented, native consumer/grant NOT implemented/activated).
+  - BE #6495 (`RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011`): merged `f1f6c32cab68c449dc0e7a462940de6a193d1412` at 05:15:20Z (frozen head `e8411fbe59f1199028684aa7efe6e49f2f5868dc`, native DONE gen 2, 185 original tests PASS = 42 pytest recon + 50 routes/write + 93 incident, net budget 118 <= 120 lines); 04:40 state (head `14de008e4bd5786eca8c2870c3afd35a32c784b0`, 183 passed = 40 pytest recon + 50 unittest routes/write + 93 unittest incident, numeric tenant fixed, deadline counter rework pending) preserved as 04:40 historical fact; undeployed on hosted dev VM, not hosted acceptance.
+  - FE #832 (`FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011`): merged `4211acdf31f9a28bd63f3d64fe0e6e23f98d395a` at 05:05:14Z (frozen head `1e2aa7d7e1085ba085a2ad820dc95cb3806a4a86`, native DONE gen 2 at 05:07:19Z, 75 originals + 1 discovery PASS, cumulative 26 <= 40 lines); 04:40 state (head `88b5c6152500d17c2c119b10bdbae33943259810` pending in source rework) preserved as 04:40 historical fact; undeployed on hosted dev VM, not hosted acceptance.
+  - BE #6497 (`TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011`): merged `c69d90931d57b5ca7a792fd65431f3c4faad247b` at 05:40:20Z (frozen head `95ca929b6ed9016615f3db12d8fbdbb8246533fd`, native DONE gen 1 at 05:43:14Z, 144 original tests PASS = 1 pytest recon + 50 routes/write + 93 incident, net budget 17 <= 40 lines); 04:40 state (queued waiting for 6495 writer-order) preserved as 04:40 historical fact; undeployed on hosted dev VM, not hosted acceptance.
+  - BE #6498 (`RECON-CURRENT-OWNER-ANCHORS-FAILCLOSED-20261011`): merged `9c15f1d9bdef2c3e9011c7a893b6c6521520f59f` at 05:45:19Z (frozen head `c357437b1d6f219480f92f2e13ac5015c2a929d6`, native DONE gen 1 at 05:46:52Z, 190 original tests PASS = 47 pytest recon + 50 routes/write + 93 incident, net budget 1 <= 2 lines, cumulative 119 <= 120 lines); undeployed on hosted dev VM, not hosted acceptance.
+  - Current source `d069` QA and test execution receipts:
+    - Current source `d069`: original 625 artifact/controller PASS, 1 original skip; 335 capture/fetch/restore PASS.
+    - Initial source worktree unsafe 775/664 helper/watchdog fail-closed before SSH retained in owned QA env history; exact owned read-only 555/444 same Git content fixed, no product bug.
+    - Initial wrong main checkout 603 explicitly UNQUALIFIED and unused; system python fastapi / malformed probe errors are collector history, not product facts.
+    - Owned PG loopback 32897 actual d069 51 routes + 93 incident PASS, 0 skips, cleanup 0 absence; actual recon 24 HTTP + 23 paired client PASS.
+    - Full original driver fixture source FINAL positive reached exact same FE; altered FE/archive/missing mandatory external hash all DENY, loads 0, recreate 0, trusted original receipt unchanged.
+    - FE remote 421 actual pinned npm ci + 75 original tests PASS across 3 files; one Playwright DISCOVERY only, not browser execution.
+    - All source-only evidence; no new FULL/Root/provider retry/market row/host mutations; source vs served 420+79 preserved and future Oct 12 NEW data / provider reported reset 12:00Z unverified availability. Overall status remains INCOMPLETE across all six areas.
 - No product or frontend source modified in this task. Production line budget net change: 0 lines.
 
 ## Timestamped Evidence Chronology & Counterfact Traceability
@@ -226,5 +270,23 @@ Note: Root pair release admission (Root run 38102321809: 420598fe + 79aacd97) do
 - **2026-10-11T04:10:14Z**: FE #831 merged `3fa4b1aab4877786e109f66156018213e4c4cb95` (head `491afee837bfee57b24016a6fa9a552e747b6a44`), native DONE 04:13:17Z.
 - **2026-10-11T04:16:00Z**: BE #6495 head `adb0` QA completed: 182 passed (39 pytest recon + 50 unittest routes/write + 93 unittest incident).
 - **2026-10-11T04:39:41Z**: BE #6495 head `14de008e4bd5786eca8c2870c3afd35a32c784b0` QA completed: 183 passed = 40 pytest recon + 50 unittest routes/write + 93 unittest incident; numeric tenant fixed; remaining TypeError legacy unscoped two 2.6s 5.200431 deadline counter (elapsed 5.200s > 5s budget).
-- **2026-10-11T04:40:00Z**: Baseline checkpoint snapshot recorded.
-- **2026-10-11T04:55:00Z**: Independent review reconciliation: exact head/test bindings bound, full immutable SHAs recorded in canonical ledger, Workshop/Governance browser receipts dissociated from L4/L10 in the L1-L12 matrix, pair release admission separated from loop owner health, and UNVERIFIED historic Human/Ops dispatch rows explicitly documented. Overall status remains honestly INCOMPLETE.
+- **2026-10-11T04:40:00Z**: Baseline checkpoint snapshot recorded under `DEV-SIX-AREA-EVIDENCE-CHECKPOINT-20261011` (PR #6496, merge commit `654bb38d13ce9f40d682b0fe5d2bda16bd43e49b`).
+- **2026-10-11T05:05:14Z**: FE #832 (`FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011`) merge commit `4211acdf31f9a28bd63f3d64fe0e6e23f98d395a` landed via PR #832 (head `1e2aa7d7e1085ba085a2ad820dc95cb3806a4a86`, native DONE gen 2 at 05:07:19Z, 75 originals + 1 discovery PASS, cumulative 26 <= 40 lines), fixing TypeError in audit identity filtering.
+- **2026-10-11T05:15:20Z**: BE #6495 (`RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011`) merge commit `f1f6c32cab68c449dc0e7a462940de6a193d1412` landed via PR #6495 (head `e8411fbe59f1199028684aa7efe6e49f2f5868dc`, native DONE gen 2, 185 PASS, net 118 <= 120).
+- **2026-10-11T05:40:20Z**: BE #6497 (`TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011`) merge commit `c69d90931d57b5ca7a792fd65431f3c4faad247b` landed via PR #6497 (frozen head `95ca929b6ed9016615f3db12d8fbdbb8246533fd`, native DONE gen 1 at 05:43:14Z, 144 PASS, net 17 <= 40).
+- **2026-10-11T05:45:19Z**: BE #6498 (`RECON-CURRENT-OWNER-ANCHORS-FAILCLOSED-20261011`) merge commit `9c15f1d9bdef2c3e9011c7a893b6c6521520f59f` landed via PR #6498 (frozen head `c357437b1d6f219480f92f2e13ac5015c2a929d6`, native DONE gen 1 at 05:46:52Z, 190 PASS, net 1 <= 2, cumulative 119 <= 120).
+- **2026-10-11T10:25:20Z**: Task `DEV-SEALED-FINAL-ARTIFACT-RETURN-20261011` generation 3 merge commit `c94fa49119e6c9084041534d798a21235896fb8d` landed via PR #6502 (head `1e19083957cb4560577a19f2b03e0a9eb2f54713`), preserved in history.
+- **2026-10-11T12:20:12Z**: Pi #6505 (`PI-REDIS-PROOF-CLEANUP-20261011`) merged `100b88c88555beba8991bd4c63d2a81b728be053` (frozen head `f5f2f5554d5168f509ef9fbc6ca3669611f6b59a`), discharging the 4 fixture ACs for Redis test cleanup with 125 real Redis tests passing and 118 AST test bodies unchanged.
+- **2026-10-11T12:43:46Z**: Pi #6506 (`PI-RECOVERY-PRIVATE-INDEX-20261011`) merged `bb044b67e25196c84a45db61f2bb091d0c0997f6` (head `0bb607d713eac2ca22ea4fc5fb2198ea826f4d42`), mechanical privateindex delivery tooling.
+- **2026-10-11T13:36:22Z**: Actual TLS readback on `app.dev.mvl-cap.tw/deployment.json` confirmed hosted pair serving BE `420598fe` + FE `79aacd97`. Root run `38124492288` (on `8f532314...` + `4211acdf...`) whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED; public compensation restored exact baseline `420598fe` + `79aacd97`.
+- **2026-10-11T13:37:00Z**: Management loop health readback confirmed 11 of 12 loops healthy; Loop 10 (`telemetry_reconciliation`) unhealthy with rejected controller-runtime provenance.
+- **2026-10-11T13:37:29Z**: Principal Workshop 295 readback confirmed title SHA `f697...` and later full content SHA `b241...` preserved; Governance human approval case pending (version 1), 0 votes cast.
+- **2026-10-11T13:40:30Z**: Pi #6507 (`PI-LANDED-REOPEN-GENERATION-20261011`) merged `d0695d2c89a1fdcaac1eea56309532fda3fabf2e` (frozen head `429457494bb11c3e635a6eb277b37f1aaaec7214`), 786 passed 1031 subtests in 160.83s; 3 required CI passed, mechanical delivery tooling only.
+- **2026-10-11T13:44:32Z**: Supervisor runtime promotion loaded exact candidate `d0695d2c89a1fdcaac1eea56309532fda3fabf2e`, supervisor PID 3553496 healthy/caught up V2 (37801 events), same integrator, 0 deletions.
+- **2026-10-11T13:45:07Z**: Task `DEV-SEALED-FINAL-ARTIFACT-RETURN-20261011` PR #6504 (head `401de086463b4c07a55f9b5a597aa8ad41e43adf`) merge commit `50f0cbeea4c6809596191cb40255ee53ef1fe7b4` confirmed by canonical auto integrator receipt. Owner finalizer lease `evt-20261011T134515Z-46134bbc` / `antigravity2-20261011T134529Z-44a787a9` / PID 3554711 archived DONE at 13:47:54Z.
+- **2026-10-11T14:25:01Z**: Fleet owner GET on 25 fixed retirement IDs confirmed 24 matches (7 retired, 1 failed, 16 paused), 0 unknown owner scope, 1 unmatched original persona (`persona-0f94f05389a7e092b469`), `rb-b529` pause cause unknown; 0 active workers; wrong runtime collector failed closed unused, correct remote auth succeeded without export.
+- **2026-10-11T14:45:14Z**: Task `TEST-REDIS-CONTAINER-LEAK-20261010` native SUPERSEDED by parent `DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002` (terminal_outcome: superseded); PR #6481 CLOSED unmerged at 14:48:05Z (head `3da34d4f...` retained, bad trailers/force hook denial preserved).
+- **2026-10-11T14:45:20Z**: Task `WORKER-NATIVE-SOURCE-REWORK-BINDING-20261011` native SUPERSEDED by parent `DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002` (terminal_outcome: superseded; cumulative budget 40/40, net budget 0 unchanged, native consumer/grant not implemented/activated).
+- **2026-10-11T14:50:00Z**: Child task `DEV-SIX-AREA-SOURCE-ADOPTION-CHECKPOINT-20261011` publishes honest timestamped partial source adoption checkpoint across all 4 declared repository artifacts. Overall status remains honestly INCOMPLETE.
+- **2026-10-11T15:02:00Z**: Authoritative operator policy clarification adopted: correctly scoped paper onboarding requires zero Capital approval per existing `capital_guard.py` execution_context contract; actual non-capital business approval UI requires one authorized human (no proxy vote); obsolete pending fixture `approval-paper-human-quorum-closeout-20261010-v1` is not a release blocker. Prior blanket two-human interpretation retracted.
+- **2026-10-11T15:16:00Z**: Child task reopened to resolve 04:40 status staleness (`83288b5`, `6495 14de`, `indexqueued`) repeated as current 14:50, authenticate exact task IDs (`PI-REDIS-PROOF-CLEANUP-20261011`, `PI-RECOVERY-PRIVATE-INDEX-20261011`), and record QA receipts on current source `d069` under clean committed head.
