@@ -1,0 +1,349 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "DEV-SIX-AREA-SOURCE-ADOPTION-CHECKPOINT-20261011",
+  "parent_task": "DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002",
+  "follow_up_of": "DEV-SIX-AREA-EVIDENCE-CHECKPOINT-20261011",
+  "title": "原三個驗收文件採納真交付與過時任務原生處置（非總驗收）",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "target_repo": "pantheon",
+  "base_sha": "d0695d2c89a1fdcaac1eea56309532fda3fabf2e",
+  "checkpoint_timestamp": "2026-10-11T15:16:00Z",
+  "status": "INCOMPLETE",
+  "phase": "PARTIAL SOURCE ADOPTION (Not Final Release)",
+  "evidence_role": "partial_source_adoption_not_final_acceptance",
+  "source_only": true,
+  "production_delta": 0,
+  "all_ac_pass": false,
+  "parent_governance": {
+    "generation": 16,
+    "owner": "Human/Ops",
+    "reviewer": "Codex2",
+    "acceptance_criteria_count": 6,
+    "canonical_parent_acceptance_areas": [
+      "AC1: Manual central release/acceptance checkpoint only; release owner coordination, nonprod-deploy.yml, environment lease; no worker VM access or parallel root release or fabricated human business approval",
+      "AC2: Pin and gate one exact latest-dev FE/BFF pair and actual owner/worker image identities after all source work; verify hosted manifest, served identities, safe write/strict auth/CORS posture; preserve incumbent artifacts",
+      "AC3: Use existing hosted harnesses with new specifically authorized labelled paper fixtures to prove all twelve loops on one fresh causal chain and Management/Agora/Persona/Research/approval journeys; actual provider results required where specified",
+      "AC4: Verify saved owner state after refresh and independent process restart plus tenant/auth/idempotency/version conflicts and provider failure visibility; genuine separate humans make business approvals; no existing dev pools or real capital effects",
+      "AC5: Exercise exact prior FE/BFF artifact rollback and reactivation with readback while preserving acknowledged data; update existing Agora/Persona/Research/FE approval hosted obligations only after real proof",
+      "AC6: Publish the exact PR/merge/run/artifact/readback matrix and independently reviewed scoped evidence; all mandatory items must pass for overall completion"
+    ],
+    "closure_authority_note": "Child task DEV-SIX-AREA-SOURCE-ADOPTION-CHECKPOINT-20261011 documents honest timestamped PARTIAL SOURCE ADOPTION checkpoint only; does NOT accept closeout or replace parent independent final acceptance or release owner authority"
+  },
+  "scope": {
+    "declared_artifacts": [
+      "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json",
+      "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/source-delivery-ledger.json",
+      "docs/deployment/latest-dev-six-area-closure.md",
+      "docs/deployment/evidence/DEV-SIX-AREA-SOURCE-ADOPTION-CHECKPOINT-20261011/evidence.json"
+    ],
+    "changed_artifacts": [
+      "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json",
+      "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/source-delivery-ledger.json",
+      "docs/deployment/latest-dev-six-area-closure.md",
+      "docs/deployment/evidence/DEV-SIX-AREA-SOURCE-ADOPTION-CHECKPOINT-20261011/evidence.json"
+    ],
+    "evidence_manifest": "docs/deployment/evidence/DEV-SIX-AREA-SOURCE-ADOPTION-CHECKPOINT-20261011/evidence.json"
+  },
+  "diff_budget": {
+    "net_production_budget": 0,
+    "production_lines_added": 0,
+    "production_lines_deleted": 0,
+    "net_production_lines": 0,
+    "documentation_only": true,
+    "verdict": "pass"
+  },
+  "adopted_source_deliveries": {
+    "pi_6505": {
+      "repo": "ajoe734/pantheon",
+      "pr": 6505,
+      "task": "PI-REDIS-PROOF-CLEANUP-20261011",
+      "kind": "operator_authorized_direct_tooling_delivery",
+      "frozen_head_sha": "f5f2f5554d5168f509ef9fbc6ca3669611f6b59a",
+      "merge_commit_sha": "100b88c88555beba8991bd4c63d2a81b728be053",
+      "merged_at": "2026-10-11T12:20:12Z",
+      "verification": "125 real Redis tests PASS, 0 skip; 118 AST original test bodies unchanged; missing-redis 105 tests 4 explicit SkipTest unchanged 67 preexisting containers, 7 cleanup boundary tests and 4 labelled-owned real start/failure cases clean before propagation",
+      "ancestry": "ancestor of current dev"
+    },
+    "pi_6506": {
+      "repo": "ajoe734/pantheon",
+      "pr": 6506,
+      "task": "PI-RECOVERY-PRIVATE-INDEX-20261011",
+      "kind": "operator_authorized_direct_tooling_delivery",
+      "head_ref_oid": "0bb607d713eac2ca22ea4fc5fb2198ea826f4d42",
+      "merge_commit_sha": "bb044b67e25196c84a45db61f2bb091d0c0997f6",
+      "merged_at": "2026-10-11T12:43:46Z",
+      "description": "privateindex mechanical delivery tooling for worker index isolation"
+    },
+    "pi_6507": {
+      "repo": "ajoe734/pantheon",
+      "pr": 6507,
+      "task": "PI-LANDED-REOPEN-GENERATION-20261011",
+      "kind": "operator_authorized_direct_tooling_delivery",
+      "frozen_head_sha": "429457494bb11c3e635a6eb277b37f1aaaec7214",
+      "merge_commit_sha": "d0695d2c89a1fdcaac1eea56309532fda3fabf2e",
+      "merged_at": "2026-10-11T13:40:30Z",
+      "verification": "786 passed, 1031 subtests passed in 160.83s; 3 required CI checks passed (Commit trailers, Publish canonical review status, Smoke acceptance; mechanical delivery tooling only)",
+      "ancestry": "current dev tip"
+    },
+    "be_6495": {
+      "repo": "ajoe734/pantheon",
+      "pr": 6495,
+      "task": "RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011",
+      "frozen_head_sha": "e8411fbe59f1199028684aa7efe6e49f2f5868dc",
+      "merge_commit_sha": "f1f6c32cab68c449dc0e7a462940de6a193d1412",
+      "merged_at": "2026-10-11T05:15:20Z",
+      "native_done_generation": 2,
+      "verification": "185 original tests PASS",
+      "net_production_budget": "net 118 <= 120",
+      "status": "MERGED (source; undeployed on hosted dev VM, not hosted acceptance)",
+      "historical_0440_state": "head 14de008e4bd5786eca8c2870c3afd35a32c784b0 in source rework (183 passed); preserved as 04:40 historical fact; landed at 05:15:20Z"
+    },
+    "fe_832": {
+      "repo": "ajoe734/execute-plans",
+      "pr": 832,
+      "task": "FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011",
+      "frozen_head_sha": "1e2aa7d7e1085ba085a2ad820dc95cb3806a4a86",
+      "merge_commit_sha": "4211acdf31f9a28bd63f3d64fe0e6e23f98d395a",
+      "merged_at": "2026-10-11T05:05:14Z",
+      "native_done_generation": 2,
+      "native_done_at": "2026-10-11T05:07:19Z",
+      "verification": "75 originals + 1 discovery PASS",
+      "cumulative_production_budget": "26 <= 40",
+      "status": "MERGED (FE source; native DONE gen 2; undeployed on hosted dev VM, not hosted acceptance)",
+      "historical_0440_state": "head 88b5c6152500d17c2c119b10bdbae33943259810 pending PR #832; preserved as 04:40 historical fact; landed at 05:05:14Z"
+    },
+    "be_6497": {
+      "repo": "ajoe734/pantheon",
+      "pr": 6497,
+      "task": "TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011",
+      "frozen_head_sha": "95ca929b6ed9016615f3db12d8fbdbb8246533fd",
+      "merge_commit_sha": "c69d90931d57b5ca7a792fd65431f3c4faad247b",
+      "merged_at": "2026-10-11T05:40:20Z",
+      "native_done_generation": 1,
+      "native_done_at": "2026-10-11T05:43:14Z",
+      "verification": "144 original tests PASS",
+      "net_production_budget": "net 17 <= 40",
+      "status": "MERGED (source; native DONE gen 1; undeployed on hosted dev VM, not hosted acceptance)",
+      "historical_0440_state": "queued waiting for 6495 writer-order; preserved as 04:40 historical fact; landed at 05:40:20Z"
+    },
+    "be_6498": {
+      "repo": "ajoe734/pantheon",
+      "pr": 6498,
+      "task": "RECON-CURRENT-OWNER-ANCHORS-FAILCLOSED-20261011",
+      "frozen_head_sha": "c357437b1d6f219480f92f2e13ac5015c2a929d6",
+      "merge_commit_sha": "9c15f1d9bdef2c3e9011c7a893b6c6521520f59f",
+      "merged_at": "2026-10-11T05:45:19Z",
+      "native_done_generation": 1,
+      "native_done_at": "2026-10-11T05:46:52Z",
+      "verification": "190 original tests PASS",
+      "net_production_budget": "net 1 <= 2, cumulative 119 <= 120",
+      "status": "MERGED (source; native DONE gen 1; undeployed on hosted dev VM, not hosted acceptance)"
+    },
+    "loaded_supervisor_runtime_promotion": {
+      "command_root": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/d0695d2c89a1fdcaac1eea56309532fda3fabf2e",
+      "source_sha": "d0695d2c89a1fdcaac1eea56309532fda3fabf2e",
+      "epoch": "849ca97a930047fd9c545246f59bb521",
+      "promoted_at": "2026-10-11T13:44:32Z",
+      "supervisor_pid": 3553496,
+      "command_runtime_health": "healthy",
+      "task_state_projection_caught_up": true,
+      "event_count": 37801,
+      "command_runtime_deletions": 0,
+      "same_integrator": true
+    },
+    "native_task_dev_sealed_final_artifact_return": {
+      "task_id": "DEV-SEALED-FINAL-ARTIFACT-RETURN-20261011",
+      "owner": "Antigravity2",
+      "reviewer": "Antigravity",
+      "pr": 6504,
+      "head_sha": "401de086463b4c07a55f9b5a597aa8ad41e43adf",
+      "merge_commit_sha": "50f0cbeea4c6809596191cb40255ee53ef1fe7b4",
+      "canonical_integration_receipt_at": "2026-10-11T13:45:07Z",
+      "generation": 3,
+      "previous_integration_receipt_preserved": {
+        "pr": 6502,
+        "head_sha": "1e19083957cb4560577a19f2b03e0a9eb2f54713",
+        "merge_commit_sha": "c94fa49119e6c9084041534d798a21235896fb8d",
+        "observed_at": "2026-10-11T10:25:20Z"
+      },
+      "owner_finalizer_lease": {
+        "queue_event_id": "evt-20261011T134515Z-46134bbc",
+        "worker_run_id": "antigravity2-20261011T134529Z-44a787a9",
+        "pid": 3554711,
+        "archived_at": "2026-10-11T13:47:54Z",
+        "terminal_status": "done",
+        "terminal_outcome": "completed"
+      },
+      "boundary": "source/loaded tooling/native DONE is NOT live FINAL/all DATA/FULL/product acceptance"
+    }
+  },
+  "native_superseded_task_disposition": {
+    "test_redis_container_leak": {
+      "task_id": "TEST-REDIS-CONTAINER-LEAK-20261010",
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "terminal_status": "done",
+      "terminal_outcome": "superseded",
+      "superseded_by": "DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002",
+      "archived_at": "2026-10-11T14:45:14Z",
+      "pr": 6481,
+      "pr_state": "CLOSED",
+      "pr_closed_at": "2026-10-11T14:48:05Z",
+      "retained_head_sha": "3da34d4f1c6e7f272242a2c40092bd689bb79f05",
+      "preserved_archives": "original worker/reviewer/PR6481 bad trailers (d5c6cd304) and force hook denial references preserved; not falsely completed original PR or fabricated Claude review/native recovery",
+      "surviving_owner": "Existing parent DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 owns surviving source adoption and all real hosted duties; no new platform or dispatcher"
+    },
+    "worker_native_source_rework_binding": {
+      "task_id": "WORKER-NATIVE-SOURCE-REWORK-BINDING-20261011",
+      "owner": "Antigravity2",
+      "reviewer": "Antigravity",
+      "terminal_status": "done",
+      "terminal_outcome": "superseded",
+      "superseded_by": "DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002",
+      "archived_at": "2026-10-11T14:45:20Z",
+      "cumulative_baseline": "9c15f1d9bdef2c3e9011c7a893b6c6521520f59f",
+      "cumulative_production_budget": 40,
+      "net_production_budget": 0,
+      "implemented_native_consumer_claim": false,
+      "line_budget_grant_plus_35_implemented": false,
+      "design_anchor_retained": "03bd68630",
+      "surviving_owner": "Obsolete only as dependency needed to recover old blocked Redis PR6481 after authorized Pi direct tooling delivery 6505 already discharged 4 fixture ACs; parent DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 adopts authentic source and survives all product obligations"
+    }
+  },
+  "hosted_readback_and_boundary_facts": {
+    "tls_hosted_pair": {
+      "observed_at": "2026-10-11T13:36:22Z",
+      "endpoint": "https://app.dev.mvl-cap.tw/deployment.json",
+      "backend_commit_sha": "420598fe643be541ca28419a1abe4b03acb2dd73",
+      "frontend_commit_sha": "79aacd97f770dafb58471bba59d2fc9b98b4dff5",
+      "root_run_id": 38102321809,
+      "source_status": "Current committed source is d0695d2c89a1fdcaac1eea56309532fda3fabf2e + 4211acdf31f9a28bd63f3d64fe0e6e23f98d395a, currently undeployed and unqualified; reread remote after doc delivery; do NOT claim d069 is FINAL"
+    },
+    "root_38124492288_attempt_and_compensation": {
+      "run_id": 38124492288,
+      "attempted_pair": {
+        "backend_sha": "8f532314a0aaa34ac4621c8fcbb4f35e5d9e5ea4",
+        "frontend_sha": "4211acdf31f9a28bd63f3d64fe0e6e23f98d395a"
+      },
+      "outcome": "whole outcome FAILED paper probe; FULL and exact pair admission SKIPPED",
+      "artifacts_verified": "six original artifacts API hash and size verified",
+      "public_compensation": "compensation restored exact baseline 420598fe + 79aacd97",
+      "quarantine_ttl": "quarantine TTL is NOT release acceptance"
+    },
+    "principal_workshop_and_governance": {
+      "observed_at": "2026-10-11T13:37:29Z",
+      "principal": "pantheon-dev-operator-a",
+      "tenant": "tenant-dev",
+      "workshop_id": "295726c7-47b5-4516-a74a-c5ba8765ee48",
+      "title_sha256": "f697a21ccd124c051cf40715d1fd622d0314f8af2d0c7cd9c7c13682cf9c3093",
+      "later_full_content_sha256": "b241456e7d88c7468b8cb01d58129ebf639d8c0590bb301797e0ad09ffd02490",
+      "observed_post_save_bff_restart": "2026-10-11T01:58:33Z",
+      "save_truth": "preserved across post-save BFF restart; later full digest b241...2490 is NOT original save-time full hash; zero create/PATCH/resave executed",
+      "governance_approval_case": {
+        "case_id": "approval-paper-human-quorum-closeout-20261010-v1",
+        "status": "pending",
+        "version": 1,
+        "human_votes_observed": 0,
+        "ai_votes_cast": 0,
+        "new_browser_journey": false,
+        "fixture_disposition": "obsolete historical fixture with zero votes; omitted actual execution_context=paper owner contract; retained without fabricated cancellation; not a release blocker",
+        "operator_policy_clarification_20261011": {
+          "timestamp": "2026-10-11T15:02:00Z",
+          "operator_instruction": "User explicitly rejected demanding two human approvers for ordinary dev/paper closeout; supersedes earlier blanket two-human interpretation",
+          "capital_paper_onboarding_approval_required": 0,
+          "capital_guard_policy": "services/capital/capital_guard.py:is_paper_operation/authorize allows correctly scoped paper pool activation, paper_owner binding and paper_ledger rebalance without Capital approval; CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001 AC3 explicitly requires paper onboarding without Capital approval",
+          "non_capital_business_approval_policy": "Real non-capital business approval UI acceptance uses existing one-authorized-human policy for its actual target; retains true login, owner version/readback, tenant, idempotency, persistence and no-proxy-vote",
+          "current_required_votes": 1
+        },
+        "current_required_votes": 1
+      }
+    },
+    "management_loop_health": {
+      "observed_at": "2026-10-11T13:37:00Z",
+      "accepted_records_count": 11,
+      "total_records_count": 12,
+      "loop_10_telemetry_reconciliation": {
+        "record_accepted": false,
+        "reported_status": "unhealthy",
+        "rejection_reason": "record lacks accepted current controller-runtime provenance"
+      },
+      "historical_transfer_prohibited": "Management 11/12 current accepted records reflects fresh functional and provenance status; historical 09:21 12/12 report is NOT transferred; does not constitute 12 scenario / browser / FULL qualification"
+    },
+    "fleet_owner_legacy_us_audit": {
+      "observed_at": "2026-10-11T14:25:01Z",
+      "method": "GET only with configured auth (require_remote=true, allow_local=false, default principal assertion passing)",
+      "total_audited_personas": 25,
+      "matched_bindings_count": 24,
+      "breakdown": {
+        "retired": 7,
+        "failed": 1,
+        "paused": 16
+      },
+      "unknown_owner_scope_count": 0,
+      "unmatched_original_personas": [
+        "persona-0f94f05389a7e092b469"
+      ],
+      "rb_b529_pause_cause": "rb-b5299c1b77f149feb9174e935032fb52 pause cause unknown (empty public owner metadata state)",
+      "active_workers_joined": 0,
+      "paused_is_terminal": false,
+      "lifecycle_writes_issued": false,
+      "collector_disposition": "wrong runtime-container collector refused missing PANTHEON_RUNTIME_MANAGER_URL and failed closed unused; correct configured Fleet-owner remote auth succeeded without fallback or credential export"
+    }
+  },
+  "remaining_unfulfilled_mandatory_obligations": [
+    {
+      "item": "full_loop_qualification",
+      "detail": "Failed FULL 38092806870 due to provider weekly quota; reported reset Oct 12 12:00 UTC (unverified / availability not guaranteed); Root 38102321809 skipped FULL; Root 38124492288 skipped FULL"
+    },
+    {
+      "item": "taiwan_natural_market_data",
+      "detail": "Mandatory Oct 12 NEW natural Taiwan market data arrival, freshness verification, and downstream pipeline consumption"
+    },
+    {
+      "item": "human_approval_and_paper_onboarding_policy",
+      "detail": "One authorized human required for real non-capital business approval UI acceptance (retaining true login, owner version/readback, tenant, idempotency, persistence, no-proxy-vote); zero Capital approval required for genuine paper onboarding per services/capital/capital_guard.py:is_paper_operation and CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001 AC3; obsolete fixture approval-paper-human-quorum-closeout-20261010-v1 is not a release blocker"
+    },
+    {
+      "item": "positive_financial_reconciliation",
+      "detail": "Positive financial accounting, marks verification, and executed runtime reconciliation"
+    },
+    {
+      "item": "main_provider_and_docker_replay",
+      "detail": "Original main post-config / provider execution, pinned Docker replay, and legacy US scope limitations"
+    },
+    {
+      "item": "exact_sealed_bytes_roundtrip",
+      "detail": "Exact prior-to-same FINAL sealed bytes roundtrip and preservation of all acknowledged data on hosted dev VM"
+    },
+    {
+      "item": "latest_own_pair_root_seals_and_governance_browser",
+      "detail": "Latest own pair Root seals and image-served 12-loop + Governance browser qualification"
+    },
+    {
+      "item": "final_repository_artifact_updates",
+      "detail": "Final repository artifact updates across all declared paths"
+    },
+    {
+      "item": "independent_final_acceptance",
+      "detail": "Independent final acceptance by parent reviewer Codex2 and release owner Human/Ops across all six areas"
+    }
+  ],
+  "qa_source_validation_facts": {
+    "source_head": "d0695d2c89a1fdcaac1eea56309532fda3fabf2e",
+    "fe_remote_head": "4211acdf31f9a28bd63f3d64fe0e6e23f98d395a",
+    "bff_artifact_controller_tests": "625 passed, 1 original skip",
+    "capture_fetch_restore_tests": "335 passed",
+    "pg_loopback_tests": "51 routes + 93 incident passed, 0 skips, 0 cleanup absence",
+    "reconciliation_client_tests": "24 HTTP + 23 paired client passed",
+    "driver_fixture_validation": "Full original driver fixture source FINAL positive reached exact same FE; altered FE/archive/missing mandatory external hash all DENY, loads 0, recreate 0, trusted original receipt unchanged",
+    "fe_remote_tests": "Pinned npm ci + 75 original tests PASS across 3 files; one Playwright discovery only, not browser execution",
+    "workspace_safety_and_history": "Initial source worktree unsafe 775/664 helper/watchdog fail-closed before SSH retained in owned QA env history; exact owned read-only 555/444 same Git content fixed, no product bug. Initial wrong main checkout 603 explicitly unqualified and unused; system python fastapi / malformed probe errors are collector history, not product facts",
+    "boundary": "All source-only evidence; no new FULL/Root/provider retry/market row/host mutations; source vs served 420+79 preserved and future Oct 12 NEW data / provider reported reset 12:00Z unverified availability"
+  },
+  "verification": {
+    "test_command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/control-plane/bff/tests/test_latest_dev_six_area_closure.py",
+    "verdict": "pass",
+    "clean_worktree": true
+  }
+}
