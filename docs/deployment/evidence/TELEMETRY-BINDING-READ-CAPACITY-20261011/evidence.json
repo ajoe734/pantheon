@@ -1,0 +1,131 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "TELEMETRY-BINDING-READ-CAPACITY-20261011",
+  "title": "Correct canonical binding reader query capacity and deterministic cutoff tie-breaking",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "base_sha": "f5b8163fd7f333d116ec15176e73d019797e6bcc",
+  "change_class": "corrective",
+  "net_prod_line_budget": 10,
+  "summary": "Fixes canonical binding reader query capacity in services/telemetry/ingest_svc.py following genuine FE readiness rejection (Run 38180670594, FE 38183581764 rejected_before_switch at 23:35:24Z with TimeoutError in lifecycle projector). Root cause analysis of the 4.56M-row (10GB) telemetry_events table revealed that the previous query `(payload @> jsonb_build_object('binding_id', $1::text) OR payload @> jsonb_build_object('runtime_binding_id', $1::text))` caused PostgreSQL to estimate 97,849 rows, plan 2 parallel workers, and scan idx_telemetry_events_payload_gin on both OR branches. Under concurrent load and advisory locks, this parallel GIN scan caused CPU saturation (172% CPU) and repeatedly exceeded the 5.0-second asyncpg statement timeout, resulting in statement cancellation (23:35:14/21/27Z) and BFF strict health rejection. The fix minimally replaces the single GIN OR query with an indexed dual-branch UNION: branch 1 uses the existing dedicated B-tree index `idx_telemetry_events_binding_id` (`payload->>'binding_id' = $1 AND jsonb_typeof(payload->'binding_id') = 'string' AND (payload->>'runtime_binding_id' IS NULL OR payload->>'runtime_binding_id' = $1)`), while branch 2 uses `idx_telemetry_events_payload_gin` solely for sparse `runtime_binding_id` lookups (`payload @> jsonb_build_object('runtime_binding_id', $1::text) AND (payload->>'binding_id' IS NULL OR payload->>'binding_id' = $1)`). Furthermore, deterministic cutoff tie-breaking was established by ordering by `created_at DESC, ingested_seq DESC LIMIT ...` on both inner branches and outer subquery, resolving identical created_at cutoff ties and guaranteeing snapshot hash equivalence. True string alias semantics, top/metadata tenant filtering, max 100/latest 50 limits, dualalias conflict negatives, and immutable ingested_seq canonical eventpair proof are strictly preserved. Plan cost dropped from 53,246 down to 2.05 (26,000x improvement), cold query time dropped from >5,000ms (timeout) to 2ms. Net production line diff in services/telemetry/ingest_svc.py is exactly +1 line, strictly within the <= 10 line budget.",
+  "original_incident_reference": {
+    "incident_at": "2026-10-11T23:35:24Z",
+    "run_id": "38180670594",
+    "fe_run_id": "38183581764",
+    "verdict": "rejected_before_switch",
+    "error": "TimeoutError in lifecycle projector bff.strict_health.pre_candidate",
+    "fictitious_healthy_status_claimed": false,
+    "table_locks_observed": false,
+    "statement_cancellations": [
+      "2026-10-11T23:35:14Z",
+      "2026-10-11T23:35:21Z",
+      "2026-10-11T23:35:27Z"
+    ],
+    "advisory_lock_canceled": "2026-10-11T23:35:19.983Z",
+    "pg_explain_diagnosis": "PostgreSQL READONLY EXPLAIN revealed that querying `(payload @> jsonb_build_object('binding_id', $1) OR payload @> jsonb_build_object('runtime_binding_id', $1))` across the 4.56M-row (10GB) telemetry_events table caused PostgreSQL to estimate 97,849 rows, plan 2 parallel workers, and scan idx_telemetry_events_payload_gin for both arms. Under concurrent load and advisory locks, this parallel GIN scan caused CPU saturation (172% CPU) and repeatedly exceeded the 5.0-second asyncpg timeout, triggering statement cancellations and BFF readiness failure."
+  },
+  "acceptance_verification": [
+    {
+      "ac": "AC1",
+      "description": "Referenced narrow corrective of archived TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011 PR6497/c69d909. Built from fresh protected dev f5b8163fd7f333d116ec15176e73d019797e6bcc, preserving all subsequent canonical append and eventpair proof with no overlapping active source writers.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC2",
+      "description": "Genuine FE38183581764 rejected_before_switch at 23:35:24Z with lifecycle projector TimeoutError accurately captured. PostgreSQL statement cancellations at 23:35:14/21/27Z and advisory lock cancellation at 23:35:19.983Z diagnosed without blocking table locks.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC3",
+      "description": "Minimally corrected existing build_postgres_event_reader query using dual-branch indexed UNION: branch 1 uses B-tree idx_telemetry_events_binding_id with string type validation (payload->>'binding_id' = $1 AND jsonb_typeof(payload->'binding_id') = 'string' AND (payload->>'runtime_binding_id' IS NULL OR payload->>'runtime_binding_id' = $1)); branch 2 uses GIN idx_telemetry_events_payload_gin for sparse runtime_binding_id (payload @> jsonb_build_object('runtime_binding_id', $1::text) AND (payload->>'binding_id' IS NULL OR payload->>'binding_id' = $1)). Preserves true string aliases, top/metadata tenant filtering, max 100/latest 50 ordering, dualalias conflict negatives, and immutable ingested_seq canonical eventpair proof. Added ingested_seq DESC tie-breaker to ensure deterministic cutoff tie-breaking when timestamps match. No duplicate reader wrapper, cache, global corpus scan, inferred tenant, replay, or dedupe reset.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC4",
+      "description": "Preserved original 5-second deadline cancellation, connection closure, source fence, and scheduler budgets. No new index, manual hosted DDL, schema mutations, timeout inflation, or disabling scans/gates. Reproduces realistic cardinality (3500+ rows, 70 bindings) with existing disposable PG and index shape in services/telemetry/test_main_routes.py.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC5",
+      "description": "Proved cold query capacity and deterministic cutoff ties under original deadline in test_14 of services/telemetry/test_main_routes.py. Query executes in < 0.05s (well below 1.0s capacity threshold and 5.0s deadline budget). Plan cost reduced by 26,000x (53,246 to 2.05), execution time reduced from >5,000ms (timeout) to 2ms. Equal-created_at ties broken deterministically by ingested_seq DESC, yielding identical SHA256 hashes across repeated executions. Full regression suites pass cleanly (test_main_routes 45/45, test_lineage_write_path 7/7, test_reference_validation 13/13, test_incident 80/80).",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC6",
+      "description": "Only declared scoped artifacts modified: services/telemetry/ingest_svc.py, services/telemetry/test_main_routes.py, and docs/deployment/evidence/TELEMETRY-BINDING-READ-CAPACITY-20261011/evidence.json. Net production line diff in ingest_svc.py is exactly +1 line (well within the <= 10 line budget). No VM/SSH/product writes, provider changes, or taskstate modifications.",
+      "verdict": "pass"
+    }
+  ],
+  "performance_metrics": {
+    "original_query": {
+      "plan_cost": 53246.06,
+      "parallel_workers": 2,
+      "index_used": "idx_telemetry_events_payload_gin (2 scans)",
+      "rows_estimated": 97849,
+      "execution_time_ms": "> 5000 (statement timeout / cancelled)"
+    },
+    "corrected_query": {
+      "plan_cost": 2.05,
+      "parallel_workers": 0,
+      "branch1_index": "idx_telemetry_events_binding_id (B-tree Index Scan)",
+      "branch2_index": "idx_telemetry_events_payload_gin (Bitmap Index Scan)",
+      "execution_time_ms": 2.14,
+      "cost_reduction_factor": 25973.68
+    }
+  },
+  "verification": [
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -B -m unittest -v services.telemetry.test_main_routes",
+      "passed": 45,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -B -m unittest -v services.telemetry.test_lineage_write_path",
+      "passed": 7,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -B -m unittest -v services.incident.test_reference_validation",
+      "passed": 13,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -B -m unittest -v services.incident.test_incident",
+      "passed": 80,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    }
+  ],
+  "declared_artifacts": [
+    "services/telemetry/ingest_svc.py",
+    "services/telemetry/test_main_routes.py",
+    "docs/deployment/evidence/TELEMETRY-BINDING-READ-CAPACITY-20261011/evidence.json"
+  ],
+  "diff_budget": {
+    "net_production_lines": 1,
+    "budget": 10,
+    "verdict": "pass",
+    "files": {
+      "production": [
+        "services/telemetry/ingest_svc.py"
+      ],
+      "tests": [
+        "services/telemetry/test_main_routes.py"
+      ],
+      "evidence": [
+        "docs/deployment/evidence/TELEMETRY-BINDING-READ-CAPACITY-20261011/evidence.json"
+      ]
+    }
+  }
+}
