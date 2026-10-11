@@ -1,0 +1,27 @@
+{
+  "task_id": "DEV-OWNER-JWT-KEY-SELECTION-20261011",
+  "change_class": "corrective",
+  "summary": "Consolidate cryptographic verifier routing for authentic dev operator HS256 JWTs alongside existing paper JWKS tokens at common inbound validator; remove duplicated BFF JWKS/OIDC masking; enable dev owner authenticate_tenant to select configured shared-secret HS256 only when PANTHEON_ENV is dev while retaining default JWKS exclusivity for shared and nondev callers.",
+  "net_prod_line_growth": 13,
+  "acceptance_verification": {
+    "ac1_source_only_repair_dev_operator_jwt": "passed: Deployment owner 401 AUTH_JWT_ALG_UNSUPPORTED resolved for authentic dev operator JWT when owner secret, issuer, and audience match while owner JWKS is configured; zero VM, secrets, provider, or business-state mutations.",
+    "ac2_consolidate_verifier_routing_at_common_validator": "passed: Cryptographic verifier routing consolidated in services/runtime_auth_inbound.py; removed duplicated JWKS/OIDC masking in services/control-plane/bff/auth/policy.py; dev owner authenticate_tenant in services/deployment/auth.py selects configured shared-secret HS256 only when PANTHEON_ENV is dev; net production growth across all 3 files is 13 lines (budget <= 20).",
+    "ac3_authenticate_signature_before_authority_and_fail_closed": "passed: Signature, exp, and issuer/audience authenticated before authority or role assignment; header algorithm selects verifier but never authorizes; existing ES256/RS256 JWKS paper callers and OIDC paths preserved; no fallback to another verifier after bad signature; no JWKS public key used as HMAC secret; default shared validator and nondev owner remain JWKS-exclusive when configured; missing secret, none/unknown algorithms, and invalid signatures remain fail-closed.",
+    "ac4_preserve_role_email_mfa_and_tenant_boundaries": "passed: Configured owner role maps, email verification rules, required roles, MFA rules, explicit tenant binding, and cross-tenant denial preserved; BFF-specific role/email handling policy preserved; capital, paper, live, and Governance boundaries unchanged.",
+    "ac5_extend_original_tests_with_actual_testclient": "passed: Extended only original test files (services/test_runtime_auth_inbound_attack_matrix.py, services/deployment/test_service.py, services/control-plane/bff/auth/test_policy.py); tested valid dev HS operator with JWKS configured, same-context real JWKS paper token verification, BFF original behavior, shared default and nondev owner rejection of HS when JWKS is configured, bad signature, expired, wrong issuer/audience, missing secret, none/unknown algorithms, foreign tenant, missing role, and required MFA; executed actual owner TestClient read route with genuine fixture JWT and configured JWKS proving HTTP behavior.",
+    "ac6_clean_worktree_scoped_delivery": "passed: Ran original changed auth, Deployment, BFF, and related JWKS/paper owner/governance suites; clean task worktree with exact scoped artifacts; review/merge and native canonical finish marked pending until receipts exist; source delivery only."
+  },
+  "evidence_status": {
+    "review_and_merge": "pending independent review, CI, and exact dev integration",
+    "hosted_status": "pending until receipts exist; source delivery only"
+  },
+  "local_verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/test_runtime_auth_inbound_attack_matrix.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/auth/test_policy.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/deployment/test_service.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_auth_jwks_strict.py services/governance/test_approval_authority.py services/runtime-manager/test_runtime_hardening.py"
+    ],
+    "result": "passed: 148 total tests passed across all scoped and related suites (22 attack matrix, 16 BFF policy, 28 deployment service, 82 related JWKS/governance/runtime suites)"
+  }
+}

@@ -729,3 +729,29 @@ def test_dev_login_forbidden_in_production(tmp_path: Path, monkeypatch: pytest.M
     assert resp.status_code == 403
     err = _extract_error(resp)
     assert err.get("code") == "PRECONDITION_FAILED"
+
+
+def test_bff_preserves_hs256_selection_when_jwks_configured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Verify BFF accepts valid HS256 operator token even when JWKS is configured (no masking regression)."""
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "false")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", TEST_JWT_SECRET)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", TEST_JWT_ISSUER)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", TEST_JWT_AUDIENCE)
+    monkeypatch.setenv("PANTHEON_BFF_JWKS_URI", "https://idp.example.com/.well-known/jwks.json")
+
+    store = SessionLifecycleStore(str(tmp_path / "bff_jwks_hs256_store.json"))
+    app = _build_standalone_app(store, auth_mode="strict", auth_stub=False)
+    client = TestClient(app)
+
+    token = _make_jwt(
+        subject="bff-operator-with-jwks",
+        roles=["operator"],
+        extra={"allowed_tenants": ["tenant-dev"]},
+    )
+    resp = client.get("/bff/me", headers={"Authorization": f"Bearer {token}", "X-Tenant-Id": "tenant-dev"})
+    assert resp.status_code == 200, resp.text
+    data = resp.json()["data"]
+    assert data["operator_id"] == "bff-operator-with-jwks"
+    assert data["tenant"]["id"] == "tenant-dev"
+

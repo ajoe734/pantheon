@@ -146,12 +146,14 @@ def authenticate_tenant(
 ) -> AuthenticatedTenant:
     """Authenticate the actor and bind the request to one explicit tenant."""
 
+    is_dev = os.getenv("PANTHEON_ENV", "").strip().lower() == "dev"
     auth = validate_request_auth(
         authorization=authorization,
         mfa_header=mfa_header,
         required_roles=required_roles,
         mfa_required=mfa_required,
         env=service_auth_env(service_prefix),
+        allow_shared_secret=is_dev,
     )
     normalized_tenant = str(tenant_id or "").strip()
     if not normalized_tenant:
