@@ -1,0 +1,110 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011",
+  "title": "Recover accepted append visibility from canonical durable order after bounded-history eviction",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "base_sha": "420598fe643be541ca28419a1abe4b03acb2dd73",
+  "change_class": "corrective",
+  "net_prod_line_budget": 120,
+  "summary": "Recovers accepted append visibility in reconciliation-drift when prior accepted lifecycle appends have genuine persisted visibility confirmations (summary_visibility_confirmed_at) but are evicted from the bounded 512 recent lifecycle event IDs upon arrival of a subsequent new aggregate. Implements a bounded authenticated pair verification endpoint in telemetry (/api/telemetry/events/{accepted_event_id}?observed_event_id={observed_event_id}) backed by PostgreSQL immutable ingested_seq order. Enforces strict qualifications: matching explicit tenant, binding_id, runtime_id, artifact_id, and strict accepted_ingested_seq < observed_ingested_seq. Rejects unconfirmed, foreign tenant, mismatched runtime/artifact, equal, out-of-order, or forged producer sequences. Fails closed with HTTP 404 (not found / foreign), HTTP 409 (conflict / out of order), or HTTP 503 (database unavailable). Retains existing in-window fast-path, bounded 512 window, CAS fencing, and error semantics within cumulative net production line budget <= 120 lines.",
+  "acceptance_verification": [
+    {
+      "ac": "AC1",
+      "description": "Bounded referenced successor after original RECON-SCHEDULED-INCIDENT-CANONICAL-LINEAGE-20261010 terminal denial; source-only current BE 420598fe; original L10 publication truth and old accepted evaluations immutable; does not manufacture controller healthy or positive finance.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC2",
+      "description": "Fixes permanent deferred accepted_lifecycle_append_not_visible after prior accepted append has genuine persisted visibility acknowledgement (summary_visibility_confirmed_at) but exact accepted event evicted from bounded 512 recent lifecycle IDs and later distinct aggregate arrives; original canonical telemetry owner durable order proof discharges cross-aggregate barrier.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC3",
+      "description": "Telemetry owner reads use bounded authenticated exact-event pair lookup over original immutable PostgreSQL ingested_seq; qualifies explicit tenant, binding_id, runtime_id, artifact_id, actual observed lifecycle anchors, and strict accepted-before-observed order; no producer timestamps, no cross-aggregate sequence_no, no payload-forged sequence; missing/foreign/conflict/unavailable fail closed.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC4",
+      "description": "Preserves existing same-aggregate and retained ordered-history paths and finite max 512 history; preserves deadlines, retries, SLAs (5s/60s); does not reset, replay, or rewrite historical events, evaluations, outbox, inbox, DLQ, or receipts.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC5",
+      "description": "Uses original AST helper and real owned PG tests for evicted-but-confirmed source counter plus missing, unconfirmed, out-of-order, equal, foreign runtime/tenant/binding/artifact, forged producer order, and unavailable negatives; independent new head QA and review.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC6",
+      "description": "Nine declared scoped artifacts total; net production lines (+103) strictly within budget (<= 120 against 420598fe); no VM provider, browser, release, or taskstore authority; 2 independent incident timeouts remain separate failures and are not suppressed.",
+      "verdict": "pass"
+    }
+  ],
+  "verification": [
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/pytest services/telemetry/test_main_routes.py",
+      "passed": 43,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m unittest services.telemetry.test_lineage_write_path",
+      "passed": 7,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/pytest services/reconciliation-drift/test_reconciliation_drift_http_service.py",
+      "passed": 17,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/pytest services/reconciliation-drift/test_telemetry_client.py",
+      "passed": 21,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    }
+  ],
+  "declared_artifacts": [
+    "services/reconciliation-drift/main.py",
+    "services/reconciliation-drift/telemetry_client.py",
+    "services/reconciliation-drift/test_reconciliation_drift_http_service.py",
+    "services/reconciliation-drift/test_telemetry_client.py",
+    "services/telemetry/main.py",
+    "services/telemetry/ingest_svc.py",
+    "services/telemetry/test_main_routes.py",
+    "services/telemetry/test_lineage_write_path.py",
+    "docs/deployment/evidence/RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011/evidence.json"
+  ],
+  "diff_budget": {
+    "net_production_lines": 103,
+    "budget": 120,
+    "verdict": "pass",
+    "files": {
+      "production": [
+        "services/reconciliation-drift/main.py",
+        "services/reconciliation-drift/telemetry_client.py",
+        "services/telemetry/main.py",
+        "services/telemetry/ingest_svc.py"
+      ],
+      "tests": [
+        "services/reconciliation-drift/test_reconciliation_drift_http_service.py",
+        "services/reconciliation-drift/test_telemetry_client.py",
+        "services/telemetry/test_main_routes.py",
+        "services/telemetry/test_lineage_write_path.py"
+      ],
+      "evidence": [
+        "docs/deployment/evidence/RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011/evidence.json"
+      ]
+    }
+  }
+}

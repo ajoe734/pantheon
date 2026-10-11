@@ -1990,6 +1990,10 @@ def _accepted_append_visibility_reason(
     binding_id: str,
     timestamp: str,
     evaluations: Optional[List[Dict[str, Any]]] = None,
+    telemetry_url: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    service_token: Optional[str] = None,
+    timeout_seconds: float = 5.0,
 ) -> tuple[str | None, Dict[str, Any]]:
     """Fail closed until a prior accepted append is visible in the projector.
 
@@ -2088,6 +2092,17 @@ def _accepted_append_visibility_reason(
     # skewed or backfilled and therefore cannot replace projector order.
     if ordered_after_accepted:
         return None, visibility
+
+    if accepted_state.get("summary_visibility_confirmed_at") and telemetry_url and accepted_event_id and observed_event_id:
+        try:
+            from telemetry_client import verify_durable_event_order
+            proven, _, _ = verify_durable_event_order(
+                telemetry_url, accepted_event_id=accepted_event_id, observed_event_id=observed_event_id,
+                tenant_id=tenant_id or _current_tenant_id(), service_token=service_token, timeout_seconds=timeout_seconds,
+            )
+            if proven: return None, visibility
+        except Exception: pass
+
     return "accepted_lifecycle_append_not_visible", visibility
 
 
@@ -2132,6 +2147,9 @@ def _ensure_scheduled_lifecycle_append(
             binding_id=str(evaluation.get("binding_id") or "").strip(),
             timestamp=timestamp,
             evaluations=evaluations,
+            telemetry_url=telemetry_url,
+            tenant_id=str(evaluation.get("tenant_id") or "").strip() or None,
+            timeout_seconds=timeout_seconds,
         )
         if visibility_reason is not None:
             state.update(

@@ -1183,11 +1183,19 @@ def runtime_summary(runtime_id: str):
 @app.route("/api/telemetry/events/<event_id>", methods=["GET"])
 @require_telemetry_authority(("service", "operator", "reviewer", "admin"))
 def accepted_event(event_id: str):
-    """Return one exact owner-accepted event without summary races."""
+    """Return one exact owner-accepted event or verify exact-event pair durable order."""
+    svc, tenant = _get_service(), request_tenant_id()
+    if observed_id := str(request.args.get("observed_event_id") or "").strip():
+        try:
+            ok, err, details = svc.get_accepted_event_pair_order(event_id, observed_id, tenant_id=tenant)
+        except RuntimeError as exc:
+            return jsonify({"error": {"code": "SERVICE_UNAVAILABLE", "message": str(exc)}}), 503
+        if not ok:
+            return jsonify({"error": {"code": "DURABLE_ORDER_INVALID", "reason": err}}), 404 if err in ("event_not_found", "tenant_mismatch") else 409
+        return jsonify({"status": "verified", "pair": details}), 200
 
-    svc = _get_service()
     try:
-        event = svc.get_accepted_event(event_id, tenant_id=request_tenant_id())
+        event = svc.get_accepted_event(event_id, tenant_id=tenant)
     except RuntimeError as exc:
         return jsonify({"error": {"code": "SERVICE_UNAVAILABLE", "message": str(exc)}}), 503
     if event is None:

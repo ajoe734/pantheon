@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any
 
@@ -179,3 +180,39 @@ def append_lifecycle_event(
         "response": response_body,
         "error": parse_error or "telemetry ingest did not return terminal accepted status",
     }
+
+
+def _event_get(url: str, tenant_id: str | None, service_token: str | None, timeout: float) -> tuple[int, dict[str, Any] | None]:
+    token = (service_token if service_token is not None else os.getenv("PANTHEON_TELEMETRY_SERVICE_TOKEN", "")).strip()
+    tenant = (tenant_id or os.getenv("PANTHEON_TENANT_ID") or "default").strip()
+    headers = {"Accept": "application/json", "X-Tenant-Id": tenant, **({"Authorization": f"Bearer {token}"} if token else {})}
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers, method="GET"), timeout=timeout) as resp:
+            body = resp.read().decode("utf-8")
+            return int(getattr(resp, "status", resp.getcode())), json.loads(body) if body else {}
+    except urllib.error.HTTPError as exc:
+        try: payload = json.loads(exc.read().decode("utf-8"))
+        except Exception: payload = None
+        return int(exc.code), payload
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise TelemetryUnavailable(str(exc)) from exc
+
+
+def fetch_accepted_event(telemetry_url: str, event_id: str, *, tenant_id: str | None = None, service_token: str | None = None, timeout_seconds: float = 5.0) -> dict[str, Any] | None:
+    if not telemetry_url or not event_id: raise TelemetryUnavailable("PANTHEON_TELEMETRY_API_URL and event_id required")
+    url = f"{telemetry_url.rstrip('/')}/api/telemetry/events/{urllib.parse.quote(event_id.strip())}"
+    status, body = _event_get(url, tenant_id, service_token, timeout_seconds)
+    if status == 200: return body
+    if status == 404: return None
+    raise (TelemetryAuthError if status in (401, 403) else TelemetryUnavailable)(f"HTTP {status}")
+
+
+def verify_durable_event_order(telemetry_url: str, *, accepted_event_id: str, observed_event_id: str, tenant_id: str | None = None, service_token: str | None = None, timeout_seconds: float = 5.0) -> tuple[bool, str | None, dict[str, Any]]:
+    if not telemetry_url or not accepted_event_id or not observed_event_id: return False, "missing_parameter", {}
+    q = urllib.parse.urlencode({"observed_event_id": observed_event_id.strip()})
+    url = f"{telemetry_url.rstrip('/')}/api/telemetry/events/{urllib.parse.quote(accepted_event_id.strip())}?{q}"
+    status, body = _event_get(url, tenant_id, service_token, timeout_seconds)
+    if status == 200 and isinstance(body, dict) and body.get("status") == "verified": return True, None, body.get("pair") or {}
+    if status == 404: return False, "event_not_found", {}
+    if status == 409: return False, (body or {}).get("error", {}).get("reason") or "conflict", {}
+    raise (TelemetryAuthError if status in (401, 403) else TelemetryUnavailable)(f"HTTP {status}")

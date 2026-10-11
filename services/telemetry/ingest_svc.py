@@ -722,7 +722,11 @@ def build_postgres_event_reader(
         conn = await asyncpg.connect(dsn, timeout=5.0)
         try:
             records = await conn.fetch(sql, *args, timeout=5.0)
-            return [_json.loads(r["payload"]) if isinstance(r["payload"], str) else r["payload"] for r in records]
+            return [
+                dict(_json.loads(r["payload"]) if isinstance(r["payload"], str) else r["payload"],
+                     **({"ingested_seq": int(r["ingested_seq"])} if "ingested_seq" in r and r["ingested_seq"] is not None else {}))
+                for r in records
+            ]
         finally:
             try: await conn.close(timeout=1.0)
             except Exception: conn.terminate()
@@ -743,7 +747,7 @@ def build_postgres_event_reader(
         if not (clean_eid := str(eid or "").strip()):
             return None
         tid = str(tenant_id or "").strip()
-        sql = f"SELECT payload FROM {table} WHERE event_id = $1" + (" AND (payload->>'tenant_id' = $2 OR payload->'metadata'->>'tenant_id' = $2) LIMIT 1" if tid else " LIMIT 1")
+        sql = f"SELECT payload, ingested_seq FROM {table} WHERE event_id = $1" + (" AND (payload->>'tenant_id' = $2 OR payload->'metadata'->>'tenant_id' = $2) LIMIT 1" if tid else " LIMIT 1")
         r = _sync(sql, clean_eid, tid) if tid else _sync(sql, clean_eid)
         return r[0] if r else None
 
@@ -752,7 +756,7 @@ def build_postgres_event_reader(
             return []
         fetch_lim, tid = min(max(1, int(limit or 50)), 100), str(tenant_id or "").strip()
         cond = " AND (payload->>'tenant_id' = $2 OR payload->'metadata'->>'tenant_id' = $2) ORDER BY created_at DESC LIMIT $3"
-        sql = f"SELECT payload FROM {table} WHERE (payload->>'binding_id' = $1 OR payload->>'runtime_binding_id' = $1)" + (cond if tid else " ORDER BY created_at DESC LIMIT $2")
+        sql = f"SELECT payload, ingested_seq FROM {table} WHERE (payload->>'binding_id' = $1 OR payload->>'runtime_binding_id' = $1)" + (cond if tid else " ORDER BY created_at DESC LIMIT $2")
         return _sync(sql, clean_bid, tid, fetch_lim) if tid else _sync(sql, clean_bid, fetch_lim)
 
     return _fetch_event, _fetch_binding_events
@@ -1883,12 +1887,14 @@ class TelemetryIngestService:
         clean_event_id = str(event_id or "").strip()
         if not clean_event_id:
             return None
-        event = self._seen_event_ids.get(clean_event_id)
-        if event is None and self._event_reader is not None:
+        event = None
+        if self._event_reader is not None:
             try:
                 event = self._event_reader(clean_event_id, tenant_id=tenant_id)
             except TypeError:
                 event = self._event_reader(clean_event_id)
+        if event is None:
+            event = self._seen_event_ids.get(clean_event_id)
         if (
             event is not None
             and tenant_id is not None
@@ -1896,6 +1902,40 @@ class TelemetryIngestService:
         ):
             return None
         return copy.deepcopy(event) if event is not None else None
+
+    def get_accepted_event_pair_order(
+        self,
+        accepted_event_id: str,
+        observed_event_id: str,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> tuple[bool, Optional[str], Optional[dict[str, Any]]]:
+        """Verify strict durable order of accepted event before observed event in PostgreSQL."""
+        a_id, o_id = str(accepted_event_id or "").strip(), str(observed_event_id or "").strip()
+        if not a_id or not o_id: return False, "missing_event_id", None
+        if a_id == o_id: return False, "equal_event_id", None
+        ev_a = self.get_accepted_event(a_id, tenant_id=tenant_id)
+        ev_o = self.get_accepted_event(o_id, tenant_id=tenant_id)
+        if ev_a is None or ev_o is None: return False, "event_not_found", None
+        tid_a, tid_b = self._event_tenant_id(ev_a), self._event_tenant_id(ev_o)
+        if not tid_a or tid_a != tid_b or (tenant_id and (tid_a != tenant_id or tid_b != tenant_id)):
+            return False, "tenant_mismatch", None
+        bid_a = str(ev_a.get("binding_id") or ev_a.get("runtime_binding_id") or "").strip()
+        bid_b = str(ev_o.get("binding_id") or ev_o.get("runtime_binding_id") or "").strip()
+        if not bid_a or bid_a != bid_b: return False, "binding_mismatch", None
+        for key in ("runtime_id", "artifact_id", "artifact_version"):
+            val_a, val_b = str(ev_a.get(key) or "").strip(), str(ev_o.get(key) or "").strip()
+            if not val_a or val_a != val_b: return False, f"{key}_mismatch", None
+        seq_a, seq_b = ev_a.get("ingested_seq"), ev_o.get("ingested_seq")
+        if not isinstance(seq_a, int) or isinstance(seq_a, bool) or not isinstance(seq_b, int) or isinstance(seq_b, bool):
+            return False, "missing_ingested_seq", None
+        if seq_a >= seq_b: return False, "out_of_order_ingested_seq", None
+        return True, None, {
+            "accepted_event_id": a_id, "observed_event_id": o_id,
+            "accepted_ingested_seq": seq_a, "observed_ingested_seq": seq_b,
+            "tenant_id": tid_a, "binding_id": bid_a, "runtime_id": str(ev_a.get("runtime_id")),
+            "artifact_id": str(ev_a.get("artifact_id")), "artifact_version": str(ev_a.get("artifact_version")),
+        }
 
     def get_trade_episode_projection(
         self,
