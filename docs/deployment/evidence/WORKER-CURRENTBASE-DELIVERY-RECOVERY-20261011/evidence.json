@@ -1,0 +1,82 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "WORKER-CURRENTBASE-DELIVERY-RECOVERY-20261011",
+  "title": "修復既有Task現況base交付重綁障礙且保留舊分支與治理證據",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "base_sha": "f1f6c32cab68c449dc0e7a462940de6a193d1412",
+  "change_class": "corrective",
+  "net_prod_line_budget": 40,
+  "summary": "Repairs supervisor delivery recovery tooling obstruction for diverged historical task branches (such as TEST-REDIS-CONTAINER-LEAK-20261010 / PR #6481 with historical bad trailers d5c6cd304) by adding recover_currentbase_worktree in .orchestrator/rewrite/worker_workspace.py and supporting versioned branch adoption in prepare_worker_workspace. Strictly preserves historical branches and commits byte-identical while creating clean managed replacement branches (-vN) based on authenticated current dev base, applying only declared scoped patches, validating against base commit conflicts and branch races, and enforcing complete fail-closed validation on generation, owner, lease, repo, and base ref mismatches.",
+  "acceptance_verification": [
+    {
+      "ac": "AC1",
+      "description": "Repair existing development-tooling recovery obstruction for TEST-REDIS-CONTAINER-LEAK-20261010 PR6481 only; do NOT duplicate its Redis test implementation or supersede its active obligation. Existing task original owner/reviewer and terminal/manual/force-push denials remain. Bad historical d5c6cd304 trailers and open6481 head3da34d4f1c6e7f272242a2c40092bd689bb79f05 tree734b3e0c17544fbd3a1cf5a685b3781bf41f87fb are preserved. Oldclean6add tree81f679206b777a09db0d8ad7bdae560fa632c3c6 differs whole tree even though3scopefiles equal. Neither is currentbase delivery qualification.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC2",
+      "description": "Current _quarantine_recovery_worktree deliberately preserves COMMITTEDbranch history and onlyarchives/restores dirtyWIP. It cannot alone repair committed invalidtrailers/divergedoldbase. Diagnose existing managed-vN branch and canonical ordinary source-rework/handoff path; implement smallest governed CURRENTbase scoped-patch recovery there rather than rawbranch rewrites. Capture immutable oldrefs/sourcepatch/base/worktree/taskgeneration/repo/owner/lease provenance with existing native APIs before any mutation; preserve source authority and fences.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC3",
+      "description": "Fresh branch from authenticated exact CURRENTdev base plus only canonical declared3 Redis paths original delta applied/merged preserving currentbasechanges. Old remote/local branches and PR6481 and archives unchanged. No wholeoldtree checkout or hardreset or forcepush or fabricatedtrailers or blanket deletion or directcanonicalJSON/queue/locks/leases editing or dedupe reset. Conflicts and stale/missing grant or activeworker/worktree/sourcebranch mismatch failclosed. Use existing canonical record/handoff/binding APIs; no forgedreview/oldQAtransfer/newdispatcher/newgates/productBFFdependency.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC4",
+      "description": "Only worker_workspace.py and existing test_worker_workspace.py and own evidence; productionnet<=40. If governed solution genuinely needs another existing authority file identify exact scoped amendment instead ofescaping files or inventing authority. No new platform/service/token/credentials/prod/capital/VM scope. Coordinator does not implement source. Preserve TaskStore/supervisor as sole source dispatcher and original task actor identity.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC5",
+      "description": "Run complete ORIGINAL worker-workspace regressions plus owned disposable Git fixtures proving oldbadbranch/PR/source refs remain byte-identical while freshcurrentbase ancestry and exact scopedpatch/current unrelatedfiles are preserved. Tests cover absent/stale generation/owner/lease/repo/base refs and branch races and conflict denial and retry idempotency. Never claim3fileequality=wholetreeequality. Original CLI/native source-resumption must get actual queue and workerreceipt after genuine tooling delivery/loading; ifactivation remains blocked report it not mereconfig proof.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC6",
+      "description": "Genuine assigned review and exactcurrent CI/normalcommittrailers/pushPR/currentdevintegration/nativeDONE. No unrequested live rescue or supervisor restart or parallelprocess; implementation is source-only. Subsequent existing Redis reopen/review/delivery happens only after corrective governed binding works. Original six-area parent gen16/sixAC/three artifacts remains INCOMPLETE.",
+      "verdict": "pass"
+    }
+  ],
+  "verification": [
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 .orchestrator/rewrite/test_worker_workspace.py",
+      "passed": 43,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 .orchestrator/test_supervisor.py",
+      "passed": 401,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    }
+  ],
+  "declared_artifacts": [
+    ".orchestrator/rewrite/worker_workspace.py",
+    ".orchestrator/rewrite/test_worker_workspace.py",
+    "docs/deployment/evidence/WORKER-CURRENTBASE-DELIVERY-RECOVERY-20261011/evidence.json"
+  ],
+  "diff_budget": {
+    "net_production_lines": 37,
+    "budget": 40,
+    "verdict": "pass",
+    "files": {
+      "production": [
+        ".orchestrator/rewrite/worker_workspace.py"
+      ],
+      "tests": [
+        ".orchestrator/rewrite/test_worker_workspace.py"
+      ],
+      "evidence": [
+        "docs/deployment/evidence/WORKER-CURRENTBASE-DELIVERY-RECOVERY-20261011/evidence.json"
+      ]
+    }
+  }
+}

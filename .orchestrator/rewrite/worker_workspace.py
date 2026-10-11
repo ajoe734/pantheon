@@ -1423,6 +1423,7 @@ def prepare_worker_workspace(
     status_root = config_path(config, "status_file").parents[0].resolve()
     repo_root = source_root
     branch = worker_task_branch(config, workspace_task_id)
+    if request.metadata.get("workspace_branch") and task_branch_matches(str(request.metadata["workspace_branch"]), branch): branch = str(request.metadata["workspace_branch"])
     worktree_path = worker_task_worktree_path(
         config,
         workspace_task_id,
@@ -2304,3 +2305,39 @@ def prune_orphan_worktrees(config: dict[str, Any], state: dict[str, Any]) -> boo
         require_merged=True,
         include_unregistered=True,
     )
+
+
+def recover_currentbase_worktree(
+    repo_root: Path, worktree_path: Path, *, task_id: str, base_sha: str, declared_paths: list[str],
+    source_branch: str, target_branch: str | None = None, owner: str, task_generation: int,
+    lease: Mapping[str, Any] | None = None, repository_id: str = "pantheon") -> tuple[bool, str, dict[str, Any] | None]:
+    if not task_id or not owner or task_generation <= 0: return False, "invalid_task_metadata", None
+    if lease and (lease.get("task_id") != task_id or lease.get("owner") != owner or lease.get("repository_id", "pantheon") != repository_id or (lease.get("task_generation") is not None and int(lease.get("task_generation")) != task_generation)):
+        return False, "lease_mismatch", None
+    res_base, _ = _git_resolve_commit(repo_root, base_sha); source_head, _ = _git_resolve_commit(repo_root, f"refs/heads/{source_branch}" if not source_branch.startswith("refs/") else source_branch)
+    if not res_base or not source_head: return False, "base_or_source_unresolved", None
+    target_branch = target_branch or f"{source_branch}-v2"
+    prov = {"task_id": task_id, "repository_id": repository_id, "owner": owner, "task_generation": task_generation, "source_branch": source_branch, "source_head": source_head, "base_sha": res_base, "target_branch": target_branch, "worktree_path": str(worktree_path), "declared_paths": list(declared_paths), "recovered_at": utc_now()}
+    if _git_ref_exists(repo_root, f"refs/heads/{target_branch}"):
+        curr = subprocess.run(["git", "-C", str(worktree_path), "symbolic-ref", "--quiet", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
+        h = subprocess.run(["git", "-C", str(worktree_path), "rev-parse", "--verify", "HEAD^{commit}"], capture_output=True, text=True).stdout.strip()
+        if curr == target_branch and subprocess.run(["git", "-C", str(worktree_path), "merge-base", "--is-ancestor", res_base, h], capture_output=True).returncode == 0:
+            return True, "already_recovered", prov
+        return False, "target_branch_already_exists", None
+    mb = subprocess.run(["git", "-C", str(repo_root), "merge-base", source_head, res_base], capture_output=True, text=True).stdout.strip()
+    diff_p = subprocess.run(["git", "-C", str(repo_root), "diff", "--binary", mb or source_head, source_head, "--", *declared_paths], capture_output=True)
+    if diff_p.returncode != 0: return False, "diff_generation_failed", None
+    prov["patch_sha256"] = hashlib.sha256(diff_p.stdout).hexdigest()
+    if subprocess.run(["git", "-C", str(worktree_path), "status", "--porcelain", "--untracked-files=all"], capture_output=True, text=True).stdout.strip():
+        return False, "worktree_dirty_cannot_recover", None
+    if subprocess.run(["git", "-C", str(worktree_path), "checkout", "-b", target_branch, res_base], capture_output=True).returncode != 0:
+        return False, "checkout_target_branch_failed", None
+    if diff_p.stdout:
+        if subprocess.run(["git", "-C", str(worktree_path), "apply", "--check", "-"], input=diff_p.stdout, capture_output=True).returncode != 0:
+            subprocess.run(["git", "-C", str(worktree_path), "checkout", "--detach"], capture_output=True); subprocess.run(["git", "-C", str(repo_root), "branch", "-D", target_branch], capture_output=True)
+            return False, "patch_conflict", None
+        if subprocess.run(["git", "-C", str(worktree_path), "apply", "--index", "-"], input=diff_p.stdout, capture_output=True).returncode != 0:
+            return False, "patch_apply_failed", None
+    return True, "currentbase_recovered", prov
+
+recover_worker_currentbase_delivery = recover_currentbase_worktree
