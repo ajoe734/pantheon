@@ -9,7 +9,7 @@
   "change_class": "corrective",
   "net_prod_line_budget": 2,
   "cumulative_net_prod_line_budget": 40,
-  "summary": "Hardens recover_currentbase_worktree in .orchestrator/rewrite/worker_workspace.py to strictly enforce fail-closed validation BEFORE any git mutation (including backup refs and branch checkouts). Specifically: requires callable publication callback and successful publication before mutating git; requires non-empty declared_paths (preventing whole-repo patch leakage); enforces exact lease task_generation matching and rejects missing generation; ensures auth_base is strictly derived from configured current dev branch tips rather than arbitrary lease.base_ref commit SHAs; enforces source worktree branch fencing (rejecting foreign source branches without git mutation); enforces non-mutating patch conflict pre-check on an isolated temporary index before provenance publication, ref creation, or branch checkouts (ensuring conflicting current dev does not change refs or detach HEAD); requires canonical existing stored provenance on retry with full task_generation, repository_id, owner, worktree_path, declared_paths, source_head, base_sha, source_branch, target_branch, and patch_sha256 equality; preserves old branch, commits, and refs byte-identical while verifying all 47 workspace tests and complete counter suite on disposable Git.",
+  "summary": "Hardens recover_currentbase_worktree in .orchestrator/rewrite/worker_workspace.py to strictly enforce fail-closed validation BEFORE any git mutation (including backup refs and branch checkouts). Specifically: requires callable publication callback and successful publication before mutating git; rejects physical shared root recovery (worktree_path resolving to repo_root) and arbitrary default base branches as source branches without mutation; requires non-empty declared_paths (preventing whole-repo patch leakage); enforces exact lease task_generation matching and rejects missing generation; ensures auth_base is strictly derived from configured current dev branch tips rather than arbitrary lease.base_ref commit SHAs; enforces source worktree branch fencing (rejecting foreign source branches without git mutation); enforces non-mutating patch conflict pre-check on an isolated temporary index before provenance publication, ref creation, or branch checkouts (ensuring conflicting current dev does not change refs or detach HEAD); verifies current dev base CAS check immediately after publication before any ref creation or checkout (ensuring concurrent dev advance during publication fails closed without git mutation); requires canonical existing stored provenance on retry with full task_generation, repository_id, owner, worktree_path, declared_paths, source_head, base_sha, source_branch, target_branch, and patch_sha256 equality; preserves old branch, commits, and refs byte-identical while verifying all 49 workspace tests and complete counter suites on disposable Git.",
   "acceptance_verification": [
     {
       "ac": "AC1",
@@ -19,7 +19,7 @@
     {
       "ac": "AC2",
       "description": "Complete ORIGINALhelper+ORIGINALownedGitfixtures reproduce callbackNone mutating withoutpublication; leasegeneration missing stillaccepted; lease.base_ref=oldSHA reauthorizesstalebase; empty declared_paths yields ALLpatch. Require canonical taskgrant/currentepoch/repo/owner/lease and authenticated configuredCURRENTdev base and canonical narrow scope; queue/request/free-form lease fields are not authority. Missing/unsupported authority or callback or epoch or scope failclosed BEFORE ANYgit mutation including refs. Real publication through existing canonical APIs before mutation not returned dict or fake callback.",
-      "verdict": "pass_source_fixture_verified: fail-closed controls for missing publication callback, missing lease generation, stale base ref, empty declared scope, non-mutating patch conflict pre-check, missing stored provenance on retry, and foreign source worktree verified on owned disposable Git fixtures before any git mutation; live canonical API publication remains gap as native adapter is unavailable in worker runtime"
+      "verdict": "pass_source_fixture_verified: fail-closed controls for missing publication callback, missing lease generation, stale base ref, empty declared scope, physical shared root checkout rejection, current dev advance race rejection, non-mutating patch conflict pre-check, missing stored provenance on retry, and foreign source worktree verified on owned disposable Git fixtures before any git mutation; live canonical API publication remains gap as native adapter is unavailable in worker runtime"
     },
     {
       "ac": "AC3",
@@ -29,12 +29,12 @@
     {
       "ac": "AC4",
       "description": "Implement/use existing governed native source-rework/currentbase managed-vN path with canonical binding/fences or honestly failclosed when unavailable. Unused utility export is not actualnative recovery. No physicalsharedroot/foreignworkspace/activeworker mutation or symlinkescape or arbitrarysourcebranch/scope/base selection; replay/CAS verify immutable exact scopepatch and sourcehead/taskgen/repo/owner/path bindings. Oldlocal/remoterefs andPR6481 unchanged. No forcepush/hardreset/fabricatedtrailers/oldtree substitution/JSONqueueleaseedit/newdispatcher/productBFFlogin dependency.",
-      "verdict": "failclosed_native_adapter_unavailable: governed native recovery helper and failclosed fences implemented and verified on owned disposable Git fixtures; live native recovery adapter remains unavailable in worker environment and honestly fails closed without physical mutation"
+      "verdict": "failclosed_native_adapter_unavailable: governed native recovery helper and failclosed fences implemented and verified on owned disposable Git fixtures; physical shared root and current dev advance race fail closed without mutation; live native recovery adapter remains unavailable in worker environment and honestly fails closed without physical mutation"
     },
     {
       "ac": "AC5",
       "description": "Run all ORIGINALworkspace regressions and complete helper counters on owneddisposable Git. Valid canonical published control preserves current unrelatedfiles and originalrefs; missingpublication/generation/emptyscope/oldSHA-as-ref/foreignrole/repo/activeworkspace/stalesource races deny withoutmutation. These are source tests NOT live grant proof. Sourceonly worker does not alter actualRedis worktree/task/queue or load/restart supervisor.",
-      "verdict": "pass_source_regression_only: all 47 workspace tests and complete helper counter suite pass on owned disposable Git; source tests prove non-mutating fail-closed conflict fencing and old branch/ref preservation without live grant proof; worker alters no actual Redis worktree, task, queue, or supervisor"
+      "verdict": "pass_source_regression_only: all 49 workspace tests and complete helper counter suites (including publication/generation/scope, retry/conflict, and physicalsharedroot/currentdev-race counters) pass on owned disposable Git; source tests prove non-mutating fail-closed conflict fencing, physical shared root protection, current dev race fencing, and old branch/ref preservation without live grant proof; worker alters no actual Redis worktree, task, queue, or supervisor"
     },
     {
       "ac": "AC6",
@@ -45,7 +45,7 @@
   "verification": [
     {
       "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 .orchestrator/rewrite/test_worker_workspace.py",
-      "passed": 47,
+      "passed": 49,
       "failed": 0,
       "errors": 0,
       "skipped": 0,
@@ -68,6 +68,14 @@
       "exit_code": 0
     },
     {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 /tmp/pantheon-closeout-resume-20261011T0710Z/tooling-original-sharedroot-currentbase-race-check.py .",
+      "passed": 3,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
       "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 .orchestrator/test_supervisor.py",
       "passed": 401,
       "failed": 0,
@@ -82,9 +90,9 @@
     "docs/deployment/evidence/WORKER-GOVERNED-RECOVERY-FAILCLOSED-20261011/evidence.json"
   ],
   "diff_budget": {
-    "net_production_lines": 2,
+    "net_production_lines": 1,
     "budget": 2,
-    "cumulative_net_production_lines": 40,
+    "cumulative_net_production_lines": 39,
     "cumulative_budget": 40,
     "verdict": "pass",
     "files": {
