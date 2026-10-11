@@ -57,6 +57,7 @@
     "pi_6505": {
       "repo": "ajoe734/pantheon",
       "pr": 6505,
+      "task": "PI-REDIS-PROOF-CLEANUP-20261011",
       "kind": "operator_authorized_direct_tooling_delivery",
       "frozen_head_sha": "f5f2f5554d5168f509ef9fbc6ca3669611f6b59a",
       "merge_commit_sha": "100b88c88555beba8991bd4c63d2a81b728be053",
@@ -67,6 +68,7 @@
     "pi_6506": {
       "repo": "ajoe734/pantheon",
       "pr": 6506,
+      "task": "PI-RECOVERY-PRIVATE-INDEX-20261011",
       "kind": "operator_authorized_direct_tooling_delivery",
       "head_ref_oid": "0bb607d713eac2ca22ea4fc5fb2198ea826f4d42",
       "merge_commit_sha": "bb044b67e25196c84a45db61f2bb091d0c0997f6",
@@ -76,12 +78,51 @@
     "pi_6507": {
       "repo": "ajoe734/pantheon",
       "pr": 6507,
+      "task": "PI-LANDED-REOPEN-GENERATION-20261011",
       "kind": "operator_authorized_direct_tooling_delivery",
       "frozen_head_sha": "429457494bb11c3e635a6eb277b37f1aaaec7214",
       "merge_commit_sha": "d0695d2c89a1fdcaac1eea56309532fda3fabf2e",
       "merged_at": "2026-10-11T13:40:30Z",
       "verification": "786 passed, 1031 subtests passed in 160.83s; 3 required CI checks passed (Commit trailers, Publish canonical review status, Smoke acceptance; mechanical delivery tooling only)",
       "ancestry": "current dev tip"
+    },
+    "be_6495": {
+      "repo": "ajoe734/pantheon",
+      "pr": 6495,
+      "task": "RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011",
+      "head_sha": "e8411fbe59f1199028684aa7efe6e49f2f5868dc",
+      "merge_commit_sha": "f1f6c32cab68c449dc0e7a462940de6a193d1412",
+      "merged_at": "2026-10-11T05:15:20Z",
+      "status": "MERGED",
+      "historical_0440_state": "head 14de008e4bd5786eca8c2870c3afd35a32c784b0 in source rework (183 passed); preserved as 04:40 historical fact; landed at 05:15:20Z"
+    },
+    "fe_832": {
+      "repo": "ajoe734/execute-plans",
+      "pr": 832,
+      "task": "FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011",
+      "head_sha": "1e2aa7d7e1085ba085a2ad820dc95cb3806a4a86",
+      "merged_at": "2026-10-11T05:05:14Z",
+      "status": "MERGED",
+      "historical_0440_state": "head 88b5c6152500d17c2c119b10bdbae33943259810 pending PR #832; preserved as 04:40 historical fact; landed at 05:05:14Z"
+    },
+    "be_6497": {
+      "repo": "ajoe734/pantheon",
+      "pr": 6497,
+      "task": "TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011",
+      "head_sha": "95ca929b6f5053cf224c6ad07038e932463e2a22",
+      "merge_commit_sha": "c69d90931d57b5ca7a792fd65431f3c4faad247b",
+      "merged_at": "2026-10-11T05:40:20Z",
+      "status": "MERGED",
+      "historical_0440_state": "queued waiting for 6495 writer-order; preserved as 04:40 historical fact; landed at 05:40:20Z"
+    },
+    "be_6498": {
+      "repo": "ajoe734/pantheon",
+      "pr": 6498,
+      "task": "RECON-CURRENT-OWNER-ANCHORS-FAILCLOSED-20261011",
+      "head_sha": "c357437b1d4c2b9fa96924aa5a9ee4a46e1039da",
+      "merge_commit_sha": "9c15f1d9bdef2c3e9011c7a893b6c6521520f59f",
+      "merged_at": "2026-10-11T05:45:19Z",
+      "status": "MERGED"
     },
     "loaded_supervisor_runtime_promotion": {
       "command_root": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/d0695d2c89a1fdcaac1eea56309532fda3fabf2e",
@@ -272,6 +313,18 @@
       "detail": "Independent final acceptance by parent reviewer Codex2 and release owner Human/Ops across all six areas"
     }
   ],
+  "qa_source_validation_facts": {
+    "source_head": "d0695d2c89a1fdcaac1eea56309532fda3fabf2e",
+    "fe_remote_head": "4211acdf31f9a28bd63f3d64fe0e6e23f98d395a",
+    "bff_artifact_controller_tests": "625 passed, 1 original skip",
+    "capture_fetch_restore_tests": "335 passed",
+    "pg_loopback_tests": "51 routes + 93 incident passed, 0 skips, 0 cleanup absence",
+    "reconciliation_client_tests": "24 HTTP + 23 paired client passed",
+    "driver_fixture_validation": "Full original driver fixture source FINAL positive reached exact same FE; altered FE/archive/missing mandatory external hash all DENY, loads 0, recreate 0, trusted original receipt unchanged",
+    "fe_remote_tests": "Pinned npm ci + 75 original tests PASS across 3 files; one Playwright discovery only, not browser execution",
+    "workspace_safety_and_history": "Initial source worktree unsafe 775/664 helper/watchdog fail-closed before SSH retained in owned QA env history; exact owned read-only 555/444 same Git content fixed, no product bug. Initial wrong main checkout 603 explicitly unqualified and unused; system python fastapi / malformed probe errors are collector history, not product facts",
+    "boundary": "All source-only evidence; no new FULL/Root/provider retry/market row/host mutations; source vs served 420+79 preserved and future Oct 12 NEW data / provider reported reset 12:00Z unverified availability"
+  },
   "verification": {
     "test_command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/control-plane/bff/tests/test_latest_dev_six_area_closure.py",
     "verdict": "pass",

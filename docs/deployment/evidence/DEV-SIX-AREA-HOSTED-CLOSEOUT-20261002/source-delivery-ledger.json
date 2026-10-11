@@ -41,7 +41,7 @@
     {
       "repo": "pantheon",
       "pr": 6505,
-      "task": "PI-DIRECT-REDIS-LEAK-CLEANUP-20261011",
+      "task": "PI-REDIS-PROOF-CLEANUP-20261011",
       "delivery_class": "operator_authorized_development_tooling",
       "head": "f5f2f5554d5168f509ef9fbc6ca3669611f6b59a",
       "merge_commit": "100b88c88555beba8991bd4c63d2a81b728be053",
@@ -52,7 +52,7 @@
     {
       "repo": "pantheon",
       "pr": 6506,
-      "task": "PI-PRIVATE-INDEX-DELIVERY-20261011",
+      "task": "PI-RECOVERY-PRIVATE-INDEX-20261011",
       "delivery_class": "operator_authorized_development_tooling",
       "head": "0bb607d713eac2ca22ea4fc5fb2198ea826f4d42",
       "merge_commit": "bb044b67e25196c84a45db61f2bb091d0c0997f6",
@@ -109,6 +109,44 @@
       },
       "canonical_status": "DONE",
       "boundary": "source/loaded tooling/native DONE not live FINAL/all DATA/FULL/product"
+    },
+    {
+      "repo": "pantheon",
+      "pr": 6495,
+      "task": "RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011",
+      "head": "e8411fbe59f1199028684aa7efe6e49f2f5868dc",
+      "merge_commit": "f1f6c32cab68c449dc0e7a462940de6a193d1412",
+      "merged_at": "2026-10-11T05:15:20Z",
+      "historical_0440_state": "head 14de008e4bd5786eca8c2870c3afd35a32c784b0 in source rework (183 passed); preserved as 04:40 historical fact; landed at 05:15:20Z",
+      "canonical_status": "MERGED"
+    },
+    {
+      "repo": "execute-plans",
+      "pr": 832,
+      "task": "FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011",
+      "head": "1e2aa7d7e1085ba085a2ad820dc95cb3806a4a86",
+      "merged_at": "2026-10-11T05:05:14Z",
+      "historical_0440_state": "head 88b5c6152500d17c2c119b10bdbae33943259810 pending PR #832; preserved as 04:40 historical fact; landed at 05:05:14Z",
+      "canonical_status": "MERGED"
+    },
+    {
+      "repo": "pantheon",
+      "pr": 6497,
+      "task": "TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011",
+      "head": "95ca929b6f5053cf224c6ad07038e932463e2a22",
+      "merge_commit": "c69d90931d57b5ca7a792fd65431f3c4faad247b",
+      "merged_at": "2026-10-11T05:40:20Z",
+      "historical_0440_state": "queued waiting for 6495 writer-order; preserved as 04:40 historical fact; landed at 05:40:20Z",
+      "canonical_status": "MERGED"
+    },
+    {
+      "repo": "pantheon",
+      "pr": 6498,
+      "task": "RECON-CURRENT-OWNER-ANCHORS-FAILCLOSED-20261011",
+      "head": "c357437b1d4c2b9fa96924aa5a9ee4a46e1039da",
+      "merge_commit": "9c15f1d9bdef2c3e9011c7a893b6c6521520f59f",
+      "merged_at": "2026-10-11T05:45:19Z",
+      "canonical_status": "MERGED"
     }
   ],
   "superseded_source_tasks": [
@@ -146,29 +184,5 @@
       "surviving_owner": "Obsolete only as dependency needed to recover old blocked Redis PR6481 after authorized Pi direct tooling delivery 6505 already discharged 4 fixture ACs; parent DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 adopts authentic source and survives all product obligations"
     }
   ],
-  "in_progress_source_tasks": [
-    {
-      "repo": "pantheon",
-      "pr": 6495,
-      "task": "RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011",
-      "head": "14de008e4bd5786eca8c2870c3afd35a32c784b0",
-      "tests": "183 passed = 40 pytest recon + 50 unittest routes/write + 93 unittest incident; numeric tenant fixed; remaining TypeError legacy unscoped two 2.6s 5.200431 deadline counter (elapsed 5.200s > 5s budget); earlier adb0 history retained: 182 passed (39 pytest recon + 50 unittest routes/write + 93 unittest incident) and earlier pytest 240s timeout retained as invocation timeout not product deadlock",
-      "worker": "Antigravity2 (PID 2773328)",
-      "notes": "numeric tenant coercion and pair deadline counter rework pending in source rework; no total PASS"
-    },
-    {
-      "repo": "execute-plans",
-      "pr": 832,
-      "task": "FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011",
-      "head": "88b5c6152500d17c2c119b10bdbae33943259810",
-      "worker": "Antigravity2 (PID 2775529)",
-      "notes": "TypeError fix on e.target.includes to use target_id with fail-closed audit validation; pending PR #832"
-    },
-    {
-      "repo": "pantheon",
-      "task": "TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011",
-      "status": "queued",
-      "notes": "waiting for 6495 writer-order to avoid conflicting table updates"
-    }
-  ]
+  "in_progress_source_tasks": []
 }
