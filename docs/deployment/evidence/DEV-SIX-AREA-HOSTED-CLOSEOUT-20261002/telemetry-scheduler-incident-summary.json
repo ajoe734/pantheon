@@ -1,0 +1,60 @@
+{
+  "at": "2026-10-11T04:04:45.000000+00:00",
+  "historical_pg_lineage_cold_read": {
+    "telemetry_restart_utc": "2026-10-11T01:49:17Z",
+    "cold_read_http_status": 200,
+    "recovered_canonical_traces": ["d39", "69fff"],
+    "prior_status": 404,
+    "reproduced_without_pg_replay_or_mutation": true
+  },
+  "live_management_status": {
+    "total_loops": 12,
+    "accepted_healthy_loops": 11,
+    "unhealthy_loop_id": "telemetry_reconciliation",
+    "rejection_reason": "record lacks accepted current controller-runtime provenance"
+  },
+  "scheduler_unhealthy_state": {
+    "incident_timeouts_count": 2,
+    "visibility_deferrals_count": 18,
+    "bounded_recent_ids_window": 512,
+    "incident_projections_evaluated": [
+      {
+        "binding_id": "rb-52d16f8d2ace4104868caf3f3fc4c898",
+        "event_id": "fc454b55-9077-4407-9294-4742335b7bad",
+        "trace_timing_seconds": 1.527,
+        "trace_status": "PASS",
+        "projection_elapsed_seconds": 5.086,
+        "projection_status": "HTTP 503",
+        "projection_error": "telemetry lineage lookup failed for runtime_binding_projection: HTTP 503"
+      },
+      {
+        "binding_id": "rb-5354aba551124647a7d93774317bd43d",
+        "event_id": "95d7a07a-08dc-4dfa-b5a5-38d7a599e65b",
+        "trace_timing_seconds": 3.066,
+        "trace_status": "PASS",
+        "projection_elapsed_seconds": 7.718,
+        "projection_status": "HTTP 503",
+        "projection_error": "telemetry lineage lookup failed for runtime_binding_projection: HTTP 503"
+      }
+    ],
+    "pg_durable_order_verified": {
+      "query_type": "READONLY",
+      "rb_52d16f8d_order": "3445658 < 4005801",
+      "rb_5354aba5_order": "3457957 < 4005806"
+    },
+    "pg_explain_analysis": {
+      "query_type": "EXPLAIN (not ANALYZE)",
+      "finding": "costly created_at index filter for OR runtime binding query missing dedicated index; no held blocking table lock detected"
+    }
+  },
+  "reopen_and_successor_tasks": {
+    "terminal_denial": "preserved",
+    "successor_task": "RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011",
+    "assigned_worker": "Antigravity2",
+    "worker_pid": 2773328,
+    "budget": "9 files, production net <= 120 lines",
+    "status": "source rework active",
+    "queued_followup_task": "TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011",
+    "queued_condition": "waiting for BE 6495 genuine DONE to serialize overlapping writer"
+  }
+}

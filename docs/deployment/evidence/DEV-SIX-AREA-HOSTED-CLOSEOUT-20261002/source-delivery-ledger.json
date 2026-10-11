@@ -1,0 +1,62 @@
+{
+  "at": "2026-10-11T04:17:00.000000+00:00",
+  "integrated_deliveries": [
+    {
+      "repo": "pantheon",
+      "pr": 6494,
+      "task": "TELEMETRY-CANONICAL-OWNER-METADATA-TENANT-20261010",
+      "owner": "Antigravity2",
+      "reviewer": "Antigravity",
+      "head": "9d7092a3",
+      "merge_commit": "420598fe643be541ca28419a1abe4b03acb2dd73",
+      "merged_at": "2026-10-10T23:40:19Z",
+      "verification": "142 passed, 0 skipped",
+      "canonical_status": "DONE"
+    },
+    {
+      "repo": "execute-plans",
+      "pr": 830,
+      "task": "FE-GOVERNANCE-OWNER-READABLE-DETAIL-20261010",
+      "owner": "Antigravity2",
+      "reviewer": "Antigravity",
+      "head": "753bd239",
+      "merge_commit": "79aacd97f770dafb58471bba59d2fc9b98b4dff5",
+      "merged_at": "2026-10-10T23:55:14Z",
+      "verification": "54 passed + 1 Playwright discovery",
+      "canonical_status": "DONE"
+    },
+    {
+      "repo": "execute-plans",
+      "pr": 831,
+      "task": "FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011",
+      "owner": "Antigravity2",
+      "head": "491",
+      "merge_commit": "3fa4b1aa",
+      "merged_at": "2026-10-11T04:10:14Z",
+      "verification": "67 passed + 1 discovery",
+      "notes": "numeric-missing-conflicting audit identity counter and AST TypeError remain in source rework; referenced successor pending"
+    }
+  ],
+  "in_progress_source_tasks": [
+    {
+      "repo": "pantheon",
+      "task": "RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011",
+      "head": "adb0ea4b0",
+      "tests": "182 passed under unittest; earlier pytest 240s timeout retained as invocation not proven product deadlock",
+      "worker": "Antigravity2 (PID 2773328)",
+      "notes": "numeric tenant coercion and pair deadline counter rework remain"
+    },
+    {
+      "repo": "execute-plans",
+      "task": "FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011",
+      "worker": "Antigravity2 (PID 2775529)",
+      "notes": "TypeError fix on e.target.includes to use target_id with fail-closed audit validation"
+    },
+    {
+      "repo": "pantheon",
+      "task": "TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011",
+      "status": "queued",
+      "notes": "waiting for 6495 writer-order to avoid conflicting table updates"
+    }
+  ]
+}

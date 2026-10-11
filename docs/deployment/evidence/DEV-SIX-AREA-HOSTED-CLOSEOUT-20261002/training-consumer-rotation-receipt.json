@@ -1,0 +1,57 @@
+{
+  "at": "2026-10-11T03:46:26.104366+00:00",
+  "consumer_identity": {
+    "consumer": "training-session-svc",
+    "same_running_instance": true,
+    "mount_path": "/run/pantheon-principals/TRAINING_SESSION_SOURCE_READ_TOKEN",
+    "read_only_mount_verified": true
+  },
+  "natural_rotation_window": {
+    "rotation_window_utc": "2026-10-11T02:45:46Z -> 2026-10-11T03:45:46Z",
+    "before": {
+      "captured_at": "2026-10-11T03:36:43.857920+00:00",
+      "file_mtime_utc": "2026-10-11T02:45:46.324767+00:00",
+      "token_sha256": "81f18536e2f1db17dbfb9a2862c0eb4e578ba256d0d5718dfa8566ff726d36e2",
+      "public_claims": {
+        "sub": "pantheon-dev-training-session-svc",
+        "scope": "pantheon:dev-owner-read",
+        "aud": "bff-operators",
+        "tenant_id": "tenant-dev",
+        "roles": ["source_ingest_reader"],
+        "iat": 1791686746,
+        "exp": 1791773146
+      },
+      "authenticated_source_records_get_succeeded": true,
+      "authenticated_controller_readback_get_succeeded": true
+    },
+    "after": {
+      "captured_at": "2026-10-11T03:46:08.572110+00:00",
+      "file_mtime_utc": "2026-10-11T03:45:46.324767+00:00",
+      "token_sha256": "a34bfdb5750058b7ea751d384487b326cbef8fbd3bf79d3910c6670868f0cb57",
+      "public_claims": {
+        "sub": "pantheon-dev-training-session-svc",
+        "scope": "pantheon:dev-owner-read",
+        "aud": "bff-operators",
+        "tenant_id": "tenant-dev",
+        "roles": ["source_ingest_reader"],
+        "iat": 1791690346,
+        "exp": 1791776746
+      },
+      "authenticated_source_records_get_succeeded": true,
+      "authenticated_controller_readback_get_succeeded": true
+    }
+  },
+  "verification_assertions": {
+    "sha_changed": true,
+    "iat_advanced": true,
+    "same_finite_principal": true,
+    "same_scope_and_tenant": true,
+    "new_consumer_token_matches_issuer_file": true,
+    "issuer_signature_valid": true,
+    "fixed_grant_valid": true,
+    "headroom_healthcheck_exit_code": 0,
+    "forced_issuance_or_restart": false,
+    "secret_or_key_export": false,
+    "claims_boundary": "single consumer adoption across one natural rotation proven; does NOT claim projector adoption, infinite continuity, or training job completion"
+  }
+}

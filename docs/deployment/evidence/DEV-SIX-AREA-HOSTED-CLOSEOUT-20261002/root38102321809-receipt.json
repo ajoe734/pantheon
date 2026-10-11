@@ -1,0 +1,82 @@
+{
+  "at": "2026-10-11T03:30:05.225430+00:00",
+  "root_run_id": 38102321809,
+  "fe_gate_run_id": 38103669914,
+  "fe_deploy_run_id": 38104566256,
+  "controller_accepted_at": "2026-10-11T02:33:31Z",
+  "candidate": "488b5e461c9583e261bddf2d7ad7ac8afe7e92dab677338fdb7634f437a14341",
+  "served_pair": {
+    "bff_sha": "420598fe643be541ca28419a1abe4b03acb2dd73",
+    "fe_sha": "79aacd97f770dafb58471bba59d2fc9b98b4dff5"
+  },
+  "artifacts": [
+    {
+      "id": 11689890853,
+      "name": "pantheon-cross-repo-release-38102321809-1",
+      "bytes": 6679,
+      "authenticated_api_sha256": "aa31a97ef12ba2163916756811bc8a027c22518b916bbb1273ef338920b85a5f"
+    },
+    {
+      "id": 11689091106,
+      "name": "pantheon-dev-artifact-candidate-38102321809-1",
+      "bytes": 1074,
+      "authenticated_api_sha256": "f2473ee7cf4ceb8b6e732d4073005f687a6e606b9592638746980bce72a342e8"
+    },
+    {
+      "id": 11688560334,
+      "name": "pantheon-dev-release-admission-38102321809-1",
+      "bytes": 5353,
+      "authenticated_api_sha256": "576039306378dfb2a1f88cd67d93cb25fa1f07d4ee14d74a903615f24fae5d41"
+    },
+    {
+      "id": 11688363486,
+      "name": "pantheon-dev-paper-diagnostics-38102321809-1",
+      "bytes": 295,
+      "authenticated_api_sha256": "502bdf17d9f027cfaac261a163137117070e9cd1ad314991d87463c606086cea"
+    },
+    {
+      "id": 11688203993,
+      "name": "loop-prod-tel-002-hosted-38102321809-1",
+      "bytes": 4165,
+      "authenticated_api_sha256": "01bb5704f77a14072fe1d918905dc2dc3b32fccdc8962fba048a2919fac1d72f"
+    },
+    {
+      "id": 11688029301,
+      "name": "pantheon-dev-deployment-posture-38102321809-1",
+      "bytes": 699,
+      "authenticated_api_sha256": "b197a2908892c6167685eb225b64f906d90460fc124e3e23a9c8be68c015cb73"
+    },
+    {
+      "id": 11687847999,
+      "name": "pantheon-dev-artifact-baseline-38102321809-1",
+      "bytes": 1735,
+      "authenticated_api_sha256": "20b9d9bc785444d27fb3d914d4fa28be2ceee977b920875d4aa3604cf39682ea"
+    }
+  ],
+  "own_images": {
+    "agora-interaction-worker": {
+      "sealed": "sha256:0acbfe4d037bbb505ad790ac54ad2b8cc37e36b58d208fa71b5688cef7af3909",
+      "observed": "sha256:0acbfe4d037bbb505ad790ac54ad2b8cc37e36b58d208fa71b5688cef7af3909",
+      "matches": true
+    },
+    "loop-run-projector-scheduler": {
+      "sealed": "sha256:a07b15f5991e9eca7bf99ca40d62890de5a81462a783ab4eccb2d9306b9c5e7e",
+      "observed": "sha256:a07b15f5991e9eca7bf99ca40d62890de5a81462a783ab4eccb2d9306b9c5e7e",
+      "matches": true
+    },
+    "operator-bff": {
+      "sealed": "sha256:353dc659c2384411e55bbed103b0aca04fe38536a4172e01c182f8ae1cd45819",
+      "observed": "sha256:353dc659c2384411e55bbed103b0aca04fe38536a4172e01c182f8ae1cd45819",
+      "matches": true
+    }
+  },
+  "fe_seal_verification": {
+    "own_deploy_run": 38104566256,
+    "sealed_files_count": 32,
+    "all_hashes_and_sizes_match": true
+  },
+  "full_loop_qualification": {
+    "status": "SKIPPED_not_qualified",
+    "notes": "FULL job was SKIPPED in this root run, not executed or qualified; prior FULL 38092806870 failed with provider weekly limit"
+  }
+}
