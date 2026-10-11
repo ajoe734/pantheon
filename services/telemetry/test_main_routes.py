@@ -1684,6 +1684,37 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
         self.assertFalse(ok_num)
         self.assertEqual(err_num, "tenant_mismatch")
 
+        # 13. Unsupported batch returning non-dict fails closed with 503
+        nondict_reader = lambda eids, tenant_id=None: [fetch_ev(self._E1_ID), fetch_ev(self._E1_SECOND_ID)]
+        _main._svc = TelemetryIngestService(event_reader=nondict_reader)
+        r_nondict = self.client.get(f"/api/telemetry/events/{self._E1_ID}?observed_event_id={self._E1_SECOND_ID}", headers=headers)
+        self.assertEqual(r_nondict.status_code, 503)
+        self.assertEqual(r_nondict.get_json()["error"]["code"], "SERVICE_UNAVAILABLE")
+
+        # 14. TypeError legacy slow reader fails closed with 503 without two reads or authscope drop
+        legacy_calls = []
+        def legacy_slow_reader(*args, **kwargs):
+            legacy_calls.append((args, kwargs))
+            if len(args) > 1 or isinstance(args[0], (list, tuple)) or "tenant_id" in kwargs:
+                raise TypeError("reader() does not support batch or tenant_id")
+            return fetch_ev(args[0])
+
+        _main._svc = TelemetryIngestService(event_reader=legacy_slow_reader)
+        r_legacy = self.client.get(f"/api/telemetry/events/{self._E1_ID}?observed_event_id={self._E1_SECOND_ID}", headers=headers)
+        self.assertEqual(r_legacy.status_code, 503)
+        self.assertEqual(r_legacy.get_json()["error"]["code"], "SERVICE_UNAVAILABLE")
+        self.assertEqual(len(legacy_calls), 1)
+
+        # 15. Malformed non-string event_id and expected anchors reject without coercion
+        _main._svc = TelemetryIngestService(event_reader=fetch_ev)
+        ok_eid, err_eid, _ = _main._svc.get_accepted_event_pair_order(123, self._E1_SECOND_ID, tenant_id=self._TENANT)
+        self.assertFalse(ok_eid)
+        self.assertEqual(err_eid, "missing_event_id")
+
+        ok_exp, err_exp, _ = _main._svc.get_accepted_event_pair_order(self._E1_ID, self._E1_SECOND_ID, tenant_id=self._TENANT, expected_binding_id=123)
+        self.assertFalse(ok_exp)
+        self.assertEqual(err_exp, "expected_identity_mismatch")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -59,7 +59,7 @@
     },
     {
       "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/pytest services/reconciliation-drift/test_reconciliation_drift_http_service.py",
-      "passed": 18,
+      "passed": 19,
       "failed": 0,
       "errors": 0,
       "skipped": 0,
@@ -67,7 +67,7 @@
     },
     {
       "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/pytest services/reconciliation-drift/test_telemetry_client.py",
-      "passed": 22,
+      "passed": 23,
       "failed": 0,
       "errors": 0,
       "skipped": 0,
@@ -86,7 +86,7 @@
     "docs/deployment/evidence/RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011/evidence.json"
   ],
   "diff_budget": {
-    "net_production_lines": 117,
+    "net_production_lines": 114,
     "budget": 120,
     "verdict": "pass",
     "files": {

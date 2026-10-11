@@ -527,6 +527,35 @@ class TestAcceptedAppendVisibilityReason(unittest.TestCase):
             self.assertIsNone(reason)
             mock_verify.assert_not_called()
 
+    def test_evicted_confirmed_fails_closed_when_coercible_numeric_anchors(self) -> None:
+        with mock.patch("telemetry_client.verify_durable_event_order") as mock_verify:
+            # 1. Numeric tenant_id in evaluation
+            bad_eval = dict(self.accepted_evaluation)
+            bad_eval["tenant_id"] = 123
+            reason, _ = _accepted_append_visibility_reason(
+                summary=self.summary_evicted,
+                binding_id=self.binding_id,
+                timestamp=self.timestamp,
+                evaluations=[bad_eval],
+                telemetry_url=self.telemetry_url,
+                tenant_id=123,
+            )
+            self.assertEqual(reason, "accepted_lifecycle_append_not_visible")
+            mock_verify.assert_not_called()
+
+            # 2. Numeric runtime_id in summary
+            bad_sum = dict(self.summary_evicted)
+            bad_sum["runtime_id"] = 123
+            reason, _ = _accepted_append_visibility_reason(
+                summary=bad_sum,
+                binding_id=self.binding_id,
+                timestamp=self.timestamp,
+                evaluations=[self.accepted_evaluation],
+                telemetry_url=self.telemetry_url,
+            )
+            self.assertEqual(reason, "accepted_lifecycle_append_not_visible")
+            mock_verify.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

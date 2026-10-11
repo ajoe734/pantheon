@@ -1195,7 +1195,7 @@ def accepted_event(event_id: str):
                 expected_artifact_id=request.args.get("artifact_id"), expected_artifact_version=request.args.get("artifact_version"),
             )
         except RuntimeError as exc: return jsonify({"error": {"code": "SERVICE_UNAVAILABLE", "message": str(exc)}}), 503
-        if not ok: return jsonify({"error": {"code": "DURABLE_ORDER_INVALID", "reason": err}}), (503 if err == "database_unavailable" else (404 if err in ("event_not_found", "tenant_mismatch") else 409))
+        if not ok: return jsonify({"error": {"code": "SERVICE_UNAVAILABLE" if err == "database_unavailable" else "DURABLE_ORDER_INVALID", "reason": err}}), (503 if err == "database_unavailable" else (404 if err in ("event_not_found", "tenant_mismatch") else 409))
         return jsonify({"status": "verified", "pair": details}), 200
 
     try:

@@ -239,6 +239,25 @@ class TestTelemetryClient(unittest.TestCase):
                 self.telemetry_url, accepted_event_id="e1", observed_event_id="e2"
             )
 
+    def test_verify_durable_event_order_rejects_numeric_coercible_parameters(self):
+        ok, reason, _ = verify_durable_event_order(
+            self.telemetry_url, accepted_event_id="e1", observed_event_id="e2", tenant_id=123
+        )
+        self.assertFalse(ok)
+        self.assertEqual(reason, "invalid_parameter")
+
+        ok, reason, _ = verify_durable_event_order(
+            self.telemetry_url, accepted_event_id="e1", observed_event_id="e2", expected_binding_id=123
+        )
+        self.assertFalse(ok)
+        self.assertEqual(reason, "invalid_parameter")
+
+        ok, reason, _ = verify_durable_event_order(
+            self.telemetry_url, accepted_event_id=123, observed_event_id="e2"
+        )
+        self.assertFalse(ok)
+        self.assertEqual(reason, "missing_parameter")
+
 
 if __name__ == "__main__":
     unittest.main()

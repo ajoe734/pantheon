@@ -1841,12 +1841,8 @@ class TelemetryIngestService:
 
     @staticmethod
     def _event_tenant_id(event: dict[str, Any]) -> str:
-        candidates = []
-        for loc in (event.get("tenant_id"), (event.get("metadata") or {}).get("tenant_id") if isinstance(event.get("metadata"), dict) else None, (event.get("correlation_envelope") or {}).get("tenant_id") if isinstance(event.get("correlation_envelope"), dict) else None):
-            if loc is not None:
-                if not isinstance(loc, str) or not loc.strip(): return ""
-                candidates.append(loc.strip())
-        return candidates[0] if candidates and len(set(candidates)) == 1 else ""
+        c = [loc for loc in (event.get("tenant_id"), (event.get("metadata") or {}).get("tenant_id") if isinstance(event.get("metadata"), dict) else None, (event.get("correlation_envelope") or {}).get("tenant_id") if isinstance(event.get("correlation_envelope"), dict) else None) if loc is not None]
+        return c[0].strip() if c and len(set(c)) == 1 and all(isinstance(x, str) and x.strip() for x in c) else ""
 
     def get_runtime_summary(
         self,
@@ -1903,24 +1899,23 @@ class TelemetryIngestService:
         expected_artifact_id: Optional[str] = None, expected_artifact_version: Optional[str] = None,
     ) -> tuple[bool, Optional[str], Optional[dict[str, Any]]]:
         """Verify strict durable order of accepted event before observed event in PostgreSQL."""
-        if tenant_id is not None and (not isinstance(tenant_id, str) or not tenant_id.strip()):
-            return False, "tenant_mismatch", None
+        if tenant_id is not None and (not isinstance(tenant_id, str) or not tenant_id.strip()): return False, "tenant_mismatch", None
         clean_tid = tenant_id.strip() if tenant_id else None
-        a_id, o_id = str(accepted_event_id or "").strip(), str(observed_event_id or "").strip()
+        if not isinstance(accepted_event_id, str) or not isinstance(observed_event_id, str): return False, "missing_event_id", None
+        a_id, o_id = accepted_event_id.strip(), observed_event_id.strip()
         if not a_id or not o_id: return False, "missing_event_id", None
         if a_id == o_id: return False, "equal_event_id", None
+        if any(exp is not None and (not isinstance(exp, str) or not exp.strip()) for exp in (expected_binding_id, expected_runtime_id, expected_artifact_id, expected_artifact_version)): return False, "expected_identity_mismatch", None
         if self._event_reader is None: return False, "database_unavailable", None
         try:
             evs = self._event_reader([a_id, o_id], tenant_id=clean_tid)
-            if isinstance(evs, dict): ev_a, ev_o = evs.get(a_id), evs.get(o_id)
-            else: ev_a, ev_o = self._event_reader(a_id, tenant_id=clean_tid), self._event_reader(o_id, tenant_id=clean_tid)
-        except TypeError:
-            try: ev_a, ev_o = self._event_reader(a_id), self._event_reader(o_id)
-            except Exception: ev_a, ev_o = None, None
+            if not isinstance(evs, dict): return False, "database_unavailable", None
+            ev_a, ev_o = evs.get(a_id), evs.get(o_id)
+        except RuntimeError: raise
+        except Exception: return False, "database_unavailable", None
         if ev_a is None or ev_o is None: return False, "event_not_found", None
         tid_a, tid_o = self._event_tenant_id(ev_a), self._event_tenant_id(ev_o)
-        if not tid_a or not tid_o or tid_a != tid_o or (clean_tid and tid_a != clean_tid):
-            return False, "tenant_mismatch", None
+        if not tid_a or not tid_o or tid_a != tid_o or (clean_tid and tid_a != clean_tid): return False, "tenant_mismatch", None
         def _canon(ev: dict[str, Any]) -> Optional[tuple[str, str, str, str]]:
             b1, b2 = ev.get("binding_id"), ev.get("runtime_binding_id")
             if (b1 is not None and (not isinstance(b1, str) or not b1.strip())) or (b2 is not None and (not isinstance(b2, str) or not b2.strip())): return None
@@ -1934,7 +1929,7 @@ class TelemetryIngestService:
         bid_o, rid_o, aid_o, aver_o = id_o
         for name, va, vo, exp in (("binding", bid_a, bid_o, expected_binding_id), ("runtime_id", rid_a, rid_o, expected_runtime_id), ("artifact_id", aid_a, aid_o, expected_artifact_id), ("artifact_version", aver_a, aver_o, expected_artifact_version)):
             if va != vo: return False, f"{name}_mismatch", None
-            if exp and va != exp: return False, "expected_identity_mismatch", None
+            if exp is not None and (not isinstance(exp, str) or va != exp.strip()): return False, "expected_identity_mismatch", None
         seq_a, seq_o = ev_a.get("ingested_seq"), ev_o.get("ingested_seq")
         if type(seq_a) is not int or type(seq_o) is not int: return False, "missing_ingested_seq", None
         if seq_a >= seq_o: return False, "out_of_order_ingested_seq", None

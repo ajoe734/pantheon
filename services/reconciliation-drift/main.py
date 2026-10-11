@@ -2096,13 +2096,14 @@ def _accepted_append_visibility_reason(
     if accepted_state.get("summary_visibility_confirmed_at") and telemetry_url and accepted_event_id and observed_event_id:
         try:
             from telemetry_client import verify_durable_event_order
-            sum_bid, tid, bid = str(summary.get("binding_id") or "").strip(), str(tenant_id or summary.get("tenant_id") or _current_tenant_id() or "").strip(), str(binding_id or "").strip()
-            rid, aid, aver = str(summary.get("runtime_id") or "").strip(), str(summary.get("artifact_id") or "").strip(), str(summary.get("artifact_version") or "").strip()
-            if not (sum_bid and sum_bid != bid) and all((tid, bid, rid, aid, aver)):
+            raw_t = tenant_id if tenant_id is not None else (summary.get("tenant_id") or _current_tenant_id())
+            tid, bid = (raw_t.strip() if isinstance(raw_t, str) else ""), (binding_id.strip() if isinstance(binding_id, str) else "")
+            sb, rid, aid, av = summary.get("binding_id"), summary.get("runtime_id"), summary.get("artifact_id"), summary.get("artifact_version")
+            if (sb is None or (isinstance(sb, str) and sb.strip() == bid)) and all(isinstance(x, str) and x.strip() for x in (tid, bid, rid, aid, av)):
                 ok, _, p = verify_durable_event_order(
                     telemetry_url, accepted_event_id=accepted_event_id, observed_event_id=observed_event_id,
                     tenant_id=tid, service_token=service_token, timeout_seconds=timeout_seconds,
-                    expected_binding_id=bid, expected_runtime_id=rid, expected_artifact_id=aid, expected_artifact_version=aver,
+                    expected_binding_id=bid, expected_runtime_id=rid.strip(), expected_artifact_id=aid.strip(), expected_artifact_version=av.strip(),
                 )
                 if ok and p and p.get("accepted_event_id") == accepted_event_id and p.get("observed_event_id") == observed_event_id and p.get("binding_id") == bid:
                     return None, visibility
@@ -2147,13 +2148,12 @@ def _ensure_scheduled_lifecycle_append(
 
     event = state.get("event") if isinstance(state.get("event"), dict) else None
     if event is None:
+        raw_b, raw_t = evaluation.get("binding_id"), evaluation.get("tenant_id")
         visibility_reason, visibility = _accepted_append_visibility_reason(
             summary=summary,
-            binding_id=str(evaluation.get("binding_id") or "").strip(),
-            timestamp=timestamp,
-            evaluations=evaluations,
-            telemetry_url=telemetry_url,
-            tenant_id=str(evaluation.get("tenant_id") or "").strip() or None,
+            binding_id=raw_b.strip() if isinstance(raw_b, str) else "",
+            timestamp=timestamp, evaluations=evaluations, telemetry_url=telemetry_url,
+            tenant_id=raw_t.strip() if isinstance(raw_t, str) else (None if raw_t is None else "__non_str__"),
             timeout_seconds=timeout_seconds,
         )
         if visibility_reason is not None:

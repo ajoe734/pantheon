@@ -184,7 +184,8 @@ def append_lifecycle_event(
 
 def _event_get(url: str, tenant_id: str | None, service_token: str | None, timeout: float) -> tuple[int, dict[str, Any] | None]:
     token = (service_token if service_token is not None else os.getenv("PANTHEON_TELEMETRY_SERVICE_TOKEN", "")).strip()
-    tenant = (tenant_id or os.getenv("PANTHEON_TENANT_ID") or "").strip()
+    if tenant_id is not None and (not isinstance(tenant_id, str) or not tenant_id.strip()): raise TelemetryUnavailable("tenant_id must be string")
+    tenant = tenant_id.strip() if isinstance(tenant_id, str) else (os.getenv("PANTHEON_TENANT_ID") or "").strip()
     if not tenant: raise TelemetryUnavailable("tenant_id is required")
     headers = {"Accept": "application/json", "X-Tenant-Id": tenant, **({"Authorization": f"Bearer {token}"} if token else {})}
     try:
@@ -192,11 +193,9 @@ def _event_get(url: str, tenant_id: str | None, service_token: str | None, timeo
             body = resp.read().decode("utf-8")
             return int(getattr(resp, "status", resp.getcode())), json.loads(body) if body else {}
     except urllib.error.HTTPError as exc:
-        try: payload = json.loads(exc.read().decode("utf-8"))
-        except Exception: payload = None
-        return int(exc.code), payload
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        raise TelemetryUnavailable(str(exc)) from exc
+        try: return int(exc.code), json.loads(exc.read().decode("utf-8"))
+        except Exception: return int(exc.code), None
+    except (urllib.error.URLError, TimeoutError, OSError) as exc: raise TelemetryUnavailable(str(exc)) from exc
 
 
 def fetch_accepted_event(telemetry_url: str, event_id: str, *, tenant_id: str | None = None, service_token: str | None = None, timeout_seconds: float = 5.0) -> dict[str, Any] | None:
@@ -208,8 +207,11 @@ def fetch_accepted_event(telemetry_url: str, event_id: str, *, tenant_id: str | 
 
 
 def verify_durable_event_order(telemetry_url: str, *, accepted_event_id: str, observed_event_id: str, tenant_id: str | None = None, service_token: str | None = None, timeout_seconds: float = 5.0, expected_binding_id: str | None = None, expected_runtime_id: str | None = None, expected_artifact_id: str | None = None, expected_artifact_version: str | None = None) -> tuple[bool, str | None, dict[str, Any]]:
-    if not telemetry_url or not accepted_event_id or not observed_event_id: return False, "missing_parameter", {}
-    params = {"observed_event_id": observed_event_id.strip(), **{k: v.strip() for k, v in [("binding_id", expected_binding_id), ("runtime_id", expected_runtime_id), ("artifact_id", expected_artifact_id), ("artifact_version", expected_artifact_version)] if v and v.strip()}}
+    if not telemetry_url or not isinstance(accepted_event_id, str) or not isinstance(observed_event_id, str) or not accepted_event_id.strip() or not observed_event_id.strip(): return False, "missing_parameter", {}
+    if tenant_id is not None and (not isinstance(tenant_id, str) or not tenant_id.strip()): return False, "invalid_parameter", {}
+    exps = [("binding_id", expected_binding_id), ("runtime_id", expected_runtime_id), ("artifact_id", expected_artifact_id), ("artifact_version", expected_artifact_version)]
+    if any(v is not None and (not isinstance(v, str) or not v.strip()) for _, v in exps): return False, "invalid_parameter", {}
+    params = {"observed_event_id": observed_event_id.strip(), **{k: v.strip() for k, v in exps if v}}
     status, body = _event_get(f"{telemetry_url.rstrip('/')}/api/telemetry/events/{urllib.parse.quote(accepted_event_id.strip())}?{urllib.parse.urlencode(params)}", tenant_id, service_token, timeout_seconds)
     if status == 200 and isinstance(body, dict) and body.get("status") == "verified": return True, None, body.get("pair") or {}
     if status == 404: return False, "event_not_found", {}
