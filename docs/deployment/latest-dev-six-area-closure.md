@@ -17,7 +17,7 @@ This task does NOT accept closeout or replace parent independent final acceptanc
 | BFF-RECEIPT-ONLY-ROUTES-002 | BE | #6095 | `e32ab2785` |
 | BFF-RESEARCH-SINGLE-OWNER-001 | BE | #6103 | `8af1ef2d0` |
 | PERSONA-OWNER-READBACK-20261002 | BE | #6123 | `2643a2d12` |
-| FE-PERSONA-READBACK-SOURCE-20261004 | FE / dev-deploy (not a BE-repo merge) | - | not verifiable from BE source; Human/Ops dispatch truth: done |
+| FE-PERSONA-READBACK-SOURCE-20261004 | FE / dev-deploy (not a BE-repo merge) | - | not verifiable from BE source; UNVERIFIED historic (Human/Ops dispatch truth: done), not current canonical DONE; summary current provider product tasks still due |
 | OSS-RESEARCH-RESIDUAL-002 | BE | #6131 | `0aeedd5c3` |
 | OSS-INFRA-PROFILES-002 | BE | #6142 | `dc95ca6f5` |
 | OSS-OBJECT-STORE-CUTOVER-002 | BE | #6168 | `8b899124d` |
@@ -27,10 +27,10 @@ This task does NOT accept closeout or replace parent independent final acceptanc
 | BFF-CLOSURE-REGRESSION-20261002 | BE | #6093 | `b6599f9fd` |
 | DIRECT-BFF-OWNERSHIP-001 | BE | #6094 | `88ce3faff` |
 | DEV-RESTART-GATE-CORRECTIVE-20261002 | BE | #6102 | `6891d5a7e` |
-| FE-AGORA-RETIRED-PROBES-20261003 | FE / dev-deploy (not a BE-repo merge) | - | not verifiable from BE source; Human/Ops dispatch truth: done |
+| FE-AGORA-RETIRED-PROBES-20261003 | FE / dev-deploy (not a BE-repo merge) | - | not verifiable from BE source; UNVERIFIED historic (Human/Ops dispatch truth: done), not current canonical DONE; summary current provider product tasks still due |
 | TRADE-JOURNEY-SHARED-IDENTITY-001 | BE | #6107 | `a8c3ee64a` |
 | BFF-TENANT-FALLBACK-AUDIT-20261003 | BE | #6109 | `0e520cb61` |
-| FE-APPROVAL-FIXTURE-LANE-20261003 | FE / dev-deploy (not a BE-repo merge) | - | not verifiable from BE source; Human/Ops dispatch truth: done |
+| FE-APPROVAL-FIXTURE-LANE-20261003 | FE / dev-deploy (not a BE-repo merge) | - | not verifiable from BE source; UNVERIFIED historic (Human/Ops dispatch truth: done), not current canonical DONE; summary current provider product tasks still due |
 | DEV-PROJECTION-BOOTSTRAP-20261003 | BE | #6111 | `3728879ab` |
 | PERSONA-TW-SOURCE-SELECTION-20261003 | BE | #6141 | `1a6decd06` |
 | TRADE-JOURNAL-OWNER-WIRING-20261003 | BE | #6144 | `f0b7efc23` |
@@ -40,14 +40,14 @@ This task does NOT accept closeout or replace parent independent final acceptanc
 | BFF-CAPITAL-OWNER-READS-20261003 | BE | #6132 | `ba78a54be` |
 | PERSONA-EVALUATOR-DEV-PRINCIPALS-20261003 | BE | #6115 | `42e2ea3f6` |
 | GOV-APPROVAL-NOT-FOUND-20261003 | BE | #6118 | `2be20ce4d` |
-| OPENCLAW-STRUCTURED-AGENT-DEV-20261003 | FE / dev-deploy (not a BE-repo merge) | - | not verifiable from BE source; Human/Ops dispatch truth: done |
+| OPENCLAW-STRUCTURED-AGENT-DEV-20261003 | FE / dev-deploy (not a BE-repo merge) | - | not verifiable from BE source; UNVERIFIED historic (Human/Ops dispatch truth: done), not current canonical DONE; summary current provider product tasks still due |
 | BFF-RANKING-EVIDENCE-SURFACES-20261003 | BE | #6150 | `829015b20` |
 | BFF-COMMANDTYPE-CONTINUATION-20261004 | BE | #6143 | `510c71d51` |
 | OPENCLAW-STRUCTURED-AGENT-SOURCE-20261003 | BE | #6122 | `745674230` |
 | PERSONA-PRIVATE-TENANT-SCOPE-20261003 | BE | #6133 | `720c23d7d` |
 | BFF-RESEARCH-RUN-COPY-REMOVAL-20261004 | BE | #6134 | `ed4d2cd19` |
-| PERSONA-OWNER-JWT-VERIFIER-DEV-20261004 | FE / dev-deploy (not a BE-repo merge) | - | not verifiable from BE source; Human/Ops dispatch truth: done |
-| FE-RESEARCH-UNUSED-CLIENT-20261004 | FE / dev-deploy (not a BE-repo merge) | - | not verifiable from BE source; Human/Ops dispatch truth: done |
+| PERSONA-OWNER-JWT-VERIFIER-DEV-20261004 | FE / dev-deploy (not a BE-repo merge) | - | not verifiable from BE source; UNVERIFIED historic (Human/Ops dispatch truth: done), not current canonical DONE; summary current provider product tasks still due |
+| FE-RESEARCH-UNUSED-CLIENT-20261004 | FE / dev-deploy (not a BE-repo merge) | - | not verifiable from BE source; UNVERIFIED historic (Human/Ops dispatch truth: done), not current canonical DONE; summary current provider product tasks still due |
 | TRADE-JOURNAL-CLAIM-GUARD-CORRECTION-20261004 | BE | #6146 | `6037745e6` |
 | OSS-PROFILES-RUNTIME-GROUPING-CORRECTION-20261004 | BE | #6149 | `c390ce2dc` |
 | BFF-RANKING-DEFAULT-OWNER-CORRECTION-20261004 | BE | #6153 | `4ced94cfd` |
@@ -77,9 +77,9 @@ This task does NOT accept closeout or replace parent independent final acceptanc
 | SOURCE-TENANT-RESOLUTION-SINGLE-PATH-20261008 | BE | #6369 | `614dda5db` |
 | PROJECTION-MIGRATION-TIMEOUT-20261008 | BE | #6357 | `72de383e1` |
 | TELEMETRY-CANONICAL-OWNER-METADATA-TENANT-20261010 | BE | #6494 | `420598fe6` |
-| FE-GOVERNANCE-OWNER-READABLE-DETAIL-20261010 | FE / dev-deploy (not a BE-repo merge) | - | not verifiable from BE source; Human/Ops dispatch truth: done (FE PR #830, merge 79aacd97) |
-| FE-GOVERNANCE-CANONICAL-AUDIT-READBACK-20261011 | FE / dev-deploy (not a BE-repo merge) | - | not verifiable from BE source; Human/Ops dispatch truth: done (FE PR #831, merge 3fa4b1aa, native DONE 04:13:17) |
-| FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011 | FE / dev-deploy (not a BE-repo merge) | - | not verifiable from BE source; pending PR #832 (head 88b5c615) |
+| FE-GOVERNANCE-OWNER-READABLE-DETAIL-20261010 | FE / dev-deploy (not a BE-repo merge) | - | not verifiable from BE source; UNVERIFIED historic (Human/Ops dispatch truth: done), not current canonical DONE; summary current provider product tasks still due (FE PR #830, merge 79aacd97f770dafb58471bba59d2fc9b98b4dff5) |
+| FE-GOVERNANCE-CANONICAL-AUDIT-READBACK-20261011 | FE / dev-deploy (not a BE-repo merge) | - | not verifiable from BE source; UNVERIFIED historic (Human/Ops dispatch truth: done), not current canonical DONE; summary current provider product tasks still due (FE PR #831, merge 3fa4b1aab4877786e109f66156018213e4c4cb95, native DONE 04:13:17) |
+| FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011 | FE / dev-deploy (not a BE-repo merge) | - | not verifiable from BE source; pending PR #832 (head 88b5c6152500d17c2c119b10bdbae33943259810) |
 
 PR6093 = BFF-CLOSURE-REGRESSION-20261002 (`b6599f9fd`), PR6094 = DIRECT-BFF-OWNERSHIP-001 (`88ce3faff`),
 both merged. DIRECT-RAY-BASELINE-001 was NOT DELIVERED (see `docs/operations/research-framework-disposition.md`);
@@ -128,8 +128,8 @@ RLlib/Ray stays as on `dev`.
   - Result: Steps 1-7 PASS, step 8 `navigate_governance_case_ui_first` **FAILED**.
   - Hosted Failure: Hosted Playwright browser execution failed at UI navigation step 8; the Playwright run artifact did not capture the hosted browser console error stack trace.
   - Source AST Counter: Complete original AST inspection of `GovernanceReview.tsx` revealed `audit.filter((e) => e.target.includes(id)...)` accessing undefined `e.target` because `GET /bff/audit` returns `target_id`, causing `TypeError: Cannot read properties of undefined (reading 'includes')`. Both hosted UI failure and source AST counter are clearly labeled.
-  - Reopen Disposition: Terminal reopen DENIED; referenced successor task `FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011` created and dispatched to `Antigravity2` (PID 2775529), pending PR #832 (head `88b5c615`), currently in source rework (not reviewed or deployed).
-- **All-Loop Browser Proof**: NONE. There is no product Research, provider/Alpha, Capital, or human imitation browser proof across all loops. Each loop's browser state is `NOT_PROVEN` unless backed by its own exact receipt (L4 workshop journey PASS, Governance FAIL).
+  - Reopen Disposition: Terminal reopen DENIED; referenced successor task `FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011` created and dispatched to `Antigravity2` (PID 2775529), pending PR #832 (head `88b5c6152500d17c2c119b10bdbae33943259810`), currently in source rework (not reviewed or deployed).
+- **All-Loop Browser Proof**: NONE. There is no product Research, provider/Alpha, Capital, or human imitation browser proof across all loops. All loop browser states in the operational L1-L12 ledger remain NOT_PROVEN / not_applicable without loop-specific UI proof. Workshop persistence journey (13 PASS) and Governance journey (7 PASS, step 8 FAIL) are retained and evaluated separately as cross-cutting AC3/AC4 journey receipts, not loop-specific proofs for L4 (persona_teaching) or L10 (telemetry_reconciliation).
 - **Legacy US Persona Bindings**:
   - Audit Scope: 25 archived Persona IDs cross-referenced against runtime owner `metadata.persona_id`.
   - Matched Bindings: 24 matched bindings (7 retired, 1 failed, 16 paused [15 with explicit `market_input_stale` canonical session admission; 1 paused cause unknown]).
@@ -186,34 +186,45 @@ RLlib/Ray stays as on `dev`.
 
 ## Operational L1-L12 Ledger
 
-| Loop | Name | Source Delivery | Controller Admission | Served Pair | Browser Verified | FULL Qualified | Final Acceptance |
+| Loop | Name | Source Delivery | Served Pair (Release Admission) | Loop Owner Admission / Health | Browser Verified | FULL Qualified | Final Acceptance |
 |---|---|---|---|---|---|---|---|
-| L1 | source_ingestion | PREDECESSOR_MERGED | accepted | `420598fe` + `79aacd97` | NOT_PROVEN | SKIPPED | INCOMPLETE |
-| L2 | strategy_distillation | PREDECESSOR_MERGED | accepted | `420598fe` + `79aacd97` | NOT_PROVEN | SKIPPED | INCOMPLETE |
-| L3 | alpha_replication | PREDECESSOR_MERGED | accepted | `420598fe` + `79aacd97` | NOT_PROVEN | SKIPPED | INCOMPLETE |
-| L4 | persona_teaching | PREDECESSOR_MERGED | accepted | `420598fe` + `79aacd97` | PASS (Workshop run 38109227221) | SKIPPED | INCOMPLETE |
-| L5 | agora_interaction_evidence | PREDECESSOR_MERGED | accepted | `420598fe` + `79aacd97` | NOT_PROVEN | SKIPPED | INCOMPLETE |
-| L6 | human_imitation_shadow_eval | PREDECESSOR_MERGED | accepted | `420598fe` + `79aacd97` | NOT_PROVEN | SKIPPED | INCOMPLETE |
-| L7 | consultation | PREDECESSOR_MERGED | accepted | `420598fe` + `79aacd97` | NOT_PROVEN | SKIPPED | INCOMPLETE |
-| L8 | promotion_deployment | PREDECESSOR_MERGED | accepted | `420598fe` + `79aacd97` | NOT_PROVEN | SKIPPED | INCOMPLETE |
-| L9 | capital_pool_execution | PREDECESSOR_MERGED | accepted | `420598fe` + `79aacd97` | NOT_PROVEN | SKIPPED | INCOMPLETE |
-| L10 | telemetry_reconciliation | IN_REWORK | unobserved / unhealthy | `420598fe` + `79aacd97` | FAIL (run 38108525681 step 8 UI) | SKIPPED | INCOMPLETE |
-| L11 | evolution | PREDECESSOR_MERGED | accepted | `420598fe` + `79aacd97` | NOT_PROVEN | SKIPPED | INCOMPLETE |
-| L12 | bff_health_monitoring | PREDECESSOR_MERGED | accepted | `420598fe` + `79aacd97` | NOT_PROVEN | SKIPPED | INCOMPLETE |
+| L1 | source_ingestion | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
+| L2 | strategy_distillation | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
+| L3 | alpha_replication | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
+| L4 | persona_teaching | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof (Workshop 295 persistence journey run 38109227221 is evaluated separately in AC3/AC4, not loop-specific teaching proof) | SKIPPED | INCOMPLETE |
+| L5 | agora_interaction_evidence | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
+| L6 | human_imitation_shadow_eval | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
+| L7 | consultation | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
+| L8 | promotion_deployment | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
+| L9 | capital_pool_execution | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
+| L10 | telemetry_reconciliation | IN_REWORK (BE 6494 merged, BE 6495 in rework, indexed-binding queued) | `420598fe` + `79aacd97` (Root 38102321809 accepted) | UNHEALTHY / unobserved (fresh functional failure: 2 incident timeouts, 18 visibility deferrals active; BE 6495 in rework) | NOT_PROVEN / not_applicable without loop-specific UI proof (Governance review journey run 38108525681 is evaluated separately in AC3, not loop-specific telemetry proof) | SKIPPED | INCOMPLETE |
+| L11 | evolution | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
+| L12 | bff_health_monitoring | PREDECESSOR_MERGED | `420598fe` + `79aacd97` (Root 38102321809 accepted) | NOT_PROVEN (loop admission not qualified; FULL skipped) | NOT_PROVEN / not_applicable without loop-specific UI proof | SKIPPED | INCOMPLETE |
 
-Note: Source delivery distinguishes genuine task-specific receipts from global inheritance. Browser verification
-is NOT_PROVEN for all loops lacking an exact loop browser run; only L4 workshop journey (13 steps PASS) and
-Governance journey (7 PASS, step 8 FAIL) have browser test receipts.
+Note: Root pair release admission (Root run 38102321809: 420598fe + 79aacd97) does NOT imply loop-level controller admission. Loop owner health is evaluated separately; only L10 has observed fresh unhealthy functional results, while L1-L9, L11, L12 loop admissions remain unproven / not qualified without FULL run. All loops browser_verified remain NOT_PROVEN / not_applicable without loop-specific UI proof (Workshop 295 journey and Governance journey are cross-cutting journey receipts in AC3/AC4, not loop-specific proofs for L4 or L10).
 
 ## Integrated Source Checks
 
 - BFF test suite (12 files under `services/control-plane/bff/tests`): 100% passed on `origin/dev`, including `test_latest_dev_six_area_closure.py`.
 - Frontend (`execute-plans` @ `79aacd97`): `tsc`, unit tests (54 pass + 1 Playwright discovery), and build exit 0.
 - Source tasks status:
-  - BE #6494 (`TELEMETRY-CANONICAL-OWNER-METADATA-TENANT-20261010`): merged `420598fe`, 142 passed, canonical DONE.
-  - FE #830 (`FE-GOVERNANCE-OWNER-READABLE-DETAIL-20261010`): merged `79aacd97`, 54 passed + 1 discovery, archived DONE.
-  - FE #831 (`FE-GOVERNANCE-CANONICAL-AUDIT-READBACK-20261011`): merged `3fa4b1aa` (at 04:10:14Z, native DONE 04:13:17), 67 passed + 1 discovery, canonical DONE.
-  - BE #6495 (`RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011`): pending PR #6495 (head `14de008e`), 182 passed (39 pytest recon + 50 unittest routes/write + 93 unittest incident); earlier pytest 240s timeout retained as invocation timeout not product deadlock; numeric tenant coercion and pair deadline counter rework pending in source rework, no total PASS.
-  - FE #832 (`FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011`): pending PR #832 (head `88b5c615`), source rework active.
+  - BE #6494 (`TELEMETRY-CANONICAL-OWNER-METADATA-TENANT-20261010`): merged `420598fe643be541ca28419a1abe4b03acb2dd73` (head `9d7092a3945dbdbb94a9122dd832b5bbf9acba26`), 142 passed, canonical DONE.
+  - FE #830 (`FE-GOVERNANCE-OWNER-READABLE-DETAIL-20261010`): merged `79aacd97f770dafb58471bba59d2fc9b98b4dff5` (head `753bd23928d87af1d761975ee703e8d8568248d0`), 54 passed + 1 discovery, archived DONE.
+  - FE #831 (`FE-GOVERNANCE-CANONICAL-AUDIT-READBACK-20261011`): merged `3fa4b1aab4877786e109f66156018213e4c4cb95` (head `491afee837bfee57b24016a6fa9a552e747b6a44`, at 04:10:14Z, native DONE 04:13:17), 67 passed + 1 discovery, canonical DONE.
+  - BE #6495 (`RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011`): pending PR #6495 (head `14de008e4bd5786eca8c2870c3afd35a32c784b0`), 183 passed = 40 pytest recon + 50 unittest routes/write + 93 unittest incident; numeric tenant fixed; remaining TypeError legacy unscoped two 2.6s 5.200431 deadline counter (elapsed 5.200s > 5s budget); earlier adb0 history retained: 182 passed (39 pytest recon + 50 unittest routes/write + 93 unittest incident) and earlier pytest 240s timeout retained as invocation timeout not product deadlock; numeric tenant coercion and pair deadline counter rework pending in source rework under Antigravity2 (PID 2773328), no total PASS.
+  - FE #832 (`FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011`): pending PR #832 (head `88b5c6152500d17c2c119b10bdbae33943259810`), source rework active under Antigravity2 (PID 2775529).
   - `TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011`: queued, waiting for 6495 writer-order.
 - No product or frontend source modified in this task. Production line budget net change: 0 lines.
+
+## Timestamped Evidence Chronology & Counterfact Traceability
+
+- **2026-10-11T02:33:31Z**: Root run `38102321809` admitted release pair BE `420598fe` + FE `79aacd97`; FULL loop skipped.
+- **2026-10-11T03:31:09Z**: Governance journey run `38108525681` (7 PASS, step 8 UI navigation FAIL; source AST confirmed TypeError on undefined `e.target`; terminal reopen denied, successor FE #832 pending).
+- **2026-10-11T03:44:13Z**: Workshop persistence journey run `38109227221` on Workshop `295726c7` (13 of 13 real steps PASS across post-save independent BFF restart).
+- **2026-10-11T03:45:46Z**: Training consumer natural rotation observed (`02:45:46Z` to `03:45:46Z`, `iat` advanced 1h, GET adoption verified, exit code 0).
+- **2026-10-11T03:48:03Z**: Legacy US 25 persona bindings audit (24 matched [7 retired, 1 failed, 16 paused], 1 unmatched, 0 workers; historical 1191 clarification).
+- **2026-10-11T04:10:14Z**: FE #831 merged `3fa4b1aab4877786e109f66156018213e4c4cb95` (head `491afee837bfee57b24016a6fa9a552e747b6a44`), native DONE 04:13:17Z.
+- **2026-10-11T04:16:00Z**: BE #6495 head `adb0` QA completed: 182 passed (39 pytest recon + 50 unittest routes/write + 93 unittest incident).
+- **2026-10-11T04:39:41Z**: BE #6495 head `14de008e4bd5786eca8c2870c3afd35a32c784b0` QA completed: 183 passed = 40 pytest recon + 50 unittest routes/write + 93 unittest incident; numeric tenant fixed; remaining TypeError legacy unscoped two 2.6s 5.200431 deadline counter (elapsed 5.200s > 5s budget).
+- **2026-10-11T04:40:00Z**: Baseline checkpoint snapshot recorded.
+- **2026-10-11T04:55:00Z**: Independent review reconciliation: exact head/test bindings bound, full immutable SHAs recorded in canonical ledger, Workshop/Governance browser receipts dissociated from L4/L10 in the L1-L12 matrix, pair release admission separated from loop owner health, and UNVERIFIED historic Human/Ops dispatch rows explicitly documented. Overall status remains honestly INCOMPLETE.
