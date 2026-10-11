@@ -1189,6 +1189,52 @@ class RecoveryCurrentbaseDeliveryTests(unittest.TestCase):
         self.assertEqual(self._git(self.repo, "show-ref"), before_refs)
         self.assertNotIn(f"refs/heads/{target_branch}", self._git(self.repo, "for-each-ref", "refs/heads/"))
 
+    def test_recovery_rejects_physical_shared_root_fail_closed(self) -> None:
+        before_branch = self._git(self.repo, "symbolic-ref", "--short", "HEAD")
+        before_head = self._git(self.repo, "rev-parse", "HEAD")
+        before_refs = self._git(self.repo, "show-ref")
+
+        ok, status, _ = worker_workspace.recover_currentbase_worktree(
+            self.repo, self.repo,
+            task_id=self.task_id, base_sha=self.current_dev_sha,
+            declared_paths=self.declared_paths, source_branch="dev",
+            owner=self.owner, task_generation=self.task_generation,
+            lease=self.lease,
+            publish_provenance=self.publish_provenance,
+        )
+        self.assertFalse(ok)
+        self.assertEqual(status, "physical_shared_root_cannot_recover")
+        self.assertEqual(self._git(self.repo, "symbolic-ref", "--short", "HEAD"), before_branch)
+        self.assertEqual(self._git(self.repo, "rev-parse", "HEAD"), before_head)
+        self.assertEqual(self._git(self.repo, "show-ref"), before_refs)
+
+    def test_recovery_rejects_current_dev_race_during_publication_fail_closed(self) -> None:
+        before_branch = self._git(self.worktree, "symbolic-ref", "--short", "HEAD")
+        before_head = self._git(self.worktree, "rev-parse", "HEAD")
+
+        def pub_racing(p: dict[str, Any]) -> bool:
+            (self.repo / "racing_feature.py").write_text("concurrent dev change\n", encoding="utf-8")
+            self._git(self.repo, "add", ".")
+            self._git(self.repo, "commit", "-m", "racing dev commit")
+            return True
+
+        target_branch = f"task/{self.task_id}-v2"
+        ok, status, _ = worker_workspace.recover_currentbase_worktree(
+            self.repo, self.worktree,
+            task_id=self.task_id, base_sha=self.current_dev_sha,
+            declared_paths=self.declared_paths, source_branch=self.source_branch,
+            target_branch=target_branch,
+            owner=self.owner, task_generation=self.task_generation,
+            lease=self.lease,
+            publish_provenance=pub_racing,
+        )
+        self.assertFalse(ok)
+        self.assertEqual(status, "stale_base")
+        self.assertEqual(self._git(self.worktree, "symbolic-ref", "--short", "HEAD"), before_branch)
+        self.assertEqual(self._git(self.worktree, "rev-parse", "HEAD"), before_head)
+        self.assertNotIn(f"refs/heads/{target_branch}", self._git(self.repo, "for-each-ref", "refs/heads/"))
+        self.assertFalse((self.worktree / "racing_feature.py").exists())
+
     def test_prepare_worker_workspace_adopts_versioned_branch(self) -> None:
         config = {
             "paths": {

@@ -2309,9 +2309,8 @@ def prune_orphan_worktrees(config: dict[str, Any], state: dict[str, Any]) -> boo
 def recover_currentbase_worktree(
     repo_root: Path, worktree_path: Path, *, task_id: str, base_sha: str, declared_paths: list[str], source_branch: str, target_branch: str | None = None, owner: str, task_generation: int, lease: Mapping[str, Any] | None = None, repository_id: str = "pantheon", publish_provenance: Callable[[dict[str, Any]], bool] | None = None, existing_provenance: Mapping[str, Any] | None = None) -> tuple[bool, str, dict[str, Any] | None]:
     if not task_id or not owner or task_generation <= 0: return False, "invalid_task_metadata", None
-    if not declared_paths: return False, "empty_declared_scope", None
-    if not isinstance(lease, Mapping): return False, "lease_required", None
-    if lease.get("task_id") != task_id or (lease.get("owner") != owner and lease.get("agent") != owner) or str(lease.get("repository_id") or "pantheon") != repository_id or lease.get("task_generation") is None or int(lease.get("task_generation")) != task_generation: return False, "lease_mismatch", None
+    if not declared_paths or Path(worktree_path).resolve() == Path(repo_root).resolve() or source_branch in ("dev", "master"): return False, ("empty_declared_scope" if not declared_paths else "physical_shared_root_cannot_recover"), None
+    if not isinstance(lease, Mapping) or lease.get("task_id") != task_id or (lease.get("owner") != owner and lease.get("agent") != owner) or str(lease.get("repository_id") or "pantheon") != repository_id or lease.get("task_generation") is None or int(lease.get("task_generation")) != task_generation: return False, ("lease_required" if not isinstance(lease, Mapping) else "lease_mismatch"), None
     res_base, _ = _git_resolve_commit(repo_root, base_sha); source_head, _ = _git_resolve_commit(repo_root, source_branch if source_branch.startswith("refs/") else f"refs/heads/{source_branch}")
     if not res_base or not source_head: return False, "base_or_source_unresolved", None
     auth_base = next((c for ref in ("refs/remotes/origin/dev", "refs/heads/dev") if (c := _git_resolve_commit(repo_root, ref)[0])), None)
@@ -2330,14 +2329,14 @@ def recover_currentbase_worktree(
         if not isinstance(existing_provenance, Mapping) or any(existing_provenance.get(k) != prov.get(k) for k in ("task_id", "repository_id", "owner", "task_generation", "source_branch", "source_head", "base_sha", "target_branch", "patch_sha256", "worktree_path", "declared_paths")): return False, "recovery_provenance_mismatch", None
         return True, "already_recovered", prov
     if curr != source_branch: return False, "source_branch_mismatch", None
-    if subprocess.run(["git", "-C", str(worktree_path), "status", "--porcelain", "--untracked-files=all"], capture_output=True, text=True).stdout.strip(): return False, "worktree_dirty_cannot_recover", None
-    if not callable(publish_provenance): return False, "publication_callback_required", None
+    if not callable(publish_provenance) or subprocess.run(["git", "-C", str(worktree_path), "status", "--porcelain", "--untracked-files=all"], capture_output=True, text=True).stdout.strip(): return False, ("publication_callback_required" if not callable(publish_provenance) else "worktree_dirty_cannot_recover"), None
     ti = f"/tmp/.recov_idx_{os.getpid()}_{time.time_ns()}"; env = dict(os.environ, GIT_INDEX_FILE=ti)
     try:
         if subprocess.run(["git", "-C", str(repo_root), "read-tree", res_base], env=env, capture_output=True).returncode != 0: return False, "read_tree_failed", None
         if diff_p.stdout and subprocess.run(["git", "-C", str(repo_root), "apply", "--check", "--cached", "-"], env=env, input=diff_p.stdout, capture_output=True).returncode != 0: return False, "patch_conflict", None
     finally: (os.path.exists(ti) and os.unlink(ti))
     if not publish_provenance(prov): return False, "provenance_publication_failed", None
+    if next((c for ref in ("refs/remotes/origin/dev", "refs/heads/dev") if (c := _git_resolve_commit(repo_root, ref)[0])), None) != res_base: return False, "stale_base", None
     if subprocess.run(["git", "-C", str(repo_root), "update-ref", b_ref, source_head, ""], capture_output=True).returncode != 0: return False, "source_backup_failed", None
     if subprocess.run(["git", "-C", str(worktree_path), "checkout", "-b", target_branch, res_base], capture_output=True).returncode != 0: return False, "checkout_target_branch_failed", None
     if diff_p.stdout and subprocess.run(["git", "-C", str(worktree_path), "apply", "--index", "-"], input=diff_p.stdout, capture_output=True).returncode != 0: return False, "patch_apply_failed", None
