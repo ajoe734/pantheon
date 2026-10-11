@@ -1617,12 +1617,24 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
         self.assertEqual(r_mismatch.status_code, 409)
         self.assertEqual(r_mismatch.get_json()["error"]["reason"], "binding_mismatch")
 
-        # 7. Unavailable Postgres fails with 503
+        # 7. Expected identity match succeeds; mismatch fails closed with 409
+        r_exp = self.client.get(f"/api/telemetry/events/{self._E1_ID}?observed_event_id={self._E1_SECOND_ID}&binding_id={self._E1_BINDING}&runtime_id=rt-3739472a", headers=headers)
+        self.assertEqual(r_exp.status_code, 200)
+        r_bad_b = self.client.get(f"/api/telemetry/events/{self._E1_ID}?observed_event_id={self._E1_SECOND_ID}&binding_id=rb-wrong", headers=headers)
+        self.assertEqual(r_bad_b.status_code, 409)
+        self.assertEqual(r_bad_b.get_json()["error"]["reason"], "expected_identity_mismatch")
+
+        # 8. Unavailable Postgres fails with 503
         bad_ev, _ = build_postgres_event_reader("postgresql://postgres:pw@127.0.0.1:59999/postgres")
         _main._svc = TelemetryIngestService(event_reader=bad_ev)
         r_unavail = self.client.get(f"/api/telemetry/events/{self._E1_ID}?observed_event_id={self._E1_SECOND_ID}", headers=headers)
         self.assertEqual(r_unavail.status_code, 503)
         self.assertEqual(r_unavail.get_json()["error"]["code"], "SERVICE_UNAVAILABLE")
+
+        # 9. No event reader configured fails with 503
+        _main._svc = TelemetryIngestService()
+        r_no_db = self.client.get(f"/api/telemetry/events/{self._E1_ID}?observed_event_id={self._E1_SECOND_ID}", headers=headers)
+        self.assertEqual(r_no_db.status_code, 503)
 
 
 if __name__ == "__main__":

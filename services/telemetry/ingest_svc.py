@@ -723,7 +723,7 @@ def build_postgres_event_reader(
         try:
             records = await conn.fetch(sql, *args, timeout=5.0)
             return [
-                dict(_json.loads(r["payload"]) if isinstance(r["payload"], str) else r["payload"],
+                dict({k: v for k, v in (_json.loads(r["payload"]) if isinstance(r["payload"], str) else r["payload"]).items() if k != "ingested_seq"},
                      **({"ingested_seq": int(r["ingested_seq"])} if "ingested_seq" in r and r["ingested_seq"] is not None else {}))
                 for r in records
             ]
@@ -1887,14 +1887,12 @@ class TelemetryIngestService:
         clean_event_id = str(event_id or "").strip()
         if not clean_event_id:
             return None
-        event = None
-        if self._event_reader is not None:
+        event = self._seen_event_ids.get(clean_event_id)
+        if event is None and self._event_reader is not None:
             try:
                 event = self._event_reader(clean_event_id, tenant_id=tenant_id)
             except TypeError:
                 event = self._event_reader(clean_event_id)
-        if event is None:
-            event = self._seen_event_ids.get(clean_event_id)
         if (
             event is not None
             and tenant_id is not None
@@ -1904,37 +1902,47 @@ class TelemetryIngestService:
         return copy.deepcopy(event) if event is not None else None
 
     def get_accepted_event_pair_order(
-        self,
-        accepted_event_id: str,
-        observed_event_id: str,
-        *,
-        tenant_id: Optional[str] = None,
+        self, accepted_event_id: str, observed_event_id: str, *, tenant_id: Optional[str] = None,
+        expected_binding_id: Optional[str] = None, expected_runtime_id: Optional[str] = None,
+        expected_artifact_id: Optional[str] = None, expected_artifact_version: Optional[str] = None,
     ) -> tuple[bool, Optional[str], Optional[dict[str, Any]]]:
         """Verify strict durable order of accepted event before observed event in PostgreSQL."""
         a_id, o_id = str(accepted_event_id or "").strip(), str(observed_event_id or "").strip()
         if not a_id or not o_id: return False, "missing_event_id", None
         if a_id == o_id: return False, "equal_event_id", None
-        ev_a = self.get_accepted_event(a_id, tenant_id=tenant_id)
-        ev_o = self.get_accepted_event(o_id, tenant_id=tenant_id)
+        if self._event_reader is None: return False, "database_unavailable", None
+        try: ev_a, ev_o = self._event_reader(a_id, tenant_id=tenant_id), self._event_reader(o_id, tenant_id=tenant_id)
+        except TypeError: ev_a, ev_o = self._event_reader(a_id), self._event_reader(o_id)
         if ev_a is None or ev_o is None: return False, "event_not_found", None
-        tid_a, tid_b = self._event_tenant_id(ev_a), self._event_tenant_id(ev_o)
-        if not tid_a or tid_a != tid_b or (tenant_id and (tid_a != tenant_id or tid_b != tenant_id)):
+        tid_a, tid_o = self._event_tenant_id(ev_a), self._event_tenant_id(ev_o)
+        if not isinstance(tid_a, str) or not tid_a.strip() or not isinstance(tid_o, str) or not tid_o.strip() or tid_a != tid_o or (tenant_id and tid_a != tenant_id):
             return False, "tenant_mismatch", None
-        bid_a = str(ev_a.get("binding_id") or ev_a.get("runtime_binding_id") or "").strip()
-        bid_b = str(ev_o.get("binding_id") or ev_o.get("runtime_binding_id") or "").strip()
-        if not bid_a or bid_a != bid_b: return False, "binding_mismatch", None
-        for key in ("runtime_id", "artifact_id", "artifact_version"):
-            val_a, val_b = str(ev_a.get(key) or "").strip(), str(ev_o.get(key) or "").strip()
-            if not val_a or val_a != val_b: return False, f"{key}_mismatch", None
-        seq_a, seq_b = ev_a.get("ingested_seq"), ev_o.get("ingested_seq")
-        if not isinstance(seq_a, int) or isinstance(seq_a, bool) or not isinstance(seq_b, int) or isinstance(seq_b, bool):
+        def _canon(ev: dict[str, Any]) -> Optional[tuple[str, str, str, str]]:
+            b1, b2 = ev.get("binding_id"), ev.get("runtime_binding_id")
+            if (b1 is not None and (not isinstance(b1, str) or not b1.strip())) or (b2 is not None and (not isinstance(b2, str) or not b2.strip())): return None
+            s1, s2 = b1.strip() if b1 else None, b2.strip() if b2 else None
+            if (s1 and s2 and s1 != s2) or not (s1 or s2): return None
+            r, a, v = ev.get("runtime_id"), ev.get("artifact_id"), ev.get("artifact_version")
+            if any(not isinstance(x, str) or not x.strip() for x in (r, a, v)): return None
+            return (s1 or s2), r.strip(), a.strip(), v.strip()
+        id_a, id_o = _canon(ev_a), _canon(ev_o)
+        if not id_a or not id_o: return False, "invalid_identity", None
+        bid_a, rid_a, aid_a, aver_a = id_a
+        bid_o, rid_o, aid_o, aver_o = id_o
+        if bid_a != bid_o: return False, "binding_mismatch", None
+        if rid_a != rid_o: return False, "runtime_id_mismatch", None
+        if aid_a != aid_o: return False, "artifact_id_mismatch", None
+        if aver_a != aver_o: return False, "artifact_version_mismatch", None
+        if (expected_binding_id and bid_a != expected_binding_id) or (expected_runtime_id and rid_a != expected_runtime_id) or (expected_artifact_id and aid_a != expected_artifact_id) or (expected_artifact_version and aver_a != expected_artifact_version):
+            return False, "expected_identity_mismatch", None
+        seq_a, seq_o = ev_a.get("ingested_seq"), ev_o.get("ingested_seq")
+        if not isinstance(seq_a, int) or isinstance(seq_a, bool) or not isinstance(seq_o, int) or isinstance(seq_o, bool):
             return False, "missing_ingested_seq", None
-        if seq_a >= seq_b: return False, "out_of_order_ingested_seq", None
+        if seq_a >= seq_o: return False, "out_of_order_ingested_seq", None
         return True, None, {
             "accepted_event_id": a_id, "observed_event_id": o_id,
-            "accepted_ingested_seq": seq_a, "observed_ingested_seq": seq_b,
-            "tenant_id": tid_a, "binding_id": bid_a, "runtime_id": str(ev_a.get("runtime_id")),
-            "artifact_id": str(ev_a.get("artifact_id")), "artifact_version": str(ev_a.get("artifact_version")),
+            "accepted_ingested_seq": seq_a, "observed_ingested_seq": seq_o,
+            "tenant_id": tid_a, "binding_id": bid_a, "runtime_id": rid_a, "artifact_id": aid_a, "artifact_version": aver_a,
         }
 
     def get_trade_episode_projection(

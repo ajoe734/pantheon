@@ -60,6 +60,18 @@ def _make_http_error(url: str, code: int, body: dict | str = "") -> urllib.error
 class TestTelemetryClient(unittest.TestCase):
     def setUp(self):
         self.telemetry_url = "http://telemetry.local:8083"
+        self.tenant_id = "tenant-dev"
+        self._env_patch = mock.patch.dict("os.environ", {"PANTHEON_TENANT_ID": self.tenant_id})
+        self._env_patch.start()
+
+    def tearDown(self):
+        self._env_patch.stop()
+
+    def test_event_get_missing_tenant_fails_closed(self):
+        with mock.patch.dict("os.environ", {}, clear=True):
+            with self.assertRaises(TelemetryUnavailable) as ctx:
+                fetch_accepted_event(self.telemetry_url, "e1")
+            self.assertIn("tenant_id is required", str(ctx.exception))
 
     # --- fetch_runtime_summaries tests ---
     def test_fetch_runtime_summaries_missing_url(self):

@@ -347,6 +347,7 @@ class TestAcceptedAppendVisibilityReason(unittest.TestCase):
                 {
                     "accepted_event_id": self.accepted_event_id,
                     "observed_event_id": self.observed_event_id,
+                    "binding_id": self.binding_id,
                     "accepted_ingested_seq": 1000,
                     "observed_ingested_seq": 2000,
                 },

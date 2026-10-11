@@ -36,7 +36,7 @@
     },
     {
       "ac": "AC6",
-      "description": "Nine declared scoped artifacts total; net production lines (+103) strictly within budget (<= 120 against 420598fe); no VM provider, browser, release, or taskstore authority; 2 independent incident timeouts remain separate failures and are not suppressed.",
+      "description": "Nine declared scoped artifacts total; net production lines (+119) strictly within budget (<= 120 against 420598fe); no VM provider, browser, release, or taskstore authority; 2 independent incident timeouts remain separate failures and are not suppressed.",
       "verdict": "pass"
     }
   ],
@@ -67,7 +67,7 @@
     },
     {
       "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/pytest services/reconciliation-drift/test_telemetry_client.py",
-      "passed": 21,
+      "passed": 22,
       "failed": 0,
       "errors": 0,
       "skipped": 0,
@@ -86,7 +86,7 @@
     "docs/deployment/evidence/RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011/evidence.json"
   ],
   "diff_budget": {
-    "net_production_lines": 103,
+    "net_production_lines": 119,
     "budget": 120,
     "verdict": "pass",
     "files": {
