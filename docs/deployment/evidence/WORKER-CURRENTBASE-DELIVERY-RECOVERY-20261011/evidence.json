@@ -4,7 +4,7 @@
   "title": "修復既有Task現況base交付重綁障礙且保留舊分支與治理證據",
   "owner": "Antigravity2",
   "reviewer": "Antigravity",
-  "base_sha": "f1f6c32cab68c449dc0e7a462940de6a193d1412",
+  "base_sha": "9c15f1d9bdef2c3e9011c7a893b6c6521520f59f",
   "change_class": "corrective",
   "net_prod_line_budget": 40,
   "summary": "Repairs supervisor delivery recovery tooling obstruction for diverged historical task branches (such as TEST-REDIS-CONTAINER-LEAK-20261010 / PR #6481 with historical bad trailers d5c6cd304) by adding recover_currentbase_worktree in .orchestrator/rewrite/worker_workspace.py and supporting versioned branch adoption in prepare_worker_workspace. Strictly preserves historical branches and commits byte-identical while creating clean managed replacement branches (-vN) based on authenticated current dev base, applying only declared scoped patches, validating against base commit conflicts and branch races, and enforcing complete fail-closed validation on generation, owner, lease, repo, and base ref mismatches.",
