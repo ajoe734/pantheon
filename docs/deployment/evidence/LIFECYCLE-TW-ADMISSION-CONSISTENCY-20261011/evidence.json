@@ -1,0 +1,53 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "LIFECYCLE-TW-ADMISSION-CONSISTENCY-20261011",
+  "title": "Use existing governed Taiwan freshness admission in the natural lifecycle probe",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "change_class": "corrective",
+  "root_failure_reference": {
+    "root_id": "38167902596",
+    "original_failure_time": "2026-10-11T19:53:07Z",
+    "original_failure_code": "invalid_freshness",
+    "original_failure_message": "market input timestamps violate age <= 86400.0s",
+    "actual_snapshot_id": "mss-30acb1675bc853346f828b8d",
+    "actual_event_time": "2026-10-08T00:00:00Z",
+    "actual_observed_at": "2026-10-10T03:12:18Z",
+    "actual_calendar_version": "twse-2026-schedule-v1",
+    "actual_calendar_checksum": "69c1a9b5f8cd347faca498ea3ecbc63fc3fe7a7bbb49d1ddb2b50f4cef0c35eb",
+    "canonical_admission_result": {
+      "admitted": true,
+      "reason_code": null,
+      "detail": null
+    }
+  },
+  "changes": [
+    "In services/trade_journey/hosted_lifecycle_probe.py _validate_natural_candidate, bypassed the flat 24h refresh age gate (t_sig - t_obs <= max_age_seconds) for Taiwan symbols, preserving it strictly for non-Taiwan symbols.",
+    "In Stage 1 preliminary freshness check, deferred market_input_stale_refresh and market_input_calendar_unverifiable to Stage 2 authoritative admit_market_snapshot, allowing Taiwan weekend/holiday snapshots with valid governed calendar evidence to be admitted without contradictory caller rejections.",
+    "Preserved all existing snapshot identity, checksum, source-owner lookup, lineage, calendar authority, version, pins, future-time, ordering, tenant, case, and artifact guards intact.",
+    "Preserved production line budget: net 0 lines changed (<= 5 lines budget) in exactly one production file (services/trade_journey/hosted_lifecycle_probe.py).",
+    "Added regression tests in services/trade_journey/test_hosted_lifecycle_probe.py covering: Root 38167902596 original-time Taiwan pass after caller repair, non-Taiwan flat 24h age rejection preservation, and all negative guards (14-day stale receipt ceiling, post-new-session stale data, unverified/tampered calendar, future timestamps, snapshot checksum mismatch, snapshot id mismatch, case/tenant mismatch)."
+  ],
+  "acceptance_status": {
+    "1": "met: rebaselined actual current protected dev and consumed genuinely DONE TW-REFRESH-RECEIPT-SESSION-WINDOW-20261008; source-only worker work with no VM, SSH, deploy, capital, or provider changes.",
+    "2": "met: fixed contradictory caller boundary in hosted_lifecycle_probe _validate_natural_candidate; preserved non-Taiwan flat-age checks; production net growth is 0 lines (<= 5 lines budget) in exactly one production file.",
+    "3": "met: preserved every snapshot identity/checksum/source-owner/lineage/calendar authority/pin/signature/future-time/ordering/tenant/case/artifact guard and require_snapshot behavior.",
+    "4": "met: added meaningful regressions in test_hosted_lifecycle_probe reproducing old caller rejection vs canonical admission success for 10/8 event, 10/10 receipt, 10/11 original-time case; preserved negatives for post-new-session stale data, 14-day stale receipt, unverified/tampered calendar, future timestamps, snapshot id/checksum mismatch, case/tenant mismatch, non-Taiwan stale receipt.",
+    "5": "met: ran full hosted_lifecycle_probe tests (115 passed, 1 skipped), market_snapshot_admission tests (26 passed), and hosted_bff_readback tests (9 passed) with honest terminal exits, reusing original read-only real-Root evidence.",
+    "6": "met: clean task worktree task/LIFECYCLE-TW-ADMISSION-CONSISTENCY-20261011; preparing handoff for assigned independent reviewer Antigravity."
+  },
+  "tests": {
+    "hosted_lifecycle_probe": {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/trade_journey/test_hosted_lifecycle_probe.py",
+      "result": "115 passed, 1 skipped in 19.73s"
+    },
+    "market_snapshot_admission": {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/execution/test_market_snapshot_admission.py",
+      "result": "26 passed in 4.67s"
+    },
+    "hosted_bff_readback": {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/trade_journey/test_hosted_bff_readback.py",
+      "result": "9 passed, 1 warning in 4.52s"
+    }
+  }
+}
