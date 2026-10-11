@@ -43,7 +43,7 @@
   "verification": [
     {
       "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 .orchestrator/rewrite/test_worker_workspace.py",
-      "passed": 43,
+      "passed": 46,
       "failed": 0,
       "errors": 0,
       "skipped": 0,

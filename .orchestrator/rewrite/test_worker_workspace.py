@@ -766,6 +766,7 @@ class RecoveryCurrentbaseDeliveryTests(unittest.TestCase):
         self._git(self.repo, "init", "-b", "dev")
         self._git(self.repo, "config", "user.name", "Test")
         self._git(self.repo, "config", "user.email", "test@example.com")
+        self._git(self.repo, "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git")
 
         (self.repo / "scoped_service.py").write_text("def run():\n    return 'base'\n", encoding="utf-8")
         (self.repo / "unrelated.py").write_text("# initial dev code\n", encoding="utf-8")
@@ -852,12 +853,41 @@ class RecoveryCurrentbaseDeliveryTests(unittest.TestCase):
         self.assertEqual((self.worktree / "scoped_service.py").read_text(encoding="utf-8"), "def run():\n    return 'redis leak fixed'\n")
         self.assertEqual((self.worktree / "docs" / "evidence" / "evidence.json").read_text(encoding="utf-8"), '{"status": "verified"}\n')
 
+    def test_recovery_rejects_missing_lease_fail_closed(self) -> None:
+        ok, status, _ = worker_workspace.recover_currentbase_worktree(
+            self.repo, self.worktree,
+            task_id=self.task_id, base_sha=self.current_dev_sha,
+            declared_paths=self.declared_paths, source_branch=self.source_branch,
+            owner=self.owner, task_generation=self.task_generation,
+            lease=None,
+        )
+        self.assertFalse(ok)
+        self.assertEqual(status, "lease_required")
+        curr_b = self._git(self.worktree, "symbolic-ref", "--short", "HEAD")
+        self.assertEqual(curr_b, self.source_branch)
+
+    def test_recovery_rejects_stale_base_fail_closed(self) -> None:
+        stale_base = self.old_base
+        ok, status, _ = worker_workspace.recover_currentbase_worktree(
+            self.repo, self.worktree,
+            task_id=self.task_id, base_sha=stale_base,
+            declared_paths=self.declared_paths, source_branch=self.source_branch,
+            owner=self.owner, task_generation=self.task_generation,
+            lease=self.lease,
+        )
+        self.assertFalse(ok)
+        self.assertEqual(status, "stale_base")
+        curr_b = self._git(self.worktree, "symbolic-ref", "--short", "HEAD")
+        self.assertEqual(curr_b, self.source_branch)
+        self.assertTrue((self.repo / "other_feature.py").exists())
+
     def test_recovery_rejects_missing_or_stale_generation(self) -> None:
         ok, status, _ = worker_workspace.recover_currentbase_worktree(
             self.repo, self.worktree,
             task_id=self.task_id, base_sha=self.current_dev_sha,
             declared_paths=self.declared_paths, source_branch=self.source_branch,
             owner=self.owner, task_generation=0,
+            lease=self.lease,
         )
         self.assertFalse(ok)
         self.assertEqual(status, "invalid_task_metadata")
@@ -879,6 +909,7 @@ class RecoveryCurrentbaseDeliveryTests(unittest.TestCase):
             task_id=self.task_id, base_sha=self.current_dev_sha,
             declared_paths=self.declared_paths, source_branch=self.source_branch,
             owner="", task_generation=self.task_generation,
+            lease=self.lease,
         )
         self.assertFalse(ok)
         self.assertEqual(status, "invalid_task_metadata")
@@ -923,6 +954,7 @@ class RecoveryCurrentbaseDeliveryTests(unittest.TestCase):
             task_id=self.task_id, base_sha="0000000000000000000000000000000000000000",
             declared_paths=self.declared_paths, source_branch=self.source_branch,
             owner=self.owner, task_generation=self.task_generation,
+            lease=self.lease,
         )
         self.assertFalse(ok)
         self.assertEqual(status, "base_or_source_unresolved")
@@ -932,6 +964,7 @@ class RecoveryCurrentbaseDeliveryTests(unittest.TestCase):
             task_id=self.task_id, base_sha=self.current_dev_sha,
             declared_paths=self.declared_paths, source_branch="nonexistent-branch",
             owner=self.owner, task_generation=self.task_generation,
+            lease=self.lease,
         )
         self.assertFalse(ok)
         self.assertEqual(status, "base_or_source_unresolved")
@@ -945,6 +978,7 @@ class RecoveryCurrentbaseDeliveryTests(unittest.TestCase):
             declared_paths=self.declared_paths, source_branch=self.source_branch,
             target_branch=target_branch,
             owner=self.owner, task_generation=self.task_generation,
+            lease=self.lease,
         )
         self.assertFalse(ok)
         self.assertEqual(status, "target_branch_already_exists")
@@ -962,6 +996,7 @@ class RecoveryCurrentbaseDeliveryTests(unittest.TestCase):
             declared_paths=self.declared_paths, source_branch=self.source_branch,
             target_branch=target_branch,
             owner=self.owner, task_generation=self.task_generation,
+            lease=self.lease,
         )
         self.assertFalse(ok)
         self.assertEqual(status, "patch_conflict")
@@ -974,11 +1009,29 @@ class RecoveryCurrentbaseDeliveryTests(unittest.TestCase):
             task_id=self.task_id, base_sha=self.current_dev_sha,
             declared_paths=self.declared_paths, source_branch=self.source_branch,
             owner=self.owner, task_generation=self.task_generation,
+            lease=self.lease,
         )
         self.assertFalse(ok)
         self.assertEqual(status, "worktree_dirty_cannot_recover")
 
-    def test_recovery_retry_idempotency(self) -> None:
+    def test_recovery_rejects_provenance_publication_failure(self) -> None:
+        target_branch = f"task/{self.task_id}-v2"
+        ok, status, _ = worker_workspace.recover_currentbase_worktree(
+            self.repo, self.worktree,
+            task_id=self.task_id, base_sha=self.current_dev_sha,
+            declared_paths=self.declared_paths, source_branch=self.source_branch,
+            target_branch=target_branch,
+            owner=self.owner, task_generation=self.task_generation,
+            lease=self.lease,
+            publish_provenance=lambda _prov: False,
+        )
+        self.assertFalse(ok)
+        self.assertEqual(status, "provenance_publication_failed")
+        self.assertNotIn(f"refs/heads/{target_branch}", self._git(self.repo, "for-each-ref", "refs/heads/"))
+        curr_b = self._git(self.worktree, "symbolic-ref", "--short", "HEAD")
+        self.assertEqual(curr_b, self.source_branch)
+
+    def test_recovery_retry_idempotency_and_provenance_mismatch(self) -> None:
         target_branch = f"task/{self.task_id}-v2"
         ok1, status1, prov1 = worker_workspace.recover_currentbase_worktree(
             self.repo, self.worktree,
@@ -986,9 +1039,23 @@ class RecoveryCurrentbaseDeliveryTests(unittest.TestCase):
             declared_paths=self.declared_paths, source_branch=self.source_branch,
             target_branch=target_branch,
             owner=self.owner, task_generation=self.task_generation,
+            lease=self.lease,
         )
         self.assertTrue(ok1, status1)
         self.assertEqual(status1, "currentbase_recovered")
+
+        bad_prov = dict(prov1, owner="OtherWorker")
+        ok_bad, status_bad, _ = worker_workspace.recover_currentbase_worktree(
+            self.repo, self.worktree,
+            task_id=self.task_id, base_sha=self.current_dev_sha,
+            declared_paths=self.declared_paths, source_branch=self.source_branch,
+            target_branch=target_branch,
+            owner=self.owner, task_generation=self.task_generation,
+            lease=self.lease,
+            existing_provenance=bad_prov,
+        )
+        self.assertFalse(ok_bad)
+        self.assertEqual(status_bad, "recovery_provenance_mismatch")
 
         ok2, status2, prov2 = worker_workspace.recover_currentbase_worktree(
             self.repo, self.worktree,
@@ -996,6 +1063,8 @@ class RecoveryCurrentbaseDeliveryTests(unittest.TestCase):
             declared_paths=self.declared_paths, source_branch=self.source_branch,
             target_branch=target_branch,
             owner=self.owner, task_generation=self.task_generation,
+            lease=self.lease,
+            existing_provenance=prov1,
         )
         self.assertTrue(ok2, status2)
         self.assertEqual(status2, "already_recovered")
@@ -1003,23 +1072,31 @@ class RecoveryCurrentbaseDeliveryTests(unittest.TestCase):
 
     def test_prepare_worker_workspace_adopts_versioned_branch(self) -> None:
         config = {
-            "status_file": str(self.root / "ai-status.json"),
+            "paths": {
+                "status_file": str(self.root / "ai-status.json"),
+                "activity_log": str(self.root / "ai-activity-log.jsonl"),
+            },
             "worker_worktrees": {"path": str(self.root / "worktrees")},
+            "coordination": {"repositories": {"pantheon": {"local_path": str(self.repo), "default_branch": "dev"}}},
         }
         (self.root / "ai-status.json").write_text("{}", encoding="utf-8")
+        target_branch = f"task/{self.task_id}-v2"
+        self._git(self.worktree, "checkout", "-b", target_branch)
+        state = {"worker_worktrees": {"leases": {}}}
         request = worker_workspace.DeliveryRequest(
             agent_id="Antigravity2",
             provider="test",
             delivery_mode="auto",
             message="launch",
             task_id=self.task_id,
-            metadata={
-                "workspace_path": str(self.worktree),
-                "workspace_branch": f"task/{self.task_id}-v2",
-            },
+            metadata={"workspace_path": str(self.worktree)},
         )
-        canonical = worker_workspace.worker_task_branch(config, self.task_id)
-        self.assertTrue(worker_workspace.task_branch_matches(request.metadata["workspace_branch"], canonical))
+        ok, error = worker_workspace.prepare_worker_workspace(
+            config, state, request, queue_event_id="evt-1", target_agent="Antigravity2",
+        )
+        self.assertTrue(ok, error)
+        self.assertEqual(request.metadata["workspace_branch"], target_branch)
+        self.assertEqual(state["worker_worktrees"]["leases"][self.task_id]["branch"], target_branch)
 
 
 if __name__ == "__main__":
