@@ -237,7 +237,8 @@ def installer_case(tmp_path):
 
 
 def install(payload):
-    return subprocess.run([sys.executable, "-c", c.INSTALLER, base64.b64encode(c.encoded(payload)).decode()],
+    return subprocess.run([sys.executable, "-c", c.INSTALLER],
+                          input=base64.b64encode(c.encoded(payload)).decode(),
                           capture_output=True, text=True, preexec_fn=lambda: os.umask(0o077))
 
 
@@ -474,4 +475,83 @@ def test_drifted_manifest_without_drift_inputs_fails_existing_checks():
     partial["manifest_sha256"] = c.digest(c.encoded(partial["manifest"]))
     with pytest.raises(c.CaptureError, match="capture image revision differs from prior"):
         c.seal_result(json.dumps(partial).encode(), IDENTITY)
+
+
+def test_generated_installer_boundary_with_real_implementations_succeeds_beyond_argv_limit(tmp_path, monkeypatch):
+    source = tmp_path / "pantheon"
+    source.mkdir()
+    git(source, "init", "-q")
+    (source / "docker-compose.yml").write_text("services: {}\n")
+    prior = commit(source, "fixture prior Compose")
+    (source / "docker-compose.yml").write_text("services: {governance: {image: upgraded-owner}}\n")
+    current = commit(source, "fixture upgraded owner Compose")
+    source_before = (source / "docker-compose.yml").read_bytes()
+
+    root = tmp_path / "release-artifacts"
+    monkeypatch.setattr(c, "ARTIFACT_ROOT", root)
+    monkeypatch.setattr(c, "VM_HOME", tmp_path)
+
+    identity = {**IDENTITY, "previous_backend_sha": prior}
+    real_implementations = {name: (c.ROOT / "scripts" / name).read_bytes() for name in c.IMPLEMENTATIONS}
+
+    # Verify real implementations are large enough to exceed Linux single-argument limit (131072 bytes).
+    payload = {"root": str(root), "source": str(source), "controller_sha": identity["controller_sha"],
+               "previous_backend_sha": prior,
+               "files": {name: {"base64": base64.b64encode(raw).decode(), "sha256": c.digest(raw)}
+                         for name, raw in real_implementations.items()}}
+    b64_payload = base64.b64encode(c.encoded(payload)).decode()
+    assert len(b64_payload) > 131072
+
+    # Reproduce E2BIG exit 126 before fix when payload was passed via single argv.
+    old_script = (
+        "set -euo pipefail\n"
+        "if python3 - " + shlex.quote(b64_payload) + " 2>/dev/null <<'INSTALL_ARTIFACT_CONTROLLER'\n"
+        + c.INSTALLER + "\nINSTALL_ARTIFACT_CONTROLLER\n"
+        "then :\nelse\n  rc=$?\n  exit \"$rc\"\nfi\n"
+    )
+    old_res = subprocess.run(["bash"], input=old_script, text=True, capture_output=True)
+    assert old_res.returncode == 126
+    assert not root.exists()
+
+    # Generate actual production shell script from remote_script with stdin streaming.
+    script = c.remote_script(identity, real_implementations, environment(identity), GUARD_ID)
+
+    # Local final driver stopped at a clearly labeled fixture marker.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    shim = bin_dir / "python3"
+    shim.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = \"-c\" ]; then\n"
+        f"  exec {shlex.quote(sys.executable)} \"$@\"\n"
+        "fi\n"
+        "echo \"FIXTURE_MARKER: stopped before docker/network\"\n"
+        "exit 0\n"
+    )
+    shim.chmod(0o755)
+
+    test_env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                "PANTHEON_DEV_ARTIFACT_GUARD_CHANNEL_FD": "9"}
+    completed = subprocess.run(["bash"], input=script, text=True, capture_output=True, env=test_env)
+    assert completed.returncode == 0, completed.stderr
+    assert "FIXTURE_MARKER: stopped before docker/network" in completed.stdout
+
+    # Retained private root and immutable controller files.
+    assert root.stat().st_mode & 0o777 == 0o700
+    for name in c.IMPLEMENTATIONS:
+        dest = root / "controllers" / identity["controller_sha"] / name
+        assert dest.is_file() and not dest.is_symlink()
+        assert dest.read_bytes() == real_implementations[name]
+        assert dest.stat().st_mode & 0o777 == 0o400
+
+    # Retained separate Compose worktree at exact prior commit.
+    compose_dir = root / "compose" / prior
+    assert compose_dir.is_dir() and not compose_dir.is_symlink()
+    assert git(compose_dir, "rev-parse", "HEAD") == prior
+    assert (compose_dir / "docker-compose.yml").read_text() == "services: {}\n"
+
+    # Source HEAD and working tree bytes remain unchanged.
+    assert git(source, "rev-parse", "HEAD") == current
+    assert (source / "docker-compose.yml").read_bytes() == source_before
+
 

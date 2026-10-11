@@ -1,0 +1,106 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "DEV-ARTIFACT-INSTALL-STDIN-20261011",
+  "title": "Install retained dev artifacts without command-line payload limits",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "base_sha": "d7fd6a81a25c6e77e7e6c7126ddb87e8673d4b5d",
+  "change_class": "corrective",
+  "net_prod_line_budget": 10,
+  "summary": "Fixes dev artifact capture-before-switch installer failure on Root 38150955971 by moving the base64-encoded controller and library implementation payload from argv (which produced a 134,296-byte single argument exceeding the Linux kernel single-argument limit of 131,072 bytes and triggered execve errno 7 E2BIG with bash exit code 126) to stdin streaming via heredoc to python3 -c with base64 decoding on stdin, while preserving exact file digests, permissions, private directory checks, detached Compose baseline worktree creation, and original error redaction.",
+  "acceptance_verification": [
+    {
+      "ac": "AC1",
+      "description": "Source-only repair for newly verified latest Root38150955971 capture-before-switch install failure. Actual guard verified at15:23:00 then install exited126. Current d7 installer and both retained implementations are byte-identical to failed d069. Keep all prior source tasks genuinely DONE; no source worker VM or SSH or deployment or provider or financial-state operations",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC2",
+      "description": "Use the existing pinned remote installer and existing bounded private script transport. Move installer payload off argv to stdin or its existing private input channel with the smallest local change. Actual two implementation payload134296bytes must work beyond Linux single-argument131072 limit. Do not move it to an environment variable or truncate data or split into a new protocol or add wrappers or loosen capture/lease/receipt/hash authority",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC3",
+      "description": "Preserve exact implementation digest and bytes and private owner/mode checks and no symlinks or overwrite and separate prior Compose worktree without changing owner-mounted source. Preserve disabled checkout hooks and original genuine failure code/redaction behavior. Do not add logging of private installer or credential content",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC4",
+      "description": "Extend original capture tests to execute the actual generated installer boundary in an owned Git fixture using current real implementation bytes large enough to reproduce E2BIG before fix. Valid case retains both exact immutable files and prior config while source HEAD and bytes stay unchanged. Keep original drift/digest/symlink/root-mode/config-symlink/hook negatives. Local final driver may be stopped at a clearly labeled fixture marker; no Docker or network stand-in counted as hosted success",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC5",
+      "description": "Run full original capture module and relevant existing remote transport/watchdog plus artifact driver/fetch/restore modules with unchanged guards. Net production growth at most10 lines against starting current dev. Only capture_dev_artifact_baseline.py and its original test file and this evidence. No new platform or framework or acceptance gate or changes to artifact contract or timeouts or FULL policy",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC6",
+      "description": "Clean current-dev task worktree and truthful required trailers and assigned independent review then required CI and exact dev integration and canonical finish. Evidence must distinguish tested source from pending actual review/integration/native completion rather than prospectively declaring delivery PASS. Source repair is not provider FULL or hosted L1-L12 acceptance",
+      "verdict": "pending_delivery: local source validation and clean task worktree with required trailers verified (172 capture tests passed including E2BIG reproduction and boundary verification beyond argv limit; 65 transport tests passed; 301 driver and restore tests passed; 146 workflow tests passed); downstream independent review by assigned reviewer Antigravity, required CI checks, dev integration merge, and canonical finish remain pending delivery on task PR; source repair is not provider FULL or hosted L1-L12 acceptance"
+    }
+  ],
+  "verification": [
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest scripts/test_capture_dev_artifact_baseline.py",
+      "passed": 172,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest scripts/test_dev_remote_guarded_exec.py",
+      "passed": 65,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest scripts/test_dev_release_artifact_driver.py scripts/test_deploy_nonprod_artifact_restore.py",
+      "passed": 301,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest scripts/test_dev_release_artifacts.py scripts/test_fetch_dev_artifact_evidence.py scripts/test_dev_artifact_compensation_evidence.py scripts/test_dev_candidate_receipt.py",
+      "passed": 410,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 1,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest scripts/test_nonprod_dev_artifact_workflow.py",
+      "passed": 146,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    }
+  ],
+  "declared_artifacts": [
+    "scripts/capture_dev_artifact_baseline.py",
+    "scripts/test_capture_dev_artifact_baseline.py",
+    "docs/deployment/evidence/DEV-ARTIFACT-INSTALL-STDIN-20261011/evidence.json"
+  ],
+  "diff_budget": {
+    "net_production_lines": 0,
+    "budget": 10,
+    "verdict": "pass",
+    "files": {
+      "production": [
+        "scripts/capture_dev_artifact_baseline.py"
+      ],
+      "tests": [
+        "scripts/test_capture_dev_artifact_baseline.py"
+      ],
+      "evidence": [
+        "docs/deployment/evidence/DEV-ARTIFACT-INSTALL-STDIN-20261011/evidence.json"
+      ]
+    }
+  }
+}
