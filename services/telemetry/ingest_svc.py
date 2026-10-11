@@ -716,6 +716,7 @@ def build_postgres_event_reader(
     table: str = "telemetry_events",
 ) -> tuple[Callable[..., Any], Callable[..., list[dict[str, Any]]]]:
     """Build durable, tenant-scoped, and fetch-bounded event and binding readers querying canonical PostgreSQL."""
+    if not str(table).isidentifier(): raise ValueError(f"invalid table name: {table}")
     import asyncpg, concurrent.futures, json as _json, time
 
     async def _fetch(sql: str, *args: Any, deadline: float = 5.0) -> list[dict[str, Any]]:
@@ -756,8 +757,24 @@ def build_postgres_event_reader(
         if not (clean_bid := str(bid or "").strip()): return []
         fetch_lim, tid = min(max(1, int(limit or 50)), 100), str(tenant_id or "").strip()
         cond = " AND (payload->>'tenant_id' = $2 OR payload->'metadata'->>'tenant_id' = $2) ORDER BY created_at DESC LIMIT $3"
-        sql = f"SELECT event_id, payload, ingested_seq FROM {table} WHERE (payload->>'binding_id' = $1 OR payload->>'runtime_binding_id' = $1)" + (cond if tid else " ORDER BY created_at DESC LIMIT $2")
-        return _sync(sql, clean_bid, tid, fetch_lim) if tid else _sync(sql, clean_bid, fetch_lim)
+        conflict = " AND (payload->>'binding_id' IS NULL OR payload->>'runtime_binding_id' IS NULL OR payload->>'binding_id' = payload->>'runtime_binding_id')"
+        where = "(payload @> jsonb_build_object('binding_id', $1::text) OR payload @> jsonb_build_object('runtime_binding_id', $1::text))" + conflict
+        sql = f"SELECT event_id, payload, ingested_seq FROM {table} WHERE {where}" + (cond if tid else " ORDER BY created_at DESC LIMIT $2")
+        rows = _sync(sql, clean_bid, tid, fetch_lim) if tid else _sync(sql, clean_bid, fetch_lim)
+        out, seen = [], set()
+        for r in rows:
+            b1, b2 = r.get("binding_id"), r.get("runtime_binding_id")
+            s1, s2 = str(b1).strip() if b1 else None, str(b2).strip() if b2 else None
+            if (s1 and s2 and s1 != s2) or (s1 != clean_bid and s2 != clean_bid): continue
+            if tid:
+                t1 = str(r.get("tenant_id") or "").strip()
+                t2 = str((r.get("metadata") or {}).get("tenant_id") or "").strip() if isinstance(r.get("metadata"), dict) else ""
+                if t1 != tid and t2 != tid: continue
+            eid = r.get("event_id")
+            if eid and eid in seen: continue
+            if eid: seen.add(eid)
+            out.append(r)
+        return out
 
     return _fetch_event, _fetch_binding_events
 

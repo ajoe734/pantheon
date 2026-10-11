@@ -2017,7 +2017,7 @@ def _accepted_append_visibility_reason(
     ).strip()
     raw_identity = summary.get("last_lifecycle_identity")
     identity = raw_identity if isinstance(raw_identity, dict) else {}
-    observed_event_id = str(identity.get("event_id") or "").strip()
+    observed_event_id = identity["event_id"].strip() if isinstance(identity.get("event_id"), str) else ""
     raw_recent_event_ids = summary.get("recent_lifecycle_event_ids")
     recent_event_ids = (
         [str(value or "").strip() for value in raw_recent_event_ids]
@@ -2096,17 +2096,18 @@ def _accepted_append_visibility_reason(
     if accepted_state.get("summary_visibility_confirmed_at") and telemetry_url and accepted_event_id and observed_event_id:
         try:
             from telemetry_client import verify_durable_event_order
-            t_raws = [t for t in (tenant_id, summary.get("tenant_id") if "tenant_id" in summary else None) if t is not None]
-            t_cands = [t.strip() for t in t_raws if isinstance(t, str) and t.strip()]
-            if len(t_cands) != len(t_raws) or len(set(t_cands)) > 1: raise ValueError
-            tid = t_cands[0] if t_cands else (_current_tenant_id() or "").strip()
-            if not tid or not isinstance(binding_id, str) or not binding_id.strip(): raise ValueError
+            if "last_lifecycle_identity" in summary and not isinstance(summary["last_lifecycle_identity"], dict): raise ValueError
+            def _field(k: str) -> str:
+                raws = [s[k] for s in (summary, identity) if k in s]
+                if not raws or any(not isinstance(x, str) or isinstance(x, bool) or not x.strip() for x in raws) or len(set(x.strip() for x in raws)) > 1: raise ValueError
+                return raws[0].strip()
+            tid = _field("tenant_id")
+            if tenant_id is not None and (not isinstance(tenant_id, str) or isinstance(tenant_id, bool) or tenant_id.strip() != tid): raise ValueError
+            if not isinstance(binding_id, str) or isinstance(binding_id, bool) or not binding_id.strip(): raise ValueError
             bid = binding_id.strip()
-            b_raws = [b for b in (summary.get("binding_id"), summary.get("runtime_binding_id")) if b is not None]
-            b_cands = [b.strip() for b in b_raws if isinstance(b, str) and b.strip()]
-            if len(b_cands) != len(b_raws) or any(b != bid for b in b_cands): raise ValueError
-            rid, aid, av = summary.get("runtime_id"), summary.get("artifact_id"), summary.get("artifact_version")
-            if not all(isinstance(x, str) and x.strip() for x in (rid, aid, av)): raise ValueError
+            b_owner = [s[k] for s in (summary, identity) for k in ("binding_id", "runtime_binding_id") if k in s]
+            if not b_owner or any(not isinstance(b, str) or isinstance(b, bool) or b.strip() != bid for b in b_owner): raise ValueError
+            rid, aid, av = _field("runtime_id"), _field("artifact_id"), _field("artifact_version")
             ok, _, p = verify_durable_event_order(
                 telemetry_url, accepted_event_id=accepted_event_id, observed_event_id=observed_event_id,
                 tenant_id=tid, service_token=service_token, timeout_seconds=timeout_seconds,

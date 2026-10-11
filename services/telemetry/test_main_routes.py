@@ -1135,7 +1135,16 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
                     payload JSONB NOT NULL,
                     ingested_seq BIGSERIAL,
                     ingested_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
-                )
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_telemetry_events_ingested_seq ON telemetry_events USING btree (ingested_seq);
+                CREATE INDEX IF NOT EXISTS idx_telemetry_events_ingested_at ON telemetry_events USING btree (ingested_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_telemetry_events_event_type_ingested_seq ON telemetry_events USING btree (event_type, ingested_seq);
+                CREATE INDEX IF NOT EXISTS idx_telemetry_events_created_at ON telemetry_events USING btree (created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_telemetry_events_event_type ON telemetry_events USING btree (event_type);
+                CREATE INDEX IF NOT EXISTS idx_telemetry_events_binding_id ON telemetry_events USING btree (((payload ->> 'binding_id'::text)));
+                CREATE INDEX IF NOT EXISTS idx_telemetry_events_runtime_id ON telemetry_events USING btree (((payload ->> 'runtime_id'::text)));
+                CREATE INDEX IF NOT EXISTS idx_telemetry_events_deployment_stage ON telemetry_events USING btree (((payload ->> 'deployment_stage'::text)));
+                CREATE INDEX IF NOT EXISTS idx_telemetry_events_payload_gin ON telemetry_events USING gin (payload);
             ''')
             ev1 = {
                 "event_id": cls._E1_ID,
@@ -1714,6 +1723,128 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
         ok_exp, err_exp, _ = _main._svc.get_accepted_event_pair_order(self._E1_ID, self._E1_SECOND_ID, tenant_id=self._TENANT, expected_binding_id=123)
         self.assertFalse(ok_exp)
         self.assertEqual(err_exp, "expected_identity_mismatch")
+
+    def test_13_cold_historical_sparse_binding_indexed_read_and_negatives(self):
+        """Prove cold historical sparse-binding owner read with owned disposable PG under original deadline with full index shape.
+        Tests exact-ordered valid bothalias, top-level and metadata tenant cases, and missing/foreign/dualalias-conflict negatives."""
+        import asyncpg, datetime, json, time, types
+        fetch_ev, fetch_b = build_postgres_event_reader(self.dsn, table="telemetry_events")
+        hist_bid = "rb-52d16f8d2ace4104868caf3f3fc4c898"
+        base_hist = datetime.datetime.fromisoformat("2026-06-01T00:00:00+00:00")
+
+        async def _seed_sparse():
+            conn = await asyncpg.connect(self.dsn)
+            try:
+                ev_sparse1 = {
+                    "event_id": "evt-hist-sparse-001", "event_type": "heartbeat",
+                    "created_at": base_hist.isoformat(),
+                    "tenant_id": self._TENANT, "binding_id": hist_bid,
+                    "runtime_id": "rt-75d06572", "artifact_id": "artifact-persona-paper-272cfd5e65f5f4d2f9e2", "artifact_version": "1.0.0",
+                }
+                ev_sparse2 = {
+                    "event_id": "evt-hist-sparse-002", "event_type": "heartbeat",
+                    "created_at": (base_hist + datetime.timedelta(seconds=60)).isoformat(),
+                    "runtime_binding_id": hist_bid, "metadata": {"tenant_id": self._TENANT},
+                    "runtime_id": "rt-75d06572", "artifact_id": "artifact-persona-paper-272cfd5e65f5f4d2f9e2", "artifact_version": "1.0.0",
+                }
+                ev_sparse3 = {
+                    "event_id": "evt-hist-sparse-003", "event_type": "heartbeat",
+                    "created_at": (base_hist + datetime.timedelta(seconds=120)).isoformat(),
+                    "tenant_id": self._TENANT, "binding_id": hist_bid, "runtime_binding_id": hist_bid,
+                    "runtime_id": "rt-75d06572", "artifact_id": "artifact-persona-paper-272cfd5e65f5f4d2f9e2", "artifact_version": "1.0.0",
+                }
+                ev_conflict = {
+                    "event_id": "evt-hist-conflict-004", "event_type": "heartbeat",
+                    "created_at": (base_hist + datetime.timedelta(seconds=180)).isoformat(),
+                    "tenant_id": self._TENANT, "binding_id": hist_bid, "runtime_binding_id": "rb-foreign-conflict",
+                    "runtime_id": "rt-75d06572", "artifact_id": "artifact-persona-paper-272cfd5e65f5f4d2f9e2", "artifact_version": "1.0.0",
+                }
+                ev_foreign = {
+                    "event_id": "evt-hist-foreign-005", "event_type": "heartbeat",
+                    "created_at": (base_hist + datetime.timedelta(seconds=240)).isoformat(),
+                    "tenant_id": self._FOREIGN_TENANT, "binding_id": hist_bid,
+                    "runtime_id": "rt-75d06572", "artifact_id": "artifact-persona-paper-272cfd5e65f5f4d2f9e2", "artifact_version": "1.0.0",
+                }
+                rows = [
+                    (e["event_id"], e["event_type"], datetime.datetime.fromisoformat(e["created_at"]), json.dumps(e))
+                    for e in [ev_sparse1, ev_sparse2, ev_sparse3, ev_conflict, ev_foreign]
+                ]
+                now = datetime.datetime.fromisoformat("2026-10-11T00:00:00+00:00")
+                for i in range(1200):
+                    e_noise = {
+                        "event_id": f"evt-noise-{i}", "event_type": "heartbeat",
+                        "created_at": (now + datetime.timedelta(seconds=i*5)).isoformat(),
+                        "tenant_id": self._TENANT, "binding_id": f"rb-noise-{i%50}",
+                    }
+                    rows.append((e_noise["event_id"], e_noise["event_type"], datetime.datetime.fromisoformat(e_noise["created_at"]), json.dumps(e_noise)))
+                await conn.executemany(
+                    "INSERT INTO telemetry_events (event_id, event_type, created_at, payload) VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT (event_id) DO NOTHING",
+                    rows
+                )
+                await conn.execute("ANALYZE telemetry_events;")
+            finally:
+                await conn.close()
+
+        asyncio.run(_seed_sparse())
+
+        # 1. Cold historical owner read within original deadline (< 2s << 5s)
+        t0 = time.monotonic()
+        events = fetch_b(hist_bid, tenant_id=self._TENANT, limit=50)
+        elapsed = time.monotonic() - t0
+        self.assertLess(elapsed, 2.0, f"cold historical sparse read took too long: {elapsed}s")
+
+        # 2. Strict ordering and exact results: latest 3 valid events (ev3, ev2, ev1), no duplicates for bothalias ev3
+        self.assertEqual(len(events), 3)
+        self.assertEqual([e["event_id"] for e in events], ["evt-hist-sparse-003", "evt-hist-sparse-002", "evt-hist-sparse-001"])
+        self.assertNotIn("evt-hist-conflict-004", [e["event_id"] for e in events])
+        self.assertNotIn("evt-hist-foreign-005", [e["event_id"] for e in events])
+
+        # 3. Limit behavior
+        events_lim = fetch_b(hist_bid, tenant_id=self._TENANT, limit=2)
+        self.assertEqual(len(events_lim), 2)
+        self.assertEqual([e["event_id"] for e in events_lim], ["evt-hist-sparse-003", "evt-hist-sparse-002"])
+
+        # 4. HTTP route binding projection with adapter metadata envelope
+        class SparseBindingAdapter:
+            def get_binding(self, bid: str):
+                if bid == hist_bid:
+                    return types.SimpleNamespace(
+                        binding_id=bid,
+                        runtime_id="rt-75d06572",
+                        artifact_id="artifact-persona-paper-272cfd5e65f5f4d2f9e2",
+                        artifact_version="1.0.0",
+                        status="paused",
+                        metadata={"tenant_id": TestTelemetryDurableLineageReadRestart._TENANT},
+                    )
+                return None
+
+        _main._lineage_svc = LineageReadService(
+            event_reader=fetch_ev,
+            binding_events_reader=fetch_b,
+            binding_store=SparseBindingAdapter(),
+        )
+        headers = self._auth_headers()
+        r_proj = self.client.get(f"/api/telemetry/lineage/runtime-bindings/{hist_bid}/projection", headers=headers)
+        self.assertEqual(r_proj.status_code, 200)
+        proj = r_proj.get_json()
+        self.assertEqual(proj["target_id"], hist_bid)
+        self.assertEqual(proj["binding_status"], "paused")
+        downstream = [node["id"] for node in proj.get("downstream_chain", []) if node.get("type") == "telemetry_event"]
+        self.assertEqual(set(downstream), {"evt-hist-sparse-003", "evt-hist-sparse-002", "evt-hist-sparse-001"})
+        self.assertEqual(len(downstream), 3)
+        self.assertNotIn("evt-hist-conflict-004", downstream)
+        self.assertNotIn("evt-hist-foreign-005", downstream)
+
+        # 5. Missing / foreign / dualalias conflict negatives fail closed
+        r_missing = self.client.get("/api/telemetry/lineage/runtime-bindings/rb-nonexistent/projection", headers=headers)
+        self.assertEqual(r_missing.status_code, 404)
+
+        headers_foreign = self._auth_headers(tenant=self._FOREIGN_TENANT)
+        r_foreign = self.client.get(f"/api/telemetry/lineage/runtime-bindings/{hist_bid}/projection", headers=headers_foreign)
+        self.assertEqual(r_foreign.status_code, 404)
+
+        conflict_events = fetch_b("rb-foreign-conflict", tenant_id=self._TENANT)
+        self.assertEqual(conflict_events, [])
 
 
 if __name__ == "__main__":

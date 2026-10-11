@@ -1,0 +1,118 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "RECON-CURRENT-OWNER-ANCHORS-FAILCLOSED-20261011",
+  "title": "現況Owner anchors缺失不得借用既有收據或環境Tenant",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "base_sha": "f1f6c32cab68c449dc0e7a462940de6a193d1412",
+  "cumulative_base_sha": "420598fe643be541ca28419a1abe4b03acb2dd73",
+  "change_class": "corrective",
+  "net_prod_line_budget": 2,
+  "cumulative_net_prod_line_budget": 120,
+  "summary": "Enforces strict fail-closed validation for current-owner anchors before calling durable event order reader. Rejects missing, null, falsy (0, False, blank), wrong-type, and conflicting current tenant anchors without falling back to ambient _current_tenant_id() or caller-provided scope. Requires at least one declared current binding alias (binding_id or runtime_binding_id) consistent with expected binding. Valid current runtime_binding_id alias-only is supported. Genuinely explicit current last_lifecycle_identity fields qualify if typed and consistent with other declared current fields. Rejects numeric coercion of observed event ID. Preserves original single paired PG query and DB-owned order within strict production net <= 2 line budget over f1f6c32 base (cumulative <= 120 against 420598fe).",
+  "acceptance_verification": [
+    {
+      "ac": "AC1",
+      "description": "Referenced successor of terminal RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011 PR6495 exacthead e8411fbe59f1199028684aa7efe6e49f2f5868dc merge f1f6c32cab68c449dc0e7a462940de6a193d1412. Preserve genuine DONE and 185 ORIGINALPASS and corrected one bounded scoped batch. Source DONE is not hosted acceptance.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC2",
+      "description": "Complete original helper and ORIGINAL TestAcceptedAppendVisibilityReason.setUp reproduce missing/null currenttenant without explicit scope and missing BOTH currentbindingaliases returningNone after environment/caller fallback. Require genuinely typed current-owner tenant/binding/runtime/artifact/event anchors before reader call. No old receipt or configured environment substitute for missing current owner fields. Reject malformed explicitly declared current fields and conflicts. Valid current runtime_binding_id alias-only supported. Genuinely explicit CURRENT last_lifecycle_identity fields may qualify only if typed and consistent with other declared CURRENT fields; do not manufacture fixture/readback fields or use prior accepted evaluation.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC3",
+      "description": "Only three declared files. Production net<=2 over fresh delivered f1f6c32 base AND cumulative predecessor plus successor<=120 against 420598fe643be541ca28419a1abe4b03acb2dd73; predecessor 118. No unrelated refactor or new gates. No overlap with indexed-reader task writer paths.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC4",
+      "description": "Preserve original single paired PG query and DB-owned order and original 5s reader/closure and zero unscoped legacyfallback. Reject current observed eventID numeric coercion. No inferred tenant or producer integer/timestamp/crossaggregate sequence/cache/order fallback or replay/reset/history enlargement/deadline extension.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC5",
+      "description": "Run ORIGINAL reconciliation HTTP/client modules and relevant original 50 telemetryroute/write plus 93 incident regressions on exact frozen head. Original validtyped control recovers; missing/null/blank/0/False/wrongtype/conflicting CURRENT anchors and absent current bindingaliases must defer without ownerGET. Source-only mocked diagnostic is not positive hosted PG/provider/browser/human proof. Destructive QA only labelled loopback-owned PG with finally teardown0 and absence verified.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC6",
+      "description": "Genuine original assigned source and reviewer roles plus exact-head CI and currentdev canonical integration/finalizer. No worker VM/provider/release/control/capital/humanvote authority. Parent gen16/sixAC/three artifacts and sole coordinator unchanged. No whole acceptance claim.",
+      "verdict": "pass"
+    }
+  ],
+  "verification": [
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m unittest services/reconciliation-drift/test_reconciliation_drift_http_service.py",
+      "passed": 24,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m unittest services/reconciliation-drift/test_telemetry_client.py",
+      "passed": 23,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "PYTHONPATH=.:services/control-plane/bff /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m unittest services/telemetry/test_main_routes.py",
+      "passed": 43,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "PYTHONPATH=.:services/control-plane/bff /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m unittest services/telemetry/test_lineage_write_path.py",
+      "passed": 7,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m unittest services/incident/test_incident.py services/incident/test_reference_validation.py",
+      "passed": 93,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "python3 /tmp/pantheon-closeout-continue-20261011T0328Z/recon-current-anchor-original-absence-check.py /tmp/pantheon-worker-worktrees/pantheon/recon-current-owner-anchors-failclosed-20261011",
+      "passed": 4,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    }
+  ],
+  "declared_artifacts": [
+    "services/reconciliation-drift/main.py",
+    "services/reconciliation-drift/test_reconciliation_drift_http_service.py",
+    "docs/deployment/evidence/RECON-CURRENT-OWNER-ANCHORS-FAILCLOSED-20261011/evidence.json"
+  ],
+  "diff_budget": {
+    "net_production_lines": 1,
+    "budget": 2,
+    "cumulative_net_production_lines": 119,
+    "cumulative_budget": 120,
+    "verdict": "pass",
+    "files": {
+      "production": [
+        "services/reconciliation-drift/main.py"
+      ],
+      "tests": [
+        "services/reconciliation-drift/test_reconciliation_drift_http_service.py"
+      ],
+      "evidence": [
+        "docs/deployment/evidence/RECON-CURRENT-OWNER-ANCHORS-FAILCLOSED-20261011/evidence.json"
+      ]
+    }
+  }
+}

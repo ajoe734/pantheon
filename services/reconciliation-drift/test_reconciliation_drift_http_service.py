@@ -583,6 +583,115 @@ class TestAcceptedAppendVisibilityReason(unittest.TestCase):
             self.assertEqual(reason, "accepted_lifecycle_append_not_visible")
             mock_verify.assert_not_called()
 
+    def test_missing_or_null_current_tenant_without_explicit_scope_fails_closed(self) -> None:
+        for missing_tenant_summary in (
+            {k: v for k, v in self.summary_evicted.items() if k != "tenant_id"},
+            dict(self.summary_evicted, tenant_id=None),
+        ):
+            with mock.patch("telemetry_client.verify_durable_event_order") as mock_verify:
+                reason, _ = _accepted_append_visibility_reason(
+                    summary=missing_tenant_summary,
+                    binding_id=self.binding_id,
+                    timestamp=self.timestamp,
+                    evaluations=[self.accepted_evaluation],
+                    telemetry_url=self.telemetry_url,
+                    tenant_id=None,
+                )
+                self.assertEqual(reason, "accepted_lifecycle_append_not_visible")
+                mock_verify.assert_not_called()
+
+    def test_missing_both_current_binding_aliases_fails_closed(self) -> None:
+        no_binding_summary = {k: v for k, v in self.summary_evicted.items() if k not in ("binding_id", "runtime_binding_id")}
+        with mock.patch("telemetry_client.verify_durable_event_order") as mock_verify:
+            reason, _ = _accepted_append_visibility_reason(
+                summary=no_binding_summary,
+                binding_id=self.binding_id,
+                timestamp=self.timestamp,
+                evaluations=[self.accepted_evaluation],
+                telemetry_url=self.telemetry_url,
+            )
+            self.assertEqual(reason, "accepted_lifecycle_append_not_visible")
+            mock_verify.assert_not_called()
+
+    def test_runtime_binding_id_alias_only_supported(self) -> None:
+        alias_summary = {k: v for k, v in self.summary_evicted.items() if k != "binding_id"}
+        alias_summary["runtime_binding_id"] = self.binding_id
+        with mock.patch("telemetry_client.verify_durable_event_order") as mock_verify:
+            mock_verify.return_value = (
+                True,
+                None,
+                {
+                    "accepted_event_id": self.accepted_event_id,
+                    "observed_event_id": self.observed_event_id,
+                    "binding_id": self.binding_id,
+                },
+            )
+            reason, _ = _accepted_append_visibility_reason(
+                summary=alias_summary,
+                binding_id=self.binding_id,
+                timestamp=self.timestamp,
+                evaluations=[self.accepted_evaluation],
+                telemetry_url=self.telemetry_url,
+            )
+            self.assertIsNone(reason)
+            mock_verify.assert_called_once()
+
+    def test_explicit_last_lifecycle_identity_fields_qualify_and_enforce_consistency(self) -> None:
+        summary_no_top_tenant = {k: v for k, v in self.summary_evicted.items() if k != "tenant_id"}
+        summary_no_top_tenant["last_lifecycle_identity"] = dict(
+            summary_no_top_tenant["last_lifecycle_identity"],
+            tenant_id=self.tenant_id,
+        )
+        with mock.patch("telemetry_client.verify_durable_event_order") as mock_verify:
+            mock_verify.return_value = (
+                True,
+                None,
+                {
+                    "accepted_event_id": self.accepted_event_id,
+                    "observed_event_id": self.observed_event_id,
+                    "binding_id": self.binding_id,
+                },
+            )
+            reason, _ = _accepted_append_visibility_reason(
+                summary=summary_no_top_tenant,
+                binding_id=self.binding_id,
+                timestamp=self.timestamp,
+                evaluations=[self.accepted_evaluation],
+                telemetry_url=self.telemetry_url,
+            )
+            self.assertIsNone(reason)
+            mock_verify.assert_called_once()
+
+        conflicting_summary = dict(self.summary_evicted)
+        conflicting_summary["last_lifecycle_identity"] = dict(
+            conflicting_summary["last_lifecycle_identity"],
+            tenant_id="conflicting-tenant",
+        )
+        with mock.patch("telemetry_client.verify_durable_event_order") as mock_verify:
+            reason, _ = _accepted_append_visibility_reason(
+                summary=conflicting_summary,
+                binding_id=self.binding_id,
+                timestamp=self.timestamp,
+                evaluations=[self.accepted_evaluation],
+                telemetry_url=self.telemetry_url,
+            )
+            self.assertEqual(reason, "accepted_lifecycle_append_not_visible")
+            mock_verify.assert_not_called()
+
+    def test_numeric_observed_event_id_not_coerced(self) -> None:
+        bad_sum = dict(self.summary_evicted)
+        bad_sum["last_lifecycle_identity"] = dict(bad_sum["last_lifecycle_identity"], event_id=123)
+        with mock.patch("telemetry_client.verify_durable_event_order") as mock_verify:
+            reason, _ = _accepted_append_visibility_reason(
+                summary=bad_sum,
+                binding_id=self.binding_id,
+                timestamp=self.timestamp,
+                evaluations=[self.accepted_evaluation],
+                telemetry_url=self.telemetry_url,
+            )
+            self.assertEqual(reason, "accepted_lifecycle_append_not_visible")
+            mock_verify.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
