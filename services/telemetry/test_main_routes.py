@@ -1031,6 +1031,7 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
     """
 
     _E1_ID = "d39cabae-3276-4af1-a017-f4c171161ad4"
+    _E1_SECOND_ID = "d39cabae-3276-4af1-a017-f4c171161ad5"
     _E1_BINDING = "rb-d16978f8faaa402090d9f8d3fb04936d"
     _E2_ID = "69fff59d-83c9-4cf6-b4a7-9deb5d0a5236"
     _E2_BINDING = "rb-63be17dc01eb40b48b3302e218079b70"
@@ -1175,7 +1176,22 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
                 "binding_id": cls._E_UNVERIFIED_BINDING,
                 "runtime_id": "rt-unverified",
             }
-            for ev in [ev1, ev2, ev3_unverified]:
+            ev1_second = {
+                "event_id": cls._E1_SECOND_ID,
+                "event_type": "heartbeat",
+                "created_at": "2026-10-10T14:00:00Z",
+                "tenant_id": cls._TENANT,
+                "binding_id": cls._E1_BINDING,
+                "runtime_id": "rt-3739472a",
+                "artifact_id": "artifact-persona-paper-0a906806ac32538fc7df",
+                "artifact_version": "1.0.0",
+                "capital_pool_id": "pool-persona-paper-0a906806ac32538fc7df",
+                "plan_id": "plan-persona-paper-0a906806ac32538fc7df",
+                "persona_capital_binding_id": "pcb-persona-paper-0a906806ac32538fc7df",
+                "deployment_mode": "paper",
+                "binding_status": "active",
+            }
+            for ev in [ev1, ev2, ev3_unverified, ev1_second]:
                 dt = datetime.datetime.fromisoformat(ev["created_at"].replace("Z", "+00:00"))
                 await conn.execute(f'''
                     INSERT INTO telemetry_events (event_id, event_type, created_at, payload)
@@ -1558,6 +1574,146 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
         direct_proj = _main._lineage_svc.query("runtime_binding_projection", binding_id=self._E2_BINDING, tenant_id=self._TENANT)
         self.assertEqual(direct_proj.get("binding_status"), "paused")
         self.assertEqual(direct_proj.get("conflict_markers"), [])
+
+    def test_12_durable_event_pair_order_verification_and_negatives(self):
+        """Owner durable order proof: strictly ordered accepted before observed succeeds; out-of-order, equal, missing, foreign, and unavailable fail closed."""
+        fetch_ev, _ = build_postgres_event_reader(self.dsn, table="telemetry_events")
+        _main._svc = TelemetryIngestService(event_reader=fetch_ev)
+        headers = self._auth_headers()
+
+        # 1. Strictly ordered accepted before observed succeeds with 200 and pair details
+        r_ok = self.client.get(f"/api/telemetry/events/{self._E1_ID}?observed_event_id={self._E1_SECOND_ID}", headers=headers)
+        self.assertEqual(r_ok.status_code, 200)
+        data = r_ok.get_json()
+        self.assertEqual(data["status"], "verified")
+        pair = data["pair"]
+        self.assertEqual(pair["accepted_event_id"], self._E1_ID)
+        self.assertEqual(pair["observed_event_id"], self._E1_SECOND_ID)
+        self.assertLess(pair["accepted_ingested_seq"], pair["observed_ingested_seq"])
+        self.assertEqual(pair["binding_id"], self._E1_BINDING)
+        self.assertEqual(pair["runtime_id"], "rt-3739472a")
+
+        # 2. Out of order (observed before accepted) fails with 409
+        r_rev = self.client.get(f"/api/telemetry/events/{self._E1_SECOND_ID}?observed_event_id={self._E1_ID}", headers=headers)
+        self.assertEqual(r_rev.status_code, 409)
+        self.assertEqual(r_rev.get_json()["error"]["reason"], "out_of_order_ingested_seq")
+
+        # 3. Equal event IDs fails with 409
+        r_eq = self.client.get(f"/api/telemetry/events/{self._E1_ID}?observed_event_id={self._E1_ID}", headers=headers)
+        self.assertEqual(r_eq.status_code, 409)
+        self.assertEqual(r_eq.get_json()["error"]["reason"], "equal_event_id")
+
+        # 4. Foreign tenant fails closed with 404
+        r_foreign = self.client.get(f"/api/telemetry/events/{self._E1_ID}?observed_event_id={self._E1_SECOND_ID}", headers=self._auth_headers(tenant=self._FOREIGN_TENANT))
+        self.assertEqual(r_foreign.status_code, 404)
+
+        # 5. Missing event fails closed with 404
+        r_missing = self.client.get(f"/api/telemetry/events/{self._E1_ID}?observed_event_id=nonexistent-event-id", headers=headers)
+        self.assertEqual(r_missing.status_code, 404)
+        self.assertEqual(r_missing.get_json()["error"]["reason"], "event_not_found")
+
+        # 6. Mismatched binding / runtime fails with 409
+        r_mismatch = self.client.get(f"/api/telemetry/events/{self._E1_ID}?observed_event_id={self._E2_ID}", headers=headers)
+        self.assertEqual(r_mismatch.status_code, 409)
+        self.assertEqual(r_mismatch.get_json()["error"]["reason"], "binding_mismatch")
+
+        # 7. Expected identity match succeeds; mismatch fails closed with 409
+        r_exp = self.client.get(f"/api/telemetry/events/{self._E1_ID}?observed_event_id={self._E1_SECOND_ID}&binding_id={self._E1_BINDING}&runtime_id=rt-3739472a", headers=headers)
+        self.assertEqual(r_exp.status_code, 200)
+        r_bad_b = self.client.get(f"/api/telemetry/events/{self._E1_ID}?observed_event_id={self._E1_SECOND_ID}&binding_id=rb-wrong", headers=headers)
+        self.assertEqual(r_bad_b.status_code, 409)
+        self.assertEqual(r_bad_b.get_json()["error"]["reason"], "expected_identity_mismatch")
+
+        # 8. Unavailable Postgres fails with 503
+        bad_ev, _ = build_postgres_event_reader("postgresql://postgres:pw@127.0.0.1:59999/postgres")
+        _main._svc = TelemetryIngestService(event_reader=bad_ev)
+        r_unavail = self.client.get(f"/api/telemetry/events/{self._E1_ID}?observed_event_id={self._E1_SECOND_ID}", headers=headers)
+        self.assertEqual(r_unavail.status_code, 503)
+        self.assertEqual(r_unavail.get_json()["error"]["code"], "SERVICE_UNAVAILABLE")
+
+        # 9. No event reader configured fails with 503
+        _main._svc = TelemetryIngestService()
+        r_no_db = self.client.get(f"/api/telemetry/events/{self._E1_ID}?observed_event_id={self._E1_SECOND_ID}", headers=headers)
+        self.assertEqual(r_no_db.status_code, 503)
+
+        # 10. Single bounded DB roundtrip reads both events
+        pair_dict = fetch_ev([self._E1_ID, self._E1_SECOND_ID], tenant_id=self._TENANT)
+        self.assertEqual(len(pair_dict), 2)
+        self.assertIn(self._E1_ID, pair_dict)
+        self.assertIn(self._E1_SECOND_ID, pair_dict)
+
+        # 11. Real PG test for forged payload-order: injected payload sequence is ignored, true immutable PG sequence enforced
+        import asyncpg, json
+        async def _insert_forged():
+            conn = await asyncpg.connect(self.dsn)
+            try:
+                forged_ev = {
+                    "event_id": "evt-forged-seq-001",
+                    "event_type": "heartbeat",
+                    "created_at": "2026-10-10T15:00:00Z",
+                    "tenant_id": self._TENANT,
+                    "binding_id": self._E1_BINDING,
+                    "runtime_id": "rt-3739472a",
+                    "artifact_id": "artifact-persona-paper-0a906806ac32538fc7df",
+                    "artifact_version": "1.0.0",
+                    "ingested_seq": 1,
+                }
+                await conn.execute(f"""
+                    INSERT INTO telemetry_events (event_id, event_type, created_at, payload)
+                    VALUES ('{forged_ev["event_id"]}', '{forged_ev["event_type"]}', '2026-10-10T15:00:00+00:00', '{json.dumps(forged_ev)}')
+                    ON CONFLICT (event_id) DO UPDATE SET payload = EXCLUDED.payload
+                """)
+            finally:
+                await conn.close()
+        asyncio.run(_insert_forged())
+
+        _main._svc = TelemetryIngestService(event_reader=fetch_ev)
+        r_forged = self.client.get(f"/api/telemetry/events/{self._E1_ID}?observed_event_id=evt-forged-seq-001", headers=headers)
+        self.assertEqual(r_forged.status_code, 200)
+        self.assertGreater(r_forged.get_json()["pair"]["observed_ingested_seq"], 1)
+
+        r_forged_rev = self.client.get(f"/api/telemetry/events/evt-forged-seq-001?observed_event_id={self._E1_ID}", headers=headers)
+        self.assertEqual(r_forged_rev.status_code, 409)
+        self.assertEqual(r_forged_rev.get_json()["error"]["reason"], "out_of_order_ingested_seq")
+
+        # 12. Typed tenant validation: non-string tenant or query param mismatch fails closed
+        r_bad_q_tid = self.client.get(f"/api/telemetry/events/{self._E1_ID}?observed_event_id={self._E1_SECOND_ID}&tenant_id=foreign-tenant", headers=headers)
+        self.assertEqual(r_bad_q_tid.status_code, 404)
+
+        ok_num, err_num, _ = _main._svc.get_accepted_event_pair_order(self._E1_ID, self._E1_SECOND_ID, tenant_id=123)
+        self.assertFalse(ok_num)
+        self.assertEqual(err_num, "tenant_mismatch")
+
+        # 13. Unsupported batch returning non-dict fails closed with 503
+        nondict_reader = lambda eids, tenant_id=None: [fetch_ev(self._E1_ID), fetch_ev(self._E1_SECOND_ID)]
+        _main._svc = TelemetryIngestService(event_reader=nondict_reader)
+        r_nondict = self.client.get(f"/api/telemetry/events/{self._E1_ID}?observed_event_id={self._E1_SECOND_ID}", headers=headers)
+        self.assertEqual(r_nondict.status_code, 503)
+        self.assertEqual(r_nondict.get_json()["error"]["code"], "SERVICE_UNAVAILABLE")
+
+        # 14. TypeError legacy slow reader fails closed with 503 without two reads or authscope drop
+        legacy_calls = []
+        def legacy_slow_reader(*args, **kwargs):
+            legacy_calls.append((args, kwargs))
+            if len(args) > 1 or isinstance(args[0], (list, tuple)) or "tenant_id" in kwargs:
+                raise TypeError("reader() does not support batch or tenant_id")
+            return fetch_ev(args[0])
+
+        _main._svc = TelemetryIngestService(event_reader=legacy_slow_reader)
+        r_legacy = self.client.get(f"/api/telemetry/events/{self._E1_ID}?observed_event_id={self._E1_SECOND_ID}", headers=headers)
+        self.assertEqual(r_legacy.status_code, 503)
+        self.assertEqual(r_legacy.get_json()["error"]["code"], "SERVICE_UNAVAILABLE")
+        self.assertEqual(len(legacy_calls), 1)
+
+        # 15. Malformed non-string event_id and expected anchors reject without coercion
+        _main._svc = TelemetryIngestService(event_reader=fetch_ev)
+        ok_eid, err_eid, _ = _main._svc.get_accepted_event_pair_order(123, self._E1_SECOND_ID, tenant_id=self._TENANT)
+        self.assertFalse(ok_eid)
+        self.assertEqual(err_eid, "missing_event_id")
+
+        ok_exp, err_exp, _ = _main._svc.get_accepted_event_pair_order(self._E1_ID, self._E1_SECOND_ID, tenant_id=self._TENANT, expected_binding_id=123)
+        self.assertFalse(ok_exp)
+        self.assertEqual(err_exp, "expected_identity_mismatch")
 
 
 if __name__ == "__main__":

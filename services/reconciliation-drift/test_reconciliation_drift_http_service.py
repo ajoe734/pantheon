@@ -59,6 +59,7 @@ def _load_main_module():
 _main = _load_main_module()
 _scheduled_drift_report = _main._scheduled_drift_report
 _summary_telemetry_event_ids = _main._summary_telemetry_event_ids
+_accepted_append_visibility_reason = _main._accepted_append_visibility_reason
 
 
 class TestScheduledDriftReportCausalLineage(unittest.TestCase):
@@ -295,6 +296,292 @@ class TestScheduledDriftReportCausalLineage(unittest.TestCase):
             timestamp="2026-10-10T10:00:00Z",
         )
         self.assertIsNone(report)
+
+
+class TestAcceptedAppendVisibilityReason(unittest.TestCase):
+    def setUp(self) -> None:
+        self.binding_id = "rb-test-001"
+        self.runtime_id = "rt-test-001"
+        self.artifact_id = "art-test-001"
+        self.artifact_version = "1.0.0"
+        self.tenant_id = "tenant-test"
+        self.accepted_event_id = "evt-accepted-001"
+        self.observed_event_id = "evt-observed-002"
+        self.telemetry_url = "http://telemetry.local:8083"
+        self.timestamp = "2026-10-11T12:00:00Z"
+
+        self.accepted_evaluation = {
+            "evaluation_id": "eval-accepted-001",
+            "binding_id": self.binding_id,
+            "runtime_id": self.runtime_id,
+            "artifact_id": self.artifact_id,
+            "artifact_version": self.artifact_version,
+            "tenant_id": self.tenant_id,
+            "evaluated_at": "2026-10-08T10:00:00Z",
+            "lifecycle_append": {
+                "status": "accepted",
+                "event_id": self.accepted_event_id,
+                "accepted_at": "2026-10-08T10:00:00Z",
+                "summary_visibility_confirmed_at": "2026-10-08T10:01:00Z",
+                "event": {
+                    "event_id": self.accepted_event_id,
+                    "aggregate_type": "journey",
+                    "aggregate_id": "j-old",
+                    "sequence_no": 5,
+                },
+            },
+        }
+
+        # Bounded 512 window with older accepted_event_id evicted
+        self.evicted_recent_ids = [f"evt-window-{i:03d}" for i in range(512)]
+        self.evicted_recent_ids[-1] = self.observed_event_id
+
+        self.summary_evicted = {
+            "binding_id": self.binding_id,
+            "runtime_id": self.runtime_id,
+            "artifact_id": self.artifact_id,
+            "artifact_version": self.artifact_version,
+            "tenant_id": self.tenant_id,
+            "last_lifecycle_identity": {
+                "event_id": self.observed_event_id,
+                "aggregate_type": "journey",
+                "aggregate_id": "j-new",
+                "sequence_no": 1,
+            },
+            "recent_lifecycle_event_ids": self.evicted_recent_ids,
+        }
+
+    def test_evicted_but_confirmed_accepted_append_recovers_visibility_via_durable_order(self) -> None:
+        with mock.patch("telemetry_client.verify_durable_event_order") as mock_verify:
+            mock_verify.return_value = (
+                True,
+                None,
+                {
+                    "accepted_event_id": self.accepted_event_id,
+                    "observed_event_id": self.observed_event_id,
+                    "binding_id": self.binding_id,
+                    "accepted_ingested_seq": 1000,
+                    "observed_ingested_seq": 2000,
+                },
+            )
+            reason, visibility = _accepted_append_visibility_reason(
+                summary=self.summary_evicted,
+                binding_id=self.binding_id,
+                timestamp=self.timestamp,
+                evaluations=[self.accepted_evaluation],
+                telemetry_url=self.telemetry_url,
+            )
+            self.assertIsNone(reason)
+            self.assertEqual(visibility["waiting_for_event_id"], self.accepted_event_id)
+            self.assertEqual(visibility["observed_event_id"], self.observed_event_id)
+            mock_verify.assert_called_once_with(
+                self.telemetry_url,
+                accepted_event_id=self.accepted_event_id,
+                observed_event_id=self.observed_event_id,
+                tenant_id=self.tenant_id,
+                service_token=None,
+                timeout_seconds=5.0,
+                expected_binding_id=self.binding_id,
+                expected_runtime_id=self.runtime_id,
+                expected_artifact_id=self.artifact_id,
+                expected_artifact_version=self.artifact_version,
+            )
+
+    def test_evicted_missing_current_identity_fails_closed_without_calling_durable_order(self) -> None:
+        for missing_key in ("runtime_id", "artifact_id", "artifact_version"):
+            bad_summary = dict(self.summary_evicted)
+            bad_summary[missing_key] = ""
+            with mock.patch("telemetry_client.verify_durable_event_order") as mock_verify:
+                reason, _ = _accepted_append_visibility_reason(
+                    summary=bad_summary,
+                    binding_id=self.binding_id,
+                    timestamp=self.timestamp,
+                    evaluations=[self.accepted_evaluation],
+                    telemetry_url=self.telemetry_url,
+                )
+                self.assertEqual(reason, "accepted_lifecycle_append_not_visible")
+                mock_verify.assert_not_called()
+
+        mismatched_summary = dict(self.summary_evicted)
+        mismatched_summary["binding_id"] = "different-binding"
+        with mock.patch("telemetry_client.verify_durable_event_order") as mock_verify:
+            reason, _ = _accepted_append_visibility_reason(
+                summary=mismatched_summary,
+                binding_id=self.binding_id,
+                timestamp=self.timestamp,
+                evaluations=[self.accepted_evaluation],
+                telemetry_url=self.telemetry_url,
+            )
+            self.assertEqual(reason, "accepted_lifecycle_append_not_visible")
+            mock_verify.assert_not_called()
+
+    def test_evicted_confirmed_fails_closed_when_telemetry_order_out_of_order(self) -> None:
+        with mock.patch("telemetry_client.verify_durable_event_order") as mock_verify:
+            mock_verify.return_value = (False, "out_of_order", {})
+            reason, visibility = _accepted_append_visibility_reason(
+                summary=self.summary_evicted,
+                binding_id=self.binding_id,
+                timestamp=self.timestamp,
+                evaluations=[self.accepted_evaluation],
+                telemetry_url=self.telemetry_url,
+            )
+            self.assertEqual(reason, "accepted_lifecycle_append_not_visible")
+
+    def test_evicted_confirmed_fails_closed_when_event_not_found(self) -> None:
+        with mock.patch("telemetry_client.verify_durable_event_order") as mock_verify:
+            mock_verify.return_value = (False, "event_not_found", {})
+            reason, visibility = _accepted_append_visibility_reason(
+                summary=self.summary_evicted,
+                binding_id=self.binding_id,
+                timestamp=self.timestamp,
+                evaluations=[self.accepted_evaluation],
+                telemetry_url=self.telemetry_url,
+            )
+            self.assertEqual(reason, "accepted_lifecycle_append_not_visible")
+
+    def test_evicted_confirmed_fails_closed_when_equal_sequence(self) -> None:
+        with mock.patch("telemetry_client.verify_durable_event_order") as mock_verify:
+            mock_verify.return_value = (False, "equal_sequence", {})
+            reason, visibility = _accepted_append_visibility_reason(
+                summary=self.summary_evicted,
+                binding_id=self.binding_id,
+                timestamp=self.timestamp,
+                evaluations=[self.accepted_evaluation],
+                telemetry_url=self.telemetry_url,
+            )
+            self.assertEqual(reason, "accepted_lifecycle_append_not_visible")
+
+    def test_evicted_confirmed_fails_closed_when_foreign_tenant_or_runtime_or_binding(self) -> None:
+        with mock.patch("telemetry_client.verify_durable_event_order") as mock_verify:
+            mock_verify.return_value = (False, "mismatched_runtime", {})
+            reason, visibility = _accepted_append_visibility_reason(
+                summary=self.summary_evicted,
+                binding_id=self.binding_id,
+                timestamp=self.timestamp,
+                evaluations=[self.accepted_evaluation],
+                telemetry_url=self.telemetry_url,
+            )
+            self.assertEqual(reason, "accepted_lifecycle_append_not_visible")
+
+    def test_evicted_confirmed_fails_closed_when_telemetry_unavailable(self) -> None:
+        with mock.patch("telemetry_client.verify_durable_event_order") as mock_verify:
+            from telemetry_client import TelemetryUnavailable
+            mock_verify.side_effect = TelemetryUnavailable("connection refused")
+            reason, visibility = _accepted_append_visibility_reason(
+                summary=self.summary_evicted,
+                binding_id=self.binding_id,
+                timestamp=self.timestamp,
+                evaluations=[self.accepted_evaluation],
+                telemetry_url=self.telemetry_url,
+            )
+            self.assertEqual(reason, "accepted_lifecycle_append_not_visible")
+
+    def test_evicted_confirmed_fails_closed_without_telemetry_url(self) -> None:
+        reason, visibility = _accepted_append_visibility_reason(
+            summary=self.summary_evicted,
+            binding_id=self.binding_id,
+            timestamp=self.timestamp,
+            evaluations=[self.accepted_evaluation],
+            telemetry_url=None,
+        )
+        self.assertEqual(reason, "accepted_lifecycle_append_not_visible")
+
+    def test_evicted_unconfirmed_fails_closed_without_calling_durable_order(self) -> None:
+        # If prior accepted append was never visibility confirmed, durable order cannot discharge barrier
+        unconfirmed_eval = dict(self.accepted_evaluation)
+        unconfirmed_eval["lifecycle_append"] = dict(self.accepted_evaluation["lifecycle_append"])
+        unconfirmed_eval["lifecycle_append"].pop("summary_visibility_confirmed_at", None)
+
+        with mock.patch("telemetry_client.verify_durable_event_order") as mock_verify:
+            reason, visibility = _accepted_append_visibility_reason(
+                summary=self.summary_evicted,
+                binding_id=self.binding_id,
+                timestamp=self.timestamp,
+                evaluations=[unconfirmed_eval],
+                telemetry_url=self.telemetry_url,
+            )
+            self.assertEqual(reason, "accepted_lifecycle_append_not_visible")
+            mock_verify.assert_not_called()
+
+    def test_in_window_ordered_after_does_not_need_telemetry_durable_call(self) -> None:
+        # In-window ordered after accepted: both are in recent_lifecycle_event_ids
+        recent = [self.accepted_event_id, "evt-mid-001", self.observed_event_id]
+        summary_in_window = {
+            "binding_id": self.binding_id,
+            "last_lifecycle_identity": {
+                "event_id": self.observed_event_id,
+                "aggregate_type": "journey",
+                "aggregate_id": "j-new",
+                "sequence_no": 1,
+            },
+            "recent_lifecycle_event_ids": recent,
+        }
+        with mock.patch("telemetry_client.verify_durable_event_order") as mock_verify:
+            reason, visibility = _accepted_append_visibility_reason(
+                summary=summary_in_window,
+                binding_id=self.binding_id,
+                timestamp=self.timestamp,
+                evaluations=[self.accepted_evaluation],
+                telemetry_url=self.telemetry_url,
+            )
+            self.assertIsNone(reason)
+            mock_verify.assert_not_called()
+
+    def test_evicted_confirmed_fails_closed_when_coercible_numeric_anchors(self) -> None:
+        with mock.patch("telemetry_client.verify_durable_event_order") as mock_verify:
+            # 1. Numeric tenant_id in evaluation
+            bad_eval = dict(self.accepted_evaluation)
+            bad_eval["tenant_id"] = 123
+            reason, _ = _accepted_append_visibility_reason(
+                summary=self.summary_evicted,
+                binding_id=self.binding_id,
+                timestamp=self.timestamp,
+                evaluations=[bad_eval],
+                telemetry_url=self.telemetry_url,
+                tenant_id=123,
+            )
+            self.assertEqual(reason, "accepted_lifecycle_append_not_visible")
+            mock_verify.assert_not_called()
+
+            # 2. Numeric runtime_id in summary
+            bad_sum = dict(self.summary_evicted)
+            bad_sum["runtime_id"] = 123
+            reason, _ = _accepted_append_visibility_reason(
+                summary=bad_sum,
+                binding_id=self.binding_id,
+                timestamp=self.timestamp,
+                evaluations=[self.accepted_evaluation],
+                telemetry_url=self.telemetry_url,
+            )
+            self.assertEqual(reason, "accepted_lifecycle_append_not_visible")
+            mock_verify.assert_not_called()
+
+            # 3. Falsy 0, False, present blank "" in summary tenant_id does not infer default tenant
+            for falsy_tid in (0, False, "", "   "):
+                bad_t_sum = dict(self.summary_evicted)
+                bad_t_sum["tenant_id"] = falsy_tid
+                reason, _ = _accepted_append_visibility_reason(
+                    summary=bad_t_sum,
+                    binding_id=self.binding_id,
+                    timestamp=self.timestamp,
+                    evaluations=[self.accepted_evaluation],
+                    telemetry_url=self.telemetry_url,
+                )
+                self.assertEqual(reason, "accepted_lifecycle_append_not_visible")
+                mock_verify.assert_not_called()
+
+            # 4. Conflicting declared runtime_binding_id in summary
+            conflict_sum = dict(self.summary_evicted)
+            conflict_sum["runtime_binding_id"] = "conflicting-runtime-binding"
+            reason, _ = _accepted_append_visibility_reason(
+                summary=conflict_sum,
+                binding_id=self.binding_id,
+                timestamp=self.timestamp,
+                evaluations=[self.accepted_evaluation],
+                telemetry_url=self.telemetry_url,
+            )
+            self.assertEqual(reason, "accepted_lifecycle_append_not_visible")
+            mock_verify.assert_not_called()
 
 
 if __name__ == "__main__":
