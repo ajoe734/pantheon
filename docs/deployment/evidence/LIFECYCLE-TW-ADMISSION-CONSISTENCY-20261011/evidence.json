@@ -34,7 +34,7 @@
     "3": "met: preserved every snapshot identity/checksum/source-owner/lineage/calendar authority/pin/signature/future-time/ordering/tenant/case/artifact guard and require_snapshot behavior.",
     "4": "met: added meaningful regressions in test_hosted_lifecycle_probe reproducing old caller rejection vs canonical admission success for 10/8 event, 10/10 receipt, 10/11 original-time case; preserved negatives for post-new-session stale data, 14-day stale receipt, unverified/tampered calendar, future timestamps, snapshot id/checksum mismatch, case/tenant mismatch, non-Taiwan stale receipt.",
     "5": "met: ran full hosted_lifecycle_probe tests (115 passed, 1 skipped), market_snapshot_admission tests (26 passed), and hosted_bff_readback tests (9 passed) with honest terminal exits, reusing original read-only real-Root evidence.",
-    "6": "met: clean task worktree task/LIFECYCLE-TW-ADMISSION-CONSISTENCY-20261011; preparing handoff for assigned independent reviewer Antigravity."
+    "6": "pending_delivery: clean task worktree task/LIFECYCLE-TW-ADMISSION-CONSISTENCY-20261011; source QA and regression tests verified (115 passed, 1 skipped; 26 passed; 9 passed); awaiting assigned independent review (Antigravity), required CI, native integrator dev PR merge, and canonical native finish; no prospective delivery PASS or forged reviewer claim."
   },
   "tests": {
     "hosted_lifecycle_probe": {
