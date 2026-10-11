@@ -19,7 +19,10 @@
       "scripts/test_nonprod_dev_artifact_workflow.py",
       ".github/workflows/nonprod-deploy.yml",
       "docs/deployment/dev-exact-artifact-rollback.md",
-      "docs/deployment/evidence/DEV-SEALED-FINAL-ARTIFACT-RETURN-20261011/evidence.json"
+      "docs/deployment/evidence/DEV-SEALED-FINAL-ARTIFACT-RETURN-20261011/evidence.json",
+      "scripts/dev_candidate_receipt.py",
+      "scripts/test_dev_candidate_receipt.py",
+      "scripts/deploy_nonprod_vm.sh"
     ],
     "changed_artifacts": [
       "scripts/dev_release_artifacts.py",
@@ -46,13 +49,13 @@
     "docs/deployment/dev-exact-artifact-rollback.md": "Documented step 8 for returning to the same admitted final sealed candidate bytes."
   },
   "test_execution": {
-    "command": ".venv-pantheon/bin/python3 -m pytest scripts/test_dev_release_artifacts.py scripts/test_dev_release_artifact_driver.py scripts/test_nonprod_dev_artifact_workflow.py",
+    "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest scripts/test_dev_release_artifacts.py scripts/test_dev_release_artifact_driver.py scripts/test_nonprod_dev_artifact_workflow.py scripts/test_dev_candidate_receipt.py",
     "exit_code": 0,
-    "collected": 474,
-    "passed": 473,
+    "collected": 561,
+    "passed": 560,
     "skipped": 1,
     "failed": 0,
-    "duration": "96.27s"
+    "duration": "108.25s"
   },
   "explicit_unaccepted_gaps": {
     "worker_boundary": "Worker is strictly SOURCEONLY with no VM, provider, Root, control, capital, or live operator execution permissions.",
