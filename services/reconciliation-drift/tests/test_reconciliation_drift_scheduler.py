@@ -1020,7 +1020,7 @@ def test_scheduled_reconcile_accepts_receipted_reconciliation_before_new_aggrega
             next_signal.update(
                 {
                     "event_id": next_signal_id,
-                    "event_type": "signal_generation",
+                    "event_type": "position_snapshot",
                     "created_at": "2026-07-15T23:59:59Z",
                     "trace_id": next_trace_id,
                     "signal_id": "signal-paper-lifecycle-002",
@@ -1028,8 +1028,8 @@ def test_scheduled_reconcile_accepts_receipted_reconciliation_before_new_aggrega
                     "loop_run_id": "lr-paper-lifecycle-002",
                     "aggregate_id": next_aggregate_id,
                     "journey_id": next_aggregate_id,
-                    "sequence_no": 1,
-                    "causal_parent_id": "loop-trigger-paper-lifecycle-002",
+                    "sequence_no": 7,
+                    "causal_parent_id": "fill-paper-lifecycle-002",
                 }
             )
             next_signal.pop("reconciliation_id", None)
@@ -1039,8 +1039,8 @@ def test_scheduled_reconcile_accepts_receipted_reconciliation_before_new_aggrega
                     "correlation_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
                     "trace_id": next_trace_id,
                     "event_id": next_signal_id,
-                    "causation_event_id": "loop-trigger-paper-lifecycle-002",
-                    "producer": "strategy.signal_generator",
+                    "causation_event_id": "fill-paper-lifecycle-002",
+                    "producer": "execution.paper_runtime",
                     "event_time": "2026-07-15T23:59:59Z",
                     "received_at": "2026-07-15T23:59:59Z",
                 }
@@ -1052,7 +1052,7 @@ def test_scheduled_reconcile_accepts_receipted_reconciliation_before_new_aggrega
                     "loop_run_id": next_signal["loop_run_id"],
                     "journey_id": next_aggregate_id,
                     "correlation_envelope": next_signal["correlation_envelope"],
-                    "sequence_no": 1,
+                    "sequence_no": 7,
                     "causal_parent_id": next_signal["causal_parent_id"],
                 }
             )
@@ -1076,7 +1076,7 @@ def test_scheduled_reconcile_accepts_receipted_reconciliation_before_new_aggrega
         assert append.call_count == 2
         next_reconciliation = append.call_args_list[1].args[1]
         assert next_reconciliation["aggregate_id"] == next_aggregate_id
-        assert next_reconciliation["sequence_no"] == 2
+        assert next_reconciliation["sequence_no"] == 8
         assert next_reconciliation["causal_parent_id"] == next_signal_id
         first_evaluation = svc.store.get_evaluation(
             svc._tick_evaluation_id(
@@ -1817,3 +1817,296 @@ def test_controller_error_tick_is_recorded_as_failure():
     )
     assert projected["controller_health"]["status"] == "unhealthy"
     assert qualified is False
+
+
+# ---------------------------------------------------------------------------
+# In-flight paper lifecycle terminal order race tests (RECON-PAPER-INFLIGHT-TERMINAL-ORDER-20261011)
+# ---------------------------------------------------------------------------
+
+
+def _make_inflight_paper_summary(stage: str, sequence_no: int, **overrides) -> dict:
+    base = _paper_lifecycle_summary()
+    identity = dict(base["last_lifecycle_identity"])
+    event_id = f"evt-{stage}-{sequence_no}"
+    causal_id = f"evt-parent-{sequence_no - 1}" if sequence_no > 1 else "loop-trigger-001"
+    envelope = dict(identity["correlation_envelope"])
+    envelope.update(
+        {
+            "event_id": event_id,
+            "causation_event_id": causal_id,
+            "producer": (
+                "execution.paper_runtime"
+                if stage != "signal_generation"
+                else "strategy.signal_generator"
+            ),
+        }
+    )
+    metadata = dict(identity.get("metadata") or {})
+    metadata.update(
+        {
+            "sequence_no": sequence_no,
+            "causal_parent_id": causal_id,
+            "correlation_envelope": envelope,
+        }
+    )
+    identity.update(
+        {
+            "event_id": event_id,
+            "event_type": stage,
+            "sequence_no": sequence_no,
+            "causal_parent_id": causal_id,
+            "correlation_envelope": envelope,
+            "metadata": metadata,
+        }
+    )
+    base.update(
+        {
+            "last_event_id": event_id,
+            "last_lifecycle_identity": identity,
+        }
+    )
+    base.update(overrides)
+    return base
+
+
+def test_scheduled_reconcile_actual_sequence2_trade_decision_race_and_resumes_on_sequence7_position_snapshot() -> None:
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        race_summary = _make_inflight_paper_summary("trade_decision", 2)
+        binding_id = race_summary["binding_id"]
+        tick_id = "tick-race-trade-decision-001"
+
+        with (
+            mock.patch.dict(
+                "os.environ",
+                {"PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083"},
+            ),
+            mock.patch.object(
+                svc,
+                "fetch_runtime_summaries",
+                return_value=[race_summary],
+            ) as fetch_mock,
+            mock.patch.object(
+                svc,
+                "_append_telemetry_lifecycle_event",
+                return_value=_accepted_delivery(),
+            ) as append,
+        ):
+            # 1. In-flight race: sequence 2 trade_decision must NOT emit reconciliation
+            inflight_resp = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": tick_id},
+            )
+            assert inflight_resp.status_code == 201
+            payload = inflight_resp.json()
+            assert payload["status"] == "failure"  # Pending work is retryable failure
+            assert append.call_count == 0  # Zero telemetry POST while in-flight!
+            assert payload["lifecycle_accepted_event_ids"] == []
+            assert len(payload["lifecycle_retryable_errors"]) == 1
+            assert payload["lifecycle_terminal_rejections"] == []
+            assert payload["lifecycle_ineligible_binding_ids"] == []
+
+            results = {item["binding_id"]: item for item in payload["lifecycle_append_results"]}
+            assert results[binding_id]["status"] == "pending"
+            assert results[binding_id]["terminal"] is False
+            assert results[binding_id]["retryable"] is True
+            assert results[binding_id]["reason"] == "lifecycle_in_flight"
+            assert results[binding_id]["event_id"] is None
+            assert payload["lifecycle_retryable_errors"][0] == results[binding_id]
+
+            eval_id = svc._tick_evaluation_id(tick_id, binding_id)
+            stored_eval = svc.store.get_evaluation(eval_id)
+            assert stored_eval is not None
+            assert stored_eval["lifecycle_append"]["status"] == "pending"
+            assert stored_eval["lifecycle_append"]["terminal"] is False
+            assert stored_eval["lifecycle_append"]["retryable"] is True
+            assert stored_eval["lifecycle_append"]["reason"] == "lifecycle_in_flight"
+
+            # 2. Later sequence 7 position_snapshot arrives for same valid identity
+            pos_summary = _make_inflight_paper_summary("position_snapshot", 7)
+            fetch_mock.return_value = [pos_summary]
+
+            resume_resp = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": tick_id},
+            )
+            assert resume_resp.status_code == 201
+            assert resume_resp.json()["status"] == "ok"
+            assert append.call_count == 1  # Exactly one terminal append emitted!
+            _, terminal_event = append.call_args.args
+            assert terminal_event["event_type"] == "reconciliation_completed"
+            assert terminal_event["sequence_no"] == 8
+            assert terminal_event["causal_parent_id"] == pos_summary["last_lifecycle_identity"]["event_id"]
+            assert terminal_event["binding_id"] == binding_id
+            assert resume_resp.json()["lifecycle_accepted_event_ids"] == [terminal_event["event_id"]]
+
+            resumed_eval = svc.store.get_evaluation(eval_id)
+            assert resumed_eval["lifecycle_append"]["status"] == "accepted"
+            assert resumed_eval["lifecycle_append"]["terminal"] is True
+            assert resumed_eval["lifecycle_append"]["retryable"] is False
+
+            # 3. Duplicate retry: exactly same terminal returned, zero additional POST
+            dup_resp = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": tick_id},
+            )
+            assert dup_resp.status_code == 201
+            assert dup_resp.json()["status"] == "ok"
+            assert append.call_count == 1  # No duplicate POST!
+            assert dup_resp.json()["lifecycle_accepted_event_ids"] == [terminal_event["event_id"]]
+
+
+def test_scheduled_reconcile_all_six_incomplete_stages_pending_and_zero_telemetry_post() -> None:
+    from fastapi.testclient import TestClient
+
+    incomplete_stages = [
+        ("signal_generation", 1),
+        ("trade_decision", 2),
+        ("risk_evaluation", 3),
+        ("order_submitted", 4),
+        ("order_accepted", 5),
+        ("paper_fill_simulated", 6),
+    ]
+
+    for stage, seq_no in incomplete_stages:
+        with tempfile.TemporaryDirectory() as data_dir:
+            svc = _load_service_module(data_dir)
+            client = TestClient(svc.app)
+            stage_summary = _make_inflight_paper_summary(stage, seq_no)
+            binding_id = stage_summary["binding_id"]
+            tick_id = f"tick-incomplete-{stage}-{seq_no}"
+
+            with (
+                mock.patch.dict(
+                    "os.environ",
+                    {"PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083"},
+                ),
+                mock.patch.object(
+                    svc,
+                    "fetch_runtime_summaries",
+                    return_value=[stage_summary],
+                ) as fetch_mock,
+                mock.patch.object(
+                    svc,
+                    "_append_telemetry_lifecycle_event",
+                    return_value=_accepted_delivery(),
+                ) as append,
+            ):
+                # Must NOT emit terminal while at stage
+                resp = client.post(
+                    "/api/reconciliation-drift/scheduled-reconcile",
+                    json={"tick_id": tick_id},
+                )
+                assert resp.status_code == 201
+                assert resp.json()["status"] == "failure"  # Pending work retryable
+                assert append.call_count == 0  # Zero telemetry POST!
+                receipt = resp.json()["lifecycle_append_results"][0]
+                assert receipt["binding_id"] == binding_id
+                assert receipt["status"] == "pending"
+                assert receipt["terminal"] is False
+                assert receipt["retryable"] is True
+                assert receipt["reason"] == "lifecycle_in_flight"
+                assert resp.json()["lifecycle_retryable_errors"] == [receipt]
+
+                eval_id = svc._tick_evaluation_id(tick_id, binding_id)
+                evaluation = svc.store.get_evaluation(eval_id)
+                assert evaluation is not None
+                assert evaluation["lifecycle_append"]["status"] == "pending"
+                assert evaluation["lifecycle_append"]["terminal"] is False
+                assert evaluation["lifecycle_append"]["retryable"] is True
+
+                # Later sequence 7 position_snapshot emits sequence 8 terminal
+                pos_summary = _make_inflight_paper_summary("position_snapshot", 7)
+                fetch_mock.return_value = [pos_summary]
+
+                later_resp = client.post(
+                    "/api/reconciliation-drift/scheduled-reconcile",
+                    json={"tick_id": tick_id},
+                )
+                assert later_resp.status_code == 201
+                assert later_resp.json()["status"] == "ok"
+                assert append.call_count == 1
+                _, event = append.call_args.args
+                assert event["event_type"] == "reconciliation_completed"
+                assert event["sequence_no"] == 8
+                assert event["causal_parent_id"] == pos_summary["last_lifecycle_identity"]["event_id"]
+
+                # Duplicate retry
+                dup_resp = client.post(
+                    "/api/reconciliation-drift/scheduled-reconcile",
+                    json={"tick_id": tick_id},
+                )
+                assert dup_resp.status_code == 201
+                assert dup_resp.json()["status"] == "ok"
+                assert append.call_count == 1
+
+
+def test_scheduled_reconcile_inflight_preserves_malformed_identity_and_nonpaper_negatives() -> None:
+    from fastapi.testclient import TestClient
+
+    # In-flight stage but non-paper
+    nonpaper_summary = _make_inflight_paper_summary("trade_decision", 2)
+    nonpaper_summary["binding_id"] = "55555555-5555-4555-8555-000000000001"
+    nonpaper_summary["last_lifecycle_identity"]["binding_id"] = nonpaper_summary["binding_id"]
+    nonpaper_summary["deployment_stage"] = "live"
+    nonpaper_summary["last_lifecycle_identity"]["deployment_stage"] = "live"
+    nonpaper_summary["last_lifecycle_identity"]["environment"] = "live"
+    nonpaper_summary["last_lifecycle_identity"]["execution_mode"] = "live"
+    nonpaper_summary["last_lifecycle_identity"]["correlation_envelope"]["environment"] = "live"
+
+    # In-flight stage but missing persona_id
+    missing_persona = _make_inflight_paper_summary("trade_decision", 2)
+    missing_persona["binding_id"] = "55555555-5555-4555-8555-000000000002"
+    missing_persona["last_lifecycle_identity"]["binding_id"] = missing_persona["binding_id"]
+    missing_persona["last_lifecycle_identity"]["authority_refs"].pop("persona_id", None)
+    missing_persona["last_lifecycle_identity"]["metadata"].pop("persona_id", None)
+
+    # In-flight stage but binding mismatch
+    mismatched_binding = _make_inflight_paper_summary("trade_decision", 2)
+    mismatched_binding["binding_id"] = "55555555-5555-4555-8555-000000000003"
+    mismatched_binding["last_lifecycle_identity"]["binding_id"] = "different-binding-id"
+
+    # Already reconciled
+    already_reconciled = _make_inflight_paper_summary("reconciliation_completed", 8)
+    already_reconciled["binding_id"] = "55555555-5555-4555-8555-000000000004"
+    already_reconciled["last_lifecycle_identity"]["binding_id"] = already_reconciled["binding_id"]
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+
+        with (
+            mock.patch.dict(
+                "os.environ",
+                {"PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083"},
+            ),
+            mock.patch.object(
+                svc,
+                "fetch_runtime_summaries",
+                return_value=[nonpaper_summary, missing_persona, mismatched_binding, already_reconciled],
+            ),
+            mock.patch.object(
+                svc,
+                "_append_telemetry_lifecycle_event",
+            ) as append,
+        ):
+            resp = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": "tick-negatives-001"},
+            )
+
+        assert resp.status_code == 201
+        assert append.call_count == 0
+        results = {item["binding_id"]: item for item in resp.json()["lifecycle_append_results"]}
+        assert results[nonpaper_summary["binding_id"]]["status"] == "not_eligible"
+        assert results[nonpaper_summary["binding_id"]]["reason"] == "non_paper_lifecycle"
+        assert results[missing_persona["binding_id"]]["status"] == "not_eligible"
+        assert results[missing_persona["binding_id"]]["reason"] == "missing_lifecycle_persona_id"
+        assert results[mismatched_binding["binding_id"]]["status"] == "not_eligible"
+        assert results[mismatched_binding["binding_id"]]["reason"] == "lifecycle_binding_mismatch"
+        assert results[already_reconciled["binding_id"]]["status"] == "not_eligible"
+        assert results[already_reconciled["binding_id"]]["reason"] == "lifecycle_already_reconciled"
+

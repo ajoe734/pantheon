@@ -1,0 +1,98 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "RECON-PAPER-INFLIGHT-TERMINAL-ORDER-20261011",
+  "title": "Reconcile paper execution only after its completed position",
+  "owner": "Antigravity2",
+  "reviewer": "Codex2",
+  "base_sha": "ef4c0ad88b099170cdb2ae02683fcfa5b02013e4",
+  "change_class": "corrective",
+  "net_prod_line_budget": 15,
+  "summary": "Fixes paper reconciliation event ordering race where terminal reconciliation events (reconciliation_failed or reconciliation_completed) were emitted prematurely for in-flight journeys (stages 1-6: signal_generation, trade_decision, risk_evaluation, order_submitted, order_accepted, paper_fill_simulated) before committed position_snapshot (stage 7). In-flight evaluations are held as pending and retryable work without emitting telemetry POSTs, persisting evaluation state so the scheduler re-evaluates the work item until position_snapshot arrives, emitting a single deterministic terminal event at sequence 8.",
+  "acceptance_verification": [
+    {
+      "ac": "AC1",
+      "description": "Source-only successor for newly reproduced Root38124492288 causal-order defect. Original RECON-CURRENT-OWNER-ANCHORS-FAILCLOSED-20261011 remains genuinely DONE and is not reimplemented. No VM or SSH or deployment or provider or financial-state mutations.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC2",
+      "description": "Modify only existing scheduled paper lifecycle append so signal_generation and trade_decision and risk_evaluation and order_submitted and order_accepted and paper_fill_simulated cannot emit reconciliation terminal before committed position_snapshot for same identity. Preserve genuine tenant and binding and runtime and artifact and causal-parent checks.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC3",
+      "description": "In-flight summary is pending work rather than terminal reconciliation or permanently completed evaluation. Reuse existing evaluation state and scheduler retry mechanism. Later complete owner position for same valid identity emits one correctly ordered deterministic terminal. No new queue or service or health writer or generic gate.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC4",
+      "description": "Extend original scheduler tests with actual sequence2 trade_decision race and all six incomplete stages plus later sequence7 position_snapshot to sequence8 terminal and duplicate retry. Verify zero telemetry POST while in-flight and same evaluation remains resumable. Preserve nonpaper and already-reconciled and malformed identity negatives.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC5",
+      "description": "Run full original scheduler and causal HTTP and telemetry client modules plus original hosted_lifecycle_probe tests. Net production growth at most 15 lines against starting dev head (net +5 lines in main.py). Only main.py and its existing scheduler tests plus this evidence. No timeout or market freshness or FULL acceptance weakening.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC6",
+      "description": "Use clean current-dev task worktree and truthful required trailers and assigned independent reviewer then required CI and dev integration and canonical finish. Preserve original failed Root and late eight-stage negative history. Passing source tests is not hosted or L1-L12 completion.",
+      "verdict": "pass"
+    }
+  ],
+  "verification": [
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py",
+      "passed": 34,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest services/reconciliation-drift/test_reconciliation_drift_http_service.py services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py",
+      "passed": 31,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest services/reconciliation-drift/test_telemetry_client.py services/reconciliation-drift/tests/test_telemetry_client_auth.py",
+      "passed": 36,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest services/trade_journey/test_hosted_lifecycle_probe.py",
+      "passed": 112,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 1,
+      "exit_code": 0
+    }
+  ],
+  "declared_artifacts": [
+    "services/reconciliation-drift/main.py",
+    "services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py",
+    "docs/deployment/evidence/RECON-PAPER-INFLIGHT-TERMINAL-ORDER-20261011/evidence.json"
+  ],
+  "diff_budget": {
+    "net_production_lines": 5,
+    "budget": 15,
+    "verdict": "pass",
+    "files": {
+      "production": [
+        "services/reconciliation-drift/main.py"
+      ],
+      "tests": [
+        "services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py"
+      ],
+      "evidence": [
+        "docs/deployment/evidence/RECON-PAPER-INFLIGHT-TERMINAL-ORDER-20261011/evidence.json"
+      ]
+    }
+  }
+}

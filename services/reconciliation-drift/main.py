@@ -1848,6 +1848,8 @@ def _scheduled_lifecycle_event(
         "reconciliation_failed",
     }:
         return None, "lifecycle_already_reconciled"
+    if identity["event_type"] != "position_snapshot":
+        return None, "lifecycle_in_flight"
 
     evaluation_id = str(evaluation["evaluation_id"])
     event_id = str(
@@ -2185,10 +2187,12 @@ def _ensure_scheduled_lifecycle_append(
             timestamp=timestamp,
         )
         if event is None:
+            inflight = reason == "lifecycle_in_flight"
             state = {
-                "status": "not_eligible",
-                "terminal": True,
-                "retryable": False,
+                "status": "pending" if inflight else "not_eligible",
+                "terminal": not inflight,
+                "retryable": inflight,
+                "outcome": "pending" if inflight else "not_eligible",
                 "reason": reason,
                 "attempt_count": 0,
                 "deferred_count": int(state.get("deferred_count") or 0),
@@ -2338,11 +2342,12 @@ def _scheduled_lifecycle_only_reconcile(
             timestamp=timestamp,
         )
         if event is None:
+            inflight = reason == "lifecycle_in_flight"
             state: Dict[str, Any] = {
-                "status": "not_eligible",
-                "terminal": True,
-                "retryable": False,
-                "outcome": "not_eligible",
+                "status": "pending" if inflight else "not_eligible",
+                "terminal": not inflight,
+                "retryable": inflight,
+                "outcome": "pending" if inflight else "not_eligible",
                 "reason": reason,
                 "attempt_count": 0,
                 "event_id": None,
@@ -2388,7 +2393,7 @@ def _scheduled_lifecycle_only_reconcile(
         lifecycle_append_results.append(receipt)
         if receipt["status"] == "accepted" and receipt["event_id"]:
             lifecycle_accepted_event_ids.append(str(receipt["event_id"]))
-        elif receipt["status"] == "retryable_error":
+        elif receipt["status"] in {"retryable_error", "pending"}:
             lifecycle_retryable_errors.append(receipt)
         elif receipt["status"] == "terminal_rejected":
             lifecycle_terminal_rejections.append(receipt)
@@ -2853,7 +2858,7 @@ def _execute_scheduled_reconcile(
         lifecycle_append_results.append(receipt)
         if receipt["status"] == "accepted" and receipt["event_id"]:
             lifecycle_accepted_event_ids.append(str(receipt["event_id"]))
-        elif receipt["status"] in {"retryable_error", "deferred"}:
+        elif receipt["status"] in {"retryable_error", "deferred", "pending"}:
             lifecycle_retryable_errors.append(receipt)
         elif receipt["status"] == "terminal_rejected":
             lifecycle_terminal_rejections.append(receipt)
