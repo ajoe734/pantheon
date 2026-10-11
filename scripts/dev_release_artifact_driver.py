@@ -497,7 +497,7 @@ def _validate_candidate(raw, args, identity, *, expected_hash):
     return receipt
 
 
-def _load_candidate(args, identity, folder):
+def _load_candidate(args, identity, folder, *, require_bundle=False):
     path, override_path = _candidate_paths(folder)
     if args.candidate_image_manifest != path:
         raise a.ArtifactError("candidate receipt is not the fixed transition path")
@@ -506,9 +506,17 @@ def _load_candidate(args, identity, folder):
     if a._document_bytes(override_path) != _candidate_override(receipt):
         raise a.ArtifactError("retained candidate image override differs from admission")
     bundle_path = folder / "candidate-bundle.json"
+    seal_path = folder / "candidate-bundle.sha256"
+    if require_bundle and (not bundle_path.exists() or not seal_path.exists()):
+        raise a.ArtifactError("candidate bundle is missing")
     if bundle_path.exists():
+        if not seal_path.exists():
+            raise a.ArtifactError("candidate bundle seal is missing")
+        expected_bundle_sha = a._document_bytes(seal_path).decode("utf-8").strip()
         bundle_raw = a._document_bytes(bundle_path)
-        bundle = a.validate_images(bundle_raw, expected_sha256=hashlib.sha256(bundle_raw).hexdigest(),
+        if hashlib.sha256(bundle_raw).hexdigest() != expected_bundle_sha:
+            raise a.ArtifactError("candidate bundle bytes mismatch")
+        bundle = a.validate_images(bundle_raw, expected_sha256=expected_bundle_sha,
                                   expected_source_sha=args.candidate_backend_sha, archive_root=ROOT / "images")
         if any(bundle["services"][s]["image_id"] != receipt["services"][s]["image_id"] for s in a.SERVICES):
             raise a.ArtifactError("candidate bundle image differs from admitted candidate receipt")
@@ -603,7 +611,8 @@ class RestoreCAS:
 def _seal_candidate(args, identity, lease_id, outer, folder, compose, docker, http, barrier):
     path, override_path = _candidate_paths(folder)
     bundle_path = folder / "candidate-bundle.json"
-    if path.exists() or path.is_symlink() or bundle_path.exists() or bundle_path.is_symlink():
+    seal_path = folder / "candidate-bundle.sha256"
+    if path.exists() or path.is_symlink() or bundle_path.exists() or bundle_path.is_symlink() or seal_path.exists() or seal_path.is_symlink():
         raise a.ArtifactError("candidate images already sealed; refusing re-admission")
     if a._file_digest(folder / "baseline-compose.yml")[0] != outer["compose_sha256"]:
         raise a.ArtifactError("retained baseline Compose has drifted")
@@ -642,9 +651,11 @@ def _seal_candidate(args, identity, lease_id, outer, folder, compose, docker, ht
                                          "repo_digests": None} for s, r in services.items()},
                         "archives": archives}
     bundle_raw = a.manifest_bytes(candidate_bundle)
-    a.validate_images(bundle_raw, expected_sha256=hashlib.sha256(bundle_raw).hexdigest(),
+    bundle_sha = hashlib.sha256(bundle_raw).hexdigest()
+    a.validate_images(bundle_raw, expected_sha256=bundle_sha,
                       expected_source_sha=args.candidate_backend_sha, archive_root=ROOT / "images")
     _publish(bundle_path, bundle_raw)
+    _publish(seal_path, bundle_sha.encode("utf-8"))
     _publish(override_path, override)
     _publish(path, raw)
     barrier.check()
@@ -721,6 +732,7 @@ def run(args, *, docker, http, barrier):
     outer, raw = _load(args, identity, manifest_path)
     if args.command == "seal-candidate":
         return _seal_candidate(args, identity, lease_id, outer, folder, compose, docker, http, barrier)
+    is_restore = args.command in ("restore", "restore-final")
     if not return_final:
         if compose_digest != outer["compose_sha256"] or a._file_digest(folder / "baseline-compose.yml")[0] != compose_digest:
             raise a.ArtifactError("baseline Compose bytes mismatch")
@@ -733,24 +745,27 @@ def run(args, *, docker, http, barrier):
         target_images = {s: outer["image_bundle"]["services"][s]["image_id"] for s in a.SERVICES}
         compose_files = ((args.compose_file, compose_digest),)
     else:
-        candidate = _load_candidate(args, identity, folder)
+        candidate = _load_candidate(args, identity, folder, require_bundle=True)
         if compose_digest != candidate["candidate_compose_sha256"]:
             raise a.ArtifactError("candidate Compose bytes mismatch")
         bundle_raw = a._document_bytes(folder / "candidate-bundle.json")
-        bundle_sha = hashlib.sha256(bundle_raw).hexdigest()
-        bundle = a.validate_images(bundle_raw, expected_sha256=bundle_sha, expected_source_sha=args.candidate_backend_sha,
-                                  archive_root=images)
-        if any(bundle["services"][s]["image_id"] != candidate["services"][s]["image_id"] for s in a.SERVICES):
-            raise a.ArtifactError("candidate bundle image differs from admitted candidate receipt")
-        target_frontend = a.capture_frontend(release_store=args.fe_release_store, live_link=args.fe_live_link,
-                                            frontend_sha=args.candidate_frontend_sha, backend_sha=args.candidate_backend_sha)
+        bundle_sha = a._document_bytes(folder / "candidate-bundle.sha256").decode("utf-8").strip()
+        fe_seal = folder / "candidate-frontend.json"
+        if is_restore:
+            if not fe_seal.exists():
+                raise a.ArtifactError("candidate frontend seal is missing")
+            target_frontend = a._json(a._document_bytes(fe_seal))
+        else:
+            target_frontend = a.capture_frontend(release_store=args.fe_release_store, live_link=args.fe_live_link,
+                                                frontend_sha=args.candidate_frontend_sha, backend_sha=args.candidate_backend_sha)
+            if args.command == "verify":
+                _publish(fe_seal, a.manifest_bytes(target_frontend))
         a.verify_frontend(target_frontend, release_store=args.fe_release_store, live_link=args.fe_live_link)
         target_backend_sha = args.candidate_backend_sha
         target_images = {s: candidate["services"][s]["image_id"] for s in a.SERVICES}
         _, override_path = _candidate_paths(folder)
         compose_files = ((args.compose_file, compose_digest), (override_path, candidate["image_override_sha256"]))
     owners_before = _owners(docker)
-    is_restore = args.command in ("restore", "restore-final")
     if is_restore:
         if os.environ.get("PANTHEON_BFF_AUTH_STUB") != "false" or os.environ.get("PANTHEON_BFF_AUTH_MODE") != "strict":
             raise a.ArtifactError("restore caller did not inject the approved strict runtime environment")

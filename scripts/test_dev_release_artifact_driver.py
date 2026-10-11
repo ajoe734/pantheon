@@ -1106,8 +1106,12 @@ def test_sealed_final_artifact_return_roundtrip(case):
 def test_restore_target_final_matches_restore_final(case):
     seal(case)
     deploy_candidate_frontend(case)
+    for service, row in case.docker.built.items():
+        case.docker.containers[service]["image_id"] = row["image_id"]
+    case.http.source = case.args.candidate_backend_sha
     case.args.compose_file = case.docker.candidate_compose
     case.args.target = "final"
+    execute(case, "verify")
     res = execute(case, "restore")
     assert res["image_readback_verified"] is True
     assert res["frontend"]["frontend_sha"] == case.args.candidate_frontend_sha
@@ -1122,7 +1126,13 @@ def test_restore_final_fail_closed_conditions(case, monkeypatch, failure):
     captured = seal(case)
     folder = Path(captured["manifest_path"]).parent
     deploy_candidate_frontend(case)
+    for service, row in case.docker.built.items():
+        case.docker.containers[service]["image_id"] = row["image_id"]
+    case.http.source = case.args.candidate_backend_sha
     case.args.compose_file = case.docker.candidate_compose
+    case.args.target = "final"
+    execute(case, "verify")
+    case.docker.calls.clear()
 
     if failure == "missing_bundle":
         (folder / "candidate-bundle.json").unlink()
@@ -1158,6 +1168,61 @@ def test_restore_final_fail_closed_conditions(case, monkeypatch, failure):
         assert any(call[0] == "compose" and "up" in call for call in case.docker.calls)
     else:
         no_replacement(case)
+
+
+def test_restore_final_rejects_tampered_fe_even_when_deployment_json_self_digest_rewritten(case):
+    seal(case)
+    final_dir = deploy_candidate_frontend(case)
+    for service, row in case.docker.built.items():
+        case.docker.containers[service]["image_id"] = row["image_id"]
+    case.http.source = case.args.candidate_backend_sha
+    case.args.compose_file = case.docker.candidate_compose
+    case.args.target = "final"
+    execute(case, "verify")
+    case.docker.calls.clear()
+
+    (final_dir / "index.html").write_text("SOURCE-ONLY-TAMPERED-POST-SEAL-FINAL-BYTES")
+    p = final_dir / "deployment.json"
+    doc = json.loads(p.read_bytes())
+    doc["artifactDigestSha256"] = d.a.frontend_dist_digest(final_dir)
+    p.write_text(json.dumps(doc))
+
+    with pytest.raises(d.a.ArtifactError) as exc_info:
+        execute(case, "restore-final")
+    assert "FE exact artifact/target mismatch" in str(exc_info.value) or "FE dist digest mismatch" in str(exc_info.value)
+    no_replacement(case)
+
+
+def test_restore_final_rejects_tampered_archive_even_when_candidate_bundle_rewritten(case):
+    captured = seal(case)
+    folder = Path(captured["manifest_path"]).parent
+    deploy_candidate_frontend(case)
+    for service, row in case.docker.built.items():
+        case.docker.containers[service]["image_id"] = row["image_id"]
+    case.http.source = case.args.candidate_backend_sha
+    case.args.compose_file = case.docker.candidate_compose
+    case.args.target = "final"
+    execute(case, "verify")
+    case.docker.calls.clear()
+
+    bundlepath = folder / "candidate-bundle.json"
+    doc = json.loads(bundlepath.read_bytes())
+    image_id = next(iter(doc["archives"]))
+    entry = doc["archives"][image_id]
+    p = d.ROOT / "images" / entry["name"]
+    raw = p.read_bytes() + b"\nSOURCE-ONLY-ARCHIVE-BYTE-TAMPER\n"
+    digest = hashlib.sha256(raw).hexdigest()
+    name = image_id.removeprefix("sha256:") + "-" + digest + ".tar"
+    new = p.parent / name
+    new.write_bytes(raw)
+    entry.update(name=name, sha256=digest, size=len(raw))
+    bundlepath.write_bytes(d.a.manifest_bytes(doc))
+
+    with pytest.raises(d.a.ArtifactError) as exc_info:
+        execute(case, "restore-final")
+    assert "candidate bundle bytes mismatch" in str(exc_info.value)
+    no_replacement(case)
+
 
 
 
