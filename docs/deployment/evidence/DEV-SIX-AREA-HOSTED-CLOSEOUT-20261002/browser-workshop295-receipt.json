@@ -1,0 +1,50 @@
+{
+  "at": "2026-10-11T03:44:13.309219+00:00",
+  "browser_run_id": 38109227221,
+  "operation_id": "803e8330-75e4-4d31-83fd-57f48b0ee1c3",
+  "exact_served_pair": {
+    "expected": {
+      "fe_sha": "79aacd97f770dafb58471bba59d2fc9b98b4dff5",
+      "bff_sha": "420598fe643be541ca28419a1abe4b03acb2dd73"
+    },
+    "before": {
+      "fe_sha": "79aacd97f770dafb58471bba59d2fc9b98b4dff5",
+      "bff_sha": "420598fe643be541ca28419a1abe4b03acb2dd73",
+      "captured_at": "2026-10-11T03:43:17.597Z"
+    },
+    "after": {
+      "fe_sha": "79aacd97f770dafb58471bba59d2fc9b98b4dff5",
+      "bff_sha": "420598fe643be541ca28419a1abe4b03acb2dd73",
+      "captured_at": "2026-10-11T03:43:32.495Z"
+    },
+    "matched": true
+  },
+  "workshop_identity": {
+    "id": "295726c7-47b5-4516-a74a-c5ba8765ee48",
+    "title": "Workshop persistence journey 994e6c0b-b056-4bad-9686-ef68d4c273c6",
+    "title_sha256": "f697a21ccd124c051cf40715d1fd622d0314f8af2d0c7cd9c7c13682cf9c3093",
+    "content_sha256": "b241456e7d88c7468b8cb01d58129ebf639d8c0590bb301797e0ad09ffd02490"
+  },
+  "real_steps_13": [
+    { "id": "capture_version_pair_before", "status": "passed" },
+    { "id": "real_ui_login_first", "status": "passed" },
+    { "id": "assert_existing_workshop_owner_readback_first", "status": "passed" },
+    { "id": "navigate_existing_workshop_ui", "status": "passed" },
+    { "id": "execute_real_page_reload", "status": "passed" },
+    { "id": "assert_after_reload_readback_and_visible_ui", "status": "passed" },
+    { "id": "real_ui_sign_out", "status": "passed" },
+    { "id": "assert_session_invalidated", "status": "passed" },
+    { "id": "assert_fresh_context_anonymous", "status": "passed" },
+    { "id": "real_ui_login_second", "status": "passed" },
+    { "id": "reopen_existing_workshop_ui", "status": "passed" },
+    { "id": "assert_fresh_context_owner_readback", "status": "passed" },
+    { "id": "capture_version_pair_after", "status": "passed" }
+  ],
+  "observed_bff_owner_restart": "2026-10-11T01:58:33.264523039Z",
+  "acknowledged_save_before_restart": "2026-10-09T01:16:15.438Z",
+  "postrestart_get_same_full_digest": true,
+  "full_digest_not_original_save_time_hash": true,
+  "governance_browser_status": "remains_fail_at_step_8",
+  "no_create_patch_resave_or_votes": true,
+  "all_owner_data_or_rollback_proven": false
+}

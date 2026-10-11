@@ -436,7 +436,6 @@ class TestLiveLineageWritePathFullStackHTTPRoute(unittest.IsolatedAsyncioTestCas
             batch_size=10,
             batch_interval=0.1,
         )
-        await ingest_svc.start()
 
         live_validator = CanonicalReferenceValidator(
             binding_lookup=_RuntimeBindingLookup(client=rm_client),
@@ -446,11 +445,15 @@ class TestLiveLineageWritePathFullStackHTTPRoute(unittest.IsolatedAsyncioTestCas
         test_store = build_incident_store(Path(self._tempdir.name) / "incidents.json")
 
         dummy_sub = lambda topic, eid, payload: None
-        from agora.performance.consumer import get_canonical_performance_transport, register_performance_subscriber
+        try:
+            from agora.performance.consumer import get_canonical_performance_transport, register_performance_subscriber
+        except (ImportError, AttributeError):
+            from services.control_plane.bff.agora.performance.consumer import get_canonical_performance_transport, register_performance_subscriber
         transport = get_canonical_performance_transport()
         if dummy_sub not in transport._subscribers:
             register_performance_subscriber(dummy_sub)
 
+        await ingest_svc.start()
         try:
             with mock.patch.object(incidents_main, "store", test_store), \
                  mock.patch.object(incidents_main, "reference_validator", live_validator):
