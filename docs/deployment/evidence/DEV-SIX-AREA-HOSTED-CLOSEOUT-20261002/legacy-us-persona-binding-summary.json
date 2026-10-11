@@ -1,0 +1,32 @@
+{
+  "at": "2026-10-11T03:48:03.345080+00:00",
+  "archived_personas_count": 25,
+  "matched_runtime_bindings_count": 24,
+  "unmatched_personas_count": 1,
+  "unmatched_personas": [
+    "persona-0f94f05389a7e092b469"
+  ],
+  "matched_bindings_breakdown": {
+    "retired": 7,
+    "failed": 1,
+    "paused": 16
+  },
+  "paused_bindings_admission_reasons": {
+    "market_input_stale": 15,
+    "cause_unknown": 1
+  },
+  "workers_present_count": 0,
+  "all_24_bindings_have_no_worker": true,
+  "runtime_commands_issued": {
+    "pause_commands": 0,
+    "retire_commands": 0,
+    "capital_commands": 0,
+    "terminal_claim": "paused state is NOT claimed to be irreversible terminal without canonical proof"
+  },
+  "historical_data_clarification": {
+    "previous_reported_number": 1191,
+    "actual_meaning": "10-minute SPY snapshot polls in historical logs, NOT 1191 distinct runtime bindings",
+    "actual_runtime_binding_count": 46,
+    "legacy_us_matched_subset": 24
+  }
+}

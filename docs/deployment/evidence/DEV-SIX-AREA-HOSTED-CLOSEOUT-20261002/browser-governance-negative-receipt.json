@@ -1,0 +1,51 @@
+{
+  "at": "2026-10-11T03:31:09.164470+00:00",
+  "browser_run_id": 38108525681,
+  "operation_id": "1638df31-eaeb-4f87-ba78-8ace7b8b0850",
+  "status": "failed",
+  "failed_step": "navigate_governance_case_ui_first",
+  "steps_summary": {
+    "total": 8,
+    "passed": 7,
+    "failed": 1
+  },
+  "passed_steps": [
+    "capture_version_pair_before",
+    "real_ui_login_first",
+    "assert_existing_workshop_owner_readback_first",
+    "navigate_existing_workshop_ui",
+    "execute_real_page_reload",
+    "assert_after_reload_readback_and_visible_ui",
+    "assert_governance_case_owner_readback_first"
+  ],
+  "governance_case_readback": {
+    "id": "approval-paper-human-quorum-closeout-20261010-v1",
+    "expected_version": 1,
+    "observed_version": 1,
+    "target_digest": "e9c7c073c544cd453e2ac3d62b4acb4be7a47f5010a01a5498c40c284238a39b",
+    "state": "pending",
+    "content_sha256": "15ede1dd0017537cd3d4f2f416ec2a30f098c3ae69ce67aadcff0047bbcb42ed"
+  },
+  "coexisting_evidence_labels": {
+    "hosted_browser_failure": "run 38108525681 executed 7 PASS then UI navigation FAIL at step 8 navigate_governance_case_ui_first; hosted Playwright run log did not capture hosted browser console error stack",
+    "source_ast_counter": "complete original AST inspection of GovernanceReview.tsx revealed audit.filter((e) => e.target.includes(id)...) accesses undefined e.target because GET /bff/audit returns target_id"
+  },
+  "root_cause_analysis": {
+    "endpoint": "GET /bff/audit",
+    "http_status": 200,
+    "returned_items_count": 12,
+    "returned_schema_fields": ["entry_id", "target_id", "action_type", "timestamp"],
+    "frontend_code_path": "GovernanceReview.tsx",
+    "failing_expression": "audit.filter((e) => e.target.includes(id) || (req && e.target.includes(req.subject.split(' ')[0])))",
+    "error": "TypeError: Cannot read properties of undefined (reading 'includes')",
+    "explanation": "Frontend accessed e.target which is undefined because the API returns target_id"
+  },
+  "reopen_and_successor_status": {
+    "terminal_reopen": "DENIED",
+    "successor_task": "FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011",
+    "pending_pr": 832,
+    "head_sha": "88b5c6152500d17c2c119b10bdbae33943259810",
+    "assigned_worker": "Antigravity2",
+    "status": "source rework active, pending PR #832, not reviewed or deployed"
+  }
+}

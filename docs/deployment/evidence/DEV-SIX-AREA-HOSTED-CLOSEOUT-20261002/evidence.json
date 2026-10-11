@@ -1,0 +1,400 @@
+{
+  "task": "DEV-SIX-AREA-EVIDENCE-CHECKPOINT-20261011",
+  "parent_task": "DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002",
+  "checkpoint_timestamp": "2026-10-11T04:40:00Z",
+  "status": "INCOMPLETE",
+  "documentation_only": true,
+  "production_delta": 0,
+  "parent_governance": {
+    "generation": 16,
+    "owner": "Human/Ops",
+    "reviewer": "Codex2",
+    "acceptance_criteria_count": 6,
+    "canonical_parent_acceptance_areas": [
+      "AC1: Manual central release/acceptance checkpoint only; release owner coordination, nonprod-deploy.yml, environment lease; no worker VM access or parallel root release or fabricated human business approval",
+      "AC2: Pin and gate one exact latest-dev FE/BFF pair and actual owner/worker image identities after all source work; verify hosted manifest, served identities, safe write/strict auth/CORS posture; preserve incumbent artifacts",
+      "AC3: Use existing hosted harnesses with new specifically authorized labelled paper fixtures to prove all twelve loops on one fresh causal chain and Management/Agora/Persona/Research/approval journeys; actual provider results required where specified",
+      "AC4: Verify saved owner state after refresh and independent process restart plus tenant/auth/idempotency/version conflicts and provider failure visibility; genuine separate humans make business approvals; no existing dev pools or real capital effects",
+      "AC5: Exercise exact prior FE/BFF artifact rollback and reactivation with readback while preserving acknowledged data; update existing Agora/Persona/Research/FE approval hosted obligations only after real proof",
+      "AC6: Publish the exact PR/merge/run/artifact/readback matrix and independently reviewed scoped evidence; all mandatory items must pass for overall completion"
+    ],
+    "scoped_artifacts": [
+      "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/",
+      "docs/deployment/latest-dev-six-area-closure.md",
+      "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json"
+    ],
+    "closure_authority_note": "Child task DEV-SIX-AREA-EVIDENCE-CHECKPOINT-20261011 documents honest incomplete checkpoint only; does NOT accept closeout or replace parent independent final acceptance or release owner authority"
+  },
+  "six_area_checkpoint_matrix": {
+    "ac1_release_owner_coordination_and_governed_deployment_gate": {
+      "parent_area": "AC1: Release owner coordination, environment lease & governed deployment gate",
+      "status": "COORDINATED_CENTRAL_NONPROD_LEASE_PRESERVED",
+      "release_owner": "Human/Ops",
+      "workflow": ".github/workflows/nonprod-deploy.yml",
+      "worker_vm_access": false,
+      "parallel_root_release": false,
+      "fabricated_human_business_approvals": false,
+      "environment_lease": "single dev nonprod lease preserved; no parallel deployment"
+    },
+    "ac2_pinned_fe_bff_pair_and_sealed_artifacts": {
+      "parent_area": "AC2: Pinned & gated exact latest-dev FE/BFF pair, hosted identities & sealed artifacts",
+      "status": "PARTIAL_SERVED_PAIR_ACCEPTED_FULL_SKIPPED",
+      "root_run_id": 38102321809,
+      "fe_gate_run_id": 38103669914,
+      "fe_deploy_run_id": 38104566256,
+      "controller_accepted_at": "2026-10-11T02:33:31Z",
+      "served_pair": {
+        "bff_sha": "420598fe643be541ca28419a1abe4b03acb2dd73",
+        "fe_sha": "79aacd97f770dafb58471bba59d2fc9b98b4dff5"
+      },
+      "candidate_digest": "488b5e461c9583e261bddf2d7ad7ac8afe7e92dab677338fdb7634f437a14341",
+      "root_artifacts_verified_count": 7,
+      "fe_sealed_files_count": 32,
+      "all_fe_hashes_and_sizes_match": true,
+      "sealed_images": {
+        "agora-interaction-worker": "sha256:0acbfe4d037bbb505ad790ac54ad2b8cc37e36b58d208fa71b5688cef7af3909",
+        "loop-run-projector-scheduler": "sha256:a07b15f5991e9eca7bf99ca40d62890de5a81462a783ab4eccb2d9306b9c5e7e",
+        "operator-bff": "sha256:353dc659c2384411e55bbed103b0aca04fe38536a4172e01c182f8ae1cd45819"
+      },
+      "all_images_match": true,
+      "full_job_state": "SKIPPED_not_qualified",
+      "prior_full_run_id": 38092806870,
+      "prior_full_failure_reason": "weekly provider quota limit reported reset Oct 12 12:00 UTC (availability not guaranteed)"
+    },
+    "ac3_hosted_harness_and_twelve_loop_causal_chain": {
+      "parent_area": "AC3: Hosted harness, twelve-loop causal chain & journey verification",
+      "status": "PARTIAL_WORKSHOP_PASS_GOVERNANCE_FAIL_ALL_LOOPS_NOT_PROVEN",
+      "causal_chain_state": "INCOMPLETE; no ALL-loop browser proof or FULL qualification exists",
+      "workshop_journey": {
+        "browser_run_id": 38109227221,
+        "operation_id": "803e8330-75e4-4d31-83fd-57f48b0ee1c3",
+        "workshop_id": "295726c7-47b5-4516-a74a-c5ba8765ee48",
+        "title_sha256": "f697a21ccd124c051cf40715d1fd622d0314f8af2d0c7cd9c7c13682cf9c3093",
+        "content_sha256": "b241456e7d88c7468b8cb01d58129ebf639d8c0590bb301797e0ad09ffd02490",
+        "real_steps_passed": 13,
+        "real_steps_total": 13,
+        "observed_bff_owner_restart": "2026-10-11T01:58:33.264523039Z",
+        "acknowledged_save_before_restart": "2026-10-09T01:16:15.438Z",
+        "hash_retention_truth": "post-save BFF restart verified with later full content hash b241...2490, NOT original save-time full hash; zero create/PATCH/resave",
+        "scope_boundary": "proves Workshop persistence journey on workshop 295; does NOT prove Governance, all owner data, or rollback PASS"
+      },
+      "governance_journey": {
+        "browser_run_id": 38108525681,
+        "status": "FAILED",
+        "steps_passed": 7,
+        "failed_step": "navigate_governance_case_ui_first",
+        "hosted_failure_label": "run 38108525681 executed 7 PASS then UI navigation FAIL at step 8 navigate_governance_case_ui_first; hosted Playwright run log did not capture hosted browser console error stack",
+        "source_ast_counter_label": "complete original AST inspection of GovernanceReview.tsx revealed audit.filter((e) => e.target.includes(id)...) accesses undefined e.target because GET /bff/audit returns target_id, causing TypeError: Cannot read properties of undefined (reading 'includes')",
+        "reopen_resolution": "terminal reopen DENIED; referenced successor task created",
+        "successor_task": "FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011",
+        "pending_pr": 832,
+        "successor_status": "source rework active under Antigravity2 (PID 2775529), pending PR #832 (head 88b5c6152500d17c2c119b10bdbae33943259810), not reviewed or deployed"
+      },
+      "all_loop_browser_proof": "NONE; no product Research, provider/Alpha, Capital, or human imitation browser proof exists; all loop browser states in L1-L12 ledger remain NOT_PROVEN / not_applicable without loop-specific UI proof. Workshop persistence journey (13 PASS) and Governance journey (7 PASS, step 8 FAIL) are separately documented as cross-cutting AC3/AC4 journey receipts, not loop-specific proofs for L4 or L10.",
+      "legacy_us_persona_bindings": {
+        "archived_personas_audited": 25,
+        "matched_runtime_bindings": 24,
+        "binding_state_breakdown": {
+          "retired": 7,
+          "failed": 1,
+          "paused": 16
+        },
+        "paused_admission_reasons": {
+          "market_input_stale": 15,
+          "cause_unknown": 1
+        },
+        "unmatched_original_personas": [
+          "persona-0f94f05389a7e092b469"
+        ],
+        "active_workers_count": 0,
+        "runtime_commands_issued": "none (no pause, retire, or capital commands; paused state NOT claimed to be irreversible terminal)",
+        "historical_figure_correction": "historical 1191 represents 10-minute SPY snapshot polls in logs, NOT 1191 runtime bindings"
+      }
+    },
+    "ac4_saved_owner_state_persistence_and_fault_visibility": {
+      "parent_area": "AC4: Saved owner state persistence across restart, fault visibility & human approval",
+      "status": "PARTIAL_RESTART_PERSISTENCE_PROVEN_FAULT_UNHEALTHY_HUMAN_VOTES_ZERO",
+      "historical_pg_lineage": {
+        "telemetry_process_restart": "2026-10-11T01:49:17Z",
+        "cold_read_result": "HTTP 200 for historical incident canonical traces and binding projections (d39 and 69fff recovered from prior 404)",
+        "pg_mutation": false
+      },
+      "live_management_health": {
+        "healthy_loops_count": 11,
+        "total_loops_count": 12,
+        "loop_10_status": "fresh unhealthy functional result from current owner receipts (not merely stale unobserved provenance rejection)",
+        "incident_timeouts": 2,
+        "visibility_deferrals": 18,
+        "binding_projections": "HTTP 503 (5.086s, 7.718s) on rb-52d16f8d and rb-5354aba5 while event traces PASS (1.527s, 3.066s)",
+        "pg_durable_order": "READONLY verified 3445658 < 4005801 and 3457957 < 4005806",
+        "pg_explain": "EXPLAIN (not ANALYZE) confirmed costly created_at index scan on OR runtime binding query without dedicated index; no held blocking table lock",
+        "successor_task": "RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011",
+        "pending_pr": 6495,
+        "head_sha": "14de008e4bd5786eca8c2870c3afd35a32c784b0",
+        "status": "source rework active; numeric tenant coercion and pair deadline counter rework pending; no total PASS",
+        "queued_task": "TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011 (waiting for 6495 writer-order)"
+      },
+      "training_consumer_token_rotation": {
+        "service": "training-session-svc",
+        "instance_continuity": "same running instance across rotation",
+        "mount_path": "/run/pantheon-principals/TRAINING_SESSION_SOURCE_READ_TOKEN",
+        "rotation_window_utc": "2026-10-11T02:45:46Z -> 2026-10-11T03:45:46Z",
+        "rotation_type": "natural scheduled rotation occurring before 24h expiry, NOT an expiration event (iat advanced after 1h from 1791686746 to 1791690346; exp remains 24h from issuance)",
+        "principal_claims": {
+          "sub": "pantheon-dev-training-session-svc",
+          "scope": "pantheon:dev-owner-read",
+          "aud": "bff-operators",
+          "tenant_id": "tenant-dev",
+          "roles": ["source_ingest_reader"]
+        },
+        "authenticated_get_adoption": {
+          "source_records_get_before": true,
+          "source_records_get_after": true,
+          "controller_readback_get_before": true,
+          "controller_readback_get_after": true
+        },
+        "issuer_healthcheck": {
+          "signature_valid": true,
+          "fixed_grant_valid": true,
+          "headroom_exit_code": 0
+        },
+        "boundary_limitation": "proves single consumer adoption across one natural rotation; does NOT claim projector adoption, infinite continuity, or training job completion; zero forced mint, restart, or secret export"
+      },
+      "human_approval_votes": {
+        "required_votes": 2,
+        "eligible_distinct_humans": 2,
+        "observed_votes": 0,
+        "status": "pending; zero votes cast"
+      }
+    },
+    "ac5_rollback_verification_and_hosted_obligation_status": {
+      "parent_area": "AC5: Rollback verification & hosted obligation status update",
+      "status": "UNEXECUTED_OBLIGATIONS_REMAIN_OPEN",
+      "prior_artifact_rollback": "unexecuted; exact prior FE/BFF artifact rollback and reactivation with readback while preserving acknowledged data remains unverified",
+      "hosted_obligations_status": {
+        "agora": "OPEN / INCOMPLETE",
+        "persona": "OPEN / INCOMPLETE",
+        "research": "OPEN / INCOMPLETE",
+        "fe_approval": "OPEN / INCOMPLETE"
+      },
+      "premature_closure_guard": "hosted obligations NOT updated or closed; source task completion or historical reports do not satisfy hosted closure"
+    },
+    "ac6_matrix_publication_and_independent_review_evidence": {
+      "parent_area": "AC6: Matrix publication & independent review evidence",
+      "status": "HONEST_INCOMPLETE_CHECKPOINT_PUBLISHED",
+      "published_artifacts": [
+        "docs/deployment/latest-dev-six-area-closure.md",
+        "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json",
+        "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/browser-governance-negative-receipt.json",
+        "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/browser-workshop295-receipt.json",
+        "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/legacy-us-persona-binding-summary.json",
+        "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/root38102321809-receipt.json",
+        "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/source-delivery-ledger.json",
+        "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/telemetry-scheduler-incident-summary.json",
+        "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/training-consumer-rotation-receipt.json"
+      ],
+      "production_delta_lines": 0,
+      "unfulfilled_obligations": [
+        {
+          "item": "full_loop_qualification",
+          "detail": "Failed FULL 38092806870 due to provider weekly quota; reported reset Oct 12 12:00 UTC (availability not guaranteed); Root 38102321809 skipped FULL"
+        },
+        {
+          "item": "taiwan_natural_market_data",
+          "detail": "Mandatory Oct 12 NEW natural Taiwan market data arrival, freshness verification, and downstream pipeline consumption"
+        },
+        {
+          "item": "human_approval_votes",
+          "detail": "Two real eligible distinct human votes required on Governance approval case"
+        },
+        {
+          "item": "positive_financial_reconciliation",
+          "detail": "Positive financial accounting, ledger reconciliation, and variance resolution"
+        },
+        {
+          "item": "main_provider_and_docker_replay",
+          "detail": "Original main post-config / provider execution and pinned Docker replay"
+        },
+        {
+          "item": "legacy_us_scope_limitations",
+          "detail": "Formal retirement and terminal disposition of legacy US bindings without runtime commands"
+        },
+        {
+          "item": "exact_sealed_bytes_roundtrip",
+          "detail": "Exact prior-to-same FINAL sealed bytes roundtrip and all acknowledged data retention"
+        },
+        {
+          "item": "redis_governed_branch",
+          "detail": "Redis test container cleanup tool PR #6481 resolution"
+        },
+        {
+          "item": "independent_final_acceptance",
+          "detail": "Independent final acceptance by parent reviewer Codex2 and release owner Human/Ops"
+        }
+      ]
+    }
+  },
+  "source_ledger": {
+    "be_pr_6494": {
+      "task": "TELEMETRY-CANONICAL-OWNER-METADATA-TENANT-20261010",
+      "head": "9d7092a3945dbdbb94a9122dd832b5bbf9acba26",
+      "merge_commit": "420598fe643be541ca28419a1abe4b03acb2dd73",
+      "tests": "142 passed, 0 skipped",
+      "status": "canonical DONE"
+    },
+    "fe_pr_830": {
+      "task": "FE-GOVERNANCE-OWNER-READABLE-DETAIL-20261010",
+      "head": "753bd23928d87af1d761975ee703e8d8568248d0",
+      "merge_commit": "79aacd97f770dafb58471bba59d2fc9b98b4dff5",
+      "tests": "54 passed + 1 Playwright discovery",
+      "status": "archived DONE"
+    },
+    "fe_pr_831": {
+      "task": "FE-GOVERNANCE-CANONICAL-AUDIT-READBACK-20261011",
+      "head": "491afee837bfee57b24016a6fa9a552e747b6a44",
+      "merge_commit": "3fa4b1aab4877786e109f66156018213e4c4cb95",
+      "merged_at": "2026-10-11T04:10:14Z",
+      "native_done_at": "2026-10-11T04:13:17Z",
+      "tests": "67 passed + 1 discovery",
+      "status": "canonical DONE"
+    },
+    "be_pr_6495": {
+      "task": "RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011",
+      "head": "14de008e4bd5786eca8c2870c3afd35a32c784b0",
+      "tests": "183 passed = 40 pytest recon + 50 unittest routes/write + 93 unittest incident; numeric tenant fixed; remaining TypeError legacy unscoped two 2.6s 5.200431 deadline counter (elapsed 5.200s > 5s budget); earlier adb0 history retained: 182 passed (39 pytest recon + 50 unittest routes/write + 93 unittest incident) and earlier pytest 240s timeout retained as invocation timeout not proven product deadlock",
+      "notes": "numeric tenant coercion and pair deadline counter rework remain in source rework under Antigravity2 (PID 2773328); no total PASS"
+    },
+    "fe_pr_832": {
+      "task": "FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011",
+      "head": "88b5c6152500d17c2c119b10bdbae33943259810",
+      "status": "pending PR #832",
+      "notes": "TypeError fix on e.target.includes to use target_id with fail-closed audit validation; pending review"
+    },
+    "telemetry_indexed_binding_task": {
+      "task": "TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011",
+      "status": "queued, waiting for 6495 writer-order"
+    }
+  },
+  "operational_l1_l12_ledger": [
+    {
+      "loop": "L1",
+      "name": "source_ingestion",
+      "source_status": "PREDECESSOR_MERGED",
+      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97)",
+      "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
+      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
+      "full_qualified": false,
+      "final_acceptance": false
+    },
+    {
+      "loop": "L2",
+      "name": "strategy_distillation",
+      "source_status": "PREDECESSOR_MERGED",
+      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97)",
+      "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
+      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
+      "full_qualified": false,
+      "final_acceptance": false
+    },
+    {
+      "loop": "L3",
+      "name": "alpha_replication",
+      "source_status": "PREDECESSOR_MERGED",
+      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97)",
+      "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
+      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
+      "full_qualified": false,
+      "final_acceptance": false
+    },
+    {
+      "loop": "L4",
+      "name": "persona_teaching",
+      "source_status": "PREDECESSOR_MERGED",
+      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97)",
+      "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
+      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof (Workshop 295 persistence journey run 38109227221 is evaluated separately in AC3/AC4, not loop-specific teaching proof)",
+      "full_qualified": false,
+      "final_acceptance": false
+    },
+    {
+      "loop": "L5",
+      "name": "agora_interaction_evidence",
+      "source_status": "PREDECESSOR_MERGED",
+      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97)",
+      "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
+      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
+      "full_qualified": false,
+      "final_acceptance": false
+    },
+    {
+      "loop": "L6",
+      "name": "human_imitation_shadow_evaluation",
+      "source_status": "PREDECESSOR_MERGED",
+      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97)",
+      "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
+      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
+      "full_qualified": false,
+      "final_acceptance": false
+    },
+    {
+      "loop": "L7",
+      "name": "consultation",
+      "source_status": "PREDECESSOR_MERGED",
+      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97)",
+      "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
+      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
+      "full_qualified": false,
+      "final_acceptance": false
+    },
+    {
+      "loop": "L8",
+      "name": "promotion_deployment",
+      "source_status": "PREDECESSOR_MERGED",
+      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97)",
+      "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
+      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
+      "full_qualified": false,
+      "final_acceptance": false
+    },
+    {
+      "loop": "L9",
+      "name": "capital_pool_execution",
+      "source_status": "PREDECESSOR_MERGED",
+      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97)",
+      "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
+      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
+      "full_qualified": false,
+      "final_acceptance": false
+    },
+    {
+      "loop": "L10",
+      "name": "telemetry_reconciliation",
+      "source_status": "IN_REWORK (BE 6494 merged, BE 6495 in rework, indexed-binding queued)",
+      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97)",
+      "loop_owner_admission_health": "UNHEALTHY / unobserved (fresh functional failure: 2 incident timeouts, 18 visibility deferrals active; BE 6495 in rework)",
+      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof (Governance review journey run 38108525681 is evaluated separately in AC3, not loop-specific telemetry proof)",
+      "full_qualified": false,
+      "final_acceptance": false
+    },
+    {
+      "loop": "L11",
+      "name": "evolution",
+      "source_status": "PREDECESSOR_MERGED",
+      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97)",
+      "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
+      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
+      "full_qualified": false,
+      "final_acceptance": false
+    },
+    {
+      "loop": "L12",
+      "name": "bff_health_monitoring",
+      "source_status": "PREDECESSOR_MERGED",
+      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97)",
+      "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
+      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
+      "full_qualified": false,
+      "final_acceptance": false
+    }
+  ]
+}
