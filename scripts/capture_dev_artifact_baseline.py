@@ -137,7 +137,7 @@ def read_implementation(root: Path, name: str, controller_sha: str) -> bytes:
 # owner-mounted source directory, never touches Docker, and never fetches a token.
 INSTALLER = r'''
 import base64, hashlib, json, os, pathlib, stat, subprocess, sys
-p = json.loads(base64.b64decode(sys.argv[1], validate=True))
+p = json.loads(base64.b64decode(sys.stdin.read().strip(), validate=True))
 root = pathlib.Path(p["root"])
 def private_directory(path):
     for part in (path, *path.parents):
@@ -217,8 +217,8 @@ def remote_script(identity: dict[str, str], implementations: dict[str, bytes],
     install_failure = artifacts.failure_record(subprocess.CalledProcessError(1, []), "install")
     install_failure["exit_code"] = 0
     failure_format = json.dumps(install_failure, sort_keys=True).replace('"exit_code": 0', '"exit_code": %d') + "\n"
-    lines.append("if python3 - " + shlex.quote(base64.b64encode(encoded(payload)).decode()) + " 2>/dev/null <<'INSTALL_ARTIFACT_CONTROLLER'")
-    lines.extend((INSTALLER, "INSTALL_ARTIFACT_CONTROLLER", "then :", "else",
+    lines.append("if python3 -c " + shlex.quote(INSTALLER) + " 2>/dev/null <<'INSTALL_ARTIFACT_PAYLOAD'")
+    lines.extend((base64.b64encode(encoded(payload)).decode(), "INSTALL_ARTIFACT_PAYLOAD", "then :", "else",
                   "  rc=$?", "  printf " + shlex.quote(failure_format) + ' "$rc" >&2', '  exit "$rc"', "fi"))
     lines.append("exec " + shlex.join(args) + ' --guard-channel-fd "${PANTHEON_DEV_ARTIFACT_GUARD_CHANNEL_FD}"')
     return "\n".join(lines) + "\n"
