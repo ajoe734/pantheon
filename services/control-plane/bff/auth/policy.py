@@ -606,8 +606,6 @@ def extract_identity_jwt(
     except Exception:
         unverified_alg = ""
     if unverified_alg == "HS256":
-        bff_env["PANTHEON_RUNTIME_JWKS_URI"] = ""
-        bff_env["PANTHEON_RUNTIME_OIDC_DISCOVERY_URL"] = ""
         bff_env["PANTHEON_RUNTIME_ROLE_CLAIMS"] = "roles,role"
         bff_env["PANTHEON_RUNTIME_ROLE_MAP"] = ""
         bff_env["PANTHEON_RUNTIME_ROLE_MAP_MODE"] = "passthrough"
@@ -620,6 +618,7 @@ def extract_identity_jwt(
             mfa_header=mfa_token or "",
             mfa_required=mfa_required,
             env=bff_env,
+            allow_shared_secret=True,
         )
     except AuthError as exc:
         if exc.status_code == 403:

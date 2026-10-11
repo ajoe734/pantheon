@@ -1178,3 +1178,216 @@ def test_post_activation_failure_uses_plan_rollback_action_and_finalize(client):
     assert saga.status_code == 200
     assert saga.json()["status"] == "failed"
     assert saga.json()["compensation"]["command_type"] == "request_rollback"
+
+
+def test_deployment_owner_jwt_key_selection_http_matrix(client, monkeypatch):
+    """Verify real dev operator HS256 JWT alongside paper JWKS tokens on actual owner read route.
+
+    Covers DEV-OWNER-JWT-KEY-SELECTION-20261011 acceptance criteria:
+    1. Valid dev HS operator succeeds with JWKS configured (GET /api/deployment/plans -> 200).
+    2. Same-context real JWKS paper token still verifies (GET /api/deployment/plans -> 200).
+    3. Nondev owner (PANTHEON_ENV != 'dev') rejects HS with JWKS configured (401 AUTH_JWT_ALG_UNSUPPORTED).
+    4. Nondev owner still verifies real JWKS paper token (200).
+    5. Bad signature, expired, wrong issuer/aud, missing secret, none/unknown alg fail.
+    6. Foreign tenant returns 403 TENANT_BOUNDARY_DENIED; missing role returns 403.
+    7. Required MFA without token fails with 401 MFA_REQUIRED.
+    """
+    import base64
+    import time
+    from unittest.mock import patch
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import padding, rsa
+    from services.runtime_auth_inbound import encode_jwt_hs256, AuthError
+    from services.deployment.auth import authenticate_tenant
+
+    test_client, _ = client
+
+    dev_secret = "dev-operator-test-secret-32-chars-long"
+    dev_issuer = "pantheon-dev"
+    dev_aud = "pantheon-deployment"
+    jwks_uri = "https://auth.example.com/jwks.json"
+
+    # Configure Deployment auth environment
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_JWKS_URI", jwks_uri)
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_JWT_SECRET", dev_secret)
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_JWT_ISSUER", dev_issuer)
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_JWT_AUDIENCE", dev_aud)
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_DEFAULT_ROLE", "operator")
+
+    def _make_hs_jwt(**overrides):
+        now = time.time()
+        payload = {
+            "sub": "dev-operator-01",
+            "roles": ["operator"],
+            "iss": dev_issuer,
+            "aud": dev_aud,
+            "tenant_id": "tenant-deployment-test",
+            "iat": int(now),
+            "exp": int(now + 3600),
+        }
+        payload.update(overrides)
+        return encode_jwt_hs256(payload, secret=dev_secret)
+
+    # 1. Valid dev HS operator succeeds with JWKS configured
+    valid_hs = _make_hs_jwt()
+    resp_hs = test_client.get(
+        "/api/deployment/plans",
+        headers={"Authorization": f"Bearer {valid_hs}", "X-Tenant-Id": "tenant-deployment-test"},
+    )
+    assert resp_hs.status_code == 200, resp_hs.text
+    assert isinstance(resp_hs.json(), list)
+
+    # 2. Same-context real JWKS paper token still verifies
+    private_key = rsa.generate_private_key(65537, 2048)
+    public_numbers = private_key.public_key().public_numbers()
+    byte_len_n = (public_numbers.n.bit_length() + 7) // 8
+    byte_len_e = (public_numbers.e.bit_length() + 7) // 8
+    jwk = {
+        "kty": "RSA",
+        "kid": "paper-jwks-kid-01",
+        "use": "sig",
+        "alg": "RS256",
+        "n": base64.urlsafe_b64encode(public_numbers.n.to_bytes(byte_len_n, "big")).rstrip(b"=").decode(),
+        "e": base64.urlsafe_b64encode(public_numbers.e.to_bytes(byte_len_e, "big")).rstrip(b"=").decode(),
+    }
+    header_b64 = base64.urlsafe_b64encode(json.dumps({"alg": "RS256", "typ": "JWT", "kid": "paper-jwks-kid-01"}).encode()).rstrip(b"=").decode()
+    payload_b64 = base64.urlsafe_b64encode(
+        json.dumps({
+            "sub": "paper-caller-01",
+            "roles": ["operator"],
+            "iss": dev_issuer,
+            "aud": dev_aud,
+            "tenant_id": "tenant-deployment-test",
+            "iat": int(time.time()),
+            "exp": int(time.time() + 3600),
+        }).encode()
+    ).rstrip(b"=").decode()
+    signing_input = f"{header_b64}.{payload_b64}".encode("ascii")
+    sig = private_key.sign(signing_input, padding.PKCS1v15(), hashes.SHA256())
+    sig_b64 = base64.urlsafe_b64encode(sig).rstrip(b"=").decode()
+    rs_token = f"{header_b64}.{payload_b64}.{sig_b64}"
+
+    with patch("services.runtime_auth_inbound._fetch_jwks_keys", return_value=[jwk]):
+        resp_rs = test_client.get(
+            "/api/deployment/plans",
+            headers={"Authorization": f"Bearer {rs_token}", "X-Tenant-Id": "tenant-deployment-test"},
+        )
+    assert resp_rs.status_code == 200, resp_rs.text
+
+    # 3. Nondev owner rejects HS token with JWKS configured
+    monkeypatch.setenv("PANTHEON_ENV", "production")
+    resp_prod_hs = test_client.get(
+        "/api/deployment/plans",
+        headers={"Authorization": f"Bearer {valid_hs}", "X-Tenant-Id": "tenant-deployment-test"},
+    )
+    assert resp_prod_hs.status_code == 401
+    assert resp_prod_hs.json().get("error_code") == "AUTH_JWT_ALG_UNSUPPORTED"
+
+    # 4. Nondev owner still verifies real JWKS paper token
+    with patch("services.runtime_auth_inbound._fetch_jwks_keys", return_value=[jwk]):
+        resp_prod_rs = test_client.get(
+            "/api/deployment/plans",
+            headers={"Authorization": f"Bearer {rs_token}", "X-Tenant-Id": "tenant-deployment-test"},
+        )
+    assert resp_prod_rs.status_code == 200
+
+    # Restore PANTHEON_ENV=dev for negative checks
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+
+    # 5. Bad signature fails
+    h, p, s = valid_hs.split(".")
+    bad_sig_hs = f"{h}.{p}.{s[:-2]}AA"
+    resp_bad_sig = test_client.get(
+        "/api/deployment/plans",
+        headers={"Authorization": f"Bearer {bad_sig_hs}", "X-Tenant-Id": "tenant-deployment-test"},
+    )
+    assert resp_bad_sig.status_code == 401
+    assert resp_bad_sig.json().get("error_code") == "AUTH_JWT_BAD_SIGNATURE"
+
+    # 6. Expired fails
+    expired_hs = _make_hs_jwt(exp=time.time() - 3600)
+    resp_exp = test_client.get(
+        "/api/deployment/plans",
+        headers={"Authorization": f"Bearer {expired_hs}", "X-Tenant-Id": "tenant-deployment-test"},
+    )
+    assert resp_exp.status_code == 401
+    assert resp_exp.json().get("error_code") == "AUTH_JWT_EXPIRED"
+
+    # 7. Wrong issuer fails
+    wrong_iss_hs = _make_hs_jwt(iss="wrong-issuer")
+    resp_iss = test_client.get(
+        "/api/deployment/plans",
+        headers={"Authorization": f"Bearer {wrong_iss_hs}", "X-Tenant-Id": "tenant-deployment-test"},
+    )
+    assert resp_iss.status_code == 401
+    assert resp_iss.json().get("error_code") == "AUTH_JWT_ISSUER_MISMATCH"
+
+    # 8. Wrong audience fails
+    wrong_aud_hs = _make_hs_jwt(aud="wrong-audience")
+    resp_aud = test_client.get(
+        "/api/deployment/plans",
+        headers={"Authorization": f"Bearer {wrong_aud_hs}", "X-Tenant-Id": "tenant-deployment-test"},
+    )
+    assert resp_aud.status_code == 401
+    assert resp_aud.json().get("error_code") == "AUTH_JWT_AUDIENCE_MISMATCH"
+
+    # 9. Missing secret fails closed
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_JWT_SECRET", "")
+    resp_no_sec = test_client.get(
+        "/api/deployment/plans",
+        headers={"Authorization": f"Bearer {valid_hs}", "X-Tenant-Id": "tenant-deployment-test"},
+    )
+    assert resp_no_sec.status_code in (401, 500)
+    assert resp_no_sec.json().get("error_code") in ("AUTH_JWT_SECRET_MISSING", "AUTH_JWT_UNVERIFIED")
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_JWT_SECRET", dev_secret)
+
+    # 10. Alg none and unknown alg fail
+    b = lambda o: base64.urlsafe_b64encode(json.dumps(o).encode()).rstrip(b"=").decode()
+    forged_none = f"{b({'alg':'none','typ':'JWT'})}.{b({'sub':'u','roles':['operator']})}.e30"
+    resp_none = test_client.get(
+        "/api/deployment/plans",
+        headers={"Authorization": f"Bearer {forged_none}", "X-Tenant-Id": "tenant-deployment-test"},
+    )
+    assert resp_none.status_code == 401
+    assert resp_none.json().get("error_code") == "AUTH_JWT_ALG_UNSUPPORTED"
+
+    forged_unknown = f"{b({'alg':'HS384','typ':'JWT'})}.{b({'sub':'u','roles':['operator']})}.dGVzdA"
+    resp_unk = test_client.get(
+        "/api/deployment/plans",
+        headers={"Authorization": f"Bearer {forged_unknown}", "X-Tenant-Id": "tenant-deployment-test"},
+    )
+    assert resp_unk.status_code == 401
+    assert resp_unk.json().get("error_code") == "AUTH_JWT_ALG_UNSUPPORTED"
+
+    # 11. Foreign tenant fails
+    foreign_hs = _make_hs_jwt(tenant_id="tenant-foreign")
+    resp_foreign = test_client.get(
+        "/api/deployment/plans",
+        headers={"Authorization": f"Bearer {foreign_hs}", "X-Tenant-Id": "tenant-deployment-test"},
+    )
+    assert resp_foreign.status_code == 403
+    assert resp_foreign.json().get("error_code") == "TENANT_BOUNDARY_DENIED"
+
+    # 12. Missing required role fails
+    unauth_role_hs = _make_hs_jwt(roles=["untrusted-role"])
+    resp_role = test_client.get(
+        "/api/deployment/plans",
+        headers={"Authorization": f"Bearer {unauth_role_hs}", "X-Tenant-Id": "tenant-deployment-test"},
+    )
+    assert resp_role.status_code == 403
+    assert resp_role.json().get("error_code") == "AUTH_FORBIDDEN"
+
+    # 13. Required MFA fails
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_MFA_REQUIRED", "true")
+    with pytest.raises(AuthError) as exc_mfa:
+        authenticate_tenant(
+            authorization=f"Bearer {valid_hs}",
+            tenant_id="tenant-deployment-test",
+            service_prefix="DEPLOYMENT",
+            mfa_required=True,
+        )
+    assert exc_mfa.value.code == "MFA_REQUIRED"
+    assert exc_mfa.value.status_code == 401
+
