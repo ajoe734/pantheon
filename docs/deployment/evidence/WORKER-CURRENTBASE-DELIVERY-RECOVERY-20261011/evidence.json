@@ -64,7 +64,7 @@
     "docs/deployment/evidence/WORKER-CURRENTBASE-DELIVERY-RECOVERY-20261011/evidence.json"
   ],
   "diff_budget": {
-    "net_production_lines": 37,
+    "net_production_lines": 38,
     "budget": 40,
     "verdict": "pass",
     "files": {
