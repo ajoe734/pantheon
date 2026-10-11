@@ -1,0 +1,52 @@
+{
+  "task_id": "PI-REDIS-PROOF-CLEANUP-20261011",
+  "references": ["TEST-REDIS-CONTAINER-LEAK-20261010", "DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002"],
+  "implementation_author": "Pi chatbox, directly authorized by the operator; not the original Claude worker",
+  "delivery_class": "tooling",
+  "authority": "AGENTS.md Explicit Operator Bypass and Operator-Authorized Development Tooling Delivery; original runtime, capital, credential, and human-decision boundaries unchanged",
+  "base": "50f0cbeea4c6809596191cb40255ee53ef1fe7b4",
+  "files": [
+    "services/paper_fleet_reconciler/test_paper_fleet_reconciler.py",
+    "services/execution/lean_runtime/test_signal_isolation.py",
+    "scripts/test_redis_proof_fixture_cleanup.py",
+    "docs/02-architecture/component-boundary.yaml",
+    "docs/deployment/evidence/PI-REDIS-PROOF-CLEANUP-20261011/evidence.json"
+  ],
+  "production_runtime_lines_changed": 0,
+  "changes": [
+    "Import optional redis dependency before any Docker or socket operation; missing import is explicit SkipTest.",
+    "ExitStack registers fixture-owned cleanup before Docker start, covering ambiguous start, client construction, readiness failure and BaseException.",
+    "Register class cleanup after readiness, preserving cleanup when a subclass subsequently fails setup; normal teardown remains idempotent.",
+    "Classify only these exact disposable proof-test paths as delivery acceptance, not all services or product handlers."
+  ],
+  "validation": {
+    "cleanup_boundary_tests": {"passed": 7, "fixture_modules_per_case": 2},
+    "original_owner_test_bodies_AST_unchanged": {"paper_fleet": 75, "signal_isolation": 43},
+    "actual_interpreter_without_redis": {"redis_module_spec": null, "original_modules_tests_run": 105, "original_class_skips": 4, "exit": 0},
+    "actual_real_redis_with_service_dependencies": {"tests_passed": 125, "skips": 0, "exit": 0},
+    "original_component_and_delivery_class_tests": {"passed": 35, "subtests_passed": 10},
+    "real_owned_Docker_failure_cases": {
+      "count": 4,
+      "scenarios_per_module": ["client failure after real start", "real Docker start acknowledgment lost"],
+      "owned_label": "pantheon.pi.redis-cleanup-qa=20261011T1135Z",
+      "each_owned_container_removed_before_failure_observation": true,
+      "each_owned_container_absent_after_failure": true
+    },
+    "preexisting_l12_cap_container_count": 67,
+    "preexisting_inventory_unchanged": true,
+    "no_broad_container_removal": true,
+    "dependency_installation": "Owned temporary QA venv only; initial missing Flask, pydantic and asyncpg errors retained as dependency failures, then original tests rerun successfully.",
+    "external_receipts": "/tmp/pantheon-pi-direct-20261011T1135Z/"
+  },
+  "workflow": {
+    "original_supervisor_not_replaced_or_restarted": true,
+    "canonical_task_queue_lease_json_not_hand_edited": true,
+    "original_worker_identity_PR6481_bad_trailers_and_refs_retained": true,
+    "native_binding_files_not_modified": true,
+    "worker_sealed_artifact_files_not_modified": true,
+    "required_dev_checks": ["Commit trailers", "Runtime mirror guard", "Smoke acceptance"],
+    "mechanical_PR_if_required": "delivery:tooling, only branch-protection transport; no reviewer, review-proof tag or fabricated attestation"
+  },
+  "overall_six_area_acceptance": "INCOMPLETE",
+  "not_claimed": ["live native source-rework grant", "loaded supervisor recovery", "hosted product FULL", "future natural TW prices", "genuine human votes", "accepted exact FINAL rollback and all acknowledged owner data"]
+}

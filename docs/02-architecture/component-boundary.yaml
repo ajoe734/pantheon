@@ -155,6 +155,11 @@ components:
       - scripts/test_db_migrate.py
       # Schema/bootstrap and Compose acceptance tests, not product handlers.
       - services/telemetry/test_loop_prod_tel_002_substrate.py
+      # Disposable Redis proof fixtures; no production owner/consumer code.
+      - services/paper_fleet_reconciler/test_paper_fleet_reconciler.py
+      - services/execution/lean_runtime/test_signal_isolation.py
+      - scripts/test_redis_proof_fixture_cleanup.py
+      - docs/deployment/evidence/PI-REDIS-PROOF-CLEANUP-20261011/evidence.json
       - docs/deployment/single-vm-runbook.md
       - scripts/test_deploy_nonprod_bootstrap_contract.py
       - scripts/auto_deploy_dev_pair.py

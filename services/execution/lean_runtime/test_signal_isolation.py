@@ -8,6 +8,7 @@ Acceptance coverage:
 from __future__ import annotations
 
 import json
+from contextlib import ExitStack
 import multiprocessing
 import shutil
 import socket
@@ -68,6 +69,10 @@ class _RealRedisDockerTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         super().setUpClass()
+        try:
+            import redis
+        except ImportError as exc:
+            raise unittest.SkipTest("redis package is required for real Redis proof") from exc
         if shutil.which("docker") is None:
             raise unittest.SkipTest("docker is required for real Redis proof")
         probe = subprocess.run(
@@ -82,42 +87,45 @@ class _RealRedisDockerTestCase(unittest.TestCase):
             sock.bind(("127.0.0.1", 0))
             port = int(sock.getsockname()[1])
         cls._container_name = f"l12-cap-redis-{uuid.uuid4().hex[:10]}"
-        started = subprocess.run(
-            [
-                "docker",
-                "run",
-                "--rm",
-                "-d",
-                "--name",
-                cls._container_name,
-                "-p",
-                f"127.0.0.1:{port}:6379",
-                "redis:7-alpine",
-                "redis-server",
-                "--save",
-                "",
-                "--appendonly",
-                "no",
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if started.returncode != 0:
-            raise unittest.SkipTest(f"could not start Redis container: {started.stderr}")
-        cls.redis_url = f"redis://127.0.0.1:{port}/15"
-        import redis
-
-        client = redis.Redis.from_url(cls.redis_url, decode_responses=True)
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            try:
-                if client.ping():
-                    return
-            except Exception:
-                time.sleep(0.05)
-        cls.tearDownClass()
-        raise RuntimeError("real Redis container did not become ready")
+        with ExitStack() as rollback:
+            # Register before docker run: even an ambiguous start must clean up
+            # only this fixture's uniquely named container.
+            rollback.callback(cls.tearDownClass)
+            started = subprocess.run(
+                [
+                    "docker",
+                    "run",
+                    "--rm",
+                    "-d",
+                    "--name",
+                    cls._container_name,
+                    "-p",
+                    f"127.0.0.1:{port}:6379",
+                    "redis:7-alpine",
+                    "redis-server",
+                    "--save",
+                    "",
+                    "--appendonly",
+                    "no",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if started.returncode != 0:
+                raise unittest.SkipTest(f"could not start Redis container: {started.stderr}")
+            cls.redis_url = f"redis://127.0.0.1:{port}/15"
+            client = redis.Redis.from_url(cls.redis_url, decode_responses=True)
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                try:
+                    if client.ping():
+                        cls.addClassCleanup(cls.tearDownClass)
+                        rollback.pop_all()
+                        return
+                except Exception:
+                    time.sleep(0.05)
+            raise RuntimeError("real Redis container did not become ready")
 
     @classmethod
     def tearDownClass(cls) -> None:
