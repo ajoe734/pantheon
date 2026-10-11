@@ -153,10 +153,12 @@ validate_artifact_restore_request() {
     || error "artifact restore and verify modes are mutually exclusive"
   [[ "${DEPLOY_ENV}:${COMPONENT}" == dev:bff && "${ALLOW_DIRTY}" != true ]] \
     || error "artifact restore requires a clean explicit dev:bff target"
-  [[ "${DEPLOY_SHA}" == "${PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA:-}" ]] \
-    || error "artifact restore SHA must match the sealed previous backend"
-  local name
-  for name in MANIFEST_SHA256 DRIVER_SHA256 LIBRARY_SHA256 CANDIDATE_ID; do
+  local expected_backend="${PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA:-}"
+  [[ "${ARTIFACT_TARGET:-baseline}" != "final" ]] || expected_backend="${PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA:-}"
+  [[ "${DEPLOY_SHA}" == "${expected_backend}" ]] || error "artifact restore SHA must match the admitted backend"
+  local name sha256_names="MANIFEST_SHA256 DRIVER_SHA256 LIBRARY_SHA256 CANDIDATE_ID"
+  [[ "${ARTIFACT_TARGET:-baseline}" != "final" ]] || sha256_names+=" FE_MANIFEST_SHA256 FE_DIST_SHA256"
+  for name in ${sha256_names}; do
     local variable="PANTHEON_DEV_ARTIFACT_${name}"
     [[ "${!variable:-}" =~ ^[0-9a-f]{64}$ && "${!variable}" != "$(printf '%064d' 0)" ]] \
       || error "artifact restore requires ${variable}"
@@ -888,7 +890,7 @@ ssh_bash() {
     PANTHEON_DEV_ARTIFACT_ATTEMPT PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA \
     PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA PANTHEON_DEV_ARTIFACT_CANDIDATE_FRONTEND_SHA \
     PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA \
-    PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID; do
+    PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256 PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256 PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID; do
     command_prefix+=" ${artifact_variable}=$(shell_quote "${!artifact_variable:-}")"
   done
   command_prefix+=" PANTHEON_GITHUB_TOKEN=$(shell_quote "${GITHUB_TOKEN:-}")"
@@ -3969,9 +3971,9 @@ ARTIFACT_PY
     if [[ "${operation}" == restore-final ]]; then
       compose_file="${PWD}/docker-compose.yml"
       runtime_sha="${PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA}"
-      candidate_args+=(--target final)
-      [[ -z "${PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256:-}" ]] || candidate_args+=(--fe-manifest-sha256 "${PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256}")
-      [[ -z "${PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256:-}" ]] || candidate_args+=(--fe-dist-sha256 "${PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256}")
+      [[ "${PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256:-}" =~ ^[0-9a-f]{64}$ && "${PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] \
+        || { info "restore-final requires external FE manifest and dist digests" >&2; return 75; }
+      candidate_args+=(--target final --fe-manifest-sha256 "${PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256}" --fe-dist-sha256 "${PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256}")
     fi
   fi
 

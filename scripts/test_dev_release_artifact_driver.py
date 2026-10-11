@@ -1077,6 +1077,9 @@ def test_sealed_final_artifact_return_roundtrip(case):
     pruned_image = case.docker.built["operator-bff"]["image_id"]
     del case.docker.images[pruned_image]
 
+    case.args.fe_manifest_sha256 = verify_res["frontend"]["manifest_sha256"]
+    case.args.fe_dist_sha256 = verify_res["frontend"]["dist_sha256"]
+    case.args.fe_target = verify_res["frontend"]["target"]
     final_res = execute(case, "restore-final")
     assert final_res["operation"] == "restore-final"
     assert final_res["image_readback_verified"] is True
@@ -1111,7 +1114,10 @@ def test_restore_target_final_matches_restore_final(case):
     case.http.source = case.args.candidate_backend_sha
     case.args.compose_file = case.docker.candidate_compose
     case.args.target = "final"
-    execute(case, "verify")
+    verify_res = execute(case, "verify")
+    case.args.fe_manifest_sha256 = verify_res["frontend"]["manifest_sha256"]
+    case.args.fe_dist_sha256 = verify_res["frontend"]["dist_sha256"]
+    case.args.fe_target = verify_res["frontend"]["target"]
     res = execute(case, "restore")
     assert res["image_readback_verified"] is True
     assert res["frontend"]["frontend_sha"] == case.args.candidate_frontend_sha
@@ -1131,8 +1137,11 @@ def test_restore_final_fail_closed_conditions(case, monkeypatch, failure):
     case.http.source = case.args.candidate_backend_sha
     case.args.compose_file = case.docker.candidate_compose
     case.args.target = "final"
-    execute(case, "verify")
+    verify_res = execute(case, "verify")
     case.docker.calls.clear()
+    case.args.fe_manifest_sha256 = verify_res["frontend"]["manifest_sha256"]
+    case.args.fe_dist_sha256 = verify_res["frontend"]["dist_sha256"]
+    case.args.fe_target = verify_res["frontend"]["target"]
 
     if failure == "missing_bundle":
         (folder / "candidate-bundle.json").unlink()
@@ -1178,8 +1187,10 @@ def test_restore_final_rejects_tampered_fe_even_when_deployment_json_self_digest
     case.http.source = case.args.candidate_backend_sha
     case.args.compose_file = case.docker.candidate_compose
     case.args.target = "final"
-    execute(case, "verify")
+    verify_res = execute(case, "verify")
     case.docker.calls.clear()
+    case.args.fe_manifest_sha256 = verify_res["frontend"]["manifest_sha256"]
+    case.args.fe_dist_sha256 = verify_res["frontend"]["dist_sha256"]
 
     (final_dir / "index.html").write_text("SOURCE-ONLY-TAMPERED-POST-SEAL-FINAL-BYTES")
     p = final_dir / "deployment.json"
@@ -1202,8 +1213,10 @@ def test_restore_final_rejects_tampered_archive_even_when_candidate_bundle_rewri
     case.http.source = case.args.candidate_backend_sha
     case.args.compose_file = case.docker.candidate_compose
     case.args.target = "final"
-    execute(case, "verify")
+    verify_res = execute(case, "verify")
     case.docker.calls.clear()
+    case.args.fe_manifest_sha256 = verify_res["frontend"]["manifest_sha256"]
+    case.args.fe_dist_sha256 = verify_res["frontend"]["dist_sha256"]
 
     bundlepath = folder / "candidate-bundle.json"
     doc = json.loads(bundlepath.read_bytes())
@@ -1247,8 +1260,10 @@ def test_restore_final_fails_closed_on_unsealed_v1_candidate_receipt(case):
     case.http.source = case.args.candidate_backend_sha
     case.args.compose_file = case.docker.candidate_compose
     case.args.target = "final"
-    execute(case, "verify")
+    verify_res = execute(case, "verify")
     case.docker.calls.clear()
+    case.args.fe_manifest_sha256 = verify_res["frontend"]["manifest_sha256"]
+    case.args.fe_dist_sha256 = verify_res["frontend"]["dist_sha256"]
 
     rec_path = folder / "candidate-images.json"
     doc = json.loads(rec_path.read_bytes())
@@ -1272,8 +1287,10 @@ def test_restore_final_rejects_tampered_candidate_frontend_seal(case):
     case.http.source = case.args.candidate_backend_sha
     case.args.compose_file = case.docker.candidate_compose
     case.args.target = "final"
-    execute(case, "verify")
+    verify_res = execute(case, "verify")
     case.docker.calls.clear()
+    case.args.fe_manifest_sha256 = verify_res["frontend"]["manifest_sha256"]
+    case.args.fe_dist_sha256 = verify_res["frontend"]["dist_sha256"]
 
     fe_seal = folder / "candidate-frontend.json"
     doc = json.loads(fe_seal.read_bytes())
@@ -1294,9 +1311,11 @@ def test_restore_final_rejects_cli_fe_digest_mismatches(case, mismatch):
     case.http.source = case.args.candidate_backend_sha
     case.args.compose_file = case.docker.candidate_compose
     case.args.target = "final"
-    execute(case, "verify")
+    verify_res = execute(case, "verify")
     case.docker.calls.clear()
 
+    case.args.fe_manifest_sha256 = verify_res["frontend"]["manifest_sha256"]
+    case.args.fe_dist_sha256 = verify_res["frontend"]["dist_sha256"]
     if mismatch == "manifest":
         case.args.fe_manifest_sha256 = "0" * 64
     else:
@@ -1305,6 +1324,61 @@ def test_restore_final_rejects_cli_fe_digest_mismatches(case, mismatch):
     with pytest.raises(d.a.ArtifactError, match="candidate FE .* digest mismatch"):
         execute(case, "restore-final")
     no_replacement(case)
+
+
+@pytest.mark.parametrize("missing", ["manifest", "dist", "both"])
+def test_restore_final_rejects_missing_fe_digests(case, missing):
+    captured = seal(case)
+    deploy_candidate_frontend(case)
+    for service, row in case.docker.built.items():
+        case.docker.containers[service]["image_id"] = row["image_id"]
+    case.http.source = case.args.candidate_backend_sha
+    case.args.compose_file = case.docker.candidate_compose
+    case.args.target = "final"
+    verify_res = execute(case, "verify")
+    case.docker.calls.clear()
+
+    if missing != "manifest" and missing != "both":
+        case.args.fe_manifest_sha256 = verify_res["frontend"]["manifest_sha256"]
+    if missing != "dist" and missing != "both":
+        case.args.fe_dist_sha256 = verify_res["frontend"]["dist_sha256"]
+
+    with pytest.raises(d.a.ArtifactError, match="candidate FE .* digest mismatch"):
+        execute(case, "restore-final")
+    no_replacement(case)
+
+
+def test_restore_final_rejects_tampered_fe_even_when_adjacent_seal_rewritten(case):
+    captured = seal(case)
+    folder = Path(captured["manifest_path"]).parent
+    final_dir = deploy_candidate_frontend(case)
+    for service, row in case.docker.built.items():
+        case.docker.containers[service]["image_id"] = row["image_id"]
+    case.http.source = case.args.candidate_backend_sha
+    case.args.compose_file = case.docker.candidate_compose
+    case.args.target = "final"
+    verify_res = execute(case, "verify")
+    sealed_fe = verify_res["frontend"]
+    case.docker.calls.clear()
+
+    (final_dir / "index.html").write_text("SOURCE-ONLY-TAMPERED-POST-SEAL-FINAL-BYTES")
+    p = final_dir / "deployment.json"
+    doc = json.loads(p.read_bytes())
+    doc["artifactDigestSha256"] = d.a.frontend_dist_digest(final_dir)
+    p.write_text(json.dumps(doc))
+
+    newly_observed = d.a.capture_frontend(
+        release_store=case.args.fe_release_store, live_link=case.args.fe_live_link,
+        frontend_sha=case.args.candidate_frontend_sha, backend_sha=case.args.candidate_backend_sha)
+    (folder / "candidate-frontend.json").write_bytes(d.a.manifest_bytes(newly_observed))
+
+    case.args.fe_manifest_sha256 = sealed_fe["manifest_sha256"]
+    case.args.fe_dist_sha256 = sealed_fe["dist_sha256"]
+
+    with pytest.raises(d.a.ArtifactError, match="candidate FE manifest digest mismatch"):
+        execute(case, "restore-final")
+    no_replacement(case)
+
 
 
 

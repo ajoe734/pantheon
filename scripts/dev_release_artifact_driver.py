@@ -749,8 +749,10 @@ def run(args, *, docker, http, barrier):
         else:
             target_frontend = a.capture_frontend(release_store=args.fe_release_store, live_link=args.fe_live_link,
                                                 frontend_sha=args.candidate_frontend_sha, backend_sha=target_sha)
-        if getattr(args, "fe_manifest_sha256", None) and target_frontend["manifest_sha256"] != args.fe_manifest_sha256: raise a.ArtifactError("candidate FE manifest digest mismatch")
-        if getattr(args, "fe_dist_sha256", None) and target_frontend["dist_sha256"] != args.fe_dist_sha256: raise a.ArtifactError("candidate FE dist digest mismatch")
+        fe_m, fe_d = getattr(args, "fe_manifest_sha256", None), getattr(args, "fe_dist_sha256", None)
+        if (is_restore and not fe_m) or (fe_m and target_frontend["manifest_sha256"] != fe_m): raise a.ArtifactError("candidate FE manifest digest mismatch")
+        if (is_restore and not fe_d) or (fe_d and target_frontend["dist_sha256"] != fe_d): raise a.ArtifactError("candidate FE dist digest mismatch")
+        if getattr(args, "fe_target", None) and target_frontend["target"] != args.fe_target: raise a.ArtifactError("candidate FE target mismatch")
         target_images = {s: candidate["services"][s]["image_id"] for s in a.SERVICES}
         compose_files = ((args.compose_file, compose_digest), (_candidate_paths(folder)[1], candidate["image_override_sha256"]))
     a.verify_frontend(target_frontend, release_store=args.fe_release_store, live_link=args.fe_live_link)
@@ -806,8 +808,7 @@ def parse_args(argv=None):
     parser.add_argument("--manifest-sha256")
     parser.add_argument("--candidate-image-manifest", type=Path)
     parser.add_argument("--candidate-image-manifest-sha256")
-    parser.add_argument("--fe-manifest-sha256")
-    parser.add_argument("--fe-dist-sha256")
+    for name in ("fe-manifest-sha256", "fe-dist-sha256", "fe-target"): parser.add_argument("--" + name)
     parser.add_argument("--guard-channel-fd", type=int, required=True)
     parser.add_argument("--guard-max-silence-seconds", type=float, default=10)
     return parser.parse_args(argv)
