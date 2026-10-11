@@ -2096,17 +2096,16 @@ def _accepted_append_visibility_reason(
     if accepted_state.get("summary_visibility_confirmed_at") and telemetry_url and accepted_event_id and observed_event_id:
         try:
             from telemetry_client import verify_durable_event_order
-            expected_tid = tenant_id or summary.get("tenant_id") or _current_tenant_id()
-            if not expected_tid: return "accepted_lifecycle_append_not_visible", visibility
-            rid = str(summary.get("runtime_id") or accepted_evaluation.get("runtime_id") or "").strip() or None
-            aid, aver = str(summary.get("artifact_id") or accepted_event.get("artifact_id") or "").strip() or None, str(summary.get("artifact_version") or accepted_event.get("artifact_version") or "").strip() or None
-            proven, _, pair = verify_durable_event_order(
-                telemetry_url, accepted_event_id=accepted_event_id, observed_event_id=observed_event_id,
-                tenant_id=expected_tid, service_token=service_token, timeout_seconds=timeout_seconds,
-                expected_binding_id=binding_id, expected_runtime_id=rid, expected_artifact_id=aid, expected_artifact_version=aver,
-            )
-            if proven and pair and pair.get("accepted_event_id") == accepted_event_id and pair.get("observed_event_id") == observed_event_id and pair.get("binding_id") == binding_id:
-                return None, visibility
+            sum_bid, tid, bid = str(summary.get("binding_id") or "").strip(), str(tenant_id or summary.get("tenant_id") or _current_tenant_id() or "").strip(), str(binding_id or "").strip()
+            rid, aid, aver = str(summary.get("runtime_id") or "").strip(), str(summary.get("artifact_id") or "").strip(), str(summary.get("artifact_version") or "").strip()
+            if not (sum_bid and sum_bid != bid) and all((tid, bid, rid, aid, aver)):
+                ok, _, p = verify_durable_event_order(
+                    telemetry_url, accepted_event_id=accepted_event_id, observed_event_id=observed_event_id,
+                    tenant_id=tid, service_token=service_token, timeout_seconds=timeout_seconds,
+                    expected_binding_id=bid, expected_runtime_id=rid, expected_artifact_id=aid, expected_artifact_version=aver,
+                )
+                if ok and p and p.get("accepted_event_id") == accepted_event_id and p.get("observed_event_id") == observed_event_id and p.get("binding_id") == bid:
+                    return None, visibility
         except Exception: pass
 
     return "accepted_lifecycle_append_not_visible", visibility

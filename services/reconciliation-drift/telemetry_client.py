@@ -210,8 +210,7 @@ def fetch_accepted_event(telemetry_url: str, event_id: str, *, tenant_id: str | 
 def verify_durable_event_order(telemetry_url: str, *, accepted_event_id: str, observed_event_id: str, tenant_id: str | None = None, service_token: str | None = None, timeout_seconds: float = 5.0, expected_binding_id: str | None = None, expected_runtime_id: str | None = None, expected_artifact_id: str | None = None, expected_artifact_version: str | None = None) -> tuple[bool, str | None, dict[str, Any]]:
     if not telemetry_url or not accepted_event_id or not observed_event_id: return False, "missing_parameter", {}
     params = {"observed_event_id": observed_event_id.strip(), **{k: v.strip() for k, v in [("binding_id", expected_binding_id), ("runtime_id", expected_runtime_id), ("artifact_id", expected_artifact_id), ("artifact_version", expected_artifact_version)] if v and v.strip()}}
-    url = f"{telemetry_url.rstrip('/')}/api/telemetry/events/{urllib.parse.quote(accepted_event_id.strip())}?{urllib.parse.urlencode(params)}"
-    status, body = _event_get(url, tenant_id, service_token, timeout_seconds)
+    status, body = _event_get(f"{telemetry_url.rstrip('/')}/api/telemetry/events/{urllib.parse.quote(accepted_event_id.strip())}?{urllib.parse.urlencode(params)}", tenant_id, service_token, timeout_seconds)
     if status == 200 and isinstance(body, dict) and body.get("status") == "verified": return True, None, body.get("pair") or {}
     if status == 404: return False, "event_not_found", {}
     if status == 409: return False, (body or {}).get("error", {}).get("reason") or "conflict", {}

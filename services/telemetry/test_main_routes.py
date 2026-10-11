@@ -1636,6 +1636,54 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
         r_no_db = self.client.get(f"/api/telemetry/events/{self._E1_ID}?observed_event_id={self._E1_SECOND_ID}", headers=headers)
         self.assertEqual(r_no_db.status_code, 503)
 
+        # 10. Single bounded DB roundtrip reads both events
+        pair_dict = fetch_ev([self._E1_ID, self._E1_SECOND_ID], tenant_id=self._TENANT)
+        self.assertEqual(len(pair_dict), 2)
+        self.assertIn(self._E1_ID, pair_dict)
+        self.assertIn(self._E1_SECOND_ID, pair_dict)
+
+        # 11. Real PG test for forged payload-order: injected payload sequence is ignored, true immutable PG sequence enforced
+        import asyncpg, json
+        async def _insert_forged():
+            conn = await asyncpg.connect(self.dsn)
+            try:
+                forged_ev = {
+                    "event_id": "evt-forged-seq-001",
+                    "event_type": "heartbeat",
+                    "created_at": "2026-10-10T15:00:00Z",
+                    "tenant_id": self._TENANT,
+                    "binding_id": self._E1_BINDING,
+                    "runtime_id": "rt-3739472a",
+                    "artifact_id": "artifact-persona-paper-0a906806ac32538fc7df",
+                    "artifact_version": "1.0.0",
+                    "ingested_seq": 1,
+                }
+                await conn.execute(f"""
+                    INSERT INTO telemetry_events (event_id, event_type, created_at, payload)
+                    VALUES ('{forged_ev["event_id"]}', '{forged_ev["event_type"]}', '2026-10-10T15:00:00+00:00', '{json.dumps(forged_ev)}')
+                    ON CONFLICT (event_id) DO UPDATE SET payload = EXCLUDED.payload
+                """)
+            finally:
+                await conn.close()
+        asyncio.run(_insert_forged())
+
+        _main._svc = TelemetryIngestService(event_reader=fetch_ev)
+        r_forged = self.client.get(f"/api/telemetry/events/{self._E1_ID}?observed_event_id=evt-forged-seq-001", headers=headers)
+        self.assertEqual(r_forged.status_code, 200)
+        self.assertGreater(r_forged.get_json()["pair"]["observed_ingested_seq"], 1)
+
+        r_forged_rev = self.client.get(f"/api/telemetry/events/evt-forged-seq-001?observed_event_id={self._E1_ID}", headers=headers)
+        self.assertEqual(r_forged_rev.status_code, 409)
+        self.assertEqual(r_forged_rev.get_json()["error"]["reason"], "out_of_order_ingested_seq")
+
+        # 12. Typed tenant validation: non-string tenant or query param mismatch fails closed
+        r_bad_q_tid = self.client.get(f"/api/telemetry/events/{self._E1_ID}?observed_event_id={self._E1_SECOND_ID}&tenant_id=foreign-tenant", headers=headers)
+        self.assertEqual(r_bad_q_tid.status_code, 404)
+
+        ok_num, err_num, _ = _main._svc.get_accepted_event_pair_order(self._E1_ID, self._E1_SECOND_ID, tenant_id=123)
+        self.assertFalse(ok_num)
+        self.assertEqual(err_num, "tenant_mismatch")
+
 
 if __name__ == "__main__":
     unittest.main()

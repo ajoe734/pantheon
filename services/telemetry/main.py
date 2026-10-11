@@ -1186,6 +1186,8 @@ def accepted_event(event_id: str):
     """Return one exact owner-accepted event or verify exact-event pair durable order."""
     svc, tenant = _get_service(), request_tenant_id()
     if observed_id := str(request.args.get("observed_event_id") or "").strip():
+        if (req_tid := request.args.get("tenant_id")) and req_tid != tenant:
+            return jsonify({"error": {"code": "DURABLE_ORDER_INVALID", "reason": "tenant_mismatch"}}), 404
         try:
             ok, err, details = svc.get_accepted_event_pair_order(
                 event_id, observed_id, tenant_id=tenant,

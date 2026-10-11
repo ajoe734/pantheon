@@ -714,49 +714,49 @@ def build_postgres_write_fn(
 def build_postgres_event_reader(
     dsn: str,
     table: str = "telemetry_events",
-) -> tuple[Callable[..., Optional[dict[str, Any]]], Callable[..., list[dict[str, Any]]]]:
+) -> tuple[Callable[..., Any], Callable[..., list[dict[str, Any]]]]:
     """Build durable, tenant-scoped, and fetch-bounded event and binding readers querying canonical PostgreSQL."""
-    import asyncpg, concurrent.futures, json as _json
+    import asyncpg, concurrent.futures, json as _json, time
 
-    async def _fetch(sql: str, *args: Any) -> list[dict[str, Any]]:
-        conn = await asyncpg.connect(dsn, timeout=5.0)
+    async def _fetch(sql: str, *args: Any, deadline: float = 5.0) -> list[dict[str, Any]]:
+        t0 = time.monotonic()
+        conn = await asyncpg.connect(dsn, timeout=min(deadline, 5.0))
         try:
-            records = await conn.fetch(sql, *args, timeout=5.0)
-            return [
-                dict({k: v for k, v in (_json.loads(r["payload"]) if isinstance(r["payload"], str) else r["payload"]).items() if k != "ingested_seq"},
-                     **({"ingested_seq": int(r["ingested_seq"])} if "ingested_seq" in r and r["ingested_seq"] is not None else {}))
-                for r in records
-            ]
+            records = await conn.fetch(sql, *args, timeout=max(0.01, deadline - (time.monotonic() - t0)))
+            return [dict({k: v for k, v in (_json.loads(r["payload"]) if isinstance(r["payload"], str) else dict(r["payload"])).items() if k != "ingested_seq"}, **({"ingested_seq": int(r["ingested_seq"])} if "ingested_seq" in r and r["ingested_seq"] is not None else {}), **({"event_id": str(r["event_id"])} if "event_id" in r and r["event_id"] is not None else {})) for r in records]
         finally:
-            try: await conn.close(timeout=1.0)
+            try: await conn.close(timeout=min(1.0, max(0.1, deadline - (time.monotonic() - t0))))
             except Exception: conn.terminate()
 
-    def _sync(sql: str, *args: Any) -> list[dict[str, Any]]:
+    def _sync(sql: str, *args: Any, timeout: float = 5.0) -> list[dict[str, Any]]:
         try: loop = asyncio.get_running_loop()
         except RuntimeError: loop = None
         try:
             if loop and loop.is_running():
                 pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-                try: return pool.submit(lambda: asyncio.run(_fetch(sql, *args))).result(timeout=5.0)
+                try: return pool.submit(lambda: asyncio.run(_fetch(sql, *args, deadline=timeout))).result(timeout=timeout)
                 finally: pool.shutdown(wait=False, cancel_futures=True)
-            return asyncio.run(_fetch(sql, *args))
+            return asyncio.run(_fetch(sql, *args, deadline=timeout))
         except Exception as exc:
             raise RuntimeError(f"PostgreSQL lineage store unavailable: {exc}") from exc
 
-    def _fetch_event(eid: str, tenant_id: Optional[str] = None) -> Optional[dict[str, Any]]:
-        if not (clean_eid := str(eid or "").strip()):
-            return None
+    def _fetch_event(eid: Any, tenant_id: Optional[str] = None) -> Any:
+        if isinstance(eid, (list, tuple)):
+            if not (clean := [s for x in eid if (s := str(x or "").strip())]): return {}
+            tid = str(tenant_id or "").strip()
+            sql = f"SELECT event_id, payload, ingested_seq FROM {table} WHERE event_id = ANY($1::text[])" + (" AND (payload->>'tenant_id' = $2 OR payload->'metadata'->>'tenant_id' = $2)" if tid else "")
+            return {r["event_id"]: r for r in (_sync(sql, clean, tid) if tid else _sync(sql, clean))}
+        if not (clean_eid := str(eid or "").strip()): return None
         tid = str(tenant_id or "").strip()
-        sql = f"SELECT payload, ingested_seq FROM {table} WHERE event_id = $1" + (" AND (payload->>'tenant_id' = $2 OR payload->'metadata'->>'tenant_id' = $2) LIMIT 1" if tid else " LIMIT 1")
+        sql = f"SELECT event_id, payload, ingested_seq FROM {table} WHERE event_id = $1" + (" AND (payload->>'tenant_id' = $2 OR payload->'metadata'->>'tenant_id' = $2) LIMIT 1" if tid else " LIMIT 1")
         r = _sync(sql, clean_eid, tid) if tid else _sync(sql, clean_eid)
         return r[0] if r else None
 
     def _fetch_binding_events(bid: str, tenant_id: Optional[str] = None, limit: int = 50) -> list[dict[str, Any]]:
-        if not (clean_bid := str(bid or "").strip()):
-            return []
+        if not (clean_bid := str(bid or "").strip()): return []
         fetch_lim, tid = min(max(1, int(limit or 50)), 100), str(tenant_id or "").strip()
         cond = " AND (payload->>'tenant_id' = $2 OR payload->'metadata'->>'tenant_id' = $2) ORDER BY created_at DESC LIMIT $3"
-        sql = f"SELECT payload, ingested_seq FROM {table} WHERE (payload->>'binding_id' = $1 OR payload->>'runtime_binding_id' = $1)" + (cond if tid else " ORDER BY created_at DESC LIMIT $2")
+        sql = f"SELECT event_id, payload, ingested_seq FROM {table} WHERE (payload->>'binding_id' = $1 OR payload->>'runtime_binding_id' = $1)" + (cond if tid else " ORDER BY created_at DESC LIMIT $2")
         return _sync(sql, clean_bid, tid, fetch_lim) if tid else _sync(sql, clean_bid, fetch_lim)
 
     return _fetch_event, _fetch_binding_events
@@ -1841,16 +1841,12 @@ class TelemetryIngestService:
 
     @staticmethod
     def _event_tenant_id(event: dict[str, Any]) -> str:
-        top_level = str(event.get("tenant_id") or "").strip()
-        envelope = event.get("correlation_envelope")
-        envelope_tenant = (
-            str(envelope.get("tenant_id") or "").strip()
-            if isinstance(envelope, dict)
-            else ""
-        )
-        if top_level and envelope_tenant and top_level != envelope_tenant:
-            return ""
-        return top_level or envelope_tenant
+        candidates = []
+        for loc in (event.get("tenant_id"), (event.get("metadata") or {}).get("tenant_id") if isinstance(event.get("metadata"), dict) else None, (event.get("correlation_envelope") or {}).get("tenant_id") if isinstance(event.get("correlation_envelope"), dict) else None):
+            if loc is not None:
+                if not isinstance(loc, str) or not loc.strip(): return ""
+                candidates.append(loc.strip())
+        return candidates[0] if candidates and len(set(candidates)) == 1 else ""
 
     def get_runtime_summary(
         self,
@@ -1907,15 +1903,23 @@ class TelemetryIngestService:
         expected_artifact_id: Optional[str] = None, expected_artifact_version: Optional[str] = None,
     ) -> tuple[bool, Optional[str], Optional[dict[str, Any]]]:
         """Verify strict durable order of accepted event before observed event in PostgreSQL."""
+        if tenant_id is not None and (not isinstance(tenant_id, str) or not tenant_id.strip()):
+            return False, "tenant_mismatch", None
+        clean_tid = tenant_id.strip() if tenant_id else None
         a_id, o_id = str(accepted_event_id or "").strip(), str(observed_event_id or "").strip()
         if not a_id or not o_id: return False, "missing_event_id", None
         if a_id == o_id: return False, "equal_event_id", None
         if self._event_reader is None: return False, "database_unavailable", None
-        try: ev_a, ev_o = self._event_reader(a_id, tenant_id=tenant_id), self._event_reader(o_id, tenant_id=tenant_id)
-        except TypeError: ev_a, ev_o = self._event_reader(a_id), self._event_reader(o_id)
+        try:
+            evs = self._event_reader([a_id, o_id], tenant_id=clean_tid)
+            if isinstance(evs, dict): ev_a, ev_o = evs.get(a_id), evs.get(o_id)
+            else: ev_a, ev_o = self._event_reader(a_id, tenant_id=clean_tid), self._event_reader(o_id, tenant_id=clean_tid)
+        except TypeError:
+            try: ev_a, ev_o = self._event_reader(a_id), self._event_reader(o_id)
+            except Exception: ev_a, ev_o = None, None
         if ev_a is None or ev_o is None: return False, "event_not_found", None
         tid_a, tid_o = self._event_tenant_id(ev_a), self._event_tenant_id(ev_o)
-        if not isinstance(tid_a, str) or not tid_a.strip() or not isinstance(tid_o, str) or not tid_o.strip() or tid_a != tid_o or (tenant_id and tid_a != tenant_id):
+        if not tid_a or not tid_o or tid_a != tid_o or (clean_tid and tid_a != clean_tid):
             return False, "tenant_mismatch", None
         def _canon(ev: dict[str, Any]) -> Optional[tuple[str, str, str, str]]:
             b1, b2 = ev.get("binding_id"), ev.get("runtime_binding_id")
@@ -1923,25 +1927,19 @@ class TelemetryIngestService:
             s1, s2 = b1.strip() if b1 else None, b2.strip() if b2 else None
             if (s1 and s2 and s1 != s2) or not (s1 or s2): return None
             r, a, v = ev.get("runtime_id"), ev.get("artifact_id"), ev.get("artifact_version")
-            if any(not isinstance(x, str) or not x.strip() for x in (r, a, v)): return None
-            return (s1 or s2), r.strip(), a.strip(), v.strip()
+            return ((s1 or s2), r.strip(), a.strip(), v.strip()) if all(isinstance(x, str) and x.strip() for x in (r, a, v)) else None
         id_a, id_o = _canon(ev_a), _canon(ev_o)
         if not id_a or not id_o: return False, "invalid_identity", None
         bid_a, rid_a, aid_a, aver_a = id_a
         bid_o, rid_o, aid_o, aver_o = id_o
-        if bid_a != bid_o: return False, "binding_mismatch", None
-        if rid_a != rid_o: return False, "runtime_id_mismatch", None
-        if aid_a != aid_o: return False, "artifact_id_mismatch", None
-        if aver_a != aver_o: return False, "artifact_version_mismatch", None
-        if (expected_binding_id and bid_a != expected_binding_id) or (expected_runtime_id and rid_a != expected_runtime_id) or (expected_artifact_id and aid_a != expected_artifact_id) or (expected_artifact_version and aver_a != expected_artifact_version):
-            return False, "expected_identity_mismatch", None
+        for name, va, vo, exp in (("binding", bid_a, bid_o, expected_binding_id), ("runtime_id", rid_a, rid_o, expected_runtime_id), ("artifact_id", aid_a, aid_o, expected_artifact_id), ("artifact_version", aver_a, aver_o, expected_artifact_version)):
+            if va != vo: return False, f"{name}_mismatch", None
+            if exp and va != exp: return False, "expected_identity_mismatch", None
         seq_a, seq_o = ev_a.get("ingested_seq"), ev_o.get("ingested_seq")
-        if not isinstance(seq_a, int) or isinstance(seq_a, bool) or not isinstance(seq_o, int) or isinstance(seq_o, bool):
-            return False, "missing_ingested_seq", None
+        if type(seq_a) is not int or type(seq_o) is not int: return False, "missing_ingested_seq", None
         if seq_a >= seq_o: return False, "out_of_order_ingested_seq", None
         return True, None, {
-            "accepted_event_id": a_id, "observed_event_id": o_id,
-            "accepted_ingested_seq": seq_a, "observed_ingested_seq": seq_o,
+            "accepted_event_id": a_id, "observed_event_id": o_id, "accepted_ingested_seq": seq_a, "observed_ingested_seq": seq_o,
             "tenant_id": tid_a, "binding_id": bid_a, "runtime_id": rid_a, "artifact_id": aid_a, "artifact_version": aver_a,
         }
 

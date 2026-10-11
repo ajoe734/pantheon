@@ -301,6 +301,10 @@ class TestScheduledDriftReportCausalLineage(unittest.TestCase):
 class TestAcceptedAppendVisibilityReason(unittest.TestCase):
     def setUp(self) -> None:
         self.binding_id = "rb-test-001"
+        self.runtime_id = "rt-test-001"
+        self.artifact_id = "art-test-001"
+        self.artifact_version = "1.0.0"
+        self.tenant_id = "tenant-test"
         self.accepted_event_id = "evt-accepted-001"
         self.observed_event_id = "evt-observed-002"
         self.telemetry_url = "http://telemetry.local:8083"
@@ -309,6 +313,10 @@ class TestAcceptedAppendVisibilityReason(unittest.TestCase):
         self.accepted_evaluation = {
             "evaluation_id": "eval-accepted-001",
             "binding_id": self.binding_id,
+            "runtime_id": self.runtime_id,
+            "artifact_id": self.artifact_id,
+            "artifact_version": self.artifact_version,
+            "tenant_id": self.tenant_id,
             "evaluated_at": "2026-10-08T10:00:00Z",
             "lifecycle_append": {
                 "status": "accepted",
@@ -330,6 +338,10 @@ class TestAcceptedAppendVisibilityReason(unittest.TestCase):
 
         self.summary_evicted = {
             "binding_id": self.binding_id,
+            "runtime_id": self.runtime_id,
+            "artifact_id": self.artifact_id,
+            "artifact_version": self.artifact_version,
+            "tenant_id": self.tenant_id,
             "last_lifecycle_identity": {
                 "event_id": self.observed_event_id,
                 "aggregate_type": "journey",
@@ -362,7 +374,46 @@ class TestAcceptedAppendVisibilityReason(unittest.TestCase):
             self.assertIsNone(reason)
             self.assertEqual(visibility["waiting_for_event_id"], self.accepted_event_id)
             self.assertEqual(visibility["observed_event_id"], self.observed_event_id)
-            mock_verify.assert_called_once()
+            mock_verify.assert_called_once_with(
+                self.telemetry_url,
+                accepted_event_id=self.accepted_event_id,
+                observed_event_id=self.observed_event_id,
+                tenant_id=self.tenant_id,
+                service_token=None,
+                timeout_seconds=5.0,
+                expected_binding_id=self.binding_id,
+                expected_runtime_id=self.runtime_id,
+                expected_artifact_id=self.artifact_id,
+                expected_artifact_version=self.artifact_version,
+            )
+
+    def test_evicted_missing_current_identity_fails_closed_without_calling_durable_order(self) -> None:
+        for missing_key in ("runtime_id", "artifact_id", "artifact_version"):
+            bad_summary = dict(self.summary_evicted)
+            bad_summary[missing_key] = ""
+            with mock.patch("telemetry_client.verify_durable_event_order") as mock_verify:
+                reason, _ = _accepted_append_visibility_reason(
+                    summary=bad_summary,
+                    binding_id=self.binding_id,
+                    timestamp=self.timestamp,
+                    evaluations=[self.accepted_evaluation],
+                    telemetry_url=self.telemetry_url,
+                )
+                self.assertEqual(reason, "accepted_lifecycle_append_not_visible")
+                mock_verify.assert_not_called()
+
+        mismatched_summary = dict(self.summary_evicted)
+        mismatched_summary["binding_id"] = "different-binding"
+        with mock.patch("telemetry_client.verify_durable_event_order") as mock_verify:
+            reason, _ = _accepted_append_visibility_reason(
+                summary=mismatched_summary,
+                binding_id=self.binding_id,
+                timestamp=self.timestamp,
+                evaluations=[self.accepted_evaluation],
+                telemetry_url=self.telemetry_url,
+            )
+            self.assertEqual(reason, "accepted_lifecycle_append_not_visible")
+            mock_verify.assert_not_called()
 
     def test_evicted_confirmed_fails_closed_when_telemetry_order_out_of_order(self) -> None:
         with mock.patch("telemetry_client.verify_durable_event_order") as mock_verify:
