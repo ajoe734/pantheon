@@ -33,26 +33,26 @@
   },
   "diff_budget": {
     "net_production_budget": 80,
-    "production_lines_added": 109,
+    "production_lines_added": 121,
     "production_lines_deleted": 45,
-    "net_production_lines": 64,
+    "net_production_lines": 76,
     "verdict": "pass"
   },
   "implementation_summary": {
     "scripts/dev_release_artifacts.py": "Extracted save_image helper from capture_images so candidate image admission persists byte-verified, fsynced, lease-checked archives identically to baseline. Added restore-final to FAILURE_STAGES.",
-    "scripts/dev_release_artifact_driver.py": "Added candidate-bundle.sha256 and candidate-frontend.json publication during candidate sealing preserving exact wire contract for dev_candidate_receipt.py; added restore-final command and --target final/candidate option; validated candidate compose bytes, candidate bundle (against sealed candidate-bundle.sha256 digest), candidate archives, and candidate frontend (against sealed candidate-frontend.json digest) before switch; enforced RestoreCAS and protected owner barriers; executed docker compose restore with --no-build, --pull never, --no-deps.",
+    "scripts/dev_release_artifact_driver.py": "Added candidate-bundle.sha256 and candidate-frontend.json publication preserving exact wire contract for dev_candidate_receipt.py; deferred candidate-frontend.json seal publication until after all verify gates (image readback, config, public, owner) pass; added restore-final command and --target final/candidate option; validated candidate compose bytes, candidate bundle (against sealed candidate-bundle.sha256 digest), candidate archives, and candidate frontend (against sealed candidate-frontend.json digest) before switch; enforced RestoreCAS and protected owner barriers; executed docker compose restore with --no-build, --pull never, --no-deps.",
     "scripts/test_dev_release_artifacts.py": "Added test_save_image_persists_archive_and_rejects_empty_or_differing_overwrite verifying idempotency and rejection of empty/tampered archives.",
-    "scripts/test_dev_release_artifact_driver.py": "Added test_sealed_final_artifact_return_roundtrip verifying full roundtrip (baseline capture -> candidate seal -> rollout -> baseline rollback -> final return from archives without docker build or pull); added test_restore_target_final_matches_restore_final; added test_restore_final_fail_closed_conditions verifying fail-closed failure modes; added test_restore_final_rejects_tampered_fe_even_when_deployment_json_self_digest_rewritten and test_restore_final_rejects_tampered_archive_even_when_candidate_bundle_rewritten verifying counterexample rejection.",
+    "scripts/test_dev_release_artifact_driver.py": "Added test_sealed_final_artifact_return_roundtrip verifying full roundtrip (baseline capture -> candidate seal -> rollout -> baseline rollback -> final return from archives without docker build or pull); added test_restore_target_final_matches_restore_final; added test_restore_final_fail_closed_conditions verifying fail-closed failure modes; added test_restore_final_rejects_tampered_fe_even_when_deployment_json_self_digest_rewritten and test_restore_final_rejects_tampered_archive_even_when_candidate_bundle_rewritten verifying counterexample rejection; added test_verify_target_final_does_not_publish_fe_seal_on_gate_failure.",
     "docs/deployment/dev-exact-artifact-rollback.md": "Documented step 8 for returning to the same admitted final sealed candidate bytes."
   },
   "test_execution": {
     "command": ".venv-pantheon/bin/python3 -m pytest scripts/test_dev_release_artifacts.py scripts/test_dev_release_artifact_driver.py scripts/test_nonprod_dev_artifact_workflow.py",
     "exit_code": 0,
-    "collected": 473,
-    "passed": 472,
+    "collected": 474,
+    "passed": 473,
     "skipped": 1,
     "failed": 0,
-    "duration": "94.06s"
+    "duration": "96.27s"
   },
   "explicit_unaccepted_gaps": {
     "worker_boundary": "Worker is strictly SOURCEONLY with no VM, provider, Root, control, capital, or live operator execution permissions.",

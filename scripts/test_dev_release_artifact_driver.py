@@ -1224,5 +1224,18 @@ def test_restore_final_rejects_tampered_archive_even_when_candidate_bundle_rewri
     no_replacement(case)
 
 
+def test_verify_target_final_does_not_publish_fe_seal_on_gate_failure(case):
+    captured = seal(case)
+    folder = Path(captured["manifest_path"]).parent
+    deploy_candidate_frontend(case)
+    case.args.compose_file = case.docker.candidate_compose
+    case.args.target = "final"
+    case.http.fail = "/health"
+    with pytest.raises(d.a.ArtifactError):
+        execute(case, "verify")
+    assert not (folder / "candidate-frontend.json").exists()
+
+
+
 
 

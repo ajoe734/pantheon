@@ -758,8 +758,6 @@ def run(args, *, docker, http, barrier):
         else:
             target_frontend = a.capture_frontend(release_store=args.fe_release_store, live_link=args.fe_live_link,
                                                 frontend_sha=args.candidate_frontend_sha, backend_sha=args.candidate_backend_sha)
-            if args.command == "verify":
-                _publish(fe_seal, a.manifest_bytes(target_frontend))
         a.verify_frontend(target_frontend, release_store=args.fe_release_store, live_link=args.fe_live_link)
         target_backend_sha = args.candidate_backend_sha
         target_images = {s: candidate["services"][s]["image_id"] for s in a.SERVICES}
@@ -791,6 +789,9 @@ def run(args, *, docker, http, barrier):
     owners_after = _owners(docker)
     if owners_before != owners_after: raise a.ArtifactError("protected owners changed during artifact restore/verify")
     barrier.check()
+    if args.command == "verify" and return_final:
+        _publish(fe_seal, a.manifest_bytes(target_frontend))
+        barrier.check()
     return {"schema_version": "pantheon.dev-artifact-readback.v1", "operation": args.command,
             "manifest_sha256": hashlib.sha256(raw).hexdigest(), "identity": identity,
             "pre_restore_source_observations": sorted(cas.source_observations) if is_restore else [],
