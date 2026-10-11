@@ -2316,10 +2316,8 @@ def recover_currentbase_worktree(
     if not res_base or not source_head: return False, "base_or_source_unresolved", None
     auth_base = next((c for ref in ("refs/remotes/origin/dev", "refs/heads/dev") if (c := _git_resolve_commit(repo_root, ref)[0])), None)
     if not auth_base or res_base != auth_base or (lease.get("base_ref") and (len(str(lease["base_ref"])) in (40, 64) or next((c for ref in (f"refs/remotes/{lease['base_ref']}" if not str(lease['base_ref']).startswith("refs/") else str(lease['base_ref']), f"refs/heads/{lease['base_ref']}" if not str(lease['base_ref']).startswith("refs/") else str(lease['base_ref'])) if (c := _git_resolve_commit(repo_root, ref)[0])), None) != auth_base)): return False, "stale_base", None
-    target_branch = target_branch or f"{source_branch}-v2"
-    if not task_branch_matches(target_branch, source_branch): return False, "invalid_target_branch", None
-    mb = subprocess.run(["git", "-C", str(repo_root), "merge-base", source_head, res_base], capture_output=True, text=True).stdout.strip()
-    diff_p = subprocess.run(["git", "-C", str(repo_root), "diff", "--binary", mb or source_head, source_head, "--", *declared_paths], capture_output=True)
+    if not task_branch_matches(target_branch := (target_branch or f"{source_branch}-v2"), source_branch): return False, "invalid_target_branch", None
+    mb = subprocess.run(["git", "-C", str(repo_root), "merge-base", source_head, res_base], capture_output=True, text=True).stdout.strip(); diff_p = subprocess.run(["git", "-C", str(repo_root), "diff", "--binary", mb or source_head, source_head, "--", *declared_paths], capture_output=True)
     if diff_p.returncode != 0: return False, "diff_generation_failed", None
     patch_sha = hashlib.sha256(diff_p.stdout).hexdigest(); b_ref = f"refs/pantheon/recovery/{_task_id_slug(task_id)}/{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{os.getpid()}-{time.time_ns()}"; curr = subprocess.run(["git", "-C", str(worktree_path), "symbolic-ref", "--quiet", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
     prov = {"task_id": task_id, "repository_id": repository_id, "owner": owner, "task_generation": task_generation, "source_branch": source_branch, "source_head": source_head, "base_sha": res_base, "target_branch": target_branch, "worktree_path": str(worktree_path), "declared_paths": list(declared_paths), "patch_sha256": patch_sha, "preserved_source_ref": b_ref, "recovered_at": utc_now()}
@@ -2334,13 +2332,15 @@ def recover_currentbase_worktree(
     if curr != source_branch: return False, "source_branch_mismatch", None
     if subprocess.run(["git", "-C", str(worktree_path), "status", "--porcelain", "--untracked-files=all"], capture_output=True, text=True).stdout.strip(): return False, "worktree_dirty_cannot_recover", None
     if not callable(publish_provenance): return False, "publication_callback_required", None
+    ti = f"/tmp/.recov_idx_{os.getpid()}_{time.time_ns()}"; env = dict(os.environ, GIT_INDEX_FILE=ti)
+    try:
+        if subprocess.run(["git", "-C", str(repo_root), "read-tree", res_base], env=env, capture_output=True).returncode != 0: return False, "read_tree_failed", None
+        if diff_p.stdout and subprocess.run(["git", "-C", str(repo_root), "apply", "--check", "--cached", "-"], env=env, input=diff_p.stdout, capture_output=True).returncode != 0: return False, "patch_conflict", None
+    finally: (os.path.exists(ti) and os.unlink(ti))
     if not publish_provenance(prov): return False, "provenance_publication_failed", None
     if subprocess.run(["git", "-C", str(repo_root), "update-ref", b_ref, source_head, ""], capture_output=True).returncode != 0: return False, "source_backup_failed", None
     if subprocess.run(["git", "-C", str(worktree_path), "checkout", "-b", target_branch, res_base], capture_output=True).returncode != 0: return False, "checkout_target_branch_failed", None
-    if diff_p.stdout:
-        if subprocess.run(["git", "-C", str(worktree_path), "apply", "--check", "-"], input=diff_p.stdout, capture_output=True).returncode != 0:
-            subprocess.run(["git", "-C", str(worktree_path), "checkout", "--detach"], capture_output=True); subprocess.run(["git", "-C", str(repo_root), "branch", "-D", target_branch], capture_output=True); return False, "patch_conflict", None
-        if subprocess.run(["git", "-C", str(worktree_path), "apply", "--index", "-"], input=diff_p.stdout, capture_output=True).returncode != 0: return False, "patch_apply_failed", None
+    if diff_p.stdout and subprocess.run(["git", "-C", str(worktree_path), "apply", "--index", "-"], input=diff_p.stdout, capture_output=True).returncode != 0: return False, "patch_apply_failed", None
     return True, "currentbase_recovered", prov
 
 recover_worker_currentbase_delivery = recover_currentbase_worktree

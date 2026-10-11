@@ -1019,6 +1019,10 @@ class RecoveryCurrentbaseDeliveryTests(unittest.TestCase):
         self._git(self.repo, "commit", "-m", "conflicting dev commit")
         conflicting_dev = self._git(self.repo, "rev-parse", "dev")
 
+        before_branch = self._git(self.worktree, "symbolic-ref", "--short", "HEAD")
+        before_head = self._git(self.worktree, "rev-parse", "HEAD")
+        before_refs = self._git(self.repo, "show-ref")
+
         target_branch = f"task/{self.task_id}-v2"
         ok, status, _ = worker_workspace.recover_currentbase_worktree(
             self.repo, self.worktree,
@@ -1031,6 +1035,9 @@ class RecoveryCurrentbaseDeliveryTests(unittest.TestCase):
         )
         self.assertFalse(ok)
         self.assertEqual(status, "patch_conflict")
+        self.assertEqual(self._git(self.worktree, "symbolic-ref", "--short", "HEAD"), before_branch)
+        self.assertEqual(self._git(self.worktree, "rev-parse", "HEAD"), before_head)
+        self.assertEqual(self._git(self.repo, "show-ref"), before_refs)
         self.assertNotIn(f"refs/heads/{target_branch}", self._git(self.repo, "for-each-ref", "refs/heads/"))
 
     def test_recovery_rejects_dirty_worktree(self) -> None:

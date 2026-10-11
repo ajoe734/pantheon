@@ -9,7 +9,7 @@
   "change_class": "corrective",
   "net_prod_line_budget": 2,
   "cumulative_net_prod_line_budget": 40,
-  "summary": "Hardens recover_currentbase_worktree in .orchestrator/rewrite/worker_workspace.py to strictly enforce fail-closed validation BEFORE any git mutation (including backup refs and branch checkouts). Specifically: requires callable publication callback and successful publication before mutating git; requires non-empty declared_paths (preventing whole-repo patch leakage); enforces exact lease task_generation matching and rejects missing generation; ensures auth_base is strictly derived from configured current dev branch tips rather than arbitrary lease.base_ref commit SHAs; enforces source worktree branch fencing (rejecting foreign source branches without git mutation); requires canonical existing stored provenance on retry with full task_generation, repository_id, owner, worktree_path, declared_paths, source_head, base_sha, source_branch, target_branch, and patch_sha256 equality; preserves old branch, commits, and refs byte-identical while verifying all 47 workspace tests and complete counter suite on disposable Git.",
+  "summary": "Hardens recover_currentbase_worktree in .orchestrator/rewrite/worker_workspace.py to strictly enforce fail-closed validation BEFORE any git mutation (including backup refs and branch checkouts). Specifically: requires callable publication callback and successful publication before mutating git; requires non-empty declared_paths (preventing whole-repo patch leakage); enforces exact lease task_generation matching and rejects missing generation; ensures auth_base is strictly derived from configured current dev branch tips rather than arbitrary lease.base_ref commit SHAs; enforces source worktree branch fencing (rejecting foreign source branches without git mutation); enforces non-mutating patch conflict pre-check on an isolated temporary index before provenance publication, ref creation, or branch checkouts (ensuring conflicting current dev does not change refs or detach HEAD); requires canonical existing stored provenance on retry with full task_generation, repository_id, owner, worktree_path, declared_paths, source_head, base_sha, source_branch, target_branch, and patch_sha256 equality; preserves old branch, commits, and refs byte-identical while verifying all 47 workspace tests and complete counter suite on disposable Git.",
   "acceptance_verification": [
     {
       "ac": "AC1",
@@ -19,7 +19,7 @@
     {
       "ac": "AC2",
       "description": "Complete ORIGINALhelper+ORIGINALownedGitfixtures reproduce callbackNone mutating withoutpublication; leasegeneration missing stillaccepted; lease.base_ref=oldSHA reauthorizesstalebase; empty declared_paths yields ALLpatch. Require canonical taskgrant/currentepoch/repo/owner/lease and authenticated configuredCURRENTdev base and canonical narrow scope; queue/request/free-form lease fields are not authority. Missing/unsupported authority or callback or epoch or scope failclosed BEFORE ANYgit mutation including refs. Real publication through existing canonical APIs before mutation not returned dict or fake callback.",
-      "verdict": "pass_source_fixture_verified: fail-closed controls for missing publication callback, missing lease generation, stale base ref, empty declared scope, missing stored provenance on retry, and foreign source worktree verified on owned disposable Git fixtures before any git mutation; live canonical API publication remains gap as native adapter is unavailable in worker runtime"
+      "verdict": "pass_source_fixture_verified: fail-closed controls for missing publication callback, missing lease generation, stale base ref, empty declared scope, non-mutating patch conflict pre-check, missing stored provenance on retry, and foreign source worktree verified on owned disposable Git fixtures before any git mutation; live canonical API publication remains gap as native adapter is unavailable in worker runtime"
     },
     {
       "ac": "AC3",
@@ -34,7 +34,7 @@
     {
       "ac": "AC5",
       "description": "Run all ORIGINALworkspace regressions and complete helper counters on owneddisposable Git. Valid canonical published control preserves current unrelatedfiles and originalrefs; missingpublication/generation/emptyscope/oldSHA-as-ref/foreignrole/repo/activeworkspace/stalesource races deny withoutmutation. These are source tests NOT live grant proof. Sourceonly worker does not alter actualRedis worktree/task/queue or load/restart supervisor.",
-      "verdict": "pass_source_regression_only: all 47 workspace tests and complete helper counter suite pass on owned disposable Git; source tests prove fail-closed fencing and old branch/ref preservation without live grant proof; worker alters no actual Redis worktree, task, queue, or supervisor"
+      "verdict": "pass_source_regression_only: all 47 workspace tests and complete helper counter suite pass on owned disposable Git; source tests prove non-mutating fail-closed conflict fencing and old branch/ref preservation without live grant proof; worker alters no actual Redis worktree, task, queue, or supervisor"
     },
     {
       "ac": "AC6",
