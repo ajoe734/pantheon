@@ -737,7 +737,6 @@ def validate_request_auth(
     mfa_required: bool = False,
     env: Optional[Mapping[str, str]] = None,
     allow_shared_secret: bool = False,
-    allow_hs256: bool = False,
 ) -> AuthContext:
     """Validate inbound auth, returning the resolved ``AuthContext``.
 
@@ -775,7 +774,7 @@ def validate_request_auth(
         jwks_uri = _env(env, "PANTHEON_RUNTIME_JWKS_URI")
         oidc_discovery_url = _env(env, "PANTHEON_RUNTIME_OIDC_DISCOVERY_URL")
         token_alg = ""
-        if allow_shared_secret or allow_hs256:
+        if allow_shared_secret:
             try:
                 hdr = json.loads(_b64url_decode(token.split(".", 1)[0]))
                 if isinstance(hdr, dict):
@@ -783,7 +782,7 @@ def validate_request_auth(
             except Exception:
                 token_alg = ""
         use_jwks = bool(jwks_uri or oidc_discovery_url) and not (
-            (allow_shared_secret or allow_hs256) and token_alg == "HS256"
+            allow_shared_secret and token_alg == "HS256"
         )
         if use_jwks and jwks_uri:
             # OIDC/JWKS path: active when PANTHEON_RUNTIME_JWKS_URI is configured.
