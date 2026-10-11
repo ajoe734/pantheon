@@ -955,6 +955,91 @@ class TestRedisPendingSignalStoreClaimVisibility(_RealRedisDockerTestCase):
         self.assertEqual(worker.queue_depth(), 0)
         self.assertEqual(worker.dlq_depth(), 1)
 
+    def test_redis7_enqueue_claim_requeue_recovery_retains_enqueue_observation_and_correlation(self):
+        worker_a = self._store("worker-A")
+        raw_signal = _signal(
+            "sig-redis7-obs",
+            binding_id="b-001",
+            runtime_id="rt-001",
+            capital_pool_id="pool-001",
+        )
+        raw_signal["correlation_envelope"] = {
+            "journey_id": "journey-redis7-001",
+            "event_id": "event-redis7-001",
+            "tenant_id": "default",
+            "environment": "paper",
+        }
+        before_enqueue = datetime.now(timezone.utc)
+        worker_a.enqueue(raw_signal)
+        after_enqueue = datetime.now(timezone.utc)
+
+        # 1. Claim from Redis: verify enqueue observation is present and valid
+        claimed_batch = worker_a.get_pending(limit=1)
+        self.assertEqual(len(claimed_batch), 1)
+        claimed = claimed_batch[0]
+        self.assertIn("enqueued_at", claimed)
+
+        enqueued_dt = datetime.fromisoformat(claimed["enqueued_at"])
+        self.assertGreaterEqual(enqueued_dt, before_enqueue)
+        self.assertLessEqual(enqueued_dt, after_enqueue)
+        initial_enqueued_at = claimed["enqueued_at"]
+
+        # 2. Failed requeue via nack_requeue: must NOT reset initial observation
+        time.sleep(0.01)
+        worker_a.nack_requeue(claimed)
+        self.assertEqual(worker_a.inflight_depth(), 0)
+        self.assertEqual(worker_a.queue_depth(), 1)
+
+        reclaimed_batch = worker_a.get_pending(limit=1)
+        self.assertEqual(len(reclaimed_batch), 1)
+        reclaimed = reclaimed_batch[0]
+        self.assertEqual(reclaimed["enqueued_at"], initial_enqueued_at)
+        self.assertEqual(reclaimed["correlation_envelope"], claimed["correlation_envelope"])
+
+        # 3. Duplicate-signal fence proof on Redis
+        fence = worker_a.begin_execution(reclaimed)
+        self.assertEqual(fence.status, "acquired")
+        self.assertIsNotNone(fence.token)
+
+        second_fence = worker_a.begin_execution(reclaimed)
+        self.assertEqual(second_fence.status, "acquired")
+
+        completed = worker_a.complete_execution(reclaimed["signal_id"], fence.token)
+        self.assertTrue(completed)
+        self.assertTrue(worker_a.is_processed(reclaimed["signal_id"]))
+
+        worker_a.ack(reclaimed)
+
+        # 4. Visibility recovery retains enqueue observation across crashed workers
+        sig_crash = _signal(
+            "sig-redis7-crash-recover",
+            binding_id="b-001",
+            runtime_id="rt-001",
+            capital_pool_id="pool-001",
+        )
+        sig_crash["correlation_envelope"] = {
+            "journey_id": "journey-redis7-crash",
+            "event_id": "event-redis7-crash",
+            "tenant_id": "default",
+            "environment": "paper",
+        }
+        worker_a.enqueue(sig_crash)
+        crash_claimed = worker_a.get_pending(limit=1)[0]
+        crash_enqueued_at = crash_claimed["enqueued_at"]
+        self.assertEqual(worker_a.inflight_depth(), 1)
+
+        # Allow visibility timeout (0.25s) to expire without ack
+        time.sleep(0.3)
+        worker_b = self._store("worker-B")
+        recovered_batch = worker_b.get_pending(limit=1)
+        self.assertEqual(len(recovered_batch), 1)
+        recovered = recovered_batch[0]
+        self.assertEqual(recovered["signal_id"], "sig-redis7-crash-recover")
+        self.assertEqual(recovered["enqueued_at"], crash_enqueued_at)
+        self.assertEqual(recovered["correlation_envelope"], crash_claimed["correlation_envelope"])
+        worker_b.ack(recovered)
+        self.assertEqual(worker_b.inflight_depth(), 0)
+
 
 # ---------------------------------------------------------------------------
 # Cross-process leader lease tests (B2)
