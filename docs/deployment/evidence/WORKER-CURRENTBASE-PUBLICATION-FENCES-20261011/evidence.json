@@ -1,0 +1,118 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "WORKER-CURRENTBASE-PUBLICATION-FENCES-20261011",
+  "title": "既有source與epoch發布前後必須保持同一授權",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "base_sha": "d04e751d70757913ed7029b98612dd553f726bde",
+  "cumulative_baseline": "9c15f1d9bdef2c3e9011c7a893b6c6521520f59f",
+  "change_class": "corrective",
+  "net_prod_line_budget": 1,
+  "cumulative_net_prod_line_budget": 40,
+  "summary": "Enforces fail-closed publication-time fences in recover_currentbase_worktree (.orchestrator/rewrite/worker_workspace.py) to guarantee that source worktree state and lease authorization remain identical before and after provenance publication, prior to any protected git mutation. Specifically: verifies current dev base CAS check (stale_base), lease validity/task_id/owner/task_generation (lease_mismatch), source branch reference and worktree HEAD commit equality (stale_source), worktree branch symbolic-ref match (source_branch_mismatch), and target branch collision absence (target_branch_already_exists) immediately after publication callback before ref updates, branch checkouts, or patch application; ensures concurrent source head advance or lease generation modification during publication safely fails closed without mutating git refs or working copy; preserves all 49 existing workspace tests and adds 2 targeted unit tests (51 passed), passes all helper counter suites (5 publication/generation/scope, 5 retry/conflict, 3 sharedroot/race, 3 publication source/epoch fence), and 401 supervisor tests; strictly satisfies production net line diff budget (+1 over d04, cumulative 40 over 9c).",
+  "acceptance_verification": [
+    {
+      "ac": "AC1",
+      "description": "Referenced successor preserves terminal6501 head72fc42f9b9581c02f6ceabb9c2d6d03ca95e6654 mergedd04e751d70757913ed7029b98612dd553f726bde DONEgen2.49originalworkspacePASS and earliermissinglease-stalebase-publisher-generation-emptyscope-oldSHAref-retry-foreign-conflict-physicalroot-currentdev counter fixes remain. OriginalRedis6481 owner/reviewer/oldtrailers/forcehook/refs/PR/archive unchanged.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC2",
+      "description": "Complete ORIGINALhelper+ORIGINALownedGitfixtures reproduce sourceheadadvance or suppliedleaseepochchanged duringpublication stillaccepted with old provenance and mutationAFTERpublisher; sourceonly noactualgrant. Require currenttask/source/path/repo/owner/lease/sourcehead/ref/branch/base fences checked throughpublication beforeanyprotectedmutation; realcanonicalpublicationnotfakecallback proof.",
+      "verdict": "pass_source_fixture_verified: fail-closed controls for source head advance and lease generation changes during publication verified on owned disposable Git fixtures before any git mutation; live canonical API publication remains gap as native adapter is unavailable in worker runtime"
+    },
+    {
+      "ac": "AC3",
+      "description": "Only existing worker_workspace.py and originaltest_worker_workspace.py and own evidence. Netproduction<=1 againstcurrentdevd04 and total6499+6501+this<=40 against9c15f1d9bdef2c3e9011c7a893b6c6521520f59f; priorcumulative39. No budgetrenewal/refactor/defaultdeletion/newcommand/platform/queue-state-leaseedit orsupervisor/workerrestart.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC4",
+      "description": "Implement/use existing governed native source-rework/currentbase managed-vN path with canonical binding/fences or honestly failclosed when unavailable. Unused utility export is not actualnative recovery. No physicalsharedroot/foreignworkspace/activeworker mutation or symlinkescape or arbitrarysourcebranch/scope/base selection; replay/CAS verify immutable exact scopepatch and sourcehead/taskgen/repo/owner/path bindings. Oldlocal/remoterefs andPR6481 unchanged.",
+      "verdict": "failclosed_native_adapter_unavailable: governed native recovery helper and publication-time failclosed fences implemented and verified on owned disposable Git fixtures; live native recovery adapter remains unavailable in worker environment and honestly fails closed without physical mutation"
+    },
+    {
+      "ac": "AC5",
+      "description": "Run all ORIGINALworkspace regressions and complete helper counters on owneddisposable Git. Valid canonical published control preserves current unrelatedfiles and originalrefs; branch-head-ref-taskepoch/publisherdeny counters on own disposable Git no shared/liveworktree mutation. These are source tests NOT live grant proof. Sourceonly worker does not alter actualRedis worktree/task/queue or load/restart supervisor.",
+      "verdict": "pass_source_regression_only: all 51 workspace tests and complete helper counter suites (including publication/generation/scope, retry/conflict, physicalsharedroot/currentdev-race, and publication source/epoch fence counters) pass on owned disposable Git; source tests prove non-mutating fail-closed fencing and old branch/ref preservation without live grant proof; worker alters no actual Redis worktree, task, queue, or supervisor"
+    },
+    {
+      "ac": "AC6",
+      "description": "Genuine assigned owner andreviewer exactcommittedcleanhead currentCI/currentdevrebase normalintegration/nativefinalizer; no reviewtransfer/source-only no loadednativeRedisproof. OriginalRoot remainssolecoordinator. Do notreopenRedis until genuine correctivebindingandloadedpolicy; missingnativeauthority honestlyfailclosed notsuccess. Parent DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 remains incomplete.",
+      "verdict": "incomplete_parent_preserved: delivery is source-only and preserves unchanged history; original Redis task awaiting local Human/Ops reopen after loaded tooling ready; parent DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 remains incomplete"
+    }
+  ],
+  "verification": [
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 .orchestrator/rewrite/test_worker_workspace.py",
+      "passed": 51,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 /tmp/pantheon-closeout-resume-20261011T0710Z/tooling7d44-original-publication-generation-scope-check.py .",
+      "passed": 5,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 /tmp/pantheon-closeout-resume-20261011T0710Z/tooling-original-retry-conflict-scope-check.py .",
+      "passed": 5,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 /tmp/pantheon-closeout-resume-20261011T0710Z/tooling-original-sharedroot-currentbase-race-check.py .",
+      "passed": 3,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 /tmp/pantheon-closeout-resume-20261011T0904Z/tooling-original-publication-source-epoch-fence-check.py .",
+      "passed": 3,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 .orchestrator/test_supervisor.py",
+      "passed": 401,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    }
+  ],
+  "declared_artifacts": [
+    ".orchestrator/rewrite/worker_workspace.py",
+    ".orchestrator/rewrite/test_worker_workspace.py",
+    "docs/deployment/evidence/WORKER-CURRENTBASE-PUBLICATION-FENCES-20261011/evidence.json"
+  ],
+  "diff_budget": {
+    "net_production_lines": 1,
+    "budget": 1,
+    "cumulative_net_production_lines": 40,
+    "cumulative_budget": 40,
+    "verdict": "pass",
+    "files": {
+      "production": [
+        ".orchestrator/rewrite/worker_workspace.py"
+      ],
+      "tests": [
+        ".orchestrator/rewrite/test_worker_workspace.py"
+      ],
+      "evidence": [
+        "docs/deployment/evidence/WORKER-CURRENTBASE-PUBLICATION-FENCES-20261011/evidence.json"
+      ]
+    }
+  }
+}
