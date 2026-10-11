@@ -25,6 +25,7 @@ import re
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -2330,11 +2331,10 @@ def recover_currentbase_worktree(
         return True, "already_recovered", prov
     if curr != source_branch: return False, "source_branch_mismatch", None
     if not callable(publish_provenance) or subprocess.run(["git", "-C", str(worktree_path), "status", "--porcelain", "--untracked-files=all"], capture_output=True, text=True).stdout.strip(): return False, ("publication_callback_required" if not callable(publish_provenance) else "worktree_dirty_cannot_recover"), None
-    ti = f"/tmp/.recov_idx_{os.getpid()}_{time.time_ns()}"; env = dict(os.environ, GIT_INDEX_FILE=ti)
-    try:
+    with tempfile.TemporaryDirectory(prefix="pantheon-recovery-index-") as index_dir:
+        env = dict(os.environ, GIT_INDEX_FILE=str(Path(index_dir) / "index"))
         if subprocess.run(["git", "-C", str(repo_root), "read-tree", res_base], env=env, capture_output=True).returncode != 0: return False, "read_tree_failed", None
         if diff_p.stdout and subprocess.run(["git", "-C", str(repo_root), "apply", "--check", "--cached", "-"], env=env, input=diff_p.stdout, capture_output=True).returncode != 0: return False, "patch_conflict", None
-    finally: (os.path.exists(ti) and os.unlink(ti))
     if not publish_provenance(prov): return False, "provenance_publication_failed", None
     if next((c for ref in ("refs/remotes/origin/dev", "refs/heads/dev") if (c := _git_resolve_commit(repo_root, ref)[0])), None) != res_base: return False, "stale_base", None
     if (not isinstance(lease, Mapping) or lease.get("task_id") != task_id or (lease.get("owner") != owner and lease.get("agent") != owner) or str(lease.get("repository_id") or "pantheon") != repository_id or lease.get("task_generation") is None or int(lease.get("task_generation")) != task_generation) or (_git_resolve_commit(repo_root, source_branch if source_branch.startswith("refs/") else f"refs/heads/{source_branch}")[0] != source_head or subprocess.run(["git", "-C", str(worktree_path), "rev-parse", "--verify", "HEAD^{commit}"], capture_output=True, text=True).stdout.strip() != source_head) or (subprocess.run(["git", "-C", str(worktree_path), "symbolic-ref", "--quiet", "--short", "HEAD"], capture_output=True, text=True).stdout.strip() != source_branch) or _git_ref_exists(repo_root, f"refs/heads/{target_branch}"): return False, ("lease_mismatch" if (not isinstance(lease, Mapping) or lease.get("task_id") != task_id or (lease.get("owner") != owner and lease.get("agent") != owner) or str(lease.get("repository_id") or "pantheon") != repository_id or lease.get("task_generation") is None or int(lease.get("task_generation")) != task_generation) else ("source_branch_mismatch" if subprocess.run(["git", "-C", str(worktree_path), "symbolic-ref", "--quiet", "--short", "HEAD"], capture_output=True, text=True).stdout.strip() != source_branch else ("target_branch_already_exists" if _git_ref_exists(repo_root, f"refs/heads/{target_branch}") else "stale_source"))), None

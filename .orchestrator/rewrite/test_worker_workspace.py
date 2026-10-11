@@ -1284,6 +1284,71 @@ class RecoveryCurrentbaseDeliveryTests(unittest.TestCase):
         self.assertEqual(self._git(self.worktree, "rev-parse", "HEAD"), before_head)
         self.assertNotIn(f"refs/heads/{target_branch}", self._git(self.repo, "for-each-ref", "refs/heads/"))
 
+    def test_preflight_index_is_private_and_preserves_preexisting_global_file(self) -> None:
+        nonce = worker_workspace.time.time_ns()
+        legacy = Path(tempfile.gettempdir()) / f".recov_idx_{worker_workspace.os.getpid()}_{nonce}"
+        with legacy.open("xb"):
+            pass
+        self.addCleanup(lambda: legacy.unlink(missing_ok=True))
+        subprocess.run(["git", "-C", str(self.repo), "read-tree", self.old_base],
+                       env=dict(worker_workspace.os.environ, GIT_INDEX_FILE=str(legacy)),
+                       check=True, capture_output=True)
+        original_bytes = legacy.read_bytes()
+        original_run = subprocess.run
+        indexes = []
+
+        def inspect_index(argv, **kwargs):
+            if "read-tree" in argv:
+                index = Path(kwargs["env"]["GIT_INDEX_FILE"])
+                indexes.append(index)
+                self.assertNotEqual(index, legacy)
+                self.assertEqual(stat.S_IMODE(index.parent.stat().st_mode), 0o700)
+                self.assertFalse(index.parent.is_symlink())
+            return original_run(argv, **kwargs)
+
+        with mock.patch.object(worker_workspace.time, "time_ns", return_value=nonce), \
+                mock.patch.object(worker_workspace.subprocess, "run", side_effect=inspect_index):
+            ok, reason, _ = worker_workspace.recover_currentbase_worktree(
+                self.repo, self.worktree, task_id=self.task_id, base_sha=self.current_dev_sha,
+                declared_paths=self.declared_paths, source_branch=self.source_branch,
+                owner=self.owner, task_generation=self.task_generation, lease=self.lease,
+                publish_provenance=lambda prov: False,
+            )
+        self.assertFalse(ok)
+        self.assertEqual(reason, "provenance_publication_failed")
+        self.assertEqual(len(indexes), 1)
+        self.assertFalse(indexes[0].parent.exists())
+        self.assertEqual(legacy.read_bytes(), original_bytes)
+        self.assertEqual(self._git(self.worktree, "rev-parse", "HEAD"), self.source_head)
+
+    def test_preflight_failure_removes_private_index_directory_without_git_mutation(self) -> None:
+        original_run = subprocess.run
+        indexes = []
+
+        def fail_read_tree(argv, **kwargs):
+            if "read-tree" in argv:
+                index = Path(kwargs["env"]["GIT_INDEX_FILE"])
+                indexes.append(index)
+                self.assertEqual(stat.S_IMODE(index.parent.stat().st_mode), 0o700)
+                index.write_bytes(b"owned partial index")
+                return subprocess.CompletedProcess(argv, 1, stdout=b"", stderr=b"owned failure")
+            return original_run(argv, **kwargs)
+
+        with mock.patch.object(worker_workspace.subprocess, "run", side_effect=fail_read_tree):
+            ok, reason, _ = worker_workspace.recover_currentbase_worktree(
+                self.repo, self.worktree, task_id=self.task_id, base_sha=self.current_dev_sha,
+                declared_paths=self.declared_paths, source_branch=self.source_branch,
+                owner=self.owner, task_generation=self.task_generation, lease=self.lease,
+                publish_provenance=self.publish_provenance,
+            )
+        self.assertFalse(ok)
+        self.assertEqual(reason, "read_tree_failed")
+        self.assertEqual(len(indexes), 1)
+        self.assertFalse(indexes[0].parent.exists())
+        self.assertFalse(self.published_provenances)
+        self.assertEqual(self._git(self.worktree, "rev-parse", "HEAD"), self.source_head)
+        self.assertEqual(self._git(self.repo, "rev-parse", "dev"), self.current_dev_sha)
+
     def test_prepare_worker_workspace_adopts_versioned_branch(self) -> None:
         config = {
             "paths": {
