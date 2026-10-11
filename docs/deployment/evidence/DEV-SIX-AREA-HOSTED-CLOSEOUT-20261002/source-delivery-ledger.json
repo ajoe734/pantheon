@@ -1,5 +1,5 @@
 {
-  "at": "2026-10-11T14:50:00.000000+00:00",
+  "at": "2026-10-11T15:16:00.000000+00:00",
   "historical_snapshot_at": "2026-10-11T04:40:00.000000+00:00",
   "integrated_deliveries": [
     {
@@ -117,36 +117,52 @@
       "head": "e8411fbe59f1199028684aa7efe6e49f2f5868dc",
       "merge_commit": "f1f6c32cab68c449dc0e7a462940de6a193d1412",
       "merged_at": "2026-10-11T05:15:20Z",
+      "native_done_generation": 2,
+      "verification": "185 original tests PASS",
+      "net_production_budget": "net 118 <= 120",
       "historical_0440_state": "head 14de008e4bd5786eca8c2870c3afd35a32c784b0 in source rework (183 passed); preserved as 04:40 historical fact; landed at 05:15:20Z",
-      "canonical_status": "MERGED"
+      "canonical_status": "MERGED (source; undeployed on hosted dev VM, not hosted acceptance)"
     },
     {
       "repo": "execute-plans",
       "pr": 832,
       "task": "FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011",
       "head": "1e2aa7d7e1085ba085a2ad820dc95cb3806a4a86",
+      "merge_commit": "4211acdf31f9a28bd63f3d64fe0e6e23f98d395a",
       "merged_at": "2026-10-11T05:05:14Z",
+      "native_done_generation": 2,
+      "native_done_at": "2026-10-11T05:07:19Z",
+      "verification": "75 originals + 1 discovery PASS",
+      "cumulative_production_budget": "26 <= 40",
       "historical_0440_state": "head 88b5c6152500d17c2c119b10bdbae33943259810 pending PR #832; preserved as 04:40 historical fact; landed at 05:05:14Z",
-      "canonical_status": "MERGED"
+      "canonical_status": "MERGED (FE source; native DONE gen 2; undeployed on hosted dev VM, not hosted acceptance)"
     },
     {
       "repo": "pantheon",
       "pr": 6497,
       "task": "TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011",
-      "head": "95ca929b6f5053cf224c6ad07038e932463e2a22",
+      "head": "95ca929b6ed9016615f3db12d8fbdbb8246533fd",
       "merge_commit": "c69d90931d57b5ca7a792fd65431f3c4faad247b",
       "merged_at": "2026-10-11T05:40:20Z",
+      "native_done_generation": 1,
+      "native_done_at": "2026-10-11T05:43:14Z",
+      "verification": "144 original tests PASS",
+      "net_production_budget": "net 17 <= 40",
       "historical_0440_state": "queued waiting for 6495 writer-order; preserved as 04:40 historical fact; landed at 05:40:20Z",
-      "canonical_status": "MERGED"
+      "canonical_status": "MERGED (source; native DONE gen 1; undeployed on hosted dev VM, not hosted acceptance)"
     },
     {
       "repo": "pantheon",
       "pr": 6498,
       "task": "RECON-CURRENT-OWNER-ANCHORS-FAILCLOSED-20261011",
-      "head": "c357437b1d4c2b9fa96924aa5a9ee4a46e1039da",
+      "head": "c357437b1d6f219480f92f2e13ac5015c2a929d6",
       "merge_commit": "9c15f1d9bdef2c3e9011c7a893b6c6521520f59f",
       "merged_at": "2026-10-11T05:45:19Z",
-      "canonical_status": "MERGED"
+      "native_done_generation": 1,
+      "native_done_at": "2026-10-11T05:46:52Z",
+      "verification": "190 original tests PASS",
+      "net_production_budget": "net 1 <= 2, cumulative 119 <= 120",
+      "canonical_status": "MERGED (source; native DONE gen 1; undeployed on hosted dev VM, not hosted acceptance)"
     }
   ],
   "superseded_source_tasks": [

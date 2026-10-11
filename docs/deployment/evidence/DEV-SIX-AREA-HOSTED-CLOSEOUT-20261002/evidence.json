@@ -2,7 +2,7 @@
   "task": "DEV-SIX-AREA-SOURCE-ADOPTION-CHECKPOINT-20261011",
   "parent_task": "DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002",
   "predecessor_checkpoint_task": "DEV-SIX-AREA-EVIDENCE-CHECKPOINT-20261011",
-  "checkpoint_timestamp": "2026-10-11T14:50:00Z",
+  "checkpoint_timestamp": "2026-10-11T15:16:00Z",
   "historical_snapshot_timestamp": "2026-10-11T04:40:00Z",
   "status": "INCOMPLETE",
   "phase": "PARTIAL SOURCE ADOPTION (Not Final Release)",
@@ -55,7 +55,7 @@
         "run_id": 38124492288,
         "attempted_backend_sha": "8f532314a0aaa34ac4621c8fcbb4f35e5d9e5ea4",
         "attempted_frontend_sha": "4211acdf31f9a28bd63f3d64fe0e6e23f98d395a",
-        "outcome": "paper probe FAILED; FULL + exact pair admission SKIPPED",
+        "outcome": "whole outcome FAILED paper probe; FULL and exact pair admission SKIPPED",
         "artifacts_verified": "six original artifacts API hash and size verified",
         "public_compensation": "restored exact baseline 420598fe + 79aacd97",
         "quarantine_ttl": "quarantine TTL is NOT release acceptance"
@@ -101,8 +101,22 @@
         "source_ast_counter_label": "complete original AST inspection of GovernanceReview.tsx revealed audit.filter((e) => e.target.includes(id)...) accesses undefined e.target because GET /bff/audit returns target_id, causing TypeError: Cannot read properties of undefined (reading 'includes')",
         "reopen_resolution": "terminal reopen DENIED; referenced successor task created",
         "successor_task": "FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011",
-        "pending_pr": 832,
-        "successor_status": "source rework active under Antigravity2 (PID 2775529), pending PR #832 (head 88b5c6152500d17c2c119b10bdbae33943259810), not reviewed or deployed"
+        "successor_delivery": {
+          "pr": 832,
+          "frozen_head": "1e2aa7d7e1085ba085a2ad820dc95cb3806a4a86",
+          "merge_commit": "4211acdf31f9a28bd63f3d64fe0e6e23f98d395a",
+          "merged_at": "2026-10-11T05:05:14Z",
+          "native_done_generation": 2,
+          "native_done_at": "2026-10-11T05:07:19Z",
+          "verification": "75 originals + 1 discovery PASS",
+          "cumulative_production_budget": "26 <= 40",
+          "status": "MERGED (FE source; native DONE gen 2; undeployed on hosted dev VM, not hosted acceptance)"
+        },
+        "historical_0440_state": {
+          "pending_pr": 832,
+          "head": "88b5c6152500d17c2c119b10bdbae33943259810",
+          "status": "source rework active under Antigravity2 (PID 2775529), pending PR #832; preserved in explicitly labelled 04:40 historical object, not current fields"
+        }
       },
       "fleet_owner_legacy_us_bindings": {
         "observed_at": "2026-10-11T14:25:01Z",
@@ -145,16 +159,53 @@
         "total_loops_count": 12,
         "loop_10_status": "unhealthy; record_accepted=false, reason: record lacks accepted current controller-runtime provenance",
         "historical_transfer_prohibited": "Management 11/12 current accepted records reflects fresh functional and provenance status; historical 09:21 12/12 report is NOT transferred; does not constitute 12 scenario / browser / FULL qualification",
-        "incident_timeouts": 2,
-        "visibility_deferrals": 18,
-        "binding_projections": "HTTP 503 (5.086s, 7.718s) on rb-52d16f8d and rb-5354aba5 while event traces PASS (1.527s, 3.066s)",
-        "pg_durable_order": "READONLY verified 3445658 < 4005801 and 3457957 < 4005806",
-        "pg_explain": "EXPLAIN (not ANALYZE) confirmed costly created_at index scan on OR runtime binding query without dedicated index; no held blocking table lock",
-        "successor_task": "RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011",
-        "pending_pr": 6495,
-        "head_sha": "14de008e4bd5786eca8c2870c3afd35a32c784b0",
-        "status": "source rework active; numeric tenant coercion and pair deadline counter rework pending; no total PASS",
-        "queued_task": "TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011 (waiting for 6495 writer-order)"
+        "incident_timing_diagnostics_separately_dated": {
+          "observed_at": "2026-10-11T04:40:00.000000+00:00",
+          "historical_checkpoint": "DEV-SIX-AREA-EVIDENCE-CHECKPOINT-20261011 (receipt: telemetry-scheduler-incident-summary.json)",
+          "incident_timeouts": 2,
+          "visibility_deferrals": 18,
+          "binding_projections": "HTTP 503 (5.086s, 7.718s) on rb-52d16f8d and rb-5354aba5 while event traces PASS (1.527s, 3.066s)",
+          "pg_durable_order": "READONLY verified 3445658 < 4005801 and 3457957 < 4005806",
+          "pg_explain": "EXPLAIN (not ANALYZE) confirmed costly created_at index scan on OR runtime binding query without dedicated index; no held blocking table lock"
+        },
+        "successor_source_deliveries": {
+          "be_6495": {
+            "task": "RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011",
+            "frozen_head": "e8411fbe59f1199028684aa7efe6e49f2f5868dc",
+            "merge_commit": "f1f6c32cab68c449dc0e7a462940de6a193d1412",
+            "merged_at": "2026-10-11T05:15:20Z",
+            "native_done_generation": 2,
+            "verification": "185 original tests PASS",
+            "net_production_budget": "net 118 <= 120",
+            "status": "MERGED (source; undeployed on hosted dev VM, not hosted acceptance)"
+          },
+          "be_6497": {
+            "task": "TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011",
+            "frozen_head": "95ca929b6ed9016615f3db12d8fbdbb8246533fd",
+            "merge_commit": "c69d90931d57b5ca7a792fd65431f3c4faad247b",
+            "merged_at": "2026-10-11T05:40:20Z",
+            "native_done_generation": 1,
+            "native_done_at": "2026-10-11T05:43:14Z",
+            "verification": "144 original tests PASS",
+            "net_production_budget": "net 17 <= 40",
+            "status": "MERGED (source; undeployed on hosted dev VM, not hosted acceptance)"
+          },
+          "be_6498": {
+            "task": "RECON-CURRENT-OWNER-ANCHORS-FAILCLOSED-20261011",
+            "frozen_head": "c357437b1d6f219480f92f2e13ac5015c2a929d6",
+            "merge_commit": "9c15f1d9bdef2c3e9011c7a893b6c6521520f59f",
+            "merged_at": "2026-10-11T05:45:19Z",
+            "native_done_generation": 1,
+            "native_done_at": "2026-10-11T05:46:52Z",
+            "verification": "190 original tests PASS",
+            "net_production_budget": "net 1 <= 2, cumulative 119 <= 120",
+            "status": "MERGED (source; undeployed on hosted dev VM, not hosted acceptance)"
+          }
+        },
+        "historical_0440_state": {
+          "successor_6495_head": "14de008e4bd5786eca8c2870c3afd35a32c784b0",
+          "status": "source rework active; numeric tenant coercion and pair deadline counter rework pending (183 passed); TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011 queued waiting for 6495 writer-order; preserved as 04:40 historical fact, not erased"
+        }
       },
       "training_consumer_token_rotation": {
         "service": "training-session-svc",
@@ -162,7 +213,7 @@
         "mount_path": "/run/pantheon-principals/TRAINING_SESSION_SOURCE_READ_TOKEN",
         "rotation_window_utc": "2026-10-11T02:45:46Z -> 2026-10-11T03:45:46Z",
         "rotation_type": "natural scheduled rotation occurring before 24h expiry, NOT an expiration event (iat advanced after 1h from 1791686746 to 1791690346; exp remains 24h from issuance)",
-        "principal_claims": {
+        "public_claims": {
           "sub": "pantheon-dev-training-session-svc",
           "scope": "pantheon:dev-owner-read",
           "aud": "bff-operators",
@@ -191,7 +242,7 @@
           "fixture_disposition": "obsolete historical fixture with zero votes; omitted execution_context=paper owner contract; retained without fabricated cancellation; not a release blocker"
         },
         "operator_policy_clarification_20261011": {
-          "timestamp": "2026-10-11",
+          "timestamp": "2026-10-11T15:02:00Z",
           "operator_instruction": "User explicitly rejected demanding two human approvers for ordinary dev/paper closeout; supersedes earlier blanket two-human interpretation",
           "capital_paper_onboarding_approval_required": 0,
           "capital_guard_policy": "services/capital/capital_guard.py:is_paper_operation/authorize allows correctly scoped paper pool activation, paper_owner binding and paper_ledger rebalance without Capital approval; CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001 AC3 explicitly requires paper onboarding without Capital approval",
@@ -391,30 +442,46 @@
       "head": "e8411fbe59f1199028684aa7efe6e49f2f5868dc",
       "merge_commit": "f1f6c32cab68c449dc0e7a462940de6a193d1412",
       "merged_at": "2026-10-11T05:15:20Z",
-      "status": "MERGED (source)",
+      "native_done_generation": 2,
+      "verification": "185 original tests PASS",
+      "net_production_budget": "net 118 <= 120",
+      "status": "MERGED (source; undeployed on hosted dev VM, not hosted acceptance)",
       "historical_0440_state": "head 14de008e4bd5786eca8c2870c3afd35a32c784b0 in source rework (183 passed); preserved as 04:40 historical fact; landed at 05:15:20Z"
     },
     "fe_pr_832": {
       "task": "FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011",
       "head": "1e2aa7d7e1085ba085a2ad820dc95cb3806a4a86",
+      "merge_commit": "4211acdf31f9a28bd63f3d64fe0e6e23f98d395a",
       "merged_at": "2026-10-11T05:05:14Z",
-      "status": "MERGED (FE source)",
+      "native_done_generation": 2,
+      "native_done_at": "2026-10-11T05:07:19Z",
+      "verification": "75 originals + 1 discovery PASS",
+      "cumulative_production_budget": "26 <= 40",
+      "status": "MERGED (FE source; native DONE gen 2; undeployed on hosted dev VM, not hosted acceptance)",
       "historical_0440_state": "head 88b5c6152500d17c2c119b10bdbae33943259810 pending PR #832; preserved as 04:40 historical fact; landed at 05:05:14Z"
     },
     "telemetry_indexed_binding_task": {
       "task": "TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011",
-      "head": "95ca929b6f5053cf224c6ad07038e932463e2a22",
+      "head": "95ca929b6ed9016615f3db12d8fbdbb8246533fd",
       "merge_commit": "c69d90931d57b5ca7a792fd65431f3c4faad247b",
       "merged_at": "2026-10-11T05:40:20Z",
-      "status": "MERGED (source)",
+      "native_done_generation": 1,
+      "native_done_at": "2026-10-11T05:43:14Z",
+      "verification": "144 original tests PASS",
+      "net_production_budget": "net 17 <= 40",
+      "status": "MERGED (source; native DONE gen 1; undeployed on hosted dev VM, not hosted acceptance)",
       "historical_0440_state": "queued, waiting for 6495 writer-order; preserved as 04:40 historical fact; landed at 05:40:20Z"
     },
     "be_pr_6498": {
       "task": "RECON-CURRENT-OWNER-ANCHORS-FAILCLOSED-20261011",
-      "head": "c357437b1d4c2b9fa96924aa5a9ee4a46e1039da",
+      "head": "c357437b1d6f219480f92f2e13ac5015c2a929d6",
       "merge_commit": "9c15f1d9bdef2c3e9011c7a893b6c6521520f59f",
       "merged_at": "2026-10-11T05:45:19Z",
-      "status": "MERGED (source)"
+      "native_done_generation": 1,
+      "native_done_at": "2026-10-11T05:46:52Z",
+      "verification": "190 original tests PASS",
+      "net_production_budget": "net 1 <= 2, cumulative 119 <= 120",
+      "status": "MERGED (source; native DONE gen 1; undeployed on hosted dev VM, not hosted acceptance)"
     }
   },
   "operational_l1_l12_ledger": [
@@ -422,7 +489,7 @@
       "loop": "L1",
       "name": "source_ingestion",
       "source_status": "PREDECESSOR_MERGED",
-      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 skipped/compensated)",
+      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact 420598fe + 79aacd97)",
       "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
       "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
       "full_qualified": false,
@@ -432,7 +499,7 @@
       "loop": "L2",
       "name": "strategy_distillation",
       "source_status": "PREDECESSOR_MERGED",
-      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 skipped/compensated)",
+      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact 420598fe + 79aacd97)",
       "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
       "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
       "full_qualified": false,
@@ -442,7 +509,7 @@
       "loop": "L3",
       "name": "alpha_replication",
       "source_status": "PREDECESSOR_MERGED",
-      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 skipped/compensated)",
+      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact 420598fe + 79aacd97)",
       "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
       "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
       "full_qualified": false,
@@ -452,7 +519,7 @@
       "loop": "L4",
       "name": "persona_teaching",
       "source_status": "PREDECESSOR_MERGED",
-      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 skipped/compensated)",
+      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact 420598fe + 79aacd97)",
       "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
       "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof (Workshop 295 persistence journey run 38109227221 is evaluated separately in AC3/AC4, not loop-specific teaching proof)",
       "full_qualified": false,
@@ -462,7 +529,7 @@
       "loop": "L5",
       "name": "agora_interaction_evidence",
       "source_status": "PREDECESSOR_MERGED",
-      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 skipped/compensated)",
+      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact 420598fe + 79aacd97)",
       "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
       "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
       "full_qualified": false,
@@ -472,7 +539,7 @@
       "loop": "L6",
       "name": "human_imitation_shadow_evaluation",
       "source_status": "PREDECESSOR_MERGED",
-      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 skipped/compensated)",
+      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact 420598fe + 79aacd97)",
       "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
       "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
       "full_qualified": false,
@@ -482,7 +549,7 @@
       "loop": "L7",
       "name": "consultation",
       "source_status": "PREDECESSOR_MERGED",
-      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 skipped/compensated)",
+      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact 420598fe + 79aacd97)",
       "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
       "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
       "full_qualified": false,
@@ -492,7 +559,7 @@
       "loop": "L8",
       "name": "promotion_deployment",
       "source_status": "PREDECESSOR_MERGED",
-      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 skipped/compensated)",
+      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact 420598fe + 79aacd97)",
       "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
       "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
       "full_qualified": false,
@@ -502,7 +569,7 @@
       "loop": "L9",
       "name": "capital_pool_execution",
       "source_status": "PREDECESSOR_MERGED",
-      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 skipped/compensated)",
+      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact 420598fe + 79aacd97)",
       "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
       "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
       "full_qualified": false,
@@ -511,9 +578,9 @@
     {
       "loop": "L10",
       "name": "telemetry_reconciliation",
-      "source_status": "PREDECESSOR_MERGED (BE 6494, 6495, 6497, 6498 and FE 832 merged)",
-      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 skipped/compensated)",
-      "loop_owner_admission_health": "UNHEALTHY / unobserved (fresh functional failure: 2 incident timeouts, 18 visibility deferrals active; 13:37 controller report rejected: lacks accepted current controller-runtime provenance; landed source deliveries undeployed on dev VM)",
+      "source_status": "PREDECESSOR_MERGED (BE 6494, 6495, 6497, 6498 and FE 832 merged; undeployed on hosted dev VM)",
+      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact 420598fe + 79aacd97)",
+      "loop_owner_admission_health": "UNHEALTHY / unobserved (13:37 controller report rejected: lacks accepted current controller-runtime provenance [record_accepted: false]; landed source deliveries BE 6494, 6495, 6497, 6498 and FE 832 undeployed on hosted dev VM; not hosted acceptance; historical 04:40:00Z incident timeouts/visibility deferrals diagnostics kept separately as 04:40 checkpoint)",
       "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof (Governance review journey run 38108525681 is evaluated separately in AC3, not loop-specific telemetry proof)",
       "full_qualified": false,
       "final_acceptance": false
@@ -522,7 +589,7 @@
       "loop": "L11",
       "name": "evolution",
       "source_status": "PREDECESSOR_MERGED",
-      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 skipped/compensated)",
+      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact 420598fe + 79aacd97)",
       "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
       "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
       "full_qualified": false,
@@ -532,7 +599,7 @@
       "loop": "L12",
       "name": "bff_health_monitoring",
       "source_status": "PREDECESSOR_MERGED",
-      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 skipped/compensated)",
+      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact 420598fe + 79aacd97)",
       "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
       "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
       "full_qualified": false,
