@@ -103,13 +103,18 @@ class Docker(FakeDocker):
                 if self.render_drift:
                     fields["PANTHEON_BFF_MFA_REQUIRED"] = "true"
                 return json.dumps(split_services(fields))
+            fields = self.compose_fields
+            if fields is None:
+                fields = {key: "${" + key + ":-" + (value or "") + "}"
+                          for key, value in (self.baseline_config or self.config).items() if value is not None}
             if compose_file != self.candidate_compose:
-                fields = self.compose_fields
-                if fields is None:
-                    fields = {key: value for key, value in (self.baseline_config or self.config).items() if value is not None}
                 return json.dumps(split_services(fields))
-            model = {"services": {service: {"build": {"context": str(self.candidate_compose.parent), "dockerfile": d.DOCKERFILES[service]}}
-                                  for service in d.a.SERVICES}}
+            split = split_services(fields)["services"]
+            model = {"services": {
+                **split,
+                **{service: {**split.get(service, {}), "build": {"context": str(self.candidate_compose.parent), "dockerfile": d.DOCKERFILES[service]}}
+                   for service in d.a.SERVICES}
+            }}
             row = model["services"][d.a.SERVICES[0]]
             if self.build_contract_drift == "explicit_image": row["image"] = "pantheon-operator-bff"
             elif self.build_contract_drift == "dockerfile": row["build"]["dockerfile"] = "services/governance/Dockerfile"
@@ -240,7 +245,7 @@ def case(tmp_path, monkeypatch):
                              "git_sha": candidate_sha if service != "loop-run-projector-scheduler" else None,
                              "compose_image": "pantheon-" + service} for index, service in enumerate(d.a.SERVICES, 4)}
     docker.images.update({row["image_id"]: {"id": row["image_id"], "revision": candidate_sha, "repo_digests": None} for row in docker.built.values()})
-    return SimpleNamespace(args=args, docker=docker, http=http, barrier=Barrier(), release=release, git=git)
+    return SimpleNamespace(args=args, docker=docker, http=http, barrier=Barrier(), release=release, git=git, baseline_compose=compose)
 
 
 def execute(case, operation=None):
@@ -1010,5 +1015,299 @@ def test_restore_never_skips_the_viewer_readback(case):
     with pytest.raises(d.a.ArtifactError, match="dedicated viewer identity"):
         execute(case, "restore")
     assert any(url.endswith("/bff/auth/dev-login") for _, url, _, _ in case.http.calls)
+
+
+def deploy_candidate_frontend(case):
+    store = case.args.fe_release_store
+    candidate_release = store / "accepted-candidate"
+    candidate_release.mkdir(exist_ok=True)
+    (candidate_release / "index.html").write_text("fixture candidate FE")
+    manifest = candidate_release / "deployment.json"
+    manifest.write_text(json.dumps({
+        "schemaVersion": 1, "repository": "ajoe734/execute-plans", "app": "execute-plans",
+        "sourceBranch": "dev", "bffCommitEvidence": True, "deploymentState": "accepted",
+        "frontendSha": case.args.candidate_frontend_sha, "bffCommit": case.args.candidate_backend_sha,
+        "artifactDigestSha256": d.a.frontend_dist_digest(candidate_release)
+    }))
+    case.args.fe_live_link.unlink(missing_ok=True)
+    case.args.fe_live_link.symlink_to(candidate_release)
+    case.http.manifest = manifest
+    return candidate_release
+
+
+def test_sealed_final_artifact_return_roundtrip(case):
+    captured = seal(case)
+    baseline_folder = Path(captured["manifest_path"]).parent
+    candidate_bundle_path = baseline_folder / "candidate-bundle.json"
+    assert candidate_bundle_path.is_file()
+    candidate_bundle = json.loads(candidate_bundle_path.read_bytes())
+    assert candidate_bundle["schema_version"] == d.a.SCHEMA
+    assert candidate_bundle["source_sha"] == case.args.candidate_backend_sha
+    for service, row in case.docker.built.items():
+        assert candidate_bundle["services"][service]["image_id"] == row["image_id"]
+        archive_entry = candidate_bundle["archives"][row["image_id"]]
+        assert (d.ROOT / "images" / archive_entry["name"]).is_file()
+
+    deploy_candidate_frontend(case)
+    for service, row in case.docker.built.items():
+        case.docker.containers[service]["image_id"] = row["image_id"]
+    case.http.source = case.args.candidate_backend_sha
+
+    case.args.compose_file = case.docker.candidate_compose
+    case.args.target = "final"
+    verify_res = execute(case, "verify")
+    assert verify_res["image_readback_verified"] is True
+    assert verify_res["frontend"]["frontend_sha"] == case.args.candidate_frontend_sha
+    assert verify_res["images"] == {s: r["image_id"] for s, r in case.docker.built.items()}
+    no_replacement(case)
+
+    case.args.fe_live_link.unlink(missing_ok=True)
+    case.args.fe_live_link.symlink_to(case.release)
+    case.http.manifest = case.release / "deployment.json"
+    case.args.compose_file = case.baseline_compose
+    case.args.target = "baseline"
+    baseline_restore_res = execute(case, "restore")
+    assert baseline_restore_res["image_readback_verified"] is True
+    assert all(row["image_id"] == IDS[i] for i, row in enumerate(case.docker.containers.values()))
+
+    deploy_candidate_frontend(case)
+    case.args.compose_file = case.docker.candidate_compose
+    case.docker.calls.clear()
+
+    pruned_image = case.docker.built["operator-bff"]["image_id"]
+    del case.docker.images[pruned_image]
+
+    final_res = execute(case, "restore-final")
+    assert final_res["operation"] == "restore-final"
+    assert final_res["image_readback_verified"] is True
+    assert final_res["frontend"]["frontend_sha"] == case.args.candidate_frontend_sha
+    assert final_res["frontend"]["backend_sha"] == case.args.candidate_backend_sha
+    assert final_res["images"] == {s: r["image_id"] for s, r in case.docker.built.items()}
+    assert final_res["public"]["source_sha"] == case.args.candidate_backend_sha
+    assert final_res["public"]["authenticated_viewer_readback_verified"] is True
+
+    load_calls = [call for call in case.docker.calls if call[:2] == ("image", "load")]
+    assert len(load_calls) == 1
+    archive_name = candidate_bundle["archives"][pruned_image]["name"]
+    assert load_calls[0][-1] == str(d.ROOT / "images" / archive_name)
+
+    up_calls = [call for call in case.docker.calls if call[0] == "compose" and "up" in call]
+    assert len(up_calls) == 1
+    up_args = up_calls[0]
+    assert "--no-build" in up_args
+    assert "--pull" in up_args and up_args[up_args.index("--pull") + 1] == "never"
+    assert "--no-deps" in up_args
+    assert "--force-recreate" in up_args
+
+    assert not any(call[0] in ("build", "pull") or call[:2] == ("image", "pull") or call[:2] == ("image", "build")
+                   for call in case.docker.calls)
+
+
+def test_restore_target_final_matches_restore_final(case):
+    seal(case)
+    deploy_candidate_frontend(case)
+    for service, row in case.docker.built.items():
+        case.docker.containers[service]["image_id"] = row["image_id"]
+    case.http.source = case.args.candidate_backend_sha
+    case.args.compose_file = case.docker.candidate_compose
+    case.args.target = "final"
+    execute(case, "verify")
+    res = execute(case, "restore")
+    assert res["image_readback_verified"] is True
+    assert res["frontend"]["frontend_sha"] == case.args.candidate_frontend_sha
+
+
+@pytest.mark.parametrize("failure", [
+    "missing_bundle", "tampered_bundle", "missing_archive", "tampered_archive",
+    "compose_mismatch", "wrong_fe", "cas_foreign_container", "owner_drift",
+    "permissive_auth", "unhealthy_bff", "wrong_public_source"
+])
+def test_restore_final_fail_closed_conditions(case, monkeypatch, failure):
+    captured = seal(case)
+    folder = Path(captured["manifest_path"]).parent
+    deploy_candidate_frontend(case)
+    for service, row in case.docker.built.items():
+        case.docker.containers[service]["image_id"] = row["image_id"]
+    case.http.source = case.args.candidate_backend_sha
+    case.args.compose_file = case.docker.candidate_compose
+    case.args.target = "final"
+    execute(case, "verify")
+    case.docker.calls.clear()
+
+    if failure == "missing_bundle":
+        (folder / "candidate-bundle.json").unlink()
+    elif failure == "tampered_bundle":
+        (folder / "candidate-bundle.json").write_bytes(b"tampered bundle")
+    elif failure == "missing_archive":
+        bundle = json.loads((folder / "candidate-bundle.json").read_bytes())
+        archive_name = next(iter(bundle["archives"].values()))["name"]
+        (d.ROOT / "images" / archive_name).unlink()
+    elif failure == "tampered_archive":
+        bundle = json.loads((folder / "candidate-bundle.json").read_bytes())
+        archive_name = next(iter(bundle["archives"].values()))["name"]
+        (d.ROOT / "images" / archive_name).write_bytes(b"tampered archive bytes")
+    elif failure == "compose_mismatch":
+        case.docker.candidate_compose.write_text("services: {drift: {}}\n")
+    elif failure == "wrong_fe":
+        case.args.fe_live_link.unlink()
+        case.args.fe_live_link.symlink_to(case.release)
+    elif failure == "cas_foreign_container":
+        case.docker.containers["operator-bff"]["image_id"] = "sha256:" + "9" * 64
+    elif failure == "owner_drift":
+        case.docker.owner_drift = True
+    elif failure == "permissive_auth":
+        monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    elif failure == "unhealthy_bff":
+        case.http.fail = "/health"
+    elif failure == "wrong_public_source":
+        case.http.source = "9" * 40
+
+    with pytest.raises(d.a.ArtifactError):
+        execute(case, "restore-final")
+    if failure in ("owner_drift", "unhealthy_bff"):
+        assert any(call[0] == "compose" and "up" in call for call in case.docker.calls)
+    else:
+        no_replacement(case)
+
+
+def test_restore_final_rejects_tampered_fe_even_when_deployment_json_self_digest_rewritten(case):
+    seal(case)
+    final_dir = deploy_candidate_frontend(case)
+    for service, row in case.docker.built.items():
+        case.docker.containers[service]["image_id"] = row["image_id"]
+    case.http.source = case.args.candidate_backend_sha
+    case.args.compose_file = case.docker.candidate_compose
+    case.args.target = "final"
+    execute(case, "verify")
+    case.docker.calls.clear()
+
+    (final_dir / "index.html").write_text("SOURCE-ONLY-TAMPERED-POST-SEAL-FINAL-BYTES")
+    p = final_dir / "deployment.json"
+    doc = json.loads(p.read_bytes())
+    doc["artifactDigestSha256"] = d.a.frontend_dist_digest(final_dir)
+    p.write_text(json.dumps(doc))
+
+    with pytest.raises(d.a.ArtifactError) as exc_info:
+        execute(case, "restore-final")
+    assert "FE exact artifact/target mismatch" in str(exc_info.value) or "FE dist digest mismatch" in str(exc_info.value)
+    no_replacement(case)
+
+
+def test_restore_final_rejects_tampered_archive_even_when_candidate_bundle_rewritten(case):
+    captured = seal(case)
+    folder = Path(captured["manifest_path"]).parent
+    deploy_candidate_frontend(case)
+    for service, row in case.docker.built.items():
+        case.docker.containers[service]["image_id"] = row["image_id"]
+    case.http.source = case.args.candidate_backend_sha
+    case.args.compose_file = case.docker.candidate_compose
+    case.args.target = "final"
+    execute(case, "verify")
+    case.docker.calls.clear()
+
+    bundlepath = folder / "candidate-bundle.json"
+    doc = json.loads(bundlepath.read_bytes())
+    image_id = next(iter(doc["archives"]))
+    entry = doc["archives"][image_id]
+    p = d.ROOT / "images" / entry["name"]
+    raw = p.read_bytes() + b"\nSOURCE-ONLY-ARCHIVE-BYTE-TAMPER\n"
+    digest = hashlib.sha256(raw).hexdigest()
+    name = image_id.removeprefix("sha256:") + "-" + digest + ".tar"
+    new = p.parent / name
+    new.write_bytes(raw)
+    entry.update(name=name, sha256=digest, size=len(raw))
+    bundlepath.write_bytes(d.a.manifest_bytes(doc))
+
+    (folder / "candidate-bundle.sha256").write_text(hashlib.sha256(d.a.manifest_bytes(doc)).hexdigest())
+
+    with pytest.raises(d.a.ArtifactError) as exc_info:
+        execute(case, "restore-final")
+    assert "candidate bundle bytes mismatch" in str(exc_info.value)
+    no_replacement(case)
+
+
+def test_verify_target_final_does_not_publish_fe_seal_on_gate_failure(case):
+    captured = seal(case)
+    folder = Path(captured["manifest_path"]).parent
+    deploy_candidate_frontend(case)
+    case.args.compose_file = case.docker.candidate_compose
+    case.args.target = "final"
+    case.http.fail = "/health"
+    with pytest.raises(d.a.ArtifactError):
+        execute(case, "verify")
+    assert not (folder / "candidate-frontend.json").exists()
+
+
+def test_restore_final_fails_closed_on_unsealed_v1_candidate_receipt(case):
+    captured = seal(case)
+    folder = Path(captured["manifest_path"]).parent
+    deploy_candidate_frontend(case)
+    for service, row in case.docker.built.items():
+        case.docker.containers[service]["image_id"] = row["image_id"]
+    case.http.source = case.args.candidate_backend_sha
+    case.args.compose_file = case.docker.candidate_compose
+    case.args.target = "final"
+    execute(case, "verify")
+    case.docker.calls.clear()
+
+    rec_path = folder / "candidate-images.json"
+    doc = json.loads(rec_path.read_bytes())
+    doc["schema_version"] = "pantheon.dev-candidate-image-admission.v1"
+    doc.pop("candidate_bundle_sha256", None)
+    raw = d.a.manifest_bytes(doc)
+    rec_path.write_bytes(raw)
+    case.args.candidate_image_manifest_sha256 = hashlib.sha256(raw).hexdigest()
+
+    with pytest.raises(d.a.ArtifactError, match="unsealed v1"):
+        execute(case, "restore-final")
+    no_replacement(case)
+
+
+def test_restore_final_rejects_tampered_candidate_frontend_seal(case):
+    captured = seal(case)
+    folder = Path(captured["manifest_path"]).parent
+    deploy_candidate_frontend(case)
+    for service, row in case.docker.built.items():
+        case.docker.containers[service]["image_id"] = row["image_id"]
+    case.http.source = case.args.candidate_backend_sha
+    case.args.compose_file = case.docker.candidate_compose
+    case.args.target = "final"
+    execute(case, "verify")
+    case.docker.calls.clear()
+
+    fe_seal = folder / "candidate-frontend.json"
+    doc = json.loads(fe_seal.read_bytes())
+    doc["dist_sha256"] = "0" * 64
+    fe_seal.write_bytes(d.a.manifest_bytes(doc))
+
+    with pytest.raises(d.a.ArtifactError, match="candidate frontend differs from sealed FE"):
+        execute(case, "restore-final")
+    no_replacement(case)
+
+
+@pytest.mark.parametrize("mismatch", ["manifest", "dist"])
+def test_restore_final_rejects_cli_fe_digest_mismatches(case, mismatch):
+    captured = seal(case)
+    deploy_candidate_frontend(case)
+    for service, row in case.docker.built.items():
+        case.docker.containers[service]["image_id"] = row["image_id"]
+    case.http.source = case.args.candidate_backend_sha
+    case.args.compose_file = case.docker.candidate_compose
+    case.args.target = "final"
+    execute(case, "verify")
+    case.docker.calls.clear()
+
+    if mismatch == "manifest":
+        case.args.fe_manifest_sha256 = "0" * 64
+    else:
+        case.args.fe_dist_sha256 = "0" * 64
+
+    with pytest.raises(d.a.ArtifactError, match="candidate FE .* digest mismatch"):
+        execute(case, "restore-final")
+    no_replacement(case)
+
+
+
+
 
 

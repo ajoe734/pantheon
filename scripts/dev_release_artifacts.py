@@ -47,7 +47,7 @@ class ArtifactError(RuntimeError):
 
 FAILURE_CODE = "DEV_ARTIFACT_OPERATION_FAILED"
 FAILURE_STAGES = frozenset({"initialize", "install", "transport", "capture", "verify",
-                            "seal-candidate", "restore", "seal-result", "publish-evidence"})
+                            "seal-candidate", "restore", "restore-final", "seal-result", "publish-evidence"})
 FAILURE_KINDS = frozenset({"contract", "timeout", "subprocess", "filesystem", "invalid-data", "unexpected"})
 FAILURE_SOURCE = re.compile(r"(?:capture_dev_artifact_baseline|dev_release_artifact_driver|dev_release_artifacts|dev_remote_guarded_exec)\.py:[1-9][0-9]{0,5}")
 
@@ -251,6 +251,28 @@ def _image(docker: Docker, image_id: str) -> dict:
     return row
 
 
+def save_image(*, docker: Docker, archive_root: Path, image_id: str,
+               check_lease: Callable[[], None]) -> dict:
+    root = _directory(archive_root, private=True)
+    with tempfile.TemporaryDirectory(prefix=".capture-", dir=root) as stage:
+        temporary = Path(stage) / "image.tar"
+        check_lease()
+        docker.call("image", "save", "--output", str(temporary), image_id)
+        digest, size = _file_digest(temporary)
+        if size <= 0:
+            raise ArtifactError("empty image archive")
+        name = image_id.removeprefix("sha256:") + "-" + digest + ".tar"
+        with temporary.open("rb") as stream:
+            os.fsync(stream.fileno())
+        target = root / name
+        try:
+            os.link(temporary, target, follow_symlinks=False)
+        except FileExistsError:
+            if _file_digest(target) != (digest, size):
+                raise ArtifactError("existing image archive differs; refusing overwrite")
+        return {"name": name, "sha256": digest, "size": size}
+
+
 def capture_images(*, docker: Docker, archive_root: Path, source_sha: str,
                    check_lease: Callable[[], None]) -> dict:
     """Capture observed IDs and authenticated archives; never invent RepoDigests.
@@ -274,25 +296,8 @@ def capture_images(*, docker: Docker, archive_root: Path, source_sha: str,
         services[service] = {"image_id": image_id, "oci_revision": revision,
                              "repo_digests": image["repo_digests"]}
     for image_id in sorted({row["image_id"] for row in services.values()}):
-        with tempfile.TemporaryDirectory(prefix=".capture-", dir=root) as stage:
-            temporary = Path(stage) / "image.tar"
-            check_lease()
-            docker.call("image", "save", "--output", str(temporary), image_id)
-            digest, size = _file_digest(temporary)
-            if size <= 0:
-                raise ArtifactError("empty image archive")
-            # docker save byte reproducibility is not an identity guarantee.
-            # Retain independently hashed archives even for the same image ID.
-            name = image_id.removeprefix("sha256:") + "-" + digest + ".tar"
-            with temporary.open("rb") as stream:
-                os.fsync(stream.fileno())
-            target = root / name
-            try:
-                os.link(temporary, target, follow_symlinks=False)
-            except FileExistsError:
-                if _file_digest(target) != (digest, size):
-                    raise ArtifactError("existing image archive differs; refusing overwrite")
-            archives[image_id] = {"name": name, "sha256": digest, "size": size}
+        archives[image_id] = save_image(docker=docker, archive_root=root, image_id=image_id,
+                                        check_lease=check_lease)
     for service in SERVICES:
         if _current(docker, service, require_healthy=False)["image_id"] != services[service]["image_id"]:
             raise ArtifactError("container changed during artifact capture")

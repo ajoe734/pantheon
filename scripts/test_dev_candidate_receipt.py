@@ -448,3 +448,35 @@ def test_receipt_directory_owner_is_checked(documents, tmp_path, monkeypatch):
     monkeypatch.setattr(receiver.os, "geteuid", lambda: actual_uid + 1)
     with pytest.raises(receiver.CaptureError):
         receiver.CandidateReceiptObserver(context_path=context_path, output_path=output)
+
+
+def test_v2_frozen_contract_with_candidate_bundle_hash_returns_receipt_digest(documents):
+    context, result = documents
+    result["candidate_image_manifest"]["schema_version"] = receiver.SCHEMA_V2
+    result["candidate_image_manifest"]["candidate_bundle_sha256"] = "3" * 64
+    reseal(result)
+    assert receiver.validate_receipt(result, context) == result["candidate_image_manifest_sha256"]
+
+
+def test_v2_finalize_emits_candidate_bundle_sha256(documents, tmp_path):
+    context, result = documents
+    result["candidate_image_manifest"]["schema_version"] = receiver.SCHEMA_V2
+    result["candidate_image_manifest"]["candidate_bundle_sha256"] = "4" * 64
+    reseal(result)
+    receive, context_path, receipt = observer(tmp_path, context)
+    receive(line(result))
+    output = tmp_path / "github-output"
+    receiver.finalize(context_path, receipt, output)
+    actual = dict(row.split("=", 1) for row in output.read_text().splitlines())
+    assert actual["candidate_bundle_sha256"] == "4" * 64
+
+
+@pytest.mark.parametrize("bad_bundle_sha", ["short", "g" * 64, None, 12345])
+def test_v2_invalid_candidate_bundle_sha256_fails_closed(documents, bad_bundle_sha):
+    context, result = documents
+    result["candidate_image_manifest"]["schema_version"] = receiver.SCHEMA_V2
+    result["candidate_image_manifest"]["candidate_bundle_sha256"] = bad_bundle_sha
+    reseal(result)
+    with pytest.raises((receiver.CaptureError, TypeError)):
+        receiver.validate_receipt(result, context)
+
