@@ -2110,3 +2110,137 @@ def test_scheduled_reconcile_inflight_preserves_malformed_identity_and_nonpaper_
         assert results[already_reconciled["binding_id"]]["status"] == "not_eligible"
         assert results[already_reconciled["binding_id"]]["reason"] == "lifecycle_already_reconciled"
 
+
+def test_scheduled_reconcile_core_budget_priority_prevents_starvation_under_43_summaries_and_retry() -> None:
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+
+        # 42 earlier summaries that trigger drift warnings (queue_lag_ms=25000), causing incident dispatches
+        summaries = [
+            _healthy_runtime_summary(
+                binding_id=f"owned-older-{i:03d}",
+                runtime_id=f"owned-runtime-{i:03d}",
+                queue_lag_ms=25000,
+            )
+            for i in range(42)
+        ]
+        # 43rd summary: valid paper position awaiting reconciliation terminal
+        current_paper = _paper_lifecycle_summary(queue_lag_ms=25000)
+        summaries.append(current_paper)
+        assert len(summaries) == 43
+
+        clock = [1000.0]
+        call_log = []
+
+        class DummyResponse:
+            status = 202
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return b'{"status":"accepted"}'
+
+        def mock_urlopen(req, timeout=None):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            kind = "incident" if "consume-drift-report" in url else "lifecycle"
+            call_log.append({
+                "kind": kind,
+                "timeout": timeout,
+                "elapsed": clock[0] - 1000.0,
+            })
+            if kind == "incident":
+                # Each incident takes 2.0 seconds and times out / errors
+                clock[0] += 2.0
+                raise TimeoutError("slow incident fixture")
+            # Lifecycle append: fast core capacity, advances clock slightly and returns accepted
+            clock[0] += 0.05
+            return DummyResponse()
+
+        tick_id = "tick-core-budget-priority-43-sums"
+
+        with (
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "PANTHEON_INCIDENTS_API_URL": "http://incidents:8090",
+                    "PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083",
+                },
+            ),
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=summaries),
+            mock.patch.object(svc, "_monotonic", side_effect=lambda: clock[0]),
+            mock.patch("time.monotonic", side_effect=lambda: clock[0]),
+            mock.patch.object(svc.urllib.request, "urlopen", side_effect=mock_urlopen),
+        ):
+            # First tick run
+            resp = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={
+                    "tick_id": tick_id,
+                    "sla_seconds": 60.0,
+                },
+            )
+            assert resp.status_code == 201
+            payload = resp.json()
+
+            # 1. Lifecycle append was dispatched BEFORE any incident dispatches
+            assert len(call_log) > 0
+            first_call = call_log[0]
+            assert first_call["kind"] == "lifecycle", "Core lifecycle append must be called before incident dispatches"
+            assert first_call["timeout"] == 5.0
+
+            # 2. Paper position terminal was successfully accepted
+            paper_results = [
+                r for r in payload["lifecycle_append_results"]
+                if r["binding_id"] == current_paper["binding_id"]
+            ]
+            assert len(paper_results) == 1
+            paper_receipt = paper_results[0]
+            assert paper_receipt["status"] == "accepted"
+            assert paper_receipt["terminal"] is True
+            assert paper_receipt["retryable"] is False
+            assert paper_receipt["event_id"] is not None
+            assert paper_receipt["event_id"] in payload["lifecycle_accepted_event_ids"]
+
+            # 3. Earlier incidents were attempted, slow incidents ran until budget exhausted
+            incident_calls = [c for c in call_log if c["kind"] == "incident"]
+            assert len(incident_calls) > 0
+            assert len(payload["incident_delivery_errors"]) > 0
+            # Tick status is failure due to incident errors, but within SLA
+            assert payload["status"] == "failure"
+            assert payload["within_sla"] is True
+
+            # 4. Same-tick retry: stable idempotency, no duplicate append or incident delivery
+            prior_lifecycle_calls = len([c for c in call_log if c["kind"] == "lifecycle"])
+            retry_resp = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={
+                    "tick_id": tick_id,
+                    "sla_seconds": 60.0,
+                },
+            )
+            assert retry_resp.status_code == 201
+            retry_payload = retry_resp.json()
+
+            # Zero additional lifecycle network calls!
+            new_lifecycle_calls = len([c for c in call_log if c["kind"] == "lifecycle"])
+            assert new_lifecycle_calls == prior_lifecycle_calls
+
+            # Same accepted terminal returned
+            retry_paper_results = [
+                r for r in retry_payload["lifecycle_append_results"]
+                if r["binding_id"] == current_paper["binding_id"]
+            ]
+            assert len(retry_paper_results) == 1
+            assert retry_paper_results[0]["status"] == "accepted"
+            assert retry_paper_results[0]["event_id"] == paper_receipt["event_id"]
+            assert retry_payload["lifecycle_accepted_event_ids"] == [paper_receipt["event_id"]]
+            assert retry_payload["skipped_binding_count"] == 43
+
+
