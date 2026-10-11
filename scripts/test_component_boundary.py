@@ -34,6 +34,16 @@ class ComponentBoundaryTests(unittest.TestCase):
         ])
         self.assertFalse(mixed["tooling_only"])
 
+    def test_landed_reopen_evidence_is_narrowly_tooling(self) -> None:
+        evidence = "docs/deployment/evidence/PI-LANDED-REOPEN-GENERATION-20261011/evidence.json"
+        self.assertTrue(component_boundary.classify_paths(self.manifest, [
+            "scripts/ai_status.py", ".orchestrator/rewrite/integration_receipt.py", evidence,
+        ])["tooling_only"])
+        for other in ("services/trade_journey/lifecycle_projector.py",
+                      "docs/deployment/evidence/UNRELATED/evidence.json"):
+            with self.subTest(path=other):
+                self.assertFalse(component_boundary.classify_paths(self.manifest, [evidence, other])["tooling_only"])
+
     def test_product_path_selects_product_runtime(self) -> None:
         result = component_boundary.classify_paths(
             self.manifest,
