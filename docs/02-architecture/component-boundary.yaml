@@ -91,6 +91,7 @@ components:
       - docs/operations/provider-auth-health-contract.md
       - docs/operations/pi-astra-worker.md
       - ai-task-archive/
+      - docs/deployment/evidence/PI-LANDED-REOPEN-GENERATION-20261011/evidence.json
     runtime_required: false
     removal_condition: "all engineering tasks archived and no worker/lease remains"
 
