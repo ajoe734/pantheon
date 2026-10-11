@@ -1,0 +1,26 @@
+{
+  "task_id": "PI-LANDED-REOPEN-GENERATION-20261011",
+  "delivery_class": "development_tooling",
+  "authority": "Actual operator direct-implementation instruction in original Pi session, 2026-10-11T11:34:59.357Z; AGENTS Explicit Operator Bypass and direct tooling delivery",
+  "source_only": true,
+  "production_files": ["scripts/ai_status.py", ".orchestrator/rewrite/integration_receipt.py"],
+  "test_files": ["scripts/test_ai_status.py", ".orchestrator/rewrite/test_integration_receipt.py"],
+  "defect": "Native reopen reused a generation already occupied by a genuine landed receipt. A later distinct reviewed delivery then conflicts with that immutable same-generation receipt.",
+  "repair": "A legal native reopen advances only its own landed generation and preserves the receipt. A legacy same-generation successor is recorded only through the original authenticated auto-integrator API, exact-generation CAS and current review_approved row, with a matching frozen PR delivery/review whose base_sha is precisely the old merge commit. Distinct same-repository/branch PR, head and merge are mandatory. The prior receipt remains byte-for-byte in history; no generation, status, approval or binding is rewritten. Bool/float receipt versions are rejected.",
+  "validation": {
+    "original_complete_modules": ["scripts/test_ai_status.py", ".orchestrator/rewrite/test_integration_receipt.py", "scripts/test_component_boundary.py", "scripts/git/test_auto_integrator.py"],
+    "result": "786 passed, 1031 subtests passed",
+    "seconds": 162.62,
+    "native_positive_control": "Original held-lock authority fixture and V2 journal API: new receipt recorded, immutable prior journal event and old receipt retained, exact replay produces no extra event.",
+    "negative_controls": "Without current approval, exact binding or exact prior-merge base, legacy rollover still denies without task/projection mutation; all original same-generation, foreign-repository, generation-CAS and lock-authority denials retained.",
+    "history": "Initial added repeated-reopen control attempted an illegal in_progress transition: 1 failed, 599 passed. Corrected the fixture to a later legal review handoff without another merge; no product policy relaxation.",
+    "fixtures": "Original isolated task/Git/lock/TaskStore fixtures; no hosted or shared task mutation"
+  },
+  "not_claimed": [
+    "Actual live application to the existing PR6504 generation-3 conflict before promoted-runtime receipt readback",
+    "Loaded supervisor promotion or native source-rework consumer integration",
+    "Original Redis task completion or old PR6481 disposition",
+    "Hosted FULL, new paired deployment, rollback roundtrip, owner-data preservation or total acceptance"
+  ],
+  "overall_project": "INCOMPLETE"
+}

@@ -115,7 +115,7 @@ from rewrite.task_state_store import (
     snapshot_transaction,
 )
 from rewrite.worker_recovery import task_has_active_worker_recovery
-from rewrite import task_machine, task_state_store
+from rewrite import integration_receipt, task_machine, task_state_store
 from rewrite.task_contract import (
     OpenPullRequestDiscovery,
     _delivery_contract_payload,
@@ -5887,6 +5887,9 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     apply_task_lifecycle_transition(task, "start" if task.get("status") == "todo" else "reopen")
     preserve_hold = actor != "Human/Ops" and task.get("waiting_for") == "Human/Ops"
     generation = max(1, int(task.get("generation", 1) or 1))
+    landed = integration_receipt.parse_integration_receipt(task.get("integration_receipt"))
+    if landed is not None and landed["task_generation"] == generation:
+        generation += 1
     requeue_basis = {
         "schema_version": REVIEW_REQUEUE_INTENT_SCHEMA_VERSION,
         "task_id": task_id,
@@ -5910,7 +5913,7 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     # immutable intent into the runtime queue with the intent id as its
     # idempotency key; a crash on either side can therefore replay safely.
     task[REVIEW_REQUEUE_INTENT_KEY] = deepcopy(requeue_intent)
-    task["last_update"] = timestamp
+    task["generation"], task["last_update"] = generation, timestamp
     task["next"] = message
     # Only an explicit operator reopen may release an operator stop/hold.
     if not preserve_hold:
