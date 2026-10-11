@@ -2321,17 +2321,17 @@ def recover_currentbase_worktree(
     mb = subprocess.run(["git", "-C", str(repo_root), "merge-base", source_head, res_base], capture_output=True, text=True).stdout.strip()
     diff_p = subprocess.run(["git", "-C", str(repo_root), "diff", "--binary", mb or source_head, source_head, "--", *declared_paths], capture_output=True)
     if diff_p.returncode != 0: return False, "diff_generation_failed", None
-    patch_sha = hashlib.sha256(diff_p.stdout).hexdigest(); b_ref = f"refs/pantheon/recovery/{_task_id_slug(task_id)}/{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{os.getpid()}-{time.time_ns()}"
+    patch_sha = hashlib.sha256(diff_p.stdout).hexdigest(); b_ref = f"refs/pantheon/recovery/{_task_id_slug(task_id)}/{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{os.getpid()}-{time.time_ns()}"; curr = subprocess.run(["git", "-C", str(worktree_path), "symbolic-ref", "--quiet", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
     prov = {"task_id": task_id, "repository_id": repository_id, "owner": owner, "task_generation": task_generation, "source_branch": source_branch, "source_head": source_head, "base_sha": res_base, "target_branch": target_branch, "worktree_path": str(worktree_path), "declared_paths": list(declared_paths), "patch_sha256": patch_sha, "preserved_source_ref": b_ref, "recovered_at": utc_now()}
     if _git_ref_exists(repo_root, f"refs/heads/{target_branch}"):
-        curr = subprocess.run(["git", "-C", str(worktree_path), "symbolic-ref", "--quiet", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
         h = subprocess.run(["git", "-C", str(worktree_path), "rev-parse", "--verify", "HEAD^{commit}"], capture_output=True, text=True).stdout.strip()
         if curr != target_branch or not h or subprocess.run(["git", "-C", str(worktree_path), "merge-base", "--is-ancestor", res_base, h], capture_output=True).returncode != 0: return False, "target_branch_already_exists", None
         cur_d = subprocess.run(["git", "-C", str(worktree_path), "diff", "--cached", "--binary", "--", *declared_paths], capture_output=True)
         if not cur_d.stdout: cur_d = subprocess.run(["git", "-C", str(repo_root), "diff", "--binary", res_base, h, "--", *declared_paths], capture_output=True)
         if hashlib.sha256(cur_d.stdout).hexdigest() != patch_sha: return False, "target_branch_patch_mismatch", None
-        if existing_provenance and any(existing_provenance.get(k) != prov.get(k) for k in ("task_id", "owner", "task_generation", "source_branch", "source_head", "base_sha", "target_branch", "patch_sha256")): return False, "recovery_provenance_mismatch", None
+        if not isinstance(existing_provenance, Mapping) or any(existing_provenance.get(k) != prov.get(k) for k in ("task_id", "repository_id", "owner", "task_generation", "source_branch", "source_head", "base_sha", "target_branch", "patch_sha256", "worktree_path", "declared_paths")): return False, "recovery_provenance_mismatch", None
         return True, "already_recovered", prov
+    if curr != source_branch: return False, "source_branch_mismatch", None
     if subprocess.run(["git", "-C", str(worktree_path), "status", "--porcelain", "--untracked-files=all"], capture_output=True, text=True).stdout.strip(): return False, "worktree_dirty_cannot_recover", None
     if not callable(publish_provenance): return False, "publication_callback_required", None
     if not publish_provenance(prov): return False, "provenance_publication_failed", None

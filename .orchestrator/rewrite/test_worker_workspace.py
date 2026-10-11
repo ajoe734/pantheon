@@ -1115,6 +1115,33 @@ class RecoveryCurrentbaseDeliveryTests(unittest.TestCase):
         self.assertFalse(ok_bad)
         self.assertEqual(status_bad, "recovery_provenance_mismatch")
 
+        ok_no_prov, status_no_prov, _ = worker_workspace.recover_currentbase_worktree(
+            self.repo, self.worktree,
+            task_id=self.task_id, base_sha=self.current_dev_sha,
+            declared_paths=self.declared_paths, source_branch=self.source_branch,
+            target_branch=target_branch,
+            owner=self.owner, task_generation=self.task_generation,
+            lease=self.lease,
+            existing_provenance=None,
+            publish_provenance=self.publish_provenance,
+        )
+        self.assertFalse(ok_no_prov)
+        self.assertEqual(status_no_prov, "recovery_provenance_mismatch")
+
+        new_gen_lease = dict(self.lease, task_generation=self.task_generation + 1)
+        ok_stale_gen, status_stale_gen, _ = worker_workspace.recover_currentbase_worktree(
+            self.repo, self.worktree,
+            task_id=self.task_id, base_sha=self.current_dev_sha,
+            declared_paths=self.declared_paths, source_branch=self.source_branch,
+            target_branch=target_branch,
+            owner=self.owner, task_generation=self.task_generation + 1,
+            lease=new_gen_lease,
+            existing_provenance=prov1,
+            publish_provenance=self.publish_provenance,
+        )
+        self.assertFalse(ok_stale_gen)
+        self.assertEqual(status_stale_gen, "recovery_provenance_mismatch")
+
         ok2, status2, prov2 = worker_workspace.recover_currentbase_worktree(
             self.repo, self.worktree,
             task_id=self.task_id, base_sha=self.current_dev_sha,
@@ -1128,6 +1155,32 @@ class RecoveryCurrentbaseDeliveryTests(unittest.TestCase):
         self.assertTrue(ok2, status2)
         self.assertEqual(status2, "already_recovered")
         self.assertEqual(prov1["base_sha"], prov2["base_sha"])
+
+    def test_recovery_rejects_foreign_source_worktree_fail_closed(self) -> None:
+        foreign_branch = "task/OTHER-OWNER-SOURCE"
+        self._git(self.worktree, "checkout", "-b", foreign_branch)
+        (self.worktree / "foreign.txt").write_text("foreign\n", encoding="utf-8")
+        self._git(self.worktree, "add", "foreign.txt")
+        self._git(self.worktree, "commit", "-m", "foreign branch commit")
+        foreign_head = self._git(self.worktree, "rev-parse", "HEAD")
+        before_refs = self._git(self.repo, "show-ref")
+
+        target_branch = f"task/{self.task_id}-v2"
+        ok, status, _ = worker_workspace.recover_currentbase_worktree(
+            self.repo, self.worktree,
+            task_id=self.task_id, base_sha=self.current_dev_sha,
+            declared_paths=self.declared_paths, source_branch=self.source_branch,
+            target_branch=target_branch,
+            owner=self.owner, task_generation=self.task_generation,
+            lease=self.lease,
+            publish_provenance=self.publish_provenance,
+        )
+        self.assertFalse(ok)
+        self.assertEqual(status, "source_branch_mismatch")
+        self.assertEqual(self._git(self.worktree, "symbolic-ref", "--short", "HEAD"), foreign_branch)
+        self.assertEqual(self._git(self.worktree, "rev-parse", "HEAD"), foreign_head)
+        self.assertEqual(self._git(self.repo, "show-ref"), before_refs)
+        self.assertNotIn(f"refs/heads/{target_branch}", self._git(self.repo, "for-each-ref", "refs/heads/"))
 
     def test_prepare_worker_workspace_adopts_versioned_branch(self) -> None:
         config = {
