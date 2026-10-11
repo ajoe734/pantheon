@@ -1,5 +1,6 @@
 {
-  "at": "2026-10-11T04:40:00.000000+00:00",
+  "at": "2026-10-11T14:50:00.000000+00:00",
+  "historical_snapshot_at": "2026-10-11T04:40:00.000000+00:00",
   "integrated_deliveries": [
     {
       "repo": "pantheon",
@@ -36,6 +37,113 @@
       "native_done_at": "2026-10-11T04:13:17Z",
       "verification": "67 passed + 1 discovery",
       "canonical_status": "DONE"
+    },
+    {
+      "repo": "pantheon",
+      "pr": 6505,
+      "task": "PI-DIRECT-REDIS-LEAK-CLEANUP-20261011",
+      "delivery_class": "operator_authorized_development_tooling",
+      "head": "f5f2f5554d5168f509ef9fbc6ca3669611f6b59a",
+      "merge_commit": "100b88c88555beba8991bd4c63d2a81b728be053",
+      "merged_at": "2026-10-11T12:20:12Z",
+      "verification": "125 real Redis tests PASS, 0 skip; 118 AST original test bodies unchanged; missing-redis 105 tests 4 explicit SkipTest unchanged 67 preexisting containers, 7 cleanup boundary tests and 4 labelled-owned real start/failure cases clean before propagation",
+      "canonical_status": "MERGED (tooling)"
+    },
+    {
+      "repo": "pantheon",
+      "pr": 6506,
+      "task": "PI-PRIVATE-INDEX-DELIVERY-20261011",
+      "delivery_class": "operator_authorized_development_tooling",
+      "head": "0bb607d713eac2ca22ea4fc5fb2198ea826f4d42",
+      "merge_commit": "bb044b67e25196c84a45db61f2bb091d0c0997f6",
+      "merged_at": "2026-10-11T12:43:46Z",
+      "canonical_status": "MERGED (tooling)"
+    },
+    {
+      "repo": "pantheon",
+      "pr": 6507,
+      "task": "PI-LANDED-REOPEN-GENERATION-20261011",
+      "delivery_class": "operator_authorized_development_tooling",
+      "head": "429457494bb11c3e635a6eb277b37f1aaaec7214",
+      "merge_commit": "d0695d2c89a1fdcaac1eea56309532fda3fabf2e",
+      "merged_at": "2026-10-11T13:40:30Z",
+      "verification": "786 passed, 1031 subtests passed in 160.83s; 3 required CI checks passed (Commit trailers, Publish canonical review status, Smoke acceptance; mechanical delivery tooling only)",
+      "canonical_status": "MERGED (tooling)"
+    },
+    {
+      "repo": "pantheon",
+      "kind": "supervisor_runtime_promotion",
+      "command_root": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/d0695d2c89a1fdcaac1eea56309532fda3fabf2e",
+      "source_sha": "d0695d2c89a1fdcaac1eea56309532fda3fabf2e",
+      "promoted_at": "2026-10-11T13:44:32Z",
+      "supervisor_pid": 3553496,
+      "health": "healthy",
+      "task_state_v2_caught_up": true,
+      "event_count": 37801,
+      "runtime_deletions": 0,
+      "same_integrator": true
+    },
+    {
+      "repo": "pantheon",
+      "pr": 6504,
+      "task": "DEV-SEALED-FINAL-ARTIFACT-RETURN-20261011",
+      "owner": "Antigravity2",
+      "reviewer": "Antigravity",
+      "head": "401de086463b4c07a55f9b5a597aa8ad41e43adf",
+      "merge_commit": "50f0cbeea4c6809596191cb40255ee53ef1fe7b4",
+      "canonical_integration_receipt_at": "2026-10-11T13:45:07Z",
+      "generation": 3,
+      "previous_integration_receipt_retained": {
+        "pr": 6502,
+        "head": "1e19083957cb4560577a19f2b03e0a9eb2f54713",
+        "merge_commit": "c94fa49119e6c9084041534d798a21235896fb8d",
+        "observed_at": "2026-10-11T10:25:20Z"
+      },
+      "owner_finalizer_lease": {
+        "queue_event_id": "evt-20261011T134515Z-46134bbc",
+        "worker_run_id": "antigravity2-20261011T134529Z-44a787a9",
+        "pid": 3554711,
+        "archived_at": "2026-10-11T13:47:54Z",
+        "terminal_status": "done",
+        "terminal_outcome": "completed"
+      },
+      "canonical_status": "DONE",
+      "boundary": "source/loaded tooling/native DONE not live FINAL/all DATA/FULL/product"
+    }
+  ],
+  "superseded_source_tasks": [
+    {
+      "repo": "pantheon",
+      "task": "TEST-REDIS-CONTAINER-LEAK-20261010",
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "terminal_status": "done",
+      "terminal_outcome": "superseded",
+      "superseded_by": "DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002",
+      "archived_at": "2026-10-11T14:45:14Z",
+      "pr": 6481,
+      "pr_state": "CLOSED",
+      "pr_closed_at": "2026-10-11T14:48:05Z",
+      "retained_head": "3da34d4f1c6e7f272242a2c40092bd689bb79f05",
+      "preserved_archives": "original worker Claude, reviewer Antigravity, PR #6481 history with bad trailers commit d5c6cd304 and hook denial preserved; no falsely completed original PR or fabricated Claude review/native recovery",
+      "surviving_owner": "Existing parent DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 owns surviving source adoption and all real hosted duties; no new platform or dispatcher"
+    },
+    {
+      "repo": "pantheon",
+      "task": "WORKER-NATIVE-SOURCE-REWORK-BINDING-20261011",
+      "owner": "Antigravity2",
+      "reviewer": "Antigravity",
+      "terminal_status": "done",
+      "terminal_outcome": "superseded",
+      "superseded_by": "DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002",
+      "archived_at": "2026-10-11T14:45:20Z",
+      "cumulative_baseline": "9c15f1d9bdef2c3e9011c7a893b6c6521520f59f",
+      "cumulative_production_budget": 40,
+      "net_production_budget": 0,
+      "implemented_native_consumer_claim": false,
+      "line_budget_grant_plus_35_implemented": false,
+      "design_anchor_retained": "03bd68630",
+      "surviving_owner": "Obsolete only as dependency needed to recover old blocked Redis PR6481 after authorized Pi direct tooling delivery 6505 already discharged 4 fixture ACs; parent DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 adopts authentic source and survives all product obligations"
     }
   ],
   "in_progress_source_tasks": [
