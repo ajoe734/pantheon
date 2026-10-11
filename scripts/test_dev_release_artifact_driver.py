@@ -1218,6 +1218,8 @@ def test_restore_final_rejects_tampered_archive_even_when_candidate_bundle_rewri
     entry.update(name=name, sha256=digest, size=len(raw))
     bundlepath.write_bytes(d.a.manifest_bytes(doc))
 
+    (folder / "candidate-bundle.sha256").write_text(hashlib.sha256(d.a.manifest_bytes(doc)).hexdigest())
+
     with pytest.raises(d.a.ArtifactError) as exc_info:
         execute(case, "restore-final")
     assert "candidate bundle bytes mismatch" in str(exc_info.value)
@@ -1234,6 +1236,76 @@ def test_verify_target_final_does_not_publish_fe_seal_on_gate_failure(case):
     with pytest.raises(d.a.ArtifactError):
         execute(case, "verify")
     assert not (folder / "candidate-frontend.json").exists()
+
+
+def test_restore_final_fails_closed_on_unsealed_v1_candidate_receipt(case):
+    captured = seal(case)
+    folder = Path(captured["manifest_path"]).parent
+    deploy_candidate_frontend(case)
+    for service, row in case.docker.built.items():
+        case.docker.containers[service]["image_id"] = row["image_id"]
+    case.http.source = case.args.candidate_backend_sha
+    case.args.compose_file = case.docker.candidate_compose
+    case.args.target = "final"
+    execute(case, "verify")
+    case.docker.calls.clear()
+
+    rec_path = folder / "candidate-images.json"
+    doc = json.loads(rec_path.read_bytes())
+    doc["schema_version"] = "pantheon.dev-candidate-image-admission.v1"
+    doc.pop("candidate_bundle_sha256", None)
+    raw = d.a.manifest_bytes(doc)
+    rec_path.write_bytes(raw)
+    case.args.candidate_image_manifest_sha256 = hashlib.sha256(raw).hexdigest()
+
+    with pytest.raises(d.a.ArtifactError, match="unsealed v1"):
+        execute(case, "restore-final")
+    no_replacement(case)
+
+
+def test_restore_final_rejects_tampered_candidate_frontend_seal(case):
+    captured = seal(case)
+    folder = Path(captured["manifest_path"]).parent
+    deploy_candidate_frontend(case)
+    for service, row in case.docker.built.items():
+        case.docker.containers[service]["image_id"] = row["image_id"]
+    case.http.source = case.args.candidate_backend_sha
+    case.args.compose_file = case.docker.candidate_compose
+    case.args.target = "final"
+    execute(case, "verify")
+    case.docker.calls.clear()
+
+    fe_seal = folder / "candidate-frontend.json"
+    doc = json.loads(fe_seal.read_bytes())
+    doc["dist_sha256"] = "0" * 64
+    fe_seal.write_bytes(d.a.manifest_bytes(doc))
+
+    with pytest.raises(d.a.ArtifactError, match="candidate frontend differs from sealed FE"):
+        execute(case, "restore-final")
+    no_replacement(case)
+
+
+@pytest.mark.parametrize("mismatch", ["manifest", "dist"])
+def test_restore_final_rejects_cli_fe_digest_mismatches(case, mismatch):
+    captured = seal(case)
+    deploy_candidate_frontend(case)
+    for service, row in case.docker.built.items():
+        case.docker.containers[service]["image_id"] = row["image_id"]
+    case.http.source = case.args.candidate_backend_sha
+    case.args.compose_file = case.docker.candidate_compose
+    case.args.target = "final"
+    execute(case, "verify")
+    case.docker.calls.clear()
+
+    if mismatch == "manifest":
+        case.args.fe_manifest_sha256 = "0" * 64
+    else:
+        case.args.fe_dist_sha256 = "0" * 64
+
+    with pytest.raises(d.a.ArtifactError, match="candidate FE .* digest mismatch"):
+        execute(case, "restore-final")
+    no_replacement(case)
+
 
 
 

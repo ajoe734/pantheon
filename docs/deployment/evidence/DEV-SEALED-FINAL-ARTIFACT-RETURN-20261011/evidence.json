@@ -29,6 +29,9 @@
       "scripts/dev_release_artifact_driver.py",
       "scripts/test_dev_release_artifacts.py",
       "scripts/test_dev_release_artifact_driver.py",
+      "scripts/dev_candidate_receipt.py",
+      "scripts/test_dev_candidate_receipt.py",
+      "scripts/deploy_nonprod_vm.sh",
       "docs/deployment/dev-exact-artifact-rollback.md",
       "docs/deployment/evidence/DEV-SEALED-FINAL-ARTIFACT-RETURN-20261011/evidence.json"
     ],
@@ -36,26 +39,29 @@
   },
   "diff_budget": {
     "net_production_budget": 80,
-    "production_lines_added": 121,
-    "production_lines_deleted": 45,
+    "production_lines_added": 148,
+    "production_lines_deleted": 72,
     "net_production_lines": 76,
     "verdict": "pass"
   },
   "implementation_summary": {
     "scripts/dev_release_artifacts.py": "Extracted save_image helper from capture_images so candidate image admission persists byte-verified, fsynced, lease-checked archives identically to baseline. Added restore-final to FAILURE_STAGES.",
-    "scripts/dev_release_artifact_driver.py": "Added candidate-bundle.sha256 and candidate-frontend.json publication preserving exact wire contract for dev_candidate_receipt.py; deferred candidate-frontend.json seal publication until after all verify gates (image readback, config, public, owner) pass; added restore-final command and --target final/candidate option; validated candidate compose bytes, candidate bundle (against sealed candidate-bundle.sha256 digest), candidate archives, and candidate frontend (against sealed candidate-frontend.json digest) before switch; enforced RestoreCAS and protected owner barriers; executed docker compose restore with --no-build, --pull never, --no-deps.",
+    "scripts/dev_candidate_receipt.py": "Added SCHEMA_V2 (pantheon.dev-candidate-image-admission.v2) validating nested candidate_bundle_sha256 digest while preserving 5-field outer wrapper contract; exported candidate_bundle_sha256 in finalize.",
+    "scripts/test_dev_candidate_receipt.py": "Added test_v2_frozen_contract_with_candidate_bundle_hash_returns_receipt_digest, test_v2_finalize_emits_candidate_bundle_sha256, test_v2_invalid_candidate_bundle_sha256_fails_closed.",
+    "scripts/deploy_nonprod_vm.sh": "Added --artifact-restore-final CLI option; added PANTHEON_DEV_ARTIFACT_TARGET to SSH command prefix; updated run_dev_artifact_driver to route restore-final with candidate compose and admitted candidate backend SHA; passed optional FE digests if provided; dispatched restore-final in external restore mode when target is final.",
+    "scripts/dev_release_artifact_driver.py": "Switched CANDIDATE_SCHEMA to v2; in _seal_candidate, persisted archives and computed candidate_bundle_sha256 before constructing receipt, cryptographically binding candidate bundle into the externally sealed receipt digest; in _load_candidate, verified bundle against receipt[candidate_bundle_sha256] and failed closed on unsealed v1 receipts; in restore-final, validated candidate frontend against live capture and staged CLI digests (--fe-manifest-sha256, --fe-dist-sha256); rejected tampered archives even with rewritten adjacent checksums.",
     "scripts/test_dev_release_artifacts.py": "Added test_save_image_persists_archive_and_rejects_empty_or_differing_overwrite verifying idempotency and rejection of empty/tampered archives.",
-    "scripts/test_dev_release_artifact_driver.py": "Added test_sealed_final_artifact_return_roundtrip verifying full roundtrip (baseline capture -> candidate seal -> rollout -> baseline rollback -> final return from archives without docker build or pull); added test_restore_target_final_matches_restore_final; added test_restore_final_fail_closed_conditions verifying fail-closed failure modes; added test_restore_final_rejects_tampered_fe_even_when_deployment_json_self_digest_rewritten and test_restore_final_rejects_tampered_archive_even_when_candidate_bundle_rewritten verifying counterexample rejection; added test_verify_target_final_does_not_publish_fe_seal_on_gate_failure.",
+    "scripts/test_dev_release_artifact_driver.py": "Added test_sealed_final_artifact_return_roundtrip; test_restore_target_final_matches_restore_final; test_restore_final_fail_closed_conditions; test_restore_final_rejects_tampered_fe_even_when_deployment_json_self_digest_rewritten; test_restore_final_rejects_tampered_archive_even_when_candidate_bundle_rewritten; test_verify_target_final_does_not_publish_fe_seal_on_gate_failure; test_restore_final_fails_closed_on_unsealed_v1_candidate_receipt; test_restore_final_rejects_tampered_candidate_frontend_seal; test_restore_final_rejects_cli_fe_digest_mismatches.",
     "docs/deployment/dev-exact-artifact-rollback.md": "Documented step 8 for returning to the same admitted final sealed candidate bytes."
   },
   "test_execution": {
     "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest scripts/test_dev_release_artifacts.py scripts/test_dev_release_artifact_driver.py scripts/test_nonprod_dev_artifact_workflow.py scripts/test_dev_candidate_receipt.py",
     "exit_code": 0,
-    "collected": 561,
-    "passed": 560,
+    "collected": 571,
+    "passed": 570,
     "skipped": 1,
     "failed": 0,
-    "duration": "108.25s"
+    "duration": "117.98s"
   },
   "explicit_unaccepted_gaps": {
     "worker_boundary": "Worker is strictly SOURCEONLY with no VM, provider, Root, control, capital, or live operator execution permissions.",
