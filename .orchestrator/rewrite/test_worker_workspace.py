@@ -1235,6 +1235,55 @@ class RecoveryCurrentbaseDeliveryTests(unittest.TestCase):
         self.assertNotIn(f"refs/heads/{target_branch}", self._git(self.repo, "for-each-ref", "refs/heads/"))
         self.assertFalse((self.worktree / "racing_feature.py").exists())
 
+    def test_recovery_rejects_source_head_race_during_publication_fail_closed(self) -> None:
+        before_branch = self._git(self.worktree, "symbolic-ref", "--short", "HEAD")
+        before_head = self._git(self.worktree, "rev-parse", "HEAD")
+
+        def pub_racing_source(p: dict[str, Any]) -> bool:
+            (self.worktree / "scoped_service.py").write_text("concurrent source change\n", encoding="utf-8")
+            self._git(self.worktree, "add", "scoped_service.py")
+            self._git(self.worktree, "commit", "-m", "racing source commit")
+            return True
+
+        target_branch = f"task/{self.task_id}-v2"
+        ok, status, _ = worker_workspace.recover_currentbase_worktree(
+            self.repo, self.worktree,
+            task_id=self.task_id, base_sha=self.current_dev_sha,
+            declared_paths=self.declared_paths, source_branch=self.source_branch,
+            target_branch=target_branch,
+            owner=self.owner, task_generation=self.task_generation,
+            lease=self.lease,
+            publish_provenance=pub_racing_source,
+        )
+        self.assertFalse(ok)
+        self.assertEqual(status, "stale_source")
+        self.assertEqual(self._git(self.worktree, "symbolic-ref", "--short", "HEAD"), before_branch)
+        self.assertNotIn(f"refs/heads/{target_branch}", self._git(self.repo, "for-each-ref", "refs/heads/"))
+
+    def test_recovery_rejects_lease_generation_change_during_publication_fail_closed(self) -> None:
+        before_branch = self._git(self.worktree, "symbolic-ref", "--short", "HEAD")
+        before_head = self._git(self.worktree, "rev-parse", "HEAD")
+
+        def pub_racing_lease(p: dict[str, Any]) -> bool:
+            self.lease["task_generation"] = self.task_generation + 1
+            return True
+
+        target_branch = f"task/{self.task_id}-v2"
+        ok, status, _ = worker_workspace.recover_currentbase_worktree(
+            self.repo, self.worktree,
+            task_id=self.task_id, base_sha=self.current_dev_sha,
+            declared_paths=self.declared_paths, source_branch=self.source_branch,
+            target_branch=target_branch,
+            owner=self.owner, task_generation=self.task_generation,
+            lease=self.lease,
+            publish_provenance=pub_racing_lease,
+        )
+        self.assertFalse(ok)
+        self.assertEqual(status, "lease_mismatch")
+        self.assertEqual(self._git(self.worktree, "symbolic-ref", "--short", "HEAD"), before_branch)
+        self.assertEqual(self._git(self.worktree, "rev-parse", "HEAD"), before_head)
+        self.assertNotIn(f"refs/heads/{target_branch}", self._git(self.repo, "for-each-ref", "refs/heads/"))
+
     def test_prepare_worker_workspace_adopts_versioned_branch(self) -> None:
         config = {
             "paths": {
