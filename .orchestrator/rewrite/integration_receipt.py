@@ -581,13 +581,30 @@ def record_integration_receipt(
 
 
 def _is_superseded_by_successor(
-    existing: Mapping[str, Any], candidate: Mapping[str, Any]
+    existing: Mapping[str, Any], candidate: Mapping[str, Any], task: Mapping[str, Any]
 ) -> bool:
-    """A valid prior landed receipt from an earlier generation, for a
-    different PR/head/merge on the same repository and branch."""
+    """Preserve prior merge evidence for a distinct authenticated successor.
 
+    Legacy reopen did not advance a landed generation. Admit that narrow
+    recovery only for an exactly reviewed PR frozen on the prior merge itself;
+    the caller still holds the original native authority and generation CAS.
+    """
+    delivery, review = task.get("delivery_binding"), task.get("review_binding")
+    reviewed_legacy_rework = (
+        existing["task_generation"] == candidate["task_generation"]
+        and task.get("status") == "review_approved"
+        and isinstance(delivery, Mapping) and isinstance(review, Mapping)
+        and delivery.get("kind") == "pull_request"
+        and delivery.get("base_sha") == existing["merge_commit_sha"]
+        and delivery.get("pr") == candidate["pr"]
+        and delivery.get("head_sha") == candidate["head_sha"]
+        and delivery.get("base") == candidate["target_branch"]
+        and isinstance(review.get("head_branch"), str) and bool(review["head_branch"].strip())
+        and all(delivery.get(key) == review.get(key)
+                for key in ("pr", "head_sha", "head_branch", "base"))
+    )
     return (
-        existing["task_generation"] < candidate["task_generation"]
+        (existing["task_generation"] < candidate["task_generation"] or reviewed_legacy_rework)
         and existing["repository"] == candidate["repository"]
         and existing["target_branch"] == candidate["target_branch"]
         and existing["pr"] != candidate["pr"]
@@ -670,10 +687,9 @@ def _apply_receipt_to_state(
             return ReceiptWriteResult(
                 task_id=task_id, written=False, replay=True, receipt=existing
             )
-        if _is_superseded_by_successor(existing, candidate_receipt):
-            # A genuine reopen advanced the generation and a different
-            # delivery landed: keep the prior landed fact auditable in
-            # history instead of letting it block the successor forever.
+        if _is_superseded_by_successor(existing, candidate_receipt, task):
+            # A later generation or exactly reviewed legacy rework landed:
+            # keep the original receipt unchanged as historical evidence.
             history = task.get(RECEIPT_HISTORY_KEY)
             if history is None:
                 history = []
