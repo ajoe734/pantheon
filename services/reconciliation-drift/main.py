@@ -1990,6 +1990,10 @@ def _accepted_append_visibility_reason(
     binding_id: str,
     timestamp: str,
     evaluations: Optional[List[Dict[str, Any]]] = None,
+    telemetry_url: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    service_token: Optional[str] = None,
+    timeout_seconds: float = 5.0,
 ) -> tuple[str | None, Dict[str, Any]]:
     """Fail closed until a prior accepted append is visible in the projector.
 
@@ -2013,7 +2017,7 @@ def _accepted_append_visibility_reason(
     ).strip()
     raw_identity = summary.get("last_lifecycle_identity")
     identity = raw_identity if isinstance(raw_identity, dict) else {}
-    observed_event_id = str(identity.get("event_id") or "").strip()
+    observed_event_id = identity["event_id"].strip() if isinstance(identity.get("event_id"), str) else ""
     raw_recent_event_ids = summary.get("recent_lifecycle_event_ids")
     recent_event_ids = (
         [str(value or "").strip() for value in raw_recent_event_ids]
@@ -2088,6 +2092,31 @@ def _accepted_append_visibility_reason(
     # skewed or backfilled and therefore cannot replace projector order.
     if ordered_after_accepted:
         return None, visibility
+
+    if accepted_state.get("summary_visibility_confirmed_at") and telemetry_url and accepted_event_id and observed_event_id:
+        try:
+            from telemetry_client import verify_durable_event_order
+            if "last_lifecycle_identity" in summary and not isinstance(summary["last_lifecycle_identity"], dict): raise ValueError
+            def _field(k: str) -> str:
+                raws = [s[k] for s in (summary, identity) if k in s]
+                if not raws or any(not isinstance(x, str) or isinstance(x, bool) or not x.strip() for x in raws) or len(set(x.strip() for x in raws)) > 1: raise ValueError
+                return raws[0].strip()
+            tid = _field("tenant_id")
+            if tenant_id is not None and (not isinstance(tenant_id, str) or isinstance(tenant_id, bool) or tenant_id.strip() != tid): raise ValueError
+            if not isinstance(binding_id, str) or isinstance(binding_id, bool) or not binding_id.strip(): raise ValueError
+            bid = binding_id.strip()
+            b_owner = [s[k] for s in (summary, identity) for k in ("binding_id", "runtime_binding_id") if k in s]
+            if not b_owner or any(not isinstance(b, str) or isinstance(b, bool) or b.strip() != bid for b in b_owner): raise ValueError
+            rid, aid, av = _field("runtime_id"), _field("artifact_id"), _field("artifact_version")
+            ok, _, p = verify_durable_event_order(
+                telemetry_url, accepted_event_id=accepted_event_id, observed_event_id=observed_event_id,
+                tenant_id=tid, service_token=service_token, timeout_seconds=timeout_seconds,
+                expected_binding_id=bid, expected_runtime_id=rid.strip(), expected_artifact_id=aid.strip(), expected_artifact_version=av.strip(),
+            )
+            if ok and p and p.get("accepted_event_id") == accepted_event_id and p.get("observed_event_id") == observed_event_id and p.get("binding_id") == bid:
+                return None, visibility
+        except Exception: pass
+
     return "accepted_lifecycle_append_not_visible", visibility
 
 
@@ -2128,10 +2157,9 @@ def _ensure_scheduled_lifecycle_append(
     event = state.get("event") if isinstance(state.get("event"), dict) else None
     if event is None:
         visibility_reason, visibility = _accepted_append_visibility_reason(
-            summary=summary,
-            binding_id=str(evaluation.get("binding_id") or "").strip(),
-            timestamp=timestamp,
-            evaluations=evaluations,
+            summary=summary, binding_id=evaluation.get("binding_id"),
+            timestamp=timestamp, evaluations=evaluations, telemetry_url=telemetry_url,
+            tenant_id=evaluation.get("tenant_id"), timeout_seconds=timeout_seconds,
         )
         if visibility_reason is not None:
             state.update(
