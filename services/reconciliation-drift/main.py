@@ -2096,17 +2096,24 @@ def _accepted_append_visibility_reason(
     if accepted_state.get("summary_visibility_confirmed_at") and telemetry_url and accepted_event_id and observed_event_id:
         try:
             from telemetry_client import verify_durable_event_order
-            raw_t = tenant_id if tenant_id is not None else (summary.get("tenant_id") or _current_tenant_id())
-            tid, bid = (raw_t.strip() if isinstance(raw_t, str) else ""), (binding_id.strip() if isinstance(binding_id, str) else "")
-            sb, rid, aid, av = summary.get("binding_id"), summary.get("runtime_id"), summary.get("artifact_id"), summary.get("artifact_version")
-            if (sb is None or (isinstance(sb, str) and sb.strip() == bid)) and all(isinstance(x, str) and x.strip() for x in (tid, bid, rid, aid, av)):
-                ok, _, p = verify_durable_event_order(
-                    telemetry_url, accepted_event_id=accepted_event_id, observed_event_id=observed_event_id,
-                    tenant_id=tid, service_token=service_token, timeout_seconds=timeout_seconds,
-                    expected_binding_id=bid, expected_runtime_id=rid.strip(), expected_artifact_id=aid.strip(), expected_artifact_version=av.strip(),
-                )
-                if ok and p and p.get("accepted_event_id") == accepted_event_id and p.get("observed_event_id") == observed_event_id and p.get("binding_id") == bid:
-                    return None, visibility
+            t_raws = [t for t in (tenant_id, summary.get("tenant_id") if "tenant_id" in summary else None) if t is not None]
+            t_cands = [t.strip() for t in t_raws if isinstance(t, str) and t.strip()]
+            if len(t_cands) != len(t_raws) or len(set(t_cands)) > 1: raise ValueError
+            tid = t_cands[0] if t_cands else (_current_tenant_id() or "").strip()
+            if not tid or not isinstance(binding_id, str) or not binding_id.strip(): raise ValueError
+            bid = binding_id.strip()
+            b_raws = [b for b in (summary.get("binding_id"), summary.get("runtime_binding_id")) if b is not None]
+            b_cands = [b.strip() for b in b_raws if isinstance(b, str) and b.strip()]
+            if len(b_cands) != len(b_raws) or any(b != bid for b in b_cands): raise ValueError
+            rid, aid, av = summary.get("runtime_id"), summary.get("artifact_id"), summary.get("artifact_version")
+            if not all(isinstance(x, str) and x.strip() for x in (rid, aid, av)): raise ValueError
+            ok, _, p = verify_durable_event_order(
+                telemetry_url, accepted_event_id=accepted_event_id, observed_event_id=observed_event_id,
+                tenant_id=tid, service_token=service_token, timeout_seconds=timeout_seconds,
+                expected_binding_id=bid, expected_runtime_id=rid.strip(), expected_artifact_id=aid.strip(), expected_artifact_version=av.strip(),
+            )
+            if ok and p and p.get("accepted_event_id") == accepted_event_id and p.get("observed_event_id") == observed_event_id and p.get("binding_id") == bid:
+                return None, visibility
         except Exception: pass
 
     return "accepted_lifecycle_append_not_visible", visibility
@@ -2148,13 +2155,10 @@ def _ensure_scheduled_lifecycle_append(
 
     event = state.get("event") if isinstance(state.get("event"), dict) else None
     if event is None:
-        raw_b, raw_t = evaluation.get("binding_id"), evaluation.get("tenant_id")
         visibility_reason, visibility = _accepted_append_visibility_reason(
-            summary=summary,
-            binding_id=raw_b.strip() if isinstance(raw_b, str) else "",
+            summary=summary, binding_id=evaluation.get("binding_id"),
             timestamp=timestamp, evaluations=evaluations, telemetry_url=telemetry_url,
-            tenant_id=raw_t.strip() if isinstance(raw_t, str) else (None if raw_t is None else "__non_str__"),
-            timeout_seconds=timeout_seconds,
+            tenant_id=evaluation.get("tenant_id"), timeout_seconds=timeout_seconds,
         )
         if visibility_reason is not None:
             state.update(

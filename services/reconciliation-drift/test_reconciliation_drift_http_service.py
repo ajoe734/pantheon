@@ -556,6 +556,33 @@ class TestAcceptedAppendVisibilityReason(unittest.TestCase):
             self.assertEqual(reason, "accepted_lifecycle_append_not_visible")
             mock_verify.assert_not_called()
 
+            # 3. Falsy 0, False, present blank "" in summary tenant_id does not infer default tenant
+            for falsy_tid in (0, False, "", "   "):
+                bad_t_sum = dict(self.summary_evicted)
+                bad_t_sum["tenant_id"] = falsy_tid
+                reason, _ = _accepted_append_visibility_reason(
+                    summary=bad_t_sum,
+                    binding_id=self.binding_id,
+                    timestamp=self.timestamp,
+                    evaluations=[self.accepted_evaluation],
+                    telemetry_url=self.telemetry_url,
+                )
+                self.assertEqual(reason, "accepted_lifecycle_append_not_visible")
+                mock_verify.assert_not_called()
+
+            # 4. Conflicting declared runtime_binding_id in summary
+            conflict_sum = dict(self.summary_evicted)
+            conflict_sum["runtime_binding_id"] = "conflicting-runtime-binding"
+            reason, _ = _accepted_append_visibility_reason(
+                summary=conflict_sum,
+                binding_id=self.binding_id,
+                timestamp=self.timestamp,
+                evaluations=[self.accepted_evaluation],
+                telemetry_url=self.telemetry_url,
+            )
+            self.assertEqual(reason, "accepted_lifecycle_append_not_visible")
+            mock_verify.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
