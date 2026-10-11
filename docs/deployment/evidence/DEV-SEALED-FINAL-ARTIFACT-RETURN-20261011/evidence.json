@@ -1,0 +1,63 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "DEV-SEALED-FINAL-ARTIFACT-RETURN-20261011",
+  "parent_task": "DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002",
+  "title": "既有artifact driver補齊同一FINAL封存bytes合法回復路徑",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "target_repo": "pantheon",
+  "base_sha": "8f532314a0aaa34ac4621c8fcbb4f35e5d9e5ea4",
+  "source_only": true,
+  "all_ac_pass": false,
+  "scope": {
+    "declared_artifacts": [
+      "scripts/dev_release_artifacts.py",
+      "scripts/dev_release_artifact_driver.py",
+      "scripts/test_dev_release_artifacts.py",
+      "scripts/test_dev_release_artifact_driver.py",
+      "scripts/compensate_cross_repo_release.sh",
+      "scripts/test_nonprod_dev_artifact_workflow.py",
+      ".github/workflows/nonprod-deploy.yml",
+      "docs/deployment/dev-exact-artifact-rollback.md",
+      "docs/deployment/evidence/DEV-SEALED-FINAL-ARTIFACT-RETURN-20261011/evidence.json"
+    ],
+    "changed_artifacts": [
+      "scripts/dev_release_artifacts.py",
+      "scripts/dev_release_artifact_driver.py",
+      "scripts/test_dev_release_artifacts.py",
+      "scripts/test_dev_release_artifact_driver.py",
+      "docs/deployment/dev-exact-artifact-rollback.md",
+      "docs/deployment/evidence/DEV-SEALED-FINAL-ARTIFACT-RETURN-20261011/evidence.json"
+    ],
+    "evidence_manifest": "docs/deployment/evidence/DEV-SEALED-FINAL-ARTIFACT-RETURN-20261011/evidence.json"
+  },
+  "diff_budget": {
+    "net_production_budget": 80,
+    "production_lines_added": 93,
+    "production_lines_deleted": 44,
+    "net_production_lines": 49,
+    "verdict": "pass"
+  },
+  "implementation_summary": {
+    "scripts/dev_release_artifacts.py": "Extracted save_image helper from capture_images so candidate image admission persists byte-verified, fsynced, lease-checked archives identically to baseline. Added restore-final to FAILURE_STAGES.",
+    "scripts/dev_release_artifact_driver.py": "Added candidate-bundle.json generation during candidate sealing preserving exact 5-key return contract for dev_candidate_receipt.py; added restore-final command and --target final/candidate option; validated candidate compose bytes, candidate bundle, candidate archives, and candidate frontend before switch; enforced RestoreCAS and protected owner barriers; executed docker compose restore with --no-build, --pull never, --no-deps.",
+    "scripts/test_dev_release_artifacts.py": "Added test_save_image_persists_archive_and_rejects_empty_or_differing_overwrite verifying idempotency and rejection of empty/tampered archives.",
+    "scripts/test_dev_release_artifact_driver.py": "Added test_sealed_final_artifact_return_roundtrip verifying full roundtrip (baseline capture -> candidate seal -> rollout -> baseline rollback -> final return from archives without docker build or pull); added test_restore_target_final_matches_restore_final; added test_restore_final_fail_closed_conditions verifying 11 fail-closed failure modes.",
+    "docs/deployment/dev-exact-artifact-rollback.md": "Documented step 8 for returning to the same admitted final sealed candidate bytes."
+  },
+  "test_execution": {
+    "command": ".venv-pantheon/bin/python3 -m pytest scripts/test_dev_release_artifacts.py scripts/test_dev_release_artifact_driver.py scripts/test_nonprod_dev_artifact_workflow.py",
+    "exit_code": 0,
+    "collected": 471,
+    "passed": 470,
+    "skipped": 1,
+    "failed": 0,
+    "duration": "94.91s"
+  },
+  "explicit_unaccepted_gaps": {
+    "worker_boundary": "Worker is strictly SOURCEONLY with no VM, provider, Root, control, capital, or live operator execution permissions.",
+    "live_roundtrip": "Live VM execution of rollback drill followed by return to final sealed bytes was NOT performed; live roundtrip remains an unexecuted live coordinator obligation.",
+    "data_preservation_claims": "Zero acknowledged data loss (PG/WAL/SHM) on hosted dev VM must be proven by live coordinator post-drill database readback, not by code-level or test fixture claims.",
+    "frontend_live_symlink": "Frontend hosted symlink switch and rollback remain live FE/controller-owned operations on the dev VM."
+  }
+}

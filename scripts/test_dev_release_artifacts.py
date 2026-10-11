@@ -445,3 +445,37 @@ def test_capture_and_validate_images_reject_conflicting_oci_revisions(tmp_path):
         artifacts.validate_images(raw, expected_sha256=hashlib.sha256(raw).hexdigest(),
                                   expected_source_sha=SOURCE, archive_root=root)
 
+
+def test_save_image_persists_archive_and_rejects_empty_or_differing_overwrite(tmp_path):
+    root = tmp_path / "archives"
+    root.mkdir(mode=0o700)
+    docker = FakeDocker()
+    checks = []
+    lease = lambda: checks.append(True)
+
+    record = artifacts.save_image(docker=docker, archive_root=root, image_id=IDS[0], check_lease=lease)
+    assert checks == [True]
+    assert record["name"].startswith(IDS[0].removeprefix("sha256:") + "-")
+    target = root / record["name"]
+    assert target.is_file()
+    digest, size = artifacts._file_digest(target)
+    assert record["sha256"] == digest and record["size"] == size
+
+    second = artifacts.save_image(docker=docker, archive_root=root, image_id=IDS[0], check_lease=lease)
+    assert second == record
+
+    target.write_bytes(b"tampered")
+    with pytest.raises(artifacts.ArtifactError, match="existing image archive differs; refusing overwrite"):
+        artifacts.save_image(docker=docker, archive_root=root, image_id=IDS[0], check_lease=lease)
+
+    class EmptyDocker(FakeDocker):
+        def call(self, *args):
+            if args[:2] == ("image", "save"):
+                Path(args[3]).touch()
+                return ""
+            return super().call(*args)
+
+    with pytest.raises(artifacts.ArtifactError, match="empty image archive"):
+        artifacts.save_image(docker=EmptyDocker(), archive_root=root, image_id="sha256:" + "9" * 64, check_lease=lease)
+
+
