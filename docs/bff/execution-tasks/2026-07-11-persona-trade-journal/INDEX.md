@@ -38,9 +38,10 @@ duplicate、late、out-of-order、correction、partial fill、scale、reversal�
 修復 paper execution runtime (`paper_runtime.py`) 與 `TradeEpisodeProjectionStore` 之間的斷裂 seam：
 - 由 paper ledger 作為 exposure authority 指派 stable genuine `trade_episode_id`（涵蓋 entry、scale-in/out、reversal 至 exact flat）。
 - 於 ledger checkpoint (`open_episodes`) 持久化 open episode identity，支援重啟復原；legacy ledger 無 provenance 乾淨載入不偽造 opened/closed 事實。
-- `TradeEpisodeProjectionStore` 支援 native paper payloads（包含負數 fill/position quantity 空方部位、exact flat 關閉、拒絕單不誤關、缺漏 PnL 誠實覆蓋標示）。
+- `reversal` metadata 嚴格隔離於 fill event，不洩漏至 risk/order/position snapshot，防止反向部位 snapshot 污染或重開已關閉 episode。
+- `TradeEpisodeProjectionStore` 追蹤 nonzero position remaining quantity、維護方向穩定不被減倉賣單反轉 side、並支援同秒 native sequence_no 因果排序。
 
-驗收：paper runtime 與 projection contract tests；restart 狀態還原；空方部位持續開啟且 exact flat 正常關閉；net production diff ≤ 250 lines。
+驗收：paper runtime 與 projection contract tests；restart 狀態還原；reduce-reverse-flat 4 步循環驗證通過；net production diff ≤ 250 lines。
 
 ### PTJ-003 — Reflection pipeline
 

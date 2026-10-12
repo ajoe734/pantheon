@@ -3215,6 +3215,7 @@ class PaperRuntimeService:
                 )
             )
             risk_metadata = dict(telemetry_metadata)
+            risk_metadata.pop("reversal", None)
             risk_scope = (
                 _clean_text(telemetry_metadata.get("signal_id")) or event.event_id
             )
@@ -3240,6 +3241,8 @@ class PaperRuntimeService:
             )
             telemetry_metadata.setdefault("order_id", f"paper-order-{order_event_id}")
             telemetry_metadata.setdefault("fill_id", f"paper-fill-{event.event_id}")
+            order_metadata = dict(telemetry_metadata)
+            order_metadata.pop("reversal", None)
             self._emit_lifecycle_telemetry(
                 "order_submitted",
                 {
@@ -3247,7 +3250,7 @@ class PaperRuntimeService:
                     "order_quantity": abs(event.quantity),
                     "order_price": event.fill_price,
                 },
-                telemetry_metadata,
+                order_metadata,
                 event_id=order_event_id,
                 created_at=event.created_at,
             )
@@ -3257,7 +3260,7 @@ class PaperRuntimeService:
                     f"{event.event_id}:order_accepted",
                 )
             )
-            accepted_metadata = dict(telemetry_metadata)
+            accepted_metadata = dict(order_metadata)
             accepted_metadata.setdefault(
                 "broker_order_id", f"paper-accepted-{order_event_id}"
             )
@@ -3299,6 +3302,7 @@ class PaperRuntimeService:
                 )
             )
             position_metadata = dict(telemetry_metadata)
+            position_metadata.pop("reversal", None)
             position_metadata.update(
                 {
                     "ledger_committed": True,

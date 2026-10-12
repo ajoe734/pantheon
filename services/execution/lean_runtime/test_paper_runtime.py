@@ -3416,6 +3416,122 @@ class PaperTradeEpisodeCorrelationTest(unittest.TestCase):
         self.assertEqual(store.get(new_ep)["side"], "short")
         self.assertEqual(store.get(new_ep)["filled_quantity"], 10.0)
 
+    def test_paper_full_reduce_reverse_flat_lifecycle_and_projection(self):
+        events = []
+        algo = PaperExecutionAlgorithm(
+            initial_cash=100_000.0,
+            default_price=100.0,
+            event_sink=events.append,
+        )
+
+        from services.telemetry.trade_episode_projection import TradeEpisodeProjectionStore
+        store = TradeEpisodeProjectionStore()
+
+        # Step 1: Entry long +10
+        algo.MarketOrder("SPY", 10.0)
+        ep1 = algo.open_episodes["SPY"]
+        fill1 = [e for e in events if e.event_type == "paper_fill_simulated"][-1]
+        store.project_event({
+            "event_id": str(uuid.uuid4()),
+            "event_type": "paper_fill_simulated",
+            "trade_episode_id": ep1,
+            "metrics": {"fill_quantity": fill1.quantity, "fill_price": fill1.fill_price},
+            "metadata": fill1.metadata,
+        })
+        snap1_id = str(uuid.uuid4())
+        store.project_event({
+            "event_id": snap1_id,
+            "event_type": "position_snapshot",
+            "trade_episode_id": ep1,
+            "metrics": {"position_qty": 10.0, "price": 100.0},
+        })
+        p1 = store.get(ep1)
+        self.assertEqual(p1["status"], "open")
+        self.assertEqual(p1["side"], "long")
+        self.assertEqual(p1["filled_quantity"], 10.0)
+        self.assertEqual(p1["remaining_quantity"], 10.0)
+        self.assertEqual(p1["position_snapshot_refs"], [snap1_id])
+
+        # Step 2: Reduce -5 -> position +5
+        algo.MarketOrder("SPY", -5.0)
+        fill2 = [e for e in events if e.event_type == "paper_fill_simulated"][-1]
+        store.project_event({
+            "event_id": str(uuid.uuid4()),
+            "event_type": "paper_fill_simulated",
+            "trade_episode_id": ep1,
+            "metrics": {"fill_quantity": fill2.quantity, "fill_price": fill2.fill_price},
+            "metadata": fill2.metadata,
+        })
+        snap2_id = str(uuid.uuid4())
+        store.project_event({
+            "event_id": snap2_id,
+            "event_type": "position_snapshot",
+            "trade_episode_id": ep1,
+            "metrics": {"position_qty": 5.0, "price": 100.0},
+        })
+        p1 = store.get(ep1)
+        self.assertEqual(p1["status"], "reducing")
+        self.assertEqual(p1["side"], "long")
+        self.assertEqual(p1["filled_quantity"], 10.0)
+        self.assertEqual(p1["remaining_quantity"], 5.0)
+        self.assertEqual(p1["position_snapshot_refs"], [snap1_id, snap2_id])
+
+        # Step 3: Reversal -15 -> position -10
+        algo.MarketOrder("SPY", -15.0)
+        fill3 = [e for e in events if e.event_type == "paper_fill_simulated"][-1]
+        ep2 = algo.open_episodes["SPY"]
+        self.assertNotEqual(ep1, ep2)
+        store.project_event({
+            "event_id": str(uuid.uuid4()),
+            "event_type": "paper_fill_simulated",
+            "trade_episode_id": ep2,
+            "metrics": {"fill_quantity": fill3.quantity, "fill_price": fill3.fill_price},
+            "metadata": fill3.metadata,
+        })
+        snap3_id = str(uuid.uuid4())
+        store.project_event({
+            "event_id": snap3_id,
+            "event_type": "position_snapshot",
+            "trade_episode_id": ep2,
+            "metrics": {"position_qty": -10.0, "price": 100.0},
+        })
+        p1 = store.get(ep1)
+        p2 = store.get(ep2)
+        self.assertEqual(p1["status"], "closed")
+        self.assertEqual(p1["remaining_quantity"], 0.0)
+        self.assertEqual(p1["position_snapshot_refs"], [snap1_id, snap2_id])
+        self.assertEqual(p2["status"], "open")
+        self.assertEqual(p2["side"], "short")
+        self.assertEqual(p2["filled_quantity"], 10.0)
+        self.assertEqual(p2["remaining_quantity"], 10.0)
+        self.assertEqual(p2["position_snapshot_refs"], [snap3_id])
+
+        # Step 4: Flatten +10 -> position 0
+        algo.MarketOrder("SPY", 10.0)
+        fill4 = [e for e in events if e.event_type == "paper_fill_simulated"][-1]
+        store.project_event({
+            "event_id": str(uuid.uuid4()),
+            "event_type": "paper_fill_simulated",
+            "trade_episode_id": ep2,
+            "metrics": {"fill_quantity": fill4.quantity, "fill_price": fill4.fill_price},
+            "metadata": fill4.metadata,
+        })
+        snap4_id = str(uuid.uuid4())
+        store.project_event({
+            "event_id": snap4_id,
+            "event_type": "position_snapshot",
+            "trade_episode_id": ep2,
+            "metrics": {"position_qty": 0.0, "price": 100.0},
+        })
+        p1 = store.get(ep1)
+        p2 = store.get(ep2)
+        self.assertEqual(p1["status"], "closed")
+        self.assertEqual(p1["remaining_quantity"], 0.0)
+        self.assertEqual(p2["status"], "closed")
+        self.assertEqual(p2["side"], "short")
+        self.assertEqual(p2["filled_quantity"], 10.0)
+        self.assertEqual(p2["remaining_quantity"], 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
