@@ -1,8 +1,10 @@
 """Tests for decision-to-signal producer."""
 from __future__ import annotations
 
+import json
 import sys
 import unittest
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 from services.execution.lean_runtime.pending_signal_store import (
@@ -201,6 +203,147 @@ class TestDecisionSignalProducer(unittest.TestCase):
 
         self.assertIsInstance(producer._store, RedisPendingSignalStore)
         self.assertEqual(producer._store._queue_key, "pantheon:signals:pending:binding-factory")
+
+    def test_producer_to_memory_and_redis_serialization_observes_real_enqueue_without_manual_metadata(self) -> None:
+        store = InMemoryPendingSignalStore()
+        producer = DecisionSignalProducer(store)
+        decision = {
+            "decision_id": "decision-real-obs-001",
+            "strategy_id": "strategy-obs",
+            "timestamp": _NOW,
+            "symbol": "AAPL.US",
+            "action": "buy",
+            "direction": "long",
+            "quantity": 10,
+            "quantity_type": "SHARES",
+            "metadata": {"custom_strategy_metric": 42},
+        }
+
+        before_enqueue = datetime.now(timezone.utc)
+        batch = producer.produce(
+            decision,
+            binding_id="binding-obs",
+            runtime_id="runtime-obs",
+            run_id="run-obs",
+            source_worker="test-producer-obs",
+        )
+        after_enqueue = datetime.now(timezone.utc)
+
+        self.assertEqual(batch.count, 1)
+        # Caller input and returned batch signals must NOT have manual enqueue metadata
+        self.assertNotIn("enqueued_at", decision)
+        self.assertNotIn("enqueued_at", decision["metadata"])
+        self.assertNotIn("causal_queue_receipt", decision)
+        self.assertNotIn("enqueued_at", batch.signals[0])
+
+        # Dequeued item from store DOES observe actual enqueue admission UTC time
+        [dequeued] = store.get_pending()
+        self.assertIn("enqueued_at", dequeued)
+        self.assertEqual(dequeued["metadata"]["custom_strategy_metric"], 42)
+
+        enqueued_dt = datetime.fromisoformat(dequeued["enqueued_at"])
+        self.assertGreaterEqual(enqueued_dt, before_enqueue)
+        self.assertLessEqual(enqueued_dt, after_enqueue)
+        self.assertNotEqual(dequeued["enqueued_at"], _NOW)
+
+        # Redis serialization path
+        mock_redis = MagicMock()
+        redis_store = RedisPendingSignalStore.__new__(RedisPendingSignalStore)
+        redis_store._client = mock_redis
+        redis_store._queue_key = "pantheon:signals:pending:test-obs"
+        redis_store._worker_id = "test-worker"
+        redis_store._default_batch_size = 100
+        redis_producer = DecisionSignalProducer(redis_store)
+
+        redis_batch = redis_producer.produce(
+            decision,
+            binding_id="binding-obs",
+            runtime_id="runtime-obs",
+            run_id="run-obs",
+        )
+        self.assertEqual(redis_batch.count, 1)
+        mock_redis.rpush.assert_called_once()
+        call_args = mock_redis.rpush.call_args[0]
+        self.assertEqual(call_args[0], "pantheon:signals:pending:test-obs")
+        serialized = json.loads(call_args[1])
+        self.assertIn("enqueued_at", serialized)
+        self.assertEqual(serialized["symbol"], "AAPL.US")
+        self.assertEqual(serialized["action"], "BUY")
+        self.assertEqual(serialized["binding_id"], "binding-obs")
+
+    def test_producer_and_store_refuse_caller_forged_timestamps_and_observe_actual_enqueue(self) -> None:
+        store = InMemoryPendingSignalStore()
+        producer = DecisionSignalProducer(store)
+        forged_ts_past = "1999-01-01T00:00:00Z"
+        forged_decision = {
+            "decision_id": "decision-forged-001",
+            "strategy_id": "strategy-forged",
+            "timestamp": _NOW,
+            "symbol": "AAPL.US",
+            "action": "buy",
+            "direction": "long",
+            "quantity": 10,
+            "quantity_type": "SHARES",
+            "enqueued_at": forged_ts_past,
+            "metadata": {
+                "enqueued_at": "2099-01-01T00:00:00Z",
+                "custom_metric": 99,
+            },
+        }
+
+        before = datetime.now(timezone.utc)
+        batch = producer.produce(
+            forged_decision,
+            binding_id="b-forged",
+            runtime_id="rt-forged",
+            run_id="run-forged",
+        )
+        after = datetime.now(timezone.utc)
+
+        # 1. Caller input dictionary and nested metadata are preserved without mutation
+        self.assertEqual(forged_decision["enqueued_at"], forged_ts_past)
+        self.assertEqual(forged_decision["metadata"]["enqueued_at"], "2099-01-01T00:00:00Z")
+        self.assertEqual(forged_decision["metadata"]["custom_metric"], 99)
+
+        # 2. Dequeued signal observes actual physical enqueue interval, NOT caller forged time
+        [dequeued] = store.get_pending()
+        self.assertNotEqual(dequeued["enqueued_at"], forged_ts_past)
+        self.assertNotEqual(dequeued["enqueued_at"], "2099-01-01T00:00:00Z")
+        enqueued_dt = datetime.fromisoformat(dequeued["enqueued_at"])
+        self.assertGreaterEqual(enqueued_dt, before)
+        self.assertLessEqual(enqueued_dt, after)
+
+        # 3. Correlation fields are preserved intact
+        self.assertEqual(dequeued["metadata"]["decision_id"], "decision-forged-001")
+        self.assertEqual(dequeued["correlation_envelope"]["journey_id"], batch.signals[0]["journey_id"])
+        self.assertEqual(dequeued["strategy_id"], "strategy-forged")
+        self.assertEqual(dequeued["binding_id"], "b-forged")
+        self.assertEqual(dequeued["runtime_id"], "rt-forged")
+        self.assertEqual(dequeued["journey_id"], batch.signals[0]["journey_id"])
+
+        # 4. Direct store enqueue with forged enqueued_at also records actual operation time
+        raw_signal = {
+            "signal_id": "sig-direct-forged",
+            "strategy_id": "strategy-forged",
+            "version": "1.0",
+            "timestamp": _NOW,
+            "symbol": "2330.TW",
+            "action": "BUY",
+            "quantity": 100,
+            "enqueued_at": "2000-01-01T12:00:00Z",
+            "metadata": {"enqueued_at": "2000-01-01T12:00:00Z"},
+        }
+        before_direct = datetime.now(timezone.utc)
+        store.enqueue(raw_signal)
+        after_direct = datetime.now(timezone.utc)
+
+        self.assertEqual(raw_signal["enqueued_at"], "2000-01-01T12:00:00Z")
+        [direct_dequeued] = store.get_pending()
+        self.assertEqual(direct_dequeued["signal_id"], "sig-direct-forged")
+        self.assertNotEqual(direct_dequeued["enqueued_at"], "2000-01-01T12:00:00Z")
+        direct_dt = datetime.fromisoformat(direct_dequeued["enqueued_at"])
+        self.assertGreaterEqual(direct_dt, before_direct)
+        self.assertLessEqual(direct_dt, after_direct)
 
 
 if __name__ == "__main__":

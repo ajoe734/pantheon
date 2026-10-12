@@ -26,6 +26,7 @@ import json
 import os
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -96,6 +97,13 @@ class PendingSignalStore(Protocol):
         """Return the current pending queue depth."""
 
 
+def _observed_enqueue_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    validate_signal_payload_minimal(payload)
+    item = json.loads(json.dumps(payload))
+    item["enqueued_at"] = datetime.now(timezone.utc).isoformat()
+    return item
+
+
 class InMemoryPendingSignalStore:
     """Small in-memory queue for tests and local dry runs with claim/ack visibility."""
 
@@ -117,8 +125,7 @@ class InMemoryPendingSignalStore:
         return str(signal_id) in self._processed
 
     def enqueue(self, payload: dict[str, Any]) -> None:
-        validate_signal_payload_minimal(payload)
-        self._pending.append(json.loads(json.dumps(payload)))
+        self._pending.append(_observed_enqueue_payload(payload))
 
     def get_pending(self, limit: int | None = None) -> list[dict[str, Any]]:
         batch_limit = max(int(limit or len(self._pending) or 1), 0)
@@ -367,8 +374,7 @@ return moved
             return False
 
     def enqueue(self, payload: dict[str, Any]) -> None:
-        validate_signal_payload_minimal(payload)
-        self._client.rpush(self._queue_key, json.dumps(payload))
+        self._client.rpush(self._queue_key, json.dumps(_observed_enqueue_payload(payload)))
 
     def get_pending(self, limit: int | None = None) -> list[dict[str, Any]]:
         self.reclaim_expired_inflight()

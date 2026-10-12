@@ -2200,5 +2200,176 @@ def test_natural_probe_reports_last_natural_rejection_when_candidate_fails_stage
     assert artifact["failure"]["code"] == "artifact_not_approved"
 
 
+def test_natural_probe_taiwan_weekend_original_time_passes_after_caller_repair(tmp_path):
+    # Reproduces Root 38167902596: 10/8 event, 10/10 receipt, 10/11 original failure time.
+    # The old caller flat age check rejected Taiwan with invalid_freshness (age <= 86400s)
+    # even though canonical admission admitted the unchanged snapshot with governed calendar.
+    from services.execution.market_snapshot_admission import admit_market_snapshot
+
+    snap, rows, case = _taiwan_snapshot_and_rows(
+        trade_date="2026-10-08",
+        event_time="2026-10-08T05:30:00Z",
+        observed_at="2026-10-10T03:12:18Z",
+        signal_event_time_base="2026-10-11T19:53:0",
+        with_evidence=True,
+    )
+    now_dt = datetime.fromisoformat("2026-10-11T19:53:07+00:00")
+
+    # 1. Old caller rejection reproduction: age > 86400s
+    t_sig = datetime.fromisoformat("2026-10-11T19:53:01+00:00")
+    t_obs = datetime.fromisoformat("2026-10-10T03:12:18+00:00")
+    assert (t_sig - t_obs).total_seconds() > 86400.0
+
+    # 2. Existing canonical admission succeeds at original failure time
+    decision = admit_market_snapshot(
+        snap,
+        expected_symbol="2330.TW",
+        max_age_seconds=86400,
+        now_iso=now_dt.isoformat(),
+        calendar_evidence=snap["calendar_evidence"],
+    )
+    assert decision.admitted is True
+    assert decision.reason_code is None
+
+    # 3. Stage 1 candidate filter succeeds
+    cands = probe._complete_candidates(rows, mode="natural", case=case, now_dt=now_dt)
+    assert len(cands) == 1
+
+    # 4. Stage 2 candidate validation succeeds with governed calendar
+    probe._validate_natural_candidate(cands[0], case=case, now_dt=now_dt, snap=snap, require_snapshot=True)
+
+    # 5. Full probe execution succeeds end-to-end
+    case_key = "dev-paper-release-tw-root38167902596-pass"
+    case["idempotency_key"] = case_key
+    case_source = InMemoryCaseSource({case_key: case}, {snap["snapshot_id"]: snap})
+    root, pub_rows = _publish(tmp_path, rows=rows)
+    out = tmp_path / "out.json"
+    code, artifact = asyncio.run(
+        probe.execute(
+            source=FakeSource(len(pub_rows), pub_rows),
+            projection_root=root,
+            case_source=case_source,
+            expected_sha="deployed-sha",
+            output=out,
+            timeout_seconds=0.1,
+            poll_seconds=0.01,
+            case_key=case_key,
+            now_dt=now_dt,
+        )
+    )
+    assert code == 0
+    assert artifact["outcome"] == "passed"
+
+
+def test_natural_probe_non_taiwan_flat_age_check_preserved():
+    # Non-Taiwan symbol must continue to enforce flat 24h refresh age limit
+    snap, rows, case = _taiwan_snapshot_and_rows(
+        trade_date="2026-10-08",
+        event_time="2026-10-08T05:30:00Z",
+        observed_at="2026-10-10T03:12:18Z",
+        signal_event_time_base="2026-10-11T19:53:0",
+        with_evidence=False,
+    )
+    for row in rows:
+        p = row["payload"]
+        if p.get("event_type") == "signal_generation":
+            p["raw_symbol"] = "AAPL"
+    case["source_snapshot"]["symbol"] = "AAPL"
+    snap["symbol"] = "AAPL"
+
+    now_dt = datetime.fromisoformat("2026-10-11T19:53:07+00:00")
+    rejections = []
+    cands = probe._complete_candidates(rows, mode="natural", case=case, now_dt=now_dt, rejections=rejections)
+    assert len(cands) == 0
+    assert len(rejections) == 1
+    assert rejections[0].code == "invalid_freshness"
+    assert "market input timestamps violate age <= 86400.0s" in rejections[0].safe_message
+
+    cands_controlled = probe._complete_candidates(rows, mode="controlled-stimulus")
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(cands_controlled[0], case=case, now_dt=now_dt, snap=snap, require_snapshot=True)
+    assert exc_info.value.code == "invalid_freshness"
+    assert "market input timestamps violate age <= 86400.0s" in exc_info.value.safe_message
+
+
+def test_natural_probe_taiwan_negatives_preserved():
+    # 1. 14-day stale receipt ceiling
+    snap_stale_14d, rows_stale_14d, case_stale_14d = _taiwan_snapshot_and_rows(
+        trade_date="2026-09-20",
+        event_time="2026-09-20T00:00:00Z",
+        observed_at="2026-09-20T03:12:18Z",
+        signal_event_time_base="2026-10-11T19:53:0",
+        with_evidence=True,
+    )
+    now_dt = datetime.fromisoformat("2026-10-11T19:53:07+00:00")
+    cands_14d = probe._complete_candidates(rows_stale_14d, mode="controlled-stimulus")
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(cands_14d[0], case=case_stale_14d, now_dt=now_dt, snap=snap_stale_14d, require_snapshot=True)
+    assert exc_info.value.code == "market_input_stale_refresh"
+    assert "maximum is 14 days" in exc_info.value.safe_message
+
+    # 2. Post-new-session stale data
+    snap_post_session, rows_post_session, case_post_session = _taiwan_snapshot_and_rows(
+        trade_date="2026-10-08",
+        event_time="2026-10-08T05:30:00Z",
+        observed_at="2026-10-12T05:35:00Z",
+        signal_event_time_base="2026-10-12T06:00:0",
+        with_evidence=True,
+    )
+    now_dt_post = datetime.fromisoformat("2026-10-12T06:01:00+00:00")
+    cands_post = probe._complete_candidates(rows_post_session, mode="controlled-stimulus")
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(cands_post[0], case=case_post_session, now_dt=now_dt_post, snap=snap_post_session, require_snapshot=True)
+    assert exc_info.value.code == "market_input_stale"
+    assert "a newer official Taiwan session closed" in exc_info.value.safe_message
+
+    # 3. Unverified/tampered official calendar
+    snap_tampered, rows_tampered, case_tampered = _taiwan_snapshot_and_rows(
+        trade_date="2026-10-08",
+        event_time="2026-10-08T05:30:00Z",
+        observed_at="2026-10-10T03:12:18Z",
+        signal_event_time_base="2026-10-11T19:53:0",
+        with_evidence=True,
+    )
+    snap_tampered["calendar_evidence"]["checksum"] = "0" * 64
+    cands_tampered = probe._complete_candidates(rows_tampered, mode="controlled-stimulus")
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(cands_tampered[0], case=case_tampered, now_dt=now_dt, snap=snap_tampered, require_snapshot=True)
+    assert exc_info.value.code == "market_input_calendar_unverifiable"
+
+    # 4. Future timestamps
+    cands_future = probe._complete_candidates(rows_tampered, mode="controlled-stimulus")
+    cands_future[0]["signal_provenance"]["market_input_event_time"] = "2026-10-15T00:00:00Z"
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(cands_future[0], case=case_tampered, now_dt=now_dt, snap=snap_tampered, require_snapshot=True)
+    assert exc_info.value.code == "invalid_freshness"
+    assert "in the future" in exc_info.value.safe_message
+
+    # 5. Incorrect snapshot checksum & snapshot ID mismatch
+    snap_mismatch, rows_mismatch, case_mismatch = _taiwan_snapshot_and_rows(
+        trade_date="2026-10-08",
+        event_time="2026-10-08T05:30:00Z",
+        observed_at="2026-10-10T03:12:18Z",
+        signal_event_time_base="2026-10-11T19:53:0",
+        with_evidence=True,
+    )
+    bad_snap_chk = dict(snap_mismatch, checksum="wrong-checksum-digest")
+    cands_mismatch = probe._complete_candidates(rows_mismatch, mode="controlled-stimulus")
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(cands_mismatch[0], case=case_mismatch, now_dt=now_dt, snap=bad_snap_chk, require_snapshot=True)
+    assert exc_info.value.code == "invalid_checksum"
+
+    bad_snap_id = dict(snap_mismatch, snapshot_id="mss-000000000000000000000000")
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(cands_mismatch[0], case=case_mismatch, now_dt=now_dt, snap=bad_snap_id, require_snapshot=True)
+    assert exc_info.value.code == "invalid_snapshot_id"
+
+    # 6. Case/tenant mismatch
+    bad_case_tenant = dict(case_mismatch, tenant_id="mismatched-tenant-id")
+    with pytest.raises(probe.ProbeError) as exc_info:
+        probe._validate_natural_candidate(cands_mismatch[0], case=bad_case_tenant, now_dt=now_dt, snap=snap_mismatch, require_snapshot=True)
+    assert exc_info.value.code == "case_identity_mismatch"
+
+
 
 
