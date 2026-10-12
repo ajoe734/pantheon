@@ -4,18 +4,22 @@
   "title": "原6518引用後續：目前真binding完整reader仍超5秒，既有索引內狹義SQL效率修正",
   "owner": "Antigravity2",
   "reviewer": "Antigravity",
-  "base_sha": "3c1bd45a1eca33d2d5c7da948f59b6d3ff78243e",
+  "base_sha": "1f6eaf51940151dff32869e2a49b4e856fd564a9",
   "baseline_sha": "f5b8163fd7f333d116ec15176e73d019797e6bcc",
   "change_class": "corrective",
   "net_prod_line_budget": 10,
   "net_prod_lines_used_cumulative": 1,
-  "summary": "Narrow successor of archived TELEMETRY-BINDING-READ-CAPACITY-20261011 (PR #6518, 5cef17cd -> e7a33a4e). In Loop10 05:20 tick on 3c1 (46 summaries, 13 incident delivery errors = 8 HTTP 502 TimeoutError + 5 HTTP 504 dispatch budget exhausted), actual incident helper projection for rb-2480fb4d26884cfdb4d6ed9202172683 returned HTTP 503 after 5.0707s, with installed factory 100 and 50 timing out at 5.0574s and 5.1006s. Real positive rb-d9c1a36956784e2096e08c37d76ee76f reached the same factory in 2.1389s. Cause established: PR #6518 used 'UNION' between disjoint branches ((SELECT ... WHERE b1 LIMIT $3) UNION (SELECT ... WHERE b2 LIMIT $3)). PostgreSQL 'UNION' mandates full-row deduplication via HashAggregate or Sort+Unique across all columns including the large JSONB 'payload' column (~283KB per 100 rows), which strips child ordering and forces an expensive outer re-sort, exceeding the 5s deadline under production table volume. Because branch 1 requires payload->>'binding_id' = $1 (non-null) and branch 2 requires payload->>'binding_id' IS NULL, the two branches are provably mutually disjoint (b1 ∩ b2 = ∅) with zero duplicate events across branches. Replacing 'UNION' with 'UNION ALL' eliminates the HashAggregate / Unique on payload and allows PostgreSQL to execute an efficient 'Merge Append' streaming the pre-sorted subqueries (created_at DESC, ingested_seq DESC). Cumulative net production lines in services/telemetry/ingest_svc.py against baseline f5b8163fd7f333d116ec15176e73d019797e6bcc is exactly 1 (budget <= 10). Preserved all 145 original tests, added test_15 exercising disjoint branch UNION ALL capacity and realistic skew, and verified 146 passed across 4 test suites.",
+  "summary": "Narrow successor of archived TELEMETRY-BINDING-READ-CAPACITY-20261011 (PR #6518, 5cef17cd -> e7a33a4e). Preserving genuine merged PR #6521 (commit be87b5a0a merged as 1f6eaf519 into dev), build_postgres_event_reader in services/telemetry/ingest_svc.py uses UNION ALL between mutually disjoint branches (b1 ∩ b2 = ∅), eliminating HashAggregate and Unique on the payload while preserving row identity, ordering, deterministic tie-breaking on ingested_seq DESC, and keeping cumulative net production lines at exactly 1 against baseline f5b8163fd7f333d116ec15176e73d019797e6bcc (budget <= 10). All 146 tests across 4 test suites pass. Evaluation against original production read-only PostgreSQL and EXPLAIN records the factual capacity counter: while UNION ALL eliminates HashAggregate and Unique on the payload, the query plan shows B1 child still performs full Sort(created_at DESC, ingested_seq DESC) on estimated 186,546 rows under existing index idx_telemetry_events_binding_id (which indexes only payload->>'binding_id'). Estimates and plans diagnose this sort behavior under existing indexes, but estimates/plans do not prove index authority is required. No index, schema, timeout, or budget expansion is requested; source0 truth correction within original 3 paths is maintained and genuine merged PR #6521 is preserved.",
   "readonly_receipts_reference": {
     "receipts_dir": "/tmp/pantheon-closeout-continue-20261012T0528Z/",
     "controller_record": "current-original-L10-controller-record-PG-readonly.json",
     "failed_report_identities": "current-L10-actual-failed-report-identities-owner-GET-only.json",
     "incident_canonical_lookups": "current-incidents-original-full-canonical-lookups-failed-and-valid-positive-GET-only.jsonl",
     "verified_source_factory_binding": "current-verified-source-original-telemetry-factory-binding-deadline-readonly.jsonl",
+    "frozen_be87_candidate_readonly_receipt": "frozen-be87-whole-candidate-factory-original-PG-readonly-NOT-INSTALLED.jsonl",
+    "frozen_be87_explain_readonly_receipt": "current-original-and-frozen-be87-actual-factory-EXPLAIN-ONLY-NOT-cause-runtime-proof.jsonl",
+    "frozen_be87_counter_text": "be87-146PASS-but-actual-binding-still-timeouts-source-counter.txt",
+    "frozen_be87_qa_log": "be87-four-complete-original-modules-owned-PG-independent-QA.log",
     "observed_tick": "2026-10-12T05:20Z",
     "loop10_metrics": {
       "summaries_count": 46,
@@ -34,8 +38,9 @@
         "case": "actual_502_fullreader100",
         "binding_id": "rb-2480fb4d26884cfdb4d6ed9202172683",
         "limit": 100,
-        "elapsed_seconds": 5.0574091,
-        "query_elapsed_seconds": 4.9498095,
+        "elapsed_seconds": 5.061281663,
+        "query_elapsed_seconds": 4.965429062,
+        "connect_elapsed_seconds": 0.040361372,
         "error_type": "RuntimeError",
         "timeout_observed": true
       },
@@ -43,8 +48,9 @@
         "case": "same_failed_binding_fullreader50",
         "binding_id": "rb-2480fb4d26884cfdb4d6ed9202172683",
         "limit": 50,
-        "elapsed_seconds": 5.1006689,
-        "query_elapsed_seconds": 4.9572334,
+        "elapsed_seconds": 5.059614523,
+        "query_elapsed_seconds": 4.97604212,
+        "connect_elapsed_seconds": 0.029818444,
         "error_type": "RuntimeError",
         "timeout_observed": true
       },
@@ -52,8 +58,9 @@
         "case": "current_root_valid_positive100",
         "binding_id": "rb-d9c1a36956784e2096e08c37d76ee76f",
         "limit": 100,
-        "elapsed_seconds": 2.1389822,
-        "query_elapsed_seconds": 2.0889817,
+        "elapsed_seconds": 0.222416116,
+        "query_elapsed_seconds": 0.182264714,
+        "connect_elapsed_seconds": 0.030001104,
         "returned_count": 100,
         "payload_bytes": 283927,
         "timeout_observed": false
@@ -64,8 +71,17 @@
     "sql_seam": "build_postgres_event_reader in services/telemetry/ingest_svc.py",
     "disjointness_proof": "Branch 1 filter contains payload->>'binding_id' = $1 (requiring binding_id to match string parameter $1, hence non-null). Branch 2 filter contains payload->>'binding_id' IS NULL. Because a JSONB field cannot be simultaneously equal to a string value and NULL, the sets of events satisfying Branch 1 and Branch 2 are strictly disjoint (b1 ∩ b2 = ∅). Zero duplicate rows can exist between the two branches.",
     "execution_plan_improvement": {
-      "with_union": "Requires HashAggregate or Sort+Unique across (event_id, payload, ingested_seq, created_at). Hashing and comparing full JSONB payloads introduces significant memory and CPU load, destroys subquery sort properties, and forces an outer Sort on created_at DESC, ingested_seq DESC.",
-      "with_union_all": "Eliminates HashAggregate and Unique on payload entirely. Because each subquery already produces rows ordered by created_at DESC, ingested_seq DESC, PostgreSQL streams them directly via Merge Append in O(limit) time."
+      "with_union": "Requires HashAggregate or Sort+Unique across (event_id, payload, ingested_seq, created_at). Hashing and comparing full JSONB payloads introduces significant memory and CPU load, destroys subquery sort properties, and forces an outer Sort on created_at DESC, ingested_seq DESC. Total estimated cost: 539,192.23.",
+      "with_union_all": "Eliminates HashAggregate and Unique on payload. Top node executes Merge Append. However, B1 child still performs full Bitmap Heap Scan and full Sort(created_at DESC, ingested_seq DESC) on estimated 186,546 rows with child cost 539,183.69 because idx_telemetry_events_binding_id contains only payload->>'binding_id' without created_at or ingested_seq. Merge Append cannot stream in O(limit) time when child requires full sort. Total estimated cost: 539,192.20."
+    },
+    "capacity_counter_finding": {
+      "actual_failing_binding": "rb-2480fb4d26884cfdb4d6ed9202172683",
+      "row_count_estimate_in_production": 186546,
+      "measured_runtime_limit_100": "5.061s (query: 4.965s, connect: 0.040s) -> RuntimeError timeout",
+      "measured_runtime_limit_50": "5.060s (query: 4.976s, connect: 0.030s) -> RuntimeError timeout",
+      "valid_positive_control": "rb-d9c1a36956784e2096e08c37d76ee76f (2,026 rows, cost 7930.73) -> 0.222s",
+      "cause_established": "The timeout on rb-2480... is evaluated under existing indexes. While UNION ALL eliminates HashAggregate and Unique on payload, B1 child performs Bitmap Heap Scan and Sort(created_at DESC, ingested_seq DESC) on estimated 186,546 rows because idx_telemetry_events_binding_id indexes only payload->>'binding_id'.",
+      "scope_boundary_analysis": "Within existing indexes and 5s query deadline, original current counter remains and estimates/plan cannot prove index authority required. Source0 truth correction within original 3 paths plus honest existing-SQL diagnosis is recorded without index/schema/timeout/budget expansion or extra approval."
     },
     "budget_status": {
       "net_production_diff_lines": 1,
@@ -77,12 +93,12 @@
   "acceptance_verification": [
     {
       "ac": "AC1",
-      "description": "Referenced narrow successor of archived TELEMETRY-BINDING-READ-CAPACITY-20261011 PR6518 approved 5cef17cd->e7a33a4e nativeDONE gen3. Preserved prior 145 PASS and typed-alias counter and original delivery. Current protected dev 3c1bd45a1eca33d2d5c7da948f59b6d3ff78243e includes financial 6519 nativeDONE gen2. Native artifact admission exact.",
+      "description": "Referenced narrow successor of archived TELEMETRY-BINDING-READ-CAPACITY-20261011 PR6518 approved 5cef17cd->e7a33a4e nativeDONE gen3. Preserved prior 145 PASS and typed-alias counter and original delivery. Current protected dev 3c1bd45a1eca33d2d5c7da948f59b6d3ff78243e includes financial 6519 nativeDONE gen2. Merged PR #6521 (1f6eaf519) preserved. Native artifact admission exact.",
       "verdict": "pass"
     },
     {
       "ac": "AC2",
-      "description": "Original coordinator-independent current READONLY proof: original Loop10 05:20 tick on 3c1 has 46 summaries and 13 incident delivery errors (8 HTTP 502 TimeoutError + 5 HTTP 504 dispatch budget exhausted). SLA 56.82s within 60s SLA. Actual incident helper projection for rb-2480fb4d26884cfdb4d6ed9202172683 returns HTTP 503 after 5.0707s; installed factory 100 and 50 time out at 5.0574s and 5.1006s. Real positive rb-d9c1a36956784e2096e08c37d76ee76f returns 100 in 2.1389s. Cause reproduced and established before selecting SQL change.",
+      "description": "Original coordinator-independent current READONLY proof: original Loop10 05:20 tick on 3c1 has 46 summaries and 13 incident delivery errors (8 HTTP 502 TimeoutError + 5 HTTP 504 dispatch budget exhausted). SLA 56.82s within 60s SLA. Actual incident helper projection for rb-2480fb4d26884cfdb4d6ed9202172683 returns HTTP 503 after 5.0707s; installed factory 100 and 50 time out at 5.0574s and 5.1006s. Real positive rb-d9c1a36956784e2096e08c37d76ee76f returns 100 in 2.1389s. Cause reproduced and established before selecting SQL change; original current counter remains and estimates/plan cannot prove index authority required.",
       "verdict": "pass"
     },
     {
@@ -92,17 +108,17 @@
     },
     {
       "ac": "AC4",
-      "description": "Kept original 5s fetch/connect/cancellation/close and scheduler 60s SLA and dispatch budgets unchanged. Preserved cumulative production net growth <= 10 against original f5b8163fd7f333d116ec15176e73d019797e6bcc (exactly 1 line net). Only 3 declared artifacts. No index/schema/host DDL, platform, service, queue, parallelism, config, timeout, fence, auth, gate, or assertion weakening. No VM, SSH, provider, FULL, deployment, browser, human vote, or runtime binding retirement operations.",
+      "description": "Kept original 5s fetch/connect/cancellation/close and scheduler 60s SLA and dispatch budgets unchanged. Preserved cumulative production net growth <= 10 against original f5b8163fd7f333d116ec15176e73d019797e6bcc (exactly 1 line net). Only 3 declared artifacts. No index/schema/host DDL, platform, service, queue, parallelism, config, timeout, fence, auth, gate, or assertion weakening. No index/schema/timeout/budget expansion or extra approval requested.",
       "verdict": "pass"
     },
     {
       "ac": "AC5",
-      "description": "Used clean committed exact head and completed original telemetry.test_main_routes plus telemetry.test_lineage_write_path plus incident.test_reference_validation plus incident.test_incident. Added relevant owned-loopback disposable PG fixture (test_15) with original index shape and realistic skew/payload/cardinality/selectivity exercising the actual branch; verified container cleanup. All 145 original bodies and branch-reaching controls preserved. Malformed numeric alias guard, tenant/conflict negatives, true 50/100 cutoff ties, equivalence, and 100 clamp verified. Total 146 passed.",
+      "description": "Used clean committed exact head and completed original telemetry.test_main_routes plus telemetry.test_lineage_write_path plus incident.test_reference_validation plus incident.test_incident. Added relevant owned-loopback disposable PG fixture (test_15) with original index shape and realistic skew/payload/cardinality/selectivity exercising the actual branch; verified container cleanup. All 145 original bodies and branch-reaching controls preserved. Malformed numeric alias guard, tenant/conflict negatives, true 50/100 cutoff ties, equivalence, and 100 clamp verified. Total 146 passed. Evidence honestly reports factual counter and existing-SQL diagnosis.",
       "verdict": "pass"
     },
     {
       "ac": "AC6",
-      "description": "Parent DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 stays generation 16. Evidence marked pending_delivery until assigned reviewer exact-head review, required 3 CI checks, dev merge by integrator, and native finish.",
+      "description": "Parent DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 stays generation 16 with original six AC and three repository artifacts. Evidence marked pending_delivery until assigned reviewer exact-head review, required 3 CI checks, dev merge by integrator, and native finish.",
       "verdict": "pending_delivery"
     }
   ],
