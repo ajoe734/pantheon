@@ -4,7 +4,7 @@
   "title": "原6518引用後續：目前真binding完整reader仍超5秒，既有索引內狹義SQL效率修正",
   "owner": "Antigravity2",
   "reviewer": "Antigravity",
-  "base_sha": "1f6eaf51940151dff32869e2a49b4e856fd564a9",
+  "base_sha": "38e85132384f88c278ee90733f716b845a201839",
   "baseline_sha": "f5b8163fd7f333d116ec15176e73d019797e6bcc",
   "change_class": "corrective",
   "net_prod_line_budget": 10,
