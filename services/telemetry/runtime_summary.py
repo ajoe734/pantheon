@@ -515,11 +515,7 @@ class RuntimeSummaryProjectionStore:
                     current["event_delivery_lag_ms"] = event_delivery_lag_ms
                 if isinstance(reported_health_summary, dict):
                     current["reported_health_summary"] = reported_health_summary
-                runtime_package = (
-                    runtime_heartbeat.get("runtime_package")
-                    or metadata.get("runtime_package")
-                    or event.get("runtime_package")
-                )
+                runtime_package = metadata.get("runtime_package")
                 if isinstance(runtime_package, str) and runtime_package.strip():
                     current["runtime_package"] = runtime_package.strip()
             elif event_type == "deploy_started":
@@ -831,7 +827,7 @@ class RuntimeSummaryProjectionStore:
             bridge_status = "ok"
         elif (
             stage == "paper"
-            and str(summary.get("environment") or "").lower() not in {"canary", "live"}
+            and str(summary.get("environment") or "").lower() == "paper"
             and summary.get("runtime_package") == "paper_execution_runtime"
         ):
             bridge_status = "not_applicable"

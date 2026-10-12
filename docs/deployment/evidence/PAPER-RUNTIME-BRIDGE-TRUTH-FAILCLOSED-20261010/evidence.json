@@ -52,7 +52,7 @@
     "production_line_budget_compliance": {
       "base_sha": "a4402ed3b",
       "production_line_budget": 25,
-      "production_lines_net": 18,
+      "production_lines_net": 15,
       "scoped_files": [
         "services/telemetry/runtime_summary.py",
         "services/telemetry/test_runtime_summary_projection.py",
@@ -62,7 +62,7 @@
     "test_results": {
       "test_runtime_summary_projection": "35 passed",
       "test_paper_runtime": "78 passed, 27 subtests passed",
-      "test_reconciliation_drift_http_service": "24 passed",
+      "test_reconciliation_drift_http_service": "7 passed",
       "test_reconciliation_drift_consumer": "11 passed",
       "test_l12_mfc_r4_telrec_001_contract": "1 passed"
     }

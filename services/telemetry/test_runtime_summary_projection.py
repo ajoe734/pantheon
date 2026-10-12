@@ -16,6 +16,7 @@ def _event(event_type: str = "heartbeat", *, created_at: str = "2026-05-01T00:00
         "event_type": event_type,
         "created_at": created_at,
         "deployment_stage": stage,
+        "environment": stage,
         "binding_id": f"rtb-{stage}-001",
         "runtime_id": f"rt-{stage}-001",
         "capital_pool_id": f"pool-{stage}-001",
@@ -796,16 +797,53 @@ class RuntimeSummaryProjectionStoreTest(unittest.TestCase):
         summary_unknown = store.project_event(hb_unknown)
         self.assertEqual(summary_unknown["health_summary"]["bridge"], "degraded")
 
+        store_no_profile = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
         hb_no_profile = _event(created_at="2026-05-01T00:00:06Z", stage="paper")
         hb_no_profile["event_id"] = "evt-paper-no-profile"
         hb_no_profile["metadata"] = {}
-        summary_no_profile = store.project_event(hb_no_profile)
+        summary_no_profile = store_no_profile.project_event(hb_no_profile)
         self.assertEqual(summary_no_profile["health_summary"]["bridge"], "degraded")
 
+        store_canary = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
         hb_canary = _event(created_at="2026-05-01T00:00:07Z", stage="canary")
         hb_canary["metadata"] = {"runtime_package": "paper_execution_runtime"}
-        summary_canary = store.project_event(hb_canary)
+        summary_canary = store_canary.project_event(hb_canary)
         self.assertEqual(summary_canary["health_summary"]["bridge"], "degraded")
+
+        store_unknown_env = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        hb_unknown_env = _event(created_at="2026-05-01T00:00:08Z", stage="paper")
+        hb_unknown_env["event_id"] = "evt-paper-unknown-env"
+        hb_unknown_env["environment"] = "unknown"
+        hb_unknown_env["metadata"] = {"runtime_package": "paper_execution_runtime"}
+        summary_unknown_env = store_unknown_env.project_event(hb_unknown_env)
+        self.assertEqual(summary_unknown_env["health_summary"]["bridge"], "degraded")
+
+        store_missing_env = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        hb_missing_env = _event(created_at="2026-05-01T00:00:09Z", stage="paper")
+        hb_missing_env["event_id"] = "evt-paper-missing-env"
+        hb_missing_env["environment"] = ""
+        hb_missing_env["metadata"] = {"runtime_package": "paper_execution_runtime"}
+        summary_missing_env = store_missing_env.project_event(hb_missing_env)
+        self.assertEqual(summary_missing_env["health_summary"]["bridge"], "degraded")
+
+        store_top_level = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        hb_top_level = _event(created_at="2026-05-01T00:00:10Z", stage="paper")
+        hb_top_level["event_id"] = "evt-paper-top-level-alias"
+        hb_top_level["runtime_package"] = "paper_execution_runtime"
+        hb_top_level["metadata"] = {}
+        summary_top_level = store_top_level.project_event(hb_top_level)
+        self.assertNotIn("runtime_package", summary_top_level)
+        self.assertEqual(summary_top_level["health_summary"]["bridge"], "degraded")
+
+        store_self_reported = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        hb_self_reported = _event(created_at="2026-05-01T00:00:11Z", stage="paper")
+        hb_self_reported["event_id"] = "evt-paper-self-reported"
+        hb_self_reported["metadata"] = {
+            "reported_health_summary": {"bridge": "ok"},
+            "runtime_heartbeat": {"health_summary": {"bridge": "ok"}},
+        }
+        summary_self_reported = store_self_reported.project_event(hb_self_reported)
+        self.assertEqual(summary_self_reported["health_summary"]["bridge"], "degraded")
 
     def test_binding_rollover_clears_profile_and_prevents_inheritance(self):
         store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
