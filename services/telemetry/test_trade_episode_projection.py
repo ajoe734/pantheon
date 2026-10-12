@@ -547,6 +547,54 @@ class TestTradeEpisodeProjectionStore(unittest.TestCase):
         self.assertEqual(proj_after["tenant_id"], "tenant-corp")
         self.assertEqual(len(proj_after["position_snapshot_refs"]), 0)
 
+    def test_missing_tenant_fails_closed_and_metadata_cannot_override(self) -> None:
+        episode_id = str(uuid.uuid4())
+        fill1 = {
+            "event_id": str(uuid.uuid4()),
+            "event_type": "paper_fill_simulated",
+            "occurred_at": "2026-07-11T14:00:00Z",
+            "trade_episode_id": episode_id,
+            "tenant_id": "tenant-corp",
+            "persona_id": "persona-quant",
+            "instrument_id": "NVDA",
+            "metrics": {"fill_quantity": 10.0, "fill_price": 120.0},
+            "sequence_number": 1,
+        }
+        proj = self.store.project_event(fill1)
+        self.assertIsNotNone(proj)
+        self.assertEqual(proj["status"], "open")
+        self.assertEqual(proj["tenant_id"], "tenant-corp")
+
+        # Missing tenant fails closed
+        missing_tenant_ev = {
+            "event_id": str(uuid.uuid4()),
+            "event_type": "paper_fill_simulated",
+            "occurred_at": "2026-07-11T14:01:00Z",
+            "trade_episode_id": episode_id,
+            "metrics": {"fill_quantity": -5.0, "fill_price": 125.0},
+            "sequence_number": 2,
+        }
+        self.assertIsNone(self.store.project_event(missing_tenant_ev))
+
+        # Metadata-only tenant fails closed
+        meta_only_tenant_ev = {
+            "event_id": str(uuid.uuid4()),
+            "event_type": "paper_fill_simulated",
+            "occurred_at": "2026-07-11T14:02:00Z",
+            "trade_episode_id": episode_id,
+            "metadata": {"tenant_id": "tenant-corp"},
+            "metrics": {"fill_quantity": -5.0, "fill_price": 125.0},
+            "sequence_number": 3,
+        }
+        self.assertIsNone(self.store.project_event(meta_only_tenant_ev))
+
+        # Projection remains unchanged
+        proj_final = self.store.get(episode_id)
+        self.assertIsNotNone(proj_final)
+        self.assertEqual(proj_final["status"], "open")
+        self.assertEqual(proj_final["filled_quantity"], 10.0)
+        self.assertEqual(len(proj_final["fill_ids"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

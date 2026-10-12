@@ -3339,6 +3339,50 @@ class PaperTradeEpisodeCorrelationTest(unittest.TestCase):
             # Must cleanly default to empty without inventing fake open episodes
             self.assertEqual(algo.open_episodes, {})
 
+    def test_paper_ledger_position_reversal_allocates_close_and_open_episodes(self):
+        events = []
+        algo = PaperExecutionAlgorithm(
+            initial_cash=100_000.0,
+            default_price=100.0,
+            event_sink=events.append,
+        )
+
+        # 1. Entry long +10
+        algo.MarketOrder("SPY", 10.0)
+        fills = [e for e in events if e.event_type == "paper_fill_simulated"]
+        self.assertEqual(len(fills), 1)
+        old_ep = fills[0].metadata.get("trade_episode_id")
+        self.assertIsNotNone(old_ep)
+        self.assertEqual(algo.open_episodes.get("SPY"), old_ep)
+        self.assertEqual(fills[0].quantity, 10.0)
+        self.assertEqual(fills[0].metadata["position_quantity"], 10.0)
+
+        # 2. Reversal order -20 (reverses position from +10 to -10)
+        algo.MarketOrder("SPY", -20.0)
+        fills_after = [e for e in events if e.event_type == "paper_fill_simulated"]
+        self.assertEqual(len(fills_after), 3)
+
+        closing_fill = fills_after[1]
+        self.assertEqual(closing_fill.metadata["trade_episode_id"], old_ep)
+        self.assertEqual(closing_fill.quantity, -10.0)
+        self.assertEqual(closing_fill.metadata["position_quantity"], 0.0)
+
+        opening_fill = fills_after[2]
+        new_ep = opening_fill.metadata["trade_episode_id"]
+        self.assertIsNotNone(new_ep)
+        self.assertNotEqual(new_ep, old_ep)
+        self.assertEqual(opening_fill.quantity, -10.0)
+        self.assertEqual(opening_fill.metadata["position_quantity"], -10.0)
+
+        # Ledger state reflects new active episode and short holding
+        self.assertEqual(algo.open_episodes.get("SPY"), new_ep)
+        self.assertEqual(algo.Portfolio["SPY"].Quantity, -10.0)
+
+        old_ep_fills = [f for f in fills_after if f.metadata.get("trade_episode_id") == old_ep]
+        self.assertEqual(len(old_ep_fills), 2)
+        new_ep_fills = [f for f in fills_after if f.metadata.get("trade_episode_id") == new_ep]
+        self.assertEqual(len(new_ep_fills), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

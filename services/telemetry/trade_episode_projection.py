@@ -38,17 +38,15 @@ def _decode_cursor(cursor_str: str) -> tuple[str, str]:
 
 
 def _extract_metric_qty(ev: dict[str, Any], *keys: str) -> float | None:
-    for source in (ev.get("metrics"), ev.get("metadata"), ev.get("payload")):
-        if isinstance(source, dict):
+    for s in (ev.get("metrics"), ev.get("metadata"), ev.get("payload")):
+        if isinstance(s, dict):
             for k in keys:
-                v = source.get(k)
-                if v is not None:
-                    try:
-                        val = float(v)
-                        if math.isfinite(val):
-                            return val
-                    except (TypeError, ValueError):
-                        pass
+                try:
+                    v = float(s[k])
+                    if math.isfinite(v):
+                        return v
+                except (KeyError, TypeError, ValueError):
+                    pass
     return None
 
 
@@ -121,57 +119,31 @@ class TradeEpisodeProjectionStore:
                                 return str(v).strip()
                 return ""
 
-            _ev_tenant = lambda e: _ev_field(e, "tenant_id")
+            _ev_tenant = lambda e: str(e.get("tenant_id") or (e.get("authority_refs") or {}).get("tenant_id") or (e.get("payload") or {}).get("tenant_id") or "").strip()
             _ev_persona = lambda e: _ev_field(e, "persona_id")
             _ev_instrument = lambda e: _ev_field(e, "symbol", "instrument_id")
 
             existing_tenants = {_ev_tenant(ev) for ev in existing_events if _ev_tenant(ev)}
+            curr_proj = self._projections.get(trade_episode_id)
+            if curr_proj and curr_proj.get("tenant_id"):
+                existing_tenants.add(str(curr_proj["tenant_id"]).strip())
+
             incoming_tenant = _ev_tenant(event)
-            if existing_tenants and incoming_tenant and incoming_tenant not in existing_tenants:
-                log.warning(
-                    "Rejected cross-tenant trade episode projection event %s for %s",
-                    event_id,
-                    trade_episode_id,
-                )
-                return None
+            if existing_tenants:
+                if not incoming_tenant or incoming_tenant not in existing_tenants:
+                    log.warning(
+                        "Rejected tenant-mismatched or missing-tenant trade episode projection event %s for %s",
+                        event_id,
+                        trade_episode_id,
+                    )
+                    return None
 
-            existing_personas = {
-                _ev_persona(ev)
-                for ev in existing_events
-                if _ev_persona(ev) and _ev_persona(ev) != "unknown"
-            }
-            incoming_persona = _ev_persona(event)
-            if (
-                existing_personas
-                and incoming_persona
-                and incoming_persona != "unknown"
-                and incoming_persona not in existing_personas
-            ):
-                log.warning(
-                    "Rejected cross-persona trade episode projection event %s for %s",
-                    event_id,
-                    trade_episode_id,
-                )
-                return None
-
-            existing_instruments = {
-                _ev_instrument(ev)
-                for ev in existing_events
-                if _ev_instrument(ev) and _ev_instrument(ev) != "unknown"
-            }
-            incoming_instrument = _ev_instrument(event)
-            if (
-                existing_instruments
-                and incoming_instrument
-                and incoming_instrument != "unknown"
-                and incoming_instrument not in existing_instruments
-            ):
-                log.warning(
-                    "Rejected cross-instrument trade episode projection event %s for %s",
-                    event_id,
-                    trade_episode_id,
-                )
-                return None
+            for name, extractor in (("persona", _ev_persona), ("instrument", _ev_instrument)):
+                known = {extractor(ev) for ev in existing_events if extractor(ev) and extractor(ev) != "unknown"}
+                inc = extractor(event)
+                if known and inc and inc != "unknown" and inc not in known:
+                    log.warning("Rejected cross-%s trade episode projection event %s for %s", name, event_id, trade_episode_id)
+                    return None
 
             if any(ev.get("event_id") == event_id for ev in existing_events):
                 log.debug("Event %s already exists for episode %s; skipping ingest", event_id, trade_episode_id)
@@ -351,7 +323,7 @@ class TradeEpisodeProjectionStore:
                     return c
             return None
 
-        tenant_id = _first(ev.get("tenant_id"), auth.get("tenant_id"), meta.get("tenant_id"), payload.get("tenant_id"))
+        tenant_id = _first(ev.get("tenant_id"), auth.get("tenant_id"), payload.get("tenant_id"))
         persona_id = _first(ev.get("persona_id"), auth.get("persona_id"), meta.get("persona_id"), payload.get("persona_id")) or "unknown"
         strategy_id = _first(target.get("strategy_id"), meta.get("strategy_id"), ev.get("strategy_id"), payload.get("strategy_id")) or "unknown"
         artifact_id = _first(ev.get("artifact_id"), target.get("registry_id"), meta.get("artifact_id"), payload.get("artifact_id")) or "unknown"
@@ -361,31 +333,15 @@ class TradeEpisodeProjectionStore:
         instrument_id = _first(meta.get("symbol"), ev.get("symbol"), meta.get("instrument_id"), ev.get("instrument_id"), payload.get("instrument_id")) or "unknown"
         environment = _first(ev.get("environment"), ev.get("deployment_stage"), ev.get("execution_mode"), meta.get("environment"), payload.get("environment")) or "paper"
 
-        raw_side = (
-            meta.get("direction")
-            or meta.get("side")
-            or payload.get("side")
-            or ev.get("side")
-        )
-        side = "long"
+        raw_side = meta.get("direction") or meta.get("side") or payload.get("side") or ev.get("side")
         if raw_side:
-            norm_side = str(raw_side).strip().lower()
-            if norm_side in ("short", "sell"):
-                side = "short"
-            elif norm_side in ("long", "buy"):
-                side = "long"
+            side = "short" if str(raw_side).strip().lower() in ("short", "sell") else "long"
         else:
-            fq = _extract_fill_quantity(ev)
-            pq = _extract_position_quantity(ev)
-            if (fq is not None and fq < 0) or (pq is not None and pq < 0):
-                side = "short"
+            fq, pq = _extract_fill_quantity(ev), _extract_position_quantity(ev)
+            side = "short" if (fq is not None and fq < 0) or (pq is not None and pq < 0) else "long"
 
-        realized_pnl = float(payload["realized_pnl"]) if payload.get("realized_pnl") is not None else (
-            float(metrics["realized_pnl"]) if metrics.get("realized_pnl") is not None else None
-        )
-        unrealized_pnl = float(payload["unrealized_pnl"]) if payload.get("unrealized_pnl") is not None else (
-            float(metrics["unrealized_pnl"]) if metrics.get("unrealized_pnl") is not None else None
-        )
+        realized_pnl = _extract_metric_qty(ev, "realized_pnl")
+        unrealized_pnl = _extract_metric_qty(ev, "unrealized_pnl")
 
         missing_refs = ["opened_event"]
         if realized_pnl is None:
@@ -690,15 +646,9 @@ class TradeEpisodeProjectionStore:
                 order_id = (ev.get("metadata") or {}).get("order_id") or ev.get("order_id") or ev.get("event_id")
                 if order_id and order_id not in proj["order_ids"]:
                     proj["order_ids"].append(order_id)
-                metrics = ev.get("metrics") or {}
-                req_qty_cand = metrics.get("order_quantity") or metrics.get("requested_quantity") or metrics.get("quantity")
-                if req_qty_cand is not None:
-                    try:
-                        req_qty = float(req_qty_cand)
-                        if math.isfinite(req_qty) and req_qty > 0:
-                            proj["requested_quantity"] = req_qty
-                    except (TypeError, ValueError):
-                        pass
+                req_qty = _extract_metric_qty(ev, "order_quantity", "requested_quantity", "quantity")
+                if req_qty and req_qty > 0:
+                    proj["requested_quantity"] = req_qty
                 if proj["status"] in ("proposed", "approved"):
                     proj["status"] = "submitted"
                 proj["coverage"]["as_of"] = ev.get("occurred_at") or ev.get("created_at")
@@ -755,22 +705,21 @@ class TradeEpisodeProjectionStore:
                         elif proj["status"] in ("proposed", "approved", "submitted"):
                             proj["status"] = "open"
 
-                        try:
-                            slippage = float(metrics.get("slippage") or metrics.get("slippage_bps") or 0.0)
-                            if math.isfinite(slippage) and slippage > 0:
-                                proj["slippage"] = slippage if proj["slippage"] is None else (proj["slippage"] * prev_qty + slippage * fill_mag) / new_qty
-                        except (TypeError, ValueError):
-                            pass
+                        slippage = _extract_metric_qty(ev, "slippage", "slippage_bps")
+                        if slippage and slippage > 0:
+                            proj["slippage"] = slippage if proj["slippage"] is None else (proj["slippage"] * prev_qty + slippage * fill_mag) / new_qty
                     else:
-                        if proj["status"] in ("open", "partially_filled"):
+                        pos_qty = _extract_position_quantity(ev)
+                        if pos_qty is not None and abs(pos_qty) <= 1e-12:
+                            if proj["status"] in ("open", "reducing", "partially_filled", "submitted"):
+                                proj["status"] = "closed"
+                                proj["closed_at"] = ev.get("occurred_at") or ev.get("created_at")
+                        elif proj["status"] in ("open", "partially_filled"):
                             proj["status"] = "reducing"
 
-                try:
-                    fees = float(metrics.get("fees") or metrics.get("commission") or 0.0)
-                    if math.isfinite(fees) and fees > 0:
-                        proj["fees"] += fees
-                except (TypeError, ValueError):
-                    pass
+                fees = _extract_metric_qty(ev, "fees", "commission")
+                if fees and fees > 0:
+                    proj["fees"] += fees
 
                 proj["coverage"]["as_of"] = ev.get("occurred_at") or ev.get("created_at")
 
