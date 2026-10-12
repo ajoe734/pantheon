@@ -1,14 +1,25 @@
 from __future__ import annotations
 
+import base64
 import copy
+import importlib.util
 import json
 import os
 import sys
+import tempfile
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
+import pytest
+from fastapi import HTTPException
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ports import ReadSurfacePorts, TrainingSessionTrainerPort, create_in_memory_read_surface_ports
+from services.control_plane.bff.ports.read_surface_ports import create_read_surface_ports
+from services.control_plane.bff.ports.persona_training import TrainingSessionHttpStore
+from services.control_plane.bff.core.owner_reads import authorization, selected_tenant
 
 
 _ACTIVE_SESSION = "trn-20260419-001"
@@ -743,3 +754,308 @@ def test_trainer_session_port_delegates_to_training_service_double() -> None:
     assert session["allowedActions"]["canSendMessage"] is True
     assert message["event"]["message_body"] == "Adjust max drawdown."
     assert [call[0] for call in training.calls] == ["create", "message"]
+
+
+# ---------------------------------------------------------------------------
+# Live Training Session Owner Service Integration Tests (AC-1, AC-3, AC-5)
+# ---------------------------------------------------------------------------
+
+from services.runtime_auth_inbound import encode_jwt_hs256
+
+
+def _load_isolated_module(name: str, filepath: Path) -> Any:
+    spec = importlib.util.spec_from_file_location(name, filepath)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load module {name} from {filepath}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture(scope="module")
+def live_training_session_service():
+    repo_root = Path(__file__).resolve().parents[3]
+    service_dir = repo_root / "services" / "training-session"
+    tests_dir = service_dir / "tests"
+
+    strict_support = _load_isolated_module("strict_test_support", tests_dir / "strict_test_support.py")
+    fixture = strict_support.materialize_strict_authority(tempfile.mkdtemp())
+    env_backup = dict(os.environ)
+    os.environ.update(fixture.environment())
+    os.environ["TRAINING_SESSION_AUTH_DISABLED"] = "false"
+    os.environ["TRAINING_SESSION_AUTH_MODE"] = "strict"
+    os.environ["TRAINING_SESSION_JWT_SECRET"] = "owned-original-training-inbound-test-secret-only"
+    os.environ["TRAINING_SESSION_ALLOWED_CALLER_SERVICES"] = "control-plane-bff,training-session-preview-worker"
+
+    modules_to_load = [
+        "models",
+        "policy_lineage",
+        "inbound_authority",
+        "evaluation_authority",
+        "source_dataset_authority",
+        "persona_target",
+        "consultation_client",
+        "store",
+    ]
+    for mod_name in modules_to_load:
+        _load_isolated_module(mod_name, service_dir / f"{mod_name}.py")
+
+    training_service = _load_isolated_module("training_session_live_app", service_dir / "main.py")
+    training_service.store = training_service.TrainingSessionStore(fixture.data_dir)
+    training_service._trusted_now = lambda: strict_support.FIXED_TRUSTED_NOW
+    training_service.run_vectorbt_workflow = strict_support.make_fake_real_vectorbt_workflow()
+    training_service._read_target_precondition = strict_support.make_fake_target_precondition_reader()
+    training_service._commit_authoritative_persona_target = strict_support.make_fake_persona_target_commit()
+
+    import uvicorn
+
+    config = uvicorn.Config(training_service.app, host="127.0.0.1", port=0, log_level="error")
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+
+    while not server.started:
+        time.sleep(0.05)
+
+    port = server.servers[0].sockets[0].getsockname()[1]
+    base_url = f"http://127.0.0.1:{port}"
+    os.environ["PANTHEON_TRAINING_SESSION_API_URL"] = base_url
+
+    try:
+        yield base_url, training_service
+    finally:
+        server.should_exit = True
+        thread.join(timeout=2)
+        os.environ.clear()
+        os.environ.update(env_backup)
+
+
+def _signed_caller_jwt(tenant: str, actor: str = "operator-live") -> str:
+    secret = os.environ.get("TRAINING_SESSION_JWT_SECRET", "owned-original-training-inbound-test-secret-only")
+    return encode_jwt_hs256(
+        {
+            "sub": "control-plane-bff",
+            "service": "control-plane-bff",
+            "tenant_ids": [tenant],
+            "delegated_actor_id": actor,
+            "roles": ["training-service"],
+            "exp": time.time() + 3600,
+        },
+        secret=secret,
+    )
+
+
+def test_default_production_factory_live_owner_roundtrip(live_training_session_service):
+    """Verify default create_read_surface_ports against genuine Training Session service with strict signed auth."""
+    base_url, training_service = live_training_session_service
+    ports = create_read_surface_ports()
+    assert ports.persona_training.trainer._training.__class__.__name__ == "TrainingSessionHttpStore"
+
+    token = _signed_caller_jwt("tenant-live", "operator-live")
+    auth_token = authorization.set(f"Bearer {token}")
+    tenant_token = selected_tenant.set("tenant-live")
+
+    try:
+        # 1. Create session
+        created = ports.create_trainer_session(
+            persona_id="persona-alpha",
+            objective="Tune momentum response during macro surprise",
+            actor_id="operator-live",
+        )
+        assert created is not None
+        session_id = created["session_id"]
+        assert session_id.startswith("trn-")
+        assert created["status"] == "active"
+        assert created["allowedActions"]["canSendMessage"] is True
+
+        # 2. List sessions
+        sessions = ports.list_trainer_sessions()
+        assert len(sessions) >= 1
+        listed = next((s for s in sessions if s["session_id"] == session_id), None)
+        assert listed is not None
+        assert listed["allowedActions"]["canSendMessage"] is True
+        assert listed["links"]["workbench_detail"] == f"/trainer/sessions/{session_id}"
+
+        # 3. Readback session detail
+        detail = ports.get_trainer_session(session_id)
+        assert detail is not None
+        assert detail["session_id"] == session_id
+        assert detail["objective"] == "Tune momentum response during macro surprise"
+
+        # 4. Append trainer message
+        msg = ports.append_trainer_message(
+            session_id,
+            message_body="Adjust minimum hold bars to 4",
+            actor_id="operator-live",
+        )
+        assert msg is not None
+        assert msg["event"]["message_body"] == "Adjust minimum hold bars to 4"
+        assert len(msg["session"]["events"]) == 1
+
+        # 5. Controls: test rejected unknown control first
+        patch_rejected = ports.patch_trainer_controls(
+            session_id,
+            patches=[{"parameter_key": "unknown_param", "proposed_value": 1}],
+        )
+        assert patch_rejected is not None
+        assert patch_rejected["status"] == "rejected"
+        assert patch_rejected["error_code"] == "CONTROL_PATCH_VALIDATION_FAILED"
+
+        # Seed controls on the session and test accepted control patch
+        training_service.store.put_controls(
+            session_id,
+            {
+                "session_id": session_id,
+                "tenant_id": "tenant-live",
+                "controls": [
+                    {
+                        "parameter_key": "risk.max_drawdown",
+                        "current_value": 0.08,
+                        "allowed_range": {"min": 0.02, "max": 0.2},
+                    }
+                ],
+            },
+        )
+        ctrls = ports.get_trainer_controls(session_id)
+        assert ctrls is not None
+        assert ctrls["session_id"] == session_id
+        assert ctrls["allowedActions"]["canPatchControls"] is True
+
+        patch_accepted = ports.patch_trainer_controls(
+            session_id,
+            patches=[{"parameter_key": "risk.max_drawdown", "proposed_value": 0.1}],
+        )
+        assert patch_accepted is not None
+        assert patch_accepted["status"] == "accepted"
+        assert patch_accepted["current_controls"][0]["current_value"] == 0.1
+
+        # 6. Preview refresh -> queue admission to native job queue with genuine eval_id and job_id
+        preview = ports.refresh_trainer_preview(session_id, session_status="active")
+        assert preview is not None
+        assert preview["status"] == "pending"
+        assert preview["job_id"] is not None
+        assert preview["eval_id"] is not None
+        assert preview["owner_job_ref"]["job_id"] == preview["job_id"]
+        assert preview["owner_job_ref"]["eval_id"] == preview["eval_id"]
+        assert preview["polling"]["enabled"] is True
+
+        # 7. Rapid eval: reject fabricated queued/healthy state on default production factory.
+        with pytest.raises(
+            RuntimeError,
+            match="RapidEvaluationPort has no backend bound to its owner",
+        ):
+            ports.create_rapid_eval(session_id, eval_scope="persona_patch")
+    finally:
+        authorization.reset(auth_token)
+        selected_tenant.reset(tenant_token)
+
+
+def test_live_foreign_tenant_rejected(live_training_session_service):
+    """Verify tenant mismatch raises 403 TENANT_MISMATCH, not converted to 500 or fake success."""
+    ports = create_read_surface_ports()
+
+    token = _signed_caller_jwt("tenant-legit", "operator-live")
+    auth_token = authorization.set(f"Bearer {token}")
+    tenant_token = selected_tenant.set("tenant-attacker")
+
+    try:
+        with pytest.raises(StarletteHTTPException) as exc_info:
+            ports.create_trainer_session(persona_id="p-1", objective="infiltrate")
+        assert exc_info.value.status_code == 403
+    finally:
+        authorization.reset(auth_token)
+        selected_tenant.reset(tenant_token)
+
+
+def test_live_tampered_credential_rejected_by_owner(live_training_session_service):
+    """Verify tampered signed JWT credential is rejected by native owner with HTTP 401."""
+    ports = create_read_surface_ports()
+
+    token = _signed_caller_jwt("tenant-live", "operator-live")
+    tampered = token[:-1] + ("A" if token[-1] != "A" else "B")
+    auth_token = authorization.set(f"Bearer {tampered}")
+    tenant_token = selected_tenant.set("tenant-live")
+
+    try:
+        with pytest.raises(HTTPException) as exc_info:
+            ports.create_trainer_session(persona_id="p-tampered", objective="infiltrate")
+        assert exc_info.value.status_code == 401
+    finally:
+        authorization.reset(auth_token)
+        selected_tenant.reset(tenant_token)
+
+
+def test_live_different_signed_tenant_cannot_read_owner_session(live_training_session_service):
+    """Verify different signed tenant cannot read another tenant's session."""
+    ports = create_read_surface_ports()
+
+    token_alpha = _signed_caller_jwt("tenant-alpha", "operator-live")
+    auth_alpha = authorization.set(f"Bearer {token_alpha}")
+    tenant_alpha = selected_tenant.set("tenant-alpha")
+    try:
+        session = ports.create_trainer_session(persona_id="persona-alpha", objective="alpha session")
+        session_id = session["session_id"]
+    finally:
+        authorization.reset(auth_alpha)
+        selected_tenant.reset(tenant_alpha)
+
+    token_beta = _signed_caller_jwt("tenant-beta", "operator-live")
+    auth_beta = authorization.set(f"Bearer {token_beta}")
+    tenant_beta = selected_tenant.set("tenant-beta")
+    try:
+        result = ports.get_trainer_session(session_id)
+        assert result is None
+    finally:
+        authorization.reset(auth_beta)
+        selected_tenant.reset(tenant_beta)
+
+
+def test_owner_outage_returns_truthful_503(monkeypatch):
+    """Verify owner outage returns truthful 503 DEPENDENCY_UNAVAILABLE, never 500 null store or empty success."""
+    monkeypatch.setenv("PANTHEON_TRAINING_SESSION_API_URL", "http://127.0.0.1:1")
+    ports = create_read_surface_ports()
+
+    with pytest.raises(HTTPException) as exc_info:
+        ports.list_trainer_sessions()
+    assert exc_info.value.status_code == 503
+    detail = exc_info.value.detail
+    assert isinstance(detail, dict)
+    assert detail.get("error", {}).get("code") == "DEPENDENCY_UNAVAILABLE"
+
+
+def test_live_malformed_preview_job_raises_503(live_training_session_service):
+    """Verify malformed preview-job missing job_id or eval_id raises truthful 503 DEPENDENCY_UNAVAILABLE, never fake pending."""
+    base_url, training_service = live_training_session_service
+    ports = create_read_surface_ports()
+
+    token = _signed_caller_jwt("tenant-live", "operator-live")
+    auth_token = authorization.set(f"Bearer {token}")
+    tenant_token = selected_tenant.set("tenant-live")
+
+    try:
+        session = ports.create_trainer_session(persona_id="p-malformed", objective="test malformed preview")
+        session_id = session["session_id"]
+
+        orig_request = ports.persona_training.trainer._training._request
+
+        def mock_request(path: str, *args: Any, **kwargs: Any) -> Any:
+            if "preview-jobs" in path:
+                return {"status": "queued"}
+            return orig_request(path, *args, **kwargs)
+
+        ports.persona_training.trainer._training._request = mock_request
+        try:
+            with pytest.raises(HTTPException) as exc_info:
+                ports.refresh_trainer_preview(session_id, actor_id="operator-live")
+            assert exc_info.value.status_code == 503
+            detail = exc_info.value.detail
+            assert isinstance(detail, dict)
+            assert detail.get("error", {}).get("code") == "DEPENDENCY_UNAVAILABLE"
+        finally:
+            ports.persona_training.trainer._training._request = orig_request
+    finally:
+        authorization.reset(auth_token)
+        selected_tenant.reset(tenant_token)
+
+

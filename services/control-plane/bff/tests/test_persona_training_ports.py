@@ -10,11 +10,17 @@ Validates:
 4. PersonaTrainingDomainPort composes all three ports
 """
 
+import base64
+import json
 import sys
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pytest
+from fastapi import HTTPException
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 BFF_DIR = Path(__file__).resolve().parent.parent
 if str(BFF_DIR) not in sys.path:
@@ -25,8 +31,10 @@ from ports.persona_training import (
     PersonaTrainingDomainPort,
     RapidEvaluationOwnership,
     RapidEvaluationPort,
+    TrainingSessionHttpStore,
     TrainingSessionTrainerPort,
 )
+from services.control_plane.bff.core.owner_reads import authorization, selected_tenant
 
 
 # ---------------------------------------------------------------------------
@@ -304,3 +312,291 @@ class TestPersonaTrainingDomainPort:
         }
         assert rapid_eval_calls == [("trn-1", {"eval_scope": "full"})]
         assert domain_port.rapid_eval_owner == "training-session"
+
+
+# ---------------------------------------------------------------------------
+# 5. Production Default Wiring & Live Owner Error Reproduction (AC-1, AC-5)
+# ---------------------------------------------------------------------------
+
+class TestProductionDefaultOwnerWiring:
+    def test_unbound_trainer_port_reproduces_live_500_root_cause(self):
+        """Reproduce the live 500 root cause: TrainingSessionTrainerPort(training=None)."""
+        port = TrainingSessionTrainerPort(training=None)
+        with pytest.raises(
+            RuntimeError,
+            match="TrainingSessionTrainerPort requires a Training Session-backed store",
+        ):
+            port.list_trainer_sessions()
+
+    def test_unbound_rapid_eval_port_raises_runtime_error(self):
+        """Reproduce unbound rapid-eval port: RapidEvaluationPort(create=None)."""
+        port = RapidEvaluationPort()
+        with pytest.raises(
+            RuntimeError,
+            match="RapidEvaluationPort has no backend bound to its owner",
+        ):
+            port.create_rapid_eval("trn-1")
+
+    def test_default_read_surface_ports_composition(self):
+        """Verify default create_read_surface_ports binds TrainingSessionHttpStore and leaves RapidEval unbound."""
+        from services.control_plane.bff.ports.read_surface_ports import create_read_surface_ports
+        read_ports = create_read_surface_ports()
+        assert (
+            read_ports.persona_training.trainer._training.__class__.__name__
+            == "TrainingSessionHttpStore"
+        )
+        assert read_ports.persona_training.rapid_eval._create is None
+        assert read_ports.persona_training.rapid_eval._get is None
+
+    def test_default_read_surface_ports_rejects_fabricated_rapid_eval(self):
+        """Verify default ReadSurfacePorts rejects fabricated rapid-eval queued state."""
+        from services.control_plane.bff.ports.read_surface_ports import create_read_surface_ports
+        read_ports = create_read_surface_ports()
+        with pytest.raises(
+            RuntimeError,
+            match="RapidEvaluationPort has no backend bound to its owner",
+        ):
+            read_ports.create_rapid_eval("trn-20261012-001", eval_scope="persona_patch")
+
+
+class TestTrainingSessionHttpStoreUnit:
+    """Unit tests for TrainingSessionHttpStore against an ephemeral HTTP test server."""
+
+    @pytest.fixture
+    def mock_server(self):
+        requests_log = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def _send_json(self, status, data):
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(data).encode("utf-8"))
+
+            def do_GET(self):
+                body = None
+                requests_log.append(("GET", self.path, dict(self.headers), body))
+                if self.path.startswith("/api/training/sessions/trn-1"):
+                    self._send_json(200, {
+                        "session_id": "trn-1",
+                        "persona_id": "persona-1",
+                        "objective": "test objective",
+                        "status": "active",
+                        "events": [{"sequence_number": 1, "message_body": "hello", "actor": "operator"}],
+                    })
+                elif self.path.startswith("/api/training/sessions"):
+                    self._send_json(200, [
+                        {
+                            "session_id": "trn-1",
+                            "persona_id": "persona-1",
+                            "objective": "test objective",
+                            "status": "active",
+                            "started_at": "2026-10-12T00:00:00Z",
+                            "events": [],
+                        }
+                    ])
+                elif self.path.startswith("/api/training/controls/trn-1"):
+                    self._send_json(200, {"session_id": "trn-1", "controls": [{"parameter_key": "param1", "current_value": 1.0}]})
+                elif self.path.startswith("/api/training/previews/trn-1"):
+                    self._send_json(200, {
+                        "latest_eval_id": "teval-1",
+                        "evaluations": {
+                            "teval-1": {
+                                "eval_id": "teval-1",
+                                "status": "complete",
+                                "warnings": [{"level": "medium", "message": "caution"}],
+                            }
+                        }
+                    })
+                elif self.path.startswith("/api/training/replays"):
+                    self._send_json(200, [
+                        {
+                            "session_id": "trn-1",
+                            "persona_id": "persona-1",
+                            "objective": "replay obj",
+                            "status": "completed",
+                            "events": [{"sequence_number": 1, "event_type": "preview_trigger", "outcome_signal": "ok"}],
+                            "replay_resolution": {"state": "pending_decision"},
+                            "artifacts": {"candidate_artifact_ref": "art-1"},
+                        }
+                    ])
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length", 0))
+                raw_body = self.rfile.read(length).decode("utf-8") if length else ""
+                body = json.loads(raw_body) if raw_body else {}
+                requests_log.append(("POST", self.path, dict(self.headers), body))
+                if self.path == "/api/training/sessions":
+                    self._send_json(200, {
+                        "session_id": "trn-new",
+                        "persona_id": body.get("persona_id"),
+                        "objective": body.get("objective"),
+                        "status": "active",
+                        "events": [],
+                    })
+                elif self.path.startswith("/api/training/sessions/trn-1/controls"):
+                    self._send_json(200, {
+                        "session_id": "trn-1",
+                        "status": "accepted",
+                        "controls": [{"parameter_key": "p1", "current_value": 2.0}],
+                        "patch_delta": [{"parameter_key": "p1", "previous_value": 1.0, "new_value": 2.0}],
+                    })
+                elif self.path.startswith("/api/training/sessions/trn-1/events"):
+                    self._send_json(200, {
+                        "accepted_at": "2026-10-12T00:01:00Z",
+                        "event": {
+                            "event_id": "tevt-001",
+                            "session_id": "trn-1",
+                            "actor": body.get("actor", "operator"),
+                            "message_body": body.get("message_body"),
+                            "sequence_number": 1,
+                        },
+                        "session": {
+                            "session_id": "trn-1",
+                            "status": "active",
+                            "events": [{
+                                "event_id": "tevt-001",
+                                "actor": body.get("actor", "operator"),
+                                "message_body": body.get("message_body"),
+                                "sequence_number": 1,
+                            }],
+                        },
+                    })
+                elif self.path.startswith("/api/training/sessions/trn-1/preview-jobs"):
+                    self._send_json(200, {"eval_id": "teval-job-1", "job_id": "job-123"})
+                elif self.path.startswith("/api/training/sessions/trn-malformed/preview-jobs"):
+                    self._send_json(200, {"status": "queued"})
+                elif self.path.startswith("/api/training/replays/trn-1/commit"):
+                    self._send_json(200, {
+                        "session_id": "trn-1",
+                        "status": "completed",
+                        "replay_resolution": {"state": "committed", "decision_at": "2026-10-12T00:02:00Z", "decision_by": "op-1"},
+                        "artifacts": {"candidate_artifact_ref": "art-1"},
+                        "events": [],
+                    })
+                elif self.path.startswith("/api/training/replays/trn-1/discard"):
+                    self._send_json(200, {
+                        "session_id": "trn-1",
+                        "status": "completed",
+                        "replay_resolution": {"state": "discarded", "decision_at": "2026-10-12T00:02:00Z", "decision_by": "op-1"},
+                        "artifacts": {"candidate_artifact_ref": "art-1"},
+                        "events": [],
+                    })
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        port = server.server_port
+        try:
+            yield f"http://127.0.0.1:{port}", requests_log
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_http_store_auth_and_tenant_forwarding(self, mock_server):
+        base_url, requests_log = mock_server
+        store = TrainingSessionHttpStore(base_url=base_url)
+
+        claims = base64.urlsafe_b64encode(json.dumps({"tenant_id": "tenant-test"}).encode()).decode().rstrip("=")
+        auth_token = authorization.set(f"Bearer header.{claims}.sig")
+        tenant_token = selected_tenant.set("tenant-test")
+        try:
+            sessions = store.list_trainer_sessions()
+            assert len(sessions) == 1
+            assert sessions[0]["session_id"] == "trn-1"
+            assert sessions[0]["allowedActions"]["canSendMessage"] is True
+
+            last_req = requests_log[-1]
+            headers = last_req[2]
+            assert "Authorization" in headers
+            assert headers.get("X-Tenant-Id") == "tenant-test"
+        finally:
+            authorization.reset(auth_token)
+            selected_tenant.reset(tenant_token)
+
+    def test_http_store_all_methods(self, mock_server):
+        base_url, _ = mock_server
+        store = TrainingSessionHttpStore(base_url=base_url)
+
+        claims = base64.urlsafe_b64encode(json.dumps({"tenant_id": "tenant-test"}).encode()).decode().rstrip("=")
+        auth_token = authorization.set(f"Bearer header.{claims}.sig")
+        tenant_token = selected_tenant.set("tenant-test")
+        try:
+            # 1. create
+            sess = store.create_trainer_session(persona_id="p-1", objective="test obj")
+            assert sess["session_id"] == "trn-new"
+
+            # 2. get session
+            detail = store.get_trainer_session("trn-1")
+            assert detail["session_id"] == "trn-1"
+
+            # 3. get controls
+            ctrls = store.get_trainer_controls("trn-1")
+            assert ctrls["session_id"] == "trn-1"
+
+            # 4. patch controls
+            patched = store.patch_trainer_controls("trn-1", patches=[{"parameter_key": "p1", "proposed_value": 2.0}])
+            assert patched["status"] == "accepted"
+
+            # 5. append message
+            msg = store.append_trainer_message("trn-1", message_body="hi")
+            assert msg["event"]["message_body"] == "hi"
+
+            # 6. preview
+            prev = store.get_trainer_preview("trn-1", session_status="active")
+            assert prev["status"] == "complete"
+            assert prev["allowedActions"]["canRefreshPreview"] is True
+
+            # 7. refresh preview
+            refreshed = store.refresh_trainer_preview("trn-1")
+            assert refreshed["status"] == "pending"
+            assert refreshed["job_id"] == "job-123"
+            assert refreshed["eval_id"] == "teval-job-1"
+            assert refreshed["owner_job_ref"] == {"job_id": "job-123", "eval_id": "teval-job-1"}
+
+            with pytest.raises(HTTPException) as exc_info:
+                store.refresh_trainer_preview("trn-malformed")
+            assert exc_info.value.status_code == 503
+            assert exc_info.value.detail["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+
+            # 8. preview unavailable
+            unavail = store.build_trainer_preview_unavailable("trn-1")
+            assert unavail["status"] == "preview_unavailable"
+            assert unavail["allowedActions"]["canRefreshPreview"] is False
+
+            # 9. list replays
+            replays, surface = store.list_trainer_replays()
+            assert len(replays) == 1
+            assert replays[0]["session_id"] == "trn-1"
+
+            # 10. commit & discard replay
+            committed = store.commit_trainer_replay("trn-1", expected_candidate_snapshot_at="2026-10-12T00:00:00Z")
+            assert committed["status"] == "completed"
+            assert committed["replay_resolution"]["state"] == "committed"
+
+            discarded = store.discard_trainer_replay("trn-1", expected_candidate_snapshot_at="2026-10-12T00:00:00Z")
+            assert discarded["status"] == "completed"
+            assert discarded["replay_resolution"]["state"] == "discarded"
+        finally:
+            authorization.reset(auth_token)
+            selected_tenant.reset(tenant_token)
+
+    def test_http_store_outage_raises_503(self):
+        store = TrainingSessionHttpStore(base_url="http://127.0.0.1:1")
+        with pytest.raises(HTTPException) as exc_info:
+            store.list_trainer_sessions()
+        assert exc_info.value.status_code == 503
+        detail = exc_info.value.detail
+        assert isinstance(detail, dict)
+        assert detail.get("error", {}).get("code") == "DEPENDENCY_UNAVAILABLE"
+
