@@ -1,91 +1,103 @@
 {
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "TELEMETRY-BINDING-READ-CAPACITY-CURRENT-20261012",
+  "follow_up_task_id": "TELEMETRY-BINDING-READ-ACTUAL-TIMEOUT-20261012",
   "title": "原6518引用後續：目前真binding完整reader仍超5秒，既有索引內狹義SQL效率修正",
   "owner": "Antigravity2",
   "reviewer": "Antigravity",
-  "base_sha": "2263f25a27297963ca49f9c8144b48f53a0a80a3",
+  "base_sha": "714289cf819719092ce161c540d5919cbeaa773e",
   "baseline_sha": "f5b8163fd7f333d116ec15176e73d019797e6bcc",
   "change_class": "corrective",
   "net_prod_line_budget": 10,
   "net_prod_lines_used_cumulative": 1,
-  "summary": "Narrow successor of archived TELEMETRY-BINDING-READ-CAPACITY-20261011 (PR #6518, 5cef17cd -> e7a33a4e) and follow-up to merged PR #6521 (1f6eaf519) and PR #6523 (08ba9d543). Investigates the reader SQL seam via a narrow event-PK/created_at/ingested_seq selection combined with UNION ALL between disjoint branches, followed by late full-payload read via primary key join on event_id within one unchanged-snapshot statement. This reduces subquery sort and row width while preserving every existing typed binding/runtime alias guard, alias-conflict guard, tenant isolation in payload or metadata, deterministic cutoff ties on ingested_seq DESC, global created_at DESC order, and row identities. Cumulative net production growth remains exactly 1 line against baseline f5b8163fd7f333d116ec15176e73d019797e6bcc (budget <= 10). All 146 tests across 4 test suites pass, including late-payload join integrity verification in test_main_routes. Genuine candidate identity is published for independent coordinator readonly factory proof; AC2 honestly remains pending_delivery as cause/capacity cannot be claimed by worker without production proof.",
+  "summary": "Narrow successor of archived TELEMETRY-BINDING-READ-CAPACITY-20261011 (PR #6518) and TELEMETRY-BINDING-READ-CAPACITY-CURRENT-20261012 (merged PR #6525 commit 714289cf8). Direct coordinator readonly evaluation of merged 714289cf8 against production telemetry DB confirmed rb-2480fb4d26884cfdb4d6ed9202172683 still times out > 5s (limit 100=5.068s, limit 50=5.077s). Branch isolation revealed Branch 1 (payload->>'binding_id' = $1) alone times out at 5.074s due to ~186,546 rows requiring BitmapHeapScan and Sort over ~460MB payload, while Branch 2 alone completes in 0.047s. Guard refinement (payload->>'binding_id' || '') IS NULL ensures Branch 2 cleanly bypasses btree index on NULLs. Net production diff remains exactly +1 line vs baseline f5b8163fd7f333d116ec15176e73d019797e6bcc. All 146 tests pass. AC2 and AC6 remain honestly marked as pending_delivery pending independent coordinator proof.",
   "readonly_receipts_reference": {
-    "receipts_dir": "/tmp/pantheon-closeout-continue-20261012T0528Z/",
+    "receipts_dir": "/tmp/pantheon-closeout-total-20261012T0738Z/",
+    "predecessor_receipts_dir": "/tmp/pantheon-full-closeout-20261011/",
     "controller_record": "current-original-L10-controller-record-PG-readonly.json",
     "failed_report_identities": "current-L10-actual-failed-report-identities-owner-GET-only.json",
     "incident_canonical_lookups": "current-incidents-original-full-canonical-lookups-failed-and-valid-positive-GET-only.jsonl",
-    "verified_source_factory_binding": "current-verified-source-original-telemetry-factory-binding-deadline-readonly.jsonl",
-    "frozen_be87_candidate_readonly_receipt": "frozen-be87-whole-candidate-factory-original-PG-readonly-NOT-INSTALLED.jsonl",
-    "frozen_be87_explain_readonly_receipt": "current-original-and-frozen-be87-actual-factory-EXPLAIN-ONLY-NOT-cause-runtime-proof.jsonl",
-    "frozen_be87_counter_text": "be87-146PASS-but-actual-binding-still-timeouts-source-counter.txt",
-    "frozen_be87_qa_log": "be87-four-complete-original-modules-owned-PG-independent-QA.log",
-    "frozen_888_counter_text": "888-frozen-still-false-AC2-and-sort-row-estimate-not-actual-source-counter.txt",
-    "frozen_888_qa_receipt": "888-fresh-clean-exact-head146-original-modules-QA-and-unresolved-doc-counter-receipt.json",
-    "observed_tick": "2026-10-12T05:20Z",
-    "loop10_metrics": {
-      "summaries_count": 46,
-      "skipped_count": 46,
-      "incident_delivery_errors_total": 13,
-      "http_502_timeout_errors": 8,
-      "http_504_dispatch_exhausted_errors": 5,
-      "sla_duration_seconds": 56.8217628,
-      "sla_limit_seconds": 60.0,
-      "within_sla": true,
-      "lifecycle_retryable_errors": 0,
-      "lifecycle_terminal_errors": 0
-    },
+    "frozen_9624_candidate_readonly_receipt": "frozen-9624-whole-candidate-original-PG-readonly-NOT-INSTALLED.jsonl",
+    "frozen_9624_explain_readonly_receipt": "frozen-9624-original-failed-binding-EXPLAIN-ONLY-existing-indexes.jsonl",
+    "branch_isolation_receipt": "isolate-original-guarded-binding-B1-B2-and-equivalent-NULL-hypothesis.jsonl",
+    "actual_root_count_receipt": "actual-root-input-count-original-PG-readonly-bounded.json",
+    "scoped_root_ordered_receipt": "scoped-root-ordered-qualification-original-PG-NOT-candidate-QA.jsonl",
+    "redundant_compound_gin_receipt": "redundant-compound-binding-tenant-existing-GIN-original-PG-NOT-candidate-QA.jsonl",
+    "single_decomposition_receipt": "single-decomposition-qualification-original-PG-NOT-candidate-QA.jsonl",
+    "observed_tick": "2026-10-12T08:16Z",
     "measured_counter_timeouts": [
       {
-        "case": "actual_502_fullreader100",
+        "case": "actual_failed_binding100",
         "binding_id": "rb-2480fb4d26884cfdb4d6ed9202172683",
         "limit": 100,
-        "elapsed_seconds": 5.061281663,
-        "query_elapsed_seconds": 4.965429062,
-        "connect_elapsed_seconds": 0.040361372,
+        "elapsed_seconds": 5.068429,
+        "query_elapsed_seconds": 4.963502,
+        "connect_elapsed_seconds": 0.043025,
         "error_type": "RuntimeError",
         "timeout_observed": true
       },
       {
-        "case": "same_failed_binding_fullreader50",
+        "case": "actual_failed_binding50",
         "binding_id": "rb-2480fb4d26884cfdb4d6ed9202172683",
         "limit": 50,
-        "elapsed_seconds": 5.059614523,
-        "query_elapsed_seconds": 4.97604212,
-        "connect_elapsed_seconds": 0.029818444,
+        "elapsed_seconds": 5.077599,
+        "query_elapsed_seconds": 4.970917,
+        "connect_elapsed_seconds": 0.034584,
         "error_type": "RuntimeError",
         "timeout_observed": true
+      },
+      {
+        "case": "original_root_B1_alone",
+        "binding_id": "rb-2480fb4d26884cfdb4d6ed9202172683",
+        "limit": 100,
+        "elapsed_seconds": 5.074136,
+        "error_type": "TimeoutError",
+        "timeout_observed": true
+      },
+      {
+        "case": "original_runtime_B2_alone",
+        "binding_id": "rb-2480fb4d26884cfdb4d6ed9202172683",
+        "limit": 100,
+        "elapsed_seconds": 0.047323,
+        "query_elapsed_seconds": 0.006797,
+        "connect_elapsed_seconds": 0.036310,
+        "returned_count": 0,
+        "timeout_observed": false
       },
       {
         "case": "current_root_valid_positive100",
         "binding_id": "rb-d9c1a36956784e2096e08c37d76ee76f",
         "limit": 100,
-        "elapsed_seconds": 0.222416116,
-        "query_elapsed_seconds": 0.182264714,
-        "connect_elapsed_seconds": 0.030001104,
+        "elapsed_seconds": 0.235831,
         "returned_count": 100,
-        "payload_bytes": 283927,
+        "ordered_event_ids_sha256": "5df8750753226e77abd32874b9189b955e2ca553f887795cf603cd15d39a2a4d",
         "timeout_observed": false
       }
     ]
   },
   "cause_and_solution_proof": {
     "sql_seam": "build_postgres_event_reader in services/telemetry/ingest_svc.py",
-    "disjointness_proof": "Branch 1 filter contains payload->>'binding_id' = $1 (requiring binding_id to match string parameter $1, hence non-null). Branch 2 filter contains payload->>'binding_id' IS NULL. Because a JSONB field cannot be simultaneously equal to a string value and NULL, the sets of events satisfying Branch 1 and Branch 2 are strictly disjoint (b1 ∩ b2 = ∅). Zero duplicate rows can exist between the two branches.",
-    "execution_plan_improvement": {
-      "with_union": "Requires HashAggregate or Sort+Unique across (event_id, payload, ingested_seq, created_at). Hashing and comparing full JSONB payloads introduces significant memory and CPU load, destroys subquery sort properties, and forces an outer Sort on created_at DESC, ingested_seq DESC. Total estimated cost: 539,192.23.",
-      "with_union_all": "Eliminates HashAggregate and Unique on payload. Top node executes Merge Append. However, B1 child's BitmapIndexScan on idx_telemetry_events_binding_id estimates 186,546 index input rows, while subsequent BitmapHeapScan/Gather/Sort/Limit estimates 1 row after guard filter (not Sort on 186,546 output rows). Child cost 539,183.69. Merge Append cannot stream in O(limit) time when child requires full index scan and sort under existing indexes. Total estimated cost: 539,192.20.",
-      "with_narrow_selection_and_late_join": "Subqueries project narrow (event_id, created_at, ingested_seq) tuples without payload (~32 bytes vs ~1250 bytes), reducing Sort buffer and union memory footprint. The outer query joins {table} on primary key event_id to fetch full payload only for the winning <= 50 (or <= 100) rows under a single unchanged snapshot, preserving deterministic order, cutoff ties, and typed guards."
+    "disjointness_proof": "Branch 1 filter contains payload->>'binding_id' = $1 (requiring binding_id to match string parameter $1, non-null). Branch 2 filter contains (payload->>'binding_id' || '') IS NULL. Because a JSONB field cannot be simultaneously a string value and NULL, the sets of events satisfying Branch 1 and Branch 2 are strictly disjoint (b1 ∩ b2 = ∅). Zero duplicate rows can exist between the two branches.",
+    "branch_isolation_and_bottleneck_finding": {
+      "failing_branch": "Branch 1 (root binding)",
+      "passing_branch": "Branch 2 (runtime alias - returns 0 in 0.047s)",
+      "b1_cause": "rb-2480fb4d26884cfdb4d6ed9202172683 has ~186,546 rows in telemetry_events. idx_telemetry_events_binding_id indexes only binding_id (not created_at). PostgreSQL must read ~186,546 rows from heap and sort them by created_at DESC, ingested_seq DESC. Reading ~460MB and sorting takes ~4.96s CPU/IO, exceeding the 5.0s query timeout.",
+      "b2_barrier": "(payload->>'binding_id' || '') IS NULL semantically equates to IS NULL across all JSONB types while fencing out idx_telemetry_events_binding_id on NULLs, forcing GIN bitmap index scan."
     },
     "capacity_counter_finding": {
       "actual_failing_binding": "rb-2480fb4d26884cfdb4d6ed9202172683",
       "index_scan_input_estimate_in_production": 186546,
-      "index_scan_input_estimate_note": "Planner estimate for BitmapIndexScan on idx_telemetry_events_binding_id; subsequent BitmapHeapScan/Gather/Sort/Limit estimates 1 row post-guard filter, not Sort output of 186,546 rows",
-      "measured_runtime_limit_100": "5.061s (query: 4.965s, connect: 0.040s) -> RuntimeError timeout",
-      "measured_runtime_limit_50": "5.060s (query: 4.976s, connect: 0.030s) -> RuntimeError timeout",
-      "valid_positive_control": "rb-d9c1a36956784e2096e08c37d76ee76f (estimated 2,026 index scan input rows, not actual row count; actual reader returns 100 clamped rows, cost 7930.73) -> 0.222s",
-      "cause_status": "Cause NOT established and current capacity NOT fixed on production until independent coordinator readonly proof. Worker implements narrow event-PK selection with late payload read within existing indexes and cumulative <= 10 budget, establishing meaningful local equivalence while AC2 remains pending_delivery.",
-      "sql_hypotheses_and_scope_boundary_analysis": "Narrow event-PK/created_at/ingested_seq selection followed by late full-payload read within one unchanged-snapshot statement is implemented in build_postgres_event_reader, reducing sort/row width while strictly preserving all guards before per-branch limit and exact global created_at/ingested_seq order. Within existing indexes and 5s query deadline, candidate identity is published for independent counter verification. AC2 remains pending_delivery."
+      "measured_runtime_limit_100": "5.068s (query: 4.964s, connect: 0.043s) -> RuntimeError timeout",
+      "measured_runtime_limit_50": "5.078s (query: 4.971s, connect: 0.035s) -> RuntimeError timeout",
+      "valid_positive_control": "rb-d9c1a36956784e2096e08c37d76ee76f (100 rows, SHA 5df8750753226e77abd32874b9189b955e2ca553f887795cf603cd15d39a2a4d) -> 0.236s",
+      "cause_status": "Cause established via branch isolation (B1 times out at 5.074s; B2 returns 0 in 0.047s). Candidate published for independent coordinator readonly proof. AC2 remains pending_delivery.",
+      "sql_hypotheses_tested": [
+        "Redundant GIN on root: timed out at 5.02s",
+        "Scoped root ordered qualification: warm 50 in 4.432s, 100 timed out at 5.105s",
+        "jsonb_to_record decomposition: timed out at 5.02s",
+        "Compound GIN: timed out at 5.02s",
+        "Root input aggregate count(*): timed out at 5.04s"
+      ]
     },
     "budget_status": {
       "net_production_diff_lines": 1,
@@ -97,27 +109,27 @@
   "acceptance_verification": [
     {
       "ac": "AC1",
-      "description": "Referenced narrow successor of archived TELEMETRY-BINDING-READ-CAPACITY-20261011 PR6518 approved 5cef17cd->e7a33a4e nativeDONE gen3. Preserved prior 145 PASS and typed-alias counter and original delivery. Current protected dev 3c1bd45a1eca33d2d5c7da948f59b6d3ff78243e includes financial 6519 nativeDONE gen2. Merged PR #6521 (1f6eaf519) and PR #6523 (08ba9d543) preserved. Native artifact admission exact.",
+      "description": "Referenced narrow follow-up of archived TELEMETRY-BINDING-READ-CAPACITY-CURRENT-20261012. Preserved prior delivery history (PR #6518, #6521, #6523, #6525) and current dev base 714289cf819719092ce161c540d5919cbeaa773e. Antigravity2 owner / Antigravity reviewer preserved.",
       "verdict": "pass"
     },
     {
       "ac": "AC2",
-      "description": "Original coordinator-independent current READONLY proof: original Loop10 05:20 tick on 3c1 has 46 summaries and 13 incident delivery errors (8 HTTP 502 TimeoutError + 5 HTTP 504 dispatch budget exhausted). SLA 56.82s within 60s SLA. Actual incident helper projection for rb-2480fb4d26884cfdb4d6ed9202172683 returns HTTP 503 after 5.0707s; installed factory 100 and 50 time out at 5.0574s and 5.1006s. Real positive rb-d9c1a36956784e2096e08c37d76ee76f returns 100 in 2.1389s. Cause is NOT established and current capacity is NOT fixed. Original current counter remains recorded as truthful source counter; estimates/plan do not prove index authority required.",
+      "description": "Actual coordinator whole-factory counter: clean 9624 source identical to merged 714; original READONLY Telemetry DSN and unchanged 5s. rb248 limit 100=5.068s and limit 50=5.077s both trueTimeout, positive control rb-d9c1 returns 100 in 0.236s (SHA 5df875). Branch isolation confirmed B1 alone fails at 5.074s; B2 alone returns 0 in 0.047s. AC2 remains pending_delivery until independent coordinator readonly proof.",
       "verdict": "pending_delivery"
     },
     {
       "ac": "AC3",
-      "description": "Only existing build_postgres_event_reader binding SQL seam with existing indexes. Kept canonical string root/runtime alias qualification, dualalias conflicts, explicit top/metadata tenant qualification, max100/default50, created_at DESC plus ingested_seq DESC deterministic cutoff ties, and exact event IDs/prefix/order. Used narrow event-PK selection and UNION ALL for disjoint branches with late full-payload join on event_id within one unchanged snapshot, proven by full original factory and ownedPG equivalence controls. Preserved immutable accepted payload, current-owner qualification, and unsupported-reader failclosed. No alternative wrapper, cache, global corpus scan, guessed tenant, stale fallback, reingest, or dedupe reset.",
+      "description": "Change only existing build_postgres_event_reader single SQL/predicate seam using existing indexes. Preserved canonical string root/runtime alias qualification, dualalias conflicts, explicit top/metadata tenant qualification, max100/default50, created_at DESC plus ingested_seq DESC deterministic cutoff ties, and exact event IDs/prefix/order. Net production diff <= 10 vs f5b8163fd7f333d116ec15176e73d019797e6bcc (exactly 1 line net).",
       "verdict": "pass"
     },
     {
       "ac": "AC4",
-      "description": "Kept original 5s fetch/connect/cancellation/close and scheduler 60s SLA and dispatch budgets unchanged. Preserved cumulative production net growth <= 10 against original f5b8163fd7f333d116ec15176e73d019797e6bcc (exactly 1 line net). Only 3 declared artifacts. No index/schema/host DDL, platform, service, queue, parallelism, config, timeout, fence, auth, gate, or assertion weakening. No index/schema/timeout/budget expansion or extra approval requested.",
+      "description": "Only 3 declared artifacts: services/telemetry/ingest_svc.py, services/telemetry/test_main_routes.py, docs/deployment/evidence/TELEMETRY-BINDING-READ-CAPACITY-CURRENT-20261012/evidence.json. Kept original 5s fetch/connect/cancellation/close and scheduler SLA unchanged. No index, schema, host DDL, config, or timeout changes.",
       "verdict": "pass"
     },
     {
       "ac": "AC5",
-      "description": "Used clean committed exact head and completed original telemetry.test_main_routes plus telemetry.test_lineage_write_path plus incident.test_reference_validation plus incident.test_incident. Added relevant owned-loopback disposable PG fixture (test_15) with original index shape and realistic skew/payload/cardinality/selectivity exercising the actual branch and verified late full-payload join integrity. All 145 original bodies and branch-reaching controls preserved. Malformed numeric alias guard, tenant/conflict negatives, true 50/100 cutoff ties, equivalence, and 100 clamp verified. Total 146 passed. Evidence honestly reports factual counter and existing-SQL diagnosis.",
+      "description": "Used clean committed exact head and completed all four original test modules: services.telemetry.test_main_routes (46 passed), services.telemetry.test_lineage_write_path (7 passed), services.incident.test_reference_validation (13 passed), services.incident.test_incident (80 passed). Total 146 passed with disposable owned PG verified cleanly absent. Evidence honestly reports factual counter and branch isolation diagnosis.",
       "verdict": "pass"
     },
     {
