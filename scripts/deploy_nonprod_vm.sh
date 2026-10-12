@@ -2194,7 +2194,7 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
     docker compose -p pantheon -f docker-compose.yml build source-ingest-agora-projector \
     || error "failed to build source-ingest-agora-projector image"
   local projector_img_id projector_img_sha
-  projector_img_id="$(COMPOSE_PROFILES="source-ingest-scheduler,workers" docker compose -p pantheon -f docker-compose.yml images -q source-ingest-agora-projector 2>/dev/null | head -n 1 || true)"
+  projector_img_id="$(docker inspect --format '{{.Id}}' pantheon-source-ingest-agora-projector:latest 2>/dev/null || true)"
   projector_img_sha="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${projector_img_id}" 2>/dev/null || true)"
   [[ -n "${projector_img_id}" && "${projector_img_sha}" == "${GIT_SHA}" ]] || error "source-ingest-agora-projector image revision ${projector_img_sha:-missing} != expected ${GIT_SHA} (stale_projector_image)"
 
