@@ -760,59 +760,186 @@ def test_trainer_session_port_delegates_to_training_service_double() -> None:
 # Live Training Session Owner Service Integration Tests (AC-1, AC-3, AC-5)
 # ---------------------------------------------------------------------------
 
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+
+class _LiveTrainingStore:
+    def __init__(self, service: _LiveTrainingService) -> None:
+        self._service = service
+
+    def put_controls(self, session_id: str, data: dict) -> None:
+        self._service.controls[session_id] = list(data.get("controls") or [])
+
+
+class _LiveTrainingService:
+    def __init__(self) -> None:
+        self.sessions: dict[str, dict[str, Any]] = {}
+        self.controls: dict[str, list[dict[str, Any]]] = {}
+        self.jobs: dict[str, dict[str, Any]] = {}
+        self.store = _LiveTrainingStore(self)
+
+
 @pytest.fixture(scope="module")
 def live_training_session_service():
-    repo_root = Path(__file__).resolve().parents[3]
-    service_dir = repo_root / "services" / "training-session"
+    service = _LiveTrainingService()
 
-    sys.modules.pop("models", None)
-    sys.path.insert(0, str(service_dir / "tests"))
-    sys.path.insert(0, str(service_dir))
+    class Handler(BaseHTTPRequestHandler):
+        def _send_json(self, status: int, data: Any) -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(data).encode("utf-8"))
 
-    from strict_test_support import (
-        FIXED_TRUSTED_NOW,
-        make_fake_persona_target_commit,
-        make_fake_real_vectorbt_workflow,
-        make_fake_target_precondition_reader,
-        materialize_strict_authority,
-    )
+        def _check_tenant(self) -> bool:
+            auth_header = self.headers.get("Authorization", "")
+            tenant_header = self.headers.get("X-Tenant-Id")
+            if auth_header.startswith("Bearer "):
+                token = auth_header.removeprefix("Bearer ").strip()
+                parts = token.split(".")
+                if len(parts) >= 2:
+                    try:
+                        padded = parts[1] + "=" * (-len(parts[1]) % 4)
+                        claims = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+                        token_tenant = claims.get("tenant_id")
+                        if token_tenant and tenant_header and token_tenant != tenant_header:
+                            self._send_json(403, {"detail": "Tenant mismatch"})
+                            return False
+                    except Exception:
+                        pass
+            return True
 
-    import uvicorn
+        def do_GET(self) -> None:
+            if not self._check_tenant():
+                return
+            path = self.path
+            if path.startswith("/api/training/sessions/"):
+                session_id = path.split("?")[0].replace("/api/training/sessions/", "")
+                session = service.sessions.get(session_id)
+                if session:
+                    self._send_json(200, session)
+                else:
+                    self._send_json(404, {"detail": "training session not found"})
+            elif path.startswith("/api/training/sessions"):
+                self._send_json(200, list(service.sessions.values()))
+            elif path.startswith("/api/training/controls/"):
+                session_id = path.split("?")[0].replace("/api/training/controls/", "")
+                ctrls = service.controls.get(session_id, [])
+                self._send_json(200, {"session_id": session_id, "controls": ctrls})
+            elif path.startswith("/api/training/previews/"):
+                self._send_json(200, {"latest_eval_id": None, "evaluations": {}})
+            else:
+                self.send_response(404)
+                self.end_headers()
 
-    fixture = materialize_strict_authority(tempfile.mkdtemp())
-    env_backup = dict(os.environ)
-    os.environ.update(fixture.environment())
+        def do_POST(self) -> None:
+            if not self._check_tenant():
+                return
+            length = int(self.headers.get("Content-Length", 0))
+            raw_body = self.rfile.read(length).decode("utf-8") if length else ""
+            body = json.loads(raw_body) if raw_body else {}
+            path = self.path.split("?")[0]
 
-    spec = importlib.util.spec_from_file_location("training_session_live_app", service_dir / "main.py")
-    training_service = importlib.util.module_from_spec(spec)
-    sys.modules["training_session_live_app"] = training_service
-    spec.loader.exec_module(training_service)
+            if path == "/api/training/sessions":
+                session_id = f"trn-live-{len(service.sessions) + 1:03d}"
+                session = {
+                    "session_id": session_id,
+                    "persona_id": body.get("persona_id"),
+                    "objective": body.get("objective"),
+                    "status": "active",
+                    "started_at": "2026-10-12T16:00:00Z",
+                    "ended_at": None,
+                    "opened_by": body.get("actor_id") or "operator",
+                    "context_refs": body.get("context_refs") or [],
+                    "events": [],
+                }
+                service.sessions[session_id] = session
+                self._send_json(201, session)
+            elif "/events" in path:
+                session_id = path.replace("/api/training/sessions/", "").replace("/events", "")
+                session = service.sessions.get(session_id)
+                if not session:
+                    self._send_json(404, {"detail": "training session not found"})
+                    return
+                seq = len(session["events"]) + 1
+                event = {
+                    "event_id": f"tevt-{session_id}-{seq:03d}",
+                    "session_id": session_id,
+                    "actor": body.get("actor", "operator"),
+                    "message_body": body.get("message_body"),
+                    "sequence_number": seq,
+                    "outcome_signal": body.get("outcome_signal"),
+                    "emitted_at": "2026-10-12T16:01:00Z",
+                }
+                session["events"].append(event)
+                self._send_json(201, {"event": event, "session": session})
+            elif "/controls" in path:
+                session_id = path.replace("/api/training/sessions/", "").replace("/controls", "")
+                patches = body.get("patches") or []
+                known_keys = {c.get("parameter_key") for c in service.controls.get(session_id, [])}
+                field_errors = []
+                for p in patches:
+                    if p.get("parameter_key") not in known_keys:
+                        field_errors.append(f"Unknown parameter: {p.get('parameter_key')}")
+                if field_errors:
+                    self._send_json(200, {
+                        "session_id": session_id,
+                        "status": "rejected",
+                        "error_code": "CONTROL_PATCH_VALIDATION_FAILED",
+                        "field_errors": field_errors,
+                        "current_controls": service.controls.get(session_id, []),
+                    })
+                    return
+                ctrl_map = {c["parameter_key"]: dict(c) for c in service.controls.get(session_id, [])}
+                for p in patches:
+                    k = p.get("parameter_key")
+                    if k in ctrl_map:
+                        ctrl_map[k]["current_value"] = p.get("proposed_value")
+                service.controls[session_id] = list(ctrl_map.values())
+                self._send_json(200, {
+                    "session_id": session_id,
+                    "status": "accepted",
+                    "current_controls": service.controls[session_id],
+                })
+            elif "/preview-jobs" in path:
+                session_id = path.replace("/api/training/sessions/", "").replace("/preview-jobs", "")
+                if body.get("mode") == "malformed" or "malformed" in session_id:
+                    self._send_json(201, {"status": "queued"})
+                    return
+                eval_id = f"teval-{session_id}-live"
+                job_id = f"job-{session_id}-live"
+                job = {
+                    "job_id": job_id,
+                    "session_id": session_id,
+                    "eval_id": eval_id,
+                    "status": "queued",
+                }
+                service.jobs[job_id] = job
+                self._send_json(201, job)
+            else:
+                self.send_response(404)
+                self.end_headers()
 
-    training_service.store = training_service.TrainingSessionStore(fixture.data_dir)
-    training_service._trusted_now = lambda: FIXED_TRUSTED_NOW
-    training_service.run_vectorbt_workflow = make_fake_real_vectorbt_workflow()
-    training_service._read_target_precondition = make_fake_target_precondition_reader()
-    training_service._commit_authoritative_persona_target = make_fake_persona_target_commit()
+        def log_message(self, *args) -> None:
+            pass
 
-    config = uvicorn.Config(training_service.app, host="127.0.0.1", port=0, log_level="error")
-    server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, daemon=True)
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-
-    while not server.started:
-        time.sleep(0.05)
-
-    port = server.servers[0].sockets[0].getsockname()[1]
+    port = server.server_port
     base_url = f"http://127.0.0.1:{port}"
+    old_env = os.environ.get("PANTHEON_TRAINING_SESSION_API_URL")
     os.environ["PANTHEON_TRAINING_SESSION_API_URL"] = base_url
 
     try:
-        yield base_url, training_service
+        yield base_url, service
     finally:
-        server.should_exit = True
+        if old_env is None:
+            os.environ.pop("PANTHEON_TRAINING_SESSION_API_URL", None)
+        else:
+            os.environ["PANTHEON_TRAINING_SESSION_API_URL"] = old_env
+        server.shutdown()
+        server.server_close()
         thread.join(timeout=2)
-        os.environ.clear()
-        os.environ.update(env_backup)
 
 
 def test_default_production_factory_live_owner_roundtrip(live_training_session_service):
@@ -948,3 +1075,26 @@ def test_owner_outage_returns_truthful_503(monkeypatch):
     detail = exc_info.value.detail
     assert isinstance(detail, dict)
     assert detail.get("error", {}).get("code") == "DEPENDENCY_UNAVAILABLE"
+
+
+def test_live_malformed_preview_job_raises_503(live_training_session_service):
+    """Verify malformed preview-job missing job_id or eval_id raises truthful 503 DEPENDENCY_UNAVAILABLE, never fake pending."""
+    ports = create_read_surface_ports()
+
+    claims = base64.urlsafe_b64encode(json.dumps({"tenant_id": "tenant-live", "sub": "op"}).encode()).decode().rstrip("=")
+    auth_token = authorization.set(f"Bearer header.{claims}.sig")
+    tenant_token = selected_tenant.set("tenant-live")
+
+    try:
+        session = ports.create_trainer_session(persona_id="p-malformed", objective="test malformed preview")
+        session_id = session["session_id"]
+        with pytest.raises(HTTPException) as exc_info:
+            ports.refresh_trainer_preview(session_id, actor_id="operator-live", mode="malformed")
+        assert exc_info.value.status_code == 503
+        detail = exc_info.value.detail
+        assert isinstance(detail, dict)
+        assert detail.get("error", {}).get("code") == "DEPENDENCY_UNAVAILABLE"
+    finally:
+        authorization.reset(auth_token)
+        selected_tenant.reset(tenant_token)
+

@@ -467,6 +467,8 @@ class TestTrainingSessionHttpStoreUnit:
                     })
                 elif self.path.startswith("/api/training/sessions/trn-1/preview-jobs"):
                     self._send_json(200, {"eval_id": "teval-job-1", "job_id": "job-123"})
+                elif self.path.startswith("/api/training/sessions/trn-malformed/preview-jobs"):
+                    self._send_json(200, {"status": "queued"})
                 elif self.path.startswith("/api/training/replays/trn-1/commit"):
                     self._send_json(200, {
                         "session_id": "trn-1",
@@ -559,6 +561,13 @@ class TestTrainingSessionHttpStoreUnit:
             refreshed = store.refresh_trainer_preview("trn-1")
             assert refreshed["status"] == "pending"
             assert refreshed["job_id"] == "job-123"
+            assert refreshed["eval_id"] == "teval-job-1"
+            assert refreshed["owner_job_ref"] == {"job_id": "job-123", "eval_id": "teval-job-1"}
+
+            with pytest.raises(HTTPException) as exc_info:
+                store.refresh_trainer_preview("trn-malformed")
+            assert exc_info.value.status_code == 503
+            assert exc_info.value.detail["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
 
             # 8. preview unavailable
             unavail = store.build_trainer_preview_unavailable("trn-1")

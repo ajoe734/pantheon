@@ -767,18 +767,27 @@ class TrainingSessionHttpStore:
         existing = self.get_trainer_preview(session_id, session_status=session_status, snapshot_at=timestamp)
         if existing and existing.get("status") == "pending":
             return existing
-        payload = {"mode": "refresh", "requested_by": kwargs.get("actor_id") or "operator", "requested_at": timestamp}
+        payload = {"mode": kwargs.get("mode") or "refresh", "requested_by": kwargs.get("actor_id") or "operator", "requested_at": timestamp}
         job = self._request(f"/api/training/sessions/{urllib.parse.quote(str(session_id))}/preview-jobs", method="POST", payload=payload)
-        if not isinstance(job, dict):
-            return None
-        eval_id = job.get("eval_id") or f"teval-{session_id.replace('trn-', '')}-001"
-        job_id = job.get("job_id")
+        if not isinstance(job, dict) or not job.get("job_id") or not job.get("eval_id"):
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": {
+                        "code": "DEPENDENCY_UNAVAILABLE",
+                        "message": "Training session service returned malformed preview job response missing job_id or eval_id",
+                        "status_code": 503,
+                    }
+                },
+            )
+        eval_id = str(job["eval_id"])
+        job_id = str(job["job_id"])
         return {
             "session_id": session_id,
             "status": "pending",
             "eval_id": eval_id,
             "job_id": job_id,
-            "owner_job_ref": {"job_id": job_id, "eval_id": eval_id} if job_id else None,
+            "owner_job_ref": {"job_id": job_id, "eval_id": eval_id},
             "baseline_snapshot_at": timestamp,
             "candidate_snapshot_at": timestamp,
             "control_diff": [],
