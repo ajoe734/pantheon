@@ -1846,6 +1846,240 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
         conflict_events = fetch_b("rb-foreign-conflict", tenant_id=self._TENANT)
         self.assertEqual(conflict_events, [])
 
+    def test_14_canonical_binding_reader_capacity_equivalence_and_malformed_types(self):
+        """Verify local multi-binding shape capacity, 50/100 cutoffs, genuine cutoff ties crossing boundaries against in-memory oracle, valid control, and malformed alias types.
+
+        Note: Disposable PG environment uses 3500 noise rows across 70 distinct bindings to verify
+        local multi-binding selectivity and index shape under original 5s deadline budget.
+        This provides local test coverage; it does not reproduce full production scale (4.56M rows / 10GB)
+        or prove cold-cache performance. Actual VM point-reads (at 00:24:28Z for 533 and 00:04:16Z for 98cd)
+        show sequential reads under 5s deadline, which may warm cache and do not assert cold-cache or
+        causal speedup proof.
+        """
+        import asyncpg, datetime, hashlib, json, time
+        fetch_ev, fetch_b = build_postgres_event_reader(self.dsn, table="telemetry_events")
+        target_bid = "rb-capacity-target-20261011"
+        base_time = datetime.datetime.fromisoformat("2026-08-01T12:00:00+00:00")
+        tie_50_dt = base_time + datetime.timedelta(days=1)
+        tie_100_dt = base_time + datetime.timedelta(hours=6)
+
+        oracle_target_rows = []
+
+        async def _seed_capacity():
+            nonlocal oracle_target_rows
+            conn = await asyncpg.connect(self.dsn)
+            try:
+                # 1. Group A: 40 newest distinct events (occupy ranks 0..39)
+                group_a = []
+                for i in range(40):
+                    dt = base_time + datetime.timedelta(days=2, minutes=i*10)
+                    eid = f"evt-cap-a-{i:03d}"
+                    if i % 2 == 0:
+                        payload = {"event_id": eid, "event_type": "heartbeat", "created_at": dt.isoformat(), "tenant_id": self._TENANT, "binding_id": target_bid, "runtime_id": "rt-cap-001"}
+                    else:
+                        payload = {"event_id": eid, "event_type": "heartbeat", "created_at": dt.isoformat(), "runtime_binding_id": target_bid, "metadata": {"tenant_id": self._TENANT}, "runtime_id": "rt-cap-001"}
+                    group_a.append((eid, "heartbeat", dt, json.dumps(payload)))
+
+                # 2. Group B: 20 events with identical created_at tie_50_dt (occupy ranks 40..59, strictly crossing 50 cutoff)
+                group_b = []
+                for i in range(20):
+                    eid = f"evt-tie50-{i:03d}"
+                    if i % 2 == 0:
+                        payload = {"event_id": eid, "event_type": "heartbeat", "created_at": tie_50_dt.isoformat(), "tenant_id": self._TENANT, "binding_id": target_bid, "runtime_id": "rt-cap-001"}
+                    else:
+                        payload = {"event_id": eid, "event_type": "heartbeat", "created_at": tie_50_dt.isoformat(), "tenant_id": self._TENANT, "binding_id": target_bid, "runtime_binding_id": target_bid, "runtime_id": "rt-cap-001"}
+                    group_b.append((eid, "heartbeat", tie_50_dt, json.dumps(payload)))
+
+                # 3. Group C: 30 distinct events between cutoffs (occupy ranks 60..89)
+                group_c = []
+                for i in range(30):
+                    dt = base_time + datetime.timedelta(hours=12, minutes=i*10)
+                    eid = f"evt-cap-c-{i:03d}"
+                    if i % 2 == 0:
+                        payload = {"event_id": eid, "event_type": "heartbeat", "created_at": dt.isoformat(), "tenant_id": self._TENANT, "binding_id": target_bid, "runtime_id": "rt-cap-001"}
+                    else:
+                        payload = {"event_id": eid, "event_type": "heartbeat", "created_at": dt.isoformat(), "runtime_binding_id": target_bid, "metadata": {"tenant_id": self._TENANT}, "runtime_id": "rt-cap-001"}
+                    group_c.append((eid, "heartbeat", dt, json.dumps(payload)))
+
+                # 4. Group D: 20 events with identical created_at tie_100_dt (occupy ranks 90..109, strictly crossing 100 cutoff)
+                group_d = []
+                for i in range(20):
+                    eid = f"evt-tie100-{i:03d}"
+                    if i % 2 == 0:
+                        payload = {"event_id": eid, "event_type": "heartbeat", "created_at": tie_100_dt.isoformat(), "tenant_id": self._TENANT, "binding_id": target_bid, "runtime_id": "rt-cap-001"}
+                    else:
+                        payload = {"event_id": eid, "event_type": "heartbeat", "created_at": tie_100_dt.isoformat(), "tenant_id": self._TENANT, "binding_id": target_bid, "runtime_binding_id": target_bid, "runtime_id": "rt-cap-001"}
+                    group_d.append((eid, "heartbeat", tie_100_dt, json.dumps(payload)))
+
+                # 5. Group E: 10 older distinct events (occupy ranks 110..119, beyond 100 cutoff)
+                group_e = []
+                for i in range(10):
+                    dt = base_time + datetime.timedelta(minutes=i*10)
+                    eid = f"evt-cap-e-{i:03d}"
+                    payload = {"event_id": eid, "event_type": "heartbeat", "created_at": dt.isoformat(), "tenant_id": self._TENANT, "binding_id": target_bid, "runtime_binding_id": target_bid, "runtime_id": "rt-cap-001"}
+                    group_e.append((eid, "heartbeat", dt, json.dumps(payload)))
+
+                # Total valid target events = 40 + 20 + 30 + 20 + 10 = 120 events.
+                valid_target_rows = group_a + group_b + group_c + group_d + group_e
+
+                # 6. Valid control & malformed alias types:
+                # - Positive valid control: string "99999" on both binding_id and runtime_binding_id
+                valid_control = (
+                    "owned-positive-string-both", "heartbeat", base_time + datetime.timedelta(hours=1),
+                    json.dumps({
+                        "event_id": "owned-positive-string-both", "event_type": "heartbeat",
+                        "created_at": (base_time + datetime.timedelta(hours=1)).isoformat(),
+                        "binding_id": "99999", "runtime_binding_id": "99999", "tenant_id": self._TENANT,
+                    })
+                )
+                # - Negative mixed numeric: string "99999" on binding_id, but NUMERIC integer 99999 on runtime_binding_id (must be DENIED)
+                negative_mixed_numeric = (
+                    "owned-negative-mixed-numeric", "heartbeat", base_time + datetime.timedelta(hours=1, minutes=1),
+                    json.dumps({
+                        "event_id": "owned-negative-mixed-numeric", "event_type": "heartbeat",
+                        "created_at": (base_time + datetime.timedelta(hours=1, minutes=1)).isoformat(),
+                        "binding_id": "99999", "runtime_binding_id": 99999, "tenant_id": self._TENANT,
+                    })
+                )
+                # - Negative malformed numeric only
+                negative_num_b = (
+                    "evt-malformed-num-b", "heartbeat", base_time + datetime.timedelta(hours=1, minutes=2),
+                    json.dumps({
+                        "event_id": "evt-malformed-num-b", "event_type": "heartbeat",
+                        "created_at": (base_time + datetime.timedelta(hours=1, minutes=2)).isoformat(),
+                        "binding_id": 88888, "tenant_id": self._TENANT,
+                    })
+                )
+                negative_num_rb = (
+                    "evt-malformed-num-rb", "heartbeat", base_time + datetime.timedelta(hours=1, minutes=3),
+                    json.dumps({
+                        "event_id": "evt-malformed-num-rb", "event_type": "heartbeat",
+                        "created_at": (base_time + datetime.timedelta(hours=1, minutes=3)).isoformat(),
+                        "runtime_binding_id": 77777, "tenant_id": self._TENANT,
+                    })
+                )
+                # - Negative booleans (lowercase true/false and uppercase True/False)
+                negative_bool_true = (
+                    "evt-malformed-bool-true", "heartbeat", base_time + datetime.timedelta(hours=1, minutes=4),
+                    json.dumps({
+                        "event_id": "evt-malformed-bool-true", "event_type": "heartbeat",
+                        "created_at": (base_time + datetime.timedelta(hours=1, minutes=4)).isoformat(),
+                        "runtime_binding_id": True, "tenant_id": self._TENANT,
+                    })
+                )
+                negative_bool_false = (
+                    "evt-malformed-bool-false", "heartbeat", base_time + datetime.timedelta(hours=1, minutes=5),
+                    json.dumps({
+                        "event_id": "evt-malformed-bool-false", "event_type": "heartbeat",
+                        "created_at": (base_time + datetime.timedelta(hours=1, minutes=5)).isoformat(),
+                        "runtime_binding_id": False, "tenant_id": self._TENANT,
+                    })
+                )
+                negative_root_bool = (
+                    "evt-malformed-root-bool", "heartbeat", base_time + datetime.timedelta(hours=1, minutes=6),
+                    json.dumps({
+                        "event_id": "evt-malformed-root-bool", "event_type": "heartbeat",
+                        "created_at": (base_time + datetime.timedelta(hours=1, minutes=6)).isoformat(),
+                        "binding_id": True, "tenant_id": self._TENANT,
+                    })
+                )
+                control_and_malformed = [
+                    valid_control, negative_mixed_numeric, negative_num_b, negative_num_rb,
+                    negative_bool_true, negative_bool_false, negative_root_bool,
+                ]
+
+                # 7. Realistic cardinality noise rows (3500 rows across 70 distinct bindings)
+                now_dt = datetime.datetime.fromisoformat("2026-10-11T12:00:00+00:00")
+                noise_events = [
+                    (
+                        f"evt-cap-noise-{i}", "heartbeat", now_dt + datetime.timedelta(seconds=i),
+                        json.dumps({
+                            "event_id": f"evt-cap-noise-{i}", "event_type": "heartbeat",
+                            "created_at": (now_dt + datetime.timedelta(seconds=i)).isoformat(),
+                            "tenant_id": self._TENANT, "binding_id": f"rb-noise-pool-{i%70}",
+                        })
+                    )
+                    for i in range(3500)
+                ]
+
+                all_rows = valid_target_rows + control_and_malformed + noise_events
+                await conn.executemany(
+                    "INSERT INTO telemetry_events (event_id, event_type, created_at, payload) VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT (event_id) DO NOTHING",
+                    all_rows
+                )
+                await conn.execute("ANALYZE telemetry_events;")
+
+                # Fetch all valid target events from DB to construct exact in-memory oracle
+                oracle_target_rows = await conn.fetch(
+                    "SELECT event_id, created_at, ingested_seq FROM telemetry_events WHERE (payload->>'binding_id' = $1 OR payload->>'runtime_binding_id' = $1) AND (payload->>'tenant_id' = $2 OR payload->'metadata'->>'tenant_id' = $2)",
+                    target_bid, self._TENANT
+                )
+            finally:
+                await conn.close()
+
+        asyncio.run(_seed_capacity())
+
+        # 1. Realistic cold query performance under original 5s deadline budget
+        t0 = time.monotonic()
+        res_50 = fetch_b(target_bid, tenant_id=self._TENANT, limit=50)
+        elapsed = time.monotonic() - t0
+        self.assertLess(elapsed, 1.0, f"query exceeded 1.0s capacity threshold: {elapsed}s")
+
+        # 2. In-memory oracle construction: sort all valid rows by (created_at DESC, ingested_seq DESC)
+        self.assertEqual(len(oracle_target_rows), 120)
+        oracle_sorted = sorted(oracle_target_rows, key=lambda r: (r["created_at"], r["ingested_seq"]), reverse=True)
+        expected_top50 = [r["event_id"] for r in oracle_sorted[:50]]
+        expected_top100 = [r["event_id"] for r in oracle_sorted[:100]]
+
+        # 3. Exact matching of res_50 against in-memory oracle top 50
+        self.assertEqual(len(res_50), 50)
+        self.assertEqual([r["event_id"] for r in res_50], expected_top50)
+
+        # 4. Prove genuine cutoff tie crossing at 50:
+        # Group B (20 events at tie_50_dt) spans ranks 40..59; 10 must be in res_50, 10 must be outside
+        tie50_in_res50 = [r["event_id"] for r in res_50 if r["event_id"].startswith("evt-tie50-")]
+        self.assertEqual(len(tie50_in_res50), 10)
+
+        # 5. Strict 100 cutoff verification and upper bound clamp against in-memory oracle
+        res_100 = fetch_b(target_bid, tenant_id=self._TENANT, limit=100)
+        self.assertEqual(len(res_100), 100)
+        self.assertEqual([r["event_id"] for r in res_100], expected_top100)
+
+        # res_50 must be exact prefix of res_100
+        self.assertEqual([r["event_id"] for r in res_50], [r["event_id"] for r in res_100[:50]])
+
+        # limit=200 must be clamped to max 100
+        res_200 = fetch_b(target_bid, tenant_id=self._TENANT, limit=200)
+        self.assertEqual(len(res_200), 100)
+        self.assertEqual([r["event_id"] for r in res_100], [r["event_id"] for r in res_200])
+
+        # 6. Prove genuine cutoff tie crossing at 100:
+        # Group D (20 events at tie_100_dt) spans ranks 90..109; 10 must be in res_100, 10 must be excluded
+        tie100_in_res100 = [r["event_id"] for r in res_100 if r["event_id"].startswith("evt-tie100-")]
+        self.assertEqual(len(tie100_in_res100), 10)
+
+        # 7. Valid control vs mixed-numeric negative:
+        # Querying string "99999" MUST return valid string control "owned-positive-string-both"
+        # and MUST DENY / NOT return "owned-negative-mixed-numeric" (NUMERIC runtime_binding_id)
+        res_control = fetch_b("99999", tenant_id=self._TENANT, limit=50)
+        self.assertEqual([r["event_id"] for r in res_control], ["owned-positive-string-both"])
+
+        # 8. Malformed numeric and boolean types fail closed:
+        self.assertEqual(fetch_b("88888", tenant_id=self._TENANT, limit=50), [])
+        self.assertEqual(fetch_b("77777", tenant_id=self._TENANT, limit=50), [])
+        self.assertEqual(fetch_b("true", tenant_id=self._TENANT, limit=50), [])
+        self.assertEqual(fetch_b("True", tenant_id=self._TENANT, limit=50), [])
+        self.assertEqual(fetch_b("false", tenant_id=self._TENANT, limit=50), [])
+        self.assertEqual(fetch_b("False", tenant_id=self._TENANT, limit=50), [])
+
+        # 9. Dualalias conflict negative: querying conflicted binding returns empty
+        res_conflict = fetch_b("rb-foreign-conflict", tenant_id=self._TENANT, limit=50)
+        self.assertEqual(res_conflict, [])
+
+        # 10. Non-matching tenant returns empty
+        res_wrong_tenant = fetch_b(target_bid, tenant_id="tenant-foreign", limit=50)
+        self.assertEqual(res_wrong_tenant, [])
+
 
 if __name__ == "__main__":
     unittest.main()
