@@ -489,16 +489,28 @@ def _project_job_trainer_preview(
     *,
     session_status: Optional[str] = None,
     timestamp: Optional[str] = None,
-) -> Dict[str, Any]:
-    st = str(job.get("status") or "pending").strip().lower()
-    job_id = str(job.get("job_id") or "")
-    eval_id = str(job.get("eval_id") or "")
+) -> Optional[Dict[str, Any]]:
+    if not isinstance(job, dict) or not str(job.get("job_id") or "").strip() or not str(job.get("eval_id") or "").strip():
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": {
+                    "code": "DEPENDENCY_UNAVAILABLE",
+                    "message": "Training session service returned malformed preview job response missing job_id or eval_id",
+                    "status_code": 503,
+                }
+            },
+        )
+    st = str(job.get("status") or "queued").strip().lower()
+    if st not in ("queued", "running", "failed"):
+        return None
+    job_id, eval_id = str(job["job_id"]).strip(), str(job["eval_id"]).strip()
     ts = timestamp or str(job.get("requested_at") or _utc_now())
     is_failed = st == "failed"
     reason = str(job.get("failure_reason") or job.get("error_code") or "").strip()
     warnings = [{"level": "high", "message": reason}] if (is_failed and reason) else []
     can_refresh = str(session_status or "").strip().lower() in ("active", "paused") if is_failed else False
-    payload: Dict[str, Any] = {
+    return {
         "session_id": session_id,
         "status": "failed" if is_failed else "pending",
         "eval_id": eval_id,
@@ -521,7 +533,6 @@ def _project_job_trainer_preview(
         } if is_failed else None,
         "meta": {"snapshot_at": ts, "surfaces": {"trainer_preview": "degraded" if is_failed else "ok"}},
     }
-    return payload
 
 
 def _can_act_replay(status: Any, resolution_state: str, surface_state: str, candidate_ref: Any) -> bool:
@@ -831,23 +842,7 @@ class TrainingSessionHttpStore:
             return existing
         payload = {"mode": kwargs.get("mode") or "refresh", "requested_by": kwargs.get("actor_id") or "operator", "requested_at": timestamp}
         job = self._request(f"/api/training/sessions/{urllib.parse.quote(str(session_id))}/preview-jobs", method="POST", payload=payload)
-        if not isinstance(job, dict) or not job.get("job_id") or not job.get("eval_id"):
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "error": {
-                        "code": "DEPENDENCY_UNAVAILABLE",
-                        "message": "Training session service returned malformed preview job response missing job_id or eval_id",
-                        "status_code": 503,
-                    }
-                },
-            )
-        return _project_job_trainer_preview(
-            session_id,
-            job,
-            session_status=session_status,
-            timestamp=timestamp,
-        )
+        return _project_job_trainer_preview(session_id, job, session_status=session_status, timestamp=timestamp)
 
     def list_trainer_replays(
         self, *, persona_id: Optional[str] = None, status: Optional[str] = None, snapshot_at: Optional[str] = None, **kwargs: Any

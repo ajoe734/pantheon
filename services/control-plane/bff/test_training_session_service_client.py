@@ -1401,6 +1401,74 @@ def test_live_malformed_preview_job_list_raises_503(live_training_session_servic
         selected_tenant.reset(tenant_token)
 
 
+def test_live_malformed_preview_job_running_without_job_id_raises_503(live_training_session_service):
+    """Verify running job without job_id raises truthful 503 DEPENDENCY_UNAVAILABLE, never fake pending."""
+    base_url, training_service = live_training_session_service
+    ports = create_read_surface_ports()
+
+    token = _signed_caller_jwt("tenant-live", "operator-live")
+    auth_token = authorization.set(f"Bearer {token}")
+    tenant_token = selected_tenant.set("tenant-live")
+
+    try:
+        session = ports.create_trainer_session(persona_id="p-malformed-no-jobid", objective="test no jobid")
+        session_id = session["session_id"]
+
+        orig_request = ports.persona_training.trainer._training._request
+
+        def mock_request(path: str, *args: Any, **kwargs: Any) -> Any:
+            if "preview-jobs" in path and not path.endswith("/preview-jobs"):
+                return [{"session_id": session_id, "eval_id": "eval-source", "status": "running"}]
+            return orig_request(path, *args, **kwargs)
+
+        ports.persona_training.trainer._training._request = mock_request
+        try:
+            with pytest.raises(HTTPException) as exc_info:
+                ports.get_trainer_preview(session_id, session_status="active")
+            assert exc_info.value.status_code == 503
+            assert exc_info.value.detail.get("error", {}).get("code") == "DEPENDENCY_UNAVAILABLE"
+        finally:
+            ports.persona_training.trainer._training._request = orig_request
+    finally:
+        authorization.reset(auth_token)
+        selected_tenant.reset(tenant_token)
+
+
+def test_live_completed_job_without_evaluation_truthfully_unavailable_or_not_found(live_training_session_service):
+    """Verify completed job without genuine evaluation is truthfully unavailable/error, never fake pending."""
+    base_url, training_service = live_training_session_service
+    ports = create_read_surface_ports()
+
+    token = _signed_caller_jwt("tenant-live", "operator-live")
+    auth_token = authorization.set(f"Bearer {token}")
+    tenant_token = selected_tenant.set("tenant-live")
+
+    try:
+        session = ports.create_trainer_session(persona_id="p-completed-no-eval", objective="test completed no eval")
+        session_id = session["session_id"]
+
+        orig_request = ports.persona_training.trainer._training._request
+
+        def mock_request(path: str, *args: Any, **kwargs: Any) -> Any:
+            if "preview-jobs" in path and not path.endswith("/preview-jobs"):
+                return [{"session_id": session_id, "job_id": "job-source", "eval_id": "eval-source", "status": "completed"}]
+            return orig_request(path, *args, **kwargs)
+
+        ports.persona_training.trainer._training._request = mock_request
+        try:
+            res_eval = ports.get_trainer_preview(session_id, eval_id="eval-source", session_status="active")
+            assert res_eval is None
+
+            res_none = ports.get_trainer_preview(session_id, session_status="active")
+            assert res_none is not None
+            assert res_none["status"] == "preview_unavailable"
+        finally:
+            ports.persona_training.trainer._training._request = orig_request
+    finally:
+        authorization.reset(auth_token)
+        selected_tenant.reset(tenant_token)
+
+
 def test_service_caller_token_accepted(live_training_session_service):
     """Verify genuine service caller token (with service claim and training-service role) is accepted."""
     ports = create_read_surface_ports()

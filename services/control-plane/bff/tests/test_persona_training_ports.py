@@ -422,7 +422,32 @@ class TestTrainingSessionHttpStoreUnit:
                     elif "session_id=trn-malformed" in self.path:
                         self._send_json(200, {"malformed": "not a list"})
                         return
+                    elif "session_id=trn-running-no-jobid" in self.path:
+                        jobs.append({
+                            "session_id": "trn-running-no-jobid",
+                            "eval_id": "eval-source",
+                            "status": "running",
+                        })
+                    elif "session_id=trn-completed-no-eval" in self.path:
+                        jobs.append({
+                            "job_id": "job-source",
+                            "session_id": "trn-completed-no-eval",
+                            "eval_id": "eval-source",
+                            "status": "completed",
+                        })
                     self._send_json(200, jobs)
+                elif self.path.startswith("/api/training/previews/trn-running-no-jobid"):
+                    self._send_json(200, {
+                        "session_id": "trn-running-no-jobid",
+                        "evaluations": {},
+                        "preview": {"session_id": "trn-running-no-jobid", "status": "preview_unavailable"},
+                    })
+                elif self.path.startswith("/api/training/previews/trn-completed-no-eval"):
+                    self._send_json(200, {
+                        "session_id": "trn-completed-no-eval",
+                        "evaluations": {},
+                        "preview": {"session_id": "trn-completed-no-eval", "status": "preview_unavailable"},
+                    })
                 elif self.path.startswith("/api/training/previews/trn-failed"):
                     self._send_json(200, {
                         "session_id": "trn-failed",
@@ -653,6 +678,17 @@ class TestTrainingSessionHttpStoreUnit:
             with pytest.raises(HTTPException) as exc_malformed:
                 store.get_trainer_preview("trn-malformed", session_status="active")
             assert exc_malformed.value.status_code == 503
+
+            # 1h. running without job_id raises 503 DEPENDENCY_UNAVAILABLE
+            with pytest.raises(HTTPException) as exc_no_jobid:
+                store.get_trainer_preview("trn-running-no-jobid", session_status="active")
+            assert exc_no_jobid.value.status_code == 503
+
+            # 1i. completed without evaluation returns None on specific eval_id, and preview_unavailable without eval_id (truthfully unavailable/error, not pending)
+            assert store.get_trainer_preview("trn-completed-no-eval", eval_id="eval-source", session_status="active") is None
+            completed_prev = store.get_trainer_preview("trn-completed-no-eval", session_status="active")
+            assert completed_prev is not None
+            assert completed_prev["status"] == "preview_unavailable"
 
             # 2. get session
             detail = store.get_trainer_session("trn-1")
