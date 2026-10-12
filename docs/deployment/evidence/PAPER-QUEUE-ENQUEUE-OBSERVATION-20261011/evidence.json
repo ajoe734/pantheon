@@ -1,0 +1,67 @@
+{
+  "task_id": "PAPER-QUEUE-ENQUEUE-OBSERVATION-20261011",
+  "title": "Observe real enqueue admission in the existing pending signal store",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "status": "pending_delivery",
+  "remediation_summary": {
+    "gap_diagnosis": "Root38167902596 owner evaluation warned queue_lag_ms absent (observed: null) and bridge degraded. In original DecisionSignalProducer through both memory and RedisPendingSignalStore, store.enqueue serialized no enqueue observation (missing enqueued_at) while PaperRuntimeService._handle_order_event already consumed enqueued_at to measure queue lag. Signal generation timestamp was preserved as generation time but not recorded as queue admission time.",
+    "adapter_fix": "In pending_signal_store.py, _observed_enqueue_payload records genuine queue admission UTC time as enqueued_at upon physical store enqueue across InMemoryPendingSignalStore and RedisPendingSignalStore without trusting caller-supplied timestamps or duplicating metadata writers. Caller input dictionary and nested metadata are preserved without in-place mutation via json deep copy. Existing exact-payload requeues (via nack_requeue or reclaim) retain the initial enqueue observation without calling enqueue or resetting observation.",
+    "bridge_preservation": "Existing approved failclosed bridge truth from PR6490 and PR6491 is preserved without alteration. Unverified, conflicting, or uninstalled bridge paths remain truthful explicit None/degraded without inventing synthetic repo/commit identity."
+  },
+  "line_budget_compliance": {
+    "net_production_lines_budget": 20,
+    "net_production_lines_actual": 6,
+    "breakdown": {
+      "services/execution/lean_runtime/pending_signal_store.py": "+10, -4 (net +6)"
+    },
+    "scoped_artifacts": [
+      "services/execution/lean_runtime/pending_signal_store.py",
+      "services/execution/lean_runtime/test_signal_producer.py",
+      "services/execution/lean_runtime/test_paper_runtime.py",
+      "services/execution/lean_runtime/test_signal_isolation.py",
+      "docs/deployment/evidence/PAPER-QUEUE-ENQUEUE-OBSERVATION-20261011/evidence.json"
+    ]
+  },
+  "test_verification": {
+    "test_signal_producer": {
+      "command": "python3 -m unittest services/execution/lean_runtime/test_signal_producer.py",
+      "passed": 8,
+      "failed": 0,
+      "exit_code": 0,
+      "detail": "Verified DecisionSignalProducer produce to memory and Redis serialization records real enqueue interval observation while preserving caller input and batch signals without manual enqueue metadata; verified conflicting forged caller timestamps are rejected and actual enqueue operation interval is observed while caller input and correlation fields are preserved."
+    },
+    "test_signal_consumer": {
+      "command": "python3 -m unittest services/execution/lean_runtime/test_signal_consumer.py",
+      "passed": 34,
+      "failed": 0,
+      "exit_code": 0,
+      "detail": "Verified SignalConsumer validation, duplicate filtering, conflict resolution, staleness, DLQ routing, and claim heartbeat/fencing."
+    },
+    "test_paper_runtime": {
+      "command": "python3 -m unittest services/execution/lean_runtime/test_paper_runtime.py",
+      "passed": 78,
+      "failed": 0,
+      "exit_code": 0,
+      "detail": "Verified end-to-end real store -> SignalConsumer -> PaperRuntimeService measured queue_lag_ms in service snapshot and heartbeat telemetry event, retained negative tests for missing, invalid, and future timestamps (staying None/degraded without fabricated zero metric)."
+    },
+    "test_signal_isolation": {
+      "command": "PYTHONPATH=\"/tmp/python-packages:$PYTHONPATH\" python3 -m unittest services/execution/lean_runtime/test_signal_isolation.py",
+      "passed": 44,
+      "failed": 0,
+      "skipped": 0,
+      "exit_code": 0,
+      "detail": "Verified disposable real Redis 7 container drill: enqueue, claim, nack requeue, visibility recovery across crashed workers, and duplicate-signal fence proof retain exact payload, correlation envelope, and initial enqueue observation."
+    },
+    "total_tests_passed": 164,
+    "total_tests_failed": 0
+  },
+  "invariants_preserved": [
+    "AC1: Predecessor PR6490 and PR6491 genuine changes consumed; source-only delivery with no VM, SSH, deployment, provider, approval, or business-data writes.",
+    "AC2: Enqueue admission UTC time recorded in existing runtime-local pending adapter; production growth net +6 lines (budget <= 20 lines) in pending_signal_store.py only; no new queue/service/schema/config/health writer/clock framework/wrapper.",
+    "AC3: Caller input and nested metadata preserved without mutation; frozen correlation fields and binding/tenant/case/artifact IDs preserved; queue observation originates from enqueue operation not caller timestamp; no fabricated zero metric; absent/invalid/future timestamps remain degraded/None; exact payload requeue preserves initial observation.",
+    "AC4: Meaningful tests added to test_signal_producer.py, test_paper_runtime.py, and test_signal_isolation.py; source QA clearly labeled with no hosted/provider/financial acceptance claims.",
+    "AC5: Ran test_signal_producer.py, test_signal_consumer.py, test_paper_runtime.py, and completed test_signal_isolation.py with real disposable Redis 7 infrastructure (0 skipped); exact commands, exits, and passed counts recorded; bridge failclosed truth preserved.",
+    "AC6: Exactly five declared scoped artifacts modified; clean task worktree maintained ready for exact-head review and integrator dev merge; source evidence status pending_delivery."
+  ]
+}

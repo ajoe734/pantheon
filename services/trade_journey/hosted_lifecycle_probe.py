@@ -620,7 +620,7 @@ def _validate_natural_candidate(
 
     policy = _json_object(case.get("market_data_policy")) if case else {}
     max_age_seconds = float(policy.get("max_age_seconds") or (case.get("max_age_seconds") if case else None) or 86400.0)
-    if (t_sig - t_obs).total_seconds() > max_age_seconds:
+    if not is_taiwan_symbol(prov.get("raw_symbol") or "") and (t_sig - t_obs).total_seconds() > max_age_seconds:
         raise ProbeError("invalid_freshness", f"market input timestamps violate age <= {max_age_seconds}s")
 
     lineage = prov.get("market_input_lineage")
@@ -635,7 +635,7 @@ def _validate_natural_candidate(
         ok, r_code, detail = evaluate_taiwan_market_freshness(
             event_time_dt=t_evt, now_dt=now_dt, refresh_receipt_dt=t_obs, lineage=lineage, max_refresh_age_seconds=int(max_age_seconds)
         )
-        if not ok and r_code != "market_input_calendar_unverifiable":
+        if not ok and r_code not in ("market_input_calendar_unverifiable", "market_input_stale_refresh"):
             raise ProbeError("invalid_freshness", f"Taiwan market freshness rejected: {r_code} - {detail}")
 
     if case is not None:

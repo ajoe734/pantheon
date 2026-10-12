@@ -2852,6 +2852,7 @@ def _execute_scheduled_reconcile(
     lifecycle_terminal_rejections: List[Dict[str, Any]] = []
     lifecycle_ineligible_binding_ids: List[str] = []
     dispatch_incidents = bool(body.dispatch_incidents)
+    incident_candidates: List[tuple[Dict[str, Any], Dict[str, Any], List[str]]] = []
 
     def record_lifecycle_append(binding_id: str, state: Dict[str, Any]) -> None:
         receipt = _lifecycle_append_receipt(binding_id, state)
@@ -2904,131 +2905,95 @@ def _execute_scheduled_reconcile(
             if existing_evaluation is None:
                 continue
             evaluation_statuses.append(str(existing_evaluation.get("status") or status))
-            lifecycle_state = _ensure_scheduled_lifecycle_append(
-                summary=summary,
-                evaluation=existing_evaluation,
-                telemetry_url=telemetry_url,
-                timestamp=timestamp,
-                timeout_seconds=dispatch_timeout(),
-                evaluations=existing_evaluations,
-            )
-            record_lifecycle_append(binding_id, lifecycle_state)
-            if not dispatch_incidents:
-                continue
-            report = _scheduled_drift_report(
-                summary=summary,
-                evaluation=existing_evaluation,
-                telemetry_event_ids=telemetry_event_ids,
-                timestamp=timestamp,
-            )
-            delivery = existing_evaluation.get("incident_delivery")
-            if report is None:
-                continue
-            existing_report = store.get_drift_report(
-                str(report["drift_report_id"]),
-                tenant_id=tenant_id,
-            )
-            report_to_dispatch = existing_report or report
-            drift_report_ids.append(str(report_to_dispatch["drift_report_id"]))
-            if isinstance(delivery, dict) and delivery.get("status") == "delivered":
-                incident_id = str(delivery.get("incident_id") or "").strip()
-                if incident_id:
-                    incident_ids.append(incident_id)
-                continue
-            delivery_result = _dispatch_scheduled_drift_report(
-                report_to_dispatch,
-                timeout_seconds=dispatch_timeout(),
-            )
-            existing_evaluation["incident_delivery"] = {
-                **delivery_result,
-                "attempted_at": timestamp,
-            }
-            store.put_evaluation(existing_evaluation)
-            incident_id = str(delivery_result.get("incident_id") or "").strip()
-            if incident_id:
-                incident_ids.append(incident_id)
-            if delivery_result.get("error"):
-                incident_delivery_errors.append(
-                    {
-                        "drift_report_id": delivery_result["drift_report_id"],
-                        **delivery_result["error"],
-                    }
-                )
-            continue
-
-        evaluation = {
-            "id": evaluation_id,
-            "evaluation_id": evaluation_id,
-            "tenant_id": tenant_id,
-            "binding_id": binding_id,
-            "runtime_id": runtime_id or None,
-            "status": status,
-            "summary": {
+            target_evaluation = existing_evaluation
+        else:
+            evaluation = {
+                "id": evaluation_id,
+                "evaluation_id": evaluation_id,
+                "tenant_id": tenant_id,
+                "binding_id": binding_id,
+                "runtime_id": runtime_id or None,
                 "status": status,
-                "telemetry_event_count": len(telemetry_event_ids),
-                "baseline_metric_count": len(baseline_metrics),
-                "observed_metric_count": len(observed_metrics),
-                "drift_check_count": len(drift_checks),
-                "reconciliation_check_count": len(reconciliation_checks),
-            },
-            "baseline_metrics": baseline_metrics,
-            "observed_metrics": observed_metrics,
-            "drift_checks": drift_checks,
-            "reconciliation_checks": reconciliation_checks,
-            "evidence_refs": [
-                {"type": "tick", "id": tick_id},
-                {"type": "runtime_binding", "id": binding_id},
-                *([{"type": "runtime_session", "id": runtime_id}] if runtime_id else []),
-                *[
-                    {"type": "telemetry_event", "id": event_id}
-                    for event_id in telemetry_event_ids
+                "summary": {
+                    "status": status,
+                    "telemetry_event_count": len(telemetry_event_ids),
+                    "baseline_metric_count": len(baseline_metrics),
+                    "observed_metric_count": len(observed_metrics),
+                    "drift_check_count": len(drift_checks),
+                    "reconciliation_check_count": len(reconciliation_checks),
+                },
+                "baseline_metrics": baseline_metrics,
+                "observed_metrics": observed_metrics,
+                "drift_checks": drift_checks,
+                "reconciliation_checks": reconciliation_checks,
+                "evidence_refs": [
+                    {"type": "tick", "id": tick_id},
+                    {"type": "runtime_binding", "id": binding_id},
+                    *([{"type": "runtime_session", "id": runtime_id}] if runtime_id else []),
+                    *[
+                        {"type": "telemetry_event", "id": event_id}
+                        for event_id in telemetry_event_ids
+                    ],
                 ],
-            ],
-            "tick_id": tick_id,
-            "trigger": "scheduled",
-            "source_contract": {
-                "telemetry_truth_owner": "telemetry-ingest",
-                "lineage_truth_owner": "lineage-read",
-                "runtime_truth_owner": "runtime-manager",
-                "derived_only": True,
-                "emergency_control_chain_affected": False,
-            },
-            "evaluated_at": timestamp,
-        }
-        stored = store.put_evaluation(evaluation)
-        existing_evaluation_ids.add(evaluation_id)
-        created_evaluation_ids.append(stored["evaluation_id"])
-        evaluation_statuses.append(status)
+                "tick_id": tick_id,
+                "trigger": "scheduled",
+                "source_contract": {
+                    "telemetry_truth_owner": "telemetry-ingest",
+                    "lineage_truth_owner": "lineage-read",
+                    "runtime_truth_owner": "runtime-manager",
+                    "derived_only": True,
+                    "emergency_control_chain_affected": False,
+                },
+                "evaluated_at": timestamp,
+            }
+            stored = store.put_evaluation(evaluation)
+            existing_evaluation_ids.add(evaluation_id)
+            created_evaluation_ids.append(stored["evaluation_id"])
+            evaluation_statuses.append(status)
+            target_evaluation = stored
+
         lifecycle_state = _ensure_scheduled_lifecycle_append(
             summary=summary,
-            evaluation=stored,
+            evaluation=target_evaluation,
             telemetry_url=telemetry_url,
             timestamp=timestamp,
             timeout_seconds=dispatch_timeout(),
             evaluations=existing_evaluations,
         )
         record_lifecycle_append(binding_id, lifecycle_state)
-        if not dispatch_incidents:
-            continue
+        if dispatch_incidents:
+            incident_candidates.append((summary, target_evaluation, telemetry_event_ids))
 
+    for summary, evaluation, telemetry_event_ids in incident_candidates:
         report = _scheduled_drift_report(
             summary=summary,
-            evaluation=stored,
+            evaluation=evaluation,
             telemetry_event_ids=telemetry_event_ids,
             timestamp=timestamp,
         )
         if report is None:
             continue
+        existing_report = store.get_drift_report(
+            str(report["drift_report_id"]),
+            tenant_id=tenant_id,
+        )
+        report_to_dispatch = existing_report or report
+        drift_report_ids.append(str(report_to_dispatch["drift_report_id"]))
+        delivery = evaluation.get("incident_delivery")
+        if isinstance(delivery, dict) and delivery.get("status") == "delivered":
+            incident_id = str(delivery.get("incident_id") or "").strip()
+            if incident_id:
+                incident_ids.append(incident_id)
+            continue
         delivery_result = _dispatch_scheduled_drift_report(
-            report,
+            report_to_dispatch,
             timeout_seconds=dispatch_timeout(),
         )
-        drift_report_ids.append(str(delivery_result["drift_report_id"]))
-        stored["incident_delivery"] = {
+        evaluation["incident_delivery"] = {
             **delivery_result,
             "attempted_at": timestamp,
         }
-        store.put_evaluation(stored)
+        store.put_evaluation(evaluation)
         incident_id = str(delivery_result.get("incident_id") or "").strip()
         if incident_id:
             incident_ids.append(incident_id)

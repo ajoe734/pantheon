@@ -1,0 +1,116 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "RECONCILIATION-CORE-BUDGET-PRIORITY-20261011",
+  "title": "Prevent incident dispatch from starving canonical reconciliation terminals",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "base_sha": "5b65e984d5b65a5077c3026adcc67486eba81474",
+  "change_class": "corrective",
+  "net_prod_line_budget": 20,
+  "status": "pending_delivery",
+  "summary": "Fixes scheduled reconciliation shared-budget starvation where earlier incident dispatches consumed the 55s network budget, starving later valid canonical paper lifecycle appends and causing synthetic 504 retryable errors. Within _execute_scheduled_reconcile, canonical lifecycle evaluations and appends are prioritized to execute with their bounded budget before incident dispatches. In addition, duplicated new-evaluation and existing-evaluation incident dispatch paths are consolidated into a single post-lifecycle dispatch loop.",
+  "root_failure_reference": {
+    "root_id": "38176179301",
+    "binding_id": "rb-13664d522bc843c7942944ed9cf72c07",
+    "event_id": "3f894126-1162-5e40-bcaf-24d433b18b01",
+    "upstream_event_id": "49efe975-0d3a-5f98-9138-591acd7e52b5",
+    "error": "scheduled reconciliation SLA budget exhausted",
+    "http_status": 504,
+    "diagnosis": "Actual tick 2 had 43 summaries and 21 incident delivery errors; earlier slow incident calls consumed the shared 55s network budget, leaving zero budget for canonical lifecycle appends."
+  },
+  "acceptance_verification": [
+    {
+      "ac": "AC1",
+      "description": "Fix only proven original scheduler shared-budget starvation where earlier incidents consumed network budget before canonical terminals. Counter fixture reproduces starvation; root cause resolved by prioritizing core lifecycle append before incident dispatches.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC2",
+      "description": "Give canonical lifecycle appends bounded budget before incident dispatch within _execute_scheduled_reconcile; consolidate duplicate incident dispatch paths; keep SLA60, network max 5s, retries, and intervals unchanged; production net growth is -35 lines (budget <= 20 lines) in main.py only.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC3",
+      "description": "Preserve tenant isolation, position-before-terminal guard, real committed correlation identity, persisted deterministic append payload, visibility/order fence, and nonpaper/incomplete checks. Genuine lifecycle network timeouts still exhaust bounded budget truthfully. Incident idempotency and error state preserved.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC4",
+      "description": "Add regression test covering 43-summary cardinality (42 slow incidents + 1 paper position) where fast core capacity successfully sends and accepts canonical terminal, and same-tick retry produces zero duplicate appends or incident deliveries. Keep original negative deadline and timeout tests.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC5",
+      "description": "Run complete scheduler suite (35 passed), telemetry client and auth suites (36 passed), HTTP service suites (31 passed), store suite with Postgres loopback prerequisite (27 passed, 1 skipped), and hosted probe suite (115 passed, 1 skipped). Exactly 3 artifacts declared. Source evidence pending_delivery until review, CI, and merge.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC6",
+      "description": "Root remains sole hosted coordinator. Source changes and CI do not claim hosted or product completion. No VM, SSH, product API writes, deployment, or provider FULL from source worker. Clean task worktree on task/RECONCILIATION-CORE-BUDGET-PRIORITY-20261011.",
+      "verdict": "pending_delivery"
+    }
+  ],
+  "verification": [
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py",
+      "passed": 35,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest services/reconciliation-drift/test_telemetry_client.py services/reconciliation-drift/tests/test_telemetry_client_auth.py",
+      "passed": 36,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest services/reconciliation-drift/test_reconciliation_drift_http_service.py services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py",
+      "passed": 31,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_store.py",
+      "passed": 27,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 1,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest services/trade_journey/test_hosted_lifecycle_probe.py",
+      "passed": 115,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 1,
+      "exit_code": 0
+    }
+  ],
+  "declared_artifacts": [
+    "services/reconciliation-drift/main.py",
+    "services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py",
+    "docs/deployment/evidence/RECONCILIATION-CORE-BUDGET-PRIORITY-20261011/evidence.json"
+  ],
+  "diff_budget": {
+    "net_production_lines": -35,
+    "budget": 20,
+    "verdict": "pass",
+    "files": {
+      "production": [
+        "services/reconciliation-drift/main.py"
+      ],
+      "tests": [
+        "services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py"
+      ],
+      "evidence": [
+        "docs/deployment/evidence/RECONCILIATION-CORE-BUDGET-PRIORITY-20261011/evidence.json"
+      ]
+    }
+  }
+}

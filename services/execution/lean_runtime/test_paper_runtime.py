@@ -9,7 +9,7 @@ import urllib.request
 import uuid
 import unittest
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import ThreadingHTTPServer
 from unittest.mock import MagicMock, patch
 
@@ -2901,6 +2901,23 @@ class TestPaperRuntimeObservabilityEnvelope(unittest.TestCase):
         self.assertIsNone(snap["queue_lag_ms"])
         self.assertIsNone(snap["paper_state"]["queue_lag_ms"])
 
+        # Future timestamp anomaly: queue lag remains None / degraded
+        future_iso = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+        ev_future = OrderEvent(
+            event_id=str(uuid.uuid4()),
+            event_type="signal_generation",
+            symbol="2330.TW",
+            quantity=100,
+            fill_price=0.0,
+            action="BUY",
+            metadata={"enqueued_at": future_iso},
+        )
+        service._handle_order_event(ev_future)
+        self.assertIsNone(service._observed_queue_lag_ms)
+        snap_future = service.snapshot()
+        self.assertIsNone(snap_future["queue_lag_ms"])
+        self.assertIsNone(snap_future["paper_state"]["queue_lag_ms"])
+
     def test_telemetry_emitter_records_delivery_lag(self):
         identity = replace(self._identity(), telemetry_url="http://telemetry.test")
         emitter = RuntimeTelemetryEmitter(identity, _FakeBindingResolver(self._binding()))
@@ -3001,6 +3018,61 @@ class TestPaperRuntimeObservabilityEnvelope(unittest.TestCase):
         self.assertIsNotNone(service._observed_queue_lag_ms)
         self.assertGreaterEqual(service._observed_queue_lag_ms, 0)
         self.assertEqual(service.snapshot()["queue_lag_ms"], service._observed_queue_lag_ms)
+
+    def test_real_store_to_signal_consumer_to_paper_runtime_measured_heartbeat_and_snapshot(self):
+        sig = {
+            "signal_id": f"signal-real-{uuid.uuid4().hex[:8]}",
+            "version": "1.0",
+            "strategy_id": "strategy-paper",
+            "binding_id": "bind-test",
+            "runtime_id": "rt-test",
+            "timestamp": datetime.now(timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z"),
+            "symbol": "AAPL.US",
+            "action": "BUY",
+            "direction": "LONG",
+            "quantity": 10,
+            "quantity_type": "SHARES",
+            "metadata": {"source": "unit_test"},
+        }
+        # Verify initial signal has no manual enqueue metadata
+        self.assertNotIn("enqueued_at", sig)
+        self.assertNotIn("causal_queue_receipt", sig)
+
+        store = InMemoryPendingSignalStore([sig])
+        telemetry = _FakeTelemetryEmitter()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            outbox_path = str(Path(tmp_dir) / "lifecycle-outbox.json")
+            with patch.dict(os.environ, {"PANTHEON_LIFECYCLE_OUTBOX_PATH": outbox_path}):
+                service = PaperRuntimeService(
+                    store=store,
+                    identity=self._identity(),
+                    runtime_manager_client=_FakeRuntimeManagerClient([self._binding()]),
+                    telemetry_emitter=telemetry,
+                    poll_interval_seconds=3600,
+                    max_batch_size=10,
+                )
+
+                # Before drain: metric remains None (not fabricated zero)
+                snap0 = service.snapshot()
+                self.assertIsNone(snap0["queue_lag_ms"])
+                self.assertIsNone(snap0["paper_state"]["queue_lag_ms"])
+
+                time.sleep(0.005)
+                snap1 = service.drain_once()
+
+                self.assertIsNotNone(service._observed_queue_lag_ms)
+                self.assertGreaterEqual(service._observed_queue_lag_ms, 0)
+                self.assertEqual(snap1["queue_lag_ms"], service._observed_queue_lag_ms)
+                self.assertEqual(snap1["paper_state"]["queue_lag_ms"], service._observed_queue_lag_ms)
+
+                # Heartbeat telemetry reflects observed queue lag
+                heartbeat_events = [ev for ev in telemetry.events if ev["event_type"] == "heartbeat"]
+                self.assertTrue(len(heartbeat_events) >= 1)
+                heartbeat_meta = heartbeat_events[-1].get("metadata") or {}
+                self.assertEqual(heartbeat_meta.get("queue_lag_ms"), service._observed_queue_lag_ms)
 
     def test_emitter_base_metadata_omits_unverified_or_conflicting_bridge(self):
         identity = self._identity()
