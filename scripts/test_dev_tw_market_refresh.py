@@ -305,6 +305,25 @@ if args[0] == "compose":
         sys.exit(0)
     elif sub[0] == "ps":
         target = sub[-1]
+        custom_containers = state.get("compose_service_containers", {{}}).get(target)
+        if custom_containers is not None:
+            status_filter = None
+            if "--status" in sub:
+                status_filter = sub[sub.index("--status") + 1]
+            is_all = "-a" in sub or "--all" in sub
+            matching = []
+            for c in custom_containers:
+                c_status = c.get("status", "running")
+                if status_filter:
+                    if c_status == status_filter:
+                        matching.append(c["id"])
+                elif is_all:
+                    matching.append(c["id"])
+                elif c_status == "running":
+                    matching.append(c["id"])
+            for mid in matching:
+                print(mid)
+            sys.exit(0)
         print(f"cid-{{target}}")
         sys.exit(0)
     elif sub[0] == "images":
@@ -354,6 +373,32 @@ elif args[0] == "start":
 elif args[0] == "inspect":
     fmt = args[2] if len(args) > 2 and args[1] == "--format" else ""
     target = args[-1]
+    if len(target.splitlines()) > 1:
+        print("Error: No such object: " + str(target), file=sys.stderr)
+        sys.exit(1)
+    container_map = {{}}
+    for svc_list in state.get("compose_service_containers", {{}}).values():
+        for c in svc_list:
+            container_map[c["id"]] = c
+            if "name" in c:
+                container_map[c["name"].lstrip("/")] = c
+    if target in container_map:
+        c = container_map[target]
+        if "{{.Image}}" in fmt:
+            print(c.get("image", state.get("image_id", "sha256:" + "a" * 64)))
+            sys.exit(0)
+        elif "Config.Env" in fmt:
+            if "env" in c:
+                print(json.dumps(c["env"]))
+            elif c.get("status") == "running":
+                print(json.dumps(["PANTHEON_TENANT_ID=tenant-dev", "PANTHEON_ENV=dev", "GIT_SHA=abc123", *state.get("steady_lease_env", ["SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS=1"])]))
+            else:
+                print(json.dumps([]))
+            sys.exit(0)
+        elif "State.Status" in fmt:
+            log_event("docker_inspect_status", target=target)
+            print(c.get("status", "running"))
+            sys.exit(0)
     if target == "pantheon-source-ingest-agora-projector:latest":
         if not state.get("built_projector_image_present", True):
             sys.stderr.write("Error: No such image: " + target + "\\n")
@@ -1788,6 +1833,184 @@ def test_bounded_refresh_launch_failure_restores_steady_scheduler_and_removes_bo
     ]
     assert restore_ups, "Runtime must be restored to egress deny on launch failure cleanup"
     assert restore_ups[-1]["env"].get("SOURCE_INGEST_CONTROLLER_MODE") == "reconcile_only"
+
+
+def _steady_containers_for_case(case: str) -> list[dict[str, Any]]:
+    if case == "positive":
+        return [
+            {
+                "id": "0d124a6305c2800d280fcb5751c95bfa25eb695d138d26a21bd343b6e62542c5",
+                "name": "/pantheon-bounded-refresh-source-ingest-scheduler",
+                "status": "exited",
+            },
+            {
+                "id": "847ed9fb5e7ab6722f7bf65d0525a0e27dd90437deddd496c5965904f666b565",
+                "name": "/pantheon-source-ingest-scheduler-1",
+                "status": "running",
+                "env": [
+                    "PANTHEON_TENANT_ID=tenant-dev",
+                    "PANTHEON_ENV=dev",
+                    "GIT_SHA=abc123",
+                    "SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS=1",
+                ],
+            },
+        ]
+    if case == "stopped_only":
+        return [
+            {
+                "id": "0d124a6305c2800d280fcb5751c95bfa25eb695d138d26a21bd343b6e62542c5",
+                "name": "/pantheon-bounded-refresh-source-ingest-scheduler",
+                "status": "exited",
+            }
+        ]
+    if case == "ambiguous_live":
+        return [
+            {
+                "id": "847ed9fb5e7ab6722f7bf65d0525a0e27dd90437deddd496c5965904f666b565",
+                "status": "running",
+                "env": [
+                    "PANTHEON_TENANT_ID=tenant-dev",
+                    "PANTHEON_ENV=dev",
+                    "GIT_SHA=abc123",
+                ],
+            },
+            {
+                "id": "1111111111111111111111111111111111111111111111111111111111111111",
+                "status": "running",
+                "env": [
+                    "PANTHEON_TENANT_ID=tenant-dev",
+                    "PANTHEON_ENV=dev",
+                    "GIT_SHA=abc123",
+                ],
+            },
+        ]
+    raise ValueError(f"Unknown case: {case}")
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["positive", "stopped_only", "ambiguous_live"],
+)
+def test_bounded_refresh_steady_container_selection(tmp_path: Path, case: str):
+    # Parameterized tests sharing duplicate setup across steady selection cases:
+    # - positive: running steady scheduler alongside stopped bounded containers; running status filter
+    #   selects only steady container, reads steady env, runs sequentially, validates real readback,
+    #   restarts steady scheduler, and leaves old one-shots stopped.
+    # - stopped_only: only stopped bounded containers exist; running query returns empty, deploy-time
+    #   values fail closed before mutation, and old one-shots are not started.
+    # - ambiguous_live: multiple running steady containers exist; running query returns multiline IDs,
+    #   deploy-time lookup fails closed before mutation without first-ID fallback, and no containers mutate.
+    scheduler_containers = _steady_containers_for_case(case)
+    initial_state: dict[str, Any] = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "built_projector_image_id": "sha256:0fedd6c77271dc29bf6425461cac284df85a6454d656e363d67646ec9ee24b2e",
+        "projector_image_sha": "abc123",
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+        "compose_service_containers": {
+            "source-ingest-scheduler": scheduler_containers,
+            "source-ingest-agora-projector": [
+                {
+                    "id": "f9e6c68db2cc6202b23878fa3c6615fa873ff3c49f446bfdeb523d6c078387cd",
+                    "name": "/pantheon-bounded-refresh-source-ingest-agora-projector",
+                    "status": "exited",
+                }
+            ],
+        },
+    }
+    if case == "positive":
+        # Positive steady selection reaches real bounded execution and exercises
+        # actual original receipt/run/source readback validation via _deploy_script_with_readback.
+        # Testing real binding rejection where Agora projection does not bind new receipt/run/source
+        # proves entry reaches source, waits Source before Agora, validates readback rejection,
+        # cleanly restarts only steady scheduler, and leaves old one-shots stopped.
+        initial_state["agora_projection"] = {
+            "row1": {
+                "connectorId": "tw-twse-tpex-official-market",
+                "ingestRunId": "ingest-e53a86463995",
+                "sourceId": "tw-official:tw_price_daily:TWSE:2330:90e323e6754e2e9e",
+            }
+        }
+    bin_dir, state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+
+    proc = subprocess.run(
+        ["bash", str(_deploy_script_with_readback(tmp_path)), "--refresh-only", "--force", "--output", str(output_file)],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    events = [json.loads(line) for line in events_file.read_text().splitlines() if line] if events_file.exists() else []
+
+    if case == "positive":
+        assert proc.returncode != 0, f"Expected readback binding rejection to fail closed, got 0:\n{proc.stdout}"
+        assert "steady_scheduler_deploy_values_missing" not in proc.stderr
+        assert "Agora projection does not bind the new receipt/run/source" in proc.stderr
+        assert not output_file.exists() or json.loads(output_file.read_text()).get("status") != "completed"
+
+        # Verify stopped containers: only steady scheduler 847ed9... was stopped, NOT 0d124a...
+        stop_events = [e for e in events if e.get("event") == "docker_stop"]
+        assert stop_events, "Steady scheduler must be stopped before bounded run"
+        stopped_ids = [cid for e in stop_events for cid in e.get("names", [])]
+        assert "847ed9fb5e7ab6722f7bf65d0525a0e27dd90437deddd496c5965904f666b565" in stopped_ids
+        assert "0d124a6305c2800d280fcb5751c95bfa25eb695d138d26a21bd343b6e62542c5" not in stopped_ids
+        assert "f9e6c68db2cc6202b23878fa3c6615fa873ff3c49f446bfdeb523d6c078387cd" not in stopped_ids
+
+        # Verify sequential runs: scheduler ran before projector
+        runs = [e for e in events if e.get("event") == "compose_run"]
+        assert len(runs) == 2
+        assert "source-ingest-scheduler" in runs[0]["args"]
+        assert "source-ingest-agora-projector" in runs[1]["args"]
+
+        # Verify restarted containers: ONLY steady scheduler 847ed9... was restarted, NOT 0d124a...
+        start_events = [e for e in events if e.get("event") == "docker_start"]
+        assert start_events, "Steady scheduler must be restarted on completion"
+        started_ids = [cid for e in start_events for cid in e.get("names", [])]
+        assert "847ed9fb5e7ab6722f7bf65d0525a0e27dd90437deddd496c5965904f666b565" in started_ids
+        assert "0d124a6305c2800d280fcb5751c95bfa25eb695d138d26a21bd343b6e62542c5" not in started_ids
+        assert "f9e6c68db2cc6202b23878fa3c6615fa873ff3c49f446bfdeb523d6c078387cd" not in started_ids
+
+        # Verify egress restored to deny
+        restore_ups = [
+            e for e in events
+            if e.get("event") == "compose_up"
+            and "source-ingest" in e.get("services", [])
+            and e["env"].get("PANTHEON_EXTERNAL_EGRESS") == "deny"
+        ]
+        assert restore_ups, "Runtime must be restored to egress deny"
+
+    elif case == "stopped_only":
+        assert proc.returncode != 0, f"Expected stopped-only steady scheduler to fail closed, got 0:\n{proc.stdout}"
+        assert "steady_scheduler_deploy_values_missing" in proc.stderr
+        assert not output_file.exists() or json.loads(output_file.read_text()).get("status") != "completed"
+
+        # Old stopped container must NOT be started
+        start_events = [e for e in events if e.get("event") == "docker_start"]
+        started_ids = [cid for e in start_events for cid in e.get("names", [])]
+        assert "0d124a6305c2800d280fcb5751c95bfa25eb695d138d26a21bd343b6e62542c5" not in started_ids
+        # No containers stopped
+        assert not any(e.get("event") == "docker_stop" for e in events)
+        # No compose run
+        assert not any(e.get("event") == "compose_run" for e in events)
+
+    elif case == "ambiguous_live":
+        assert proc.returncode != 0, f"Expected ambiguous live identity to fail closed, got 0:\n{proc.stdout}"
+        assert "steady_scheduler_deploy_values_missing" in proc.stderr
+        assert not output_file.exists() or json.loads(output_file.read_text()).get("status") != "completed"
+
+        # No containers stopped
+        assert not any(e.get("event") == "docker_stop" for e in events)
+        # No containers started
+        assert not any(e.get("event") == "docker_start" for e in events)
+        # No compose run
+        assert not any(e.get("event") == "compose_run" for e in events)
+
 
 
 

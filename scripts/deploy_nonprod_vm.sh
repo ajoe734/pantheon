@@ -2122,7 +2122,7 @@ execute_bounded_source_refresh_entrypoint() {
   # Deploy-time values (tenant, GIT_SHA, ...) only exist on the steady scheduler container.
   local steady_id steady_scheduler_env; steady_ids=()
   for bounded_service in "${bounded_services[@]}"; do
-    steady_id="$(docker compose -p pantheon -f docker-compose.yml ps -a -q "${bounded_service}" 2>/dev/null || true)"
+    steady_id="$(docker compose -p pantheon -f docker-compose.yml ps --status running -q "${bounded_service}" 2>/dev/null || true)"
     [[ -n "${steady_id}" ]] && steady_ids+=("${steady_id}")
   done
   steady_scheduler_env="$(docker inspect --format '{{json .Config.Env}}' "${steady_ids[0]:-}" 2>/dev/null || true)"
