@@ -3813,6 +3813,7 @@ def test_prebootstrap_capture_not_attempted_without_worktree():
         {"FAKE_CAPTURE_OUTPUT": "-5\n"},
         {"FAKE_CAPTURE_OUTPUT": ""},
         {"FAKE_CAPTURE_OUTPUT": "5264951\n5269000\n"},
+        {"FAKE_CAPTURE_OUTPUT": "5264\r951\n"},
     ],
 )
 def test_prebootstrap_capture_failure_aborts_bootstrap_and_keeps_diagnostics_path(extra):
