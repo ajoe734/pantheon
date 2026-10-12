@@ -584,5 +584,189 @@ class ApproveDeploymentDeploymentAuthorityTests(unittest.TestCase):
         )
 
 
+class RuntimeBindingsViewerReadAndTenancyTests(unittest.TestCase):
+    """
+    Acceptance tests for evaluator / viewer read-only access and strict tenancy gating on:
+    - GET /api/runtime-bindings
+    - GET /api/runtime-bindings/<binding_id>
+    """
+
+    def setUp(self):
+        self.env = HardeningEnvScope().__enter__()
+        os.environ["PANTHEON_RUNTIME_AUTH_MODE"] = "strict"
+        os.environ["PANTHEON_RUNTIME_JWT_SECRET"] = "runtime-test-secret-at-least-32-chars-long!"
+        self.jwt_secret = "runtime-test-secret-at-least-32-chars-long!"
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.store_path = Path(self.tempdir.name) / "bindings.json"
+        self.command_state_path = Path(self.tempdir.name) / "commands.json"
+        self.main = _load_main_module(self.store_path, self.command_state_path)
+        self.client = self.main.app.test_client()
+
+        # Seed bindings in store: tenant-dev, tenant-other, and tenantless
+        from services.runtime_manager.runtime_binding import RuntimeBinding
+        service = self.main._get_service()
+        self.binding_dev = RuntimeBinding(
+            binding_id="rtb-dev-001",
+            runtime_id="rt-dev-001",
+            capital_pool_id="pool-dev-001",
+            artifact_id="artifact-dev",
+            artifact_version="1.0.0",
+            deployment_mode="paper",
+            execution_mode="paper",
+            effective_at="2026-05-01T00:00:00Z",
+            status="active",
+            plan_id="plan-dev-001",
+            persona_capital_binding_id="pcb-dev-001",
+            metadata={"tenant_id": "tenant-dev"},
+        )
+        self.binding_other = RuntimeBinding(
+            binding_id="rtb-other-001",
+            runtime_id="rt-other-001",
+            capital_pool_id="pool-other-001",
+            artifact_id="artifact-other",
+            artifact_version="1.0.0",
+            deployment_mode="paper",
+            execution_mode="paper",
+            effective_at="2026-05-01T00:00:00Z",
+            status="active",
+            plan_id="plan-other-001",
+            persona_capital_binding_id="pcb-other-001",
+            metadata={"tenant_id": "tenant-other"},
+        )
+        self.binding_tenantless = RuntimeBinding(
+            binding_id="rtb-tenantless-001",
+            runtime_id="rt-tenantless-001",
+            capital_pool_id="pool-tenantless-001",
+            artifact_id="artifact-tenantless",
+            artifact_version="1.0.0",
+            deployment_mode="paper",
+            execution_mode="paper",
+            effective_at="2026-05-01T00:00:00Z",
+            status="active",
+            plan_id="plan-tenantless-001",
+            persona_capital_binding_id="pcb-tenantless-001",
+            metadata={},
+        )
+        service.store._bindings[self.binding_dev.binding_id] = self.binding_dev
+        service.store._bindings[self.binding_other.binding_id] = self.binding_other
+        service.store._bindings[self.binding_tenantless.binding_id] = self.binding_tenantless
+        service.store._save()
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+        self.env.__exit__(None, None, None)
+
+    def _token(self, roles=None, tenant_id="tenant-dev", allowed_tenants=None, **claims):
+        payload = {
+            "sub": "test-viewer",
+            "roles": roles or ["viewer"],
+            "exp": int(time.time()) + 3600,
+        }
+        if tenant_id is not None:
+            payload["tenant_id"] = tenant_id
+        if allowed_tenants is not None:
+            payload["allowed_tenants"] = allowed_tenants
+        payload.update(claims)
+        return encode_jwt_hs256(payload, secret=self.jwt_secret)
+
+    def test_viewer_token_lists_only_matching_tenant_bindings(self):
+        token = self._token(roles=["viewer"], tenant_id="tenant-dev", allowed_tenants=["tenant-dev"])
+        response = self.client.get(
+            "/api/runtime-bindings",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        data = response.get_json()
+        self.assertEqual(data["count"], 1)
+        self.assertEqual(len(data["bindings"]), 1)
+        self.assertEqual(data["bindings"][0]["binding_id"], "rtb-dev-001")
+        self.assertEqual(data["bindings"][0]["metadata"]["tenant_id"], "tenant-dev")
+
+    def test_viewer_token_gets_binding_by_id_matching_vs_foreign_vs_tenantless(self):
+        token = self._token(roles=["viewer"], tenant_id="tenant-dev", allowed_tenants=["tenant-dev"])
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # 1. Matching tenant binding returns 200
+        res_match = self.client.get("/api/runtime-bindings/rtb-dev-001", headers=headers)
+        self.assertEqual(res_match.status_code, 200)
+        self.assertEqual(res_match.get_json()["binding_id"], "rtb-dev-001")
+
+        # 2. Foreign tenant binding returns 404
+        res_foreign = self.client.get("/api/runtime-bindings/rtb-other-001", headers=headers)
+        self.assertEqual(res_foreign.status_code, 404)
+        self.assertEqual(res_foreign.get_json()["error"]["code"], "NOT_FOUND")
+
+        # 3. Tenantless binding returns 404
+        res_tenantless = self.client.get("/api/runtime-bindings/rtb-tenantless-001", headers=headers)
+        self.assertEqual(res_tenantless.status_code, 404)
+        self.assertEqual(res_tenantless.get_json()["error"]["code"], "NOT_FOUND")
+
+    def test_evaluator_viewer_token_reads_bindings_succeeds(self):
+        token = self._token(
+            roles=["viewer"],
+            tenant_id="tenant-dev",
+            allowed_tenants=["tenant-dev"],
+            sub="pantheon-dev-persona-evaluator-bff-reader",
+            service="pantheon-dev-persona-evaluator-bff-reader",
+            scope="pantheon:dev-owner-read",
+        )
+        response = self.client.get(
+            "/api/runtime-bindings",
+            headers={"Authorization": f"Bearer {token}", "X-Pantheon-Service": "control-plane-bff"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["count"], 1)
+
+    def test_viewer_token_missing_tenant_claims_rejected(self):
+        token = self._token(roles=["viewer"], tenant_id=None, allowed_tenants=None)
+        response = self.client.get(
+            "/api/runtime-bindings",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.get_json()["error"]["code"], "TENANT_CLAIM_REQUIRED")
+
+    def test_viewer_token_foreign_tenant_header_rejected(self):
+        token = self._token(roles=["viewer"], tenant_id="tenant-dev", allowed_tenants=["tenant-dev"])
+        response = self.client.get(
+            "/api/runtime-bindings",
+            headers={"Authorization": f"Bearer {token}", "X-Tenant-Id": "tenant-other"},
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.get_json()["error"]["code"], "TENANT_SCOPE_FORBIDDEN")
+
+    def test_viewer_token_conflicting_tenant_headers_rejected(self):
+        token = self._token(roles=["viewer"], tenant_id="tenant-dev", allowed_tenants=["tenant-dev"])
+        response = self.client.get(
+            "/api/runtime-bindings",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Tenant-Id": "tenant-dev",
+                "X-Tenant": "tenant-other",
+            },
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error"]["code"], "TENANT_HEADER_CONFLICT")
+
+    def test_viewer_token_cannot_execute_mutations(self):
+        token = self._token(roles=["viewer"], tenant_id="tenant-dev", allowed_tenants=["tenant-dev"])
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # 1. POST /api/runtime-bindings/<id>/retire returns 403
+        res_retire = self.client.post("/api/runtime-bindings/rtb-dev-001/retire", headers=headers)
+        self.assertEqual(res_retire.status_code, 403)
+        self.assertEqual(res_retire.get_json()["error"]["code"], "AUTH_FORBIDDEN")
+
+        # 2. POST /api/runtimes/deploy returns 403
+        res_deploy = self.client.post("/api/runtimes/deploy", headers=headers, json=_valid_deploy_request())
+        self.assertEqual(res_deploy.status_code, 403)
+        self.assertEqual(res_deploy.get_json()["error"]["code"], "AUTH_FORBIDDEN")
+
+        # Verify underlying binding status unchanged
+        stored = self.main._get_service().get("rtb-dev-001")
+        self.assertEqual(stored.status, "active")
+
+
 if __name__ == "__main__":
     unittest.main()
+

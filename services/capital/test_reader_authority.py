@@ -521,3 +521,205 @@ def test_isolated_run_deploy_authority_against_capital_app(capital_reader_env, m
         assert authority_report["capital_pool_sha256"].startswith("sha256:")
         assert authority_report["capital_admissibility_sha256"].startswith("sha256:")
         assert authority_report["persona_capital_binding_sha256"].startswith("sha256:")
+
+
+def test_evaluator_viewer_token_read_pool_and_admissibility_succeeds(capital_reader_env):
+    """
+    Validates that original evaluator token (viewer role, service=pantheon-dev-persona-evaluator-bff-reader)
+    forwarded through control-plane-bff succeeds for GET pool and bindings admissibility on its tenant.
+    """
+    client, module, _ = capital_reader_env
+    _seed_pool_and_binding(client, "tenant-alpha")
+
+    evaluator_token = encode_jwt_hs256(
+        {
+            "sub": "pantheon-dev-persona-evaluator-bff-reader",
+            "service": "pantheon-dev-persona-evaluator-bff-reader",
+            "roles": ["viewer"],
+            "allowed_tenants": ["tenant-alpha"],
+            "tenant_id": "tenant-alpha",
+            "scope": "pantheon:dev-owner-read",
+            "exp": int(time.time()) + 3600,
+        },
+        secret=JWT_SECRET,
+    )
+    evaluator_headers = {
+        "Authorization": f"Bearer {evaluator_token}",
+        "X-Pantheon-Service": "control-plane-bff",
+        "X-Tenant-Id": "tenant-alpha",
+    }
+
+    # 1. Read capital pool succeeds
+    res_pool = client.get("/api/capital-pools/pool-alpha-1", headers=evaluator_headers)
+    assert res_pool.status_code == 200, res_pool.text
+    pool_data = res_pool.json()
+    assert pool_data["pool_id"] == "pool-alpha-1"
+    assert pool_data["tenant_id"] == "tenant-alpha"
+    assert pool_data["status"] == "active"
+
+    # 2. Read bindings admissibility succeeds
+    res_admissibility = client.get(
+        "/api/bindings/admissibility",
+        params={
+            "persona_id": "persona-alpha",
+            "capital_pool_id": "pool-alpha-1",
+            "target_stage": "paper",
+        },
+        headers=evaluator_headers,
+    )
+    assert res_admissibility.status_code == 200, res_admissibility.text
+    admissibility_data = res_admissibility.json()
+    assert admissibility_data["permitted"] is True
+    assert admissibility_data["binding_id"] == "binding-alpha-1"
+
+    # 3. Read binding by ID succeeds
+    res_binding = client.get("/api/bindings/binding-alpha-1", headers=evaluator_headers)
+    assert res_binding.status_code == 200, res_binding.text
+    assert res_binding.json()["binding_id"] == "binding-alpha-1"
+
+    # 4. Cross-tenant read is rejected
+    cross_headers = dict(evaluator_headers, **{"X-Tenant-Id": "tenant-beta"})
+    res_cross = client.get("/api/capital-pools/pool-alpha-1", headers=cross_headers)
+    assert res_cross.status_code == 403
+    assert res_cross.json()["error"]["code"] == "TENANT_SCOPE_FORBIDDEN"
+
+
+def test_evaluator_viewer_token_mutation_is_rejected(capital_reader_env):
+    """
+    Validates that evaluator viewer token attempting any mutation is denied with 403.
+    Service mismatch (pantheon-dev-persona-evaluator-bff-reader != control-plane-bff on mutation)
+    and viewer role lack of mutation privilege prevent write effects.
+    """
+    client, module, _ = capital_reader_env
+    _seed_pool_and_binding(client, "tenant-alpha")
+
+    evaluator_token = encode_jwt_hs256(
+        {
+            "sub": "pantheon-dev-persona-evaluator-bff-reader",
+            "service": "pantheon-dev-persona-evaluator-bff-reader",
+            "roles": ["viewer"],
+            "allowed_tenants": ["tenant-alpha"],
+            "tenant_id": "tenant-alpha",
+            "scope": "pantheon:dev-owner-read",
+            "exp": int(time.time()) + 3600,
+        },
+        secret=JWT_SECRET,
+    )
+    evaluator_headers = {
+        "Authorization": f"Bearer {evaluator_token}",
+        "X-Pantheon-Service": "control-plane-bff",
+        "X-Tenant-Id": "tenant-alpha",
+    }
+
+    # POST /api/capital-pools is rejected
+    res_post_pool = client.post(
+        "/api/capital-pools",
+        json={
+            "actor_id": "pantheon-dev-persona-evaluator-bff-reader",
+            "actor_role": "viewer",
+            "pool_id": "pool-evaluator-forbidden",
+            "name": "Forbidden Pool",
+            "owner_id": "fund",
+            "owner_type": "fund",
+            "approval_decision_id": "app",
+        },
+        headers=evaluator_headers,
+    )
+    assert res_post_pool.status_code == 403
+    assert res_post_pool.json()["error"]["code"] == "ACTOR_SERVICE_MISMATCH"
+
+    # POST /api/bindings is rejected
+    res_post_bind = client.post(
+        "/api/bindings",
+        json={
+            "actor_id": "pantheon-dev-persona-evaluator-bff-reader",
+            "actor_role": "viewer",
+            "binding_id": "bind-evaluator-forbidden",
+            "persona_id": "persona-evaluator",
+            "capital_pool_id": "pool-alpha-1",
+            "role": "live_owner",
+            "allowed_deployment_scope": "paper",
+        },
+        headers=evaluator_headers,
+    )
+    assert res_post_bind.status_code == 403
+    assert res_post_bind.json()["error"]["code"] == "ACTOR_SERVICE_MISMATCH"
+
+
+def test_forwarded_user_jwt_mutation_positive_and_service_mismatch_negative(capital_reader_env):
+    """
+    Validates that:
+    1. A valid ordinary user JWT (sub, roles, allowed_tenants, but no service claim)
+       forwarded by control-plane-bff succeeds for legitimate mutations.
+    2. A token with an explicit mismatched service claim is rejected with ACTOR_SERVICE_MISMATCH.
+    """
+    client, module, _ = capital_reader_env
+    _seed_pool_and_binding(client, "tenant-alpha")
+
+    # 1. Ordinary user JWT without explicit service claim
+    user_token = encode_jwt_hs256(
+        {
+            "sub": "operator-alice",
+            "roles": ["operator", "capital.admin"],
+            "allowed_tenants": ["tenant-alpha"],
+            "tenant_id": "tenant-alpha",
+            "exp": int(time.time()) + 3600,
+        },
+        secret=JWT_SECRET,
+    )
+    user_headers = {
+        "Authorization": f"Bearer {user_token}",
+        "X-Pantheon-Service": "control-plane-bff",
+        "X-Tenant-Id": "tenant-alpha",
+    }
+
+    res_user_pool = client.post(
+        "/api/capital-pools",
+        json={
+            "actor_id": "operator-alice",
+            "actor_role": "capital.admin",
+            "pool_id": "pool-alice-1",
+            "name": "Alice Pool",
+            "owner_id": "fund-alice",
+            "owner_type": "fund",
+            "approval_decision_id": "appr-alice",
+            "risk_policy_ref": "risk-alice",
+        },
+        headers=user_headers,
+    )
+    assert res_user_pool.status_code == 201, res_user_pool.text
+    assert res_user_pool.json()["pool_id"] == "pool-alice-1"
+
+    # 2. Service JWT with explicit mismatched service claim
+    mismatched_service_token = encode_jwt_hs256(
+        {
+            "sub": "rogue-service",
+            "service": "rogue-service",
+            "roles": ["operator", "capital.admin"],
+            "allowed_tenants": ["tenant-alpha"],
+            "tenant_id": "tenant-alpha",
+            "exp": int(time.time()) + 3600,
+        },
+        secret=JWT_SECRET,
+    )
+    mismatched_headers = {
+        "Authorization": f"Bearer {mismatched_service_token}",
+        "X-Pantheon-Service": "control-plane-bff",
+        "X-Tenant-Id": "tenant-alpha",
+    }
+    res_mismatched = client.post(
+        "/api/capital-pools",
+        json={
+            "actor_id": "rogue-service",
+            "actor_role": "capital.admin",
+            "pool_id": "pool-rogue-1",
+            "name": "Rogue Pool",
+            "owner_id": "fund-rogue",
+            "owner_type": "fund",
+            "approval_decision_id": "appr-rogue",
+        },
+        headers=mismatched_headers,
+    )
+    assert res_mismatched.status_code == 403
+    assert res_mismatched.json()["error"]["code"] == "ACTOR_SERVICE_MISMATCH"
+

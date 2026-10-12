@@ -132,6 +132,7 @@ from promotion_authority import (
 
 # Make sibling repo modules importable when this file runs as main.
 from services.runtime_auth_inbound import (  # noqa: E402
+    AuthError,
     get_auth_context,
     has_claim_bound_mfa,
     require_authn,
@@ -280,6 +281,84 @@ def _stamp_parent_tenant(body: dict, metadata_key: str) -> None:
 _OPERATOR_ROLES = ("operator", "admin", "approver", "reviewer", "risk_owner")
 _APPROVER_ROLES = ("approver", "admin", "risk_owner")
 _INCIDENT_ROLES = ("operator", "admin", "risk_owner")
+_BINDING_READ_ROLES = (*_OPERATOR_ROLES, "viewer")
+
+_TENANT_CLAIM_KEYS = (
+    "allowed_tenants",
+    "allowedTenants",
+    "tenant_ids",
+    "tenantIds",
+    "tenants",
+    "tenant_id",
+    "tenantId",
+    "tenant.id",
+    "tid",
+    "org_id",
+)
+
+
+def _resolve_binding_read_tenant(ctx: Any) -> Optional[str]:
+    """Validate tenant authority for binding reads.
+
+    Viewer callers are admitted ONLY with verified admitted tenant before private access.
+    Foreign/tenantless rows and missing/ambiguous/foreign claims deny.
+    """
+    hdr_candidates = [
+        request.headers.get("X-Tenant-Id", "").strip(),
+        request.headers.get("X-Tenant", "").strip(),
+        request.headers.get("X-Pantheon-Tenant", "").strip(),
+    ]
+    present_hdrs = {h for h in hdr_candidates if h}
+    if len(present_hdrs) > 1:
+        raise AuthError("TENANT_HEADER_CONFLICT", "Conflicting tenant headers provided", 400)
+    req_tenant = next(iter(present_hdrs)) if present_hdrs else ""
+
+    is_viewer = ctx is not None and ctx.has_role("viewer") and not ctx.has_role(*_OPERATOR_ROLES)
+
+    claims = dict(ctx.claims) if (ctx and getattr(ctx, "claims", None)) else {}
+    allowed_tenants: list[str] = []
+    for key in _TENANT_CLAIM_KEYS:
+        val = claims.get(key)
+        if val is None:
+            continue
+        if isinstance(val, str):
+            allowed_tenants.extend([p.strip() for p in val.split(",") if p.strip()])
+        elif isinstance(val, (list, tuple, set, frozenset)):
+            for item in val:
+                clean = str(item or "").strip()
+                if clean:
+                    allowed_tenants.append(clean)
+        elif isinstance(val, dict):
+            for k in ("id", "tenant_id", "tenantId"):
+                if clean := str(val.get(k) or "").strip():
+                    allowed_tenants.append(clean)
+
+    seen: set[str] = set()
+    deduped_allowed: list[str] = []
+    for t in allowed_tenants:
+        if t not in seen:
+            seen.add(t)
+            deduped_allowed.append(t)
+    allowed_tenants = deduped_allowed
+
+    if is_viewer:
+        if not allowed_tenants:
+            raise AuthError("TENANT_CLAIM_REQUIRED", "Verified caller token does not contain tenant authority", 403)
+        if req_tenant:
+            if "*" not in allowed_tenants and req_tenant not in allowed_tenants:
+                raise AuthError("TENANT_SCOPE_FORBIDDEN", f"Requested tenant {req_tenant!r} is outside the verified caller scope", 403)
+            return req_tenant
+        else:
+            concrete = [t for t in allowed_tenants if t != "*"]
+            if len(concrete) == 1:
+                return concrete[0]
+            raise AuthError("TENANT_AMBIGUOUS", "Ambiguous or missing tenant in caller scope", 403)
+
+    if req_tenant:
+        if allowed_tenants and "*" not in allowed_tenants and req_tenant not in allowed_tenants:
+            raise AuthError("TENANT_SCOPE_FORBIDDEN", f"Requested tenant {req_tenant!r} is outside the verified caller scope", 403)
+        return req_tenant
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -584,9 +663,15 @@ def promote_runtime_binding(binding_id):
 
 
 @app.route("/api/runtime-bindings", methods=["GET"])
-@require_authn(roles=_OPERATOR_ROLES)
+@require_authn(roles=_BINDING_READ_ROLES)
 def list_bindings():
     """List RuntimeBindings, optionally filtered by pool_id or plan_id."""
+    ctx = get_auth_context()
+    try:
+        admitted_tenant = _resolve_binding_read_tenant(ctx)
+    except AuthError as exc:
+        return jsonify({"error": {"code": exc.code, "message": exc.message}}), exc.status_code
+
     pool_id = request.args.get("pool_id")
     plan_id = request.args.get("plan_id")
 
@@ -598,6 +683,9 @@ def list_bindings():
     else:
         bindings = svc.list_all()
 
+    if admitted_tenant is not None:
+        bindings = [b for b in bindings if (b.metadata or {}).get("tenant_id") == admitted_tenant]
+
     return jsonify({
         "bindings": [b.to_dict() for b in bindings],
         "count": len(bindings),
@@ -605,12 +693,23 @@ def list_bindings():
 
 
 @app.route("/api/runtime-bindings/<binding_id>", methods=["GET"])
-@require_authn(roles=_OPERATOR_ROLES)
+@require_authn(roles=_BINDING_READ_ROLES)
 def get_binding(binding_id):
     """Read a single RuntimeBinding by id."""
+    ctx = get_auth_context()
+    try:
+        admitted_tenant = _resolve_binding_read_tenant(ctx)
+    except AuthError as exc:
+        return jsonify({"error": {"code": exc.code, "message": exc.message}}), exc.status_code
+
     svc = _get_service()
     binding = svc.get(binding_id)
     if binding is None:
+        return (
+            jsonify({"error": {"code": "NOT_FOUND", "message": f"RuntimeBinding {binding_id!r} not found"}}),
+            404,
+        )
+    if admitted_tenant is not None and (binding.metadata or {}).get("tenant_id") != admitted_tenant:
         return (
             jsonify({"error": {"code": "NOT_FOUND", "message": f"RuntimeBinding {binding_id!r} not found"}}),
             404,
