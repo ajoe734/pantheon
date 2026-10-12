@@ -98,10 +98,19 @@ MIGRATIONS = [
     CREATE INDEX IF NOT EXISTS idx_telemetry_events_event_type
         ON telemetry_events (event_type);
     """,
-    # Expression indexes for operational readback, replay triage, and lineage joins
+    # Covering ordered expression index for canonical binding reader queries.
+    # Replaces legacy root-only idx_telemetry_events_binding_id with exact
+    # (created_at DESC, ingested_seq DESC) order support, eliminating full-scan
+    # sort overhead on high-cardinality bindings.
+    # Lifecycle: created first (SHARE lock allows concurrent SELECTs); once
+    # established, redundant root-only index is retired. On error, migration
+    # halts before drop, ensuring rollback safety and continuous index coverage.
     """
-    CREATE INDEX IF NOT EXISTS idx_telemetry_events_binding_id
-        ON telemetry_events ((payload->>'binding_id'));
+    CREATE INDEX IF NOT EXISTS idx_telemetry_events_binding_id_created_at_ingested_seq
+        ON telemetry_events ((payload->>'binding_id'), created_at DESC, ingested_seq DESC);
+    """,
+    """
+    DROP INDEX IF EXISTS idx_telemetry_events_binding_id;
     """,
     """
     CREATE INDEX IF NOT EXISTS idx_telemetry_events_runtime_id
