@@ -2577,6 +2577,51 @@ jobs:
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: bash .target/scripts/compensate_cross_repo_release.sh
 
+      - name: Retire non-served dev paper release cases
+        id: retire_release_cases
+        # Best effort and evidence-only: a retirement failure is recorded in
+        # the release evidence and never changes the accepted/compensated
+        # outcome enforced below.
+        if: ${{ always() && steps.frontend_release.outputs.evidence_dir != '' && (steps.frontend_release.outcome == 'success' || steps.compensation.outcome == 'success') }}
+        continue-on-error: true
+        env:
+          DEV_DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEV_DEPLOY_SSH_PRIVATE_KEY }}
+          DEV_DEPLOY_SSH_KNOWN_HOSTS: ${{ vars.DEV_DEPLOY_SSH_KNOWN_HOSTS }}
+          DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST || '35.194.154.62' }}
+          RELEASE_OUTCOME: ${{ steps.frontend_release.outcome == 'success' && 'accepted' || 'compensated' }}
+        shell: /bin/bash --noprofile --norc -uo pipefail {0}
+        run: |
+          evidence="${RELEASE_EVIDENCE_DIR}/dev-paper-release-case-retire.json"
+          fail_evidence() {
+            printf '{"schema_version":"pantheon.dev-paper-release-case-retire.v1","status":"error","run_id":"%s","error":"%s"}\n' \
+              "${GITHUB_RUN_ID}" "$1" > "${evidence}"
+            echo "[retire-release-cases] $1 (recorded; release outcome unchanged)" >&2
+            exit 0
+          }
+          credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-retire-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          transport="${GITHUB_WORKSPACE}/.target/scripts/dev_vm_ssh.sh"
+          script="${GITHUB_WORKSPACE}/.target/scripts/retire_dev_paper_release_cases.py"
+          [[ -f "${script}" && ! -L "${script}" && -f "${transport}" && ! -L "${transport}" ]] \
+            || fail_evidence "retirement script or transport missing"
+          "${transport}" prepare "${credentials_dir}" >/dev/null || fail_evidence "ssh transport prepare failed"
+          export DEV_DEPLOY_SSH_KEY_FILE="${credentials_dir}/deploy_key"
+          export DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE="${credentials_dir}/known_hosts"
+          case_key="dev-paper-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          # The script travels on stdin so a compensated (older) container
+          # image does not need to contain it.
+          if timeout --kill-after=10 240 "${transport}" exec \
+            "docker exec -i pantheon-operator-bff-1 python - --outcome ${RELEASE_OUTCOME} --new-case-key ${case_key} --run-id ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} --timeout-seconds 180" \
+            < "${script}" > "${evidence}.tmp"; then
+            :
+          fi
+          if python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "${evidence}.tmp" 2>/dev/null; then
+            mv -f "${evidence}.tmp" "${evidence}"
+          else
+            rm -f "${evidence}.tmp"
+            fail_evidence "retirement produced no parseable evidence"
+          fi
+          echo "- dev paper release case retirement: \`$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("status"))' "${evidence}")\`" >> "${GITHUB_STEP_SUMMARY}"
+
       - name: Upload accepted or compensated release evidence
         id: release_evidence_upload
         if: ${{ always() && steps.frontend_release.outputs.evidence_dir != '' }}

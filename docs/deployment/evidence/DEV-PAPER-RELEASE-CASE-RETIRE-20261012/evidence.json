@@ -1,0 +1,13 @@
+{
+  "task_id": "DEV-PAPER-RELEASE-CASE-RETIRE-20261012",
+  "hosted_action_performed_by_worker": false,
+  "owner_path": "POST /api/deployment/sagas/{saga_id}/failure failed_step=runtime_load_requested -> mark_binding_failed_inactive via deployment outbox consumer",
+  "forbidden_paths_not_used": ["/api/runtime-bindings/{id}/retire", "/api/runtime-bindings/{id}/transition", "direct database write", "record deletion"],
+  "served_case_rule": {
+    "accepted": "this run's case stays; all other active release cases retired",
+    "compensated": "newest other still-active release case stays; this run's case and older active cases retired"
+  },
+  "dry_run": "docker exec -i pantheon-operator-bff-1 python - --dry-run --outcome accepted < scripts/retire_dev_paper_release_cases.py",
+  "tests": ["scripts/test_retire_dev_paper_release_cases.py (9 passed)", "scripts/test_dev_environment_lease_deploy_contract.py (243 passed)", "scripts/test_loop_prod_tel_002_hosted_workflow.py (passed)"],
+  "limitation": "consumer behaviour on an already-completed saga is verified only by reading outbox_consumer_worker.py; first hosted Root must confirm"
+}
