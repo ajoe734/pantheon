@@ -47,30 +47,20 @@ def _extract_metric_qty(ev: dict[str, Any], *keys: str) -> float | None:
                 except (KeyError, TypeError, ValueError): pass
     return None
 
-def _extract_position_quantity(ev: dict[str, Any]) -> float | None:
-    return _extract_metric_qty(ev, "position_qty", "position_quantity", "quantity")
-
-def _extract_fill_quantity(ev: dict[str, Any]) -> float | None:
-    return _extract_metric_qty(ev, "fill_quantity", "quantity")
-
-def _extract_event_sequence(ev: dict[str, Any]) -> int | None:
+def _extract_int_field(ev: dict[str, Any], *keys: str) -> int | None:
     for s in (ev, ev.get("metadata"), ev.get("payload")):
         if isinstance(s, dict):
-            for k in ("sequence_no", "sequence_number"):
+            for k in keys:
                 v = s.get(k)
                 if v is not None and not isinstance(v, bool):
                     try: return int(v)
                     except (TypeError, ValueError): pass
     return None
 
-_EVENT_TYPE_ORDER = {
-    "trade_episode.opened": 0, "order_proposed": 1, "trade_proposal": 1, "order_approved": 2, "trade_approval": 2,
-    "order_submitted": 3, "paper_order_simulated": 3, "order_accepted": 4, "order_filled": 5, "paper_fill_simulated": 5,
-    "fill_observation": 5, "fill_received": 5, "position_snapshot": 6, "position_snapshot_received": 6,
-    "broker_position_snapshot": 6, "pnl_snapshot": 7, "drawdown_snapshot": 7, "order_canceled": 8, "order_cancelled": 8,
-    "order_rejection": 8, "trade_episode.updated": 9, "trade_episode.closed": 10, "trade_episode.unresolved": 11,
-    "trade_reflection.requested": 12, "trade_reflection.completed": 13, "trade_reflection.failed": 14,
-}
+_extract_position_quantity = lambda ev: _extract_metric_qty(ev, "position_qty", "position_quantity", "quantity")
+_extract_fill_quantity = lambda ev: _extract_metric_qty(ev, "fill_quantity", "quantity")
+_extract_event_sequence = lambda ev: _extract_int_field(ev, "sequence_no", "sequence_number")
+_extract_ledger_fill_count = lambda ev: _extract_int_field(ev, "ledger_fill_count")
 
 
 class TradeEpisodeProjectionStore:
@@ -469,14 +459,22 @@ class TradeEpisodeProjectionStore:
                     continue
             filtered_events.append(ev)
 
-        def sort_key(item: tuple[int, dict[str, Any]]) -> tuple[int, int, str, int, int]:
+        has_ledger = any(_extract_ledger_fill_count(e) is not None for e in filtered_events)
+
+        def sort_key(item: tuple[int, dict[str, Any]]) -> tuple[Any, ...]:
             idx, ev = item
-            seq = _extract_event_sequence(ev)
             occ = ev.get("occurred_at") or ev.get("created_at") or ""
-            etype = _EVENT_TYPE_ORDER.get(ev.get("event_type", ""), 99)
-            if seq is not None:
-                return (0, seq, occ, etype, idx)
-            return (1, 0, occ, idx, etype)
+            seq = _extract_event_sequence(ev)
+            if not has_ledger:
+                return (seq if seq is not None else 0, occ, ev.get("event_id") or "", idx)
+
+            fc = _extract_ledger_fill_count(ev)
+            etype = ev.get("event_type", "")
+            if fc is None:
+                fc = 1000000000 if etype == "trade_episode.closed" else 0
+            if seq is None:
+                seq = 99 if "position_snapshot" in etype else 0
+            return (fc, seq, occ, idx)
 
         sorted_events = [ev for _, ev in sorted(enumerate(filtered_events), key=sort_key)]
 
@@ -759,26 +757,25 @@ class TradeEpisodeProjectionStore:
             elif event_type in ("position_snapshot", "position_snapshot_received", "broker_position_snapshot"):
                 if not proj:
                     proj = self._init_minimal_projection(ev)
-                if proj["status"] != "closed":
-                    snap_id = ev.get("event_id")
-                    if snap_id and snap_id not in proj["position_snapshot_refs"]:
-                        proj["position_snapshot_refs"].append(snap_id)
+                snap_id = ev.get("event_id")
+                if snap_id and snap_id not in proj["position_snapshot_refs"]:
+                    proj["position_snapshot_refs"].append(snap_id)
 
-                    pos_qty = _extract_position_quantity(ev)
-                    if pos_qty is not None:
-                        if abs(pos_qty) <= 1e-12:
-                            if proj["status"] in ("open", "reducing", "partially_filled", "submitted"):
-                                proj["status"] = "closed"
-                                proj["closed_at"] = ev.get("occurred_at") or ev.get("created_at")
-                                proj["remaining_quantity"] = 0.0
-                        else:
-                            proj["remaining_quantity"] = abs(pos_qty)
-                            if proj.get("side") is None or proj["filled_quantity"] == 0.0:
-                                proj["side"] = "short" if pos_qty < 0 else "long"
-                            if proj["status"] in ("submitted", "partially_filled"):
-                                proj["status"] = "open"
-                            elif proj["status"] == "open" and abs(pos_qty) < proj["filled_quantity"] - 1e-12:
-                                proj["status"] = "reducing"
+                pos_qty = _extract_position_quantity(ev)
+                if pos_qty is not None:
+                    if abs(pos_qty) <= 1e-12:
+                        if proj["status"] in ("open", "reducing", "partially_filled", "submitted"):
+                            proj["status"] = "closed"
+                            proj["closed_at"] = ev.get("occurred_at") or ev.get("created_at")
+                            proj["remaining_quantity"] = 0.0
+                    elif proj["status"] != "closed":
+                        proj["remaining_quantity"] = abs(pos_qty)
+                        if proj.get("side") is None or proj["filled_quantity"] == 0.0:
+                            proj["side"] = "short" if pos_qty < 0 else "long"
+                        if proj["status"] in ("submitted", "partially_filled"):
+                            proj["status"] = "open"
+                        elif proj["status"] == "open" and abs(pos_qty) < proj["filled_quantity"] - 1e-12:
+                            proj["status"] = "reducing"
 
                 proj["coverage"]["as_of"] = ev.get("occurred_at") or ev.get("created_at")
 

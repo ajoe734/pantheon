@@ -390,9 +390,9 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
             proj1 = episode_store.project_event(fill_event)
             proj2 = episode_store.project_event(snapshot_event)
 
-            return accepted, proj1, proj2, episode_store.get(episode_id)
+            return accepted, proj1, proj2, episode_store.get(episode_id), snapshot_event["event_id"]
 
-        accepted, proj1, proj2, final_proj = asyncio.run(scenario())
+        accepted, proj1, proj2, final_proj, snap_id = asyncio.run(scenario())
 
         self.assertEqual(accepted, [True, True])
         self.assertIsNotNone(final_proj)
@@ -403,6 +403,7 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
         self.assertEqual(final_proj["fees"], 1.5)
         self.assertEqual(final_proj["status"], "open")
         self.assertIsNone(final_proj["closed_at"])
+        self.assertEqual(final_proj["position_snapshot_refs"], [snap_id])
 
 
 if __name__ == "__main__":
