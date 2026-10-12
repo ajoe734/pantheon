@@ -458,7 +458,7 @@ def _project_trainer_preview_payload(
     for w in warnings:
         if isinstance(w, dict) and (lvl := str(w.get("level") or "").strip().lower()) in counts:
             counts[lvl] += 1
-    can_refresh = str(session_status or "").strip().lower() in ("active", "paused") and status not in ("pending", "preview_unavailable")
+    can_refresh = str(session_status or "").strip().lower() in ("active", "paused") and status != "pending"
     payload.update({
         "status": status,
         "warnings": warnings,
@@ -479,6 +479,28 @@ def _project_trainer_preview_payload(
     for field in ("baseline_snapshot_at", "candidate_snapshot_at"):
         payload.setdefault(field, None)
     return payload
+
+
+def _project_pending_trainer_preview(
+    session_id: str, *, job_id: str, eval_id: str, timestamp: str
+) -> Dict[str, Any]:
+    return {
+        "session_id": session_id,
+        "status": "pending",
+        "eval_id": eval_id,
+        "job_id": job_id,
+        "owner_job_ref": {"job_id": job_id, "eval_id": eval_id},
+        "baseline_snapshot_at": timestamp,
+        "candidate_snapshot_at": timestamp,
+        "control_diff": [],
+        "metric_delta": [],
+        "warnings": [],
+        "warning_count_by_level": {"critical": 0, "high": 0, "medium": 0, "informational": 0},
+        "preview_quality": "directional_only",
+        "allowedActions": {"canRefreshPreview": False},
+        "polling": {"enabled": True, "poll_interval_ms": 3000, "max_wait_ms": 45000, "deadline_at": None},
+        "meta": {"snapshot_at": timestamp, "surfaces": {"trainer_preview": "ok"}},
+    }
 
 
 def _can_act_replay(status: Any, resolution_state: str, surface_state: str, candidate_ref: Any) -> bool:
@@ -721,6 +743,19 @@ class TrainingSessionHttpStore:
         raw = self._request(f"/api/training/previews/{urllib.parse.quote(str(session_id))}", method="GET", allow_404=True)
         if not isinstance(raw, dict):
             return None
+        if not eval_id:
+            jobs = self._request(f"/api/training/preview-jobs?session_id={urllib.parse.quote(str(session_id))}", method="GET", allow_404=True)
+            if isinstance(jobs, list):
+                pending_jobs = [j for j in jobs if isinstance(j, dict) and str(j.get("status") or "").lower() in ("queued", "running")]
+                if pending_jobs:
+                    active = pending_jobs[-1]
+                    if not raw.get("evaluations") or str(raw.get("latest_eval_id") or "") != str(active.get("eval_id") or ""):
+                        return _project_pending_trainer_preview(
+                            session_id,
+                            job_id=str(active.get("job_id")),
+                            eval_id=str(active.get("eval_id")),
+                            timestamp=str(active.get("requested_at") or snapshot_at or _utc_now()),
+                        )
         evaluations = raw.get("evaluations") if isinstance(raw.get("evaluations"), dict) else {}
         preview = None
         if eval_id:
@@ -780,25 +815,12 @@ class TrainingSessionHttpStore:
                     }
                 },
             )
-        eval_id = str(job["eval_id"])
-        job_id = str(job["job_id"])
-        return {
-            "session_id": session_id,
-            "status": "pending",
-            "eval_id": eval_id,
-            "job_id": job_id,
-            "owner_job_ref": {"job_id": job_id, "eval_id": eval_id},
-            "baseline_snapshot_at": timestamp,
-            "candidate_snapshot_at": timestamp,
-            "control_diff": [],
-            "metric_delta": [],
-            "warnings": [],
-            "warning_count_by_level": {"critical": 0, "high": 0, "medium": 0, "informational": 0},
-            "preview_quality": "directional_only",
-            "allowedActions": {"canRefreshPreview": False},
-            "polling": {"enabled": True, "poll_interval_ms": 3000, "max_wait_ms": 45000, "deadline_at": None},
-            "meta": {"snapshot_at": timestamp, "surfaces": {"trainer_preview": "ok"}},
-        }
+        return _project_pending_trainer_preview(
+            session_id,
+            job_id=str(job["job_id"]),
+            eval_id=str(job["eval_id"]),
+            timestamp=timestamp,
+        )
 
     def list_trainer_replays(
         self, *, persona_id: Optional[str] = None, status: Optional[str] = None, snapshot_at: Optional[str] = None, **kwargs: Any

@@ -13,13 +13,37 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
+from fastapi.testclient import TestClient
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ports import ReadSurfacePorts, TrainingSessionTrainerPort, create_in_memory_read_surface_ports
 from services.control_plane.bff.ports.read_surface_ports import create_read_surface_ports
 from services.control_plane.bff.ports.persona_training import TrainingSessionHttpStore
 from services.control_plane.bff.core.owner_reads import authorization, selected_tenant
+from services.control_plane.bff.training.router import create_training_router
+from services.control_plane.bff.auth.policy import (
+    bff_error,
+    default_utc_now,
+    extract_identity_stub,
+    require_read_role,
+)
+
+
+def _page_slice(
+    items: list[dict[str, Any]],
+    page_token: str | None,
+    page_size: int,
+) -> tuple[list[dict[str, Any]], str | None]:
+    start = int(page_token) if page_token else 0
+    end = start + page_size
+    next_page = str(end) if end < len(items) else None
+    return items[start:end], next_page
+
+
+def _dataset_surface_status(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    return {"status": "ok"}
 
 
 _ACTIVE_SESSION = "trn-20260419-001"
@@ -948,6 +972,12 @@ def test_default_production_factory_live_owner_roundtrip(live_training_session_s
         assert created["actor_context"]["actor_service"] == "control-plane-bff"
         assert created["allowedActions"]["canSendMessage"] is True
 
+        # 1a. Initial preview for genuine newly created session: no computation yet -> canRefreshPreview is True
+        initial_preview = ports.get_trainer_preview(session_id, session_status="active")
+        assert initial_preview is not None
+        assert initial_preview["status"] == "preview_unavailable"
+        assert initial_preview["allowedActions"]["canRefreshPreview"] is True
+
 
         # 2. List sessions
         sessions = ports.list_trainer_sessions()
@@ -1013,8 +1043,37 @@ def test_default_production_factory_live_owner_roundtrip(live_training_session_s
         assert patch_accepted["status"] == "accepted"
         assert patch_accepted["current_controls"][0]["current_value"] == 0.1
 
-        # 6. Preview refresh -> queue admission to native job queue with genuine eval_id and job_id
-        preview = ports.refresh_trainer_preview(session_id, session_status="active")
+        # 6. Preview refresh via BFF original router:
+        # authentic owner-present active initial preview requests the FIRST original async preview job
+        app = FastAPI()
+        @app.exception_handler(HTTPException)
+        @app.exception_handler(StarletteHTTPException)
+        async def _http_exception_handler(request: Any, exc: Any) -> JSONResponse:
+            if isinstance(exc.detail, dict) and "error" in exc.detail:
+                return JSONResponse(status_code=exc.status_code, content=exc.detail)
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}},
+            )
+        router = create_training_router(
+            read_surface=ports,
+            extract_identity=extract_identity_stub,
+            require_read_role=require_read_role,
+            bff_error=bff_error,
+            utc_now=default_utc_now,
+            page_slice=_page_slice,
+            dataset_surface_status=_dataset_surface_status,
+        )
+        app.include_router(router)
+        client = TestClient(app)
+
+        resp = client.post(
+            f"/api/v1/trainer/sessions/{session_id}/preview",
+            json={"refresh_mode": "manual"},
+            headers={"Authorization": "Bearer pantheon-dev-operator:operator"},
+        )
+        assert resp.status_code == 200, f"Expected 200 from BFF POST /preview, got {resp.status_code}: {resp.text}"
+        preview = resp.json()
         assert preview is not None
         assert preview["status"] == "pending"
         assert preview["job_id"] is not None
@@ -1022,6 +1081,71 @@ def test_default_production_factory_live_owner_roundtrip(live_training_session_s
         assert preview["owner_job_ref"]["job_id"] == preview["job_id"]
         assert preview["owner_job_ref"]["eval_id"] == preview["eval_id"]
         assert preview["polling"]["enabled"] is True
+        assert preview["allowedActions"]["canRefreshPreview"] is False
+
+        # 6a. Pending reread & no second admission (both existing ports and fresh store instance)
+        reread_preview = ports.get_trainer_preview(session_id, session_status="active")
+        assert reread_preview is not None
+        assert reread_preview["status"] == "pending"
+        assert reread_preview["allowedActions"]["canRefreshPreview"] is False
+        assert reread_preview["job_id"] == preview["job_id"]
+
+        # Validate same original owner pending truth after fresh TrainingSessionHttpStore instance (no local cache dependency)
+        fresh_store = TrainingSessionHttpStore()
+        fresh_preview = fresh_store.get_trainer_preview(session_id, session_status="active")
+        assert fresh_preview is not None
+        assert fresh_preview["status"] == "pending"
+        assert fresh_preview["allowedActions"]["canRefreshPreview"] is False
+        assert fresh_preview["job_id"] == preview["job_id"]
+
+        # Verify exactly one queued job in owner store before repeat
+        owner_jobs_before = [j for j in training_service.store.list_preview_jobs() if j.get("session_id") == session_id]
+        assert len(owner_jobs_before) == 1
+        assert owner_jobs_before[0]["job_id"] == preview["job_id"]
+
+        resp_repeat = client.post(
+            f"/api/v1/trainer/sessions/{session_id}/preview",
+            json={"refresh_mode": "manual"},
+            headers={"Authorization": "Bearer pantheon-dev-operator:operator"},
+        )
+        assert resp_repeat.status_code == 200
+        assert resp_repeat.json()["job_id"] == preview["job_id"]
+        assert resp_repeat.json()["eval_id"] == preview["eval_id"]
+
+        # Verify still exactly one queued job in owner store after repeat (no second admission)
+        owner_jobs_after = [j for j in training_service.store.list_preview_jobs() if j.get("session_id") == session_id]
+        assert len(owner_jobs_after) == 1
+
+        # 6b. Original negative / failure distinctions:
+        # Non-existent session returns 404
+        resp_404 = client.post(
+            "/api/v1/trainer/sessions/trn-nonexistent/preview",
+            json={"refresh_mode": "manual"},
+            headers={"Authorization": "Bearer pantheon-dev-operator:operator"},
+        )
+        assert resp_404.status_code == 404
+
+        # Owner unavailable distinction: build_trainer_preview_unavailable retains canRefreshPreview=False
+        unavail = ports.persona_training.trainer._training.build_trainer_preview_unavailable("trn-probe")
+        assert unavail["status"] == "preview_unavailable"
+        assert unavail["allowedActions"]["canRefreshPreview"] is False
+        assert unavail["meta"]["surfaces"]["trainer_preview"] == "unavailable"
+
+        # Terminal session rejects preview refresh with 409 OPERATION_NOT_ALLOWED
+        sess = dict(training_service.store.get_session(session_id))
+        sess["status"] = "completed"
+        training_service.store.put_session(sess)
+        resp_terminal = client.post(
+            f"/api/v1/trainer/sessions/{session_id}/preview",
+            json={"refresh_mode": "manual"},
+            headers={"Authorization": "Bearer pantheon-dev-operator:operator"},
+        )
+        assert resp_terminal.status_code == 409
+        assert resp_terminal.json()["error"]["code"] == "OPERATION_NOT_ALLOWED"
+
+        # Restore status for subsequent steps
+        sess["status"] = "active"
+        training_service.store.put_session(sess)
 
         # 7. Rapid eval: reject fabricated queued/healthy state on default production factory.
         with pytest.raises(
