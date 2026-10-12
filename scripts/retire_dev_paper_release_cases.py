@@ -5,7 +5,8 @@ Every Root deploy provisions one ``dev-paper-release-<run>-<attempt>`` Persona
 through ``bootstrap_dev_paper_baseline.py`` and never retires it, so each old
 case keeps an active RuntimeBinding in the paper fleet.  After the release
 controller has either accepted or compensated the release, this script moves
-every release case that is *not* the served one out of the active fleet.
+every release case that is *not* the served one out of the active fleet
+(on a compensated release, only this run's own case).
 
 Retirement uses only an existing owner path: the Deployment owner's saga
 failure route (``POST /api/deployment/sagas/{id}/failure`` with
@@ -23,8 +24,8 @@ checked-out image after a compensation)::
 
 Served case:
 * ``accepted``    -> the case of this run stays; every other active case goes.
-* ``compensated`` -> the newest other still-active case (the previously served
-  one) stays; the case of this run and every older active case goes.
+* ``compensated`` -> only the case of this run goes; every other case,
+  including the previously served one, is left untouched.
 """
 
 from __future__ import annotations
@@ -108,12 +109,13 @@ def plan_retirement(
     live = [k for k in keys if sagas.get(k) != SAGA_RETIRED]
     if outcome == "accepted":
         served = new_case_key if new_case_key in keys else None
+        retire = [k for k in live if k != served]
     else:
-        served = next(
-            (k for k in live if k != new_case_key and sagas.get(k) != SAGA_MISSING),
-            None,
-        )
-    retire = [k for k in live if k != served]
+        # The previously served case cannot be identified reliably, so a
+        # compensated release retires ONLY this run's case and leaves every
+        # other case (including the served baseline) untouched.
+        served = None
+        retire = [k for k in live if k == new_case_key]
     return {
         "outcome": outcome,
         "new_case_key": new_case_key,
@@ -201,7 +203,7 @@ def execute(
     # Cases whose state could not be read are never retired or relied upon.
     decision["retire"] = [k for k in decision["retire"] if k not in errors]
     served = decision["served_case_key"]
-    assert served is None or served not in decision["retire"]
+    assert served not in decision["retire"]
     result: dict[str, Any] = {
         "schema_version": "pantheon.dev-paper-release-case-retire.v1",
         "dry_run": dry_run,

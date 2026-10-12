@@ -2149,6 +2149,50 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Retire dev paper release case of the compensated deploy
+        id: deploy_retire_release_case
+        # Best effort and evidence-only: the deploy failed before the release
+        # coordinator ran, so only this run's own case is retired.  A failure
+        # here never changes the compensation outcome.
+        if: ${{ always() && steps.deploy_compensation.outcome == 'success' && steps.release_admission.outputs.evidence_dir != '' }}
+        continue-on-error: true
+        timeout-minutes: 6
+        env:
+          EVIDENCE_DIR: ${{ steps.release_admission.outputs.evidence_dir }}
+        shell: /bin/bash --noprofile --norc -uo pipefail {0}
+        run: |
+          evidence="${EVIDENCE_DIR}/dev-paper-release-case-retire.json"
+          fail_evidence() {
+            printf '{"schema_version":"pantheon.dev-paper-release-case-retire.v1","status":"error","run_id":"%s","error":"%s"}\n' \
+              "${GITHUB_RUN_ID}" "$1" > "${evidence}"
+            echo "[retire-release-cases] $1 (recorded; compensation outcome unchanged)" >&2
+            exit 0
+          }
+          transport="${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/dev_vm_ssh.sh"
+          script="${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/retire_dev_paper_release_cases.py"
+          [[ -f "${script}" && ! -L "${script}" && -f "${transport}" && ! -L "${transport}" ]] \
+            || fail_evidence "retirement script or transport missing"
+          case_key="dev-paper-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          timeout --kill-after=10 240 "${transport}" exec \
+            "docker exec -i pantheon-operator-bff-1 python - --outcome compensated --new-case-key ${case_key} --run-id ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} --timeout-seconds 180" \
+            < "${script}" > "${evidence}.tmp"
+          if python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "${evidence}.tmp" 2>/dev/null; then
+            mv -f "${evidence}.tmp" "${evidence}"
+          else
+            rm -f "${evidence}.tmp"
+            fail_evidence "retirement produced no parseable evidence"
+          fi
+          echo "- dev paper release case retirement (deploy compensation): \`$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("status"))' "${evidence}")\`" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload dev paper release case retirement evidence
+        if: ${{ always() && steps.deploy_retire_release_case.outcome != 'skipped' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pantheon-dev-paper-release-case-retire-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.release_admission.outputs.evidence_dir }}/dev-paper-release-case-retire.json
+          if-no-files-found: warn
+          retention-days: 30
+
       - name: Stop heartbeat and release only after complete success
         id: lease_cleanup
         if: ${{ always() && steps.lease.outcome == 'success' }}
@@ -2587,7 +2631,6 @@ jobs:
         env:
           DEV_DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEV_DEPLOY_SSH_PRIVATE_KEY }}
           DEV_DEPLOY_SSH_KNOWN_HOSTS: ${{ vars.DEV_DEPLOY_SSH_KNOWN_HOSTS }}
-          DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST || '35.194.154.62' }}
           RELEASE_OUTCOME: ${{ steps.frontend_release.outcome == 'success' && 'accepted' || 'compensated' }}
         shell: /bin/bash --noprofile --norc -uo pipefail {0}
         run: |

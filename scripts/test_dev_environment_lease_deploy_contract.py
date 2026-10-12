@@ -3192,3 +3192,13 @@ def test_release_case_retirement_uses_no_operator_or_mfa_route() -> None:
     assert "/api/runtime-bindings" not in code
     assert "/api/deployment/sagas/" in code and "mark_binding_failed" not in code
     assert "psycopg" not in code and "DELETE" not in code.upper().replace("DELETION", "")
+
+
+def test_release_case_retirement_covers_deploy_dev_compensation_without_ip_fallback() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    start = text.index("- name: Retire dev paper release case of the compensated deploy")
+    end = text.index("- name: Stop heartbeat and release only after complete success", start)
+    step = text[start:end]
+    assert "steps.deploy_compensation.outcome == 'success'" in step
+    assert "--outcome compensated" in step and "continue-on-error: true" in step
+    assert "35.194.154.62" not in _retire_step_text()

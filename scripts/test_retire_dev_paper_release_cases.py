@@ -81,19 +81,26 @@ def test_accepted_retires_previous_and_keeps_new(monkeypatch):
     assert out["status"] == "retired"
 
 
-def test_compensated_retires_new_and_keeps_previous_served(monkeypatch):
+def test_compensated_retires_only_new_case(monkeypatch):
     store, owner = _setup(monkeypatch, KEYS)
     out = _run(store, owner, outcome="compensated", new_case_key=KEYS[3])
-    assert out["served_case_key"] == KEYS[2]
-    assert sorted(owner.posts) == sorted(f"saga-{k}" for k in (KEYS[0], KEYS[1], KEYS[3]))
-    assert "saga-" + KEYS[2] not in owner.posts
+    assert owner.posts == ["saga-" + KEYS[3]]
+    assert out["retire"] == [KEYS[3]]
 
 
-def test_compensated_skips_already_retired_when_choosing_served(monkeypatch):
+def test_compensated_never_touches_older_live_cases(monkeypatch):
     store, owner = _setup(monkeypatch, KEYS, retired=[KEYS[2]])
     out = _run(store, owner, outcome="compensated", new_case_key=KEYS[3])
-    assert out["served_case_key"] == KEYS[1]
-    assert "saga-" + KEYS[1] not in owner.posts
+    assert owner.posts == ["saga-" + KEYS[3]]
+    assert out["status"] == "retired" or out["status"] == "partial"
+
+
+def test_compensated_replay_is_idempotent(monkeypatch):
+    store, owner = _setup(monkeypatch, KEYS)
+    _run(store, owner, outcome="compensated", new_case_key=KEYS[3])
+    out = _run(store, owner, outcome="compensated", new_case_key=KEYS[3])
+    assert owner.posts == ["saga-" + KEYS[3]]
+    assert out["retire"] == []
 
 
 def test_replay_is_idempotent(monkeypatch):
