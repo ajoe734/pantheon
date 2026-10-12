@@ -41,5 +41,30 @@
     "AC4: Preserved corrected ALLOWED-path validators, causal queue timestamps, missing timestamps remaining NULL, monotonic HTTP handoff lag, tenant fences, DSN exclusion, and financial validation integrity",
     "AC5: Source fixture rejects existing ordinary allowed directory + arbitrary unexecuted commit; conflict aliases and inherited env cannot resurrect identity; loaded runtime_context cannot publish guessed bridge from env manifest strings alone",
     "AC6: Clean frozen original 91 test suites plus new negative source-only QA all green (93 passed)"
-  ]
+  ],
+  "followup_task": {
+    "task_id": "PAPER-RUNTIME-ORIGINAL-BRIDGE-HEALTH-APPLICABILITY-20261012",
+    "title": "Apply original bridge health only to execution profiles that actually use it",
+    "owner": "Antigravity2",
+    "reviewer": "Antigravity",
+    "status": "ready_for_review",
+    "corrective_source_scope": "Preserve c9 unverified bridge fail-closed truth boundary while addressing applicability mismatch for direct native paper execution runtime. Native paper execution runtime (paper_execution_runtime) emits trusted runtime_package without executing external LEAN bridge. RuntimeSummary retains accepted runtime_package profile and derives bridge=not_applicable solely for known direct paper_execution_runtime in paper environment; unknown/bridge-dependent profiles remain degraded without verified bridge identity. Rollover clears runtime_package to prevent inheritance.",
+    "production_line_budget_compliance": {
+      "base_sha": "a4402ed3b",
+      "production_line_budget": 25,
+      "production_lines_net": 15,
+      "scoped_files": [
+        "services/telemetry/runtime_summary.py",
+        "services/telemetry/test_runtime_summary_projection.py",
+        "docs/deployment/evidence/PAPER-RUNTIME-BRIDGE-TRUTH-FAILCLOSED-20261010/evidence.json"
+      ]
+    },
+    "test_results": {
+      "test_runtime_summary_projection": "35 passed",
+      "test_paper_runtime": "78 passed, 27 subtests passed",
+      "test_reconciliation_drift_http_service": "7 passed",
+      "test_reconciliation_drift_consumer": "11 passed",
+      "test_l12_mfc_r4_telrec_001_contract": "1 passed"
+    }
+  }
 }
