@@ -1847,7 +1847,12 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
         self.assertEqual(conflict_events, [])
 
     def test_14_canonical_binding_reader_capacity_equivalence_and_malformed_types(self):
-        """Verify realistic capacity, equal-created_at deterministic cutoff ties, and malformed alias types."""
+        """Verify realistic capacity, 50/100 cutoffs, deterministic cutoff ties, and malformed alias types.
+
+        Note: Disposable PG environment uses 3500 noise rows across 70 distinct bindings to verify
+        multi-binding selectivity and capacity. Full production scale (4.56M rows / 10GB) was verified
+        by Root on the VM (0.837s candidate vs 2.076s original under cold historical rb-52 read).
+        """
         import asyncpg, datetime, hashlib, json, time
         fetch_ev, fetch_b = build_postgres_event_reader(self.dsn, table="telemetry_events")
         target_bid = "rb-capacity-target-20261011"
@@ -1856,7 +1861,7 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
         async def _seed_capacity():
             conn = await asyncpg.connect(self.dsn)
             try:
-                # 1. 20 events with identical created_at to verify deterministic cutoff ties
+                # 1. 30 events with identical created_at to verify deterministic cutoff ties
                 same_dt = base_time + datetime.timedelta(days=1)
                 tie_events = [
                     (
@@ -1868,10 +1873,10 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
                             "runtime_id": "rt-cap-001",
                         })
                     )
-                    for i in range(20)
+                    for i in range(30)
                 ]
                 # 2. Events with distinct created_at:
-                # - 5 runtime_binding_id only with metadata tenant
+                # - 45 runtime_binding_id only with metadata tenant
                 rb_events = [
                     (
                         f"evt-rb-only-{i:03d}", "heartbeat", base_time + datetime.timedelta(minutes=i*10),
@@ -1882,9 +1887,9 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
                             "runtime_id": "rt-cap-001",
                         })
                     )
-                    for i in range(5)
+                    for i in range(45)
                 ]
-                # - 5 bothalias matching
+                # - 45 bothalias matching (binding_id and runtime_binding_id both set)
                 both_events = [
                     (
                         f"evt-both-cap-{i:03d}", "heartbeat", base_time + datetime.timedelta(hours=2, minutes=i*10),
@@ -1895,9 +1900,11 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
                             "tenant_id": self._TENANT, "runtime_id": "rt-cap-001",
                         })
                     )
-                    for i in range(5)
+                    for i in range(45)
                 ]
-                # 3. Malformed alias types (integer, boolean) - must NOT be matched as string aliases
+                # Total valid events for target_bid = 30 + 45 + 45 = 120 events (> 100 cutoff).
+
+                # 3. Malformed alias types (integer, boolean true/false) - must NOT be matched as string aliases
                 malformed_events = [
                     (
                         "evt-malformed-int-cap", "heartbeat", base_time + datetime.timedelta(hours=3),
@@ -1908,11 +1915,27 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
                         })
                     ),
                     (
-                        "evt-malformed-bool-cap", "heartbeat", base_time + datetime.timedelta(hours=3, minutes=1),
+                        "evt-malformed-bool-true", "heartbeat", base_time + datetime.timedelta(hours=3, minutes=1),
                         json.dumps({
-                            "event_id": "evt-malformed-bool-cap", "event_type": "heartbeat",
+                            "event_id": "evt-malformed-bool-true", "event_type": "heartbeat",
                             "created_at": (base_time + datetime.timedelta(hours=3, minutes=1)).isoformat(),
                             "runtime_binding_id": True, "tenant_id": self._TENANT,
+                        })
+                    ),
+                    (
+                        "evt-malformed-bool-false", "heartbeat", base_time + datetime.timedelta(hours=3, minutes=2),
+                        json.dumps({
+                            "event_id": "evt-malformed-bool-false", "event_type": "heartbeat",
+                            "created_at": (base_time + datetime.timedelta(hours=3, minutes=2)).isoformat(),
+                            "runtime_binding_id": False, "tenant_id": self._TENANT,
+                        })
+                    ),
+                    (
+                        "evt-malformed-root-bool", "heartbeat", base_time + datetime.timedelta(hours=3, minutes=3),
+                        json.dumps({
+                            "event_id": "evt-malformed-root-bool", "event_type": "heartbeat",
+                            "created_at": (base_time + datetime.timedelta(hours=3, minutes=3)).isoformat(),
+                            "binding_id": True, "tenant_id": self._TENANT,
                         })
                     ),
                 ]
@@ -1942,34 +1965,60 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
 
         # 1. Realistic cold query performance under original 5s deadline budget
         t0 = time.monotonic()
-        res = fetch_b(target_bid, tenant_id=self._TENANT, limit=50)
+        res_50 = fetch_b(target_bid, tenant_id=self._TENANT, limit=50)
         elapsed = time.monotonic() - t0
         self.assertLess(elapsed, 1.0, f"query exceeded 1.0s capacity threshold: {elapsed}s")
 
-        # 2. Strict count: 20 tie + 5 rb-only + 5 both = 30 valid target events (no malformed, no noise)
-        self.assertEqual(len(res), 30)
+        # 2. Strict 50 cutoff verification (from 120 total valid target events)
+        self.assertEqual(len(res_50), 50)
+
+        # Verify strict descending order by created_at DESC, ingested_seq DESC
+        for idx in range(len(res_50) - 1):
+            curr_item = res_50[idx]
+            next_item = res_50[idx + 1]
+            curr_key = (curr_item["created_at"], curr_item["ingested_seq"])
+            next_key = (next_item["created_at"], next_item["ingested_seq"])
+            self.assertGreaterEqual(curr_key, next_key, f"Order violation at index {idx}: {curr_key} < {next_key}")
 
         # 3. Deterministic cutoff tie-breaking: identical created_at events strictly sorted by ingested_seq DESC
-        tie_eids = [r["event_id"] for r in res if r["event_id"].startswith("evt-tie-target-")]
-        self.assertEqual(len(tie_eids), 20)
-        tie_seqs = [r["ingested_seq"] for r in res if r["event_id"].startswith("evt-tie-target-")]
+        tie_in_50 = [r for r in res_50 if r["event_id"].startswith("evt-tie-target-")]
+        self.assertGreater(len(tie_in_50), 0)
+        tie_seqs = [r["ingested_seq"] for r in tie_in_50]
         self.assertEqual(tie_seqs, sorted(tie_seqs, reverse=True))
 
         # Re-running produces identical stable SHA256 (proves tie-breaking equivalence)
         res_repeat = fetch_b(target_bid, tenant_id=self._TENANT, limit=50)
-        hash1 = hashlib.sha256("".join(r["event_id"] for r in res).encode("utf-8")).hexdigest()
+        hash1 = hashlib.sha256("".join(r["event_id"] for r in res_50).encode("utf-8")).hexdigest()
         hash2 = hashlib.sha256("".join(r["event_id"] for r in res_repeat).encode("utf-8")).hexdigest()
         self.assertEqual(hash1, hash2)
 
-        # 4. Malformed alias types fail closed: querying string "99999" does not match integer 99999
-        res_mal_int = fetch_b("99999", tenant_id=self._TENANT, limit=50)
-        self.assertEqual(res_mal_int, [])
-        res_mal_bool = fetch_b("True", tenant_id=self._TENANT, limit=50)
-        self.assertEqual(res_mal_bool, [])
+        # 4. Strict 100 cutoff verification and upper bound clamp
+        res_100 = fetch_b(target_bid, tenant_id=self._TENANT, limit=100)
+        self.assertEqual(len(res_100), 100)
+        # limit=200 must be clamped to max 100
+        res_200 = fetch_b(target_bid, tenant_id=self._TENANT, limit=200)
+        self.assertEqual(len(res_200), 100)
+        self.assertEqual([r["event_id"] for r in res_100], [r["event_id"] for r in res_200])
 
-        # 5. Dualalias conflict negative: querying conflicted binding returns empty
+        # Verify res_50 is exact prefix of res_100 (proving cutoff consistency)
+        self.assertEqual([r["event_id"] for r in res_50], [r["event_id"] for r in res_100[:50]])
+
+        # 5. Malformed alias types fail closed:
+        # Querying string "99999" does not match integer 99999
+        self.assertEqual(fetch_b("99999", tenant_id=self._TENANT, limit=50), [])
+        # Querying string "true" (lowercase) or "True" does not match JSON boolean true (Finding 7)
+        self.assertEqual(fetch_b("true", tenant_id=self._TENANT, limit=50), [])
+        self.assertEqual(fetch_b("True", tenant_id=self._TENANT, limit=50), [])
+        self.assertEqual(fetch_b("false", tenant_id=self._TENANT, limit=50), [])
+        self.assertEqual(fetch_b("False", tenant_id=self._TENANT, limit=50), [])
+
+        # 6. Dualalias conflict negative: querying conflicted binding returns empty
         res_conflict = fetch_b("rb-foreign-conflict", tenant_id=self._TENANT, limit=50)
         self.assertEqual(res_conflict, [])
+
+        # 7. Non-matching tenant returns empty
+        res_wrong_tenant = fetch_b(target_bid, tenant_id="tenant-foreign", limit=50)
+        self.assertEqual(res_wrong_tenant, [])
 
 
 if __name__ == "__main__":
