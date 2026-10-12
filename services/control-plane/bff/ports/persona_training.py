@@ -1,24 +1,43 @@
 """Domain port for Persona reads, Training Session trainer/replay, and rapid-eval.
 
-This module provides typed domain ports for:
-- Persona, session, teaching, and capability reads owned by the Persona
-  Registry read surface
-- Trainer session, controls, message, preview, and replay flows owned by
-  the existing Training Session service
-- Rapid-evaluation caller-evidence ownership assignment (ACG-02-017)
+This module formalizes three disposition-matrix items from the BFF
+architecture-cleanup program into typed, testable domain ports:
 
-None of these ports reimplement persistence or HTTP transport. Every method
-delegates to an injected store/backend that already owns that
-responsibility -- ``read_store.ReadSurfaceStore`` in the running BFF, or a
-service-backed double in tests. This module intentionally does not import
-``main`` or ``read_store`` so it stays composable and does not change the
-behavior of either file.
+- ACG-02-014 (MIGRATE): "Persona, teaching-session, and capability reads" --
+  route reads through the Persona Registry read surface; extract pure DTO
+  projectors.
+- ACG-02-016 (MIGRATE): "Trainer session, controls, message, preview, and
+  replay flows" -- route reads and lifecycle commands through the Training
+  Session service; extract pure DTO projectors.
+- ACG-02-017 (MERGE): "Rapid-evaluation requests" -- assign canonical owner
+  based on caller evidence.
+
+Every method in this module delegates to an injected store/backend or to
+caller-provided callables. None of these ports owns raw entity storage or
+direct file/DB access.
 """
 
 from __future__ import annotations
 
+import copy
+import json
+import os
+import urllib.error
+import urllib.parse
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+from fastapi import HTTPException
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+try:
+    from ..command_adapters.base import get_base_url, http_request_json
+    from ..core.owner_reads import authorization, selected_tenant
+except (ImportError, ValueError):
+    from services.control_plane.bff.command_adapters.base import get_base_url, http_request_json
+    from services.control_plane.bff.core.owner_reads import authorization, selected_tenant
 
 
 # ---------------------------------------------------------------------------
@@ -29,8 +48,7 @@ class PersonaRegistryReadsPort:
     """Port for persona, session, teaching, and capability reads.
 
     Delegates to the injected ``store`` (duck-typed to the Persona
-    Registry-backed methods already implemented by
-    ``read_store.ReadSurfaceStore``: ``list_personas``, ``get_persona``,
+    Registry-backed methods: ``list_personas``, ``get_persona``,
     ``get_bindings_for_persona``, ``list_sessions_for_persona``,
     ``list_teaching_sessions_for_persona``, and
     ``get_capability_snapshot_for_persona``).
@@ -113,11 +131,9 @@ class TrainingSessionTrainerPort:
     """Port for trainer session, controls, message, preview, and replay flows.
 
     Delegates to the injected ``training`` store, which is expected to be
-    backed by the Training Session service -- see
-    ``read_store.ReadSurfaceStore.create_trainer_session`` and the
-    neighboring trainer/replay methods, which already call the Training
-    Session HTTP API at ``PANTHEON_TRAINING_SESSION_API_URL``. This port owns
-    no HTTP transport or local persistence of its own.
+    backed by the Training Session service (e.g. ``TrainingSessionHttpStore``)
+    or a test double. This port owns no HTTP transport or local persistence
+    of its own.
     """
 
     def __init__(self, *, training: Optional[Any] = None) -> None:
@@ -139,8 +155,8 @@ class TrainingSessionTrainerPort:
     def get_trainer_session(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
         return self._require_training().get_trainer_session(session_id)
 
-    def get_trainer_controls(self, session_id: str) -> Optional[Dict[str, Any]]:
-        return self._require_training().get_trainer_controls(session_id)
+    def get_trainer_controls(self, session_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self._require_training().get_trainer_controls(session_id, **kwargs)
 
     def patch_trainer_controls(self, session_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
         return self._require_training().patch_trainer_controls(session_id, **kwargs)
@@ -151,14 +167,20 @@ class TrainingSessionTrainerPort:
     def get_trainer_preview(self, session_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
         return self._require_training().get_trainer_preview(session_id, **kwargs)
 
+    def build_trainer_preview_unavailable(self, session_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        store = self._require_training()
+        if hasattr(store, "build_trainer_preview_unavailable"):
+            return store.build_trainer_preview_unavailable(session_id, **kwargs)
+        return self.get_trainer_preview(session_id, **kwargs)
+
     def refresh_trainer_preview(self, session_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
         return self._require_training().refresh_trainer_preview(session_id, **kwargs)
 
-    def list_trainer_replays(self, **kwargs: Any) -> List[Dict[str, Any]]:
-        return self._require_training().list_trainer_replays(**kwargs) or []
+    def list_trainer_replays(self, **kwargs: Any) -> Any:
+        return self._require_training().list_trainer_replays(**kwargs)
 
-    def get_trainer_replay(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        return self._require_training().get_trainer_replay(session_id)
+    def get_trainer_replay(self, session_id: Optional[str], **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self._require_training().get_trainer_replay(session_id, **kwargs)
 
     def commit_trainer_replay(self, session_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
         return self._require_training().commit_trainer_replay(session_id, **kwargs)
@@ -297,8 +319,8 @@ class PersonaTrainingDomainPort:
     def get_trainer_session(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
         return self.trainer.get_trainer_session(session_id)
 
-    def get_trainer_controls(self, session_id: str) -> Optional[Dict[str, Any]]:
-        return self.trainer.get_trainer_controls(session_id)
+    def get_trainer_controls(self, session_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self.trainer.get_trainer_controls(session_id, **kwargs)
 
     def patch_trainer_controls(self, session_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
         return self.trainer.patch_trainer_controls(session_id, **kwargs)
@@ -309,14 +331,17 @@ class PersonaTrainingDomainPort:
     def get_trainer_preview(self, session_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
         return self.trainer.get_trainer_preview(session_id, **kwargs)
 
+    def build_trainer_preview_unavailable(self, session_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self.trainer.build_trainer_preview_unavailable(session_id, **kwargs)
+
     def refresh_trainer_preview(self, session_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
         return self.trainer.refresh_trainer_preview(session_id, **kwargs)
 
-    def list_trainer_replays(self, **kwargs: Any) -> List[Dict[str, Any]]:
+    def list_trainer_replays(self, **kwargs: Any) -> Any:
         return self.trainer.list_trainer_replays(**kwargs)
 
-    def get_trainer_replay(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        return self.trainer.get_trainer_replay(session_id)
+    def get_trainer_replay(self, session_id: Optional[str], **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self.trainer.get_trainer_replay(session_id, **kwargs)
 
     def commit_trainer_replay(self, session_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
         return self.trainer.commit_trainer_replay(session_id, **kwargs)
@@ -334,3 +359,488 @@ class PersonaTrainingDomainPort:
 
     def get_rapid_eval(self, eval_id: Optional[str], **kwargs: Any) -> Optional[Dict[str, Any]]:
         return self.rapid_eval.get_rapid_eval(eval_id, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Training Session DTO / Projection Mappings
+# ---------------------------------------------------------------------------
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _trainer_session_allowed_actions(status: Optional[str]) -> Dict[str, bool]:
+    return {"canSendMessage": str(status or "").strip().lower() == "active"}
+
+
+def _project_teaching_event(session_id: str, event: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "event_id": event.get("event_id"),
+        "session_id": session_id,
+        "actor": event.get("actor"),
+        "message_body": event.get("message_body") or event.get("summary"),
+        "emitted_at": event.get("emitted_at") or event.get("timestamp"),
+        "sequence_number": event.get("sequence_number"),
+        "outcome_signal": event.get("outcome_signal"),
+    }
+
+
+def _extract_sorted_events(session_id: str, session: Dict[str, Any]) -> List[Dict[str, Any]]:
+    raw = [e for e in (session.get("events") or []) if isinstance(e, dict)]
+    raw.sort(key=lambda item: int(item.get("sequence_number") or 0))
+    return [_project_teaching_event(session_id, e) for e in raw]
+
+
+def _project_trainer_session_summary(
+    session: Dict[str, Any], events: Optional[List[Dict[str, Any]]] = None
+) -> Dict[str, Any]:
+    session_id = str(session.get("session_id") or session.get("id") or "")
+    evs = events if events is not None else _extract_sorted_events(session_id, session)
+    latest_signal = next((e.get("outcome_signal") for e in reversed(evs) if e.get("outcome_signal")), None)
+    return {
+        "message_count": len(evs),
+        "last_event_at": evs[-1].get("emitted_at") if evs else None,
+        "latest_outcome_signal": latest_signal,
+    }
+
+
+def _project_trainer_session_list_item(session: Dict[str, Any]) -> Dict[str, Any]:
+    sid = str(session.get("session_id") or session.get("id") or "")
+    summary = _project_trainer_session_summary(session)
+    status = session.get("status")
+    return {
+        "session_id": sid,
+        "persona_id": session.get("persona_id"),
+        "session_type": session.get("session_type") or "trainer",
+        "objective": session.get("objective") or session.get("topic"),
+        "status": status,
+        "started_at": session.get("started_at"),
+        "ended_at": session.get("ended_at") or session.get("completed_at"),
+        "message_count": summary["message_count"],
+        "last_event_at": summary["last_event_at"],
+        "latest_outcome_signal": summary["latest_outcome_signal"],
+        "actor_context": session.get("actor_context") or {"persona_display_name": None, "persona_role_context": None},
+        "allowedActions": _trainer_session_allowed_actions(status),
+        "links": {"workbench_detail": f"/trainer/sessions/{sid}"},
+    }
+
+
+def _project_trainer_session_detail(session: Dict[str, Any]) -> Dict[str, Any]:
+    sid = str(session.get("session_id") or session.get("id") or "")
+    events = _extract_sorted_events(sid, session)
+    status = session.get("status")
+    return {
+        "session_id": sid,
+        "persona_id": session.get("persona_id"),
+        "session_type": session.get("session_type") or "trainer",
+        "objective": session.get("objective") or session.get("topic"),
+        "status": status,
+        "started_at": session.get("started_at"),
+        "ended_at": session.get("ended_at") or session.get("completed_at"),
+        "opened_by": session.get("opened_by") or session.get("operator_id"),
+        "context_refs": list(session.get("context_refs") or []),
+        "actor_context": session.get("actor_context") or {"persona_display_name": None, "persona_role_context": None},
+        "session_summary": _project_trainer_session_summary(session, events=events),
+        "events": events,
+        "allowedActions": _trainer_session_allowed_actions(status),
+        "links": {"self": f"/api/v1/trainer/sessions/{sid}", "workbench_detail": f"/trainer/sessions/{sid}"},
+    }
+
+
+def _project_trainer_preview_payload(
+    preview: Dict[str, Any], *, session_status: Optional[str] = None, snapshot_at: Optional[str] = None
+) -> Dict[str, Any]:
+    payload = copy.deepcopy(preview)
+    now = snapshot_at or _utc_now()
+    status = str(payload.get("status") or "preview_unavailable").strip().lower()
+    warnings = list(payload.get("warnings") or [])
+    counts = {"critical": 0, "high": 0, "medium": 0, "informational": 0}
+    for w in warnings:
+        if isinstance(w, dict) and (lvl := str(w.get("level") or "").strip().lower()) in counts:
+            counts[lvl] += 1
+    can_refresh = str(session_status or "").strip().lower() in ("active", "paused") and status not in ("pending", "preview_unavailable")
+    payload.update({
+        "status": status,
+        "warnings": warnings,
+        "warning_count_by_level": payload.get("warning_count_by_level") or counts,
+        "allowedActions": {"canRefreshPreview": can_refresh},
+    })
+    if not (isinstance(payload.get("polling"), dict) and payload["polling"].get("deadline_at")):
+        payload["polling"] = {"enabled": status == "pending", "poll_interval_ms": 3000, "max_wait_ms": 45000, "deadline_at": None}
+    meta = payload.setdefault("meta", {})
+    meta["snapshot_at"] = str(meta.get("snapshot_at") or now)
+    meta.setdefault("surfaces", {}).setdefault("trainer_preview", "ok")
+    if status == "preview_unavailable":
+        payload["degraded_copy"] = {"title": "Trainer preview is temporarily unavailable", "body": "No preview evaluation is currently available."}
+    else:
+        payload.setdefault("degraded_copy", None)
+    for field in ("control_diff", "metric_delta"):
+        payload.setdefault(field, [])
+    for field in ("baseline_snapshot_at", "candidate_snapshot_at"):
+        payload.setdefault(field, None)
+    return payload
+
+
+def _can_act_replay(status: Any, resolution_state: str, surface_state: str, candidate_ref: Any) -> bool:
+    return (
+        str(status or "").strip().lower() == "completed"
+        and resolution_state == "pending_decision"
+        and surface_state not in ("degraded", "unavailable")
+        and bool(candidate_ref)
+    )
+
+
+def _project_trainer_replay_list_item(session: Dict[str, Any], *, surface_state: str = "ok") -> Dict[str, Any]:
+    sid = str(session.get("session_id") or session.get("id") or "")
+    events = sorted([e for e in (session.get("events") or []) if isinstance(e, dict)], key=lambda e: int(e.get("sequence_number") or 0))
+    resolution = session.get("replay_resolution") or {}
+    res_state = str(resolution.get("state") or "pending_decision")
+    artifacts = session.get("artifacts") or {}
+    can_act = _can_act_replay(session.get("status"), res_state, surface_state, artifacts.get("candidate_artifact_ref"))
+    latest_signal = next((e.get("outcome_signal") for e in reversed(events) if e.get("outcome_signal")), None)
+    return {
+        "session_id": sid,
+        "persona_id": session.get("persona_id"),
+        "objective": session.get("objective"),
+        "status": session.get("status"),
+        "started_at": session.get("started_at"),
+        "ended_at": session.get("ended_at"),
+        "event_count": len(events),
+        "latest_event_type": events[-1].get("event_type") if events else None,
+        "latest_outcome_signal": latest_signal,
+        "replay_resolution": {"state": res_state},
+        "allowedActions": {"canReplay": surface_state != "unavailable", "canCommit": can_act, "canDiscard": can_act},
+        "links": {"replay_detail": f"/trainer/replay/{sid}"},
+    }
+
+
+def _project_trainer_replay_detail(
+    session: Dict[str, Any], *, surface_state: str = "ok", snapshot_at: Optional[str] = None
+) -> Dict[str, Any]:
+    sid = str(session.get("session_id") or session.get("id") or "")
+    events = _extract_sorted_events(sid, session)
+    resolution = session.get("replay_resolution") or {"state": "pending_decision", "decision_at": None, "decision_by": None, "note": None}
+    res_state = str(resolution.get("state") or "pending_decision")
+    artifacts = session.get("artifacts") or {"before_artifact_ref": None, "candidate_artifact_ref": None, "after_artifact_ref": None}
+    can_act = _can_act_replay(session.get("status"), res_state, surface_state, artifacts.get("candidate_artifact_ref"))
+    latest_signal = next((e.get("outcome_signal") for e in reversed(events) if e.get("outcome_signal")), None)
+    return {
+        "session_id": sid,
+        "persona_id": session.get("persona_id"),
+        "objective": session.get("objective"),
+        "status": session.get("status"),
+        "started_at": session.get("started_at"),
+        "ended_at": session.get("ended_at"),
+        "replay_resolution": resolution,
+        "artifacts": artifacts,
+        "event_summary": {
+            "event_count": len(events),
+            "first_sequence_number": events[0]["sequence_number"] if events else None,
+            "last_sequence_number": events[-1]["sequence_number"] if events else None,
+            "latest_outcome_signal": latest_signal,
+        },
+        "events": events,
+        "allowedActions": {"canReplay": surface_state != "unavailable", "canCommit": can_act, "canDiscard": can_act},
+        "links": {"self": f"/trainer/replay/{sid}", "session_detail": f"/trainer/sessions/{sid}", "replay_detail": f"/trainer/replay/{sid}"},
+        "meta": {"snapshot_at": snapshot_at or _utc_now(), "surfaces": {"trainer_replay": surface_state}},
+    }
+
+
+# ---------------------------------------------------------------------------
+# Training Session HTTP Store (Owner-Backed)
+# ---------------------------------------------------------------------------
+
+class TrainingSessionHttpStore:
+    """Production HTTP-backed store for the Training Session owner service.
+
+    Talks to the existing Training Session service at PANTHEON_TRAINING_SESSION_API_URL
+    using http_request_json and request-scoped caller auth/tenant forwarding.
+    """
+
+    def __init__(self, *, base_url: Optional[str] = None) -> None:
+        self._explicit_base_url = base_url
+
+    def _resolve_base_url(self) -> str:
+        return self._explicit_base_url or get_base_url("PANTHEON_TRAINING_SESSION_API_URL", "PANTHEON_TRAINING_SESSION_URL")
+
+    def _request(
+        self, path: str, method: str = "GET", payload: Optional[Dict[str, Any]] = None, allow_404: bool = False
+    ) -> Any:
+        url = f"{self._resolve_base_url().rstrip('/')}{path}"
+        auth = authorization.get()
+        token = auth.removeprefix("Bearer ").strip() if auth else None
+        tenant = selected_tenant.get()
+        try:
+            return http_request_json(url, method=method, payload=payload, auth_token=token, tenant_id=tenant)
+        except urllib.error.HTTPError as exc:
+            if allow_404 and exc.code == 404:
+                return None
+            err_body = {}
+            try:
+                raw = exc.read().decode("utf-8")
+                err_body = json.loads(raw) if raw else {}
+                if hasattr(exc, "fp") and hasattr(exc.fp, "seek"):
+                    exc.fp.seek(0)
+            except Exception:
+                pass
+            detail = err_body.get("detail") or f"Training session service returned HTTP {exc.code}"
+            if 400 <= exc.code < 500:
+                raise HTTPException(status_code=exc.code, detail=detail) from exc
+            raise HTTPException(
+                status_code=503,
+                detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": f"Training session service returned HTTP {exc.code}", "status_code": 503}},
+            ) from exc
+        except Exception as exc:
+            if isinstance(exc, (HTTPException, StarletteHTTPException)):
+                raise
+            raise HTTPException(
+                status_code=503,
+                detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": f"Training session service unavailable: {exc}", "status_code": 503}},
+            ) from exc
+
+    def create_trainer_session(
+        self,
+        *,
+        persona_id: str,
+        objective: str,
+        context_refs: Optional[List[Dict[str, Any]]] = None,
+        actor_id: str = "operator",
+        created_at: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Optional[Dict[str, Any]]:
+        payload = {"persona_id": persona_id, "objective": objective, "context_refs": context_refs or [], "actor_id": actor_id, "created_at": created_at}
+        raw = self._request("/api/training/sessions", method="POST", payload=payload)
+        return _project_trainer_session_detail(raw) if isinstance(raw, dict) else None
+
+    def list_trainer_sessions(
+        self, *, persona_id: Optional[str] = None, status: Optional[str] = None, **kwargs: Any
+    ) -> List[Dict[str, Any]]:
+        params = [f"persona_id={urllib.parse.quote(str(persona_id))}"] if persona_id else []
+        if status:
+            params.append(f"status={urllib.parse.quote(str(status))}")
+        raw = self._request(f"/api/training/sessions{('?' + '&'.join(params)) if params else ''}", method="GET")
+        if not isinstance(raw, list):
+            return []
+        items = [_project_trainer_session_list_item(s) for s in raw if isinstance(s, dict)]
+        items.sort(key=lambda item: item.get("last_event_at") or item.get("started_at") or "", reverse=True)
+        return items
+
+    def get_trainer_session(self, session_id: Optional[str], **kwargs: Any) -> Optional[Dict[str, Any]]:
+        if not session_id:
+            return None
+        raw = self._request(f"/api/training/sessions/{urllib.parse.quote(str(session_id))}", method="GET", allow_404=True)
+        return _project_trainer_session_detail(raw) if isinstance(raw, dict) else None
+
+    def get_trainer_controls(
+        self, session_id: str, *, snapshot_at: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        if not session_id:
+            return None
+        session = self.get_trainer_session(session_id)
+        if session is None:
+            return None
+        now = snapshot_at or _utc_now()
+        raw = self._request(f"/api/training/controls/{urllib.parse.quote(str(session_id))}", method="GET", allow_404=True)
+        controls = list(raw.get("controls") or []) if isinstance(raw, dict) else []
+        status = str(session.get("status") or "")
+        return {
+            "object_ref": {"type": "TrainerControlState", "id": session_id},
+            "session_id": session_id,
+            "status": session.get("status"),
+            "controls": controls,
+            "allowedActions": {"canPatchControls": status.strip().lower() == "active"},
+            "meta": {
+                "snapshot_at": now,
+                "staleness": {"served_from": "owner_records", "last_known_at": now, "status": "fresh"},
+                "surfaces": {"trainer_controls": {"state": "ok"}},
+            },
+        }
+
+    def patch_trainer_controls(
+        self, session_id: str, patches: List[Dict[str, Any]], *, patched_at: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        now = patched_at or _utc_now()
+        raw = self._request(f"/api/training/sessions/{urllib.parse.quote(str(session_id))}/controls", method="POST", payload={"patches": patches, "patched_at": patched_at})
+        if not isinstance(raw, dict):
+            return None
+        controls = list(raw.get("controls") or raw.get("current_controls") or [])
+        meta = {
+            "snapshot_at": now,
+            "staleness": {"served_from": "owner_records", "last_known_at": now, "status": "fresh"},
+            "surfaces": {"trainer_controls": {"state": "ok"}},
+        }
+        if raw.get("status") == "rejected":
+            return {
+                "session_id": session_id,
+                "status": "rejected",
+                "error_code": "CONTROL_PATCH_VALIDATION_FAILED",
+                "message": "Patch contains invalid control updates.",
+                "field_errors": list(raw.get("field_errors") or []),
+                "rejected_changes": [],
+                "current_controls": controls,
+                "allowedActions": {"canPatchControls": True},
+                "meta": meta,
+            }
+        updated_diff = [
+            {"field": row.get("parameter_key"), "before": row.get("previous_value"), "after": row.get("new_value"), "validation_status": "accepted"}
+            for row in list(raw.get("patch_delta") or [])
+            if isinstance(row, dict)
+        ]
+        return {
+            "session_id": session_id,
+            "status": "accepted",
+            "message": "Patch applied successfully.",
+            "warnings": [],
+            "diff": {"updated_controls": updated_diff},
+            "current_controls": controls,
+            "allowedActions": {"canPatchControls": True},
+            "meta": meta,
+        }
+
+    def append_trainer_message(
+        self, session_id: str, *, message_body: str, actor_id: str = "operator", accepted_at: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        timestamp = accepted_at or _utc_now()
+        payload: Dict[str, Any] = {"actor": actor_id, "event_type": kwargs.get("event_type", "message"), "message_body": message_body, "emitted_at": timestamp}
+        for opt in ("summary", "outcome_signal", "evidence_ref", "patch_delta", "eval_ref", "artifact_refs"):
+            if opt in kwargs:
+                payload[opt] = kwargs[opt]
+        raw = self._request(f"/api/training/sessions/{urllib.parse.quote(str(session_id))}/events", method="POST", payload=payload)
+        if not isinstance(raw, dict) or not isinstance(raw.get("session"), dict):
+            return None
+        event = raw.get("event") if isinstance(raw.get("event"), dict) else {}
+        return {
+            "accepted_at": raw.get("accepted_at") or timestamp,
+            "event": _project_teaching_event(session_id, event),
+            "session": _project_trainer_session_detail(raw["session"]),
+        }
+
+    def get_trainer_preview(
+        self, session_id: str, *, session_status: Optional[str] = None, eval_id: Optional[str] = None, snapshot_at: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        raw = self._request(f"/api/training/previews/{urllib.parse.quote(str(session_id))}", method="GET", allow_404=True)
+        if not isinstance(raw, dict):
+            return None
+        evaluations = raw.get("evaluations") if isinstance(raw.get("evaluations"), dict) else {}
+        preview = None
+        if eval_id:
+            candidate = evaluations.get(eval_id)
+            if isinstance(candidate, dict):
+                preview = candidate
+        else:
+            latest_id = str(raw.get("latest_eval_id") or "").strip()
+            if latest_id and isinstance(evaluations.get(latest_id), dict):
+                preview = evaluations[latest_id]
+            elif isinstance(raw.get("preview"), dict):
+                preview = raw.get("preview")
+            elif evaluations:
+                preview = next(iter(evaluations.values()))
+        if not isinstance(preview, dict):
+            return None
+        return _project_trainer_preview_payload(preview, session_status=session_status, snapshot_at=snapshot_at)
+
+    def build_trainer_preview_unavailable(
+        self, session_id: str, *, session_status: Optional[str] = None, snapshot_at: Optional[str] = None, control_diff: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
+    ) -> Dict[str, Any]:
+        now = snapshot_at or _utc_now()
+        return {
+            "session_id": session_id,
+            "status": "preview_unavailable",
+            "eval_id": None,
+            "baseline_snapshot_at": None,
+            "candidate_snapshot_at": None,
+            "control_diff": list(control_diff or []),
+            "metric_delta": [],
+            "warnings": [],
+            "warning_count_by_level": {"critical": 0, "high": 0, "medium": 0, "informational": 0},
+            "preview_quality": "not_available",
+            "allowedActions": {"canRefreshPreview": False},
+            "polling": {"enabled": False, "poll_interval_ms": 3000, "max_wait_ms": 45000, "deadline_at": None},
+            "degraded_copy": {"title": "Trainer preview is unavailable", "body": "No evaluation has been completed for this session."},
+            "meta": {"snapshot_at": now, "surfaces": {"trainer_preview": "unavailable"}},
+        }
+
+    def refresh_trainer_preview(
+        self, session_id: str, *, session_status: Optional[str] = None, refreshed_at: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        timestamp = refreshed_at or _utc_now()
+        existing = self.get_trainer_preview(session_id, session_status=session_status, snapshot_at=timestamp)
+        if existing and existing.get("status") == "pending":
+            return existing
+        payload = {"mode": "refresh", "requested_by": kwargs.get("actor_id") or "operator", "requested_at": timestamp}
+        job = self._request(f"/api/training/sessions/{urllib.parse.quote(str(session_id))}/preview-jobs", method="POST", payload=payload)
+        if not isinstance(job, dict):
+            return None
+        eval_id = job.get("eval_id") or f"teval-{session_id.replace('trn-', '')}-001"
+        job_id = job.get("job_id")
+        return {
+            "session_id": session_id,
+            "status": "pending",
+            "eval_id": eval_id,
+            "job_id": job_id,
+            "owner_job_ref": {"job_id": job_id, "eval_id": eval_id} if job_id else None,
+            "baseline_snapshot_at": timestamp,
+            "candidate_snapshot_at": timestamp,
+            "control_diff": [],
+            "metric_delta": [],
+            "warnings": [],
+            "warning_count_by_level": {"critical": 0, "high": 0, "medium": 0, "informational": 0},
+            "preview_quality": "directional_only",
+            "allowedActions": {"canRefreshPreview": False},
+            "polling": {"enabled": True, "poll_interval_ms": 3000, "max_wait_ms": 45000, "deadline_at": None},
+            "meta": {"snapshot_at": timestamp, "surfaces": {"trainer_preview": "ok"}},
+        }
+
+    def list_trainer_replays(
+        self, *, persona_id: Optional[str] = None, status: Optional[str] = None, snapshot_at: Optional[str] = None, **kwargs: Any
+    ) -> Tuple[List[Dict[str, Any]], str]:
+        params = [f"persona_id={urllib.parse.quote(str(persona_id))}"] if persona_id else []
+        if status:
+            params.append(f"status={urllib.parse.quote(str(status))}")
+        raw = self._request(f"/api/training/replays{('?' + '&'.join(params)) if params else ''}", method="GET")
+        if not isinstance(raw, list):
+            return [], "ok"
+        items = [_project_trainer_replay_list_item(s, surface_state="ok") for s in raw if isinstance(s, dict)]
+        items.sort(key=lambda item: item.get("ended_at") or item.get("started_at") or "", reverse=True)
+        return items, "ok"
+
+    def get_trainer_replay(
+        self, session_id: Optional[str], *, snapshot_at: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        if not session_id:
+            return None
+        raw = self._request(f"/api/training/replays/{urllib.parse.quote(str(session_id))}", method="GET", allow_404=True)
+        return _project_trainer_replay_detail(raw, surface_state="ok", snapshot_at=snapshot_at) if isinstance(raw, dict) else None
+
+    def _decide_trainer_replay(
+        self, session_id: str, *, action: str, expected_snapshot: str, note: Optional[str] = None, actor_id: str = "operator", decided_at: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        timestamp = decided_at or _utc_now()
+        payload = {"expected_candidate_snapshot_at": expected_snapshot, "note": note, "actor_id": actor_id, "decided_at": timestamp}
+        raw = self._request(f"/api/training/replays/{urllib.parse.quote(str(session_id))}/{action}", method="POST", payload=payload)
+        if not isinstance(raw, dict):
+            return None
+        projected = _project_trainer_replay_detail(raw, surface_state="ok", snapshot_at=timestamp)
+        res = projected.get("replay_resolution") or {}
+        events = projected.get("events") or []
+        return {
+            "session_id": session_id,
+            "status": projected.get("status"),
+            "replay_resolution": res,
+            "artifacts": projected.get("artifacts"),
+            f"{action}ed_at": res.get("decision_at") or timestamp,
+            f"{action}ed_by": res.get("decision_by") or actor_id,
+            "event": events[-1] if events else None,
+            "allowedActions": projected.get("allowedActions"),
+            "meta": projected.get("meta"),
+        }
+
+    def commit_trainer_replay(
+        self, session_id: str, *, expected_candidate_snapshot_at: str, note: Optional[str] = None, actor_id: str = "operator", committed_at: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        return self._decide_trainer_replay(session_id, action="commit", expected_snapshot=expected_candidate_snapshot_at, note=note, actor_id=actor_id, decided_at=committed_at)
+
+    def discard_trainer_replay(
+        self, session_id: str, *, expected_candidate_snapshot_at: str, note: Optional[str] = None, actor_id: str = "operator", discarded_at: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        return self._decide_trainer_replay(session_id, action="discard", expected_snapshot=expected_candidate_snapshot_at, note=note, actor_id=actor_id, decided_at=discarded_at)
