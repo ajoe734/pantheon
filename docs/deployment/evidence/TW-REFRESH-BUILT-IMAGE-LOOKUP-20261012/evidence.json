@@ -88,8 +88,8 @@
       "predecessor": {
         "task_id": "TW-REFRESH-ORDER-RESTORE-20261012",
         "pr": 6528,
-        "merge_commit": "d10a49814407da5a7c29370bb4e18d6e32bc0e57",
-        "dev_head": "f1510207bf5dc62ce9c02581c7ff26b7713f0c13"
+        "merge_commit": "d10a498142196b235892daccff97f36165ff6acb",
+        "dev_head": "f1510207b7efc636e838a895da12466339f20832"
       },
       "hosted_dev_incident": {
         "run_id": 38263512802,
@@ -123,17 +123,17 @@
       },
       "changes": [
         "scripts/deploy_nonprod_vm.sh: replaced docker compose ps -a -q with docker compose ps --status running -q when selecting steady bounded services in execute_bounded_source_refresh_entrypoint, selecting only currently running steady service containers and excluding completed/stopped bounded oneshots with net 0 line growth (cumulative <=12 relative to 714)",
-        "scripts/test_dev_tw_market_refresh.py: extended test docker stub to support compose service container status queries and multiline inspect rejection; added reproduction test for run 38263512802 ps -a multiline inspect failure, test verifying corrected script ignores stopped bounded oneshots and succeeds with full readback and restoration, and tests verifying fail-closed handling for stopped-only and ambiguous live identities without starting old oneshots"
+        "scripts/test_dev_tw_market_refresh.py: extended test docker stub to support compose service container status queries and multiline inspect rejection; parameterized steady selection tests sharing setup across positive stopped+running with real readback validation, stopped-only fail-closed without restarting old oneshots, and ambiguous live identities fail-closed before mutation"
       ],
       "verification": {
-        "scripts/test_dev_tw_market_refresh.py": "44 passed",
+        "scripts/test_dev_tw_market_refresh.py": "43 passed",
         "regression_tests": [
-          "test_bounded_refresh_reproduces_run38263512802_multiline_ps_all_inspect_failure (ps -a selects stopped bounded container alongside steady container, multiline inspect fails, triggering deploy value missing error)",
-          "test_bounded_refresh_corrected_steady_selection_ignores_stopped_bounded_containers_and_succeeds (running status filter excludes stopped bounded oneshots, reads steady env, runs sequentially, validates readback, restarts steady scheduler, and leaves old oneshots stopped)",
-          "test_bounded_refresh_stopped_only_steady_scheduler_fails_closed_without_starting_old_oneshots (stopped-only steady container fails closed before mutation without restarting old oneshot)",
-          "test_bounded_refresh_ambiguous_live_steady_scheduler_fails_closed_before_mutation (ambiguous multiple live steady containers fail closed before mutation without first-ID fallback)"
+          "test_bounded_refresh_steady_container_selection[positive] (running status filter excludes stopped bounded oneshots, reads steady env, runs sequentially, exercises real receipt/run/source readback validation, restarts steady scheduler, and leaves old oneshots stopped)",
+          "test_bounded_refresh_steady_container_selection[stopped_only] (stopped-only steady container fails closed before mutation without restarting old oneshot)",
+          "test_bounded_refresh_steady_container_selection[ambiguous_live] (ambiguous multiple live steady containers fail closed before mutation without first-ID fallback)"
         ]
       }
+
     }
   },
   "not_claimed": [
