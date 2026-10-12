@@ -378,6 +378,7 @@ class RuntimeSummaryProjectionStore:
                     "queue_lag_ms", "event_delivery_lag_ms", "reported_health_summary",
                     "trace_id", "correlation_envelope", "last_lifecycle_identity",
                     "recent_lifecycle_event_ids",
+                    "runtime_package",
                 ]
                 for key in keys_to_clear:
                     current.pop(key, None)
@@ -514,6 +515,13 @@ class RuntimeSummaryProjectionStore:
                     current["event_delivery_lag_ms"] = event_delivery_lag_ms
                 if isinstance(reported_health_summary, dict):
                     current["reported_health_summary"] = reported_health_summary
+                runtime_package = (
+                    runtime_heartbeat.get("runtime_package")
+                    or metadata.get("runtime_package")
+                    or event.get("runtime_package")
+                )
+                if isinstance(runtime_package, str) and runtime_package.strip():
+                    current["runtime_package"] = runtime_package.strip()
             elif event_type == "deploy_started":
                 current.setdefault("state", "active")
             elif event_type == "deploy_completed":
@@ -819,13 +827,23 @@ class RuntimeSummaryProjectionStore:
         broker_status = summary.get("broker_status")
         stage = str(summary.get("deployment_stage") or "paper").lower()
         stage_key = f"{stage}_runtime"
+        if has_bridge_identity:
+            bridge_status = "ok"
+        elif (
+            stage == "paper"
+            and str(summary.get("environment") or "").lower() not in {"canary", "live"}
+            and summary.get("runtime_package") == "paper_execution_runtime"
+        ):
+            bridge_status = "not_applicable"
+        else:
+            bridge_status = "degraded"
         return {
             stage_key: (
                 "ok"
                 if summary.get("state") == "active" and connectivity_status != "disconnected"
                 else "degraded"
             ),
-            "bridge": "ok" if has_bridge_identity else "degraded",
+            "bridge": bridge_status,
             "telemetry": telemetry_state,
             "broker": broker_status if broker_status in {"ok", "degraded", "unavailable"} else "not_applicable",
         }
