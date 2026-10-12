@@ -458,7 +458,7 @@ def _project_trainer_preview_payload(
     for w in warnings:
         if isinstance(w, dict) and (lvl := str(w.get("level") or "").strip().lower()) in counts:
             counts[lvl] += 1
-    can_refresh = str(session_status or "").strip().lower() in ("active", "paused") and status not in ("pending", "preview_unavailable")
+    can_refresh = str(session_status or "").strip().lower() in ("active", "paused") and status != "pending"
     payload.update({
         "status": status,
         "warnings": warnings,
@@ -472,13 +472,67 @@ def _project_trainer_preview_payload(
     meta.setdefault("surfaces", {}).setdefault("trainer_preview", "ok")
     if status == "preview_unavailable":
         payload["degraded_copy"] = {"title": "Trainer preview is temporarily unavailable", "body": "No preview evaluation is currently available."}
+    elif status == "failed" and not payload.get("degraded_copy"):
+        payload["degraded_copy"] = {"title": "Trainer preview could not complete", "body": payload.get("failure_reason") or "Pantheon could not finish the rapid-eval for this candidate."}
     else:
         payload.setdefault("degraded_copy", None)
     for field in ("control_diff", "metric_delta"):
         payload.setdefault(field, [])
-    for field in ("baseline_snapshot_at", "candidate_snapshot_at"):
+    for field in ("baseline_snapshot_at", "candidate_snapshot_at", "error_code", "failure_reason", "owner_job_ref", "job_id"):
         payload.setdefault(field, None)
     return payload
+
+
+def _project_job_trainer_preview(
+    session_id: str,
+    job: Dict[str, Any],
+    *,
+    session_status: Optional[str] = None,
+    timestamp: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    if not isinstance(job, dict) or not str(job.get("job_id") or "").strip() or not str(job.get("eval_id") or "").strip():
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": {
+                    "code": "DEPENDENCY_UNAVAILABLE",
+                    "message": "Training session service returned malformed preview job response missing job_id or eval_id",
+                    "status_code": 503,
+                }
+            },
+        )
+    st = str(job.get("status") or "").strip().lower()
+    if st not in ("queued", "running", "failed"):
+        return None
+    job_id, eval_id = str(job["job_id"]).strip(), str(job["eval_id"]).strip()
+    ts = timestamp or str(job.get("requested_at") or _utc_now())
+    is_failed = st == "failed"
+    reason = str(job.get("failure_reason") or job.get("error_code") or "").strip()
+    warnings = [{"level": "high", "message": reason}] if (is_failed and reason) else []
+    can_refresh = str(session_status or "").strip().lower() in ("active", "paused") if is_failed else False
+    return {
+        "session_id": session_id,
+        "status": "failed" if is_failed else "pending",
+        "eval_id": eval_id,
+        "job_id": job_id,
+        "owner_job_ref": {"job_id": job_id, "eval_id": eval_id},
+        "error_code": job.get("error_code"),
+        "failure_reason": job.get("failure_reason"),
+        "baseline_snapshot_at": ts,
+        "candidate_snapshot_at": ts,
+        "control_diff": [],
+        "metric_delta": [],
+        "warnings": warnings,
+        "warning_count_by_level": {"critical": 0, "high": len(warnings), "medium": 0, "informational": 0},
+        "preview_quality": "insufficient_data" if is_failed else "directional_only",
+        "allowedActions": {"canRefreshPreview": can_refresh},
+        "polling": {"enabled": not is_failed, "poll_interval_ms": 3000, "max_wait_ms": 45000, "deadline_at": None},
+        "degraded_copy": {
+            "title": "Trainer preview could not complete",
+            "body": reason or "Pantheon could not finish the rapid-eval for this candidate.",
+        } if is_failed else None,
+        "meta": {"snapshot_at": ts, "surfaces": {"trainer_preview": "degraded" if is_failed else "ok"}},
+    }
 
 
 def _can_act_replay(status: Any, resolution_state: str, surface_state: str, candidate_ref: Any) -> bool:
@@ -721,20 +775,35 @@ class TrainingSessionHttpStore:
         raw = self._request(f"/api/training/previews/{urllib.parse.quote(str(session_id))}", method="GET", allow_404=True)
         if not isinstance(raw, dict):
             return None
+        jobs = self._request(f"/api/training/preview-jobs?session_id={urllib.parse.quote(str(session_id))}", method="GET")
+        if not isinstance(jobs, list):
+            raise HTTPException(
+                status_code=503,
+                detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": "Training session service returned malformed preview job list response", "status_code": 503}},
+            )
         evaluations = raw.get("evaluations") if isinstance(raw.get("evaluations"), dict) else {}
-        preview = None
         if eval_id:
-            candidate = evaluations.get(eval_id)
-            if isinstance(candidate, dict):
-                preview = candidate
-        else:
-            latest_id = str(raw.get("latest_eval_id") or "").strip()
-            if latest_id and isinstance(evaluations.get(latest_id), dict):
-                preview = evaluations[latest_id]
-            elif isinstance(raw.get("preview"), dict):
-                preview = raw.get("preview")
-            elif evaluations:
-                preview = next(iter(evaluations.values()))
+            if eval_id in evaluations and isinstance(evaluations[eval_id], dict):
+                return _project_trainer_preview_payload(evaluations[eval_id], session_status=session_status, snapshot_at=snapshot_at)
+            matching_job = next((j for j in reversed(jobs) if isinstance(j, dict) and str(j.get("eval_id") or "") == eval_id), None)
+            if matching_job:
+                return _project_job_trainer_preview(session_id, matching_job, session_status=session_status, timestamp=snapshot_at)
+            return None
+        if jobs:
+            latest_job = jobs[-1]
+            if isinstance(latest_job, dict):
+                job_status = str(latest_job.get("status") or "").lower()
+                job_eval_id = str(latest_job.get("eval_id") or "")
+                if job_status in ("queued", "running", "failed") and (not evaluations or str(raw.get("latest_eval_id") or "") != job_eval_id):
+                    return _project_job_trainer_preview(session_id, latest_job, session_status=session_status, timestamp=snapshot_at)
+        preview = None
+        latest_id = str(raw.get("latest_eval_id") or "").strip()
+        if latest_id and isinstance(evaluations.get(latest_id), dict):
+            preview = evaluations[latest_id]
+        elif isinstance(raw.get("preview"), dict):
+            preview = raw.get("preview")
+        elif evaluations:
+            preview = next(iter(evaluations.values()))
         if not isinstance(preview, dict):
             return None
         return _project_trainer_preview_payload(preview, session_status=session_status, snapshot_at=snapshot_at)
@@ -747,6 +816,10 @@ class TrainingSessionHttpStore:
             "session_id": session_id,
             "status": "preview_unavailable",
             "eval_id": None,
+            "job_id": None,
+            "owner_job_ref": None,
+            "error_code": None,
+            "failure_reason": None,
             "baseline_snapshot_at": None,
             "candidate_snapshot_at": None,
             "control_diff": list(control_diff or []),
@@ -769,36 +842,7 @@ class TrainingSessionHttpStore:
             return existing
         payload = {"mode": kwargs.get("mode") or "refresh", "requested_by": kwargs.get("actor_id") or "operator", "requested_at": timestamp}
         job = self._request(f"/api/training/sessions/{urllib.parse.quote(str(session_id))}/preview-jobs", method="POST", payload=payload)
-        if not isinstance(job, dict) or not job.get("job_id") or not job.get("eval_id"):
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "error": {
-                        "code": "DEPENDENCY_UNAVAILABLE",
-                        "message": "Training session service returned malformed preview job response missing job_id or eval_id",
-                        "status_code": 503,
-                    }
-                },
-            )
-        eval_id = str(job["eval_id"])
-        job_id = str(job["job_id"])
-        return {
-            "session_id": session_id,
-            "status": "pending",
-            "eval_id": eval_id,
-            "job_id": job_id,
-            "owner_job_ref": {"job_id": job_id, "eval_id": eval_id},
-            "baseline_snapshot_at": timestamp,
-            "candidate_snapshot_at": timestamp,
-            "control_diff": [],
-            "metric_delta": [],
-            "warnings": [],
-            "warning_count_by_level": {"critical": 0, "high": 0, "medium": 0, "informational": 0},
-            "preview_quality": "directional_only",
-            "allowedActions": {"canRefreshPreview": False},
-            "polling": {"enabled": True, "poll_interval_ms": 3000, "max_wait_ms": 45000, "deadline_at": None},
-            "meta": {"snapshot_at": timestamp, "surfaces": {"trainer_preview": "ok"}},
-        }
+        return _project_job_trainer_preview(session_id, job, session_status=session_status, timestamp=timestamp)
 
     def list_trainer_replays(
         self, *, persona_id: Optional[str] = None, status: Optional[str] = None, snapshot_at: Optional[str] = None, **kwargs: Any
