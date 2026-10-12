@@ -1,0 +1,50 @@
+{
+  "task_id": "PAPER-PERF-VALUATION-TIME-20261012",
+  "title": "Separate paper valuation time from admitted market quote time",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "status": "ready_for_review",
+  "root_cause_analysis": {
+    "predate_rejection": "Taiwan MARKET orders intentionally fill from the admitted daily close at wall-clock commit time. Previously, value_portfolio rejected still-age-eligible quotes whenever their event_time predated the fill with 'market_marks_predate_ledger', preventing a fresh daily snapshot from valuing same-day filled books.",
+    "sample_backdating": "Previously, value_portfolio calculated sample as_of as min() across used marks, omitting the ledger fill timestamp and backdating the portfolio sample to the earliest quote rather than the latest intrinsic boundary across fills and marks."
+  },
+  "remediation": {
+    "performance_telemetry": "Removed predating_ledger rejection in value_portfolio. Sample as_of is now the latest intrinsic timestamp (max) across the last committed fill (ledger_as_of) and all used marks. Each MarketMark.as_of and source_ref remains unchanged as admitted. No wall-clock now, receipt time, or rewritten event_time is substituted for quotes or ledger timestamps.",
+    "contract_preservation": "Retains original max_mark_age_seconds (172800s) and future_tolerance_seconds (300s) fail-closed behavior, invalid ledger fail-closed, missing/invalid mark fail-closed, and currency/alias isolation."
+  },
+  "line_budget_compliance": {
+    "net_production_lines_allowed": 15,
+    "net_production_lines_actual": -14,
+    "breakdown": {
+      "performance_telemetry.py": "+5, -19 (net -14)"
+    },
+    "evidence_lines_allowed": 200
+  },
+  "synthetic_source_only_controls": {
+    "counter_file": "/tmp/pantheon-full-closeout-20261011/financial-daily-bucket-ledger-source-only-counter-20261012.json",
+    "synthetic_source_only": true,
+    "not_actual_new_taiwan_data_or_hosted_positive_finance": true,
+    "diagnosis": "Proves that a fresh daily date bucket predating wall-clock paper fill was rejected by the old guard while after-fill marks valued. Contract repair resolves this mismatch by accepting age-eligible admitted daily closes."
+  },
+  "hosted_delivery_distinction": {
+    "source_delivery_only": true,
+    "hosted_fresh_mark_finance_status": "still_unfinished",
+    "notes": "Explicitly distinguishes source delivery from hosted fresh-mark finance. Real fresh 10/12 Taiwan market marks, provider reset / FULL qualification (12:00 UTC), and coordinator same-final hosted acceptance remain outstanding. No actual provider calls, VM mutations, human votes, or task-state direct writes occurred."
+  },
+  "test_results": {
+    "services/execution/lean_runtime/test_performance_telemetry.py": "28 passed in 4.41s (e2e PaperExecutionAlgorithm ledger/provider/valuator counter, updated timing contract with before/after rationale, stale/future/missing-fill fail-closed, wall-clock now fingerprint invariance preventing drawdown duplication)",
+    "services/execution/lean_runtime/test_algorithm_smoke.py": "4 passed in 1.17s",
+    "services/execution/lean_runtime/test_paper_runtime.py": "78 passed, 27 subtests passed in 17.16s",
+    "services/execution/lean_runtime/test_paper_runtime_smoke.py": "8 failed, 8 passed in 3.03s (pre-existing failures preserved: 8 tests fail due to worker environment read-only /data filesystem [Errno 30], not from code regression)"
+  },
+  "invariants_preserved": [
+    "MarketMark.as_of and source_ref preserved exactly as admitted",
+    "Sample as_of is latest intrinsic timestamp across last fill and used marks, never earlier than a used mark or ledger",
+    "Two identical evaluations at different wall-clock now values have identical fingerprints and record no duplicate drawdown points",
+    "Restored drawdown tracker plus unchanged ledger/marks records no extra points",
+    "A quote older than max age still returns marks_unavailable and no sample",
+    "Missing latest-fill time on open book still fails closed with invalid_ledger",
+    "Future quote still fails closed with marks_unavailable / stale_or_future_market_marks",
+    "No new helpers, classes, fields, parameters, env vars, writers, services, or source providers introduced"
+  ]
+}

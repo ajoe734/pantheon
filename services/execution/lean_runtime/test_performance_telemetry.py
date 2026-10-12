@@ -278,6 +278,13 @@ class PortfolioValuationTest(unittest.TestCase):
         self.assertEqual(result.diagnostic["missing_symbols"], ["MSFT"])
 
     def test_mark_older_than_latest_fill_cannot_value_the_new_ledger_state(self):
+        # Before: value_portfolio rejected any still-age-eligible mark whose timestamp
+        # predated the latest fill with marks_unavailable / market_marks_predate_ledger,
+        # preventing fresh daily snapshot quotes from valuing same-day filled books.
+        # After: an age-eligible admitted mark preceding the fill is accepted;
+        # the portfolio sample as_of advances to the latest intrinsic timestamp across
+        # the fill and all used marks (never earlier than a used mark or ledger),
+        # while keeping the mark's original as_of and source_ref unchanged.
         result = value_portfolio(
             initial_cash=100_000,
             cash=99_000,
@@ -295,10 +302,77 @@ class PortfolioValuationTest(unittest.TestCase):
             now=_NOW,
         )
 
-        self.assertEqual(result.status, "marks_unavailable")
-        self.assertIsNone(result.sample)
-        self.assertEqual(result.diagnostic["code"], "market_marks_predate_ledger")
-        self.assertEqual(result.diagnostic["missing_symbols"], ["AAPL"])
+        self.assertEqual(result.status, "valued")
+        self.assertIsNotNone(result.sample)
+        self.assertAlmostEqual(result.sample.portfolio_value, 100_100.0)
+        self.assertAlmostEqual(result.sample.pnl, 100.0)
+        self.assertEqual(result.sample.as_of, "2026-07-14T11:00:00Z")
+        self.assertEqual(result.sample.marks[0].as_of, "2026-07-14T10:59:59Z")
+        self.assertEqual(result.sample.marks[0].source_ref, "source-ingest://aapl")
+
+    def test_quote_older_than_max_age_or_future_quote_or_missing_fill_time_fails_closed(self):
+        # Quote older than max age returns no sample (stale_or_future_market_marks)
+        stale_result = value_portfolio(
+            initial_cash=100_000,
+            cash=99_000,
+            positions=[{"symbol": "AAPL", "quantity": 10}],
+            marks={
+                "AAPL": MarketMark(
+                    "AAPL",
+                    110.0,
+                    (_NOW - timedelta(seconds=172801)).isoformat(),
+                    "source-ingest://aapl",
+                )
+            },
+            fill_count=1,
+            last_fill_at="2026-07-14T11:00:00Z",
+            now=_NOW,
+        )
+        self.assertEqual(stale_result.status, "marks_unavailable")
+        self.assertIsNone(stale_result.sample)
+        self.assertEqual(stale_result.diagnostic["code"], "stale_or_future_market_marks")
+
+        # Future quote fails closed (stale_or_future_market_marks)
+        future_result = value_portfolio(
+            initial_cash=100_000,
+            cash=99_000,
+            positions=[{"symbol": "AAPL", "quantity": 10}],
+            marks={
+                "AAPL": MarketMark(
+                    "AAPL",
+                    110.0,
+                    (_NOW + timedelta(seconds=301)).isoformat(),
+                    "source-ingest://aapl",
+                )
+            },
+            fill_count=1,
+            last_fill_at="2026-07-14T11:00:00Z",
+            now=_NOW,
+        )
+        self.assertEqual(future_result.status, "marks_unavailable")
+        self.assertIsNone(future_result.sample)
+        self.assertEqual(future_result.diagnostic["code"], "stale_or_future_market_marks")
+
+        # Missing latest-fill time fails closed (open_book_missing_fill_as_of)
+        missing_fill_result = value_portfolio(
+            initial_cash=100_000,
+            cash=99_000,
+            positions=[{"symbol": "AAPL", "quantity": 10}],
+            marks={
+                "AAPL": MarketMark(
+                    "AAPL",
+                    110.0,
+                    "2026-07-14T11:00:00Z",
+                    "source-ingest://aapl",
+                )
+            },
+            fill_count=1,
+            last_fill_at=None,
+            now=_NOW,
+        )
+        self.assertEqual(missing_fill_result.status, "invalid_ledger")
+        self.assertIsNone(missing_fill_result.sample)
+        self.assertEqual(missing_fill_result.diagnostic["code"], "open_book_missing_fill_as_of")
 
 
 class RollingDrawdownTrackerTest(unittest.TestCase):
@@ -382,6 +456,81 @@ class RollingDrawdownTrackerTest(unittest.TestCase):
                     "latest_as_of": "2099-01-01T00:00:00Z",
                 }
             )
+
+    def test_identical_ledger_mark_evaluations_at_different_wall_clocks_prevent_drawdown_duplication(self):
+        # Two identical evaluations at different wall-clock now values have identical fingerprints
+        now1 = _NOW
+        now2 = _NOW + timedelta(hours=2)
+        mark = MarketMark("AAPL", 110.0, "2026-07-14T10:00:00Z", "source-ingest://aapl")
+        res1 = value_portfolio(
+            initial_cash=100_000,
+            cash=99_000,
+            positions=[{"symbol": "AAPL", "quantity": 10}],
+            marks={"AAPL": mark},
+            fill_count=1,
+            last_fill_at="2026-07-14T10:30:00Z",
+            now=now1,
+        )
+        res2 = value_portfolio(
+            initial_cash=100_000,
+            cash=99_000,
+            positions=[{"symbol": "AAPL", "quantity": 10}],
+            marks={"AAPL": mark},
+            fill_count=1,
+            last_fill_at="2026-07-14T10:30:00Z",
+            now=now2,
+        )
+        self.assertEqual(res1.status, "valued")
+        self.assertEqual(res2.status, "valued")
+        self.assertIsNotNone(res1.sample)
+        self.assertIsNotNone(res2.sample)
+        self.assertEqual(res1.sample.fingerprint, res2.sample.fingerprint)
+
+        # RollingDrawdownTracker records initial equity seed and first sample point, but suppresses second point
+        tracker = RollingDrawdownTracker(window_days=20)
+        first_metrics = tracker.observe(res1.sample)
+        self.assertIsNotNone(first_metrics)
+        self.assertEqual(first_metrics["window_observations"], 2)
+
+        second_metrics = tracker.observe(res2.sample)
+        self.assertIsNone(second_metrics, "Advancing wall clock now without ledger or mark change must record no second point")
+
+        # Restored tracker plus unchanged sample also records no extra point
+        persisted = tracker.export_state()
+        restored = RollingDrawdownTracker(window_days=20)
+        restored.restore(persisted)
+        self.assertIsNone(restored.observe(res2.sample), "Restored tracker with unchanged sample must record no extra point")
+
+        # A real new committed fill is a different intrinsic sample and is observed
+        res_new_fill = value_portfolio(
+            initial_cash=100_000,
+            cash=97_900,
+            positions=[{"symbol": "AAPL", "quantity": 20}],
+            marks={"AAPL": mark},
+            fill_count=2,
+            last_fill_at="2026-07-14T11:00:00Z",
+            now=now2,
+        )
+        self.assertNotEqual(res_new_fill.sample.fingerprint, res1.sample.fingerprint)
+        obs_new_fill = tracker.observe(res_new_fill.sample)
+        self.assertIsNotNone(obs_new_fill)
+        self.assertEqual(obs_new_fill["window_observations"], 3)
+
+        # A changed eligible quote is a different intrinsic sample and is observed
+        mark_updated = MarketMark("AAPL", 115.0, "2026-07-14T11:30:00Z", "source-ingest://aapl-v2")
+        res_new_quote = value_portfolio(
+            initial_cash=100_000,
+            cash=97_900,
+            positions=[{"symbol": "AAPL", "quantity": 20}],
+            marks={"AAPL": mark_updated},
+            fill_count=2,
+            last_fill_at="2026-07-14T11:00:00Z",
+            now=now2,
+        )
+        self.assertNotEqual(res_new_quote.sample.fingerprint, res_new_fill.sample.fingerprint)
+        obs_new_quote = tracker.observe(res_new_quote.sample)
+        self.assertIsNotNone(obs_new_quote)
+        self.assertEqual(obs_new_quote["window_observations"], 4)
 
 
 class PaperPerformanceLedgerTest(unittest.TestCase):
@@ -603,6 +752,124 @@ class PaperPerformanceLedgerTest(unittest.TestCase):
         self.assertEqual(ledger["fill_count"], 1)
         self.assertEqual(events[0].quantity, -3.0)
         self.assertEqual(events[0].fill_price, 50.0)
+
+    def test_e2e_paper_execution_algorithm_ledger_provider_valuator(self):
+        algorithm = PaperExecutionAlgorithm(initial_cash=100_000.0)
+
+        # Committed fills with governed daily-close shape and realistic sequence
+        broker_fill_tw = {
+            "order_id": "tw-order-001",
+            "fill_qty": 10,
+            "fill_price": 1000.0,
+            "filled_at": "2026-07-14T06:00:00Z",
+            "quote_source": "shioaji-paper-quote",
+        }
+        algorithm.SetCurrentSignalContext(
+            {
+                "market_price": 1000.0,
+                "market_price_as_of": "2026-07-14T05:30:00Z",
+                "market_price_source": "source-ingest://snapshots/mss-2330",
+            }
+        )
+        with patch("services.execution.lean_runtime.paper_runtime._iso_now", return_value="2026-07-14T06:00:00Z"):
+            with patch.object(algorithm, "_post_broker_paper_order", return_value=broker_fill_tw):
+                algorithm.SubmitTaiwanBrokerOrder(
+                    "2330.TW",
+                    signal_id="sig-tw-001",
+                    side="buy",
+                    quantity=10,
+                    quantity_type="SHARES",
+                    action="BUY",
+                )
+
+        broker_fill_tw2 = {
+            "order_id": "tw-order-002",
+            "fill_qty": 5,
+            "fill_price": 200.0,
+            "filled_at": "2026-07-14T06:15:00Z",
+            "quote_source": "shioaji-paper-quote",
+        }
+        algorithm.SetCurrentSignalContext(
+            {
+                "market_price": 200.0,
+                "market_price_as_of": "2026-07-14T07:30:00Z",
+                "market_price_source": "source-ingest://snapshots/mss-2454",
+            }
+        )
+        with patch("services.execution.lean_runtime.paper_runtime._iso_now", return_value="2026-07-14T06:15:00Z"):
+            with patch.object(algorithm, "_post_broker_paper_order", return_value=broker_fill_tw2):
+                algorithm.SubmitTaiwanBrokerOrder(
+                    "2454.TW",
+                    signal_id="sig-tw-002",
+                    side="buy",
+                    quantity=5,
+                    quantity_type="SHARES",
+                    action="BUY",
+                )
+
+        ledger = algorithm.performance_ledger()
+        self.assertEqual(ledger["initial_cash"], 100_000.0)
+        self.assertEqual(ledger["cash"], 89_000.0)
+        self.assertEqual(ledger["fill_count"], 2)
+        self.assertEqual(ledger["last_fill_at"], "2026-07-14T06:15:00Z")
+
+        # Two marks with distinct quote times:
+        # 2330.TW quote time (05:30:00Z) predates both fills
+        # 2454.TW quote time (07:30:00Z) is newer than both fills
+        snap_2330 = _snapshot(
+            "2330.TW",
+            1050.0,
+            event_time="2026-07-14T05:30:00Z",
+            source_ref="source-ingest://snapshots/mss-2330",
+        )
+        snap_2454 = _snapshot(
+            "2454.TW",
+            210.0,
+            event_time="2026-07-14T07:30:00Z",
+            source_ref="source-ingest://snapshots/mss-2454",
+        )
+        provider = _provider({"2330.TW": snap_2330, "2454.TW": snap_2454})
+        marks, mark_diag = provider.resolve(algorithm.mark_symbols())
+        self.assertEqual(len(marks), 2)
+        self.assertEqual(mark_diag["missing_symbols"], [])
+
+        # Valuator produces truthful cash + quantity * mark and PnL
+        result = value_portfolio(
+            initial_cash=ledger["initial_cash"],
+            cash=ledger["cash"],
+            positions=ledger["positions"],
+            marks=marks,
+            fill_count=ledger["fill_count"],
+            last_fill_at=ledger["last_fill_at"],
+            mark_diagnostic=mark_diag,
+            now=_NOW,
+        )
+
+        self.assertEqual(result.status, "valued")
+        self.assertIsNotNone(result.sample)
+        # Cash: 89,000 + 10 * 1050 (10,500) + 5 * 210 (1,050) = 100,550
+        self.assertAlmostEqual(result.sample.cash, 89_000.0)
+        self.assertAlmostEqual(result.sample.portfolio_value, 100_550.0)
+        self.assertAlmostEqual(result.sample.pnl, 550.0)
+
+        # Sample date is at least the latest fill and every used mark
+        last_fill_dt = datetime.fromisoformat(ledger["last_fill_at"].replace("Z", "+00:00"))
+        sample_as_of_dt = datetime.fromisoformat(result.sample.as_of.replace("Z", "+00:00"))
+        mark_2330_dt = datetime.fromisoformat(marks["2330.TW"].as_of.replace("Z", "+00:00"))
+        mark_2454_dt = datetime.fromisoformat(marks["2454.TW"].as_of.replace("Z", "+00:00"))
+
+        self.assertGreaterEqual(sample_as_of_dt, last_fill_dt)
+        self.assertGreaterEqual(sample_as_of_dt, mark_2330_dt)
+        self.assertGreaterEqual(sample_as_of_dt, mark_2454_dt)
+        # Distinct quote times: sample as_of does not backdate the newer quote (07:30:00Z)
+        self.assertEqual(result.sample.as_of, "2026-07-14T07:30:00Z")
+
+        # Each original quote date and source reference is preserved unchanged
+        sample_marks = {m.symbol: m for m in result.sample.marks}
+        self.assertEqual(sample_marks["2330.TW"].as_of, "2026-07-14T05:30:00Z")
+        self.assertEqual(sample_marks["2330.TW"].source_ref, "source-ingest://snapshots/mss-2330")
+        self.assertEqual(sample_marks["2454.TW"].as_of, "2026-07-14T07:30:00Z")
+        self.assertEqual(sample_marks["2454.TW"].source_ref, "source-ingest://snapshots/mss-2454")
 
 
 if __name__ == "__main__":
