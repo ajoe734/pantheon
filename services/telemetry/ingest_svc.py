@@ -757,7 +757,7 @@ def build_postgres_event_reader(
         if not (clean_bid := str(bid or "").strip()): return []
         fetch_lim, tid = min(max(1, int(limit or 50)), 100), str(tenant_id or "").strip()
         cond = " AND (payload->>'tenant_id' = $2 OR payload->'metadata'->>'tenant_id' = $2)"
-        b1 = f"payload->>'binding_id' = $1 AND jsonb_typeof(payload->'binding_id') = 'string' AND (payload->>'runtime_binding_id' IS NULL OR payload->>'runtime_binding_id' = $1)" + (cond if tid else "")
+        b1 = f"payload->>'binding_id' = $1 AND jsonb_typeof(payload->'binding_id') = 'string' AND (payload->>'runtime_binding_id' IS NULL OR (payload->>'runtime_binding_id' = $1 AND jsonb_typeof(payload->'runtime_binding_id') = 'string'))" + (cond if tid else "")
         b2 = f"payload @> jsonb_build_object('runtime_binding_id', $1::text) AND payload->>'binding_id' IS NULL" + (cond if tid else "")
         lim = f" ORDER BY created_at DESC, ingested_seq DESC LIMIT ${3 if tid else 2}"
         sql = f"SELECT event_id, payload, ingested_seq FROM ((SELECT event_id, payload, ingested_seq, created_at FROM {table} WHERE {b1}{lim}) UNION (SELECT event_id, payload, ingested_seq, created_at FROM {table} WHERE {b2}{lim})) sub{lim}"

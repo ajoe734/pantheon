@@ -7,7 +7,7 @@
   "base_sha": "f5b8163fd7f333d116ec15176e73d019797e6bcc",
   "change_class": "corrective",
   "net_prod_line_budget": 10,
-  "summary": "Corrects canonical binding reader query capacity in services/telemetry/ingest_svc.py following genuine FE readiness rejection (Run 38180670594, FE 38183581764 rejected_before_switch at 23:35:24Z with TimeoutError in lifecycle projector bff.strict_health.pre_candidate). Failing-window PostgreSQL canonical binding queries were canceled at 23:35:14, 23:35:21, and 23:35:27Z, and advisory lock canceled at 23:35:19.983Z. Exact blocker PID and full projector traceback were not retained after original compensation, so correlation is distinguished from proven cause, and 172% CPU was recorded at 23:42:00Z after compensation rather than during the 23:35:24Z window. The query capacity is corrected by replacing the previous single GIN OR query with a mutually disjoint dual-branch indexed UNION: branch 1 uses the existing B-tree index idx_telemetry_events_binding_id (payload->>'binding_id' = $1 AND jsonb_typeof(payload->'binding_id') = 'string' AND (payload->>'runtime_binding_id' IS NULL OR payload->>'runtime_binding_id' = $1)), which exclusively handles all events with binding_id = $1 (including bothalias); branch 2 uses GIN index idx_telemetry_events_payload_gin exclusively for sparse runtime_binding_id events where binding_id is absent (payload @> jsonb_build_object('runtime_binding_id', $1::text) AND payload->>'binding_id' IS NULL). This eliminates overlapping bothalias scans and disallows root=$1 in branch 2 (addressing Review Finding 6). Deterministic cutoff tie-breaking is enforced by ORDER BY created_at DESC, ingested_seq DESC LIMIT ... on both inner branches and outer subquery. On the actual VM cold historical rb-52 dataset (4.56M estimated rows, 10GB) at 2026-10-12T00:04:16Z, Root measured: candidate 98cd 0.837205s vs original 2.076073s for 50 rows (same 50 event ID set, same event time multiset, difference in ordered IDs purely due to candidate's deterministic ingested_seq DESC tie-breaking). Note: this 00:04:16Z measurement reflects exact sourcehead 98cd8ca5639c868ea15147f90abc20d708a48fdf with the old overlapping UNION as a historical point-read (both passed within 5s at that moment); it does not verify the new disjoint branch 2 / null-only SQL head aaf51fae18afbc8f65773e47869b090f9935d303, which Root will compare after publication. No cold cache, causal speedup, all bindings, or concurrent writer assertion is made. Test suite test_14 in services/telemetry/test_main_routes.py seeds 120 valid events and verifies 50-cutoff, 100-cutoff, limit=200 clamping, deterministic tie-breaking, malformed integer and lowercase JSON boolean ('true'/'false') fail-closed extraction, dualalias conflict negatives, and tenant isolation. Net production lines diff in services/telemetry/ingest_svc.py is exactly +1 line (strictly within <= 10 budget). AC6 is marked pending_delivery until genuine assigned reviewer exact-head review, required 3 CI checks, dev merge by integrator, and native finish.",
+  "summary": "Corrects canonical binding reader query capacity in services/telemetry/ingest_svc.py following genuine FE readiness rejection (Run 38180670594, FE 38183581764 rejected_before_switch at 23:35:24Z with TimeoutError in lifecycle projector bff.strict_health.pre_candidate). Failing-window PostgreSQL canonical binding queries were canceled at 23:35:14, 23:35:21, and 23:35:27Z, and advisory lock canceled at 23:35:19.983Z. Exact blocker PID and full projector traceback were not retained after original compensation, so correlation is distinguished from proven cause, and 172% CPU was recorded at 23:42:00Z after compensation rather than during the 23:35:24Z window. The query capacity is corrected by replacing the previous single GIN OR query with a mutually disjoint dual-branch indexed UNION: branch 1 uses the existing B-tree index idx_telemetry_events_binding_id (payload->>'binding_id' = $1 AND jsonb_typeof(payload->'binding_id') = 'string' AND (payload->>'runtime_binding_id' IS NULL OR (payload->>'runtime_binding_id' = $1 AND jsonb_typeof(payload->'runtime_binding_id') = 'string'))), which exclusively handles all events with binding_id = $1 (including bothalias) while strictly guarding optional runtime_binding_id to be a string type; branch 2 uses GIN index idx_telemetry_events_payload_gin exclusively for sparse runtime_binding_id events where binding_id is absent (payload @> jsonb_build_object('runtime_binding_id', $1::text) AND payload->>'binding_id' IS NULL). This eliminates overlapping bothalias scans and disallows root=$1 in branch 2 (addressing RF6), enforces strict typeguards against numeric and boolean alias types while preserving valid positive string control '99999'. Deterministic cutoff tie-breaking is enforced by ORDER BY created_at DESC, ingested_seq DESC LIMIT ... on both inner branches and outer subquery. On the actual VM repeatable-read READONLY snapshot rb-52 (4.56M estimated rows, 10GB), Root measured: at 00:04:16Z (98cd head) candidate 0.837205s vs original 2.076073s for 50 rows; at 00:24:28Z (533 head) candidate 0.566251s (50 rows) and 0.621517s (100 rows) vs original 2.099816s (50 rows) and 0.339661s (100 rows). Both 50 and 100 return identical event ID sets and same event time multisets, order difference is timestamp ties handled seqDESC, and candidate 50 is exact prefix of 100. Honest documentation: these are sequential point-reads on rb-52 that may warm cache (all original point-reads also executed within the 5s deadline); no causal speedup, cold cache, all bindings, concurrent writer, hosted readiness, or FINAL proof is asserted. Test suite test_14 in services/telemetry/test_main_routes.py seeds 120 valid events and verifies 50/100 cutoffs with genuine equal-created_at ties crossing the 50 and 100 boundaries against an in-memory oracle, limit=200 clamping, positive string control ('owned-positive-string-both'), negative mixed numeric denial ('owned-negative-mixed-numeric'), malformed integer and lowercase/uppercase JSON boolean fail-closed extraction, dualalias conflict negatives, and tenant isolation. Net production lines diff in services/telemetry/ingest_svc.py is exactly +1 line (strictly within <= 10 budget). AC6 is marked pending_delivery until genuine assigned reviewer exact-head review, required 3 CI checks, dev merge by integrator, and native finish.",
   "original_incident_reference": {
     "incident_at": "2026-10-11T23:35:24Z",
     "run_id": "38180670594",
@@ -28,7 +28,7 @@
     {
       "finding_id": "RF1",
       "finding": "Published 3 files still contains 3500 noise test after independent original native QA. Existing actual estimated 4561717 rows/10GB not reproduced by 3500.",
-      "resolution": "Acknowledged that disposable PG table with 3500 noise rows verifies multi-binding selectivity within test environment limits, while full production scale (4.56M rows / 10GB) was verified by Root directly on VM (0.837s candidate vs 2.076s original)."
+      "resolution": "Acknowledged that disposable PG table with 3500 noise rows verifies multi-binding selectivity and local index shape within test environment limits, while full production scale (4.56M rows / 10GB) was verified by Root directly on VM point-reads (0.837s candidate 98cd vs 2.076s original at 00:04:16Z; 0.566s candidate 533 vs 2.099s original at 00:24:28Z)."
     },
     {
       "finding_id": "RF2",
@@ -38,12 +38,12 @@
     {
       "finding_id": "RF3",
       "finding": "Evidence plan 53246 to 2.05/26000x and cold >5000 to 2ms belongs local small fixture; original hosted counters later warm 0.57 / cold 3.02 success. No actual 4.56M-row fixed SQL timing/identity equivalence yet.",
-      "resolution": "Replaced local fixture numbers with Root's actual measured bounded VM SELECT counter at 2026-10-12T00:04:16Z: Candidate 98cd 0.837205s vs Original 2.076073s on cold historical rb-52 read of 4.56M rows, noting this reflects 98cd captured SQL with overlapping UNION as a historical point-read (both inside 5s) and does not substitute for new disjoint head verification."
+      "resolution": "Replaced local fixture numbers with Root's actual measured bounded VM SELECT counters on rb-52 (4.56M rows): 00:04:16Z (98cd) and 00:24:28Z (533, 0.566s/0.621s candidate vs 2.099s/0.339s original for 50/100 rows). Documented honestly that these are sequential point-reads that may warm cache (all original point-reads also passed within 5s at those moments) and do not substitute for causal speedup or cold cache proof."
     },
     {
       "finding_id": "RF4",
       "finding": "Deterministic repeated newSQL hash does not prove old/new equivalence. 30 valid events do not test 50 or 100 cutoff.",
-      "resolution": "Expanded test_14 in services/telemetry/test_main_routes.py to seed 120 valid events (30 tie + 45 rb-only + 45 bothalias). Verified exact 50 cutoff, exact 100 cutoff, limit=200 clamping, prefix consistency matching in-memory top-N sort, and deterministic tie-breaking on identical timestamps."
+      "resolution": "Expanded test_14 in services/telemetry/test_main_routes.py to seed 120 valid events with genuine equal-created_at ties placed directly across the 50 cutoff (ranks 40..59) and across the 100 cutoff (ranks 90..109). Strictly verified res_50 and res_100 against an in-memory oracle sorting all valid target events by (created_at DESC, ingested_seq DESC), proving deterministic tie-breaking across cutoff boundaries."
     },
     {
       "finding_id": "RF5",
@@ -53,47 +53,58 @@
     {
       "finding_id": "RF6",
       "finding": "Overlapping UNION branch 2 still includes bothalias and allows root=$1; actual GIN cost / full payload dedupe not bounded proven.",
-      "resolution": "Updated branch 2 in services/telemetry/ingest_svc.py to `payload @> jsonb_build_object('runtime_binding_id', $1::text) AND payload->>'binding_id' IS NULL`. Branch 1 and Branch 2 are now strictly disjoint; Branch 2 eliminates bothalias duplicate scans and disallows root=$1."
+      "resolution": "Updated branch 2 in services/telemetry/ingest_svc.py to `payload @> jsonb_build_object('runtime_binding_id', $1::text) AND payload->>'binding_id' IS NULL`. Branch 1 and Branch 2 are strictly disjoint; Branch 2 eliminates bothalias duplicate scans and disallows root=$1."
     },
     {
       "finding_id": "RF7",
-      "finding": "Boolean negative queryTrue does not test JSON true lowercase actual extraction.",
-      "resolution": "Added explicit negative tests in test_14 for lowercase string 'true', 'false', and uppercase 'True', 'False' against JSON boolean values, verifying fail-closed string extraction."
+      "finding": "Boolean negative queryTrue does not test JSON true lowercase actual extraction. Numeric runtime_binding_id 99999 was falsely returned alongside valid string control 99999.",
+      "resolution": "Added typed guard `(payload->>'runtime_binding_id' IS NULL OR (payload->>'runtime_binding_id' = $1 AND jsonb_typeof(payload->'runtime_binding_id') = 'string'))` in branch 1. Verified in test_14 that querying string '99999' returns positive string control 'owned-positive-string-both' and denies 'owned-negative-mixed-numeric', while all boolean and malformed numeric queries fail closed."
     }
   ],
   "vm_actual_select_counter": {
-    "observed_at": "2026-10-12T00:04:16.268620+00:00",
-    "measured_source_head": "98cd8ca5639c868ea15147f90abc20d708a48fdf",
-    "measured_source_sql_type": "captured_from_original_build_postgres_event_reader_factory_with_overlapping_union",
-    "dataset_rows_estimated": 4561717,
-    "table_size_bytes": "10GB",
-    "binding_id": "rb-52d16f8d2ace4104868caf3f3fc4c898",
-    "same_repeatable_read_snapshot": true,
-    "direct_SQL_captured_from_exact_original_factory": true,
-    "original": {
-      "outcome": "success",
-      "rows": 50,
-      "elapsed_seconds": 2.076073,
-      "ordered_event_ids_sha256": "eb62219723f6a3ffce35d2af05dfa35b09d96fea2bbea6de7ee534fa4521b655",
-      "source_sha256": "dd84ecdb1bcc801dbd3f71916854d491fa6ce71b78c9fe64ef03fb5d542134b1"
+    "point_read_00_24_28Z_head_533": {
+      "observed_at": "2026-10-12T00:24:28Z",
+      "measured_source_head": "533ced5ebe1ab53376aa62d0ec8918bc33ac7ea7",
+      "dataset_rows_estimated": 4561717,
+      "table_size_bytes": "10GB",
+      "binding_id": "rb-52d16f8d2ace4104868caf3f3fc4c898",
+      "same_repeatable_read_snapshot": true,
+      "direct_SQL_captured_from_exact_original_factory": true,
+      "source_sha256": "0335d0f1c5d8a17661934e318dbc2a64e66ae0541568d106acb8bcb6dfc6ad6b",
+      "original_50_seconds": 2.099816,
+      "original_100_seconds": 0.339661,
+      "candidate_533_50_seconds": 0.566251,
+      "candidate_533_100_seconds": 0.621517,
+      "comparison": {
+        "both_50_and_100_same_event_id_set": true,
+        "both_50_and_100_same_event_time_multiset": true,
+        "order_diff_handled_seq_desc": true,
+        "candidate_50_exact_prefix_100": true,
+        "all_within_5s_budget": true,
+        "sequential_point_read_may_warm_cache": true,
+        "not_causal_speedup_or_cold_cache_proof": true,
+        "not_all_bindings_or_concurrent_writer_proof": true
+      }
     },
-    "candidate_98cd": {
-      "outcome": "success",
-      "rows": 50,
-      "elapsed_seconds": 0.837205,
-      "ordered_event_ids_sha256": "7157cfb33c5fa0918504fad8270b63f8c54723cb28c77a99da04d733d29d3214",
-      "source_sha256": "f75b51c661b309485da2a1e9f8c3ec20cb4a6e60ab28ccb10dd1f0fd2aac3f50"
-    },
-    "comparison": {
-      "same_event_id_set": true,
-      "same_ordered_ids": false,
-      "old_only_count": 0,
-      "new_only_count": 0,
-      "same_event_time_multiset": true,
-      "candidate_deterministic_timestamp_seq_order": true,
-      "speedup_factor": 2.48
-    },
-    "source_identity_clarification": "The 0.837205s measurement reflects exact sourcehead 98cd8ca5639c868ea15147f90abc20d708a48fdf with overlapping UNION as a single point-read on the historical rb-52 dataset (both original 2.076s and 98cd 0.837s passed within 5s at that moment). It does NOT verify newhead aaf51fae18afbc8f65773e47869b090f9935d303 (disjoint branch 2 / null-only SQL), which will be compared by Root after publication. Neither cold cache, causal speedup, all bindings, nor concurrent writer assertion is made."
+    "point_read_00_04_16Z_head_98cd": {
+      "observed_at": "2026-10-12T00:04:16.268620+00:00",
+      "measured_source_head": "98cd8ca5639c868ea15147f90abc20d708a48fdf",
+      "dataset_rows_estimated": 4561717,
+      "table_size_bytes": "10GB",
+      "binding_id": "rb-52d16f8d2ace4104868caf3f3fc4c898",
+      "same_repeatable_read_snapshot": true,
+      "direct_SQL_captured_from_exact_original_factory": true,
+      "original_50_seconds": 2.076073,
+      "candidate_98cd_50_seconds": 0.837205,
+      "comparison": {
+        "same_event_id_set": true,
+        "same_event_time_multiset": true,
+        "candidate_deterministic_timestamp_seq_order": true,
+        "speedup_factor": 2.48,
+        "sequential_point_read_may_warm_cache": true,
+        "not_causal_speedup_or_cold_cache_proof": true
+      }
+    }
   },
   "acceptance_verification": [
     {
@@ -108,17 +119,17 @@
     },
     {
       "ac": "AC3",
-      "description": "Minimally corrected existing build_postgres_event_reader query using mutually disjoint dual-branch indexed UNION: branch 1 uses B-tree idx_telemetry_events_binding_id with string type validation (payload->>'binding_id' = $1 AND jsonb_typeof(payload->'binding_id') = 'string' AND (payload->>'runtime_binding_id' IS NULL OR payload->>'runtime_binding_id' = $1)); branch 2 uses GIN idx_telemetry_events_payload_gin exclusively for sparse runtime_binding_id without binding_id (payload @> jsonb_build_object('runtime_binding_id', $1::text) AND payload->>'binding_id' IS NULL). Eliminates overlapping bothalias scan and disallows root=$1 in branch 2 (addressing RF6). Preserves true string aliases, top/metadata tenant filtering, max 100/latest 50 ordering, dualalias conflict negatives, and immutable ingested_seq canonical eventpair proof. Added ingested_seq DESC tie-breaker to ensure deterministic cutoff tie-breaking when timestamps match. No duplicate reader wrapper, cache, global corpus scan, inferred tenant, replay, or dedupe reset.",
+      "description": "Minimally corrected existing build_postgres_event_reader query using mutually disjoint dual-branch indexed UNION: branch 1 uses B-tree idx_telemetry_events_binding_id with string type validation (payload->>'binding_id' = $1 AND jsonb_typeof(payload->'binding_id') = 'string' AND (payload->>'runtime_binding_id' IS NULL OR (payload->>'runtime_binding_id' = $1 AND jsonb_typeof(payload->'runtime_binding_id') = 'string'))); branch 2 uses GIN idx_telemetry_events_payload_gin exclusively for sparse runtime_binding_id without binding_id (payload @> jsonb_build_object('runtime_binding_id', $1::text) AND payload->>'binding_id' IS NULL). Eliminates overlapping bothalias scan and disallows root=$1 in branch 2 (addressing RF6). Enforces strict typed guard on optional runtime_binding_id, fail-closed against mixed numeric/boolean alias types while preserving positive string control. Preserves true string aliases, top/metadata tenant filtering, max 100/latest 50 ordering, dualalias conflict negatives, and immutable ingested_seq canonical eventpair proof. Added ingested_seq DESC tie-breaker to ensure deterministic cutoff tie-breaking when timestamps match. No duplicate reader wrapper, cache, global corpus scan, inferred tenant, replay, or dedupe reset.",
       "verdict": "pass"
     },
     {
       "ac": "AC4",
-      "description": "Preserved original 5-second deadline cancellation, connection closure, source fence, and scheduler budgets. No new index, manual hosted DDL, schema mutations, timeout inflation, or disabling scans/gates. Reproduces realistic multi-binding noise (3500 noise rows, 70 bindings) with existing disposable PG and index shape in services/telemetry/test_main_routes.py while acknowledging RF1 (3500 noise rows does not reproduce full 4.56M rows / 10GB scale).",
+      "description": "Preserved original 5-second deadline cancellation, connection closure, source fence, and scheduler budgets. No new index, manual hosted DDL, schema mutations, timeout inflation, or disabling scans/gates. Reproduces local multi-binding noise (3500 noise rows, 70 bindings) with existing disposable PG and index shape in services/telemetry/test_main_routes.py while honestly documenting that 3500 noise rows provides local shape coverage and does not reproduce full 4.56M rows / 10GB scale or assert cold cache proof.",
       "verdict": "pass"
     },
     {
       "ac": "AC5",
-      "description": "Proved cold query capacity and deterministic cutoff ties under original deadline in test_14 of services/telemetry/test_main_routes.py and on VM actual dataset. On VM cold historical rb-52 read (4.56M rows), 98cd query executed in 0.837s (< 5.0s budget, 2.48x speedup). In test_14, 120 valid events verify 50-cutoff, 100-cutoff, limit=200 clamping, deterministic tie-breaking on identical timestamps by ingested_seq DESC, malformed alias types (integer 99999, lowercase JSON boolean true/false, root boolean), dualalias conflict, and tenant isolation. Full regression suites pass cleanly (test_main_routes 45/45, test_lineage_write_path 7/7, test_reference_validation 13/13, test_incident 80/80).",
+      "description": "Proved local query capacity and deterministic cutoff ties under original deadline in test_14 of services/telemetry/test_main_routes.py and on VM actual dataset point-reads. On VM rb-52 point-reads (4.56M rows), 533 executed in 0.566s (50 rows) and 0.621s (100 rows), both under 5.0s budget with same event ID sets/time counts as original (sequential point-read may warm cache, original also executed within 5s). In test_14, 120 valid events verify 50-cutoff and 100-cutoff with genuine equal-created_at ties crossing the 50 and 100 boundaries strictly matching an in-memory oracle, limit=200 clamping, positive string control ('owned-positive-string-both'), negative mixed numeric denial ('owned-negative-mixed-numeric'), malformed alias types (integer 88888/77777, lowercase/uppercase JSON boolean true/false, root boolean), dualalias conflict, and tenant isolation. Full regression suites pass cleanly (test_main_routes 45/45, test_lineage_write_path 7/7, test_reference_validation 13/13, test_incident 80/80; total 145/145 PASS, 0 SKIP).",
       "verdict": "pass"
     },
     {
