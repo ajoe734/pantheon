@@ -33,9 +33,59 @@
       "test_bounded_refresh_missing_built_projector_image_fails_closed (missing built image fails closed before one-shot start)"
     ]
   },
+  "followup": {
+    "task_id": "TW-REFRESH-ORDER-RESTORE-20261012",
+    "scope": "sequence existing Source and Agora refresh phases and restore correctly after failed readback",
+    "predecessor": {
+      "task_id": "TW-REFRESH-BUILT-IMAGE-LOOKUP-20261012",
+      "pr": 6524,
+      "merge_commit": "2263f25a2b1660d3d573d6bb6efc85e2b02a90da",
+      "dev_head": "714289cf819719092ce161c540d5919cbeaa773e"
+    },
+    "hosted_dev_incident": {
+      "run_id": 38240659167,
+      "workflow": "Dev Taiwan Market Daily Refresh",
+      "failure_summary": "Original actual run 38240659167 reached genuine built projector, but script launched Source scheduler and Agora projector concurrently: Source scheduler start 11:11:03 / finish 11:11:37, Agora projector start 11:11:06 / finish 11:11:11, while Source new 2330 event persisted at 11:11:22. Projector finished before new source existed, and readback at 11:11:46 rejected: 'Agora projection does not bind the new receipt/run/source'. Cleanup then lost function-local steady_ids upon return to outer EXIT trap under set -euo pipefail (line 1035 unbound variable), leaving steady Source scheduler container 847ed9... exited (137) and unrestored.",
+      "receipts": [
+        "/tmp/pantheon-full-closeout-20261011/TW38240659167-original-failed-step.log",
+        "/tmp/pantheon-full-closeout-20261011/TW38240659167-actual-one-shot-order-and-projection-metadata-readonly.json",
+        "/tmp/pantheon-full-closeout-20261011/TW38240659167-actual-Source-controller-complete-restoration-readonly.json",
+        "/tmp/pantheon-full-closeout-20261011/TW38240659167-original-Source-scheduler-temporary-live-restoration-receipt.json",
+        "/tmp/pantheon-full-closeout-20261011/TW38240659167-Source-latest-after-failure-readonly.json"
+      ],
+      "receipt_facts": {
+        "source_scheduler_start": "2026-10-12T11:11:03.943Z",
+        "source_scheduler_finish": "2026-10-12T11:11:37.384Z",
+        "agora_projector_start": "2026-10-12T11:11:06.085Z",
+        "agora_projector_finish": "2026-10-12T11:11:11.519Z",
+        "source_2330_event_persisted_at": "2026-10-12T11:11:22Z",
+        "readback_rejection_at": "2026-10-12T11:11:46.747Z",
+        "unbound_variable_failure_at": "2026-10-12T11:12:18.887Z",
+        "steady_source_scheduler_id": "847ed9fb5e7ab6722f7bf65d0525a0e27dd90437deddd496c5965904f666b565",
+        "steady_source_scheduler_state_after_failure": "exited 137",
+        "temporary_live_restoration": "original coordinator restored exact original Source scheduler container/image/fullenv/reconcile_only, egress deny, bounded one-shots terminal; temporary live rescue is not permanent delivery",
+        "actual_2330_snapshot": "mss-697e067484b53fbb63b7b1f8 (event 2026-10-12, observed_at 11:11:22Z)",
+        "actual_0050_snapshot": "mss-2fca8b8f4dcb908919e84271 (remains Oct 8 event despite Oct 12 observed_at, not relabelled NEW)"
+      }
+    },
+    "changes": [
+      "scripts/deploy_nonprod_vm.sh: moved wait_for_bounded_source_refresh_service inside the bounded_services loop so source-ingest-scheduler finishes before source-ingest-agora-projector starts; fixed cleanup on ordinary readback failure/return under set -euo pipefail by executing restore_bounded_source_refresh in local scope where steady_env, running_image_id, bounded_containers, and steady_ids are available; guarded bounded_containers and steady_ids array expansions against unbound variables; restarted steady scheduler and removed named bounded containers while preserving failing exit code with cumulative net line growth +2 (within <=12 budget relative to 714)",
+      "scripts/test_dev_tw_market_refresh.py: updated docker stub to support docker_start logging and custom agora projection; updated _deploy_script_without_readback needle; added _deploy_script_with_readback helper; added 4 regression tests verifying sequential phase wait ordering, run 38240659167 causal defect rejection by readback gate, readback failure cleanup restarting steady scheduler and removing bounded containers without unbound variable errors, and failed one-shot cleanup"
+    ],
+    "verification": {
+      "scripts/test_dev_tw_market_refresh.py": "39 passed",
+      "regression_tests": [
+        "test_bounded_refresh_phase_ordering_waits_for_scheduler_before_projector_launch (sequential execution: scheduler finishes before projector launch)",
+        "test_bounded_refresh_reproduces_run38240659167_causal_defect_concurrent_projector_rejected_by_readback (premature projector rejected by binding gate)",
+        "test_bounded_refresh_failed_readback_restores_steady_scheduler_and_removes_bounded_containers (local-scope failure cleanup restarts steady scheduler, removes bounded containers, preserves failing exit code, eliminates unbound variable error)",
+        "test_bounded_refresh_failed_one_shot_restores_steady_scheduler (one-shot failure cleanly restores steady scheduler and removes bounded containers)"
+      ]
+    }
+  },
   "not_claimed": [
     "worker VM, provider, deployment, or Capital authority",
     "hosted NEW or FULL claim",
-    "manual timestamp, replacement source/provider/account, or duplicate active run"
+    "manual timestamp, replacement source/provider/account, or duplicate active run",
+    "relabeling 0050.TW Oct 8 event as NEW Oct 12"
   ]
 }

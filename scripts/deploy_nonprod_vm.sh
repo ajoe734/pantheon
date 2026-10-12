@@ -2152,7 +2152,7 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
   fi
 
   restore_bounded_source_refresh() {
-    local rc=$?
+    local rc="${1:-$?}"
     trap - EXIT INT TERM
     info "restoring external egress to deny and source controller to reconcile_only"
     unset SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS || true
@@ -2165,8 +2165,10 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
         docker compose -p pantheon -f docker-compose.yml up -d --no-deps --no-build source-ingest >/dev/null 2>&1 || true
     fi
     # Only the named one-shot containers are removed; steady scheduler/projector are never touched.
-    docker rm -f "${bounded_containers[@]}" >/dev/null 2>&1 || true
-    if (( ${#steady_ids[@]} )); then
+    if [[ "${bounded_containers+x}" == "x" ]] && (( ${#bounded_containers[@]} )); then
+      docker rm -f "${bounded_containers[@]}" >/dev/null 2>&1 || true
+    fi
+    if [[ "${steady_ids+x}" == "x" ]] && (( ${#steady_ids[@]} )); then
       docker start "${steady_ids[@]}" >/dev/null 2>&1 || rc=$?
     fi
     rm -f "${steady_env:-}"
@@ -2215,13 +2217,13 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
       docker compose -p pantheon -f docker-compose.yml run -d --no-deps \
         -e SOURCE_INGEST_CONTROLLER_ALIVE_PATH=/data/source-ingest/bounded-refresh/controller_alive \
         --name "${SOURCE_INGEST_BOUNDED_CONTAINER_PREFIX}-${bounded_service}" "${bounded_service}"
-  done
-  for bounded_service in "${bounded_services[@]}"; do
     wait_for_bounded_source_refresh_service "${bounded_service}"
   done
 
-  verify_bounded_source_refresh_readback "${refresh_started_at}"
-  restore_bounded_source_refresh
+  local refresh_rc=0
+  verify_bounded_source_refresh_readback "${refresh_started_at}" || refresh_rc=$?
+  restore_bounded_source_refresh "${refresh_rc}" || refresh_rc=$?
+  (( refresh_rc == 0 )) || return "${refresh_rc}"
   [[ -n "${output_path}" ]] && python3 -c "import json; print(json.dumps({'status': 'completed', 'refreshed_at': '${refresh_started_at}'}))" > "${output_path}"
 }
 
