@@ -62,5 +62,43 @@
     "source_verification": "SUCCESS",
     "persona_contracts_ci": "SUCCESS",
     "hosted_independent_acceptance": "INCOMPLETE"
+  },
+  "followup": {
+    "task_id": "PERSONA-TRAINING-READ-TEST-CONTRACT-20261012",
+    "label": "test-contract followup",
+    "scope": "Synchronize original Training owner readback tests with tenant-bound Persona authentication",
+    "predecessor": {
+      "task_id": "PERSONA-TENANT-BOUND-OWNER-READ-20261012",
+      "pr": 6522,
+      "head_sha": "93633d797ba159bd4b6e744136da435ee7217388",
+      "merge_commit": "38e85132384f88c278ee90733f716b845a201839",
+      "dev_head": "f1510207b7efc636e838a895da12466339f20832"
+    },
+    "test_contract_synchronization": {
+      "reproduced_before_failures": {
+        "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/persona/test_training_target_owner.py",
+        "exit_code": 1,
+        "test_summary": "4 failed, 11 passed, 1 warning in 6.81s",
+        "failures": [
+          "test_precondition_read_commit_and_restart_readback: AssertionError (401 != 200) - UNAUTHORIZED: Missing authorization on restarted_client.get(f'/api/personas/{PERSONA_ID}')",
+          "test_commit_recovers_after_crash_between_durability_and_application: KeyError 'metadata' on client.get(f'/api/personas/{PERSONA_ID}') returning 401 UNAUTHORIZED",
+          "test_apply_ignores_out_of_order_lower_generation: KeyError 'metadata' on client.get(f'/api/personas/{PERSONA_ID}').json() returning 401 UNAUTHORIZED",
+          "test_apply_survives_generation2_committing_between_read_and_cas: KeyError 'metadata' on client.get(f'/api/personas/{PERSONA_ID}').json() returning 401 UNAUTHORIZED"
+        ]
+      },
+      "remediation": "Added headers=_auth_header() to the 6 existing general Persona GET requests across the 4 failing tests in services/persona/test_training_target_owner.py (lines 312, 388, 410, 463, 474, 555) using existing test fixture service token; preserved all original assertions; zero production code changes.",
+      "actual_after_verification": {
+        "services/persona/test_training_target_owner.py": {
+          "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/persona/test_training_target_owner.py",
+          "exit_code": 0,
+          "test_summary": "15 passed, 1 warning in 6.36s"
+        },
+        "services/persona/test_persona_owner_read_roles.py": {
+          "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/persona/test_persona_owner_read_roles.py",
+          "exit_code": 0,
+          "test_summary": "13 passed, 1 warning in 5.31s"
+        }
+      }
+    }
   }
 }
