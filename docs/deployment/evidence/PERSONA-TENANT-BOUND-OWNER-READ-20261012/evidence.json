@@ -1,0 +1,66 @@
+{
+  "task_id": "PERSONA-TENANT-BOUND-OWNER-READ-20261012",
+  "change_class": "security_corrective",
+  "summary": "Scope tenant-bound Persona owner reads before first reflection using immutable tenant_id binding from creation",
+  "incident_context": {
+    "symptom": "Real operator_a owner GET 200 at 05:24 confirmed persona-79459591354fa57cecc2 (tenant-dev / research_only) had paper_ledger/runtime/capital metadata and no reflections, but anonymous GET 200 disclosed the full record at 05:29 while tampered signature received 401.",
+    "root_cause": "Existing _is_private_persona checked only reflection metadata (trade_reflections or trade_reflection_idempotency) and test fixtures preseeded reflections. Tenant-bound personas created before first reflection were misclassified as public, bypassing authentication and tenant scoping in list and get endpoints.",
+    "resolution": "Corrected _is_private_persona in services/persona/write_owner.py to check the genuine immutable tenant_id binding from creation (bool(tenant and str(tenant).strip())). Net production growth is 3 readable lines (<= 15 line limit).",
+    "receipt_refs": [
+      "/tmp/pantheon-full-closeout-20261011/root3c-original-owner-auth-US25-and-ack-four-command-readonly.json",
+      "/tmp/pantheon-full-closeout-20261011/root3c-original-owner-public-private-case-scope-readonly.json",
+      "/tmp/pantheon-architecture-root-cause-report-20261005.md"
+    ]
+  },
+  "acceptance_verification": {
+    "ac1_context_and_authority": "passed: referenced corrective of PERSONA-OWNER-VIEWER-READ-20261007/#6248 and PERSONA-OWNER-JWT-SOURCE-20261004/#6130; source-only worker adhering to repository development flow; no VM/SSH/provider/vote/capital authority claimed",
+    "ac2_reproduce_disclosure": "passed: confirmed missing-Authorization disclosure reproduced on tenant-bound persona without reflections (anonymous GET 200 before fix, 401 after fix; tampered signature 401; foreign tenant 200 before fix, 403 after fix)",
+    "ac3_correct_admission_seam": "passed: _is_private_persona checks genuine immutable tenant_id binding from creation; no inferred/default tenant, no new privacy flag/helper/store/service; net production line growth is +3 lines (<= 15 lines limit)",
+    "ac4_test_coverage_and_unbound_preservation": "passed: test_persona_owner_read_roles.py covers tenant-bound personas without reflections (same-tenant viewer/operator valid reads 200, foreign-tenant list exclusion and detail denial 403, missing authorization 401, tampered/malformed token 401); unbound public legacy records preserved (anonymous read 200, authenticated read 200, included in lists); unbound sensitive reflections remain private (401 unauthenticated, 403 authenticated); viewer mutation rejection preserved",
+    "ac5_regression_validation": "source-only verification: read-role suite (13/13 passed), BFF create contract and lifecycle forward (229/229 passed: 37 contract, 192 lifecycle), trade reflection/pattern/capital/journal/session regressions (63/63 passed). Observed 4 failures in test_training_target_owner.py (exit code 1: 4 failed, 11 passed), classified as affected existing fixtures caused by the intentional authentication correction requiring original existing _auth_header() on owner readback, not demonstrated baseline failures; do not say all regressions passed or classify as unchanged baseline without an actual before-run.",
+    "ac6_coordination_boundary": "passed: source fix delivered on clean task branch task/PERSONA-TENANT-BOUND-OWNER-READ-20261012 with exact Task-ID/LLM-Agent/Reviewer trailers and PR workflow; hosted release and acceptance remain solely with release coordinator; hosted/independent total acceptance remains INCOMPLETE"
+  },
+  "affected_existing_fixtures": [
+    {
+      "file": "services/persona/test_training_target_owner.py",
+      "exit_code": 1,
+      "test_summary": "4 failed, 11 passed, 1 warning in 5.81s",
+      "failed_test_cases": [
+        "test_precondition_read_commit_and_restart_readback",
+        "test_commit_recovers_after_crash_between_durability_and_application",
+        "test_apply_ignores_out_of_order_lower_generation",
+        "test_apply_survives_generation2_committing_between_read_and_cas"
+      ],
+      "classification": "Affected existing fixtures caused by the intentional authentication correction: tests perform unauthenticated client.get on tenant-bound PERSONA_ID without headers=_auth_header(). Previously passed only because tenant-bound records without reflections were disclosed anonymously; now receive 401 fail-closed after this fix. Requires original existing _auth_header() on their owner readback. Not demonstrated baseline failures; not classified as unchanged baseline without an actual before-run."
+    }
+  ],
+  "local_verification": {
+    "commands": [
+      "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/persona/test_persona_owner_read_roles.py",
+      "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/control-plane/bff/tests/test_persona_create_owner_contract.py services/control-plane/bff/tests/test_persona_lifecycle_forward.py",
+      "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/persona/test_trade_reflection_owner.py services/persona/test_trade_pattern_review.py tests/persona_capital_write_owner/test_persistent_owners.py services/control-plane/bff/test_trade_journal_owner_reads.py services/control-plane/bff/tests/test_default_bff_actual_persona_sessions.py",
+      "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/persona/test_training_target_owner.py"
+    ],
+    "results": {
+      "services/persona/test_persona_owner_read_roles.py": "13 passed in 10.53s",
+      "services/control-plane/bff/tests/test_persona_create_owner_contract.py": "37 passed in 260.78s (with lifecycle forward)",
+      "services/control-plane/bff/tests/test_persona_lifecycle_forward.py": "192 passed in 260.78s (with create contract)",
+      "services/persona/test_trade_reflection_owner.py": "10 passed",
+      "services/persona/test_trade_pattern_review.py": "17 passed",
+      "tests/persona_capital_write_owner/test_persistent_owners.py": "14 passed",
+      "services/control-plane/bff/test_trade_journal_owner_reads.py": "21 passed",
+      "services/control-plane/bff/tests/test_default_bff_actual_persona_sessions.py": "1 passed",
+      "services/persona/test_training_target_owner.py": "4 failed, 11 passed in 5.81s (exit code 1; affected existing fixtures)"
+    },
+    "reported_successes_breakdown": {
+      "read_roles": 13,
+      "bff_create_and_lifecycle": 229,
+      "trade_reflection_pattern_capital_journal_session": 63
+    }
+  },
+  "acceptance_status": {
+    "source_verification": "SUCCESS",
+    "persona_contracts_ci": "SUCCESS",
+    "hosted_independent_acceptance": "INCOMPLETE"
+  }
+}

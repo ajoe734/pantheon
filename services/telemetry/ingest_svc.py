@@ -760,7 +760,7 @@ def build_postgres_event_reader(
         b1 = f"payload->>'binding_id' = $1 AND jsonb_typeof(payload->'binding_id') = 'string' AND (payload->>'runtime_binding_id' IS NULL OR (payload->>'runtime_binding_id' = $1 AND jsonb_typeof(payload->'runtime_binding_id') = 'string'))" + (cond if tid else "")
         b2 = f"payload @> jsonb_build_object('runtime_binding_id', $1::text) AND payload->>'binding_id' IS NULL" + (cond if tid else "")
         lim = f" ORDER BY created_at DESC, ingested_seq DESC LIMIT ${3 if tid else 2}"
-        sql = f"SELECT event_id, payload, ingested_seq FROM ((SELECT event_id, payload, ingested_seq, created_at FROM {table} WHERE {b1}{lim}) UNION (SELECT event_id, payload, ingested_seq, created_at FROM {table} WHERE {b2}{lim})) sub{lim}"
+        sql = f"SELECT t.event_id, t.payload, t.ingested_seq FROM (SELECT event_id, created_at, ingested_seq FROM ((SELECT event_id, created_at, ingested_seq FROM {table} WHERE {b1}{lim}) UNION ALL (SELECT event_id, created_at, ingested_seq FROM {table} WHERE {b2}{lim})) u{lim}) sub JOIN {table} t ON t.event_id = sub.event_id ORDER BY sub.created_at DESC, sub.ingested_seq DESC"
         rows = _sync(sql, clean_bid, tid, fetch_lim) if tid else _sync(sql, clean_bid, fetch_lim)
         out, seen = [], set()
         for r in rows:

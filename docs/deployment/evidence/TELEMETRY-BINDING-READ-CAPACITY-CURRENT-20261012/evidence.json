@@ -1,0 +1,172 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "TELEMETRY-BINDING-ORDERED-INDEX-20261012",
+  "title": "Make the existing binding index support the exact bounded event order",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "base_sha": "714289cf819719092ce161c540d5919cbeaa773e",
+  "baseline_sha": "714289cf819719092ce161c540d5919cbeaa773e",
+  "change_class": "corrective",
+  "net_prod_line_budget": 20,
+  "net_prod_lines_used_cumulative": 9,
+  "summary": "Follow-up to merged CURRENT source delivery PR #6525 (commit 9624c19d7 -> 714289cf8) and blocked ACTUAL-TIMEOUT/gen2 PR #6526. The actual rb248 binding whole factory at limit 100 and 50 still timed out under 5.0s because PostgreSQL had to scan 194,975 index TIDs and 194,969 qualified rows with 225,552 lossy bitmap rechecks per worker and sort all rows before taking LIMIT 100/50 (diagnostic EXPLAIN ANALYZE BUFFERS completed in 16.763s total / 16.656s execution time; diagnostic receipt: /tmp/pantheon-full-closeout-20261011/original-failed-9624-SQL-bounded-EXPLAIN-ANALYZE-diagnostic-NOT-CAPACITY-PASS.json). Unbounded heap and sort access was demonstrated on the existing index. While only a simplified four-row/enable_seqscan=off local case was tested locally and not the actual 714 full factory, defining covering ordered index idx_telemetry_events_binding_id_created_at_ingested_seq on ((payload->>'binding_id'), created_at DESC, ingested_seq DESC) in scripts/db_migrate.sh and retiring legacy root-only idx_telemetry_events_binding_id provides the proposed mechanism and local ordering-support proof. Existing merged 714 reader SQL, strict typed binding/runtime guards, tenant isolation, and deterministic tie-breaker semantics remain completely unchanged. Production net growth is exactly +9 lines in scripts/db_migrate.sh against dev base 714289cf8 (budget <= 20). Tests cover fresh schema migration, old schema upgrade, idempotency, and exact ordering / tie behavior with 14 passed in test_db_migrate.py and 146 passed across 4 telemetry/incident test suites. Source delivery prepared pending review, CI, and merge; actual hosted 5s / FULL / healthy Loop10 capacity remains unverified and pending delivery, with coordinator owning migration apply and hosted capacity verification.",
+  "readonly_receipts_reference": {
+    "diagnostic_file": "/tmp/pantheon-full-closeout-20261011/original-failed-9624-SQL-bounded-EXPLAIN-ANALYZE-diagnostic-NOT-CAPACITY-PASS.json",
+    "receipts_dir": "/tmp/pantheon-closeout-continue-20261012T0528Z/",
+    "controller_record": "current-original-L10-controller-record-PG-readonly.json",
+    "failed_report_identities": "current-L10-actual-failed-report-identities-owner-GET-only.json",
+    "incident_canonical_lookups": "current-incidents-original-full-canonical-lookups-failed-and-valid-positive-GET-only.jsonl",
+    "verified_source_factory_binding": "current-verified-source-original-telemetry-factory-binding-deadline-readonly.jsonl",
+    "frozen_be87_candidate_readonly_receipt": "frozen-be87-whole-candidate-factory-original-PG-readonly-NOT-INSTALLED.jsonl",
+    "frozen_be87_explain_readonly_receipt": "current-original-and-frozen-be87-actual-factory-EXPLAIN-ONLY-NOT-cause-runtime-proof.jsonl",
+    "frozen_be87_counter_text": "be87-146PASS-but-actual-binding-still-timeouts-source-counter.txt",
+    "frozen_be87_qa_log": "be87-four-complete-original-modules-owned-PG-independent-QA.log",
+    "observed_tick": "2026-10-12T11:31Z",
+    "loop10_metrics": {
+      "summaries_count": 46,
+      "skipped_count": 46,
+      "incident_delivery_errors_total": 13,
+      "http_502_timeout_errors": 8,
+      "http_504_dispatch_exhausted_errors": 5,
+      "sla_duration_seconds": 56.8217628,
+      "sla_limit_seconds": 60.0,
+      "within_sla": true,
+      "lifecycle_retryable_errors": 0,
+      "lifecycle_terminal_errors": 0
+    },
+    "measured_counter_timeouts": [
+      {
+        "case": "actual_failed_diagnostic_20s_EXPLAIN_ANALYZE",
+        "binding_id": "rb-2480fb4d26884cfdb4d6ed9202172683",
+        "limit": 100,
+        "elapsed_seconds": 16.763329526,
+        "execution_time_ms": 16655.991,
+        "actual_index_tids": 194975,
+        "actual_qualified_rows": 194969,
+        "lossy_bitmap_rechecks_per_worker": 225552,
+        "shared_hit_blocks": 495137,
+        "shared_read_blocks": 239144,
+        "error_type": "TimeoutExceeded5sApplicationFactory",
+        "timeout_observed": true
+      },
+      {
+        "case": "current_root_valid_positive100",
+        "binding_id": "rb-d9c1a36956784e2096e08c37d76ee76f",
+        "limit": 100,
+        "elapsed_seconds": 0.222416116,
+        "query_elapsed_seconds": 0.182264714,
+        "connect_elapsed_seconds": 0.030001104,
+        "returned_count": 100,
+        "payload_bytes": 283927,
+        "timeout_observed": false
+      }
+    ]
+  },
+  "cause_and_solution_proof": {
+    "demonstrated_defect": "PostgreSQL query planner was forced to perform Bitmap Index Scan on idx_telemetry_events_binding_id returning 194,975 index TIDs and 194,969 qualified rows, followed by Gather and top-N Sort over all 194,969 rows before taking LIMIT 100, because the legacy index only indexed (payload->>'binding_id') without ordering columns created_at DESC, ingested_seq DESC.",
+    "diagnostic_reference": "/tmp/pantheon-full-closeout-20261011/original-failed-9624-SQL-bounded-EXPLAIN-ANALYZE-diagnostic-NOT-CAPACITY-PASS.json",
+    "solution_mechanism": "Added covering ordered expression index idx_telemetry_events_binding_id_created_at_ingested_seq ON telemetry_events ((payload->>'binding_id'), created_at DESC, ingested_seq DESC) in scripts/db_migrate.sh and retired redundant root-only idx_telemetry_events_binding_id. In local disposable PostgreSQL testing with enable_seqscan=off on simplified four-row case, the index demonstrates local ordering-support proof for the proposed mechanism (Index Scan in created_at DESC, ingested_seq DESC order without Sort node). Actual hosted planner behavior on full factory and actual hosted 5s / FULL / healthy Loop10 capacity remain unverified and pending delivery/coordinator apply.",
+    "lifecycle_and_lock_behavior": "The ordered replacement index is created first with CREATE INDEX IF NOT EXISTS (acquires SHARE lock on telemetry_events, permitting concurrent SELECT reads). Once verified, the redundant root-only index is retired via DROP INDEX IF EXISTS. In case of migration failure, transaction halts before drop, ensuring continuous index coverage. Migration is fully idempotent across fresh, pre-existing, and repeated executions.",
+    "budget_status": {
+      "net_production_diff_lines": 9,
+      "baseline_commit": "714289cf819719092ce161c540d5919cbeaa773e",
+      "budget_limit": 20,
+      "budget_passed": true
+    }
+  },
+  "acceptance_verification": [
+    {
+      "ac": "AC1",
+      "description": "Referenced original CURRENT source delivery (#6525 exact 9624->714/native gen3 DONE) and blocked ACTUAL-TIMEOUT/gen2/PR6526 truthfully. Existing SQL source in ingest_svc.py remains unchanged; redundant B2 barrier was not merged, cumulative source budget not reset. Verified clean dev 714289cf819719092ce161c540d5919cbeaa773e before clean branch edits. Governed supervisor, assigned owner Antigravity2, independent reviewer Antigravity, integrator merge.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC2",
+      "description": "Demonstrated defect measured: 194,975 B1 index TIDs / 194,969 qualified rows / 16.656s scan-sort before LIMIT under 11:31:27Z readonly diagnostic EXPLAIN (ANALYZE, BUFFERS). Corrected ordering support of existing binding expression index in scripts/db_migrate.sh to idx_telemetry_events_binding_id_created_at_ingested_seq on ((payload->>'binding_id'), created_at DESC, ingested_seq DESC), preserving exact descending created_at and ingested_seq tie-breaker. Rootbinding prefix semantics and historical B2 legacy/metadata-tenant aliases unchanged. No bigger timeout, JIT/planner tuning, new cache/reader/projection or invented counts. Local ordering-support proof on simplified four-row local case demonstrates proposed mechanism (Index Scan without Sort node), while actual hosted planner on full factory and actual hosted 5s / FULL / healthy Loop10 capacity remain pending delivery. Coordinator owns apply and hosted capacity proof.",
+      "verdict": "pending_delivery"
+    },
+    {
+      "ac": "AC3",
+      "description": "Used only existing migration entrypoint scripts/db_migrate.sh and existing tests scripts/test_db_migrate.py. Fresh and previously-migrated databases obtain the proper ordered index idempotently via CREATE INDEX IF NOT EXISTS idx_telemetry_events_binding_id_created_at_ingested_seq; legacy root-only idx_telemetry_events_binding_id is retired via DROP INDEX IF EXISTS after replacement. Unrelated indexes (ingested_seq, created_at, event_type, runtime_id, deployment_stage, payload_gin), permissions, and data rows strictly preserved. Zero table/column/type mutations or reader startup DDL. Net production line growth in scripts/db_migrate.sh is +9 lines against 714 (budget <= 20).",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC4",
+      "description": "Exactly scripts/db_migrate.sh, scripts/test_db_migrate.py, and docs/deployment/evidence/TELEMETRY-BINDING-READ-CAPACITY-CURRENT-20261012/evidence.json touched; no new test files or evidence directories. Meaningful test suite covers fresh database schema, old-index database schema upgrade, repeated existing-entry idempotency, exact index order and deterministic tie behavior on ingested_seq DESC, and retained pre-existing data rows. All 14 tests in test_db_migrate.py pass (including transport failure and bootstrap delegation) with 0 skips, and all 146 tests across 4 original telemetry/incident modules pass unchanged. Synthetic local tests and fixture limits cannot complete actual hosted capacity.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC5",
+      "description": "Preserved original strict typed binding/runtime_binding string checks, tenant root/metadata OR semantics, conflicting alias rejection, disjoint UNION ALL, immutable event/cursor, and 50/100 cutoff/full helper semantics in existing reader query. Coordinator after approved migration applies migration entry on original rb248 at 100 and 50 under original READONLY DSN and original 5s, with real d9 positive and ordered-ID equivalence. Actual hosted 5s / FULL factory / healthy Loop10 capacity remains unverified and pending delivery. Source worker delivers migration/test/evidence only; coordinator owns apply and hosted proof.",
+      "verdict": "pending_delivery"
+    },
+    {
+      "ac": "AC6",
+      "description": "Truthful commit with Task-ID, LLM-Agent, Reviewer, Verified trailers; PR push; exact assigned reviewer Antigravity review; required CI; supervisor integrator merge. Source delivery prepared pending dev merge; coordinator owns apply and hosted proof. Parent gen16/sixAC/3 final artifacts/21 deps unchanged.",
+      "verdict": "pending_delivery"
+    }
+  ],
+  "verification": [
+    {
+      "command": "python3 -m pytest -v scripts/test_db_migrate.py",
+      "passed": 14,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "python3 -m unittest services.telemetry.test_main_routes",
+      "passed": 46,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "python3 -m unittest services.telemetry.test_lineage_write_path",
+      "passed": 7,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "python3 -m unittest services.incident.test_reference_validation",
+      "passed": 13,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "python3 -m unittest services.incident.test_incident",
+      "passed": 80,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    }
+  ],
+  "declared_artifacts": [
+    "scripts/db_migrate.sh",
+    "scripts/test_db_migrate.py",
+    "docs/deployment/evidence/TELEMETRY-BINDING-READ-CAPACITY-CURRENT-20261012/evidence.json"
+  ],
+  "diff_budget": {
+    "net_production_lines": 9,
+    "budget": 20,
+    "verdict": "pass",
+    "files": {
+      "production": [
+        "scripts/db_migrate.sh"
+      ],
+      "tests": [
+        "scripts/test_db_migrate.py"
+      ],
+      "evidence": [
+        "docs/deployment/evidence/TELEMETRY-BINDING-READ-CAPACITY-CURRENT-20261012/evidence.json"
+      ]
+    }
+  }
+}
