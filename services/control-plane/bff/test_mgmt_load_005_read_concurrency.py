@@ -31,6 +31,13 @@ routes therefore either completes within the wait budget (asserted by the
 "slow read completes" sub-tests below) or degrades to an explicit envelope
 once it exceeds the budget (asserted by the "timeout returns degraded
 envelope" sub-tests below), the same MGMT-LOAD-005 contract as ``/bff/alerts``.
+
+``/bff/management/quarterly-ranking``, ``/drilldown``, and
+``/recommendations`` (via native ``personas.routes.ranking.build_ranking_router``)
+use FastAPI's native synchronous-handler threadpool dispatch (``def`` handlers
+for synchronous route bodies) to ensure slow original ranking aggregation
+cannot block the persistent event loop or delay unrelated routes like
+``/health`` and strict auth rejections (MGMT-RANKING-ORIGINAL-READ-ISOLATION-20261012).
 """
 from __future__ import annotations
 
@@ -67,10 +74,15 @@ from services.control_plane.bff.management_read_models.router import (
     _utc_now_rfc3339,
     create_management_router,
 )
+from services.control_plane.bff.personas import PersonaService, create_personas_router
 from services.control_plane.bff.personas.routes.common import (
     run_management_read as _real_run_management_read,
 )
-from services.control_plane.bff.ports import ReadSurfacePorts, create_read_surface_ports
+from services.control_plane.bff.ports import (
+    ReadSurfacePorts,
+    create_persona_registry_write_owner,
+    create_read_surface_ports,
+)
 
 
 HEADERS = {"Authorization": "Bearer op-mgmt-load-005:operator,admin:mfa"}
@@ -108,6 +120,7 @@ def _build_app(
     *,
     build_operator_alerts_payload=None,
     run_management_read=None,
+    persona_service=None,
 ) -> FastAPI:
     app = FastAPI()
     register_error_handlers(app)
@@ -165,6 +178,21 @@ def _build_app(
             submit_job_action=lambda job_id, action_id, resolved_key, identity, payload: {},
         )
     )
+    if persona_service is None:
+        persona_service = PersonaService(
+            write_owner=create_persona_registry_write_owner(),
+            read_store=store,
+            ranking_write_owner=store,
+            command_store=_EmptyCommandLog(),
+        )
+    app.include_router(
+        create_personas_router(
+            service=persona_service,
+            extract_identity_fn=_tenant_a_identity,
+            require_read_role_fn=_default_require_read_role,
+            utc_now_fn=_utc_now_rfc3339,
+        )
+    )
     return app
 
 
@@ -173,6 +201,7 @@ def _isolated_bff(
     *,
     build_operator_alerts_payload=None,
     run_management_read=_real_run_management_read,
+    persona_service=None,
 ) -> Iterator[tuple[TestClient, ReadSurfacePorts]]:
     """Standalone app on a *persistent* TestClient portal (single event loop).
 
@@ -191,6 +220,7 @@ def _isolated_bff(
         store,
         build_operator_alerts_payload=build_operator_alerts_payload,
         run_management_read=run_management_read,
+        persona_service=persona_service,
     )
     with TestClient(app, raise_server_exceptions=False) as client:
         yield client, store
@@ -390,3 +420,117 @@ def test_human_inbox_timeout_returns_degraded_envelope_without_hanging() -> None
     surface = payload["meta"]["surfaces"]["human_inbox"]
     assert surface["status"] == "degraded"
     assert surface["reason"] == "read_timeout"
+
+
+def test_health_and_auth_rejection_stay_responsive_while_ranking_read_is_slow() -> None:
+    """A slow, synchronous quarterly ranking read must not block the asyncio
+    event loop or delay concurrent /health or unauthenticated rejection requests
+    (MGMT-RANKING-ORIGINAL-READ-ISOLATION-20261012).
+    """
+    store = create_read_surface_ports()
+    store.list_jobs_bff = lambda **_kwargs: []
+    persona_service = PersonaService(
+        write_owner=create_persona_registry_write_owner(),
+        read_store=store,
+        ranking_write_owner=store,
+        command_store=_EmptyCommandLog(),
+    )
+    orig_get_quarterly_ranking = persona_service.get_quarterly_ranking
+
+    def slow_ranking_read(*args, **kwargs):
+        time.sleep(0.8)
+        return orig_get_quarterly_ranking(*args, **kwargs)
+
+    persona_service.get_quarterly_ranking = slow_ranking_read
+
+    with _isolated_bff(persona_service=persona_service) as (client, _store):
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            ranking_future = pool.submit(
+                client.get,
+                "/bff/management/quarterly-ranking",
+                headers=HEADERS,
+                params={"quarter": "2026-Q1"},
+            )
+            time.sleep(0.05)  # ensure slow ranking read starts first
+
+            # 1. Unrelated core /health must stay fast (< 0.3s)
+            health_started = time.monotonic()
+            health_response = client.get("/health")
+            health_elapsed = time.monotonic() - health_started
+
+            # 2. Strict auth rejection must stay responsive (< 0.3s)
+            unauth_started = time.monotonic()
+            unauth_response = client.get("/bff/management/quarterly-ranking")
+            unauth_elapsed = time.monotonic() - unauth_started
+
+            ranking_response = ranking_future.result()
+
+    assert health_response.status_code == 200
+    assert health_elapsed < 0.3, (
+        f"/health took {health_elapsed:.3f}s while slow ranking aggregation was in flight; "
+        "event loop was blocked by synchronous ranking read"
+    )
+
+    assert unauth_response.status_code == 401
+    assert unauth_elapsed < 0.3, (
+        f"unauthenticated rejection took {unauth_elapsed:.3f}s; "
+        "auth rejection was delayed by slow ranking read"
+    )
+
+    assert ranking_response.status_code == 200
+    ranking_payload = ranking_response.json()
+    assert "data" in ranking_payload
+    assert "meta" in ranking_payload
+
+
+def test_ranking_drilldown_and_recommendations_preserve_synchronous_dispatch_and_errors() -> None:
+    """Quarterly ranking drilldown and recommendations GET handlers dispatch
+    via synchronous threadpool, preserving caller tenant context, true validation
+    and not-found errors, and without blocking concurrent /health requests.
+    """
+    store = create_read_surface_ports()
+    store.list_jobs_bff = lambda **_kwargs: []
+    persona_service = PersonaService(
+        write_owner=create_persona_registry_write_owner(),
+        read_store=store,
+        ranking_write_owner=store,
+        command_store=_EmptyCommandLog(),
+    )
+    orig_recommendations = persona_service.get_quarterly_ranking_recommendations
+
+    def slow_recommendations(*args, **kwargs):
+        time.sleep(0.5)
+        return orig_recommendations(*args, **kwargs)
+
+    persona_service.get_quarterly_ranking_recommendations = slow_recommendations
+
+    with _isolated_bff(persona_service=persona_service) as (client, _store):
+        # Validation error: missing personaId on drilldown
+        val_resp = client.get("/bff/management/quarterly-ranking/drilldown", headers=HEADERS)
+        assert val_resp.status_code == 422
+
+        # Not found error: nonexistent persona on drilldown
+        nf_resp = client.get(
+            "/bff/management/quarterly-ranking/drilldown?persona_id=nonexistent-persona",
+            headers=HEADERS,
+        )
+        assert nf_resp.status_code == 404
+
+        # Slow recommendations read does not block /health
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            rec_future = pool.submit(
+                client.get,
+                "/bff/management/quarterly-ranking/recommendations",
+                headers=HEADERS,
+                params={"quarter": "2026-Q1"},
+            )
+            time.sleep(0.05)
+            health_started = time.monotonic()
+            health_resp = client.get("/health")
+            health_elapsed = time.monotonic() - health_started
+            rec_resp = rec_future.result()
+
+    assert health_resp.status_code == 200
+    assert health_elapsed < 0.3, f"/health took {health_elapsed:.3f}s during slow recommendations read"
+    assert rec_resp.status_code == 200
+
