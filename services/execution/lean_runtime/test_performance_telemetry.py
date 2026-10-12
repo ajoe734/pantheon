@@ -277,7 +277,7 @@ class PortfolioValuationTest(unittest.TestCase):
         self.assertEqual(result.diagnostic["code"], "missing_market_marks")
         self.assertEqual(result.diagnostic["missing_symbols"], ["MSFT"])
 
-    def test_mark_older_than_latest_fill_cannot_value_the_new_ledger_state(self):
+    def test_mark_older_than_latest_fill_can_value_the_new_ledger_state(self):
         # Before: value_portfolio rejected any still-age-eligible mark whose timestamp
         # predated the latest fill with marks_unavailable / market_marks_predate_ledger,
         # preventing fresh daily snapshot quotes from valuing same-day filled books.
@@ -792,8 +792,8 @@ class PaperPerformanceLedgerTest(unittest.TestCase):
         algorithm.SetCurrentSignalContext(
             {
                 "market_price": 200.0,
-                "market_price_as_of": "2026-07-14T07:30:00Z",
-                "market_price_source": "source-ingest://snapshots/mss-2454",
+                "market_price_as_of": "2026-07-14T06:10:00Z",
+                "market_price_source": "source-ingest://snapshots/mss-2454-morning",
             }
         )
         with patch("services.execution.lean_runtime.paper_runtime._iso_now", return_value="2026-07-14T06:15:00Z"):
@@ -814,11 +814,13 @@ class PaperPerformanceLedgerTest(unittest.TestCase):
         self.assertEqual(ledger["last_fill_at"], "2026-07-14T06:15:00Z")
 
         # Two marks with distinct quote times:
-        # 2330.TW quote time (05:30:00Z) predates both fills
-        # 2454.TW quote time (07:30:00Z) is newer than both fills
+        # 2330.TW quote time (05:30:00Z) predates both fills (06:00:00Z and 06:15:00Z)
+        # and has immutable identical price/time/source_ref as fill context.
+        # 2454.TW has an actual later differently identified eligible quote (07:30:00Z)
+        # newer than both fills, yielding truthful positive PnL.
         snap_2330 = _snapshot(
             "2330.TW",
-            1050.0,
+            1000.0,
             event_time="2026-07-14T05:30:00Z",
             source_ref="source-ingest://snapshots/mss-2330",
         )
@@ -826,7 +828,7 @@ class PaperPerformanceLedgerTest(unittest.TestCase):
             "2454.TW",
             210.0,
             event_time="2026-07-14T07:30:00Z",
-            source_ref="source-ingest://snapshots/mss-2454",
+            source_ref="source-ingest://snapshots/mss-2454-afternoon",
         )
         provider = _provider({"2330.TW": snap_2330, "2454.TW": snap_2454})
         marks, mark_diag = provider.resolve(algorithm.mark_symbols())
@@ -847,10 +849,10 @@ class PaperPerformanceLedgerTest(unittest.TestCase):
 
         self.assertEqual(result.status, "valued")
         self.assertIsNotNone(result.sample)
-        # Cash: 89,000 + 10 * 1050 (10,500) + 5 * 210 (1,050) = 100,550
+        # Cash: 89,000 + 10 * 1000 (10,000) + 5 * 210 (1,050) = 100,050 (PnL: +50.0)
         self.assertAlmostEqual(result.sample.cash, 89_000.0)
-        self.assertAlmostEqual(result.sample.portfolio_value, 100_550.0)
-        self.assertAlmostEqual(result.sample.pnl, 550.0)
+        self.assertAlmostEqual(result.sample.portfolio_value, 100_050.0)
+        self.assertAlmostEqual(result.sample.pnl, 50.0)
 
         # Sample date is at least the latest fill and every used mark
         last_fill_dt = datetime.fromisoformat(ledger["last_fill_at"].replace("Z", "+00:00"))
@@ -858,6 +860,8 @@ class PaperPerformanceLedgerTest(unittest.TestCase):
         mark_2330_dt = datetime.fromisoformat(marks["2330.TW"].as_of.replace("Z", "+00:00"))
         mark_2454_dt = datetime.fromisoformat(marks["2454.TW"].as_of.replace("Z", "+00:00"))
 
+        # Old quote before ledger valuation: 2330 mark predates last fill and is successfully valued
+        self.assertGreater(last_fill_dt, mark_2330_dt)
         self.assertGreaterEqual(sample_as_of_dt, last_fill_dt)
         self.assertGreaterEqual(sample_as_of_dt, mark_2330_dt)
         self.assertGreaterEqual(sample_as_of_dt, mark_2454_dt)
@@ -869,7 +873,7 @@ class PaperPerformanceLedgerTest(unittest.TestCase):
         self.assertEqual(sample_marks["2330.TW"].as_of, "2026-07-14T05:30:00Z")
         self.assertEqual(sample_marks["2330.TW"].source_ref, "source-ingest://snapshots/mss-2330")
         self.assertEqual(sample_marks["2454.TW"].as_of, "2026-07-14T07:30:00Z")
-        self.assertEqual(sample_marks["2454.TW"].source_ref, "source-ingest://snapshots/mss-2454")
+        self.assertEqual(sample_marks["2454.TW"].source_ref, "source-ingest://snapshots/mss-2454-afternoon")
 
 
 if __name__ == "__main__":
