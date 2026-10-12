@@ -201,8 +201,7 @@ if [[ -n "${DEV_PAPER_PREBOOTSTRAP_WORKTREE:-}" ]]; then
   capture_command="set -euo pipefail; cd ${worktree_q}; docker compose -p pantheon -f docker-compose.yml exec -T loop-run-projector-scheduler python -m services.trade_journey.hosted_lifecycle_probe --expected-sha ${EXPECTED_BFF_SHA} --print-high-watermark"
   capture_rc=0
   prebootstrap_hw="$("${SSH}" exec "${capture_command}")" || capture_rc=$?
-  prebootstrap_hw="${prebootstrap_hw//$'\r'/}"
-  prebootstrap_hw="${prebootstrap_hw//$'\n'/}"
+  prebootstrap_hw="${prebootstrap_hw//$'\r'/}"  # CRLF only; multi-line output stays invalid
   if [[ "${capture_rc}" -eq 130 || "${capture_rc}" -eq 143 ]]; then
     exit "${capture_rc}"
   elif [[ "${capture_rc}" -ne 0 || ! "${prebootstrap_hw}" =~ ^[0-9]+$ ]]; then
