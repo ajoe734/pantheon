@@ -2236,6 +2236,11 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
         res_foreign = fetch_b(target_b2_only, tenant_id="tenant-foreign", limit=50)
         self.assertEqual(res_foreign, [])
 
+        # 8. Late full-payload join integrity verification
+        self.assertTrue(all("drift_details" in r for r in res_50_b2))
+        self.assertTrue(all("padding" in r for r in res_50_b1))
+
+
 
 if __name__ == "__main__":
     unittest.main()
