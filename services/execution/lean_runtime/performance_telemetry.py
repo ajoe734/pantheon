@@ -8,7 +8,7 @@ explicit:
 
 * source-ingest supplies price, source and observation time;
 * every open position must have a finite positive mark;
-* the oldest mark is the atomic valuation ``as_of`` boundary;
+* the latest intrinsic timestamp across fills and marks is the valuation ``as_of`` boundary;
 * incomplete marks produce diagnostics and no performance sample.
 
 ``drawdown_pct`` is represented as a fractional ratio (``0.18`` means 18%),
@@ -430,7 +430,6 @@ def value_portfolio(
         )
     reference_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     stale: list[str] = []
-    predating_ledger: list[str] = []
     for symbol, quantity in normalized_positions:
         mark = marks[symbol]
         observed = _parse_rfc3339(mark.as_of)
@@ -450,9 +449,6 @@ def value_portfolio(
         ):
             stale.append(symbol)
             continue
-        if ledger_as_of is not None and observed < ledger_as_of:
-            predating_ledger.append(symbol)
-            continue
         portfolio_value += quantity * mark.price
         used_marks.append(mark)
 
@@ -468,21 +464,11 @@ def value_portfolio(
             },
         )
 
-    if predating_ledger:
-        return ValuationResult(
-            status="marks_unavailable",
-            sample=None,
-            diagnostic={
-                **base_diagnostic,
-                "code": "market_marks_predate_ledger",
-                "missing_symbols": sorted(predating_ledger),
-                "ledger_as_of": _iso(ledger_as_of) if ledger_as_of else None,
-            },
-        )
-
     if used_marks:
-        as_of_dt = min(_parse_rfc3339(mark.as_of) for mark in used_marks)
-        assert as_of_dt is not None
+        intrinsic_timestamps = [_parse_rfc3339(mark.as_of) for mark in used_marks]
+        if ledger_as_of is not None:
+            intrinsic_timestamps.append(ledger_as_of)
+        as_of_dt = max(dt for dt in intrinsic_timestamps if dt is not None)
         as_of = _iso(as_of_dt)
     else:
         flat_as_of = _parse_rfc3339(last_fill_at)
