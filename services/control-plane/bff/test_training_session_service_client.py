@@ -783,10 +783,32 @@ def live_training_session_service():
     fixture = strict_support.materialize_strict_authority(tempfile.mkdtemp())
     env_backup = dict(os.environ)
     os.environ.update(fixture.environment())
+    jwt_secret = "owned-original-training-inbound-test-secret-only"
+    jwt_issuer = "pantheon-dev"
+    jwt_audience = "bff-operators"
     os.environ["TRAINING_SESSION_AUTH_DISABLED"] = "false"
     os.environ["TRAINING_SESSION_AUTH_MODE"] = "strict"
-    os.environ["TRAINING_SESSION_JWT_SECRET"] = "owned-original-training-inbound-test-secret-only"
+    os.environ["TRAINING_SESSION_JWT_SECRET"] = jwt_secret
+    os.environ["TRAINING_SESSION_JWT_ISSUER"] = jwt_issuer
+    os.environ["TRAINING_SESSION_JWT_AUDIENCE"] = jwt_audience
+    os.environ["TRAINING_SESSION_MFA_REQUIRED"] = "false"
     os.environ["TRAINING_SESSION_ALLOWED_CALLER_SERVICES"] = "control-plane-bff,training-session-preview-worker"
+    os.environ["TRAINING_SESSION_ALLOWED_GATEWAY_SERVICES"] = "control-plane-bff"
+
+    os.environ["PANTHEON_ENV"] = "dev"
+    os.environ["PANTHEON_DEPLOYMENT_STAGE"] = "dev"
+    os.environ["PANTHEON_BFF_JWT_SECRET"] = jwt_secret
+    os.environ["PANTHEON_BFF_JWT_ISSUER"] = jwt_issuer
+    os.environ["PANTHEON_BFF_JWT_AUDIENCE"] = jwt_audience
+    os.environ["PANTHEON_BFF_MFA_REQUIRED"] = "false"
+    os.environ["PANTHEON_BFF_DEV_LOGIN_CLIENT_ID"] = "pantheon-dev-operator"
+    os.environ["PANTHEON_BFF_DEV_LOGIN_CLIENT_SECRET"] = "dev-operator-secret-123"
+    os.environ["PANTHEON_BFF_TENANT_ID"] = "tenant-live"
+    os.environ["PANTHEON_BFF_ALLOWED_TENANTS"] = "tenant-live,tenant-legit,tenant-alpha,tenant-beta"
+    os.environ["PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_ID"] = "pantheon-dev-viewer"
+    os.environ["PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET"] = "dev-viewer-secret-123"
+    os.environ["PANTHEON_BFF_DEV_LOGIN_VIEWER_TENANT_ID"] = "tenant-live"
+    os.environ["PANTHEON_BFF_DEV_LOGIN_VIEWER_ALLOWED_TENANTS"] = "tenant-live,tenant-alpha"
 
     modules_to_load = [
         "models",
@@ -831,7 +853,7 @@ def live_training_session_service():
         os.environ.update(env_backup)
 
 
-def _signed_caller_jwt(tenant: str, actor: str = "operator-live") -> str:
+def _signed_caller_jwt(tenant: str, actor: str = "control-plane-bff") -> str:
     secret = os.environ.get("TRAINING_SESSION_JWT_SECRET", "owned-original-training-inbound-test-secret-only")
     return encode_jwt_hs256(
         {
@@ -840,10 +862,50 @@ def _signed_caller_jwt(tenant: str, actor: str = "operator-live") -> str:
             "tenant_ids": [tenant],
             "delegated_actor_id": actor,
             "roles": ["training-service"],
+            "iss": os.environ.get("TRAINING_SESSION_JWT_ISSUER", "pantheon-dev"),
+            "aud": os.environ.get("TRAINING_SESSION_JWT_AUDIENCE", "bff-operators"),
             "exp": time.time() + 3600,
         },
         secret=secret,
     )
+
+
+def _dev_login(
+    *,
+    client_id: str = "pantheon-dev-operator",
+    client_secret: str = "dev-operator-secret-123",
+    roles: list[str] | None = None,
+    tenant_id: str = "tenant-live",
+) -> tuple[str, dict[str, Any]]:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from services.control_plane.bff.auth.policy import create_auth_dependencies
+    from services.control_plane.bff.auth.handlers import create_auth_handlers
+    from services.control_plane.bff.auth.service import AuthFacadeService
+    from services.control_plane.bff.auth.router import create_auth_router
+
+    deps = create_auth_dependencies()
+    handlers = create_auth_handlers(dependencies=deps)
+    auth_service = AuthFacadeService(local_readiness=handlers["bff_auth_readiness"], handlers=handlers)
+    auth_router = create_auth_router(service=auth_service)
+    app = FastAPI()
+    app.include_router(auth_router)
+    client = TestClient(app)
+
+    payload: dict[str, Any] = {
+        "grant_type": "client_credentials",
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "tenant_id": tenant_id,
+    }
+    if roles is not None:
+        payload["roles"] = roles
+
+    resp = client.post("/bff/auth/dev-login", json=payload)
+    assert resp.status_code == 200, f"Dev login failed: {resp.status_code} {resp.text}"
+    token = resp.json()["access_token"]
+    raw_payload = json.loads(base64.urlsafe_b64decode(token.split(".")[1] + "==").decode("utf-8"))
+    return token, raw_payload
 
 
 def test_default_production_factory_live_owner_roundtrip(live_training_session_service):
@@ -852,7 +914,21 @@ def test_default_production_factory_live_owner_roundtrip(live_training_session_s
     ports = create_read_surface_ports()
     assert ports.persona_training.trainer._training.__class__.__name__ == "TrainingSessionHttpStore"
 
-    token = _signed_caller_jwt("tenant-live", "operator-live")
+    token, claims = _dev_login(
+        client_id="pantheon-dev-operator",
+        client_secret="dev-operator-secret-123",
+        roles=["operator"],
+        tenant_id="tenant-live",
+    )
+    assert "service" not in claims
+    assert "service_id" not in claims
+    assert "training-service" not in claims.get("roles", [])
+    assert "operator" in claims.get("roles", [])
+    assert "mfa" not in claims
+    assert "amr" not in claims
+    assert claims.get("sub") == "pantheon-dev-operator"
+    assert claims.get("tenant_id") == "tenant-live"
+
     auth_token = authorization.set(f"Bearer {token}")
     tenant_token = selected_tenant.set("tenant-live")
 
@@ -861,13 +937,17 @@ def test_default_production_factory_live_owner_roundtrip(live_training_session_s
         created = ports.create_trainer_session(
             persona_id="persona-alpha",
             objective="Tune momentum response during macro surprise",
-            actor_id="operator-live",
+            actor_id="pantheon-dev-operator",
         )
         assert created is not None
         session_id = created["session_id"]
         assert session_id.startswith("trn-")
         assert created["status"] == "active"
+        assert created["opened_by"] == "pantheon-dev-operator"
+        assert created["actor_context"]["authenticated_actor_id"] == "pantheon-dev-operator"
+        assert created["actor_context"]["actor_service"] == "control-plane-bff"
         assert created["allowedActions"]["canSendMessage"] is True
+
 
         # 2. List sessions
         sessions = ports.list_trainer_sessions()
@@ -882,16 +962,19 @@ def test_default_production_factory_live_owner_roundtrip(live_training_session_s
         assert detail is not None
         assert detail["session_id"] == session_id
         assert detail["objective"] == "Tune momentum response during macro surprise"
+        assert detail["opened_by"] == "pantheon-dev-operator"
 
         # 4. Append trainer message
         msg = ports.append_trainer_message(
             session_id,
             message_body="Adjust minimum hold bars to 4",
-            actor_id="operator-live",
+            actor_id="pantheon-dev-operator",
         )
         assert msg is not None
         assert msg["event"]["message_body"] == "Adjust minimum hold bars to 4"
+        assert msg["event"]["actor"] == "pantheon-dev-operator"
         assert len(msg["session"]["events"]) == 1
+
 
         # 5. Controls: test rejected unknown control first
         patch_rejected = ports.patch_trainer_controls(
@@ -1057,5 +1140,294 @@ def test_live_malformed_preview_job_raises_503(live_training_session_service):
     finally:
         authorization.reset(auth_token)
         selected_tenant.reset(tenant_token)
+
+
+def test_service_caller_token_accepted(live_training_session_service):
+    """Verify genuine service caller token (with service claim and training-service role) is accepted."""
+    ports = create_read_surface_ports()
+    token = _signed_caller_jwt("tenant-live", "control-plane-bff")
+    auth_token = authorization.set(f"Bearer {token}")
+    tenant_token = selected_tenant.set("tenant-live")
+
+    try:
+        created = ports.create_trainer_session(
+            persona_id="persona-alpha",
+            objective="Service-originated training session",
+            actor_id="control-plane-bff",
+        )
+        assert created is not None
+        assert created["opened_by"] == "control-plane-bff"
+        assert created["actor_context"]["actor_service"] == "control-plane-bff"
+    finally:
+        authorization.reset(auth_token)
+        selected_tenant.reset(tenant_token)
+
+
+def test_live_expired_jwt_rejected(live_training_session_service):
+    """Verify expired token is rejected with HTTP 401."""
+    ports = create_read_surface_ports()
+    secret = os.environ.get("TRAINING_SESSION_JWT_SECRET", "owned-original-training-inbound-test-secret-only")
+    expired_token = encode_jwt_hs256(
+        {
+            "sub": "pantheon-dev-operator",
+            "roles": ["operator"],
+            "tenant_id": "tenant-live",
+            "allowed_tenants": ["tenant-live"],
+            "iss": "pantheon-dev",
+            "aud": "bff-operators",
+            "exp": time.time() - 3600,
+        },
+        secret=secret,
+    )
+    auth_token = authorization.set(f"Bearer {expired_token}")
+    tenant_token = selected_tenant.set("tenant-live")
+
+    try:
+        with pytest.raises(HTTPException) as exc_info:
+            ports.create_trainer_session(persona_id="p-1", objective="expired test")
+        assert exc_info.value.status_code == 401
+    finally:
+        authorization.reset(auth_token)
+        selected_tenant.reset(tenant_token)
+
+
+def test_live_anonymous_caller_rejected(live_training_session_service):
+    """Verify anonymous caller without Bearer token is rejected with HTTP 401 by native owner."""
+    import urllib.error
+    import urllib.request
+
+    base_url, _ = live_training_session_service
+    req = urllib.request.Request(
+        f"{base_url}/api/training/sessions",
+        data=json.dumps({"persona_id": "p-1", "objective": "anonymous test"}).encode(),
+        headers={
+            "X-Tenant-Id": "tenant-live",
+            "X-Pantheon-Service": "control-plane-bff",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(req)
+    assert exc_info.value.code == 401
+
+
+
+def test_live_viewer_role_write_rejected(live_training_session_service):
+    """Verify viewer dev-login user can read sessions but is rejected on mutations with 403."""
+    ports = create_read_surface_ports()
+    token, claims = _dev_login(
+        client_id="pantheon-dev-viewer",
+        client_secret="dev-viewer-secret-123",
+        roles=["viewer"],
+        tenant_id="tenant-live",
+    )
+    assert "viewer" in claims.get("roles", [])
+
+    auth_token = authorization.set(f"Bearer {token}")
+    tenant_token = selected_tenant.set("tenant-live")
+
+    try:
+        sessions = ports.list_trainer_sessions()
+        assert isinstance(sessions, list)
+
+        with pytest.raises(HTTPException) as exc_info:
+            ports.create_trainer_session(persona_id="p-1", objective="viewer mutation")
+        assert exc_info.value.status_code == 403
+    finally:
+        authorization.reset(auth_token)
+        selected_tenant.reset(tenant_token)
+
+
+def test_live_user_cannot_call_worker_only_run(live_training_session_service):
+    """Verify user authority cannot invoke worker-only endpoints such as /preview-jobs/{id}/run."""
+    import urllib.error
+    import urllib.request
+
+    base_url, _ = live_training_session_service
+    token, _ = _dev_login(
+        client_id="pantheon-dev-operator",
+        client_secret="dev-operator-secret-123",
+        roles=["operator"],
+        tenant_id="tenant-live",
+    )
+
+    req = urllib.request.Request(
+        f"{base_url}/api/training/preview-jobs/job-123/run",
+        data=b"{}",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "X-Tenant-Id": "tenant-live",
+            "X-Pantheon-Service": "control-plane-bff",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(req)
+    assert exc_info.value.code == 403
+    body = json.loads(exc_info.value.read().decode())
+    assert body.get("error", {}).get("code") == "AUTH_FORBIDDEN"
+
+
+def test_live_forged_gateway_rejected(live_training_session_service):
+    """Verify user token sent through unauthorized gateway service is rejected with 403."""
+    import urllib.error
+    import urllib.request
+
+    base_url, _ = live_training_session_service
+    token, _ = _dev_login(
+        client_id="pantheon-dev-operator",
+        client_secret="dev-operator-secret-123",
+        roles=["operator"],
+        tenant_id="tenant-live",
+    )
+
+    req = urllib.request.Request(
+        f"{base_url}/api/training/sessions",
+        data=json.dumps({"persona_id": "persona-alpha", "objective": "test"}).encode(),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "X-Tenant-Id": "tenant-live",
+            "X-Pantheon-Service": "unauthorized-gateway",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(req)
+    assert exc_info.value.code == 403
+    body = json.loads(exc_info.value.read().decode())
+    assert body.get("error", {}).get("code") == "ACTOR_SERVICE_FORBIDDEN"
+
+
+def test_live_actor_spoof_rejected(live_training_session_service):
+    """Verify body actor_id that does not match authenticated user is rejected with 403."""
+    ports = create_read_surface_ports()
+    token, _ = _dev_login(
+        client_id="pantheon-dev-operator",
+        client_secret="dev-operator-secret-123",
+        roles=["operator"],
+        tenant_id="tenant-live",
+    )
+    auth_token = authorization.set(f"Bearer {token}")
+    tenant_token = selected_tenant.set("tenant-live")
+
+    try:
+        with pytest.raises(HTTPException) as exc_info:
+            ports.create_trainer_session(
+                persona_id="persona-alpha",
+                objective="test",
+                actor_id="spoofed-impostor-actor",
+            )
+        assert exc_info.value.status_code == 403
+    finally:
+        authorization.reset(auth_token)
+        selected_tenant.reset(tenant_token)
+
+
+def test_live_jwt_issuer_audience_mismatch_rejected(live_training_session_service):
+    """Verify tokens with wrong issuer or audience are rejected with 401."""
+    ports = create_read_surface_ports()
+    secret = os.environ.get("TRAINING_SESSION_JWT_SECRET", "owned-original-training-inbound-test-secret-only")
+
+    # Wrong issuer
+    bad_iss = encode_jwt_hs256(
+        {
+            "sub": "pantheon-dev-operator",
+            "roles": ["operator"],
+            "tenant_id": "tenant-live",
+            "allowed_tenants": ["tenant-live"],
+            "iss": "wrong-issuer",
+            "aud": "bff-operators",
+            "exp": time.time() + 3600,
+        },
+        secret=secret,
+    )
+    auth_token = authorization.set(f"Bearer {bad_iss}")
+    tenant_token = selected_tenant.set("tenant-live")
+    try:
+        with pytest.raises(HTTPException) as exc_info:
+            ports.create_trainer_session(persona_id="p-1", objective="test")
+        assert exc_info.value.status_code == 401
+    finally:
+        authorization.reset(auth_token)
+        selected_tenant.reset(tenant_token)
+
+    # Wrong audience
+    bad_aud = encode_jwt_hs256(
+        {
+            "sub": "pantheon-dev-operator",
+            "roles": ["operator"],
+            "tenant_id": "tenant-live",
+            "allowed_tenants": ["tenant-live"],
+            "iss": "pantheon-dev",
+            "aud": "wrong-audience",
+            "exp": time.time() + 3600,
+        },
+        secret=secret,
+    )
+    auth_token = authorization.set(f"Bearer {bad_aud}")
+    tenant_token = selected_tenant.set("tenant-live")
+    try:
+        with pytest.raises(HTTPException) as exc_info:
+            ports.create_trainer_session(persona_id="p-1", objective="test")
+        assert exc_info.value.status_code == 401
+    finally:
+        authorization.reset(auth_token)
+        selected_tenant.reset(tenant_token)
+
+
+def test_live_replay_commit_requires_verified_mfa_negatives(live_training_session_service, monkeypatch):
+    """Verify replay commit/discard reject missing or unverified MFA when MFA is required."""
+    import urllib.error
+    import urllib.request
+
+    base_url, _ = live_training_session_service
+    token, _ = _dev_login(
+        client_id="pantheon-dev-operator",
+        client_secret="dev-operator-secret-123",
+        roles=["operator"],
+        tenant_id="tenant-live",
+    )
+    monkeypatch.setenv("TRAINING_SESSION_MFA_REQUIRED", "true")
+
+    req_no_mfa = urllib.request.Request(
+        f"{base_url}/api/training/replays/not-found/commit",
+        data=b"{}",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "X-Tenant-Id": "tenant-live",
+            "X-Pantheon-Service": "control-plane-bff",
+            "Content-Type": "application/json",
+            "Idempotency-Key": "test-key-1",
+        },
+        method="POST",
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(req_no_mfa)
+    assert exc_info.value.code == 401
+    body = json.loads(exc_info.value.read().decode())
+    assert body.get("error", {}).get("code") == "MFA_REQUIRED"
+
+    req_unverified_mfa = urllib.request.Request(
+        f"{base_url}/api/training/replays/not-found/commit",
+        data=b"{}",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "X-Tenant-Id": "tenant-live",
+            "X-Pantheon-Service": "control-plane-bff",
+            "X-MFA-Token": "123456",
+            "Content-Type": "application/json",
+            "Idempotency-Key": "test-key-2",
+        },
+        method="POST",
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(req_unverified_mfa)
+    assert exc_info.value.code == 401
+    body = json.loads(exc_info.value.read().decode())
+    assert body.get("error", {}).get("code") == "MFA_NOT_VERIFIED"
+
 
 
