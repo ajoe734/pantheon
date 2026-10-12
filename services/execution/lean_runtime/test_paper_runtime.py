@@ -3234,6 +3234,112 @@ class TestPaperRuntimeObservabilityEnvelope(unittest.TestCase):
         self.assertNotIn("context_source", event["metadata"])
 
 
+class PaperTradeEpisodeCorrelationTest(unittest.TestCase):
+    def test_paper_ledger_assigns_and_retains_trade_episode_id_lifecycle(self):
+        events = []
+        algo = PaperExecutionAlgorithm(
+            initial_cash=100_000.0,
+            default_price=100.0,
+            event_sink=events.append,
+        )
+
+        # 1. Entry fill assigns new trade_episode_id
+        algo.MarketOrder("SPY", 10.0)
+        self.assertTrue(len(events) > 0)
+        fill1 = events[-1]
+        self.assertEqual(fill1.event_type, "paper_fill_simulated")
+        ep_id = fill1.metadata.get("trade_episode_id")
+        self.assertIsNotNone(ep_id)
+        self.assertEqual(algo.open_episodes.get("SPY"), ep_id)
+
+        # 2. Scale-in retains same trade_episode_id
+        algo.MarketOrder("SPY", 5.0)
+        fill2 = events[-1]
+        self.assertEqual(fill2.metadata.get("trade_episode_id"), ep_id)
+        self.assertEqual(algo.open_episodes.get("SPY"), ep_id)
+
+        # 3. Partial scale-out retains same trade_episode_id
+        algo.MarketOrder("SPY", -5.0)
+        fill3 = events[-1]
+        self.assertEqual(fill3.metadata.get("trade_episode_id"), ep_id)
+        self.assertEqual(algo.open_episodes.get("SPY"), ep_id)
+
+        # 4. Exact flat liquidate carries trade_episode_id and clears open episode
+        algo.Liquidate("SPY")
+        fill4 = events[-1]
+        self.assertEqual(fill4.metadata.get("trade_episode_id"), ep_id)
+        self.assertNotIn("SPY", algo.open_episodes)
+
+        # 5. Subsequent new entry assigns fresh distinct trade_episode_id
+        algo.MarketOrder("SPY", 20.0)
+        fill5 = events[-1]
+        new_ep_id = fill5.metadata.get("trade_episode_id")
+        self.assertIsNotNone(new_ep_id)
+        self.assertNotEqual(new_ep_id, ep_id)
+        self.assertEqual(algo.open_episodes.get("SPY"), new_ep_id)
+
+    def test_paper_ledger_persistence_and_restart_restores_open_episodes(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_path = Path(tmpdir) / "paper_ledger.json"
+            algo = PaperExecutionAlgorithm(
+                initial_cash=100_000.0,
+                default_price=100.0,
+                state_path=str(state_path),
+            )
+            algo.MarketOrder("SPY", 10.0)
+            algo.MarketOrder("QQQ", 5.0)
+
+            spy_ep = algo.open_episodes["SPY"]
+            qqq_ep = algo.open_episodes["QQQ"]
+
+            # Verify persisted file on disk has open_episodes
+            payload = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertIn("open_episodes", payload)
+            self.assertEqual(payload["open_episodes"]["SPY"], spy_ep)
+            self.assertEqual(payload["open_episodes"]["QQQ"], qqq_ep)
+
+            # Restart from persisted state
+            algo2 = PaperExecutionAlgorithm(
+                initial_cash=100_000.0,
+                default_price=100.0,
+                state_path=str(state_path),
+            )
+            self.assertEqual(algo2.open_episodes.get("SPY"), spy_ep)
+            self.assertEqual(algo2.open_episodes.get("QQQ"), qqq_ep)
+            self.assertEqual(len(algo2.open_episodes), 2)
+
+    def test_legacy_ledger_without_provenance_loads_cleanly(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            legacy_path = Path(tmpdir) / "legacy_ledger.json"
+            legacy_payload = {
+                "schema_version": "paper_performance_ledger.v1",
+                "binding_id": "binding-legacy",
+                "initial_cash": 100_000.0,
+                "cash": 99_000.0,
+                "fill_count": 1,
+                "ledger_started_at": "2026-07-14T10:00:00Z",
+                "first_fill_at": "2026-07-14T10:01:00Z",
+                "last_fill_at": "2026-07-14T10:01:00Z",
+                "performance_window": {},
+                "holdings": {"SPY": 10.0},
+                "execution_prices": {"SPY": 100.0},
+            }
+            legacy_path.write_text(json.dumps(legacy_payload), encoding="utf-8")
+
+            algo = PaperExecutionAlgorithm(
+                initial_cash=100_000.0,
+                default_price=100.0,
+                state_path=str(legacy_path),
+            )
+            # Legacy ledger without provenance must load without error
+            self.assertIsNone(algo._state_error)
+            self.assertEqual(algo.Portfolio["SPY"].Quantity, 10.0)
+            # Must cleanly default to empty without inventing fake open episodes
+            self.assertEqual(algo.open_episodes, {})
+
+
 if __name__ == "__main__":
     unittest.main()
 

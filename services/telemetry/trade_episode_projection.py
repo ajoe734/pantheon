@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import math
 import os
 import threading
 import uuid
@@ -34,6 +35,29 @@ def _decode_cursor(cursor_str: str) -> tuple[str, str]:
     except Exception:
         pass
     return "", ""
+
+
+def _extract_metric_qty(ev: dict[str, Any], *keys: str) -> float | None:
+    for source in (ev.get("metrics"), ev.get("metadata"), ev.get("payload")):
+        if isinstance(source, dict):
+            for k in keys:
+                v = source.get(k)
+                if v is not None:
+                    try:
+                        val = float(v)
+                        if math.isfinite(val):
+                            return val
+                    except (TypeError, ValueError):
+                        pass
+    return None
+
+
+def _extract_position_quantity(ev: dict[str, Any]) -> float | None:
+    return _extract_metric_qty(ev, "position_qty", "position_quantity", "quantity")
+
+
+def _extract_fill_quantity(ev: dict[str, Any]) -> float | None:
+    return _extract_metric_qty(ev, "fill_quantity", "quantity")
 
 
 class TradeEpisodeProjectionStore:
@@ -87,19 +111,68 @@ class TradeEpisodeProjectionStore:
         with self._lock:
             # 1. Idempotent check
             existing_events = self._events[trade_episode_id]
-            existing_tenants = {
-                str(ev.get("tenant_id") or "").strip()
-                for ev in existing_events
-                if str(ev.get("tenant_id") or "").strip()
-            }
-            incoming_tenant = str(event.get("tenant_id") or "").strip()
-            if existing_tenants and incoming_tenant not in existing_tenants:
+
+            def _ev_field(e: dict[str, Any], *keys: str) -> str:
+                for s in (e, e.get("authority_refs"), e.get("metadata"), e.get("payload")):
+                    if isinstance(s, dict):
+                        for k in keys:
+                            v = s.get(k)
+                            if v:
+                                return str(v).strip()
+                return ""
+
+            _ev_tenant = lambda e: _ev_field(e, "tenant_id")
+            _ev_persona = lambda e: _ev_field(e, "persona_id")
+            _ev_instrument = lambda e: _ev_field(e, "symbol", "instrument_id")
+
+            existing_tenants = {_ev_tenant(ev) for ev in existing_events if _ev_tenant(ev)}
+            incoming_tenant = _ev_tenant(event)
+            if existing_tenants and incoming_tenant and incoming_tenant not in existing_tenants:
                 log.warning(
                     "Rejected cross-tenant trade episode projection event %s for %s",
                     event_id,
                     trade_episode_id,
                 )
                 return None
+
+            existing_personas = {
+                _ev_persona(ev)
+                for ev in existing_events
+                if _ev_persona(ev) and _ev_persona(ev) != "unknown"
+            }
+            incoming_persona = _ev_persona(event)
+            if (
+                existing_personas
+                and incoming_persona
+                and incoming_persona != "unknown"
+                and incoming_persona not in existing_personas
+            ):
+                log.warning(
+                    "Rejected cross-persona trade episode projection event %s for %s",
+                    event_id,
+                    trade_episode_id,
+                )
+                return None
+
+            existing_instruments = {
+                _ev_instrument(ev)
+                for ev in existing_events
+                if _ev_instrument(ev) and _ev_instrument(ev) != "unknown"
+            }
+            incoming_instrument = _ev_instrument(event)
+            if (
+                existing_instruments
+                and incoming_instrument
+                and incoming_instrument != "unknown"
+                and incoming_instrument not in existing_instruments
+            ):
+                log.warning(
+                    "Rejected cross-instrument trade episode projection event %s for %s",
+                    event_id,
+                    trade_episode_id,
+                )
+                return None
+
             if any(ev.get("event_id") == event_id for ev in existing_events):
                 log.debug("Event %s already exists for episode %s; skipping ingest", event_id, trade_episode_id)
                 return self._projections.get(trade_episode_id)
@@ -266,19 +339,80 @@ class TradeEpisodeProjectionStore:
         if not trade_episode_id:
             trade_episode_id = ev.get("metadata", {}).get("trade_episode_id")
 
+        meta = ev.get("metadata") if isinstance(ev.get("metadata"), dict) else {}
+        target = ev.get("target") if isinstance(ev.get("target"), dict) else {}
+        auth = ev.get("authority_refs") if isinstance(ev.get("authority_refs"), dict) else {}
+        payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
+        metrics = ev.get("metrics") if isinstance(ev.get("metrics"), dict) else {}
+
+        def _first(*candidates: Any) -> Any:
+            for c in candidates:
+                if c is not None and str(c).strip():
+                    return c
+            return None
+
+        tenant_id = _first(ev.get("tenant_id"), auth.get("tenant_id"), meta.get("tenant_id"), payload.get("tenant_id"))
+        persona_id = _first(ev.get("persona_id"), auth.get("persona_id"), meta.get("persona_id"), payload.get("persona_id")) or "unknown"
+        strategy_id = _first(target.get("strategy_id"), meta.get("strategy_id"), ev.get("strategy_id"), payload.get("strategy_id")) or "unknown"
+        artifact_id = _first(ev.get("artifact_id"), target.get("registry_id"), meta.get("artifact_id"), payload.get("artifact_id")) or "unknown"
+        artifact_version = _first(ev.get("artifact_version"), target.get("artifact_version"), meta.get("artifact_version"), payload.get("artifact_version")) or "unknown"
+        runtime_binding_id = _first(ev.get("binding_id"), ev.get("runtime_binding_id"), meta.get("binding_id"), meta.get("runtime_binding_id"), payload.get("runtime_binding_id")) or "00000000-0000-0000-0000-000000000000"
+        capital_pool_id = _first(ev.get("capital_pool_id"), meta.get("capital_pool_id"), payload.get("capital_pool_id")) or "unknown"
+        instrument_id = _first(meta.get("symbol"), ev.get("symbol"), meta.get("instrument_id"), ev.get("instrument_id"), payload.get("instrument_id")) or "unknown"
+        environment = _first(ev.get("environment"), ev.get("deployment_stage"), ev.get("execution_mode"), meta.get("environment"), payload.get("environment")) or "paper"
+
+        raw_side = (
+            meta.get("direction")
+            or meta.get("side")
+            or payload.get("side")
+            or ev.get("side")
+        )
+        side = "long"
+        if raw_side:
+            norm_side = str(raw_side).strip().lower()
+            if norm_side in ("short", "sell"):
+                side = "short"
+            elif norm_side in ("long", "buy"):
+                side = "long"
+        else:
+            fq = _extract_fill_quantity(ev)
+            pq = _extract_position_quantity(ev)
+            if (fq is not None and fq < 0) or (pq is not None and pq < 0):
+                side = "short"
+
+        realized_pnl = float(payload["realized_pnl"]) if payload.get("realized_pnl") is not None else (
+            float(metrics["realized_pnl"]) if metrics.get("realized_pnl") is not None else None
+        )
+        unrealized_pnl = float(payload["unrealized_pnl"]) if payload.get("unrealized_pnl") is not None else (
+            float(metrics["unrealized_pnl"]) if metrics.get("unrealized_pnl") is not None else None
+        )
+
+        missing_refs = ["opened_event"]
+        if realized_pnl is None:
+            missing_refs.append("attribution")
+
+        event_type = ev.get("event_type")
+        initial_status = "open"
+        if event_type in ("order_submitted", "paper_order_simulated"):
+            initial_status = "submitted"
+        elif event_type in ("order_proposed", "trade_proposal"):
+            initial_status = "proposed"
+        elif event_type in ("order_approved", "trade_approval"):
+            initial_status = "approved"
+
         return {
             "trade_episode_id": trade_episode_id,
-            "tenant_id": ev.get("tenant_id"),
-            "environment": ev.get("environment") or ev.get("deployment_stage") or "paper",
-            "persona_id": ev.get("persona_id") or "unknown",
-            "strategy_id": ev.get("strategy_id") or "unknown",
-            "artifact_id": ev.get("artifact_id") or "unknown",
-            "artifact_version": ev.get("artifact_version") or "unknown",
-            "runtime_binding_id": ev.get("binding_id") or ev.get("runtime_binding_id") or "00000000-0000-0000-0000-000000000000",
-            "capital_pool_id": ev.get("capital_pool_id") or "unknown",
-            "instrument_id": ev.get("instrument_id") or "unknown",
-            "side": "long",
-            "status": "open",
+            "tenant_id": tenant_id,
+            "environment": environment,
+            "persona_id": persona_id,
+            "strategy_id": strategy_id,
+            "artifact_id": artifact_id,
+            "artifact_version": artifact_version,
+            "runtime_binding_id": runtime_binding_id,
+            "capital_pool_id": capital_pool_id,
+            "instrument_id": instrument_id,
+            "side": side,
+            "status": initial_status,
             "decision_id": None,
             "proposal_id": None,
             "evidence_refs": [],
@@ -300,8 +434,8 @@ class TradeEpisodeProjectionStore:
             "fees": 0.0,
             "slippage": None,
             "rejects": [],
-            "realized_pnl": 0.0,
-            "unrealized_pnl": 0.0,
+            "realized_pnl": realized_pnl,
+            "unrealized_pnl": unrealized_pnl,
             "return_percent": None,
             "mae": None,
             "mfe": None,
@@ -319,9 +453,9 @@ class TradeEpisodeProjectionStore:
             "approval_refs": [],
             "coverage": {
                 "state": "partial",
-                "missing_refs": ["opened_event"],
+                "missing_refs": missing_refs,
                 "as_of": ev.get("occurred_at") or ev.get("created_at"),
-                "source_system": ev.get("producer") or "trade-journal-service",
+                "source_system": ev.get("producer") or meta.get("runtime_package") or "trade-journal-service",
             },
             "reflection_summary": None,
             "memory_governance_refs": [],
@@ -417,8 +551,8 @@ class TradeEpisodeProjectionStore:
                     "fees": float(payload.get("fees") or 0.0),
                     "slippage": float(payload["slippage"]) if payload.get("slippage") is not None else None,
                     "rejects": payload.get("rejects") or [],
-                    "realized_pnl": float(payload["realized_pnl"]) if payload.get("realized_pnl") is not None else 0.0,
-                    "unrealized_pnl": float(payload["unrealized_pnl"]) if payload.get("unrealized_pnl") is not None else 0.0,
+                    "realized_pnl": float(payload["realized_pnl"]) if payload.get("realized_pnl") is not None else None,
+                    "unrealized_pnl": float(payload["unrealized_pnl"]) if payload.get("unrealized_pnl") is not None else None,
                     "return_percent": float(payload["return_percent"]) if payload.get("return_percent") is not None else None,
                     "mae": float(payload["mae"]) if payload.get("mae") is not None else None,
                     "mfe": float(payload["mfe"]) if payload.get("mfe") is not None else None,
@@ -553,13 +687,18 @@ class TradeEpisodeProjectionStore:
             elif event_type in ("order_submitted", "paper_order_simulated"):
                 if not proj:
                     proj = self._init_minimal_projection(ev)
-                order_id = ev.get("event_id")
+                order_id = (ev.get("metadata") or {}).get("order_id") or ev.get("order_id") or ev.get("event_id")
                 if order_id and order_id not in proj["order_ids"]:
                     proj["order_ids"].append(order_id)
                 metrics = ev.get("metrics") or {}
-                req_qty = float(metrics.get("quantity") or metrics.get("requested_quantity") or 0.0)
-                if req_qty > 0:
-                    proj["requested_quantity"] = req_qty
+                req_qty_cand = metrics.get("order_quantity") or metrics.get("requested_quantity") or metrics.get("quantity")
+                if req_qty_cand is not None:
+                    try:
+                        req_qty = float(req_qty_cand)
+                        if math.isfinite(req_qty) and req_qty > 0:
+                            proj["requested_quantity"] = req_qty
+                    except (TypeError, ValueError):
+                        pass
                 if proj["status"] in ("proposed", "approved"):
                     proj["status"] = "submitted"
                 proj["coverage"]["as_of"] = ev.get("occurred_at") or ev.get("created_at")
@@ -568,47 +707,83 @@ class TradeEpisodeProjectionStore:
                 if not proj:
                     proj = self._init_minimal_projection(ev)
 
-                fill_id = ev.get("event_id")
+                fill_id = (ev.get("metadata") or {}).get("fill_id") or ev.get("fill_id") or ev.get("event_id")
                 if fill_id and fill_id not in proj["fill_ids"]:
                     proj["fill_ids"].append(fill_id)
 
+                meta = ev.get("metadata") or {}
+                raw_side = meta.get("direction") or meta.get("side")
+                if raw_side:
+                    norm_side = str(raw_side).strip().lower()
+                    if norm_side in ("short", "sell"):
+                        proj["side"] = "short"
+                    elif norm_side in ("long", "buy"):
+                        proj["side"] = "long"
+
+                raw_fill_qty = _extract_fill_quantity(ev)
                 metrics = ev.get("metrics") or {}
+                try:
+                    fill_price = float(metrics.get("fill_price") or metrics.get("price") or 0.0)
+                    if not math.isfinite(fill_price) or fill_price < 0:
+                        fill_price = 0.0
+                except (TypeError, ValueError):
+                    fill_price = 0.0
 
-                fill_qty = float(metrics.get("fill_quantity") or metrics.get("quantity") or 0.0)
-                fill_price = float(metrics.get("fill_price") or metrics.get("price") or 0.0)
+                if raw_fill_qty is not None and math.isfinite(raw_fill_qty) and raw_fill_qty != 0.0:
+                    if raw_fill_qty < 0 and (proj.get("side") != "long" or str(meta.get("side") or "").lower() in ("sell", "short")):
+                        proj["side"] = "short"
 
-                if fill_qty > 0:
-                    prev_qty = proj["filled_quantity"]
-                    prev_vwap = proj["vwap"] or 0.0
+                    is_short = proj["side"] == "short"
+                    is_adding = (raw_fill_qty < 0) if is_short else (raw_fill_qty > 0)
 
-                    new_qty = prev_qty + fill_qty
-                    proj["filled_quantity"] = new_qty
+                    if is_adding:
+                        fill_mag = abs(raw_fill_qty)
+                        prev_qty = proj["filled_quantity"]
+                        prev_vwap = proj["vwap"] or 0.0
 
-                    if new_qty > 0:
-                        proj["vwap"] = (prev_vwap * prev_qty + fill_price * fill_qty) / new_qty
+                        new_qty = prev_qty + fill_mag
+                        proj["filled_quantity"] = new_qty
 
-                    req_qty = proj["requested_quantity"]
-                    if req_qty > 0 and new_qty >= req_qty:
-                        proj["status"] = "open"
+                        if new_qty > 0 and fill_price > 0:
+                            proj["vwap"] = (prev_vwap * prev_qty + fill_price * fill_mag) / new_qty if (prev_qty > 0 and prev_vwap > 0) else fill_price
+
+                        req_qty = proj["requested_quantity"]
+                        if req_qty > 0 and new_qty >= req_qty:
+                            proj["status"] = "open"
+                        elif req_qty > 0 and new_qty < req_qty:
+                            proj["status"] = "partially_filled"
+                        elif proj["status"] in ("proposed", "approved", "submitted"):
+                            proj["status"] = "open"
+
+                        try:
+                            slippage = float(metrics.get("slippage") or metrics.get("slippage_bps") or 0.0)
+                            if math.isfinite(slippage) and slippage > 0:
+                                proj["slippage"] = slippage if proj["slippage"] is None else (proj["slippage"] * prev_qty + slippage * fill_mag) / new_qty
+                        except (TypeError, ValueError):
+                            pass
                     else:
-                        proj["status"] = "partially_filled"
+                        if proj["status"] in ("open", "partially_filled"):
+                            proj["status"] = "reducing"
 
-                    slippage = float(metrics.get("slippage") or metrics.get("slippage_bps") or 0.0)
-                    if slippage > 0:
-                        if proj["slippage"] is None:
-                            proj["slippage"] = slippage
-                        else:
-                            proj["slippage"] = (proj["slippage"] * prev_qty + slippage * fill_qty) / new_qty
-
-                fees = float(metrics.get("fees") or metrics.get("commission") or 0.0)
-                proj["fees"] += fees
+                try:
+                    fees = float(metrics.get("fees") or metrics.get("commission") or 0.0)
+                    if math.isfinite(fees) and fees > 0:
+                        proj["fees"] += fees
+                except (TypeError, ValueError):
+                    pass
 
                 proj["coverage"]["as_of"] = ev.get("occurred_at") or ev.get("created_at")
 
             elif event_type in ("order_canceled", "order_cancelled", "order_rejection"):
                 if not proj:
                     proj = self._init_minimal_projection(ev)
-                if proj["status"] in ("proposed", "approved", "submitted", "partially_filled"):
+                reason = (ev.get("metadata") or {}).get("reject_reason") or (ev.get("payload") or {}).get("reason") or "rejected"
+                proj["rejects"].append({
+                    "reject_id": ev.get("event_id"),
+                    "rejected_at": ev.get("occurred_at") or ev.get("created_at"),
+                    "reason": str(reason),
+                })
+                if proj["filled_quantity"] == 0.0 and proj["status"] in ("proposed", "approved", "submitted", "partially_filled"):
                     proj["status"] = "cancelled" if "cancel" in event_type else "rejected"
                 proj["coverage"]["as_of"] = ev.get("occurred_at") or ev.get("created_at")
 
@@ -619,13 +794,19 @@ class TradeEpisodeProjectionStore:
                 if snap_id and snap_id not in proj["position_snapshot_refs"]:
                     proj["position_snapshot_refs"].append(snap_id)
 
-                metrics = ev.get("metrics") or {}
-                pos_qty = float(metrics.get("position_quantity") or metrics.get("quantity") or 0.0)
-                if pos_qty == 0.0 and proj["status"] in ("open", "reducing", "partially_filled"):
-                    proj["status"] = "closed"
-                    proj["closed_at"] = ev.get("occurred_at") or ev.get("created_at")
-                elif pos_qty > 0.0 and proj["status"] == "partially_filled":
-                    proj["status"] = "open"
+                pos_qty = _extract_position_quantity(ev)
+                if pos_qty is not None:
+                    if abs(pos_qty) <= 1e-12:
+                        if proj["status"] in ("open", "reducing", "partially_filled", "submitted"):
+                            proj["status"] = "closed"
+                            proj["closed_at"] = ev.get("occurred_at") or ev.get("created_at")
+                    else:
+                        if pos_qty < 0:
+                            proj["side"] = "short"
+                        elif pos_qty > 0:
+                            proj["side"] = "long"
+                        if proj["status"] in ("submitted", "partially_filled"):
+                            proj["status"] = "open"
 
                 proj["coverage"]["as_of"] = ev.get("occurred_at") or ev.get("created_at")
 

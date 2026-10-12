@@ -386,6 +386,167 @@ class TestTradeEpisodeProjectionStore(unittest.TestCase):
         self.assertEqual(proj2["filled_quantity"], 50.0)
         self.assertEqual(proj2["vwap"], 450.0)
 
+    def test_short_position_lifecycle_and_exact_flat_close(self) -> None:
+        episode_id = str(uuid.uuid4())
+        tenant_id = "tenant-alpha"
+        persona_id = "persona-short"
+        instrument_id = "TSLA"
+
+        # 1. Order submitted for short
+        submit_event = {
+            "event_id": str(uuid.uuid4()),
+            "event_type": "order_submitted",
+            "occurred_at": "2026-07-11T13:00:00Z",
+            "trade_episode_id": episode_id,
+            "tenant_id": tenant_id,
+            "persona_id": persona_id,
+            "instrument_id": instrument_id,
+            "metrics": {"order_quantity": 100.0, "order_price": 200.0},
+            "metadata": {"side": "short"},
+            "sequence_number": 1,
+        }
+        proj = self.store.project_event(submit_event)
+        self.assertEqual(proj["side"], "short")
+        self.assertEqual(proj["status"], "submitted")
+
+        # 2. First short fill (negative quantity)
+        fill1 = {
+            "event_id": str(uuid.uuid4()),
+            "event_type": "paper_fill_simulated",
+            "occurred_at": "2026-07-11T13:01:00Z",
+            "trade_episode_id": episode_id,
+            "tenant_id": tenant_id,
+            "persona_id": persona_id,
+            "instrument_id": instrument_id,
+            "metrics": {"fill_quantity": -50.0, "fill_price": 200.0},
+            "metadata": {"side": "short"},
+            "sequence_number": 2,
+        }
+        proj = self.store.project_event(fill1)
+        self.assertEqual(proj["side"], "short")
+        self.assertEqual(proj["filled_quantity"], 50.0)
+        self.assertEqual(proj["vwap"], 200.0)
+        self.assertEqual(proj["status"], "partially_filled")
+
+        # 3. Position snapshot with negative position qty stays open
+        snap1 = {
+            "event_id": str(uuid.uuid4()),
+            "event_type": "position_snapshot",
+            "occurred_at": "2026-07-11T13:01:05Z",
+            "trade_episode_id": episode_id,
+            "tenant_id": tenant_id,
+            "persona_id": persona_id,
+            "instrument_id": instrument_id,
+            "metrics": {"position_qty": -50.0, "price": 200.0},
+            "sequence_number": 3,
+        }
+        proj = self.store.project_event(snap1)
+        self.assertIsNone(proj["closed_at"])
+        self.assertNotEqual(proj["status"], "closed")
+
+        # 4. Scale-in short fill
+        fill2 = {
+            "event_id": str(uuid.uuid4()),
+            "event_type": "paper_fill_simulated",
+            "occurred_at": "2026-07-11T13:02:00Z",
+            "trade_episode_id": episode_id,
+            "tenant_id": tenant_id,
+            "persona_id": persona_id,
+            "instrument_id": instrument_id,
+            "metrics": {"fill_quantity": -50.0, "fill_price": 204.0},
+            "metadata": {"side": "short"},
+            "sequence_number": 4,
+        }
+        proj = self.store.project_event(fill2)
+        self.assertEqual(proj["filled_quantity"], 100.0)
+        self.assertEqual(proj["vwap"], 202.0)
+        self.assertEqual(proj["status"], "open")
+
+        # 5. Order rejection does not close open episode
+        reject_event = {
+            "event_id": str(uuid.uuid4()),
+            "event_type": "order_rejection",
+            "occurred_at": "2026-07-11T13:02:30Z",
+            "trade_episode_id": episode_id,
+            "tenant_id": tenant_id,
+            "persona_id": persona_id,
+            "instrument_id": instrument_id,
+            "metadata": {"reject_reason": "bracket_risk_limit_exceeded"},
+            "sequence_number": 5,
+        }
+        proj = self.store.project_event(reject_event)
+        self.assertEqual(proj["status"], "open")
+        self.assertEqual(len(proj["rejects"]), 1)
+        self.assertEqual(proj["rejects"][0]["reason"], "bracket_risk_limit_exceeded")
+
+        # 6. Degenerate position snapshot with missing/invalid qty does not close episode
+        degen_snap = {
+            "event_id": str(uuid.uuid4()),
+            "event_type": "position_snapshot",
+            "occurred_at": "2026-07-11T13:03:00Z",
+            "trade_episode_id": episode_id,
+            "tenant_id": tenant_id,
+            "persona_id": persona_id,
+            "instrument_id": instrument_id,
+            "metrics": {"position_qty": None},
+            "sequence_number": 6,
+        }
+        proj = self.store.project_event(degen_snap)
+        self.assertEqual(proj["status"], "open")
+        self.assertIsNone(proj["closed_at"])
+
+        # 7. Exact flat close via position snapshot with 0.0
+        flat_snap = {
+            "event_id": str(uuid.uuid4()),
+            "event_type": "position_snapshot",
+            "occurred_at": "2026-07-11T13:05:00Z",
+            "trade_episode_id": episode_id,
+            "tenant_id": tenant_id,
+            "persona_id": persona_id,
+            "instrument_id": instrument_id,
+            "metrics": {"position_qty": 0.0, "price": 195.0},
+            "sequence_number": 7,
+        }
+        proj = self.store.project_event(flat_snap)
+        self.assertEqual(proj["status"], "closed")
+        self.assertEqual(proj["closed_at"], "2026-07-11T13:05:00Z")
+
+    def test_absent_pnl_remains_none_and_isolation_guards(self) -> None:
+        episode_id = str(uuid.uuid4())
+        fill_event = {
+            "event_id": str(uuid.uuid4()),
+            "event_type": "paper_fill_simulated",
+            "occurred_at": "2026-07-11T14:00:00Z",
+            "trade_episode_id": episode_id,
+            "tenant_id": "tenant-corp",
+            "persona_id": "persona-quant",
+            "instrument_id": "NVDA",
+            "metrics": {"fill_quantity": 10.0, "fill_price": 120.0},
+            "sequence_number": 1,
+        }
+        proj = self.store.project_event(fill_event)
+        self.assertIsNone(proj["realized_pnl"])
+        self.assertIn("attribution", proj["coverage"]["missing_refs"])
+
+        # Isolation violation: mismatching tenant
+        foreign_event = {
+            "event_id": str(uuid.uuid4()),
+            "event_type": "position_snapshot",
+            "occurred_at": "2026-07-11T14:01:00Z",
+            "trade_episode_id": episode_id,
+            "tenant_id": "tenant-other",
+            "persona_id": "persona-quant",
+            "instrument_id": "NVDA",
+            "metrics": {"position_qty": 10.0},
+            "sequence_number": 2,
+        }
+        rejected = self.store.project_event(foreign_event)
+        self.assertIsNone(rejected)
+        proj_after = self.store.get(episode_id)
+        self.assertIsNotNone(proj_after)
+        self.assertEqual(proj_after["tenant_id"], "tenant-corp")
+        self.assertEqual(len(proj_after["position_snapshot_refs"]), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

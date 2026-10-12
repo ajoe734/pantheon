@@ -311,6 +311,8 @@ class PaperExecutionAlgorithm:
         self.Securities: dict[str, _Security] = {}
         self._open_bracket_orders: list[dict[str, Any]] = []
         self._current_signal_metadata: dict[str, Any] = {}
+        self._active_episodes: dict[str, str] = {}
+        self._last_fill_episode_id: str | None = None
         self._fill_count = 0
         self._ledger_started_at = _iso_now()
         self._first_fill_at: str | None = None
@@ -639,6 +641,8 @@ class PaperExecutionAlgorithm:
             event_metadata["position_quantity"] = float(
                 self._holding(str(symbol)).Quantity
             )
+            if self._last_fill_episode_id:
+                event_metadata["trade_episode_id"] = self._last_fill_episode_id
         self._event_sink(
             OrderEvent(
                 event_type=event_type,
@@ -1313,8 +1317,28 @@ class PaperExecutionAlgorithm:
             "mark_as_of": security.MarkAsOf,
             "mark_source": security.MarkSource,
             "mark_authoritative": security.MarkAuthoritative,
+            "active_episodes": dict(self._active_episodes),
+            "last_fill_episode_id": self._last_fill_episode_id,
         }
         try:
+            prev_qty = float(holding.Quantity)
+            new_qty = float(next_quantity)
+            cand_ep = str(self._current_signal_metadata.get("trade_episode_id") or "").strip() or None
+
+            if abs(new_qty) <= 1e-12:
+                ep_id = self._active_episodes.pop(symbol, None) or cand_ep or str(uuid.uuid4())
+                self._last_fill_episode_id = ep_id
+            elif abs(prev_qty) <= 1e-12 or symbol not in self._active_episodes:
+                ep_id = cand_ep or str(uuid.uuid4())
+                self._active_episodes[symbol] = ep_id
+                self._last_fill_episode_id = ep_id
+            elif (prev_qty > 0 and new_qty > 0) or (prev_qty < 0 and new_qty < 0):
+                self._last_fill_episode_id = self._active_episodes[symbol]
+            else:
+                new_ep_id = cand_ep or str(uuid.uuid4())
+                self._active_episodes[symbol] = new_ep_id
+                self._last_fill_episode_id = new_ep_id
+
             if execution_price is not None:
                 self.SetSecurityPrice(
                     symbol,
@@ -1336,6 +1360,8 @@ class PaperExecutionAlgorithm:
             security.MarkAsOf = checkpoint["mark_as_of"]
             security.MarkSource = checkpoint["mark_source"]
             security.MarkAuthoritative = checkpoint["mark_authoritative"]
+            self._active_episodes = dict(checkpoint["active_episodes"])
+            self._last_fill_episode_id = checkpoint["last_fill_episode_id"]
             raise
 
     def _load_state(self) -> None:
@@ -1476,9 +1502,24 @@ class PaperExecutionAlgorithm:
                     binding_id=normalized_binding_id,
                 )
 
+            raw_open_episodes = payload.get("open_episodes")
+            restored_episodes: dict[str, str] = {}
+            if raw_open_episodes is not None:
+                if not isinstance(raw_open_episodes, dict):
+                    raise ValueError("paper performance ledger open_episodes must be an object")
+                for symbol, ep_id in raw_open_episodes.items():
+                    if not isinstance(symbol, str) or not symbol.strip():
+                        raise ValueError("paper performance ledger open_episodes contains an empty symbol")
+                    if not isinstance(ep_id, str) or not ep_id.strip():
+                        raise ValueError("paper performance ledger open_episodes contains an empty episode id")
+                    normalized_symbol = symbol.strip()
+                    if normalized_symbol in restored:
+                        restored_episodes[normalized_symbol] = ep_id.strip()
+
             self._initial_cash = initial_cash
             self._cash = cash
             self.Portfolio = restored
+            self._active_episodes = restored_episodes
             self.Securities = {}
             for symbol, price in restored_prices.items():
                 # Restored fill/execution prices are deliberately not
@@ -1525,6 +1566,11 @@ class PaperExecutionAlgorithm:
                 for symbol, holding in sorted(self.Portfolio.items())
                 if abs(float(holding.Quantity)) > 1e-12
             },
+            "open_episodes": {
+                symbol: str(ep_id)
+                for symbol, ep_id in sorted(self._active_episodes.items())
+                if symbol in self.Portfolio and abs(float(self.Portfolio[symbol].Quantity)) > 1e-12
+            },
             "execution_prices": {
                 symbol: float(security.Price)
                 for symbol, security in sorted(self.Securities.items())
@@ -1565,6 +1611,10 @@ class PaperExecutionAlgorithm:
 
     def open_bracket_orders(self) -> list[dict[str, Any]]:
         return [dict(order) for order in self._open_bracket_orders]
+
+    @property
+    def open_episodes(self) -> dict[str, str]:
+        return dict(self._active_episodes)
 
     def pnl(self) -> float:
         portfolio_value = self._cash
@@ -2803,6 +2853,7 @@ class PaperRuntimeService:
             "journey_id",
             "decision_id",
             "correlation_envelope",
+            "trade_episode_id",
         ):
             value = signal.get(field)
             if value not in (None, "", [], {}):

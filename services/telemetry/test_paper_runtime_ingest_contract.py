@@ -13,6 +13,7 @@ from services.execution.lean_runtime.paper_runtime import RuntimeTelemetryEmitte
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
 from services.telemetry.ingest_svc import TelemetryIngestService
 from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+from services.telemetry.trade_episode_projection import TradeEpisodeProjectionStore
 
 
 SCHEMA_PATH = str(Path(__file__).with_name("telemetry_event.schema.json"))
@@ -324,6 +325,84 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
         self.assertEqual(summary["pnl_at"], "2026-05-01T00:00:05Z")
         self.assertEqual(summary["drawdown"], 0.0425)
         self.assertEqual(summary["drawdown_at"], "2026-05-01T00:00:07Z")
+
+    def test_paper_fill_and_position_snapshot_with_trade_episode_id_project_cleanly(self):
+        async def scenario():
+            summary_store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+            episode_store = TradeEpisodeProjectionStore()
+            svc = TelemetryIngestService(
+                schema_path=SCHEMA_PATH,
+                binding_store=_StubBindingStore(),
+                runtime_summary_store=summary_store,
+                batch_size=10,
+                batch_interval=0.01,
+            )
+            await svc.start()
+            emitter = RuntimeTelemetryEmitter(_runtime_identity(), _FakeBindingResolver())
+
+            episode_id = str(uuid.uuid4())
+            fill_event = emitter.build_event(
+                "paper_fill_simulated",
+                {
+                    "fill_quantity": 50.0,
+                    "fill_price": 450.0,
+                    "fees": 1.5,
+                },
+                metadata={
+                    "trade_episode_id": episode_id,
+                    "symbol": "SPY",
+                    "side": "buy",
+                    "ledger_committed": True,
+                    "ledger_fill_count": 1,
+                    "position_quantity": 50.0,
+                },
+                event_id=str(uuid.uuid4()),
+                created_at="2026-05-01T00:01:00Z",
+            )
+            snapshot_event = emitter.build_event(
+                "position_snapshot",
+                {
+                    "position_qty": 50.0,
+                    "price": 450.0,
+                    "cash": 77500.0,
+                },
+                metadata={
+                    "trade_episode_id": episode_id,
+                    "symbol": "SPY",
+                    "ledger_committed": True,
+                    "ledger_fill_count": 1,
+                },
+                event_id=str(uuid.uuid4()),
+                created_at="2026-05-01T00:01:01Z",
+            )
+
+            self.assertIsNotNone(fill_event)
+            self.assertIsNotNone(snapshot_event)
+            self.assertEqual(fill_event["metadata"]["trade_episode_id"], episode_id)
+            self.assertEqual(snapshot_event["metadata"]["trade_episode_id"], episode_id)
+
+            # Ingest both events through TelemetryIngestService (validating schema)
+            accepted = [await svc.ingest(fill_event), await svc.ingest(snapshot_event)]
+            await asyncio.sleep(0.05)
+            await svc.stop(graceful=True)
+
+            # Project both events into TradeEpisodeProjectionStore
+            proj1 = episode_store.project_event(fill_event)
+            proj2 = episode_store.project_event(snapshot_event)
+
+            return accepted, proj1, proj2, episode_store.get(episode_id)
+
+        accepted, proj1, proj2, final_proj = asyncio.run(scenario())
+
+        self.assertEqual(accepted, [True, True])
+        self.assertIsNotNone(final_proj)
+        self.assertEqual(final_proj["trade_episode_id"], final_proj["trade_episode_id"])
+        self.assertEqual(final_proj["instrument_id"], "SPY")
+        self.assertEqual(final_proj["filled_quantity"], 50.0)
+        self.assertEqual(final_proj["vwap"], 450.0)
+        self.assertEqual(final_proj["fees"], 1.5)
+        self.assertEqual(final_proj["status"], "open")
+        self.assertIsNone(final_proj["closed_at"])
 
 
 if __name__ == "__main__":
