@@ -760,6 +760,9 @@ class AdvancePersonaLifecycleRequest(BaseModel):
 
 
 def _is_private_persona(record: Any) -> bool:
+    tenant = record.tenant_id if isinstance(record, PersonaBody) else (record.get("tenant_id") if isinstance(record, dict) else None)
+    if bool(tenant and str(tenant).strip()):
+        return True
     meta = (record.metadata if isinstance(record, PersonaBody) else (record.get("metadata") if isinstance(record, dict) else None)) or {}
     return bool(meta.get("trade_reflections") or meta.get("trade_reflection_idempotency"))
 

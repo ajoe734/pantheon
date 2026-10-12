@@ -59,7 +59,7 @@ def owner_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         tmp_path / "capabilities.json"
     )
 
-    # Seed private persona for tenant-alpha
+    # Seed tenant-bound persona without reflections for tenant-alpha
     store.create(
         CreatePersonaRequest(
             actor_id="operator-bff",
@@ -68,11 +68,11 @@ def owner_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             mandate="Alpha thesis",
             strategy_family="alpha",
             tenant_id="tenant-alpha",
-            metadata={"trade_reflections": [{"episode_id": "ep-alpha-1"}]},
+            metadata={"paper_ledger": {"cash": 100000}},
         )
     )
 
-    # Seed private persona for tenant-beta
+    # Seed tenant-bound persona without reflections for tenant-beta
     store.create(
         CreatePersonaRequest(
             actor_id="operator-bff",
@@ -81,7 +81,33 @@ def owner_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             mandate="Beta thesis",
             strategy_family="beta",
             tenant_id="tenant-beta",
-            metadata={"trade_reflections": [{"episode_id": "ep-beta-1"}]},
+            metadata={"paper_ledger": {"cash": 50000}},
+        )
+    )
+
+    # Seed unbound public legacy persona without reflections
+    store.create(
+        CreatePersonaRequest(
+            actor_id="operator-bff",
+            persona_id="persona-public",
+            name="Public Legacy Persona",
+            mandate="Public thesis",
+            strategy_family="public",
+            tenant_id=None,
+            metadata={"description": "legacy public record"},
+        )
+    )
+
+    # Seed unbound persona with sensitive reflections
+    store.create(
+        CreatePersonaRequest(
+            actor_id="operator-bff",
+            persona_id="persona-unbound-private",
+            name="Unbound Private Persona",
+            mandate="Sensitive reflection thesis",
+            strategy_family="private-unbound",
+            tenant_id=None,
+            metadata={"trade_reflections": [{"episode_id": "ep-unbound-1"}]},
         )
     )
 
@@ -99,6 +125,7 @@ def test_viewer_can_list_and_get_own_tenant_persona_and_is_tenant_isolated(owner
     returned_ids = [p["persona_id"] for p in list_res.json()]
     assert "persona-alpha" in returned_ids
     assert "persona-beta" not in returned_ids
+    assert "persona-unbound-private" not in returned_ids
 
     # Viewer gets own tenant persona detail
     get_res = client.get("/api/personas/persona-alpha", headers=headers)
@@ -109,6 +136,34 @@ def test_viewer_can_list_and_get_own_tenant_persona_and_is_tenant_isolated(owner
     # Viewer cannot get another tenant's persona
     cross_res = client.get("/api/personas/persona-beta", headers=headers)
     assert cross_res.status_code == 403, cross_res.text
+
+
+def test_operator_valid_reads_and_foreign_tenant_isolation(owner_app):
+    client, _ = owner_app
+    same_headers = _auth_header(roles=["operator"], tenant_id="tenant-alpha", actor_id="operator-alpha")
+    foreign_headers = _auth_header(roles=["operator"], tenant_id="tenant-beta", actor_id="operator-beta")
+
+    # Same-tenant operator can list and get tenant-alpha persona without reflections
+    list_res = client.get("/api/personas", headers=same_headers)
+    assert list_res.status_code == 200, list_res.text
+    returned_ids = [p["persona_id"] for p in list_res.json()]
+    assert "persona-alpha" in returned_ids
+    assert "persona-beta" not in returned_ids
+
+    get_res = client.get("/api/personas/persona-alpha", headers=same_headers)
+    assert get_res.status_code == 200, get_res.text
+    assert get_res.json()["persona_id"] == "persona-alpha"
+    assert get_res.json()["tenant_id"] == "tenant-alpha"
+
+    # Foreign-tenant operator is excluded from list and detail access is denied (403)
+    foreign_list_res = client.get("/api/personas", headers=foreign_headers)
+    assert foreign_list_res.status_code == 200, foreign_list_res.text
+    foreign_returned_ids = [p["persona_id"] for p in foreign_list_res.json()]
+    assert "persona-alpha" not in foreign_returned_ids
+    assert "persona-beta" in foreign_returned_ids
+
+    foreign_get_res = client.get("/api/personas/persona-alpha", headers=foreign_headers)
+    assert foreign_get_res.status_code == 403, foreign_get_res.text
 
 
 @pytest.mark.parametrize(
@@ -144,10 +199,56 @@ def test_unauthenticated_and_unauthorized_role_rejected_on_get_routes(owner_app)
     assert client.get("/api/personas").status_code == 401
     assert client.get("/api/personas/persona-alpha").status_code == 401
 
+    # Invalid / tampered bearer token rejected with 401
+    bad_sig_token = encode_jwt_hs256(
+        {"sub": "bad-caller", "roles": ["viewer"], "tenant_id": "tenant-alpha", "exp": 4102444800},
+        secret="wrong-secret",
+    )
+    tampered_headers = {"Authorization": f"Bearer {bad_sig_token}"}
+    assert client.get("/api/personas/persona-alpha", headers=tampered_headers).status_code == 401
+    malformed_headers = {"Authorization": "Bearer not-a-valid-token"}
+    assert client.get("/api/personas/persona-alpha", headers=malformed_headers).status_code == 401
+
     # Unauthorized role (not in _AUTHENTICATED_READ_ROLES) fails with 403
     unauth_headers = _auth_header(roles=["unauthorized_guest"], tenant_id="tenant-alpha")
     assert client.get("/api/personas", headers=unauth_headers).status_code == 403
     assert client.get("/api/personas/persona-alpha", headers=unauth_headers).status_code == 403
+
+
+def test_unbound_public_legacy_records_preserve_public_read_behavior(owner_app):
+    client, _ = owner_app
+    alpha_headers = _auth_header(roles=["viewer"], tenant_id="tenant-alpha", actor_id="viewer-alpha")
+    beta_headers = _auth_header(roles=["viewer"], tenant_id="tenant-beta", actor_id="viewer-beta")
+
+    # Unbound public record (without sensitive reflections) allows anonymous read
+    anon_res = client.get("/api/personas/persona-public")
+    assert anon_res.status_code == 200, anon_res.text
+    assert anon_res.json()["persona_id"] == "persona-public"
+    assert anon_res.json()["tenant_id"] is None
+
+    # Authenticated same- and foreign-tenant readers can also read public record
+    assert client.get("/api/personas/persona-public", headers=alpha_headers).status_code == 200
+    assert client.get("/api/personas/persona-public", headers=beta_headers).status_code == 200
+
+    # Public record is included in tenant lists
+    alpha_list = client.get("/api/personas", headers=alpha_headers).json()
+    assert "persona-public" in [p["persona_id"] for p in alpha_list]
+
+
+def test_unbound_sensitive_reflections_remain_private(owner_app):
+    client, _ = owner_app
+    alpha_headers = _auth_header(roles=["viewer"], tenant_id="tenant-alpha", actor_id="viewer-alpha")
+
+    # Unbound persona with reflections fails closed: 401 unauthenticated
+    assert client.get("/api/personas/persona-unbound-private").status_code == 401
+
+    # Fails closed for authenticated caller because no tenant binding can authorize it
+    auth_res = client.get("/api/personas/persona-unbound-private", headers=alpha_headers)
+    assert auth_res.status_code == 403, auth_res.text
+
+    # Excluded from tenant list
+    alpha_list = client.get("/api/personas", headers=alpha_headers).json()
+    assert "persona-unbound-private" not in [p["persona_id"] for p in alpha_list]
 
 
 def test_viewer_role_rejected_on_all_mutation_routes(owner_app):
