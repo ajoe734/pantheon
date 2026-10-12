@@ -635,32 +635,6 @@ class PaperExecutionAlgorithm:
         if metadata:
             event_metadata.update(metadata)
         if event_type == "paper_fill_simulated":
-            if self._reversal_info:
-                rev = self._reversal_info
-                self._reversal_info = None
-                for ep_id, qty, pos_q in (
-                    (rev["old_episode_id"], rev["close_qty"], 0.0),
-                    (rev["new_episode_id"], rev["open_qty"], rev["open_qty"]),
-                ):
-                    meta_copy = dict(event_metadata)
-                    meta_copy["ledger_committed"] = True
-                    meta_copy["ledger_fill_count"] = int(self._fill_count)
-                    meta_copy["position_quantity"] = float(pos_q)
-                    meta_copy["trade_episode_id"] = ep_id
-                    self._event_sink(
-                        OrderEvent(
-                            event_type=event_type,
-                            symbol=str(symbol),
-                            quantity=float(qty),
-                            fill_price=event_price,
-                            action=action,
-                            submitted_to_broker=submitted_to_broker,
-                            broker_submission_status=broker_submission_status,
-                            metadata=meta_copy,
-                        )
-                    )
-                return
-
             # All fill publishers call `_commit_fill` first.  This marker makes
             # the ordering explicit so downstream code never emits a position
             # snapshot for an uncommitted or rejected paper fill.
@@ -669,8 +643,23 @@ class PaperExecutionAlgorithm:
             event_metadata["position_quantity"] = float(
                 self._holding(str(symbol)).Quantity
             )
-            if self._last_fill_episode_id:
+            if self._reversal_info:
+                rev = self._reversal_info
+                self._reversal_info = None
+                event_metadata["reversal"] = {
+                    "closed_episode_id": rev["old_episode_id"],
+                    "close_quantity": float(rev["close_qty"]),
+                    "opened_episode_id": rev["new_episode_id"],
+                    "open_quantity": float(rev["open_qty"]),
+                }
+                if rev["old_episode_id"]:
+                    event_metadata["closed_trade_episode_id"] = rev["old_episode_id"]
+                if rev["new_episode_id"]:
+                    event_metadata["trade_episode_id"] = rev["new_episode_id"]
+            elif self._last_fill_episode_id:
                 event_metadata["trade_episode_id"] = self._last_fill_episode_id
+            else:
+                event_metadata.pop("trade_episode_id", None)
         self._event_sink(
             OrderEvent(
                 event_type=event_type,
@@ -1355,17 +1344,28 @@ class PaperExecutionAlgorithm:
             cand_ep = str(self._current_signal_metadata.get("trade_episode_id") or "").strip() or None
             self._reversal_info = None
 
-            if abs(new_qty) <= 1e-12:
-                ep_id = self._active_episodes.pop(symbol, None) or cand_ep or str(uuid.uuid4())
-                self._last_fill_episode_id = ep_id
-            elif abs(prev_qty) <= 1e-12 or symbol not in self._active_episodes:
+            if abs(prev_qty) > 1e-12 and symbol not in self._active_episodes:
+                is_rev = (prev_qty > 0 and new_qty < 0) or (prev_qty < 0 and new_qty > 0)
+                new_ep_id = (cand_ep or str(uuid.uuid4())) if is_rev else None
+                if is_rev:
+                    self._active_episodes[symbol] = new_ep_id
+                    self._reversal_info = {
+                        "old_episode_id": None,
+                        "new_episode_id": new_ep_id,
+                        "close_qty": -prev_qty,
+                        "open_qty": new_qty,
+                    }
+                self._last_fill_episode_id = new_ep_id
+            elif abs(new_qty) <= 1e-12:
+                self._last_fill_episode_id = self._active_episodes.pop(symbol, None)
+            elif abs(prev_qty) <= 1e-12:
                 ep_id = cand_ep or str(uuid.uuid4())
                 self._active_episodes[symbol] = ep_id
                 self._last_fill_episode_id = ep_id
             elif (prev_qty > 0 and new_qty > 0) or (prev_qty < 0 and new_qty < 0):
-                self._last_fill_episode_id = self._active_episodes[symbol]
+                self._last_fill_episode_id = self._active_episodes.get(symbol)
             else:
-                old_ep_id = self._active_episodes.pop(symbol, None) or str(uuid.uuid4())
+                old_ep_id = self._active_episodes.pop(symbol, None)
                 new_ep_id = cand_ep if cand_ep and cand_ep != old_ep_id else str(uuid.uuid4())
                 self._active_episodes[symbol] = new_ep_id
                 self._last_fill_episode_id = new_ep_id

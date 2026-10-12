@@ -3328,16 +3328,32 @@ class PaperTradeEpisodeCorrelationTest(unittest.TestCase):
             }
             legacy_path.write_text(json.dumps(legacy_payload), encoding="utf-8")
 
+            events = []
             algo = PaperExecutionAlgorithm(
                 initial_cash=100_000.0,
                 default_price=100.0,
                 state_path=str(legacy_path),
+                event_sink=events.append,
             )
             # Legacy ledger without provenance must load without error
             self.assertIsNone(algo._state_error)
             self.assertEqual(algo.Portfolio["SPY"].Quantity, 10.0)
             # Must cleanly default to empty without inventing fake open episodes
             self.assertEqual(algo.open_episodes, {})
+
+            # Reduce fill on unprovenanced legacy position emits no trade_episode_id
+            algo.MarketOrder("SPY", -5.0)
+            self.assertEqual(algo.Portfolio["SPY"].Quantity, 5.0)
+            self.assertEqual(algo.open_episodes, {})
+            reduce_fill = [e for e in events if e.event_type == "paper_fill_simulated"][-1]
+            self.assertNotIn("trade_episode_id", reduce_fill.metadata)
+
+            # Flattening fill on unprovenanced legacy position emits no trade_episode_id
+            algo.MarketOrder("SPY", -5.0)
+            self.assertEqual(algo.Portfolio["SPY"].Quantity, 0.0)
+            self.assertEqual(algo.open_episodes, {})
+            flat_fill = [e for e in events if e.event_type == "paper_fill_simulated"][-1]
+            self.assertNotIn("trade_episode_id", flat_fill.metadata)
 
     def test_paper_ledger_position_reversal_allocates_close_and_open_episodes(self):
         events = []
@@ -3360,28 +3376,46 @@ class PaperTradeEpisodeCorrelationTest(unittest.TestCase):
         # 2. Reversal order -20 (reverses position from +10 to -10)
         algo.MarketOrder("SPY", -20.0)
         fills_after = [e for e in events if e.event_type == "paper_fill_simulated"]
-        self.assertEqual(len(fills_after), 3)
+        # Exactly one raw fill event per committed fill (no duplicate raw events / no raw split)
+        self.assertEqual(len(fills_after), 2)
 
-        closing_fill = fills_after[1]
-        self.assertEqual(closing_fill.metadata["trade_episode_id"], old_ep)
-        self.assertEqual(closing_fill.quantity, -10.0)
-        self.assertEqual(closing_fill.metadata["position_quantity"], 0.0)
-
-        opening_fill = fills_after[2]
-        new_ep = opening_fill.metadata["trade_episode_id"]
+        rev_fill = fills_after[1]
+        self.assertEqual(rev_fill.quantity, -20.0)
+        self.assertEqual(rev_fill.metadata["position_quantity"], -10.0)
+        new_ep = rev_fill.metadata.get("trade_episode_id")
         self.assertIsNotNone(new_ep)
         self.assertNotEqual(new_ep, old_ep)
-        self.assertEqual(opening_fill.quantity, -10.0)
-        self.assertEqual(opening_fill.metadata["position_quantity"], -10.0)
+        self.assertEqual(rev_fill.metadata.get("closed_trade_episode_id"), old_ep)
+        self.assertEqual(rev_fill.metadata["reversal"]["close_quantity"], -10.0)
+        self.assertEqual(rev_fill.metadata["reversal"]["open_quantity"], -10.0)
 
         # Ledger state reflects new active episode and short holding
         self.assertEqual(algo.open_episodes.get("SPY"), new_ep)
         self.assertEqual(algo.Portfolio["SPY"].Quantity, -10.0)
 
-        old_ep_fills = [f for f in fills_after if f.metadata.get("trade_episode_id") == old_ep]
-        self.assertEqual(len(old_ep_fills), 2)
-        new_ep_fills = [f for f in fills_after if f.metadata.get("trade_episode_id") == new_ep]
-        self.assertEqual(len(new_ep_fills), 1)
+        # Projection reflects closed old episode and open new episode from single reversal event
+        from services.telemetry.trade_episode_projection import TradeEpisodeProjectionStore
+        store = TradeEpisodeProjectionStore()
+        store.project_event({
+            "event_id": str(uuid.uuid4()),
+            "event_type": fills[0].event_type,
+            "trade_episode_id": old_ep,
+            "metrics": {"fill_quantity": fills[0].quantity, "fill_price": fills[0].fill_price},
+            "metadata": fills[0].metadata,
+        })
+        self.assertEqual(store.get(old_ep)["status"], "open")
+
+        store.project_event({
+            "event_id": str(uuid.uuid4()),
+            "event_type": rev_fill.event_type,
+            "trade_episode_id": new_ep,
+            "metrics": {"fill_quantity": rev_fill.quantity, "fill_price": rev_fill.fill_price},
+            "metadata": rev_fill.metadata,
+        })
+        self.assertEqual(store.get(old_ep)["status"], "closed")
+        self.assertEqual(store.get(new_ep)["status"], "open")
+        self.assertEqual(store.get(new_ep)["side"], "short")
+        self.assertEqual(store.get(new_ep)["filled_quantity"], 10.0)
 
 
 if __name__ == "__main__":

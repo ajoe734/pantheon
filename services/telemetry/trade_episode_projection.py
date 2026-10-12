@@ -156,6 +156,19 @@ class TradeEpisodeProjectionStore:
             projection = self._rebuild_projection(trade_episode_id)
             if projection:
                 self._projections[trade_episode_id] = projection
+
+            # Check for reversal allocation closing prior episode
+            meta = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+            rev = meta.get("reversal") if isinstance(meta.get("reversal"), dict) else {}
+            closed_ep_id = rev.get("closed_episode_id") or meta.get("closed_trade_episode_id")
+            if closed_ep_id and (closed_ep_id in self._events or closed_ep_id in self._projections):
+                if not any(ev.get("event_id") == event_id for ev in self._events[closed_ep_id]):
+                    self._events[closed_ep_id].append(event)
+                    closed_proj = self._rebuild_projection(closed_ep_id)
+                    if closed_proj:
+                        self._projections[closed_ep_id] = closed_proj
+
+            if projection:
                 self._persist()
                 return json.loads(json.dumps(projection))
 
@@ -662,6 +675,16 @@ class TradeEpisodeProjectionStore:
                     proj["fill_ids"].append(fill_id)
 
                 meta = ev.get("metadata") or {}
+                rev = meta.get("reversal") or {}
+                if (
+                    rev.get("closed_episode_id") == trade_episode_id
+                    or meta.get("closed_trade_episode_id") == trade_episode_id
+                ):
+                    proj["status"] = "closed"
+                    proj["closed_at"] = ev.get("occurred_at") or ev.get("created_at")
+                    proj["coverage"]["as_of"] = ev.get("occurred_at") or ev.get("created_at")
+                    continue
+
                 raw_side = meta.get("direction") or meta.get("side")
                 if raw_side:
                     norm_side = str(raw_side).strip().lower()
@@ -670,7 +693,7 @@ class TradeEpisodeProjectionStore:
                     elif norm_side in ("long", "buy"):
                         proj["side"] = "long"
 
-                raw_fill_qty = _extract_fill_quantity(ev)
+                raw_fill_qty = float(rev["open_quantity"]) if "open_quantity" in rev and rev.get("opened_episode_id") == trade_episode_id else _extract_fill_quantity(ev)
                 metrics = ev.get("metrics") or {}
                 try:
                     fill_price = float(metrics.get("fill_price") or metrics.get("price") or 0.0)
