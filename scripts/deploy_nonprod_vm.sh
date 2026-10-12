@@ -2080,7 +2080,8 @@ execute_bounded_source_refresh_entrypoint() {
       ;;
   esac
 
-  local refresh_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" steady_env="$(mktemp)"
+  local refresh_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  steady_env="$(mktemp)" running_image_id="" steady_ids=() bounded_containers=()
   PANTHEON_DEV_COMPOSE_PROFILES="root,source-ingest-scheduler" \
   PANTHEON_EXTERNAL_EGRESS="allowlist" \
   PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw" \
@@ -2102,13 +2103,12 @@ execute_bounded_source_refresh_entrypoint() {
   fi
 
   local bounded_services=(source-ingest-scheduler source-ingest-agora-projector) bounded_service
-  local bounded_containers=()
   SOURCE_INGEST_BOUNDED_CONTAINER_PREFIX="pantheon-bounded-refresh"
   for bounded_service in "${bounded_services[@]}"; do
     bounded_containers+=("${SOURCE_INGEST_BOUNDED_CONTAINER_PREFIX}-${bounded_service}")
   done
 
-  local cid running_image_id compose_image_id
+  local cid compose_image_id; running_image_id=""
   cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null || true)"
   [[ -n "$cid" ]] || error "running source-ingest container not found"
   running_image_id="$(docker inspect --format '{{.Image}}' "$cid" 2>/dev/null || true)"
@@ -2120,7 +2120,7 @@ execute_bounded_source_refresh_entrypoint() {
   docker inspect --format '{{json .Config.Env}}' "$cid" > "${steady_env}"
 
   # Deploy-time values (tenant, GIT_SHA, ...) only exist on the steady scheduler container.
-  local steady_ids=() steady_id steady_scheduler_env
+  local steady_id steady_scheduler_env; steady_ids=()
   for bounded_service in "${bounded_services[@]}"; do
     steady_id="$(docker compose -p pantheon -f docker-compose.yml ps -a -q "${bounded_service}" 2>/dev/null || true)"
     [[ -n "${steady_id}" ]] && steady_ids+=("${steady_id}")
@@ -2152,7 +2152,7 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
   fi
 
   restore_bounded_source_refresh() {
-    local rc=$?
+    local rc="${1:-$?}"
     trap - EXIT INT TERM
     info "restoring external egress to deny and source controller to reconcile_only"
     unset SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS || true
@@ -2165,7 +2165,7 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
         docker compose -p pantheon -f docker-compose.yml up -d --no-deps --no-build source-ingest >/dev/null 2>&1 || true
     fi
     # Only the named one-shot containers are removed; steady scheduler/projector are never touched.
-    docker rm -f "${bounded_containers[@]}" >/dev/null 2>&1 || true
+    (( ${#bounded_containers[@]} )) && docker rm -f "${bounded_containers[@]}" >/dev/null 2>&1 || true
     if (( ${#steady_ids[@]} )); then
       docker start "${steady_ids[@]}" >/dev/null 2>&1 || rc=$?
     fi
@@ -2215,13 +2215,13 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
       docker compose -p pantheon -f docker-compose.yml run -d --no-deps \
         -e SOURCE_INGEST_CONTROLLER_ALIVE_PATH=/data/source-ingest/bounded-refresh/controller_alive \
         --name "${SOURCE_INGEST_BOUNDED_CONTAINER_PREFIX}-${bounded_service}" "${bounded_service}"
-  done
-  for bounded_service in "${bounded_services[@]}"; do
     wait_for_bounded_source_refresh_service "${bounded_service}"
   done
 
-  verify_bounded_source_refresh_readback "${refresh_started_at}"
-  restore_bounded_source_refresh
+  local refresh_rc=0
+  verify_bounded_source_refresh_readback "${refresh_started_at}" || refresh_rc=$?
+  restore_bounded_source_refresh "${refresh_rc}" || refresh_rc=$?
+  (( refresh_rc == 0 )) || return "${refresh_rc}"
   [[ -n "${output_path}" ]] && python3 -c "import json; print(json.dumps({'status': 'completed', 'refreshed_at': '${refresh_started_at}'}))" > "${output_path}"
 }
 
