@@ -29,6 +29,15 @@
 #                                     each run/attempt creates a fresh paper
 #                                     reservation; polling stays idempotent.
 #   DEV_PAPER_PHASE                  short [a-z0-9_-] phase label
+#   DEV_PAPER_PREBOOTSTRAP_WORKTREE  dev VM worktree. When set, the native
+#                                     hosted_lifecycle_probe --print-high-watermark
+#                                     runs once over the same SSH transport
+#                                     BEFORE bootstrap creates/activates the
+#                                     run/attempt case, and the value is
+#                                     appended to GITHUB_OUTPUT as
+#                                     prebootstrap_high_watermark. Capture
+#                                     failure aborts bootstrap and takes the
+#                                     normal diagnostics path.
 #   DEV_PAPER_DIAGNOSTICS_TIMEOUT_SECONDS  overall collection deadline
 #                                     (default 120); bounds a stalled/hung
 #                                     SSH channel that per-command/connect
@@ -187,8 +196,27 @@ if [[ -n "${DEV_PAPER_RUN_ID:-}" ]]; then
 fi
 
 bootstrap_status=0
-"${SSH}" exec "${bootstrap_command}" \
-  || bootstrap_status=$?
+if [[ -n "${DEV_PAPER_PREBOOTSTRAP_WORKTREE:-}" ]]; then
+  printf -v worktree_q '%q' "${DEV_PAPER_PREBOOTSTRAP_WORKTREE}"
+  capture_command="set -euo pipefail; cd ${worktree_q}; docker compose -p pantheon -f docker-compose.yml exec -T loop-run-projector-scheduler python -m services.trade_journey.hosted_lifecycle_probe --expected-sha ${EXPECTED_BFF_SHA} --print-high-watermark"
+  capture_rc=0
+  prebootstrap_hw="$("${SSH}" exec "${capture_command}")" || capture_rc=$?
+  prebootstrap_hw="${prebootstrap_hw//$'\r'/}"
+  prebootstrap_hw="${prebootstrap_hw//$'\n'/}"
+  if [[ "${capture_rc}" -eq 130 || "${capture_rc}" -eq 143 ]]; then
+    exit "${capture_rc}"
+  elif [[ "${capture_rc}" -ne 0 || ! "${prebootstrap_hw}" =~ ^[0-9]+$ ]]; then
+    error "pre-bootstrap high-watermark capture failed; bootstrap not started"
+    bootstrap_status=$(( capture_rc != 0 ? capture_rc : 1 ))
+  elif [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+    echo "prebootstrap_high_watermark=${prebootstrap_hw}" >> "${GITHUB_OUTPUT}"
+  fi
+fi
+
+if [[ "${bootstrap_status}" -eq 0 ]]; then
+  "${SSH}" exec "${bootstrap_command}" \
+    || bootstrap_status=$?
+fi
 
 if [[ "${bootstrap_status}" -eq 0 ]]; then
   write_status "not_required" "${bootstrap_status}" 0 ""

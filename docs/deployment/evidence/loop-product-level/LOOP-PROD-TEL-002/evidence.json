@@ -401,6 +401,12 @@
       "actor": "Codex",
       "event": "monotonic_readback_verifier_merged",
       "message": "PR #3898 merged as 7ec6407169629df25b8e6dee762b1917320a024f after all visible Commit trailers, Runtime mirror guard, Forward to orchestrator, and Smoke acceptance checks passed. Terminal success remains false pending the designated independent reviewer verdict."
+    },
+    {
+      "recorded_at": "2026-10-12T00:00:00Z",
+      "actor": "Claude",
+      "event": "prebootstrap_baseline_ordering_source_correction",
+      "message": "Source-only correction (DEV-NATURAL-PAPER-PREBOOTSTRAP-BASELINE-20261012). Root run 38283337890 remains an actual FAILURE: the first seven lifecycle events of case dev-paper-release-38283337890-1 ingested 17:42:26-17:42:45 (seq 5264952..5265119) before the natural wrapper captured its post-activation high-watermark, so the baseline-filtered probe rejected the incomplete chain; the eighth arrived 17:43:46. The high-watermark is now captured once inside the lease-guarded bootstrap child before the case is created and forwarded via GITHUB_OUTPUT to the unchanged native probe. No pass is claimed; historical artifacts are unchanged and a same-FINAL full run is still required."
     }
   ],
   "redaction": {

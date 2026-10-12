@@ -59,3 +59,15 @@ def test_hosted_probe_artifact_upload_runs_even_when_probe_fails_closed() -> Non
     assert "readback_artifact_path" in tail
     assert "if-no-files-found: error" in tail
     assert "retention-days: 30" in tail
+
+
+def test_prebootstrap_baseline_is_captured_before_bootstrap_and_wired_to_probe() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    helper = (ROOT / "scripts" / "run_dev_paper_baseline_with_diagnostics.sh").read_text(encoding="utf-8")
+    capture = helper.index("--print-high-watermark")
+    bootstrap = helper.index('"${SSH}" exec "${bootstrap_command}"')
+    assert capture < bootstrap
+    assert "prebootstrap_high_watermark=" in helper
+    assert "DEV_PAPER_PREBOOTSTRAP_WORKTREE" in source
+    assert "steps.paper_bootstrap.outputs.prebootstrap_high_watermark" in source
+    assert "--baseline-high-watermark ${baseline_q}" in source

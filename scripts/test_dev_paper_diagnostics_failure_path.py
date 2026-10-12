@@ -335,6 +335,13 @@ cleanup_child() {
 }
 trap 'cleanup_child; exit 143' TERM INT
 
+# Pre-bootstrap native high-watermark capture
+if [[ "${cmd}" == *"--print-high-watermark"* ]]; then
+  [[ "${FAKE_CAPTURE_EXIT:-0}" == "0" ]] || exit "${FAKE_CAPTURE_EXIT}"
+  printf '%b' "${FAKE_CAPTURE_OUTPUT-5264951\n}"
+  exit 0
+fi
+
 # Bootstrap execution
 if [[ "${cmd}" == *"bootstrap_dev_paper_baseline.py"* ]]; then
   cat >/dev/null
@@ -3743,3 +3750,76 @@ def test_d3_8_composed_baseline_failure_capture_quarantine_compensation_failure(
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+# ==============================================================================
+# Pre-bootstrap high-watermark capture (natural paper baseline ordering)
+# ==============================================================================
+def _run_wrapper_directly(root: Path, **extra_env: str):
+    workspace = root / "workspace"
+    workspace.mkdir()
+    prepare_ssh_fixture(workspace)
+    diag_dir = root / "diagnostics"
+    diag_dir.mkdir()
+    ssh_log = root / "fake-ssh.log"
+    github_output = root / "github-output"
+    github_output.write_text("", encoding="utf-8")
+    env = {
+        **os.environ,
+        "GITHUB_WORKSPACE": str(workspace),
+        "GITHUB_OUTPUT": str(github_output),
+        "DEV_PAPER_DIAGNOSTICS_DIR": str(diag_dir),
+        "DEV_PAPER_DIAGNOSTICS_COLLECTOR": str(COLLECTOR_SCRIPT),
+        "EXPECTED_BFF_SHA": TEST_BFF_SHA,
+        "EXPECTED_FE_SHA": TEST_FE_SHA,
+        "DEV_PAPER_RUN_ID": "1001",
+        "DEV_PAPER_ATTEMPT": "1",
+        "DEV_PAPER_PHASE": "paper_bootstrap",
+        "DEV_PAPER_PREBOOTSTRAP_WORKTREE": "/srv/dev root",
+        "FAKE_BOOTSTRAP_EXIT": "0",
+        "FAKE_SSH_LOG": str(ssh_log),
+        "DEV_PAPER_DIAGNOSTICS_TIMEOUT_SECONDS": "5",
+        **extra_env,
+    }
+    proc = subprocess.run(["bash", str(WRAPPER_SCRIPT)], env=env, capture_output=True, text=True, timeout=30)
+    log = ssh_log.read_text().splitlines() if ssh_log.exists() else []
+    return proc, log, github_output.read_text(), diag_dir
+
+
+def test_prebootstrap_capture_precedes_bootstrap_and_publishes_output():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        proc, log, output, _ = _run_wrapper_directly(Path(tmpdir))
+        assert proc.returncode == 0, proc.stderr
+        capture = [i for i, line in enumerate(log) if "--print-high-watermark" in line]
+        bootstrap = [i for i, line in enumerate(log) if "bootstrap_dev_paper_baseline.py" in line]
+        assert len(capture) == 1 and len(bootstrap) == 1 and capture[0] < bootstrap[0]
+        assert "cd /srv/dev\\ root" in log[capture[0]]
+        assert output == "prebootstrap_high_watermark=5264951\n"
+
+
+def test_prebootstrap_capture_not_attempted_without_worktree():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        proc, log, output, _ = _run_wrapper_directly(Path(tmpdir), DEV_PAPER_PREBOOTSTRAP_WORKTREE="")
+        assert proc.returncode == 0, proc.stderr
+        assert not any("--print-high-watermark" in line for line in log)
+        assert output == ""
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"FAKE_CAPTURE_EXIT": "7"},
+        {"FAKE_CAPTURE_OUTPUT": "not-a-number\n"},
+        {"FAKE_CAPTURE_OUTPUT": "-5\n"},
+        {"FAKE_CAPTURE_OUTPUT": ""},
+    ],
+)
+def test_prebootstrap_capture_failure_aborts_bootstrap_and_keeps_diagnostics_path(extra):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        proc, log, output, diag_dir = _run_wrapper_directly(Path(tmpdir), **extra)
+        assert proc.returncode != 0
+        assert not any("bootstrap_dev_paper_baseline.py" in line for line in log)
+        assert output == ""
+        status = json.loads((diag_dir / "collection-status.json").read_text(encoding="utf-8"))
+        assert status["collectionStatus"] != "not_started"
+        assert status["bootstrapExit"] == proc.returncode
