@@ -10,19 +10,53 @@
   "change_class": "corrective",
   "net_prod_line_budget": 10,
   "net_prod_lines_used_cumulative": 1,
-  "summary": "Narrow successor of archived TELEMETRY-BINDING-READ-CAPACITY-CURRENT-20261012 (PR #6525, commit 714289cf8) and TELEMETRY-BINDING-ORDERED-INDEX-20261012 (PR #6529, commit bd0747d36 merged into dev at d10a49814). Following PR #6529's migration introducing covering ordered index idx_telemetry_events_binding_id_created_at_ingested_seq on ((payload->>'binding_id'), created_at DESC, ingested_seq DESC) and dropping legacy root-only idx_telemetry_events_binding_id, the unchanged reader SQL on D10 whole factory still timed out at 5.033s / 5.035s because PostgreSQL's query planner did not recognize that the index satisfies the sort order when multiple non-index guard conditions were connected at top-level AND, resorting to a Bitmap Index Scan + Sort across all 194,975 TIDs. Diagnostic investigation on genuine production PG with READONLY DSN confirmed that wrapping non-index guards (string type assertion on binding_id, null/matching runtime_binding_id, and tenant qualification) in an equivalent CASE WHEN ... THEN TRUE ELSE FALSE END expression enables PostgreSQL to perform an Index Scan using idx_telemetry_events_binding_id_created_at_ingested_seq directly and terminate early upon reaching LIMIT $3 without a Sort node. Measured counter on production PG with READONLY DSN confirms actual capacity: failed binding rb-2480fb4d26884cfdb4d6ed9202172683 at limit 100 completes in 0.213s (fetch: 0.143s, connection: 0.055s, returning 100 rows, SHA 306672e49e7dff110bd7866c6b7c0045e17aa10a3a407442f19339a42a7e5c53); at limit 50 completes in 0.090s (fetch: 0.030s, connection: 0.054s, returning 50 rows, SHA 58b686f568a28d6c77e213bdefb0291f0d4590a7d046450eb468fb001121c0c7); and positive control rb-d9c1a36956784e2096e08c37d76ee76f completes in 0.101s (fetch: 0.056s, connection: 0.038s, returning 100 rows, SHA f8dc4ea4a0cef35f0012a1d4c763d5942ed0d28368f9d35756094c9d5017e04b). All times are well within the 5.0s query timeout SLA. Net production diff vs baseline f5b8163fd7f333d116ec15176e73d019797e6bcc remains exactly +1 line (budget <= 10). All 146 tests pass across four modules.",
+  "summary": "Narrow successor of archived TELEMETRY-BINDING-READ-CAPACITY-CURRENT-20261012 (PR #6525, commit 714289cf8) and TELEMETRY-BINDING-ORDERED-INDEX-20261012 (PR #6529, commit bd0747d36 merged into dev at d10a49814). Following PR #6529's migration introducing covering ordered index idx_telemetry_events_binding_id_created_at_ingested_seq on ((payload->>'binding_id'), created_at DESC, ingested_seq DESC) and dropping legacy root-only idx_telemetry_events_binding_id, the unchanged reader SQL on D10 whole factory still timed out at 5.033s / 5.035s because PostgreSQL's query planner did not select an early-terminating index scan when multiple non-index guard conditions were connected at top-level AND, resorting to a Bitmap Index Scan + Sort across all 194,975 TIDs. Diagnostic investigation on genuine production PG with READONLY DSN confirmed that wrapping non-index guards (string type assertion on binding_id, null/matching runtime_binding_id, and tenant qualification) in an equivalent CASE WHEN ... THEN TRUE ELSE FALSE END expression enables PostgreSQL to perform an Index Scan using idx_telemetry_events_binding_id_created_at_ingested_seq directly and terminate early upon reaching LIMIT $3 for Branch 1 (while Branch 2 retains its sort). Actual whole-factory candidate execution at 13:35Z with clean frozen 93e97327 (reader module SHA 0cb352cda98285dfa4c35fddfe4c87cb58d82a0b574afe4447a3574ed07b8bd4) against genuine production PG with READONLY DSN and unchanged 5.0s timeout measured: failed binding rb-2480fb4d26884cfdb4d6ed9202172683 at limit 100 completes in 0.170s (100 rows, SHA 306672e49e7dff110bd7866c6b7c0045e17aa10a3a407442f19339a42a7e5c53, first 50 SHA 58b686f568a28d6c77e213bdefb0291f0d4590a7d046450eb468fb001121c0c7); at limit 50 completes in 0.120s (50 rows, SHA 58b686f568a28d6c77e213bdefb0291f0d4590a7d046450eb468fb001121c0c7, matching first 50 of limit 100); and positive control rb-d9c1a36956784e2096e08c37d76ee76f completes in 0.121s (100 rows, SHA 934f5c6c2206fb1a93b3db07ca1dcec4fc8ce46b6d4cc825f1afc5ad39f42d19). Retained earlier 13:21 raw CASE hypothesis (0.213s/0.090s/0.101s) labelled as hypothesis only. Narrow verdict is current point PASS (not cold/shared window/L10/served/ALL capacity, and not total elimination of sort since B2 retains sort). Net production diff vs baseline f5b8163fd7f333d116ec15176e73d019797e6bcc remains exactly +1 line (budget <= 10). All 146 tests pass across four modules with owned disposable PG cleanly absent.",
   "readonly_receipts_reference": {
+    "fresh_whole_factory_receipt": "/tmp/pantheon-closeout-complete-20261012T1238Z/93e97327-fresh146-complete-original-QA-and-full-factory100-50-positive-under5s-narrow-independent-receipt.json",
+    "actual93_independent_receipt": "/tmp/pantheon-full-closeout-20261011/ACTUAL93-independent-exact-whole-factory-and-original146-receipt.json",
     "case_diagnostic_receipt": "/tmp/pantheon-closeout-complete-20261012T1238Z/after-real-valid-ordered-index-original-guarded-CASE-hypothesis-READONLY-NOT-candidate.jsonl",
     "receipts_dir": "/tmp/pantheon-closeout-complete-20261012T1238Z/",
     "predecessor_receipts_dir": "/tmp/pantheon-closeout-total-20261012T0738Z/",
-    "profile_1109z_receipts_dir": "/tmp/pantheon-closeout-complete-20261012T1104Z/",
-    "profile_1109z_unsorted_profile_receipt": "original-B1-guarded-unsorted-LIMIT100-bounded-profile-NOT-candidate.json",
     "frozen_9624_candidate_readonly_receipt": "frozen-9624-whole-candidate-original-PG-readonly-NOT-INSTALLED.jsonl",
     "frozen_9624_explain_readonly_receipt": "frozen-9624-original-failed-binding-EXPLAIN-ONLY-existing-indexes.jsonl",
-    "observed_tick": "2026-10-12T13:21Z",
-    "measured_counter_timeouts": [
+    "candidate_whole_factory_execution_tick": "2026-10-12T13:35Z",
+    "candidate_module_sha256": "0cb352cda98285dfa4c35fddfe4c87cb58d82a0b574afe4447a3574ed07b8bd4",
+    "candidate_whole_factory_measurements": [
       {
         "case": "actual_failed_binding100",
+        "binding_id": "rb-2480fb4d26884cfdb4d6ed9202172683",
+        "limit": 100,
+        "elapsed_seconds": 0.16973460899316706,
+        "returned_count": 100,
+        "ordered_event_ids_sha256": "306672e49e7dff110bd7866c6b7c0045e17aa10a3a407442f19339a42a7e5c53",
+        "first50_ids_sha256": "58b686f568a28d6c77e213bdefb0291f0d4590a7d046450eb468fb001121c0c7",
+        "timeout_observed": false
+      },
+      {
+        "case": "actual_failed_binding50",
+        "binding_id": "rb-2480fb4d26884cfdb4d6ed9202172683",
+        "limit": 50,
+        "elapsed_seconds": 0.12006370798917487,
+        "returned_count": 50,
+        "ordered_event_ids_sha256": "58b686f568a28d6c77e213bdefb0291f0d4590a7d046450eb468fb001121c0c7",
+        "first50_ids_sha256": "58b686f568a28d6c77e213bdefb0291f0d4590a7d046450eb468fb001121c0c7",
+        "both100_first50_equals50": true,
+        "timeout_observed": false
+      },
+      {
+        "case": "original_root_valid_positive100",
+        "binding_id": "rb-d9c1a36956784e2096e08c37d76ee76f",
+        "limit": 100,
+        "elapsed_seconds": 0.12081281800055876,
+        "returned_count": 100,
+        "ordered_event_ids_sha256": "934f5c6c2206fb1a93b3db07ca1dcec4fc8ce46b6d4cc825f1afc5ad39f42d19",
+        "first50_ids_sha256": "d380928d244924aaaf7411e86e1bb151d9bdac77fae6d9eb10e53748f492d9dd",
+        "timeout_observed": false
+      }
+    ],
+    "earlier_raw_sql_hypothesis_1321z": [
+      {
+        "case": "hypothesis_failed_binding100",
         "binding_id": "rb-2480fb4d26884cfdb4d6ed9202172683",
         "limit": 100,
         "elapsed_seconds": 0.2133780189906247,
@@ -31,11 +65,10 @@
         "returned_count": 100,
         "ordered_event_ids_sha256": "306672e49e7dff110bd7866c6b7c0045e17aa10a3a407442f19339a42a7e5c53",
         "first50_ids_sha256": "58b686f568a28d6c77e213bdefb0291f0d4590a7d046450eb468fb001121c0c7",
-        "payload_encoded_bytes": 247065,
-        "timeout_observed": false
+        "note": "Raw SQL hypothesis test at 13:21Z; not whole factory candidate"
       },
       {
-        "case": "actual_failed_binding50",
+        "case": "hypothesis_failed_binding50",
         "binding_id": "rb-2480fb4d26884cfdb4d6ed9202172683",
         "limit": 50,
         "elapsed_seconds": 0.09035020301234908,
@@ -44,11 +77,10 @@
         "returned_count": 50,
         "ordered_event_ids_sha256": "58b686f568a28d6c77e213bdefb0291f0d4590a7d046450eb468fb001121c0c7",
         "first50_ids_sha256": "58b686f568a28d6c77e213bdefb0291f0d4590a7d046450eb468fb001121c0c7",
-        "payload_encoded_bytes": 124834,
-        "timeout_observed": false
+        "note": "Raw SQL hypothesis test at 13:21Z; not whole factory candidate"
       },
       {
-        "case": "current_root_valid_positive100",
+        "case": "hypothesis_valid_positive100",
         "binding_id": "rb-d9c1a36956784e2096e08c37d76ee76f",
         "limit": 100,
         "elapsed_seconds": 0.1008776509843301,
@@ -57,9 +89,10 @@
         "returned_count": 100,
         "ordered_event_ids_sha256": "f8dc4ea4a0cef35f0012a1d4c763d5942ed0d28368f9d35756094c9d5017e04b",
         "first50_ids_sha256": "66c6f7959ad3dc4777805bb183581c823c2556529991247142e5325af106ce28",
-        "payload_encoded_bytes": 336896,
-        "timeout_observed": false
-      },
+        "note": "Raw SQL hypothesis test at 13:21Z; not whole factory candidate"
+      }
+    ],
+    "predecessor_measured_counter_timeouts": [
       {
         "case": "predecessor_unchanged_d10_wholefactory_timeout100",
         "binding_id": "rb-2480fb4d26884cfdb4d6ed9202172683",
@@ -75,20 +108,36 @@
         "elapsed_seconds": 5.035,
         "error_type": "RuntimeError",
         "timeout_observed": true
+      },
+      {
+        "case": "predecessor_9624_wholefactory_timeout100",
+        "binding_id": "rb-2480fb4d26884cfdb4d6ed9202172683",
+        "limit": 100,
+        "elapsed_seconds": 5.068,
+        "error_type": "RuntimeError",
+        "timeout_observed": true
+      },
+      {
+        "case": "predecessor_9624_wholefactory_timeout50",
+        "binding_id": "rb-2480fb4d26884cfdb4d6ed9202172683",
+        "limit": 50,
+        "elapsed_seconds": 5.078,
+        "error_type": "RuntimeError",
+        "timeout_observed": true
       }
     ]
   },
   "cause_and_solution_proof": {
     "sql_seam": "build_postgres_event_reader in services/telemetry/ingest_svc.py",
-    "defect_and_bottleneck": "Even after the covering ordered index idx_telemetry_events_binding_id_created_at_ingested_seq on ((payload->>'binding_id'), created_at DESC, ingested_seq DESC) was applied in PR #6529 / commit bd0747d36, the reader query in D10 whole factory still timed out at 5.033s / 5.035s. When multiple non-index guard conditions (jsonb_typeof string checks, runtime_binding_id null/equality checks, and tenant qualification) were conjoined at the top-level WHERE clause via AND, PostgreSQL's optimizer failed to match the query to an Index Scan on the ordered index, falling back to Bitmap Index Scan + Sort over 194,975 rows and lossy heap blocks.",
-    "solution_mechanism": "Refactored the non-index guard conditions in Branch 1 into a CASE WHEN expression: payload->>'binding_id' = $1 AND CASE WHEN jsonb_typeof(payload->'binding_id') = 'string' AND (payload->>'runtime_binding_id' IS NULL OR (payload->>'runtime_binding_id' = $1 AND jsonb_typeof(payload->'runtime_binding_id') = 'string')) [AND tenant guard] THEN TRUE ELSE FALSE END. Because payload->>'binding_id' = $1 is the sole top-level index predicate, PostgreSQL's query planner directly selects an Index Scan along idx_telemetry_events_binding_id_created_at_ingested_seq in forward order (Startup Cost: 0.56, Total Cost: 807.03), evaluating the CASE filter per index tuple and terminating early as soon as the LIMIT ($3) is satisfied without any Sort node or full 194,975-row scan.",
+    "defect_and_bottleneck": "Even after the covering ordered index idx_telemetry_events_binding_id_created_at_ingested_seq on ((payload->>'binding_id'), created_at DESC, ingested_seq DESC) was applied in PR #6529 / commit bd0747d36, the reader query in D10 whole factory still timed out at 5.033s / 5.035s. With multiple non-index guard conditions (jsonb_typeof string checks, runtime_binding_id null/equality checks, and tenant qualification) conjoined at the top-level WHERE clause via AND, PostgreSQL's optimizer planner cost estimates favored a Bitmap Index Scan + Sort across 194,975 TIDs instead of an early-terminating ordered index scan.",
+    "solution_mechanism": "Refactored the non-index guard conditions in Branch 1 into a CASE WHEN expression: payload->>'binding_id' = $1 AND CASE WHEN jsonb_typeof(payload->'binding_id') = 'string' AND (payload->>'runtime_binding_id' IS NULL OR (payload->>'runtime_binding_id' = $1 AND jsonb_typeof(payload->'runtime_binding_id') = 'string')) [AND tenant guard] THEN TRUE ELSE FALSE END. Because payload->>'binding_id' = $1 is the sole top-level index predicate, PostgreSQL's query planner selects an Index Scan along idx_telemetry_events_binding_id_created_at_ingested_seq in forward order, evaluating the CASE filter per index tuple and terminating early as soon as the LIMIT ($3) is satisfied without sorting Branch 1 tuples. Note that Branch 2 retains its index and sort nodes.",
     "capacity_counter_finding": {
       "actual_failing_binding": "rb-2480fb4d26884cfdb4d6ed9202172683",
       "index_name": "idx_telemetry_events_binding_id_created_at_ingested_seq",
-      "measured_runtime_limit_100": "0.213s (fetch: 0.143s, connect: 0.055s) -> 100 rows",
-      "measured_runtime_limit_50": "0.090s (fetch: 0.030s, connect: 0.054s) -> 50 rows",
-      "valid_positive_control": "rb-d9c1a36956784e2096e08c37d76ee76f -> 0.101s (fetch: 0.056s, connect: 0.038s) -> 100 rows",
-      "cause_status": "Definitively resolved: wrapping non-index guards in CASE WHEN enables early-terminating Index Scan along the covering ordered index, bringing all queries under 215ms well within the 5.0s SLA."
+      "measured_runtime_limit_100": "0.170s (100 rows, SHA 306672e49e7dff110bd7866c6b7c0045e17aa10a3a407442f19339a42a7e5c53, first50 SHA 58b686f568a28d6c77e213bdefb0291f0d4590a7d046450eb468fb001121c0c7) on frozen candidate [earlier 13:21Z raw CASE hypothesis: 0.213s]",
+      "measured_runtime_limit_50": "0.120s (50 rows, SHA 58b686f568a28d6c77e213bdefb0291f0d4590a7d046450eb468fb001121c0c7, exactly matching first 50 of limit 100) on frozen candidate [earlier 13:21Z raw CASE hypothesis: 0.090s]",
+      "valid_positive_control": "0.121s (100 rows, SHA 934f5c6c2206fb1a93b3db07ca1dcec4fc8ce46b6d4cc825f1afc5ad39f42d19) on frozen candidate [earlier 13:21Z raw CASE hypothesis: 0.101s]",
+      "cause_status": "Narrow verdict current point PASS: grouping non-index guards into a CASE WHEN expression enables an early-terminating Index Scan along the covering ordered index for Branch 1, bringing candidate queries under 0.170s well within the 5.0s SLA. This is a narrow complete factory point proof, not cold/shared window/L10/served/ALL capacity proof, and does not claim total elimination of Sort nodes as B2 retains its sort."
     },
     "budget_status": {
       "net_production_diff_lines": 1,
@@ -105,7 +154,7 @@
     },
     {
       "ac": "AC2",
-      "description": "Actual coordinator whole-factory counter: clean candidate with CASE WHEN optimization verified against genuine production PG with READONLY DSN. rb248 limit 100 executes in 0.213s (100 rows, SHA 306672) and limit 50 in 0.090s (50 rows, SHA 58b686); positive control rb-d9c1 returns 100 in 0.101s (SHA f8dc4e). Query planner selects direct Index Scan on idx_telemetry_events_binding_id_created_at_ingested_seq without Sort node or Bitmap Heap scan, resolving the 5.0s timeout.",
+      "description": "Actual coordinator whole-factory counter: clean candidate (reader module SHA 0cb352cda98285dfa4c35fddfe4c87cb58d82a0b574afe4447a3574ed07b8bd4) with CASE WHEN optimization verified against genuine production PG with READONLY DSN. rb248 limit 100 executes in 0.170s (100 rows, SHA 306672) and limit 50 in 0.120s (50 rows, SHA 58b686, matching first 50 of limit 100); positive control rb-d9c1 returns 100 in 0.121s (SHA 934f5c). Retained earlier 13:21 raw CASE hypothesis (0.213s / 0.090s / 0.101s) accurately labelled as hypothesis. Query planner selects direct Index Scan on idx_telemetry_events_binding_id_created_at_ingested_seq for B1, resolving the 5.0s timeout. Narrow verdict current point PASS; not cold/window/L10/served/ALL capacity.",
       "verdict": "pass"
     },
     {
