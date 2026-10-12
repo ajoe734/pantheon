@@ -1527,7 +1527,7 @@ jobs:
           printf -v remote_evidence_q '%q' "${remote_evidence}"
           printf -v container_evidence_q '%q' "${container_evidence}"
           printf -v case_key_q '%q' "${case_key}"
-          printf -v baseline_q '%q' "${PREBOOTSTRAP_HIGH_WATERMARK}"
+          printf -v baseline_q '%q' "${PREBOOTSTRAP_HIGH_WATERMARK:-}"
           echo "artifact_path=${local_evidence}" >> "$GITHUB_OUTPUT"
           echo "readback_artifact_path=${readback_evidence}" >> "$GITHUB_OUTPUT"
           set +e
