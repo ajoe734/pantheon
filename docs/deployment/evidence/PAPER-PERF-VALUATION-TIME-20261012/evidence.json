@@ -36,7 +36,7 @@
     "suite_diff_against_dev": "git diff origin/dev -- services/execution/lean_runtime/test_paper_runtime_smoke.py is empty (0 lines changed)",
     "command": "python3 scripts/dev/provision_python_distribution.py && \"$PANTHEON_PY\" -m pytest -q services/execution/lean_runtime/test_paper_runtime_smoke.py",
     "baseline_origin_dev": {
-      "commit": "e7a33a4ebf0ec5e42f5be24b33537243c3328eb9",
+      "commit": "e7a33a4eba63e2c34b0617a5ea4e8312b6a26e55",
       "summary": "8 failed, 8 passed in 3.01s",
       "failed_tests": [
         "PaperRuntimeSmokeTest::test_bracket_order_canary_stage_is_fail_closed",
