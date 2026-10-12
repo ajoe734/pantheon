@@ -308,6 +308,12 @@ if args[0] == "compose":
         print(f"cid-{{target}}")
         sys.exit(0)
     elif sub[0] == "images":
+        target_service = sub[-1] if len(sub) > 1 and not sub[-1].startswith("-") else ""
+        if target_service == "source-ingest-agora-projector":
+            projector_compose_id = state.get("projector_container_compose_image_id", "")
+            if projector_compose_id:
+                print(projector_compose_id)
+            sys.exit(0)
         print(state["compose_image_id"])
         sys.exit(0)
     elif sub[0] == "up":
@@ -344,10 +350,24 @@ elif args[0] == "stop":
 elif args[0] == "inspect":
     fmt = args[2] if len(args) > 2 and args[1] == "--format" else ""
     target = args[-1]
+    if target == "pantheon-source-ingest-agora-projector:latest":
+        if not state.get("built_projector_image_present", True):
+            sys.stderr.write("Error: No such image: " + target + "\\n")
+            sys.exit(1)
+        if "{{.Id}}" in fmt:
+            print(state.get("built_projector_image_id", "sha256:" + "b" * 64))
+            sys.exit(0)
+    if not target:
+        sys.stderr.write("Error: target required\\n")
+        sys.exit(1)
     if "{{.Image}}" in fmt:
         print(state["image_id"])
         sys.exit(0)
     elif "org.opencontainers.image.revision" in fmt:
+        revisions = state.get("image_revisions", {{}})
+        if target in revisions:
+            print(revisions[target])
+            sys.exit(0)
         print(state.get("projector_image_sha", "abc123"))
         sys.exit(0)
     elif "Config.Env" in fmt and target == "cid-source-ingest-scheduler":
@@ -1359,7 +1379,7 @@ def test_bounded_refresh_stale_projector_image_guard_fails_closed(tmp_path: Path
         "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
         "projector_image_sha": "stale-sha-2026-10-05",
     }
-    bin_dir, state_file, _events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+    bin_dir, state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
 
     test_env = dict(os.environ)
     test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
@@ -1377,6 +1397,110 @@ def test_bounded_refresh_stale_projector_image_guard_fails_closed(tmp_path: Path
     assert proc.returncode != 0, f"Expected refresh to fail closed on stale projector image, got 0:\n{proc.stdout}"
     assert "stale_projector_image" in proc.stderr
     assert "source-ingest-agora-projector image revision stale-sha-2026-10-05 != expected abc123" in proc.stderr
+    events = [json.loads(line) for line in events_file.read_text().splitlines() if line]
+    assert not any(e.get("event") == "compose_run" for e in events), "One-shot containers must not start on stale projector image"
+
+
+def test_bounded_refresh_accepts_valid_built_projector_image_when_container_absent(tmp_path: Path):
+    # Regression for run 38212356787: genuine projector image was built with matching revision,
+    # but no projector container was created, so compose images -q returns empty.
+    # The post-build lookup must inspect the built image and proceed.
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "projector_container_compose_image_id": "",  # absent projector container
+        "built_projector_image_id": "sha256:0fedd6c77271dc29bf6425461cac284df85a6454d656e363d67646ec9ee24b2e",
+        "projector_image_sha": "abc123",  # matching GIT_SHA
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+    }
+    bin_dir, state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+
+    proc = subprocess.run(
+        ["bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--force", "--output", str(output_file)],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode == 0, f"Expected refresh to succeed with absent projector container, failed:\n{proc.stderr}"
+    assert "stale_projector_image" not in proc.stderr
+    events = [json.loads(line) for line in events_file.read_text().splitlines() if line]
+    assert any(e.get("event") == "compose_run" and "source-ingest-agora-projector" in e.get("args", []) for e in events)
+
+
+def test_bounded_refresh_built_projector_image_used_over_old_container_image(tmp_path: Path):
+    # An old projector container image exists with a stale OCI revision,
+    # but the newly built projector image has the valid matching revision.
+    # The lookup must inspect the built image, not the old container image.
+    old_container_img_id = "sha256:" + "9" * 64
+    new_built_img_id = "sha256:" + "b" * 64
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "projector_container_compose_image_id": old_container_img_id,
+        "built_projector_image_id": new_built_img_id,
+        "image_revisions": {
+            old_container_img_id: "stale-container-rev-20261001",
+            new_built_img_id: "abc123",
+        },
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+    }
+    bin_dir, state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+
+    proc = subprocess.run(
+        ["bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--force", "--output", str(output_file)],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode == 0, f"Expected refresh to succeed using built image, failed:\n{proc.stderr}"
+    assert "stale_projector_image" not in proc.stderr
+    events = [json.loads(line) for line in events_file.read_text().splitlines() if line]
+    assert any(e.get("event") == "compose_run" and "source-ingest-agora-projector" in e.get("args", []) for e in events)
+
+
+def test_bounded_refresh_missing_built_projector_image_fails_closed(tmp_path: Path):
+    # Built projector image is missing (e.g. build failure or prune).
+    # The lookup must fail closed before one-shot start.
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "built_projector_image_present": False,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+    }
+    bin_dir, state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+
+    proc = subprocess.run(
+        ["bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--force", "--output", str(output_file)],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode != 0, f"Expected refresh to fail closed on missing built image, got 0:\n{proc.stdout}"
+    assert "stale_projector_image" in proc.stderr
+    assert "source-ingest-agora-projector image revision missing != expected abc123" in proc.stderr
+    events = [json.loads(line) for line in events_file.read_text().splitlines() if line]
+    assert not any(e.get("event") == "compose_run" for e in events), "One-shot containers must not start when image is missing"
 
 
 

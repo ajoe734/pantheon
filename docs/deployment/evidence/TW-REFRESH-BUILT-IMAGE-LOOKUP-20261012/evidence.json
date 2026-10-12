@@ -1,0 +1,41 @@
+{
+  "task_id": "TW-REFRESH-BUILT-IMAGE-LOOKUP-20261012",
+  "scope": "read actual built projector image before starting bounded refresh",
+  "predecessor": {
+    "task_id": "AGORA-PROJECTOR-HOSTED-PRINCIPAL-20261010",
+    "commit": "ead2441eb86cba140ec61d06c180244b10c5e73d",
+    "relation": "corrective follow-up for post-build image lookup seam"
+  },
+  "hosted_dev_incident": {
+    "run_id": 38212356787,
+    "workflow": "Dev Taiwan Market Daily Refresh",
+    "failure_summary": "post-build projector_img_id lookup queried 'docker compose images -q source-ingest-agora-projector', which queries created containers rather than the just-built image. Because no steady projector container exists and bounded containers were removed prior to build, the query exited 0 with empty output, causing false stale_projector_image rejection despite successful build.",
+    "host_evidence_receipt": "/tmp/pantheon-full-closeout-20261011/original-TW38212356787-actual-built-image-vs-container-lookup-readonly.json",
+    "receipt_facts": {
+      "built_image": "pantheon-source-ingest-agora-projector:latest",
+      "built_image_id": "sha256:0fedd6c77271dc29bf6425461cac284df85a6454d656e363d67646ec9ee24b2e",
+      "built_oci_revision": "3c1bd45a1eca33d2d5c7da948f59b6d3ff78243e",
+      "projector_container_present": false,
+      "container_images_lookup_returncode": 0,
+      "container_images_lookup_result": []
+    }
+  },
+  "changes": [
+    "scripts/deploy_nonprod_vm.sh: changed post-build projector_img_id lookup to inspect 'pantheon-source-ingest-agora-projector:latest' directly via docker inspect --format '{{.Id}}', resolving the built image independent of absent or old containers, preserving exact OCI revision check and fail-closed guards with 0 net line growth",
+    "scripts/test_dev_tw_market_refresh.py: updated docker stub to reflect absent projector container and handle built projector image inspection; added 3 shell-boundary regression tests verifying absent container acceptance, preference of newly built valid image over old container image, and fail-closed termination on missing built image"
+  ],
+  "verification": {
+    "scripts/test_dev_tw_market_refresh.py": "35 passed",
+    "regression_tests": [
+      "test_bounded_refresh_stale_projector_image_guard_fails_closed (mismatching OCI revision fails closed before one-shot start)",
+      "test_bounded_refresh_accepts_valid_built_projector_image_when_container_absent (genuine built image accepted with absent container)",
+      "test_bounded_refresh_built_projector_image_used_over_old_container_image (built valid image inspected over old container image)",
+      "test_bounded_refresh_missing_built_projector_image_fails_closed (missing built image fails closed before one-shot start)"
+    ]
+  },
+  "not_claimed": [
+    "worker VM, provider, deployment, or Capital authority",
+    "hosted NEW or FULL claim",
+    "manual timestamp, replacement source/provider/account, or duplicate active run"
+  ]
+}
