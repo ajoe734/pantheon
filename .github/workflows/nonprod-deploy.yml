@@ -1384,6 +1384,7 @@ jobs:
           DEV_PAPER_RUN_ID: ${{ github.run_id }}
           DEV_PAPER_ATTEMPT: ${{ github.run_attempt }}
           DEV_PAPER_PHASE: paper_bootstrap
+          DEV_PAPER_PREBOOTSTRAP_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || format('{0}/dev-root', vars.DEV_DEPLOY_WORKTREE_ROOT) }}
           PANTHEON_MARKET_INPUT_BOOTSTRAP_GRACE_SECONDS: "120"
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
@@ -1433,6 +1434,7 @@ jobs:
             DEV_PAPER_RUN_ID="${DEV_PAPER_RUN_ID}" \
             DEV_PAPER_ATTEMPT="${DEV_PAPER_ATTEMPT}" \
             DEV_PAPER_PHASE="${DEV_PAPER_PHASE}" \
+            DEV_PAPER_PREBOOTSTRAP_WORKTREE="${DEV_PAPER_PREBOOTSTRAP_WORKTREE}" \
             "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
             "${diagnostics_script}" || baseline_status=$?
           exit "${baseline_status}"
@@ -1510,6 +1512,7 @@ jobs:
           DEV_BFF_OIDC_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID || 'pantheon-dev-operator-a-v1' }}
           DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}
           DEPLOY_SHA: ${{ steps.target.outputs.sha }}
+          PREBOOTSTRAP_HIGH_WATERMARK: ${{ steps.paper_bootstrap.outputs.prebootstrap_high_watermark }}
         run: |
           set -euo pipefail
           evidence_name="loop-prod-tel-002-hosted-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
@@ -1524,11 +1527,12 @@ jobs:
           printf -v remote_evidence_q '%q' "${remote_evidence}"
           printf -v container_evidence_q '%q' "${container_evidence}"
           printf -v case_key_q '%q' "${case_key}"
+          printf -v baseline_q '%q' "${PREBOOTSTRAP_HIGH_WATERMARK:-}"
           echo "artifact_path=${local_evidence}" >> "$GITHUB_OUTPUT"
           echo "readback_artifact_path=${readback_evidence}" >> "$GITHUB_OUTPUT"
           set +e
           "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/dev_vm_ssh.sh" exec \
-            "set -uo pipefail; cd ${worktree_q} || exit 1; scripts/run_loop_prod_tel_002_hosted_probe.sh --expected-sha ${deploy_sha_q} --container-output ${container_evidence_q} --remote-output ${remote_evidence_q} --timeout-seconds 420 --poll-seconds 5 --mode natural --case-key ${case_key_q}"
+            "set -uo pipefail; cd ${worktree_q} || exit 1; scripts/run_loop_prod_tel_002_hosted_probe.sh --expected-sha ${deploy_sha_q} --container-output ${container_evidence_q} --remote-output ${remote_evidence_q} --timeout-seconds 420 --poll-seconds 5 --mode natural --case-key ${case_key_q} --baseline-high-watermark ${baseline_q}"
           probe_status=$?
           scp_status=0
           "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/dev_vm_ssh.sh" copy-from \
