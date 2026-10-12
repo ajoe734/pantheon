@@ -760,196 +760,100 @@ def test_trainer_session_port_delegates_to_training_service_double() -> None:
 # Live Training Session Owner Service Integration Tests (AC-1, AC-3, AC-5)
 # ---------------------------------------------------------------------------
 
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from services.runtime_auth_inbound import encode_jwt_hs256
 
 
-class _LiveTrainingStore:
-    def __init__(self, service: _LiveTrainingService) -> None:
-        self._service = service
-
-    def put_controls(self, session_id: str, data: dict) -> None:
-        self._service.controls[session_id] = list(data.get("controls") or [])
-
-
-class _LiveTrainingService:
-    def __init__(self) -> None:
-        self.sessions: dict[str, dict[str, Any]] = {}
-        self.controls: dict[str, list[dict[str, Any]]] = {}
-        self.jobs: dict[str, dict[str, Any]] = {}
-        self.store = _LiveTrainingStore(self)
+def _load_isolated_module(name: str, filepath: Path) -> Any:
+    spec = importlib.util.spec_from_file_location(name, filepath)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load module {name} from {filepath}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 @pytest.fixture(scope="module")
 def live_training_session_service():
-    service = _LiveTrainingService()
+    repo_root = Path(__file__).resolve().parents[3]
+    service_dir = repo_root / "services" / "training-session"
+    tests_dir = service_dir / "tests"
 
-    class Handler(BaseHTTPRequestHandler):
-        def _send_json(self, status: int, data: Any) -> None:
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps(data).encode("utf-8"))
+    strict_support = _load_isolated_module("strict_test_support", tests_dir / "strict_test_support.py")
+    fixture = strict_support.materialize_strict_authority(tempfile.mkdtemp())
+    env_backup = dict(os.environ)
+    os.environ.update(fixture.environment())
+    os.environ["TRAINING_SESSION_AUTH_DISABLED"] = "false"
+    os.environ["TRAINING_SESSION_AUTH_MODE"] = "strict"
+    os.environ["TRAINING_SESSION_JWT_SECRET"] = "owned-original-training-inbound-test-secret-only"
+    os.environ["TRAINING_SESSION_ALLOWED_CALLER_SERVICES"] = "control-plane-bff,training-session-preview-worker"
 
-        def _check_tenant(self) -> bool:
-            auth_header = self.headers.get("Authorization", "")
-            tenant_header = self.headers.get("X-Tenant-Id")
-            if auth_header.startswith("Bearer "):
-                token = auth_header.removeprefix("Bearer ").strip()
-                parts = token.split(".")
-                if len(parts) >= 2:
-                    try:
-                        padded = parts[1] + "=" * (-len(parts[1]) % 4)
-                        claims = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
-                        token_tenant = claims.get("tenant_id")
-                        if token_tenant and tenant_header and token_tenant != tenant_header:
-                            self._send_json(403, {"detail": "Tenant mismatch"})
-                            return False
-                    except Exception:
-                        pass
-            return True
+    modules_to_load = [
+        "models",
+        "policy_lineage",
+        "inbound_authority",
+        "evaluation_authority",
+        "source_dataset_authority",
+        "persona_target",
+        "consultation_client",
+        "store",
+    ]
+    for mod_name in modules_to_load:
+        _load_isolated_module(mod_name, service_dir / f"{mod_name}.py")
 
-        def do_GET(self) -> None:
-            if not self._check_tenant():
-                return
-            path = self.path
-            if path.startswith("/api/training/sessions/"):
-                session_id = path.split("?")[0].replace("/api/training/sessions/", "")
-                session = service.sessions.get(session_id)
-                if session:
-                    self._send_json(200, session)
-                else:
-                    self._send_json(404, {"detail": "training session not found"})
-            elif path.startswith("/api/training/sessions"):
-                self._send_json(200, list(service.sessions.values()))
-            elif path.startswith("/api/training/controls/"):
-                session_id = path.split("?")[0].replace("/api/training/controls/", "")
-                ctrls = service.controls.get(session_id, [])
-                self._send_json(200, {"session_id": session_id, "controls": ctrls})
-            elif path.startswith("/api/training/previews/"):
-                self._send_json(200, {"latest_eval_id": None, "evaluations": {}})
-            else:
-                self.send_response(404)
-                self.end_headers()
+    training_service = _load_isolated_module("training_session_live_app", service_dir / "main.py")
+    training_service.store = training_service.TrainingSessionStore(fixture.data_dir)
+    training_service._trusted_now = lambda: strict_support.FIXED_TRUSTED_NOW
+    training_service.run_vectorbt_workflow = strict_support.make_fake_real_vectorbt_workflow()
+    training_service._read_target_precondition = strict_support.make_fake_target_precondition_reader()
+    training_service._commit_authoritative_persona_target = strict_support.make_fake_persona_target_commit()
 
-        def do_POST(self) -> None:
-            if not self._check_tenant():
-                return
-            length = int(self.headers.get("Content-Length", 0))
-            raw_body = self.rfile.read(length).decode("utf-8") if length else ""
-            body = json.loads(raw_body) if raw_body else {}
-            path = self.path.split("?")[0]
+    import uvicorn
 
-            if path == "/api/training/sessions":
-                session_id = f"trn-live-{len(service.sessions) + 1:03d}"
-                session = {
-                    "session_id": session_id,
-                    "persona_id": body.get("persona_id"),
-                    "objective": body.get("objective"),
-                    "status": "active",
-                    "started_at": "2026-10-12T16:00:00Z",
-                    "ended_at": None,
-                    "opened_by": body.get("actor_id") or "operator",
-                    "context_refs": body.get("context_refs") or [],
-                    "events": [],
-                }
-                service.sessions[session_id] = session
-                self._send_json(201, session)
-            elif "/events" in path:
-                session_id = path.replace("/api/training/sessions/", "").replace("/events", "")
-                session = service.sessions.get(session_id)
-                if not session:
-                    self._send_json(404, {"detail": "training session not found"})
-                    return
-                seq = len(session["events"]) + 1
-                event = {
-                    "event_id": f"tevt-{session_id}-{seq:03d}",
-                    "session_id": session_id,
-                    "actor": body.get("actor", "operator"),
-                    "message_body": body.get("message_body"),
-                    "sequence_number": seq,
-                    "outcome_signal": body.get("outcome_signal"),
-                    "emitted_at": "2026-10-12T16:01:00Z",
-                }
-                session["events"].append(event)
-                self._send_json(201, {"event": event, "session": session})
-            elif "/controls" in path:
-                session_id = path.replace("/api/training/sessions/", "").replace("/controls", "")
-                patches = body.get("patches") or []
-                known_keys = {c.get("parameter_key") for c in service.controls.get(session_id, [])}
-                field_errors = []
-                for p in patches:
-                    if p.get("parameter_key") not in known_keys:
-                        field_errors.append(f"Unknown parameter: {p.get('parameter_key')}")
-                if field_errors:
-                    self._send_json(200, {
-                        "session_id": session_id,
-                        "status": "rejected",
-                        "error_code": "CONTROL_PATCH_VALIDATION_FAILED",
-                        "field_errors": field_errors,
-                        "current_controls": service.controls.get(session_id, []),
-                    })
-                    return
-                ctrl_map = {c["parameter_key"]: dict(c) for c in service.controls.get(session_id, [])}
-                for p in patches:
-                    k = p.get("parameter_key")
-                    if k in ctrl_map:
-                        ctrl_map[k]["current_value"] = p.get("proposed_value")
-                service.controls[session_id] = list(ctrl_map.values())
-                self._send_json(200, {
-                    "session_id": session_id,
-                    "status": "accepted",
-                    "current_controls": service.controls[session_id],
-                })
-            elif "/preview-jobs" in path:
-                session_id = path.replace("/api/training/sessions/", "").replace("/preview-jobs", "")
-                if body.get("mode") == "malformed" or "malformed" in session_id:
-                    self._send_json(201, {"status": "queued"})
-                    return
-                eval_id = f"teval-{session_id}-live"
-                job_id = f"job-{session_id}-live"
-                job = {
-                    "job_id": job_id,
-                    "session_id": session_id,
-                    "eval_id": eval_id,
-                    "status": "queued",
-                }
-                service.jobs[job_id] = job
-                self._send_json(201, job)
-            else:
-                self.send_response(404)
-                self.end_headers()
-
-        def log_message(self, *args) -> None:
-            pass
-
-    server = HTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    config = uvicorn.Config(training_service.app, host="127.0.0.1", port=0, log_level="error")
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
-    port = server.server_port
+
+    while not server.started:
+        time.sleep(0.05)
+
+    port = server.servers[0].sockets[0].getsockname()[1]
     base_url = f"http://127.0.0.1:{port}"
-    old_env = os.environ.get("PANTHEON_TRAINING_SESSION_API_URL")
     os.environ["PANTHEON_TRAINING_SESSION_API_URL"] = base_url
 
     try:
-        yield base_url, service
+        yield base_url, training_service
     finally:
-        if old_env is None:
-            os.environ.pop("PANTHEON_TRAINING_SESSION_API_URL", None)
-        else:
-            os.environ["PANTHEON_TRAINING_SESSION_API_URL"] = old_env
-        server.shutdown()
-        server.server_close()
+        server.should_exit = True
         thread.join(timeout=2)
+        os.environ.clear()
+        os.environ.update(env_backup)
+
+
+def _signed_caller_jwt(tenant: str, actor: str = "operator-live") -> str:
+    secret = os.environ.get("TRAINING_SESSION_JWT_SECRET", "owned-original-training-inbound-test-secret-only")
+    return encode_jwt_hs256(
+        {
+            "sub": "control-plane-bff",
+            "service": "control-plane-bff",
+            "tenant_ids": [tenant],
+            "delegated_actor_id": actor,
+            "roles": ["training-service"],
+            "exp": time.time() + 3600,
+        },
+        secret=secret,
+    )
 
 
 def test_default_production_factory_live_owner_roundtrip(live_training_session_service):
-    """Verify default create_read_surface_ports against genuine Training Session service."""
+    """Verify default create_read_surface_ports against genuine Training Session service with strict signed auth."""
     base_url, training_service = live_training_session_service
     ports = create_read_surface_ports()
     assert ports.persona_training.trainer._training.__class__.__name__ == "TrainingSessionHttpStore"
 
-    claims = base64.urlsafe_b64encode(json.dumps({"tenant_id": "tenant-live", "sub": "operator-live"}).encode()).decode().rstrip("=")
-    auth_token = authorization.set(f"Bearer header.{claims}.sig")
+    token = _signed_caller_jwt("tenant-live", "operator-live")
+    auth_token = authorization.set(f"Bearer {token}")
     tenant_token = selected_tenant.set("tenant-live")
 
     try:
@@ -1026,17 +930,17 @@ def test_default_production_factory_live_owner_roundtrip(live_training_session_s
         assert patch_accepted["status"] == "accepted"
         assert patch_accepted["current_controls"][0]["current_value"] == 0.1
 
-        # 6. Preview refresh -> queue admission to native job queue
+        # 6. Preview refresh -> queue admission to native job queue with genuine eval_id and job_id
         preview = ports.refresh_trainer_preview(session_id, session_status="active")
         assert preview is not None
         assert preview["status"] == "pending"
         assert preview["job_id"] is not None
         assert preview["eval_id"] is not None
+        assert preview["owner_job_ref"]["job_id"] == preview["job_id"]
+        assert preview["owner_job_ref"]["eval_id"] == preview["eval_id"]
         assert preview["polling"]["enabled"] is True
 
         # 7. Rapid eval: reject fabricated queued/healthy state on default production factory.
-        # services/training-session/main.py has no rapid-eval route; calling rapid eval
-        # truthfully reports the unbound boundary via RuntimeError without fabricating queued records.
         with pytest.raises(
             RuntimeError,
             match="RapidEvaluationPort has no backend bound to its owner",
@@ -1051,8 +955,8 @@ def test_live_foreign_tenant_rejected(live_training_session_service):
     """Verify tenant mismatch raises 403 TENANT_MISMATCH, not converted to 500 or fake success."""
     ports = create_read_surface_ports()
 
-    claims = base64.urlsafe_b64encode(json.dumps({"tenant_id": "tenant-legit", "sub": "op"}).encode()).decode().rstrip("=")
-    auth_token = authorization.set(f"Bearer header.{claims}.sig")
+    token = _signed_caller_jwt("tenant-legit", "operator-live")
+    auth_token = authorization.set(f"Bearer {token}")
     tenant_token = selected_tenant.set("tenant-attacker")
 
     try:
@@ -1062,6 +966,49 @@ def test_live_foreign_tenant_rejected(live_training_session_service):
     finally:
         authorization.reset(auth_token)
         selected_tenant.reset(tenant_token)
+
+
+def test_live_tampered_credential_rejected_by_owner(live_training_session_service):
+    """Verify tampered signed JWT credential is rejected by native owner with HTTP 401."""
+    ports = create_read_surface_ports()
+
+    token = _signed_caller_jwt("tenant-live", "operator-live")
+    tampered = token[:-1] + ("A" if token[-1] != "A" else "B")
+    auth_token = authorization.set(f"Bearer {tampered}")
+    tenant_token = selected_tenant.set("tenant-live")
+
+    try:
+        with pytest.raises(HTTPException) as exc_info:
+            ports.create_trainer_session(persona_id="p-tampered", objective="infiltrate")
+        assert exc_info.value.status_code == 401
+    finally:
+        authorization.reset(auth_token)
+        selected_tenant.reset(tenant_token)
+
+
+def test_live_different_signed_tenant_cannot_read_owner_session(live_training_session_service):
+    """Verify different signed tenant cannot read another tenant's session."""
+    ports = create_read_surface_ports()
+
+    token_alpha = _signed_caller_jwt("tenant-alpha", "operator-live")
+    auth_alpha = authorization.set(f"Bearer {token_alpha}")
+    tenant_alpha = selected_tenant.set("tenant-alpha")
+    try:
+        session = ports.create_trainer_session(persona_id="persona-alpha", objective="alpha session")
+        session_id = session["session_id"]
+    finally:
+        authorization.reset(auth_alpha)
+        selected_tenant.reset(tenant_alpha)
+
+    token_beta = _signed_caller_jwt("tenant-beta", "operator-live")
+    auth_beta = authorization.set(f"Bearer {token_beta}")
+    tenant_beta = selected_tenant.set("tenant-beta")
+    try:
+        result = ports.get_trainer_session(session_id)
+        assert result is None
+    finally:
+        authorization.reset(auth_beta)
+        selected_tenant.reset(tenant_beta)
 
 
 def test_owner_outage_returns_truthful_503(monkeypatch):
@@ -1079,22 +1026,36 @@ def test_owner_outage_returns_truthful_503(monkeypatch):
 
 def test_live_malformed_preview_job_raises_503(live_training_session_service):
     """Verify malformed preview-job missing job_id or eval_id raises truthful 503 DEPENDENCY_UNAVAILABLE, never fake pending."""
+    base_url, training_service = live_training_session_service
     ports = create_read_surface_ports()
 
-    claims = base64.urlsafe_b64encode(json.dumps({"tenant_id": "tenant-live", "sub": "op"}).encode()).decode().rstrip("=")
-    auth_token = authorization.set(f"Bearer header.{claims}.sig")
+    token = _signed_caller_jwt("tenant-live", "operator-live")
+    auth_token = authorization.set(f"Bearer {token}")
     tenant_token = selected_tenant.set("tenant-live")
 
     try:
         session = ports.create_trainer_session(persona_id="p-malformed", objective="test malformed preview")
         session_id = session["session_id"]
-        with pytest.raises(HTTPException) as exc_info:
-            ports.refresh_trainer_preview(session_id, actor_id="operator-live", mode="malformed")
-        assert exc_info.value.status_code == 503
-        detail = exc_info.value.detail
-        assert isinstance(detail, dict)
-        assert detail.get("error", {}).get("code") == "DEPENDENCY_UNAVAILABLE"
+
+        orig_request = ports.persona_training.trainer._training._request
+
+        def mock_request(path: str, *args: Any, **kwargs: Any) -> Any:
+            if "preview-jobs" in path:
+                return {"status": "queued"}
+            return orig_request(path, *args, **kwargs)
+
+        ports.persona_training.trainer._training._request = mock_request
+        try:
+            with pytest.raises(HTTPException) as exc_info:
+                ports.refresh_trainer_preview(session_id, actor_id="operator-live")
+            assert exc_info.value.status_code == 503
+            detail = exc_info.value.detail
+            assert isinstance(detail, dict)
+            assert detail.get("error", {}).get("code") == "DEPENDENCY_UNAVAILABLE"
+        finally:
+            ports.persona_training.trainer._training._request = orig_request
     finally:
         authorization.reset(auth_token)
         selected_tenant.reset(tenant_token)
+
 
