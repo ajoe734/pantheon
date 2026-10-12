@@ -102,14 +102,15 @@ class TradeEpisodeProjectionStore:
         if not trade_episode_id:
             trade_episode_id = event.get("metadata", {}).get("trade_episode_id")
 
+        meta = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+        rev = meta.get("reversal") if isinstance(meta.get("reversal"), dict) else {}
+        closed_ep_id = rev.get("closed_episode_id")
+
         event_id = event.get("event_id")
         if not trade_episode_id or not event_id:
             return None
 
         with self._lock:
-            # 1. Idempotent check
-            existing_events = self._events[trade_episode_id]
-
             def _ev_field(e: dict[str, Any], *keys: str) -> str:
                 for s in (e, e.get("authority_refs"), e.get("metadata"), e.get("payload")):
                     if isinstance(s, dict):
@@ -123,31 +124,52 @@ class TradeEpisodeProjectionStore:
             _ev_persona = lambda e: _ev_field(e, "persona_id")
             _ev_instrument = lambda e: _ev_field(e, "symbol", "instrument_id")
 
-            existing_tenants = {_ev_tenant(ev) for ev in existing_events if _ev_tenant(ev)}
-            curr_proj = self._projections.get(trade_episode_id)
-            if curr_proj and curr_proj.get("tenant_id"):
-                existing_tenants.add(str(curr_proj["tenant_id"]).strip())
+            def _validate_scope(ep_id: str) -> bool:
+                ep_events = self._events[ep_id]
+                ep_proj = self._projections.get(ep_id)
+                tenants = {_ev_tenant(ev) for ev in ep_events if _ev_tenant(ev)}
+                if ep_proj and ep_proj.get("tenant_id"):
+                    tenants.add(str(ep_proj["tenant_id"]).strip())
+                incoming_tenant = _ev_tenant(event)
+                if tenants:
+                    if not incoming_tenant or incoming_tenant not in tenants:
+                        log.warning(
+                            "Rejected tenant-mismatched or missing-tenant trade episode projection event %s for %s",
+                            event_id,
+                            ep_id,
+                        )
+                        return False
+                for name, extractor in (("persona", _ev_persona), ("instrument", _ev_instrument)):
+                    known = {extractor(ev) for ev in ep_events if extractor(ev) and extractor(ev) != "unknown"}
+                    if ep_proj and ep_proj.get(f"{name}_id") and ep_proj.get(f"{name}_id") != "unknown":
+                        known.add(str(ep_proj[f"{name}_id"]))
+                    inc = extractor(event)
+                    if known and inc and inc != "unknown" and inc not in known:
+                        log.warning("Rejected cross-%s trade episode projection event %s for %s", name, event_id, ep_id)
+                        return False
+                return True
 
-            incoming_tenant = _ev_tenant(event)
-            if existing_tenants:
-                if not incoming_tenant or incoming_tenant not in existing_tenants:
-                    log.warning(
-                        "Rejected tenant-mismatched or missing-tenant trade episode projection event %s for %s",
-                        event_id,
-                        trade_episode_id,
-                    )
+            if not _validate_scope(trade_episode_id):
+                return None
+
+            if closed_ep_id:
+                if closed_ep_id not in self._events and closed_ep_id not in self._projections:
+                    log.warning("Rejected unknown closed_episode_id %s in reversal event %s", closed_ep_id, event_id)
+                    return None
+                if not _validate_scope(closed_ep_id):
                     return None
 
-            for name, extractor in (("persona", _ev_persona), ("instrument", _ev_instrument)):
-                known = {extractor(ev) for ev in existing_events if extractor(ev) and extractor(ev) != "unknown"}
-                inc = extractor(event)
-                if known and inc and inc != "unknown" and inc not in known:
-                    log.warning("Rejected cross-%s trade episode projection event %s for %s", name, event_id, trade_episode_id)
-                    return None
-
+            existing_events = self._events[trade_episode_id]
             if any(ev.get("event_id") == event_id for ev in existing_events):
                 log.debug("Event %s already exists for episode %s; skipping ingest", event_id, trade_episode_id)
                 return self._projections.get(trade_episode_id)
+
+            if closed_ep_id:
+                if not any(ev.get("event_id") == event_id for ev in self._events[closed_ep_id]):
+                    self._events[closed_ep_id].append(event)
+                    closed_proj = self._rebuild_projection(closed_ep_id)
+                    if closed_proj:
+                        self._projections[closed_ep_id] = closed_proj
 
             # 2. Append event
             self._events[trade_episode_id].append(event)
@@ -156,19 +178,6 @@ class TradeEpisodeProjectionStore:
             projection = self._rebuild_projection(trade_episode_id)
             if projection:
                 self._projections[trade_episode_id] = projection
-
-            # Check for reversal allocation closing prior episode
-            meta = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
-            rev = meta.get("reversal") if isinstance(meta.get("reversal"), dict) else {}
-            closed_ep_id = rev.get("closed_episode_id") or meta.get("closed_trade_episode_id")
-            if closed_ep_id and (closed_ep_id in self._events or closed_ep_id in self._projections):
-                if not any(ev.get("event_id") == event_id for ev in self._events[closed_ep_id]):
-                    self._events[closed_ep_id].append(event)
-                    closed_proj = self._rebuild_projection(closed_ep_id)
-                    if closed_proj:
-                        self._projections[closed_ep_id] = closed_proj
-
-            if projection:
                 self._persist()
                 return json.loads(json.dumps(projection))
 
@@ -676,10 +685,7 @@ class TradeEpisodeProjectionStore:
 
                 meta = ev.get("metadata") or {}
                 rev = meta.get("reversal") or {}
-                if (
-                    rev.get("closed_episode_id") == trade_episode_id
-                    or meta.get("closed_trade_episode_id") == trade_episode_id
-                ):
+                if rev.get("closed_episode_id") == trade_episode_id:
                     proj["status"] = "closed"
                     proj["closed_at"] = ev.get("occurred_at") or ev.get("created_at")
                     proj["coverage"]["as_of"] = ev.get("occurred_at") or ev.get("created_at")

@@ -595,6 +595,42 @@ class TestTradeEpisodeProjectionStore(unittest.TestCase):
         self.assertEqual(proj_final["filled_quantity"], 10.0)
         self.assertEqual(len(proj_final["fill_ids"]), 1)
 
+    def test_reversal_cross_tenant_isolation_fails_closed(self) -> None:
+        foreign_ep = str(uuid.uuid4())
+        self.store.project_event({
+            "event_id": "owned-first",
+            "event_type": "paper_fill_simulated",
+            "trade_episode_id": foreign_ep,
+            "tenant_id": "tenant-b",
+            "persona_id": "persona-b",
+            "instrument_id": "SPY",
+            "metrics": {"fill_quantity": 10.0, "fill_price": 100.0},
+        })
+        self.assertEqual(self.store.get(foreign_ep)["status"], "open")
+
+        new_ep = str(uuid.uuid4())
+        res = self.store.project_event({
+            "event_id": "owned-reversal",
+            "event_type": "paper_fill_simulated",
+            "trade_episode_id": new_ep,
+            "tenant_id": "tenant-a",
+            "persona_id": "persona-a",
+            "instrument_id": "SPY",
+            "metrics": {"fill_quantity": -20.0, "fill_price": 100.0},
+            "metadata": {
+                "reversal": {
+                    "closed_episode_id": foreign_ep,
+                    "close_quantity": -10.0,
+                    "opened_episode_id": new_ep,
+                    "open_quantity": -10.0,
+                }
+            },
+        })
+        self.assertIsNone(res)
+        self.assertEqual(self.store.get(foreign_ep)["status"], "open")
+        self.assertEqual(self.store.get(foreign_ep)["fill_ids"], ["owned-first"])
+        self.assertIsNone(self.store.get(new_ep))
+
 
 if __name__ == "__main__":
     unittest.main()

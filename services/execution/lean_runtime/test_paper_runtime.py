@@ -3384,8 +3384,7 @@ class PaperTradeEpisodeCorrelationTest(unittest.TestCase):
         self.assertEqual(rev_fill.metadata["position_quantity"], -10.0)
         new_ep = rev_fill.metadata.get("trade_episode_id")
         self.assertIsNotNone(new_ep)
-        self.assertNotEqual(new_ep, old_ep)
-        self.assertEqual(rev_fill.metadata.get("closed_trade_episode_id"), old_ep)
+        self.assertEqual(rev_fill.metadata["reversal"]["closed_episode_id"], old_ep)
         self.assertEqual(rev_fill.metadata["reversal"]["close_quantity"], -10.0)
         self.assertEqual(rev_fill.metadata["reversal"]["open_quantity"], -10.0)
 

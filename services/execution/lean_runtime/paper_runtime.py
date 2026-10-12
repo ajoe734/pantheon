@@ -652,8 +652,6 @@ class PaperExecutionAlgorithm:
                     "opened_episode_id": rev["new_episode_id"],
                     "open_quantity": float(rev["open_qty"]),
                 }
-                if rev["old_episode_id"]:
-                    event_metadata["closed_trade_episode_id"] = rev["old_episode_id"]
                 if rev["new_episode_id"]:
                     event_metadata["trade_episode_id"] = rev["new_episode_id"]
             elif self._last_fill_episode_id:
