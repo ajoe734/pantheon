@@ -69,16 +69,17 @@
       }
     },
     "changes": [
-      "scripts/deploy_nonprod_vm.sh: moved wait_for_bounded_source_refresh_service inside the bounded_services loop so source-ingest-scheduler finishes before source-ingest-agora-projector starts; fixed cleanup on ordinary readback failure/return under set -euo pipefail by executing restore_bounded_source_refresh in local scope where steady_env, running_image_id, bounded_containers, and steady_ids are available; guarded bounded_containers and steady_ids array expansions against unbound variables; restarted steady scheduler and removed named bounded containers while preserving failing exit code with cumulative net line growth +2 (within <=12 budget relative to 714)",
-      "scripts/test_dev_tw_market_refresh.py: updated docker stub to support docker_start logging and custom agora projection; updated _deploy_script_without_readback needle; added _deploy_script_with_readback helper; added 4 regression tests verifying sequential phase wait ordering, run 38240659167 causal defect rejection by readback gate, readback failure cleanup restarting steady scheduler and removing bounded containers without unbound variable errors, and failed one-shot cleanup"
+      "scripts/deploy_nonprod_vm.sh: moved wait_for_bounded_source_refresh_service inside the bounded_services loop so source-ingest-scheduler finishes before source-ingest-agora-projector starts; declared steady_env, running_image_id, steady_ids, and bounded_containers in script scope so they are preserved across errexit, raw Docker launch failures, readback failure, and SIGTERM/INT cleanup; execute restore_bounded_source_refresh to cleanly restart steady scheduler, remove named bounded containers, restore runtime egress to deny, and preserve failing return/exit codes with cumulative net line growth +2 (within <=12 budget relative to 714)",
+      "scripts/test_dev_tw_market_refresh.py: updated docker stub to support docker_start logging and custom agora projection; updated _deploy_script_without_readback needle; added _deploy_script_with_readback helper; added 5 regression tests verifying sequential phase wait ordering, run 38240659167 causal defect rejection by readback gate, readback failure cleanup restarting steady scheduler and removing bounded containers without unbound variable errors, failed one-shot cleanup, and raw Docker compose launch failure restoration (exit 42)"
     ],
     "verification": {
-      "scripts/test_dev_tw_market_refresh.py": "39 passed",
+      "scripts/test_dev_tw_market_refresh.py": "40 passed",
       "regression_tests": [
         "test_bounded_refresh_phase_ordering_waits_for_scheduler_before_projector_launch (sequential execution: scheduler finishes before projector launch)",
         "test_bounded_refresh_reproduces_run38240659167_causal_defect_concurrent_projector_rejected_by_readback (premature projector rejected by binding gate)",
         "test_bounded_refresh_failed_readback_restores_steady_scheduler_and_removes_bounded_containers (local-scope failure cleanup restarts steady scheduler, removes bounded containers, preserves failing exit code, eliminates unbound variable error)",
-        "test_bounded_refresh_failed_one_shot_restores_steady_scheduler (one-shot failure cleanly restores steady scheduler and removes bounded containers)"
+        "test_bounded_refresh_failed_one_shot_restores_steady_scheduler (one-shot failure cleanly restores steady scheduler and removes bounded containers)",
+        "test_bounded_refresh_launch_failure_restores_steady_scheduler_and_removes_bounded_containers (raw Docker launch failure code 42 cleanly restores steady scheduler, removes named bounded containers, and preserves failing return code)"
       ]
     }
   },

@@ -2080,7 +2080,8 @@ execute_bounded_source_refresh_entrypoint() {
       ;;
   esac
 
-  local refresh_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" steady_env="$(mktemp)"
+  local refresh_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  steady_env="$(mktemp)" running_image_id="" steady_ids=() bounded_containers=()
   PANTHEON_DEV_COMPOSE_PROFILES="root,source-ingest-scheduler" \
   PANTHEON_EXTERNAL_EGRESS="allowlist" \
   PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw" \
@@ -2102,13 +2103,12 @@ execute_bounded_source_refresh_entrypoint() {
   fi
 
   local bounded_services=(source-ingest-scheduler source-ingest-agora-projector) bounded_service
-  local bounded_containers=()
   SOURCE_INGEST_BOUNDED_CONTAINER_PREFIX="pantheon-bounded-refresh"
   for bounded_service in "${bounded_services[@]}"; do
     bounded_containers+=("${SOURCE_INGEST_BOUNDED_CONTAINER_PREFIX}-${bounded_service}")
   done
 
-  local cid running_image_id compose_image_id
+  local cid compose_image_id; running_image_id=""
   cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null || true)"
   [[ -n "$cid" ]] || error "running source-ingest container not found"
   running_image_id="$(docker inspect --format '{{.Image}}' "$cid" 2>/dev/null || true)"
@@ -2120,7 +2120,7 @@ execute_bounded_source_refresh_entrypoint() {
   docker inspect --format '{{json .Config.Env}}' "$cid" > "${steady_env}"
 
   # Deploy-time values (tenant, GIT_SHA, ...) only exist on the steady scheduler container.
-  local steady_ids=() steady_id steady_scheduler_env
+  local steady_id steady_scheduler_env; steady_ids=()
   for bounded_service in "${bounded_services[@]}"; do
     steady_id="$(docker compose -p pantheon -f docker-compose.yml ps -a -q "${bounded_service}" 2>/dev/null || true)"
     [[ -n "${steady_id}" ]] && steady_ids+=("${steady_id}")
@@ -2165,10 +2165,8 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
         docker compose -p pantheon -f docker-compose.yml up -d --no-deps --no-build source-ingest >/dev/null 2>&1 || true
     fi
     # Only the named one-shot containers are removed; steady scheduler/projector are never touched.
-    if [[ "${bounded_containers+x}" == "x" ]] && (( ${#bounded_containers[@]} )); then
-      docker rm -f "${bounded_containers[@]}" >/dev/null 2>&1 || true
-    fi
-    if [[ "${steady_ids+x}" == "x" ]] && (( ${#steady_ids[@]} )); then
+    (( ${#bounded_containers[@]} )) && docker rm -f "${bounded_containers[@]}" >/dev/null 2>&1 || true
+    if (( ${#steady_ids[@]} )); then
       docker start "${steady_ids[@]}" >/dev/null 2>&1 || rc=$?
     fi
     rm -f "${steady_env:-}"

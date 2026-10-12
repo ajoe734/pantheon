@@ -1713,4 +1713,82 @@ def test_bounded_refresh_failed_one_shot_restores_steady_scheduler(tmp_path: Pat
     assert "cid-source-ingest-scheduler" in started_names
 
 
+def test_bounded_refresh_launch_failure_restores_steady_scheduler_and_removes_bounded_containers(tmp_path: Path):
+    # Regression for launch failure / raw errexit (exit code 42) before container starts:
+    # When docker compose run fails during launch, script-scoped variables ensure
+    # failure cleanup executes completely, restarts steady scheduler, removes named bounded containers,
+    # and preserves the failing return code without unbound variable errors.
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "built_projector_image_id": "sha256:0fedd6c77271dc29bf6425461cac284df85a6454d656e363d67646ec9ee24b2e",
+        "projector_image_sha": "abc123",
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+        "dlq_entries": [],
+    }
+    bin_dir, state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    docker = bin_dir / "docker"
+    delegate = bin_dir / "original-owned-docker-stub"
+    docker.rename(delegate)
+    docker.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os,sys,json\n"
+        "from pathlib import Path\n"
+        "a=sys.argv[1:]\n"
+        'if "run" in a and "--name" in a and "pantheon-bounded-refresh-source-ingest-scheduler" in a:\n'
+        f"    p=Path({repr(str(events_file))})\n"
+        '    p.open("a").write(json.dumps({"event":"QA_owned_scheduler_launch_failed","args":a})+"\\n")\n'
+        "    sys.exit(42)\n"
+        f"os.execv({repr(str(delegate))}, [{repr(str(delegate))}]+a)\n"
+    )
+    docker.chmod(0o755)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+
+    proc = subprocess.run(
+        ["bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--force", "--output", str(output_file)],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode == 42, f"Expected launch failure return code 42, got {proc.returncode}:\n{proc.stdout}\n{proc.stderr}"
+    assert "steady_ids: unbound variable" not in proc.stderr
+    assert not output_file.exists() or json.loads(output_file.read_text()).get("status") != "completed"
+
+    events = [json.loads(line) for line in events_file.read_text().splitlines() if line]
+
+    # Verify launch failure occurred
+    assert any(e.get("event") == "QA_owned_scheduler_launch_failed" for e in events)
+
+    # Verify bounded containers were removed on cleanup
+    rm_events = [e for e in events if e.get("event") == "docker_rm"]
+    assert rm_events, "Named bounded containers must be removed on failure cleanup"
+    removed_names = [name for e in rm_events for name in e.get("names", [])]
+    assert "pantheon-bounded-refresh-source-ingest-scheduler" in removed_names
+    assert "pantheon-bounded-refresh-source-ingest-agora-projector" in removed_names
+
+    # Verify steady scheduler was restarted on cleanup
+    start_events = [e for e in events if e.get("event") == "docker_start"]
+    assert start_events, "Steady scheduler container must be restarted on launch failure"
+    started_names = [name for e in start_events for name in e.get("names", [])]
+    assert "cid-source-ingest-scheduler" in started_names
+
+    # Verify runtime restored to egress deny
+    restore_ups = [
+        e for e in events
+        if e.get("event") == "compose_up"
+        and "source-ingest" in e.get("services", [])
+        and e["env"].get("PANTHEON_EXTERNAL_EGRESS") == "deny"
+    ]
+    assert restore_ups, "Runtime must be restored to egress deny on launch failure cleanup"
+    assert restore_ups[-1]["env"].get("SOURCE_INGEST_CONTROLLER_MODE") == "reconcile_only"
+
+
+
 
