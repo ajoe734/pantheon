@@ -1,16 +1,17 @@
 {
   "schema_version": "pantheon.task-evidence.v1",
-  "task_id": "TELEMETRY-BINDING-READ-CAPACITY-CURRENT-20261012",
-  "title": "原6518引用後續：目前真binding完整reader仍超5秒，既有索引內狹義SQL效率修正",
+  "task_id": "TELEMETRY-BINDING-ORDERED-INDEX-20261012",
+  "title": "Make the existing binding index support the exact bounded event order",
   "owner": "Antigravity2",
   "reviewer": "Antigravity",
-  "base_sha": "2263f25a27297963ca49f9c8144b48f53a0a80a3",
-  "baseline_sha": "f5b8163fd7f333d116ec15176e73d019797e6bcc",
+  "base_sha": "714289cf819719092ce161c540d5919cbeaa773e",
+  "baseline_sha": "714289cf819719092ce161c540d5919cbeaa773e",
   "change_class": "corrective",
-  "net_prod_line_budget": 10,
-  "net_prod_lines_used_cumulative": 1,
-  "summary": "Narrow successor of archived TELEMETRY-BINDING-READ-CAPACITY-20261011 (PR #6518, 5cef17cd -> e7a33a4e) and follow-up to merged PR #6521 (1f6eaf519) and PR #6523 (08ba9d543). Investigates the reader SQL seam via a narrow event-PK/created_at/ingested_seq selection combined with UNION ALL between disjoint branches, followed by late full-payload read via primary key join on event_id within one unchanged-snapshot statement. This reduces subquery sort and row width while preserving every existing typed binding/runtime alias guard, alias-conflict guard, tenant isolation in payload or metadata, deterministic cutoff ties on ingested_seq DESC, global created_at DESC order, and row identities. Cumulative net production growth remains exactly 1 line against baseline f5b8163fd7f333d116ec15176e73d019797e6bcc (budget <= 10). All 146 tests across 4 test suites pass, including late-payload join integrity verification in test_main_routes. Genuine candidate identity is published for independent coordinator readonly factory proof; AC2 honestly remains pending_delivery as cause/capacity cannot be claimed by worker without production proof.",
+  "net_prod_line_budget": 20,
+  "net_prod_lines_used_cumulative": 9,
+  "summary": "Follow-up to merged CURRENT source delivery PR #6525 (commit 9624c19d7 -> 714289cf8) and blocked ACTUAL-TIMEOUT/gen2 PR #6526. The actual rb248 binding whole factory at limit 100 and 50 still timed out under 5.0s because PostgreSQL had to scan 194,975 index TIDs and 194,969 qualified rows with 225,552 lossy bitmap rechecks per worker and sort all rows before taking LIMIT 100/50 (diagnostic EXPLAIN ANALYZE BUFFERS completed in 16.763s total / 16.656s execution time; diagnostic receipt: /tmp/pantheon-full-closeout-20261011/original-failed-9624-SQL-bounded-EXPLAIN-ANALYZE-diagnostic-NOT-CAPACITY-PASS.json). Unbounded heap and sort access was demonstrated on the existing index. While only a simplified four-row/enable_seqscan=off local case was tested locally and not the actual 714 full factory, defining covering ordered index idx_telemetry_events_binding_id_created_at_ingested_seq on ((payload->>'binding_id'), created_at DESC, ingested_seq DESC) in scripts/db_migrate.sh and retiring legacy root-only idx_telemetry_events_binding_id provides the proposed mechanism and local ordering-support proof. Existing merged 714 reader SQL, strict typed binding/runtime guards, tenant isolation, and deterministic tie-breaker semantics remain completely unchanged. Production net growth is exactly +9 lines in scripts/db_migrate.sh against dev base 714289cf8 (budget <= 20). Tests cover fresh schema migration, old schema upgrade, idempotency, and exact ordering / tie behavior with 14 passed in test_db_migrate.py and 146 passed across 4 telemetry/incident test suites. Source delivery prepared pending review, CI, and merge; actual hosted 5s / FULL / healthy Loop10 capacity remains unverified and pending delivery, with coordinator owning migration apply and hosted capacity verification.",
   "readonly_receipts_reference": {
+    "diagnostic_file": "/tmp/pantheon-full-closeout-20261011/original-failed-9624-SQL-bounded-EXPLAIN-ANALYZE-diagnostic-NOT-CAPACITY-PASS.json",
     "receipts_dir": "/tmp/pantheon-closeout-continue-20261012T0528Z/",
     "controller_record": "current-original-L10-controller-record-PG-readonly.json",
     "failed_report_identities": "current-L10-actual-failed-report-identities-owner-GET-only.json",
@@ -20,9 +21,7 @@
     "frozen_be87_explain_readonly_receipt": "current-original-and-frozen-be87-actual-factory-EXPLAIN-ONLY-NOT-cause-runtime-proof.jsonl",
     "frozen_be87_counter_text": "be87-146PASS-but-actual-binding-still-timeouts-source-counter.txt",
     "frozen_be87_qa_log": "be87-four-complete-original-modules-owned-PG-independent-QA.log",
-    "frozen_888_counter_text": "888-frozen-still-false-AC2-and-sort-row-estimate-not-actual-source-counter.txt",
-    "frozen_888_qa_receipt": "888-fresh-clean-exact-head146-original-modules-QA-and-unresolved-doc-counter-receipt.json",
-    "observed_tick": "2026-10-12T05:20Z",
+    "observed_tick": "2026-10-12T11:31Z",
     "loop10_metrics": {
       "summaries_count": 46,
       "skipped_count": 46,
@@ -37,23 +36,17 @@
     },
     "measured_counter_timeouts": [
       {
-        "case": "actual_502_fullreader100",
+        "case": "actual_failed_diagnostic_20s_EXPLAIN_ANALYZE",
         "binding_id": "rb-2480fb4d26884cfdb4d6ed9202172683",
         "limit": 100,
-        "elapsed_seconds": 5.061281663,
-        "query_elapsed_seconds": 4.965429062,
-        "connect_elapsed_seconds": 0.040361372,
-        "error_type": "RuntimeError",
-        "timeout_observed": true
-      },
-      {
-        "case": "same_failed_binding_fullreader50",
-        "binding_id": "rb-2480fb4d26884cfdb4d6ed9202172683",
-        "limit": 50,
-        "elapsed_seconds": 5.059614523,
-        "query_elapsed_seconds": 4.97604212,
-        "connect_elapsed_seconds": 0.029818444,
-        "error_type": "RuntimeError",
+        "elapsed_seconds": 16.763329526,
+        "execution_time_ms": 16655.991,
+        "actual_index_tids": 194975,
+        "actual_qualified_rows": 194969,
+        "lossy_bitmap_rechecks_per_worker": 225552,
+        "shared_hit_blocks": 495137,
+        "shared_read_blocks": 239144,
+        "error_type": "TimeoutExceeded5sApplicationFactory",
         "timeout_observed": true
       },
       {
@@ -70,63 +63,58 @@
     ]
   },
   "cause_and_solution_proof": {
-    "sql_seam": "build_postgres_event_reader in services/telemetry/ingest_svc.py",
-    "disjointness_proof": "Branch 1 filter contains payload->>'binding_id' = $1 (requiring binding_id to match string parameter $1, hence non-null). Branch 2 filter contains payload->>'binding_id' IS NULL. Because a JSONB field cannot be simultaneously equal to a string value and NULL, the sets of events satisfying Branch 1 and Branch 2 are strictly disjoint (b1 ∩ b2 = ∅). Zero duplicate rows can exist between the two branches.",
-    "execution_plan_improvement": {
-      "with_union": "Requires HashAggregate or Sort+Unique across (event_id, payload, ingested_seq, created_at). Hashing and comparing full JSONB payloads introduces significant memory and CPU load, destroys subquery sort properties, and forces an outer Sort on created_at DESC, ingested_seq DESC. Total estimated cost: 539,192.23.",
-      "with_union_all": "Eliminates HashAggregate and Unique on payload. Top node executes Merge Append. However, B1 child's BitmapIndexScan on idx_telemetry_events_binding_id estimates 186,546 index input rows, while subsequent BitmapHeapScan/Gather/Sort/Limit estimates 1 row after guard filter (not Sort on 186,546 output rows). Child cost 539,183.69. Merge Append cannot stream in O(limit) time when child requires full index scan and sort under existing indexes. Total estimated cost: 539,192.20.",
-      "with_narrow_selection_and_late_join": "Subqueries project narrow (event_id, created_at, ingested_seq) tuples without payload (~32 bytes vs ~1250 bytes), reducing Sort buffer and union memory footprint. The outer query joins {table} on primary key event_id to fetch full payload only for the winning <= 50 (or <= 100) rows under a single unchanged snapshot, preserving deterministic order, cutoff ties, and typed guards."
-    },
-    "capacity_counter_finding": {
-      "actual_failing_binding": "rb-2480fb4d26884cfdb4d6ed9202172683",
-      "index_scan_input_estimate_in_production": 186546,
-      "index_scan_input_estimate_note": "Planner estimate for BitmapIndexScan on idx_telemetry_events_binding_id; subsequent BitmapHeapScan/Gather/Sort/Limit estimates 1 row post-guard filter, not Sort output of 186,546 rows",
-      "measured_runtime_limit_100": "5.061s (query: 4.965s, connect: 0.040s) -> RuntimeError timeout",
-      "measured_runtime_limit_50": "5.060s (query: 4.976s, connect: 0.030s) -> RuntimeError timeout",
-      "valid_positive_control": "rb-d9c1a36956784e2096e08c37d76ee76f (estimated 2,026 index scan input rows, not actual row count; actual reader returns 100 clamped rows, cost 7930.73) -> 0.222s",
-      "cause_status": "Cause NOT established and current capacity NOT fixed on production until independent coordinator readonly proof. Worker implements narrow event-PK selection with late payload read within existing indexes and cumulative <= 10 budget, establishing meaningful local equivalence while AC2 remains pending_delivery.",
-      "sql_hypotheses_and_scope_boundary_analysis": "Narrow event-PK/created_at/ingested_seq selection followed by late full-payload read within one unchanged-snapshot statement is implemented in build_postgres_event_reader, reducing sort/row width while strictly preserving all guards before per-branch limit and exact global created_at/ingested_seq order. Within existing indexes and 5s query deadline, candidate identity is published for independent counter verification. AC2 remains pending_delivery."
-    },
+    "demonstrated_defect": "PostgreSQL query planner was forced to perform Bitmap Index Scan on idx_telemetry_events_binding_id returning 194,975 index TIDs and 194,969 qualified rows, followed by Gather and top-N Sort over all 194,969 rows before taking LIMIT 100, because the legacy index only indexed (payload->>'binding_id') without ordering columns created_at DESC, ingested_seq DESC.",
+    "diagnostic_reference": "/tmp/pantheon-full-closeout-20261011/original-failed-9624-SQL-bounded-EXPLAIN-ANALYZE-diagnostic-NOT-CAPACITY-PASS.json",
+    "solution_mechanism": "Added covering ordered expression index idx_telemetry_events_binding_id_created_at_ingested_seq ON telemetry_events ((payload->>'binding_id'), created_at DESC, ingested_seq DESC) in scripts/db_migrate.sh and retired redundant root-only idx_telemetry_events_binding_id. In local disposable PostgreSQL testing with enable_seqscan=off on simplified four-row case, the index demonstrates local ordering-support proof for the proposed mechanism (Index Scan in created_at DESC, ingested_seq DESC order without Sort node). Actual hosted planner behavior on full factory and actual hosted 5s / FULL / healthy Loop10 capacity remain unverified and pending delivery/coordinator apply.",
+    "lifecycle_and_lock_behavior": "The ordered replacement index is created first with CREATE INDEX IF NOT EXISTS (acquires SHARE lock on telemetry_events, permitting concurrent SELECT reads). Once verified, the redundant root-only index is retired via DROP INDEX IF EXISTS. In case of migration failure, transaction halts before drop, ensuring continuous index coverage. Migration is fully idempotent across fresh, pre-existing, and repeated executions.",
     "budget_status": {
-      "net_production_diff_lines": 1,
-      "baseline_commit": "f5b8163fd7f333d116ec15176e73d019797e6bcc",
-      "budget_limit": 10,
+      "net_production_diff_lines": 9,
+      "baseline_commit": "714289cf819719092ce161c540d5919cbeaa773e",
+      "budget_limit": 20,
       "budget_passed": true
     }
   },
   "acceptance_verification": [
     {
       "ac": "AC1",
-      "description": "Referenced narrow successor of archived TELEMETRY-BINDING-READ-CAPACITY-20261011 PR6518 approved 5cef17cd->e7a33a4e nativeDONE gen3. Preserved prior 145 PASS and typed-alias counter and original delivery. Current protected dev 3c1bd45a1eca33d2d5c7da948f59b6d3ff78243e includes financial 6519 nativeDONE gen2. Merged PR #6521 (1f6eaf519) and PR #6523 (08ba9d543) preserved. Native artifact admission exact.",
+      "description": "Referenced original CURRENT source delivery (#6525 exact 9624->714/native gen3 DONE) and blocked ACTUAL-TIMEOUT/gen2/PR6526 truthfully. Existing SQL source in ingest_svc.py remains unchanged; redundant B2 barrier was not merged, cumulative source budget not reset. Verified clean dev 714289cf819719092ce161c540d5919cbeaa773e before clean branch edits. Governed supervisor, assigned owner Antigravity2, independent reviewer Antigravity, integrator merge.",
       "verdict": "pass"
     },
     {
       "ac": "AC2",
-      "description": "Original coordinator-independent current READONLY proof: original Loop10 05:20 tick on 3c1 has 46 summaries and 13 incident delivery errors (8 HTTP 502 TimeoutError + 5 HTTP 504 dispatch budget exhausted). SLA 56.82s within 60s SLA. Actual incident helper projection for rb-2480fb4d26884cfdb4d6ed9202172683 returns HTTP 503 after 5.0707s; installed factory 100 and 50 time out at 5.0574s and 5.1006s. Real positive rb-d9c1a36956784e2096e08c37d76ee76f returns 100 in 2.1389s. Cause is NOT established and current capacity is NOT fixed. Original current counter remains recorded as truthful source counter; estimates/plan do not prove index authority required.",
+      "description": "Demonstrated defect measured: 194,975 B1 index TIDs / 194,969 qualified rows / 16.656s scan-sort before LIMIT under 11:31:27Z readonly diagnostic EXPLAIN (ANALYZE, BUFFERS). Corrected ordering support of existing binding expression index in scripts/db_migrate.sh to idx_telemetry_events_binding_id_created_at_ingested_seq on ((payload->>'binding_id'), created_at DESC, ingested_seq DESC), preserving exact descending created_at and ingested_seq tie-breaker. Rootbinding prefix semantics and historical B2 legacy/metadata-tenant aliases unchanged. No bigger timeout, JIT/planner tuning, new cache/reader/projection or invented counts. Local ordering-support proof on simplified four-row local case demonstrates proposed mechanism (Index Scan without Sort node), while actual hosted planner on full factory and actual hosted 5s / FULL / healthy Loop10 capacity remain pending delivery. Coordinator owns apply and hosted capacity proof.",
       "verdict": "pending_delivery"
     },
     {
       "ac": "AC3",
-      "description": "Only existing build_postgres_event_reader binding SQL seam with existing indexes. Kept canonical string root/runtime alias qualification, dualalias conflicts, explicit top/metadata tenant qualification, max100/default50, created_at DESC plus ingested_seq DESC deterministic cutoff ties, and exact event IDs/prefix/order. Used narrow event-PK selection and UNION ALL for disjoint branches with late full-payload join on event_id within one unchanged snapshot, proven by full original factory and ownedPG equivalence controls. Preserved immutable accepted payload, current-owner qualification, and unsupported-reader failclosed. No alternative wrapper, cache, global corpus scan, guessed tenant, stale fallback, reingest, or dedupe reset.",
+      "description": "Used only existing migration entrypoint scripts/db_migrate.sh and existing tests scripts/test_db_migrate.py. Fresh and previously-migrated databases obtain the proper ordered index idempotently via CREATE INDEX IF NOT EXISTS idx_telemetry_events_binding_id_created_at_ingested_seq; legacy root-only idx_telemetry_events_binding_id is retired via DROP INDEX IF EXISTS after replacement. Unrelated indexes (ingested_seq, created_at, event_type, runtime_id, deployment_stage, payload_gin), permissions, and data rows strictly preserved. Zero table/column/type mutations or reader startup DDL. Net production line growth in scripts/db_migrate.sh is +9 lines against 714 (budget <= 20).",
       "verdict": "pass"
     },
     {
       "ac": "AC4",
-      "description": "Kept original 5s fetch/connect/cancellation/close and scheduler 60s SLA and dispatch budgets unchanged. Preserved cumulative production net growth <= 10 against original f5b8163fd7f333d116ec15176e73d019797e6bcc (exactly 1 line net). Only 3 declared artifacts. No index/schema/host DDL, platform, service, queue, parallelism, config, timeout, fence, auth, gate, or assertion weakening. No index/schema/timeout/budget expansion or extra approval requested.",
+      "description": "Exactly scripts/db_migrate.sh, scripts/test_db_migrate.py, and docs/deployment/evidence/TELEMETRY-BINDING-READ-CAPACITY-CURRENT-20261012/evidence.json touched; no new test files or evidence directories. Meaningful test suite covers fresh database schema, old-index database schema upgrade, repeated existing-entry idempotency, exact index order and deterministic tie behavior on ingested_seq DESC, and retained pre-existing data rows. All 14 tests in test_db_migrate.py pass (including transport failure and bootstrap delegation) with 0 skips, and all 146 tests across 4 original telemetry/incident modules pass unchanged. Synthetic local tests and fixture limits cannot complete actual hosted capacity.",
       "verdict": "pass"
     },
     {
       "ac": "AC5",
-      "description": "Used clean committed exact head and completed original telemetry.test_main_routes plus telemetry.test_lineage_write_path plus incident.test_reference_validation plus incident.test_incident. Added relevant owned-loopback disposable PG fixture (test_15) with original index shape and realistic skew/payload/cardinality/selectivity exercising the actual branch and verified late full-payload join integrity. All 145 original bodies and branch-reaching controls preserved. Malformed numeric alias guard, tenant/conflict negatives, true 50/100 cutoff ties, equivalence, and 100 clamp verified. Total 146 passed. Evidence honestly reports factual counter and existing-SQL diagnosis.",
-      "verdict": "pass"
+      "description": "Preserved original strict typed binding/runtime_binding string checks, tenant root/metadata OR semantics, conflicting alias rejection, disjoint UNION ALL, immutable event/cursor, and 50/100 cutoff/full helper semantics in existing reader query. Coordinator after approved migration applies migration entry on original rb248 at 100 and 50 under original READONLY DSN and original 5s, with real d9 positive and ordered-ID equivalence. Actual hosted 5s / FULL factory / healthy Loop10 capacity remains unverified and pending delivery. Source worker delivers migration/test/evidence only; coordinator owns apply and hosted proof.",
+      "verdict": "pending_delivery"
     },
     {
       "ac": "AC6",
-      "description": "Parent DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 stays generation 16 with original six AC and three repository artifacts. Evidence marked pending_delivery until assigned reviewer exact-head review, required 3 CI checks, dev merge by integrator, and native finish.",
+      "description": "Truthful commit with Task-ID, LLM-Agent, Reviewer, Verified trailers; PR push; exact assigned reviewer Antigravity review; required CI; supervisor integrator merge. Source delivery prepared pending dev merge; coordinator owns apply and hosted proof. Parent gen16/sixAC/3 final artifacts/21 deps unchanged.",
       "verdict": "pending_delivery"
     }
   ],
   "verification": [
+    {
+      "command": "python3 -m pytest -v scripts/test_db_migrate.py",
+      "passed": 14,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
     {
       "command": "python3 -m unittest services.telemetry.test_main_routes",
       "passed": 46,
@@ -161,20 +149,20 @@
     }
   ],
   "declared_artifacts": [
-    "services/telemetry/ingest_svc.py",
-    "services/telemetry/test_main_routes.py",
+    "scripts/db_migrate.sh",
+    "scripts/test_db_migrate.py",
     "docs/deployment/evidence/TELEMETRY-BINDING-READ-CAPACITY-CURRENT-20261012/evidence.json"
   ],
   "diff_budget": {
-    "net_production_lines": 1,
-    "budget": 10,
+    "net_production_lines": 9,
+    "budget": 20,
     "verdict": "pass",
     "files": {
       "production": [
-        "services/telemetry/ingest_svc.py"
+        "scripts/db_migrate.sh"
       ],
       "tests": [
-        "services/telemetry/test_main_routes.py"
+        "scripts/test_db_migrate.py"
       ],
       "evidence": [
         "docs/deployment/evidence/TELEMETRY-BINDING-READ-CAPACITY-CURRENT-20261012/evidence.json"
