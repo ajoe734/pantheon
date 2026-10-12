@@ -501,7 +501,7 @@ def _project_job_trainer_preview(
                 }
             },
         )
-    st = str(job.get("status") or "queued").strip().lower()
+    st = str(job.get("status") or "").strip().lower()
     if st not in ("queued", "running", "failed"):
         return None
     job_id, eval_id = str(job["job_id"]).strip(), str(job["eval_id"]).strip()

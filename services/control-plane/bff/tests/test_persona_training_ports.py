@@ -547,11 +547,11 @@ class TestTrainingSessionHttpStoreUnit:
                         },
                     })
                 elif self.path.startswith("/api/training/sessions/trn-failed/preview-jobs"):
-                    self._send_json(200, {"eval_id": "teval-failed-002", "job_id": "job-failed-2"})
+                    self._send_json(200, {"eval_id": "teval-failed-002", "job_id": "job-failed-2", "status": "queued"})
                 elif self.path.startswith("/api/training/sessions/trn-new/preview-jobs"):
-                    self._send_json(200, {"eval_id": "teval-new-001", "job_id": "job-new-1"})
+                    self._send_json(200, {"eval_id": "teval-new-001", "job_id": "job-new-1", "status": "queued"})
                 elif self.path.startswith("/api/training/sessions/trn-1/preview-jobs"):
-                    self._send_json(200, {"eval_id": "teval-job-1", "job_id": "job-123"})
+                    self._send_json(200, {"eval_id": "teval-job-1", "job_id": "job-123", "status": "queued"})
                 elif self.path.startswith("/api/training/sessions/trn-malformed/preview-jobs"):
                     self._send_json(200, {"status": "queued"})
                 elif self.path.startswith("/api/training/replays/trn-1/commit"):
