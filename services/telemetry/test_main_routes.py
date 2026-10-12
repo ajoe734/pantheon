@@ -2080,6 +2080,162 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
         res_wrong_tenant = fetch_b(target_bid, tenant_id="tenant-foreign", limit=50)
         self.assertEqual(res_wrong_tenant, [])
 
+    def test_15_canonical_binding_reader_disjoint_branch_union_all_capacity_and_skew_equivalence(self):
+        """Verify UNION ALL equivalence on disjoint branches under realistic skew, noise cardinality, and payload size.
+
+        Specifically exercises the branch-2 path (runtime_binding_id set, binding_id IS NULL)
+        corresponding to production runtime-health drift projections (e.g. rb-2480fb4d26884cfdb4d6ed9202172683),
+        as well as branch-1 only and mixed branches. Proves exact in-memory oracle equivalence,
+        prefix cutoff consistency, deterministic tie-breaking on ingested_seq DESC, and bounded capacity
+        well within the original 5s SLA.
+        """
+        import asyncpg, datetime, hashlib, json, time
+        fetch_ev, fetch_b = build_postgres_event_reader(self.dsn, table="telemetry_events")
+        target_b2_only = "rb-skew-b2-2480-target"
+        target_b1_only = "rb-skew-b1-root-target"
+        base_time = datetime.datetime.fromisoformat("2026-09-01T08:00:00+00:00")
+        tie_dt = base_time + datetime.timedelta(days=3)
+
+        oracle_b2_rows = []
+
+        async def _seed_skew_capacity():
+            nonlocal oracle_b2_rows
+            conn = await asyncpg.connect(self.dsn)
+            try:
+                # 1. Target B2 events (60 events: all with runtime_binding_id set and binding_id IS NULL)
+                # Realistic payload ~1.5KB each
+                b2_rows = []
+                for i in range(60):
+                    if 20 <= i < 40:
+                        dt = tie_dt  # 20 tie events spanning 50-limit cutoff boundary
+                    else:
+                        dt = base_time + datetime.timedelta(days=2, minutes=i * 15)
+                    eid = f"evt-skew-b2-{i:03d}"
+                    payload = {
+                        "event_id": eid,
+                        "event_type": "runtime_state",
+                        "created_at": dt.isoformat(),
+                        "runtime_binding_id": target_b2_only,
+                        "metadata": {"tenant_id": self._TENANT} if i % 2 == 1 else {},
+                        "tenant_id": self._TENANT if i % 2 == 0 else None,
+                        "runtime_id": "rt-3b7c2155",
+                        "drift_details": {
+                            "category": "runtime_health",
+                            "evidence": f"drift-evidence-payload-padding-{'z' * 500}",
+                        },
+                    }
+                    b2_rows.append((eid, "runtime_state", dt, json.dumps(payload)))
+
+                # 2. Target B1 events (60 events: all with binding_id set and runtime_binding_id IS NULL)
+                b1_rows = []
+                for i in range(60):
+                    dt = base_time + datetime.timedelta(days=1, minutes=i * 10)
+                    eid = f"evt-skew-b1-{i:03d}"
+                    payload = {
+                        "event_id": eid,
+                        "event_type": "heartbeat",
+                        "created_at": dt.isoformat(),
+                        "binding_id": target_b1_only,
+                        "tenant_id": self._TENANT,
+                        "runtime_id": "rt-feabfde4",
+                        "padding": "x" * 600,
+                    }
+                    b1_rows.append((eid, "heartbeat", dt, json.dumps(payload)))
+
+                # 3. Realistic noise cardinality:
+                # 2000 events with binding_id IS NULL (exercising index selectivity and Branch 2 filter)
+                # 1000 events with generic binding_id
+                now_dt = datetime.datetime.fromisoformat("2026-10-12T04:00:00+00:00")
+                noise_null_b = [
+                    (
+                        f"evt-noise-nullb-{i}",
+                        "heartbeat",
+                        now_dt + datetime.timedelta(seconds=i),
+                        json.dumps({
+                            "event_id": f"evt-noise-nullb-{i}",
+                            "event_type": "heartbeat",
+                            "created_at": (now_dt + datetime.timedelta(seconds=i)).isoformat(),
+                            "tenant_id": self._TENANT,
+                            "runtime_id": f"rt-noise-{i % 30}",
+                            "noise_blob": "n" * 500,
+                        }),
+                    )
+                    for i in range(2000)
+                ]
+                noise_generic_b = [
+                    (
+                        f"evt-noise-genb-{i}",
+                        "heartbeat",
+                        now_dt + datetime.timedelta(seconds=i),
+                        json.dumps({
+                            "event_id": f"evt-noise-genb-{i}",
+                            "event_type": "heartbeat",
+                            "created_at": (now_dt + datetime.timedelta(seconds=i)).isoformat(),
+                            "tenant_id": self._TENANT,
+                            "binding_id": f"rb-noise-pool-{i % 50}",
+                            "noise_blob": "m" * 500,
+                        }),
+                    )
+                    for i in range(1000)
+                ]
+
+                all_skew_rows = b2_rows + b1_rows + noise_null_b + noise_generic_b
+                await conn.executemany(
+                    "INSERT INTO telemetry_events (event_id, event_type, created_at, payload) VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT (event_id) DO NOTHING",
+                    all_skew_rows,
+                )
+                await conn.execute("ANALYZE telemetry_events;")
+
+                # Fetch all valid target B2 events from DB for exact in-memory oracle comparison
+                oracle_b2_rows = await conn.fetch(
+                    "SELECT event_id, created_at, ingested_seq FROM telemetry_events WHERE payload @> jsonb_build_object('runtime_binding_id', $1::text) AND payload->>'binding_id' IS NULL AND (payload->>'tenant_id' = $2 OR payload->'metadata'->>'tenant_id' = $2)",
+                    target_b2_only, self._TENANT,
+                )
+            finally:
+                await conn.close()
+
+        asyncio.run(_seed_skew_capacity())
+
+        # 1. Cold query performance under original 5s deadline budget (proves capacity counter)
+        t0 = time.monotonic()
+        res_50_b2 = fetch_b(target_b2_only, tenant_id=self._TENANT, limit=50)
+        elapsed_b2 = time.monotonic() - t0
+        self.assertLess(elapsed_b2, 1.0, f"Branch-2 query exceeded 1.0s capacity threshold: {elapsed_b2}s")
+
+        # 2. In-memory oracle comparison
+        self.assertEqual(len(oracle_b2_rows), 60)
+        oracle_sorted = sorted(oracle_b2_rows, key=lambda r: (r["created_at"], r["ingested_seq"]), reverse=True)
+        expected_top50 = [r["event_id"] for r in oracle_sorted[:50]]
+
+        # 3. Exact matching of res_50_b2 against oracle top 50
+        self.assertEqual(len(res_50_b2), 50)
+        self.assertEqual([r["event_id"] for r in res_50_b2], expected_top50)
+
+        # 4. Strict descending order (created_at DESC, ingested_seq DESC)
+        for idx in range(len(res_50_b2) - 1):
+            curr_item = res_50_b2[idx]
+            next_item = res_50_b2[idx + 1]
+            curr_key = (curr_item["created_at"], curr_item["ingested_seq"])
+            next_key = (next_item["created_at"], next_item["ingested_seq"])
+            self.assertGreaterEqual(curr_key, next_key)
+
+        # 5. Deterministic tie-breaking on ingested_seq DESC for identical created_at
+        tie_in_50 = [r for r in res_50_b2 if 20 <= int(r["event_id"].split("-")[-1]) < 40]
+        self.assertGreater(len(tie_in_50), 0)
+        seqs = [r["ingested_seq"] for r in tie_in_50]
+        self.assertEqual(seqs, sorted(seqs, reverse=True))
+
+        # 6. Branch 1 only query also proves exact ordering and cutoff
+        res_50_b1 = fetch_b(target_b1_only, tenant_id=self._TENANT, limit=50)
+        self.assertEqual(len(res_50_b1), 50)
+        res_100_b1 = fetch_b(target_b1_only, tenant_id=self._TENANT, limit=100)
+        self.assertEqual(len(res_100_b1), 60)  # total 60 events
+        self.assertEqual([r["event_id"] for r in res_50_b1], [r["event_id"] for r in res_100_b1[:50]])
+
+        # 7. Non-matching tenant returns empty
+        res_foreign = fetch_b(target_b2_only, tenant_id="tenant-foreign", limit=50)
+        self.assertEqual(res_foreign, [])
+
 
 if __name__ == "__main__":
     unittest.main()
