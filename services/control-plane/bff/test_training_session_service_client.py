@@ -9,6 +9,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -1116,7 +1117,106 @@ def test_default_production_factory_live_owner_roundtrip(live_training_session_s
         owner_jobs_after = [j for j in training_service.store.list_preview_jobs() if j.get("session_id") == session_id]
         assert len(owner_jobs_after) == 1
 
-        # 6b. Original negative / failure distinctions:
+        # 6b. Native worker route POST /api/training/preview-jobs/{job_id}/run with legitimate lab worker JWT/header:
+        # Candidate controls have not changed, so native admission rejects candidate controls before compute
+        worker_jwt = encode_jwt_hs256(
+            {
+                "sub": "training-session-preview-worker",
+                "service": "training-session-preview-worker",
+                "tenant_ids": ["tenant-live"],
+                "roles": ["training-service"],
+                "iss": "pantheon-dev",
+                "aud": "bff-operators",
+                "exp": time.time() + 3600,
+            },
+            secret=os.environ.get("TRAINING_SESSION_JWT_SECRET", "owned-original-training-inbound-test-secret-only"),
+        )
+        worker_headers = {
+            "Authorization": f"Bearer {worker_jwt}",
+            "X-Tenant-Id": "tenant-live",
+            "X-Pantheon-Service": "training-session-preview-worker",
+            "Content-Type": "application/json",
+        }
+        worker_req = urllib.request.Request(
+            f"{base_url}/api/training/preview-jobs/{preview['job_id']}/run",
+            data=b"{}",
+            headers=worker_headers,
+            method="POST",
+        )
+        with urllib.request.urlopen(worker_req) as run_resp:
+            assert run_resp.status == 200
+            run_data = json.loads(run_resp.read().decode())
+            assert run_data["status"] == "failed"
+            assert run_data["error_code"] == "evaluation_admission_rejected"
+            assert run_data["failure_reason"] == "candidate controls do not contain an effective change"
+            assert run_data["retryable"] is False
+
+        # 6c. Fresh BFF readback of failed preview:
+        # Port and router truthfully propagate failed job identity, error code, reason, and warnings
+        failed_preview = ports.get_trainer_preview(session_id, session_status="active")
+        assert failed_preview is not None
+        assert failed_preview["status"] == "failed"
+        assert failed_preview["job_id"] == preview["job_id"]
+        assert failed_preview["eval_id"] == preview["eval_id"]
+        assert failed_preview["owner_job_ref"] == {"job_id": preview["job_id"], "eval_id": preview["eval_id"]}
+        assert failed_preview["error_code"] == "evaluation_admission_rejected"
+        assert failed_preview["failure_reason"] == "candidate controls do not contain an effective change"
+        assert failed_preview["allowedActions"]["canRefreshPreview"] is True
+        assert failed_preview["polling"]["enabled"] is False
+        assert len(failed_preview["warnings"]) == 1
+        assert failed_preview["warnings"][0]["level"] == "high"
+        assert failed_preview["warnings"][0]["message"] == "candidate controls do not contain an effective change"
+        assert failed_preview["warning_count_by_level"]["high"] == 1
+        assert failed_preview["preview_quality"] == "insufficient_data"
+        assert failed_preview["meta"]["surfaces"]["trainer_preview"] == "degraded"
+
+        # Reread via fresh store instance also propagates failure truthfully
+        fresh_failed = fresh_store.get_trainer_preview(session_id, session_status="active")
+        assert fresh_failed is not None
+        assert fresh_failed["status"] == "failed"
+        assert fresh_failed["job_id"] == preview["job_id"]
+        assert fresh_failed["error_code"] == "evaluation_admission_rejected"
+
+        # Lookup by eval_id propagates failed preview
+        by_eval = ports.get_trainer_preview(session_id, eval_id=preview["eval_id"], session_status="active")
+        assert by_eval is not None
+        assert by_eval["status"] == "failed"
+        assert by_eval["job_id"] == preview["job_id"]
+
+        # Lookup by unknown eval_id returns None
+        assert ports.get_trainer_preview(session_id, eval_id="teval-unknown-999") is None
+
+        # Router GET /preview readback matches failed preview truth
+        resp_failed = client.get(
+            f"/api/v1/trainer/sessions/{session_id}/preview",
+            headers={"Authorization": "Bearer pantheon-dev-operator:operator"},
+        )
+        assert resp_failed.status_code == 200
+        router_failed = resp_failed.json()
+        assert router_failed["status"] == "failed"
+        assert router_failed["job_id"] == preview["job_id"]
+        assert router_failed["eval_id"] == preview["eval_id"]
+        assert router_failed["owner_job_ref"] == {"job_id": preview["job_id"], "eval_id": preview["eval_id"]}
+        assert router_failed["error_code"] == "evaluation_admission_rejected"
+        assert router_failed["failure_reason"] == "candidate controls do not contain an effective change"
+        assert router_failed["allowedActions"]["canRefreshPreview"] is True
+        assert router_failed["polling"]["enabled"] is False
+        assert len(router_failed["warnings"]) == 1
+        assert router_failed["warnings"][0]["message"] == "candidate controls do not contain an effective change"
+
+        # Post-failure preview refresh: active session can request a new preview job
+        resp_retry = client.post(
+            f"/api/v1/trainer/sessions/{session_id}/preview",
+            json={"refresh_mode": "manual"},
+            headers={"Authorization": "Bearer pantheon-dev-operator:operator"},
+        )
+        assert resp_retry.status_code == 200
+        retry_preview = resp_retry.json()
+        assert retry_preview["status"] == "pending"
+        assert retry_preview["job_id"] != preview["job_id"]
+        assert retry_preview["allowedActions"]["canRefreshPreview"] is False
+
+        # 6d. Original negative / failure distinctions:
         # Non-existent session returns 404
         resp_404 = client.post(
             "/api/v1/trainer/sessions/trn-nonexistent/preview",
@@ -1255,6 +1355,41 @@ def test_live_malformed_preview_job_raises_503(live_training_session_service):
         try:
             with pytest.raises(HTTPException) as exc_info:
                 ports.refresh_trainer_preview(session_id, actor_id="operator-live")
+            assert exc_info.value.status_code == 503
+            detail = exc_info.value.detail
+            assert isinstance(detail, dict)
+            assert detail.get("error", {}).get("code") == "DEPENDENCY_UNAVAILABLE"
+        finally:
+            ports.persona_training.trainer._training._request = orig_request
+    finally:
+        authorization.reset(auth_token)
+        selected_tenant.reset(tenant_token)
+
+
+def test_live_malformed_preview_job_list_raises_503(live_training_session_service):
+    """Verify malformed preview-job list response raises truthful 503 DEPENDENCY_UNAVAILABLE, never silent success."""
+    base_url, training_service = live_training_session_service
+    ports = create_read_surface_ports()
+
+    token = _signed_caller_jwt("tenant-live", "operator-live")
+    auth_token = authorization.set(f"Bearer {token}")
+    tenant_token = selected_tenant.set("tenant-live")
+
+    try:
+        session = ports.create_trainer_session(persona_id="p-malformed-list", objective="test malformed list")
+        session_id = session["session_id"]
+
+        orig_request = ports.persona_training.trainer._training._request
+
+        def mock_request(path: str, *args: Any, **kwargs: Any) -> Any:
+            if "preview-jobs" in path:
+                return {"not_a_list": True}
+            return orig_request(path, *args, **kwargs)
+
+        ports.persona_training.trainer._training._request = mock_request
+        try:
+            with pytest.raises(HTTPException) as exc_info:
+                ports.get_trainer_preview(session_id, session_status="active")
             assert exc_info.value.status_code == 503
             detail = exc_info.value.detail
             assert isinstance(detail, dict)
