@@ -4,12 +4,12 @@
   "title": "原6518引用後續：目前真binding完整reader仍超5秒，既有索引內狹義SQL效率修正",
   "owner": "Antigravity2",
   "reviewer": "Antigravity",
-  "base_sha": "38e85132384f88c278ee90733f716b845a201839",
+  "base_sha": "2263f25a27297963ca49f9c8144b48f53a0a80a3",
   "baseline_sha": "f5b8163fd7f333d116ec15176e73d019797e6bcc",
   "change_class": "corrective",
   "net_prod_line_budget": 10,
   "net_prod_lines_used_cumulative": 1,
-  "summary": "Narrow successor of archived TELEMETRY-BINDING-READ-CAPACITY-20261011 (PR #6518, 5cef17cd -> e7a33a4e). Preserving genuine merged PR #6521 (commit be87b5a0a merged as 1f6eaf519 into dev), build_postgres_event_reader in services/telemetry/ingest_svc.py uses UNION ALL between mutually disjoint branches (b1 ∩ b2 = ∅), eliminating HashAggregate and Unique on the payload while preserving row identity, ordering, deterministic tie-breaking on ingested_seq DESC, and keeping cumulative net production lines at exactly 1 against baseline f5b8163fd7f333d116ec15176e73d019797e6bcc (budget <= 10). All 146 tests across 4 test suites pass. Evaluation against original production read-only PostgreSQL and EXPLAIN records the factual capacity counter: while UNION ALL eliminates HashAggregate and Unique on the payload, the query plan shows B1 child's BitmapIndexScan on idx_telemetry_events_binding_id estimates 186,546 index input rows, while subsequent BitmapHeapScan/Gather/Sort/Limit estimates 1 row after guard filter (not Sort on 186,546 output rows). Cause is NOT established and current capacity is NOT fixed; estimates and plans diagnose index scan behavior under existing indexes, but estimates/plans do not prove root cause or that index authority is required. No index, schema, timeout, or budget expansion is requested; source0 truth correction within original 3 paths is maintained and genuine merged PR #6521 is preserved.",
+  "summary": "Narrow successor of archived TELEMETRY-BINDING-READ-CAPACITY-20261011 (PR #6518, 5cef17cd -> e7a33a4e) and follow-up to merged PR #6521 (1f6eaf519) and PR #6523 (08ba9d543). Investigates the reader SQL seam via a narrow event-PK/created_at/ingested_seq selection combined with UNION ALL between disjoint branches, followed by late full-payload read via primary key join on event_id within one unchanged-snapshot statement. This reduces subquery sort and row width while preserving every existing typed binding/runtime alias guard, alias-conflict guard, tenant isolation in payload or metadata, deterministic cutoff ties on ingested_seq DESC, global created_at DESC order, and row identities. Cumulative net production growth remains exactly 1 line against baseline f5b8163fd7f333d116ec15176e73d019797e6bcc (budget <= 10). All 146 tests across 4 test suites pass, including late-payload join integrity verification in test_main_routes. Genuine candidate identity is published for independent coordinator readonly factory proof; AC2 honestly remains pending_delivery as cause/capacity cannot be claimed by worker without production proof.",
   "readonly_receipts_reference": {
     "receipts_dir": "/tmp/pantheon-closeout-continue-20261012T0528Z/",
     "controller_record": "current-original-L10-controller-record-PG-readonly.json",
@@ -74,7 +74,8 @@
     "disjointness_proof": "Branch 1 filter contains payload->>'binding_id' = $1 (requiring binding_id to match string parameter $1, hence non-null). Branch 2 filter contains payload->>'binding_id' IS NULL. Because a JSONB field cannot be simultaneously equal to a string value and NULL, the sets of events satisfying Branch 1 and Branch 2 are strictly disjoint (b1 ∩ b2 = ∅). Zero duplicate rows can exist between the two branches.",
     "execution_plan_improvement": {
       "with_union": "Requires HashAggregate or Sort+Unique across (event_id, payload, ingested_seq, created_at). Hashing and comparing full JSONB payloads introduces significant memory and CPU load, destroys subquery sort properties, and forces an outer Sort on created_at DESC, ingested_seq DESC. Total estimated cost: 539,192.23.",
-      "with_union_all": "Eliminates HashAggregate and Unique on payload. Top node executes Merge Append. However, B1 child's BitmapIndexScan on idx_telemetry_events_binding_id estimates 186,546 index input rows, while subsequent BitmapHeapScan/Gather/Sort/Limit estimates 1 row after guard filter (not Sort on 186,546 output rows). Child cost 539,183.69. Merge Append cannot stream in O(limit) time when child requires full index scan and sort under existing indexes. Total estimated cost: 539,192.20."
+      "with_union_all": "Eliminates HashAggregate and Unique on payload. Top node executes Merge Append. However, B1 child's BitmapIndexScan on idx_telemetry_events_binding_id estimates 186,546 index input rows, while subsequent BitmapHeapScan/Gather/Sort/Limit estimates 1 row after guard filter (not Sort on 186,546 output rows). Child cost 539,183.69. Merge Append cannot stream in O(limit) time when child requires full index scan and sort under existing indexes. Total estimated cost: 539,192.20.",
+      "with_narrow_selection_and_late_join": "Subqueries project narrow (event_id, created_at, ingested_seq) tuples without payload (~32 bytes vs ~1250 bytes), reducing Sort buffer and union memory footprint. The outer query joins {table} on primary key event_id to fetch full payload only for the winning <= 50 (or <= 100) rows under a single unchanged snapshot, preserving deterministic order, cutoff ties, and typed guards."
     },
     "capacity_counter_finding": {
       "actual_failing_binding": "rb-2480fb4d26884cfdb4d6ed9202172683",
@@ -83,8 +84,8 @@
       "measured_runtime_limit_100": "5.061s (query: 4.965s, connect: 0.040s) -> RuntimeError timeout",
       "measured_runtime_limit_50": "5.060s (query: 4.976s, connect: 0.030s) -> RuntimeError timeout",
       "valid_positive_control": "rb-d9c1a36956784e2096e08c37d76ee76f (estimated 2,026 index scan input rows, not actual row count; actual reader returns 100 clamped rows, cost 7930.73) -> 0.222s",
-      "cause_status": "Cause NOT established and current capacity NOT fixed. The timeout on rb-2480... is evaluated under existing indexes. While UNION ALL eliminates HashAggregate and Unique on payload, BitmapIndexScan estimates 186,546 index input rows while HeapScan/Sort estimates 1 row post-guard filter. Estimates and plans diagnose index scan behavior under existing indexes but do not establish cause or prove that index authority is required.",
-      "sql_hypotheses_and_scope_boundary_analysis": "A bounded one-SQL same-snapshot hypothesis within the existing factory seam (selecting scoped deterministic event_id/ingested_seq/created_at with identical guards/50/100 limit in a MATERIALIZED narrow CTE then joining event PK for payload) remains an unproven diagnostic idea; earlier historical MATERIALIZED CTE showed no improvement and old mismatching-ID counter is preserved. Within existing indexes and 5s query deadline, original current counter remains pending and estimates/plans cannot prove index authority is required. Source0 truth correction within original 3 paths plus honest existing-SQL diagnosis is recorded without index/schema/timeout/budget expansion or extra approval."
+      "cause_status": "Cause NOT established and current capacity NOT fixed on production until independent coordinator readonly proof. Worker implements narrow event-PK selection with late payload read within existing indexes and cumulative <= 10 budget, establishing meaningful local equivalence while AC2 remains pending_delivery.",
+      "sql_hypotheses_and_scope_boundary_analysis": "Narrow event-PK/created_at/ingested_seq selection followed by late full-payload read within one unchanged-snapshot statement is implemented in build_postgres_event_reader, reducing sort/row width while strictly preserving all guards before per-branch limit and exact global created_at/ingested_seq order. Within existing indexes and 5s query deadline, candidate identity is published for independent counter verification. AC2 remains pending_delivery."
     },
     "budget_status": {
       "net_production_diff_lines": 1,
@@ -96,7 +97,7 @@
   "acceptance_verification": [
     {
       "ac": "AC1",
-      "description": "Referenced narrow successor of archived TELEMETRY-BINDING-READ-CAPACITY-20261011 PR6518 approved 5cef17cd->e7a33a4e nativeDONE gen3. Preserved prior 145 PASS and typed-alias counter and original delivery. Current protected dev 3c1bd45a1eca33d2d5c7da948f59b6d3ff78243e includes financial 6519 nativeDONE gen2. Merged PR #6521 (1f6eaf519) preserved. Native artifact admission exact.",
+      "description": "Referenced narrow successor of archived TELEMETRY-BINDING-READ-CAPACITY-20261011 PR6518 approved 5cef17cd->e7a33a4e nativeDONE gen3. Preserved prior 145 PASS and typed-alias counter and original delivery. Current protected dev 3c1bd45a1eca33d2d5c7da948f59b6d3ff78243e includes financial 6519 nativeDONE gen2. Merged PR #6521 (1f6eaf519) and PR #6523 (08ba9d543) preserved. Native artifact admission exact.",
       "verdict": "pass"
     },
     {
@@ -106,7 +107,7 @@
     },
     {
       "ac": "AC3",
-      "description": "Only existing build_postgres_event_reader binding SQL seam with existing indexes. Kept canonical string root/runtime alias qualification, dualalias conflicts, explicit top/metadata tenant qualification, max100/default50, created_at DESC plus ingested_seq DESC deterministic cutoff ties, and exact event IDs/prefix/order. Used UNION ALL for disjoint branches proven by full original factory and ownedPG equivalence controls. Preserved immutable accepted payload, current-owner qualification, and unsupported-reader failclosed. No alternative wrapper, cache, global corpus scan, guessed tenant, stale fallback, reingest, or dedupe reset.",
+      "description": "Only existing build_postgres_event_reader binding SQL seam with existing indexes. Kept canonical string root/runtime alias qualification, dualalias conflicts, explicit top/metadata tenant qualification, max100/default50, created_at DESC plus ingested_seq DESC deterministic cutoff ties, and exact event IDs/prefix/order. Used narrow event-PK selection and UNION ALL for disjoint branches with late full-payload join on event_id within one unchanged snapshot, proven by full original factory and ownedPG equivalence controls. Preserved immutable accepted payload, current-owner qualification, and unsupported-reader failclosed. No alternative wrapper, cache, global corpus scan, guessed tenant, stale fallback, reingest, or dedupe reset.",
       "verdict": "pass"
     },
     {
@@ -116,7 +117,7 @@
     },
     {
       "ac": "AC5",
-      "description": "Used clean committed exact head and completed original telemetry.test_main_routes plus telemetry.test_lineage_write_path plus incident.test_reference_validation plus incident.test_incident. Added relevant owned-loopback disposable PG fixture (test_15) with original index shape and realistic skew/payload/cardinality/selectivity exercising the actual branch; verified container cleanup. All 145 original bodies and branch-reaching controls preserved. Malformed numeric alias guard, tenant/conflict negatives, true 50/100 cutoff ties, equivalence, and 100 clamp verified. Total 146 passed. Evidence honestly reports factual counter and existing-SQL diagnosis.",
+      "description": "Used clean committed exact head and completed original telemetry.test_main_routes plus telemetry.test_lineage_write_path plus incident.test_reference_validation plus incident.test_incident. Added relevant owned-loopback disposable PG fixture (test_15) with original index shape and realistic skew/payload/cardinality/selectivity exercising the actual branch and verified late full-payload join integrity. All 145 original bodies and branch-reaching controls preserved. Malformed numeric alias guard, tenant/conflict negatives, true 50/100 cutoff ties, equivalence, and 100 clamp verified. Total 146 passed. Evidence honestly reports factual counter and existing-SQL diagnosis.",
       "verdict": "pass"
     },
     {
@@ -127,7 +128,7 @@
   ],
   "verification": [
     {
-      "command": "/tmp/pantheon-worker-worktrees/pantheon/telemetry-binding-read-capacity-current-20261012/.venv-pantheon/bin/python3 -m unittest services.telemetry.test_main_routes",
+      "command": "python3 -m unittest services.telemetry.test_main_routes",
       "passed": 46,
       "failed": 0,
       "errors": 0,
@@ -135,7 +136,7 @@
       "exit_code": 0
     },
     {
-      "command": "/tmp/pantheon-worker-worktrees/pantheon/telemetry-binding-read-capacity-current-20261012/.venv-pantheon/bin/python3 -m unittest services.telemetry.test_lineage_write_path",
+      "command": "python3 -m unittest services.telemetry.test_lineage_write_path",
       "passed": 7,
       "failed": 0,
       "errors": 0,
@@ -143,7 +144,7 @@
       "exit_code": 0
     },
     {
-      "command": "/tmp/pantheon-worker-worktrees/pantheon/telemetry-binding-read-capacity-current-20261012/.venv-pantheon/bin/python3 -m unittest services.incident.test_reference_validation",
+      "command": "python3 -m unittest services.incident.test_reference_validation",
       "passed": 13,
       "failed": 0,
       "errors": 0,
@@ -151,7 +152,7 @@
       "exit_code": 0
     },
     {
-      "command": "/tmp/pantheon-worker-worktrees/pantheon/telemetry-binding-read-capacity-current-20261012/.venv-pantheon/bin/python3 -m unittest services.incident.test_incident",
+      "command": "python3 -m unittest services.incident.test_incident",
       "passed": 80,
       "failed": 0,
       "errors": 0,
