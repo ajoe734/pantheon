@@ -756,10 +756,11 @@ def build_postgres_event_reader(
     def _fetch_binding_events(bid: str, tenant_id: Optional[str] = None, limit: int = 50) -> list[dict[str, Any]]:
         if not (clean_bid := str(bid or "").strip()): return []
         fetch_lim, tid = min(max(1, int(limit or 50)), 100), str(tenant_id or "").strip()
-        cond = " AND (payload->>'tenant_id' = $2 OR payload->'metadata'->>'tenant_id' = $2) ORDER BY created_at DESC LIMIT $3"
-        conflict = " AND (payload->>'binding_id' IS NULL OR payload->>'runtime_binding_id' IS NULL OR payload->>'binding_id' = payload->>'runtime_binding_id')"
-        where = "(payload @> jsonb_build_object('binding_id', $1::text) OR payload @> jsonb_build_object('runtime_binding_id', $1::text))" + conflict
-        sql = f"SELECT event_id, payload, ingested_seq FROM {table} WHERE {where}" + (cond if tid else " ORDER BY created_at DESC LIMIT $2")
+        cond = " AND (payload->>'tenant_id' = $2 OR payload->'metadata'->>'tenant_id' = $2)"
+        b1 = f"payload->>'binding_id' = $1 AND jsonb_typeof(payload->'binding_id') = 'string' AND (payload->>'runtime_binding_id' IS NULL OR (payload->>'runtime_binding_id' = $1 AND jsonb_typeof(payload->'runtime_binding_id') = 'string'))" + (cond if tid else "")
+        b2 = f"payload @> jsonb_build_object('runtime_binding_id', $1::text) AND payload->>'binding_id' IS NULL" + (cond if tid else "")
+        lim = f" ORDER BY created_at DESC, ingested_seq DESC LIMIT ${3 if tid else 2}"
+        sql = f"SELECT event_id, payload, ingested_seq FROM ((SELECT event_id, payload, ingested_seq, created_at FROM {table} WHERE {b1}{lim}) UNION (SELECT event_id, payload, ingested_seq, created_at FROM {table} WHERE {b2}{lim})) sub{lim}"
         rows = _sync(sql, clean_bid, tid, fetch_lim) if tid else _sync(sql, clean_bid, fetch_lim)
         out, seen = [], set()
         for r in rows:
