@@ -2561,6 +2561,13 @@ jobs:
           DEV_DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEV_DEPLOY_SSH_PRIVATE_KEY }}
           DEV_DEPLOY_SSH_KNOWN_HOSTS: ${{ vars.DEV_DEPLOY_SSH_KNOWN_HOSTS }}
           DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
+          PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT && format('{0}/dev-root/docker-compose.yml', vars.DEV_DEPLOY_WORKTREE_ROOT) || (vars.DEV_REMOTE_DIR && format('{0}/docker-compose.yml', vars.DEV_REMOTE_DIR)) || '/home/chloe_ong_dev_cctech_support_com/pantheon/docker-compose.yml' }}
+          DEV_BFF_AUTH_STUB: "false"
+          DEV_BFF_AUTH_MODE: strict
+          DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+          DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
+          DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
+          DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"

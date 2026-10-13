@@ -4,8 +4,8 @@
   "owner": "Antigravity2",
   "reviewer": "Antigravity",
   "change_class": "corrective",
-  "timestamp": "2026-10-13T02:50:00Z",
-  "summary": "Connected the existing sealed final artifact return caller, verified explicit candidate compose resolution without ambient PWD dependency, wired candidate receipt and final FE seal validation into compensation evidence and deployment workflows, and enforced all eight identity fields on retained typed readback seals.",
+  "timestamp": "2026-10-13T05:45:00Z",
+  "summary": "Connected the existing sealed final artifact return caller, verified explicit candidate compose resolution without ambient PWD dependency, wired candidate receipt and final FE seal validation into compensation evidence and deployment workflows, enforced all eight identity fields on retained typed readback seals, resolved strict auth preflight isolation during artifact operations, and provided connected positive CLI proof.",
   "acceptance_criteria_verification": {
     "ac1_correct_final_caller_gaps": {
       "satisfied": true,
@@ -21,16 +21,27 @@
     },
     "ac4_supported_invocations_documented": {
       "satisfied": true,
-      "evidence": "Documented concrete CLI invocations for final verify and restore-final in docs/deployment/dev-exact-artifact-rollback.md without modifying FE controller or symlinks directly."
+      "evidence": "Documented concrete CLI invocations for final verify and restore-final in docs/deployment/dev-exact-artifact-rollback.md without modifying FE controller or symlinks directly, including credential preflight isolation and connected CLI verification."
     },
     "ac5_full_test_suite_coverage": {
       "satisfied": true,
-      "evidence": "Added positive and negative control tests covering hostile ambient working directory, tampered seals across all 8 identity fields, structural typed readback negatives, mixed baseline/candidate identities, missing receipts, typed readback seal consumption, and workflow lease contracts across test_dev_artifact_compensation_evidence.py, test_deploy_nonprod_artifact_restore.py, and test_nonprod_dev_artifact_workflow.py (293 passed, 0 failed, 0 skipped in 49.79s)."
+      "evidence": "Added connected positive control test (test_full_cli_restore_final_connected_positive) covering full CLI -> isolated transport -> remote driver -> real FE owner with 5-field seals -> real compensation evidence validator, plus hostile ambient working directory, tampered seals across all 8 identity fields, structural typed readback negatives, mixed baseline/candidate identities, missing receipts, typed readback seal consumption, and workflow lease contracts across test_deploy_nonprod_bff_strict_auth_default_contract.py, test_cross_repo_release_controller.py, test_dev_artifact_compensation_evidence.py, test_deploy_nonprod_artifact_restore.py, and test_nonprod_dev_artifact_workflow.py (410 passed, 0 failed, 0 skipped)."
     },
     "ac6_scoped_files_only": {
       "satisfied": true,
       "evidence": "Only the 9 scoped files modified and tracked. Non-interactive worker commit and task handoff."
     }
+  },
+  "counter_resolution": {
+    "item1_initial_final_verify_fe_digests": "deploy_nonprod_vm.sh permits initial final verify without FE digests while restore-final remains strict.",
+    "item2_connected_operation_proof": "dev_artifact_compensation_evidence.py allows distinct original run_id/attempt from current workflow, reporting current run while enforcing 8-field equality with candidate receipt.",
+    "item3_explicit_candidate_compose": "candidate compose path is explicitly resolved from candidate context/receipt without search lists or ambient PWD fallback.",
+    "item4_workflow_reusal": "nonprod-deploy.yml final_artifact_verify reuses compensate_cross_repo_release.sh without duplicate lease lifecycle.",
+    "item5_controller_log_and_outcome": "compensate_cross_repo_release.sh and dev_artifact_compensation_evidence.py accept absent failure_log on success and return outcome restore-final.",
+    "item6_real_fe_owner_delegation": "deploy_nonprod_vm.sh forwards exact FE owner parameters (pantheon-dev-deploy, epoch, run_id, event_name, roots), switches legs using original 5-field seals, and safely skips redundant switch if live matches target.",
+    "item7_compensation_error_handling": "nonprod-deploy.yml always() includes final verify failure for preparation and compensation.",
+    "item8_strict_auth_preflight_isolation": "deploy_nonprod_vm.sh isolates deploy-only actor credential preflight so artifact verify/restore operations do not fail without write-capable secrets, while remote driver retains strict non-stub auth defaults.",
+    "item9_connected_cli_proof": "test_full_cli_restore_final_connected_positive tests full CLI invocation through isolated transport, remote driver, real FE deploy script with full 5-field seals, and real dev_artifact_compensation_evidence.py readback validation."
   },
   "verification": {
     "test_suites": [
@@ -48,13 +59,13 @@
       },
       {
         "module": "scripts/test_dev_artifact_compensation_evidence.py",
-        "passed": 93,
+        "passed": 94,
         "failed": 0,
         "skipped": 0
       },
       {
         "module": "scripts/test_deploy_nonprod_artifact_restore.py",
-        "passed": 58,
+        "passed": 61,
         "failed": 0,
         "skipped": 0
       },
@@ -65,7 +76,7 @@
         "skipped": 0
       }
     ],
-    "total_passed": 406,
+    "total_passed": 410,
     "total_failed": 0
   },
   "review": {

@@ -260,11 +260,11 @@ def test_coordinate_dev_release_verifies_and_seals_final_candidate():
     assert verify_step["env"]["PANTHEON_ROLLBACK_EVIDENCE_OUT"] == "${{ env.RELEASE_EVIDENCE_DIR }}/candidate/candidate-frontend.json"
     assert verify_step["env"]["PANTHEON_ENVIRONMENT_LEASE_TOKEN"] == "${{ secrets.COORDINATION_REPO_TOKEN }}"
 
-    compensation_script = (ROOT / "scripts" / "compensate_cross_repo_release.sh").read_text(encoding="utf-8")
-    assert "run_with_dev_environment_lease.sh" in compensation_script
-    assert "dev_environment_lease.py" in compensation_script
-    assert "acquire \\" in compensation_script
-    assert '"--artifact-${PANTHEON_DEV_ARTIFACT_OPERATION}"' in compensation_script
-    assert '--artifact-target "${PANTHEON_DEV_ARTIFACT_TARGET}"' in compensation_script
+    assert "PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE" in verify_step["env"]
+    assert verify_step["env"]["DEV_BFF_AUTH_MODE"] == "strict"
+    assert verify_step["env"]["DEV_BFF_JWT_SECRET"] == "${{ secrets.DEV_BFF_JWT_SECRET }}"
+    assert verify_step["env"]["DEV_BFF_OIDC_CLIENT_ID"] == "${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}"
+    assert verify_step["env"]["DEV_BFF_OIDC_CLIENT_SECRET"] == "${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}"
+    assert verify_step["env"]["DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN"] == "${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}"
 
 

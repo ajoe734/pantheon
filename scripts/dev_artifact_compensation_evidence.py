@@ -218,9 +218,24 @@ def load_evidence(env: dict[str, str], provenance: str) -> dict:
                     ENV_PREFIX + "MANIFEST_PATH": outputs["manifest_path"],
                     ENV_PREFIX + "MANIFEST_SHA256": manifest_hash})
     if is_final:
-        candidate_compose = env.get(ENV_PREFIX + "CANDIDATE_COMPOSE_FILE", "")
+        candidate_compose = (
+            env.get(ENV_PREFIX + "CANDIDATE_COMPOSE_FILE")
+            or env.get("CANDIDATE_COMPOSE_FILE")
+            or env.get(ENV_PREFIX + "COMPOSE_FILE")
+            or env.get("COMPOSE_FILE")
+            or ""
+        )
         if not candidate_compose:
-            candidate_compose = str(capture.ARTIFACT_ROOT / "compose" / identity["candidate_backend_sha"] / "docker-compose.yml")
+            for candidate_dir in (
+                env.get("DEV_REMOTE_DIR"),
+                env.get("PANTHEON_REMOTE_DIR"),
+                Path(env["PANTHEON_DEPLOY_WORKTREE_ROOT"]) / "dev-root" if env.get("PANTHEON_DEPLOY_WORKTREE_ROOT") else None,
+            ):
+                if candidate_dir:
+                    candidate_compose = str(Path(candidate_dir) / "docker-compose.yml")
+                    break
+        if not candidate_compose:
+            raise capture.CaptureError("candidate compose file is required for final verification")
         exports[ENV_PREFIX + "COMPOSE_FILE"] = candidate_compose
         exports[ENV_PREFIX + "CANDIDATE_COMPOSE_FILE"] = candidate_compose
     else:

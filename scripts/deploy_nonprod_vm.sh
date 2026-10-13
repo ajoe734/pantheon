@@ -748,33 +748,35 @@ fi
 # depend on the shared dev lease.
 verify_dev_environment_lease_contract
 
-if [[ "$DEPLOY_ENV" == "dev" && "$DEV_BFF_AUTH_MODE" == "strict" && "$DEV_BFF_AUTH_STUB" != "true" ]]; then
-  if [[ -z "$DEV_BFF_JWT_SECRET" || -z "$DEV_BFF_OIDC_CLIENT_ID" || -z "$DEV_BFF_OIDC_CLIENT_SECRET" ]]; then
-    error "strict auth cutover requested (DEV_BFF_AUTH_MODE=strict, DEV_BFF_AUTH_STUB=${DEV_BFF_AUTH_STUB}) but no governed verifier/dev-login credentials are configured (DEV_BFF_JWT_SECRET, DEV_BFF_OIDC_CLIENT_ID, DEV_BFF_OIDC_CLIENT_SECRET); refusing to deploy a BFF where every protected route would be unusable"
-  fi
-  for identity in VIEWER APPROVER RISK_OWNER OPERATOR_A OPERATOR_B; do
-    id_var="DEV_BFF_DEV_LOGIN_${identity}_CLIENT_ID"
-    secret_var="DEV_BFF_DEV_LOGIN_${identity}_CLIENT_SECRET"
-    if [[ -z "${!id_var}" || -z "${!secret_var}" ]]; then
-      error "strict auth cutover requires dedicated ${identity,,} dev-login credentials (${id_var}, ${secret_var}); refusing to deploy without distinct governed proof actors"
+if [[ "${ARTIFACT_RESTORE:-false}" != "true" && "${ARTIFACT_VERIFY:-false}" != "true" ]]; then
+  if [[ "$DEPLOY_ENV" == "dev" && "$DEV_BFF_AUTH_MODE" == "strict" && "$DEV_BFF_AUTH_STUB" != "true" ]]; then
+    if [[ -z "$DEV_BFF_JWT_SECRET" || -z "$DEV_BFF_OIDC_CLIENT_ID" || -z "$DEV_BFF_OIDC_CLIENT_SECRET" ]]; then
+      error "strict auth cutover requested (DEV_BFF_AUTH_MODE=strict, DEV_BFF_AUTH_STUB=${DEV_BFF_AUTH_STUB}) but no governed verifier/dev-login credentials are configured (DEV_BFF_JWT_SECRET, DEV_BFF_OIDC_CLIENT_ID, DEV_BFF_OIDC_CLIENT_SECRET); refusing to deploy a BFF where every protected route would be unusable"
     fi
-  done
-fi
-
-if [[ "$DEPLOY_ENV" == "dev" ]]; then
-  case "${DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED,,}" in
-    1|true|yes|on)
-      if [[ -z "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}" ]] \
-        || is_placeholder_credential "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}"; then
-        error "strict OpenClaw adapter service auth requires a human-provisioned DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN; refusing to deploy with an empty or fabricated service credential"
+    for identity in VIEWER APPROVER RISK_OWNER OPERATOR_A OPERATOR_B; do
+      id_var="DEV_BFF_DEV_LOGIN_${identity}_CLIENT_ID"
+      secret_var="DEV_BFF_DEV_LOGIN_${identity}_CLIENT_SECRET"
+      if [[ -z "${!id_var}" || -z "${!secret_var}" ]]; then
+        error "strict auth cutover requires dedicated ${identity,,} dev-login credentials (${id_var}, ${secret_var}); refusing to deploy without distinct governed proof actors"
       fi
-      ;;
-    0|false|no|off)
-      ;;
-    *)
-      error "DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED must be true or false"
-      ;;
-  esac
+    done
+  fi
+
+  if [[ "$DEPLOY_ENV" == "dev" ]]; then
+    case "${DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED,,}" in
+      1|true|yes|on)
+        if [[ -z "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}" ]] \
+          || is_placeholder_credential "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}"; then
+          error "strict OpenClaw adapter service auth requires a human-provisioned DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN; refusing to deploy with an empty or fabricated service credential"
+        fi
+        ;;
+      0|false|no|off)
+        ;;
+      *)
+        error "DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED must be true or false"
+        ;;
+    esac
+  fi
 fi
 
 if [[ "$DEPLOY_ENV" == "dev" ]]; then
@@ -910,9 +912,14 @@ ssh_bash() {
     PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA \
     PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256 PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256 \
     PANTHEON_DEV_ARTIFACT_FE_TARGET PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID \
-    PANTHEON_DEV_ARTIFACT_SEALED_FROM_JSON PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON; do
+    PANTHEON_DEV_ARTIFACT_SEALED_FROM_JSON PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON \
+    PANTHEON_DEV_FE_DEPLOY_SCRIPT PANTHEON_EXECUTE_PLANS_ROOT \
+    PANTHEON_DEV_FE_ROOT PANTHEON_DEV_FE_RELEASES_DIR \
+    PANTHEON_DEPLOY_LEASE_OWNER PANTHEON_DEPLOY_LEASE_EPOCH \
+    PANTHEON_DEPLOY_LEASE_RUN_ID PANTHEON_DEPLOY_LEASE_DELEGATED; do
     command_prefix+=" ${artifact_variable}=$(shell_quote "${!artifact_variable:-}")"
   done
+  command_prefix+=" GITHUB_EVENT_NAME=$(shell_quote "${GITHUB_EVENT_NAME:-${PANTHEON_DEV_EVENT_NAME:-}}")"
   command_prefix+=" PANTHEON_GITHUB_TOKEN=$(shell_quote "${GITHUB_TOKEN:-}")"
   command_prefix+=" PANTHEON_ALLOW_DIRTY_DEPLOY=$(shell_quote "$ALLOW_DIRTY")"
   command_prefix+=" PANTHEON_ALLOW_EXAMPLE_ENV=$(shell_quote "$ALLOW_EXAMPLE_ENV")"
@@ -3920,6 +3927,10 @@ import sys
 env = os.environ
 candidate_compose = env.get("PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE") or env.get("PANTHEON_DEV_ARTIFACT_COMPOSE_FILE")
 if not candidate_compose:
+    remote_dir = env.get("PANTHEON_REMOTE_DIR")
+    if remote_dir:
+        candidate_compose = str(pathlib.Path(remote_dir) / "docker-compose.yml")
+if not candidate_compose:
     sys.exit("unable to resolve explicit candidate Compose path: missing path")
 
 path = pathlib.Path(candidate_compose)
@@ -4369,15 +4380,29 @@ if [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" == true || "${PANTHEON_DEV_ARTIF
   if [[ "${artifact_operation}" == "restore" || "${artifact_operation}" == "restore-final" ]]; then
     if [[ -n "${PANTHEON_DEV_ARTIFACT_SEALED_FROM_JSON:-}" && -n "${PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON:-}" ]]; then
       fe_script="${PANTHEON_DEV_FE_DEPLOY_SCRIPT:-${PANTHEON_EXECUTE_PLANS_ROOT:-${HOME:-/home/chloe_ong_dev_cctech_support_com}/code/execute-plans}/scripts/deploy-dev-vm.sh}"
-      if [[ -f "${fe_script}" && ! -L "${fe_script}" ]]; then
+      if [[ ! -f "${fe_script}" || -L "${fe_script}" ]]; then
+        error "FE deploy script missing or unsafe: ${fe_script}"
+      fi
+
+      to_target="$(python3 -c 'import json, sys; print(json.loads(sys.argv[1]).get("target", ""))' "${PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON}" 2>/dev/null || true)"
+      fe_root="${PANTHEON_DEV_FE_ROOT:-/var/www/pantheon-dev-fe}"
+      fe_live="$(readlink -f "${fe_root}" 2>/dev/null || readlink "${fe_root}" 2>/dev/null || true)"
+
+      if [[ -n "${to_target}" && -n "${fe_live}" && ( "${fe_live}" == "${to_target}" || "$(readlink "${fe_root}" 2>/dev/null || true)" == "${to_target}" ) ]]; then
+        info "FE live symlink already matches target sealed release (${to_target}); skipping redundant FE switch"
+      else
         info "invoking FE owner restore-sealed before BE ${artifact_operation}"
-        fe_lease_epoch="1"
-        fe_lease_run_id="${PANTHEON_DEV_ARTIFACT_RUN_ID:-0}"
-        fe_lease_owner="pantheon:dev"
-        if [[ -n "${PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID:-}" ]]; then
-          fe_lease_owner="${PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID}"
+        fe_lease_owner="${PANTHEON_DEPLOY_LEASE_OWNER:-pantheon-dev-deploy}"
+        if [[ ! "${fe_lease_owner}" =~ ^(pantheon-release-controller|pantheon-dev-deploy|parent-controller|pantheon-proof-watchdog|pantheon-fe-deploy)$ ]]; then
+          fe_lease_owner="pantheon-dev-deploy"
         fi
-        GITHUB_EVENT_NAME=workflow_dispatch \
+        fe_lease_epoch="${PANTHEON_DEPLOY_LEASE_EPOCH:-1}"
+        fe_lease_run_id="${PANTHEON_DEPLOY_LEASE_RUN_ID:-${GITHUB_RUN_ID:-${PANTHEON_DEV_ARTIFACT_RUN_ID:-0}}}"
+        fe_event_name="${GITHUB_EVENT_NAME:-${PANTHEON_DEV_EVENT_NAME:-push}}"
+
+        PANTHEON_DEV_FE_ROOT="${PANTHEON_DEV_FE_ROOT:-/var/www/pantheon-dev-fe}" \
+        PANTHEON_DEV_FE_RELEASES_DIR="${PANTHEON_DEV_FE_RELEASES_DIR:-/var/www/pantheon-dev-fe-releases}" \
+        GITHUB_EVENT_NAME="${fe_event_name}" \
         PANTHEON_DEPLOY_PROFILE=operator-live \
         PANTHEON_DEPLOY_PROOF_WINDOW_ACK=false \
         PANTHEON_DEPLOY_REAL_WRITES=true \
@@ -4390,8 +4415,6 @@ if [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" == true || "${PANTHEON_DEV_ARTIF
         PANTHEON_DEPLOY_SEALED_FROM_JSON="${PANTHEON_DEV_ARTIFACT_SEALED_FROM_JSON}" \
         PANTHEON_DEPLOY_SEALED_TO_JSON="${PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON}" \
           bash "${fe_script}" || error "FE owner restore-sealed failed with exit code $?"
-      elif [[ -n "${PANTHEON_DEV_FE_DEPLOY_SCRIPT:-}" ]]; then
-        error "FE deploy script missing: ${PANTHEON_DEV_FE_DEPLOY_SCRIPT}"
       fi
     fi
   fi

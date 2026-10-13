@@ -69,6 +69,7 @@ def case(tmp_path, monkeypatch):
     retained.chmod(0o700)
     env = {"TARGET_ENV": "dev", "GCP_DEPLOY_PROJECT_ID": "pantheon-dev-20260902", "DEV_VM": "pantheon-dev-deploy",
            "DEV_ZONE": "asia-east1-b", "RUNNER_TEMP": str(tmp_path), "PANTHEON_RELEASE_REPO_ROOT": str(tmp_path),
+           "DEV_REMOTE_DIR": "/home/chloe_ong_dev_cctech_support_com/pantheon",
            "GITHUB_RUN_ID": "123456", "GITHUB_RUN_ATTEMPT": "2", "GITHUB_REPOSITORY": "ajoe734/pantheon",
            "PANTHEON_RELEASE_CANDIDATE_ID": "c" * 64, "PANTHEON_FAILED_BACKEND_SHA": "e" * 40,
            "PANTHEON_FAILED_FRONTEND_SHA": "f" * 40, "PANTHEON_ROLLBACK_BACKEND_SHA": "a" * 40,
@@ -486,17 +487,89 @@ def test_restore_final_rejects_structural_typed_readback_seal_negatives(case, st
 
 def test_load_evidence_respects_dev_artifact_run_id_and_attempt(case):
     actions(case["env"])
-    no_candidate(case["env"])
+    case["env"]["GITHUB_RUN_ID"] = "112233"
+    case["env"]["GITHUB_RUN_ATTEMPT"] = "1"
     case["env"]["PANTHEON_DEV_ARTIFACT_RUN_ID"] = "998877"
     case["env"]["PANTHEON_DEV_ARTIFACT_ATTEMPT"] = "4"
+    case["env"][e.ENV_PREFIX + "TARGET"] = "final"
+    case["env"][e.ENV_PREFIX + "OPERATION"] = "restore-final"
+    case["env"][e.ENV_PREFIX + "CANDIDATE_COMPOSE_FILE"] = str(case["retained"] / "docker-compose.yml")
+
     case["baseline"]["identity"]["run_id"] = "998877"
     case["baseline"]["identity"]["attempt"] = "4"
-    baseline_path = write(case["retained"] / "baseline/artifact-baseline.json", e.capture.encoded(case["baseline"]))
+    baseline_bytes = e.capture.encoded(case["baseline"])
+    manifest_hash = e.capture.digest(baseline_bytes)
+    baseline_path = write(case["retained"] / "baseline/artifact-baseline.json", baseline_bytes)
     case["env"][e.ENV_PREFIX + "BASELINE_FILE"] = str(baseline_path)
-    case["env"][e.ENV_PREFIX + "MANIFEST_SHA256"] = e.capture.digest(e.capture.encoded(case["baseline"]))
+    case["env"][e.ENV_PREFIX + "MANIFEST_SHA256"] = manifest_hash
+
+    folder = e.capture.ARTIFACT_ROOT / f"baseline-998877-4-{case['identity']['candidate_id']}"
+    case["receipt"]["candidate_image_manifest"]["identity"]["run_id"] = "998877"
+    case["receipt"]["candidate_image_manifest"]["identity"]["attempt"] = "4"
+    case["receipt"]["candidate_image_manifest"]["baseline_manifest_sha256"] = manifest_hash
+    case["receipt"]["candidate_image_manifest_path"] = str(folder / "candidate-images.json")
+    case["receipt"]["candidate_image_override_path"] = str(folder / "candidate-images.override.json")
+    case["receipt"]["candidate_image_manifest_sha256"] = e.capture.digest(e.capture.encoded(case["receipt"]["candidate_image_manifest"]))
+    receipt_path = write(case["retained"] / "candidate/candidate-receipt.json", e.capture.encoded(case["receipt"]))
+    case["env"][e.ENV_PREFIX + "CANDIDATE_RECEIPT_FILE"] = str(receipt_path)
+    case["env"][e.ENV_PREFIX + "CANDIDATE_IMAGE_MANIFEST_SHA256"] = case["receipt"]["candidate_image_manifest_sha256"]
+
+    fe_seal = {
+        "target": "/var/www/pantheon-dev-fe-releases/candidate-fixture",
+        "dist_sha256": "4" * 64,
+        "manifest_sha256": "3" * 64,
+        "frontend_sha": case["identity"]["candidate_frontend_sha"],
+        "backend_sha": case["identity"]["candidate_backend_sha"],
+    }
+    seal_path = write(case["retained"] / "candidate/candidate-frontend.json", e.capture.encoded(fe_seal))
+    case["env"][e.ENV_PREFIX + "FINAL_FE_SEAL_FILE"] = str(seal_path)
+
     evidence = e.load_evidence(case["env"], "actions-download")
     assert evidence["identity"]["run_id"] == "998877"
     assert evidence["identity"]["attempt"] == "4"
+    assert evidence["candidate"] is not None
+    assert evidence["fe_seal"] is not None
+
+    readback = deepcopy(case["value"])
+    readback["operation"] = "restore-final"
+    readback["manifest_sha256"] = manifest_hash
+    readback["identity"]["run_id"] = "998877"
+    readback["identity"]["attempt"] = "4"
+    readback["images"] = {service: row["image_id"] for service, row in case["receipt"]["candidate_image_manifest"]["services"].items()}
+    readback["frontend"] = deepcopy(fe_seal)
+    readback["public"]["source_sha"] = case["identity"]["candidate_backend_sha"]
+    readback_path = write(case["retained"] / "readback-cross-run.json", e.capture.encoded(readback))
+
+    result = e.compensation_evidence(case["env"], "actions-download", readback_path, failure_log=None)
+    assert result["outcome"] == "restore-final"
+    assert result["operation"] == "restore-final"
+    assert result["workflow"]["run_id"] == "112233"
+    assert result["workflow"]["run_attempt"] == "1"
+    assert result["artifact_readback"]["identity"]["run_id"] == "998877"
+    assert result["artifact_readback"]["identity"]["attempt"] == "4"
+    assert result["restored_pair"]["backend_sha"] == case["identity"]["candidate_backend_sha"]
+    assert result["restored_pair"]["frontend_sha"] == case["identity"]["candidate_frontend_sha"]
+
+
+def test_load_evidence_final_requires_candidate_compose(case):
+    actions(case["env"])
+    case["env"][e.ENV_PREFIX + "TARGET"] = "final"
+    fe_seal = {
+        "target": "/var/www/pantheon-dev-fe-releases/candidate-fixture",
+        "dist_sha256": "4" * 64,
+        "manifest_sha256": "3" * 64,
+        "frontend_sha": case["identity"]["candidate_frontend_sha"],
+        "backend_sha": case["identity"]["candidate_backend_sha"],
+    }
+    seal_path = write(case["retained"] / "candidate/candidate-frontend.json", e.capture.encoded(fe_seal))
+    case["env"][e.ENV_PREFIX + "FINAL_FE_SEAL_FILE"] = str(seal_path)
+    case["env"].pop(e.ENV_PREFIX + "CANDIDATE_COMPOSE_FILE", None)
+    case["env"].pop(e.ENV_PREFIX + "COMPOSE_FILE", None)
+    case["env"].pop("PANTHEON_DEPLOY_WORKTREE_ROOT", None)
+    case["env"].pop("DEV_REMOTE_DIR", None)
+    case["env"].pop("PANTHEON_REMOTE_DIR", None)
+    with pytest.raises(e.capture.CaptureError, match="candidate compose file is required"):
+        e.load_evidence(case["env"], "actions-download")
 
 
 def test_compensation_evidence_handles_none_failure_log_for_restore_final(case):

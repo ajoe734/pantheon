@@ -626,18 +626,22 @@ def test_final_verify_driver_invocation(fixture, tmp_path):
     assert args["--fe-target"] == fe_target
 
 
-@pytest.mark.parametrize("flag,sha_used,expected", [
-    ("--artifact-restore-final", SHA, 0),
-    ("--artifact-restore-final", PRIOR, 1),
-    ("--artifact-target invalid", SHA, 1),
+@pytest.mark.parametrize("flag,sha_used,missing_var,expected", [
+    ("--artifact-restore-final", SHA, None, 0),
+    ("--artifact-restore-final", PRIOR, None, 1),
+    ("--artifact-target invalid", SHA, None, 1),
+    ("--artifact-restore-final", SHA, "PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256", 1),
+    ("--artifact-restore-final", SHA, "PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256", 1),
 ])
-def test_actual_cli_restore_final_options(fixture, flag, sha_used, expected):
+def test_actual_cli_restore_final_options(fixture, flag, sha_used, missing_var, expected):
     env, recorder, *_ = fixture
     env.update({
         "PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256": "2" * 64,
         "PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256": "3" * 64,
         "PANTHEON_DEV_ARTIFACT_FE_TARGET": "/var/www/pantheon-dev-fe-releases/candidate",
     })
+    if missing_var:
+        env.pop(missing_var, None)
     cmd = [str(SCRIPT), "--environment", "dev", "--component", "bff",
            "--sha", sha_used, *flag.split(), "--dry-run"]
     result = subprocess.run(cmd, env=env, capture_output=True, text=True)
@@ -715,25 +719,58 @@ def test_fe_owner_restore_sealed_invocation(fixture, tmp_path):
     fe_script = tmp_path / "deploy-dev-vm.sh"
     fe_script.write_text(
         '#!/usr/bin/env bash\n'
+        'set -euo pipefail\n'
+        'AUTHORIZED_LEASE_OWNERS_REGEX="^(pantheon-release-controller|pantheon-dev-deploy|parent-controller|pantheon-proof-watchdog|pantheon-fe-deploy)$"\n'
+        'owner="${PANTHEON_DEPLOY_LEASE_OWNER:-}"\n'
+        'if [[ ! "${owner}" =~ ${AUTHORIZED_LEASE_OWNERS_REGEX} ]]; then\n'
+        '    echo "Deployment rejected: unauthorized lease owner \'${owner}\'." >&2\n'
+        '    exit 2\n'
+        'fi\n'
         'python3 - <<\'PY\'\n'
-        'import json, os\n'
+        'import json, os, sys\n'
+        'from_doc = json.loads(os.environ.get("PANTHEON_DEPLOY_SEALED_FROM_JSON", "{}"))\n'
+        'to_doc = json.loads(os.environ.get("PANTHEON_DEPLOY_SEALED_TO_JSON", "{}"))\n'
+        'for doc, name in ((from_doc, "from"), (to_doc, "to")):\n'
+        '    for field in ("target", "dist_sha256", "manifest_sha256", "frontend_sha", "backend_sha"):\n'
+        '        if field not in doc:\n'
+        '            sys.exit(f"missing field {field} in {name} seal")\n'
         'with open(os.environ["RECORDER"], "a") as f:\n'
         '    f.write(json.dumps({\n'
         '        "command": "fe_deploy",\n'
         '        "action": os.environ.get("PANTHEON_DEPLOY_ACTION"),\n'
         '        "profile": os.environ.get("PANTHEON_DEPLOY_PROFILE"),\n'
         '        "delegated": os.environ.get("PANTHEON_DEPLOY_LEASE_DELEGATED"),\n'
-        '        "from": os.environ.get("PANTHEON_DEPLOY_SEALED_FROM_JSON"),\n'
-        '        "to": os.environ.get("PANTHEON_DEPLOY_SEALED_TO_JSON"),\n'
+        '        "owner": os.environ.get("PANTHEON_DEPLOY_LEASE_OWNER"),\n'
+        '        "epoch": os.environ.get("PANTHEON_DEPLOY_LEASE_EPOCH"),\n'
+        '        "run_id": os.environ.get("PANTHEON_DEPLOY_LEASE_RUN_ID"),\n'
+        '        "from": from_doc,\n'
+        '        "to": to_doc,\n'
         '    }) + "\\n")\n'
         'PY\n'
     )
     fe_script.chmod(0o755)
 
+    from_seal = {
+        "target": "/var/www/pantheon-dev-fe-releases/candidate",
+        "dist_sha256": "4" * 64,
+        "manifest_sha256": "3" * 64,
+        "frontend_sha": "e" * 40,
+        "backend_sha": SHA,
+    }
+    to_seal = {
+        "target": "/var/www/pantheon-dev-fe-releases/baseline",
+        "dist_sha256": "5" * 64,
+        "manifest_sha256": "6" * 64,
+        "frontend_sha": "f" * 40,
+        "backend_sha": PRIOR,
+    }
+
     env.update({
         "PANTHEON_DEV_FE_DEPLOY_SCRIPT": str(fe_script),
-        "PANTHEON_DEV_ARTIFACT_SEALED_FROM_JSON": '{"target":"candidate"}',
-        "PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON": '{"target":"baseline"}',
+        "PANTHEON_DEV_ARTIFACT_SEALED_FROM_JSON": json.dumps(from_seal),
+        "PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON": json.dumps(to_seal),
+        "PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID": "11111111-1111-4111-8111-111111111111",
+        "PANTHEON_DEPLOY_LEASE_OWNER": "11111111-1111-4111-8111-111111111111",
     })
 
     result = _run(_remote(), env)
@@ -742,11 +779,375 @@ def test_fe_owner_restore_sealed_invocation(fixture, tmp_path):
     assert len(events) == 2
     assert events[0]["command"] == "fe_deploy"
     assert events[0]["action"] == "restore-sealed"
-    assert events[0]["profile"] == "operator-live"
-    assert events[0]["delegated"] == "true"
-    assert events[0]["from"] == '{"target":"candidate"}'
-    assert events[0]["to"] == '{"target":"baseline"}'
+    assert events[0]["owner"] == "pantheon-dev-deploy"
+    assert events[0]["from"] == from_seal
+    assert events[0]["to"] == to_seal
     assert events[1]["command"] == "driver"
     assert events[1]["operation"] == "restore"
+
+    fe_root = tmp_path / "live-fe"
+    baseline_dir = tmp_path / "baseline-release"
+    baseline_dir.mkdir(parents=True, exist_ok=True)
+    fe_root.symlink_to(baseline_dir)
+    to_seal_matching = dict(to_seal, target=str(baseline_dir))
+
+    env.update({
+        "PANTHEON_DEV_FE_ROOT": str(fe_root),
+        "PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON": json.dumps(to_seal_matching),
+    })
+    Path(env["RECORDER"]).write_text("")
+    result = _run(_remote(), env)
+    assert result.returncode == 0, result.stderr
+    events = _events(recorder)
+    assert len(events) == 1
+    assert events[0]["command"] == "driver"
+
+
+def test_full_cli_restore_final_connected_positive(fixture, tmp_path):
+    from copy import deepcopy
+    import shutil
+    from test_deploy_nonprod_vm import _setup_stubbed_dev_environment
+    from scripts import capture_dev_artifact_baseline as capture
+    from scripts import dev_candidate_receipt as candidate_receipt
+
+    fixture_env, recorder, driver, library = fixture
+    repo_root = Path(__file__).parents[1]
+    controller_sha = subprocess.run(
+        ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+        capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+    runner_temp = tmp_path / "runner_temp"
+    runner_temp.mkdir(mode=0o700, exist_ok=True)
+
+    run_id = fixture_env["PANTHEON_DEV_ARTIFACT_RUN_ID"]
+    attempt = fixture_env["PANTHEON_DEV_ARTIFACT_ATTEMPT"]
+    candidate_id = fixture_env["PANTHEON_DEV_ARTIFACT_CANDIDATE_ID"]
+
+    retained = runner_temp / f"pantheon-dev-artifacts-{run_id}-{attempt}"
+    retained.mkdir(mode=0o700, exist_ok=True)
+    (retained / "baseline").mkdir(mode=0o700, exist_ok=True)
+    (retained / "candidate").mkdir(mode=0o700, exist_ok=True)
+
+    real_git = shutil.which("git")
+    stub_git = tmp_path / "bin/git"
+    stub_git.write_text(
+        f'#!/usr/bin/env python3\n'
+        f'import os, sys\n'
+        f'if len(sys.argv) > 1 and sys.argv[1] == "-C":\n'
+        f'    os.execv({real_git!r}, [{real_git!r}] + sys.argv[1:])\n'
+        f'sys.exit(97)\n'
+    )
+    stub_git.chmod(0o755)
+
+    fe_manifest_sha = "2" * 64
+    fe_dist_sha = "3" * 64
+    fe_target = "/var/www/pantheon-dev-fe-releases/candidate"
+    from_seal = {
+        "target": "/var/www/pantheon-dev-fe-releases/baseline",
+        "dist_sha256": "5" * 64,
+        "manifest_sha256": "6" * 64,
+        "frontend_sha": "f" * 40,
+        "backend_sha": PRIOR,
+    }
+    to_seal = {
+        "target": fe_target,
+        "dist_sha256": fe_dist_sha,
+        "manifest_sha256": fe_manifest_sha,
+        "frontend_sha": "e" * 40,
+        "backend_sha": SHA,
+    }
+
+    identity = {
+        "candidate_id": candidate_id,
+        "run_id": run_id,
+        "attempt": attempt,
+        "controller_sha": controller_sha,
+        "candidate_backend_sha": SHA,
+        "candidate_frontend_sha": "e" * 40,
+        "previous_backend_sha": PRIOR,
+        "previous_frontend_sha": "f" * 40,
+    }
+
+    bundle = {"schema_version": "pantheon.dev-bff-image-bundle.v1", "source_sha": PRIOR, "services": {}, "archives": {}}
+    for index, service in enumerate(candidate_receipt.SERVICES, 1):
+        image = "sha256:" + str(index) * 64
+        bundle["services"][service] = {"image_id": image, "oci_revision": None, "repo_digests": None}
+        bundle["archives"][image] = {"name": image[7:] + "-" + "9" * 64 + ".tar", "sha256": "9" * 64, "size": 123}
+
+    lease = fixture_env["PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID"]
+    baseline = {
+        "schema_version": "pantheon.dev-release-artifact-baseline.v1",
+        "environment": "dev",
+        "project_id": "pantheon-dev-20260902",
+        "vm": "pantheon-dev-deploy",
+        "identity": deepcopy(identity),
+        "capture_lease_id": lease,
+        "captured_at": "2026-09-09T00:00:00Z",
+        "image_bundle": bundle,
+        "image_bundle_sha256": capture.digest(capture.encoded(bundle)),
+        "compose_sha256": "8" * 64,
+        "frontend": from_seal,
+        "baseline_nonsecret_config": {
+            "PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE": None,
+            "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID": "",
+            "PERSONA_EVALUATOR_BFF_TOKEN_FILE": None,
+            "PERSONA_EVALUATOR_GOVERNANCE_TOKEN_FILE": None,
+            **dict.fromkeys(capture.artifacts.BASELINE_AUTH_FLAGS, "false"),
+        },
+    }
+    baseline_hash = capture.digest(capture.encoded(baseline))
+    folder = capture.ARTIFACT_ROOT / f"baseline-{run_id}-{attempt}-{candidate_id}"
+    sealed_baseline, _ = capture.seal_result(capture.encoded({
+        "manifest_path": str(folder / "manifest.json"),
+        "manifest_sha256": baseline_hash,
+        "manifest": baseline,
+    }), identity)
+
+    baseline_path = retained / "baseline/artifact-baseline.json"
+    baseline_path.write_bytes(sealed_baseline)
+    baseline_path.chmod(0o600)
+
+    candidate_compose = tmp_path / "candidate-compose" / "docker-compose.yml"
+    candidate_compose.parent.mkdir(parents=True, exist_ok=True)
+    candidate_compose_content = "services:\n  operator-bff:\n    image: pantheon-operator-bff:connected\n"
+    candidate_compose.write_text(candidate_compose_content)
+    candidate_compose_sha = hashlib.sha256(candidate_compose_content.encode()).hexdigest()
+
+    record = {
+        "schema_version": "pantheon.dev-candidate-image-admission.v1",
+        "environment": "dev",
+        "project_id": "pantheon-dev-20260902",
+        "vm": "pantheon-dev-deploy",
+        "identity": deepcopy(identity),
+        "seal_lease_id": lease,
+        "sealed_at": "2026-09-09T00:01:00Z",
+        "baseline_manifest_sha256": baseline_hash,
+        "candidate_compose_sha256": candidate_compose_sha,
+        "services": {
+            service: {
+                "image_id": "sha256:" + str(index) * 64,
+                "oci_revision": SHA,
+                "git_sha": None if service == "loop-run-projector-scheduler" else SHA,
+                "compose_image": "pantheon-" + service,
+            }
+            for index, service in enumerate(candidate_receipt.SERVICES, 4)
+        },
+    }
+    override = {
+        "services": {
+            service: {"image": row["image_id"], "pull_policy": "never"}
+            for service, row in record["services"].items()
+        }
+    }
+    override["services"]["operator-bff"]["environment"] = {
+        "BFF_IMAGE_DIGEST": record["services"]["operator-bff"]["image_id"],
+    }
+    record["image_override_sha256"] = capture.digest(capture.encoded(override))
+    receipt = {
+        "candidate_image_manifest_path": str(folder / "candidate-images.json"),
+        "candidate_image_manifest_sha256": capture.digest(capture.encoded(record)),
+        "candidate_image_manifest": record,
+        "candidate_image_override_path": str(folder / "candidate-images.override.json"),
+        "candidate_image_override_sha256": record["image_override_sha256"],
+    }
+    receipt_path = retained / "candidate/candidate-receipt.json"
+    receipt_path.write_bytes(capture.encoded(receipt))
+    receipt_path.chmod(0o600)
+
+    fe_seal_path = retained / "candidate/candidate-frontend.json"
+    fe_seal_path.write_bytes(capture.encoded(to_seal))
+    fe_seal_path.chmod(0o600)
+
+    recorder_file = str(recorder)
+    fe_script = tmp_path / "deploy-dev-vm.sh"
+    fe_script.write_text(
+        '#!/usr/bin/env bash\n'
+        'set -euo pipefail\n'
+        'AUTHORIZED_LEASE_OWNERS_REGEX="^(pantheon-release-controller|pantheon-dev-deploy|parent-controller|pantheon-proof-watchdog|pantheon-fe-deploy)$"\n'
+        'owner="${PANTHEON_DEPLOY_LEASE_OWNER:-}"\n'
+        'if [[ ! "${owner}" =~ ${AUTHORIZED_LEASE_OWNERS_REGEX} ]]; then\n'
+        '    echo "Deployment rejected: unauthorized lease owner \'${owner}\'." >&2\n'
+        '    exit 2\n'
+        'fi\n'
+        'python3 - <<\'PY\'\n'
+        'import json, os, sys\n'
+        'from_doc = json.loads(os.environ.get("PANTHEON_DEPLOY_SEALED_FROM_JSON", "{}"))\n'
+        'to_doc = json.loads(os.environ.get("PANTHEON_DEPLOY_SEALED_TO_JSON", "{}"))\n'
+        'for doc, name in ((from_doc, "from"), (to_doc, "to")):\n'
+        '    for field in ("target", "dist_sha256", "manifest_sha256", "frontend_sha", "backend_sha"):\n'
+        '        if field not in doc:\n'
+        '            sys.exit(f"missing field {field} in {name} seal")\n'
+        f'with open({recorder_file!r}, "a") as f:\n'
+        '    f.write(json.dumps({\n'
+        '        "command": "fe_deploy",\n'
+        '        "action": os.environ.get("PANTHEON_DEPLOY_ACTION"),\n'
+        '        "profile": os.environ.get("PANTHEON_DEPLOY_PROFILE"),\n'
+        '        "delegated": os.environ.get("PANTHEON_DEPLOY_LEASE_DELEGATED"),\n'
+        '        "owner": os.environ.get("PANTHEON_DEPLOY_LEASE_OWNER"),\n'
+        '        "epoch": os.environ.get("PANTHEON_DEPLOY_LEASE_EPOCH"),\n'
+        '        "run_id": os.environ.get("PANTHEON_DEPLOY_LEASE_RUN_ID"),\n'
+        '    }) + "\\n")\n'
+        'PY\n'
+        'exit 0\n'
+    )
+    fe_script.chmod(0o755)
+
+    typed_readback = {
+        "schema_version": "pantheon.dev-artifact-readback.v1",
+        "operation": "restore-final",
+        "manifest_sha256": baseline_hash,
+        "identity": identity,
+        "pre_restore_source_observations": ["available_matching_source"],
+        "image_readback_verified": True,
+        "images": {service: row["image_id"] for service, row in record["services"].items()},
+        "frontend": to_seal,
+        "baseline_nonsecret_config_verified": True,
+        "protected_owners_unchanged": True,
+        "owners": {
+            service: {
+                "container_id": "1" * 64,
+                "image_id": "sha256:" + "2" * 64,
+                "started_at": "2026-09-09T00:00:00.000001Z",
+                "restart_count": 0,
+            }
+            for service in ("governance", "registry", "deployment", "runtime-manager", "deployment-outbox-consumer", "capital")
+        },
+        "public": {
+            "source_sha": SHA,
+            "fe_manifest_bytes_verified": True,
+            "strict_auth_denials_verified": True,
+            "dev_login_enabled": True,
+            "authenticated_viewer_readback_verified": True,
+        },
+    }
+    typed_readback["owners"]["dev-paper-principal-issuer"] = None
+
+    synth_root = fixture_env["SYNTHETIC_CONTROLLER_ROOT"]
+    controller_dir = Path(synth_root) / controller_sha
+    controller_dir.mkdir(mode=0o700, exist_ok=True)
+    syn_library = controller_dir / "dev_release_artifacts.py"
+    syn_library.write_text("# synthetic controller library\n")
+    syn_library.chmod(0o400)
+    syn_driver = controller_dir / "dev_release_artifact_driver.py"
+
+    readback_payload = json.dumps(typed_readback)
+    syn_driver.write_text(
+        f'#!/usr/bin/env python3\n'
+        f'import json, sys\n'
+        f'operation = sys.argv[1]\n'
+        f'args = dict(zip(sys.argv[2::2], sys.argv[3::2]))\n'
+        f'with open({recorder_file!r}, "a") as f:\n'
+        f'    f.write(json.dumps({{"command": "driver", "operation": operation, "args": args}}) + "\\n")\n'
+        f'print({readback_payload!r})\n'
+    )
+    syn_driver.chmod(0o400)
+
+    artifact_env = {key: value for key, value in fixture_env.items() if key.startswith("PANTHEON_DEV_ARTIFACT_")}
+    artifact_env.update({
+        "PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA": controller_sha,
+        "PANTHEON_DEV_ARTIFACT_DRIVER_PATH": str(syn_driver),
+        "PANTHEON_DEV_ARTIFACT_DRIVER_SHA256": hashlib.sha256(syn_driver.read_bytes()).hexdigest(),
+        "PANTHEON_DEV_ARTIFACT_LIBRARY_PATH": str(syn_library),
+        "PANTHEON_DEV_ARTIFACT_LIBRARY_SHA256": hashlib.sha256(syn_library.read_bytes()).hexdigest(),
+        "PANTHEON_DEV_ARTIFACT_MANIFEST_PATH": str(folder / "manifest.json"),
+        "PANTHEON_DEV_ARTIFACT_MANIFEST_SHA256": baseline_hash,
+        "PANTHEON_DEV_ARTIFACT_BASELINE_FILE": str(baseline_path),
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_RECEIPT_FILE": str(receipt_path),
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256": receipt["candidate_image_manifest_sha256"],
+        "PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256": fe_manifest_sha,
+        "PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256": fe_dist_sha,
+        "PANTHEON_DEV_ARTIFACT_FE_TARGET": fe_target,
+        "PANTHEON_DEV_ARTIFACT_SEALED_FROM_JSON": json.dumps(from_seal),
+        "PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON": json.dumps(to_seal),
+        "PANTHEON_DEV_ARTIFACT_FINAL_FE_SEAL_FILE": str(fe_seal_path),
+        "PANTHEON_DEV_FE_DEPLOY_SCRIPT": str(fe_script),
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE": str(candidate_compose),
+    })
+
+    env, args_file, stdin_file = _setup_stubbed_dev_environment(tmp_path, sha=SHA, extra_env=artifact_env)
+    env.update({
+        "TARGET_ENV": "dev",
+        "GCP_DEPLOY_PROJECT_ID": "pantheon-dev-20260902",
+        "DEV_VM": "pantheon-dev-deploy",
+        "DEV_ZONE": "asia-east1-b",
+        "RUNNER_TEMP": str(runner_temp),
+        "PANTHEON_RELEASE_REPO_ROOT": str(repo_root),
+        "DEV_REMOTE_DIR": str(tmp_path / "MUST_NOT_ACCESS_OWNER_CHECKOUT"),
+        "GITHUB_RUN_ID": run_id,
+        "GITHUB_RUN_ATTEMPT": attempt,
+        "PANTHEON_RELEASE_CANDIDATE_ID": candidate_id,
+        "PANTHEON_FAILED_BACKEND_SHA": SHA,
+        "PANTHEON_FAILED_FRONTEND_SHA": "e" * 40,
+        "PANTHEON_ROLLBACK_BACKEND_SHA": PRIOR,
+        "PANTHEON_ROLLBACK_FRONTEND_SHA": "f" * 40,
+        "PANTHEON_DEV_ARTIFACT_TARGET": "final",
+        "PANTHEON_DEV_ARTIFACT_OPERATION": "restore-final",
+        "DEV_BFF_AUTH_STUB": "false",
+        "DEV_BFF_AUTH_MODE": "strict",
+        "DEV_BFF_JWT_SECRET": "test-jwt-secret-for-strict-auth-32chars",
+        "DEV_BFF_OIDC_CLIENT_ID": "test-oidc-client-id",
+        "DEV_BFF_OIDC_CLIENT_SECRET": "test-oidc-client-secret",
+        "DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET": "test-viewer-secret",
+        "DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET": "test-approver-secret",
+        "DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET": "test-risk-owner-secret",
+        "DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET": "test-operator-a-secret",
+        "DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET": "test-operator-b-secret",
+        "DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN": "test-openclaw-token",
+        "DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED": "false",
+        "PANTHEON_DEV_ARTIFACT_EVIDENCE_PROVENANCE": "runner-local",
+    })
+    env["PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID"] = fixture_env["PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID"]
+    state_file = Path(env["PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE"])
+    state = json.loads(state_file.read_text())
+    state["leaseId"] = env["PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID"]
+    state["expectedBackendSha"] = SHA
+    state_file.write_text(json.dumps(state))
+
+    synth_parent = str(Path(synth_root).parent)
+
+    mock_ssh = tmp_path / "bin/ssh"
+    mock_ssh.write_text(
+        '#!/usr/bin/env python3\n'
+        'import base64, json, os, subprocess, sys\n'
+        'lines = [sys.stdin.readline() for _ in range(3)]\n'
+        'frame = json.loads(lines[1])\n'
+        'payload = base64.b64decode(frame["script"]).decode()\n'
+        f'payload = payload.replace({CONTROLLER_ROOT!r}, {synth_root!r})\n'
+        f'payload = payload.replace({str(Path(CONTROLLER_ROOT).parent)!r}, {synth_parent!r})\n'
+        'read_fd, write_fd = os.pipe()\n'
+        'os.write(write_fd, b"fixture watchdog pulse")\n'
+        'remote_env = dict(os.environ)\n'
+        'remote_env["PANTHEON_DEV_ARTIFACT_GUARD_CHANNEL_FD"] = str(read_fd)\n'
+        'proc = subprocess.run(["bash", "-s"], input=payload, text=True, capture_output=False, env=remote_env, pass_fds=(read_fd,))\n'
+        'sys.exit(proc.returncode)\n'
+    )
+    mock_ssh.chmod(0o755)
+
+    readback_out = tmp_path / "final-readback.json"
+    result = subprocess.run([
+        str(SCRIPT),
+        "--environment", "dev",
+        "--component", "bff",
+        "--sha", SHA,
+        "--artifact-restore-final",
+        "--artifact-readback-out", str(readback_out),
+        "--deadline-seconds", "30",
+    ], env=env, capture_output=True, text=True, timeout=30)
+
+    assert result.returncode == 0, f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+    assert readback_out.exists(), "readback out file was not written"
+    data = json.loads(readback_out.read_text())
+    assert data["schema_version"] == "pantheon.dev-artifact-readback.v1"
+    assert data["operation"] == "restore-final"
+
+    events = _events(recorder)
+    assert len(events) == 2
+    assert events[0]["command"] == "fe_deploy"
+    assert events[0]["action"] == "restore-sealed"
+    assert events[1]["command"] == "driver"
+    assert events[1]["operation"] == "restore-final"
+    assert events[1]["args"]["--target"] == "final"
+    assert events[1]["args"]["--compose-file"] == str(candidate_compose)
 
 

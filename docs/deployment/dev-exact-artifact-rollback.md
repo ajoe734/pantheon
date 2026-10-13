@@ -155,11 +155,18 @@ Final verification and same-final return (`restore-final`) reuse the existing gu
    - `PANTHEON_DEPLOY_ACTION=restore-sealed`
    - `PANTHEON_DEPLOY_PROFILE=operator-live`
    - `PANTHEON_DEPLOY_LEASE_DELEGATED=true`
+   - `PANTHEON_DEPLOY_LEASE_OWNER=pantheon-dev-deploy`
    - `PANTHEON_DEPLOY_SEALED_FROM_JSON` and `PANTHEON_DEPLOY_SEALED_TO_JSON` (carrying the reversed seals)
-   This restores the hosted FE symlink via the authoritative frontend deploy owner under the active delegated lease before the BFF containers are started.
+   This restores the hosted FE symlink via the authoritative frontend deploy owner under the active delegated lease before the BFF containers are started. If the live symlink already matches the target release, the switch is safely identified as redundant and skipped without error.
 
 2. **Deduplicated Release Verification**:
    The workflow step `final_artifact_verify` reuses `scripts/compensate_cross_repo_release.sh` with `PANTHEON_DEV_ARTIFACT_OPERATION=verify` and `PANTHEON_DEV_ARTIFACT_TARGET=final`. This deduplicates the lease lifecycle (acquire, heartbeat, verify, release) and error handling, ensuring identical lease ownership semantics between compensation rollback and candidate admission verification without duplicating 160+ lines of shell script or violating strict auth environment boundaries.
+
+3. **Credential Preflight Isolation**:
+   `deploy_nonprod_vm.sh` enforces full actor credential checks (`VIEWER`, `APPROVER`, `RISK_OWNER`, `OPERATOR_A`, `OPERATOR_B`) and human-provisioned OpenClaw tokens for normal VM deployment routines. During artifact operations (`--artifact-verify` and `--artifact-restore`), deploy-time actor preflights are bypassed because the operations run over SSH against already-deployed containers under the active lease, preserving strict non-stub auth defaults on the remote driver without plumbing write-capable actor secrets to readback steps.
+
+4. **Connected Positive Verification**:
+   A connected positive CLI test (`test_full_cli_restore_final_connected_positive`) exercises the full path: `deploy_nonprod_vm.sh --artifact-restore-final` -> isolated transport stub -> remote driver -> real FE owner script with complete 5-field seals -> real compensation evidence validator (`dev_artifact_compensation_evidence.py readback`).
 
 
 The eight identity fields are `candidate_id`, `run_id`, `attempt`,
