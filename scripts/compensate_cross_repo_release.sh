@@ -32,7 +32,6 @@ for name in \
   PANTHEON_FAILED_BACKEND_SHA \
   PANTHEON_FAILED_FRONTEND_SHA \
   PANTHEON_RELEASE_CANDIDATE_ID \
-  PANTHEON_RELEASE_CONTROLLER_LOG \
   PANTHEON_ROLLBACK_EVIDENCE_OUT \
   DEV_BFF_URL \
   DEV_FE_URL \
@@ -60,8 +59,10 @@ digest_pattern='^[0-9a-f]{64}$'
   || die "failed frontend SHA is invalid"
 [[ "${PANTHEON_RELEASE_CANDIDATE_ID}" =~ ${digest_pattern} ]] \
   || die "release candidate ID is invalid"
-[[ -f "${PANTHEON_RELEASE_CONTROLLER_LOG}" && ! -L "${PANTHEON_RELEASE_CONTROLLER_LOG}" ]] \
-  || die "release controller log is missing or unsafe"
+if [[ -n "${PANTHEON_RELEASE_CONTROLLER_LOG:-}" ]]; then
+  [[ -f "${PANTHEON_RELEASE_CONTROLLER_LOG}" && ! -L "${PANTHEON_RELEASE_CONTROLLER_LOG}" ]] \
+    || die "release controller log is missing or unsafe"
+fi
 
 lease_controller="$(realpath "${PANTHEON_LEASE_CONTROLLER_ROOT}")"
 release_root="$(realpath "${PANTHEON_RELEASE_REPO_ROOT}")"
@@ -94,6 +95,10 @@ artifact_readback="${lease_dir}/artifact-readback.json"
 python3 "${evidence_helper}" prepare --provenance actions-download --output-env "${artifact_env}"
 # Only the helper's fixed-schema, shell-quoted nonsecret exports are executable.
 source "${artifact_env}"
+target_backend_sha="${PANTHEON_ROLLBACK_BACKEND_SHA}"
+if [[ "${PANTHEON_DEV_ARTIFACT_OPERATION:-}" == "restore-final" || "${PANTHEON_DEV_ARTIFACT_TARGET:-}" == "final" ]]; then
+  target_backend_sha="${PANTHEON_FAILED_BACKEND_SHA}"
+fi
 state_file="${lease_dir}/state.json"
 acquisition_file="${lease_dir}/acquisition.json"
 pid_file="${lease_dir}/heartbeat.pid"
@@ -179,12 +184,12 @@ PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
     --path .pantheon/environment-leases/pantheon-dev-environment.json \
     --resource pantheon-dev-environment \
     --mode deployment \
-    --owner "pantheon:${GITHUB_REPOSITORY}:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:rollback" \
+    --owner "pantheon:${GITHUB_REPOSITORY}:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${PANTHEON_DEV_ARTIFACT_OPERATION:-rollback}" \
     --ttl-seconds 300 \
     --wait-seconds 7200 \
     --poll-seconds 5 \
     --state-file "${state_file}" \
-    --expected-backend-sha "${PANTHEON_ROLLBACK_BACKEND_SHA}" \
+    --expected-backend-sha "${target_backend_sha}" \
     --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
     --json-out "${acquisition_file}"
 
@@ -235,22 +240,74 @@ export PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG="${heartbeat_log}"
 export PANTHEON_DEV_ENVIRONMENT_LEASE_MAX_HEARTBEAT_AGE_SECONDS=120
 export PANTHEON_DEV_ENVIRONMENT_LEASE_VERIFY_INTERVAL_SECONDS=30
 
+# Bind the FE controller to the admitted frontend deploy run: the accepted
+# release receipt keeps only run_id, so read that run's immutable head_sha
+# (the FE controller commit, distinct from the FE candidate and BE controller
+# SHAs) through the original GitHubClient.get_run. No receipt -> no binding
+# (failed-release compensation); an unreadable or invalid one is fatal.
+fe_controller_sha=""
+accepted_receipt="${RELEASE_EVIDENCE_DIR:-}/release-controller-accepted.json"
+if [[ -n "${RELEASE_EVIDENCE_DIR:-}" && -f "${accepted_receipt}" && ! -L "${accepted_receipt}" ]]; then
+  fe_controller_sha="$(CROSS_REPO_RELEASE_TOKEN="${lease_token}" \
+    python3 - "${release_root}" "${accepted_receipt}" <<'PY' || true
+import json
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[1]) / "scripts"))
+import cross_repo_release_controller as controller
+
+try:
+    receipt = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+    run_id = int(receipt["frontend_deploy"]["run_id"])
+    client = controller.GitHubClient(
+        api_url=os.environ.get("GITHUB_API_URL", "https://api.github.com"),
+        token=os.environ["CROSS_REPO_RELEASE_TOKEN"],
+        repository=controller.FRONTEND_REPOSITORY,
+    )
+    run = client.get_run(run_id)
+    path = str(run.get("path") or "").split("@", 1)[0]
+    head_sha = controller.exact_sha(str(run.get("head_sha") or "").lower(), "FE controller SHA")
+    if (
+        run.get("id") != run_id
+        or path != f".github/workflows/{controller.DEPLOY_WORKFLOW}"
+        or run.get("event") != "workflow_dispatch"
+        or run.get("head_branch") != controller.FRONTEND_BRANCH
+    ):
+        raise ValueError("admitted FE deploy run identity mismatch")
+    print(head_sha)
+except Exception:
+    raise SystemExit(1)
+PY
+  )"
+  [[ "${fe_controller_sha}" =~ ${sha_pattern} ]] \
+    || die "admitted FE controller identity could not be resolved from the accepted frontend deploy run"
+fi
+export PANTHEON_DEV_FE_CONTROLLER_SHA="${fe_controller_sha}"
+
+extra_deploy_args=()
+if [[ -n "${PANTHEON_DEV_ARTIFACT_TARGET:-}" ]]; then
+  extra_deploy_args+=(--artifact-target "${PANTHEON_DEV_ARTIFACT_TARGET}")
+fi
+
 PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_ROLLBACK_BACKEND_SHA}" \
 PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
   "${lease_wrapper}" \
     bash "${deploy_script}" \
       --environment dev \
       --component bff \
-      --sha "${PANTHEON_ROLLBACK_BACKEND_SHA}" \
+      --sha "${target_backend_sha}" \
       --project-id "${GCP_DEPLOY_PROJECT_ID}" \
       "--artifact-${PANTHEON_DEV_ARTIFACT_OPERATION}" \
-      --artifact-readback-out "${artifact_readback}"
+      --artifact-readback-out "${artifact_readback}" \
+      "${extra_deploy_args[@]}"
 
 python3 - \
   "${release_root}" \
   "${artifact_readback}" \
   "${PANTHEON_ROLLBACK_EVIDENCE_OUT}" \
-  "${PANTHEON_RELEASE_CONTROLLER_LOG}" <<'PY'
+  "${PANTHEON_RELEASE_CONTROLLER_LOG:-}" <<'PY'
 import os
 from pathlib import Path
 import sys
@@ -259,8 +316,19 @@ sys.path.insert(0, str(Path(sys.argv[1]) / "scripts"))
 import dev_artifact_compensation_evidence as artifact
 
 try:
-    evidence = artifact.compensation_evidence(dict(os.environ), "actions-download", Path(sys.argv[2]), Path(sys.argv[4]))
-    artifact.private_write(Path(sys.argv[3]), artifact.capture.encoded(evidence))
+    readback_path = Path(sys.argv[2])
+    output_path = Path(sys.argv[3])
+    log_arg = sys.argv[4] if len(sys.argv) > 4 else ""
+    failure_log = Path(log_arg) if log_arg and log_arg != "None" and Path(log_arg).is_file() else None
+    operation = os.environ.get("PANTHEON_DEV_ARTIFACT_OPERATION", "restore")
+
+    if operation == "verify":
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        raw_readback = artifact.private_bytes(readback_path, limit=65536)
+        artifact.private_write(output_path, raw_readback)
+    else:
+        evidence = artifact.compensation_evidence(dict(os.environ), "actions-download", readback_path, failure_log)
+        artifact.private_write(output_path, artifact.capture.encoded(evidence))
 except (artifact.capture.CaptureError, OSError, ValueError, TypeError, AttributeError, KeyError):
     raise SystemExit("artifact compensation evidence rejected") from None
 PY

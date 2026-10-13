@@ -113,6 +113,69 @@ from `vm-dev-staging-prod-management-plan.md`, never a retired project or host.
    authenticated viewer/tenant/session readback. Release/quarantine decisions
    use this complete evidence, never the source SHA alone.
 
+### Supported invocations for final verify and same-final return
+
+Final verification and same-final return (`restore-final`) reuse the existing guarded remote transport and driver without ambient PWD assumptions or rebuilding:
+
+1. **Final verify and candidate seal creation**:
+   ```bash
+   bash scripts/deploy_nonprod_vm.sh \
+     --environment dev \
+     --component bff \
+     --sha "${CANDIDATE_BACKEND_SHA}" \
+     --project-id "${GCP_DEPLOY_PROJECT_ID}" \
+     --artifact-verify \
+     --artifact-target final \
+     --artifact-readback-out "${RELEASE_EVIDENCE_DIR}/candidate/candidate-frontend.json"
+   ```
+   This passes `--target final` to the remote artifact driver, selects the explicit candidate Compose configuration via `resolve_dev_candidate_compose`, verifies the FE distribution and deployment manifest against their sealed digests, and records the validated candidate frontend seal to `candidate/candidate-frontend.json`.
+
+2. **Same-final return (`restore-final`)**:
+   ```bash
+   bash scripts/deploy_nonprod_vm.sh \
+     --environment dev \
+     --component bff \
+     --sha "${CANDIDATE_BACKEND_SHA}" \
+     --project-id "${GCP_DEPLOY_PROJECT_ID}" \
+     --artifact-restore-final \
+     --artifact-readback-out "${RELEASE_EVIDENCE_DIR}/candidate-readback.json"
+   ```
+   Or via the release compensation helper:
+   ```bash
+   PANTHEON_DEV_ARTIFACT_TARGET=final \
+   PANTHEON_DEV_ARTIFACT_OPERATION=restore-final \
+     bash scripts/compensate_cross_repo_release.sh
+   ```
+   This binds `DEPLOY_SHA` and `lease.expectedBackendSha` to the candidate backend SHA, verifies that `candidate-frontend.json` and candidate image receipts exist and match their admitted digests, and performs an exact Compose recreate using `--no-build --pull never --no-deps`.
+
+### FE Owner restore-sealed and Helper Reuse
+
+1. **FE Owner Delegation**:
+   When restoring artifacts (`restore` or `restore-final`), `deploy_nonprod_vm.sh` invokes the frontend owner script (`scripts/deploy-dev-vm.sh`) with:
+   - `PANTHEON_DEPLOY_ACTION=restore-sealed`
+   - `PANTHEON_DEPLOY_PROFILE=operator-live`
+   - `PANTHEON_DEPLOY_LEASE_DELEGATED=true`
+   - `PANTHEON_DEPLOY_LEASE_OWNER=pantheon-dev-deploy`
+   - `PANTHEON_DEPLOY_SEALED_FROM_JSON` and `PANTHEON_DEPLOY_SEALED_TO_JSON` (carrying the reversed seals)
+   This restores the hosted FE symlink via the authoritative frontend deploy owner under the active delegated lease before the BFF containers are started. If the live symlink already matches the target release, the switch is safely identified as redundant and skipped without error.
+
+2. **Deduplicated Release Verification & Opt-in Roundtrip Entry**:
+   The workflow step `final_artifact_verify` reuses `scripts/compensate_cross_repo_release.sh` with `PANTHEON_DEV_ARTIFACT_OPERATION=verify` and `PANTHEON_DEV_ARTIFACT_TARGET=final`. This deduplicates the lease lifecycle (acquire, heartbeat, verify, release) and error handling, ensuring identical lease ownership semantics between compensation rollback and candidate admission verification.
+   Additionally, an optional workflow dispatch input `run_exact_artifact_roundtrip` (boolean, default false) executes a same-job baseline restore followed by a same-final return using unchanged original seals under the active lease. When enabled, actual roundtrip leg outcomes feed directly into release retirement and compensation enforcement.
+
+3. **Credential Preflight Isolation**:
+   `deploy_nonprod_vm.sh` enforces full actor credential checks (`VIEWER`, `APPROVER`, `RISK_OWNER`, `OPERATOR_A`, `OPERATOR_B`) and human-provisioned OpenClaw tokens for normal VM deployment routines. During `--artifact-verify`, deploy-time runtime credential preflights are bypassed because verification probes already-deployed containers without recreating services. Conversely, during `--artifact-restore` and `--artifact-restore-final`, full runtime credential checks are retained because restoration recreates container services via docker-compose; missing credentials fail closed before any FE or container mutation is attempted.
+
+4. **FE Controller Version Binding**:
+   `compensate_cross_repo_release.sh` reads the run ID retained in `release-controller-accepted.json` and resolves that run's immutable `head_sha` through the existing `GitHubClient.get_run`; that is the admitted FE controller commit (not the FE candidate SHA or the BE controller SHA). It is exported as `PANTHEON_DEV_FE_CONTROLLER_SHA` and forwarded to the VM. FE `restore-sealed` exits before the FE controller's own expected-HEAD and tracked-clean checks, so `deploy_nonprod_vm.sh` applies the same semantics before executing the script: the script must be the checkout's `scripts/deploy-dev-vm.sh`, the checkout HEAD must equal the admitted commit, and the script plus `scripts/atomic-symlink-cas.py` and `scripts/atomic-release-manifest.py` must be tracked and unmodified. `restore-final` fails closed when no admitted identity is supplied. No controller service, lock, or copy of FE code is added.
+
+5. **Candidate Compose Context and Retirement**:
+   The final verify and both roundtrip legs receive `PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE` as `<DEV_DEPLOY_WORKTREE_ROOT>/dev-<root|bff>/docker-compose.yml` (the layout of `prepare_deploy_worktree`; `component=bff` selects `dev-bff`) plus `PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPONENT`. The direct deploy remote resolver keeps its existing `$HOME/pantheon-ci-deploy/managed-deploy-worktrees` default, but compensation and the workflow's local prepare do not: final compensation requires an explicitly configured `DEV_DEPLOY_WORKTREE_ROOT` containing the candidate Compose for the actual component and the sealed digest, and a missing or unconfigured path is rejected (fail closed) rather than falling back to the VM `$HOME`. The receipt compose digest is still verified; there is no alias or directory search. Release-case retirement is `accepted` only for a successful frontend release, final verify and (when opted in) both roundtrip legs; otherwise it runs only after a successful compensation, as `compensated`. A failed roundtrip leg with failed compensation never retires.
+
+6. **Source-Level CLI Integration Test Coverage (AC5)**:
+   `test_full_cli_restore_final_executes_original_bff_chain` runs `deploy_nonprod_vm.sh --artifact-restore-final` from a hostile working directory through the original guarded sender, original bootstrap and remote watchdog (real pulses, guard FD and exit status), the deploy payload, the ORIGINAL driver and library bytes taken from the admitted controller commit, and the external `dev_artifact_compensation_evidence.py readback` validator, which consumes the driver-generated readback. Baseline manifest, candidate receipt and final FE seal are produced by the original driver in-process beforehand. Synthetic boundaries (not hosted evidence): a PATH `ssh` runs the remote command locally and substitutes the fixed `/home/...` artifact-store constants in the transported payload; a PATH `python3` shim patches only the driver/validator path and hostname constants and swaps Docker/HTTP for the driver test models; the FE deploy command is an explicit mock that records its env and switches the live link (the real FE controller/CAS is covered by the independent FE tests and the parent hosted roundtrip). Negative cases reject a tampered final FE seal after the driver readback and an unadmitted FE controller commit before any FE or driver action. Hosted environment execution and parent business data acceptance remain separate boundaries.
+
+
 The eight identity fields are `candidate_id`, `run_id`, `attempt`,
 `controller_sha`, `candidate_backend_sha`, `candidate_frontend_sha`,
 `previous_backend_sha`, and `previous_frontend_sha`. Controller Python bytes
