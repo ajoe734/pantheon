@@ -540,4 +540,3 @@ def test_confirm_token_trusted_tenant_save_and_status_readback(mounted, owner):
     resp_other = client.get(f"/api/v1/operator/commands/{cmd_id}", headers={"Authorization": _tok("tenant-b")})
     assert resp_other.status_code == 404, resp_other.text
     assert resp_other.json()["detail"] == "Command not found"
-

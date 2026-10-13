@@ -429,6 +429,28 @@ class CommandAdapterService:
     def get_action_catalog(self, identity: Optional[OperatorIdentity] = None) -> BffActionCatalogResponse:
         return BffActionCatalogResponse(catalog=get_action_catalog().catalog)
 
+    @staticmethod
+    def _trusted_tenant_for_identity(identity: Optional[OperatorIdentity]) -> Optional[str]:
+        if identity is None:
+            return None
+        claims = getattr(identity, "claims", None) or {}
+        for key in ("tenant_id", "tenantId", "tid"):
+            val = str(claims.get(key) or "").strip()
+            if val:
+                return val
+        direct = str(getattr(identity, "tenant_id", "") or "").strip()
+        if direct:
+            return direct
+        try:
+            from ..auth.policy import bff_me_tenant_payload
+            payload = bff_me_tenant_payload(identity)
+            tid = str(payload.get("id") or "").strip()
+            if tid:
+                return tid
+        except Exception:
+            pass
+        return None
+
     def get_command_status(self, command_id: str, identity: Optional[OperatorIdentity] = None) -> CommandStatusResponse:
         clean_id = str(command_id or "").strip()
         if not clean_id:
@@ -759,14 +781,7 @@ class CommandAdapterService:
             "submitted_at": now,
             "accepted_at": now,
         }
-        claims = getattr(identity, "claims", None) or {}
-        trusted_tenant = str(
-            claims.get("tenant_id")
-            or claims.get("tenantId")
-            or claims.get("tid")
-            or getattr(identity, "tenant_id", "")
-            or ""
-        ).strip()
+        trusted_tenant = self._trusted_tenant_for_identity(identity)
         foundation_ctx: Dict[str, Any] = {
             "idempotency_record": {
                 "idempotency_key": clean_key,
@@ -1460,11 +1475,9 @@ class CommandAdapterService:
             raise foundation_bff_error(exc, foundation_context=foundation_context) from exc
 
         stored_params = stored_command_params(cmd, identity, payload)
-        claims = getattr(identity, "claims", None) or {}
-        tenant_id = claims.get("tenant_id") or claims.get("tenantId") or claims.get("tid")
-        if tenant_id:
-            # Preserve an explicit scope assertion for the owner to authorize.
-            stored_params.setdefault("tenant_id", tenant_id)
+        trusted_tenant = self._trusted_tenant_for_identity(identity)
+        if trusted_tenant:
+            stored_params["tenant_id"] = trusted_tenant
         stored_params["idempotency_key"] = resolved_key
         stored_params["request_hash"] = foundation_context["idempotency_record"].request_hash
         canonicalize_validated_precondition_evidence(
@@ -1486,6 +1499,11 @@ class CommandAdapterService:
             )
 
         command_envelope = foundation_context["command_envelope"]
+        if trusted_tenant:
+            if hasattr(command_envelope, "payload") and isinstance(command_envelope.payload, dict):
+                command_envelope.payload["tenant_id"] = trusted_tenant
+            elif isinstance(command_envelope, dict) and isinstance(command_envelope.get("payload"), dict):
+                command_envelope["payload"]["tenant_id"] = trusted_tenant
         idempotency_record = foundation_context["idempotency_record"]
         idempotency_record = idempotency_record.with_status(
             "succeeded",
@@ -1524,6 +1542,8 @@ class CommandAdapterService:
             "foundation": serialize_foundation_context(foundation_context),
             "receipt_dual_write": receipt_dual_write,
         }
+        if trusted_tenant:
+            audit_record["tenant_id"] = trusted_tenant
         if precondition_evidence:
             audit_record["precondition_evidence"] = precondition_evidence
         if audit_extra:

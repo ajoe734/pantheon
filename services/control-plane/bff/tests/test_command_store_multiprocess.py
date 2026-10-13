@@ -272,4 +272,3 @@ def test_command_store_tenant_id_from_command_extraction() -> None:
     # 7. Alias check
     assert CommandStore.tenant_id_from_command is CommandStore._tenant_id_from_command
     assert CommandStore.tenant_id_from_command({"audit": {"tenant_id": "tenant-alias"}}) == "tenant-alias"
-
