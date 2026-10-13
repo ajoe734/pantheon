@@ -1,0 +1,14 @@
+{
+  "task": "TEST-CONTAINER-VOLUME-LEAK-20261013",
+  "date": "2026-10-13",
+  "change": "docker rm -f -> docker rm -f -v for postgres/redis test containers in 7 files",
+  "untouched": ["integrations/openclaw/adapter/gateway_runtime.py", "scripts/deploy_nonprod_vm.sh"],
+  "dangling_volumes_before": 266,
+  "dangling_volumes_after": 266,
+  "commands": [
+    "pytest scripts/test_db_migrate.py (14 passed)",
+    "unittest services.telemetry.test_main_routes.TestTelemetryDurableLineageReadRestart (15 tests OK)",
+    "unittest scripts.test_redis_proof_fixture_cleanup (7 tests OK)"
+  ],
+  "measure": "docker volume ls -q --filter dangling=true | wc -l, taken before and after each run"
+}
