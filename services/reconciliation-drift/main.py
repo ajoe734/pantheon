@@ -1720,27 +1720,64 @@ def _summary_observed_metrics(summary: Dict[str, Any]) -> Dict[str, float]:
 
 
 def _resolve_scheduled_metrics(summary: Dict[str, Any]) -> Dict[str, float]:
-    observed = _summary_observed_metrics(summary)
+    observed: Dict[str, float] = {}
     committed_snapshot = summary.get("committed_position_snapshot")
     if isinstance(committed_snapshot, dict):
+        # Retain operational lag and baseline slippage from summary with own provenance
+        for key in ("queue_lag_ms", "event_delivery_lag_ms", "avg_slippage_bps"):
+            num = _numeric(summary.get(key))
+            if num is not None and math.isfinite(num):
+                observed[key] = num
+
+        # Resolve snapshot financial metrics from that event only
         nested = committed_snapshot.get("metrics") or {}
         if isinstance(nested, dict):
             for key, raw_value in nested.items():
                 num = _numeric(raw_value)
                 if num is not None and math.isfinite(num):
                     observed[str(key)] = num
-        for key in ("position_qty", "price", "cash"):
+        for key in (
+            "position_qty",
+            "price",
+            "cash",
+            "pnl",
+            "drawdown",
+            "sharpe_ratio",
+            "fill_rate",
+            "total_trades",
+        ):
             num = _numeric(committed_snapshot.get(key))
             if num is not None and math.isfinite(num):
                 observed[key] = num
-        for key in ("queue_lag_ms", "event_delivery_lag_ms"):
+    elif str(summary.get("deployment_stage") or "").strip().lower() != "paper":
+        # Non-paper stages use summary observed metrics as originally designed
+        nested = summary.get("observed_metrics") or summary.get("metrics") or {}
+        if isinstance(nested, dict):
+            for key, raw_value in nested.items():
+                number = _numeric(raw_value)
+                if number is not None and math.isfinite(number):
+                    observed[str(key)] = number
+        for key in (
+            "pnl",
+            "drawdown",
+            "sharpe_ratio",
+            "fill_rate",
+            "avg_slippage_bps",
+            "total_trades",
+            "queue_lag_ms",
+            "event_delivery_lag_ms",
+        ):
+            number = _numeric(summary.get(key))
+            if number is not None and math.isfinite(number):
+                observed[key] = number
+    else:
+        # Paper summary without committed position snapshot: preserve operational lag/slippage,
+        # but do not retain uncommitted in-flight financial keys from latest summary
+        for key in ("queue_lag_ms", "event_delivery_lag_ms", "avg_slippage_bps"):
             num = _numeric(summary.get(key))
             if num is not None and math.isfinite(num):
                 observed[key] = num
-        if "pnl" not in nested and "pnl" not in committed_snapshot:
-            observed.pop("pnl", None)
-        if "drawdown" not in nested and "drawdown" not in committed_snapshot:
-            observed.pop("drawdown", None)
+
     return observed
 
 
@@ -1751,26 +1788,37 @@ def _paper_lifecycle_identity(
     runtime_id: str,
 ) -> tuple[Dict[str, Any] | None, str | None]:
     """Return a complete live paper lifecycle identity or a fail-closed reason."""
+    committed_snapshot = summary.get("committed_position_snapshot")
     last = summary.get("last_lifecycle_identity")
-    if isinstance(last, dict) and str(last.get("event_type") or "").strip() in (
-        "reconciliation_completed",
-        "reconciliation_failed",
-    ):
-        raw_identity = last
-    else:
-        committed_snapshot = summary.get("committed_position_snapshot")
-        if not isinstance(committed_snapshot, dict):
-            if isinstance(last, dict):
-                evt_type = str(last.get("event_type") or "").strip()
-                if evt_type != "position_snapshot":
-                    raw_identity = last
-                else:
-                    # Admitted-but-not-committed position snapshot cannot qualify:
-                    return None, "missing_lifecycle_identity"
-            else:
-                return None, "missing_lifecycle_identity"
+
+    if isinstance(committed_snapshot, dict):
+        is_terminal_for_snapshot = False
+        if isinstance(last, dict) and str(last.get("event_type") or "").strip() in (
+            "reconciliation_completed",
+            "reconciliation_failed",
+        ):
+            last_run = str(last.get("run_id") or (last.get("metadata") or {}).get("run_id") or "").strip()
+            snap_run = str(committed_snapshot.get("run_id") or (committed_snapshot.get("metadata") or {}).get("run_id") or "").strip()
+            snap_eid = str(committed_snapshot.get("event_id") or "").strip()
+            last_parent = str(last.get("causal_parent_id") or (last.get("metadata") or {}).get("causal_parent_id") or "").strip()
+            last_env = last.get("correlation_envelope") if isinstance(last.get("correlation_envelope"), dict) else {}
+            last_causation = str(last_env.get("causation_event_id") or "").strip()
+
+            if (snap_eid and (last_parent == snap_eid or last_causation == snap_eid)) or (snap_run and last_run and last_run == snap_run):
+                is_terminal_for_snapshot = True
+
+        if is_terminal_for_snapshot:
+            raw_identity = last
         else:
             raw_identity = committed_snapshot
+    elif isinstance(last, dict):
+        evt_type = str(last.get("event_type") or "").strip()
+        if evt_type == "position_snapshot":
+            # Admitted-but-not-committed position snapshot cannot qualify:
+            return None, "missing_lifecycle_identity"
+        raw_identity = last
+    else:
+        return None, "missing_lifecycle_identity"
 
     identity = json.loads(json.dumps(raw_identity))
     missing = [

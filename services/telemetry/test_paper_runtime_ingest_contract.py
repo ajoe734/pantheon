@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import types
 import unittest
 import uuid
@@ -535,7 +536,7 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
                 }
                 self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
 
-                # 512 bound check: event reader receives at most 512 event ids
+                # 512 bound check: event reader receives at most 512 event ids per ring, and multiple summaries do not starve each other
                 queried_counts = []
                 def count_reader(ids, tenant_id=None):
                     queried_counts.append(len(ids))
@@ -545,7 +546,50 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
                 summary_store._summaries[summary_key]["recent_lifecycle_event_ids"] = [f"evt-{i}" for i in range(1000)]
                 svc.list_runtime_summaries(tenant_id=tid)
                 self.assertEqual(queried_counts[-1], 512)
+
+                # Two summaries with 512 and 1 event IDs: neither is starved
+                two_summaries = [
+                    {"recent_lifecycle_event_ids": [f"first-{i}" for i in range(512)]},
+                    {"recent_lifecycle_event_ids": ["second-target-id"]},
+                ]
+                queried_ids = []
+                svc._event_reader = lambda ids, tenant_id=None: queried_ids.extend(ids) or {}
+                svc._enrich_with_committed_position_snapshots(two_summaries, tenant_id=tid)
+                self.assertIn("second-target-id", queried_ids)
+                self.assertEqual(len(queried_ids), 513)
+
                 summary_store._summaries[summary_key]["recent_lifecycle_event_ids"] = ["evt-snap-runA", "evt-order-runB"]
+
+                # Missing cash fail-closed: candidate with only position_qty and price (no cash) is rejected
+                partial_snap = copy.deepcopy(snap_runA)
+                partial_snap["metrics"].pop("cash", None)
+                partial_snap["ingested_seq"] = 101
+                svc._event_reader = lambda ids, tenant_id=None: {"evt-snap-runA": partial_snap}
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # Tenant conflict guard: conflicting tenant in metadata vs event root is rejected
+                conflict_snap = copy.deepcopy(snap_runA)
+                conflict_snap["tenant_id"] = tid
+                conflict_snap.setdefault("metadata", {})["tenant_id"] = "other-conflicting-tenant"
+                conflict_snap["ingested_seq"] = 101
+                svc._event_reader = lambda ids, tenant_id=None: {"evt-snap-runA": conflict_snap}
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # Missing plan guard: candidate without plan_id or deployment_plan_id is rejected (no synthesis)
+                no_plan_snap = copy.deepcopy(snap_runA)
+                no_plan_snap.pop("plan_id", None)
+                no_plan_snap.pop("deployment_plan_id", None)
+                no_plan_snap["ingested_seq"] = 101
+                svc._event_reader = lambda ids, tenant_id=None: {"evt-snap-runA": no_plan_snap}
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # get_runtime_summary returns raw stored summary without triggering event_reader
+                reader_called = []
+                svc._event_reader = lambda ids, tenant_id=None: reader_called.append(True) or {}
+                raw_got = svc.get_runtime_summary(binding.runtime_id, tenant_id=tid)
+                self.assertIsNotNone(raw_got)
+                self.assertNotIn("committed_position_snapshot", raw_got)
+                self.assertEqual(len(reader_called), 0)
 
                 # AC2: Already-reconciled position snapshot exclusion
                 term_event = _paper_event(

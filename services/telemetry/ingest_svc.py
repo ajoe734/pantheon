@@ -1861,8 +1861,18 @@ class TelemetryIngestService:
 
     @staticmethod
     def _event_tenant_id(event: dict[str, Any]) -> str:
-        c = [loc for loc in (event.get("tenant_id"), (event.get("metadata") or {}).get("tenant_id") if isinstance(event.get("metadata"), dict) else None, (event.get("correlation_envelope") or {}).get("tenant_id") if isinstance(event.get("correlation_envelope"), dict) else None) if loc is not None]
-        return c[0].strip() if c and len(set(c)) == 1 and all(isinstance(x, str) and x.strip() for x in c) else ""
+        locs = [
+            event.get("tenant_id"),
+            (event.get("metadata") or {}).get("tenant_id") if isinstance(event.get("metadata"), dict) else None,
+            (event.get("correlation_envelope") or {}).get("tenant_id") if isinstance(event.get("correlation_envelope"), dict) else None,
+        ]
+        non_empty = [str(x).strip() for x in locs if x is not None]
+        if not non_empty:
+            return ""
+        distinct = set(x for x in non_empty if x)
+        if len(distinct) != 1:
+            return "__CONFLICT__"
+        return next(iter(distinct))
 
     def _enrich_with_committed_position_snapshots(
         self,
@@ -1877,10 +1887,9 @@ class TelemetryIngestService:
         for s in summaries:
             raw = s.get("recent_lifecycle_event_ids")
             if isinstance(raw, list):
-                for x in raw:
-                    if isinstance(x, str) and x.strip():
-                        all_eids.append(x.strip())
-        all_eids = list(dict.fromkeys(all_eids))[:512]
+                ring = [str(x).strip() for x in raw if isinstance(x, str) and str(x).strip()][:512]
+                all_eids.extend(ring)
+        all_eids = list(dict.fromkeys(all_eids))
         if not all_eids:
             return summaries
 
@@ -1906,7 +1915,7 @@ class TelemetryIngestService:
             raw_eids = summary.get("recent_lifecycle_event_ids")
             if not isinstance(raw_eids, list):
                 continue
-            s_eids = [str(x).strip() for x in raw_eids if isinstance(x, str) and x.strip()]
+            s_eids = [str(x).strip() for x in raw_eids if isinstance(x, str) and str(x).strip()]
             s_events = [
                 events_by_id[eid]
                 for eid in s_eids
@@ -1934,28 +1943,34 @@ class TelemetryIngestService:
                 t_seq = ev.get("ingested_seq")
                 if not _is_positive_seq(t_seq):
                     continue
-                t_tid = self._event_tenant_id(ev) or str(ev.get("tenant_id") or "").strip()
-                if s_tid and t_tid and t_tid != s_tid:
+                t_tid = self._event_tenant_id(ev)
+                if s_tid and t_tid != s_tid:
                     continue
                 t_bid = str(ev.get("binding_id") or ev.get("runtime_binding_id") or "").strip()
-                if s_bid and t_bid and t_bid != s_bid:
+                if s_bid and t_bid != s_bid:
                     continue
                 t_rid = str(ev.get("runtime_id") or "").strip()
-                if s_rid and t_rid and t_rid != s_rid:
+                if s_rid and t_rid != s_rid:
                     continue
                 t_aid = str(ev.get("artifact_id") or "").strip()
-                if s_aid and t_aid and t_aid != s_aid:
+                if s_aid and t_aid != s_aid:
+                    continue
+                t_aver = str(ev.get("artifact_version") or "").strip()
+                if s_aver and t_aver != s_aver:
                     continue
                 t_pid = str(ev.get("deployment_plan_id") or ev.get("plan_id") or "").strip()
-                if s_pid and t_pid and t_pid != s_pid:
+                if s_pid and t_pid != s_pid:
                     continue
                 t_cpid = str(ev.get("capital_pool_id") or "").strip()
-                if s_cpid and t_cpid and t_cpid != s_cpid:
+                if s_cpid and t_cpid != s_cpid:
+                    continue
+                t_pcb = str(ev.get("persona_capital_binding_id") or "").strip()
+                if s_pcb and t_pcb != s_pcb:
                     continue
                 t_auth = ev.get("authority_refs") if isinstance(ev.get("authority_refs"), dict) else {}
                 t_meta = ev.get("metadata") if isinstance(ev.get("metadata"), dict) else {}
                 t_persona = str(t_auth.get("persona_id") or t_meta.get("persona_id") or "").strip()
-                if s_persona and t_persona and t_persona != s_persona:
+                if s_persona and t_persona != s_persona:
                     continue
                 terminal_events.append(ev)
 
@@ -1979,10 +1994,8 @@ class TelemetryIngestService:
                 if src_mode and src_mode != "live":
                     continue
 
-                ev_tid = self._event_tenant_id(ev) or str(ev.get("tenant_id") or "").strip()
-                if s_tid and ev_tid and ev_tid != s_tid:
-                    continue
-                if s_tid and not ev_tid:
+                ev_tid = self._event_tenant_id(ev)
+                if s_tid and ev_tid != s_tid:
                     continue
                 ev_bid = str(ev.get("binding_id") or ev.get("runtime_binding_id") or "").strip()
                 if s_bid and ev_bid != s_bid:
@@ -1990,16 +2003,20 @@ class TelemetryIngestService:
                 ev_rid = str(ev.get("runtime_id") or "").strip()
                 if s_rid and ev_rid != s_rid:
                     continue
-                if s_aid and str(ev.get("artifact_id") or "").strip() != s_aid:
+                ev_aid = str(ev.get("artifact_id") or "").strip()
+                if s_aid and ev_aid != s_aid:
                     continue
-                if s_aver and str(ev.get("artifact_version") or "").strip() != s_aver:
+                ev_aver = str(ev.get("artifact_version") or "").strip()
+                if s_aver and ev_aver != s_aver:
                     continue
                 ev_pid = str(ev.get("deployment_plan_id") or ev.get("plan_id") or "").strip()
-                if s_pid and ev_pid and ev_pid != s_pid:
+                if s_pid and ev_pid != s_pid:
                     continue
-                if s_cpid and str(ev.get("capital_pool_id") or "").strip() != s_cpid:
+                ev_cpid = str(ev.get("capital_pool_id") or "").strip()
+                if s_cpid and ev_cpid != s_cpid:
                     continue
-                if s_pcb and str(ev.get("persona_capital_binding_id") or "").strip() != s_pcb:
+                ev_pcb = str(ev.get("persona_capital_binding_id") or "").strip()
+                if s_pcb and ev_pcb != s_pcb:
                     continue
 
                 auth_refs = ev.get("authority_refs") if isinstance(ev.get("authority_refs"), dict) else {}
@@ -2018,8 +2035,11 @@ class TelemetryIngestService:
                 )
                 if non_finite:
                     continue
-                has_metric = any(_is_finite_num(metrics.get(k)) or _is_finite_num(ev.get(k)) for k in ("position_qty", "price", "cash"))
-                if not has_metric:
+                has_all_metrics = all(
+                    _is_finite_num(metrics.get(k)) or _is_finite_num(ev.get(k))
+                    for k in ("position_qty", "price", "cash")
+                )
+                if not has_all_metrics:
                     continue
 
                 snap_eid = str(ev.get("event_id") or "").strip()
@@ -2053,8 +2073,8 @@ class TelemetryIngestService:
             if candidates:
                 candidates.sort(key=lambda x: (int(x.get("ingested_seq") or 0), s_eids.index(str(x.get("event_id")))))
                 selected = copy.deepcopy(candidates[-1])
-                if not selected.get("plan_id") and (selected.get("deployment_plan_id") or s_pid):
-                    selected["plan_id"] = selected.get("deployment_plan_id") or s_pid
+                if not selected.get("plan_id") and selected.get("deployment_plan_id"):
+                    selected["plan_id"] = selected["deployment_plan_id"]
                 if not selected.get("aggregate_type"):
                     selected["aggregate_type"] = "trade_journey"
                 env_dict = selected.get("correlation_envelope") if isinstance(selected.get("correlation_envelope"), dict) else {}
@@ -2076,11 +2096,7 @@ class TelemetryIngestService:
     ) -> Optional[dict[str, Any]]:
         if self._runtime_summary_store is None:
             return None
-        summary = self._runtime_summary_store.get(runtime_id, tenant_id=tenant_id)
-        if summary is None:
-            return None
-        enriched = self._enrich_with_committed_position_snapshots([summary], tenant_id=tenant_id)
-        return enriched[0] if enriched else summary
+        return self._runtime_summary_store.get(runtime_id, tenant_id=tenant_id)
 
     def list_runtime_summaries(
         self,
