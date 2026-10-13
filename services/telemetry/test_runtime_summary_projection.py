@@ -989,3 +989,155 @@ class TestFillProjection(unittest.TestCase):
         # a stale total_trades=0 metric must NOT wipe the executed fill count
         self.assertEqual(summary["executed_trade_count"], 2)
         self.assertEqual(summary["total_trades"], 2)
+
+
+class TestRuntimeSummaryViewerAccess(unittest.TestCase):
+    """
+    Validates that:
+    1. Evaluator / viewer role admits GET /api/telemetry/runtime-summaries and
+       GET /api/telemetry/runtime-summaries/<runtime_id> under strict tenant guard.
+    2. Cross-tenant reads are rejected with 403 TENANT_FORBIDDEN.
+    3. Other routes (stats, events, ingest) deny viewer role with 403 AUTH_FORBIDDEN.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import os
+        import time
+        from services.runtime_auth_inbound import encode_jwt_hs256
+        import services.telemetry.main as telemetry_main
+
+        cls.jwt_secret = "telemetry-test-secret-at-least-32-chars-long!"
+        cls._saved_env = {
+            "PANTHEON_TELEMETRY_AUTH_MODE": os.environ.get("PANTHEON_TELEMETRY_AUTH_MODE"),
+            "PANTHEON_TELEMETRY_JWT_SECRET": os.environ.get("PANTHEON_TELEMETRY_JWT_SECRET"),
+            "PANTHEON_TELEMETRY_ALLOWED_TENANTS": os.environ.get("PANTHEON_TELEMETRY_ALLOWED_TENANTS"),
+        }
+        os.environ["PANTHEON_TELEMETRY_AUTH_MODE"] = "strict"
+        os.environ["PANTHEON_TELEMETRY_JWT_SECRET"] = cls.jwt_secret
+        os.environ["PANTHEON_TELEMETRY_ALLOWED_TENANTS"] = "tenant-alpha,tenant-dev"
+
+        store = RuntimeSummaryProjectionStore()
+        store.project_event({
+            "event_id": "evt-seed-dev-1",
+            "event_type": "heartbeat",
+            "created_at": "2026-05-01T00:00:00Z",
+            "deployment_stage": "paper",
+            "environment": "paper",
+            "binding_id": "rtb-seed-1",
+            "runtime_id": "rt-seed-1",
+            "capital_pool_id": "pool-seed-1",
+            "artifact_id": "artifact-seed-1",
+            "artifact_version": "1.0.0",
+            "plan_id": "plan-seed-1",
+            "persona_capital_binding_id": "pcb-seed-1",
+            "tenant_id": "tenant-dev",
+            "metrics": {"heartbeat": 1},
+            "metadata": {"tenant_id": "tenant-dev"},
+        })
+
+        if telemetry_main._svc is None:
+            class _DummyTelemetrySvc:
+                def __init__(self, s):
+                    self._runtime_summary_store = s
+                def list_runtime_summaries(self, tenant_id=None):
+                    return self._runtime_summary_store.list(tenant_id=tenant_id)
+                def get_runtime_summary(self, runtime_id, tenant_id=None):
+                    return self._runtime_summary_store.get(runtime_id, tenant_id=tenant_id)
+                def stats(self):
+                    return {"status": "ok"}
+            telemetry_main._svc = _DummyTelemetrySvc(store)
+            cls._did_set_svc = True
+        else:
+            cls._old_summary_store = getattr(telemetry_main._svc, "_runtime_summary_store", None)
+            telemetry_main._svc._runtime_summary_store = store
+            cls._did_set_svc = False
+
+        cls.telemetry_main = telemetry_main
+        cls.client = telemetry_main.app.test_client()
+
+    @classmethod
+    def tearDownClass(cls):
+        import os
+        for k, v in cls._saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        if getattr(cls, "_did_set_svc", False):
+            cls.telemetry_main._svc = None
+        elif hasattr(cls, "_old_summary_store") and cls._old_summary_store is not None:
+            cls.telemetry_main._svc._runtime_summary_store = cls._old_summary_store
+
+    def _token(self, roles=None, tenant_id="tenant-dev", allowed_tenants=None, **claims):
+        import time
+        from services.runtime_auth_inbound import encode_jwt_hs256
+
+        payload = {
+            "sub": "telemetry-viewer",
+            "roles": roles or ["viewer"],
+            "exp": int(time.time()) + 3600,
+        }
+        if tenant_id is not None:
+            payload["tenant_id"] = tenant_id
+        if allowed_tenants is not None:
+            payload["allowed_tenants"] = allowed_tenants
+        payload.update(claims)
+        return encode_jwt_hs256(payload, secret=self.jwt_secret)
+
+    def test_viewer_token_reads_runtime_summaries_succeeds(self):
+        token = self._token(roles=["viewer"], tenant_id="tenant-dev", allowed_tenants=["tenant-dev"])
+        headers = {"Authorization": f"Bearer {token}", "X-Tenant-Id": "tenant-dev"}
+
+        res_list = self.client.get("/api/telemetry/runtime-summaries", headers=headers)
+        self.assertEqual(res_list.status_code, 200, res_list.get_data(as_text=True))
+        data = res_list.get_json()
+        self.assertGreaterEqual(data["count"], 1)
+
+        res_item = self.client.get("/api/telemetry/runtime-summaries/rt-seed-1", headers=headers)
+        self.assertEqual(res_item.status_code, 200)
+        self.assertEqual(res_item.get_json()["runtime_id"], "rt-seed-1")
+
+    def test_evaluator_viewer_token_reads_runtime_summaries_succeeds(self):
+        token = self._token(
+            roles=["viewer"],
+            tenant_id="tenant-dev",
+            allowed_tenants=["tenant-dev"],
+            sub="pantheon-dev-persona-evaluator-bff-reader",
+            service="pantheon-dev-persona-evaluator-bff-reader",
+            scope="pantheon:dev-owner-read",
+        )
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "X-Pantheon-Service": "control-plane-bff",
+            "X-Tenant-Id": "tenant-dev",
+        }
+        res_list = self.client.get("/api/telemetry/runtime-summaries", headers=headers)
+        self.assertEqual(res_list.status_code, 200)
+
+    def test_viewer_token_cross_tenant_read_rejected(self):
+        token = self._token(roles=["viewer"], tenant_id="tenant-dev", allowed_tenants=["tenant-dev"])
+        headers = {"Authorization": f"Bearer {token}", "X-Tenant-Id": "tenant-other"}
+        res_cross = self.client.get("/api/telemetry/runtime-summaries", headers=headers)
+        self.assertEqual(res_cross.status_code, 403)
+        self.assertEqual(res_cross.get_json()["error"]["code"], "TENANT_FORBIDDEN")
+
+    def test_viewer_token_cannot_access_non_summary_routes(self):
+        token = self._token(roles=["viewer"], tenant_id="tenant-dev", allowed_tenants=["tenant-dev"])
+        headers = {"Authorization": f"Bearer {token}", "X-Tenant-Id": "tenant-dev"}
+
+        res_stats = self.client.get("/api/telemetry/stats", headers=headers)
+        self.assertEqual(res_stats.status_code, 403)
+        self.assertEqual(res_stats.get_json()["error"]["code"], "AUTH_FORBIDDEN")
+
+        res_event = self.client.get("/api/telemetry/events/evt-seed-dev-1", headers=headers)
+        self.assertEqual(res_event.status_code, 403)
+        self.assertEqual(res_event.get_json()["error"]["code"], "AUTH_FORBIDDEN")
+
+    def test_viewer_token_cannot_ingest_telemetry(self):
+        token = self._token(roles=["viewer"], tenant_id="tenant-dev", allowed_tenants=["tenant-dev"])
+        headers = {"Authorization": f"Bearer {token}", "X-Tenant-Id": "tenant-dev"}
+        res_ingest = self.client.post("/api/telemetry/ingest", headers=headers, json={"event_id": "test"})
+        self.assertEqual(res_ingest.status_code, 403)
+        self.assertEqual(res_ingest.get_json()["error"]["code"], "AUTH_FORBIDDEN")
+
