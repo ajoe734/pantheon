@@ -146,8 +146,10 @@ DRY_RUN=false
 ARTIFACT_RESTORE=false
 ARTIFACT_VERIFY=false
 ARTIFACT_READBACK_OUT=""
+ARTIFACT_TARGET="${PANTHEON_DEV_ARTIFACT_TARGET:-baseline}"
 
 validate_artifact_restore_request() {
+  [[ "${ARTIFACT_TARGET:-baseline}" =~ ^(baseline|final)$ ]] || error "artifact target must be baseline or final"
   [[ "${ARTIFACT_RESTORE}" == true || "${ARTIFACT_VERIFY:-false}" == true ]] || return 0
   [[ "${ARTIFACT_RESTORE}" != true || "${ARTIFACT_VERIFY:-false}" != true ]] \
     || error "artifact restore and verify modes are mutually exclusive"
@@ -157,12 +159,23 @@ validate_artifact_restore_request() {
   [[ "${ARTIFACT_TARGET:-baseline}" != "final" ]] || expected_backend="${PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA:-}"
   [[ "${DEPLOY_SHA}" == "${expected_backend}" ]] || error "artifact restore SHA must match the admitted backend"
   local name sha256_names="MANIFEST_SHA256 DRIVER_SHA256 LIBRARY_SHA256 CANDIDATE_ID"
-  [[ "${ARTIFACT_TARGET:-baseline}" != "final" ]] || sha256_names+=" FE_MANIFEST_SHA256 FE_DIST_SHA256"
+  if [[ "${ARTIFACT_TARGET:-baseline}" == "final" && "${ARTIFACT_RESTORE}" == true ]]; then
+    sha256_names+=" FE_MANIFEST_SHA256 FE_DIST_SHA256"
+  fi
   for name in ${sha256_names}; do
     local variable="PANTHEON_DEV_ARTIFACT_${name}"
     [[ "${!variable:-}" =~ ^[0-9a-f]{64}$ && "${!variable}" != "$(printf '%064d' 0)" ]] \
       || error "artifact restore requires ${variable}"
   done
+  if [[ "${ARTIFACT_TARGET:-baseline}" == "final" && "${ARTIFACT_VERIFY:-false}" == true ]]; then
+    for name in FE_MANIFEST_SHA256 FE_DIST_SHA256; do
+      local variable="PANTHEON_DEV_ARTIFACT_${name}"
+      if [[ -n "${!variable:-}" ]]; then
+        [[ "${!variable}" =~ ^[0-9a-f]{64}$ && "${!variable}" != "$(printf '%064d' 0)" ]] \
+          || error "artifact verify requires valid ${variable}"
+      fi
+    done
+  fi
   for name in CONTROLLER_SHA CANDIDATE_BACKEND_SHA CANDIDATE_FRONTEND_SHA PREVIOUS_BACKEND_SHA PREVIOUS_FRONTEND_SHA; do
     local variable="PANTHEON_DEV_ARTIFACT_${name}"
     [[ "${!variable:-}" =~ ^[0-9a-f]{40}$ ]] \
@@ -174,7 +187,7 @@ validate_artifact_restore_request() {
   done
   [[ "${PANTHEON_DEV_ARTIFACT_RUN_ID:-}" =~ ^[0-9]{1,20}$ && "${PANTHEON_DEV_ARTIFACT_ATTEMPT:-}" =~ ^[0-9]{1,10}$ ]] \
     || error "artifact restore requires an exact run and attempt"
-  if [[ "${ARTIFACT_RESTORE}" == true ]]; then
+  if [[ "${ARTIFACT_RESTORE}" == true || "${ARTIFACT_TARGET:-baseline}" == "final" ]]; then
     [[ "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH:-}" == /* && \
        "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256:-}" =~ ^[0-9a-f]{64}$ && \
        "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256}" != "$(printf '%064d' 0)" ]] \
@@ -559,6 +572,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --artifact-restore-final)
       ARTIFACT_RESTORE=true; ARTIFACT_TARGET=final; shift ;;
+    --artifact-target)
+      ARTIFACT_TARGET="${2:-}"
+      shift 2
+      ;;
     --artifact-verify)
       ARTIFACT_VERIFY=true
       shift
@@ -731,33 +748,35 @@ fi
 # depend on the shared dev lease.
 verify_dev_environment_lease_contract
 
-if [[ "$DEPLOY_ENV" == "dev" && "$DEV_BFF_AUTH_MODE" == "strict" && "$DEV_BFF_AUTH_STUB" != "true" ]]; then
-  if [[ -z "$DEV_BFF_JWT_SECRET" || -z "$DEV_BFF_OIDC_CLIENT_ID" || -z "$DEV_BFF_OIDC_CLIENT_SECRET" ]]; then
-    error "strict auth cutover requested (DEV_BFF_AUTH_MODE=strict, DEV_BFF_AUTH_STUB=${DEV_BFF_AUTH_STUB}) but no governed verifier/dev-login credentials are configured (DEV_BFF_JWT_SECRET, DEV_BFF_OIDC_CLIENT_ID, DEV_BFF_OIDC_CLIENT_SECRET); refusing to deploy a BFF where every protected route would be unusable"
-  fi
-  for identity in VIEWER APPROVER RISK_OWNER OPERATOR_A OPERATOR_B; do
-    id_var="DEV_BFF_DEV_LOGIN_${identity}_CLIENT_ID"
-    secret_var="DEV_BFF_DEV_LOGIN_${identity}_CLIENT_SECRET"
-    if [[ -z "${!id_var}" || -z "${!secret_var}" ]]; then
-      error "strict auth cutover requires dedicated ${identity,,} dev-login credentials (${id_var}, ${secret_var}); refusing to deploy without distinct governed proof actors"
+if [[ "${ARTIFACT_VERIFY:-false}" != "true" ]]; then
+  if [[ "$DEPLOY_ENV" == "dev" && "$DEV_BFF_AUTH_MODE" == "strict" && "$DEV_BFF_AUTH_STUB" != "true" ]]; then
+    if [[ -z "$DEV_BFF_JWT_SECRET" || -z "$DEV_BFF_OIDC_CLIENT_ID" || -z "$DEV_BFF_OIDC_CLIENT_SECRET" ]]; then
+      error "strict auth cutover requested (DEV_BFF_AUTH_MODE=strict, DEV_BFF_AUTH_STUB=${DEV_BFF_AUTH_STUB}) but no governed verifier/dev-login credentials are configured (DEV_BFF_JWT_SECRET, DEV_BFF_OIDC_CLIENT_ID, DEV_BFF_OIDC_CLIENT_SECRET); refusing to deploy a BFF where every protected route would be unusable"
     fi
-  done
-fi
-
-if [[ "$DEPLOY_ENV" == "dev" ]]; then
-  case "${DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED,,}" in
-    1|true|yes|on)
-      if [[ -z "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}" ]] \
-        || is_placeholder_credential "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}"; then
-        error "strict OpenClaw adapter service auth requires a human-provisioned DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN; refusing to deploy with an empty or fabricated service credential"
+    for identity in VIEWER APPROVER RISK_OWNER OPERATOR_A OPERATOR_B; do
+      id_var="DEV_BFF_DEV_LOGIN_${identity}_CLIENT_ID"
+      secret_var="DEV_BFF_DEV_LOGIN_${identity}_CLIENT_SECRET"
+      if [[ -z "${!id_var}" || -z "${!secret_var}" ]]; then
+        error "strict auth cutover requires dedicated ${identity,,} dev-login credentials (${id_var}, ${secret_var}); refusing to deploy without distinct governed proof actors"
       fi
-      ;;
-    0|false|no|off)
-      ;;
-    *)
-      error "DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED must be true or false"
-      ;;
-  esac
+    done
+  fi
+
+  if [[ "$DEPLOY_ENV" == "dev" ]]; then
+    case "${DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED,,}" in
+      1|true|yes|on)
+        if [[ -z "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}" ]] \
+          || is_placeholder_credential "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}"; then
+          error "strict OpenClaw adapter service auth requires a human-provisioned DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN; refusing to deploy with an empty or fabricated service credential"
+        fi
+        ;;
+      0|false|no|off)
+        ;;
+      *)
+        error "DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED must be true or false"
+        ;;
+    esac
+  fi
 fi
 
 if [[ "$DEPLOY_ENV" == "dev" ]]; then
@@ -886,13 +905,23 @@ ssh_bash() {
     PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256 \
     PANTHEON_DEV_ARTIFACT_DRIVER_PATH PANTHEON_DEV_ARTIFACT_DRIVER_SHA256 \
     PANTHEON_DEV_ARTIFACT_LIBRARY_SHA256 PANTHEON_DEV_ARTIFACT_COMPOSE_FILE \
+    PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPONENT \
     PANTHEON_DEV_ARTIFACT_CANDIDATE_ID PANTHEON_DEV_ARTIFACT_RUN_ID \
     PANTHEON_DEV_ARTIFACT_ATTEMPT PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA \
     PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA PANTHEON_DEV_ARTIFACT_CANDIDATE_FRONTEND_SHA \
     PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA \
-    PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256 PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256 PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID; do
+    PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256 PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256 \
+    PANTHEON_DEV_ARTIFACT_FE_TARGET PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID \
+    PANTHEON_DEV_ARTIFACT_SEALED_FROM_JSON PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON \
+    PANTHEON_DEV_FE_DEPLOY_SCRIPT PANTHEON_EXECUTE_PLANS_ROOT PANTHEON_DEV_FE_CONTROLLER_SHA \
+    PANTHEON_DEV_FE_ROOT PANTHEON_DEV_FE_RELEASES_DIR \
+    PANTHEON_DEPLOY_LEASE_OWNER PANTHEON_DEPLOY_LEASE_EPOCH \
+    PANTHEON_DEPLOY_LEASE_RUN_ID PANTHEON_DEPLOY_LEASE_DELEGATED; do
     command_prefix+=" ${artifact_variable}=$(shell_quote "${!artifact_variable:-}")"
   done
+  command_prefix+=" GITHUB_EVENT_NAME=$(shell_quote "${GITHUB_EVENT_NAME:-${PANTHEON_DEV_EVENT_NAME:-}}")"
+  command_prefix+=" GITHUB_RUN_ID=$(shell_quote "${GITHUB_RUN_ID:-}")"
+  command_prefix+=" GITHUB_RUN_ATTEMPT=$(shell_quote "${GITHUB_RUN_ATTEMPT:-}")"
   command_prefix+=" PANTHEON_GITHUB_TOKEN=$(shell_quote "${GITHUB_TOKEN:-}")"
   command_prefix+=" PANTHEON_ALLOW_DIRTY_DEPLOY=$(shell_quote "$ALLOW_DIRTY")"
   command_prefix+=" PANTHEON_ALLOW_EXAMPLE_ENV=$(shell_quote "$ALLOW_EXAMPLE_ENV")"
@@ -1040,6 +1069,7 @@ with os.fdopen(fd, "wb") as stream:
           if [[ "${transport_status}" == 0 ]]; then
             local operation=verify
             [[ "${ARTIFACT_RESTORE}" != true ]] || operation=restore
+            [[ "${ARTIFACT_TARGET:-baseline}" != "final" || "${operation}" != "restore" ]] || operation=restore-final
             python3 "${SCRIPT_DIR}/dev_artifact_compensation_evidence.py" readback \
               --input-log "${private_dir}/transport.log" --output "${ARTIFACT_READBACK_OUT}" \
               --operation "${operation}" --provenance "${PANTHEON_DEV_ARTIFACT_EVIDENCE_PROVENANCE:?missing evidence provenance}" || transport_status=$?
@@ -3888,6 +3918,46 @@ with_dev_bff_runtime_env() {
     "$@"
 }
 
+resolve_dev_candidate_compose() {
+  python3 - <<'RESOLVE_COMPOSE_PY'
+import hashlib
+import json
+import os
+import pathlib
+import sys
+
+env = os.environ
+candidate_compose = env.get("PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE") or env.get("PANTHEON_DEV_ARTIFACT_COMPOSE_FILE")
+if not candidate_compose and env.get("PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPONENT") in ("root", "bff"):
+    # Same layout as prepare_deploy_worktree: <root>/dev-<component>, with its
+    # existing remote HOME default when no worktree root is configured.
+    worktree_root = env.get("PANTHEON_DEPLOY_WORKTREE_ROOT") or os.path.join(env.get("HOME", ""), "pantheon-ci-deploy", "managed-deploy-worktrees")
+    candidate_compose = os.path.join(worktree_root, "dev-" + env["PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPONENT"], "docker-compose.yml")
+if not candidate_compose:
+    sys.exit("unable to resolve explicit candidate Compose path: missing path")
+
+path = pathlib.Path(candidate_compose)
+if not path.is_absolute() or path.is_symlink() or not path.is_file():
+    sys.exit("unable to resolve explicit candidate Compose path: not regular file")
+
+candidate_manifest_path = env.get("PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH", "")
+if candidate_manifest_path and os.path.isfile(candidate_manifest_path):
+    try:
+        manifest_data = json.loads(pathlib.Path(candidate_manifest_path).read_bytes())
+        expected_digest = manifest_data.get("candidate_compose_sha256")
+        if expected_digest:
+            actual_digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            if actual_digest != expected_digest:
+                sys.exit("unable to resolve explicit candidate Compose path: candidate Compose digest mismatch")
+    except SystemExit:
+        raise
+    except Exception as exc:
+        sys.exit(f"unable to resolve explicit candidate Compose path: {exc}")
+
+print(str(path.resolve()))
+RESOLVE_COMPOSE_PY
+}
+
 run_dev_artifact_driver() {
   local operation="$1"
   case "${PANTHEON_DEPLOY_ENV}:${PANTHEON_DEPLOY_COMPONENT}" in
@@ -3956,24 +4026,50 @@ ARTIFACT_PY
   local compose_file="${PANTHEON_DEV_ARTIFACT_COMPOSE_FILE}"
   local runtime_sha="${PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA}"
   local -a candidate_args=()
+  local is_final=false
+  if [[ "${operation}" == restore-final || "${operation}" == seal-candidate || "${PANTHEON_DEV_ARTIFACT_TARGET:-baseline}" == final ]]; then
+    is_final=true
+  fi
+
   if [[ "${operation}" == seal-candidate ]]; then
     [[ "${PANTHEON_DEPLOY_SHA}" == "${PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA}" ]] \
       || { info "candidate source differs from artifact admission" >&2; return 75; }
-    compose_file="${PWD}/docker-compose.yml"
+    if [[ -n "${PANTHEON_REMOTE_DIR:-}" && -f "${PANTHEON_REMOTE_DIR}/docker-compose.yml" && ! -L "${PANTHEON_REMOTE_DIR}/docker-compose.yml" ]]; then
+      compose_file="${PANTHEON_REMOTE_DIR}/docker-compose.yml"
+    elif [[ -n "${PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE:-}" && -f "${PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE}" && ! -L "${PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE}" ]]; then
+      compose_file="${PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE}"
+    elif [[ -f "${PANTHEON_DEV_ARTIFACT_COMPOSE_FILE}" && ! -L "${PANTHEON_DEV_ARTIFACT_COMPOSE_FILE}" ]]; then
+      compose_file="${PANTHEON_DEV_ARTIFACT_COMPOSE_FILE}"
+    else
+      error "seal-candidate requires an existing non-symlink compose file"
+    fi
     runtime_sha="${PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA}"
-  elif [[ "${operation}" == restore || "${operation}" == restore-final ]]; then
+  elif [[ "${operation}" == restore || "${operation}" == restore-final || ( "${operation}" == verify && "${is_final}" == true ) ]]; then
     [[ "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH:-}" == /* && \
        "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256:-}" =~ ^[0-9a-f]{64}$ && \
        "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256}" != "$(printf '%064d' 0)" ]] \
-      || { info "restore requires the externally retained candidate image receipt" >&2; return 75; }
+      || { info "candidate operation requires the externally retained candidate image receipt" >&2; return 75; }
     candidate_args=(--candidate-image-manifest "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH}"
       --candidate-image-manifest-sha256 "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256}")
-    if [[ "${operation}" == restore-final ]]; then
-      compose_file="${PWD}/docker-compose.yml"
+    if [[ "${is_final}" == true ]]; then
+      compose_file="$(resolve_dev_candidate_compose)" || return $?
       runtime_sha="${PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA}"
-      [[ "${PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256:-}" =~ ^[0-9a-f]{64}$ && "${PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] \
-        || { info "restore-final requires external FE manifest and dist digests" >&2; return 75; }
-      candidate_args+=(--target final --fe-manifest-sha256 "${PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256}" --fe-dist-sha256 "${PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256}")
+      candidate_args+=(--target final)
+      if [[ "${operation}" == restore-final ]]; then
+        [[ "${PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256:-}" =~ ^[0-9a-f]{64}$ && "${PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] \
+          || { info "restore-final requires external FE manifest and dist digests" >&2; return 75; }
+        candidate_args+=(--fe-manifest-sha256 "${PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256}" --fe-dist-sha256 "${PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256}")
+      else
+        if [[ "${PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256:-}" =~ ^[0-9a-f]{64}$ ]]; then
+          candidate_args+=(--fe-manifest-sha256 "${PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256}")
+        fi
+        if [[ "${PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256:-}" =~ ^[0-9a-f]{64}$ ]]; then
+          candidate_args+=(--fe-dist-sha256 "${PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256}")
+        fi
+      fi
+      if [[ -n "${PANTHEON_DEV_ARTIFACT_FE_TARGET:-}" ]]; then
+        candidate_args+=(--fe-target "${PANTHEON_DEV_ARTIFACT_FE_TARGET}")
+      fi
     fi
   fi
 
@@ -4271,6 +4367,35 @@ start_dev_paper_principal_issuer() {
   [[ "${issuer_sha}" == "${PANTHEON_DEPLOY_SHA}" ]] || { info "issuer exact source identity mismatch"; return 1; }
 }
 
+# The FE restore-sealed action exits before the FE controller's own expected
+# HEAD and tracked-clean checks, so apply the same semantics here: the script
+# and the helpers it resolves relative to its checkout must be tracked, clean,
+# and at the admitted FE controller commit (never the FE candidate or BE SHA).
+verify_fe_controller_checkout() {
+  local script="$1" expected="$2" operation="$3"
+  if [[ -z "${expected}" ]]; then
+    [[ "${operation}" != restore-final ]] || error "admitted FE controller SHA is required for restore-final"
+    return 0
+  fi
+  [[ "${expected}" =~ ^[0-9a-f]{40}$ ]] || error "admitted FE controller SHA is invalid"
+  local root head helper
+  root="$(git -C "$(dirname "${script}")" rev-parse --show-toplevel 2>/dev/null)" \
+    || error "FE deploy script is not inside a git checkout: ${script}"
+  [[ "$(readlink -f "${script}")" == "${root}/scripts/deploy-dev-vm.sh" ]] \
+    || error "FE deploy script is not the checkout's scripts/deploy-dev-vm.sh"
+  head="$(git -C "${root}" rev-parse HEAD 2>/dev/null)" || error "FE controller checkout HEAD unreadable"
+  [[ "${head}" == "${expected}" ]] \
+    || error "FE controller checkout HEAD ${head} differs from admitted controller ${expected}"
+  for helper in scripts/deploy-dev-vm.sh scripts/atomic-symlink-cas.py scripts/atomic-release-manifest.py; do
+    git -C "${root}" ls-files --error-unmatch -- "${helper}" >/dev/null 2>&1 \
+      || error "FE controller helper is not tracked at the admitted commit: ${helper}"
+    [[ -f "${root}/${helper}" && ! -L "${root}/${helper}" ]] \
+      || error "FE controller helper missing or unsafe: ${helper}"
+    git -C "${root}" diff --quiet HEAD -- "${helper}" \
+      || error "FE controller helper differs from admitted commit: ${helper}"
+  done
+}
+
 # Explicit external compensation exits before snapshots, worktree preparation,
 # principal issuance/revocation, build, cleanup, owner rollout or ingress writes.
 if [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" == true || "${PANTHEON_DEV_ARTIFACT_VERIFY:-false}" == true ]]; then
@@ -4283,6 +4408,48 @@ if [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" == true || "${PANTHEON_DEV_ARTIF
   artifact_operation=verify
   [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" != true ]] || artifact_operation=restore
   [[ "${PANTHEON_DEV_ARTIFACT_TARGET:-baseline}" != "final" || "${artifact_operation}" != "restore" ]] || artifact_operation=restore-final
+
+  if [[ "${artifact_operation}" == "restore" || "${artifact_operation}" == "restore-final" ]]; then
+    if [[ -n "${PANTHEON_DEV_ARTIFACT_SEALED_FROM_JSON:-}" && -n "${PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON:-}" ]]; then
+      fe_script="${PANTHEON_DEV_FE_DEPLOY_SCRIPT:-${PANTHEON_EXECUTE_PLANS_ROOT:-${HOME:-/home/chloe_ong_dev_cctech_support_com}/actions-runner-execute-plans/_work/execute-plans/execute-plans}/scripts/deploy-dev-vm.sh}"
+      if [[ ! -f "${fe_script}" || -L "${fe_script}" ]]; then
+        error "FE deploy script missing or unsafe: ${fe_script}"
+      fi
+
+      to_target="$(python3 -c 'import json, sys; print(json.loads(sys.argv[1]).get("target", ""))' "${PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON}" 2>/dev/null || true)"
+      fe_root="${PANTHEON_DEV_FE_ROOT:-/var/www/pantheon-dev-fe}"
+      fe_live="$(readlink -f "${fe_root}" 2>/dev/null || readlink "${fe_root}" 2>/dev/null || true)"
+
+      if [[ -n "${to_target}" && -n "${fe_live}" && ( "${fe_live}" == "${to_target}" || "$(readlink "${fe_root}" 2>/dev/null || true)" == "${to_target}" ) ]]; then
+        info "FE live symlink already matches target sealed release (${to_target}); skipping redundant FE switch"
+      else
+        verify_fe_controller_checkout "${fe_script}" "${PANTHEON_DEV_FE_CONTROLLER_SHA:-}" "${artifact_operation}"
+        info "invoking FE owner restore-sealed before BE ${artifact_operation}"
+        fe_lease_owner="${PANTHEON_DEPLOY_LEASE_OWNER:-pantheon-dev-deploy}"
+        fe_lease_epoch="${PANTHEON_DEPLOY_LEASE_EPOCH:-1}"
+        fe_lease_run_id="${PANTHEON_DEPLOY_LEASE_RUN_ID:-${GITHUB_RUN_ID:-}}"
+        fe_lease_delegated="${PANTHEON_DEPLOY_LEASE_DELEGATED:-true}"
+        fe_event_name="${GITHUB_EVENT_NAME:-${PANTHEON_DEV_EVENT_NAME:-push}}"
+
+        PANTHEON_DEV_FE_ROOT="${PANTHEON_DEV_FE_ROOT:-/var/www/pantheon-dev-fe}" \
+        PANTHEON_DEV_FE_RELEASES_DIR="${PANTHEON_DEV_FE_RELEASES_DIR:-/var/www/pantheon-dev-fe-releases}" \
+        GITHUB_EVENT_NAME="${fe_event_name}" \
+        PANTHEON_DEPLOY_PROFILE=operator-live \
+        PANTHEON_DEPLOY_PROOF_WINDOW_ACK=false \
+        PANTHEON_DEPLOY_REAL_WRITES=true \
+        PANTHEON_DEPLOY_ALLOW_DEV_STUB_WRITES=false \
+        PANTHEON_DEPLOY_ACTION=restore-sealed \
+        PANTHEON_DEPLOY_LEASE_DELEGATED="${fe_lease_delegated}" \
+        PANTHEON_DEPLOY_LEASE_OWNER="${fe_lease_owner}" \
+        PANTHEON_DEPLOY_LEASE_EPOCH="${fe_lease_epoch}" \
+        PANTHEON_DEPLOY_LEASE_RUN_ID="${fe_lease_run_id}" \
+        PANTHEON_DEPLOY_SEALED_FROM_JSON="${PANTHEON_DEV_ARTIFACT_SEALED_FROM_JSON}" \
+        PANTHEON_DEPLOY_SEALED_TO_JSON="${PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON}" \
+          bash "${fe_script}" || error "FE owner restore-sealed failed with exit code $?"
+      fi
+    fi
+  fi
+
   artifact_readback="$(run_dev_artifact_driver "${artifact_operation}")" || exit $?
   printf 'PANTHEON_ARTIFACT_READBACK_V1 %s\n' "${artifact_readback}"
   info "component bff exact artifact ${artifact_operation} completed"

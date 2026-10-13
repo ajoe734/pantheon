@@ -246,3 +246,122 @@ def test_status_functions_appear_only_in_if_conditions():
 
     walk(WORKFLOW, ())
     assert misplaced == []
+
+
+def test_coordinate_dev_release_verifies_and_seals_final_candidate():
+    ids = [item.get("id") for item in COORDINATE["steps"]]
+    assert "final_artifact_verify" in ids
+    assert ids.index("frontend_release") < ids.index("final_artifact_verify") < ids.index("release_evidence_upload")
+    verify_step = step(COORDINATE, "final_artifact_verify")
+    assert "steps.frontend_release.outcome == 'success'" in verify_step["if"]
+    assert "compensate_cross_repo_release.sh" in verify_step["run"]
+    assert verify_step["env"]["PANTHEON_DEV_ARTIFACT_OPERATION"] == "verify"
+    assert verify_step["env"]["PANTHEON_DEV_ARTIFACT_TARGET"] == "final"
+    assert verify_step["env"]["PANTHEON_ROLLBACK_EVIDENCE_OUT"] == "${{ env.RELEASE_EVIDENCE_DIR }}/candidate/candidate-frontend.json"
+    assert verify_step["env"]["PANTHEON_ENVIRONMENT_LEASE_TOKEN"] == "${{ secrets.COORDINATION_REPO_TOKEN }}"
+
+    assert verify_step["env"]["PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE"] == "${{ vars.DEV_DEPLOY_WORKTREE_ROOT && format('{0}/dev-{1}/docker-compose.yml', vars.DEV_DEPLOY_WORKTREE_ROOT, inputs.component == 'bff' && 'bff' || 'root') || '' }}"
+    assert verify_step["env"]["PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPONENT"] == "${{ inputs.component == 'bff' && 'bff' || 'root' }}"
+    assert verify_step["env"]["DEV_BFF_AUTH_MODE"] == "strict"
+    assert verify_step["env"]["DEV_BFF_JWT_SECRET"] == "${{ secrets.DEV_BFF_JWT_SECRET }}"
+    assert verify_step["env"]["DEV_BFF_OIDC_CLIENT_ID"] == "${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}"
+    assert verify_step["env"]["DEV_BFF_OIDC_CLIENT_SECRET"] == "${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}"
+    assert verify_step["env"]["DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID"] == "${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}"
+    assert verify_step["env"]["DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET"] in (
+        "${{ secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET }}",
+        "${{ secrets['DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET'] }}",
+    )
+    assert verify_step["env"]["DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN"] == "${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}"
+    assert "PANTHEON_EXECUTE_PLANS_ROOT" in verify_step["env"]
+    assert "PANTHEON_DEV_FE_DEPLOY_SCRIPT" in verify_step["env"]
+
+
+def test_coordinate_dev_release_roundtrip_opt_in_steps():
+    on_section = WORKFLOW.get(True) or WORKFLOW.get("on")
+    inputs = on_section["workflow_dispatch"]["inputs"]
+    assert "run_exact_artifact_roundtrip" in inputs
+    assert inputs["run_exact_artifact_roundtrip"]["type"] == "boolean"
+    assert inputs["run_exact_artifact_roundtrip"]["default"] is False
+
+    ids = [item.get("id") for item in COORDINATE["steps"]]
+    assert "roundtrip_baseline_restore" in ids
+    assert "roundtrip_final_return" in ids
+    assert ids.index("final_artifact_verify") < ids.index("roundtrip_baseline_restore") < ids.index("roundtrip_final_return") < ids.index("compensation")
+
+    base_step = step(COORDINATE, "roundtrip_baseline_restore")
+    assert "inputs.run_exact_artifact_roundtrip" in base_step["if"]
+    assert "steps.final_artifact_verify.outcome == 'success'" in base_step["if"]
+    assert base_step["env"]["PANTHEON_DEV_ARTIFACT_OPERATION"] == "restore"
+    assert base_step["env"]["PANTHEON_DEV_ARTIFACT_TARGET"] == "baseline"
+    assert "roundtrip-baseline-readback.json" in base_step["env"]["PANTHEON_ROLLBACK_EVIDENCE_OUT"]
+
+    final_step = step(COORDINATE, "roundtrip_final_return")
+    assert "inputs.run_exact_artifact_roundtrip" in final_step["if"]
+    assert "steps.roundtrip_baseline_restore.outcome == 'success'" in final_step["if"]
+    assert final_step["env"]["PANTHEON_DEV_ARTIFACT_OPERATION"] == "restore-final"
+    assert final_step["env"]["PANTHEON_DEV_ARTIFACT_TARGET"] == "final"
+    assert "roundtrip-final-readback.json" in final_step["env"]["PANTHEON_ROLLBACK_EVIDENCE_OUT"]
+
+    comp_step = step(COORDINATE, "compensation")
+    assert "steps.roundtrip_baseline_restore.outcome != 'success'" in comp_step["if"]
+    assert "steps.roundtrip_final_return.outcome != 'success'" in comp_step["if"]
+
+
+
+
+def _eval_gha(expression, outcomes, roundtrip):
+    import re
+
+    expr = expression.strip()
+    if expr.startswith("${{"):
+        expr = expr[3:-2].strip()
+    expr = re.sub(r"steps\.(\w+)\.outputs\.evidence_dir", "'x'", expr)
+    expr = re.sub(r"steps\.(\w+)\.outcome", lambda m: repr(outcomes.get(m.group(1), "skipped")), expr)
+    expr = expr.replace("inputs.run_exact_artifact_roundtrip", repr(roundtrip))
+    expr = expr.replace("always()", "True").replace("&&", " and ").replace("||", " or ")
+    expr = re.sub(r"!(?!=)", " not ", expr)
+    return eval(expr, {"__builtins__": {}}, {})  # noqa: S307 - fixed repo-owned expression
+
+
+def test_retirement_requires_complete_roundtrip_or_successful_compensation():
+    retire = step(COORDINATE, "retire_release_cases")
+    base = {"frontend_release": "success", "final_artifact_verify": "success"}
+
+    def decide(outcomes, roundtrip):
+        admitted = bool(_eval_gha(retire["if"], outcomes, roundtrip))
+        outcome = _eval_gha(retire["env"]["RELEASE_OUTCOME"], outcomes, roundtrip)
+        return admitted, outcome
+
+    # Opted-in baseline leg failed, final skipped, compensation failed: never retire.
+    failed = {**base, "roundtrip_baseline_restore": "failure", "compensation": "failure"}
+    assert decide(failed, True)[0] is False
+    # Same failure with successful compensation: compensated retirement only.
+    assert decide({**failed, "compensation": "success"}, True) == (True, "compensated")
+    # Final leg failure without successful compensation does not retire either.
+    final_failed = {**base, "roundtrip_baseline_restore": "success", "roundtrip_final_return": "failure", "compensation": "failure"}
+    assert decide(final_failed, True)[0] is False
+    # Complete opted-in roundtrip is accepted; opt-out normal success is accepted.
+    complete = {**base, "roundtrip_baseline_restore": "success", "roundtrip_final_return": "success"}
+    assert decide(complete, True) == (True, "accepted")
+    assert decide(base, False) == (True, "accepted")
+
+
+def test_roundtrip_legs_share_final_verify_candidate_compose_context():
+    verify = step(COORDINATE, "final_artifact_verify")["env"]
+    for step_id in ("roundtrip_baseline_restore", "roundtrip_final_return"):
+        env = step(COORDINATE, step_id)["env"]
+        for key in ("PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE", "PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPONENT"):
+            assert env[key] == verify[key]
+
+
+def test_compensation_helper_binds_fe_controller_to_admitted_frontend_run():
+    text = (ROOT / "scripts/compensate_cross_repo_release.sh").read_text()
+    assert "release-controller-accepted.json" in text
+    assert 'receipt["frontend_deploy"]["run_id"]' in text
+    assert "client.get_run(run_id)" in text
+    assert 'export PANTHEON_DEV_FE_CONTROLLER_SHA="${fe_controller_sha}"' in text
+    assert "CROSS_REPO_RELEASE_TOKEN=\"${lease_token}\"" in text
+    assert "${PANTHEON_ENVIRONMENT_LEASE_TOKEN}" not in text.split("fe_controller_sha=\"\"", 1)[1].split("extra_deploy_args", 1)[0]
+    # Neither the BE controller SHA nor the FE candidate SHA is a fallback.
+    assert "PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA" not in text.split("fe_controller_sha=\"\"", 1)[1].split("extra_deploy_args", 1)[0]
+    assert "PANTHEON_DEV_FE_CONTROLLER_SHA" in (ROOT / "scripts/deploy_nonprod_vm.sh").read_text()

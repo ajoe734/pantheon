@@ -488,6 +488,7 @@ def create_training_router(
         session_id: str,
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ):
         identity = extract_identity(authorization)
         require_read_role(identity)
@@ -538,6 +539,7 @@ def create_training_router(
             note=note,
             actor_id=identity.operator_id,
             committed_at=utc_now(),
+            **({"idempotency_key": idempotency_key} if idempotency_key else {}),
         )
         if result is None:
             raise bff_error(
@@ -560,6 +562,7 @@ def create_training_router(
         session_id: str,
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ):
         identity = extract_identity(authorization)
         require_read_role(identity)
@@ -610,6 +613,7 @@ def create_training_router(
             note=note,
             actor_id=identity.operator_id,
             discarded_at=utc_now(),
+            **({"idempotency_key": idempotency_key} if idempotency_key else {}),
         )
         if result is None:
             raise bff_error(

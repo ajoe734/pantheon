@@ -741,6 +741,16 @@ class TestTrainingSessionHttpStoreUnit:
             discarded = store.discard_trainer_replay("trn-1", expected_candidate_snapshot_at="2026-10-12T00:00:00Z")
             assert discarded["status"] == "completed"
             assert discarded["replay_resolution"]["state"] == "discarded"
+
+            # 11. caller Idempotency-Key is forwarded to the owner only when supplied
+            def _decision_headers(action):
+                return [r[2] for r in requests_log if r[0] == "POST" and r[1].endswith(f"/replays/trn-1/{action}")]
+
+            assert all("Idempotency-Key" not in h for h in _decision_headers("commit") + _decision_headers("discard"))
+            store.commit_trainer_replay("trn-1", expected_candidate_snapshot_at="2026-10-12T00:00:00Z", idempotency_key="key-commit-1")
+            store.discard_trainer_replay("trn-1", expected_candidate_snapshot_at="2026-10-12T00:00:00Z", idempotency_key="key-discard-1")
+            assert _decision_headers("commit")[-1]["Idempotency-Key"] == "key-commit-1"
+            assert _decision_headers("discard")[-1]["Idempotency-Key"] == "key-discard-1"
         finally:
             authorization.reset(auth_token)
             selected_tenant.reset(tenant_token)
@@ -754,3 +764,24 @@ class TestTrainingSessionHttpStoreUnit:
         assert isinstance(detail, dict)
         assert detail.get("error", {}).get("code") == "DEPENDENCY_UNAVAILABLE"
 
+
+
+class TestReplayDetailProjection:
+    def test_replay_detail_keeps_event_type_and_eval_ref_without_changing_teaching_events(self):
+        from ports.persona_training import _extract_sorted_events, _project_trainer_replay_detail
+
+        session = {
+            "session_id": "trn-1",
+            "status": "completed",
+            "artifacts": {"candidate_artifact_ref": "art-1"},
+            "events": [
+                {"sequence_number": 2, "event_type": "preview_trigger", "eval_ref": {"candidate_snapshot_at": "t1"}},
+                {"sequence_number": 1, "event_type": "message", "message_body": "hi"},
+            ],
+        }
+        detail = _project_trainer_replay_detail(session, snapshot_at="2026-10-13T00:00:00Z")
+        assert [e["event_type"] for e in detail["events"]] == ["message", "preview_trigger"]
+        assert "eval_ref" not in detail["events"][0]
+        assert detail["events"][1]["eval_ref"] == {"candidate_snapshot_at": "t1"}
+        assert detail["allowedActions"]["canCommit"] is True
+        assert all("event_type" not in e and "eval_ref" not in e for e in _extract_sorted_events("trn-1", session))
