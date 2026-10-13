@@ -552,6 +552,20 @@ class ResearchWriteOwner:
         new_record["allowedActions"] = self._rw04_allowed_actions(new_record)
         return new_record
 
+    @staticmethod
+    def _require_retry_scope(
+        record: Dict[str, Any], parent_id: str, actor: str, key: str
+    ) -> None:
+        """Reject a deterministic-id hit that is not this parent/actor/key's retry."""
+        if (
+            record.get("parent_experiment_id") != parent_id
+            or str(record.get("created_by") or "") != actor
+            or record.get("idempotency_key") != key
+        ):
+            raise ValueError(
+                f"experiment id {record.get('experiment_id')} is occupied by an unrelated record"
+            )
+
     def _link_retry_to_ticket(
         self, ticket_id: str, new_exp_id: str, timestamp: str, *, conn: Any
     ) -> None:
@@ -596,7 +610,9 @@ class ResearchWriteOwner:
             self._experiments_store.advisory_xact_lock(f"research-retry:{new_exp_id}", conn=conn)
 
             existing = self._experiments_store.get(new_exp_id)
-            if not isinstance(existing, dict):
+            if isinstance(existing, dict):
+                self._require_retry_scope(existing, parent_key, actor, idempotency_key)
+            else:
                 # Attempts persisted before keyed ids carry numeric ids; match by scope.
                 existing = next(
                     (
@@ -628,7 +644,9 @@ class ResearchWriteOwner:
                 new_exp_id, None, new_record, conn=conn
             )
             if not inserted:
-                return self._project_experiment_detail(canonical or new_record)
+                canonical = canonical if isinstance(canonical, dict) else new_record
+                self._require_retry_scope(canonical, parent_key, actor, idempotency_key)
+                return self._project_experiment_detail(canonical)
             ticket_id = parent.get("ticket_id")
             if ticket_id:
                 self._link_retry_to_ticket(ticket_id, new_exp_id, timestamp, conn=conn)
@@ -659,35 +677,31 @@ class ResearchWriteOwner:
         if status not in self._RW04_RETRYABLE_STATUSES:
             return None
 
-        existing_experiments = self._experiments_store.list_all()
         date_prefix = timestamp[:10].replace("-", "")
-        idx = len(existing_experiments) + 1
-        new_exp_id = f"exp-{date_prefix}-{idx:03d}"
-        existing_ids = {str(e.get("experiment_id") or "") for e in existing_experiments}
-        while new_exp_id in existing_ids:
-            idx += 1
-            new_exp_id = f"exp-{date_prefix}-{idx:03d}"
-
-        new_record = self._build_retry_record(
-            exp,
-            new_exp_id=new_exp_id,
-            actor_id=actor_id,
-            timestamp=timestamp,
-            idempotency_key=idempotency_key,
-        )
-
-        ticket_id = exp.get("ticket_id")
-        if ticket_id:
-            ticket = self._tickets_store.get(ticket_id)
-            if ticket and isinstance(ticket, dict):
-                linked = list(ticket.get("linked_experiments") or [])
-                if new_exp_id not in linked:
-                    linked.append(new_exp_id)
-                    ticket["linked_experiments"] = linked
-                    ticket["updated_at"] = timestamp
-                    self._tickets_store.put(ticket_id, ticket)
-
-        self._experiments_store.put(new_exp_id, new_record)
+        with self._experiments_store.transaction() as conn:
+            existing_experiments = self._experiments_store.list_all()
+            idx = len(existing_experiments) + 1
+            existing_ids = {str(e.get("experiment_id") or "") for e in existing_experiments}
+            while True:
+                new_exp_id = f"exp-{date_prefix}-{idx:03d}"
+                idx += 1
+                if new_exp_id in existing_ids:
+                    continue
+                new_record = self._build_retry_record(
+                    exp,
+                    new_exp_id=new_exp_id,
+                    actor_id=actor_id,
+                    timestamp=timestamp,
+                    idempotency_key=idempotency_key,
+                )
+                inserted, _ = self._experiments_store.compare_and_set(
+                    new_exp_id, None, new_record, conn=conn
+                )
+                if inserted:
+                    break
+            ticket_id = exp.get("ticket_id")
+            if ticket_id:
+                self._link_retry_to_ticket(ticket_id, new_exp_id, timestamp, conn=conn)
         return self._project_experiment_detail(new_record)
 
     def archive_research_experiment(
