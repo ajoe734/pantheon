@@ -5,8 +5,10 @@ All tests use a spy gateway runtime so no Docker or network calls are made.
 from __future__ import annotations
 
 import json
+import time
 import unittest
 from collections.abc import Callable
+from typing import Any
 from unittest.mock import patch
 
 from services.control_plane.cron.persona_cron_registrar import (
@@ -101,7 +103,7 @@ class GatewayRuntimeSpy:
             self._response_loss_after_apply.remove(method)
             raise RuntimeError(f"simulated {method} response loss after apply")
 
-    def gateway_call(self, method: str, params: dict | None = None) -> dict:
+    def gateway_call(self, method: str, params: dict | None = None, **kwargs: Any) -> dict:
         self.calls.append((method, params))
         if method == "cron.list":
             if self._cron_list_raises:
@@ -719,12 +721,12 @@ class TestPersonaCronRegistrarGatewayRpc(unittest.TestCase):
                 )
                 self._list_count = 0
 
-            def gateway_call(self, method, params=None):
+            def gateway_call(self, method, params=None, **kwargs):
                 if method == "cron.list":
                     self._list_count += 1
                     if self._list_count > 1:
                         raise RuntimeError("simulated final cron.list failure")
-                return super().gateway_call(method, params)
+                return super().gateway_call(method, params, **kwargs)
 
         with self.assertRaisesRegex(
             RuntimeError,
@@ -1121,11 +1123,11 @@ class TestPersonaCronRegistrarGatewayRpc(unittest.TestCase):
 
     def test_cron_list_pagination_cycle_fails_closed(self):
         class CyclingRuntime(GatewayRuntimeSpy):
-            def gateway_call(self, method, params=None):
+            def gateway_call(self, method, params=None, **kwargs):
                 if method == "cron.list":
                     self.calls.append((method, params))
                     return {"jobs": [], "hasMore": True, "nextOffset": 0}
-                return super().gateway_call(method, params)
+                return super().gateway_call(method, params, **kwargs)
 
         spy = CyclingRuntime()
         result = PersonaCronRegistrar(gateway_runtime=spy).register_for_persona(
@@ -1307,6 +1309,149 @@ class TestPersonaCronRegistrarGatewayRpc(unittest.TestCase):
         result = PersonaCronRegistrar(gateway_runtime=spy).register_for_persona("persona-dict-001")
         d = result.to_dict()
         json.dumps(d)
+
+
+class TestPersonaCronDeadlineContract(unittest.TestCase):
+    def test_adapter_runtime_default_arithmetic_budget(self):
+        captured: dict[str, Any] = {}
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return None
+
+            def read(self) -> bytes:
+                return b'{"status":"ok","data":{"jobs":[]}}'
+
+        def fake_urlopen(request, *, timeout):
+            captured["headers"] = {
+                key.lower(): value for key, value in request.header_items()
+            }
+            captured["timeout"] = timeout
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return Response()
+
+        runtime = AdapterCronRuntime(
+            "http://openclaw-gateway-adapter:8104",
+            service_token="cron-service-secret",
+            timeout_seconds=180,
+        )
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            runtime.gateway_call("cron.list", {"limit": 10}, timeout_seconds=100.0)
+
+        self.assertEqual(captured["timeout"], 100.0)
+        self.assertAlmostEqual(captured["body"]["timeout_seconds"], 98.0, places=2)
+        self.assertNotIn("x-pantheon-timeout-seconds", captured["headers"])
+        self.assertEqual(captured["headers"]["x-pantheon-service-token"], "cron-service-secret")
+
+    def test_adapter_runtime_late_response_rejected_after_deadline(self):
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return None
+
+            def read(self) -> bytes:
+                return b'{"status":"ok","data":{"jobs":[]}}'
+
+        runtime = AdapterCronRuntime(
+            "http://openclaw-gateway-adapter:8104",
+            service_token="cron-service-secret",
+        )
+        start = 1000.0
+        deadline = start + 5.0
+
+        with (
+            patch("urllib.request.urlopen", return_value=Response()),
+            patch(
+                "services.control_plane.cron.persona_cron_registrar.time.monotonic",
+                side_effect=[start, deadline + 1.0],
+            ),
+        ):
+            with self.assertRaisesRegex(TimeoutError, "schedule deadline exceeded after cron.list"):
+                runtime.gateway_call("cron.list", {"limit": 1}, deadline=deadline)
+
+    def test_adapter_runtime_expired_deadline_raises_timeout_error(self):
+        runtime = AdapterCronRuntime(
+            "http://openclaw-gateway-adapter:8104",
+            service_token="cron-service-secret",
+        )
+        with patch("urllib.request.urlopen") as urlopen:
+            with self.assertRaisesRegex(TimeoutError, "schedule deadline exceeded before cron.list"):
+                runtime.gateway_call(
+                    "cron.list",
+                    {"limit": 1},
+                    deadline=time.monotonic() - 1.0,
+                )
+        urlopen.assert_not_called()
+
+    def test_multi_call_pagination_shrinks_remaining_deadline(self):
+        deadlines_observed: list[float] = []
+
+        class PaginatingRuntime:
+            def gateway_call(self, method, params=None, *, deadline=None, timeout_seconds=None):
+                if deadline is not None:
+                    deadlines_observed.append(deadline)
+                offset = (params or {}).get("offset", 0)
+                if offset == 0:
+                    return {"jobs": [{"id": "j1"}], "hasMore": True, "nextOffset": 1}
+                return {"jobs": [{"id": "j2"}], "hasMore": False}
+
+        registrar = PersonaCronRegistrar(gateway_runtime=PaginatingRuntime())
+        now = time.monotonic()
+        test_deadline = now + 60.0
+        jobs = registrar._list_jobs(PaginatingRuntime(), deadline=test_deadline)
+        self.assertEqual(len(jobs), 2)
+        self.assertEqual(deadlines_observed, [test_deadline, test_deadline])
+
+    def test_register_for_persona_fails_closed_when_deadline_exceeded(self):
+        class DummyRuntime:
+            def gateway_call(self, method, params=None, **kwargs):
+                raise AssertionError("Runtime should not be invoked after deadline exhaustion")
+
+        registrar = PersonaCronRegistrar(gateway_runtime=DummyRuntime())
+        expired_deadline = time.monotonic() - 0.1
+        result = registrar.register_for_persona(
+            "persona-expired-001",
+            deadline=expired_deadline,
+        )
+        self.assertEqual(len(result.failed), 1)
+        self.assertIn("schedule deadline exceeded", result.failed[0]["error"])
+        self.assertEqual(result.registered, [])
+
+    def test_mutation_failure_skips_reconciliation_list_if_deadline_exceeded(self):
+        class AmbiguousAddRuntime:
+            def gateway_call(self, method, params=None, *, deadline=None, **kwargs):
+                if method == "cron.list":
+                    return {"jobs": []}
+                if method == "cron.add":
+                    # Simulate mutation response loss after deadline has elapsed
+                    raise RuntimeError("gateway connection reset")
+                raise AssertionError(f"unexpected method {method}")
+
+        registrar = PersonaCronRegistrar(gateway_runtime=AmbiguousAddRuntime())
+        start = time.monotonic()
+        workflow = WORKFLOW_CATALOG["pantheon.ingest"]
+        with patch("services.control_plane.cron.persona_cron_registrar.time.monotonic") as mock_time:
+            mock_time.side_effect = [
+                start,         # _call_gateway(cron.add) deadline check
+                start + 10.0,  # post-add deadline check
+                start + 10.0,
+            ]
+            with self.assertRaisesRegex(RuntimeError, "authoritative cron.list skipped: schedule deadline exceeded"):
+                registrar._register_one(
+                    AmbiguousAddRuntime(),
+                    workflow,
+                    "persona-test-001",
+                    None,
+                    None,
+                    None,
+                    None,
+                    deadline=start + 5.0,
+                )
 
 
 if __name__ == "__main__":

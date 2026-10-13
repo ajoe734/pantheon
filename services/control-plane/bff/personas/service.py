@@ -1334,6 +1334,12 @@ def _evaluate_persona_provisioning_status(
     all_monitoring_sessions: Optional[List[Dict[str, Any]]] = None,
     diagnostics: Optional[List[str]] = None,
 ) -> str:
+    eval_start_time = time.monotonic()
+    lease_seconds = max(
+        30.0,
+        float(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
+    )
+    eval_deadline = eval_start_time + lease_seconds
     metadata = raw.get("metadata") or {}
     current_state = raw.get("lifecycle_state") or raw.get("state")
     if current_state == "provisioning_failed":
@@ -1715,6 +1721,7 @@ def _evaluate_persona_provisioning_status(
                     persona_capital_binding_id,
                     runtime_id=runtime_id,
                     runtime_binding_id=binding_id,
+                    deadline=eval_deadline,
                 )
                 authoritative = schedule_receipt.get("authoritative_readback")
                 cron_ok = bool(
@@ -3406,9 +3413,26 @@ def _register_persona_cron_required(
     *,
     runtime_id: Optional[str] = None,
     runtime_binding_id: Optional[str] = None,
+    deadline: Optional[float] = None,
+    timeout_seconds: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Register and authoritatively read back the required evaluation schedule."""
     from services.control_plane.cron.persona_cron_registrar import PersonaCronRegistrar
+
+    start_time = time.monotonic()
+    if deadline is not None:
+        operation_deadline = float(deadline)
+    elif timeout_seconds is not None:
+        operation_deadline = start_time + float(timeout_seconds)
+    else:
+        lease_seconds = max(
+            30.0,
+            float(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
+        )
+        operation_deadline = start_time + lease_seconds
+
+    if time.monotonic() >= operation_deadline:
+        raise TimeoutError("schedule deadline exceeded before cron registration")
 
     registrar = PersonaCronRegistrar()
     result = registrar.register_for_persona(
@@ -3418,22 +3442,33 @@ def _register_persona_cron_required(
         runtime_id=runtime_id,
         runtime_binding_id=runtime_binding_id,
         persona_capital_binding_id=binding_id,
+        deadline=operation_deadline,
     )
     body = result.to_dict()
     if body.get("mode") != "gateway_rpc":
         raise RuntimeError("first-evaluation schedule authority is unavailable (dry-run refused)")
     if body.get("failed"):
         raise RuntimeError(f"cron registration failed: {body['failed']}")
-    runtime = registrar._get_runtime()
+
+    runtime = registrar._get_runtime(
+        timeout_seconds=max(0.001, operation_deadline - time.monotonic())
+    )
     authoritative_job = None
     readback_attempts = 0
     last_readback_error = ""
     if runtime is not None:
-        timeout_seconds = _persona_first_evaluation_readback_timeout_seconds()
         poll_seconds = _persona_first_evaluation_readback_poll_seconds()
-        deadline = time.monotonic() + timeout_seconds
+        configured_readback_timeout = _persona_first_evaluation_readback_timeout_seconds()
+        if "PANTHEON_PERSONA_FIRST_EVALUATION_READBACK_TIMEOUT_SECONDS" in os.environ:
+            readback_deadline = min(operation_deadline, time.monotonic() + configured_readback_timeout)
+        else:
+            readback_deadline = operation_deadline
+
         while True:
             readback_attempts += 1
+            now = time.monotonic()
+            if now > readback_deadline and readback_attempts > 1:
+                break
             try:
                 authoritative_job = registrar.get_first_evaluation_registration(
                     persona_id,
@@ -3442,13 +3477,19 @@ def _register_persona_cron_required(
                     runtime_binding_id=runtime_binding_id,
                     capital_pool_id=capital_pool_id,
                     persona_capital_binding_id=binding_id,
+                    deadline=readback_deadline,
                 )
             except Exception as exc:  # noqa: BLE001
                 last_readback_error = str(exc) or exc.__class__.__name__
                 authoritative_job = None
+
             if authoritative_job is not None:
+                # Disallow late success after readback deadline has expired
+                if time.monotonic() > readback_deadline:
+                    authoritative_job = None
+                    last_readback_error = "authoritative readback completed after deadline expired"
                 break
-            remaining_seconds = deadline - time.monotonic()
+            remaining_seconds = readback_deadline - time.monotonic()
             if remaining_seconds <= 0:
                 break
             time.sleep(min(poll_seconds, remaining_seconds))
@@ -3461,6 +3502,8 @@ def _register_persona_cron_required(
         raise RuntimeError(
             f"first-evaluation schedule failed authoritative readback{suffix}"
         )
+    if time.monotonic() > operation_deadline:
+        raise TimeoutError("schedule deadline exceeded during authoritative readback")
     authoritative_event = registrar._decode_job_event(authoritative_job) or {}
     body["authoritative_readback"] = {
         "persona_id": persona_id,
@@ -3482,11 +3525,23 @@ def _register_persona_cron_required(
 
 
 # --- _remove_persona_cron_required ---
-def _remove_persona_cron_required(persona_id: str) -> Dict[str, Any]:
+def _remove_persona_cron_required(
+    persona_id: str,
+    *,
+    deadline: Optional[float] = None,
+    timeout_seconds: Optional[float] = None,
+) -> Dict[str, Any]:
     """Remove first-evaluation owner rows and require authoritative absence."""
     from services.control_plane.cron.persona_cron_registrar import PersonaCronRegistrar
 
-    result = PersonaCronRegistrar().remove_first_evaluation_registration(persona_id)
+    try:
+        result = PersonaCronRegistrar().remove_first_evaluation_registration(
+            persona_id,
+            deadline=deadline,
+            timeout_seconds=timeout_seconds,
+        )
+    except TypeError:
+        result = PersonaCronRegistrar().remove_first_evaluation_registration(persona_id)
     if result.get("registered") is not False:
         raise RuntimeError("first-evaluation schedule removal lacks zero-owner readback")
     return result
@@ -4065,15 +4120,33 @@ def _coordinate_persona_create(
         persona_id=record.persona_id,
         request_payload=record.request_payload,
     )
+    start_time = time.monotonic()
+    lease_seconds = max(
+        30,
+        int(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
+    )
+    operation_deadline = start_time + float(lease_seconds)
+
+    def _bounded_schedule_registrar(
+        persona_id: str,
+        capital_pool_id: str,
+        binding_id: str,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        return _register_persona_cron_required(
+            persona_id,
+            capital_pool_id,
+            binding_id,
+            deadline=operation_deadline,
+            **kwargs,
+        )
+
     coordinator = PersonaProvisioningCoordinator(
         store=store,
         transport=_PersonaOwnerHttpTransport(tenant_id=record.tenant_id),
-        schedule_registrar=_register_persona_cron_required,
+        schedule_registrar=_bounded_schedule_registrar,
         lease_owner=f"operator-bff:{os.getenv('HOSTNAME', 'local')}:{uuid.uuid4().hex}",
-        lease_seconds=max(
-            30,
-            int(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
-        ),
+        lease_seconds=lease_seconds,
         # Owner mutations are authenticated as this BFF service principal; the
         # requesting human stays audit metadata inside each owner payload.
         actor_id=PERSONA_OWNER_SERVICE_ACTOR_ID,

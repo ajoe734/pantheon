@@ -335,6 +335,78 @@ class TestCronServiceAuthentication(unittest.TestCase):
         self.assertEqual(response.json()["data"], {"jobs": []})
         gateway_call.assert_called_once_with("cron.list", {"limit": 1})
 
+    def test_cron_proxy_late_success_after_deadline_returns_504(self):
+        current_time = [1000.0]
+
+        def slow_call(method, params, *, timeout_seconds=None):
+            current_time[0] = 2000.0
+            return {"jobs": []}
+
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+                side_effect=slow_call,
+            ),
+            patch.object(
+                adapter_main.time,
+                "monotonic",
+                side_effect=lambda: current_time[0],
+            ),
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={"method": "cron.list", "params": {"limit": 1}, "timeout_seconds": 5.0},
+                headers={"X-Pantheon-Service-Token": "cron-secret"},
+            )
+
+        self.assertEqual(response.status_code, 504, response.text)
+        self.assertEqual(response.json()["error_code"], "OPENCLAW_GATEWAY_TIMEOUT")
+        self.assertIn("schedule deadline exceeded after cron.list", response.json()["message"])
+
+    def test_cron_proxy_propagates_timeout_seconds_body(self):
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+                return_value={"jobs": []},
+            ) as gateway_call,
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={"method": "cron.list", "params": {"limit": 1}, "timeout_seconds": 33.0},
+                headers={"X-Pantheon-Service-Token": "cron-secret"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        gateway_call.assert_called_once()
+        self.assertEqual(gateway_call.call_args[0], ("cron.list", {"limit": 1}))
+        timeout_arg = gateway_call.call_args[1].get("timeout_seconds")
+        self.assertIsNotNone(timeout_arg)
+        self.assertAlmostEqual(timeout_arg, 33.0, delta=1.0)
+
+    def test_cron_proxy_deadline_exhaustion_returns_504(self):
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+            ) as gateway_call,
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={"method": "cron.list", "params": {"limit": 1}, "timeout_seconds": 0},
+                headers={
+                    "X-Pantheon-Service-Token": "cron-secret",
+                },
+            )
+
+        self.assertEqual(response.status_code, 504, response.text)
+        self.assertEqual(response.json()["error_code"], "OPENCLAW_GATEWAY_TIMEOUT")
+        gateway_call.assert_not_called()
+
     def test_cron_proxy_fails_closed_when_token_is_not_configured(self):
         with (
             self._auth_config(token="", required=False),
@@ -567,7 +639,7 @@ class TestCronServiceAuthentication(unittest.TestCase):
         patch_params.pop("id")
         calls = []
 
-        def gateway_call(method, params):
+        def gateway_call(method, params, **kwargs):
             calls.append((method, params))
             if method == "cron.list":
                 return {"jobs": [current]}
@@ -605,6 +677,49 @@ class TestCronServiceAuthentication(unittest.TestCase):
             ],
         )
 
+    def test_cron_update_spends_remaining_allowance_in_namespace_guard(self):
+        current = self._persona_job()
+        patch_params = self._persona_job()
+        patch_params.pop("id")
+        calls = []
+
+        def gateway_call(method, params, *, timeout_seconds=None, **kwargs):
+            calls.append((method, params, timeout_seconds))
+            if method == "cron.list":
+                return {"jobs": [current]}
+            if method == "cron.update":
+                return {"updated": True}
+            raise AssertionError(method)
+
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+                side_effect=gateway_call,
+            ),
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={
+                    "method": "cron.update",
+                    "params": {"id": "job-persona-1", "patch": patch_params},
+                    "timeout_seconds": 50.0,
+                },
+                headers={
+                    "X-Pantheon-Service-Token": "cron-secret",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][0], "cron.list")
+        self.assertIsNotNone(calls[0][2])
+        self.assertAlmostEqual(calls[0][2], 50.0, delta=1.0)
+        self.assertEqual(calls[1][0], "cron.update")
+        self.assertIsNotNone(calls[1][2])
+        self.assertAlmostEqual(calls[1][2], 50.0, delta=1.0)
+
     def test_cron_update_rejects_noncanonical_patch(self):
         current = self._persona_job()
         patch_params = copy.deepcopy(current)
@@ -612,7 +727,7 @@ class TestCronServiceAuthentication(unittest.TestCase):
         patch_params["schedule"]["expr"] = "0 * * * *"
         calls = []
 
-        def gateway_call(method, params):
+        def gateway_call(method, params, **kwargs):
             calls.append((method, params))
             if method == "cron.list":
                 return {"jobs": [current]}
@@ -646,7 +761,7 @@ class TestCronServiceAuthentication(unittest.TestCase):
             patch_job.pop("id")
             calls = []
 
-            def gateway_call(method, params):
+            def gateway_call(method, params, **kwargs):
                 calls.append((method, params))
                 if method == "cron.list":
                     return {"jobs": [self._persona_job()]}
@@ -693,7 +808,7 @@ class TestCronServiceAuthentication(unittest.TestCase):
     def test_cron_remove_is_fenced_to_persona_owned_namespace(self):
         calls = []
 
-        def gateway_call(method, params):
+        def gateway_call(method, params, **kwargs):
             calls.append((method, params))
             if method == "cron.list":
                 return {"jobs": [self._persona_job(name="external-job")]}
@@ -723,7 +838,7 @@ class TestCronServiceAuthentication(unittest.TestCase):
     def test_cron_remove_forwards_verified_persona_owned_job(self):
         calls = []
 
-        def gateway_call(method, params):
+        def gateway_call(method, params, **kwargs):
             calls.append((method, params))
             if method == "cron.list":
                 return {"jobs": [self._persona_job()]}
@@ -760,7 +875,7 @@ class TestCronServiceAuthentication(unittest.TestCase):
         }
         calls = []
 
-        def gateway_call(method, params):
+        def gateway_call(method, params, **kwargs):
             calls.append((method, params))
             if method == "cron.list":
                 return {"jobs": [orphan]}

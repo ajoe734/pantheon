@@ -363,6 +363,7 @@ def test_required_cron_registration_polls_until_authoritative_readback(
             runtime_id: str | None = None,
             runtime_binding_id: str | None = None,
             persona_capital_binding_id: str | None = None,
+            **_kwargs: Any,
         ) -> _RegistrationResult:
             assert persona_id == PERSONA_ID
             assert capital_pool_id == "pool-dynamic-alpha"
@@ -373,7 +374,7 @@ def test_required_cron_registration_polls_until_authoritative_readback(
             assert persona_capital_binding_id == PERSONA_CAPITAL_BINDING_ID
             return _RegistrationResult()
 
-        def _get_runtime(self) -> object:
+        def _get_runtime(self, *_args: Any, **_kwargs: Any) -> object:
             return runtime
 
         def get_first_evaluation_registration(
@@ -385,6 +386,7 @@ def test_required_cron_registration_polls_until_authoritative_readback(
             runtime_binding_id: str | None = None,
             capital_pool_id: str | None = None,
             persona_capital_binding_id: str | None = None,
+            **_kwargs: Any,
         ) -> dict[str, Any] | None:
             attempts.append(
                 {
@@ -446,7 +448,7 @@ def test_required_cron_registration_remains_fail_closed_after_bounded_readback(
         def register_for_persona(self, *_args: Any, **_kwargs: Any) -> _RegistrationResult:
             return _RegistrationResult()
 
-        def _get_runtime(self) -> object:
+        def _get_runtime(self, *_args: Any, **_kwargs: Any) -> object:
             return object()
 
         def get_first_evaluation_registration(self, *_args: Any, **_kwargs: Any) -> None:
@@ -469,6 +471,108 @@ def test_required_cron_registration_remains_fail_closed_after_bounded_readback(
             PERSONA_CAPITAL_BINDING_ID,
             runtime_id=RUNTIME_ID,
             runtime_binding_id=RUNTIME_BINDING_ID,
+        )
+
+
+def test_required_cron_registration_spans_monotonic_deadline_into_readback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    class _RegistrationResult:
+        def to_dict(self) -> dict[str, Any]:
+            return {"mode": "gateway_rpc", "failed": [], "registered": []}
+
+    class _SpannedDeadlineRegistrar:
+        def register_for_persona(self, *args: Any, **kwargs: Any) -> _RegistrationResult:
+            calls.append({"method": "register_for_persona", "kwargs": kwargs})
+            return _RegistrationResult()
+
+        def _get_runtime(self, *, timeout_seconds: float | None = None) -> object:
+            calls.append({"method": "_get_runtime", "timeout_seconds": timeout_seconds})
+            return object()
+
+        def get_first_evaluation_registration(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            calls.append({"method": "get_first_evaluation_registration", "kwargs": kwargs})
+            return _first_evaluation_job_fixture()
+
+        @staticmethod
+        def _decode_job_event(job: dict[str, Any]) -> dict[str, Any] | None:
+            return json.loads(str(job.get("payload", {}).get("text") or "{}"))
+
+    fake_module = SimpleNamespace(PersonaCronRegistrar=_SpannedDeadlineRegistrar)
+    monkeypatch.setitem(sys.modules, "persona_cron_registrar", fake_module)
+    monkeypatch.setitem(
+        sys.modules, "services.control_plane.cron.persona_cron_registrar", fake_module
+    )
+
+    test_deadline = personas_service.time.monotonic() + 120.0
+    receipt = personas_service._register_persona_cron_required(
+        PERSONA_ID,
+        "pool-dynamic-alpha",
+        PERSONA_CAPITAL_BINDING_ID,
+        runtime_id=RUNTIME_ID,
+        runtime_binding_id=RUNTIME_BINDING_ID,
+        deadline=test_deadline,
+    )
+
+    assert receipt["authoritative_readback"]["registered"] is True
+    assert len(calls) == 3
+    assert calls[0]["method"] == "register_for_persona"
+    assert calls[0]["kwargs"].get("deadline") == test_deadline
+    assert calls[1]["method"] == "_get_runtime"
+    assert calls[2]["method"] == "get_first_evaluation_registration"
+    assert calls[2]["kwargs"].get("deadline") <= test_deadline
+
+
+def test_required_cron_registration_rejects_late_success_after_deadline_expired(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _RegistrationResult:
+        def to_dict(self) -> dict[str, Any]:
+            return {"mode": "gateway_rpc", "failed": [], "registered": []}
+
+    class _LateSuccessRegistrar:
+        def register_for_persona(self, *args: Any, **kwargs: Any) -> _RegistrationResult:
+            return _RegistrationResult()
+
+        def _get_runtime(self, *args: Any, **kwargs: Any) -> object:
+            return object()
+
+        def get_first_evaluation_registration(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            # Simulate delayed return where clock has now passed deadline
+            return _first_evaluation_job_fixture()
+
+        @staticmethod
+        def _decode_job_event(job: dict[str, Any]) -> dict[str, Any] | None:
+            return json.loads(str(job.get("payload", {}).get("text") or "{}"))
+
+    fake_module = SimpleNamespace(PersonaCronRegistrar=_LateSuccessRegistrar)
+    monkeypatch.setitem(sys.modules, "persona_cron_registrar", fake_module)
+    monkeypatch.setitem(
+        sys.modules, "services.control_plane.cron.persona_cron_registrar", fake_module
+    )
+
+    # Mock time.monotonic such that during readback attempt it returns after deadline
+    start = 1000.0
+    deadline = start + 5.0
+    # Steps:
+    # 1. operation_deadline calculation: time.monotonic() -> 1000.0
+    # 2. deadline check before registration: time.monotonic() -> 1000.0
+    # 3. get_runtime remaining: time.monotonic() -> 1000.0
+    # 4. readback loop start: time.monotonic() -> 1000.0
+    # 5. after get_first_evaluation_registration returns: time.monotonic() -> 1010.0 (past deadline)
+    time_values = iter([1000.0, 1000.0, 1000.0, 1000.0, 1010.0, 1010.0, 1010.0])
+    monkeypatch.setattr(personas_service.time, "monotonic", lambda: next(time_values))
+
+    with pytest.raises(RuntimeError, match="authoritative readback completed after deadline expired"):
+        personas_service._register_persona_cron_required(
+            PERSONA_ID,
+            "pool-dynamic-alpha",
+            PERSONA_CAPITAL_BINDING_ID,
+            runtime_id=RUNTIME_ID,
+            runtime_binding_id=RUNTIME_BINDING_ID,
+            deadline=deadline,
         )
 
 
@@ -836,6 +940,7 @@ def test_runtime_identity_is_forwarded_to_exact_schedule_reconciliation(
         *,
         runtime_id: str | None = None,
         runtime_binding_id: str | None = None,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         calls.append(
             {
