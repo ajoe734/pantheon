@@ -3163,3 +3163,52 @@ _COMPENSATION_CALLERS = (
     ".github/workflows/nonprod-deploy.yml",
     "scripts/compensate_cross_repo_release.sh",
 )
+
+
+def _step_text(name: str, next_name: str) -> str:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    start = text.index(f"      - name: {name}\n")
+    end = text.index(f"      - name: {next_name}\n", start)
+    return text[start:end]
+
+
+def test_release_case_retirement_runs_after_both_compensation_paths() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    admit = _step_text(
+        "Retire non-served dev paper release cases",
+        "Upload accepted or compensated release evidence",
+    )
+    assert "steps.frontend_release.outcome == 'success' || steps.compensation.outcome == 'success'" in admit
+    assert "'accepted' || 'compensated'" in admit
+    assert text.index("name: Compensate rejected release to exact hosted baseline") < text.index(
+        "name: Retire non-served dev paper release cases"
+    )
+    deploy = _step_text(
+        "Retire this run's dev paper release case after deploy compensation",
+        "Upload dev paper release case retirement evidence",
+    )
+    assert "steps.deploy_compensation.outcome == 'success'" in deploy
+    assert "RELEASE_OUTCOME: compensated" in deploy
+    assert text.index("id: deploy_compensation") < text.index(
+        "name: Retire this run's dev paper release case after deploy compensation"
+    )
+    for step in (admit, deploy):
+        assert "continue-on-error: true" in step
+        assert "--new-case-key" in step and "dev-paper-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" in step
+        assert "dev-paper-release-case-retire.json" in step
+        assert "timeout --kill-after" in step
+
+
+def test_release_case_retirement_uses_only_the_retire_action() -> None:
+    script = (SCRIPTS / "retire_dev_paper_release_cases.py").read_text(encoding="utf-8")
+    code = script.split('"""', 2)[2]
+    assert '/retire"' in code
+    assert "/failure" not in code and "/transition" not in code
+    assert "/api/runtime-bindings" not in code
+    assert "psycopg" not in code and "DELETE" not in code.upper().replace("DELETION", "")
+
+
+def test_workflow_has_no_hard_coded_ssh_host_fallback() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "35.194.154.62" not in text
+    assert "vars.DEV_DEPLOY_SSH_HOST ||" not in text
