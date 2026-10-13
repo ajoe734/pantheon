@@ -2107,6 +2107,22 @@ def invoke_openclaw_provider_stream(
 class GatewayCronCallRequest(BaseModel):
     method: str
     params: Optional[Dict[str, Any]] = None
+    timeout_seconds: Optional[float] = None
+
+
+def _invoke_gateway_cron_call(
+    method: str,
+    params: Optional[Dict[str, Any]] = None,
+    *,
+    timeout_seconds: Optional[float] = None,
+) -> Dict[str, Any]:
+    if timeout_seconds is not None:
+        return _OPENCLAW_AGENT_PROVIDER.gateway_cron_call(
+            method,
+            params,
+            timeout_seconds=timeout_seconds,
+        )
+    return _OPENCLAW_AGENT_PROVIDER.gateway_cron_call(method, params)
 
 
 _PERSONA_CRON_CATALOG: Dict[str, Dict[str, str]] = {
@@ -2217,6 +2233,8 @@ def _is_well_formed_persona_cron_job(job: Dict[str, Any]) -> bool:
 def _assert_persona_owned_cron_call(
     method: str,
     params: Optional[Dict[str, Any]],
+    *,
+    deadline: Optional[float] = None,
 ) -> None:
     """Fence the proxy to the Persona namespace and its required RPC subset."""
 
@@ -2256,10 +2274,35 @@ def _assert_persona_owned_cron_call(
                 error_code="OPENCLAW_CRON_AUTHORIZATION_UNAVAILABLE",
             )
         seen_offsets.add(offset)
-        listing = _OPENCLAW_AGENT_PROVIDER.gateway_cron_call(
-            "cron.list",
-            {"limit": 200, "offset": offset},
-        )
+        remaining: Optional[float] = None
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise GatewayOpenClawProviderError(
+                    "cron.list timed out while authorizing a mutation.",
+                    status_code=503,
+                    error_code="OPENCLAW_CRON_AUTHORIZATION_UNAVAILABLE",
+                )
+        try:
+            listing = _invoke_gateway_cron_call(
+                "cron.list",
+                {"limit": 200, "offset": offset},
+                timeout_seconds=remaining,
+            )
+        except GatewayOpenClawProviderError as exc:
+            raise GatewayOpenClawProviderError(
+                f"cron.list failed while authorizing a mutation: {exc.message}",
+                status_code=503,
+                error_code="OPENCLAW_CRON_AUTHORIZATION_UNAVAILABLE",
+            ) from exc
+
+        if deadline is not None and time.monotonic() > deadline:
+            raise GatewayOpenClawProviderError(
+                "cron.list timed out while authorizing a mutation.",
+                status_code=503,
+                error_code="OPENCLAW_CRON_AUTHORIZATION_UNAVAILABLE",
+            )
+
         jobs = listing.get("jobs") if isinstance(listing, dict) else None
         if not isinstance(jobs, list):
             raise GatewayOpenClawProviderError(
@@ -2320,7 +2363,9 @@ def _assert_persona_owned_cron_call(
 
 
 @app.post("/api/openclaw-adapter/gateway/cron")
-def gateway_cron_call(req: GatewayCronCallRequest) -> JSONResponse:
+def gateway_cron_call(
+    req: GatewayCronCallRequest,
+) -> JSONResponse:
     """Proxy a whitelisted `cron.*` gateway RPC through the adapter.
 
     The BFF persona OODA-loop cron registrar cannot reach the gateway directly
@@ -2329,8 +2374,36 @@ def gateway_cron_call(req: GatewayCronCallRequest) -> JSONResponse:
     persona OODA cron jobs on the BFF's behalf. Only `cron.*` methods are allowed.
     """
     try:
-        _assert_persona_owned_cron_call(req.method, req.params)
-        result = _OPENCLAW_AGENT_PROVIDER.gateway_cron_call(req.method, req.params)
+        parsed_body_timeout: Optional[float] = None
+        if req.timeout_seconds is not None:
+            try:
+                parsed_body_timeout = float(req.timeout_seconds)
+            except (TypeError, ValueError):
+                pass
+
+        effective_timeout = parsed_body_timeout
+        deadline = (time.monotonic() + effective_timeout) if effective_timeout is not None else None
+
+        _assert_persona_owned_cron_call(req.method, req.params, deadline=deadline)
+
+        remaining_timeout: Optional[float] = None
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise GatewayOpenClawProviderError(
+                    f"schedule deadline exceeded before {req.method}",
+                    status_code=504,
+                    error_code="OPENCLAW_GATEWAY_TIMEOUT",
+                )
+            remaining_timeout = remaining
+
+        result = _invoke_gateway_cron_call(req.method, req.params, timeout_seconds=remaining_timeout)
+        if deadline is not None and time.monotonic() > deadline:
+            raise GatewayOpenClawProviderError(
+                f"schedule deadline exceeded after {req.method}",
+                status_code=504,
+                error_code="OPENCLAW_GATEWAY_TIMEOUT",
+            )
         if req.method == "cron.list" and isinstance(result, dict):
             jobs = result.get("jobs")
             if isinstance(jobs, list):
@@ -2346,7 +2419,7 @@ def gateway_cron_call(req: GatewayCronCallRequest) -> JSONResponse:
                 }
     except GatewayOpenClawProviderError as exc:
         return JSONResponse(
-            status_code=exc.status_code if exc.status_code in (403, 503) else 200,
+            status_code=exc.status_code if exc.status_code in (403, 503, 504) else 200,
             content={"status": "error", "error_code": exc.error_code, "message": exc.message},
         )
     return JSONResponse(status_code=200, content={"status": "ok", "data": result})

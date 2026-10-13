@@ -1,0 +1,95 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "PERSONA-CRON-DEADLINE-CONTRACT-20261013",
+  "title": "Honor one existing Persona schedule deadline across BFF and adapter RPCs",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "base_sha": "170af322bcec7b15ce1b84e9d3ebe7798e03ba60",
+  "change_class": "corrective",
+  "summary": "Fixes hosted Persona creation schedule registration boundary failure on Root 38406522993 (where cron.list failed refusing to register blind: timed out) by establishing a single monotonic schedule-operation deadline covering initial cron.list and pagination, mutation (cron.add/cron.update/cron.remove), ambiguous-response reconciliation, authoritative readback, and poll sleeps. Replaces uncoordinated 30s socket timeouts and fresh RPC allocations with remaining-budget calculation against the 180s provisioning lease (PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS), downstream adapter CLI cap (170s), fixed response allowance (2.0s via DEFAULT_HTTP_RESPONSE_ALLOWANCE_SECONDS with no arbitrary configuration ladder), and ~8-10s generic CLI startup overhead. Honestly describes the provisioning lease as a renewable exclusivity TTL for the worker lease, not proof that the whole HTTP/saga+compensation cannot exceed 180s. Retains fresh input record.created_at before store.reserve replaces it with active, reuses existing _parse_rfc3339, debits pre-queue/prior-owner elapsed time and fixed 2-second response allowance once into a single monotonic deadline propagated via existing schedule_registrar closure, without using historical active.created_at or renewable lease_expires_at or resetting at schedule entry. Removes TypeError retry from BFF _remove_persona_cron_required to fail closed without repeated mutations. Propagates process allowance strictly via request body timeout_seconds to OpenClaw gateway adapter and _gateway_call, bounds adapter namespace guard lookups to the same remaining request allowance, proves strictly shrinking remaining allowances across readback polling and actual poll sleeps with advancing controlled time, rejects late readback success after deadline expiry, refuses blind mutation on expired deadline, and preserves fail-closed list-before-add and compensation semantics.",
+  "acceptance_verification": [
+    {
+      "ac": "AC1",
+      "description": "Before edits inspect exact current protected dev and cited original first-failure/source evidence, original superseded task and existing budget/registration/reconciliation mechanisms. Use one clean task worktree, only listed existing production/tests plus mandatory evidence. Do not run another hosted request, CLI, provider, cron write, deploy or mutate data; source worker remains local-only. Preserve original failure and diagnostic limitation; same-path later success is not a source fix.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC2",
+      "description": "Implement the smallest bounded deadline contract in the existing required first-evaluation registration entry and existing registrar/runtime. A single monotonic schedule-operation deadline must encompass initial list and pagination, normal mutation, existing ambiguous-response reconciliation, authoritative readback and poll sleep; they spend remaining time rather than receive fresh full budgets. Reuse semantically appropriate existing controls, document exact default arithmetic against actual 180sec HTTP request/provisioning lease including response allowance, and account for the real generic CLI startup overhead. Preserve the existing readback policy where applicable and no late success after expiry. Do not add a new arbitrary configuration ladder or claim an isolated 30->180 change solves the operation. No full-saga timing framework/coordinator-store redesign.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC3",
+      "description": "Along the existing authenticated /api/openclaw-adapter/gateway/cron request, propagate only the remaining bounded RPC/process allowance into the existing provider _gateway_call(timeout_seconds=...) mechanism. HTTP waiting must cover that admitted process allowance plus response while remaining within the operation deadline. Owner/namespace guard lookups must also spend the same remaining request allowance. Preserve genuine service auth, method allowlist, tenant/persona/runtime/PCB owner identity, existing response contract and provider cap. No new endpoint, WS client, alternative CLI/transport, daemon, generic wrapper/cache/retry service, public authorization header, MFA/issuer/grant, health writer, scheduler or dependency.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC4",
+      "description": "Keep authoritative list-before-add failclosed, stable request identity, original exact-one owner reconciliation and original unknown-response readback. On expired/unavailable/invalid owner listing do not register blind, restart an operation automatically, fabricate readiness or convert unknown mutation into known failure/success; preserve normal compensation semantics. Do not lower gates or thresholds, delete old jobs, seed scheduling data, swap provider accounts or change paper/live/capital authority. This scope does not implement unrelated UI/finance/research features.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC5",
+      "description": "Extend the listed existing regression modules to call actual original functions and composition, not a copied validator. Meaningfully prove a legitimate delayed list exceeding the former 30sec but fitting the single operation budget can reach exact authoritative schedule readback; cumulative multi-RPC work/pagination and poll sleeps shrink the same deadline; provider and namespace lookup budgets cannot outlive caller; expired/late result, timeout/error/malformed/auth and owned-target rejection cannot pass or issue blind add. Retain existing response-loss/idempotency/owner-negative cases. Use controlled time/process fixtures without actual 30sec sleeps or hosted calls, and distinguish local composition tests from real provider evidence.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC6",
+      "description": "Finish native source delivery with relevant complete affected modules/syntax/diff checks and truthful exact counts/failures/skips, mandatory evidence, genuine owner trailers, original assigned independent reviewer, one task branch/one PR, required CI/current-dev integration and native archive. Never fake reviewer identity/rejection/attestation or use vN branches. Ordinary authorized dev commands need no repeated user approval. Source merge remains source-only: sole original release coordinator must run fresh same-version FULL before first exact FE312/newBE Root with actual hosted normal-flow/Workshop persistence/plannedrollback and remaining L1-L12 finance/provider/ONE applicable real-human/independent overall acceptance. Parent 6AC/21deps/3artifacts stay unchanged; do not add product acceptance gates.",
+      "verdict": "pending_delivery: local source validation and clean task worktree with required trailers verified (308 passed, 4 skipped across 4 scoped test suites; monotonic schedule deadline contract verified across BFF, cron registrar, and OpenClaw adapter); downstream independent review by assigned reviewer Antigravity, required CI checks, dev integration merge, and canonical finish remain pending delivery on task PR"
+    }
+  ],
+  "verification": [
+    {
+      "command": "python3 -m pytest services/control-plane/cron/test_persona_cron_registrar.py",
+      "passed": 64,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "python3 -m pytest services/control-plane/bff/test_persona_provisioning_readback.py",
+      "passed": 59,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "python3 -m pytest services/openclaw-gateway-adapter/test_main.py",
+      "passed": 136,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "python3 -m pytest services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py",
+      "passed": 49,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 4,
+      "exit_code": 0
+    },
+    {
+      "command": "python3 -m pytest services/control-plane/cron/test_persona_cron_registrar.py services/control-plane/bff/test_persona_provisioning_readback.py services/openclaw-gateway-adapter/test_main.py services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py",
+      "passed": 308,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 4,
+      "exit_code": 0
+    }
+  ],
+  "declared_artifacts": [
+    "services/control-plane/cron/persona_cron_registrar.py",
+    "services/control-plane/cron/test_persona_cron_registrar.py",
+    "services/control-plane/bff/personas/service.py",
+    "services/control-plane/bff/test_persona_provisioning_readback.py",
+    "services/openclaw-gateway-adapter/main.py",
+    "services/openclaw-gateway-adapter/assistant_openclaw_provider.py",
+    "services/openclaw-gateway-adapter/test_main.py",
+    "services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py",
+    "docs/deployment/evidence/PERSONA-CRON-DEADLINE-CONTRACT-20261013/evidence.json"
+  ]
+}
