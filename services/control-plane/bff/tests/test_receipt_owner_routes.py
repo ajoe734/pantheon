@@ -540,3 +540,42 @@ def test_confirm_token_trusted_tenant_save_and_status_readback(mounted, owner):
     resp_other = client.get(f"/api/v1/operator/commands/{cmd_id}", headers={"Authorization": _tok("tenant-b")})
     assert resp_other.status_code == 404, resp_other.text
     assert resp_other.json()["detail"] == "Command not found"
+
+
+def test_confirm_token_mapping_tenant_standard_sub_save_and_status_readback(mounted, owner):
+    """AC3 & AC5 regression: Supported mapping tenant with standard string sub saves trusted tenant and allows readback."""
+    client, store, _ = mounted
+    from services.runtime_auth_inbound import encode_jwt_hs256
+    claims = {
+        "sub": "tenant-a",
+        "roles": ["operator", "approver"],
+        "exp": 4102444800,
+        "iss": _JWT_ENV["PANTHEON_BFF_JWT_ISSUER"],
+        "aud": _JWT_ENV["PANTHEON_BFF_JWT_AUDIENCE"],
+        "tenant_id": {"id": "tenant-a"},
+    }
+    token = "Bearer " + encode_jwt_hs256(claims, secret=_JWT_ENV["PANTHEON_BFF_JWT_SECRET"])
+    key = "confirm-token-mapping-tenant-regr-1"
+    resp = client.post(
+        "/bff/confirm-tokens",
+        json={"reason": "Mapping tenant confirmation persistence check", "ttlSeconds": 300},
+        headers={"Authorization": token, "Idempotency-Key": key},
+    )
+    assert resp.status_code == 201, resp.text
+    record = store.get_command_by_idempotency_key(key, operator_id="tenant-a")
+    assert record is not None
+    assert store._tenant_id_from_command(record) == "tenant-a"
+    assert (record.get("audit") or {}).get("tenant_id") == "tenant-a"
+    assert (((record.get("foundation") or {}).get("trace_context") or {}).get("tenant_ref") or {}).get("tenant_id") == "tenant-a"
+
+    cmd_id = record["command_id"]
+    # Same identity GET returns 200
+    resp_read = client.get(f"/api/v1/operator/commands/{cmd_id}", headers={"Authorization": token})
+    assert resp_read.status_code == 200, resp_read.text
+    assert resp_read.json()["command_id"] == cmd_id
+
+    # Foreign tenant GET returns 404
+    resp_other = client.get(f"/api/v1/operator/commands/{cmd_id}", headers={"Authorization": _tok("tenant-b")})
+    assert resp_other.status_code == 404, resp_other.text
+    assert resp_other.json()["detail"] == "Command not found"
+
