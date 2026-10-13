@@ -26,7 +26,7 @@
       "disposition": "MIGRATE",
       "canonical_owner": "same validated package entrypoint (scripts/run_agora_interaction_worker.py)",
       "action": "Point command and healthcheck at one executable and verify imports before success.",
-      "gate": "Container remains running/healthy with restart count stable at zero."
+      "gate": "Container remains running/healthy with restart count stable (unchanged) across the bounded observation window."
     },
     "ACG-09-006": {
       "artifact": "REQUIRED_LOOP_WORKERS manifest omission",
@@ -61,7 +61,7 @@
     "reopened_reason": "The prior writer could swallow receipt failures, dirty the managed deploy worktree, emit passed receipts for incomplete service sets, and exit past the rollback caller.",
     "receipt_default_path": "$HOME/pantheon-ci-deploy/deployment-receipts/<environment>/<component>/backend-components-receipt.json",
     "receipt_write_contract": "git-external atomic replace; directory/write/serialization failures return non-zero to the deployment rollback caller",
-    "receipt_identity_contract": "exact frontend and backend SHAs, deployment checkout HEAD, deployment environment/component, complete required_services set, per-service container/image/command identity, exact container-to-Compose OCI image ID, exact OCI revision when embedded, zero restart count, and explicit verification failure lists",
+    "receipt_identity_contract": "exact frontend and backend SHAs, deployment checkout HEAD, deployment environment/component, complete required_services set, per-service container/image/command identity, exact container-to-Compose OCI image ID, exact OCI revision when embedded, before/after stability evidence (same container, image ID and StartedAt, unchanged non-negative restart count across at least two observations, never a lifetime-zero requirement), and explicit verification failure lists",
     "hosted_acceptance_status": "not rerun for repaired head; a real deployment must generate the runtime receipt",
     "historical_operator_accepted_head": "1f6f6fc7b12611345218e347e8daa7f6328ef503",
     "historical_acceptance_applies_to_repaired_head": false
@@ -74,6 +74,22 @@
     "syntax_commands": [
       "bash -n scripts/deploy_nonprod_vm.sh",
       "python3 -m py_compile scripts/verify_product_functional_closure.py scripts/test_deploy_nonprod_vm.py scripts/test_verify_product_functional_closure.py",
+      "git diff --check"
+    ]
+  },
+  "component_stability_followup": {
+    "task_id": "DEV-COMPONENT-STABILITY-20261013",
+    "root_failure_reference": "Root38338907050 BE6c5eb1d6/FE4d failed exit75: evolution-daily-sweep-scheduler recovered 03:11:51 but the gate at 03:16:13 rejected lifetime RestartCount 3 for an unchanged, healthy container.",
+    "change": "Producer verify_exact_component_deployment now takes at least two observations against a never-refreshed baseline, records stability before/after and StartedAt in the single backend-components receipt, rejects replacement/image/StartedAt/restart-count change and unresolved health=starting; verify_product_functional_closure gate_01 validates the same evidence and no longer requires restart_count==0.",
+    "source_commit": "this task branch (DEV-COMPONENT-STABILITY-20261013); see git history",
+    "historical_note": "The earlier 330 passed, 1 skipped result and the zero-restart-count wording apply to the prior head only and are retained as history.",
+    "hosted_acceptance_status": "not run by this source task; final deployment and hosted acceptance belong to the existing parent.",
+    "commands": [
+      {
+        "command": "pytest -q scripts/test_deploy_nonprod_vm.py scripts/test_verify_product_functional_closure.py",
+        "result": "162 passed, 2 skipped (run in a temp venv with pytest, pyyaml, jsonschema)"
+      },
+      "bash -n scripts/deploy_nonprod_vm.sh",
       "git diff --check"
     ]
   }
