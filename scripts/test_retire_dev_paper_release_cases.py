@@ -182,3 +182,34 @@ def test_script_uses_only_the_retire_action():
     assert '/retire"' in code
     assert "/failure" not in code and "/api/runtime-bindings" not in code
     assert "psycopg" not in code
+
+
+@pytest.mark.parametrize("kind", ["missing", "unknown", "readback_error", "retired"])
+def test_accepted_refuses_all_writes_without_active_served_case(monkeypatch, kind):
+    store, owner = _setup(monkeypatch, KEYS)
+    key = KEYS[3]
+    if kind == "missing":
+        key = ""
+    elif kind == "unknown":
+        key = "dev-paper-release-9-1"
+    elif kind == "retired":
+        owner.status["saga-" + key] = "retired"
+    else:
+        real_get = owner.get
+
+        def get(o, p):
+            if p.endswith("saga-" + key):
+                raise RuntimeError("served owner readback unavailable")
+            return real_get(o, p)
+
+        owner.get = get
+    out = _run(store, owner, outcome="accepted", new_case_key=key)
+    assert owner.posts == []
+    assert out["status"] == "refused" and out["refusal"]
+
+
+def test_dry_run_without_served_case_is_not_executable(monkeypatch):
+    store, owner = _setup(monkeypatch, KEYS)
+    out = _run(store, owner, outcome="accepted", new_case_key="", dry_run=True)
+    assert out["retire"] and out["executable"] is False and out["refusal"]
+    assert owner.posts == []

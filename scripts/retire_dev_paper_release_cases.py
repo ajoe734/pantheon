@@ -151,6 +151,27 @@ def retire_case(
     return _read_state(transport, plan_id, saga_id)
 
 
+def served_refusal(
+    outcome: str, new_case_key: str, sagas: Mapping[str, str], errors: Mapping[str, str]
+) -> str:
+    """Why accepted-release retirement writes must be refused ('' when safe).
+
+    The served case is this run's case; it must exist as a succeeded release
+    case whose Saga is authoritatively readable and still active/completed.
+    """
+    if outcome != "accepted":
+        return ""
+    if not new_case_key:
+        return "served case key missing"
+    if new_case_key not in sagas:
+        return "served case unknown"
+    if new_case_key in errors:
+        return "served saga readback unavailable"
+    if sagas[new_case_key] != SAGA_ACTIVE:
+        return f"served saga not active: {sagas[new_case_key]}"
+    return ""
+
+
 def execute(
     *,
     store: Any,
@@ -200,8 +221,14 @@ def execute(
         "errors": errors,
         "results": {},
     }
+    refusal = served_refusal(outcome, new_case_key, sagas, errors)
+    result["executable"] = not refusal
+    result["refusal"] = refusal
     if dry_run:
         result["status"] = "dry_run"
+        return result
+    if refusal:
+        result["status"] = "refused"
         return result
 
     results: dict[str, str] = {}
