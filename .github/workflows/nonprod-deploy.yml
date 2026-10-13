@@ -2568,7 +2568,8 @@ jobs:
           DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
           PANTHEON_EXECUTE_PLANS_ROOT: ${{ vars.PANTHEON_EXECUTE_PLANS_ROOT || '/home/chloe_ong_dev_cctech_support_com/actions-runner-execute-plans/_work/execute-plans/execute-plans' }}
           PANTHEON_DEV_FE_DEPLOY_SCRIPT: ${{ vars.PANTHEON_DEV_FE_DEPLOY_SCRIPT || format('{0}/scripts/deploy-dev-vm.sh', vars.PANTHEON_EXECUTE_PLANS_ROOT || '/home/chloe_ong_dev_cctech_support_com/actions-runner-execute-plans/_work/execute-plans/execute-plans') }}
-          PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE: ${{ format('{0}/dev-root/docker-compose.yml', vars.DEV_DEPLOY_WORKTREE_ROOT) }}
+          PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT && format('{0}/dev-{1}/docker-compose.yml', vars.DEV_DEPLOY_WORKTREE_ROOT, inputs.component == 'bff' && 'bff' || 'root') || '' }}
+          PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPONENT: ${{ inputs.component == 'bff' && 'bff' || 'root' }}
           DEV_BFF_AUTH_STUB: "false"
           DEV_BFF_AUTH_MODE: strict
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
@@ -2633,7 +2634,8 @@ jobs:
           DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
           PANTHEON_EXECUTE_PLANS_ROOT: ${{ vars.PANTHEON_EXECUTE_PLANS_ROOT || '/home/chloe_ong_dev_cctech_support_com/actions-runner-execute-plans/_work/execute-plans/execute-plans' }}
           PANTHEON_DEV_FE_DEPLOY_SCRIPT: ${{ vars.PANTHEON_DEV_FE_DEPLOY_SCRIPT || format('{0}/scripts/deploy-dev-vm.sh', vars.PANTHEON_EXECUTE_PLANS_ROOT || '/home/chloe_ong_dev_cctech_support_com/actions-runner-execute-plans/_work/execute-plans/execute-plans') }}
-          PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE: ${{ format('{0}/dev-root/docker-compose.yml', vars.DEV_DEPLOY_WORKTREE_ROOT) }}
+          PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT && format('{0}/dev-{1}/docker-compose.yml', vars.DEV_DEPLOY_WORKTREE_ROOT, inputs.component == 'bff' && 'bff' || 'root') || '' }}
+          PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPONENT: ${{ inputs.component == 'bff' && 'bff' || 'root' }}
           DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${{ vars.DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS || '300' }}
           DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
           DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
@@ -2736,7 +2738,8 @@ jobs:
           DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
           PANTHEON_EXECUTE_PLANS_ROOT: ${{ vars.PANTHEON_EXECUTE_PLANS_ROOT || '/home/chloe_ong_dev_cctech_support_com/actions-runner-execute-plans/_work/execute-plans/execute-plans' }}
           PANTHEON_DEV_FE_DEPLOY_SCRIPT: ${{ vars.PANTHEON_DEV_FE_DEPLOY_SCRIPT || format('{0}/scripts/deploy-dev-vm.sh', vars.PANTHEON_EXECUTE_PLANS_ROOT || '/home/chloe_ong_dev_cctech_support_com/actions-runner-execute-plans/_work/execute-plans/execute-plans') }}
-          PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE: ${{ format('{0}/dev-root/docker-compose.yml', vars.DEV_DEPLOY_WORKTREE_ROOT) }}
+          PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT && format('{0}/dev-{1}/docker-compose.yml', vars.DEV_DEPLOY_WORKTREE_ROOT, inputs.component == 'bff' && 'bff' || 'root') || '' }}
+          PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPONENT: ${{ inputs.component == 'bff' && 'bff' || 'root' }}
           DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${{ vars.DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS || '300' }}
           DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
           DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
@@ -2915,7 +2918,7 @@ jobs:
         # Evidence-only: a retirement failure is recorded and never changes the
         # accepted/compensated outcome. Uses only the Deployment owner retire
         # action; on compensation only this run's case is retired.
-        if: ${{ always() && steps.frontend_release.outputs.evidence_dir != '' && ((steps.frontend_release.outcome == 'success' && steps.final_artifact_verify.outcome == 'success') || steps.compensation.outcome == 'success') }}
+        if: ${{ always() && steps.frontend_release.outputs.evidence_dir != '' && ((steps.frontend_release.outcome == 'success' && steps.final_artifact_verify.outcome == 'success' && (!inputs.run_exact_artifact_roundtrip || (steps.roundtrip_baseline_restore.outcome == 'success' && steps.roundtrip_final_return.outcome == 'success'))) || steps.compensation.outcome == 'success') }}
         continue-on-error: true
         timeout-minutes: 6
         env:

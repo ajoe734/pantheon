@@ -905,7 +905,7 @@ ssh_bash() {
     PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256 \
     PANTHEON_DEV_ARTIFACT_DRIVER_PATH PANTHEON_DEV_ARTIFACT_DRIVER_SHA256 \
     PANTHEON_DEV_ARTIFACT_LIBRARY_SHA256 PANTHEON_DEV_ARTIFACT_COMPOSE_FILE \
-    PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE \
+    PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPONENT \
     PANTHEON_DEV_ARTIFACT_CANDIDATE_ID PANTHEON_DEV_ARTIFACT_RUN_ID \
     PANTHEON_DEV_ARTIFACT_ATTEMPT PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA \
     PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA PANTHEON_DEV_ARTIFACT_CANDIDATE_FRONTEND_SHA \
@@ -3928,6 +3928,11 @@ import sys
 
 env = os.environ
 candidate_compose = env.get("PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE") or env.get("PANTHEON_DEV_ARTIFACT_COMPOSE_FILE")
+if not candidate_compose and env.get("PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPONENT") in ("root", "bff"):
+    # Same layout as prepare_deploy_worktree: <root>/dev-<component>, with its
+    # existing remote HOME default when no worktree root is configured.
+    worktree_root = env.get("PANTHEON_DEPLOY_WORKTREE_ROOT") or os.path.join(env.get("HOME", ""), "pantheon-ci-deploy", "managed-deploy-worktrees")
+    candidate_compose = os.path.join(worktree_root, "dev-" + env["PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPONENT"], "docker-compose.yml")
 if not candidate_compose:
     sys.exit("unable to resolve explicit candidate Compose path: missing path")
 
