@@ -392,3 +392,58 @@ def test_no_prohibited_generic_persistence_or_read_store_imports():
             module = node.module or ""
             assert "read_store" not in module
             assert "persistence" not in module
+
+
+def test_keyed_retry_uses_real_store_primitives_and_replays_across_instances():
+    """Real PostgresJsonOwnerStore code over the SQL-emulating fake connection.
+
+    Not a real database: no isolation, locking, rollback or process-restart
+    behavior is exercised here.
+    """
+    fake_psycopg = _fake_psycopg()
+    with mock.patch.dict(sys.modules, {"psycopg": fake_psycopg}):
+        owner = ResearchWriteOwner(dsn="postgresql://writer@example/db")
+        owner.create_research_ticket(
+            title="Retry", description="", priority="high", owner="t", actor_id="a",
+            created_at="2026-10-13T00:00:00Z", ticket_id="rt-retry",
+        )
+        parent = owner.create_research_experiment(
+            ticket_id="rt-retry", experiment_name="parent", strategy_selector={},
+            parameter_set={}, run_config={}, launch_context={}, queued_at="2026-10-13T01:00:00Z",
+        )["experiment_id"]
+        owner.cancel_research_experiment(parent, completed_at="2026-10-13T01:01:00Z")
+        _FakeConnection.statements.clear()
+
+        first = owner.retry_research_experiment(parent, actor_id="a", idempotency_key="k1")
+        recreated = ResearchWriteOwner(dsn="postgresql://writer@example/db")
+        replay = recreated.retry_research_experiment(
+            parent, actor_id="a", requested_at="2026-10-13T09:00:00Z", idempotency_key="k1"
+        )
+        other_key = recreated.retry_research_experiment(parent, actor_id="a", idempotency_key="k2")
+        other_actor = recreated.retry_research_experiment(parent, actor_id="b", idempotency_key="k1")
+
+        assert replay == first
+        assert len({first["experiment_id"], other_key["experiment_id"], other_actor["experiment_id"]}) == 3
+        assert any("pg_advisory_xact_lock" in s for s in _FakeConnection.statements)
+        assert len(owner.list_research_experiments()) == 1 + 3
+        ticket = owner.get_research_ticket("rt-retry") if hasattr(owner, "get_research_ticket") else None
+        links = (ticket or owner._tickets_store.get("rt-retry"))["linked_experiments"]
+        assert sorted(links) == sorted(
+            [parent, first["experiment_id"], other_key["experiment_id"], other_actor["experiment_id"]]
+        )
+
+
+def test_unkeyed_retry_keeps_legacy_non_transactional_path():
+    fake_psycopg = _fake_psycopg()
+    with mock.patch.dict(sys.modules, {"psycopg": fake_psycopg}):
+        owner = ResearchWriteOwner(dsn="postgresql://writer@example/db")
+        parent = owner.create_research_experiment(
+            ticket_id="", experiment_name="parent", strategy_selector={},
+            parameter_set={}, run_config={}, launch_context={}, queued_at="2026-10-13T01:00:00Z",
+        )["experiment_id"]
+        owner.cancel_research_experiment(parent, completed_at="2026-10-13T01:01:00Z")
+        _FakeConnection.statements.clear()
+        a = owner.retry_research_experiment(parent, actor_id="a")
+        b = owner.retry_research_experiment(parent, actor_id="a")
+        assert a["experiment_id"] != b["experiment_id"]
+        assert not any("pg_advisory_xact_lock" in s for s in _FakeConnection.statements)

@@ -11,6 +11,7 @@ JSON fallbacks, or abstract repositories.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from datetime import datetime, timezone
@@ -505,35 +506,26 @@ class ResearchWriteOwner:
         self._experiments_store.put(experiment_id, exp)
         return self._project_experiment_detail(exp)
 
-    def retry_research_experiment(
-        self,
-        experiment_id: str,
-        *,
-        actor_id: Optional[str] = None,
-        requested_at: Optional[str] = None,
-        idempotency_key: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
-        exp = self._experiments_store.get(str(experiment_id))
-        if exp is None or not isinstance(exp, dict):
-            return None
-        status = str(exp.get("status") or "").strip().lower()
-        if status not in self._RW04_RETRYABLE_STATUSES:
-            return None
+    _RETRY_LINK_CAS_ATTEMPTS = 32
 
-        timestamp = requested_at or _utc_now_rfc3339()
+    @staticmethod
+    def _keyed_retry_experiment_id(parent_id: str, actor: str, key: str) -> str:
+        """Deterministic retry id scoped to parent + effective actor + key."""
+        scope = json.dumps([parent_id, actor, key], ensure_ascii=True)
+        return f"exp-retry-{hashlib.sha256(scope.encode('utf-8')).hexdigest()[:24]}"
+
+    def _build_retry_record(
+        self,
+        exp: Dict[str, Any],
+        *,
+        new_exp_id: str,
+        actor_id: Optional[str],
+        timestamp: str,
+        idempotency_key: Optional[str],
+    ) -> Dict[str, Any]:
         attempt_number = int(exp.get("attempt_number") or 1) + 1
         parent_id = exp["experiment_id"]
         root_id = exp.get("root_experiment_id") or parent_id
-
-        existing_experiments = self._experiments_store.list_all()
-        date_prefix = timestamp[:10].replace("-", "")
-        idx = len(existing_experiments) + 1
-        new_exp_id = f"exp-{date_prefix}-{idx:03d}"
-        existing_ids = {str(e.get("experiment_id") or "") for e in existing_experiments}
-        while new_exp_id in existing_ids:
-            idx += 1
-            new_exp_id = f"exp-{date_prefix}-{idx:03d}"
-
         new_record: Dict[str, Any] = {
             "experiment_id": new_exp_id,
             "ticket_id": exp.get("ticket_id", ""),
@@ -558,6 +550,118 @@ class ResearchWriteOwner:
             "idempotency_key": idempotency_key,
         }
         new_record["allowedActions"] = self._rw04_allowed_actions(new_record)
+        return new_record
+
+    def _link_retry_to_ticket(
+        self, ticket_id: str, new_exp_id: str, timestamp: str, *, conn: Any
+    ) -> None:
+        """Append the retry to the ticket's links via CAS inside ``conn``'s transaction."""
+        ticket = self._tickets_store.get(ticket_id)
+        for _ in range(self._RETRY_LINK_CAS_ATTEMPTS):
+            if not isinstance(ticket, dict):
+                return
+            linked = list(ticket.get("linked_experiments") or [])
+            if new_exp_id in linked:
+                return
+            updated = dict(ticket)
+            updated["linked_experiments"] = linked + [new_exp_id]
+            updated["updated_at"] = timestamp
+            ok, current = self._tickets_store.compare_and_set(ticket_id, ticket, updated, conn=conn)
+            if ok:
+                return
+            ticket = current
+        raise RuntimeError(f"could not link retry {new_exp_id} to ticket {ticket_id}: contention")
+
+    def _retry_research_experiment_keyed(
+        self,
+        experiment_id: str,
+        *,
+        actor_id: Optional[str],
+        timestamp: str,
+        idempotency_key: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Idempotent retry: one attempt record + ticket link per parent/actor/key.
+
+        The advisory lock serializes concurrent replays of the same scope; the
+        attempt insert and ticket link share one transaction so a failure
+        leaves neither behind.
+        """
+        parent_key = str(experiment_id)
+        with self._experiments_store.transaction() as conn:
+            parent = self._experiments_store.get(parent_key)
+            if parent is None or not isinstance(parent, dict):
+                return None
+            actor = str(actor_id or parent.get("created_by") or "")
+            new_exp_id = self._keyed_retry_experiment_id(parent_key, actor, idempotency_key)
+            self._experiments_store.advisory_xact_lock(f"research-retry:{new_exp_id}", conn=conn)
+
+            existing = self._experiments_store.get(new_exp_id)
+            if isinstance(existing, dict):
+                return self._project_experiment_detail(existing)
+
+            parent = self._experiments_store.get(parent_key)
+            status = str((parent or {}).get("status") or "").strip().lower()
+            if status not in self._RW04_RETRYABLE_STATUSES:
+                return None
+
+            new_record = self._build_retry_record(
+                parent,
+                new_exp_id=new_exp_id,
+                actor_id=actor_id,
+                timestamp=timestamp,
+                idempotency_key=idempotency_key,
+            )
+            inserted, canonical = self._experiments_store.compare_and_set(
+                new_exp_id, None, new_record, conn=conn
+            )
+            if not inserted:
+                return self._project_experiment_detail(canonical or new_record)
+            ticket_id = parent.get("ticket_id")
+            if ticket_id:
+                self._link_retry_to_ticket(ticket_id, new_exp_id, timestamp, conn=conn)
+            return self._project_experiment_detail(new_record)
+
+    def retry_research_experiment(
+        self,
+        experiment_id: str,
+        *,
+        actor_id: Optional[str] = None,
+        requested_at: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        timestamp = requested_at or _utc_now_rfc3339()
+        clean_key = str(idempotency_key or "").strip()
+        if clean_key:
+            return self._retry_research_experiment_keyed(
+                experiment_id,
+                actor_id=actor_id,
+                timestamp=timestamp,
+                idempotency_key=clean_key,
+            )
+
+        exp = self._experiments_store.get(str(experiment_id))
+        if exp is None or not isinstance(exp, dict):
+            return None
+        status = str(exp.get("status") or "").strip().lower()
+        if status not in self._RW04_RETRYABLE_STATUSES:
+            return None
+
+        existing_experiments = self._experiments_store.list_all()
+        date_prefix = timestamp[:10].replace("-", "")
+        idx = len(existing_experiments) + 1
+        new_exp_id = f"exp-{date_prefix}-{idx:03d}"
+        existing_ids = {str(e.get("experiment_id") or "") for e in existing_experiments}
+        while new_exp_id in existing_ids:
+            idx += 1
+            new_exp_id = f"exp-{date_prefix}-{idx:03d}"
+
+        new_record = self._build_retry_record(
+            exp,
+            new_exp_id=new_exp_id,
+            actor_id=actor_id,
+            timestamp=timestamp,
+            idempotency_key=idempotency_key,
+        )
 
         ticket_id = exp.get("ticket_id")
         if ticket_id:
