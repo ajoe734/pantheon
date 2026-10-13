@@ -155,3 +155,30 @@ def test_served_case_is_never_posted(monkeypatch):
     store, owner = _setup(monkeypatch, KEYS)
     with pytest.raises(retire.RetireError):
         retire.plan_retirement([], {}, outcome="bogus", new_case_key="x")
+
+
+@pytest.mark.parametrize("new_key", ["", "dev-paper-release-99-1"])
+def test_accepted_with_missing_or_unknown_served_identity_refuses(monkeypatch, new_key):
+    store, owner = _setup(monkeypatch, KEYS)
+    out = _run(store, owner, outcome="accepted", new_case_key=new_key)
+    assert owner.posts == []
+    assert out["status"] == "refused"
+    assert out["retire"] == []
+
+
+def test_accepted_with_unreadable_or_inactive_served_case_refuses(monkeypatch):
+    store, owner = _setup(monkeypatch, KEYS, retired=[KEYS[3]])
+    out = _run(store, owner, outcome="accepted", new_case_key=KEYS[3])
+    assert owner.posts == [] and out["status"] == "refused"
+
+    store, owner = _setup(monkeypatch, KEYS)
+    real_get = owner.get
+
+    def get(o, path):
+        if path.endswith("saga-" + KEYS[3]):
+            raise RuntimeError("owner down")
+        return real_get(o, path)
+
+    owner.get = get
+    out = _run(store, owner, outcome="accepted", new_case_key=KEYS[3])
+    assert owner.posts == [] and out["status"] == "refused"

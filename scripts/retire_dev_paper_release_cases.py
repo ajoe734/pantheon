@@ -204,6 +204,22 @@ def execute(
     decision["retire"] = [k for k in decision["retire"] if k not in errors]
     served = decision["served_case_key"]
     assert served not in decision["retire"]
+    refusal = None
+    if outcome == "accepted" and not dry_run:
+        # Fail closed before any owner write: the accepted served case must be
+        # identified, readable and still active, otherwise every old case
+        # would be retired including the one actually serving.
+        if served is None:
+            refusal = "accepted served case identity is missing or unknown"
+        elif served in errors:
+            refusal = f"accepted served case {served} state is unreadable"
+        elif sagas.get(served) != SAGA_ACTIVE:
+            refusal = (
+                f"accepted served case {served} is not active "
+                f"(saga state {sagas.get(served)})"
+            )
+        if refusal:
+            decision["retire"] = []
     result: dict[str, Any] = {
         "schema_version": "pantheon.dev-paper-release-case-retire.v1",
         "dry_run": dry_run,
@@ -213,6 +229,10 @@ def execute(
         "errors": errors,
         "results": {},
     }
+    if refusal:
+        result["status"] = "refused"
+        result["error"] = refusal
+        return result
     if dry_run:
         result["status"] = "dry_run"
         return result
