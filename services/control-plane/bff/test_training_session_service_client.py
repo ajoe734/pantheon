@@ -1758,3 +1758,114 @@ def test_live_replay_commit_requires_verified_mfa_negatives(live_training_sessio
 
 
 
+
+
+def test_live_mounted_replay_get_and_idempotency_key_forwarding(live_training_session_service):
+    """Default factory + mounted routes + real localhost owner: replay GET DTO and caller Idempotency-Key forwarding."""
+    base_url, training_service = live_training_session_service
+    ports = create_read_surface_ports()
+    token, _ = _dev_login(roles=["operator"], tenant_id="tenant-live")
+    session_id = "trn-replay-wiring-test-001"
+    candidate_snapshot_at = "2026-10-13T00:00:00Z"
+    training_service.store.put_session(
+        {
+            "session_id": session_id,
+            "tenant_id": "tenant-live",
+            "persona_id": "persona-alpha",
+            "objective": "isolated test-only replay fixture",
+            "status": "completed",
+            "started_at": "2026-10-13T00:00:00Z",
+            "ended_at": "2026-10-13T00:05:00Z",
+            "replay_resolution": {"state": "pending_decision"},
+            "artifacts": {"candidate_artifact_ref": "art-test-1"},
+            "events": [
+                {
+                    "event_id": "tevt-replay-1",
+                    "session_id": session_id,
+                    "sequence_number": 1,
+                    "event_type": "preview_trigger",
+                    "actor": "operator",
+                    "emitted_at": "2026-10-13T00:01:00Z",
+                    "eval_ref": {"eval_id": "teval-replay-1", "candidate_snapshot_at": candidate_snapshot_at},
+                }
+            ],
+        }
+    )
+
+    auth_token = authorization.set(f"Bearer {token}")
+    tenant_token = selected_tenant.set("tenant-live")
+    try:
+        app = FastAPI()
+
+        @app.exception_handler(HTTPException)
+        @app.exception_handler(StarletteHTTPException)
+        async def _http_exception_handler(request: Any, exc: Any) -> JSONResponse:
+            if isinstance(exc.detail, dict) and "error" in exc.detail:
+                return JSONResponse(status_code=exc.status_code, content=exc.detail)
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}},
+            )
+
+        app.include_router(
+            create_training_router(
+                read_surface=ports,
+                extract_identity=extract_identity_stub,
+                require_read_role=require_read_role,
+                bff_error=bff_error,
+                utc_now=default_utc_now,
+                page_slice=_page_slice,
+                dataset_surface_status=_dataset_surface_status,
+            )
+        )
+        client = TestClient(app)
+        headers = {"Authorization": "Bearer pantheon-dev-operator:operator"}
+
+        # Layer 1: ordinary GET yields the owner-backed DTO (no snapshot_at TypeError).
+        got = client.get(f"/api/v1/trainer/replay/{session_id}", headers=headers)
+        assert got.status_code == 200, got.text
+        detail = got.json()
+        assert detail["session_id"] == session_id
+        assert detail["allowedActions"]["canDiscard"] is True
+        assert detail["links"]["self"] == f"/trainer/replay/{session_id}"
+        assert detail["events"][0]["event_type"] == "preview_trigger"
+        assert detail["events"][0]["eval_ref"]["candidate_snapshot_at"] == candidate_snapshot_at
+
+        body = {"expected_candidate_snapshot_at": candidate_snapshot_at}
+
+        # Layer 3: owner rejects a missing key truthfully and leaves state unchanged.
+        missing = client.post(f"/api/v1/trainer/sessions/{session_id}/discard", json=body, headers=headers)
+        assert missing.status_code == 400, missing.text
+        assert training_service.store.get_session(session_id)["replay_resolution"]["state"] == "pending_decision"
+
+        # Wrong candidate snapshot with a key is a truthful rejection at the BFF precondition.
+        wrong = client.post(
+            f"/api/v1/trainer/sessions/{session_id}/discard",
+            json={"expected_candidate_snapshot_at": "2026-01-01T00:00:00Z"},
+            headers={**headers, "Idempotency-Key": "replay-wiring-key-1"},
+        )
+        assert wrong.status_code == 409
+        assert training_service.store.get_session(session_id)["replay_resolution"]["state"] == "pending_decision"
+
+        # Same actual caller key reaches the owner and survives retry.
+        key_headers = {**headers, "Idempotency-Key": "replay-wiring-key-1"}
+        first = client.post(f"/api/v1/trainer/sessions/{session_id}/discard", json=body, headers=key_headers)
+        assert first.status_code == 200, first.text
+        assert first.json()["replay_resolution"]["state"] == "discarded"
+        # The mounted route precondition rejects a second decision on a decided replay; owner-level
+        # same-key retry goes through the same facade/store path and is replayed, not re-applied.
+        assert client.post(
+            f"/api/v1/trainer/sessions/{session_id}/discard", json=body, headers=key_headers
+        ).status_code == 409
+        retry = ports.discard_trainer_replay(
+            session_id, expected_candidate_snapshot_at=candidate_snapshot_at, idempotency_key="replay-wiring-key-1"
+        )
+        assert retry["replay_resolution"]["state"] == "discarded"
+        with pytest.raises(HTTPException) as conflict:
+            ports.discard_trainer_replay(
+                session_id, expected_candidate_snapshot_at=candidate_snapshot_at, note="different", idempotency_key="replay-wiring-key-1"
+            )
+        assert conflict.value.status_code == 409
+    finally:
+        authorization.reset(auth_token)
+        selected_tenant.reset(tenant_token)

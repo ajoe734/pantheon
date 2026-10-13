@@ -898,8 +898,8 @@ class ReadSurfacePorts:
     def list_trainer_replays(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.persona_training.list_trainer_replays(**kwargs)
 
-    def get_trainer_replay(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        return self.persona_training.get_trainer_replay(session_id)
+    def get_trainer_replay(self, session_id: Optional[str], **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self.persona_training.get_trainer_replay(session_id, **kwargs)
 
     def commit_trainer_replay(self, session_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
         return self.persona_training.commit_trainer_replay(session_id, **kwargs)

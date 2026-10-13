@@ -568,11 +568,25 @@ def _project_trainer_replay_list_item(session: Dict[str, Any], *, surface_state:
     }
 
 
+def _extract_replay_events(session_id: str, session: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Teaching events plus the owner replay event_type/eval_ref used for candidate comparison."""
+    raw = [e for e in (session.get("events") or []) if isinstance(e, dict)]
+    raw.sort(key=lambda item: int(item.get("sequence_number") or 0))
+    events = []
+    for source in raw:
+        event = _project_teaching_event(session_id, source)
+        for field in ("event_type", "eval_ref"):
+            if field in source:
+                event[field] = source[field]
+        events.append(event)
+    return events
+
+
 def _project_trainer_replay_detail(
     session: Dict[str, Any], *, surface_state: str = "ok", snapshot_at: Optional[str] = None
 ) -> Dict[str, Any]:
     sid = str(session.get("session_id") or session.get("id") or "")
-    events = _extract_sorted_events(sid, session)
+    events = _extract_replay_events(sid, session)
     resolution = session.get("replay_resolution") or {"state": "pending_decision", "decision_at": None, "decision_by": None, "note": None}
     res_state = str(resolution.get("state") or "pending_decision")
     artifacts = session.get("artifacts") or {"before_artifact_ref": None, "candidate_artifact_ref": None, "after_artifact_ref": None}
@@ -618,14 +632,20 @@ class TrainingSessionHttpStore:
         return self._explicit_base_url or get_base_url("PANTHEON_TRAINING_SESSION_API_URL", "PANTHEON_TRAINING_SESSION_URL")
 
     def _request(
-        self, path: str, method: str = "GET", payload: Optional[Dict[str, Any]] = None, allow_404: bool = False
+        self,
+        path: str,
+        method: str = "GET",
+        payload: Optional[Dict[str, Any]] = None,
+        allow_404: bool = False,
+        headers: Optional[Dict[str, str]] = None,
     ) -> Any:
         url = f"{self._resolve_base_url().rstrip('/')}{path}"
         auth = authorization.get()
         token = auth.removeprefix("Bearer ").strip() if auth else None
         tenant = selected_tenant.get()
         try:
-            return http_request_json(url, method=method, payload=payload, auth_token=token, tenant_id=tenant)
+            extra = {"headers": headers} if headers else {}
+            return http_request_json(url, method=method, payload=payload, auth_token=token, tenant_id=tenant, **extra)
         except urllib.error.HTTPError as exc:
             if allow_404 and exc.code == 404:
                 return None
@@ -866,11 +886,15 @@ class TrainingSessionHttpStore:
         return _project_trainer_replay_detail(raw, surface_state="ok", snapshot_at=snapshot_at) if isinstance(raw, dict) else None
 
     def _decide_trainer_replay(
-        self, session_id: str, *, action: str, expected_snapshot: str, note: Optional[str] = None, actor_id: str = "operator", decided_at: Optional[str] = None
+        self, session_id: str, *, action: str, expected_snapshot: str, note: Optional[str] = None, actor_id: str = "operator", decided_at: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         timestamp = decided_at or _utc_now()
         payload = {"expected_candidate_snapshot_at": expected_snapshot, "note": note, "actor_id": actor_id, "decided_at": timestamp}
-        raw = self._request(f"/api/training/replays/{urllib.parse.quote(str(session_id))}/{action}", method="POST", payload=payload)
+        headers = {"Idempotency-Key": idempotency_key} if idempotency_key else None
+        raw = self._request(
+            f"/api/training/replays/{urllib.parse.quote(str(session_id))}/{action}", method="POST", payload=payload, headers=headers
+        )
         if not isinstance(raw, dict):
             return None
         projected = _project_trainer_replay_detail(raw, surface_state="ok", snapshot_at=timestamp)
@@ -889,11 +913,11 @@ class TrainingSessionHttpStore:
         }
 
     def commit_trainer_replay(
-        self, session_id: str, *, expected_candidate_snapshot_at: str, note: Optional[str] = None, actor_id: str = "operator", committed_at: Optional[str] = None, **kwargs: Any
+        self, session_id: str, *, expected_candidate_snapshot_at: str, note: Optional[str] = None, actor_id: str = "operator", committed_at: Optional[str] = None, idempotency_key: Optional[str] = None, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
-        return self._decide_trainer_replay(session_id, action="commit", expected_snapshot=expected_candidate_snapshot_at, note=note, actor_id=actor_id, decided_at=committed_at)
+        return self._decide_trainer_replay(session_id, action="commit", expected_snapshot=expected_candidate_snapshot_at, note=note, actor_id=actor_id, decided_at=committed_at, idempotency_key=idempotency_key)
 
     def discard_trainer_replay(
-        self, session_id: str, *, expected_candidate_snapshot_at: str, note: Optional[str] = None, actor_id: str = "operator", discarded_at: Optional[str] = None, **kwargs: Any
+        self, session_id: str, *, expected_candidate_snapshot_at: str, note: Optional[str] = None, actor_id: str = "operator", discarded_at: Optional[str] = None, idempotency_key: Optional[str] = None, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
-        return self._decide_trainer_replay(session_id, action="discard", expected_snapshot=expected_candidate_snapshot_at, note=note, actor_id=actor_id, decided_at=discarded_at)
+        return self._decide_trainer_replay(session_id, action="discard", expected_snapshot=expected_candidate_snapshot_at, note=note, actor_id=actor_id, decided_at=discarded_at, idempotency_key=idempotency_key)
