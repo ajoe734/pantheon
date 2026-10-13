@@ -766,6 +766,75 @@ class RuntimeBindingsViewerReadAndTenancyTests(unittest.TestCase):
         stored = self.main._get_service().get("rtb-dev-001")
         self.assertEqual(stored.status, "active")
 
+    def test_viewer_token_with_nested_tenant_id_in_claims(self):
+        token = self._token(
+            roles=["viewer"],
+            tenant_id=None,
+            allowed_tenants=None,
+            tenant={"id": "tenant-dev"},
+        )
+        response = self.client.get(
+            "/api/runtime-bindings",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        data = response.get_json()
+        self.assertEqual(data["count"], 1)
+        self.assertEqual(data["bindings"][0]["binding_id"], "rtb-dev-001")
+
+        # Also verify dot-path string in claims
+        token_dot = self._token(
+            roles=["viewer"],
+            tenant_id=None,
+            allowed_tenants=None,
+            **{"tenant.id": "tenant-dev"},
+        )
+        res_dot = self.client.get(
+            "/api/runtime-bindings",
+            headers={"Authorization": f"Bearer {token_dot}"},
+        )
+        self.assertEqual(res_dot.status_code, 200)
+        self.assertEqual(res_dot.get_json()["bindings"][0]["binding_id"], "rtb-dev-001")
+
+    def test_viewer_token_with_literal_wildcard_rejected_as_non_concrete(self):
+        # 1. Token with wildcard allowed_tenants sending X-Tenant-Id: *
+        token_wild = self._token(roles=["viewer"], tenant_id=None, allowed_tenants=["*"])
+        res_wild = self.client.get(
+            "/api/runtime-bindings",
+            headers={"Authorization": f"Bearer {token_wild}", "X-Tenant-Id": "*"},
+        )
+        self.assertEqual(res_wild.status_code, 403)
+        self.assertEqual(res_wild.get_json()["error"]["code"], "TENANT_SCOPE_FORBIDDEN")
+
+        # 2. Token with concrete tenant sending X-Tenant-Id: *
+        token_concrete = self._token(roles=["viewer"], tenant_id="tenant-dev", allowed_tenants=["tenant-dev"])
+        res_concrete = self.client.get(
+            "/api/runtime-bindings",
+            headers={"Authorization": f"Bearer {token_concrete}", "X-Tenant-Id": "*"},
+        )
+        self.assertEqual(res_concrete.status_code, 403)
+        self.assertEqual(res_concrete.get_json()["error"]["code"], "TENANT_SCOPE_FORBIDDEN")
+
+    def test_viewer_token_wildcard_claims_with_concrete_tenant_selection(self):
+        token = self._token(roles=["viewer"], tenant_id=None, allowed_tenants=["*"])
+        response = self.client.get(
+            "/api/runtime-bindings",
+            headers={"Authorization": f"Bearer {token}", "X-Tenant-Id": "tenant-dev"},
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(data["count"], 1)
+        self.assertEqual(data["bindings"][0]["binding_id"], "rtb-dev-001")
+
+    def test_viewer_token_wildcard_claims_without_tenant_header_rejected_ambiguous(self):
+        token = self._token(roles=["viewer"], tenant_id=None, allowed_tenants=["*"])
+        response = self.client.get(
+            "/api/runtime-bindings",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.get_json()["error"]["code"], "TENANT_AMBIGUOUS")
+
 
 if __name__ == "__main__":
     unittest.main()

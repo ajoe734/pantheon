@@ -103,6 +103,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import Any, Mapping, Optional
 
 from flask import Flask, jsonify, request
 
@@ -283,18 +284,58 @@ _APPROVER_ROLES = ("approver", "admin", "risk_owner")
 _INCIDENT_ROLES = ("operator", "admin", "risk_owner")
 _BINDING_READ_ROLES = (*_OPERATOR_ROLES, "viewer")
 
+_PRIMARY_TENANT_PATHS = (
+    "tenant_id",
+    "tenantId",
+    "tenant.id",
+    "tid",
+    "org_id",
+    "organization.id",
+    "organization_id",
+    "tenant",
+    "organization",
+)
+
 _TENANT_CLAIM_KEYS = (
     "allowed_tenants",
     "allowedTenants",
     "tenant_ids",
     "tenantIds",
     "tenants",
-    "tenant_id",
-    "tenantId",
-    "tenant.id",
-    "tid",
-    "org_id",
+    *_PRIMARY_TENANT_PATHS,
 )
+
+
+def _claim_path_value(claims: Mapping[str, Any], path: str) -> Any:
+    if path in claims:
+        return claims[path]
+    current: Any = claims
+    for part in path.split("."):
+        if not isinstance(current, Mapping) or part not in current:
+            return None
+        current = current[part]
+    return current
+
+
+def _claim_values_as_strings(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [p.strip() for p in value.split(",") if p.strip()]
+    if isinstance(value, Mapping):
+        for k in ("id", "tenant_id", "tenantId", "tid", "org_id", "organization_id", "value", "name"):
+            if v := value.get(k):
+                clean = str(v).strip()
+                if clean:
+                    return [clean]
+        return []
+    if isinstance(value, (list, tuple, set, frozenset)):
+        collected: list[str] = []
+        for item in value:
+            collected.extend(_claim_values_as_strings(item))
+        return collected
+    clean = str(value).strip()
+    return [clean] if clean else []
 
 
 def _resolve_binding_read_tenant(ctx: Any) -> Optional[str]:
@@ -313,33 +354,25 @@ def _resolve_binding_read_tenant(ctx: Any) -> Optional[str]:
         raise AuthError("TENANT_HEADER_CONFLICT", "Conflicting tenant headers provided", 400)
     req_tenant = next(iter(present_hdrs)) if present_hdrs else ""
 
+    if req_tenant == "*":
+        raise AuthError("TENANT_SCOPE_FORBIDDEN", "Literal wildcard '*' is not a concrete tenant", 403)
+
     is_viewer = ctx is not None and ctx.has_role("viewer") and not ctx.has_role(*_OPERATOR_ROLES)
 
     claims = dict(ctx.claims) if (ctx and getattr(ctx, "claims", None)) else {}
     allowed_tenants: list[str] = []
     for key in _TENANT_CLAIM_KEYS:
-        val = claims.get(key)
-        if val is None:
-            continue
-        if isinstance(val, str):
-            allowed_tenants.extend([p.strip() for p in val.split(",") if p.strip()])
-        elif isinstance(val, (list, tuple, set, frozenset)):
-            for item in val:
-                clean = str(item or "").strip()
-                if clean:
-                    allowed_tenants.append(clean)
-        elif isinstance(val, dict):
-            for k in ("id", "tenant_id", "tenantId"):
-                if clean := str(val.get(k) or "").strip():
-                    allowed_tenants.append(clean)
+        val = _claim_path_value(claims, key)
+        for s in _claim_values_as_strings(val):
+            if s and s not in allowed_tenants:
+                allowed_tenants.append(s)
 
-    seen: set[str] = set()
-    deduped_allowed: list[str] = []
-    for t in allowed_tenants:
-        if t not in seen:
-            seen.add(t)
-            deduped_allowed.append(t)
-    allowed_tenants = deduped_allowed
+    primary_tenants: list[str] = []
+    for key in _PRIMARY_TENANT_PATHS:
+        val = _claim_path_value(claims, key)
+        for s in _claim_values_as_strings(val):
+            if s and s not in primary_tenants:
+                primary_tenants.append(s)
 
     if is_viewer:
         if not allowed_tenants:
@@ -349,9 +382,12 @@ def _resolve_binding_read_tenant(ctx: Any) -> Optional[str]:
                 raise AuthError("TENANT_SCOPE_FORBIDDEN", f"Requested tenant {req_tenant!r} is outside the verified caller scope", 403)
             return req_tenant
         else:
-            concrete = [t for t in allowed_tenants if t != "*"]
-            if len(concrete) == 1:
-                return concrete[0]
+            concrete_primary = [t for t in primary_tenants if t != "*"]
+            if len(concrete_primary) == 1:
+                return concrete_primary[0]
+            concrete_allowed = [t for t in allowed_tenants if t != "*"]
+            if len(concrete_allowed) == 1:
+                return concrete_allowed[0]
             raise AuthError("TENANT_AMBIGUOUS", "Ambiguous or missing tenant in caller scope", 403)
 
     if req_tenant:
