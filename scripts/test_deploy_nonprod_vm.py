@@ -866,6 +866,40 @@ def test_component_stability_starting_then_healthy_passes(tmp_path: Path) -> Non
     assert stability["observation_count"] == 3
 
 
+def test_component_stability_unhealthy_then_healthy_fails(tmp_path: Path) -> None:
+    import json
+
+    proc, receipt_path, _ = _run_sequenced_component_verifier(
+        tmp_path, {"health": ["unhealthy", "healthy"], "restart": ["0"]}
+    )
+    assert proc.returncode != 0
+    receipt = json.loads(receipt_path.read_text())
+    assert receipt["status"] == "failed" and receipt["all_passed"] is False
+    entry = receipt["services"]["operator-bff"]
+    stability = entry["stability"]
+    assert stability["stable"] is False
+    assert stability["before"]["health"] == "unhealthy"
+    assert stability["after"]["health"] == "healthy"
+    assert any("baseline health is unhealthy" in item for item in receipt["verification_failures"]["not_running_or_restarted"])
+
+
+def test_component_stability_unknown_then_healthy_fails(tmp_path: Path) -> None:
+    import json
+
+    proc, receipt_path, _ = _run_sequenced_component_verifier(
+        tmp_path, {"health": ["unknown", "healthy"], "restart": ["0"]}
+    )
+    assert proc.returncode != 0
+    receipt = json.loads(receipt_path.read_text())
+    assert receipt["status"] == "failed" and receipt["all_passed"] is False
+    entry = receipt["services"]["operator-bff"]
+    stability = entry["stability"]
+    assert stability["stable"] is False
+    assert stability["before"]["health"] == "unknown"
+    assert stability["after"]["health"] == "healthy"
+    assert any("baseline health is unknown" in item for item in receipt["verification_failures"]["not_running_or_restarted"])
+
+
 def test_component_stability_invalid_evidence_fails(tmp_path: Path) -> None:
     import json
 

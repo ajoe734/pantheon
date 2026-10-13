@@ -3560,6 +3560,9 @@ verify_exact_component_deployment() {
         baseline_restart_count["$service"]="$restart_count"
         baseline_health["$service"]="$health"
         observation_count["$service"]=1
+        if [[ "$health" != "starting" && "$health" != "healthy" && "$health" != "not_configured" ]]; then
+          stability_errors+=("${service}: baseline health is ${health:-unknown}")
+        fi
       else
         observation_count["$service"]=$(( ${observation_count[$service]} + 1 ))
         if [[ "$container_id" != "${baseline_container_id[$service]}" ]]; then
@@ -3619,6 +3622,7 @@ stable = (
     and image_id == base_image_id
     and started_at == base_started_at
     and int(rcount) == int(base_rcount)
+    and base_hlth in ("starting", "healthy", "not_configured")
 )
 print(json.dumps({
     "service": service,

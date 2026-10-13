@@ -87,7 +87,7 @@
     "commands": [
       {
         "command": "pytest -q scripts/test_deploy_nonprod_vm.py scripts/test_verify_product_functional_closure.py",
-        "result": "162 passed, 2 skipped (run in a temp venv with pytest, pyyaml, jsonschema)"
+        "result": "164 passed, 2 skipped (run in a temp venv with pytest, pyyaml, jsonschema)"
       },
       "bash -n scripts/deploy_nonprod_vm.sh",
       "git diff --check"
