@@ -214,12 +214,12 @@ def pg_cluster():
         except Exception:
             time.sleep(0.2)
     if not connected:
-        subprocess.run(["docker", "rm", "-f", cname], capture_output=True)
+        subprocess.run(["docker", "rm", "-f", "-v", cname], capture_output=True)
         pytest.skip("PostgreSQL container did not become healthy in time")
     try:
         yield dsn
     finally:
-        subprocess.run(["docker", "rm", "-f", cname], capture_output=True)
+        subprocess.run(["docker", "rm", "-f", "-v", cname], capture_output=True)
 
 
 def _run_migration(dsn: str) -> subprocess.CompletedProcess[str]:
