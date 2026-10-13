@@ -59,6 +59,53 @@ class _InMemoryOwnerStore:
     def list_all(self, *, conn: Optional[Any] = None) -> List[Dict[str, Any]]:
         return [json.loads(json.dumps(v)) for v in self._data.values()]
 
+    # Stand-in for the table/advisory locks PostgresJsonOwnerStore takes: one
+    # shared reentrant lock serializes transactions across fake stores, and the
+    # undo journal on the yielded conn rolls back writes made through it.
+    import threading
+
+    _TXN_LOCK = threading.RLock()
+
+    def transaction(self):
+        import contextlib
+
+        @contextlib.contextmanager
+        def _txn():
+            with self._TXN_LOCK:
+                conn: Dict[str, Any] = {"undo": []}
+                try:
+                    yield conn
+                except BaseException:
+                    for undo in reversed(conn["undo"]):
+                        undo()
+                    raise
+
+        return _txn()
+
+    def advisory_xact_lock(self, key: str, *, conn: Any) -> None:
+        return None
+
+    def compare_and_set(
+        self,
+        record_id: str,
+        expected_payload: Optional[Dict[str, Any]],
+        payload: Dict[str, Any],
+        *,
+        conn: Optional[Any] = None,
+    ):
+        current = self._data.get(record_id)
+        if current != expected_payload:
+            return False, (json.loads(json.dumps(current)) if current is not None else None)
+        if conn is not None:
+            conn["undo"].append(
+                lambda: self._data.__setitem__(record_id, current)
+                if current is not None
+                else self._data.pop(record_id, None)
+            )
+        self._data[record_id] = json.loads(json.dumps(payload))
+        return True, json.loads(json.dumps(payload))
+
+
 
 # =============================================================================
 # Fixtures
@@ -610,3 +657,166 @@ def test_experiment_allowed_actions_truthfulness(isolated_write_owner: ResearchW
     assert c_detail["allowedActions"]["canArchive"] is True
     assert c_detail["allowedActions"]["canCancel"] is False
     assert c_detail["allowedActions"]["canRetry"] is False
+
+
+# =============================================================================
+# 5. Keyed experiment retry owner idempotency (in-memory fake store logic only;
+#    no real database, process restart, or hosted evidence)
+# =============================================================================
+
+
+def _retry_owner_stores():
+    stores = {name: _InMemoryOwnerStore() for name in ("tickets_store", "experiments_store", "notes_store")}
+    stores["tickets_store"].put(
+        "ticket-retry", {"ticket_id": "ticket-retry", "status": "open", "linked_experiments": []}
+    )
+    return stores
+
+
+def _canceled_parent(owner: ResearchWriteOwner, name: str = "retry parent") -> str:
+    created = owner.create_research_experiment(
+        ticket_id="ticket-retry",
+        experiment_name=name,
+        strategy_selector={"strategy_id": "s1"},
+        parameter_set={},
+        run_config={"stage": "backtest"},
+        launch_context={},
+        queued_at="2026-10-13T01:00:00Z",
+    )
+    owner.cancel_research_experiment(created["experiment_id"], completed_at="2026-10-13T01:01:00Z")
+    return created["experiment_id"]
+
+
+def _retry_params(parent: str, key: Optional[str], actor: str = "tester") -> Dict[str, Any]:
+    params = {"action_id": "retry", "experiment_id": parent, "actor_id": actor, "requested_at": "2026-10-13T01:02:00Z"}
+    if key is not None:
+        params["idempotency_key"] = key
+    return params
+
+
+def test_keyed_retry_replay_returns_existing_attempt_across_owner_instances() -> None:
+    stores = _retry_owner_stores()
+    owner = ResearchWriteOwner(**stores)
+    parent = _canceled_parent(owner)
+    adapter = ExperimentCommandAdapter(research_write_owner_factory=lambda: owner)
+    first = adapter.execute(command_id="c1", command_type="ExperimentAction", params=_retry_params(parent, "k1"))
+    second = adapter.execute(command_id="c1", command_type="ExperimentAction", params=_retry_params(parent, "k1"))
+    recreated = ExperimentCommandAdapter(research_write_owner_factory=lambda: ResearchWriteOwner(**stores))
+    third = recreated.execute(command_id="c1", command_type="ExperimentAction", params=_retry_params(parent, "k1"))
+
+    assert first["new_experiment_id"] == second["new_experiment_id"] == third["new_experiment_id"]
+    assert third["authoritative_readback"]["attempt_number"] == 2
+    assert third["authoritative_readback"]["parent_experiment_id"] == parent
+    assert len(stores["experiments_store"].list_all()) == 2
+    assert stores["tickets_store"].get("ticket-retry")["linked_experiments"] == [
+        parent,
+        first["new_experiment_id"],
+    ]
+
+
+def test_keyed_retry_replay_does_not_reset_progressed_attempt() -> None:
+    stores = _retry_owner_stores()
+    owner = ResearchWriteOwner(**stores)
+    parent = _canceled_parent(owner)
+    first = owner.retry_research_experiment(parent, actor_id="tester", idempotency_key="k1")
+    record = stores["experiments_store"].get(first["experiment_id"])
+    record.update({"status": "running", "started_at": "2026-10-13T01:05:00Z", "progress": {"percent": 40, "phase": "x", "message": None}})
+    stores["experiments_store"].put(first["experiment_id"], record)
+
+    replay = ResearchWriteOwner(**stores).retry_research_experiment(
+        parent, actor_id="tester", requested_at="2026-10-13T02:00:00Z", idempotency_key="k1"
+    )
+    assert replay["experiment_id"] == first["experiment_id"]
+    assert replay["status"] == "running"
+    assert replay["progress"]["percent"] == 40
+    assert stores["experiments_store"].get(first["experiment_id"]) == record
+    assert len(stores["experiments_store"].list_all()) == 2
+
+
+def test_keyed_retry_distinct_key_actor_parent_and_absent_key_stay_separate() -> None:
+    stores = _retry_owner_stores()
+    owner = ResearchWriteOwner(**stores)
+    parent_a = _canceled_parent(owner, "parent a")
+    parent_b = _canceled_parent(owner, "parent b")
+    ids = {
+        owner.retry_research_experiment(parent_a, actor_id="tester", idempotency_key="k1")["experiment_id"],
+        owner.retry_research_experiment(parent_a, actor_id="tester", idempotency_key="k2")["experiment_id"],
+        owner.retry_research_experiment(parent_a, actor_id="other", idempotency_key="k1")["experiment_id"],
+        owner.retry_research_experiment(parent_b, actor_id="tester", idempotency_key="k1")["experiment_id"],
+    }
+    assert len(ids) == 4
+    no_key_1 = owner.retry_research_experiment(parent_a, actor_id="tester")
+    no_key_2 = owner.retry_research_experiment(parent_a, actor_id="tester")
+    blank_1 = owner.retry_research_experiment(parent_a, actor_id="tester", idempotency_key="  ")
+    assert len({no_key_1["experiment_id"], no_key_2["experiment_id"], blank_1["experiment_id"]} | ids) == 7
+    links = stores["tickets_store"].get("ticket-retry")["linked_experiments"]
+    assert len(links) == len(set(links)) == 2 + 7
+
+
+def test_keyed_retry_replay_still_rejects_ineligible_and_missing_parents() -> None:
+    stores = _retry_owner_stores()
+    owner = ResearchWriteOwner(**stores)
+    active = owner.create_research_experiment(
+        ticket_id="ticket-retry", experiment_name="active", strategy_selector={}, parameter_set={},
+        run_config={}, launch_context={}, queued_at="2026-10-13T01:00:00Z",
+    )["experiment_id"]
+    assert owner.retry_research_experiment(active, actor_id="tester", idempotency_key="k1") is None
+    assert owner.retry_research_experiment("exp-missing", actor_id="tester", idempotency_key="k1") is None
+    assert len(stores["experiments_store"].list_all()) == 1
+
+
+def test_keyed_retry_concurrent_replays_create_one_attempt_and_keep_all_links() -> None:
+    import threading
+
+    stores = _retry_owner_stores()
+    parent = _canceled_parent(ResearchWriteOwner(**stores))
+    barrier = threading.Barrier(8)
+    results: List[Any] = []
+    errors: List[BaseException] = []
+
+    def worker(index: int) -> None:
+        try:
+            owner = ResearchWriteOwner(**stores)
+            barrier.wait()
+            # Four racers share one key; four use distinct keys on the same ticket.
+            key = "shared" if index < 4 else f"distinct-{index}"
+            results.append((key, owner.retry_research_experiment(parent, actor_id="tester", idempotency_key=key)))
+        except BaseException as exc:  # pragma: no cover - surfaced below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+    assert not errors
+    assert len(results) == 8
+    shared_ids = {r["experiment_id"] for key, r in results if key == "shared"}
+    assert len(shared_ids) == 1
+    all_ids = {r["experiment_id"] for _, r in results}
+    assert len(all_ids) == 5
+    links = stores["tickets_store"].get("ticket-retry")["linked_experiments"]
+    assert sorted(links) == sorted([parent, *all_ids])
+    assert len(stores["experiments_store"].list_all()) == 1 + 5
+
+
+def test_keyed_retry_failure_leaves_neither_attempt_nor_link_and_can_be_retried() -> None:
+    stores = _retry_owner_stores()
+    owner = ResearchWriteOwner(**stores)
+    parent = _canceled_parent(owner)
+    tickets = stores["tickets_store"]
+    real_cas = tickets.compare_and_set
+
+    def failing_cas(*args: Any, **kwargs: Any):
+        raise RuntimeError("ticket link write failed")
+
+    tickets.compare_and_set = failing_cas  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError):
+        owner.retry_research_experiment(parent, actor_id="tester", idempotency_key="k1")
+    assert len(stores["experiments_store"].list_all()) == 1
+    assert tickets.get("ticket-retry")["linked_experiments"] == [parent]
+
+    tickets.compare_and_set = real_cas  # type: ignore[method-assign]
+    recovered = owner.retry_research_experiment(parent, actor_id="tester", idempotency_key="k1")
+    assert recovered["attempt_number"] == 2
+    assert tickets.get("ticket-retry")["linked_experiments"] == [parent, recovered["experiment_id"]]

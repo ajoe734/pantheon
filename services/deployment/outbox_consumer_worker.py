@@ -357,6 +357,27 @@ def finalize_compensation(
     return json.loads(body) if body else {}
 
 
+def finalize_retirement(
+    *,
+    api_url: str,
+    saga_id: str,
+    note: str,
+    timeout_seconds: float = 10.0,
+) -> dict[str, Any]:
+    """Finalize a retiring saga only after the binding retired readback."""
+    url = api_url.rstrip("/") + f"/api/deployment/sagas/{saga_id}/retire/finalize"
+    payload = json.dumps({"note": note}).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=payload,
+        headers=_deployment_headers(json_body=True),
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        body = response.read().decode("utf-8")
+    return json.loads(body) if body else {}
+
+
 def fetch_incident(
     *, base_url: str, incident_id: str, timeout_seconds: float = 10.0
 ) -> dict[str, Any]:
@@ -1365,6 +1386,59 @@ def _execute_rollback_compensation(
     )
 
 
+def execute_retirement(
+    *,
+    api_url: str,
+    saga: Mapping[str, Any],
+    client: RuntimeManagerClient,
+    timeout_seconds: float,
+) -> str:
+    """Retire the exact saga RuntimeBinding and finalize after readback.
+
+    Fails closed on identity mismatch or a binding status that cannot
+    legitimately converge to retired.  Safe to replay after response loss.
+    """
+    saga_id = str(saga.get("saga_id") or "")
+    binding_id = str(saga.get("binding_id") or "")
+    if not binding_id:
+        raise RuntimeError("retirement requires the saga RuntimeBinding")
+    saga_status = str(saga.get("status") or "")
+    if saga_status not in {"retiring", "retired"}:
+        raise RuntimeError(
+            f"Saga {saga_id!r} cannot execute retirement from status={saga_status!r}"
+        )
+    binding = client.get(binding_id)
+    if not isinstance(binding, Mapping):
+        raise RuntimeError(f"retirement RuntimeBinding {binding_id!r} is not readable")
+    identity_error = _binding_identity_error(
+        saga=saga, binding=binding, expected_binding_id=binding_id
+    )
+    if identity_error:
+        raise RuntimeError(f"retirement binding identity mismatch: {identity_error}")
+    status = binding.get("status")
+    if status in {"active", "pending_pause", "paused"}:
+        client.transition(binding_id, "retired")
+    elif status != "retired":
+        raise RuntimeError(f"retirement cannot converge binding status={status!r}")
+    retired = client.get(binding_id)
+    if not isinstance(retired, Mapping) or retired.get("status") != "retired":
+        raise RuntimeError("RuntimeBinding retired-state readback did not converge")
+    identity_error = _binding_identity_error(
+        saga=saga, binding=retired, expected_binding_id=binding_id
+    )
+    if identity_error:
+        raise RuntimeError(f"retired readback identity mismatch: {identity_error}")
+    note = f"retired RuntimeBinding {binding_id} after authoritative readback"
+    if saga_status == "retiring":
+        finalize_retirement(
+            api_url=api_url,
+            saga_id=saga_id,
+            note=note,
+            timeout_seconds=timeout_seconds,
+        )
+    return note
+
+
 def execute_compensation(
     *,
     api_url: str,
@@ -1920,6 +1994,7 @@ def run_poll(
                 in {
                     "runtime.load.requested",
                     "deployment.compensation.requested",
+                    "deployment.retirement.requested",
                 }
                 and sequence_no > 1
             ):
@@ -1949,7 +2024,14 @@ def run_poll(
                 # lost its inbox response.  Once compensation/terminal state is
                 # durable, replay only advances the inbox sequence; it must not
                 # dispatch a second RuntimeBinding.
-                if saga_status in {"completed", "compensating", "failed", "aborted"}:
+                if saga_status in {
+                    "completed",
+                    "compensating",
+                    "failed",
+                    "aborted",
+                    "retiring",
+                    "retired",
+                }:
                     # This event no longer owns a mutable side effect.  If its
                     # receipt write fails, retain it for retry rather than
                     # converting terminal history into a DLQ record.
@@ -2343,8 +2425,14 @@ def run_poll(
                 )
                 saga_status = str(saga.get("status") or "")
 
-                if saga_status in {"compensating", "failed", "aborted"}:
-                    # Compensation owns terminal convergence.  This predecessor
+                if saga_status in {
+                    "compensating",
+                    "failed",
+                    "aborted",
+                    "retiring",
+                    "retired",
+                }:
+                    # Compensation/retirement owns terminal convergence.  This predecessor
                     # may advance the sequence but must never be DLQ'd if the
                     # receipt response is lost.
                     compensation_committed = True
@@ -2436,6 +2524,34 @@ def run_poll(
                         f"terminal deployment projection did not converge: {projection_mismatch}"
                     )
 
+                receipt = consume_event(
+                    api_url=api_url,
+                    event_id=event_id,
+                    consumer_name=consumer_name,
+                    timeout_seconds=timeout_seconds,
+                )
+                applied, duplicate, receipt_error = _apply_receipt_counts(
+                    receipt=receipt, event_id=event_id
+                )
+                consumed += applied
+                duplicates += duplicate
+                if receipt_error:
+                    errors.append(receipt_error)
+            elif event_type == "deployment.retirement.requested":
+                saga_id = event.get("aggregate_id")
+                if not saga_id:
+                    raise ValueError("missing aggregate_id (saga_id) in retirement event")
+                saga = fetch_saga(
+                    api_url=api_url,
+                    saga_id=saga_id,
+                    timeout_seconds=timeout_seconds,
+                )
+                execute_retirement(
+                    api_url=api_url,
+                    saga=saga,
+                    client=RuntimeManagerClient(require_remote=True),
+                    timeout_seconds=timeout_seconds,
+                )
                 receipt = consume_event(
                     api_url=api_url,
                     event_id=event_id,

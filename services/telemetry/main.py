@@ -1156,7 +1156,7 @@ def stats():
 
 
 @app.route("/api/telemetry/runtime-summaries", methods=["GET"])
-@require_telemetry_authority(("service", "operator", "reviewer", "admin"))
+@require_telemetry_authority(("service", "operator", "reviewer", "admin", "viewer"))
 def runtime_summaries():
     """Return telemetry-owned runtime status summaries for BFF read paths."""
     svc = _get_service()
@@ -1165,7 +1165,7 @@ def runtime_summaries():
 
 
 @app.route("/api/telemetry/runtime-summaries/<runtime_id>", methods=["GET"])
-@require_telemetry_authority(("service", "operator", "reviewer", "admin"))
+@require_telemetry_authority(("service", "operator", "reviewer", "admin", "viewer"))
 def runtime_summary(runtime_id: str):
     """Return one telemetry-owned runtime status summary."""
     svc = _get_service()

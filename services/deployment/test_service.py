@@ -1180,6 +1180,47 @@ def test_post_activation_failure_uses_plan_rollback_action_and_finalize(client):
     assert saga.json()["compensation"]["command_type"] == "request_rollback"
 
 
+def test_completed_saga_retire_http_is_truthful_idempotent_and_guarded(client):
+    test_client, _ = client
+    assert test_client.post(
+        "/api/deployment/plans",
+        json=_plan_payload(plan_id="plan-retire-001"),
+    ).status_code == 201
+    dispatch = test_client.post(
+        "/api/deployment/plans/plan-retire-001/dispatch",
+        json={"trace_id": "trace-retire-001"},
+    )
+    saga_id = dispatch.json()["deployment_saga"]["saga"]["saga_id"]
+
+    early = test_client.post(f"/api/deployment/sagas/{saga_id}/retire", json={"reason": "x"})
+    assert early.status_code == 400
+
+    test_client.post(
+        f"/api/deployment/sagas/{saga_id}/binding-created",
+        json={"binding_id": "binding-retire-001", "runtime_id": "runtime-retire-001"},
+    )
+    test_client.post(
+        f"/api/deployment/sagas/{saga_id}/runtime-active",
+        json={"binding_id": "binding-retire-001", "runtime_id": "runtime-retire-001"},
+    )
+    body = {"reason": "dev paper cleanup"}
+    first = test_client.post(f"/api/deployment/sagas/{saga_id}/retire", json=body)
+    replay = test_client.post(f"/api/deployment/sagas/{saga_id}/retire", json=body)
+    assert first.status_code == 200 and replay.status_code == 200
+    assert first.json()["event"]["event_id"] == replay.json()["event"]["event_id"]
+    assert first.json()["event"]["event_type"] == "deployment.retirement.requested"
+
+    finalized = test_client.post(f"/api/deployment/sagas/{saga_id}/retire/finalize", json={})
+    assert finalized.status_code == 200
+    saga = test_client.get(f"/api/deployment/sagas/{saga_id}").json()
+    assert saga["status"] == "retired"
+    assert saga["failure_reason"] is None
+    assert saga["compensation"] is None
+    progress = test_client.get(f"/api/deployment/sagas/{saga_id}/progress").json()
+    assert progress["progress_status"] == "completed"
+    assert progress["dlq_count"] == 0
+
+
 def test_deployment_owner_jwt_key_selection_http_matrix(client, monkeypatch):
     """Verify real dev operator HS256 JWT alongside paper JWKS tokens on actual owner read route.
 

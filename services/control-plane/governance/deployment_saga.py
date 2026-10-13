@@ -40,6 +40,8 @@ class SagaStatus(str, Enum):
     COMPENSATING = "compensating"
     FAILED = "failed"
     ABORTED = "aborted"
+    RETIRING = "retiring"
+    RETIRED = "retired"
 
 
 class SagaStep(str, Enum):
@@ -48,6 +50,8 @@ class SagaStep(str, Enum):
     RUNTIME_ACTIVE = "runtime_active"
     COMPENSATION_REQUESTED = "compensation_requested"
     COMPENSATED = "compensated"
+    RETIREMENT_REQUESTED = "retirement_requested"
+    RETIRED = "retired"
 
 
 class OutboxStatus(str, Enum):
@@ -380,6 +384,7 @@ class DeploymentSaga:
     last_event_id: Optional[str] = None
     failure_reason: Optional[str] = None
     compensation: Optional[CompensationDecision] = None
+    retirement: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
     history: List[SagaStepRecord] = field(default_factory=list)
 
@@ -462,6 +467,7 @@ class DeploymentSaga:
             last_event_id=data.get("last_event_id"),
             failure_reason=data.get("failure_reason"),
             compensation=CompensationDecision.from_dict(compensation) if isinstance(compensation, Mapping) else None,
+            retirement=copy.deepcopy(dict(data["retirement"])) if isinstance(data.get("retirement"), Mapping) else None,
             metadata=copy.deepcopy(dict(data["metadata"])) if isinstance(data.get("metadata"), Mapping) else None,
             history=[SagaStepRecord.from_dict(item) for item in history if isinstance(item, Mapping)],
         )
@@ -715,6 +721,105 @@ class DeploymentSagaStore:
                     note=note,
                 )
             )
+
+        return self._transaction(mutate)
+
+    def record_retirement(
+        self,
+        saga_id: str,
+        *,
+        reason: str,
+    ) -> OutboxRecord:
+        """Request retirement of a completed saga's RuntimeBinding.
+
+        Never touches failure_reason or compensation; replay with the same
+        reason returns the original retirement event.
+        """
+        reason = (reason or "").strip()
+        if not reason:
+            raise DeploymentSagaError("retirement reason is required")
+
+        def mutate(draft: Dict[str, Any]) -> OutboxRecord:
+            saga = self._require_saga(draft, saga_id)
+            status = SagaStatus(saga.status)
+            if status in {SagaStatus.RETIRING, SagaStatus.RETIRED}:
+                existing = saga.retirement or {}
+                if existing.get("reason") != reason:
+                    raise DeploymentSagaError(
+                        f"{saga_id} is already {status.value} with a different reason"
+                    )
+                for record in draft["outbox"]:
+                    if record.event.event_id == existing.get("requested_event_id"):
+                        return copy.deepcopy(record)
+                raise DeploymentSagaError(f"{saga_id} retirement event is missing")
+            if status != SagaStatus.COMPLETED:
+                raise DeploymentSagaError(
+                    f"{saga_id} cannot be retired from {status.value}; only completed sagas can retire"
+                )
+            if not saga.binding_id:
+                raise DeploymentSagaError(f"{saga_id} has no RuntimeBinding to retire")
+            record = self._append_outbox_event(
+                draft,
+                saga=saga,
+                owner_service="runtime-manager-svc",
+                event_type="deployment.retirement.requested",
+                step=SagaStep.RETIREMENT_REQUESTED,
+                status=SagaStatus.RETIRING,
+                payload={
+                    "plan_id": saga.plan_id,
+                    "binding_id": saga.binding_id,
+                    "runtime_id": saga.runtime_id,
+                    "reason": reason,
+                },
+                note=reason,
+            )
+            saga.retirement = {
+                "reason": reason,
+                "binding_id": saga.binding_id,
+                "requested_event_id": record.event.event_id,
+                "requested_at": record.event.emitted_at,
+            }
+            return copy.deepcopy(record)
+
+        return self._transaction(mutate)
+
+    def finalize_retirement(
+        self,
+        saga_id: str,
+        *,
+        note: Optional[str] = None,
+    ) -> OutboxRecord:
+        """Mark a retiring saga retired after the binding readback; idempotent."""
+
+        def mutate(draft: Dict[str, Any]) -> OutboxRecord:
+            saga = self._require_saga(draft, saga_id)
+            status = SagaStatus(saga.status)
+            if status == SagaStatus.RETIRED:
+                for record in reversed(draft["outbox"]):
+                    if (
+                        record.event.aggregate_id == saga_id
+                        and record.event.event_type == "deployment.saga.retired"
+                    ):
+                        return copy.deepcopy(record)
+                raise DeploymentSagaError(f"{saga_id} retired event is missing")
+            if status != SagaStatus.RETIRING or not saga.retirement:
+                raise DeploymentSagaError(f"{saga_id} is not retiring")
+            record = self._append_outbox_event(
+                draft,
+                saga=saga,
+                owner_service="deployment-orchestrator",
+                event_type="deployment.saga.retired",
+                step=SagaStep.RETIRED,
+                status=SagaStatus.RETIRED,
+                payload={
+                    "plan_id": saga.plan_id,
+                    "binding_id": saga.binding_id,
+                    "retirement": copy.deepcopy(saga.retirement),
+                },
+                note=note,
+            )
+            saga.retirement["retired_at"] = record.event.emitted_at
+            return copy.deepcopy(record)
 
         return self._transaction(mutate)
 
