@@ -107,6 +107,7 @@ try:
         DeploymentSagaBootstrapBody,
         DispatchDeploymentPlanRequest,
         FinalizeCompensationRequest,
+        FinalizeRetirementRequest,
         InboxReceiptBody,
         OutboxRecordBody,
         OutboxLeaseHealthBody,
@@ -117,6 +118,7 @@ try:
         RecordOutboxFailureRequest,
         RecordRuntimeActiveRequest,
         RecordSagaFailureRequest,
+        RetireSagaRequest,
         ReplayOutboxEventRequest,
         ReplayOutboxEventResponse,
         SagaProgressStatusBody,
@@ -146,6 +148,7 @@ except ImportError:
         DeploymentSagaBootstrapBody,
         DispatchDeploymentPlanRequest,
         FinalizeCompensationRequest,
+        FinalizeRetirementRequest,
         InboxReceiptBody,
         OutboxRecordBody,
         OutboxLeaseHealthBody,
@@ -156,6 +159,7 @@ except ImportError:
         RecordOutboxFailureRequest,
         RecordRuntimeActiveRequest,
         RecordSagaFailureRequest,
+        RetireSagaRequest,
         ReplayOutboxEventRequest,
         ReplayOutboxEventResponse,
         SagaProgressStatusBody,
@@ -1264,6 +1268,20 @@ class DeploymentOrchestrationService:
             failed_step=request.failed_step.value if request.failed_step else None,
         )
 
+    def record_retirement(
+        self,
+        saga_id: str,
+        request: RetireSagaRequest,
+    ) -> OutboxRecord:
+        return self.saga_store.record_retirement(saga_id, reason=request.reason)
+
+    def finalize_retirement(
+        self,
+        saga_id: str,
+        request: FinalizeRetirementRequest,
+    ) -> OutboxRecord:
+        return self.saga_store.finalize_retirement(saga_id, note=request.note)
+
     def finalize_compensation(
         self,
         saga_id: str,
@@ -1982,7 +2000,8 @@ def _retry_state_body(record: OutboxRecord) -> DeploymentOutboxRetryStateBody:
 
 def _saga_progress_status(saga: DeploymentSaga, records: list[OutboxRecord]) -> SagaProgressStatusBody:
     saga_status = SagaStatus(saga.status)
-    if saga_status == SagaStatus.COMPLETED:
+    if saga_status in {SagaStatus.COMPLETED, SagaStatus.RETIRED}:
+        # Retirement is a truthful end of a completed deployment, not a failure.
         return SagaProgressStatusBody.COMPLETED
     if saga_status in {SagaStatus.FAILED, SagaStatus.ABORTED}:
         return SagaProgressStatusBody.FAILED
@@ -2380,6 +2399,33 @@ async def record_saga_failure(
     try:
         _require_saga_access(saga_id, _request_identity(request))
         return _compensation_body(orchestration_service.record_failure(saga_id, body))
+    except DeploymentSagaError as exc:
+        message = str(exc)
+        status_code = 404 if "unknown saga" in message.lower() else 400
+        raise HTTPException(status_code=status_code, detail=message)
+
+
+@app.post("/api/deployment/sagas/{saga_id}/retire", response_model=OutboxRecordBody)
+async def retire_saga(request: Request, saga_id: str, body: RetireSagaRequest):
+    try:
+        _require_saga_access(saga_id, _request_identity(request))
+        return _outbox_body(orchestration_service.record_retirement(saga_id, body))
+    except DeploymentSagaError as exc:
+        message = str(exc)
+        status_code = 404 if "unknown saga" in message.lower() else 400
+        raise HTTPException(status_code=status_code, detail=message)
+
+
+@app.post(
+    "/api/deployment/sagas/{saga_id}/retire/finalize",
+    response_model=OutboxRecordBody,
+)
+async def finalize_saga_retirement(
+    request: Request, saga_id: str, body: FinalizeRetirementRequest
+):
+    try:
+        _require_saga_access(saga_id, _request_identity(request))
+        return _outbox_body(orchestration_service.finalize_retirement(saga_id, body))
     except DeploymentSagaError as exc:
         message = str(exc)
         status_code = 404 if "unknown saga" in message.lower() else 400

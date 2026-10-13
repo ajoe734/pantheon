@@ -190,6 +190,8 @@ class SagaStatusBody(str, Enum):
     COMPENSATING = "compensating"
     FAILED = "failed"
     ABORTED = "aborted"
+    RETIRING = "retiring"
+    RETIRED = "retired"
 
 
 class SagaStepBody(str, Enum):
@@ -198,6 +200,8 @@ class SagaStepBody(str, Enum):
     RUNTIME_ACTIVE = "runtime_active"
     COMPENSATION_REQUESTED = "compensation_requested"
     COMPENSATED = "compensated"
+    RETIREMENT_REQUESTED = "retirement_requested"
+    RETIRED = "retired"
 
 
 class OutboxStatusBody(str, Enum):
@@ -344,6 +348,7 @@ class DeploymentSagaBody(BaseModel):
     last_event_id: Optional[str] = None
     failure_reason: Optional[str] = None
     compensation: Optional[CompensationDecisionBody] = None
+    retirement: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
     history: List[SagaStepRecordBody] = Field(default_factory=list)
 
@@ -487,6 +492,14 @@ class ReplayOutboxEventRequest(BaseModel):
 class ReplayOutboxEventResponse(BaseModel):
     event: OutboxRecordBody
     replayed: bool
+
+
+class RetireSagaRequest(BaseModel):
+    reason: str
+
+
+class FinalizeRetirementRequest(BaseModel):
+    note: Optional[str] = None
 
 
 class FinalizeCompensationRequest(BaseModel):
