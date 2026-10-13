@@ -132,6 +132,53 @@
       "kind": "owner_evidence_ready",
       "recorded_at": "2026-08-20T01:12:00Z",
       "status": "ready_for_independent_review"
+    },
+    {
+      "sequence": 2,
+      "actor": "Antigravity2",
+      "kind": "teaching_compute_closure_followup",
+      "recorded_at": "2026-10-13T12:18:00Z",
+      "status": "ready_for_independent_review"
     }
-  ]
+  ],
+  "teaching_compute_closure_followup": {
+    "task_id": "L4-TEACHING-COMPUTE-CLOSURE-20261013",
+    "root_failure_reference": "FULL 38392277078 from exact protected 61cb3f410d503e63829cebac6bd2172ca664a3eb failed at persona_teaching / teaching.authority_actual_state (timed out waiting for terminal TeachingSession status == 'completed'). Preview job reached completed, durable TeachingEvaluationResult validation failed (sharpe_ratio_below_threshold), worker received 409 on /complete because evaluation governance gate was not passed, and owner preserved active session with ended_at null. Real failed report and diagnostics preserved at /tmp/pantheon-assist-20261013/FULL38392277078-original-qualification-artifact-readonly/ and FULL38392277078-final-first-boundary-cleanup-readonly.json.",
+    "change": "Updated tests/integration/l12/test_current_research_loops_deployed_e2e.py::_case_persona_teaching to use ordinary non-adopting preview job (terminalize_session=False), do not require session.completed for ordinary compute, consume durable TeachingEvaluationResult and proof from terminal-readback, verify real computation evidence (framework vectorbt, run_id, preview_quality), finite metric values (total_return, sharpe_ratio, max_drawdown), and dataset/policy authority identity. Preserved failed governance (governance_gate_state == 'failed', status == 'failed', commit_eligible is not True), validation_errors, and Consultation evidence (consultation_required is True, consult_request_id, consultation_receipt) with active session and ended_at null for ineligible candidates. Added focused regression tests in services/training-session/tests/test_teaching_evaluation_readback.py covering completed eligible computation, completed real-result shape but ineligible candidate with active session, failed/pending compute, mismatched identities, and complete-session invalid-proof rejection.",
+    "source_commit": "this task branch (task/L4-TEACHING-COMPUTE-CLOSURE-20261013); see git history",
+    "historical_note": "Preserves original FULL38392277078 failure, diagnostics, and cleanup provenance; actual numeric Sharpe/dataset proof absent from historical artifact remains unknown. Owner fail-closed contracts and /complete rejection are preserved without altering runtime owner, worker, threshold, retry logic, policy, or dataset.",
+    "hosted_acceptance_status": "not run by this source task; final deployment and hosted acceptance belong to the existing parent.",
+    "validation_results": [
+      {
+        "command": "python3 -m py_compile tests/integration/l12/test_current_research_loops_deployed_e2e.py",
+        "result": "pass",
+        "conclusion": "exit 0"
+      },
+      {
+        "command": "python3 -m py_compile services/training-session/tests/test_teaching_evaluation_readback.py",
+        "result": "pass",
+        "conclusion": "exit 0"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q tests/integration/l12/test_current_research_loops_deployed_e2e.py",
+        "result": "pass",
+        "conclusion": "1 anti-fixture assertion passed; 4 deployed cases skipped without opt-in"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/training-session/tests/test_teaching_evaluation_readback.py",
+        "result": "pass",
+        "conclusion": "6 passed, 1 warning"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q tests/integration/l12/",
+        "result": "pass",
+        "conclusion": "6 passed, 26 skipped across all L12 integration test files"
+      },
+      {
+        "command": "git diff --check",
+        "result": "pass",
+        "conclusion": "exit 0"
+      }
+    ]
+  }
 }
