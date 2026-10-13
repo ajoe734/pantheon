@@ -429,20 +429,74 @@ class CommandAdapterService:
     def get_action_catalog(self, identity: Optional[OperatorIdentity] = None) -> BffActionCatalogResponse:
         return BffActionCatalogResponse(catalog=get_action_catalog().catalog)
 
+    @staticmethod
+    def _trusted_tenant_for_identity(identity: Optional[OperatorIdentity]) -> Optional[str]:
+        if identity is None:
+            return None
+        claims = getattr(identity, "claims", None) or {}
+        for key in ("tenant_id", "tenantId", "tid"):
+            val = str(claims.get(key) or "").strip()
+            if val:
+                return val
+        direct = str(getattr(identity, "tenant_id", "") or "").strip()
+        if direct:
+            return direct
+        try:
+            from ..auth.policy import bff_me_tenant_payload
+            payload = bff_me_tenant_payload(identity)
+            tid = str(payload.get("id") or "").strip()
+            if tid:
+                return tid
+        except Exception:
+            pass
+        return None
+
     def get_command_status(self, command_id: str, identity: Optional[OperatorIdentity] = None) -> CommandStatusResponse:
         clean_id = str(command_id or "").strip()
         if not clean_id:
             raise HTTPException(status_code=404, detail="Command not found")
+        if identity is None:
+            raise self._raise_error(
+                401,
+                ErrorCode.AUTH_REQUIRED,
+                "Authentication required",
+                "Authenticated identity is required to read command status",
+            )
+        self.check_read_role(identity)
         store = self.command_store
         if store is None:
             raise HTTPException(status_code=404, detail=f"Command {clean_id} not found")
         record = store.get_command(clean_id)
         if not record:
             raise HTTPException(status_code=404, detail=f"Command {clean_id} not found")
+
+        tenant_extractor = getattr(store, "_tenant_id_from_command", getattr(store, "tenant_id_from_command", None))
+        record_tenant = tenant_extractor(record) if callable(tenant_extractor) else None
+        if not record_tenant:
+            # Unknown / unscoped legacy records fail closed, including for admins
+            raise HTTPException(status_code=404, detail="Command not found")
+
+        from ..auth.policy import (
+            TENANT_ALLOWED_CLAIM_PATHS,
+            identity_claim_strings,
+            bff_auth_mode,
+            env_csv,
+            first_nonblank,
+        )
+        claim_allowed = identity_claim_strings(identity, TENANT_ALLOWED_CLAIM_PATHS)
+        is_strict = getattr(identity, "token_kind", "") in ("jwt", "structured", "cookie") or bff_auth_mode() == "strict"
+        env_default = first_nonblank(os.getenv("PANTHEON_BFF_TENANT_ID"), os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"), os.getenv("PANTHEON_TENANT_ID"))
+        allowed_tenants = list(claim_allowed) if is_strict else (claim_allowed or env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [env_default or "pantheon-dev"])
+
+        if record_tenant not in allowed_tenants and "*" not in allowed_tenants:
+            # Non-disclosing unknown/invisible status contract
+            raise HTTPException(status_code=404, detail="Command not found")
+
         if record["type"] == CommandType.ADVANCE_LIFECYCLE.value:
-            tenant = ((record.get("foundation") or {}).get("command_envelope") or {}).get("payload", {}).get("tenant_id")
-            if not identity or not tenant or tenant != identity.claims.get("tenant_id"):
+            adv_tenant = ((record.get("foundation") or {}).get("command_envelope") or {}).get("payload", {}).get("tenant_id")
+            if not adv_tenant or (adv_tenant not in allowed_tenants and "*" not in allowed_tenants):
                 raise HTTPException(status_code=404, detail="Command not found")
+
         return CommandStatusResponse(
             command_id=record["command_id"],
             type=record["type"],
@@ -727,22 +781,30 @@ class CommandAdapterService:
             "submitted_at": now,
             "accepted_at": now,
         }
-        foundation_ctx = {
+        trusted_tenant = self._trusted_tenant_for_identity(identity)
+        foundation_ctx: Dict[str, Any] = {
             "idempotency_record": {
                 "idempotency_key": clean_key,
                 "request_hash": request_hash,
                 "status": "succeeded",
             }
         }
+        if trusted_tenant:
+            foundation_ctx["trace_context"] = {
+                "tenant_ref": {"tenant_id": trusted_tenant},
+                "tenant_id": trusted_tenant,
+            }
         if trusted_evidence_producer:
             foundation_ctx["trusted_evidence_producer"] = trusted_evidence_producer
-        audit_ctx = {
+        audit_ctx: Dict[str, Any] = {
             "actor": identity.operator_id,
             "operator_id": identity.operator_id,
             "command_id": command_id,
             "reason": str(payload.get("reason") or command_type.value),
             "foundation": foundation_ctx,
         }
+        if trusted_tenant:
+            audit_ctx["tenant_id"] = trusted_tenant
         if trusted_evidence_producer:
             audit_ctx["trusted_evidence_producer"] = trusted_evidence_producer
         if "live_capital_mutation" in payload:
@@ -1413,11 +1475,9 @@ class CommandAdapterService:
             raise foundation_bff_error(exc, foundation_context=foundation_context) from exc
 
         stored_params = stored_command_params(cmd, identity, payload)
-        claims = getattr(identity, "claims", None) or {}
-        tenant_id = claims.get("tenant_id") or claims.get("tenantId") or claims.get("tid")
-        if tenant_id:
-            # Preserve an explicit scope assertion for the owner to authorize.
-            stored_params.setdefault("tenant_id", tenant_id)
+        trusted_tenant = self._trusted_tenant_for_identity(identity)
+        if trusted_tenant:
+            stored_params["tenant_id"] = trusted_tenant
         stored_params["idempotency_key"] = resolved_key
         stored_params["request_hash"] = foundation_context["idempotency_record"].request_hash
         canonicalize_validated_precondition_evidence(
@@ -1439,6 +1499,11 @@ class CommandAdapterService:
             )
 
         command_envelope = foundation_context["command_envelope"]
+        if trusted_tenant:
+            if hasattr(command_envelope, "payload") and isinstance(command_envelope.payload, dict):
+                command_envelope.payload["tenant_id"] = trusted_tenant
+            elif isinstance(command_envelope, dict) and isinstance(command_envelope.get("payload"), dict):
+                command_envelope["payload"]["tenant_id"] = trusted_tenant
         idempotency_record = foundation_context["idempotency_record"]
         idempotency_record = idempotency_record.with_status(
             "succeeded",
@@ -1477,6 +1542,8 @@ class CommandAdapterService:
             "foundation": serialize_foundation_context(foundation_context),
             "receipt_dual_write": receipt_dual_write,
         }
+        if trusted_tenant:
+            audit_record["tenant_id"] = trusted_tenant
         if precondition_evidence:
             audit_record["precondition_evidence"] = precondition_evidence
         if audit_extra:
