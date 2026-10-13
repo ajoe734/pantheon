@@ -2523,36 +2523,6 @@ jobs:
           echo "controller_log=${controller_log}" >> "${GITHUB_OUTPUT}"
           exit "${controller_status}"
 
-      - name: Authenticate to Google Cloud
-        if: ${{ !cancelled() }}
-        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
-        with:
-          workload_identity_provider: ${{ vars.DEV_GCP_WIF_PROVIDER || 'projects/317269804408/locations/global/workloadIdentityPools/pantheon-github-pool/providers/pantheon-github-provider' }}
-          service_account: ${{ vars.DEV_GCP_DEPLOY_SERVICE_ACCOUNT || 'pantheon-dev-github-deploy@pantheon-dev-20260902.iam.gserviceaccount.com' }}
-
-      - name: Set up Cloud SDK
-        if: ${{ !cancelled() }}
-        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
-
-      - name: Prepare pinned direct SSH transport
-        if: ${{ !cancelled() }}
-        env:
-          DEV_DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEV_DEPLOY_SSH_PRIVATE_KEY }}
-          DEV_DEPLOY_SSH_KNOWN_HOSTS: ${{ vars.DEV_DEPLOY_SSH_KNOWN_HOSTS }}
-          DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
-        shell: /bin/bash --noprofile --norc -euo pipefail {0}
-        run: |
-          credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          transport="${GITHUB_WORKSPACE}/.target/scripts/dev_vm_ssh.sh"
-          [[ -f "${transport}" && ! -L "${transport}" ]]
-          "${transport}" prepare "${credentials_dir}" >/dev/null
-          key_file="${credentials_dir}/deploy_key"
-          known_hosts_file="${credentials_dir}/known_hosts"
-          [[ -f "${key_file}" && ! -L "${key_file}" ]]
-          [[ -f "${known_hosts_file}" && ! -L "${known_hosts_file}" ]]
-          [[ "$(stat -c '%a' "${key_file}")" == "600" ]]
-          [[ "$(stat -c '%a' "${known_hosts_file}")" == "600" ]]
-
       - name: Verify and seal admitted final candidate
         id: final_artifact_verify
         if: ${{ steps.frontend_release.outcome == 'success' }}
@@ -2583,35 +2553,6 @@ jobs:
           PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT }}
           DEV_BFF_AUTH_STUB: "false"
           DEV_BFF_AUTH_MODE: strict
-          DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
-          DEV_PAPER_PRINCIPALS_AUTHORIZED: ${{ vars.DEV_PAPER_PRINCIPALS_AUTHORIZED || 'false' }}
-          DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
-          DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
-          DEV_BFF_JWKS_URI: ${{ vars.DEV_BFF_JWKS_URI || 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com' }}
-          DEV_BFF_OIDC_DISCOVERY_URL: ${{ vars.DEV_BFF_OIDC_DISCOVERY_URL }}
-          DEV_BFF_OIDC_ISSUER: ${{ vars.DEV_BFF_OIDC_ISSUER || 'https://securetoken.google.com/pantheon-dev-20260902' }}
-          DEV_BFF_OIDC_AUDIENCE: ${{ vars.DEV_BFF_OIDC_AUDIENCE || 'pantheon-dev-20260902' }}
-          DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
-          DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
-          DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
-          DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET }}
-          DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID || 'pantheon-dev-approver-v1' }}
-          DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET }}
-          DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID || 'pantheon-dev-risk-owner-v1' }}
-          DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET }}
-          DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID || 'pantheon-dev-operator-a-v1' }}
-          DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}
-          DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID || 'pantheon-dev-operator-b-v1' }}
-          DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET }}
-          DEV_BFF_MFA_REQUIRED: ${{ vars.DEV_BFF_MFA_REQUIRED || 'false' }}
-          DEV_BFF_MFA_CLAIMS: ${{ vars.DEV_BFF_MFA_CLAIMS || 'amr,acr,mfa,mfa_verified,firebase.sign_in_second_factor' }}
-          DEV_BFF_MFA_VALUES: ${{ vars.DEV_BFF_MFA_VALUES || 'true,1,yes,mfa,otp,totp,webauthn' }}
-          DEV_BFF_REQUIRE_EMAIL_VERIFIED: ${{ vars.DEV_BFF_REQUIRE_EMAIL_VERIFIED || 'true' }}
-          DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH: ${{ secrets.DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH }}
-          DEV_BFF_ROLE_CLAIMS: ${{ vars.DEV_BFF_ROLE_CLAIMS || 'roles,role' }}
-          DEV_BFF_ROLE_MAP: ${{ vars.DEV_BFF_ROLE_MAP || 'pantheon-operator=operator;pantheon-viewer=viewer;pantheon-reviewer=reviewer;pantheon-approver=approver;pantheon-risk-owner=risk_owner;pantheon-admin=admin' }}
-          DEV_BFF_ROLE_MAP_MODE: ${{ vars.DEV_BFF_ROLE_MAP_MODE || 'strict' }}
-          DEV_BFF_DEFAULT_ROLE: ${{ vars.DEV_BFF_DEFAULT_ROLE || 'viewer' }}
           BACKEND_SHA: ${{ needs.deploy-dev.outputs.backend_sha }}
           PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
           PANTHEON_LEASE_CONTROLLER_ROOT: ${{ github.workspace }}/.lease-controller
@@ -2620,6 +2561,17 @@ jobs:
           DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
+          credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          transport="${GITHUB_WORKSPACE}/.target/scripts/dev_vm_ssh.sh"
+          [[ -f "${transport}" && ! -L "${transport}" ]]
+          "${transport}" prepare "${credentials_dir}" >/dev/null
+          key_file="${credentials_dir}/deploy_key"
+          known_hosts_file="${credentials_dir}/known_hosts"
+          [[ -f "${key_file}" && ! -L "${key_file}" ]]
+          [[ -f "${known_hosts_file}" && ! -L "${known_hosts_file}" ]]
+          [[ "$(stat -c '%a' "${key_file}")" == "600" ]]
+          [[ "$(stat -c '%a' "${known_hosts_file}")" == "600" ]]
+
           lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
           unset PANTHEON_ENVIRONMENT_LEASE_TOKEN
           export -n lease_token 2>/dev/null || true
@@ -2799,6 +2751,36 @@ jobs:
                 --artifact-readback-out "${RELEASE_EVIDENCE_DIR}/candidate/candidate-frontend.json"
 
           verify_succeeded=true
+
+      - name: Authenticate rollback to Google Cloud
+        if: ${{ steps.frontend_release.outcome != 'success' }}
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
+        with:
+          workload_identity_provider: ${{ vars.DEV_GCP_WIF_PROVIDER || 'projects/317269804408/locations/global/workloadIdentityPools/pantheon-github-pool/providers/pantheon-github-provider' }}
+          service_account: ${{ vars.DEV_GCP_DEPLOY_SERVICE_ACCOUNT || 'pantheon-dev-github-deploy@pantheon-dev-20260902.iam.gserviceaccount.com' }}
+
+      - name: Set up rollback Cloud SDK
+        if: ${{ steps.frontend_release.outcome != 'success' }}
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
+
+      - name: Prepare pinned direct SSH transport for rollback
+        if: ${{ steps.frontend_release.outcome != 'success' }}
+        env:
+          DEV_DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEV_DEPLOY_SSH_PRIVATE_KEY }}
+          DEV_DEPLOY_SSH_KNOWN_HOSTS: ${{ vars.DEV_DEPLOY_SSH_KNOWN_HOSTS }}
+          DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          transport="${GITHUB_WORKSPACE}/.target/scripts/dev_vm_ssh.sh"
+          [[ -f "${transport}" && ! -L "${transport}" ]]
+          "${transport}" prepare "${credentials_dir}" >/dev/null
+          key_file="${credentials_dir}/deploy_key"
+          known_hosts_file="${credentials_dir}/known_hosts"
+          [[ -f "${key_file}" && ! -L "${key_file}" ]]
+          [[ -f "${known_hosts_file}" && ! -L "${known_hosts_file}" ]]
+          [[ "$(stat -c '%a' "${key_file}")" == "600" ]]
+          [[ "$(stat -c '%a' "${known_hosts_file}")" == "600" ]]
 
       - name: Compensate rejected release to exact hosted baseline
         id: compensation

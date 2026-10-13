@@ -35,6 +35,18 @@
   "verification": {
     "test_suites": [
       {
+        "module": "scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py",
+        "passed": 33,
+        "failed": 0,
+        "skipped": 0
+      },
+      {
+        "module": "scripts/test_cross_repo_release_controller.py",
+        "passed": 75,
+        "failed": 0,
+        "skipped": 0
+      },
+      {
         "module": "scripts/test_dev_artifact_compensation_evidence.py",
         "passed": 91,
         "failed": 0,
@@ -53,7 +65,7 @@
         "skipped": 0
       }
     ],
-    "total_passed": 293,
+    "total_passed": 401,
     "total_failed": 0
   },
   "review": {
