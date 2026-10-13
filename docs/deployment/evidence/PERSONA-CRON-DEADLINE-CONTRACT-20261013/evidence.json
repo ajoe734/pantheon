@@ -6,7 +6,7 @@
   "reviewer": "Antigravity",
   "base_sha": "170af322bcec7b15ce1b84e9d3ebe7798e03ba60",
   "change_class": "corrective",
-  "summary": "Fixes hosted Persona creation schedule registration boundary failure on Root 38406522993 (where cron.list failed refusing to register blind: timed out) by establishing a single monotonic schedule-operation deadline covering initial cron.list and pagination, mutation (cron.add/cron.update/cron.remove), ambiguous-response reconciliation, authoritative readback, and poll sleeps. Replaces uncoordinated 30s socket timeouts and fresh RPC allocations with remaining-budget calculation against the 180s provisioning lease (PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS), downstream adapter CLI cap (170s), response allowance (2.0s), and ~8-10s generic CLI startup overhead. Retains fresh input record.created_at before store.reserve replaces it with active, debits pre-queue/prior-owner elapsed time and explicit response reserve once into a monotonic deadline propagated via existing schedule_registrar closure, without using historical active.created_at or renewable lease_expires_at or resetting at schedule entry. Removes TypeError retry from BFF _remove_persona_cron_required to fail closed without repeated mutations. Propagates process allowance strictly via request body timeout_seconds to OpenClaw gateway adapter and _gateway_call, bounds adapter namespace guard lookups to the same remaining request allowance, rejects late readback success after deadline expiry, and preserves fail-closed list-before-add and compensation semantics.",
+  "summary": "Fixes hosted Persona creation schedule registration boundary failure on Root 38406522993 (where cron.list failed refusing to register blind: timed out) by establishing a single monotonic schedule-operation deadline covering initial cron.list and pagination, mutation (cron.add/cron.update/cron.remove), ambiguous-response reconciliation, authoritative readback, and poll sleeps. Replaces uncoordinated 30s socket timeouts and fresh RPC allocations with remaining-budget calculation against the 180s provisioning lease (PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS), downstream adapter CLI cap (170s), fixed response allowance (2.0s via DEFAULT_HTTP_RESPONSE_ALLOWANCE_SECONDS with no arbitrary configuration ladder), and ~8-10s generic CLI startup overhead. Honestly describes the provisioning lease as a renewable exclusivity TTL for the worker lease, not proof that the whole HTTP/saga+compensation cannot exceed 180s. Retains fresh input record.created_at before store.reserve replaces it with active, reuses existing _parse_rfc3339, debits pre-queue/prior-owner elapsed time and fixed 2-second response allowance once into a single monotonic deadline propagated via existing schedule_registrar closure, without using historical active.created_at or renewable lease_expires_at or resetting at schedule entry. Removes TypeError retry from BFF _remove_persona_cron_required to fail closed without repeated mutations. Propagates process allowance strictly via request body timeout_seconds to OpenClaw gateway adapter and _gateway_call, bounds adapter namespace guard lookups to the same remaining request allowance, proves strictly shrinking remaining allowances across readback polling and actual poll sleeps with advancing controlled time, rejects late readback success after deadline expiry, refuses blind mutation on expired deadline, and preserves fail-closed list-before-add and compensation semantics.",
   "acceptance_verification": [
     {
       "ac": "AC1",
@@ -36,7 +36,7 @@
     {
       "ac": "AC6",
       "description": "Finish native source delivery with relevant complete affected modules/syntax/diff checks and truthful exact counts/failures/skips, mandatory evidence, genuine owner trailers, original assigned independent reviewer, one task branch/one PR, required CI/current-dev integration and native archive. Never fake reviewer identity/rejection/attestation or use vN branches. Ordinary authorized dev commands need no repeated user approval. Source merge remains source-only: sole original release coordinator must run fresh same-version FULL before first exact FE312/newBE Root with actual hosted normal-flow/Workshop persistence/plannedrollback and remaining L1-L12 finance/provider/ONE applicable real-human/independent overall acceptance. Parent 6AC/21deps/3artifacts stay unchanged; do not add product acceptance gates.",
-      "verdict": "pending_delivery: local source validation and clean task worktree with required trailers verified (307 passed, 4 skipped across 4 scoped test suites; monotonic schedule deadline contract verified across BFF, cron registrar, and OpenClaw adapter); downstream independent review by assigned reviewer Antigravity, required CI checks, dev integration merge, and canonical finish remain pending delivery on task PR"
+      "verdict": "pending_delivery: local source validation and clean task worktree with required trailers verified (308 passed, 4 skipped across 4 scoped test suites; monotonic schedule deadline contract verified across BFF, cron registrar, and OpenClaw adapter); downstream independent review by assigned reviewer Antigravity, required CI checks, dev integration merge, and canonical finish remain pending delivery on task PR"
     }
   ],
   "verification": [
@@ -50,7 +50,7 @@
     },
     {
       "command": "python3 -m pytest services/control-plane/bff/test_persona_provisioning_readback.py",
-      "passed": 58,
+      "passed": 59,
       "failed": 0,
       "errors": 0,
       "skipped": 0,
@@ -74,7 +74,7 @@
     },
     {
       "command": "python3 -m pytest services/control-plane/cron/test_persona_cron_registrar.py services/control-plane/bff/test_persona_provisioning_readback.py services/openclaw-gateway-adapter/test_main.py services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py",
-      "passed": 307,
+      "passed": 308,
       "failed": 0,
       "errors": 0,
       "skipped": 4,

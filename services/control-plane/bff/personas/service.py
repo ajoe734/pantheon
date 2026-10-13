@@ -50,6 +50,13 @@ from starlette.responses import JSONResponse
 
 BFF_DATA_DIR = os.getenv("BFF_DATA_DIR", "/tmp/pantheon/bff")
 
+try:
+    from services.control_plane.cron.persona_cron_registrar import (
+        DEFAULT_HTTP_RESPONSE_ALLOWANCE_SECONDS,
+    )
+except ImportError:
+    DEFAULT_HTTP_RESPONSE_ALLOWANCE_SECONDS = 2.0
+
 from ..models import (
     ActionCommandStatus,
     ApproveMutationCommandPayload,
@@ -1339,10 +1346,9 @@ def _evaluate_persona_provisioning_status(
         30.0,
         float(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
     )
-    response_reserve = float(
-        os.getenv("PANTHEON_PERSONA_SCHEDULE_RESPONSE_RESERVE_SECONDS", "2.0")
+    eval_deadline = eval_start_time + max(
+        0.0, lease_seconds - DEFAULT_HTTP_RESPONSE_ALLOWANCE_SECONDS
     )
-    eval_deadline = eval_start_time + max(0.0, lease_seconds - response_reserve)
     metadata = raw.get("metadata") or {}
     current_state = raw.get("lifecycle_state") or raw.get("state")
     if current_state == "provisioning_failed":
@@ -3432,10 +3438,9 @@ def _register_persona_cron_required(
             30.0,
             float(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
         )
-        response_reserve = float(
-            os.getenv("PANTHEON_PERSONA_SCHEDULE_RESPONSE_RESERVE_SECONDS", "2.0")
+        operation_deadline = start_time + max(
+            0.0, lease_seconds - DEFAULT_HTTP_RESPONSE_ALLOWANCE_SECONDS
         )
-        operation_deadline = start_time + max(0.0, lease_seconds - response_reserve)
 
     if time.monotonic() >= operation_deadline:
         raise TimeoutError("schedule deadline exceeded before cron registration")
@@ -4115,20 +4120,18 @@ def _coordinate_persona_create(
     owner: str,
 ) -> Tuple[ProvisioningRecord, Dict[str, Any], Dict[str, Any], Optional[Dict[str, Any]]]:
     # Retain the fresh input record.created_at before store.reserve replaces it with active.
-    # Convert remaining attempt allowance once to monotonic deadline, debiting
-    # pre-queue / prior-owner elapsed time and keeping explicit response reserve.
+    # Provisioning lease is a renewable exclusivity TTL for the worker lease, not a
+    # proof that the whole HTTP/saga+compensation cannot exceed 180s. Retain the fresh
+    # input record.created_at before store.reserve replaces it with active, convert
+    # remaining attempt allowance once to a monotonic deadline debiting pre-queue/prior-owner
+    # elapsed time and reusing the fixed 2-second response allowance (DEFAULT_HTTP_RESPONSE_ALLOWANCE_SECONDS).
     # Do not use historical active.created_at or renewable lease_expires_at, and do not
     # reset at schedule entry.
     input_created_at_raw = getattr(record, "created_at", None)
     elapsed_since_input = 0.0
     if input_created_at_raw:
         try:
-            if isinstance(input_created_at_raw, str):
-                created_dt = datetime.fromisoformat(input_created_at_raw.replace("Z", "+00:00"))
-            elif isinstance(input_created_at_raw, datetime):
-                created_dt = input_created_at_raw
-            else:
-                created_dt = None
+            created_dt = _parse_rfc3339(input_created_at_raw)
             if created_dt is not None:
                 if created_dt.tzinfo is None:
                     created_dt = created_dt.replace(tzinfo=timezone.utc)
@@ -4143,10 +4146,10 @@ def _coordinate_persona_create(
         int(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
     )
     attempt_allowance = float(lease_seconds)
-    response_reserve = float(
-        os.getenv("PANTHEON_PERSONA_SCHEDULE_RESPONSE_RESERVE_SECONDS", "2.0")
+    remaining_allowance = max(
+        0.0,
+        attempt_allowance - elapsed_since_input - DEFAULT_HTTP_RESPONSE_ALLOWANCE_SECONDS,
     )
-    remaining_allowance = max(0.0, attempt_allowance - elapsed_since_input - response_reserve)
     operation_deadline = monotonic_start + remaining_allowance
 
     store = _persona_provisioning_store()

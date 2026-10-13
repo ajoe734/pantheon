@@ -347,6 +347,8 @@ def test_required_cron_registration_polls_until_authoritative_readback(
     runtime = object()
     attempts: list[dict[str, Any]] = []
     sleeps: list[float] = []
+    remaining_allowances: list[float] = []
+    clock = [1000.0]
 
     class _RegistrationResult:
         def to_dict(self) -> dict[str, Any]:
@@ -363,6 +365,7 @@ def test_required_cron_registration_polls_until_authoritative_readback(
             runtime_id: str | None = None,
             runtime_binding_id: str | None = None,
             persona_capital_binding_id: str | None = None,
+            deadline: float | None = None,
             **_kwargs: Any,
         ) -> _RegistrationResult:
             assert persona_id == PERSONA_ID
@@ -372,6 +375,10 @@ def test_required_cron_registration_polls_until_authoritative_readback(
             assert runtime_id == RUNTIME_ID
             assert runtime_binding_id == RUNTIME_BINDING_ID
             assert persona_capital_binding_id == PERSONA_CAPITAL_BINDING_ID
+            assert deadline is not None
+            assert deadline > clock[0]
+            # Advance controlled clock during registration call
+            clock[0] += 0.5
             return _RegistrationResult()
 
         def _get_runtime(self, *_args: Any, **_kwargs: Any) -> object:
@@ -386,8 +393,11 @@ def test_required_cron_registration_polls_until_authoritative_readback(
             runtime_binding_id: str | None = None,
             capital_pool_id: str | None = None,
             persona_capital_binding_id: str | None = None,
+            deadline: float | None = None,
             **_kwargs: Any,
         ) -> dict[str, Any] | None:
+            if deadline is not None:
+                remaining_allowances.append(deadline - clock[0])
             attempts.append(
                 {
                     "persona_id": persona_id,
@@ -398,6 +408,8 @@ def test_required_cron_registration_polls_until_authoritative_readback(
                     "persona_capital_binding_id": persona_capital_binding_id,
                 }
             )
+            # Advance controlled clock during readback RPC execution
+            clock[0] += 0.2
             if len(attempts) < 3:
                 return None
             return _first_evaluation_job_fixture()
@@ -406,7 +418,10 @@ def test_required_cron_registration_polls_until_authoritative_readback(
         def _decode_job_event(job: dict[str, Any]) -> dict[str, Any] | None:
             return json.loads(str(job.get("payload", {}).get("text") or "{}"))
 
-    fake_module = SimpleNamespace(PersonaCronRegistrar=_DelayedReadbackRegistrar)
+    fake_module = SimpleNamespace(
+        PersonaCronRegistrar=_DelayedReadbackRegistrar,
+        DEFAULT_HTTP_RESPONSE_ALLOWANCE_SECONDS=2.0,
+    )
     monkeypatch.setitem(sys.modules, "persona_cron_registrar", fake_module)
     monkeypatch.setitem(
         sys.modules, "services.control_plane.cron.persona_cron_registrar", fake_module
@@ -419,7 +434,13 @@ def test_required_cron_registration_polls_until_authoritative_readback(
         "PANTHEON_PERSONA_FIRST_EVALUATION_READBACK_POLL_SECONDS",
         "0.1",
     )
-    monkeypatch.setattr(personas_service.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(personas_service.time, "monotonic", lambda: clock[0])
+
+    def _advancing_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        clock[0] += seconds
+
+    monkeypatch.setattr(personas_service.time, "sleep", _advancing_sleep)
 
     receipt = personas_service._register_persona_cron_required(
         PERSONA_ID,
@@ -431,6 +452,10 @@ def test_required_cron_registration_polls_until_authoritative_readback(
 
     assert len(attempts) == 3
     assert len(sleeps) == 2
+    assert len(remaining_allowances) == 3
+    # Assert subsequent remaining allowances strictly shrink through missing readbacks and poll sleeps
+    assert remaining_allowances[0] > remaining_allowances[1] > remaining_allowances[2]
+    assert all(r > 0 for r in remaining_allowances)
     assert all(call["runtime"] is runtime for call in attempts)
     assert receipt["authoritative_readback"]["registered"] is True
     assert receipt["authoritative_readback"]["job_id"] == "job-first-evaluation-delayed"
@@ -576,6 +601,38 @@ def test_required_cron_registration_rejects_late_success_after_deadline_expired(
         )
 
 
+def test_required_cron_registration_refuses_blind_mutation_when_deadline_exceeded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _MustNotCallRegistrar:
+        def register_for_persona(self, *args: Any, **kwargs: Any) -> Any:
+            raise AssertionError(
+                "register_for_persona must not be called when deadline exceeded (blind mutation forbidden)"
+            )
+
+    fake_module = SimpleNamespace(
+        PersonaCronRegistrar=_MustNotCallRegistrar,
+        DEFAULT_HTTP_RESPONSE_ALLOWANCE_SECONDS=2.0,
+    )
+    monkeypatch.setitem(sys.modules, "persona_cron_registrar", fake_module)
+    monkeypatch.setitem(
+        sys.modules, "services.control_plane.cron.persona_cron_registrar", fake_module
+    )
+
+    now = 5000.0
+    monkeypatch.setattr(personas_service.time, "monotonic", lambda: now)
+
+    with pytest.raises(TimeoutError, match="schedule deadline exceeded before cron registration"):
+        personas_service._register_persona_cron_required(
+            PERSONA_ID,
+            "pool-dynamic-alpha",
+            PERSONA_CAPITAL_BINDING_ID,
+            runtime_id=RUNTIME_ID,
+            runtime_binding_id=RUNTIME_BINDING_ID,
+            deadline=now - 0.1,
+        )
+
+
 def test_remove_persona_cron_required_fails_closed_without_typeerror_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -679,7 +736,6 @@ def test_coordinate_persona_create_propagates_monotonic_deadline_with_response_r
     monotonic_start = 5000.0
     monkeypatch.setattr(personas_service.time, "monotonic", lambda: monotonic_start)
     monkeypatch.setenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")
-    monkeypatch.setenv("PANTHEON_PERSONA_SCHEDULE_RESPONSE_RESERVE_SECONDS", "2.0")
 
     active, _, _, _ = personas_service._coordinate_persona_create(
         record,
@@ -688,10 +744,21 @@ def test_coordinate_persona_create_propagates_monotonic_deadline_with_response_r
     )
 
     assert len(captured_deadline) == 1
-    # Expected remaining: 180s (attempt allowance) - 10s (elapsed) - 2.0s (response reserve) = 168.0s
+    # Expected remaining: 180s (attempt allowance) - 10s (elapsed via _parse_rfc3339) - 2.0s (fixed response allowance) = 168.0s
     # Expected deadline: monotonic_start (5000.0) + 168.0s = 5168.0s
     assert captured_deadline[0] == pytest.approx(5000.0 + 168.0, abs=1.0)
     assert captured_deadline[0] > 5000.0
+
+    # Verify _parse_rfc3339 handles datetime object input cleanly
+    captured_deadline.clear()
+    record.created_at = datetime.now(timezone.utc) - timedelta(seconds=20.0)
+    active, _, _, _ = personas_service._coordinate_persona_create(
+        record,
+        payload=record.request_payload,
+        owner="test-owner",
+    )
+    # Expected remaining: 180s - 20s - 2.0s = 158.0s -> 5158.0s
+    assert captured_deadline[0] == pytest.approx(5000.0 + 158.0, abs=1.0)
 
 
 def _evaluate(
