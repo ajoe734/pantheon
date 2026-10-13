@@ -748,7 +748,7 @@ fi
 # depend on the shared dev lease.
 verify_dev_environment_lease_contract
 
-if [[ "${ARTIFACT_RESTORE:-false}" != "true" && "${ARTIFACT_VERIFY:-false}" != "true" ]]; then
+if [[ "${ARTIFACT_VERIFY:-false}" != "true" ]]; then
   if [[ "$DEPLOY_ENV" == "dev" && "$DEV_BFF_AUTH_MODE" == "strict" && "$DEV_BFF_AUTH_STUB" != "true" ]]; then
     if [[ -z "$DEV_BFF_JWT_SECRET" || -z "$DEV_BFF_OIDC_CLIENT_ID" || -z "$DEV_BFF_OIDC_CLIENT_SECRET" ]]; then
       error "strict auth cutover requested (DEV_BFF_AUTH_MODE=strict, DEV_BFF_AUTH_STUB=${DEV_BFF_AUTH_STUB}) but no governed verifier/dev-login credentials are configured (DEV_BFF_JWT_SECRET, DEV_BFF_OIDC_CLIENT_ID, DEV_BFF_OIDC_CLIENT_SECRET); refusing to deploy a BFF where every protected route would be unusable"
@@ -920,6 +920,8 @@ ssh_bash() {
     command_prefix+=" ${artifact_variable}=$(shell_quote "${!artifact_variable:-}")"
   done
   command_prefix+=" GITHUB_EVENT_NAME=$(shell_quote "${GITHUB_EVENT_NAME:-${PANTHEON_DEV_EVENT_NAME:-}}")"
+  command_prefix+=" GITHUB_RUN_ID=$(shell_quote "${GITHUB_RUN_ID:-}")"
+  command_prefix+=" GITHUB_RUN_ATTEMPT=$(shell_quote "${GITHUB_RUN_ATTEMPT:-}")"
   command_prefix+=" PANTHEON_GITHUB_TOKEN=$(shell_quote "${GITHUB_TOKEN:-}")"
   command_prefix+=" PANTHEON_ALLOW_DIRTY_DEPLOY=$(shell_quote "$ALLOW_DIRTY")"
   command_prefix+=" PANTHEON_ALLOW_EXAMPLE_ENV=$(shell_quote "$ALLOW_EXAMPLE_ENV")"
@@ -3927,10 +3929,6 @@ import sys
 env = os.environ
 candidate_compose = env.get("PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE") or env.get("PANTHEON_DEV_ARTIFACT_COMPOSE_FILE")
 if not candidate_compose:
-    remote_dir = env.get("PANTHEON_REMOTE_DIR")
-    if remote_dir:
-        candidate_compose = str(pathlib.Path(remote_dir) / "docker-compose.yml")
-if not candidate_compose:
     sys.exit("unable to resolve explicit candidate Compose path: missing path")
 
 path = pathlib.Path(candidate_compose)
@@ -4379,7 +4377,7 @@ if [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" == true || "${PANTHEON_DEV_ARTIF
 
   if [[ "${artifact_operation}" == "restore" || "${artifact_operation}" == "restore-final" ]]; then
     if [[ -n "${PANTHEON_DEV_ARTIFACT_SEALED_FROM_JSON:-}" && -n "${PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON:-}" ]]; then
-      fe_script="${PANTHEON_DEV_FE_DEPLOY_SCRIPT:-${PANTHEON_EXECUTE_PLANS_ROOT:-${HOME:-/home/chloe_ong_dev_cctech_support_com}/code/execute-plans}/scripts/deploy-dev-vm.sh}"
+      fe_script="${PANTHEON_DEV_FE_DEPLOY_SCRIPT:-${PANTHEON_EXECUTE_PLANS_ROOT:-${HOME:-/home/chloe_ong_dev_cctech_support_com}/actions-runner-execute-plans/_work/execute-plans/execute-plans}/scripts/deploy-dev-vm.sh}"
       if [[ ! -f "${fe_script}" || -L "${fe_script}" ]]; then
         error "FE deploy script missing or unsafe: ${fe_script}"
       fi
@@ -4393,11 +4391,9 @@ if [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" == true || "${PANTHEON_DEV_ARTIF
       else
         info "invoking FE owner restore-sealed before BE ${artifact_operation}"
         fe_lease_owner="${PANTHEON_DEPLOY_LEASE_OWNER:-pantheon-dev-deploy}"
-        if [[ ! "${fe_lease_owner}" =~ ^(pantheon-release-controller|pantheon-dev-deploy|parent-controller|pantheon-proof-watchdog|pantheon-fe-deploy)$ ]]; then
-          fe_lease_owner="pantheon-dev-deploy"
-        fi
         fe_lease_epoch="${PANTHEON_DEPLOY_LEASE_EPOCH:-1}"
-        fe_lease_run_id="${PANTHEON_DEPLOY_LEASE_RUN_ID:-${GITHUB_RUN_ID:-${PANTHEON_DEV_ARTIFACT_RUN_ID:-0}}}"
+        fe_lease_run_id="${PANTHEON_DEPLOY_LEASE_RUN_ID:-${GITHUB_RUN_ID:-}}"
+        fe_lease_delegated="${PANTHEON_DEPLOY_LEASE_DELEGATED:-true}"
         fe_event_name="${GITHUB_EVENT_NAME:-${PANTHEON_DEV_EVENT_NAME:-push}}"
 
         PANTHEON_DEV_FE_ROOT="${PANTHEON_DEV_FE_ROOT:-/var/www/pantheon-dev-fe}" \
@@ -4408,7 +4404,7 @@ if [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" == true || "${PANTHEON_DEV_ARTIF
         PANTHEON_DEPLOY_REAL_WRITES=true \
         PANTHEON_DEPLOY_ALLOW_DEV_STUB_WRITES=false \
         PANTHEON_DEPLOY_ACTION=restore-sealed \
-        PANTHEON_DEPLOY_LEASE_DELEGATED=true \
+        PANTHEON_DEPLOY_LEASE_DELEGATED="${fe_lease_delegated}" \
         PANTHEON_DEPLOY_LEASE_OWNER="${fe_lease_owner}" \
         PANTHEON_DEPLOY_LEASE_EPOCH="${fe_lease_epoch}" \
         PANTHEON_DEPLOY_LEASE_RUN_ID="${fe_lease_run_id}" \

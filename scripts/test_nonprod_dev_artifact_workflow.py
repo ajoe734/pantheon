@@ -260,11 +260,49 @@ def test_coordinate_dev_release_verifies_and_seals_final_candidate():
     assert verify_step["env"]["PANTHEON_ROLLBACK_EVIDENCE_OUT"] == "${{ env.RELEASE_EVIDENCE_DIR }}/candidate/candidate-frontend.json"
     assert verify_step["env"]["PANTHEON_ENVIRONMENT_LEASE_TOKEN"] == "${{ secrets.COORDINATION_REPO_TOKEN }}"
 
-    assert "PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE" in verify_step["env"]
+    assert verify_step["env"]["PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE"] == "${{ format('{0}/dev-root/docker-compose.yml', vars.DEV_DEPLOY_WORKTREE_ROOT) }}"
     assert verify_step["env"]["DEV_BFF_AUTH_MODE"] == "strict"
     assert verify_step["env"]["DEV_BFF_JWT_SECRET"] == "${{ secrets.DEV_BFF_JWT_SECRET }}"
     assert verify_step["env"]["DEV_BFF_OIDC_CLIENT_ID"] == "${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}"
     assert verify_step["env"]["DEV_BFF_OIDC_CLIENT_SECRET"] == "${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}"
+    assert verify_step["env"]["DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID"] == "${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}"
+    assert verify_step["env"]["DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET"] in (
+        "${{ secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET }}",
+        "${{ secrets['DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET'] }}",
+    )
     assert verify_step["env"]["DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN"] == "${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}"
+    assert "PANTHEON_EXECUTE_PLANS_ROOT" in verify_step["env"]
+    assert "PANTHEON_DEV_FE_DEPLOY_SCRIPT" in verify_step["env"]
+
+
+def test_coordinate_dev_release_roundtrip_opt_in_steps():
+    on_section = WORKFLOW.get(True) or WORKFLOW.get("on")
+    inputs = on_section["workflow_dispatch"]["inputs"]
+    assert "run_exact_artifact_roundtrip" in inputs
+    assert inputs["run_exact_artifact_roundtrip"]["type"] == "boolean"
+    assert inputs["run_exact_artifact_roundtrip"]["default"] is False
+
+    ids = [item.get("id") for item in COORDINATE["steps"]]
+    assert "roundtrip_baseline_restore" in ids
+    assert "roundtrip_final_return" in ids
+    assert ids.index("final_artifact_verify") < ids.index("roundtrip_baseline_restore") < ids.index("roundtrip_final_return") < ids.index("compensation")
+
+    base_step = step(COORDINATE, "roundtrip_baseline_restore")
+    assert "inputs.run_exact_artifact_roundtrip" in base_step["if"]
+    assert "steps.final_artifact_verify.outcome == 'success'" in base_step["if"]
+    assert base_step["env"]["PANTHEON_DEV_ARTIFACT_OPERATION"] == "restore"
+    assert base_step["env"]["PANTHEON_DEV_ARTIFACT_TARGET"] == "baseline"
+    assert "roundtrip-baseline-readback.json" in base_step["env"]["PANTHEON_ROLLBACK_EVIDENCE_OUT"]
+
+    final_step = step(COORDINATE, "roundtrip_final_return")
+    assert "inputs.run_exact_artifact_roundtrip" in final_step["if"]
+    assert "steps.roundtrip_baseline_restore.outcome == 'success'" in final_step["if"]
+    assert final_step["env"]["PANTHEON_DEV_ARTIFACT_OPERATION"] == "restore-final"
+    assert final_step["env"]["PANTHEON_DEV_ARTIFACT_TARGET"] == "final"
+    assert "roundtrip-final-readback.json" in final_step["env"]["PANTHEON_ROLLBACK_EVIDENCE_OUT"]
+
+    comp_step = step(COORDINATE, "compensation")
+    assert "steps.roundtrip_baseline_restore.outcome != 'success'" in comp_step["if"]
+    assert "steps.roundtrip_final_return.outcome != 'success'" in comp_step["if"]
 
 

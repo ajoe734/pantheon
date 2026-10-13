@@ -221,19 +221,8 @@ def load_evidence(env: dict[str, str], provenance: str) -> dict:
         candidate_compose = (
             env.get(ENV_PREFIX + "CANDIDATE_COMPOSE_FILE")
             or env.get("CANDIDATE_COMPOSE_FILE")
-            or env.get(ENV_PREFIX + "COMPOSE_FILE")
-            or env.get("COMPOSE_FILE")
             or ""
         )
-        if not candidate_compose:
-            for candidate_dir in (
-                env.get("DEV_REMOTE_DIR"),
-                env.get("PANTHEON_REMOTE_DIR"),
-                Path(env["PANTHEON_DEPLOY_WORKTREE_ROOT"]) / "dev-root" if env.get("PANTHEON_DEPLOY_WORKTREE_ROOT") else None,
-            ):
-                if candidate_dir:
-                    candidate_compose = str(Path(candidate_dir) / "docker-compose.yml")
-                    break
         if not candidate_compose:
             raise capture.CaptureError("candidate compose file is required for final verification")
         exports[ENV_PREFIX + "COMPOSE_FILE"] = candidate_compose
@@ -260,6 +249,18 @@ def load_evidence(env: dict[str, str], provenance: str) -> dict:
                 to_seal = baseline_fe
             exports[ENV_PREFIX + "SEALED_FROM_JSON"] = json.dumps(from_seal, sort_keys=True)
             exports[ENV_PREFIX + "SEALED_TO_JSON"] = json.dumps(to_seal, sort_keys=True)
+    for fe_var in (
+        "PANTHEON_DEV_FE_DEPLOY_SCRIPT",
+        "PANTHEON_EXECUTE_PLANS_ROOT",
+        "PANTHEON_DEV_FE_ROOT",
+        "PANTHEON_DEV_FE_RELEASES_DIR",
+        "PANTHEON_DEPLOY_LEASE_OWNER",
+        "PANTHEON_DEPLOY_LEASE_EPOCH",
+        "PANTHEON_DEPLOY_LEASE_RUN_ID",
+        "PANTHEON_DEPLOY_LEASE_DELEGATED",
+    ):
+        if env.get(fe_var):
+            exports[fe_var] = env[fe_var]
     return {"identity": identity, "baseline": baseline, "candidate": receipt, "exports": exports,
             "provenance": provenance, "baseline_actions_artifact": baseline_artifact,
             "candidate_actions_artifact": candidate_artifact, "target": target, "fe_seal": fe_seal}
@@ -384,6 +385,9 @@ def compensation_evidence(env: dict[str, str], provenance: str, readback_path: P
     if failure_log is None and operation == "restore-final":
         rejected_pair = None
         restored_pair = {"backend_sha": identity["candidate_backend_sha"], "frontend_sha": identity["candidate_frontend_sha"]}
+    elif failure_log is None and operation == "restore":
+        rejected_pair = None
+        restored_pair = {"backend_sha": identity["previous_backend_sha"], "frontend_sha": identity["previous_frontend_sha"]}
     elif operation == "restore-final":
         rejected_pair = {"backend_sha": identity["previous_backend_sha"], "frontend_sha": identity["previous_frontend_sha"]}
         restored_pair = {"backend_sha": identity["candidate_backend_sha"], "frontend_sha": identity["candidate_frontend_sha"]}

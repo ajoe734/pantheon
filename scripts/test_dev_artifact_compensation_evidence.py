@@ -70,6 +70,7 @@ def case(tmp_path, monkeypatch):
     env = {"TARGET_ENV": "dev", "GCP_DEPLOY_PROJECT_ID": "pantheon-dev-20260902", "DEV_VM": "pantheon-dev-deploy",
            "DEV_ZONE": "asia-east1-b", "RUNNER_TEMP": str(tmp_path), "PANTHEON_RELEASE_REPO_ROOT": str(tmp_path),
            "DEV_REMOTE_DIR": "/home/chloe_ong_dev_cctech_support_com/pantheon",
+           e.ENV_PREFIX + "CANDIDATE_COMPOSE_FILE": "/home/chloe_ong_dev_cctech_support_com/pantheon/docker-compose.yml",
            "GITHUB_RUN_ID": "123456", "GITHUB_RUN_ATTEMPT": "2", "GITHUB_REPOSITORY": "ajoe734/pantheon",
            "PANTHEON_RELEASE_CANDIDATE_ID": "c" * 64, "PANTHEON_FAILED_BACKEND_SHA": "e" * 40,
            "PANTHEON_FAILED_FRONTEND_SHA": "f" * 40, "PANTHEON_ROLLBACK_BACKEND_SHA": "a" * 40,

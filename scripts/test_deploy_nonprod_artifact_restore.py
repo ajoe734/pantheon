@@ -726,6 +726,10 @@ def test_fe_owner_restore_sealed_invocation(fixture, tmp_path):
         '    echo "Deployment rejected: unauthorized lease owner \'${owner}\'." >&2\n'
         '    exit 2\n'
         'fi\n'
+        'if [[ "${PANTHEON_DEPLOY_LEASE_DELEGATED:-}" != "true" ]]; then\n'
+        '    echo "Deployment rejected: non-delegated lease." >&2\n'
+        '    exit 2\n'
+        'fi\n'
         'python3 - <<\'PY\'\n'
         'import json, os, sys\n'
         'from_doc = json.loads(os.environ.get("PANTHEON_DEPLOY_SEALED_FROM_JSON", "{}"))\n'
@@ -770,7 +774,7 @@ def test_fe_owner_restore_sealed_invocation(fixture, tmp_path):
         "PANTHEON_DEV_ARTIFACT_SEALED_FROM_JSON": json.dumps(from_seal),
         "PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON": json.dumps(to_seal),
         "PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID": "11111111-1111-4111-8111-111111111111",
-        "PANTHEON_DEPLOY_LEASE_OWNER": "11111111-1111-4111-8111-111111111111",
+        "PANTHEON_DEPLOY_LEASE_OWNER": "pantheon-dev-deploy",
     })
 
     result = _run(_remote(), env)
@@ -801,6 +805,131 @@ def test_fe_owner_restore_sealed_invocation(fixture, tmp_path):
     events = _events(recorder)
     assert len(events) == 1
     assert events[0]["command"] == "driver"
+
+
+def test_fe_owner_restore_sealed_rejects_unauthorized_owner(fixture, tmp_path):
+    env, recorder, driver, library = fixture
+    fe_script = tmp_path / "deploy-dev-vm.sh"
+    fe_script.write_text(
+        '#!/usr/bin/env bash\n'
+        'set -euo pipefail\n'
+        'AUTHORIZED_LEASE_OWNERS_REGEX="^(pantheon-release-controller|pantheon-dev-deploy|parent-controller|pantheon-proof-watchdog|pantheon-fe-deploy)$"\n'
+        'owner="${PANTHEON_DEPLOY_LEASE_OWNER:-}"\n'
+        'if [[ ! "${owner}" =~ ${AUTHORIZED_LEASE_OWNERS_REGEX} ]]; then\n'
+        '    echo "Deployment rejected: unauthorized lease owner \'${owner}\'." >&2\n'
+        '    exit 2\n'
+        'fi\n'
+        'exit 0\n'
+    )
+    fe_script.chmod(0o755)
+
+    from_seal = {
+        "target": "/var/www/pantheon-dev-fe-releases/candidate",
+        "dist_sha256": "4" * 64,
+        "manifest_sha256": "3" * 64,
+        "frontend_sha": "e" * 40,
+        "backend_sha": SHA,
+    }
+    to_seal = {
+        "target": "/var/www/pantheon-dev-fe-releases/baseline",
+        "dist_sha256": "5" * 64,
+        "manifest_sha256": "6" * 64,
+        "frontend_sha": "f" * 40,
+        "backend_sha": PRIOR,
+    }
+
+    env.update({
+        "PANTHEON_DEV_FE_DEPLOY_SCRIPT": str(fe_script),
+        "PANTHEON_DEV_ARTIFACT_SEALED_FROM_JSON": json.dumps(from_seal),
+        "PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON": json.dumps(to_seal),
+        "PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID": "11111111-1111-4111-8111-111111111111",
+        "PANTHEON_DEPLOY_LEASE_OWNER": "11111111-1111-4111-8111-111111111111",
+    })
+
+    result = _run(_remote(), env)
+    assert result.returncode != 0
+    assert "unauthorized lease owner" in result.stderr
+
+
+def test_fe_owner_restore_sealed_rejects_non_delegated_lease(fixture, tmp_path):
+    env, recorder, driver, library = fixture
+    fe_script = tmp_path / "deploy-dev-vm.sh"
+    fe_script.write_text(
+        '#!/usr/bin/env bash\n'
+        'set -euo pipefail\n'
+        'if [[ "${PANTHEON_DEPLOY_LEASE_DELEGATED:-}" != "true" ]]; then\n'
+        '    echo "Deployment rejected: non-delegated lease." >&2\n'
+        '    exit 2\n'
+        'fi\n'
+        'exit 0\n'
+    )
+    fe_script.chmod(0o755)
+
+    from_seal = {
+        "target": "/var/www/pantheon-dev-fe-releases/candidate",
+        "dist_sha256": "4" * 64,
+        "manifest_sha256": "3" * 64,
+        "frontend_sha": "e" * 40,
+        "backend_sha": SHA,
+    }
+    to_seal = {
+        "target": "/var/www/pantheon-dev-fe-releases/baseline",
+        "dist_sha256": "5" * 64,
+        "manifest_sha256": "6" * 64,
+        "frontend_sha": "f" * 40,
+        "backend_sha": PRIOR,
+    }
+
+    env.update({
+        "PANTHEON_DEV_FE_DEPLOY_SCRIPT": str(fe_script),
+        "PANTHEON_DEV_ARTIFACT_SEALED_FROM_JSON": json.dumps(from_seal),
+        "PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON": json.dumps(to_seal),
+        "PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID": "11111111-1111-4111-8111-111111111111",
+        "PANTHEON_DEPLOY_LEASE_OWNER": "pantheon-dev-deploy",
+        "PANTHEON_DEPLOY_LEASE_DELEGATED": "false",
+    })
+
+    result = _run(_remote(), env)
+    assert result.returncode != 0
+    assert "non-delegated lease" in result.stderr
+
+
+def test_artifact_restore_retains_runtime_preflight_while_verify_bypasses(fixture, tmp_path):
+    from test_deploy_nonprod_vm import _setup_stubbed_dev_environment
+    fixture_env, *_ = fixture
+    env, _, _ = _setup_stubbed_dev_environment(tmp_path, sha=PRIOR, extra_env=fixture_env)
+    env.update({
+        "TARGET_ENV": "dev",
+        "DEV_BFF_AUTH_MODE": "strict",
+        "DEV_BFF_AUTH_STUB": "false",
+        "DEV_BFF_JWT_SECRET": "",
+        "DEV_BFF_OIDC_CLIENT_ID": "",
+        "DEV_BFF_OIDC_CLIENT_SECRET": "",
+    })
+    state_file = Path(env["PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE"])
+    state = json.loads(state_file.read_text())
+    state["leaseId"] = env["PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID"]
+    state["expectedBackendSha"] = PRIOR
+    state_file.write_text(json.dumps(state))
+
+    res_restore = subprocess.run([
+        str(SCRIPT),
+        "--environment", "dev",
+        "--component", "bff",
+        "--sha", PRIOR,
+        "--artifact-restore",
+    ], env=env, capture_output=True, text=True)
+    assert res_restore.returncode != 0
+    assert "strict auth cutover requested" in res_restore.stderr
+
+    res_verify = subprocess.run([
+        str(SCRIPT),
+        "--environment", "dev",
+        "--component", "bff",
+        "--sha", PRIOR,
+        "--artifact-verify",
+    ], env=env, capture_output=True, text=True)
+    assert "strict auth cutover requested" not in res_verify.stderr
 
 
 def test_full_cli_restore_final_connected_positive(fixture, tmp_path):
@@ -970,6 +1099,10 @@ def test_full_cli_restore_final_connected_positive(fixture, tmp_path):
         '    echo "Deployment rejected: unauthorized lease owner \'${owner}\'." >&2\n'
         '    exit 2\n'
         'fi\n'
+        'if [[ "${PANTHEON_DEPLOY_LEASE_DELEGATED:-}" != "true" ]]; then\n'
+        '    echo "Deployment rejected: non-delegated lease." >&2\n'
+        '    exit 2\n'
+        'fi\n'
         'python3 - <<\'PY\'\n'
         'import json, os, sys\n'
         'from_doc = json.loads(os.environ.get("PANTHEON_DEPLOY_SEALED_FROM_JSON", "{}"))\n'
@@ -1074,8 +1207,8 @@ def test_full_cli_restore_final_connected_positive(fixture, tmp_path):
         "RUNNER_TEMP": str(runner_temp),
         "PANTHEON_RELEASE_REPO_ROOT": str(repo_root),
         "DEV_REMOTE_DIR": str(tmp_path / "MUST_NOT_ACCESS_OWNER_CHECKOUT"),
-        "GITHUB_RUN_ID": run_id,
-        "GITHUB_RUN_ATTEMPT": attempt,
+        "GITHUB_RUN_ID": "987654321",
+        "GITHUB_RUN_ATTEMPT": "3",
         "PANTHEON_RELEASE_CANDIDATE_ID": candidate_id,
         "PANTHEON_FAILED_BACKEND_SHA": SHA,
         "PANTHEON_FAILED_FRONTEND_SHA": "e" * 40,
@@ -1117,7 +1250,7 @@ def test_full_cli_restore_final_connected_positive(fixture, tmp_path):
         f'payload = payload.replace({str(Path(CONTROLLER_ROOT).parent)!r}, {synth_parent!r})\n'
         'read_fd, write_fd = os.pipe()\n'
         'os.write(write_fd, b"fixture watchdog pulse")\n'
-        'remote_env = dict(os.environ)\n'
+        'remote_env = {"PATH": os.environ["PATH"], "HOME": os.environ.get("HOME", "/tmp"), "USER": "tester", "LANG": "C.UTF-8"}\n'
         'remote_env["PANTHEON_DEV_ARTIFACT_GUARD_CHANNEL_FD"] = str(read_fd)\n'
         'proc = subprocess.run(["bash", "-s"], input=payload, text=True, capture_output=False, env=remote_env, pass_fds=(read_fd,))\n'
         'sys.exit(proc.returncode)\n'
@@ -1140,11 +1273,16 @@ def test_full_cli_restore_final_connected_positive(fixture, tmp_path):
     data = json.loads(readback_out.read_text())
     assert data["schema_version"] == "pantheon.dev-artifact-readback.v1"
     assert data["operation"] == "restore-final"
+    assert data["identity"]["run_id"] == "12345"
+    assert data["identity"]["attempt"] == "2"
 
     events = _events(recorder)
     assert len(events) == 2
     assert events[0]["command"] == "fe_deploy"
     assert events[0]["action"] == "restore-sealed"
+    assert events[0]["owner"] == "pantheon-dev-deploy"
+    assert events[0]["delegated"] == "true"
+    assert events[0]["run_id"] == "987654321"
     assert events[1]["command"] == "driver"
     assert events[1]["operation"] == "restore-final"
     assert events[1]["args"]["--target"] == "final"
