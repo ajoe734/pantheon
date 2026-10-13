@@ -3234,6 +3234,346 @@ class TestPaperRuntimeObservabilityEnvelope(unittest.TestCase):
         self.assertNotIn("context_source", event["metadata"])
 
 
+class PaperTradeEpisodeCorrelationTest(unittest.TestCase):
+    def test_paper_ledger_assigns_and_retains_trade_episode_id_lifecycle(self):
+        events = []
+        algo = PaperExecutionAlgorithm(
+            initial_cash=100_000.0,
+            default_price=100.0,
+            event_sink=events.append,
+        )
+
+        # 1. Entry fill assigns new trade_episode_id
+        algo.MarketOrder("SPY", 10.0)
+        self.assertTrue(len(events) > 0)
+        fill1 = events[-1]
+        self.assertEqual(fill1.event_type, "paper_fill_simulated")
+        ep_id = fill1.metadata.get("trade_episode_id")
+        self.assertIsNotNone(ep_id)
+        self.assertEqual(algo.open_episodes.get("SPY"), ep_id)
+
+        # 2. Scale-in retains same trade_episode_id
+        algo.MarketOrder("SPY", 5.0)
+        fill2 = events[-1]
+        self.assertEqual(fill2.metadata.get("trade_episode_id"), ep_id)
+        self.assertEqual(algo.open_episodes.get("SPY"), ep_id)
+
+        # 3. Partial scale-out retains same trade_episode_id
+        algo.MarketOrder("SPY", -5.0)
+        fill3 = events[-1]
+        self.assertEqual(fill3.metadata.get("trade_episode_id"), ep_id)
+        self.assertEqual(algo.open_episodes.get("SPY"), ep_id)
+
+        # 4. Exact flat liquidate carries trade_episode_id and clears open episode
+        algo.Liquidate("SPY")
+        fill4 = events[-1]
+        self.assertEqual(fill4.metadata.get("trade_episode_id"), ep_id)
+        self.assertNotIn("SPY", algo.open_episodes)
+
+        # 5. Subsequent new entry assigns fresh distinct trade_episode_id
+        algo.MarketOrder("SPY", 20.0)
+        fill5 = events[-1]
+        new_ep_id = fill5.metadata.get("trade_episode_id")
+        self.assertIsNotNone(new_ep_id)
+        self.assertNotEqual(new_ep_id, ep_id)
+        self.assertEqual(algo.open_episodes.get("SPY"), new_ep_id)
+
+    def test_paper_ledger_persistence_and_restart_restores_open_episodes(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_path = Path(tmpdir) / "paper_ledger.json"
+            algo = PaperExecutionAlgorithm(
+                initial_cash=100_000.0,
+                default_price=100.0,
+                state_path=str(state_path),
+            )
+            algo.MarketOrder("SPY", 10.0)
+            algo.MarketOrder("QQQ", 5.0)
+
+            spy_ep = algo.open_episodes["SPY"]
+            qqq_ep = algo.open_episodes["QQQ"]
+
+            # Verify persisted file on disk has open_episodes
+            payload = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertIn("open_episodes", payload)
+            self.assertEqual(payload["open_episodes"]["SPY"], spy_ep)
+            self.assertEqual(payload["open_episodes"]["QQQ"], qqq_ep)
+
+            # Restart from persisted state
+            algo2 = PaperExecutionAlgorithm(
+                initial_cash=100_000.0,
+                default_price=100.0,
+                state_path=str(state_path),
+            )
+            self.assertEqual(algo2.open_episodes.get("SPY"), spy_ep)
+            self.assertEqual(algo2.open_episodes.get("QQQ"), qqq_ep)
+            self.assertEqual(len(algo2.open_episodes), 2)
+
+    def test_legacy_ledger_without_provenance_loads_cleanly(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            legacy_path = Path(tmpdir) / "legacy_ledger.json"
+            legacy_payload = {
+                "schema_version": "paper_performance_ledger.v1",
+                "binding_id": "binding-legacy",
+                "initial_cash": 100_000.0,
+                "cash": 99_000.0,
+                "fill_count": 1,
+                "ledger_started_at": "2026-07-14T10:00:00Z",
+                "first_fill_at": "2026-07-14T10:01:00Z",
+                "last_fill_at": "2026-07-14T10:01:00Z",
+                "performance_window": {},
+                "holdings": {"SPY": 10.0},
+                "execution_prices": {"SPY": 100.0},
+            }
+            legacy_path.write_text(json.dumps(legacy_payload), encoding="utf-8")
+
+            events = []
+            algo = PaperExecutionAlgorithm(
+                initial_cash=100_000.0,
+                default_price=100.0,
+                state_path=str(legacy_path),
+                event_sink=events.append,
+            )
+            # Legacy ledger without provenance must load without error
+            self.assertIsNone(algo._state_error)
+            self.assertEqual(algo.Portfolio["SPY"].Quantity, 10.0)
+            # Must cleanly default to empty without inventing fake open episodes
+            self.assertEqual(algo.open_episodes, {})
+
+            # Reduce fill on unprovenanced legacy position emits no trade_episode_id
+            algo.MarketOrder("SPY", -5.0)
+            self.assertEqual(algo.Portfolio["SPY"].Quantity, 5.0)
+            self.assertEqual(algo.open_episodes, {})
+            reduce_fill = [e for e in events if e.event_type == "paper_fill_simulated"][-1]
+            self.assertNotIn("trade_episode_id", reduce_fill.metadata)
+
+            # Flattening fill on unprovenanced legacy position emits no trade_episode_id
+            algo.MarketOrder("SPY", -5.0)
+            self.assertEqual(algo.Portfolio["SPY"].Quantity, 0.0)
+            self.assertEqual(algo.open_episodes, {})
+            flat_fill = [e for e in events if e.event_type == "paper_fill_simulated"][-1]
+            self.assertNotIn("trade_episode_id", flat_fill.metadata)
+
+    def test_paper_ledger_position_reversal_allocates_close_and_open_episodes(self):
+        events = []
+        algo = PaperExecutionAlgorithm(
+            initial_cash=100_000.0,
+            default_price=100.0,
+            event_sink=events.append,
+        )
+
+        # 1. Entry long +10
+        algo.MarketOrder("SPY", 10.0)
+        fills = [e for e in events if e.event_type == "paper_fill_simulated"]
+        self.assertEqual(len(fills), 1)
+        old_ep = fills[0].metadata.get("trade_episode_id")
+        self.assertIsNotNone(old_ep)
+        self.assertEqual(algo.open_episodes.get("SPY"), old_ep)
+        self.assertEqual(fills[0].quantity, 10.0)
+        self.assertEqual(fills[0].metadata["position_quantity"], 10.0)
+
+        # 2. Reversal order -20 (reverses position from +10 to -10)
+        algo.MarketOrder("SPY", -20.0)
+        fills_after = [e for e in events if e.event_type == "paper_fill_simulated"]
+        # Exactly one raw fill event per committed fill (no duplicate raw events / no raw split)
+        self.assertEqual(len(fills_after), 2)
+
+        rev_fill = fills_after[1]
+        self.assertEqual(rev_fill.quantity, -20.0)
+        self.assertEqual(rev_fill.metadata["position_quantity"], -10.0)
+        new_ep = rev_fill.metadata.get("trade_episode_id")
+        self.assertIsNotNone(new_ep)
+        self.assertEqual(rev_fill.metadata["reversal"]["closed_episode_id"], old_ep)
+        self.assertEqual(rev_fill.metadata["reversal"]["close_quantity"], -10.0)
+        self.assertEqual(rev_fill.metadata["reversal"]["open_quantity"], -10.0)
+
+        # Ledger state reflects new active episode and short holding
+        self.assertEqual(algo.open_episodes.get("SPY"), new_ep)
+        self.assertEqual(algo.Portfolio["SPY"].Quantity, -10.0)
+
+        # Projection reflects closed old episode and open new episode from single reversal event
+        from services.telemetry.trade_episode_projection import TradeEpisodeProjectionStore
+        store = TradeEpisodeProjectionStore()
+        store.project_event({
+            "event_id": str(uuid.uuid4()),
+            "event_type": fills[0].event_type,
+            "trade_episode_id": old_ep,
+            "metrics": {"fill_quantity": fills[0].quantity, "fill_price": fills[0].fill_price},
+            "metadata": fills[0].metadata,
+        })
+        self.assertEqual(store.get(old_ep)["status"], "open")
+
+        store.project_event({
+            "event_id": str(uuid.uuid4()),
+            "event_type": rev_fill.event_type,
+            "trade_episode_id": new_ep,
+            "metrics": {"fill_quantity": rev_fill.quantity, "fill_price": rev_fill.fill_price},
+            "metadata": rev_fill.metadata,
+        })
+        self.assertEqual(store.get(old_ep)["status"], "closed")
+        self.assertEqual(store.get(new_ep)["status"], "open")
+        self.assertEqual(store.get(new_ep)["side"], "short")
+        self.assertEqual(store.get(new_ep)["filled_quantity"], 10.0)
+
+    def test_paper_full_reduce_reverse_flat_lifecycle_and_projection(self):
+        import asyncio
+        import types
+        from services.execution.lean_runtime.signal_producer import build_decision_signals
+        from services.telemetry.ingest_svc import TelemetryIngestService
+        from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+        from services.telemetry.trade_episode_projection import TradeEpisodeProjectionStore
+
+        async def scenario():
+            schema_path = str(Path(__file__).resolve().parents[2] / "telemetry" / "telemetry_event.schema.json")
+            known_binding_id = str(uuid.uuid4())
+
+            def _known_binding():
+                return types.SimpleNamespace(
+                    binding_id=known_binding_id, runtime_id="rt-paper-test", capital_pool_id="pool-paper-test",
+                    artifact_id="art-test", artifact_version="1.0.0", plan_id="plan-test",
+                    persona_capital_binding_id="pcb-test", deployment_mode="paper", execution_mode="paper",
+                    effective_at="2026-01-01T00:00:00Z", retired_at=None,
+                )
+
+            class _StubBindingStore:
+                def get_binding(self, binding_id: str):
+                    if binding_id == known_binding_id: return _known_binding()
+                    return None
+
+            class _FakeBindingResolver:
+                def resolve(self):
+                    b = _known_binding()
+                    return {
+                        "binding_id": b.binding_id, "runtime_id": b.runtime_id, "capital_pool_id": b.capital_pool_id,
+                        "artifact_id": b.artifact_id, "artifact_version": b.artifact_version, "plan_id": b.plan_id,
+                        "persona_capital_binding_id": b.persona_capital_binding_id, "deployment_mode": b.deployment_mode,
+                        "execution_mode": b.execution_mode, "engine_bridge_repo": "ajoe734/pantheon-lean.git",
+                        "engine_bridge_path": "pantheon/lean", "engine_bridge_commit": "abc1234",
+                        "runtime_adapter_version": "0.1.0", "context_source": "launch_manifest",
+                    }
+
+            class _FakeRuntimeManagerClient:
+                def __init__(self, bindings): self._bindings = bindings
+                def list_bindings(self): return list(self._bindings)
+                def heartbeat(self, *a, **k): return None
+
+            captured = []
+            class CapturingEmitter(RuntimeTelemetryEmitter):
+                def emit_payload(self, payload):
+                    captured.append(payload)
+                    return True
+
+            identity = RuntimeIdentity.from_env({
+                "PANTHEON_RUNTIME_ROLE": "paper", "PANTHEON_RUNTIME_MODE": "paper",
+                "PANTHEON_RUNTIME_ID": "rt-paper-test", "PANTHEON_WORKSPACE_REF": "ws-test",
+                "PANTHEON_AUTH_PROFILE_REF": "prof-test", "PANTHEON_PERSONA_ID": "persona-test",
+                "PANTHEON_SESSION_ID": "session-test", "PANTHEON_TRACE_ID": str(uuid.uuid4()),
+                "PANTHEON_REQUEST_ID": "req-test",
+            })
+
+            summary_store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+            ingest_svc = TelemetryIngestService(
+                schema_path=schema_path,
+                binding_store=_StubBindingStore(),
+                runtime_summary_store=summary_store,
+                batch_size=50,
+                batch_interval=0.01,
+            )
+            await ingest_svc.start()
+            episode_store = TradeEpisodeProjectionStore()
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                outbox_path = str(Path(tmpdir) / "outbox.json")
+                with patch.dict(os.environ, {"PANTHEON_LIFECYCLE_OUTBOX_PATH": outbox_path}):
+                    emitter = CapturingEmitter(identity, _FakeBindingResolver())
+                    service = PaperRuntimeService(
+                        store=InMemoryPendingSignalStore(),
+                        identity=identity,
+                        runtime_manager_client=_FakeRuntimeManagerClient([{"binding_id": known_binding_id, "runtime_id": "rt-paper-test", "capital_pool_id": "pool-paper-test", "status": "active"}]),
+                        telemetry_emitter=emitter,
+                        poll_interval_seconds=3600,
+                    )
+
+                    steps = [
+                        ("step1", 10.0, "BUY", "LONG"),
+                        ("step2", -5.0, "SELL", "LONG"),
+                        ("step3", -15.0, "SELL", "SHORT"),
+                        ("step4", 10.0, "BUY", "SHORT"),
+                    ]
+
+                    episodes_seen = []
+                    for suffix, qty, action, direction in steps:
+                        [sig] = build_decision_signals({
+                            "decision_id": f"dec-{suffix}", "signal_id": f"sig-{suffix}",
+                            "strategy_id": "strategy-paper", "timestamp": "2026-05-01T00:00:00Z",
+                            "tenant_id": "tenant-paper", "environment": "paper",
+                            "symbol": "SPY", "action": action, "direction": direction,
+                            "quantity": abs(qty), "quantity_type": "SHARES",
+                            "run_id": f"run-{suffix}",
+                        }, binding_id=known_binding_id, runtime_id="rt-paper-test")
+
+                        service._algo.RecordSignalProcessed(sig)
+                        service._algo.SetCurrentSignalContext({
+                            "signal_id": sig["signal_id"], "strategy_id": sig["strategy_id"],
+                            "run_id": sig["run_id"], "binding_id": sig["binding_id"],
+                            "correlation_envelope": sig["correlation_envelope"],
+                        })
+                        before = len(captured)
+                        service._algo.MarketOrder("SPY", qty)
+                        step_events = captured[before:]
+
+                        for ev in step_events:
+                            ok = await ingest_svc.ingest(ev)
+                            self.assertTrue(ok, f"Schema validation failed for {ev.get('event_type')}")
+                            ep_id = ev.get("metadata", {}).get("trade_episode_id")
+                            if ep_id and ep_id not in episodes_seen:
+                                episodes_seen.append(ep_id)
+                            episode_store.project_event(ev)
+
+                        if suffix == "step1":
+                            p1 = episode_store.get(episodes_seen[0])
+                            self.assertEqual(p1["status"], "open")
+                            self.assertEqual(p1["side"], "long")
+                            self.assertEqual(p1["filled_quantity"], 10.0)
+                            self.assertEqual(p1["remaining_quantity"], 10.0)
+                            self.assertEqual(len(p1["position_snapshot_refs"]), 1)
+                        elif suffix == "step2":
+                            p1 = episode_store.get(episodes_seen[0])
+                            self.assertEqual(p1["status"], "reducing")
+                            self.assertEqual(p1["side"], "long")
+                            self.assertEqual(p1["filled_quantity"], 10.0)
+                            self.assertEqual(p1["remaining_quantity"], 5.0)
+                            self.assertEqual(len(p1["position_snapshot_refs"]), 2)
+                        elif suffix == "step3":
+                            p1 = episode_store.get(episodes_seen[0])
+                            p2 = episode_store.get(episodes_seen[1])
+                            self.assertEqual(p1["status"], "closed")
+                            self.assertEqual(p1["remaining_quantity"], 0.0)
+                            self.assertEqual(len(p1["position_snapshot_refs"]), 2)
+                            self.assertEqual(p2["status"], "open")
+                            self.assertEqual(p2["side"], "short")
+                            self.assertEqual(p2["filled_quantity"], 10.0)
+                            self.assertEqual(p2["remaining_quantity"], 10.0)
+                            self.assertEqual(len(p2["position_snapshot_refs"]), 1)
+                        elif suffix == "step4":
+                            p1 = episode_store.get(episodes_seen[0])
+                            p2 = episode_store.get(episodes_seen[1])
+                            self.assertEqual(p1["status"], "closed")
+                            self.assertEqual(p1["remaining_quantity"], 0.0)
+                            self.assertEqual(len(p1["position_snapshot_refs"]), 2)
+                            self.assertEqual(p2["status"], "closed")
+                            self.assertEqual(p2["side"], "short")
+                            self.assertEqual(p2["filled_quantity"], 10.0)
+                            self.assertEqual(p2["remaining_quantity"], 0.0)
+                            self.assertEqual(len(p2["position_snapshot_refs"]), 2)
+
+            await asyncio.sleep(0.05)
+            await ingest_svc.stop(graceful=True)
+
+        asyncio.run(scenario())
+
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -305,6 +305,25 @@ if args[0] == "compose":
         sys.exit(0)
     elif sub[0] == "ps":
         target = sub[-1]
+        custom_containers = state.get("compose_service_containers", {{}}).get(target)
+        if custom_containers is not None:
+            status_filter = None
+            if "--status" in sub:
+                status_filter = sub[sub.index("--status") + 1]
+            is_all = "-a" in sub or "--all" in sub
+            matching = []
+            for c in custom_containers:
+                c_status = c.get("status", "running")
+                if status_filter:
+                    if c_status == status_filter:
+                        matching.append(c["id"])
+                elif is_all:
+                    matching.append(c["id"])
+                elif c_status == "running":
+                    matching.append(c["id"])
+            for mid in matching:
+                print(mid)
+            sys.exit(0)
         print(f"cid-{{target}}")
         sys.exit(0)
     elif sub[0] == "images":
@@ -347,9 +366,39 @@ elif args[0] == "stop":
     log_event("docker_stop", names=args[1:])
     sys.exit(0)
 
+elif args[0] == "start":
+    log_event("docker_start", names=args[1:])
+    sys.exit(0)
+
 elif args[0] == "inspect":
     fmt = args[2] if len(args) > 2 and args[1] == "--format" else ""
     target = args[-1]
+    if len(target.splitlines()) > 1:
+        print("Error: No such object: " + str(target), file=sys.stderr)
+        sys.exit(1)
+    container_map = {{}}
+    for svc_list in state.get("compose_service_containers", {{}}).values():
+        for c in svc_list:
+            container_map[c["id"]] = c
+            if "name" in c:
+                container_map[c["name"].lstrip("/")] = c
+    if target in container_map:
+        c = container_map[target]
+        if "{{.Image}}" in fmt:
+            print(c.get("image", state.get("image_id", "sha256:" + "a" * 64)))
+            sys.exit(0)
+        elif "Config.Env" in fmt:
+            if "env" in c:
+                print(json.dumps(c["env"]))
+            elif c.get("status") == "running":
+                print(json.dumps(["PANTHEON_TENANT_ID=tenant-dev", "PANTHEON_ENV=dev", "GIT_SHA=abc123", *state.get("steady_lease_env", ["SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS=1"])]))
+            else:
+                print(json.dumps([]))
+            sys.exit(0)
+        elif "State.Status" in fmt:
+            log_event("docker_inspect_status", target=target)
+            print(c.get("status", "running"))
+            sys.exit(0)
     if target == "pantheon-source-ingest-agora-projector:latest":
         if not state.get("built_projector_image_present", True):
             sys.stderr.write("Error: No such image: " + target + "\\n")
@@ -377,6 +426,7 @@ elif args[0] == "inspect":
         print(json.dumps(state["container_env"]))
         sys.exit(0)
     elif "State.Status" in fmt:
+        log_event("docker_inspect_status", target=target)
         print("exited")
         sys.exit(0)
     elif "State.ExitCode" in fmt:
@@ -391,7 +441,7 @@ elif args[0] == "inspect":
 
 elif args[0] == "cp":
     dest = Path(args[2])
-    dest.write_text(json.dumps({{
+    projection_data = state.get("agora_projection", {{
         "row1": {{
             "connectorId": "tw-twse-tpex-official-market",
             "ingestRunId": "run-1",
@@ -404,7 +454,8 @@ elif args[0] == "cp":
                 "stale": False
             }}
         }}
-    }}))
+    }})
+    dest.write_text(json.dumps(projection_data))
     sys.exit(0)
 
 sys.exit(0)
@@ -423,9 +474,25 @@ def _deploy_script_without_readback(tmp_path: Path) -> Path:
         if entry != DEPLOY_SCRIPT:
             (scripts / entry.name).symlink_to(entry)
     content = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    needle = '  verify_bounded_source_refresh_readback "${refresh_started_at}"\n'
+    needle = '  verify_bounded_source_refresh_readback "${refresh_started_at}" || refresh_rc=$?\n'
     assert needle in content
     content = content.replace(needle, "")
+    preflight_needle = '  preflight_output="$(check_taiwan_refresh_preflight "${force}")"'
+    assert preflight_needle in content
+    content = content.replace(preflight_needle, '  preflight_output=\'{"status": "proceed"}\'')
+    patched = scripts / DEPLOY_SCRIPT.name
+    patched.write_text(content, encoding="utf-8")
+    return patched
+
+
+def _deploy_script_with_readback(tmp_path: Path) -> Path:
+    """Copy of the deploy script with real readback preserved and only preflight bypassed."""
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    for entry in DEPLOY_SCRIPT.parent.iterdir():
+        if entry != DEPLOY_SCRIPT:
+            (scripts / entry.name).symlink_to(entry)
+    content = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     preflight_needle = '  preflight_output="$(check_taiwan_refresh_preflight "${force}")"'
     assert preflight_needle in content
     content = content.replace(preflight_needle, '  preflight_output=\'{"status": "proceed"}\'')
@@ -1501,6 +1568,450 @@ def test_bounded_refresh_missing_built_projector_image_fails_closed(tmp_path: Pa
     assert "source-ingest-agora-projector image revision missing != expected abc123" in proc.stderr
     events = [json.loads(line) for line in events_file.read_text().splitlines() if line]
     assert not any(e.get("event") == "compose_run" for e in events), "One-shot containers must not start when image is missing"
+
+
+def test_bounded_refresh_phase_ordering_waits_for_scheduler_before_projector_launch(tmp_path: Path):
+    # Regression for run 38240659167: scheduler and projector were launched concurrently;
+    # Agora projector finished before new source was persisted.
+    # The phase loop must sequentially wait for source-ingest-scheduler before launching source-ingest-agora-projector.
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "built_projector_image_id": "sha256:0fedd6c77271dc29bf6425461cac284df85a6454d656e363d67646ec9ee24b2e",
+        "projector_image_sha": "abc123",
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+    }
+    bin_dir, state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+
+    proc = subprocess.run(
+        ["bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--force", "--output", str(output_file)],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode == 0, f"Refresh failed: {proc.stderr}\n{proc.stdout}"
+    events = [json.loads(line) for line in events_file.read_text().splitlines() if line]
+    runs = [e for e in events if e.get("event") == "compose_run"]
+    assert len(runs) == 2, f"Expected 2 compose_run events, got {len(runs)}"
+    assert "source-ingest-scheduler" in runs[0]["args"], "First run must be source-ingest-scheduler"
+    assert "source-ingest-agora-projector" in runs[1]["args"], "Second run must be source-ingest-agora-projector"
+
+    # Verify that inspects (waiting for scheduler completion) happened before projector was launched
+    inspect_events = [e for e in events if e.get("event") == "docker_inspect_status"]
+    scheduler_inspects = [e for e in inspect_events if "source-ingest-scheduler" in str(e.get("target", ""))]
+    assert scheduler_inspects, "Must inspect scheduler status during bounded wait"
+    assert scheduler_inspects[0]["t"] < runs[1]["t"], "Scheduler must be waited on before projector is launched"
+
+
+def test_bounded_refresh_reproduces_run38240659167_causal_defect_concurrent_projector_rejected_by_readback(tmp_path: Path):
+    # Causal defect reproduction from actual run 38240659167:
+    # Projector completed at 11:11:11 before new source persisted at 11:11:22, so Agora projection
+    # carried older run ingest-e53a86463995, rejecting the binding gate at 11:11:46.
+    # The readback gate must strictly reject when Agora projection does not bind new receipt/run/source.
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "built_projector_image_id": "sha256:0fedd6c77271dc29bf6425461cac284df85a6454d656e363d67646ec9ee24b2e",
+        "projector_image_sha": "abc123",
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+        "agora_projection": {
+            "row1": {
+                "connectorId": "tw-twse-tpex-official-market",
+                "ingestRunId": "ingest-e53a86463995",  # older run id from run 38240659167
+                "sourceId": "tw-official:tw_price_daily:TWSE:2330:90e323e6754e2e9e",
+                "asOf": "2026-10-08T14:30:00+08:00",
+                "freshness": {
+                    "sourceTimestamp": "2026-10-08T14:30:00+08:00",
+                    "sourceTimeStatus": "valid",
+                    "status": "stale",
+                    "stale": True,
+                },
+            }
+        },
+    }
+    bin_dir, state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+
+    proc = subprocess.run(
+        ["bash", str(_deploy_script_with_readback(tmp_path)), "--refresh-only", "--force", "--output", str(output_file)],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode != 0, f"Expected readback to reject stale Agora projection, got 0:\n{proc.stdout}"
+    assert "Agora projection does not bind the new receipt/run/source" in proc.stderr
+    assert not output_file.exists() or json.loads(output_file.read_text()).get("status") != "completed"
+
+
+def test_bounded_refresh_failed_readback_restores_steady_scheduler_and_removes_bounded_containers(tmp_path: Path):
+    # Regression for run 38240659167 line 1035: when readback validation failed under set -euo pipefail,
+    # returning from execute_bounded_source_refresh_entrypoint destroyed function-local steady_ids,
+    # causing an unbound variable crash in the outer EXIT trap and leaving steady scheduler stopped (exited 137).
+    # Fix: local-scope cleanup executes restore_bounded_source_refresh before return, cleanly restarting
+    # steady scheduler, removing named bounded containers, restoring egress to deny, and preserving failing exit.
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "built_projector_image_id": "sha256:0fedd6c77271dc29bf6425461cac284df85a6454d656e363d67646ec9ee24b2e",
+        "projector_image_sha": "abc123",
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+        "agora_projection": {
+            "row1": {
+                "connectorId": "tw-twse-tpex-official-market",
+                "ingestRunId": "ingest-e53a86463995",  # mismatched run to trigger readback failure
+                "sourceId": "tw-official:tw_price_daily:TWSE:2330:90e323e6754e2e9e",
+            }
+        },
+    }
+    bin_dir, state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+
+    proc = subprocess.run(
+        ["bash", str(_deploy_script_with_readback(tmp_path)), "--refresh-only", "--force", "--output", str(output_file)],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode != 0, f"Expected refresh to fail closed on readback failure, got 0:\n{proc.stdout}"
+    assert "steady_ids: unbound variable" not in proc.stderr
+    assert "Agora projection does not bind the new receipt/run/source" in proc.stderr
+    assert not output_file.exists() or json.loads(output_file.read_text()).get("status") != "completed"
+
+    events = [json.loads(line) for line in events_file.read_text().splitlines() if line]
+
+    # Verify bounded containers were removed
+    rm_events = [e for e in events if e.get("event") == "docker_rm"]
+    assert rm_events, "Named bounded containers must be removed on failure cleanup"
+    removed_names = [name for e in rm_events for name in e.get("names", [])]
+    assert "pantheon-bounded-refresh-source-ingest-scheduler" in removed_names
+    assert "pantheon-bounded-refresh-source-ingest-agora-projector" in removed_names
+
+    # Verify steady scheduler was restarted
+    start_events = [e for e in events if e.get("event") == "docker_start"]
+    assert start_events, "Steady scheduler container must be restarted on failure cleanup"
+    started_names = [name for e in start_events for name in e.get("names", [])]
+    assert "cid-source-ingest-scheduler" in started_names
+
+    # Verify external egress and controller mode were restored to deny / reconcile_only
+    restore_ups = [
+        e for e in events
+        if e.get("event") == "compose_up"
+        and "source-ingest" in e.get("services", [])
+        and e["env"].get("PANTHEON_EXTERNAL_EGRESS") == "deny"
+    ]
+    assert restore_ups, "Runtime must be restored to egress deny on failure cleanup"
+    assert restore_ups[-1]["env"].get("SOURCE_INGEST_CONTROLLER_MODE") == "reconcile_only"
+
+
+def test_bounded_refresh_failed_one_shot_restores_steady_scheduler(tmp_path: Path):
+    # When a bounded one-shot container fails during execution, failure cleanup
+    # must restart steady scheduler and remove bounded containers without unbound variable errors.
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "built_projector_image_id": "sha256:0fedd6c77271dc29bf6425461cac284df85a6454d656e363d67646ec9ee24b2e",
+        "projector_image_sha": "abc123",
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+        "dlq_entries": [dict(CANONICAL_TW_PENDING_DLQ_ENTRIES[0])],  # forces exit code 1 for scheduler
+    }
+    bin_dir, state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+
+    proc = subprocess.run(
+        ["bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--force", "--output", str(output_file)],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode != 0, f"Expected one-shot failure to fail closed, got 0:\n{proc.stdout}"
+    assert "steady_ids: unbound variable" not in proc.stderr
+
+    events = [json.loads(line) for line in events_file.read_text().splitlines() if line]
+    start_events = [e for e in events if e.get("event") == "docker_start"]
+    assert start_events, "Steady scheduler container must be restarted on one-shot failure"
+    started_names = [name for e in start_events for name in e.get("names", [])]
+    assert "cid-source-ingest-scheduler" in started_names
+
+
+def test_bounded_refresh_launch_failure_restores_steady_scheduler_and_removes_bounded_containers(tmp_path: Path):
+    # Regression for launch failure / raw errexit (exit code 42) before container starts:
+    # When docker compose run fails during launch, script-scoped variables ensure
+    # failure cleanup executes completely, restarts steady scheduler, removes named bounded containers,
+    # and preserves the failing return code without unbound variable errors.
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "built_projector_image_id": "sha256:0fedd6c77271dc29bf6425461cac284df85a6454d656e363d67646ec9ee24b2e",
+        "projector_image_sha": "abc123",
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+        "dlq_entries": [],
+    }
+    bin_dir, state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    docker = bin_dir / "docker"
+    delegate = bin_dir / "original-owned-docker-stub"
+    docker.rename(delegate)
+    docker.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os,sys,json\n"
+        "from pathlib import Path\n"
+        "a=sys.argv[1:]\n"
+        'if "run" in a and "--name" in a and "pantheon-bounded-refresh-source-ingest-scheduler" in a:\n'
+        f"    p=Path({repr(str(events_file))})\n"
+        '    p.open("a").write(json.dumps({"event":"QA_owned_scheduler_launch_failed","args":a})+"\\n")\n'
+        "    sys.exit(42)\n"
+        f"os.execv({repr(str(delegate))}, [{repr(str(delegate))}]+a)\n"
+    )
+    docker.chmod(0o755)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+
+    proc = subprocess.run(
+        ["bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--force", "--output", str(output_file)],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode == 42, f"Expected launch failure return code 42, got {proc.returncode}:\n{proc.stdout}\n{proc.stderr}"
+    assert "steady_ids: unbound variable" not in proc.stderr
+    assert not output_file.exists() or json.loads(output_file.read_text()).get("status") != "completed"
+
+    events = [json.loads(line) for line in events_file.read_text().splitlines() if line]
+
+    # Verify launch failure occurred
+    assert any(e.get("event") == "QA_owned_scheduler_launch_failed" for e in events)
+
+    # Verify bounded containers were removed on cleanup
+    rm_events = [e for e in events if e.get("event") == "docker_rm"]
+    assert rm_events, "Named bounded containers must be removed on failure cleanup"
+    removed_names = [name for e in rm_events for name in e.get("names", [])]
+    assert "pantheon-bounded-refresh-source-ingest-scheduler" in removed_names
+    assert "pantheon-bounded-refresh-source-ingest-agora-projector" in removed_names
+
+    # Verify steady scheduler was restarted on cleanup
+    start_events = [e for e in events if e.get("event") == "docker_start"]
+    assert start_events, "Steady scheduler container must be restarted on launch failure"
+    started_names = [name for e in start_events for name in e.get("names", [])]
+    assert "cid-source-ingest-scheduler" in started_names
+
+    # Verify runtime restored to egress deny
+    restore_ups = [
+        e for e in events
+        if e.get("event") == "compose_up"
+        and "source-ingest" in e.get("services", [])
+        and e["env"].get("PANTHEON_EXTERNAL_EGRESS") == "deny"
+    ]
+    assert restore_ups, "Runtime must be restored to egress deny on launch failure cleanup"
+    assert restore_ups[-1]["env"].get("SOURCE_INGEST_CONTROLLER_MODE") == "reconcile_only"
+
+
+def _steady_containers_for_case(case: str) -> list[dict[str, Any]]:
+    if case == "positive":
+        return [
+            {
+                "id": "0d124a6305c2800d280fcb5751c95bfa25eb695d138d26a21bd343b6e62542c5",
+                "name": "/pantheon-bounded-refresh-source-ingest-scheduler",
+                "status": "exited",
+            },
+            {
+                "id": "847ed9fb5e7ab6722f7bf65d0525a0e27dd90437deddd496c5965904f666b565",
+                "name": "/pantheon-source-ingest-scheduler-1",
+                "status": "running",
+                "env": [
+                    "PANTHEON_TENANT_ID=tenant-dev",
+                    "PANTHEON_ENV=dev",
+                    "GIT_SHA=abc123",
+                    "SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS=1",
+                ],
+            },
+        ]
+    if case == "stopped_only":
+        return [
+            {
+                "id": "0d124a6305c2800d280fcb5751c95bfa25eb695d138d26a21bd343b6e62542c5",
+                "name": "/pantheon-bounded-refresh-source-ingest-scheduler",
+                "status": "exited",
+            }
+        ]
+    if case == "ambiguous_live":
+        return [
+            {
+                "id": "847ed9fb5e7ab6722f7bf65d0525a0e27dd90437deddd496c5965904f666b565",
+                "status": "running",
+                "env": [
+                    "PANTHEON_TENANT_ID=tenant-dev",
+                    "PANTHEON_ENV=dev",
+                    "GIT_SHA=abc123",
+                ],
+            },
+            {
+                "id": "1111111111111111111111111111111111111111111111111111111111111111",
+                "status": "running",
+                "env": [
+                    "PANTHEON_TENANT_ID=tenant-dev",
+                    "PANTHEON_ENV=dev",
+                    "GIT_SHA=abc123",
+                ],
+            },
+        ]
+    raise ValueError(f"Unknown case: {case}")
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["positive", "stopped_only", "ambiguous_live"],
+)
+def test_bounded_refresh_steady_container_selection(tmp_path: Path, case: str):
+    # Parameterized tests sharing duplicate setup across steady selection cases:
+    # - positive: running steady scheduler alongside stopped bounded containers; running status filter
+    #   selects only steady container, reads steady env, runs sequentially, validates real readback,
+    #   restarts steady scheduler, and leaves old one-shots stopped.
+    # - stopped_only: only stopped bounded containers exist; running query returns empty, deploy-time
+    #   values fail closed before mutation, and old one-shots are not started.
+    # - ambiguous_live: multiple running steady containers exist; running query returns multiline IDs,
+    #   deploy-time lookup fails closed before mutation without first-ID fallback, and no containers mutate.
+    scheduler_containers = _steady_containers_for_case(case)
+    initial_state: dict[str, Any] = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "built_projector_image_id": "sha256:0fedd6c77271dc29bf6425461cac284df85a6454d656e363d67646ec9ee24b2e",
+        "projector_image_sha": "abc123",
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+        "compose_service_containers": {
+            "source-ingest-scheduler": scheduler_containers,
+            "source-ingest-agora-projector": [
+                {
+                    "id": "f9e6c68db2cc6202b23878fa3c6615fa873ff3c49f446bfdeb523d6c078387cd",
+                    "name": "/pantheon-bounded-refresh-source-ingest-agora-projector",
+                    "status": "exited",
+                }
+            ],
+        },
+    }
+    if case == "positive":
+        # Positive steady selection reaches real bounded execution and exercises
+        # actual original receipt/run/source readback validation via _deploy_script_with_readback.
+        # Testing real binding rejection where Agora projection does not bind new receipt/run/source
+        # proves entry reaches source, waits Source before Agora, validates readback rejection,
+        # cleanly restarts only steady scheduler, and leaves old one-shots stopped.
+        initial_state["agora_projection"] = {
+            "row1": {
+                "connectorId": "tw-twse-tpex-official-market",
+                "ingestRunId": "ingest-e53a86463995",
+                "sourceId": "tw-official:tw_price_daily:TWSE:2330:90e323e6754e2e9e",
+            }
+        }
+    bin_dir, state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+
+    proc = subprocess.run(
+        ["bash", str(_deploy_script_with_readback(tmp_path)), "--refresh-only", "--force", "--output", str(output_file)],
+        env=test_env,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    events = [json.loads(line) for line in events_file.read_text().splitlines() if line] if events_file.exists() else []
+
+    if case == "positive":
+        assert proc.returncode != 0, f"Expected readback binding rejection to fail closed, got 0:\n{proc.stdout}"
+        assert "steady_scheduler_deploy_values_missing" not in proc.stderr
+        assert "Agora projection does not bind the new receipt/run/source" in proc.stderr
+        assert not output_file.exists() or json.loads(output_file.read_text()).get("status") != "completed"
+
+        # Verify stopped containers: only steady scheduler 847ed9... was stopped, NOT 0d124a...
+        stop_events = [e for e in events if e.get("event") == "docker_stop"]
+        assert stop_events, "Steady scheduler must be stopped before bounded run"
+        stopped_ids = [cid for e in stop_events for cid in e.get("names", [])]
+        assert "847ed9fb5e7ab6722f7bf65d0525a0e27dd90437deddd496c5965904f666b565" in stopped_ids
+        assert "0d124a6305c2800d280fcb5751c95bfa25eb695d138d26a21bd343b6e62542c5" not in stopped_ids
+        assert "f9e6c68db2cc6202b23878fa3c6615fa873ff3c49f446bfdeb523d6c078387cd" not in stopped_ids
+
+        # Verify sequential runs: scheduler ran before projector
+        runs = [e for e in events if e.get("event") == "compose_run"]
+        assert len(runs) == 2
+        assert "source-ingest-scheduler" in runs[0]["args"]
+        assert "source-ingest-agora-projector" in runs[1]["args"]
+
+        # Verify restarted containers: ONLY steady scheduler 847ed9... was restarted, NOT 0d124a...
+        start_events = [e for e in events if e.get("event") == "docker_start"]
+        assert start_events, "Steady scheduler must be restarted on completion"
+        started_ids = [cid for e in start_events for cid in e.get("names", [])]
+        assert "847ed9fb5e7ab6722f7bf65d0525a0e27dd90437deddd496c5965904f666b565" in started_ids
+        assert "0d124a6305c2800d280fcb5751c95bfa25eb695d138d26a21bd343b6e62542c5" not in started_ids
+        assert "f9e6c68db2cc6202b23878fa3c6615fa873ff3c49f446bfdeb523d6c078387cd" not in started_ids
+
+        # Verify egress restored to deny
+        restore_ups = [
+            e for e in events
+            if e.get("event") == "compose_up"
+            and "source-ingest" in e.get("services", [])
+            and e["env"].get("PANTHEON_EXTERNAL_EGRESS") == "deny"
+        ]
+        assert restore_ups, "Runtime must be restored to egress deny"
+
+    elif case == "stopped_only":
+        assert proc.returncode != 0, f"Expected stopped-only steady scheduler to fail closed, got 0:\n{proc.stdout}"
+        assert "steady_scheduler_deploy_values_missing" in proc.stderr
+        assert not output_file.exists() or json.loads(output_file.read_text()).get("status") != "completed"
+
+        # Old stopped container must NOT be started
+        start_events = [e for e in events if e.get("event") == "docker_start"]
+        started_ids = [cid for e in start_events for cid in e.get("names", [])]
+        assert "0d124a6305c2800d280fcb5751c95bfa25eb695d138d26a21bd343b6e62542c5" not in started_ids
+        # No containers stopped
+        assert not any(e.get("event") == "docker_stop" for e in events)
+        # No compose run
+        assert not any(e.get("event") == "compose_run" for e in events)
+
+    elif case == "ambiguous_live":
+        assert proc.returncode != 0, f"Expected ambiguous live identity to fail closed, got 0:\n{proc.stdout}"
+        assert "steady_scheduler_deploy_values_missing" in proc.stderr
+        assert not output_file.exists() or json.loads(output_file.read_text()).get("status") != "completed"
+
+        # No containers stopped
+        assert not any(e.get("event") == "docker_stop" for e in events)
+        # No containers started
+        assert not any(e.get("event") == "docker_start" for e in events)
+        # No compose run
+        assert not any(e.get("event") == "compose_run" for e in events)
+
+
 
 
 

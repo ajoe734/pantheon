@@ -43,6 +43,26 @@ def _token(
     return encode_jwt_hs256(claims, secret=SECRET)
 
 
+def _user_token(
+    *,
+    sub: str = "operator-user",
+    tenants: list[str] | None = None,
+    role: str | None = "operator",
+    mfa: bool = False,
+) -> str:
+    claims = {
+        "sub": sub,
+        "tenant_ids": tenants or ["tenant-a"],
+        "exp": time.time() + 3600,
+    }
+    if role is not None:
+        claims["roles"] = [role]
+    if mfa:
+        claims["amr"] = ["pwd", "mfa"]
+    return encode_jwt_hs256(claims, secret=SECRET)
+
+
+
 def _headers(
     *,
     tenant: str = "tenant-a",
@@ -265,3 +285,167 @@ def test_readiness_degrades_when_strict_inbound_verifier_is_missing(monkeypatch)
     dependency = readiness.json()["dependencies"]["inbound_authority"]
     assert dependency["status"] == "error"
     assert dependency["reason"] == "jwt_verifier_missing"
+
+
+def test_user_bearer_token_authenticated_via_gateway(monkeypatch) -> None:
+    module = _load_service_module()
+    _configure_strict(monkeypatch)
+    client = TestClient(module.app)
+
+    token = _user_token(sub="operator-user-1", role="operator", tenants=["tenant-a"])
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-Tenant-Id": "tenant-a",
+        "X-Pantheon-Service": "control-plane-bff",
+    }
+
+    create_resp = client.post(
+        "/api/training/sessions",
+        json={"persona_id": "persona-a", "objective": "user-authenticated teaching session"},
+        headers=headers,
+    )
+    assert create_resp.status_code == 201, create_resp.text
+    session = create_resp.json()
+    session_id = session["session_id"]
+    assert session["tenant_id"] == "tenant-a"
+    assert session["opened_by"] == "operator-user-1"
+    assert session["actor_context"]["authenticated_actor_id"] == "operator-user-1"
+    assert session["actor_context"]["actor_service"] == "control-plane-bff"
+    assert session["actor_context"]["delegated_actor_id"] == "operator-user-1"
+    assert session["actor_context"]["roles"] == ["operator"]
+    assert session["actor_context"]["mfa_verified"] is False
+
+    get_resp = client.get(f"/api/training/sessions/{session_id}", headers=headers)
+    assert get_resp.status_code == 200
+    assert get_resp.json()["session_id"] == session_id
+
+    msg_resp = client.post(
+        f"/api/training/sessions/{session_id}/events",
+        json={"message_body": "Message from genuine user"},
+        headers=headers,
+    )
+    assert msg_resp.status_code == 201, msg_resp.text
+    event = msg_resp.json()["event"]
+    assert event["message_body"] == "Message from genuine user"
+    assert event["actor"] == "operator-user-1"
+    assert event["actor_type"] == "user"
+
+
+
+def test_viewer_role_can_read_but_cannot_mutate(monkeypatch) -> None:
+    module = _load_service_module()
+    _configure_strict(monkeypatch)
+    client = TestClient(module.app)
+
+    viewer_token = _user_token(sub="viewer-user", role="viewer", tenants=["tenant-a"])
+    viewer_headers = {
+        "Authorization": f"Bearer {viewer_token}",
+        "X-Tenant-Id": "tenant-a",
+        "X-Pantheon-Service": "control-plane-bff",
+    }
+
+    list_resp = client.get("/api/training/sessions", headers=viewer_headers)
+    assert list_resp.status_code == 200
+
+    create_resp = client.post(
+        "/api/training/sessions",
+        json={"persona_id": "persona-a", "objective": "viewer should be rejected"},
+        headers=viewer_headers,
+    )
+    assert create_resp.status_code == 403
+    assert create_resp.json()["error"]["code"] == "AUTH_FORBIDDEN"
+
+
+def test_user_cannot_invoke_worker_only_endpoints(monkeypatch) -> None:
+    module = _load_service_module()
+    _configure_strict(monkeypatch)
+    client = TestClient(module.app)
+
+    user_token = _user_token(sub="operator-user", role="operator", tenants=["tenant-a"])
+    user_headers = {
+        "Authorization": f"Bearer {user_token}",
+        "X-Tenant-Id": "tenant-a",
+        "X-Pantheon-Service": "control-plane-bff",
+    }
+
+    run_resp = client.post(
+        "/api/training/preview-jobs/job-123/run",
+        json={},
+        headers=user_headers,
+    )
+    assert run_resp.status_code == 403
+    assert run_resp.json()["error"]["code"] == "AUTH_FORBIDDEN"
+
+    worker_token = _token(
+        service="training-session-preview-worker",
+        role="training-service",
+        tenants=["tenant-a"],
+    )
+    worker_headers = {
+        "Authorization": f"Bearer {worker_token}",
+        "X-Tenant-Id": "tenant-a",
+        "X-Pantheon-Service": "training-session-preview-worker",
+    }
+    worker_resp = client.post(
+        "/api/training/preview-jobs/job-123/run",
+        json={},
+        headers=worker_headers,
+    )
+    assert worker_resp.status_code == 404
+
+
+def test_user_token_rejected_from_unauthorized_gateway(monkeypatch) -> None:
+    module = _load_service_module()
+    _configure_strict(monkeypatch)
+    client = TestClient(module.app)
+
+    user_token = _user_token(sub="operator-user", role="operator", tenants=["tenant-a"])
+    forged_headers = {
+        "Authorization": f"Bearer {user_token}",
+        "X-Tenant-Id": "tenant-a",
+        "X-Pantheon-Service": "training-session-preview-worker",
+    }
+    resp = client.post(
+        "/api/training/sessions",
+        json={"persona_id": "persona-a", "objective": "test"},
+        headers=forged_headers,
+    )
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "ACTOR_SERVICE_FORBIDDEN"
+
+
+def test_user_token_rejects_body_actor_spoof(monkeypatch) -> None:
+    module = _load_service_module()
+    _configure_strict(monkeypatch)
+    client = TestClient(module.app)
+
+    user_token = _user_token(sub="operator-user-1", role="operator", tenants=["tenant-a"])
+    headers = {
+        "Authorization": f"Bearer {user_token}",
+        "X-Tenant-Id": "tenant-a",
+        "X-Pantheon-Service": "control-plane-bff",
+    }
+
+    spoofed = client.post(
+        "/api/training/sessions",
+        json={
+            "persona_id": "persona-a",
+            "objective": "spoofed actor",
+            "actor_id": "unauthorized-different-actor",
+        },
+        headers=headers,
+    )
+    assert spoofed.status_code == 403
+
+    valid_declared = client.post(
+        "/api/training/sessions",
+        json={
+            "persona_id": "persona-a",
+            "objective": "declared matching actor",
+            "actor_id": "operator-user-1",
+        },
+        headers=headers,
+    )
+    assert valid_declared.status_code == 201
+    assert valid_declared.json()["opened_by"] == "operator-user-1"
+

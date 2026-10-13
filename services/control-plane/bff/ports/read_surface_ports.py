@@ -110,6 +110,7 @@ from services.control_plane.bff.ports.persona_training import (
     PersonaRegistryReadsPort,
     PersonaTrainingDomainPort,
     RapidEvaluationPort,
+    TrainingSessionHttpStore,
     TrainingSessionTrainerPort,
 )
 
@@ -1294,6 +1295,8 @@ class ReadSurfacePorts:
             return []
 
     def build_trainer_preview_unavailable(self, session_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        if hasattr(self.persona_training, "build_trainer_preview_unavailable"):
+            return self.persona_training.build_trainer_preview_unavailable(session_id, **kwargs)
         return self.persona_training.get_trainer_preview(session_id, **kwargs)
 
     def list_decision_journal_entries(self, **kwargs: Any) -> List[Dict[str, Any]]:
@@ -1402,9 +1405,16 @@ def create_read_surface_ports(
             evolution_decisions_reader=persona_capital_runtime.list_evolution_decisions,
             approval_decisions_reader=approval_records,
         ))
-    if persona_registry_store is not None and persona_training is None:
+    if persona_training is None:
+        persona_port = (
+            PersonaRegistryReadsPort(store=persona_registry_store)
+            if persona_registry_store is not None
+            else None
+        )
+        trainer_port = TrainingSessionTrainerPort(training=TrainingSessionHttpStore())
         persona_training = PersonaTrainingDomainPort(
-            persona_port=PersonaRegistryReadsPort(store=persona_registry_store),
+            persona_port=persona_port,
+            trainer_port=trainer_port,
         )
     return ReadSurfacePorts(
         operations_consultation=operations_consultation,
