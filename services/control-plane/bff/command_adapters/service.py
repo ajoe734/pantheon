@@ -433,16 +433,48 @@ class CommandAdapterService:
         clean_id = str(command_id or "").strip()
         if not clean_id:
             raise HTTPException(status_code=404, detail="Command not found")
+        if identity is None:
+            raise self._raise_error(
+                401,
+                ErrorCode.AUTH_REQUIRED,
+                "Authentication required",
+                "Authenticated identity is required to read command status",
+            )
+        self.check_read_role(identity)
         store = self.command_store
         if store is None:
             raise HTTPException(status_code=404, detail=f"Command {clean_id} not found")
         record = store.get_command(clean_id)
         if not record:
             raise HTTPException(status_code=404, detail=f"Command {clean_id} not found")
+
+        tenant_extractor = getattr(store, "_tenant_id_from_command", getattr(store, "tenant_id_from_command", None))
+        record_tenant = tenant_extractor(record) if callable(tenant_extractor) else None
+        if not record_tenant:
+            # Unknown / unscoped legacy records fail closed, including for admins
+            raise HTTPException(status_code=404, detail="Command not found")
+
+        from ..auth.policy import (
+            TENANT_ALLOWED_CLAIM_PATHS,
+            identity_claim_strings,
+            bff_auth_mode,
+            env_csv,
+            first_nonblank,
+        )
+        claim_allowed = identity_claim_strings(identity, TENANT_ALLOWED_CLAIM_PATHS)
+        is_strict = getattr(identity, "token_kind", "") in ("jwt", "structured", "cookie") or bff_auth_mode() == "strict"
+        env_default = first_nonblank(os.getenv("PANTHEON_BFF_TENANT_ID"), os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"), os.getenv("PANTHEON_TENANT_ID"))
+        allowed_tenants = list(claim_allowed) if is_strict else (claim_allowed or env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [env_default or "pantheon-dev"])
+
+        if record_tenant not in allowed_tenants and "*" not in allowed_tenants:
+            # Non-disclosing unknown/invisible status contract
+            raise HTTPException(status_code=404, detail="Command not found")
+
         if record["type"] == CommandType.ADVANCE_LIFECYCLE.value:
-            tenant = ((record.get("foundation") or {}).get("command_envelope") or {}).get("payload", {}).get("tenant_id")
-            if not identity or not tenant or tenant != identity.claims.get("tenant_id"):
+            adv_tenant = ((record.get("foundation") or {}).get("command_envelope") or {}).get("payload", {}).get("tenant_id")
+            if not adv_tenant or (adv_tenant not in allowed_tenants and "*" not in allowed_tenants):
                 raise HTTPException(status_code=404, detail="Command not found")
+
         return CommandStatusResponse(
             command_id=record["command_id"],
             type=record["type"],
@@ -727,22 +759,37 @@ class CommandAdapterService:
             "submitted_at": now,
             "accepted_at": now,
         }
-        foundation_ctx = {
+        claims = getattr(identity, "claims", None) or {}
+        trusted_tenant = str(
+            claims.get("tenant_id")
+            or claims.get("tenantId")
+            or claims.get("tid")
+            or getattr(identity, "tenant_id", "")
+            or ""
+        ).strip()
+        foundation_ctx: Dict[str, Any] = {
             "idempotency_record": {
                 "idempotency_key": clean_key,
                 "request_hash": request_hash,
                 "status": "succeeded",
             }
         }
+        if trusted_tenant:
+            foundation_ctx["trace_context"] = {
+                "tenant_ref": {"tenant_id": trusted_tenant},
+                "tenant_id": trusted_tenant,
+            }
         if trusted_evidence_producer:
             foundation_ctx["trusted_evidence_producer"] = trusted_evidence_producer
-        audit_ctx = {
+        audit_ctx: Dict[str, Any] = {
             "actor": identity.operator_id,
             "operator_id": identity.operator_id,
             "command_id": command_id,
             "reason": str(payload.get("reason") or command_type.value),
             "foundation": foundation_ctx,
         }
+        if trusted_tenant:
+            audit_ctx["tenant_id"] = trusted_tenant
         if trusted_evidence_producer:
             audit_ctx["trusted_evidence_producer"] = trusted_evidence_producer
         if "live_capital_mutation" in payload:
