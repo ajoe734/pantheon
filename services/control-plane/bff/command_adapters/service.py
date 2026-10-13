@@ -433,14 +433,6 @@ class CommandAdapterService:
     def _trusted_tenant_for_identity(identity: Optional[OperatorIdentity]) -> Optional[str]:
         if identity is None:
             return None
-        claims = getattr(identity, "claims", None) or {}
-        for key in ("tenant_id", "tenantId", "tid"):
-            val = str(claims.get(key) or "").strip()
-            if val:
-                return val
-        direct = str(getattr(identity, "tenant_id", "") or "").strip()
-        if direct:
-            return direct
         try:
             from ..auth.policy import bff_me_tenant_payload
             payload = bff_me_tenant_payload(identity)
@@ -449,6 +441,9 @@ class CommandAdapterService:
                 return tid
         except Exception:
             pass
+        direct = getattr(identity, "tenant_id", None)
+        if isinstance(direct, str) and direct.strip():
+            return direct.strip()
         return None
 
     def get_command_status(self, command_id: str, identity: Optional[OperatorIdentity] = None) -> CommandStatusResponse:
