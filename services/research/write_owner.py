@@ -596,6 +596,19 @@ class ResearchWriteOwner:
             self._experiments_store.advisory_xact_lock(f"research-retry:{new_exp_id}", conn=conn)
 
             existing = self._experiments_store.get(new_exp_id)
+            if not isinstance(existing, dict):
+                # Attempts persisted before keyed ids carry numeric ids; match by scope.
+                existing = next(
+                    (
+                        e
+                        for e in self._experiments_store.list_all()
+                        if isinstance(e, dict)
+                        and e.get("parent_experiment_id") == parent_key
+                        and e.get("idempotency_key") == idempotency_key
+                        and str(e.get("created_by") or "") == actor
+                    ),
+                    None,
+                )
             if isinstance(existing, dict):
                 return self._project_experiment_detail(existing)
 

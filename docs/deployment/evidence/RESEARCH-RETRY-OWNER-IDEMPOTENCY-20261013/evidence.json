@@ -3,7 +3,7 @@
   "scope": "source-only; Research owner keyed retry idempotency",
   "change": {
     "file": "services/research/write_owner.py",
-    "summary": "Non-empty idempotency_key retries use a deterministic experiment id from sha256(parent, effective actor, key); under a pg advisory xact lock, the attempt insert (compare_and_set expected=None) and ticket link (CAS loop) share one experiments_store.transaction() conn, so replay returns the existing canonical record without mutation and failure rolls back both. No-key path unchanged."
+    "summary": "Non-empty idempotency_key retries use a deterministic experiment id from sha256(parent, effective actor, key); under a pg advisory xact lock, the attempt insert (compare_and_set expected=None) and ticket link (CAS loop) share one experiments_store.transaction() conn, so replay returns the existing canonical record without mutation and failure rolls back both. No-key path unchanged. Replay first checks the hashed id, then scans experiments for an existing child with the same parent, effective actor and key (pre-upgrade numeric ids), so legacy children are reused without a duplicate child or ticket link."
   },
   "probe": {
     "script": "/tmp/pantheon-assist-20261013/reproduce_retry.py",
@@ -11,12 +11,18 @@
     "after": "PASS exit 0: single retry id, 2 experiments, 2 ticket links"
   },
   "tests": {
-    "command": "/tmp/l12venv/bin/python -m pytest -q tests/research_write_owner/test_research_write_owner.py services/control-plane/bff/tests/test_research_jobs_action_receipts.py services/research/tests/test_research_single_owner_routes.py",
-    "result": "79 passed, 13 failed, 0 skipped",
-    "new_tests_pass": "14 passed (-k retry)",
-    "preexisting_failures": "The same 13 tests (1 in tests/research_write_owner test_research_experiment_creation_cancellation_and_linking allowedActions assertion; 12 DAG/claim tests in test_research_single_owner_routes) fail identically on unmodified base; verified by stashing changes and re-running.",
-    "test_doubles": "_InMemoryOwnerStore / _InMemoryStore gained transaction(), advisory_xact_lock() and compare_and_set() with undo journal and a shared RLock; no production fallback added."
+    "command": "/tmp/l12venv/bin/python -m pytest -q tests/research_write_owner/test_research_write_owner.py services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
+    "result": "35 passed, 0 failed, 0 skipped, exit 0",
+    "allowedActions_fix": "test_research_experiment_creation_cancellation_and_linking assertions updated to the current four-key allowedActions contract (stale expectations, production unchanged); now passes.",
+    "new_regression": "test_keyed_retry_replay_returns_legacy_numeric_child_without_duplicate (legacy numeric child replay: no new child, ticket links unchanged).",
+    "routes_module": "services/research/tests/test_research_single_owner_routes.py was also run in the local env: 12 tests fail because QuantLib is not installed there (503 QuantLib execution owner failure). They are unrelated to retry and were not run to green locally; the reviewer's governed run reported them passing. Not counted as passed here.",
+    "test_doubles": "_InMemoryOwnerStore / _InMemoryStore gained transaction(), advisory_xact_lock() and compare_and_set() with an undo journal and a shared RLock; no production fallback added."
   },
-  "evidence_class": "fake-store logic and SQL-emulating fake connection over the real PostgresJsonOwnerStore code only. No real PostgreSQL available (no psycopg/postgres in env); no process restart, browser, or hosted evidence.",
-  "not_claimed": "Local tests do not deploy the fix; RESEARCH-HOSTED-ACCEPTANCE-001 and DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 retain hosted/real-DB obligations."
+  "evidence_class": "Fake-store and SQL-emulating fake-connection unit tests, plus a disposable local PostgreSQL container probe (/tmp/pantheon-assist-20261013/probe_retry_postgres.py against the committed head; 10 passed, 0 failed, container and volumes removed; includes legacy_numeric_child_upgrade_replay, fresh child process and DB restart replay). No browser or hosted evidence.",
+  "not_claimed": "Local tests do not deploy the fix; RESEARCH-HOSTED-ACCEPTANCE-001 and DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 retain hosted/real-DB obligations.",
+  "real_postgres_probe": {
+    "passed": 10,
+    "failed": 0,
+    "note": "run on the commit preceding this manifest update; local disposable DB only"
+  }
 }
