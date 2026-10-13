@@ -1,0 +1,36 @@
+{
+  "task_id": "RESEARCH-RETRY-OWNER-IDEMPOTENCY-20261013",
+  "scope": "source-only; Research owner keyed retry idempotency",
+  "change": {
+    "file": "services/research/write_owner.py",
+    "summary": "Non-empty idempotency_key retries use a deterministic experiment id from sha256(parent, effective actor, key); under a pg advisory xact lock, the attempt insert (compare_and_set expected=None) and ticket link (CAS loop) share one experiments_store.transaction() conn, so replay returns the existing canonical record without mutation and failure rolls back both. No-key path unchanged. Replay first checks the hashed id, then scans experiments for an existing child with the same parent, effective actor and key (pre-upgrade numeric ids), so legacy children are reused without a duplicate child or ticket link. Reopen fix: unkeyed retry now inserts via compare_and_set and links the ticket via the same CAS loop in one transaction (no stale put overwriting a concurrent keyed link); a keyed deterministic-id hit must match parent/actor/key else ValueError (unrelated record never returned or mutated)."
+  },
+  "probe": {
+    "script": "/tmp/pantheon-assist-20261013/reproduce_retry.py",
+    "before": "FAIL (retry-before.log): 3 distinct attempt-2 records and 3 ticket links",
+    "after": "PASS exit 0: single retry id, 2 experiments, 2 ticket links"
+  },
+  "tests": {
+    "command": "/tmp/l12venv/bin/python -m pytest -q tests/research_write_owner/test_research_write_owner.py services/control-plane/bff/tests/test_research_jobs_action_receipts.py",
+    "result": "37 passed, 0 failed, 0 skipped, exit 0",
+    "allowedActions_fix": "test_research_experiment_creation_cancellation_and_linking assertions updated to the current four-key allowedActions contract (stale expectations, production unchanged); now passes.",
+    "new_regression": "test_keyed_retry_replay_returns_legacy_numeric_child_without_duplicate (legacy numeric child replay: no new child, ticket links unchanged). Reopen: test_unkeyed_retry_links_ticket_by_cas_preserving_concurrent_keyed_link, test_keyed_retry_rejects_unrelated_record_at_deterministic_id.",
+    "routes_module": "services/research/tests/test_research_single_owner_routes.py was also run in the local env: 12 tests fail because QuantLib is not installed there (503 QuantLib execution owner failure). They are unrelated to retry and were not run to green locally; the reviewer's governed run reported them passing. Not counted as passed here.",
+    "test_doubles": "_InMemoryOwnerStore / _InMemoryStore gained transaction(), advisory_xact_lock() and compare_and_set() with an undo journal and a shared RLock; no production fallback added."
+  },
+  "evidence_class": "Fake-store and SQL-emulating fake-connection unit tests, plus a disposable local PostgreSQL container probe (/tmp/pantheon-assist-20261013/probe_retry_postgres.py against the committed head; 10 passed, 0 failed, container and volumes removed; includes legacy_numeric_child_upgrade_replay, fresh child process and DB restart replay). No browser or hosted evidence.",
+  "not_claimed": "Local tests do not deploy the fix; RESEARCH-HOSTED-ACCEPTANCE-001 and DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 retain hosted/real-DB obligations.",
+  "real_postgres_probe": {
+    "passed": 10,
+    "failed": 0,
+    "review_cases_only": {
+      "passed": 2,
+      "failed": 0,
+      "cases": [
+        "mixed_keyed_unkeyed_ticket_race",
+        "deterministic_id_unrelated_record_collision"
+      ]
+    },
+    "note": "run on head c2593eb06 (code), before this manifest commit; local disposable DB only, container/volumes removed"
+  }
+}

@@ -1075,7 +1075,7 @@ class TestTelemetryDurableLineageReadRestart(unittest.TestCase):
 
         if cls._container_name:
             import subprocess
-            subprocess.run(["docker", "rm", "-f", cls._container_name], check=False, capture_output=True)
+            subprocess.run(["docker", "rm", "-f", "-v", cls._container_name], check=False, capture_output=True)
 
     @classmethod
     def _find_pg_dsn(cls) -> str | None:

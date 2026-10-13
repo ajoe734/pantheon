@@ -397,6 +397,87 @@ class TestTrainingSessionHttpStoreUnit:
                     ])
                 elif self.path.startswith("/api/training/controls/trn-1"):
                     self._send_json(200, {"session_id": "trn-1", "controls": [{"parameter_key": "param1", "current_value": 1.0}]})
+                elif self.path.startswith("/api/training/preview-jobs"):
+                    jobs = []
+                    if "session_id=trn-new" in self.path:
+                        for r in requests_log:
+                            if r[0] == "POST" and "trn-new/preview-jobs" in r[1]:
+                                jobs.append({
+                                    "job_id": "job-new-1",
+                                    "session_id": "trn-new",
+                                    "eval_id": "teval-new-001",
+                                    "status": "queued",
+                                    "requested_at": "2026-10-12T00:01:00Z",
+                                })
+                    elif "session_id=trn-failed" in self.path:
+                        jobs.append({
+                            "job_id": "job-failed-1",
+                            "session_id": "trn-failed",
+                            "eval_id": "teval-failed-001",
+                            "status": "failed",
+                            "error_code": "evaluation_admission_rejected",
+                            "failure_reason": "candidate controls do not contain an effective change",
+                            "requested_at": "2026-10-12T00:01:00Z",
+                        })
+                    elif "session_id=trn-malformed" in self.path:
+                        self._send_json(200, {"malformed": "not a list"})
+                        return
+                    elif "session_id=trn-running-no-jobid" in self.path:
+                        jobs.append({
+                            "session_id": "trn-running-no-jobid",
+                            "eval_id": "eval-source",
+                            "status": "running",
+                        })
+                    elif "session_id=trn-completed-no-eval" in self.path:
+                        jobs.append({
+                            "job_id": "job-source",
+                            "session_id": "trn-completed-no-eval",
+                            "eval_id": "eval-source",
+                            "status": "completed",
+                        })
+                    self._send_json(200, jobs)
+                elif self.path.startswith("/api/training/previews/trn-running-no-jobid"):
+                    self._send_json(200, {
+                        "session_id": "trn-running-no-jobid",
+                        "evaluations": {},
+                        "preview": {"session_id": "trn-running-no-jobid", "status": "preview_unavailable"},
+                    })
+                elif self.path.startswith("/api/training/previews/trn-completed-no-eval"):
+                    self._send_json(200, {
+                        "session_id": "trn-completed-no-eval",
+                        "evaluations": {},
+                        "preview": {"session_id": "trn-completed-no-eval", "status": "preview_unavailable"},
+                    })
+                elif self.path.startswith("/api/training/previews/trn-failed"):
+                    self._send_json(200, {
+                        "session_id": "trn-failed",
+                        "evaluations": {},
+                        "preview": {
+                            "eval_id": "teval-failed-001",
+                            "session_id": "trn-failed",
+                            "status": "preview_unavailable",
+                            "metric_delta": {},
+                            "control_diff": [],
+                        },
+                    })
+                elif self.path.startswith("/api/training/previews/trn-malformed"):
+                    self._send_json(200, {
+                        "session_id": "trn-malformed",
+                        "evaluations": {},
+                        "preview": {"session_id": "trn-malformed", "status": "preview_unavailable"},
+                    })
+                elif self.path.startswith("/api/training/previews/trn-new"):
+                    self._send_json(200, {
+                        "session_id": "trn-new",
+                        "evaluations": {},
+                        "preview": {
+                            "eval_id": "teval-new-001",
+                            "session_id": "trn-new",
+                            "status": "preview_unavailable",
+                            "metric_delta": {},
+                            "control_diff": [],
+                        },
+                    })
                 elif self.path.startswith("/api/training/previews/trn-1"):
                     self._send_json(200, {
                         "latest_eval_id": "teval-1",
@@ -465,8 +546,12 @@ class TestTrainingSessionHttpStoreUnit:
                             }],
                         },
                     })
+                elif self.path.startswith("/api/training/sessions/trn-failed/preview-jobs"):
+                    self._send_json(200, {"eval_id": "teval-failed-002", "job_id": "job-failed-2", "status": "queued"})
+                elif self.path.startswith("/api/training/sessions/trn-new/preview-jobs"):
+                    self._send_json(200, {"eval_id": "teval-new-001", "job_id": "job-new-1", "status": "queued"})
                 elif self.path.startswith("/api/training/sessions/trn-1/preview-jobs"):
-                    self._send_json(200, {"eval_id": "teval-job-1", "job_id": "job-123"})
+                    self._send_json(200, {"eval_id": "teval-job-1", "job_id": "job-123", "status": "queued"})
                 elif self.path.startswith("/api/training/sessions/trn-malformed/preview-jobs"):
                     self._send_json(200, {"status": "queued"})
                 elif self.path.startswith("/api/training/replays/trn-1/commit"):
@@ -525,7 +610,7 @@ class TestTrainingSessionHttpStoreUnit:
             selected_tenant.reset(tenant_token)
 
     def test_http_store_all_methods(self, mock_server):
-        base_url, _ = mock_server
+        base_url, requests_log = mock_server
         store = TrainingSessionHttpStore(base_url=base_url)
 
         claims = base64.urlsafe_b64encode(json.dumps({"tenant_id": "tenant-test"}).encode()).decode().rstrip("=")
@@ -535,6 +620,75 @@ class TestTrainingSessionHttpStoreUnit:
             # 1. create
             sess = store.create_trainer_session(persona_id="p-1", objective="test obj")
             assert sess["session_id"] == "trn-new"
+
+            # 1a. initial preview: newly created session with no computation yet has canRefreshPreview=True
+            init_prev = store.get_trainer_preview("trn-new", session_status="active")
+            assert init_prev["status"] == "preview_unavailable"
+            assert init_prev["allowedActions"]["canRefreshPreview"] is True
+
+            # 1b. first preview refresh: queues native job
+            new_job = store.refresh_trainer_preview("trn-new")
+            assert new_job["status"] == "pending"
+            assert new_job["job_id"] == "job-new-1"
+            assert new_job["eval_id"] == "teval-new-001"
+            assert new_job["owner_job_ref"] == {"job_id": "job-new-1", "eval_id": "teval-new-001"}
+            assert new_job["allowedActions"]["canRefreshPreview"] is False
+
+            # 1c. pending reread & no second admission
+            reread = store.get_trainer_preview("trn-new", session_status="active")
+            assert reread["status"] == "pending"
+            assert reread["allowedActions"]["canRefreshPreview"] is False
+
+            post_count_before = len([r for r in requests_log if r[0] == "POST" and "trn-new/preview-jobs" in r[1]])
+            repeat_job = store.refresh_trainer_preview("trn-new")
+            assert repeat_job["status"] == "pending"
+            assert repeat_job["job_id"] == "job-new-1"
+            post_count_after = len([r for r in requests_log if r[0] == "POST" and "trn-new/preview-jobs" in r[1]])
+            assert post_count_before == post_count_after
+
+            # 1d. failed job readback and truth propagation
+            failed_prev = store.get_trainer_preview("trn-failed", session_status="active")
+            assert failed_prev["status"] == "failed"
+            assert failed_prev["job_id"] == "job-failed-1"
+            assert failed_prev["eval_id"] == "teval-failed-001"
+            assert failed_prev["owner_job_ref"] == {"job_id": "job-failed-1", "eval_id": "teval-failed-001"}
+            assert failed_prev["error_code"] == "evaluation_admission_rejected"
+            assert failed_prev["failure_reason"] == "candidate controls do not contain an effective change"
+            assert failed_prev["allowedActions"]["canRefreshPreview"] is True
+            assert failed_prev["polling"]["enabled"] is False
+            assert len(failed_prev["warnings"]) == 1
+            assert failed_prev["warnings"][0]["level"] == "high"
+            assert failed_prev["warnings"][0]["message"] == "candidate controls do not contain an effective change"
+            assert failed_prev["warning_count_by_level"]["high"] == 1
+            assert failed_prev["preview_quality"] == "insufficient_data"
+            assert failed_prev["meta"]["surfaces"]["trainer_preview"] == "degraded"
+
+            # 1e. failed job eval_id lookup vs unknown eval_id
+            by_eval = store.get_trainer_preview("trn-failed", eval_id="teval-failed-001", session_status="active")
+            assert by_eval["status"] == "failed"
+            assert by_eval["job_id"] == "job-failed-1"
+            assert store.get_trainer_preview("trn-failed", eval_id="teval-nonexistent", session_status="active") is None
+
+            # 1f. retry refresh after failure triggers new job
+            retry_job = store.refresh_trainer_preview("trn-failed")
+            assert retry_job["status"] == "pending"
+            assert retry_job["job_id"] == "job-failed-2"
+
+            # 1g. malformed queue response raises 503 DEPENDENCY_UNAVAILABLE
+            with pytest.raises(HTTPException) as exc_malformed:
+                store.get_trainer_preview("trn-malformed", session_status="active")
+            assert exc_malformed.value.status_code == 503
+
+            # 1h. running without job_id raises 503 DEPENDENCY_UNAVAILABLE
+            with pytest.raises(HTTPException) as exc_no_jobid:
+                store.get_trainer_preview("trn-running-no-jobid", session_status="active")
+            assert exc_no_jobid.value.status_code == 503
+
+            # 1i. completed without evaluation returns None on specific eval_id, and preview_unavailable without eval_id (truthfully unavailable/error, not pending)
+            assert store.get_trainer_preview("trn-completed-no-eval", eval_id="eval-source", session_status="active") is None
+            completed_prev = store.get_trainer_preview("trn-completed-no-eval", session_status="active")
+            assert completed_prev is not None
+            assert completed_prev["status"] == "preview_unavailable"
 
             # 2. get session
             detail = store.get_trainer_session("trn-1")

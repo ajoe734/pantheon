@@ -118,7 +118,7 @@ def runtime_contract(rendered: dict, bff_image: str) -> None:
                     print(run(*args, "--entrypoint", "python", bff_image, PROBE, "--paper-probe", phase, timeout=90))
                 finally:
                     # A killed CLI must not leave its task-owned container running.
-                    subprocess.run(["docker", "rm", "-f", container], capture_output=True, timeout=30)
+                    subprocess.run(["docker", "rm", "-f", "-v", container], capture_output=True, timeout=30)
 
             paper("create")
             paper("restart")
@@ -130,7 +130,7 @@ def runtime_contract(rendered: dict, bff_image: str) -> None:
             print("PASS: mounted BFF paper create/restart/replay/tenant/CAS/unavailable; no JSON fallback")
         finally:
             if database_created:
-                run("docker", "rm", "-f", database)
+                run("docker", "rm", "-f", "-v", database)
             if network_created:
                 run("docker", "network", "rm", network)
 

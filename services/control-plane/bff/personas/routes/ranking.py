@@ -390,7 +390,7 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.get("/bff/management/quarterly-ranking")
-    async def bff_management_quarterly_ranking(
+    def bff_management_quarterly_ranking(
         quarter: Optional[str] = Query(default=None),
         state: Optional[str] = None,
         archetype: Optional[str] = None,
@@ -445,7 +445,7 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.get("/bff/management/quarterly-ranking/drilldown")
-    async def bff_management_quarterly_ranking_drilldown(
+    def bff_management_quarterly_ranking_drilldown(
         response: Response,
         persona_id: Optional[str] = Query(default=None, alias="personaId"),
         persona_id_snake: Optional[str] = Query(default=None, alias="persona_id"),
@@ -512,7 +512,7 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.get("/bff/management/quarterly-ranking/recommendations")
-    async def bff_management_quarterly_ranking_recommendations(
+    def bff_management_quarterly_ranking_recommendations(
         quarter: Optional[str] = Query(default=None),
         state: Optional[str] = None,
         archetype: Optional[str] = None,

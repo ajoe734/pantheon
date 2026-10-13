@@ -1,0 +1,19 @@
+{
+  "task_id": "DEV-PAPER-RELEASE-CASE-RETIRE-V2-20261013",
+  "supersedes": "DEV-PAPER-RELEASE-CASE-RETIRE-20261012 (PR 6540)",
+  "hosted_action_performed_by_worker": false,
+  "owner_path": "POST /api/deployment/sagas/{saga_id}/retire (DEPLOYMENT-SAGA-RETIRE-COMMAND-20261013); retired sagas classified from status=retired",
+  "forbidden_paths_not_used": ["/api/deployment/sagas/{id}/failure", "/api/runtime-bindings/{id}/retire", "/api/runtime-bindings/{id}/transition", "direct database write", "record deletion"],
+  "scope_rule": {
+    "accepted": "every active release case except this run's case is retired",
+    "compensated": "only this run's case is retired; no other case is touched; served case never inferred from recency"
+  },
+  "workflow": {
+    "admit_job_step": "Retire non-served dev paper release cases (accepted or compensated)",
+    "deploy_job_step": "Retire this run's dev paper release case after deploy compensation",
+    "ssh_host": "vars.DEV_DEPLOY_SSH_HOST only; hard-coded fallback removed"
+  },
+  "dry_run": "docker exec -i pantheon-operator-bff-1 python - --dry-run --outcome accepted < scripts/retire_dev_paper_release_cases.py",
+  "tests": ["scripts/test_retire_dev_paper_release_cases.py (14 passed)", "scripts/test_dev_environment_lease_deploy_contract.py (247 passed)", "scripts/test_loop_prod_tel_002_hosted_workflow.py (passed)"],
+  "limitation": "hosted behaviour of the retire action on real sagas is first exercised by the next Root; a deploy-job retire runs after the compensation lease is released"
+}
