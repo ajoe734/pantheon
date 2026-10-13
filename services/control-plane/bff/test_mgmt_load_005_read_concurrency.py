@@ -31,10 +31,18 @@ routes therefore either completes within the wait budget (asserted by the
 "slow read completes" sub-tests below) or degrades to an explicit envelope
 once it exceeds the budget (asserted by the "timeout returns degraded
 envelope" sub-tests below), the same MGMT-LOAD-005 contract as ``/bff/alerts``.
+
+``/bff/management/quarterly-ranking``, ``/drilldown``, and
+``/recommendations`` (via native ``personas.routes.ranking.build_ranking_router``)
+use FastAPI's native synchronous-handler threadpool dispatch (``def`` handlers
+for synchronous route bodies) to ensure slow original ranking aggregation
+cannot block the persistent event loop or delay unrelated routes like
+``/health`` and strict auth rejections (MGMT-RANKING-ORIGINAL-READ-ISOLATION-20261012).
 """
 from __future__ import annotations
 
 import os
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -67,10 +75,14 @@ from services.control_plane.bff.management_read_models.router import (
     _utc_now_rfc3339,
     create_management_router,
 )
+from services.control_plane.bff.personas import PersonaService
 from services.control_plane.bff.personas.routes.common import (
     run_management_read as _real_run_management_read,
 )
-from services.control_plane.bff.ports import ReadSurfacePorts, create_read_surface_ports
+from services.control_plane.bff.ports import (
+    ReadSurfacePorts,
+    create_read_surface_ports,
+)
 
 
 HEADERS = {"Authorization": "Bearer op-mgmt-load-005:operator,admin:mfa"}
@@ -390,3 +402,199 @@ def test_human_inbox_timeout_returns_degraded_envelope_without_hanging() -> None
     surface = payload["meta"]["surfaces"]["human_inbox"]
     assert surface["status"] == "degraded"
     assert surface["reason"] == "read_timeout"
+
+
+@contextmanager
+def _isolated_ranking_client(
+    *,
+    jwt_secret: str = "test-ranking-read-isolation-jwt-secret",
+):
+    """Mounts the production ranking router factories via g._isolated_client
+    with native OwnerReadContextMiddleware on a persistent TestClient, in strict
+    JWT authentication mode without MFA (MGMT-RANKING-ORIGINAL-READ-ISOLATION-20261012).
+    """
+    from services.runtime_auth_inbound import encode_jwt_hs256
+    from services.control_plane.bff import test_bff_promotion_review_governance as g
+    from services.control_plane.bff.core.owner_reads import OwnerReadContextMiddleware
+
+    orig_build = g._build_promotion_review_app
+
+    def _build_with_native_middleware(*args, **kwargs):
+        app = orig_build(*args, **kwargs)
+        app.add_middleware(OwnerReadContextMiddleware)
+        return app
+
+    token = encode_jwt_hs256(
+        {
+            "sub": "op-ranking",
+            "roles": ["operator"],
+            "tenant_id": "pantheon-dev",
+            "exp": int(time.time()) + 3600,
+        },
+        secret=jwt_secret,
+    )
+    auth_headers = {
+        "Authorization": f"Bearer {token}",
+        "X-Tenant-Id": "pantheon-dev",
+    }
+
+    env_overrides = {
+        "PANTHEON_BFF_JWT_SECRET": jwt_secret,
+        "PANTHEON_BFF_AUTH_MODE": "strict",
+        "PANTHEON_BFF_MFA_REQUIRED": "false",
+    }
+    with patch.dict(os.environ, env_overrides):
+        prev_stub = os.environ.pop("PANTHEON_BFF_AUTH_STUB", None)
+        try:
+            with patch.object(g, "_build_promotion_review_app", side_effect=_build_with_native_middleware):
+                with g._isolated_client() as (client, store, commands):
+                    yield client, store, commands, auth_headers
+        finally:
+            if prev_stub is not None:
+                os.environ["PANTHEON_BFF_AUTH_STUB"] = prev_stub
+
+
+def test_health_and_auth_rejection_stay_responsive_while_ranking_read_is_slow() -> None:
+    """A slow, synchronous quarterly ranking read must not block the asyncio
+    event loop or delay concurrent /health or unauthenticated/tampered rejection requests
+    (MGMT-RANKING-ORIGINAL-READ-ISOLATION-20261012).
+
+    Uses native g._isolated_client with OwnerReadContextMiddleware and an entered-read
+    event barrier to guarantee the slow ranking aggregation has genuinely entered its
+    worker thread before probing concurrent routes.
+    """
+    from services.control_plane.bff.core import owner_reads
+
+    entered_read = threading.Event()
+    release_read = threading.Event()
+    captured_context: dict[str, str | None] = {}
+    orig_get_quarterly_ranking = PersonaService.get_quarterly_ranking
+
+    def controlled_slow_ranking(self, *args, **kwargs):
+        captured_context["authorization"] = owner_reads.authorization.get()
+        captured_context["selected_tenant"] = owner_reads.selected_tenant.get()
+        entered_read.set()
+        if not release_read.wait(timeout=5.0):
+            raise TimeoutError("Test did not release slow ranking read within timeout")
+        return orig_get_quarterly_ranking(self, *args, **kwargs)
+
+    with _isolated_ranking_client() as (client, store, _commands, auth_headers):
+        with patch.object(PersonaService, "get_quarterly_ranking", controlled_slow_ranking):
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                ranking_future = pool.submit(
+                    client.get,
+                    "/bff/management/quarterly-ranking",
+                    headers=auth_headers,
+                    params={"quarter": "2026-Q1"},
+                )
+                assert entered_read.wait(timeout=5.0), "Ranking read never entered execution"
+
+                # 1. Core /health must stay responsive (< 0.3s) while slow ranking read is in flight
+                health_started = time.monotonic()
+                health_response = client.get("/health")
+                health_elapsed = time.monotonic() - health_started
+
+                # 2. Strict anonymous rejection (401) must stay responsive (< 0.3s)
+                anon_started = time.monotonic()
+                anon_response = client.get("/bff/management/quarterly-ranking")
+                anon_elapsed = time.monotonic() - anon_started
+
+                # 3. Strict tampered JWT rejection (401) must stay responsive (< 0.3s)
+                tampered_started = time.monotonic()
+                tampered_response = client.get(
+                    "/bff/management/quarterly-ranking",
+                    headers={"Authorization": "Bearer bad.jwt.token"},
+                )
+                tampered_elapsed = time.monotonic() - tampered_started
+
+                # Controlled release of the slow ranking read
+                release_read.set()
+                ranking_response = ranking_future.result()
+
+    assert health_response.status_code == 200
+    assert health_elapsed < 0.3, (
+        f"/health took {health_elapsed:.3f}s while slow ranking aggregation was in flight; "
+        "event loop was blocked by synchronous ranking read"
+    )
+
+    assert anon_response.status_code == 401
+    assert anon_elapsed < 0.3, (
+        f"anonymous auth rejection took {anon_elapsed:.3f}s; "
+        "auth rejection was delayed by slow ranking read"
+    )
+
+    assert tampered_response.status_code == 401
+    assert tampered_elapsed < 0.3, (
+        f"tampered JWT auth rejection took {tampered_elapsed:.3f}s; "
+        "auth rejection was delayed by slow ranking read"
+    )
+
+    assert ranking_response.status_code == 200
+    ranking_payload = ranking_response.json()
+    assert "data" in ranking_payload
+    assert "meta" in ranking_payload
+
+    # Caller context vars preserved across synchronous threadpool dispatch
+    assert captured_context.get("authorization") == auth_headers["Authorization"]
+    assert captured_context.get("selected_tenant") == "pantheon-dev"
+
+
+def test_ranking_drilldown_and_recommendations_preserve_synchronous_dispatch_and_errors() -> None:
+    """Quarterly ranking drilldown and recommendations GET handlers dispatch
+    via synchronous threadpool, preserving caller tenant context, true validation
+    and not-found errors, and without blocking concurrent /health requests.
+    """
+    entered_rec = threading.Event()
+    release_rec = threading.Event()
+    orig_recommendations = PersonaService.get_quarterly_ranking_recommendations
+
+    def controlled_slow_recommendations(self, *args, **kwargs):
+        entered_rec.set()
+        if not release_rec.wait(timeout=5.0):
+            raise TimeoutError("Test did not release slow recommendations read within timeout")
+        return orig_recommendations(self, *args, **kwargs)
+
+    with _isolated_ranking_client() as (client, store, _commands, auth_headers):
+        # Validation error: missing personaId on drilldown
+        val_resp = client.get("/bff/management/quarterly-ranking/drilldown", headers=auth_headers)
+        assert val_resp.status_code == 422, val_resp.text
+
+        # Not found error: nonexistent persona on drilldown
+        nf_resp = client.get(
+            "/bff/management/quarterly-ranking/drilldown?persona_id=nonexistent-persona",
+            headers=auth_headers,
+        )
+        assert nf_resp.status_code == 404, nf_resp.text
+
+        # Drilldown success for seeded persona
+        dd_resp = client.get(
+            "/bff/management/quarterly-ranking/drilldown?persona_id=persona-us-equity&quarter=2026-Q1",
+            headers=auth_headers,
+        )
+        assert dd_resp.status_code == 200, dd_resp.text
+        dd_payload = dd_resp.json()
+        assert "data" in dd_payload
+
+        # Slow recommendations read does not block concurrent /health
+        with patch.object(PersonaService, "get_quarterly_ranking_recommendations", controlled_slow_recommendations):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                rec_future = pool.submit(
+                    client.get,
+                    "/bff/management/quarterly-ranking/recommendations",
+                    headers=auth_headers,
+                    params={"quarter": "2026-Q1"},
+                )
+                assert entered_rec.wait(timeout=5.0), "Recommendations read never entered execution"
+                health_started = time.monotonic()
+                health_resp = client.get("/health")
+                health_elapsed = time.monotonic() - health_started
+                release_rec.set()
+                rec_resp = rec_future.result()
+
+    assert health_resp.status_code == 200
+    assert health_elapsed < 0.3, f"/health took {health_elapsed:.3f}s during slow recommendations read"
+    assert rec_resp.status_code == 200
+    rec_payload = rec_resp.json()
+    assert "data" in rec_payload
+
+
