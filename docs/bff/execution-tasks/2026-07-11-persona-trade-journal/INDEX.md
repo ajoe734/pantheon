@@ -9,6 +9,7 @@
 |---|---|---|---|---|---|
 | 0 | `PTJ-001` | Antigravity | Codex2 | - | contract、identity、state machine、schema |
 | 1 | `PTJ-002` | Gemini2 | Claude2 | PTJ-001 | telemetry/lineage episode projection 與 replay |
+| 1.5 | `PTJ-ORIGINAL-PAPER-EPISODE-CORRELATION-20261012` | Antigravity | Claude | PTJ-002 | paper ledger exposure authority、open_episodes persistence 與 native projection correlation |
 | 1 | `PTJ-003` | Claude | Codex2 | PTJ-001 | reflection worker、facts snapshot、lesson candidates |
 | 2 | `PTJ-004` | Codex2 | Claude2 | PTJ-002,003 | BFF journal/reflection/pattern APIs 與 RBAC/audit |
 | 2 | `PTJ-005` | Gemini | Codex2 | PTJ-003 | memory governance 與 evaluation gates |
@@ -31,6 +32,16 @@ episode identity、reversal/partial-fill/force-close 規則、truth ownership �
 duplicate、late、out-of-order、correction、partial fill、scale、reversal、manual/risk exit。
 
 驗收：golden replay cases；coverage/missing refs；cursor pagination；source/as-of；不以時間猜測硬 join。
+
+### PTJ-ORIGINAL-PAPER-EPISODE-CORRELATION-20261012 — Original paper exposure identity correlation
+
+修復 paper execution runtime (`paper_runtime.py`) 與 `TradeEpisodeProjectionStore` 之間的斷裂 seam：
+- 由 paper ledger 作為 exposure authority 指派 stable genuine `trade_episode_id`（涵蓋 entry、scale-in/out、reversal 至 exact flat）。
+- 於 ledger checkpoint (`open_episodes`) 持久化 open episode identity，支援重啟復原；legacy ledger 無 provenance 乾淨載入不偽造 opened/closed 事實。
+- `reversal` metadata 嚴格隔離於 fill event，不洩漏至 risk/order/position snapshot，防止反向部位 snapshot 污染或重開已關閉 episode。
+- `TradeEpisodeProjectionStore` 追蹤 nonzero position remaining quantity、維護方向穩定不被減倉賣單反轉 side、並支援同秒 native sequence_no 因果排序。
+
+驗收：paper runtime 與 projection contract tests；restart 狀態還原；reduce-reverse-flat 4 步循環驗證通過；net production diff ≤ 250 lines。
 
 ### PTJ-003 — Reflection pipeline
 

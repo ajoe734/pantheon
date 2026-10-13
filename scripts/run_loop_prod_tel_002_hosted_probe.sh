@@ -8,6 +8,7 @@ Usage: scripts/run_loop_prod_tel_002_hosted_probe.sh \
   --container-output /tmp/evidence.json \
   --remote-output /tmp/evidence.json \
   [--mode natural|controlled-stimulus] [--case-key CASE_KEY] \
+  [--baseline-high-watermark N] \
   [--timeout-seconds 420] \
   [--stimulus-timeout-seconds 180] \
   [--worker-ready-timeout-seconds 120] \
@@ -19,6 +20,7 @@ EOF
 expected_sha="" container_output="" remote_output="" mode="natural" case_key=""
 timeout_seconds="420" stimulus_timeout_seconds="180" worker_ready_timeout_seconds="120"
 worker_heartbeat_max_age_seconds="120" poll_seconds="5"
+baseline_arg_set="0" explicit_baseline=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -36,6 +38,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --mode) mode="${2:-}"; shift 2 ;;
     --case-key) case_key="${2:-}"; shift 2 ;;
+    --baseline-high-watermark) baseline_arg_set="1"; explicit_baseline="${2:-}"; shift 2 ;;
     --timeout-seconds)
       timeout_seconds="${2:-}"
       shift 2
@@ -71,7 +74,6 @@ if [[ -z "${expected_sha}" || -z "${container_output}" || -z "${remote_output}" 
   usage
   exit 64
 fi
-
 compose=(docker compose -p pantheon -f docker-compose.yml)
 source_ingest_url="${PANTHEON_SOURCE_INGEST_URL:-${PANTHEON_SOURCE_INGEST_API_URL:-${SOURCE_INGEST_URL:-http://source-ingest:8097}}}"
 
@@ -93,20 +95,30 @@ copy_probe_evidence() {
   docker cp "${container_id}:${container_output}" "${remote_output}"
 }
 
-baseline_status=0
-set +e
-baseline="$("${compose[@]}" exec -T loop-run-projector-scheduler \
-  python -m services.trade_journey.hosted_lifecycle_probe \
-    --expected-sha "${expected_sha}" \
-    --print-high-watermark)"
-baseline_status=$?
-set -e
-baseline="${baseline//$'\r'/}"
-baseline="${baseline//$'\n'/}"
-if [[ "${baseline_status}" -ne 0 || ! "${baseline}" =~ ^[0-9]+$ ]]; then
-  write_probe_failure "baseline_high_watermark_failed" "hosted lifecycle baseline high-watermark capture failed"
-  copy_probe_evidence
-  exit "$(( baseline_status != 0 ? baseline_status : 1 ))"
+if [[ "${baseline_arg_set}" == "1" ]]; then
+  # Official run: the baseline was captured before bootstrap activated the case.
+  if [[ ! "${explicit_baseline}" =~ ^[0-9]+$ ]]; then
+    write_probe_failure "baseline_high_watermark_invalid" "official pre-bootstrap baseline high-watermark missing or malformed"
+    copy_probe_evidence
+    exit 64
+  fi
+  baseline="${explicit_baseline}"
+else
+  baseline_status=0
+  set +e
+  baseline="$("${compose[@]}" exec -T loop-run-projector-scheduler \
+    python -m services.trade_journey.hosted_lifecycle_probe \
+      --expected-sha "${expected_sha}" \
+      --print-high-watermark)"
+  baseline_status=$?
+  set -e
+  baseline="${baseline//$'\r'/}"
+  baseline="${baseline//$'\n'/}"
+  if [[ "${baseline_status}" -ne 0 || ! "${baseline}" =~ ^[0-9]+$ ]]; then
+    write_probe_failure "baseline_high_watermark_failed" "hosted lifecycle baseline high-watermark capture failed"
+    copy_probe_evidence
+    exit "$(( baseline_status != 0 ? baseline_status : 1 ))"
+  fi
 fi
 
 if [[ "${mode}" == "controlled-stimulus" ]]; then

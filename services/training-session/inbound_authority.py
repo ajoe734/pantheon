@@ -21,6 +21,19 @@ _AUTHORITY_CONTEXT: ContextVar[Optional["TrainingInboundAuthority"]] = ContextVa
 )
 _MUTATION_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 _MFA_PATH_SUFFIXES = ("/commit", "/discard")
+_WORKER_ONLY_PATH_SUFFIXES = ("/run",)
+_MUTATION_ROLES = frozenset({
+    "operator",
+    "admin",
+    "approver",
+    "reviewer",
+    "persona.admin",
+    "training-service",
+})
+_SERVICE_ROLES = frozenset({"training-service"})
+_DEFAULT_ALLOWED_ROLES = (
+    "operator,admin,approver,reviewer,viewer,view_only,reader,persona.admin,training-service"
+)
 _TENANT_CLAIMS = (
     "allowed_tenants",
     "allowedTenants",
@@ -316,20 +329,43 @@ def authenticate_training_request(
 
     mutation = method.upper() in _MUTATION_METHODS
     mfa_required = mutation and any(path.rstrip("/").endswith(suffix) for suffix in _MFA_PATH_SUFFIXES)
-    required_roles = tuple(
-        _csv(os.getenv("TRAINING_SESSION_ALLOWED_ROLES", "training-service"))
+    is_worker_only = any(path.rstrip("/").endswith(suffix) for suffix in _WORKER_ONLY_PATH_SUFFIXES)
+    configured_allowed_roles = set(
+        _csv(os.getenv("TRAINING_SESSION_ALLOWED_ROLES", _DEFAULT_ALLOWED_ROLES))
     )
     auth_env = _auth_env()
     try:
         context: AuthContext = validate_request_auth(
             authorization=authorization,
             mfa_header=mfa_token,
-            required_roles=required_roles,
+            required_roles=None,
             mfa_required=mfa_required,
             env=auth_env,
         )
     except AuthError as exc:
         raise TrainingInboundAuthorityError(exc.code, exc.message, exc.status_code) from exc
+
+    if not _claim_strings(context.claims, ("roles", "role")):
+        raise TrainingInboundAuthorityError(
+            "AUTH_FORBIDDEN",
+            "Caller token does not contain explicit role authority",
+            403,
+        )
+
+    if not context.roles.intersection(configured_allowed_roles):
+        raise TrainingInboundAuthorityError(
+            "AUTH_FORBIDDEN",
+            f"Role {sorted(context.roles)} not authorized; need one of {sorted(configured_allowed_roles)}",
+            403,
+        )
+
+    if mutation and not context.roles.intersection(_MUTATION_ROLES):
+        raise TrainingInboundAuthorityError(
+            "AUTH_FORBIDDEN",
+            f"Role {sorted(context.roles)} not authorized; need one of {sorted(_MUTATION_ROLES)}",
+            403,
+        )
+
     authoritative_mfa = has_claim_bound_mfa(context, env=auth_env)
     if (
         mfa_required
@@ -342,15 +378,49 @@ def authenticate_training_request(
             401,
         )
 
-    bound_services = _claim_strings(context.claims, _SERVICE_CLAIMS)
-    if context.token_kind == "structured":
-        bound_services.append(context.actor_id)
-    if clean_service not in bound_services:
+    is_service_caller = bool(context.roles.intersection(_SERVICE_ROLES))
+    if is_worker_only and not is_service_caller:
         raise TrainingInboundAuthorityError(
-            "ACTOR_SERVICE_MISMATCH",
-            "X-Pantheon-Service does not match the verified token",
+            "AUTH_FORBIDDEN",
+            "Worker-only endpoint requires training-service caller authority",
             403,
         )
+
+    if is_service_caller:
+        bound_services = _claim_strings(context.claims, _SERVICE_CLAIMS)
+        if context.token_kind == "structured":
+            bound_services.append(context.actor_id)
+        if clean_service not in bound_services:
+            raise TrainingInboundAuthorityError(
+                "ACTOR_SERVICE_MISMATCH",
+                "X-Pantheon-Service does not match the verified token",
+                403,
+            )
+        delegated_actor_id = _clean(
+            context.claims.get("delegated_actor_id")
+            or context.claims.get("operator_id")
+            or context.claims.get("user_id")
+        ) or None
+    else:
+        allowed_gateways = set(
+            _csv(
+                os.getenv(
+                    "TRAINING_SESSION_ALLOWED_GATEWAY_SERVICES",
+                    "control-plane-bff",
+                )
+            )
+        )
+        if clean_service not in allowed_gateways and "*" not in allowed_gateways:
+            raise TrainingInboundAuthorityError(
+                "ACTOR_SERVICE_FORBIDDEN",
+                "Caller service is not an authorized gateway for user authority",
+                403,
+            )
+        delegated_actor_id = _clean(
+            context.claims.get("delegated_actor_id")
+            or context.claims.get("operator_id")
+            or context.claims.get("user_id")
+        ) or context.actor_id
 
     allowed_tenants = _claim_strings(context.claims, _TENANT_CLAIMS)
     if context.token_kind == "structured":
@@ -370,11 +440,6 @@ def authenticate_training_request(
             403,
         )
 
-    delegated_actor_id = _clean(
-        context.claims.get("delegated_actor_id")
-        or context.claims.get("operator_id")
-        or context.claims.get("user_id")
-    ) or None
     return TrainingInboundAuthority(
         actor_id=context.actor_id,
         actor_service=clean_service,

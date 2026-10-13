@@ -309,7 +309,7 @@ def test_precondition_read_commit_and_restart_readback(owner_env) -> None:
     # record -- not a second receipt-only store the owner never observes --
     # and it carries the actual candidate/control_state content, not just
     # digest metadata.
-    persona = restarted_client.get(f"/api/personas/{PERSONA_ID}")
+    persona = restarted_client.get(f"/api/personas/{PERSONA_ID}", headers=_auth_header())
     assert persona.status_code == 200, persona.text
     metadata = persona.json()["metadata"]
     assert metadata["training_target_generation"] == 1
@@ -385,7 +385,7 @@ def test_commit_recovers_after_crash_between_durability_and_application(
     assert mid_crash_read.status_code == 200, mid_crash_read.text
     assert mid_crash_read.json()["status"] == "applying"
 
-    persona_mid_crash = client.get(f"/api/personas/{PERSONA_ID}")
+    persona_mid_crash = client.get(f"/api/personas/{PERSONA_ID}", headers=_auth_header())
     assert persona_mid_crash.json()["metadata"].get("training_target_generation") != 1
 
     # Replaying the identical binding recovers: applies and finalizes.
@@ -407,7 +407,7 @@ def test_commit_recovers_after_crash_between_durability_and_application(
         headers={**_auth_header(), "X-Tenant-Id": TENANT_ID},
     )
     assert final_read.json()["status"] == "committed"
-    persona_after = client.get(f"/api/personas/{PERSONA_ID}")
+    persona_after = client.get(f"/api/personas/{PERSONA_ID}", headers=_auth_header())
     assert persona_after.json()["metadata"]["training_target_generation"] == 1
 
 
@@ -460,7 +460,7 @@ def test_apply_ignores_out_of_order_lower_generation(owner_env) -> None:
 
     from services.persona.write_owner import build_persona_training_target_owner
 
-    persona_before = client.get(f"/api/personas/{PERSONA_ID}").json()
+    persona_before = client.get(f"/api/personas/{PERSONA_ID}", headers=_auth_header()).json()
     assert persona_before["metadata"]["training_target_generation"] == 2
 
     training_target_owner = build_persona_training_target_owner(
@@ -471,7 +471,7 @@ def test_apply_ignores_out_of_order_lower_generation(owner_env) -> None:
         PERSONA_ID, stale_request, {"controller_record_ref": "stale-ref"}
     )
 
-    persona_after = client.get(f"/api/personas/{PERSONA_ID}").json()
+    persona_after = client.get(f"/api/personas/{PERSONA_ID}", headers=_auth_header()).json()
     assert persona_after["metadata"]["training_target_generation"] == 2
     assert (
         persona_after["metadata"]["training_target_candidate_digest"]
@@ -552,7 +552,7 @@ def test_apply_survives_generation2_committing_between_read_and_cas(owner_env) -
     finally:
         AtomicJsonRecordStore.compare_and_set = real_compare_and_set
 
-    persona_after = client.get(f"/api/personas/{PERSONA_ID}").json()
+    persona_after = client.get(f"/api/personas/{PERSONA_ID}", headers=_auth_header()).json()
     assert persona_after["metadata"]["training_target_generation"] == 2
     assert persona_after["metadata"]["training_target_control_digest"] == "f" * 64
     assert persona_after["metadata"]["training_target_candidate_digest"] == "g" * 64
