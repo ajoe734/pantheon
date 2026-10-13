@@ -28,6 +28,53 @@ class _InMemoryStore:
     def list_all(self, *, conn: Optional[Any] = None) -> List[Dict[str, Any]]:
         return [json.loads(json.dumps(v)) for v in self._data.values()]
 
+    # Stand-in for the table/advisory locks PostgresJsonOwnerStore takes: one
+    # shared reentrant lock serializes transactions across fake stores, and the
+    # undo journal on the yielded conn rolls back writes made through it.
+    import threading
+
+    _TXN_LOCK = threading.RLock()
+
+    def transaction(self):
+        import contextlib
+
+        @contextlib.contextmanager
+        def _txn():
+            with self._TXN_LOCK:
+                conn: Dict[str, Any] = {"undo": []}
+                try:
+                    yield conn
+                except BaseException:
+                    for undo in reversed(conn["undo"]):
+                        undo()
+                    raise
+
+        return _txn()
+
+    def advisory_xact_lock(self, key: str, *, conn: Any) -> None:
+        return None
+
+    def compare_and_set(
+        self,
+        record_id: str,
+        expected_payload: Optional[Dict[str, Any]],
+        payload: Dict[str, Any],
+        *,
+        conn: Optional[Any] = None,
+    ):
+        current = self._data.get(record_id)
+        if current != expected_payload:
+            return False, (json.loads(json.dumps(current)) if current is not None else None)
+        if conn is not None:
+            conn["undo"].append(
+                lambda: self._data.__setitem__(record_id, current)
+                if current is not None
+                else self._data.pop(record_id, None)
+            )
+        self._data[record_id] = json.loads(json.dumps(payload))
+        return True, json.loads(json.dumps(payload))
+
+
 
 @pytest.fixture
 def mock_write_owner() -> ResearchWriteOwner:
@@ -2164,3 +2211,31 @@ def test_execute_research_stage_evidence_synthesis_omitted_dependencies_resolves
     assert art is not None
     assert len(art["payload"]["input_artifacts"]) == 1
     assert art["payload"]["input_artifacts"][0]["artifact_id"] == "art-dep-approved"
+
+
+def test_experiment_retry_route_same_key_replays_existing_attempt(
+    client: TestClient, mock_write_owner: ResearchWriteOwner
+) -> None:
+    # Fake-store logic only: no real database or process restart.
+    created = client.post(
+        "/api/research/experiments",
+        json={"experiment_name": "retry replay", "strategy_selector": {"strategy_id": "s1"}, "run_config": {"stage": "backtest"}},
+    )
+    assert created.status_code == 200, created.text
+    exp_id = created.json()["experiment_id"]
+    assert client.post(f"/api/research/experiments/{exp_id}/cancel", json={"actor_id": "tester"}).status_code == 200
+
+    body = {"actor_id": "tester", "idempotency_key": "route-key"}
+    first = client.post(f"/api/research/experiments/{exp_id}/retry", json=body)
+    replay = client.post(f"/api/research/experiments/{exp_id}/retry", json=body)
+    other_key = client.post(f"/api/research/experiments/{exp_id}/retry", json={**body, "idempotency_key": "route-key-2"})
+    other_actor = client.post(f"/api/research/experiments/{exp_id}/retry", json={**body, "actor_id": "someone-else"})
+    no_key_1 = client.post(f"/api/research/experiments/{exp_id}/retry", json={"actor_id": "tester"})
+    no_key_2 = client.post(f"/api/research/experiments/{exp_id}/retry", json={"actor_id": "tester"})
+    for response in (first, replay, other_key, other_actor, no_key_1, no_key_2):
+        assert response.status_code == 200, response.text
+
+    assert first.json()["experiment_id"] == replay.json()["experiment_id"]
+    distinct = {r.json()["experiment_id"] for r in (first, other_key, other_actor, no_key_1, no_key_2)}
+    assert len(distinct) == 5
+    assert len(mock_write_owner.list_research_experiments()) == 1 + 5

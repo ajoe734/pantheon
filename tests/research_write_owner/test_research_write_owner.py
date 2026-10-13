@@ -247,7 +247,12 @@ def test_research_experiment_creation_cancellation_and_linking():
         assert exp["experiment_id"] == "exp-20260829-001"
         assert exp["ticket_id"] == "rt-20260829-002"
         assert exp["status"] == "queued"
-        assert exp["allowedActions"] == {"canCancel": True}
+        assert exp["allowedActions"] == {
+            "canCancel": True,
+            "canArchive": False,
+            "canInvalidate": False,
+            "canRetry": False,
+        }
 
         # Check ticket automatically received linked experiment
         refreshed_ticket = owner.get_research_ticket("rt-20260829-002")
@@ -262,7 +267,12 @@ def test_research_experiment_creation_cancellation_and_linking():
         assert canceled is not None
         assert canceled["status"] == "canceled"
         assert canceled["completed_at"] == "2026-08-29T10:20:00Z"
-        assert canceled["allowedActions"] == {"canCancel": False}
+        assert canceled["allowedActions"] == {
+            "canCancel": False,
+            "canArchive": True,
+            "canInvalidate": False,
+            "canRetry": True,
+        }
 
         # Canceling already canceled experiment returns None
         assert owner.cancel_research_experiment("exp-20260829-001") is None
@@ -271,7 +281,12 @@ def test_research_experiment_creation_cancellation_and_linking():
         listed_exps = owner.list_research_experiments(ticket_id="rt-20260829-002")
         assert len(listed_exps) == 1
         assert listed_exps[0]["experiment_id"] == "exp-20260829-001"
-        assert listed_exps[0]["allowedActions"] == {"canCancel": False}
+        assert listed_exps[0]["allowedActions"] == {
+            "canCancel": False,
+            "canArchive": True,
+            "canInvalidate": False,
+            "canRetry": True,
+        }
 
 
 def test_research_note_creation_and_query():
@@ -392,3 +407,151 @@ def test_no_prohibited_generic_persistence_or_read_store_imports():
             module = node.module or ""
             assert "read_store" not in module
             assert "persistence" not in module
+
+
+def test_keyed_retry_uses_real_store_primitives_and_replays_across_instances():
+    """Real PostgresJsonOwnerStore code over the SQL-emulating fake connection.
+
+    Not a real database: no isolation, locking, rollback or process-restart
+    behavior is exercised here.
+    """
+    fake_psycopg = _fake_psycopg()
+    with mock.patch.dict(sys.modules, {"psycopg": fake_psycopg}):
+        owner = ResearchWriteOwner(dsn="postgresql://writer@example/db")
+        owner.create_research_ticket(
+            title="Retry", description="", priority="high", owner="t", actor_id="a",
+            created_at="2026-10-13T00:00:00Z", ticket_id="rt-retry",
+        )
+        parent = owner.create_research_experiment(
+            ticket_id="rt-retry", experiment_name="parent", strategy_selector={},
+            parameter_set={}, run_config={}, launch_context={}, queued_at="2026-10-13T01:00:00Z",
+        )["experiment_id"]
+        owner.cancel_research_experiment(parent, completed_at="2026-10-13T01:01:00Z")
+        _FakeConnection.statements.clear()
+
+        first = owner.retry_research_experiment(parent, actor_id="a", idempotency_key="k1")
+        recreated = ResearchWriteOwner(dsn="postgresql://writer@example/db")
+        replay = recreated.retry_research_experiment(
+            parent, actor_id="a", requested_at="2026-10-13T09:00:00Z", idempotency_key="k1"
+        )
+        other_key = recreated.retry_research_experiment(parent, actor_id="a", idempotency_key="k2")
+        other_actor = recreated.retry_research_experiment(parent, actor_id="b", idempotency_key="k1")
+
+        assert replay == first
+        assert len({first["experiment_id"], other_key["experiment_id"], other_actor["experiment_id"]}) == 3
+        assert any("pg_advisory_xact_lock" in s for s in _FakeConnection.statements)
+        assert len(owner.list_research_experiments()) == 1 + 3
+        ticket = owner.get_research_ticket("rt-retry") if hasattr(owner, "get_research_ticket") else None
+        links = (ticket or owner._tickets_store.get("rt-retry"))["linked_experiments"]
+        assert sorted(links) == sorted(
+            [parent, first["experiment_id"], other_key["experiment_id"], other_actor["experiment_id"]]
+        )
+
+
+def test_unkeyed_retry_takes_no_advisory_lock_and_creates_distinct_attempts():
+    fake_psycopg = _fake_psycopg()
+    with mock.patch.dict(sys.modules, {"psycopg": fake_psycopg}):
+        owner = ResearchWriteOwner(dsn="postgresql://writer@example/db")
+        parent = owner.create_research_experiment(
+            ticket_id="", experiment_name="parent", strategy_selector={},
+            parameter_set={}, run_config={}, launch_context={}, queued_at="2026-10-13T01:00:00Z",
+        )["experiment_id"]
+        owner.cancel_research_experiment(parent, completed_at="2026-10-13T01:01:00Z")
+        _FakeConnection.statements.clear()
+        a = owner.retry_research_experiment(parent, actor_id="a")
+        b = owner.retry_research_experiment(parent, actor_id="a")
+        assert a["experiment_id"] != b["experiment_id"]
+        assert not any("pg_advisory_xact_lock" in s for s in _FakeConnection.statements)
+
+
+def test_keyed_retry_replay_returns_legacy_numeric_child_without_duplicate():
+    """A pre-upgrade child with a numeric id and the same parent/actor/key is reused."""
+    fake_psycopg = _fake_psycopg()
+    with mock.patch.dict(sys.modules, {"psycopg": fake_psycopg}):
+        owner = ResearchWriteOwner(dsn="postgresql://writer@example/db")
+        owner.create_research_ticket(
+            title="Retry", description="", priority="high", owner="t", actor_id="a",
+            created_at="2026-10-13T00:00:00Z", ticket_id="rt-legacy",
+        )
+        parent = owner.create_research_experiment(
+            ticket_id="rt-legacy", experiment_name="parent", strategy_selector={},
+            parameter_set={}, run_config={}, launch_context={}, queued_at="2026-10-13T01:00:00Z",
+        )["experiment_id"]
+        owner.cancel_research_experiment(parent, completed_at="2026-10-13T01:01:00Z")
+        legacy = owner._build_retry_record(
+            owner._experiments_store.get(parent),
+            new_exp_id="exp-20261013-099",
+            actor_id="a",
+            timestamp="2026-10-13T02:00:00Z",
+            idempotency_key="k1",
+        )
+        owner._experiments_store.put("exp-20261013-099", legacy)
+
+        replay = ResearchWriteOwner(dsn="postgresql://writer@example/db").retry_research_experiment(
+            parent, actor_id="a", idempotency_key="k1"
+        )
+
+        assert replay["experiment_id"] == "exp-20261013-099"
+        assert len(owner.list_research_experiments()) == 2
+        assert owner._tickets_store.get("rt-legacy")["linked_experiments"] == [parent]
+
+
+def test_unkeyed_retry_links_ticket_by_cas_preserving_concurrent_keyed_link():
+    """An unkeyed retry must not overwrite a link committed after its ticket read."""
+    fake_psycopg = _fake_psycopg()
+    with mock.patch.dict(sys.modules, {"psycopg": fake_psycopg}):
+        owner = ResearchWriteOwner(dsn="postgresql://writer@example/db")
+        owner.create_research_ticket(
+            title="Retry", description="", priority="high", owner="t", actor_id="a",
+            created_at="2026-10-13T00:00:00Z", ticket_id="rt-mix",
+        )
+        parent = owner.create_research_experiment(
+            ticket_id="rt-mix", experiment_name="parent", strategy_selector={},
+            parameter_set={}, run_config={}, launch_context={}, queued_at="2026-10-13T01:00:00Z",
+        )["experiment_id"]
+        owner.cancel_research_experiment(parent, completed_at="2026-10-13T01:01:00Z")
+
+        store = owner._tickets_store
+        original_get = store.get
+        calls = {"n": 0}
+
+        def stale_then_fresh(ticket_id):
+            result = original_get(ticket_id)
+            calls["n"] += 1
+            if calls["n"] == 1:
+                # Keyed retry commits between the unkeyed read and its write.
+                ResearchWriteOwner(dsn="postgresql://writer@example/db").retry_research_experiment(
+                    parent, actor_id="a", idempotency_key="k1"
+                )
+            return result
+
+        store.get = stale_then_fresh
+        unkeyed = owner.retry_research_experiment(parent, actor_id="a")
+        store.get = original_get
+        keyed = owner.retry_research_experiment(parent, actor_id="a", idempotency_key="k1")
+
+        links = owner._tickets_store.get("rt-mix")["linked_experiments"]
+        assert sorted(links) == sorted([parent, unkeyed["experiment_id"], keyed["experiment_id"]])
+
+
+def test_keyed_retry_rejects_unrelated_record_at_deterministic_id():
+    fake_psycopg = _fake_psycopg()
+    with mock.patch.dict(sys.modules, {"psycopg": fake_psycopg}):
+        owner = ResearchWriteOwner(dsn="postgresql://writer@example/db")
+        parent = owner.create_research_experiment(
+            ticket_id="", experiment_name="parent", strategy_selector={},
+            parameter_set={}, run_config={}, launch_context={}, queued_at="2026-10-13T01:00:00Z",
+        )["experiment_id"]
+        owner.cancel_research_experiment(parent, completed_at="2026-10-13T01:01:00Z")
+        collision = owner._keyed_retry_experiment_id(parent, "a", "k1")
+        owner.create_research_experiment(
+            ticket_id="", experiment_name="unrelated", strategy_selector={},
+            parameter_set={}, run_config={}, launch_context={},
+            queued_at="2026-10-13T01:02:00Z", experiment_id=collision,
+        )
+        before = owner._experiments_store.get(collision)
+
+        with pytest.raises(ValueError):
+            owner.retry_research_experiment(parent, actor_id="a", idempotency_key="k1")
+
+        assert owner._experiments_store.get(collision) == before
