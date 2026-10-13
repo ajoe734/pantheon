@@ -446,16 +446,42 @@ def test_restore_final_consumes_full_typed_readback_seal(case):
     assert e.validate_readback(value, evidence, "restore-final") == value
 
 
-def test_restore_final_rejects_tampered_typed_readback_seal(case):
+@pytest.mark.parametrize("field", list(e.capture.FIELDS))
+def test_restore_final_rejects_tampered_typed_readback_seal(case, field):
     actions(case["env"])
     case["env"][e.ENV_PREFIX + "TARGET"] = "final"
     case["env"][e.ENV_PREFIX + "OPERATION"] = "restore-final"
     readback_as_seal = deepcopy(case["value"])
     readback_as_seal["operation"] = "verify"
-    readback_as_seal["identity"]["candidate_backend_sha"] = "0" * 40
+    tampered_val = "0" * 64 if field == "candidate_id" else ("999999" if field in ("run_id", "attempt") else "0" * 40)
+    readback_as_seal["identity"][field] = tampered_val
+    seal_path = write(case["retained"] / "candidate/candidate-frontend.json", e.capture.encoded(readback_as_seal))
+    case["env"][e.ENV_PREFIX + "FINAL_FE_SEAL_FILE"] = str(seal_path)
+    with pytest.raises(e.capture.CaptureError) as exc_info:
+        e.load_evidence(case["env"], "actions-download")
+    assert f"artifact readback identity mismatch for {field}" in str(exc_info.value)
+
+
+@pytest.mark.parametrize("structural_fault", ["missing_field", "extra_field", "non_dict_identity", "missing_frontend"])
+def test_restore_final_rejects_structural_typed_readback_seal_negatives(case, structural_fault):
+    actions(case["env"])
+    case["env"][e.ENV_PREFIX + "TARGET"] = "final"
+    case["env"][e.ENV_PREFIX + "OPERATION"] = "restore-final"
+    readback_as_seal = deepcopy(case["value"])
+    readback_as_seal["operation"] = "verify"
+    if structural_fault == "missing_field":
+        del readback_as_seal["identity"]["controller_sha"]
+    elif structural_fault == "extra_field":
+        readback_as_seal["identity"]["foreign_extra_key"] = "1"
+    elif structural_fault == "non_dict_identity":
+        readback_as_seal["identity"] = "not-a-dict"
+    elif structural_fault == "missing_frontend":
+        del readback_as_seal["frontend"]
+
     seal_path = write(case["retained"] / "candidate/candidate-frontend.json", e.capture.encoded(readback_as_seal))
     case["env"][e.ENV_PREFIX + "FINAL_FE_SEAL_FILE"] = str(seal_path)
     with pytest.raises(e.capture.CaptureError):
         e.load_evidence(case["env"], "actions-download")
+
 
 

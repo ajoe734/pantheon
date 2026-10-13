@@ -4,8 +4,8 @@
   "owner": "Antigravity2",
   "reviewer": "Antigravity",
   "change_class": "corrective",
-  "timestamp": "2026-10-13T02:20:00Z",
-  "summary": "Connected the existing sealed final artifact return caller, verified explicit candidate compose resolution without ambient PWD dependency, and wired candidate receipt and final FE seal validation into compensation evidence and deployment workflows.",
+  "timestamp": "2026-10-13T02:50:00Z",
+  "summary": "Connected the existing sealed final artifact return caller, verified explicit candidate compose resolution without ambient PWD dependency, wired candidate receipt and final FE seal validation into compensation evidence and deployment workflows, and enforced all eight identity fields on retained typed readback seals.",
   "acceptance_criteria_verification": {
     "ac1_correct_final_caller_gaps": {
       "satisfied": true,
@@ -17,7 +17,7 @@
     },
     "ac3_extend_compensation_evidence": {
       "satisfied": true,
-      "evidence": "dev_artifact_compensation_evidence.py validates admitted final readback against candidate receipt and candidate-frontend.json seal (deliberately consuming validated frontend structure from typed readbacks or seal files), verifies candidate backend SHA, and sets restored_pair to candidate on restore-final while preserving baseline restore and all identity fields."
+      "evidence": "dev_artifact_compensation_evidence.py validates admitted final readback against candidate receipt and candidate-frontend.json seal (deliberately consuming validated frontend structure from typed readbacks or seal files, and strictly verifying all eight identity fields: candidate_id, run_id, attempt, controller_sha, candidate_backend_sha, candidate_frontend_sha, previous_backend_sha, previous_frontend_sha with exact keys), verifies candidate backend SHA, and sets restored_pair to candidate on restore-final while preserving baseline restore."
     },
     "ac4_supported_invocations_documented": {
       "satisfied": true,
@@ -25,7 +25,7 @@
     },
     "ac5_full_test_suite_coverage": {
       "satisfied": true,
-      "evidence": "Added positive and negative control tests covering hostile ambient working directory, tampered seals, mixed baseline/candidate identities, missing receipts, typed readback seal consumption, and workflow lease contracts across test_dev_artifact_compensation_evidence.py, test_deploy_nonprod_artifact_restore.py, and test_nonprod_dev_artifact_workflow.py (282 passed, 0 failed, 0 skipped in 47.32s)."
+      "evidence": "Added positive and negative control tests covering hostile ambient working directory, tampered seals across all 8 identity fields, structural typed readback negatives, mixed baseline/candidate identities, missing receipts, typed readback seal consumption, and workflow lease contracts across test_dev_artifact_compensation_evidence.py, test_deploy_nonprod_artifact_restore.py, and test_nonprod_dev_artifact_workflow.py (293 passed, 0 failed, 0 skipped in 49.79s)."
     },
     "ac6_scoped_files_only": {
       "satisfied": true,
@@ -36,7 +36,7 @@
     "test_suites": [
       {
         "module": "scripts/test_dev_artifact_compensation_evidence.py",
-        "passed": 80,
+        "passed": 91,
         "failed": 0,
         "skipped": 0
       },
@@ -53,7 +53,7 @@
         "skipped": 0
       }
     ],
-    "total_passed": 282,
+    "total_passed": 293,
     "total_failed": 0
   },
   "review": {

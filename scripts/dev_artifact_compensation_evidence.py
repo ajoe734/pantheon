@@ -154,7 +154,8 @@ def load_evidence(env: dict[str, str], provenance: str) -> dict:
             readback_id = fe_seal_doc.get("identity")
             if not isinstance(readback_id, dict):
                 raise capture.CaptureError("artifact readback identity is invalid")
-            for id_key in ("candidate_id", "run_id", "attempt", "candidate_backend_sha", "candidate_frontend_sha"):
+            capture.exact_keys(readback_id, capture.FIELDS)
+            for id_key in capture.FIELDS:
                 if readback_id.get(id_key) != identity.get(id_key):
                     raise capture.CaptureError(f"artifact readback identity mismatch for {id_key}")
             raw_fe = fe_seal_doc.get("frontend")
