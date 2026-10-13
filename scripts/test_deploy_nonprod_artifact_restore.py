@@ -526,3 +526,122 @@ def test_three_candidate_start_sites_use_the_admitted_image_override():
     for branch in (case[case.index("  root)"):case.index("  bff)")], case[case.index("  bff)"):case.index("  control)")]):
         assert branch.index("seal_dev_candidate_images") < branch.index("start_dev_paper_principal_issuer")
         assert branch.index("seal_dev_candidate_images") < branch.index("run_dev_candidate_compose up")
+
+
+def test_final_artifact_driver_arguments_and_explicit_compose(fixture, tmp_path, monkeypatch):
+    env, recorder, driver, library = fixture
+    candidate_compose = tmp_path / "explicit-candidate" / "docker-compose.yml"
+    candidate_compose.parent.mkdir(parents=True, exist_ok=True)
+    candidate_compose_content = "services:\n  operator-bff:\n    image: pantheon-operator-bff:candidate\n"
+    candidate_compose.write_text(candidate_compose_content)
+    candidate_compose_sha = hashlib.sha256(candidate_compose_content.encode()).hexdigest()
+
+    # Update candidate-images.json with candidate_compose_sha
+    candidate_path = Path(env["PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH"])
+    candidate_data = json.loads(candidate_path.read_text())
+    candidate_data["candidate_compose_sha256"] = candidate_compose_sha
+    encoded_bytes = (json.dumps(candidate_data, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    candidate_path.write_bytes(encoded_bytes)
+    env["PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256"] = hashlib.sha256(encoded_bytes).hexdigest()
+
+    fe_manifest_sha = "2" * 64
+    fe_dist_sha = "3" * 64
+    fe_target = "/var/www/pantheon-dev-fe-releases/candidate-fe"
+
+    env.update({
+        "PANTHEON_DEPLOY_SHA": SHA,
+        "PANTHEON_DEV_ARTIFACT_TARGET": "final",
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE": str(candidate_compose),
+        "PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256": fe_manifest_sha,
+        "PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256": fe_dist_sha,
+        "PANTHEON_DEV_ARTIFACT_FE_TARGET": fe_target,
+    })
+
+    # Put a hostile docker-compose.yml in current working directory
+    hostile_cwd = tmp_path / "hostile-ambient-pwd"
+    hostile_cwd.mkdir()
+    hostile_compose = hostile_cwd / "docker-compose.yml"
+    hostile_compose.write_text("services: {}\n# hostile ambient compose\n")
+    monkeypatch.chdir(hostile_cwd)
+
+    result = _run(_remote(), env)
+    assert result.returncode == 0, result.stderr
+    events = _events(recorder)
+    assert len(events) == 1
+    event = events[0]
+    assert event["command"] == "driver"
+    assert event["operation"] == "restore-final"
+    args = event["args"]
+    assert args["--target"] == "final"
+    assert args["--compose-file"] == str(candidate_compose)
+    assert args["--candidate-image-manifest"] == env["PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH"]
+    assert args["--fe-manifest-sha256"] == fe_manifest_sha
+    assert args["--fe-dist-sha256"] == fe_dist_sha
+    assert args["--fe-target"] == fe_target
+
+
+def test_final_verify_driver_invocation(fixture, tmp_path):
+    env, recorder, driver, library = fixture
+    candidate_compose = tmp_path / "candidate-compose" / "docker-compose.yml"
+    candidate_compose.parent.mkdir(parents=True, exist_ok=True)
+    candidate_compose_content = "services:\n  operator-bff:\n    image: pantheon-operator-bff:verify\n"
+    candidate_compose.write_text(candidate_compose_content)
+    candidate_compose_sha = hashlib.sha256(candidate_compose_content.encode()).hexdigest()
+
+    candidate_path = Path(env["PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH"])
+    candidate_data = json.loads(candidate_path.read_text())
+    candidate_data["candidate_compose_sha256"] = candidate_compose_sha
+    encoded_bytes = (json.dumps(candidate_data, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    candidate_path.write_bytes(encoded_bytes)
+    env["PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256"] = hashlib.sha256(encoded_bytes).hexdigest()
+
+    fe_manifest_sha = "4" * 64
+    fe_dist_sha = "5" * 64
+    fe_target = "/var/www/pantheon-dev-fe-releases/candidate-verify"
+
+    env.update({
+        "PANTHEON_DEPLOY_SHA": SHA,
+        "PANTHEON_DEV_ARTIFACT_RESTORE": "false",
+        "PANTHEON_DEV_ARTIFACT_VERIFY": "true",
+        "PANTHEON_DEV_ARTIFACT_TARGET": "final",
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE": str(candidate_compose),
+        "PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256": fe_manifest_sha,
+        "PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256": fe_dist_sha,
+        "PANTHEON_DEV_ARTIFACT_FE_TARGET": fe_target,
+    })
+
+    result = _run(_remote(), env)
+    assert result.returncode == 0, result.stderr
+    events = _events(recorder)
+    assert len(events) == 1
+    event = events[0]
+    assert event["command"] == "driver"
+    assert event["operation"] == "verify"
+    args = event["args"]
+    assert args["--target"] == "final"
+    assert args["--compose-file"] == str(candidate_compose)
+    assert args["--candidate-image-manifest"] == env["PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH"]
+    assert args["--fe-manifest-sha256"] == fe_manifest_sha
+    assert args["--fe-dist-sha256"] == fe_dist_sha
+    assert args["--fe-target"] == fe_target
+
+
+@pytest.mark.parametrize("flag,sha_used,expected", [
+    ("--artifact-restore-final", SHA, 0),
+    ("--artifact-restore-final", PRIOR, 1),
+    ("--artifact-target invalid", SHA, 1),
+])
+def test_actual_cli_restore_final_options(fixture, flag, sha_used, expected):
+    env, recorder, *_ = fixture
+    env.update({
+        "PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256": "2" * 64,
+        "PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256": "3" * 64,
+        "PANTHEON_DEV_ARTIFACT_FE_TARGET": "/var/www/pantheon-dev-fe-releases/candidate",
+    })
+    cmd = [str(SCRIPT), "--environment", "dev", "--component", "bff",
+           "--sha", sha_used, *flag.split(), "--dry-run"]
+    result = subprocess.run(cmd, env=env, capture_output=True, text=True)
+    assert result.returncode == expected, result.stderr
+    if expected == 0:
+        assert "artifact_restore=true" in result.stdout
+

@@ -2523,19 +2523,19 @@ jobs:
           echo "controller_log=${controller_log}" >> "${GITHUB_OUTPUT}"
           exit "${controller_status}"
 
-      - name: Authenticate rollback to Google Cloud
-        if: ${{ steps.frontend_release.outcome != 'success' }}
+      - name: Authenticate to Google Cloud
+        if: ${{ !cancelled() }}
         uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
         with:
           workload_identity_provider: ${{ vars.DEV_GCP_WIF_PROVIDER || 'projects/317269804408/locations/global/workloadIdentityPools/pantheon-github-pool/providers/pantheon-github-provider' }}
           service_account: ${{ vars.DEV_GCP_DEPLOY_SERVICE_ACCOUNT || 'pantheon-dev-github-deploy@pantheon-dev-20260902.iam.gserviceaccount.com' }}
 
-      - name: Set up rollback Cloud SDK
-        if: ${{ steps.frontend_release.outcome != 'success' }}
+      - name: Set up Cloud SDK
+        if: ${{ !cancelled() }}
         uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
 
-      - name: Prepare pinned direct SSH transport for rollback
-        if: ${{ steps.frontend_release.outcome != 'success' }}
+      - name: Prepare pinned direct SSH transport
+        if: ${{ !cancelled() }}
         env:
           DEV_DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEV_DEPLOY_SSH_PRIVATE_KEY }}
           DEV_DEPLOY_SSH_KNOWN_HOSTS: ${{ vars.DEV_DEPLOY_SSH_KNOWN_HOSTS }}
@@ -2553,9 +2553,256 @@ jobs:
           [[ "$(stat -c '%a' "${key_file}")" == "600" ]]
           [[ "$(stat -c '%a' "${known_hosts_file}")" == "600" ]]
 
+      - name: Verify and seal admitted final candidate
+        id: final_artifact_verify
+        if: ${{ steps.frontend_release.outcome == 'success' }}
+        env:
+          PANTHEON_RELEASE_REPO_ROOT: ${{ github.workspace }}/.target
+          PANTHEON_ROLLBACK_BACKEND_SHA: ${{ needs.deploy-dev.outputs.previous_backend_sha }}
+          PANTHEON_ROLLBACK_FRONTEND_SHA: ${{ needs.deploy-dev.outputs.previous_frontend_sha }}
+          PANTHEON_FAILED_BACKEND_SHA: ${{ needs.deploy-dev.outputs.backend_sha }}
+          PANTHEON_FAILED_FRONTEND_SHA: ${{ needs.deploy-dev.outputs.frontend_sha }}
+          PANTHEON_RELEASE_CANDIDATE_ID: ${{ needs.deploy-dev.outputs.release_candidate_id }}
+          PANTHEON_DEV_ARTIFACT_BASELINE_FILE: ${{ env.RELEASE_EVIDENCE_DIR }}/baseline/artifact-baseline.json
+          PANTHEON_DEV_ARTIFACT_MANIFEST_SHA256: ${{ needs.deploy-dev.outputs.artifact_baseline_manifest_sha256 }}
+          PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA: ${{ needs.deploy-dev.outputs.backend_sha }}
+          PANTHEON_DEV_ARTIFACT_BASELINE_ACTIONS_ARTIFACT_ID: ${{ needs.deploy-dev.outputs.artifact_baseline_id }}
+          PANTHEON_DEV_ARTIFACT_BASELINE_ACTIONS_ARTIFACT_SHA256: ${{ needs.deploy-dev.outputs.artifact_baseline_digest }}
+          PANTHEON_DEV_ARTIFACT_CANDIDATE_RECEIPT_FILE: ${{ env.RELEASE_EVIDENCE_DIR }}/candidate/candidate-receipt.json
+          PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256: ${{ needs.deploy-dev.outputs.artifact_candidate_manifest_sha256 }}
+          PANTHEON_DEV_ARTIFACT_CANDIDATE_ACTIONS_ARTIFACT_ID: ${{ needs.deploy-dev.outputs.artifact_candidate_id }}
+          PANTHEON_DEV_ARTIFACT_CANDIDATE_ACTIONS_ARTIFACT_SHA256: ${{ needs.deploy-dev.outputs.artifact_candidate_digest }}
+          PANTHEON_DEV_ARTIFACT_OPERATION: verify
+          PANTHEON_DEV_ARTIFACT_TARGET: final
+          GITHUB_TOKEN: ${{ github.token }}
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER }}
+          DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}
+          DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}
+          DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR }}
+          PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT }}
+          DEV_BFF_AUTH_STUB: "false"
+          DEV_BFF_AUTH_MODE: strict
+          DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+          DEV_PAPER_PRINCIPALS_AUTHORIZED: ${{ vars.DEV_PAPER_PRINCIPALS_AUTHORIZED || 'false' }}
+          DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
+          DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
+          DEV_BFF_JWKS_URI: ${{ vars.DEV_BFF_JWKS_URI || 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com' }}
+          DEV_BFF_OIDC_DISCOVERY_URL: ${{ vars.DEV_BFF_OIDC_DISCOVERY_URL }}
+          DEV_BFF_OIDC_ISSUER: ${{ vars.DEV_BFF_OIDC_ISSUER || 'https://securetoken.google.com/pantheon-dev-20260902' }}
+          DEV_BFF_OIDC_AUDIENCE: ${{ vars.DEV_BFF_OIDC_AUDIENCE || 'pantheon-dev-20260902' }}
+          DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
+          DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
+          DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID || 'pantheon-dev-approver-v1' }}
+          DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID || 'pantheon-dev-risk-owner-v1' }}
+          DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID || 'pantheon-dev-operator-a-v1' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID || 'pantheon-dev-operator-b-v1' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET }}
+          DEV_BFF_MFA_REQUIRED: ${{ vars.DEV_BFF_MFA_REQUIRED || 'false' }}
+          DEV_BFF_MFA_CLAIMS: ${{ vars.DEV_BFF_MFA_CLAIMS || 'amr,acr,mfa,mfa_verified,firebase.sign_in_second_factor' }}
+          DEV_BFF_MFA_VALUES: ${{ vars.DEV_BFF_MFA_VALUES || 'true,1,yes,mfa,otp,totp,webauthn' }}
+          DEV_BFF_REQUIRE_EMAIL_VERIFIED: ${{ vars.DEV_BFF_REQUIRE_EMAIL_VERIFIED || 'true' }}
+          DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH: ${{ secrets.DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH }}
+          DEV_BFF_ROLE_CLAIMS: ${{ vars.DEV_BFF_ROLE_CLAIMS || 'roles,role' }}
+          DEV_BFF_ROLE_MAP: ${{ vars.DEV_BFF_ROLE_MAP || 'pantheon-operator=operator;pantheon-viewer=viewer;pantheon-reviewer=reviewer;pantheon-approver=approver;pantheon-risk-owner=risk_owner;pantheon-admin=admin' }}
+          DEV_BFF_ROLE_MAP_MODE: ${{ vars.DEV_BFF_ROLE_MAP_MODE || 'strict' }}
+          DEV_BFF_DEFAULT_ROLE: ${{ vars.DEV_BFF_DEFAULT_ROLE || 'viewer' }}
+          BACKEND_SHA: ${{ needs.deploy-dev.outputs.backend_sha }}
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          PANTHEON_LEASE_CONTROLLER_ROOT: ${{ github.workspace }}/.lease-controller
+          DEV_DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEV_DEPLOY_SSH_PRIVATE_KEY }}
+          DEV_DEPLOY_SSH_KNOWN_HOSTS: ${{ vars.DEV_DEPLOY_SSH_KNOWN_HOSTS }}
+          DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
+          unset PANTHEON_ENVIRONMENT_LEASE_TOKEN
+          export -n lease_token 2>/dev/null || true
+
+          lease_controller="$(realpath "${PANTHEON_LEASE_CONTROLLER_ROOT}")"
+          lease_cli="${lease_controller}/scripts/dev_environment_lease.py"
+          lease_wrapper="${lease_controller}/scripts/run_with_dev_environment_lease.sh"
+          [[ -f "${lease_cli}" && ! -L "${lease_cli}" ]]
+          [[ -f "${lease_wrapper}" && ! -L "${lease_wrapper}" ]]
+          printf '%s  %s\n' \
+            da9a728ed8cec8e1133b92171e4038f9dc51ef4888911acd02c7e399e54d95ae "${lease_cli}" \
+            6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${lease_wrapper}" \
+            | sha256sum --check --strict
+
+          artifact_env="${RELEASE_EVIDENCE_DIR}/final-verify.env"
+          python3 .target/scripts/dev_artifact_compensation_evidence.py \
+            prepare --provenance actions-download --output-env "${artifact_env}"
+          source "${artifact_env}"
+
+          lease_dir="$(mktemp -d "${RUNNER_TEMP%/}/pantheon-final-verify-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-XXXXXX")"
+          chmod 0700 "${lease_dir}"
+          state_file="${lease_dir}/state.json"
+          acquisition_file="${lease_dir}/acquisition.json"
+          pid_file="${lease_dir}/heartbeat.pid"
+          identity_file="${lease_dir}/heartbeat-identity.json"
+          failure_file="${lease_dir}/heartbeat-failure.json"
+          shutdown_file="${lease_dir}/heartbeat-stop.json"
+          heartbeat_log="${lease_dir}/heartbeat.log"
+          heartbeat_pid=""
+          verify_succeeded=false
+
+          heartbeat_stopped() {
+            local state
+            [[ -n "${heartbeat_pid}" ]] || return 0
+            state="$(ps -o stat= -p "${heartbeat_pid}" 2>/dev/null | tr -d '[:space:]')"
+            case "${state}" in
+              ""|Z*|X*|x*) return 0 ;;
+            esac
+            return 1
+          }
+
+          stop_heartbeat() {
+            heartbeat_stopped && return 0
+            python3 "${lease_cli}" verify-heartbeat-identity \
+              --identity-file "${identity_file}" \
+              --pid "${heartbeat_pid}" \
+              --expected-cli "${lease_cli}" \
+              --state-file "${state_file}" >/dev/null || return 1
+            kill -TERM "${heartbeat_pid}" 2>/dev/null || {
+              heartbeat_stopped && return 0
+              return 1
+            }
+            kill -CONT "${heartbeat_pid}" 2>/dev/null || true
+            for _ in $(seq 1 40); do
+              heartbeat_stopped && return 0
+              sleep 0.25
+            done
+            return 1
+          }
+
+          cleanup() {
+            local status=$?
+            trap - EXIT INT TERM
+            if [[ -n "${heartbeat_pid}" ]]; then
+              if ! stop_heartbeat; then
+                echo "[final-artifact-verify] heartbeat identity could not be stopped safely" >&2
+                status=75
+              fi
+            fi
+            if [[ "${verify_succeeded}" == "true" ]]; then
+              [[ ! -e "${failure_file}" ]] || status=75
+              [[ -s "${shutdown_file}" ]] || status=75
+              if [[ "${status}" -eq 0 ]]; then
+                PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+                  python3 "${lease_cli}" verify \
+                    --repository ajoe734/execute-plans \
+                    --branch environment-coordination \
+                    --path .pantheon/environment-leases/pantheon-dev-environment.json \
+                    --resource pantheon-dev-environment \
+                    --state-file "${state_file}" \
+                    --max-heartbeat-age-seconds 120 >/dev/null || status=75
+              fi
+              if [[ "${status}" -eq 0 ]]; then
+                PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+                  python3 "${lease_cli}" release \
+                    --repository ajoe734/execute-plans \
+                    --branch environment-coordination \
+                    --path .pantheon/environment-leases/pantheon-dev-environment.json \
+                    --resource pantheon-dev-environment \
+                    --state-file "${state_file}" >/dev/null || status=75
+              fi
+            else
+              echo "[final-artifact-verify] verify incomplete; lease remains quarantined until TTL" >&2
+            fi
+            lease_token=""
+            exit "${status}"
+          }
+          trap cleanup EXIT INT TERM
+
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+            python3 "${lease_cli}" acquire \
+              --repository ajoe734/execute-plans \
+              --branch environment-coordination \
+              --path .pantheon/environment-leases/pantheon-dev-environment.json \
+              --resource pantheon-dev-environment \
+              --mode deployment \
+              --owner "pantheon:${GITHUB_REPOSITORY}:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:verify" \
+              --ttl-seconds 300 \
+              --wait-seconds 7200 \
+              --poll-seconds 5 \
+              --state-file "${state_file}" \
+              --expected-backend-sha "${BACKEND_SHA}" \
+              --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+              --json-out "${acquisition_file}"
+
+          exec {token_fd}<<<"${lease_token}"
+          env -i \
+            PATH="${PATH}" HOME="${HOME}" LANG=C.UTF-8 \
+            PYTHONNOUSERSITE=1 PYTHONSAFEPATH=1 PYTHONSTARTUP= PYTHONINSPECT= \
+            python3 "${lease_cli}" heartbeat-loop \
+              --repository ajoe734/execute-plans \
+              --branch environment-coordination \
+              --path .pantheon/environment-leases/pantheon-dev-environment.json \
+              --resource pantheon-dev-environment \
+              --state-file "${state_file}" \
+              --ttl-seconds 300 \
+              --interval-seconds 60 \
+              --failure-json-out "${failure_file}" \
+              --shutdown-json-out "${shutdown_file}" \
+              --identity-json-out "${identity_file}" \
+              --token-stdin \
+              <&"${token_fd}" >"${heartbeat_log}" 2>&1 &
+          heartbeat_pid=$!
+          exec {token_fd}<&-
+          printf '%s\n' "${heartbeat_pid}" > "${pid_file}"
+
+          for _ in $(seq 1 100); do
+            [[ -s "${identity_file}" ]] && break
+            kill -0 "${heartbeat_pid}" 2>/dev/null || {
+              sed -n '1,200p' "${heartbeat_log}" >&2 || true
+              echo "[final-artifact-verify] lease heartbeat exited before becoming identity-bound" >&2
+              exit 75
+            }
+            sleep 0.1
+          done
+          [[ -s "${identity_file}" ]] || {
+            echo "[final-artifact-verify] lease heartbeat identity was not recorded" >&2
+            exit 75
+          }
+
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+            python3 "${lease_cli}" verify \
+              --repository ajoe734/execute-plans --branch environment-coordination \
+              --path .pantheon/environment-leases/pantheon-dev-environment.json \
+              --resource pantheon-dev-environment --state-file "${state_file}" \
+              --max-heartbeat-age-seconds 120 --initial-visibility-wait-seconds 15 \
+              --initial-visibility-poll-seconds 1 >/dev/null
+
+          export TARGET_ENV=dev
+          export PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE="${state_file}"
+          export PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_PID_FILE="${pid_file}"
+          export PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE="${identity_file}"
+          export PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE="${failure_file}"
+          export PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG="${heartbeat_log}"
+          export PANTHEON_DEV_ENVIRONMENT_LEASE_MAX_HEARTBEAT_AGE_SECONDS=120
+          export PANTHEON_DEV_ENVIRONMENT_LEASE_VERIFY_INTERVAL_SECONDS=30
+
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+            "${lease_wrapper}" \
+              bash .target/scripts/deploy_nonprod_vm.sh \
+                --environment dev \
+                --component bff \
+                --sha "${BACKEND_SHA}" \
+                --project-id "${GCP_DEPLOY_PROJECT_ID}" \
+                --artifact-verify \
+                --artifact-target final \
+                --artifact-readback-out "${RELEASE_EVIDENCE_DIR}/candidate/candidate-frontend.json"
+
+          verify_succeeded=true
+
       - name: Compensate rejected release to exact hosted baseline
         id: compensation
-        if: ${{ steps.frontend_release.outcome != 'success' }}
+        if: ${{ steps.frontend_release.outcome != 'success' || (steps.final_artifact_verify.conclusion != 'skipped' && steps.final_artifact_verify.outcome != 'success') }}
         continue-on-error: true
         env:
           PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
@@ -2646,7 +2893,7 @@ jobs:
           DEV_DEPLOY_SSH_KNOWN_HOSTS: ${{ vars.DEV_DEPLOY_SSH_KNOWN_HOSTS }}
           DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
           RETIRE_EVIDENCE_DIR: ${{ env.RELEASE_EVIDENCE_DIR }}
-          RELEASE_OUTCOME: ${{ steps.frontend_release.outcome == 'success' && 'accepted' || 'compensated' }}
+          RELEASE_OUTCOME: ${{ steps.frontend_release.outcome == 'success' && steps.final_artifact_verify.outcome == 'success' && 'accepted' || 'compensated' }}
         shell: /bin/bash --noprofile --norc -uo pipefail {0}
         run: |
           evidence="${RETIRE_EVIDENCE_DIR}/dev-paper-release-case-retire.json"
@@ -2696,7 +2943,9 @@ jobs:
         if: ${{ always() }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
-          if [[ "${{ steps.frontend_release.outcome }}" == "success" ]]; then
+          if [[ "${{ steps.frontend_release.outcome }}" == "success" && \
+                "${{ steps.final_artifact_verify.outcome }}" == "success" && \
+                -s "${RELEASE_EVIDENCE_DIR}/candidate/candidate-frontend.json" ]]; then
             {
               echo "## Exact FE/BFF release accepted"
               echo "- release candidate: \`${{ needs.deploy-dev.outputs.release_candidate_id }}\`"

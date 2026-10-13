@@ -113,6 +113,42 @@ from `vm-dev-staging-prod-management-plan.md`, never a retired project or host.
    authenticated viewer/tenant/session readback. Release/quarantine decisions
    use this complete evidence, never the source SHA alone.
 
+### Supported invocations for final verify and same-final return
+
+Final verification and same-final return (`restore-final`) reuse the existing guarded remote transport and driver without ambient PWD assumptions or rebuilding:
+
+1. **Final verify and candidate seal creation**:
+   ```bash
+   bash scripts/deploy_nonprod_vm.sh \
+     --environment dev \
+     --component bff \
+     --sha "${CANDIDATE_BACKEND_SHA}" \
+     --project-id "${GCP_DEPLOY_PROJECT_ID}" \
+     --artifact-verify \
+     --artifact-target final \
+     --artifact-readback-out "${RELEASE_EVIDENCE_DIR}/candidate/candidate-frontend.json"
+   ```
+   This passes `--target final` to the remote artifact driver, selects the explicit candidate Compose configuration via `resolve_dev_candidate_compose`, verifies the FE distribution and deployment manifest against their sealed digests, and records the validated candidate frontend seal to `candidate/candidate-frontend.json`.
+
+2. **Same-final return (`restore-final`)**:
+   ```bash
+   bash scripts/deploy_nonprod_vm.sh \
+     --environment dev \
+     --component bff \
+     --sha "${CANDIDATE_BACKEND_SHA}" \
+     --project-id "${GCP_DEPLOY_PROJECT_ID}" \
+     --artifact-restore-final \
+     --artifact-readback-out "${RELEASE_EVIDENCE_DIR}/candidate-readback.json"
+   ```
+   Or via the release compensation helper:
+   ```bash
+   PANTHEON_DEV_ARTIFACT_TARGET=final \
+   PANTHEON_DEV_ARTIFACT_OPERATION=restore-final \
+     bash scripts/compensate_cross_repo_release.sh
+   ```
+   This binds `DEPLOY_SHA` and `lease.expectedBackendSha` to the candidate backend SHA, verifies that `candidate-frontend.json` and candidate image receipts exist and match their admitted digests, and performs an exact Compose recreate using `--no-build --pull never --no-deps`.
+
+
 The eight identity fields are `candidate_id`, `run_id`, `attempt`,
 `controller_sha`, `candidate_backend_sha`, `candidate_frontend_sha`,
 `previous_backend_sha`, and `previous_frontend_sha`. Controller Python bytes

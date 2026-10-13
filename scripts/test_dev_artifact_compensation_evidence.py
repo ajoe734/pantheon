@@ -301,3 +301,161 @@ def test_cross_repo_caller_uses_guarded_exact_artifacts_and_v2_evidence():
     assert "cross-repo-release-compensation.v1" not in text
     assert '"${DEV_BFF_URL%/}/bff/version"' not in text
     assert "docker compose" not in text and " build " not in text
+
+
+def test_restore_final_positive_control_and_candidate_evidence(case):
+    actions(case["env"])
+    case["env"][e.ENV_PREFIX + "TARGET"] = "final"
+    case["env"][e.ENV_PREFIX + "OPERATION"] = "restore-final"
+    fe_seal = {
+        "target": "/var/www/pantheon-dev-fe-releases/candidate-fixture",
+        "dist_sha256": "3" * 64,
+        "manifest_sha256": "2" * 64,
+        "frontend_sha": case["identity"]["candidate_frontend_sha"],
+        "backend_sha": case["identity"]["candidate_backend_sha"],
+    }
+    seal_path = write(case["retained"] / "candidate/candidate-frontend.json", e.capture.encoded(fe_seal))
+    case["env"][e.ENV_PREFIX + "FINAL_FE_SEAL_FILE"] = str(seal_path)
+    output_env = case["retained"] / "candidate-compensate.env"
+    evidence = e.prepare(case["env"], "actions-download", output_env)
+    assert evidence["exports"][e.ENV_PREFIX + "OPERATION"] == "restore-final"
+    assert evidence["exports"][e.ENV_PREFIX + "TARGET"] == "final"
+    assert evidence["exports"][e.ENV_PREFIX + "FE_MANIFEST_SHA256"] == fe_seal["manifest_sha256"]
+    assert evidence["exports"][e.ENV_PREFIX + "FE_DIST_SHA256"] == fe_seal["dist_sha256"]
+    assert evidence["exports"][e.ENV_PREFIX + "FE_TARGET"] == fe_seal["target"]
+
+    value = case["value"]
+    value["operation"] = "restore-final"
+    value["images"] = {service: row["image_id"] for service, row in case["receipt"]["candidate_image_manifest"]["services"].items()}
+    value["frontend"] = deepcopy(fe_seal)
+    value["public"]["source_sha"] = case["identity"]["candidate_backend_sha"]
+
+    assert e.validate_readback(value, evidence, "restore-final") == value
+
+    readback = write(case["retained"] / "readback-final.json", e.capture.encoded(value))
+    failure = write(case["retained"] / "original-failure.log", b"candidate switch failure\n")
+    comp = e.compensation_evidence(case["env"], "actions-download", readback, failure)
+    assert comp["schema_version"] == "pantheon.cross-repo-release-compensation.v2"
+    assert comp["operation"] == "restore-final"
+    assert comp["outcome"] == "compensated"
+    assert comp["restored_pair"] == {
+        "backend_sha": case["identity"]["candidate_backend_sha"],
+        "frontend_sha": case["identity"]["candidate_frontend_sha"],
+    }
+    assert comp["rejected_pair"] == {
+        "backend_sha": case["identity"]["previous_backend_sha"],
+        "frontend_sha": case["identity"]["previous_frontend_sha"],
+    }
+
+
+@pytest.mark.parametrize("fault", [
+    "mixed_baseline_images", "mixed_baseline_fe", "tampered_seal_manifest",
+    "tampered_seal_dist", "tampered_seal_target", "missing_candidate_receipt",
+    "operation_mismatch", "wrong_public_source"
+])
+def test_restore_final_negative_controls(case, fault):
+    actions(case["env"])
+    case["env"][e.ENV_PREFIX + "TARGET"] = "final"
+    case["env"][e.ENV_PREFIX + "OPERATION"] = "restore-final"
+    fe_seal = {
+        "target": "/var/www/pantheon-dev-fe-releases/candidate-fixture",
+        "dist_sha256": "3" * 64,
+        "manifest_sha256": "2" * 64,
+        "frontend_sha": case["identity"]["candidate_frontend_sha"],
+        "backend_sha": case["identity"]["candidate_backend_sha"],
+    }
+    seal_path = write(case["retained"] / "candidate/candidate-frontend.json", e.capture.encoded(fe_seal))
+    case["env"][e.ENV_PREFIX + "FINAL_FE_SEAL_FILE"] = str(seal_path)
+
+    if fault == "missing_candidate_receipt":
+        case["env"].pop(e.ENV_PREFIX + "CANDIDATE_RECEIPT_FILE")
+        with pytest.raises(e.capture.CaptureError):
+            e.load_evidence(case["env"], "actions-download")
+        return
+
+    if fault == "tampered_seal_manifest":
+        case["env"][e.ENV_PREFIX + "FE_MANIFEST_SHA256"] = "0" * 64
+        with pytest.raises(e.capture.CaptureError):
+            e.load_evidence(case["env"], "actions-download")
+        return
+
+    if fault == "tampered_seal_dist":
+        case["env"][e.ENV_PREFIX + "FE_DIST_SHA256"] = "0" * 64
+        with pytest.raises(e.capture.CaptureError):
+            e.load_evidence(case["env"], "actions-download")
+        return
+
+    if fault == "tampered_seal_target":
+        case["env"][e.ENV_PREFIX + "FE_TARGET"] = "/wrong/path"
+        with pytest.raises(e.capture.CaptureError):
+            e.load_evidence(case["env"], "actions-download")
+        return
+
+    evidence = e.load_evidence(case["env"], "actions-download")
+    value = case["value"]
+    value["operation"] = "restore-final"
+    value["images"] = {service: row["image_id"] for service, row in case["receipt"]["candidate_image_manifest"]["services"].items()}
+    value["frontend"] = deepcopy(fe_seal)
+    value["public"]["source_sha"] = case["identity"]["candidate_backend_sha"]
+
+    if fault == "mixed_baseline_images":
+        value["images"] = {service: row["image_id"] for service, row in case["baseline"]["image_bundle"]["services"].items()}
+    elif fault == "mixed_baseline_fe":
+        value["frontend"] = deepcopy(case["baseline"]["frontend"])
+    elif fault == "operation_mismatch":
+        value["operation"] = "restore"
+    elif fault == "wrong_public_source":
+        value["public"]["source_sha"] = case["identity"]["previous_backend_sha"]
+
+    with pytest.raises(e.capture.CaptureError):
+        e.validate_readback(value, evidence, "restore-final")
+
+
+def test_restore_final_consumes_full_typed_readback_seal(case):
+    actions(case["env"])
+    case["env"][e.ENV_PREFIX + "TARGET"] = "final"
+    case["env"][e.ENV_PREFIX + "OPERATION"] = "restore-final"
+    fe_seal = {
+        "target": "/var/www/pantheon-dev-fe-releases/candidate-fixture",
+        "dist_sha256": "3" * 64,
+        "manifest_sha256": "2" * 64,
+        "frontend_sha": case["identity"]["candidate_frontend_sha"],
+        "backend_sha": case["identity"]["candidate_backend_sha"],
+    }
+    readback_as_seal = deepcopy(case["value"])
+    readback_as_seal["operation"] = "verify"
+    readback_as_seal["frontend"] = deepcopy(fe_seal)
+    readback_as_seal["public"]["source_sha"] = case["identity"]["candidate_backend_sha"]
+    write(case["retained"] / "candidate/candidate-frontend.json", e.capture.encoded(readback_as_seal))
+    case["env"].pop(e.ENV_PREFIX + "FINAL_FE_SEAL_FILE", None)
+
+    output_env = case["retained"] / "candidate-compensate.env"
+    evidence = e.prepare(case["env"], "actions-download", output_env)
+    assert evidence["exports"][e.ENV_PREFIX + "OPERATION"] == "restore-final"
+    assert evidence["exports"][e.ENV_PREFIX + "TARGET"] == "final"
+    assert evidence["exports"][e.ENV_PREFIX + "FE_MANIFEST_SHA256"] == fe_seal["manifest_sha256"]
+    assert evidence["exports"][e.ENV_PREFIX + "FE_DIST_SHA256"] == fe_seal["dist_sha256"]
+    assert evidence["exports"][e.ENV_PREFIX + "FE_TARGET"] == fe_seal["target"]
+
+    value = case["value"]
+    value["operation"] = "restore-final"
+    value["images"] = {service: row["image_id"] for service, row in case["receipt"]["candidate_image_manifest"]["services"].items()}
+    value["frontend"] = deepcopy(fe_seal)
+    value["public"]["source_sha"] = case["identity"]["candidate_backend_sha"]
+
+    assert e.validate_readback(value, evidence, "restore-final") == value
+
+
+def test_restore_final_rejects_tampered_typed_readback_seal(case):
+    actions(case["env"])
+    case["env"][e.ENV_PREFIX + "TARGET"] = "final"
+    case["env"][e.ENV_PREFIX + "OPERATION"] = "restore-final"
+    readback_as_seal = deepcopy(case["value"])
+    readback_as_seal["operation"] = "verify"
+    readback_as_seal["identity"]["candidate_backend_sha"] = "0" * 40
+    seal_path = write(case["retained"] / "candidate/candidate-frontend.json", e.capture.encoded(readback_as_seal))
+    case["env"][e.ENV_PREFIX + "FINAL_FE_SEAL_FILE"] = str(seal_path)
+    with pytest.raises(e.capture.CaptureError):
+        e.load_evidence(case["env"], "actions-download")
+
+

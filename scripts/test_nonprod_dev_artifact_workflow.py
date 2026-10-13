@@ -246,3 +246,20 @@ def test_status_functions_appear_only_in_if_conditions():
 
     walk(WORKFLOW, ())
     assert misplaced == []
+
+
+def test_coordinate_dev_release_verifies_and_seals_final_candidate():
+    ids = [item.get("id") for item in COORDINATE["steps"]]
+    assert "final_artifact_verify" in ids
+    assert ids.index("frontend_release") < ids.index("final_artifact_verify") < ids.index("release_evidence_upload")
+    verify_step = step(COORDINATE, "final_artifact_verify")
+    assert "steps.frontend_release.outcome == 'success'" in verify_step["if"]
+    assert "--artifact-verify" in verify_step["run"]
+    assert "--artifact-target final" in verify_step["run"]
+    assert '--artifact-readback-out "${RELEASE_EVIDENCE_DIR}/candidate/candidate-frontend.json"' in verify_step["run"]
+    assert "run_with_dev_environment_lease.sh" in verify_step["run"]
+    assert "dev_environment_lease.py" in verify_step["run"]
+    assert verify_step["env"]["PANTHEON_ENVIRONMENT_LEASE_TOKEN"] == "${{ secrets.COORDINATION_REPO_TOKEN }}"
+    assert "acquire \\" in verify_step["run"]
+
+

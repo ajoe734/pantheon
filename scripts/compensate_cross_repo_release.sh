@@ -94,6 +94,10 @@ artifact_readback="${lease_dir}/artifact-readback.json"
 python3 "${evidence_helper}" prepare --provenance actions-download --output-env "${artifact_env}"
 # Only the helper's fixed-schema, shell-quoted nonsecret exports are executable.
 source "${artifact_env}"
+target_backend_sha="${PANTHEON_ROLLBACK_BACKEND_SHA}"
+if [[ "${PANTHEON_DEV_ARTIFACT_OPERATION:-}" == "restore-final" || "${PANTHEON_DEV_ARTIFACT_TARGET:-}" == "final" ]]; then
+  target_backend_sha="${PANTHEON_FAILED_BACKEND_SHA}"
+fi
 state_file="${lease_dir}/state.json"
 acquisition_file="${lease_dir}/acquisition.json"
 pid_file="${lease_dir}/heartbeat.pid"
@@ -184,7 +188,7 @@ PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
     --wait-seconds 7200 \
     --poll-seconds 5 \
     --state-file "${state_file}" \
-    --expected-backend-sha "${PANTHEON_ROLLBACK_BACKEND_SHA}" \
+    --expected-backend-sha "${target_backend_sha}" \
     --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
     --json-out "${acquisition_file}"
 
@@ -235,13 +239,13 @@ export PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG="${heartbeat_log}"
 export PANTHEON_DEV_ENVIRONMENT_LEASE_MAX_HEARTBEAT_AGE_SECONDS=120
 export PANTHEON_DEV_ENVIRONMENT_LEASE_VERIFY_INTERVAL_SECONDS=30
 
-PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_ROLLBACK_BACKEND_SHA}" \
+PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${target_backend_sha}" \
 PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
   "${lease_wrapper}" \
     bash "${deploy_script}" \
       --environment dev \
       --component bff \
-      --sha "${PANTHEON_ROLLBACK_BACKEND_SHA}" \
+      --sha "${target_backend_sha}" \
       --project-id "${GCP_DEPLOY_PROJECT_ID}" \
       "--artifact-${PANTHEON_DEV_ARTIFACT_OPERATION}" \
       --artifact-readback-out "${artifact_readback}"

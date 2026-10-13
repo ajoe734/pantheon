@@ -117,6 +117,13 @@ def load_evidence(env: dict[str, str], provenance: str) -> dict:
         raise capture.CaptureError("candidate receipt and external image seal must be paired")
     baseline_artifact = artifact_metadata(env, "BASELINE", required=provenance == "actions-download")
     candidate_artifact = artifact_metadata(env, "CANDIDATE", required=has_candidate and provenance == "actions-download")
+    target = env.get(ENV_PREFIX + "TARGET", "baseline")
+    if target not in ("baseline", "final"):
+        raise capture.CaptureError("compensation target must be baseline or final")
+    is_final = target == "final"
+    fe_seal = None
+    fe_seal_path = None
+    fe_seal_file = env.get(ENV_PREFIX + "FINAL_FE_SEAL_FILE", "") or env.get(ENV_PREFIX + "FE_SEAL_FILE", "")
     if provenance == "runner-local":
         temporary = Path(env.get("RUNNER_TEMP", ""))
         if not temporary.is_absolute() or temporary.resolve() != temporary:
@@ -126,6 +133,48 @@ def load_evidence(env: dict[str, str], provenance: str) -> dict:
             raise capture.CaptureError("runner baseline is not from the exact run and attempt")
         if has_candidate and Path(receipt_file) != retained / "candidate/candidate-receipt.json":
             raise capture.CaptureError("runner receipt is not from the exact run and attempt")
+        if is_final and not fe_seal_file:
+            candidate_fe = retained / "candidate/candidate-frontend.json"
+            if candidate_fe.exists():
+                fe_seal_file = str(candidate_fe)
+    elif provenance == "actions-download":
+        if is_final and not fe_seal_file and has_candidate:
+            candidate_fe = Path(receipt_file).parent / "candidate-frontend.json"
+            if candidate_fe.exists():
+                fe_seal_file = str(candidate_fe)
+    if is_final and not has_candidate:
+        raise capture.CaptureError("final target requires candidate receipt")
+    if fe_seal_file:
+        fe_seal_path = Path(fe_seal_file)
+        if provenance == "runner-local":
+            if fe_seal_path != retained / "candidate/candidate-frontend.json":
+                raise capture.CaptureError("runner fe seal is not from the exact run and attempt")
+        fe_seal_doc, _ = document(fe_seal_path, limit=65536)
+        if isinstance(fe_seal_doc, dict) and fe_seal_doc.get("schema_version") == "pantheon.dev-artifact-readback.v1":
+            readback_id = fe_seal_doc.get("identity")
+            if not isinstance(readback_id, dict):
+                raise capture.CaptureError("artifact readback identity is invalid")
+            for id_key in ("candidate_id", "run_id", "attempt", "candidate_backend_sha", "candidate_frontend_sha"):
+                if readback_id.get(id_key) != identity.get(id_key):
+                    raise capture.CaptureError(f"artifact readback identity mismatch for {id_key}")
+            raw_fe = fe_seal_doc.get("frontend")
+            if not isinstance(raw_fe, dict):
+                raise capture.CaptureError("artifact readback frontend structure is missing")
+            fe_seal = raw_fe
+        else:
+            fe_seal = fe_seal_doc
+        capture.exact_keys(fe_seal, ("target", "dist_sha256", "manifest_sha256", "frontend_sha", "backend_sha"))
+        if fe_seal["frontend_sha"] != identity["candidate_frontend_sha"] or fe_seal["backend_sha"] != identity["candidate_backend_sha"]:
+            raise capture.CaptureError("candidate frontend seal source pair mismatch")
+        if manifest_hash_expected := env.get(ENV_PREFIX + "FE_MANIFEST_SHA256"):
+            if fe_seal["manifest_sha256"] != manifest_hash_expected:
+                raise capture.CaptureError("candidate frontend seal manifest digest mismatch")
+        if dist_hash_expected := env.get(ENV_PREFIX + "FE_DIST_SHA256"):
+            if fe_seal["dist_sha256"] != dist_hash_expected:
+                raise capture.CaptureError("candidate frontend seal dist digest mismatch")
+        if target_expected := env.get(ENV_PREFIX + "FE_TARGET"):
+            if fe_seal["target"] != target_expected:
+                raise capture.CaptureError("candidate frontend seal target mismatch")
     baseline, baseline_raw = document(baseline_path)
     folder = capture.ARTIFACT_ROOT / f"baseline-{identity['run_id']}-{identity['attempt']}-{identity['candidate_id']}"
     # Reuse the producer's strict schema and archive validation, but anchor the
@@ -149,22 +198,43 @@ def load_evidence(env: dict[str, str], provenance: str) -> dict:
     implementations = {name: capture.read_implementation(root, name, identity["controller_sha"])
                        for name in capture.IMPLEMENTATIONS}
     controller = capture.ARTIFACT_ROOT / "controllers" / identity["controller_sha"]
+    operation = "restore" if receipt is not None else "verify"
+    if is_final:
+        operation = "restore-final" if receipt is not None else "verify"
+    if env.get(ENV_PREFIX + "OPERATION") in ("verify", "restore", "restore-final"):
+        operation = env[ENV_PREFIX + "OPERATION"]
+    if operation == "restore-final" and fe_seal is None:
+        raise capture.CaptureError("candidate frontend seal is missing")
     exports = {ENV_PREFIX + key.upper(): value for key, value in identity.items()}
-    exports.update({ENV_PREFIX + "OPERATION": "restore" if receipt is not None else "verify",
+    exports.update({ENV_PREFIX + "OPERATION": operation,
+                    ENV_PREFIX + "TARGET": target,
                     ENV_PREFIX + "EVIDENCE_PROVENANCE": provenance,
                     ENV_PREFIX + "DRIVER_PATH": str(controller / capture.IMPLEMENTATIONS[0]),
                     ENV_PREFIX + "DRIVER_SHA256": capture.digest(implementations[capture.IMPLEMENTATIONS[0]]),
                     ENV_PREFIX + "LIBRARY_PATH": str(controller / capture.IMPLEMENTATIONS[1]),
                     ENV_PREFIX + "LIBRARY_SHA256": capture.digest(implementations[capture.IMPLEMENTATIONS[1]]),
-                    ENV_PREFIX + "COMPOSE_FILE": str(capture.ARTIFACT_ROOT / "compose" / identity["previous_backend_sha"] / "docker-compose.yml"),
                     ENV_PREFIX + "MANIFEST_PATH": outputs["manifest_path"],
                     ENV_PREFIX + "MANIFEST_SHA256": manifest_hash})
+    if is_final:
+        candidate_compose = env.get(ENV_PREFIX + "CANDIDATE_COMPOSE_FILE", "")
+        if not candidate_compose:
+            candidate_compose = str(capture.ARTIFACT_ROOT / "compose" / identity["candidate_backend_sha"] / "docker-compose.yml")
+        exports[ENV_PREFIX + "COMPOSE_FILE"] = candidate_compose
+        exports[ENV_PREFIX + "CANDIDATE_COMPOSE_FILE"] = candidate_compose
+    else:
+        exports[ENV_PREFIX + "COMPOSE_FILE"] = str(capture.ARTIFACT_ROOT / "compose" / identity["previous_backend_sha"] / "docker-compose.yml")
     for key in ("candidate_image_manifest_path", "candidate_image_manifest_sha256",
                 "candidate_image_override_path", "candidate_image_override_sha256"):
         exports[ENV_PREFIX + key.upper()] = receipt[key] if receipt is not None else ""
+    if fe_seal is not None:
+        exports[ENV_PREFIX + "FE_MANIFEST_SHA256"] = fe_seal["manifest_sha256"]
+        exports[ENV_PREFIX + "FE_DIST_SHA256"] = fe_seal["dist_sha256"]
+        exports[ENV_PREFIX + "FE_TARGET"] = fe_seal["target"]
+        if fe_seal_path:
+            exports[ENV_PREFIX + "FINAL_FE_SEAL_FILE"] = str(fe_seal_path)
     return {"identity": identity, "baseline": baseline, "candidate": receipt, "exports": exports,
             "provenance": provenance, "baseline_actions_artifact": baseline_artifact,
-            "candidate_actions_artifact": candidate_artifact}
+            "candidate_actions_artifact": candidate_artifact, "target": target, "fe_seal": fe_seal}
 
 
 def prepare(env: dict[str, str], provenance: str, output: Path) -> dict:
@@ -177,6 +247,9 @@ def prepare(env: dict[str, str], provenance: str, output: Path) -> dict:
 
 def validate_readback(value: dict, evidence: dict, operation: str) -> dict:
     baseline, identity = evidence["baseline"], evidence["identity"]
+    target = evidence.get("target") or evidence["exports"].get(ENV_PREFIX + "TARGET", "baseline")
+    is_final = target == "final" or operation == "restore-final" or evidence["exports"].get(ENV_PREFIX + "OPERATION") == "restore-final"
+    is_restore = operation in ("restore", "restore-final")
     if operation != evidence["exports"][ENV_PREFIX + "OPERATION"]:
         raise capture.CaptureError("readback operation differs from validated admission")
     capture.exact_keys(value, ("schema_version", "operation", "manifest_sha256", "identity",
@@ -189,13 +262,36 @@ def validate_readback(value: dict, evidence: dict, operation: str) -> dict:
     for key in ("image_readback_verified", "baseline_nonsecret_config_verified", "protected_owners_unchanged"):
         if value[key] is not True:
             raise capture.CaptureError("artifact readback verification is incomplete")
-    expected_images = {service: row["image_id"] for service, row in baseline["image_bundle"]["services"].items()}
-    if value["images"] != expected_images or value["frontend"] != baseline["frontend"]:
-        raise capture.CaptureError("readback is not the exact baseline images and frontend")
+    if is_final:
+        if not evidence.get("candidate") or not evidence["candidate"].get("candidate_image_manifest"):
+            raise capture.CaptureError("final target requires admitted candidate images")
+        expected_images = {service: row["image_id"] for service, row in evidence["candidate"]["candidate_image_manifest"]["services"].items()}
+        if evidence.get("fe_seal"):
+            expected_frontend = evidence["fe_seal"]
+        else:
+            fe = value["frontend"]
+            capture.exact_keys(fe, ("target", "dist_sha256", "manifest_sha256", "frontend_sha", "backend_sha"))
+            if fe["frontend_sha"] != identity["candidate_frontend_sha"] or fe["backend_sha"] != identity["candidate_backend_sha"]:
+                raise capture.CaptureError("readback is not the exact candidate frontend")
+            if env_manifest := evidence["exports"].get(ENV_PREFIX + "FE_MANIFEST_SHA256"):
+                if fe["manifest_sha256"] != env_manifest:
+                    raise capture.CaptureError("readback candidate frontend manifest digest mismatch")
+            if env_dist := evidence["exports"].get(ENV_PREFIX + "FE_DIST_SHA256"):
+                if fe["dist_sha256"] != env_dist:
+                    raise capture.CaptureError("readback candidate frontend dist digest mismatch")
+            if env_target := evidence["exports"].get(ENV_PREFIX + "FE_TARGET"):
+                if fe["target"] != env_target:
+                    raise capture.CaptureError("readback candidate frontend target mismatch")
+            expected_frontend = fe
+    else:
+        expected_images = {service: row["image_id"] for service, row in baseline["image_bundle"]["services"].items()}
+        expected_frontend = baseline["frontend"]
+    if value["images"] != expected_images or value["frontend"] != expected_frontend:
+        raise capture.CaptureError("readback is not the exact baseline images and frontend" if not is_final else "readback is not the exact candidate images and frontend")
     observations = value["pre_restore_source_observations"]
     if (not isinstance(observations, list) or any(not isinstance(item, str) or item not in OBSERVATIONS for item in observations) or
             observations != sorted(set(observations)) or
-            (operation == "verify" and observations) or (operation == "restore" and not observations)):
+            (not is_restore and observations) or (is_restore and not observations)):
         raise capture.CaptureError("readback source observations are invalid")
     capture.exact_keys(value["owners"], OWNERS)
     for service, row in value["owners"].items():
@@ -207,7 +303,8 @@ def validate_readback(value: dict, evidence: dict, operation: str) -> dict:
         capture.matches(row["started_at"], r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?Z")
         if type(row["restart_count"]) is not int or row["restart_count"] < 0:
             raise capture.CaptureError("protected owner restart count is invalid")
-    expected_public = {"source_sha": identity["previous_backend_sha"], "fe_manifest_bytes_verified": True,
+    expected_source_sha = identity["candidate_backend_sha"] if is_final else identity["previous_backend_sha"]
+    expected_public = {"source_sha": expected_source_sha, "fe_manifest_bytes_verified": True,
                        "strict_auth_denials_verified": True, "dev_login_enabled": True,
                        "authenticated_viewer_readback_verified": True}
     capture.exact_keys(value["public"], expected_public)
@@ -225,7 +322,7 @@ def validate_readback(value: dict, evidence: dict, operation: str) -> dict:
             public["strict_auth_denials_verified"] is not True or
             type(dev_login) is not bool or
             viewer_readback is not dev_login or
-            (operation == "restore" and dev_login is not True)):
+            (is_restore and dev_login is not True)):
         raise capture.CaptureError("public source or strict authenticated readback is incomplete")
     return value
 
@@ -253,10 +350,16 @@ def compensation_evidence(env: dict[str, str], provenance: str, readback_path: P
     # The controller log may contain private diagnostics. Retain only its hash.
     failure_raw = private_bytes(failure_log, limit=32 * 1024 * 1024)
     identity = evidence["identity"]
+    rejected_pair = ({"backend_sha": identity["candidate_backend_sha"], "frontend_sha": identity["candidate_frontend_sha"]}
+                     if operation != "restore-final" else
+                     {"backend_sha": identity["previous_backend_sha"], "frontend_sha": identity["previous_frontend_sha"]})
+    restored_pair = ({"backend_sha": identity["previous_backend_sha"], "frontend_sha": identity["previous_frontend_sha"]}
+                     if operation != "restore-final" else
+                     {"backend_sha": identity["candidate_backend_sha"], "frontend_sha": identity["candidate_frontend_sha"]})
     return {"schema_version": "pantheon.cross-repo-release-compensation.v2",
             "release_candidate_id": identity["candidate_id"], "outcome": "compensated", "operation": operation,
-            "rejected_pair": {"backend_sha": identity["candidate_backend_sha"], "frontend_sha": identity["candidate_frontend_sha"]},
-            "restored_pair": {"backend_sha": identity["previous_backend_sha"], "frontend_sha": identity["previous_frontend_sha"]},
+            "rejected_pair": rejected_pair,
+            "restored_pair": restored_pair,
             "controller_failure_log_sha256": capture.digest(failure_raw),
             "workflow": {"repository": env["GITHUB_REPOSITORY"], "run_id": identity["run_id"], "run_attempt": identity["attempt"]},
             "provenance": provenance, "baseline_actions_artifact": evidence["baseline_actions_artifact"],
@@ -276,7 +379,7 @@ def main(argv=None) -> int:
     read.add_argument("--provenance", choices=PROVENANCES)
     read.add_argument("--input-log", type=Path, required=True)
     read.add_argument("--output", type=Path, required=True)
-    read.add_argument("--operation", choices=("verify", "restore"), required=True)
+    read.add_argument("--operation", choices=("verify", "restore", "restore-final"), required=True)
     args = parser.parse_args(argv)
     try:
         env = dict(os.environ)

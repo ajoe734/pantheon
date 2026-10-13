@@ -146,8 +146,10 @@ DRY_RUN=false
 ARTIFACT_RESTORE=false
 ARTIFACT_VERIFY=false
 ARTIFACT_READBACK_OUT=""
+ARTIFACT_TARGET="${PANTHEON_DEV_ARTIFACT_TARGET:-baseline}"
 
 validate_artifact_restore_request() {
+  [[ "${ARTIFACT_TARGET:-baseline}" =~ ^(baseline|final)$ ]] || error "artifact target must be baseline or final"
   [[ "${ARTIFACT_RESTORE}" == true || "${ARTIFACT_VERIFY:-false}" == true ]] || return 0
   [[ "${ARTIFACT_RESTORE}" != true || "${ARTIFACT_VERIFY:-false}" != true ]] \
     || error "artifact restore and verify modes are mutually exclusive"
@@ -174,7 +176,7 @@ validate_artifact_restore_request() {
   done
   [[ "${PANTHEON_DEV_ARTIFACT_RUN_ID:-}" =~ ^[0-9]{1,20}$ && "${PANTHEON_DEV_ARTIFACT_ATTEMPT:-}" =~ ^[0-9]{1,10}$ ]] \
     || error "artifact restore requires an exact run and attempt"
-  if [[ "${ARTIFACT_RESTORE}" == true ]]; then
+  if [[ "${ARTIFACT_RESTORE}" == true || "${ARTIFACT_TARGET:-baseline}" == "final" ]]; then
     [[ "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH:-}" == /* && \
        "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256:-}" =~ ^[0-9a-f]{64}$ && \
        "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256}" != "$(printf '%064d' 0)" ]] \
@@ -559,6 +561,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --artifact-restore-final)
       ARTIFACT_RESTORE=true; ARTIFACT_TARGET=final; shift ;;
+    --artifact-target)
+      ARTIFACT_TARGET="${2:-}"
+      shift 2
+      ;;
     --artifact-verify)
       ARTIFACT_VERIFY=true
       shift
@@ -886,11 +892,13 @@ ssh_bash() {
     PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256 \
     PANTHEON_DEV_ARTIFACT_DRIVER_PATH PANTHEON_DEV_ARTIFACT_DRIVER_SHA256 \
     PANTHEON_DEV_ARTIFACT_LIBRARY_SHA256 PANTHEON_DEV_ARTIFACT_COMPOSE_FILE \
+    PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE \
     PANTHEON_DEV_ARTIFACT_CANDIDATE_ID PANTHEON_DEV_ARTIFACT_RUN_ID \
     PANTHEON_DEV_ARTIFACT_ATTEMPT PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA \
     PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA PANTHEON_DEV_ARTIFACT_CANDIDATE_FRONTEND_SHA \
     PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA \
-    PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256 PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256 PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID; do
+    PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256 PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256 \
+    PANTHEON_DEV_ARTIFACT_FE_TARGET PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID; do
     command_prefix+=" ${artifact_variable}=$(shell_quote "${!artifact_variable:-}")"
   done
   command_prefix+=" PANTHEON_GITHUB_TOKEN=$(shell_quote "${GITHUB_TOKEN:-}")"
@@ -1040,6 +1048,7 @@ with os.fdopen(fd, "wb") as stream:
           if [[ "${transport_status}" == 0 ]]; then
             local operation=verify
             [[ "${ARTIFACT_RESTORE}" != true ]] || operation=restore
+            [[ "${ARTIFACT_TARGET:-baseline}" != "final" || "${operation}" != "restore" ]] || operation=restore-final
             python3 "${SCRIPT_DIR}/dev_artifact_compensation_evidence.py" readback \
               --input-log "${private_dir}/transport.log" --output "${ARTIFACT_READBACK_OUT}" \
               --operation "${operation}" --provenance "${PANTHEON_DEV_ARTIFACT_EVIDENCE_PROVENANCE:?missing evidence provenance}" || transport_status=$?
@@ -3888,6 +3897,73 @@ with_dev_bff_runtime_env() {
     "$@"
 }
 
+resolve_dev_candidate_compose() {
+  python3 - <<'RESOLVE_COMPOSE_PY'
+import hashlib
+import json
+import os
+import pathlib
+import sys
+
+env = os.environ
+candidate_compose = env.get("PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE", "")
+candidate_manifest_path = env.get("PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH", "")
+expected_digest = None
+if candidate_manifest_path and os.path.isfile(candidate_manifest_path):
+    try:
+        manifest_data = json.loads(pathlib.Path(candidate_manifest_path).read_bytes())
+        expected_digest = manifest_data.get("candidate_compose_sha256")
+    except Exception:
+        pass
+
+search_paths = []
+if candidate_compose:
+    search_paths.append(pathlib.Path(candidate_compose))
+
+worktree_root = env.get("PANTHEON_DEPLOY_WORKTREE_ROOT")
+if worktree_root:
+    root_p = pathlib.Path(worktree_root)
+    search_paths.append(root_p / "dev-bff/docker-compose.yml")
+    search_paths.append(root_p / "dev-root/docker-compose.yml")
+
+home = env.get("HOME", "/home/chloe_ong_dev_cctech_support_com")
+search_paths.append(pathlib.Path(home) / "pantheon-ci-deploy/managed-deploy-worktrees/dev-bff/docker-compose.yml")
+search_paths.append(pathlib.Path(home) / "pantheon-ci-deploy/managed-deploy-worktrees/dev-root/docker-compose.yml")
+
+remote_dir = env.get("PANTHEON_REMOTE_DIR")
+if remote_dir:
+    search_paths.append(pathlib.Path(remote_dir) / "docker-compose.yml")
+
+controller_root_env = env.get("SYNTHETIC_CONTROLLER_ROOT", "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/release-artifacts/controllers")
+artifact_root = pathlib.Path(controller_root_env).parent
+candidate_backend_sha = env.get("PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA", "")
+if candidate_backend_sha:
+    search_paths.append(artifact_root / "compose" / candidate_backend_sha / "docker-compose.yml")
+
+resolved = None
+for path in search_paths:
+    if not path.is_absolute() or path.is_symlink() or not path.is_file():
+        continue
+    try:
+        raw = path.read_bytes()
+        if expected_digest and hashlib.sha256(raw).hexdigest() != expected_digest:
+            continue
+        resolved = str(path.resolve())
+        break
+    except Exception:
+        continue
+
+if not resolved and candidate_compose:
+    p = pathlib.Path(candidate_compose)
+    if p.is_file() and not p.is_symlink():
+        resolved = str(p.resolve())
+
+if not resolved:
+    sys.exit("unable to resolve explicit candidate Compose path")
+print(resolved)
+RESOLVE_COMPOSE_PY
+}
+
 run_dev_artifact_driver() {
   local operation="$1"
   case "${PANTHEON_DEPLOY_ENV}:${PANTHEON_DEPLOY_COMPONENT}" in
@@ -3956,24 +4032,42 @@ ARTIFACT_PY
   local compose_file="${PANTHEON_DEV_ARTIFACT_COMPOSE_FILE}"
   local runtime_sha="${PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA}"
   local -a candidate_args=()
+  local is_final=false
+  if [[ "${operation}" == restore-final || "${operation}" == seal-candidate || "${PANTHEON_DEV_ARTIFACT_TARGET:-baseline}" == final ]]; then
+    is_final=true
+  fi
+
   if [[ "${operation}" == seal-candidate ]]; then
     [[ "${PANTHEON_DEPLOY_SHA}" == "${PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA}" ]] \
       || { info "candidate source differs from artifact admission" >&2; return 75; }
-    compose_file="${PWD}/docker-compose.yml"
+    compose_file="$(resolve_dev_candidate_compose 2>/dev/null || printf '%s/docker-compose.yml' "${PWD}")"
     runtime_sha="${PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA}"
-  elif [[ "${operation}" == restore || "${operation}" == restore-final ]]; then
+  elif [[ "${operation}" == restore || "${operation}" == restore-final || ( "${operation}" == verify && "${is_final}" == true ) ]]; then
     [[ "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH:-}" == /* && \
        "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256:-}" =~ ^[0-9a-f]{64}$ && \
        "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256}" != "$(printf '%064d' 0)" ]] \
-      || { info "restore requires the externally retained candidate image receipt" >&2; return 75; }
+      || { info "candidate operation requires the externally retained candidate image receipt" >&2; return 75; }
     candidate_args=(--candidate-image-manifest "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH}"
       --candidate-image-manifest-sha256 "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256}")
-    if [[ "${operation}" == restore-final ]]; then
-      compose_file="${PWD}/docker-compose.yml"
+    if [[ "${is_final}" == true ]]; then
+      compose_file="$(resolve_dev_candidate_compose)" || return $?
       runtime_sha="${PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA}"
-      [[ "${PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256:-}" =~ ^[0-9a-f]{64}$ && "${PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] \
-        || { info "restore-final requires external FE manifest and dist digests" >&2; return 75; }
-      candidate_args+=(--target final --fe-manifest-sha256 "${PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256}" --fe-dist-sha256 "${PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256}")
+      candidate_args+=(--target final)
+      if [[ "${operation}" == restore-final ]]; then
+        [[ "${PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256:-}" =~ ^[0-9a-f]{64}$ && "${PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] \
+          || { info "restore-final requires external FE manifest and dist digests" >&2; return 75; }
+        candidate_args+=(--fe-manifest-sha256 "${PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256}" --fe-dist-sha256 "${PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256}")
+      else
+        if [[ "${PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256:-}" =~ ^[0-9a-f]{64}$ ]]; then
+          candidate_args+=(--fe-manifest-sha256 "${PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256}")
+        fi
+        if [[ "${PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256:-}" =~ ^[0-9a-f]{64}$ ]]; then
+          candidate_args+=(--fe-dist-sha256 "${PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256}")
+        fi
+      fi
+      if [[ -n "${PANTHEON_DEV_ARTIFACT_FE_TARGET:-}" ]]; then
+        candidate_args+=(--fe-target "${PANTHEON_DEV_ARTIFACT_FE_TARGET}")
+      fi
     fi
   fi
 

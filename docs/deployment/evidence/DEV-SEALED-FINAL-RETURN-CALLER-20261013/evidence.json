@@ -1,0 +1,63 @@
+{
+  "task_id": "DEV-SEALED-FINAL-RETURN-CALLER-20261013",
+  "title": "Connect the existing sealed final artifact return caller",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "change_class": "corrective",
+  "timestamp": "2026-10-13T02:20:00Z",
+  "summary": "Connected the existing sealed final artifact return caller, verified explicit candidate compose resolution without ambient PWD dependency, and wired candidate receipt and final FE seal validation into compensation evidence and deployment workflows.",
+  "acceptance_criteria_verification": {
+    "ac1_correct_final_caller_gaps": {
+      "satisfied": true,
+      "evidence": "Fixed runner compensation validator rejection of final readback (both as restore and restore-final). Added restore-final operation support and validated candidate receipt and FE seal digests in dev_artifact_compensation_evidence.py."
+    },
+    "ac2_driver_verify_and_restore_final": {
+      "satisfied": true,
+      "evidence": "Extended deploy_nonprod_vm.sh with --artifact-target <baseline|final>, --artifact-restore-final, explicit candidate compose resolution via resolve_dev_candidate_compose, and candidate argument forwarding. Connected nonprod-deploy.yml coordinate-dev-release to run final verify/seal readback under a pinned per-operation lease and lease wrapper on frontend_release success before accepting the release."
+    },
+    "ac3_extend_compensation_evidence": {
+      "satisfied": true,
+      "evidence": "dev_artifact_compensation_evidence.py validates admitted final readback against candidate receipt and candidate-frontend.json seal (deliberately consuming validated frontend structure from typed readbacks or seal files), verifies candidate backend SHA, and sets restored_pair to candidate on restore-final while preserving baseline restore and all identity fields."
+    },
+    "ac4_supported_invocations_documented": {
+      "satisfied": true,
+      "evidence": "Documented concrete CLI invocations for final verify and restore-final in docs/deployment/dev-exact-artifact-rollback.md without modifying FE controller or symlinks directly."
+    },
+    "ac5_full_test_suite_coverage": {
+      "satisfied": true,
+      "evidence": "Added positive and negative control tests covering hostile ambient working directory, tampered seals, mixed baseline/candidate identities, missing receipts, typed readback seal consumption, and workflow lease contracts across test_dev_artifact_compensation_evidence.py, test_deploy_nonprod_artifact_restore.py, and test_nonprod_dev_artifact_workflow.py (282 passed, 0 failed, 0 skipped in 47.32s)."
+    },
+    "ac6_scoped_files_only": {
+      "satisfied": true,
+      "evidence": "Only the 9 scoped files modified and tracked. Non-interactive worker commit and task handoff."
+    }
+  },
+  "verification": {
+    "test_suites": [
+      {
+        "module": "scripts/test_dev_artifact_compensation_evidence.py",
+        "passed": 80,
+        "failed": 0,
+        "skipped": 0
+      },
+      {
+        "module": "scripts/test_deploy_nonprod_artifact_restore.py",
+        "passed": 55,
+        "failed": 0,
+        "skipped": 0
+      },
+      {
+        "module": "scripts/test_nonprod_dev_artifact_workflow.py",
+        "passed": 147,
+        "failed": 0,
+        "skipped": 0
+      }
+    ],
+    "total_passed": 282,
+    "total_failed": 0
+  },
+  "review": {
+    "reviewer": "Antigravity",
+    "decision": "pending independent exact-head review"
+  }
+}
