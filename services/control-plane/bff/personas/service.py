@@ -50,12 +50,9 @@ from starlette.responses import JSONResponse
 
 BFF_DATA_DIR = os.getenv("BFF_DATA_DIR", "/tmp/pantheon/bff")
 
-try:
-    from services.control_plane.cron.persona_cron_registrar import (
-        DEFAULT_HTTP_RESPONSE_ALLOWANCE_SECONDS,
-    )
-except ImportError:
-    DEFAULT_HTTP_RESPONSE_ALLOWANCE_SECONDS = 2.0
+from services.control_plane.cron.persona_cron_registrar import (
+    DEFAULT_HTTP_RESPONSE_ALLOWANCE_SECONDS,
+)
 
 from ..models import (
     ActionCommandStatus,
