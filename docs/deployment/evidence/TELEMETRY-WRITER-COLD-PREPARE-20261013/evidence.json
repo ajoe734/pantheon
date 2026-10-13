@@ -1,0 +1,47 @@
+{
+  "task_id": "TELEMETRY-WRITER-COLD-PREPARE-20261013",
+  "change_class": "corrective",
+  "summary": "Prepare the unchanged telemetry INSERT statement on fresh asyncpg connections before entering the transaction advisory lock fence, leaving the lock unheld during cold type introspection and codec setup while preserving transactional serialization for insert, sequence allocation, duplicate checks, notification, and acknowledgement.",
+  "incident_context": {
+    "symptom": "Root 38450035666 failed before FE switch. PostgreSQL log at 19:57:53.565 and 20:11:01.122 canceled SELECT pg_advisory_xact_lock(hashtext($1)) due to statement timeout, causing lifecycle projector failure at 20:11:01.143 (21ms following statement cancellation).",
+    "root_cause": "Fresh asyncpg connections execute JIT setup, typeinfo_tree codec discovery, and missing-type-codec introspection inside the transaction while holding the global pg_advisory_xact_lock fence. Lock holder correlation receipt current-original-canonical-lock-holder-bounded-correlation-readonly.json (SHA f594e2511b180a9909fd5d5298948e2338f762d7d4ee8774057964420d7b333b) maps PID 150512 (projector 172.18.0.39) waiting 8.539s blocked by Telemetry (172.18.0.32 PID 150445) transaction lasting 10.778s.",
+    "evidence_references": [
+      {
+        "file": "/tmp/pantheon-assist-20261013/original-root384500-failure-interval-postgres-readonly.log",
+        "sha256": "a29a01df4c533acfb151ad710ab7cf1e4a7ff81266cfa953338fc4af3b1620d3",
+        "note": "PostgreSQL statement cancellation log showing advisory lock cancel at 19:57:53.565 and 20:11:01.122"
+      },
+      {
+        "file": "/tmp/pantheon-assist-20261013/current-original-canonical-lock-holder-bounded-correlation-readonly.json",
+        "sha256": "f594e2511b180a9909fd5d5298948e2338f762d7d4ee8774057964420d7b333b",
+        "note": "Lock correlation receipt mapping PID 150512 waiting 8.539s blocked by Telemetry PID 150445 10.778s transaction"
+      },
+      {
+        "file": "/tmp/pantheon-assist-20261013/original-telemetry-installed-asyncpg-prepare-semantics-readonly.json",
+        "sha256": "441a2d953432d59887ef5aa7533ddff89c1e3175764112bcc8d3f79af4709a76",
+        "connection_source_sha256": "e9abd5c153bc70cfadb61215f11140e90741c2fed5929e574b6548ef8092b48c",
+        "note": "asyncpg 0.31.0 prepare() performs Parse/Describe and type introspection, while PreparedStatement.fetch alone bind-executes"
+      }
+    ],
+    "resolution": "In build_postgres_write_fn, prepare the unchanged insert_sql (insert_stmt = await conn.prepare(insert_sql)) before opening the transaction and acquiring pg_advisory_xact_lock. Inside the locked transaction, execute insert_stmt.fetch(...) with original batch arrays. This leaves cold codec initialization outside the fence while preserving atomic serialization for execution, sequence assignment, duplicate checks, notification, and commit-before-ACK."
+  },
+  "acceptance_verification": {
+    "ac1_root_cause_and_evidence": "passed: verified original Root 38450035666 failure interval logs and lock holder correlation receipt matching PID 150512 projector waiting on Telemetry PID 150445 advisory lock due to cold connection type codec discovery",
+    "ac2_cold_prepare_outside_fence": "passed: build_postgres_write_fn prepares unchanged INSERT via insert_stmt = await conn.prepare(insert_sql) before transaction and advisory lock acquisition; insert_stmt.fetch executes inside advisory lock with original batch arrays; no lock relaxation, no timeout alterations, no pooling or framework introduced",
+    "ac3_regression_test_and_real_pg": "passed: adapted existing fake connections to asyncpg prepared-statement API; added test_postgres_writer_delayed_prepare_leaves_canonical_fence_available showing competitor can acquire lock during delayed prepare, while insert, duplicate check, and notify remain inside lock; verified test_postgres_source_fence_crosses_real_sequence_hole_and_waits_for_writer in test_lifecycle_projector.py against real PostgreSQL",
+    "ac4_minimal_scope": "passed: strictly scoped to services/telemetry/ingest_svc.py, services/telemetry/test_ingest_shock_absorption.py, and task evidence manifest; no capital or hosted actions",
+    "ac5_delivery_flow": "passed: clean task branch task/TELEMETRY-WRITER-COLD-PREPARE-20261013, required trailers, exact head handoff to assigned reviewer Antigravity"
+  },
+  "local_verification": {
+    "commands": [
+      "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/telemetry/test_ingest_shock_absorption.py",
+      "TEST_DATABASE_URL=\"postgresql://pantheon:pantheon@127.0.0.1:5432/source_ingest_test\" $PANTHEON_DEPENDENCY_PYTHON -m pytest services/trade_journey/test_lifecycle_projector.py",
+      "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/trade_journey/test_lifecycle_projector.py"
+    ],
+    "results": {
+      "services/telemetry/test_ingest_shock_absorption.py": "65 passed in 14.98s (exit 0)",
+      "services/trade_journey/test_lifecycle_projector.py (with TEST_DATABASE_URL)": "77 passed in 15.26s (exit 0, including test_postgres_source_fence_crosses_real_sequence_hole_and_waits_for_writer)",
+      "services/trade_journey/test_lifecycle_projector.py (without TEST_DATABASE_URL)": "75 passed, 2 skipped in 9.04s (exit 0, conditional skips on lines 358 and 474 due to unset TEST_DATABASE_URL)"
+    }
+  }
+}
