@@ -645,3 +645,108 @@ def test_actual_cli_restore_final_options(fixture, flag, sha_used, expected):
     if expected == 0:
         assert "artifact_restore=true" in result.stdout
 
+
+def test_verify_without_fe_digests_succeeds(fixture, tmp_path):
+    env, recorder, driver, library = fixture
+    candidate_compose = tmp_path / "candidate-compose" / "docker-compose.yml"
+    candidate_compose.parent.mkdir(parents=True, exist_ok=True)
+    candidate_compose_content = "services:\n  operator-bff:\n    image: pantheon-operator-bff:verify\n"
+    candidate_compose.write_text(candidate_compose_content)
+    candidate_compose_sha = hashlib.sha256(candidate_compose_content.encode()).hexdigest()
+
+    candidate_path = Path(env["PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH"])
+    candidate_data = json.loads(candidate_path.read_text())
+    candidate_data["candidate_compose_sha256"] = candidate_compose_sha
+    encoded_bytes = (json.dumps(candidate_data, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    candidate_path.write_bytes(encoded_bytes)
+    env["PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256"] = hashlib.sha256(encoded_bytes).hexdigest()
+
+    env.update({
+        "PANTHEON_DEPLOY_SHA": SHA,
+        "PANTHEON_DEV_ARTIFACT_RESTORE": "false",
+        "PANTHEON_DEV_ARTIFACT_VERIFY": "true",
+        "PANTHEON_DEV_ARTIFACT_TARGET": "final",
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE": str(candidate_compose),
+    })
+    env.pop("PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256", None)
+    env.pop("PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256", None)
+    env.pop("PANTHEON_DEV_ARTIFACT_FE_TARGET", None)
+
+    result = _run(_remote(), env)
+    assert result.returncode == 0, result.stderr
+    events = _events(recorder)
+    assert len(events) == 1
+    event = events[0]
+    assert event["command"] == "driver"
+    assert event["operation"] == "verify"
+    assert event["args"]["--target"] == "final"
+    assert event["args"]["--compose-file"] == str(candidate_compose)
+    assert "--fe-manifest-sha256" not in event["args"]
+
+
+def test_resolve_candidate_compose_mismatch_fails_closed(fixture, tmp_path):
+    env, recorder, driver, library = fixture
+    candidate_compose = tmp_path / "candidate-compose" / "docker-compose.yml"
+    candidate_compose.parent.mkdir(parents=True, exist_ok=True)
+    candidate_compose.write_text("services:\n  operator-bff:\n    image: pantheon-operator-bff:verify\n")
+
+    candidate_path = Path(env["PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH"])
+    candidate_data = json.loads(candidate_path.read_text())
+    candidate_data["candidate_compose_sha256"] = "9" * 64
+    encoded_bytes = (json.dumps(candidate_data, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    candidate_path.write_bytes(encoded_bytes)
+    env["PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256"] = hashlib.sha256(encoded_bytes).hexdigest()
+
+    env.update({
+        "PANTHEON_DEPLOY_SHA": SHA,
+        "PANTHEON_DEV_ARTIFACT_RESTORE": "false",
+        "PANTHEON_DEV_ARTIFACT_VERIFY": "true",
+        "PANTHEON_DEV_ARTIFACT_TARGET": "final",
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE": str(candidate_compose),
+    })
+
+    result = _run(_remote(), env)
+    assert result.returncode != 0
+    assert "candidate Compose digest mismatch" in result.stderr
+
+
+def test_fe_owner_restore_sealed_invocation(fixture, tmp_path):
+    env, recorder, driver, library = fixture
+    fe_script = tmp_path / "deploy-dev-vm.sh"
+    fe_script.write_text(
+        '#!/usr/bin/env bash\n'
+        'python3 - <<\'PY\'\n'
+        'import json, os\n'
+        'with open(os.environ["RECORDER"], "a") as f:\n'
+        '    f.write(json.dumps({\n'
+        '        "command": "fe_deploy",\n'
+        '        "action": os.environ.get("PANTHEON_DEPLOY_ACTION"),\n'
+        '        "profile": os.environ.get("PANTHEON_DEPLOY_PROFILE"),\n'
+        '        "delegated": os.environ.get("PANTHEON_DEPLOY_LEASE_DELEGATED"),\n'
+        '        "from": os.environ.get("PANTHEON_DEPLOY_SEALED_FROM_JSON"),\n'
+        '        "to": os.environ.get("PANTHEON_DEPLOY_SEALED_TO_JSON"),\n'
+        '    }) + "\\n")\n'
+        'PY\n'
+    )
+    fe_script.chmod(0o755)
+
+    env.update({
+        "PANTHEON_DEV_FE_DEPLOY_SCRIPT": str(fe_script),
+        "PANTHEON_DEV_ARTIFACT_SEALED_FROM_JSON": '{"target":"candidate"}',
+        "PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON": '{"target":"baseline"}',
+    })
+
+    result = _run(_remote(), env)
+    assert result.returncode == 0, result.stderr
+    events = _events(recorder)
+    assert len(events) == 2
+    assert events[0]["command"] == "fe_deploy"
+    assert events[0]["action"] == "restore-sealed"
+    assert events[0]["profile"] == "operator-live"
+    assert events[0]["delegated"] == "true"
+    assert events[0]["from"] == '{"target":"candidate"}'
+    assert events[0]["to"] == '{"target":"baseline"}'
+    assert events[1]["command"] == "driver"
+    assert events[1]["operation"] == "restore"
+
+

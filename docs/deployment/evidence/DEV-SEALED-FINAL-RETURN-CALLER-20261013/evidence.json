@@ -48,13 +48,13 @@
       },
       {
         "module": "scripts/test_dev_artifact_compensation_evidence.py",
-        "passed": 91,
+        "passed": 93,
         "failed": 0,
         "skipped": 0
       },
       {
         "module": "scripts/test_deploy_nonprod_artifact_restore.py",
-        "passed": 55,
+        "passed": 58,
         "failed": 0,
         "skipped": 0
       },
@@ -65,7 +65,7 @@
         "skipped": 0
       }
     ],
-    "total_passed": 401,
+    "total_passed": 406,
     "total_failed": 0
   },
   "review": {

@@ -159,12 +159,23 @@ validate_artifact_restore_request() {
   [[ "${ARTIFACT_TARGET:-baseline}" != "final" ]] || expected_backend="${PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA:-}"
   [[ "${DEPLOY_SHA}" == "${expected_backend}" ]] || error "artifact restore SHA must match the admitted backend"
   local name sha256_names="MANIFEST_SHA256 DRIVER_SHA256 LIBRARY_SHA256 CANDIDATE_ID"
-  [[ "${ARTIFACT_TARGET:-baseline}" != "final" ]] || sha256_names+=" FE_MANIFEST_SHA256 FE_DIST_SHA256"
+  if [[ "${ARTIFACT_TARGET:-baseline}" == "final" && "${ARTIFACT_RESTORE}" == true ]]; then
+    sha256_names+=" FE_MANIFEST_SHA256 FE_DIST_SHA256"
+  fi
   for name in ${sha256_names}; do
     local variable="PANTHEON_DEV_ARTIFACT_${name}"
     [[ "${!variable:-}" =~ ^[0-9a-f]{64}$ && "${!variable}" != "$(printf '%064d' 0)" ]] \
       || error "artifact restore requires ${variable}"
   done
+  if [[ "${ARTIFACT_TARGET:-baseline}" == "final" && "${ARTIFACT_VERIFY:-false}" == true ]]; then
+    for name in FE_MANIFEST_SHA256 FE_DIST_SHA256; do
+      local variable="PANTHEON_DEV_ARTIFACT_${name}"
+      if [[ -n "${!variable:-}" ]]; then
+        [[ "${!variable}" =~ ^[0-9a-f]{64}$ && "${!variable}" != "$(printf '%064d' 0)" ]] \
+          || error "artifact verify requires valid ${variable}"
+      fi
+    done
+  fi
   for name in CONTROLLER_SHA CANDIDATE_BACKEND_SHA CANDIDATE_FRONTEND_SHA PREVIOUS_BACKEND_SHA PREVIOUS_FRONTEND_SHA; do
     local variable="PANTHEON_DEV_ARTIFACT_${name}"
     [[ "${!variable:-}" =~ ^[0-9a-f]{40}$ ]] \
@@ -898,7 +909,8 @@ ssh_bash() {
     PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA PANTHEON_DEV_ARTIFACT_CANDIDATE_FRONTEND_SHA \
     PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA \
     PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256 PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256 \
-    PANTHEON_DEV_ARTIFACT_FE_TARGET PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID; do
+    PANTHEON_DEV_ARTIFACT_FE_TARGET PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID \
+    PANTHEON_DEV_ARTIFACT_SEALED_FROM_JSON PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON; do
     command_prefix+=" ${artifact_variable}=$(shell_quote "${!artifact_variable:-}")"
   done
   command_prefix+=" PANTHEON_GITHUB_TOKEN=$(shell_quote "${GITHUB_TOKEN:-}")"
@@ -3906,61 +3918,29 @@ import pathlib
 import sys
 
 env = os.environ
-candidate_compose = env.get("PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE", "")
+candidate_compose = env.get("PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE") or env.get("PANTHEON_DEV_ARTIFACT_COMPOSE_FILE")
+if not candidate_compose:
+    sys.exit("unable to resolve explicit candidate Compose path: missing path")
+
+path = pathlib.Path(candidate_compose)
+if not path.is_absolute() or path.is_symlink() or not path.is_file():
+    sys.exit("unable to resolve explicit candidate Compose path: not regular file")
+
 candidate_manifest_path = env.get("PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH", "")
-expected_digest = None
 if candidate_manifest_path and os.path.isfile(candidate_manifest_path):
     try:
         manifest_data = json.loads(pathlib.Path(candidate_manifest_path).read_bytes())
         expected_digest = manifest_data.get("candidate_compose_sha256")
-    except Exception:
-        pass
+        if expected_digest:
+            actual_digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            if actual_digest != expected_digest:
+                sys.exit("unable to resolve explicit candidate Compose path: candidate Compose digest mismatch")
+    except SystemExit:
+        raise
+    except Exception as exc:
+        sys.exit(f"unable to resolve explicit candidate Compose path: {exc}")
 
-search_paths = []
-if candidate_compose:
-    search_paths.append(pathlib.Path(candidate_compose))
-
-worktree_root = env.get("PANTHEON_DEPLOY_WORKTREE_ROOT")
-if worktree_root:
-    root_p = pathlib.Path(worktree_root)
-    search_paths.append(root_p / "dev-bff/docker-compose.yml")
-    search_paths.append(root_p / "dev-root/docker-compose.yml")
-
-home = env.get("HOME", "/home/chloe_ong_dev_cctech_support_com")
-search_paths.append(pathlib.Path(home) / "pantheon-ci-deploy/managed-deploy-worktrees/dev-bff/docker-compose.yml")
-search_paths.append(pathlib.Path(home) / "pantheon-ci-deploy/managed-deploy-worktrees/dev-root/docker-compose.yml")
-
-remote_dir = env.get("PANTHEON_REMOTE_DIR")
-if remote_dir:
-    search_paths.append(pathlib.Path(remote_dir) / "docker-compose.yml")
-
-controller_root_env = env.get("SYNTHETIC_CONTROLLER_ROOT", "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/release-artifacts/controllers")
-artifact_root = pathlib.Path(controller_root_env).parent
-candidate_backend_sha = env.get("PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA", "")
-if candidate_backend_sha:
-    search_paths.append(artifact_root / "compose" / candidate_backend_sha / "docker-compose.yml")
-
-resolved = None
-for path in search_paths:
-    if not path.is_absolute() or path.is_symlink() or not path.is_file():
-        continue
-    try:
-        raw = path.read_bytes()
-        if expected_digest and hashlib.sha256(raw).hexdigest() != expected_digest:
-            continue
-        resolved = str(path.resolve())
-        break
-    except Exception:
-        continue
-
-if not resolved and candidate_compose:
-    p = pathlib.Path(candidate_compose)
-    if p.is_file() and not p.is_symlink():
-        resolved = str(p.resolve())
-
-if not resolved:
-    sys.exit("unable to resolve explicit candidate Compose path")
-print(resolved)
+print(str(path.resolve()))
 RESOLVE_COMPOSE_PY
 }
 
@@ -4040,7 +4020,15 @@ ARTIFACT_PY
   if [[ "${operation}" == seal-candidate ]]; then
     [[ "${PANTHEON_DEPLOY_SHA}" == "${PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA}" ]] \
       || { info "candidate source differs from artifact admission" >&2; return 75; }
-    compose_file="$(resolve_dev_candidate_compose 2>/dev/null || printf '%s/docker-compose.yml' "${PWD}")"
+    if [[ -n "${PANTHEON_REMOTE_DIR:-}" && -f "${PANTHEON_REMOTE_DIR}/docker-compose.yml" && ! -L "${PANTHEON_REMOTE_DIR}/docker-compose.yml" ]]; then
+      compose_file="${PANTHEON_REMOTE_DIR}/docker-compose.yml"
+    elif [[ -n "${PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE:-}" && -f "${PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE}" && ! -L "${PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE}" ]]; then
+      compose_file="${PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE}"
+    elif [[ -f "${PANTHEON_DEV_ARTIFACT_COMPOSE_FILE}" && ! -L "${PANTHEON_DEV_ARTIFACT_COMPOSE_FILE}" ]]; then
+      compose_file="${PANTHEON_DEV_ARTIFACT_COMPOSE_FILE}"
+    else
+      error "seal-candidate requires an existing non-symlink compose file"
+    fi
     runtime_sha="${PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA}"
   elif [[ "${operation}" == restore || "${operation}" == restore-final || ( "${operation}" == verify && "${is_final}" == true ) ]]; then
     [[ "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH:-}" == /* && \
@@ -4377,6 +4365,37 @@ if [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" == true || "${PANTHEON_DEV_ARTIF
   artifact_operation=verify
   [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" != true ]] || artifact_operation=restore
   [[ "${PANTHEON_DEV_ARTIFACT_TARGET:-baseline}" != "final" || "${artifact_operation}" != "restore" ]] || artifact_operation=restore-final
+
+  if [[ "${artifact_operation}" == "restore" || "${artifact_operation}" == "restore-final" ]]; then
+    if [[ -n "${PANTHEON_DEV_ARTIFACT_SEALED_FROM_JSON:-}" && -n "${PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON:-}" ]]; then
+      fe_script="${PANTHEON_DEV_FE_DEPLOY_SCRIPT:-${PANTHEON_EXECUTE_PLANS_ROOT:-${HOME:-/home/chloe_ong_dev_cctech_support_com}/code/execute-plans}/scripts/deploy-dev-vm.sh}"
+      if [[ -f "${fe_script}" && ! -L "${fe_script}" ]]; then
+        info "invoking FE owner restore-sealed before BE ${artifact_operation}"
+        fe_lease_epoch="1"
+        fe_lease_run_id="${PANTHEON_DEV_ARTIFACT_RUN_ID:-0}"
+        fe_lease_owner="pantheon:dev"
+        if [[ -n "${PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID:-}" ]]; then
+          fe_lease_owner="${PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID}"
+        fi
+        GITHUB_EVENT_NAME=workflow_dispatch \
+        PANTHEON_DEPLOY_PROFILE=operator-live \
+        PANTHEON_DEPLOY_PROOF_WINDOW_ACK=false \
+        PANTHEON_DEPLOY_REAL_WRITES=true \
+        PANTHEON_DEPLOY_ALLOW_DEV_STUB_WRITES=false \
+        PANTHEON_DEPLOY_ACTION=restore-sealed \
+        PANTHEON_DEPLOY_LEASE_DELEGATED=true \
+        PANTHEON_DEPLOY_LEASE_OWNER="${fe_lease_owner}" \
+        PANTHEON_DEPLOY_LEASE_EPOCH="${fe_lease_epoch}" \
+        PANTHEON_DEPLOY_LEASE_RUN_ID="${fe_lease_run_id}" \
+        PANTHEON_DEPLOY_SEALED_FROM_JSON="${PANTHEON_DEV_ARTIFACT_SEALED_FROM_JSON}" \
+        PANTHEON_DEPLOY_SEALED_TO_JSON="${PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON}" \
+          bash "${fe_script}" || error "FE owner restore-sealed failed with exit code $?"
+      elif [[ -n "${PANTHEON_DEV_FE_DEPLOY_SCRIPT:-}" ]]; then
+        error "FE deploy script missing: ${PANTHEON_DEV_FE_DEPLOY_SCRIPT}"
+      fi
+    fi
+  fi
+
   artifact_readback="$(run_dev_artifact_driver "${artifact_operation}")" || exit $?
   printf 'PANTHEON_ARTIFACT_READBACK_V1 %s\n' "${artifact_readback}"
   info "component bff exact artifact ${artifact_operation} completed"

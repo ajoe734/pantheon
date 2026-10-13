@@ -254,12 +254,17 @@ def test_coordinate_dev_release_verifies_and_seals_final_candidate():
     assert ids.index("frontend_release") < ids.index("final_artifact_verify") < ids.index("release_evidence_upload")
     verify_step = step(COORDINATE, "final_artifact_verify")
     assert "steps.frontend_release.outcome == 'success'" in verify_step["if"]
-    assert "--artifact-verify" in verify_step["run"]
-    assert "--artifact-target final" in verify_step["run"]
-    assert '--artifact-readback-out "${RELEASE_EVIDENCE_DIR}/candidate/candidate-frontend.json"' in verify_step["run"]
-    assert "run_with_dev_environment_lease.sh" in verify_step["run"]
-    assert "dev_environment_lease.py" in verify_step["run"]
+    assert "compensate_cross_repo_release.sh" in verify_step["run"]
+    assert verify_step["env"]["PANTHEON_DEV_ARTIFACT_OPERATION"] == "verify"
+    assert verify_step["env"]["PANTHEON_DEV_ARTIFACT_TARGET"] == "final"
+    assert verify_step["env"]["PANTHEON_ROLLBACK_EVIDENCE_OUT"] == "${{ env.RELEASE_EVIDENCE_DIR }}/candidate/candidate-frontend.json"
     assert verify_step["env"]["PANTHEON_ENVIRONMENT_LEASE_TOKEN"] == "${{ secrets.COORDINATION_REPO_TOKEN }}"
-    assert "acquire \\" in verify_step["run"]
+
+    compensation_script = (ROOT / "scripts" / "compensate_cross_repo_release.sh").read_text(encoding="utf-8")
+    assert "run_with_dev_environment_lease.sh" in compensation_script
+    assert "dev_environment_lease.py" in compensation_script
+    assert "acquire \\" in compensation_script
+    assert '"--artifact-${PANTHEON_DEV_ARTIFACT_OPERATION}"' in compensation_script
+    assert '--artifact-target "${PANTHEON_DEV_ARTIFACT_TARGET}"' in compensation_script
 
 

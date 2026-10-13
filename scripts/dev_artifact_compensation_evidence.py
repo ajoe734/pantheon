@@ -98,7 +98,8 @@ def load_evidence(env: dict[str, str], provenance: str) -> dict:
         raise capture.CaptureError("compensation requires the exact current dev target")
     identity = {
         "candidate_id": env.get("PANTHEON_RELEASE_CANDIDATE_ID", ""),
-        "run_id": env.get("GITHUB_RUN_ID", ""), "attempt": env.get("GITHUB_RUN_ATTEMPT", ""),
+        "run_id": env.get(ENV_PREFIX + "RUN_ID") or env.get("GITHUB_RUN_ID", ""),
+        "attempt": env.get(ENV_PREFIX + "ATTEMPT") or env.get("GITHUB_RUN_ATTEMPT", ""),
         "controller_sha": env.get(ENV_PREFIX + "CONTROLLER_SHA", ""),
         "candidate_backend_sha": env.get("PANTHEON_FAILED_BACKEND_SHA", ""),
         "candidate_frontend_sha": env.get("PANTHEON_FAILED_FRONTEND_SHA", ""),
@@ -133,12 +134,12 @@ def load_evidence(env: dict[str, str], provenance: str) -> dict:
             raise capture.CaptureError("runner baseline is not from the exact run and attempt")
         if has_candidate and Path(receipt_file) != retained / "candidate/candidate-receipt.json":
             raise capture.CaptureError("runner receipt is not from the exact run and attempt")
-        if is_final and not fe_seal_file:
+        if not fe_seal_file:
             candidate_fe = retained / "candidate/candidate-frontend.json"
             if candidate_fe.exists():
                 fe_seal_file = str(candidate_fe)
     elif provenance == "actions-download":
-        if is_final and not fe_seal_file and has_candidate:
+        if not fe_seal_file and has_candidate and receipt_file:
             candidate_fe = Path(receipt_file).parent / "candidate-frontend.json"
             if candidate_fe.exists():
                 fe_seal_file = str(candidate_fe)
@@ -233,6 +234,17 @@ def load_evidence(env: dict[str, str], provenance: str) -> dict:
         exports[ENV_PREFIX + "FE_TARGET"] = fe_seal["target"]
         if fe_seal_path:
             exports[ENV_PREFIX + "FINAL_FE_SEAL_FILE"] = str(fe_seal_path)
+        baseline_fe = baseline.get("frontend")
+        if isinstance(baseline_fe, dict):
+            capture.exact_keys(baseline_fe, ("target", "dist_sha256", "manifest_sha256", "frontend_sha", "backend_sha"))
+            if operation == "restore-final" or (is_final and operation != "restore"):
+                from_seal = baseline_fe
+                to_seal = fe_seal
+            else:
+                from_seal = fe_seal
+                to_seal = baseline_fe
+            exports[ENV_PREFIX + "SEALED_FROM_JSON"] = json.dumps(from_seal, sort_keys=True)
+            exports[ENV_PREFIX + "SEALED_TO_JSON"] = json.dumps(to_seal, sort_keys=True)
     return {"identity": identity, "baseline": baseline, "candidate": receipt, "exports": exports,
             "provenance": provenance, "baseline_actions_artifact": baseline_artifact,
             "candidate_actions_artifact": candidate_artifact, "target": target, "fe_seal": fe_seal}
@@ -343,26 +355,36 @@ def readback(env: dict[str, str], provenance: str, input_log: Path, output: Path
     return value
 
 
-def compensation_evidence(env: dict[str, str], provenance: str, readback_path: Path, failure_log: Path) -> dict:
+def compensation_evidence(env: dict[str, str], provenance: str, readback_path: Path, failure_log: Path | None = None) -> dict:
     evidence = load_evidence(env, provenance)
     value, _ = document(readback_path, limit=65536)
     operation = evidence["exports"][ENV_PREFIX + "OPERATION"]
     validate_readback(value, evidence, operation)
-    # The controller log may contain private diagnostics. Retain only its hash.
-    failure_raw = private_bytes(failure_log, limit=32 * 1024 * 1024)
+    failure_hash = None
+    if failure_log is not None:
+        failure_raw = private_bytes(failure_log, limit=32 * 1024 * 1024)
+        failure_hash = capture.digest(failure_raw)
     identity = evidence["identity"]
-    rejected_pair = ({"backend_sha": identity["candidate_backend_sha"], "frontend_sha": identity["candidate_frontend_sha"]}
-                     if operation != "restore-final" else
-                     {"backend_sha": identity["previous_backend_sha"], "frontend_sha": identity["previous_frontend_sha"]})
-    restored_pair = ({"backend_sha": identity["previous_backend_sha"], "frontend_sha": identity["previous_frontend_sha"]}
-                     if operation != "restore-final" else
-                     {"backend_sha": identity["candidate_backend_sha"], "frontend_sha": identity["candidate_frontend_sha"]})
+    outcome = "compensated" if failure_log is not None else operation
+    if failure_log is None and operation == "restore-final":
+        rejected_pair = None
+        restored_pair = {"backend_sha": identity["candidate_backend_sha"], "frontend_sha": identity["candidate_frontend_sha"]}
+    elif operation == "restore-final":
+        rejected_pair = {"backend_sha": identity["previous_backend_sha"], "frontend_sha": identity["previous_frontend_sha"]}
+        restored_pair = {"backend_sha": identity["candidate_backend_sha"], "frontend_sha": identity["candidate_frontend_sha"]}
+    else:
+        rejected_pair = {"backend_sha": identity["candidate_backend_sha"], "frontend_sha": identity["candidate_frontend_sha"]}
+        restored_pair = {"backend_sha": identity["previous_backend_sha"], "frontend_sha": identity["previous_frontend_sha"]}
     return {"schema_version": "pantheon.cross-repo-release-compensation.v2",
-            "release_candidate_id": identity["candidate_id"], "outcome": "compensated", "operation": operation,
+            "release_candidate_id": identity["candidate_id"],
+            "outcome": "compensated" if failure_log is not None else operation,
+            "operation": operation,
             "rejected_pair": rejected_pair,
             "restored_pair": restored_pair,
-            "controller_failure_log_sha256": capture.digest(failure_raw),
-            "workflow": {"repository": env["GITHUB_REPOSITORY"], "run_id": identity["run_id"], "run_attempt": identity["attempt"]},
+            "controller_failure_log_sha256": failure_hash,
+            "workflow": {"repository": env.get("GITHUB_REPOSITORY", ""),
+                         "run_id": env.get("GITHUB_RUN_ID") or identity["run_id"],
+                         "run_attempt": env.get("GITHUB_RUN_ATTEMPT") or identity["attempt"]},
             "provenance": provenance, "baseline_actions_artifact": evidence["baseline_actions_artifact"],
             "candidate_actions_artifact": evidence["candidate_actions_artifact"],
             "baseline_manifest_sha256": evidence["exports"][ENV_PREFIX + "MANIFEST_SHA256"],

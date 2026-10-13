@@ -148,6 +148,19 @@ Final verification and same-final return (`restore-final`) reuse the existing gu
    ```
    This binds `DEPLOY_SHA` and `lease.expectedBackendSha` to the candidate backend SHA, verifies that `candidate-frontend.json` and candidate image receipts exist and match their admitted digests, and performs an exact Compose recreate using `--no-build --pull never --no-deps`.
 
+### FE Owner restore-sealed and Helper Reuse
+
+1. **FE Owner Delegation**:
+   When restoring artifacts (`restore` or `restore-final`), `deploy_nonprod_vm.sh` invokes the frontend owner script (`scripts/deploy-dev-vm.sh`) with:
+   - `PANTHEON_DEPLOY_ACTION=restore-sealed`
+   - `PANTHEON_DEPLOY_PROFILE=operator-live`
+   - `PANTHEON_DEPLOY_LEASE_DELEGATED=true`
+   - `PANTHEON_DEPLOY_SEALED_FROM_JSON` and `PANTHEON_DEPLOY_SEALED_TO_JSON` (carrying the reversed seals)
+   This restores the hosted FE symlink via the authoritative frontend deploy owner under the active delegated lease before the BFF containers are started.
+
+2. **Deduplicated Release Verification**:
+   The workflow step `final_artifact_verify` reuses `scripts/compensate_cross_repo_release.sh` with `PANTHEON_DEV_ARTIFACT_OPERATION=verify` and `PANTHEON_DEV_ARTIFACT_TARGET=final`. This deduplicates the lease lifecycle (acquire, heartbeat, verify, release) and error handling, ensuring identical lease ownership semantics between compensation rollback and candidate admission verification without duplicating 160+ lines of shell script or violating strict auth environment boundaries.
+
 
 The eight identity fields are `candidate_id`, `run_id`, `attempt`,
 `controller_sha`, `candidate_backend_sha`, `candidate_frontend_sha`,

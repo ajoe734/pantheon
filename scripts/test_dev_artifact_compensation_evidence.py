@@ -484,4 +484,49 @@ def test_restore_final_rejects_structural_typed_readback_seal_negatives(case, st
         e.load_evidence(case["env"], "actions-download")
 
 
+def test_load_evidence_respects_dev_artifact_run_id_and_attempt(case):
+    actions(case["env"])
+    no_candidate(case["env"])
+    case["env"]["PANTHEON_DEV_ARTIFACT_RUN_ID"] = "998877"
+    case["env"]["PANTHEON_DEV_ARTIFACT_ATTEMPT"] = "4"
+    case["baseline"]["identity"]["run_id"] = "998877"
+    case["baseline"]["identity"]["attempt"] = "4"
+    baseline_path = write(case["retained"] / "baseline/artifact-baseline.json", e.capture.encoded(case["baseline"]))
+    case["env"][e.ENV_PREFIX + "BASELINE_FILE"] = str(baseline_path)
+    case["env"][e.ENV_PREFIX + "MANIFEST_SHA256"] = e.capture.digest(e.capture.encoded(case["baseline"]))
+    evidence = e.load_evidence(case["env"], "actions-download")
+    assert evidence["identity"]["run_id"] == "998877"
+    assert evidence["identity"]["attempt"] == "4"
+
+
+def test_compensation_evidence_handles_none_failure_log_for_restore_final(case):
+    actions(case["env"])
+    case["env"][e.ENV_PREFIX + "TARGET"] = "final"
+    case["env"][e.ENV_PREFIX + "OPERATION"] = "restore-final"
+    fe_seal = {
+        "target": "/var/www/pantheon-dev-fe-releases/candidate-fixture",
+        "dist_sha256": "4" * 64,
+        "manifest_sha256": "3" * 64,
+        "frontend_sha": case["identity"]["candidate_frontend_sha"],
+        "backend_sha": case["identity"]["candidate_backend_sha"],
+    }
+    seal_path = write(case["retained"] / "candidate/candidate-frontend.json", e.capture.encoded(fe_seal))
+    case["env"][e.ENV_PREFIX + "FINAL_FE_SEAL_FILE"] = str(seal_path)
+
+    readback = deepcopy(case["value"])
+    readback["operation"] = "restore-final"
+    readback["images"] = {service: row["image_id"] for service, row in case["receipt"]["candidate_image_manifest"]["services"].items()}
+    readback["frontend"] = deepcopy(fe_seal)
+    readback["public"]["source_sha"] = case["identity"]["candidate_backend_sha"]
+    readback_path = write(case["retained"] / "readback-final.json", e.capture.encoded(readback))
+
+    res = e.compensation_evidence(case["env"], "actions-download", readback_path, failure_log=None)
+    assert res["outcome"] == "restore-final"
+    assert res["operation"] == "restore-final"
+    assert res["rejected_pair"] is None
+    assert res["restored_pair"]["backend_sha"] == case["identity"]["candidate_backend_sha"]
+    assert res["controller_failure_log_sha256"] is None
+
+
+
 
