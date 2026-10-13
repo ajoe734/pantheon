@@ -240,6 +240,52 @@ export PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG="${heartbeat_log}"
 export PANTHEON_DEV_ENVIRONMENT_LEASE_MAX_HEARTBEAT_AGE_SECONDS=120
 export PANTHEON_DEV_ENVIRONMENT_LEASE_VERIFY_INTERVAL_SECONDS=30
 
+# Bind the FE controller to the admitted frontend deploy run: the accepted
+# release receipt keeps only run_id, so read that run's immutable head_sha
+# (the FE controller commit, distinct from the FE candidate and BE controller
+# SHAs) through the original GitHubClient.get_run. No receipt -> no binding
+# (failed-release compensation); an unreadable or invalid one is fatal.
+fe_controller_sha=""
+accepted_receipt="${RELEASE_EVIDENCE_DIR:-}/release-controller-accepted.json"
+if [[ -n "${RELEASE_EVIDENCE_DIR:-}" && -f "${accepted_receipt}" && ! -L "${accepted_receipt}" ]]; then
+  fe_controller_sha="$(CROSS_REPO_RELEASE_TOKEN="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}" \
+    python3 - "${release_root}" "${accepted_receipt}" <<'PY' || true
+import json
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[1]) / "scripts"))
+import cross_repo_release_controller as controller
+
+try:
+    receipt = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+    run_id = int(receipt["frontend_deploy"]["run_id"])
+    client = controller.GitHubClient(
+        api_url=os.environ.get("GITHUB_API_URL", "https://api.github.com"),
+        token=os.environ["CROSS_REPO_RELEASE_TOKEN"],
+        repository=controller.FRONTEND_REPOSITORY,
+    )
+    run = client.get_run(run_id)
+    path = str(run.get("path") or "").split("@", 1)[0]
+    head_sha = controller.exact_sha(str(run.get("head_sha") or "").lower(), "FE controller SHA")
+    if (
+        run.get("id") != run_id
+        or path != f".github/workflows/{controller.DEPLOY_WORKFLOW}"
+        or run.get("event") != "workflow_dispatch"
+        or run.get("head_branch") != controller.FRONTEND_BRANCH
+    ):
+        raise ValueError("admitted FE deploy run identity mismatch")
+    print(head_sha)
+except Exception:
+    raise SystemExit(1)
+PY
+  )"
+  [[ "${fe_controller_sha}" =~ ${sha_pattern} ]] \
+    || die "admitted FE controller identity could not be resolved from the accepted frontend deploy run"
+fi
+export PANTHEON_DEV_FE_CONTROLLER_SHA="${fe_controller_sha}"
+
 extra_deploy_args=()
 if [[ -n "${PANTHEON_DEV_ARTIFACT_TARGET:-}" ]]; then
   extra_deploy_args+=(--artifact-target "${PANTHEON_DEV_ARTIFACT_TARGET}")

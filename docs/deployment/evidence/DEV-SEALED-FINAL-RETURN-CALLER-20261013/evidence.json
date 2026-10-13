@@ -4,8 +4,8 @@
   "owner": "Antigravity2",
   "reviewer": "Antigravity",
   "change_class": "corrective",
-  "timestamp": "2026-10-13T06:55:00Z",
-  "summary": "Resolved the seven-item reviewer counter: eliminated FE lease owner and delegation laundering, exported current workflow run/attempt across the SSH boundary while maintaining immutable seal identity, bound FE controller to authoritative runner checkout path, removed candidate compose directory fallback searches, scoped connected CLI test to synthetic source integration boundaries, wired an opt-in same-job roundtrip workflow entry, and isolated runtime credential preflight to preserve restore preflights while bypassing verify-only probes.",
+  "timestamp": "2026-10-13T08:40:00Z",
+  "summary": "Existing-task counter on 45a0ee0c/01f3043c: (1) retirement now requires a successful complete opted-in roundtrip or successful compensation; (2) final verify and both roundtrip legs get the actual dev-<root|bff> candidate Compose path/component; (3) FE controller is bound to the admitted frontend deploy run head_sha and verified (HEAD, tracked script and relative helpers) before restore-sealed executes; (4) AC5 CLI test now executes the original sender/watchdog/driver/library/validator chain with isolated SSH, Docker, HTTP and an explicit FE command mock. Prior genuine fixes preserved. Not hosted acceptance.",
   "acceptance_criteria_verification": {
     "ac1_correct_final_caller_gaps": {
       "satisfied": true,
@@ -25,7 +25,7 @@
     },
     "ac5_full_test_suite_coverage": {
       "satisfied": true,
-      "evidence": "Observed combined pass across all five test suites (414 passed in 81.38s: strict_auth_default_contract 33, cross_repo_release_controller 75, dev_artifact_compensation_evidence 94, deploy_nonprod_artifact_restore 64, nonprod_dev_artifact_workflow 148). Includes connected CLI test verifying SSH boundary isolation, current vs sealed run ID propagation, unauthorized owner rejection, and non-delegated lease rejection under synthetic test fixtures."
+      "evidence": "test_full_cli_restore_final_executes_original_bff_chain runs CLI -> original guarded sender -> isolated SSH -> original bootstrap/remote watchdog -> original driver/library bytes (git show of the admitted controller commit) -> external readback validator consuming the driver-generated readback, plus tampered-final-seal and unadmitted-FE-controller negatives. Synthetic boundaries: PATH ssh and python3 shims (fixed path/hostname constants), driver-test Docker/HTTP models, explicit FE command mock. Not hosted evidence."
     },
     "ac6_scoped_files_only": {
       "satisfied": true,
@@ -35,30 +35,18 @@
   "seven_point_counter_resolution": {
     "item1_fe_owner_and_delegation_laundering_eliminated": "deploy_nonprod_vm.sh no longer silently converts invalid owner UUIDs to pantheon-dev-deploy or overrides explicit false delegation; test_fe_owner_restore_sealed_rejects_unauthorized_owner and test_fe_owner_restore_sealed_rejects_non_delegated_lease verify fail-closed behavior before any mutations.",
     "item2_current_run_exported_across_ssh": "deploy_nonprod_vm.sh exports GITHUB_RUN_ID and GITHUB_RUN_ATTEMPT across SSH command_prefix without falling back to sealed run ID; test_full_cli_restore_final_connected_positive verifies distinct current run ID with sanitized remote environment.",
-    "item3_fe_controller_runner_checkout_binding": "deploy_nonprod_vm.sh uses authoritative runner execute-plans checkout path as fallback; nonprod-deploy.yml maps PANTHEON_EXECUTE_PLANS_ROOT and PANTHEON_DEV_FE_DEPLOY_SCRIPT in coordinate-dev-release steps.",
-    "item4_candidate_compose_single_path_enforced": "dev_artifact_compensation_evidence.py and deploy_nonprod_vm.sh eliminate directory search lists (DEV_REMOTE_DIR, PANTHEON_REMOTE_DIR, WORKTREE_ROOT/dev-root); nonprod-deploy.yml specifies explicit compose path.",
+    "item3_fe_controller_runner_checkout_binding": "compensate_cross_repo_release.sh resolves the admitted FE deploy run head_sha via GitHubClient.get_run and exports PANTHEON_DEV_FE_CONTROLLER_SHA; deploy_nonprod_vm.sh verify_fe_controller_checkout requires checkout HEAD == admitted commit and tracked, unmodified deploy-dev-vm.sh/atomic helpers before executing restore-sealed; restore-final fails closed without it.",
+    "item4_candidate_compose_single_path_enforced": "Explicit <root>/dev-<root|bff>/docker-compose.yml (component-aware) shared by final verify and both legs, VM HOME default when no root; receipt digest still verified; no alias or directory search.",
     "item5_test_boundaries_and_evidence_truthfulness": "Documentation and evidence manifest truthfully bound test_full_cli_restore_final_connected_positive as source-level synthetic integration proof, explicitly distinguishing it from real external FE owner execution and hosted deployment acceptance.",
     "item6_normal_roundtrip_workflow_entry": "nonprod-deploy.yml adds workflow_dispatch input run_exact_artifact_roundtrip (default false) with roundtrip_baseline_restore and roundtrip_final_return steps after final verify, wired into retirement and compensation outcomes.",
     "item7_viewer_credentials_and_preflight_isolation": "nonprod-deploy.yml plumbs dedicated viewer credentials into final_artifact_verify; deploy_nonprod_vm.sh bypasses preflight checks only when ARTIFACT_VERIFY=true, retaining full runtime credentials preflight on restore operations; verified by test_artifact_restore_retains_runtime_preflight_while_verify_bypasses."
   },
   "verification": {
-    "combined_run": {
-      "command": "python3 -m pytest scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py scripts/test_cross_repo_release_controller.py scripts/test_dev_artifact_compensation_evidence.py scripts/test_deploy_nonprod_artifact_restore.py scripts/test_nonprod_dev_artifact_workflow.py",
-      "total_passed": 414,
-      "total_failed": 0,
-      "total_skipped": 0,
-      "duration_seconds": 81.38
-    },
-    "test_suites": [
+    "note": "Each module run separately, exit 0, this head (pre-commit working tree).",
+    "modules": [
       {
-        "module": "scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py",
-        "passed": 33,
-        "failed": 0,
-        "skipped": 0
-      },
-      {
-        "module": "scripts/test_cross_repo_release_controller.py",
-        "passed": 75,
+        "module": "scripts/test_deploy_nonprod_artifact_restore.py",
+        "passed": 67,
         "failed": 0,
         "skipped": 0
       },
@@ -69,21 +57,39 @@
         "skipped": 0
       },
       {
-        "module": "scripts/test_deploy_nonprod_artifact_restore.py",
-        "passed": 64,
+        "module": "scripts/test_nonprod_dev_artifact_workflow.py",
+        "passed": 151,
         "failed": 0,
         "skipped": 0
       },
       {
-        "module": "scripts/test_nonprod_dev_artifact_workflow.py",
-        "passed": 148,
+        "module": "scripts/test_dev_remote_guarded_exec.py",
+        "passed": 65,
         "failed": 0,
         "skipped": 0
+      },
+      {
+        "module": "scripts/test_dev_release_artifact_driver.py",
+        "passed": 251,
+        "failed": 0,
+        "skipped": 0
+      },
+      {
+        "module": "scripts/test_deploy_nonprod_vm.py",
+        "passed": 49,
+        "failed": 0,
+        "skipped": 2
       }
     ]
   },
   "review": {
     "reviewer": "Antigravity",
     "decision": "pending independent exact-head review"
+  },
+  "four_point_counter_47a": {
+    "retirement": "nonprod-deploy.yml retire_release_cases if/RELEASE_OUTCOME: accepted needs full success, compensated needs compensation success; test_retirement_requires_complete_roundtrip_or_successful_compensation covers the baseline-failure/compensation-failure combination.",
+    "compose_context": "test_roundtrip_legs_share_final_verify_candidate_compose_context",
+    "fe_controller": "test_fe_controller_checkout_must_match_admitted_commit_and_tracked_sources; test_compensation_helper_binds_fe_controller_to_admitted_frontend_run",
+    "ac5": "test_full_cli_restore_final_executes_original_bff_chain and two negatives"
   }
 }

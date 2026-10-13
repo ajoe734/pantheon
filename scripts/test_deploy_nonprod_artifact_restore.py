@@ -17,6 +17,9 @@ import sys
 
 import pytest
 
+# Reuse the original driver fixtures (real driver code, isolated Docker/HTTP models).
+from scripts.test_dev_release_artifact_driver import case  # noqa: F401
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/deploy_nonprod_vm.sh"
 SHA = "a" * 40
@@ -932,290 +935,334 @@ def test_artifact_restore_retains_runtime_preflight_while_verify_bypasses(fixtur
     assert "strict auth cutover requested" not in res_verify.stderr
 
 
-def test_full_cli_restore_final_connected_positive(fixture, tmp_path):
-    from copy import deepcopy
+# --- AC5 original BE chain -------------------------------------------------
+# CLI -> original guarded sender -> isolated SSH -> original bootstrap/remote
+# watchdog (real pulse, guard FD, exit) -> deploy payload -> ORIGINAL driver and
+# library bytes from the admitted controller commit -> external readback
+# validator consuming the driver-generated readback.
+#
+# Isolated (synthetic) boundaries, stated truthfully:
+#   * SSH: a PATH `ssh` runs the requested remote command locally. It only
+#     substitutes the fixed /home/... artifact-store constants inside the
+#     transported payload, like the existing synthetic-root precedent.
+#   * Docker, public HTTP, VM hostname, artifact/FE store paths: the driver
+#     runs through a PATH `python3` shim that patches those module constants
+#     and swaps GuardedDocker/HTTP for the driver test models (FakeDocker/HTTP).
+#   * The runner-side validator runs with the same fixed ARTIFACT_ROOT patch.
+#   * The FE deploy command is an explicit mock (env/args/exit propagation and
+#     the live-link switch); the real FE controller/CAS is NOT exercised here.
+DRIVER_HARNESS = '''
+import importlib.util, json, os, pickle, sys
+from pathlib import Path
+driver_path, state_path, recorder, repo_root = sys.argv[1:5]
+rest = sys.argv[5:]
+sys.path.insert(0, repo_root)
+sys.path.insert(0, str(Path(driver_path).parent))
+spec = importlib.util.spec_from_file_location("dev_release_artifact_driver", driver_path)
+d = importlib.util.module_from_spec(spec)
+sys.modules["dev_release_artifact_driver"] = d
+spec.loader.exec_module(d)
+sys.modules["scripts.dev_release_artifact_driver"] = d
+with open(state_path, "rb") as stream:
+    state = pickle.load(stream)
+d.ROOT, d.FE_STORE, d.FE_LINK = Path(state["root"]), Path(state["fe_store"]), Path(state["fe_link"])
+d.socket.gethostname = lambda: d.VM
+docker, http = state["docker"], state["http"]
+class GuardedModel:
+    def __init__(self, barrier):
+        self.barrier = barrier
+    def call(self, *args):
+        self.barrier.check()
+        output = docker.call(*args)
+        self.barrier.check()
+        return output
+    def __getattr__(self, name):
+        return getattr(docker, name)
+d.GuardedDocker = GuardedModel
+d.HTTP = lambda: http
+code = d.main(rest)
+sys.stdout.flush()
+with open(recorder, "a") as out:
+    out.write(json.dumps({"command": "driver", "argv": rest, "exit": code,
+                          "docker_calls": [list(call) for call in docker.calls],
+                          "http_paths": [call[1] for call in http.calls]}) + "\\n")
+sys.exit(code)
+'''
+
+VALIDATOR_HARNESS = '''
+import runpy, sys
+from pathlib import Path
+import re
+script, artifact_root, fe_store = sys.argv[1:4]
+sys.path.insert(0, str(Path(script).resolve().parent))
+import capture_dev_artifact_baseline as capture
+import dev_candidate_receipt as candidate
+capture.ARTIFACT_ROOT = candidate.ARTIFACT_ROOT = Path(artifact_root)
+_matches = capture.matches
+capture.matches = lambda value, pattern: _matches(
+    value, pattern.replace("/var/www/pantheon-dev-fe-releases", re.escape(fe_store)))
+sys.argv = [script, *sys.argv[4:]]
+runpy.run_path(script, run_name="__main__")
+'''
+
+
+def _install_chain_shims(tmp_path: Path, *, artifact_root: Path, fe_store: Path, state: Path, recorder: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    (tmp_path / "driver_harness.py").write_text(DRIVER_HARNESS)
+    (tmp_path / "validator_harness.py").write_text(VALIDATOR_HARNESS)
+    shim = bin_dir / "python3"
+    shim.write_text(
+        '#!/usr/bin/python3\n'
+        'import os, sys\n'
+        'args = sys.argv[1:]\n'
+        'name = os.path.basename(args[0]) if args else ""\n'
+        f'py = {sys.executable!r}\n'
+        'if name == "dev_release_artifact_driver.py":\n'
+        f'    os.execv(py, [py, {str(tmp_path / "driver_harness.py")!r}, args[0], {str(state)!r}, {str(recorder)!r}, {str(ROOT)!r}, *args[1:]])\n'
+        'if name == "dev_artifact_compensation_evidence.py":\n'
+        f'    os.execv(py, [py, {str(tmp_path / "validator_harness.py")!r}, args[0], {str(artifact_root)!r}, {str(fe_store)!r}, *args[1:]])\n'
+        'os.execv("/usr/bin/python3", ["python3", *args])\n'
+    )
+    shim.chmod(0o755)
+    synth_root = artifact_root / "controllers"
+    ssh = bin_dir / "ssh"
+    ssh.write_text(
+        f'#!{sys.executable}\n'
+        'import base64, json, os, subprocess, sys, threading\n'
+        'remote_command = sys.argv[-1]\n'
+        'stdin = sys.stdin.buffer\n'
+        'bootstrap = stdin.readline()\n'
+        'envelope = json.loads(stdin.readline())\n'
+        'script = base64.b64decode(envelope["script"]).decode()\n'
+        f'script = script.replace({CONTROLLER_ROOT!r}, {str(synth_root)!r})\n'
+        f'script = script.replace({str(Path(CONTROLLER_ROOT).parent)!r}, {str(artifact_root)!r})\n'
+        'envelope["script"] = base64.b64encode(script.encode()).decode()\n'
+        f'remote_env = {{"PATH": {str(bin_dir)!r} + ":/usr/bin:/bin", "HOME": {str(tmp_path / "remote-home")!r}, "USER": "tester", "LANG": "C.UTF-8"}}\n'
+        'proc = subprocess.Popen(["bash", "-c", remote_command], stdin=subprocess.PIPE, env=remote_env)\n'
+        'proc.stdin.write(bootstrap + (json.dumps(envelope, separators=(",", ":")) + "\\n").encode())\n'
+        'proc.stdin.flush()\n'
+        'def pump():\n'
+        '    try:\n'
+        '        while True:\n'
+        '            chunk = stdin.read1(4096)\n'
+        '            if not chunk:\n'
+        '                break\n'
+        '            proc.stdin.write(chunk)\n'
+        '            proc.stdin.flush()\n'
+        '    except (BrokenPipeError, ValueError):\n'
+        '        pass\n'
+        '    finally:\n'
+        '        try:\n'
+        '            proc.stdin.close()\n'
+        '        except OSError:\n'
+        '            pass\n'
+        'threading.Thread(target=pump, daemon=True).start()\n'
+        'os._exit(proc.wait())\n'
+    )
+    ssh.chmod(0o755)
+
+
+FE_MOCK_SCRIPT = r'''#!/usr/bin/env bash
+# Explicit mock of the FE owner command boundary (NOT the real FE controller).
+set -euo pipefail
+owner="${PANTHEON_DEPLOY_LEASE_OWNER:-}"
+[[ "${owner}" =~ ^(pantheon-release-controller|pantheon-dev-deploy|parent-controller|pantheon-proof-watchdog|pantheon-fe-deploy)$ ]] \
+  || { echo "Deployment rejected: unauthorized lease owner '${owner}'." >&2; exit 2; }
+[[ "${PANTHEON_DEPLOY_LEASE_DELEGATED:-}" == "true" ]] || { echo "Deployment rejected: non-delegated lease." >&2; exit 2; }
+python3 - <<'PY'
+import json, os
+to_doc = json.loads(os.environ["PANTHEON_DEPLOY_SEALED_TO_JSON"])
+from_doc = json.loads(os.environ["PANTHEON_DEPLOY_SEALED_FROM_JSON"])
+with open("@RECORDER@", "a") as out:
+    out.write(json.dumps({"command": "fe_deploy", **{key: os.environ.get(name) for key, name in (
+        ("action", "PANTHEON_DEPLOY_ACTION"), ("profile", "PANTHEON_DEPLOY_PROFILE"),
+        ("delegated", "PANTHEON_DEPLOY_LEASE_DELEGATED"), ("owner", "PANTHEON_DEPLOY_LEASE_OWNER"),
+        ("epoch", "PANTHEON_DEPLOY_LEASE_EPOCH"), ("run_id", "PANTHEON_DEPLOY_LEASE_RUN_ID"))},
+        "from_target": from_doc["target"], "to_target": to_doc["target"]}) + "\n")
+PY
+target="$(python3 -c 'import json,os; print(json.loads(os.environ["PANTHEON_DEPLOY_SEALED_TO_JSON"])["target"])')"
+ln -sfn "${target}" "${PANTHEON_DEV_FE_ROOT}"
+'''
+
+
+def _git(repo: Path, *args: str) -> str:
     import shutil
+    return subprocess.run([shutil.which("git"), "-C", str(repo), "-c", "user.name=Fixture",
+                           "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", *args],
+                          check=True, capture_output=True, text=True).stdout.strip()
+
+
+def _fe_controller_checkout(path: Path, script: str) -> str:
+    (path / "scripts").mkdir(parents=True)
+    subprocess.run([__import__("shutil").which("git"), "init", "-q", str(path)], check=True)
+    (path / "scripts/deploy-dev-vm.sh").write_text(script)
+    (path / "scripts/deploy-dev-vm.sh").chmod(0o755)
+    (path / "scripts/atomic-symlink-cas.py").write_text("# fixture helper\n")
+    (path / "scripts/atomic-release-manifest.py").write_text("# fixture helper\n")
+    _git(path, "add", "scripts")
+    _git(path, "commit", "-qm", "fixture FE controller")
+    return _git(path, "rev-parse", "HEAD")
+
+
+def _run_original_chain(case, tmp_path, monkeypatch, *, env_override=None, tamper_fe_seal=False):
+    import pickle
+    from types import SimpleNamespace
     from test_deploy_nonprod_vm import _setup_stubbed_dev_environment
     from scripts import capture_dev_artifact_baseline as capture
     from scripts import dev_candidate_receipt as candidate_receipt
+    from scripts import dev_release_artifact_driver as d
+    from scripts.test_dev_release_artifact_driver import admit, deploy_candidate_frontend, execute, seal
 
-    fixture_env, recorder, driver, library = fixture
-    repo_root = Path(__file__).parents[1]
-    controller_sha = subprocess.run(
-        ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
-        capture_output=True, text=True, check=True
-    ).stdout.strip()
+    artifact_root = d.ROOT
+    monkeypatch.setattr(capture, "ARTIFACT_ROOT", artifact_root)
+    monkeypatch.setattr(candidate_receipt, "ARTIFACT_ROOT", artifact_root)
+    original_matches = capture.matches
+    monkeypatch.setattr(capture, "matches", lambda value, pattern: original_matches(
+        value, pattern.replace("/var/www/pantheon-dev-fe-releases", re.escape(str(d.FE_STORE)))))
+    controller_sha = _git(ROOT, "rev-parse", "HEAD")
+    case.args.controller_sha = controller_sha
 
+    # Original implementation bytes, verified against the admitted commit.
+    controllers = artifact_root / "controllers"
+    controller_dir = controllers / controller_sha
+    controllers.mkdir(mode=0o700)
+    controller_dir.mkdir(mode=0o700)
+    implementations = {}
+    for name in capture.IMPLEMENTATIONS:
+        implementations[name] = capture.read_implementation(ROOT, name, controller_sha)
+        (controller_dir / name).write_bytes(implementations[name])
+        (controller_dir / name).chmod(0o400)
+    assert implementations["dev_release_artifact_driver.py"] == (ROOT / "scripts/dev_release_artifact_driver.py").read_bytes()
+
+    # Evidence is produced by the original driver, in-process, before the CLI.
+    baseline_result = seal(case, admit_candidate=False)
+    receipt = admit(case)
+    candidate_release = deploy_candidate_frontend(case)
+    for service, row in case.docker.built.items():
+        case.docker.containers[service]["image_id"] = row["image_id"]
+    case.http.source = case.args.candidate_backend_sha
+    case.args.compose_file = case.docker.candidate_compose
+    case.args.target = "final"
+    verify_res = execute(case, "verify")
+    assert verify_res["frontend"]["frontend_sha"] == case.args.candidate_frontend_sha
+    # Return to the exact baseline; the CLI must bring back the sealed final.
+    case.args.fe_live_link.unlink()
+    case.args.fe_live_link.symlink_to(case.release)
+    case.http.manifest = case.release / "deployment.json"
+    case.args.compose_file = case.baseline_compose
+    case.args.target = "baseline"
+    execute(case, "restore")
+    del case.docker.images[case.docker.built["operator-bff"]["image_id"]]
+    case.http.manifest = candidate_release / "deployment.json"
+    case.docker.calls.clear()
+    case.http.calls.clear()
+
+    identity = {name: getattr(case.args, name) for name in capture.FIELDS}
+    run_id, attempt, candidate_id = identity["run_id"], identity["attempt"], identity["candidate_id"]
     runner_temp = tmp_path / "runner_temp"
-    runner_temp.mkdir(mode=0o700, exist_ok=True)
-
-    run_id = fixture_env["PANTHEON_DEV_ARTIFACT_RUN_ID"]
-    attempt = fixture_env["PANTHEON_DEV_ARTIFACT_ATTEMPT"]
-    candidate_id = fixture_env["PANTHEON_DEV_ARTIFACT_CANDIDATE_ID"]
-
     retained = runner_temp / f"pantheon-dev-artifacts-{run_id}-{attempt}"
-    retained.mkdir(mode=0o700, exist_ok=True)
-    (retained / "baseline").mkdir(mode=0o700, exist_ok=True)
-    (retained / "candidate").mkdir(mode=0o700, exist_ok=True)
-
-    real_git = shutil.which("git")
-    stub_git = tmp_path / "bin/git"
-    stub_git.write_text(
-        f'#!/usr/bin/env python3\n'
-        f'import os, sys\n'
-        f'if len(sys.argv) > 1 and sys.argv[1] == "-C":\n'
-        f'    os.execv({real_git!r}, [{real_git!r}] + sys.argv[1:])\n'
-        f'sys.exit(97)\n'
-    )
-    stub_git.chmod(0o755)
-
-    fe_manifest_sha = "2" * 64
-    fe_dist_sha = "3" * 64
-    fe_target = "/var/www/pantheon-dev-fe-releases/candidate"
-    from_seal = {
-        "target": "/var/www/pantheon-dev-fe-releases/baseline",
-        "dist_sha256": "5" * 64,
-        "manifest_sha256": "6" * 64,
-        "frontend_sha": "f" * 40,
-        "backend_sha": PRIOR,
-    }
-    to_seal = {
-        "target": fe_target,
-        "dist_sha256": fe_dist_sha,
-        "manifest_sha256": fe_manifest_sha,
-        "frontend_sha": "e" * 40,
-        "backend_sha": SHA,
-    }
-
-    identity = {
-        "candidate_id": candidate_id,
-        "run_id": run_id,
-        "attempt": attempt,
-        "controller_sha": controller_sha,
-        "candidate_backend_sha": SHA,
-        "candidate_frontend_sha": "e" * 40,
-        "previous_backend_sha": PRIOR,
-        "previous_frontend_sha": "f" * 40,
-    }
-
-    bundle = {"schema_version": "pantheon.dev-bff-image-bundle.v1", "source_sha": PRIOR, "services": {}, "archives": {}}
-    for index, service in enumerate(candidate_receipt.SERVICES, 1):
-        image = "sha256:" + str(index) * 64
-        bundle["services"][service] = {"image_id": image, "oci_revision": None, "repo_digests": None}
-        bundle["archives"][image] = {"name": image[7:] + "-" + "9" * 64 + ".tar", "sha256": "9" * 64, "size": 123}
-
-    lease = fixture_env["PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID"]
-    baseline = {
-        "schema_version": "pantheon.dev-release-artifact-baseline.v1",
-        "environment": "dev",
-        "project_id": "pantheon-dev-20260902",
-        "vm": "pantheon-dev-deploy",
-        "identity": deepcopy(identity),
-        "capture_lease_id": lease,
-        "captured_at": "2026-09-09T00:00:00Z",
-        "image_bundle": bundle,
-        "image_bundle_sha256": capture.digest(capture.encoded(bundle)),
-        "compose_sha256": "8" * 64,
-        "frontend": from_seal,
-        "baseline_nonsecret_config": {
-            "PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE": None,
-            "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID": "",
-            "PERSONA_EVALUATOR_BFF_TOKEN_FILE": None,
-            "PERSONA_EVALUATOR_GOVERNANCE_TOKEN_FILE": None,
-            **dict.fromkeys(capture.artifacts.BASELINE_AUTH_FLAGS, "false"),
-        },
-    }
-    baseline_hash = capture.digest(capture.encoded(baseline))
-    folder = capture.ARTIFACT_ROOT / f"baseline-{run_id}-{attempt}-{candidate_id}"
-    sealed_baseline, _ = capture.seal_result(capture.encoded({
-        "manifest_path": str(folder / "manifest.json"),
-        "manifest_sha256": baseline_hash,
-        "manifest": baseline,
-    }), identity)
-
+    for directory in (runner_temp, retained, retained / "baseline", retained / "candidate"):
+        directory.mkdir(mode=0o700, exist_ok=True)
     baseline_path = retained / "baseline/artifact-baseline.json"
+    sealed_baseline, _ = capture.seal_result(capture.encoded(baseline_result), identity)
     baseline_path.write_bytes(sealed_baseline)
-    baseline_path.chmod(0o600)
-
-    candidate_compose = tmp_path / "candidate-compose" / "docker-compose.yml"
-    candidate_compose.parent.mkdir(parents=True, exist_ok=True)
-    candidate_compose_content = "services:\n  operator-bff:\n    image: pantheon-operator-bff:connected\n"
-    candidate_compose.write_text(candidate_compose_content)
-    candidate_compose_sha = hashlib.sha256(candidate_compose_content.encode()).hexdigest()
-
-    record = {
-        "schema_version": "pantheon.dev-candidate-image-admission.v1",
-        "environment": "dev",
-        "project_id": "pantheon-dev-20260902",
-        "vm": "pantheon-dev-deploy",
-        "identity": deepcopy(identity),
-        "seal_lease_id": lease,
-        "sealed_at": "2026-09-09T00:01:00Z",
-        "baseline_manifest_sha256": baseline_hash,
-        "candidate_compose_sha256": candidate_compose_sha,
-        "services": {
-            service: {
-                "image_id": "sha256:" + str(index) * 64,
-                "oci_revision": SHA,
-                "git_sha": None if service == "loop-run-projector-scheduler" else SHA,
-                "compose_image": "pantheon-" + service,
-            }
-            for index, service in enumerate(candidate_receipt.SERVICES, 4)
-        },
-    }
-    override = {
-        "services": {
-            service: {"image": row["image_id"], "pull_policy": "never"}
-            for service, row in record["services"].items()
-        }
-    }
-    override["services"]["operator-bff"]["environment"] = {
-        "BFF_IMAGE_DIGEST": record["services"]["operator-bff"]["image_id"],
-    }
-    record["image_override_sha256"] = capture.digest(capture.encoded(override))
-    receipt = {
-        "candidate_image_manifest_path": str(folder / "candidate-images.json"),
-        "candidate_image_manifest_sha256": capture.digest(capture.encoded(record)),
-        "candidate_image_manifest": record,
-        "candidate_image_override_path": str(folder / "candidate-images.override.json"),
-        "candidate_image_override_sha256": record["image_override_sha256"],
-    }
     receipt_path = retained / "candidate/candidate-receipt.json"
     receipt_path.write_bytes(capture.encoded(receipt))
-    receipt_path.chmod(0o600)
-
     fe_seal_path = retained / "candidate/candidate-frontend.json"
-    fe_seal_path.write_bytes(capture.encoded(to_seal))
-    fe_seal_path.chmod(0o600)
+    fe_seal_path.write_bytes(capture.encoded(verify_res))
+    if tamper_fe_seal:
+        tampered = json.loads(json.dumps(verify_res))
+        tampered["frontend"]["dist_sha256"] = "e" * 64
+        fe_seal_path.write_bytes(capture.encoded(tampered))
+    for path in (baseline_path, receipt_path, fe_seal_path):
+        path.chmod(0o600)
 
-    recorder_file = str(recorder)
-    fe_script = tmp_path / "deploy-dev-vm.sh"
-    fe_script.write_text(
-        '#!/usr/bin/env bash\n'
-        'set -euo pipefail\n'
-        'AUTHORIZED_LEASE_OWNERS_REGEX="^(pantheon-release-controller|pantheon-dev-deploy|parent-controller|pantheon-proof-watchdog|pantheon-fe-deploy)$"\n'
-        'owner="${PANTHEON_DEPLOY_LEASE_OWNER:-}"\n'
-        'if [[ ! "${owner}" =~ ${AUTHORIZED_LEASE_OWNERS_REGEX} ]]; then\n'
-        '    echo "Deployment rejected: unauthorized lease owner \'${owner}\'." >&2\n'
-        '    exit 2\n'
-        'fi\n'
-        'if [[ "${PANTHEON_DEPLOY_LEASE_DELEGATED:-}" != "true" ]]; then\n'
-        '    echo "Deployment rejected: non-delegated lease." >&2\n'
-        '    exit 2\n'
-        'fi\n'
-        'python3 - <<\'PY\'\n'
-        'import json, os, sys\n'
-        'from_doc = json.loads(os.environ.get("PANTHEON_DEPLOY_SEALED_FROM_JSON", "{}"))\n'
-        'to_doc = json.loads(os.environ.get("PANTHEON_DEPLOY_SEALED_TO_JSON", "{}"))\n'
-        'for doc, name in ((from_doc, "from"), (to_doc, "to")):\n'
-        '    for field in ("target", "dist_sha256", "manifest_sha256", "frontend_sha", "backend_sha"):\n'
-        '        if field not in doc:\n'
-        '            sys.exit(f"missing field {field} in {name} seal")\n'
-        f'with open({recorder_file!r}, "a") as f:\n'
-        '    f.write(json.dumps({\n'
-        '        "command": "fe_deploy",\n'
-        '        "action": os.environ.get("PANTHEON_DEPLOY_ACTION"),\n'
-        '        "profile": os.environ.get("PANTHEON_DEPLOY_PROFILE"),\n'
-        '        "delegated": os.environ.get("PANTHEON_DEPLOY_LEASE_DELEGATED"),\n'
-        '        "owner": os.environ.get("PANTHEON_DEPLOY_LEASE_OWNER"),\n'
-        '        "epoch": os.environ.get("PANTHEON_DEPLOY_LEASE_EPOCH"),\n'
-        '        "run_id": os.environ.get("PANTHEON_DEPLOY_LEASE_RUN_ID"),\n'
-        '    }) + "\\n")\n'
-        'PY\n'
-        'exit 0\n'
-    )
-    fe_script.chmod(0o755)
+    to_seal = verify_res["frontend"]
+    from_seal = baseline_result["manifest"]["frontend"]
+    assert to_seal["target"] == str(candidate_release)
 
-    typed_readback = {
-        "schema_version": "pantheon.dev-artifact-readback.v1",
-        "operation": "restore-final",
-        "manifest_sha256": baseline_hash,
-        "identity": identity,
-        "pre_restore_source_observations": ["available_matching_source"],
-        "image_readback_verified": True,
-        "images": {service: row["image_id"] for service, row in record["services"].items()},
-        "frontend": to_seal,
-        "baseline_nonsecret_config_verified": True,
-        "protected_owners_unchanged": True,
-        "owners": {
-            service: {
-                "container_id": "1" * 64,
-                "image_id": "sha256:" + "2" * 64,
-                "started_at": "2026-09-09T00:00:00.000001Z",
-                "restart_count": 0,
-            }
-            for service in ("governance", "registry", "deployment", "runtime-manager", "deployment-outbox-consumer", "capital")
-        },
-        "public": {
-            "source_sha": SHA,
-            "fe_manifest_bytes_verified": True,
-            "strict_auth_denials_verified": True,
-            "dev_login_enabled": True,
-            "authenticated_viewer_readback_verified": True,
-        },
-    }
-    typed_readback["owners"]["dev-paper-principal-issuer"] = None
+    fe_repo = tmp_path / "execute-plans"
+    fe_controller_sha = _fe_controller_checkout(fe_repo, FE_MOCK_SCRIPT.replace("@RECORDER@", str(tmp_path / "commands.jsonl")))
+    recorder = tmp_path / "commands.jsonl"
+    state = tmp_path / "driver-state.pkl"
+    state.write_bytes(pickle.dumps({"docker": case.docker, "http": case.http, "root": str(d.ROOT),
+                                    "fe_store": str(d.FE_STORE), "fe_link": str(d.FE_LINK)}))
+    (tmp_path / "remote-home").mkdir()
+    hostile = tmp_path / "hostile-cwd"
+    hostile.mkdir()
+    (hostile / "docker-compose.yml").write_text("services: {hostile: {image: attacker}}\n")
 
-    synth_root = fixture_env["SYNTHETIC_CONTROLLER_ROOT"]
-    controller_dir = Path(synth_root) / controller_sha
-    controller_dir.mkdir(mode=0o700, exist_ok=True)
-    syn_library = controller_dir / "dev_release_artifacts.py"
-    syn_library.write_text("# synthetic controller library\n")
-    syn_library.chmod(0o400)
-    syn_driver = controller_dir / "dev_release_artifact_driver.py"
-
-    readback_payload = json.dumps(typed_readback)
-    syn_driver.write_text(
-        f'#!/usr/bin/env python3\n'
-        f'import json, sys\n'
-        f'operation = sys.argv[1]\n'
-        f'args = dict(zip(sys.argv[2::2], sys.argv[3::2]))\n'
-        f'with open({recorder_file!r}, "a") as f:\n'
-        f'    f.write(json.dumps({{"command": "driver", "operation": operation, "args": args}}) + "\\n")\n'
-        f'print({readback_payload!r})\n'
-    )
-    syn_driver.chmod(0o400)
-
-    artifact_env = {key: value for key, value in fixture_env.items() if key.startswith("PANTHEON_DEV_ARTIFACT_")}
-    artifact_env.update({
+    artifact_env = {
         "PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA": controller_sha,
-        "PANTHEON_DEV_ARTIFACT_DRIVER_PATH": str(syn_driver),
-        "PANTHEON_DEV_ARTIFACT_DRIVER_SHA256": hashlib.sha256(syn_driver.read_bytes()).hexdigest(),
-        "PANTHEON_DEV_ARTIFACT_LIBRARY_PATH": str(syn_library),
-        "PANTHEON_DEV_ARTIFACT_LIBRARY_SHA256": hashlib.sha256(syn_library.read_bytes()).hexdigest(),
-        "PANTHEON_DEV_ARTIFACT_MANIFEST_PATH": str(folder / "manifest.json"),
-        "PANTHEON_DEV_ARTIFACT_MANIFEST_SHA256": baseline_hash,
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_ID": candidate_id,
+        "PANTHEON_DEV_ARTIFACT_RUN_ID": run_id,
+        "PANTHEON_DEV_ARTIFACT_ATTEMPT": attempt,
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA": identity["candidate_backend_sha"],
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_FRONTEND_SHA": identity["candidate_frontend_sha"],
+        "PANTHEON_DEV_ARTIFACT_PREVIOUS_BACKEND_SHA": identity["previous_backend_sha"],
+        "PANTHEON_DEV_ARTIFACT_PREVIOUS_FRONTEND_SHA": identity["previous_frontend_sha"],
+        "PANTHEON_DEV_ARTIFACT_DRIVER_PATH": str(controller_dir / "dev_release_artifact_driver.py"),
+        "PANTHEON_DEV_ARTIFACT_DRIVER_SHA256": hashlib.sha256(implementations["dev_release_artifact_driver.py"]).hexdigest(),
+        "PANTHEON_DEV_ARTIFACT_LIBRARY_PATH": str(controller_dir / "dev_release_artifacts.py"),
+        "PANTHEON_DEV_ARTIFACT_LIBRARY_SHA256": hashlib.sha256(implementations["dev_release_artifacts.py"]).hexdigest(),
+        "PANTHEON_DEV_ARTIFACT_MANIFEST_PATH": baseline_result["manifest_path"],
+        "PANTHEON_DEV_ARTIFACT_MANIFEST_SHA256": baseline_result["manifest_sha256"],
+        "PANTHEON_DEV_ARTIFACT_COMPOSE_FILE": str(case.baseline_compose),
         "PANTHEON_DEV_ARTIFACT_BASELINE_FILE": str(baseline_path),
         "PANTHEON_DEV_ARTIFACT_CANDIDATE_RECEIPT_FILE": str(receipt_path),
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_PATH": receipt["candidate_image_manifest_path"],
         "PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256": receipt["candidate_image_manifest_sha256"],
-        "PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256": fe_manifest_sha,
-        "PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256": fe_dist_sha,
-        "PANTHEON_DEV_ARTIFACT_FE_TARGET": fe_target,
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_OVERRIDE_PATH": receipt["candidate_image_override_path"],
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_OVERRIDE_SHA256": receipt["candidate_image_override_sha256"],
+        "PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256": to_seal["manifest_sha256"],
+        "PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256": to_seal["dist_sha256"],
+        "PANTHEON_DEV_ARTIFACT_FE_TARGET": to_seal["target"],
         "PANTHEON_DEV_ARTIFACT_SEALED_FROM_JSON": json.dumps(from_seal),
         "PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON": json.dumps(to_seal),
         "PANTHEON_DEV_ARTIFACT_FINAL_FE_SEAL_FILE": str(fe_seal_path),
-        "PANTHEON_DEV_FE_DEPLOY_SCRIPT": str(fe_script),
-        "PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE": str(candidate_compose),
-    })
-
-    env, args_file, stdin_file = _setup_stubbed_dev_environment(tmp_path, sha=SHA, extra_env=artifact_env)
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE": str(case.docker.candidate_compose),
+        "PANTHEON_DEV_FE_DEPLOY_SCRIPT": str(fe_repo / "scripts/deploy-dev-vm.sh"),
+        "PANTHEON_DEV_FE_CONTROLLER_SHA": fe_controller_sha,
+        "PANTHEON_DEV_FE_ROOT": str(d.FE_LINK),
+        "PANTHEON_DEV_FE_RELEASES_DIR": str(d.FE_STORE),
+    }
+    env, args_file, stdin_file = _setup_stubbed_dev_environment(tmp_path, sha=identity["candidate_backend_sha"], extra_env=artifact_env)
+    real_git = __import__("shutil").which("git")
+    stub_git = tmp_path / "bin/git"
+    stub_git.write_text(
+        '#!/usr/bin/env python3\nimport os, sys\n'
+        'if len(sys.argv) > 1 and sys.argv[1] == "-C":\n'
+        f'    os.execv({real_git!r}, [{real_git!r}] + sys.argv[1:])\n'
+        'sys.exit(97)\n'
+    )
+    stub_git.chmod(0o755)
+    for name in ("docker", "curl", "apt-get", "systemctl", "sudo"):
+        stub = tmp_path / "bin" / name
+        stub.write_text('#!/usr/bin/env python3\nimport json,os,sys\n'
+                        f'open({str(recorder)!r},"a").write(json.dumps({{"command":"UNEXPECTED_"+sys.argv[0].split("/")[-1],"args":sys.argv[1:]}})+"\\n")\n'
+                        'sys.exit(97)\n')
+        stub.chmod(0o755)
+    _install_chain_shims(tmp_path, artifact_root=artifact_root, fe_store=d.FE_STORE, state=state, recorder=recorder)
+    lease = os.environ["PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID"]
     env.update({
         "TARGET_ENV": "dev",
         "GCP_DEPLOY_PROJECT_ID": "pantheon-dev-20260902",
         "DEV_VM": "pantheon-dev-deploy",
         "DEV_ZONE": "asia-east1-b",
         "RUNNER_TEMP": str(runner_temp),
-        "PANTHEON_RELEASE_REPO_ROOT": str(repo_root),
+        "PANTHEON_RELEASE_REPO_ROOT": str(ROOT),
         "DEV_REMOTE_DIR": str(tmp_path / "MUST_NOT_ACCESS_OWNER_CHECKOUT"),
         "GITHUB_RUN_ID": "987654321",
         "GITHUB_RUN_ATTEMPT": "3",
         "PANTHEON_RELEASE_CANDIDATE_ID": candidate_id,
-        "PANTHEON_FAILED_BACKEND_SHA": SHA,
-        "PANTHEON_FAILED_FRONTEND_SHA": "e" * 40,
-        "PANTHEON_ROLLBACK_BACKEND_SHA": PRIOR,
-        "PANTHEON_ROLLBACK_FRONTEND_SHA": "f" * 40,
+        "PANTHEON_FAILED_BACKEND_SHA": identity["candidate_backend_sha"],
+        "PANTHEON_FAILED_FRONTEND_SHA": identity["candidate_frontend_sha"],
+        "PANTHEON_ROLLBACK_BACKEND_SHA": identity["previous_backend_sha"],
+        "PANTHEON_ROLLBACK_FRONTEND_SHA": identity["previous_frontend_sha"],
         "PANTHEON_DEV_ARTIFACT_TARGET": "final",
         "PANTHEON_DEV_ARTIFACT_OPERATION": "restore-final",
+        "PANTHEON_DEV_ARTIFACT_EVIDENCE_PROVENANCE": "runner-local",
+        "PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID": lease,
         "DEV_BFF_AUTH_STUB": "false",
         "DEV_BFF_AUTH_MODE": "strict",
         "DEV_BFF_JWT_SECRET": "test-jwt-secret-for-strict-auth-32chars",
@@ -1228,64 +1275,103 @@ def test_full_cli_restore_final_connected_positive(fixture, tmp_path):
         "DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET": "test-operator-b-secret",
         "DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN": "test-openclaw-token",
         "DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED": "false",
-        "PANTHEON_DEV_ARTIFACT_EVIDENCE_PROVENANCE": "runner-local",
     })
-    env["PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID"] = fixture_env["PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID"]
-    state_file = Path(env["PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE"])
-    state = json.loads(state_file.read_text())
-    state["leaseId"] = env["PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID"]
-    state["expectedBackendSha"] = SHA
-    state_file.write_text(json.dumps(state))
-
-    synth_parent = str(Path(synth_root).parent)
-
-    mock_ssh = tmp_path / "bin/ssh"
-    mock_ssh.write_text(
-        '#!/usr/bin/env python3\n'
-        'import base64, json, os, subprocess, sys\n'
-        'lines = [sys.stdin.readline() for _ in range(3)]\n'
-        'frame = json.loads(lines[1])\n'
-        'payload = base64.b64decode(frame["script"]).decode()\n'
-        f'payload = payload.replace({CONTROLLER_ROOT!r}, {synth_root!r})\n'
-        f'payload = payload.replace({str(Path(CONTROLLER_ROOT).parent)!r}, {synth_parent!r})\n'
-        'read_fd, write_fd = os.pipe()\n'
-        'os.write(write_fd, b"fixture watchdog pulse")\n'
-        'remote_env = {"PATH": os.environ["PATH"], "HOME": os.environ.get("HOME", "/tmp"), "USER": "tester", "LANG": "C.UTF-8"}\n'
-        'remote_env["PANTHEON_DEV_ARTIFACT_GUARD_CHANNEL_FD"] = str(read_fd)\n'
-        'proc = subprocess.run(["bash", "-s"], input=payload, text=True, capture_output=False, env=remote_env, pass_fds=(read_fd,))\n'
-        'sys.exit(proc.returncode)\n'
-    )
-    mock_ssh.chmod(0o755)
+    env.update(env_override or {})
+    lease_state = Path(env["PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE"])
+    lease_doc = json.loads(lease_state.read_text())
+    lease_doc.update(leaseId=lease, expectedBackendSha=identity["candidate_backend_sha"])
+    lease_state.write_text(json.dumps(lease_doc))
 
     readback_out = tmp_path / "final-readback.json"
     result = subprocess.run([
-        str(SCRIPT),
-        "--environment", "dev",
-        "--component", "bff",
-        "--sha", SHA,
-        "--artifact-restore-final",
-        "--artifact-readback-out", str(readback_out),
-        "--deadline-seconds", "30",
-    ], env=env, capture_output=True, text=True, timeout=30)
+        str(SCRIPT), "--environment", "dev", "--component", "bff", "--sha", identity["candidate_backend_sha"],
+        "--artifact-restore-final", "--artifact-readback-out", str(readback_out), "--deadline-seconds", "60",
+    ], env=env, cwd=hostile, capture_output=True, text=True, timeout=120)
 
+    return SimpleNamespace(result=result, readback_out=readback_out, recorder=recorder, identity=identity,
+                           to_seal=to_seal, from_seal=from_seal, candidate_release=candidate_release,
+                           controller_sha=controller_sha, case=case, d=d)
+
+
+def test_full_cli_restore_final_executes_original_bff_chain(case, tmp_path, monkeypatch):
+    chain = _run_original_chain(case, tmp_path, monkeypatch)
+    result, readback_out, recorder, identity = chain.result, chain.readback_out, chain.recorder, chain.identity
+    to_seal, from_seal, candidate_release = chain.to_seal, chain.from_seal, chain.candidate_release
+    controller_sha, d = chain.controller_sha, chain.d
     assert result.returncode == 0, f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
-    assert readback_out.exists(), "readback out file was not written"
     data = json.loads(readback_out.read_text())
-    assert data["schema_version"] == "pantheon.dev-artifact-readback.v1"
     assert data["operation"] == "restore-final"
-    assert data["identity"]["run_id"] == "12345"
-    assert data["identity"]["attempt"] == "2"
+    assert data["identity"] == identity
+    assert data["frontend"] == to_seal
+    assert data["public"]["source_sha"] == identity["candidate_backend_sha"]
+    assert data["public"]["authenticated_viewer_readback_verified"] is True
+    assert data["images"] == {service: row["image_id"] for service, row in case.docker.built.items()}
+    assert "hostile" not in readback_out.read_text()
 
     events = _events(recorder)
-    assert len(events) == 2
-    assert events[0]["command"] == "fe_deploy"
-    assert events[0]["action"] == "restore-sealed"
-    assert events[0]["owner"] == "pantheon-dev-deploy"
-    assert events[0]["delegated"] == "true"
-    assert events[0]["run_id"] == "987654321"
-    assert events[1]["command"] == "driver"
-    assert events[1]["operation"] == "restore-final"
-    assert events[1]["args"]["--target"] == "final"
-    assert events[1]["args"]["--compose-file"] == str(candidate_compose)
+    assert [event["command"] for event in events] == ["fe_deploy", "driver"], events
+    fe_event, driver_event = events
+    assert (fe_event["action"], fe_event["owner"], fe_event["delegated"], fe_event["run_id"]) == (
+        "restore-sealed", "pantheon-dev-deploy", "true", "987654321")
+    assert (fe_event["from_target"], fe_event["to_target"]) == (from_seal["target"], to_seal["target"])
+    assert os.path.realpath(d.FE_LINK) == os.path.realpath(candidate_release)
+    argv = driver_event["argv"]
+    assert argv[0] == "restore-final" and driver_event["exit"] == 0
+    options = dict(zip(argv[1::2], argv[2::2]))
+    assert options["--target"] == "final"
+    assert options["--compose-file"] == str(case.docker.candidate_compose)
+    assert options["--controller-sha"] == controller_sha
+    assert options["--fe-target"] == to_seal["target"]
+    docker_calls = driver_event["docker_calls"]
+    assert sum(call[:2] == ["image", "load"] for call in docker_calls) == 1
+    up_calls = [call for call in docker_calls if call[0] == "compose" and "up" in call]
+    assert len(up_calls) == 1 and "--no-build" in up_calls[0] and "--force-recreate" in up_calls[0]
+    assert not any(call[0] in ("build", "pull") or call[:2] in (["image", "pull"], ["image", "build"]) for call in docker_calls)
 
 
+def test_original_chain_rejects_tampered_final_fe_seal_after_driver_readback(case, tmp_path, monkeypatch):
+    chain = _run_original_chain(case, tmp_path, monkeypatch, tamper_fe_seal=True)
+    assert chain.result.returncode != 0
+    assert not chain.readback_out.exists()
+    assert "evidence rejected" in chain.result.stderr or "dev-artifact-compensation" in chain.result.stderr
+
+
+def test_original_chain_rejects_unadmitted_fe_controller_before_fe_or_driver(case, tmp_path, monkeypatch):
+    chain = _run_original_chain(case, tmp_path, monkeypatch, env_override={"PANTHEON_DEV_FE_CONTROLLER_SHA": "1" * 40})
+    assert chain.result.returncode != 0
+    assert "differs from admitted controller" in chain.result.stderr
+    assert not chain.readback_out.exists()
+    assert _events(chain.recorder) == []
+
+
+def _fe_controller_check(script: Path, expected: str, operation: str = "restore-final"):
+    source = _source()
+    start = source.index("verify_fe_controller_checkout() {")
+    function = source[start:source.index("\n}\n", start) + 3]
+    shell = ("error() { echo \"ERR: $*\" >&2; exit 1; }\n" + function
+             + f"\nverify_fe_controller_checkout {script} '{expected}' {operation}\n")
+    return subprocess.run(["bash", "-c", shell], capture_output=True, text=True, cwd="/")
+
+
+def test_fe_controller_checkout_must_match_admitted_commit_and_tracked_sources(tmp_path):
+    repo = tmp_path / "execute-plans"
+    sha = _fe_controller_checkout(repo, FE_MOCK_SCRIPT)
+    script = repo / "scripts/deploy-dev-vm.sh"
+    assert _fe_controller_check(script, sha).returncode == 0
+    # A path alone is not version evidence: a different admitted commit fails.
+    stale = _fe_controller_check(script, "2" * 40)
+    assert stale.returncode != 0 and "differs from admitted controller" in stale.stderr
+    # restore-final cannot proceed without the admitted identity; other restores keep behavior.
+    assert "required for restore-final" in _fe_controller_check(script, "").stderr
+    assert _fe_controller_check(script, "", "restore").returncode == 0
+    # Modified tracked script or relative helper at the right HEAD is rejected.
+    (repo / "scripts/atomic-symlink-cas.py").write_text("# tampered\n")
+    assert "differs from admitted commit" in _fe_controller_check(script, sha).stderr
+    _git(repo, "checkout", "--", "scripts/atomic-symlink-cas.py")
+    script.write_text(FE_MOCK_SCRIPT + "\n# local edit\n")
+    assert "differs from admitted commit" in _fe_controller_check(script, sha).stderr
+    _git(repo, "checkout", "--", "scripts/deploy-dev-vm.sh")
+    # A script outside the checkout's scripts/ layout is not the checkout's controller.
+    copied = tmp_path / "copied-deploy-dev-vm.sh"
+    copied.write_text(FE_MOCK_SCRIPT)
+    assert _fe_controller_check(copied, sha).returncode != 0

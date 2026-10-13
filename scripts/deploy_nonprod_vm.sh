@@ -913,7 +913,7 @@ ssh_bash() {
     PANTHEON_DEV_ARTIFACT_FE_MANIFEST_SHA256 PANTHEON_DEV_ARTIFACT_FE_DIST_SHA256 \
     PANTHEON_DEV_ARTIFACT_FE_TARGET PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID \
     PANTHEON_DEV_ARTIFACT_SEALED_FROM_JSON PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON \
-    PANTHEON_DEV_FE_DEPLOY_SCRIPT PANTHEON_EXECUTE_PLANS_ROOT \
+    PANTHEON_DEV_FE_DEPLOY_SCRIPT PANTHEON_EXECUTE_PLANS_ROOT PANTHEON_DEV_FE_CONTROLLER_SHA \
     PANTHEON_DEV_FE_ROOT PANTHEON_DEV_FE_RELEASES_DIR \
     PANTHEON_DEPLOY_LEASE_OWNER PANTHEON_DEPLOY_LEASE_EPOCH \
     PANTHEON_DEPLOY_LEASE_RUN_ID PANTHEON_DEPLOY_LEASE_DELEGATED; do
@@ -4367,6 +4367,35 @@ start_dev_paper_principal_issuer() {
   [[ "${issuer_sha}" == "${PANTHEON_DEPLOY_SHA}" ]] || { info "issuer exact source identity mismatch"; return 1; }
 }
 
+# The FE restore-sealed action exits before the FE controller's own expected
+# HEAD and tracked-clean checks, so apply the same semantics here: the script
+# and the helpers it resolves relative to its checkout must be tracked, clean,
+# and at the admitted FE controller commit (never the FE candidate or BE SHA).
+verify_fe_controller_checkout() {
+  local script="$1" expected="$2" operation="$3"
+  if [[ -z "${expected}" ]]; then
+    [[ "${operation}" != restore-final ]] || error "admitted FE controller SHA is required for restore-final"
+    return 0
+  fi
+  [[ "${expected}" =~ ^[0-9a-f]{40}$ ]] || error "admitted FE controller SHA is invalid"
+  local root head helper
+  root="$(git -C "$(dirname "${script}")" rev-parse --show-toplevel 2>/dev/null)" \
+    || error "FE deploy script is not inside a git checkout: ${script}"
+  [[ "$(readlink -f "${script}")" == "${root}/scripts/deploy-dev-vm.sh" ]] \
+    || error "FE deploy script is not the checkout's scripts/deploy-dev-vm.sh"
+  head="$(git -C "${root}" rev-parse HEAD 2>/dev/null)" || error "FE controller checkout HEAD unreadable"
+  [[ "${head}" == "${expected}" ]] \
+    || error "FE controller checkout HEAD ${head} differs from admitted controller ${expected}"
+  for helper in scripts/deploy-dev-vm.sh scripts/atomic-symlink-cas.py scripts/atomic-release-manifest.py; do
+    git -C "${root}" ls-files --error-unmatch -- "${helper}" >/dev/null 2>&1 \
+      || error "FE controller helper is not tracked at the admitted commit: ${helper}"
+    [[ -f "${root}/${helper}" && ! -L "${root}/${helper}" ]] \
+      || error "FE controller helper missing or unsafe: ${helper}"
+    git -C "${root}" diff --quiet HEAD -- "${helper}" \
+      || error "FE controller helper differs from admitted commit: ${helper}"
+  done
+}
+
 # Explicit external compensation exits before snapshots, worktree preparation,
 # principal issuance/revocation, build, cleanup, owner rollout or ingress writes.
 if [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" == true || "${PANTHEON_DEV_ARTIFACT_VERIFY:-false}" == true ]]; then
@@ -4394,6 +4423,7 @@ if [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" == true || "${PANTHEON_DEV_ARTIF
       if [[ -n "${to_target}" && -n "${fe_live}" && ( "${fe_live}" == "${to_target}" || "$(readlink "${fe_root}" 2>/dev/null || true)" == "${to_target}" ) ]]; then
         info "FE live symlink already matches target sealed release (${to_target}); skipping redundant FE switch"
       else
+        verify_fe_controller_checkout "${fe_script}" "${PANTHEON_DEV_FE_CONTROLLER_SHA:-}" "${artifact_operation}"
         info "invoking FE owner restore-sealed before BE ${artifact_operation}"
         fe_lease_owner="${PANTHEON_DEPLOY_LEASE_OWNER:-pantheon-dev-deploy}"
         fe_lease_epoch="${PANTHEON_DEPLOY_LEASE_EPOCH:-1}"

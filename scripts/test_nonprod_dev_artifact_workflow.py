@@ -352,3 +352,14 @@ def test_roundtrip_legs_share_final_verify_candidate_compose_context():
         env = step(COORDINATE, step_id)["env"]
         for key in ("PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE", "PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPONENT"):
             assert env[key] == verify[key]
+
+
+def test_compensation_helper_binds_fe_controller_to_admitted_frontend_run():
+    text = (ROOT / "scripts/compensate_cross_repo_release.sh").read_text()
+    assert "release-controller-accepted.json" in text
+    assert 'receipt["frontend_deploy"]["run_id"]' in text
+    assert "client.get_run(run_id)" in text
+    assert 'export PANTHEON_DEV_FE_CONTROLLER_SHA="${fe_controller_sha}"' in text
+    # Neither the BE controller SHA nor the FE candidate SHA is a fallback.
+    assert "PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA" not in text.split("fe_controller_sha=\"\"", 1)[1].split("extra_deploy_args", 1)[0]
+    assert "PANTHEON_DEV_FE_CONTROLLER_SHA" in (ROOT / "scripts/deploy_nonprod_vm.sh").read_text()
