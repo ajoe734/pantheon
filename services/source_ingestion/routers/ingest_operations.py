@@ -69,11 +69,56 @@ def _source_read_tenant(authorization: str | None, requested: str | None, *, req
     return tenant
 
 
-def _require_connector_tenant(authorization: str | None, connector: SourceConnector) -> str:
+def _require_connector_tenant(authorization: str | None, connector: Any) -> str:
     tenant = str(connector.metadata.get("tenant_id") or "").strip() or None
     if not tenant:
         raise HTTPException(status_code=403, detail={"code": "TENANT_SCOPE_DENIED", "message": "Connector has no bound tenant"})
     return _source_read_tenant(authorization, tenant, required_roles=_SOURCE_INGEST_WRITE_ROLES)
+
+
+def _guard_job_mutation(
+    runtime: SourceIngestionRuntime,
+    connector_id: str,
+    authorization: str | None,
+    proposed: Any = None,
+    proposed_request_connector: Any = None,
+) -> None:
+    if runtime._is_controller_owned(proposed):
+        return
+    existing_config = runtime.connector_store.get_config(connector_id) if connector_id else None
+    existing_connector = existing_config.connector if existing_config is not None else None
+    if runtime._is_controller_owned(existing_connector):
+        return
+
+    canonical_tenant = str(existing_connector.metadata.get("tenant_id") or "").strip() if existing_connector is not None else None
+    if canonical_tenant:
+        resolved_tenant = _require_connector_tenant(authorization, existing_connector)
+        if proposed is not None:
+            proposed_tenant = str(proposed.metadata.get("tenant_id") or "").strip() or None
+            if proposed_tenant != canonical_tenant:
+                raise HTTPException(
+                    status_code=403,
+                    detail={"code": "TENANT_SCOPE_DENIED", "message": "Cannot mutate connector owned by another tenant"},
+                )
+        if proposed_request_connector is not None:
+            proposed_request_connector.metadata["tenant_id"] = resolved_tenant
+    elif existing_connector is None and proposed is not None:
+        proposed_tenant = str(proposed.metadata.get("tenant_id") or "").strip() or None
+        if proposed_tenant:
+            resolved_tenant = _source_read_tenant(
+                authorization,
+                proposed_tenant,
+                required_roles=_SOURCE_INGEST_WRITE_ROLES,
+            )
+            if proposed_request_connector is not None:
+                proposed_request_connector.metadata["tenant_id"] = resolved_tenant
+    elif existing_connector is not None and not canonical_tenant and proposed is not None:
+        proposed_tenant = str(proposed.metadata.get("tenant_id") or "").strip() or None
+        if proposed_tenant:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "TENANT_SCOPE_DENIED", "message": "Cannot mutate connector owned by another tenant"},
+            )
 
 
 def _owned_evidence_read(repository: Any, method: str, tenant: str, record_id: str | None = None, not_found_msg: str | None = None):
@@ -224,6 +269,13 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
                 operation="controller-owned connector ingest mutation",
                 proposed_connector=proposed,
             )
+            _guard_job_mutation(
+                runtime,
+                connector_id,
+                authorization,
+                proposed=proposed,
+                proposed_request_connector=request.connector,
+            )
             return runtime.pipeline.run_ingest_request(request)
 
     @router.post("/api/source-ingest/source-records", status_code=201)
@@ -241,6 +293,13 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
                 authorization,
                 operation="controller-owned connector source-record mutation",
                 proposed_connector=proposed,
+            )
+            _guard_job_mutation(
+                runtime,
+                connector_id,
+                authorization,
+                proposed=proposed,
+                proposed_request_connector=request.connector,
             )
             return runtime.pipeline.run_ingest_request(
                 TriggerIngestJobRequest(

@@ -2256,7 +2256,7 @@ def test_evaluator_viewer_token_read_and_mutation_boundaries(client) -> None:
     Acceptance test for viewer / evaluator read-only access in source ingestion:
     1. Viewer role can read evidence items, evidence bundles, knowledge objects, and source records for its tenant.
     2. Viewer cross-tenant read is isolated (returns 404).
-    3. Viewer mutation (connector configuration and lifecycle) is rejected with 403 AUTH_FORBIDDEN.
+    3. Viewer mutation (triggering jobs) is rejected with 403 AUTH_FORBIDDEN.
     """
     test_client, data_dir, module = client
     operator_headers = _read_headers(tenant="tenant-dev", roles=["operator"])
@@ -2325,4 +2325,88 @@ def test_evaluator_viewer_token_read_and_mutation_boundaries(client) -> None:
     assert res_life.status_code == 403
     assert res_life.json()["detail"]["code"] == "AUTH_FORBIDDEN"
 
+    # Viewer cannot trigger jobs on existing private connector (write roles required)
+    res_job_eval = test_client.post(
+        "/api/source-ingest/jobs",
+        headers=evaluator_headers,
+        json={
+            "connector_id": "conn-evaluator-test",
+            "trace_id": "trace-evaluator-evil-job",
+            "trigger_type": "manual",
+        },
+    )
+    assert res_job_eval.status_code == 403
+    assert res_job_eval.json()["detail"]["code"] == "AUTH_FORBIDDEN"
+
+    # Viewer cannot propose private connector to trigger jobs
+    res_job_prop = test_client.post(
+        "/api/source-ingest/jobs",
+        headers=evaluator_headers,
+        json={
+            "connector": _connector(connector_id="conn-eval-evil-job", metadata={"tenant_id": "tenant-dev"}),
+            "fetch": {"mode": "static_records", "records": []},
+            "trace_id": "trace-evaluator-evil-prop",
+            "trigger_type": "manual",
+        },
+    )
+    assert res_job_prop.status_code == 403
+    assert res_job_prop.json()["detail"]["code"] == "AUTH_FORBIDDEN"
+
+    # Viewer cannot ingest source-records on private connector
+    res_sr_eval = test_client.post(
+        "/api/source-ingest/source-records",
+        headers=evaluator_headers,
+        json={
+            "connector_id": "conn-evaluator-test",
+            "trace_id": "trace-evil-sr",
+            "records": [{
+                "source_id": "src-evil-sr",
+                "connector_id": "conn-evaluator-test",
+                "source_type": "internal_note",
+                "title": "Evil Note",
+                "content_ref": "file://evil",
+            }],
+        },
+    )
+    assert res_sr_eval.status_code == 403
+    assert res_sr_eval.json()["detail"]["code"] == "AUTH_FORBIDDEN"
+
+    # Unauthenticated mutation on private connector is rejected
+    res_no_auth = test_client.post(
+        "/api/source-ingest/jobs",
+        json={
+            "connector_id": "conn-evaluator-test",
+            "trace_id": "trace-no-auth",
+            "trigger_type": "manual",
+        },
+    )
+    assert res_no_auth.status_code == 403
+
+    # Cross-tenant operator cannot trigger job on private connector
+    other_operator_headers = _read_headers(tenant="tenant-other", roles=["operator"])
+    res_other_op = test_client.post(
+        "/api/source-ingest/jobs",
+        headers=other_operator_headers,
+        json={
+            "connector_id": "conn-evaluator-test",
+            "trace_id": "trace-other-op",
+            "trigger_type": "manual",
+        },
+    )
+    assert res_other_op.status_code == 403
+    assert res_other_op.json()["detail"]["code"] == "TENANT_SCOPE_DENIED"
+
+    # Operator cannot strip canonical private tenant
+    res_strip = test_client.post(
+        "/api/source-ingest/jobs",
+        headers=operator_headers,
+        json={
+            "connector": _connector(connector_id="conn-evaluator-test", metadata={}),
+            "fetch": {"mode": "static_records", "records": []},
+            "trace_id": "trace-strip-tenant",
+            "trigger_type": "manual",
+        },
+    )
+    assert res_strip.status_code == 403
+    assert res_strip.json()["detail"]["code"] == "TENANT_SCOPE_DENIED"
 
