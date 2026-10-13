@@ -1863,6 +1863,171 @@ class TelemetryIngestService:
         c = [loc for loc in (event.get("tenant_id"), (event.get("metadata") or {}).get("tenant_id") if isinstance(event.get("metadata"), dict) else None, (event.get("correlation_envelope") or {}).get("tenant_id") if isinstance(event.get("correlation_envelope"), dict) else None) if loc is not None]
         return c[0].strip() if c and len(set(c)) == 1 and all(isinstance(x, str) and x.strip() for x in c) else ""
 
+    def _enrich_with_committed_position_snapshots(
+        self,
+        summaries: list[dict[str, Any]],
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        if not summaries or self._event_reader is None:
+            return summaries
+
+        all_eids: list[str] = []
+        for s in summaries:
+            raw = s.get("recent_lifecycle_event_ids")
+            if isinstance(raw, list):
+                for x in raw:
+                    if isinstance(x, str) and x.strip():
+                        all_eids.append(x.strip())
+        all_eids = list(dict.fromkeys(all_eids))
+        if not all_eids:
+            return summaries
+
+        try:
+            events_by_id = self._event_reader(all_eids, tenant_id=tenant_id)
+        except TypeError:
+            events_by_id = self._event_reader(all_eids)
+        except Exception:
+            events_by_id = {}
+        if not isinstance(events_by_id, dict):
+            return summaries
+
+        def _is_num(val: Any) -> bool:
+            if isinstance(val, bool) or val is None:
+                return False
+            try:
+                float(val)
+                return True
+            except (ValueError, TypeError):
+                return False
+
+        for summary in summaries:
+            if summary.get("committed_position_snapshot"):
+                continue
+            raw_eids = summary.get("recent_lifecycle_event_ids")
+            if not isinstance(raw_eids, list):
+                continue
+            s_eids = [str(x).strip() for x in raw_eids if isinstance(x, str) and x.strip()]
+            s_events = [
+                events_by_id[eid]
+                for eid in s_eids
+                if eid in events_by_id and isinstance(events_by_id[eid], dict)
+            ]
+            if not s_events:
+                continue
+
+            terminal_events = [
+                ev for ev in s_events
+                if ev.get("event_type") in ("reconciliation_completed", "reconciliation_failed")
+            ]
+
+            s_tid = tenant_id or self._event_tenant_id(summary) or str(summary.get("tenant_id") or "").strip()
+            s_bid = str(summary.get("binding_id") or summary.get("runtime_binding_id") or "").strip()
+            s_rid = str(summary.get("runtime_id") or "").strip()
+            s_aid = str(summary.get("artifact_id") or "").strip()
+            s_aver = str(summary.get("artifact_version") or "").strip()
+            s_pid = str(summary.get("deployment_plan_id") or summary.get("plan_id") or "").strip()
+            s_cpid = str(summary.get("capital_pool_id") or "").strip()
+            s_pcb = str(summary.get("persona_capital_binding_id") or "").strip()
+
+            candidates: list[dict[str, Any]] = []
+            for ev in s_events:
+                if ev.get("event_type") != "position_snapshot":
+                    continue
+                ingested_seq = ev.get("ingested_seq")
+                if not isinstance(ingested_seq, int):
+                    continue
+
+                if str(ev.get("deployment_stage") or "").strip().lower() != "paper":
+                    continue
+                env = str(ev.get("environment") or "").strip().lower()
+                if env and env != "paper":
+                    continue
+                mode = str(ev.get("execution_mode") or "").strip().lower()
+                if mode and mode != "paper":
+                    continue
+                src_mode = str(ev.get("source_mode") or "").strip().lower()
+                if src_mode and src_mode != "live":
+                    continue
+
+                ev_tid = self._event_tenant_id(ev)
+                if s_tid and ev_tid and ev_tid != s_tid:
+                    continue
+                ev_bid = str(ev.get("binding_id") or ev.get("runtime_binding_id") or "").strip()
+                if s_bid and ev_bid != s_bid:
+                    continue
+                ev_rid = str(ev.get("runtime_id") or "").strip()
+                if s_rid and ev_rid != s_rid:
+                    continue
+                if s_aid and str(ev.get("artifact_id") or "").strip() != s_aid:
+                    continue
+                if s_aver and str(ev.get("artifact_version") or "").strip() != s_aver:
+                    continue
+                ev_pid = str(ev.get("deployment_plan_id") or ev.get("plan_id") or "").strip()
+                if s_pid and ev_pid and ev_pid != s_pid:
+                    continue
+                if s_cpid and str(ev.get("capital_pool_id") or "").strip() != s_cpid:
+                    continue
+                if s_pcb and str(ev.get("persona_capital_binding_id") or "").strip() != s_pcb:
+                    continue
+
+                auth_refs = ev.get("authority_refs") if isinstance(ev.get("authority_refs"), dict) else {}
+                meta = ev.get("metadata") if isinstance(ev.get("metadata"), dict) else {}
+                persona_id = str(auth_refs.get("persona_id") or meta.get("persona_id") or "").strip()
+                if not persona_id:
+                    continue
+
+                metrics = ev.get("metrics") if isinstance(ev.get("metrics"), dict) else {}
+                has_metric = any(_is_num(metrics.get(k)) or _is_num(ev.get(k)) for k in ("position_qty", "price", "cash"))
+                if not has_metric:
+                    continue
+
+                snap_eid = str(ev.get("event_id") or "").strip()
+                snap_run = str(ev.get("run_id") or meta.get("run_id") or "").strip()
+                snap_seq = ev.get("sequence_no") if isinstance(ev.get("sequence_no"), int) else meta.get("sequence_no")
+                reconciled = False
+                for t in terminal_events:
+                    t_meta = t.get("metadata") if isinstance(t.get("metadata"), dict) else {}
+                    t_parent = str(t.get("causal_parent_id") or t_meta.get("causal_parent_id") or "").strip()
+                    if t_parent and t_parent == snap_eid:
+                        reconciled = True
+                        break
+                    t_env = t.get("correlation_envelope") if isinstance(t.get("correlation_envelope"), dict) else {}
+                    if str(t_env.get("causation_event_id") or "").strip() == snap_eid:
+                        reconciled = True
+                        break
+                    t_run = str(t.get("run_id") or t_meta.get("run_id") or "").strip()
+                    t_seq = t.get("sequence_no") if isinstance(t.get("sequence_no"), int) else t_meta.get("sequence_no")
+                    if snap_run and t_run == snap_run:
+                        if isinstance(snap_seq, int) and isinstance(t_seq, int) and t_seq > snap_seq:
+                            reconciled = True
+                            break
+                        elif int(t.get("ingested_seq") or 0) > int(ev.get("ingested_seq") or 0):
+                            reconciled = True
+                            break
+                if reconciled:
+                    continue
+
+                candidates.append(ev)
+
+            if candidates:
+                candidates.sort(key=lambda x: (int(x.get("ingested_seq") or 0), s_eids.index(str(x.get("event_id")))))
+                selected = copy.deepcopy(candidates[-1])
+                if not selected.get("plan_id") and (selected.get("deployment_plan_id") or s_pid):
+                    selected["plan_id"] = selected.get("deployment_plan_id") or s_pid
+                if not selected.get("aggregate_type"):
+                    selected["aggregate_type"] = "trade_journey"
+                env_dict = selected.get("correlation_envelope") if isinstance(selected.get("correlation_envelope"), dict) else {}
+                if not selected.get("aggregate_id") and env_dict.get("journey_id"):
+                    selected["aggregate_id"] = env_dict["journey_id"]
+                if not selected.get("trace_id") and env_dict.get("trace_id"):
+                    selected["trace_id"] = env_dict["trace_id"]
+                if not (selected.get("authority_refs") or {}).get("persona_id") and (selected.get("metadata") or {}).get("persona_id"):
+                    selected.setdefault("authority_refs", {})["persona_id"] = selected["metadata"]["persona_id"]
+                summary["committed_position_snapshot"] = selected
+
+        return summaries
+
     def get_runtime_summary(
         self,
         runtime_id: str,
@@ -1871,7 +2036,11 @@ class TelemetryIngestService:
     ) -> Optional[dict[str, Any]]:
         if self._runtime_summary_store is None:
             return None
-        return self._runtime_summary_store.get(runtime_id, tenant_id=tenant_id)
+        summary = self._runtime_summary_store.get(runtime_id, tenant_id=tenant_id)
+        if summary is None:
+            return None
+        enriched = self._enrich_with_committed_position_snapshots([summary], tenant_id=tenant_id)
+        return enriched[0] if enriched else summary
 
     def list_runtime_summaries(
         self,
@@ -1880,7 +2049,8 @@ class TelemetryIngestService:
     ) -> list[dict[str, Any]]:
         if self._runtime_summary_store is None:
             return []
-        return self._runtime_summary_store.list(tenant_id=tenant_id)
+        summaries = self._runtime_summary_store.list(tenant_id=tenant_id)
+        return self._enrich_with_committed_position_snapshots(summaries, tenant_id=tenant_id)
 
     def get_accepted_event(
         self,

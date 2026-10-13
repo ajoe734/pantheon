@@ -2244,3 +2244,222 @@ def test_scheduled_reconcile_core_budget_priority_prevents_starvation_under_43_s
             assert retry_payload["skipped_binding_count"] == 43
 
 
+def test_cross_run_read_grain_reconciles_committed_snapshot_not_newer_inflight_run() -> None:
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+
+        base = _paper_lifecycle_summary()
+        snap_id = "evt-snap-runA"
+        order_id = "evt-order-runB"
+
+        snap_runA = dict(base["last_lifecycle_identity"])
+        snap_runA.update({
+            "event_id": snap_id,
+            "event_type": "position_snapshot",
+            "run_id": "run-A",
+            "sequence_no": 7,
+            "causal_parent_id": "evt-fill-runA",
+            "metrics": {"position_qty": 100.0, "price": 500.0, "cash": 50000.0},
+        })
+        snap_runA["correlation_envelope"] = dict(snap_runA["correlation_envelope"])
+        snap_runA["correlation_envelope"]["event_id"] = snap_id
+
+        order_runB = dict(base["last_lifecycle_identity"])
+        order_runB.update({
+            "event_id": order_id,
+            "event_type": "order_submitted",
+            "run_id": "run-B",
+            "sequence_no": 4,
+            "metrics": {"order_qty": 50.0},
+        })
+        order_runB["correlation_envelope"] = dict(order_runB["correlation_envelope"])
+        order_runB["correlation_envelope"]["event_id"] = order_id
+
+        summary = dict(base)
+        summary["last_lifecycle_identity"] = order_runB
+        summary["committed_position_snapshot"] = snap_runA
+        summary["pnl"] = 9999.0
+        summary["drawdown"] = 0.85
+        summary["queue_lag_ms"] = 15
+        summary["event_delivery_lag_ms"] = 25
+
+        telemetry_calls = []
+
+        class MockResponse:
+            status = 202
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return b'{"status":"accepted"}'
+
+        def fake_urlopen(req, timeout=None):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "telemetry" in url:
+                data = json.loads(req.data.decode("utf-8"))
+                telemetry_calls.append(data)
+                return MockResponse()
+            return MockResponse()
+
+        tick_id = "tick-cross-run-001"
+        with (
+            mock.patch.dict("os.environ", {"PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083"}),
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary]),
+            mock.patch.object(svc.urllib.request, "urlopen", side_effect=fake_urlopen),
+        ):
+            # 1. First execution: evaluates run-A snapshot, emits stage 8 terminal for run-A
+            resp = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": tick_id, "sla_seconds": 60.0},
+            )
+            assert resp.status_code == 201, resp.text
+            payload = resp.json()
+
+            assert len(telemetry_calls) == 1
+            term = telemetry_calls[0]
+            assert term["event_type"] in ("reconciliation_completed", "reconciliation_failed")
+            assert term["run_id"] == "run-A", "Stage 8 terminal must bind to run-A, not run-B"
+            assert term["sequence_no"] == 8, "Stage 8 terminal sequence must be snapshot sequence (7) + 1"
+            assert term["causal_parent_id"] == snap_id, "Stage 8 terminal must point to snapshot event ID"
+            assert term["metadata"]["run_id"] == "run-A"
+            assert term["metadata"]["causal_parent_id"] == snap_id
+            assert term["metadata"]["sequence_no"] == 8
+
+            # Evaluated metrics verification
+            eval_id = payload["evaluation_ids"][0]
+            ev = svc.store.get_evaluation(eval_id)
+            assert ev["observed_metrics"]["position_qty"] == 100.0
+            assert ev["observed_metrics"]["price"] == 500.0
+            assert ev["observed_metrics"]["cash"] == 50000.0
+            assert ev["observed_metrics"]["queue_lag_ms"] == 15.0
+            assert ev["observed_metrics"]["event_delivery_lag_ms"] == 25.0
+            assert "pnl" not in ev["observed_metrics"], "Summary financial pnl must not be transplanted onto snapshot"
+            assert "drawdown" not in ev["observed_metrics"], "Summary drawdown must not be transplanted onto snapshot"
+
+            # 2. Idempotent retry: zero additional POST
+            resp_retry = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": tick_id, "sla_seconds": 60.0},
+            )
+            assert resp_retry.status_code == 201
+            assert len(telemetry_calls) == 1, "Idempotent replay must emit 0 additional network calls"
+
+
+def test_cross_run_cache_misjoin_prevention() -> None:
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+
+        base = _paper_lifecycle_summary()
+        snap_id = "evt-snap-runA"
+        order_id = "evt-order-runB"
+
+        snap_runA = dict(base["last_lifecycle_identity"])
+        snap_runA.update({
+            "event_id": snap_id,
+            "event_type": "position_snapshot",
+            "run_id": "run-A",
+            "sequence_no": 7,
+            "causal_parent_id": "evt-fill-runA",
+            "metrics": {"position_qty": 100.0, "price": 500.0, "cash": 50000.0},
+        })
+        snap_runA["correlation_envelope"] = dict(snap_runA["correlation_envelope"])
+        snap_runA["correlation_envelope"]["event_id"] = snap_id
+
+        order_runB = dict(base["last_lifecycle_identity"])
+        order_runB.update({
+            "event_id": order_id,
+            "event_type": "order_submitted",
+            "run_id": "run-B",
+            "sequence_no": 4,
+            "metrics": {"order_qty": 50.0},
+        })
+        order_runB["correlation_envelope"] = dict(order_runB["correlation_envelope"])
+        order_runB["correlation_envelope"]["event_id"] = order_id
+
+        summary = dict(base)
+        summary["last_lifecycle_identity"] = order_runB
+        summary["committed_position_snapshot"] = snap_runA
+        summary["pnl"] = 9999.0
+        summary["drawdown"] = 0.85
+        summary["queue_lag_ms"] = 15
+        summary["event_delivery_lag_ms"] = 25
+
+        class MockResponse:
+            status = 202
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return b'{"status":"accepted"}'
+
+        telemetry_calls = []
+
+        def fake_urlopen(req, timeout=None):
+            data = json.loads(req.data.decode("utf-8"))
+            telemetry_calls.append(data)
+            return MockResponse()
+
+        tick_id = "tick-misjoin-001"
+        eval_id = svc._tick_evaluation_id(tick_id, summary["binding_id"])
+
+        # Pre-seed a cached evaluation for the tick from run-B
+        svc.store.put_evaluation({
+            "id": eval_id,
+            "evaluation_id": eval_id,
+            "tenant_id": summary.get("tenant_id") or "default",
+            "binding_id": summary["binding_id"],
+            "runtime_id": summary["runtime_id"],
+            "status": "pending",
+            "upstream_event_id": order_id,
+            "run_id": "run-B",
+            "evaluated_at": "2026-07-15T10:05:00Z",
+        })
+
+        with (
+            mock.patch.dict("os.environ", {"PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083"}),
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary]),
+            mock.patch.object(svc.urllib.request, "urlopen", side_effect=fake_urlopen),
+        ):
+            resp = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": tick_id, "sla_seconds": 60.0},
+            )
+            assert resp.status_code == 201
+            payload = resp.json()
+
+            # Misjoined cache evaluation was NOT reused; binding was NOT skipped
+            assert summary["binding_id"] not in payload["skipped_binding_ids"]
+            assert eval_id in payload["evaluation_ids"]
+
+            # Newly stored evaluation binds to run-A snapshot, not hijacked by run-B
+            ev = svc.store.get_evaluation(eval_id)
+            assert ev["run_id"] == "run-A"
+            assert ev["snapshot_event_id"] == snap_id
+            assert ev["observed_metrics"]["position_qty"] == 100.0
+            assert ev["observed_metrics"]["price"] == 500.0
+            assert ev["observed_metrics"]["cash"] == 50000.0
+            assert "pnl" not in ev["observed_metrics"]
+
+            # Telemetry terminal emitted for run-A
+            assert len(telemetry_calls) == 1
+            assert telemetry_calls[0]["run_id"] == "run-A"
+            assert telemetry_calls[0]["causal_parent_id"] == snap_id
+
+
+
+
+

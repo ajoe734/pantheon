@@ -1719,6 +1719,29 @@ def _summary_observed_metrics(summary: Dict[str, Any]) -> Dict[str, float]:
     return observed
 
 
+def _resolve_scheduled_metrics(summary: Dict[str, Any]) -> Dict[str, float]:
+    committed_snapshot = summary.get("committed_position_snapshot")
+    if isinstance(committed_snapshot, dict):
+        observed: Dict[str, float] = {}
+        nested = committed_snapshot.get("metrics") or {}
+        if isinstance(nested, dict):
+            for key, raw_value in nested.items():
+                num = _numeric(raw_value)
+                if num is not None:
+                    observed[str(key)] = num
+        for key in ("position_qty", "price", "cash"):
+            if key not in observed:
+                num = _numeric(committed_snapshot.get(key))
+                if num is not None:
+                    observed[key] = num
+        for key in ("queue_lag_ms", "event_delivery_lag_ms"):
+            num = _numeric(summary.get(key))
+            if num is not None:
+                observed[key] = num
+        return observed
+    return _summary_observed_metrics(summary)
+
+
 def _paper_lifecycle_identity(
     summary: Dict[str, Any],
     *,
@@ -1726,7 +1749,7 @@ def _paper_lifecycle_identity(
     runtime_id: str,
 ) -> tuple[Dict[str, Any] | None, str | None]:
     """Return a complete live paper lifecycle identity or a fail-closed reason."""
-    raw_identity = summary.get("last_lifecycle_identity")
+    raw_identity = summary.get("committed_position_snapshot") or summary.get("last_lifecycle_identity")
     if not isinstance(raw_identity, dict):
         return None, "missing_lifecycle_identity"
     identity = json.loads(json.dumps(raw_identity))
@@ -2303,7 +2326,12 @@ def _scheduled_lifecycle_only_reconcile(
 
         evaluation_id = _tick_evaluation_id(tick_id, binding_id)
         telemetry_event_ids = _summary_telemetry_event_ids(summary)
-        observed_metrics = _summary_observed_metrics(summary)
+        observed_metrics = _resolve_scheduled_metrics(summary)
+        committed_snapshot = summary.get("committed_position_snapshot")
+        if isinstance(committed_snapshot, dict) and committed_snapshot.get("event_id"):
+            snap_id = str(committed_snapshot["event_id"]).strip()
+            if snap_id and snap_id not in telemetry_event_ids:
+                telemetry_event_ids = [snap_id, *telemetry_event_ids]
         raw_baseline_metrics = summary.get("baseline_metrics") or {}
         baseline_metrics: Dict[str, Any] = (
             raw_baseline_metrics if isinstance(raw_baseline_metrics, dict) else {}
@@ -2874,7 +2902,12 @@ def _execute_scheduled_reconcile(
 
         evaluation_id = _tick_evaluation_id(tick_id, binding_id)
         telemetry_event_ids = _summary_telemetry_event_ids(summary)
-        observed_metrics = _summary_observed_metrics(summary)
+        observed_metrics = _resolve_scheduled_metrics(summary)
+        committed_snapshot = summary.get("committed_position_snapshot")
+        snap_event_id = str((committed_snapshot or {}).get("event_id") or "").strip() if isinstance(committed_snapshot, dict) else ""
+        snap_run_id = str((committed_snapshot or {}).get("run_id") or ((committed_snapshot or {}).get("metadata") or {}).get("run_id") or "").strip() if isinstance(committed_snapshot, dict) else ""
+        if snap_event_id and snap_event_id not in telemetry_event_ids:
+            telemetry_event_ids = [snap_event_id, *telemetry_event_ids]
         raw_baseline_metrics = summary.get("baseline_metrics") or {}
         baseline_metrics: Dict[str, Any] = (
             raw_baseline_metrics if isinstance(raw_baseline_metrics, dict) else {}
@@ -2896,23 +2929,49 @@ def _execute_scheduled_reconcile(
             ]
         )
 
+        existing_evaluation = None
         if evaluation_id in existing_evaluation_ids:
-            skipped_binding_ids.append(binding_id)
-            existing_evaluation = store.get_evaluation(
+            cached_eval = store.get_evaluation(
                 evaluation_id,
                 tenant_id=tenant_id,
             )
-            if existing_evaluation is None:
-                continue
-            evaluation_statuses.append(str(existing_evaluation.get("status") or status))
-            target_evaluation = existing_evaluation
-        else:
+            is_misjoined_cached_eval = False
+            if cached_eval is not None and snap_event_id:
+                cached_upstream = str(
+                    (cached_eval.get("lifecycle_append") or {}).get("upstream_event_id")
+                    or cached_eval.get("snapshot_event_id")
+                    or cached_eval.get("upstream_event_id")
+                    or ""
+                ).strip()
+                cached_run = str(
+                    (cached_eval.get("lifecycle_append") or {}).get("run_id")
+                    or cached_eval.get("run_id")
+                    or ""
+                ).strip()
+                cached_status = (cached_eval.get("lifecycle_append") or {}).get("status")
+                if cached_status != "accepted":
+                    if cached_upstream and cached_upstream != snap_event_id:
+                        is_misjoined_cached_eval = True
+                    elif cached_run and snap_run_id and cached_run != snap_run_id:
+                        is_misjoined_cached_eval = True
+                    elif not cached_upstream and snap_event_id:
+                        is_misjoined_cached_eval = True
+
+            if cached_eval is not None and not is_misjoined_cached_eval:
+                existing_evaluation = cached_eval
+                skipped_binding_ids.append(binding_id)
+                evaluation_statuses.append(str(existing_evaluation.get("status") or status))
+                target_evaluation = existing_evaluation
+
+        if existing_evaluation is None:
             evaluation = {
                 "id": evaluation_id,
                 "evaluation_id": evaluation_id,
                 "tenant_id": tenant_id,
                 "binding_id": binding_id,
                 "runtime_id": runtime_id or None,
+                "run_id": snap_run_id or None,
+                "snapshot_event_id": snap_event_id or None,
                 "status": status,
                 "summary": {
                     "status": status,

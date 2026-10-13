@@ -405,6 +405,154 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
         self.assertIsNone(final_proj["closed_at"])
         self.assertEqual(final_proj["position_snapshot_refs"], [snap_id])
 
+    def test_canonical_batch_read_cross_run_and_ineligible_guards(self):
+        async def scenario():
+            summary_store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+            binding = _known_binding()
+            tid = "tenant-paper-recon"
+
+            snap_runA = _paper_event(
+                event_type="position_snapshot",
+                event_id="evt-snap-runA",
+                created_at="2026-05-01T00:01:00Z",
+                metrics={"position_qty": 100.0, "price": 500.0, "cash": 50000.0},
+                metadata={
+                    "run_id": "run-A",
+                    "signal_id": "sig-A",
+                    "persona_id": "persona-paper-contract",
+                    "sequence_no": 7,
+                },
+            )
+            snap_runA.update({
+                "tenant_id": tid,
+                "trace_id": str(uuid.uuid4()),
+                "run_id": "run-A",
+                "signal_id": "sig-A",
+                "sequence_no": 7,
+                "authority_refs": {"persona_id": "persona-paper-contract"},
+            })
+
+            order_runB = _paper_event(
+                event_type="order_submitted",
+                event_id="evt-order-runB",
+                created_at="2026-05-01T00:02:00Z",
+                metrics={"order_qty": 50.0},
+                metadata={
+                    "run_id": "run-B",
+                    "signal_id": "sig-B",
+                    "persona_id": "persona-paper-contract",
+                    "sequence_no": 4,
+                },
+            )
+            order_runB.update({
+                "tenant_id": tid,
+                "trace_id": str(uuid.uuid4()),
+                "run_id": "run-B",
+                "signal_id": "sig-B",
+                "sequence_no": 4,
+                "authority_refs": {"persona_id": "persona-paper-contract"},
+            })
+
+            db_store = {
+                "evt-snap-runA": dict(snap_runA, ingested_seq=101),
+                "evt-order-runB": dict(order_runB, ingested_seq=102),
+            }
+
+            def fake_event_reader(ids, tenant_id=None):
+                return {k: v for k, v in db_store.items() if k in ids}
+
+            svc = TelemetryIngestService(
+                schema_path=SCHEMA_PATH,
+                binding_store=_StubBindingStore(),
+                runtime_summary_store=summary_store,
+                event_reader=fake_event_reader,
+                batch_size=10,
+                batch_interval=0.01,
+            )
+            await svc.start()
+            try:
+                await svc.ingest(snap_runA)
+                await svc.ingest(order_runB)
+                await asyncio.sleep(0.05)
+
+                raw_summary = summary_store.get(binding.runtime_id, tenant_id=tid)
+                self.assertEqual(raw_summary["last_lifecycle_identity"]["run_id"], "run-B")
+                self.assertEqual(raw_summary["last_lifecycle_identity"]["event_type"], "order_submitted")
+
+                summaries = svc.list_runtime_summaries(tenant_id=tid)
+                self.assertEqual(len(summaries), 1)
+                selected = summaries[0].get("committed_position_snapshot")
+                self.assertIsNotNone(selected)
+                self.assertEqual(selected["event_id"], "evt-snap-runA")
+                self.assertEqual(selected["run_id"], "run-A")
+                self.assertEqual(selected["metrics"]["position_qty"], 100.0)
+                self.assertEqual(selected["metrics"]["price"], 500.0)
+                self.assertEqual(selected["metrics"]["cash"], 50000.0)
+
+                # AC3: Uncommitted / absence in event reader fails closed
+                svc._event_reader = lambda ids, tenant_id=None: {}
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # AC1: Cross-tenant guard
+                svc._event_reader = lambda ids, tenant_id=None: {
+                    "evt-snap-runA": dict(snap_runA, tenant_id="other-tenant", ingested_seq=101)
+                }
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # AC1: Cross-binding guard
+                svc._event_reader = lambda ids, tenant_id=None: {
+                    "evt-snap-runA": dict(snap_runA, binding_id="other-binding", ingested_seq=101)
+                }
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # AC1: Cross-runtime guard
+                svc._event_reader = lambda ids, tenant_id=None: {
+                    "evt-snap-runA": dict(snap_runA, runtime_id="other-runtime", ingested_seq=101)
+                }
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # AC1: Cross-artifact guard
+                svc._event_reader = lambda ids, tenant_id=None: {
+                    "evt-snap-runA": dict(snap_runA, artifact_id="other-artifact", ingested_seq=101)
+                }
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # AC1 / AC3: Missing numeric metrics guard
+                svc._event_reader = lambda ids, tenant_id=None: {
+                    "evt-snap-runA": dict(snap_runA, metrics={}, ingested_seq=101)
+                }
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # AC2: Already-reconciled position snapshot exclusion
+                term_event = _paper_event(
+                    event_type="reconciliation_completed",
+                    event_id="evt-term-runA",
+                    created_at="2026-05-01T00:03:00Z",
+                    metadata={
+                        "run_id": "run-A",
+                        "signal_id": "sig-A",
+                        "persona_id": "persona-paper-contract",
+                        "sequence_no": 8,
+                    },
+                )
+                term_event.update({
+                    "tenant_id": tid,
+                    "trace_id": str(uuid.uuid4()),
+                    "causal_parent_id": "evt-snap-runA",
+                    "run_id": "run-A",
+                    "sequence_no": 8,
+                    "ingested_seq": 103,
+                })
+                db_store["evt-term-runA"] = term_event
+                summary_store.project_event(term_event)
+                svc._event_reader = fake_event_reader
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+            finally:
+                await svc.stop(graceful=False)
+
+        asyncio.run(scenario())
+
+
 
 if __name__ == "__main__":
     unittest.main()
