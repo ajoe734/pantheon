@@ -248,7 +248,7 @@ export PANTHEON_DEV_ENVIRONMENT_LEASE_VERIFY_INTERVAL_SECONDS=30
 fe_controller_sha=""
 accepted_receipt="${RELEASE_EVIDENCE_DIR:-}/release-controller-accepted.json"
 if [[ -n "${RELEASE_EVIDENCE_DIR:-}" && -f "${accepted_receipt}" && ! -L "${accepted_receipt}" ]]; then
-  fe_controller_sha="$(CROSS_REPO_RELEASE_TOKEN="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}" \
+  fe_controller_sha="$(CROSS_REPO_RELEASE_TOKEN="${lease_token}" \
     python3 - "${release_root}" "${accepted_receipt}" <<'PY' || true
 import json
 import os

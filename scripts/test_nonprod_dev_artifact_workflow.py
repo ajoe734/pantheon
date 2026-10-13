@@ -360,6 +360,8 @@ def test_compensation_helper_binds_fe_controller_to_admitted_frontend_run():
     assert 'receipt["frontend_deploy"]["run_id"]' in text
     assert "client.get_run(run_id)" in text
     assert 'export PANTHEON_DEV_FE_CONTROLLER_SHA="${fe_controller_sha}"' in text
+    assert "CROSS_REPO_RELEASE_TOKEN=\"${lease_token}\"" in text
+    assert "${PANTHEON_ENVIRONMENT_LEASE_TOKEN}" not in text.split("fe_controller_sha=\"\"", 1)[1].split("extra_deploy_args", 1)[0]
     # Neither the BE controller SHA nor the FE candidate SHA is a fallback.
     assert "PANTHEON_DEV_ARTIFACT_CONTROLLER_SHA" not in text.split("fe_controller_sha=\"\"", 1)[1].split("extra_deploy_args", 1)[0]
     assert "PANTHEON_DEV_FE_CONTROLLER_SHA" in (ROOT / "scripts/deploy_nonprod_vm.sh").read_text()
