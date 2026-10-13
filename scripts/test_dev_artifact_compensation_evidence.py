@@ -600,7 +600,3 @@ def test_compensation_evidence_handles_none_failure_log_for_restore_final(case):
     assert res["rejected_pair"] is None
     assert res["restored_pair"]["backend_sha"] == case["identity"]["candidate_backend_sha"]
     assert res["controller_failure_log_sha256"] is None
-
-
-
-
