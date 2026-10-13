@@ -1729,6 +1729,81 @@ def test_all_driver_call_points_use_expected_operation(fixture, call_point):
     assert len(events) == 1
     event = events[0]
     assert event["operation"] == expected_op
+    if call_point == "seal-candidate":
+        assert event["args"]["--compose-file"] == env["PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE"]
+        assert event["args"]["--compose-file"] != env["PANTHEON_DEV_ARTIFACT_COMPOSE_FILE"]
+        assert event["args"]["--compose-file"] != str(Path(env["PANTHEON_REMOTE_DIR"]) / "docker-compose.yml")
+
+
+def test_prepare_to_seal_caller_hands_off_candidate_compose(fixture, tmp_path):
+    import shutil
+    env, recorder, *_ = fixture
+
+    # Setup ambient git repository with its own distinct commit and compose file
+    ambient = tmp_path / "ambient_git_repo"
+    ambient.mkdir()
+    (ambient / "docker-compose.yml").write_text("services: {ambient: true}\n")
+    subprocess.run(["git", "-C", str(ambient), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(ambient), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(ambient), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                    "-c", "commit.gpgsign=false", "commit", "-qm", "ambient"], check=True)
+    ambient_sha = subprocess.run(["git", "-C", str(ambient), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+
+    # Candidate commit with different compose content
+    (ambient / "docker-compose.yml").write_text("services: {candidate: true}\n")
+    subprocess.run(["git", "-C", str(ambient), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(ambient), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                    "-c", "commit.gpgsign=false", "commit", "-qm", "candidate"], check=True)
+    candidate_sha = subprocess.run(["git", "-C", str(ambient), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+
+    # Reset ambient checkout HEAD to ambient_sha so ambient differs from candidate
+    subprocess.run(["git", "-C", str(ambient), "checkout", "-q", ambient_sha], check=True)
+
+    wt_root = tmp_path / "managed_worktrees"
+    wt_root.mkdir()
+
+    # Make git in bin invoke real git
+    real_git = shutil.which("git")
+    stub_git = tmp_path / "bin/git"
+    stub_git.write_text(f'#!/bin/sh\nexec {real_git} "$@"\n')
+    stub_git.chmod(0o755)
+
+    env_copy = {**env}
+    env_copy.pop("PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE", None)
+    env_copy.update({
+        "PANTHEON_DEPLOY_SHA": candidate_sha,
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA": candidate_sha,
+        "PANTHEON_DEPLOY_ENV": "dev",
+        "PANTHEON_DEPLOY_COMPONENT": "root",
+        "PANTHEON_DEPLOY_WORKTREE_ROOT": str(wt_root),
+        "PANTHEON_REMOTE_DIR": str(ambient),
+    })
+
+    functions = (
+        "prepare_deploy_worktree",
+        "with_dev_bff_runtime_env",
+        "run_dev_artifact_driver",
+        "validate_dev_candidate_override",
+        "await_dev_candidate_receipt_ack",
+        "seal_dev_candidate_images",
+    )
+    payload = "set -euo pipefail\ninfo() { echo \"$*\"; }\nerror() { exit 75; }\n"
+    payload += "git_fetch_origin_default_refs() { :; }\nrequire_clean_checkout() { :; }\n"
+    payload += "\n".join(_function(name) for name in functions)
+    payload += "\nprepare_deploy_worktree\nseal_dev_candidate_images\n"
+
+    ack = (env["PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256"] + "\n").encode()
+    result = _run(payload, env_copy, ack=ack)
+    assert result.returncode == 0, f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+
+    events = _events(recorder)
+    assert len(events) == 1
+    event = events[0]
+    assert event["operation"] == "seal-candidate"
+    expected_candidate_compose = str(wt_root / "dev-root/docker-compose.yml")
+    assert event["args"]["--compose-file"] == expected_candidate_compose
+    assert event["args"]["--compose-file"] != str(ambient / "docker-compose.yml")
+    assert event["args"]["--compose-file"] != env["PANTHEON_DEV_ARTIFACT_COMPOSE_FILE"]
 
 
 def test_bootstrap_dev_paper_baseline_transition_legacy_persona_caller() -> None:

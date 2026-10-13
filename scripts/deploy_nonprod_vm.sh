@@ -2742,6 +2742,7 @@ PY
   fi
 
   git submodule update --init --recursive
+  export PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE="${deploy_dir}/docker-compose.yml"
   info "prepared deploy worktree ${deploy_dir} at ${sha}"
 }
 
@@ -4118,12 +4119,8 @@ ARTIFACT_PY
   if [[ "${operation}" == seal-candidate ]]; then
     [[ "${PANTHEON_DEPLOY_SHA}" == "${PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA}" ]] \
       || { info "candidate source differs from artifact admission" >&2; return 75; }
-    if [[ -n "${PANTHEON_REMOTE_DIR:-}" && -f "${PANTHEON_REMOTE_DIR}/docker-compose.yml" && ! -L "${PANTHEON_REMOTE_DIR}/docker-compose.yml" ]]; then
-      compose_file="${PANTHEON_REMOTE_DIR}/docker-compose.yml"
-    elif [[ -n "${PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE:-}" && -f "${PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE}" && ! -L "${PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE}" ]]; then
+    if [[ -n "${PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE:-}" && -f "${PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE}" && ! -L "${PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE}" ]]; then
       compose_file="${PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE}"
-    elif [[ -f "${PANTHEON_DEV_ARTIFACT_COMPOSE_FILE}" && ! -L "${PANTHEON_DEV_ARTIFACT_COMPOSE_FILE}" ]]; then
-      compose_file="${PANTHEON_DEV_ARTIFACT_COMPOSE_FILE}"
     else
       error "seal-candidate requires an existing non-symlink compose file"
     fi

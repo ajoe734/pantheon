@@ -92,5 +92,21 @@
       "bash -n scripts/deploy_nonprod_vm.sh",
       "git diff --check"
     ]
+  },
+  "candidate_compose_source_followup": {
+    "task_id": "DEV-CANDIDATE-COMPOSE-SOURCE-20261013",
+    "root_failure_reference": "Root38381427233 BEd2c6835d/FE31240b10 failed exit75 driver245: prepare built candidate managed-deploy-worktrees/dev-root/dev-root at d2c, but seal-candidate prioritized ambient PANTHEON_REMOTE_DIR old 4889 Compose blob, correctly rejected by driver _compose_bytes.",
+    "change": "prepare_deploy_worktree now exports PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE with the prepared worktree docker-compose.yml; run_dev_artifact_driver seal-candidate consumes that explicit candidate path without falling back to ambient PANTHEON_REMOTE_DIR or baseline PANTHEON_DEV_ARTIFACT_COMPOSE_FILE, failing closed on missing/malformed candidate compose while retaining driver strict checks.",
+    "source_commit": "this task branch (DEV-CANDIDATE-COMPOSE-SOURCE-20261013); see git history",
+    "historical_note": "Prior verification results are retained as history; only the candidate Compose selection in prepare-to-seal and seal-candidate was corrected.",
+    "hosted_acceptance_status": "not run by this source task; final deployment and hosted acceptance belong to the existing parent.",
+    "commands": [
+      {
+        "command": "pytest scripts/test_deploy_nonprod_vm.py scripts/test_deploy_nonprod_artifact_restore.py -q",
+        "result": "132 passed, 2 skipped"
+      },
+      "bash -n scripts/deploy_nonprod_vm.sh",
+      "git diff --check"
+    ]
   }
 }
