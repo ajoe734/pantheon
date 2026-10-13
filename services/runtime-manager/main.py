@@ -134,6 +134,8 @@ from promotion_authority import (
 # Make sibling repo modules importable when this file runs as main.
 from services.runtime_auth_inbound import (  # noqa: E402
     AuthError,
+    _claim_path_value,
+    _claim_values,
     get_auth_context,
     has_claim_bound_mfa,
     require_authn,
@@ -306,36 +308,27 @@ _TENANT_CLAIM_KEYS = (
 )
 
 
-def _claim_path_value(claims: Mapping[str, Any], path: str) -> Any:
-    if path in claims:
-        return claims[path]
-    current: Any = claims
-    for part in path.split("."):
-        if not isinstance(current, Mapping) or part not in current:
-            return None
-        current = current[part]
-    return current
-
-
-def _claim_values_as_strings(value: Any) -> list[str]:
-    if value is None:
+def _extract_claim_values(claims: Mapping[str, Any], key: str) -> list[str]:
+    val = claims.get(key) if key in claims else _claim_path_value(claims, key)
+    if val is None:
         return []
-    if isinstance(value, str):
-        return [p.strip() for p in value.split(",") if p.strip()]
-    if isinstance(value, Mapping):
-        for k in ("id", "tenant_id", "tenantId", "tid", "org_id", "organization_id", "value", "name"):
-            if v := value.get(k):
-                clean = str(v).strip()
-                if clean:
-                    return [clean]
+    if isinstance(val, Mapping):
+        for k in ("id", "tenant_id", "tenantId", "tid"):
+            if clean := str(val.get(k) or "").strip():
+                return [clean]
         return []
-    if isinstance(value, (list, tuple, set, frozenset)):
+    if isinstance(val, (list, tuple, set, frozenset)):
         collected: list[str] = []
-        for item in value:
-            collected.extend(_claim_values_as_strings(item))
+        for item in val:
+            if isinstance(item, Mapping):
+                for k in ("id", "tenant_id", "tenantId", "tid"):
+                    if clean := str(item.get(k) or "").strip():
+                        collected.append(clean)
+                        break
+            else:
+                collected.extend(_claim_values(item))
         return collected
-    clean = str(value).strip()
-    return [clean] if clean else []
+    return _claim_values(val)
 
 
 def _resolve_binding_read_tenant(ctx: Any) -> Optional[str]:
@@ -362,15 +355,13 @@ def _resolve_binding_read_tenant(ctx: Any) -> Optional[str]:
     claims = dict(ctx.claims) if (ctx and getattr(ctx, "claims", None)) else {}
     allowed_tenants: list[str] = []
     for key in _TENANT_CLAIM_KEYS:
-        val = _claim_path_value(claims, key)
-        for s in _claim_values_as_strings(val):
+        for s in _extract_claim_values(claims, key):
             if s and s not in allowed_tenants:
                 allowed_tenants.append(s)
 
     primary_tenants: list[str] = []
     for key in _PRIMARY_TENANT_PATHS:
-        val = _claim_path_value(claims, key)
-        for s in _claim_values_as_strings(val):
+        for s in _extract_claim_values(claims, key):
             if s and s not in primary_tenants:
                 primary_tenants.append(s)
 
