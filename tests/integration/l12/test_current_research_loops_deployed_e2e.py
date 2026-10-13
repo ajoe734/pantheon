@@ -20,6 +20,7 @@ import ast
 import hashlib
 import inspect
 import json
+import math
 import os
 import subprocess
 import time
@@ -970,7 +971,7 @@ class DeployedResearchHarness:
                 method="POST",
                 payload={
                     "mode": "refresh",
-                    "terminalize_session": True,
+                    "terminalize_session": False,
                 },
                 headers={**headers, "Idempotency-Key": f"l12-e2e-{self.run_token}"},
                 expected=(201,),
@@ -978,6 +979,8 @@ class DeployedResearchHarness:
         )
         job_id = str(queued.get("job_id") or "")
         self._require(bool(job_id), "Teaching preview queue did not return job_id")
+        eval_id = str(queued.get("eval_id") or "")
+        self._require(bool(eval_id), "Teaching preview queue did not return eval_id")
         case["trigger"] = {"type": "PreviewEvaluationJob", "id": job_id, "session_id": session_id}
 
         def read_job() -> Any:
@@ -996,7 +999,17 @@ class DeployedResearchHarness:
                 and value.get("status") in {"completed", "failed"},
             ),
         )
-        self._require(job.get("status") == "completed", f"Teaching evaluation job failed: {job.get('error_code')}: {job.get('failure_reason')}")
+        self._require(
+            isinstance(job, Mapping) and job.get("status") == "completed",
+            f"Teaching evaluation job failed: {job.get('error_code')}: {job.get('failure_reason')}",
+        )
+        self._require(
+            job.get("job_id") == job_id and job.get("session_id") == session_id,
+            "Teaching preview job returned mismatched job/session identity",
+        )
+        job_eval_id = str(job.get("eval_id") or "")
+        self._require(bool(job_eval_id), "Teaching preview job did not return eval_id")
+        self._require(job_eval_id == eval_id, "Teaching preview job eval_id mismatch")
         terminal = self._at(
             "teaching.authority_actual_state",
             lambda: self._poll(
@@ -1008,24 +1021,92 @@ class DeployedResearchHarness:
                 ),
                 lambda value: (
                     isinstance(value, Mapping)
-                    and value.get("status") == "completed"
+                    and value.get("session_id") == session_id
                     and bool(value.get("eval_identity"))
+                    and isinstance(value.get("evaluation_result"), Mapping)
+                    and bool(value.get("evaluation_result", {}).get("eval_id"))
                 ),
             ),
         )
-        evaluation = terminal.get("evaluation_result") or {}
+        self._require(terminal.get("session_id") == session_id, "Teaching readback session_id mismatch")
+        self._require(terminal.get("persona_id") == persona_id, "Teaching readback persona_id mismatch")
+        self._require(
+            terminal.get("status") in {"active", "completed"},
+            f"Unexpected TeachingSession status: {terminal.get('status')}",
+        )
+        evaluation = terminal.get("evaluation_result")
+        self._require(isinstance(evaluation, Mapping), "Teaching readback missing evaluation_result")
         eval_identity = str(terminal.get("eval_identity") or "")
+        self._require(bool(eval_identity), "Teaching readback missing eval_identity")
         self._require(evaluation.get("eval_identity") == eval_identity, "Teaching evaluation identity drifted")
+        self._require(evaluation.get("session_id") == session_id, "Teaching evaluation session_id mismatch")
+        self._require(evaluation.get("persona_id") == persona_id, "Teaching evaluation persona_id mismatch")
+        self._require(evaluation.get("eval_id") == eval_id, "Teaching evaluation eval_id mismatch")
+
+        preview = terminal.get("preview") if isinstance(terminal.get("preview"), Mapping) else (job.get("preview") if isinstance(job.get("preview"), Mapping) else {})
+        self._require(isinstance(preview, Mapping) and bool(preview), "Teaching preview missing from readback")
+        proof = preview.get("evaluation_proof") if isinstance(preview, Mapping) else {}
+        self._require(isinstance(proof, Mapping) and bool(proof), "Teaching evaluation proof missing from readback")
+        self._require(proof.get("session_id") == session_id, "Teaching evaluation proof session_id mismatch")
+        self._require(proof.get("job_id") == job_id, "Teaching evaluation proof job_id mismatch")
+        self._require(proof.get("eval_id") == eval_id, "Teaching evaluation proof eval_id mismatch")
+        self._require(proof.get("eval_id") == evaluation.get("eval_id"), "Teaching evaluation proof eval_id mismatch")
+        if evaluation.get("evaluation_proof_ref"):
+            self._require(proof.get("proof_ref") == evaluation.get("evaluation_proof_ref"), "Teaching evaluation proof_ref mismatch")
+        self._require(bool(proof.get("proof_digest")), "Teaching evaluation proof missing proof_digest")
+
+        backend = proof.get("backend") if isinstance(proof.get("backend"), Mapping) else {}
+        self._require(backend.get("framework") == "vectorbt", f"Teaching computation framework mismatch: {backend.get('framework')}")
+        self._require(bool(backend.get("run_id")), "Teaching computation missing backend run_id")
+        self._require(bool(preview.get("preview_quality")), "Teaching preview missing preview_quality")
+
+        metrics = evaluation.get("metrics")
+        self._require(isinstance(metrics, Mapping) and len(metrics) > 0, "Teaching evaluation missing metrics")
+        for metric_key in ("total_return", "sharpe_ratio", "max_drawdown"):
+            val = metrics.get(metric_key)
+            self._require(
+                isinstance(val, (int, float)) and not isinstance(val, bool) and math.isfinite(val),
+                f"Teaching evaluation metric {metric_key} non-finite or invalid: {val}",
+            )
+
+        authority = proof.get("authority") if isinstance(proof.get("authority"), Mapping) else {}
+        dataset = authority.get("dataset") if isinstance(authority.get("dataset"), Mapping) else {}
+        self._require(bool(dataset.get("dataset_version_id")), "Teaching evaluation missing authority dataset_version_id")
+        self._require(bool(dataset.get("digest")), "Teaching evaluation missing authority dataset digest")
+        policy = authority.get("policy") if isinstance(authority.get("policy"), Mapping) else {}
+        self._require(bool(policy.get("policy_id")), "Teaching evaluation missing authority policy_id")
+        self._require(bool(policy.get("digest")), "Teaching evaluation missing authority policy digest")
+
+        val_status = evaluation.get("validation_status")
+        self._require(val_status in {"passed", "failed"}, f"Unexpected Teaching evaluation validation_status: {val_status}")
+        if val_status == "failed":
+            self._require(proof.get("governance_gate_state") == "failed", "Failed evaluation must preserve failed governance_gate_state")
+            self._require(proof.get("status") == "failed", "Failed evaluation proof must preserve failed status")
+            self._require(proof.get("commit_eligible") is not True, "Failed evaluation must not be commit eligible")
+            self._require(bool(evaluation.get("validation_errors")), "Failed evaluation missing validation_errors")
+            self._require(evaluation.get("consultation_required") is True, "Failed evaluation must require consultation")
+            self._require(bool(evaluation.get("consult_request_id")), "Failed evaluation missing consult_request_id")
+            self._require(isinstance(evaluation.get("consultation_receipt"), Mapping), "Failed evaluation missing consultation_receipt")
+            self._require(terminal.get("status") == "active" and terminal.get("ended_at") is None, "Failed evaluation session must remain active with ended_at null")
+        else:
+            self._require(proof.get("governance_gate_state") == "passed", "Passed evaluation must preserve passed governance_gate_state")
+            self._require(evaluation.get("validation_errors") == [], "Passed evaluation must have empty validation_errors")
+
         case["terminal_output"] = {
             "type": "TeachingEvaluationResult",
             "id": eval_identity,
             "session_id": session_id,
             "job_id": job_id,
+            "eval_id": evaluation.get("eval_id"),
+            "validation_status": val_status,
         }
         case["authority_readback"] = {
             "session_id": terminal.get("session_id"),
             "status": terminal.get("status"),
             "eval_identity": terminal.get("eval_identity"),
+            "validation_status": val_status,
+            "governance_gate_state": proof.get("governance_gate_state"),
+            "consultation_required": evaluation.get("consultation_required"),
         }
         verifier_readback = self._at(
             "teaching.next_consumer_readback",
@@ -1038,6 +1119,10 @@ class DeployedResearchHarness:
         self._require(
             verifier_readback.get("eval_identity") == eval_identity,
             "operator/Learning verifier did not read the exact Teaching evaluation identity",
+        )
+        self._require(
+            (verifier_readback.get("evaluation_result") or {}).get("eval_id") == evaluation.get("eval_id"),
+            "operator/Learning verifier did not read the exact Teaching evaluation result",
         )
         case["next_consumer"] = {
             "consumer": "operator-learning-verifier",
