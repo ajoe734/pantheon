@@ -91,6 +91,13 @@ def fixture(tmp_path: Path):
     compose = tmp_path / "baseline" / "docker-compose.yml"
     compose.parent.mkdir()
     compose.write_text("services: {}\n")
+    ambient = tmp_path / "ambient"
+    ambient.mkdir()
+    ambient_compose = ambient / "docker-compose.yml"
+    ambient_compose.write_text("services: {ambient: {image: ambient-image}}\n")
+    candidate_compose = tmp_path / "candidate" / "docker-compose.yml"
+    candidate_compose.parent.mkdir()
+    candidate_compose.write_text("services: {candidate: {image: candidate-image}}\n")
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     for name in ("docker", "git", "curl", "apt-get", "systemctl", "sudo"):
@@ -108,7 +115,8 @@ def fixture(tmp_path: Path):
     env.update({
         "PANTHEON_DEPLOY_ENV": "dev", "PANTHEON_DEPLOY_COMPONENT": "bff",
         "PANTHEON_DEPLOY_PROJECT_ID": "pantheon-dev-20260902", "PANTHEON_DEPLOY_SHA": PRIOR,
-        "PANTHEON_REMOTE_DIR": str(tmp_path / "MUST_NOT_ACCESS_OWNER_CHECKOUT"),
+        "PANTHEON_REMOTE_DIR": str(ambient),
+        "PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE": str(candidate_compose),
         "PANTHEON_DEV_ARTIFACT_RESTORE": "true", "PANTHEON_DEV_BFF_AUTH_MODE": "strict",
         "PANTHEON_DEV_BFF_AUTH_STUB": "false", "PANTHEON_DEV_BFF_PUBLIC_HOST": "api.dev.mvl-cap.tw",
         "PANTHEON_DEV_BFF_MFA_REQUIRED": "false",
@@ -477,7 +485,65 @@ def test_candidate_producer_cannot_start_mutation_before_matching_runner_ack(fix
     assert (result.returncode == 0) is accepted, result.stderr
     assert ("mutation-admitted=true" in result.stdout) is accepted
     assert result.stdout.count("PANTHEON_ARTIFACT_CANDIDATE_SEAL_V1 ") == 1
-    assert [event["operation"] for event in _events(recorder)] == ["seal-candidate"]
+    events = _events(recorder)
+    assert [event["operation"] for event in events] == ["seal-candidate"]
+    if accepted:
+        assert events[0]["args"]["--compose-file"] == env["PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE"]
+        assert events[0]["args"]["--compose-file"] != env["PANTHEON_DEV_ARTIFACT_COMPOSE_FILE"]
+        assert events[0]["args"]["--compose-file"] != str(Path(env["PANTHEON_REMOTE_DIR"]) / "docker-compose.yml")
+
+
+@pytest.mark.parametrize("corrupt_mode", ["unset", "nonexistent", "symlink"])
+def test_seal_candidate_rejects_missing_or_malformed_candidate_compose(fixture, corrupt_mode, tmp_path):
+    env, recorder, *_ = fixture
+    functions = ("with_dev_bff_runtime_env", "run_dev_artifact_driver", "validate_dev_candidate_override",
+                 "await_dev_candidate_receipt_ack", "seal_dev_candidate_images")
+    payload = "set -euo pipefail\ninfo() { echo \"$*\"; }\nerror() { exit 75; }\n"
+    payload += "\n".join(_function(name) for name in functions)
+    payload += "\nseal_dev_candidate_images\n"
+
+    test_env = {**env, "PANTHEON_DEPLOY_SHA": SHA}
+    if corrupt_mode == "unset":
+        test_env.pop("PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE", None)
+    elif corrupt_mode == "nonexistent":
+        test_env["PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE"] = str(tmp_path / "nonexistent-compose.yml")
+    elif corrupt_mode == "symlink":
+        sym = tmp_path / "symlink-compose.yml"
+        sym.symlink_to(env["PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE"])
+        test_env["PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE"] = str(sym)
+
+    ack = (env["PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_MANIFEST_SHA256"] + "\n").encode()
+    result = _run(payload, test_env, ack=ack)
+    assert result.returncode != 0
+    # Must fail without executing driver or falling back to ambient or baseline
+    assert _events(recorder) == []
+
+
+def test_real_driver_seal_candidate_validates_candidate_git_source_and_rejects_ambient_or_tampered(case):
+    from scripts.test_dev_release_artifact_driver import execute, seal
+    from scripts import dev_release_artifact_driver as d
+
+    seal(case, admit_candidate=False)
+
+    # 1. Real driver rejects ambient/baseline Compose whose git HEAD is not candidate SHA
+    case.args.compose_file = case.baseline_compose
+    with pytest.raises(d.a.ArtifactError, match="Compose is not the exact baseline source blob"):
+        execute(case, "seal-candidate")
+
+    # 2. Real driver rejects tampered candidate Compose bytes
+    original_bytes = case.docker.candidate_compose.read_bytes()
+    try:
+        case.docker.candidate_compose.write_text("services: {tampered: true}\n")
+        case.args.compose_file = case.docker.candidate_compose
+        with pytest.raises(d.a.ArtifactError, match="Compose is not the exact baseline source blob"):
+            execute(case, "seal-candidate")
+    finally:
+        case.docker.candidate_compose.write_bytes(original_bytes)
+
+    # 3. Exact candidate Compose succeeds with real driver
+    case.args.compose_file = case.docker.candidate_compose
+    result = execute(case, "seal-candidate")
+    assert "candidate_image_manifest_path" in result
 
 
 @pytest.mark.parametrize("profiles,services", [
