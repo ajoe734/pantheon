@@ -48,7 +48,7 @@ class RedisFixtureCleanupTests(unittest.TestCase):
         name = starts[0][starts[0].index("--name") + 1]
         self.assertTrue(name.startswith(("l12-cap-leader-", "l12-cap-redis-")))
         self.assertEqual([c for c in commands if c[:2] == ["docker", "rm"]],
-                         [["docker", "rm", "-f", name]])
+                         [["docker", "rm", "-f", "-v", name]])
         self.assertEqual(fixture._container_name, "")
 
     def test_missing_dependency_skips_before_any_docker_or_socket(self):

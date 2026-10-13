@@ -133,7 +133,7 @@ class _RealRedisDockerTestCase(unittest.TestCase):
     def tearDownClass(cls) -> None:
         if cls._container_name:
             subprocess.run(
-                ["docker", "rm", "-f", cls._container_name],
+                ["docker", "rm", "-f", "-v", cls._container_name],
                 check=False,
                 capture_output=True,
                 text=True,

@@ -350,7 +350,7 @@ class IsolatedPostgres:
     def stop(self) -> None:
         if not self.container_id:
             return
-        run_command(("docker", "rm", "-f", self.name), timeout=30, check=False)
+        run_command(("docker", "rm", "-f", "-v", self.name), timeout=30, check=False)
         self.container_id = None
 
     def __enter__(self) -> "IsolatedPostgres":
