@@ -1,0 +1,18 @@
+{
+  "task_id": "DEPLOYMENT-SAGA-RETIRE-COMMAND-20261013",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "verification": {
+    "governance_unittest": "services/control-plane/governance test_deployment_saga: 11 passed",
+    "pytest": "services/deployment test_service.py + test_outbox_consumer_worker.py: all retirement tests pass; the one remaining failure (test_idle_tick_publishes_admissible_loop8_truth) needs asyncpg, not installed in the local venv",
+    "base_check": "8 new retirement tests fail with the implementation files reverted"
+  },
+  "acceptance": {
+    "1": "POST /sagas/{id}/retire records reason, no failure_reason/compensation",
+    "2": "execute_retirement transitions exact binding to retired with readback and identity checks",
+    "3": "non-completed rejected; replay idempotent",
+    "4": "_require_saga_access, no runtime-manager change",
+    "5": "_saga_progress_status maps retired to completed",
+    "6": "tests in test_deployment_saga.py, test_service.py, test_outbox_consumer_worker.py"
+  }
+}

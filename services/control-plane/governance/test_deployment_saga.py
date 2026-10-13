@@ -19,6 +19,7 @@ from deployment_plan import (
 )
 from deployment_saga import (
     CompensationCommand,
+    DeploymentSagaError,
     DeploymentSagaStore,
     ReceiptStatus,
     SagaStatus,
@@ -133,6 +134,54 @@ class TestDeploymentSagaOrderingAndInbox(unittest.TestCase):
         self.assertEqual(applied_events, [bootstrap.outbox_event.event.event_id, seq2.event.event_id, seq3.event.event_id])
         self.assertEqual(seq2.event.causal_parent_id, bootstrap.outbox_event.event.event_id)
         self.assertEqual(seq3.event.causal_parent_id, seq2.event.event_id)
+
+
+class TestDeploymentSagaRetirement(unittest.TestCase):
+    def _completed(self, store):
+        saga_id = store.bootstrap_for_plan(build_plan(), trace_id="trace-001").saga.saga_id
+        store.record_binding_created(saga_id, binding_id="binding-001", runtime_id="runtime-001")
+        store.record_runtime_active(saga_id)
+        return saga_id
+
+    def test_completed_saga_retires_truthfully_and_replays(self):
+        store = DeploymentSagaStore()
+        saga_id = self._completed(store)
+
+        first = store.record_retirement(saga_id, reason="dev paper cleanup")
+        replay = store.record_retirement(saga_id, reason="dev paper cleanup")
+        saga = store.get(saga_id)
+
+        self.assertEqual(first.event.event_type, "deployment.retirement.requested")
+        self.assertEqual(replay.event.event_id, first.event.event_id)
+        self.assertEqual(saga.status, SagaStatus.RETIRING)
+        self.assertIsNone(saga.failure_reason)
+        self.assertIsNone(saga.compensation)
+
+        done = store.finalize_retirement(saga_id, note="readback ok")
+        again = store.finalize_retirement(saga_id)
+        self.assertEqual(done.event.event_type, "deployment.saga.retired")
+        self.assertEqual(again.event.event_id, done.event.event_id)
+        saga = store.get(saga_id)
+        self.assertEqual(saga.status, SagaStatus.RETIRED)
+        self.assertEqual(saga.current_step, SagaStep.RETIRED)
+        self.assertIsNone(saga.failure_reason)
+        self.assertEqual(
+            store.record_retirement(saga_id, reason="dev paper cleanup").event.event_id,
+            first.event.event_id,
+        )
+        with self.assertRaises(DeploymentSagaError):
+            store.record_retirement(saga_id, reason="different reason")
+
+    def test_non_completed_saga_cannot_retire(self):
+        store = DeploymentSagaStore()
+        saga_id = store.bootstrap_for_plan(build_plan(), trace_id="trace-001").saga.saga_id
+        with self.assertRaises(DeploymentSagaError):
+            store.record_retirement(saga_id, reason="too early")
+        store.record_failure(saga_id, reason="boom")
+        with self.assertRaises(DeploymentSagaError):
+            store.record_retirement(saga_id, reason="failed saga")
+        with self.assertRaises(DeploymentSagaError):
+            store.finalize_retirement(saga_id)
 
 
 class TestDeploymentSagaCompensation(unittest.TestCase):

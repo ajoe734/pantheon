@@ -235,6 +235,20 @@ DEP-002 must document compensation by failure boundary, not as one vague
 | runtime became active, then severe mismatch / policy breach is detected | `request_rollback` | `rollback-controller` issuing command, `runtime-manager-svc` applying it | replacement / pause / liquidation follows `rollback_action_type` from `DeploymentPlan.rollback.action_type` |
 | compensation itself fails or rollback cannot converge | `enter_safe_mode_and_raise_incident` | `runtime-manager-svc` + incident owner | runtime enters safe mode or paused state, incident trail is opened, further deploys stop |
 
+### 7.0 Retirement (not a compensation)
+
+A `completed` saga may be retired by an owner action. Retirement is not a
+failure: it never writes `failure_reason` or `compensation`.
+
+- `completed -> retiring` appends `deployment.retirement.requested`
+  (step `retirement_requested`, owner `runtime-manager-svc`) and records
+  `saga.retirement = {reason, binding_id, requested_event_id, requested_at}`
+- `retiring -> retired` appends `deployment.saga.retired` (step `retired`)
+  after the consumer proves the exact `RuntimeBinding` is `retired`
+- both steps are idempotent on replay; any non-`completed` saga is rejected
+- `DeploymentPlan.status` remains `executed`
+- Loop 8 progress treats `retired` as completed, not failed or dead-lettered
+
 ### 7.1 Rollback linkage source
 
 DEP-002 does not invent a new rollback strategy field.

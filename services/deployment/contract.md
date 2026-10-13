@@ -479,6 +479,35 @@ Default terminal status:
 
 ---
 
+### `POST /api/deployment/sagas/{saga_id}/retire`
+
+Retire a completed deployment's runtime binding. This is a lifecycle action,
+not a failure path.
+
+Request body: `reason` (required, non-empty).
+
+Rules:
+
+- only a `completed` saga may retire; any other status is rejected with 400
+- appends `deployment.retirement.requested` (owner `runtime-manager-svc`) and
+  moves the saga to `retiring`; `failure_reason` and `compensation` are never
+  written
+- replay with the same reason returns the original event (also after
+  `retired`); a different reason is rejected
+- same `_require_saga_access` check as `/failure`; no MFA bypass, no new
+  identity, no runtime-manager route change
+- `DeploymentPlan.status` stays `executed`
+
+The outbox consumer transitions the exact saga `RuntimeBinding` to `retired`
+through its existing runtime-manager client, requires an authoritative
+`retired` readback, fails closed on identity mismatch or any binding status
+other than `active`/`pending_pause`/`paused`/`retired`, then calls
+`POST /api/deployment/sagas/{saga_id}/retire/finalize` (optional `note`),
+which appends `deployment.saga.retired` and sets the saga to terminal
+`retired`. Saga progress reports `retired` as `completed`, never `failed`.
+
+---
+
 ### `GET /api/deployment/outbox`
 
 List outbox events visible to the authenticated tenant. Dispatch consumers
