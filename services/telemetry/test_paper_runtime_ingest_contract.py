@@ -523,6 +523,30 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
                 }
                 self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
 
+                # Real positive DB sequence guard: bool is not sequence (True != valid seq)
+                svc._event_reader = lambda ids, tenant_id=None: {
+                    "evt-snap-runA": dict(snap_runA, ingested_seq=True)
+                }
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # Finite numeric metrics guard (reject inf/nan)
+                svc._event_reader = lambda ids, tenant_id=None: {
+                    "evt-snap-runA": dict(snap_runA, metrics={"position_qty": float("inf"), "price": 500.0, "cash": 50000.0}, ingested_seq=101)
+                }
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # 512 bound check: event reader receives at most 512 event ids
+                queried_counts = []
+                def count_reader(ids, tenant_id=None):
+                    queried_counts.append(len(ids))
+                    return {}
+                svc._event_reader = count_reader
+                summary_key = list(summary_store._summaries.keys())[0]
+                summary_store._summaries[summary_key]["recent_lifecycle_event_ids"] = [f"evt-{i}" for i in range(1000)]
+                svc.list_runtime_summaries(tenant_id=tid)
+                self.assertEqual(queried_counts[-1], 512)
+                summary_store._summaries[summary_key]["recent_lifecycle_event_ids"] = ["evt-snap-runA", "evt-order-runB"]
+
                 # AC2: Already-reconciled position snapshot exclusion
                 term_event = _paper_event(
                     event_type="reconciliation_completed",
@@ -543,6 +567,14 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
                     "sequence_no": 8,
                     "ingested_seq": 103,
                 })
+                # If terminal event belongs to another tenant, it does not exclude candidate
+                other_term = dict(term_event, tenant_id="other-tenant")
+                db_store_term = dict(db_store, **{"evt-term-runA": other_term})
+                svc._event_reader = lambda ids, tenant_id=None: {k: v for k, v in db_store_term.items() if k in ids}
+                summary_store.project_event(other_term)
+                self.assertIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # When terminal matches current tenant/binding/plan, it excludes candidate
                 db_store["evt-term-runA"] = term_event
                 summary_store.project_event(term_event)
                 svc._event_reader = fake_event_reader

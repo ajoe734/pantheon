@@ -163,6 +163,8 @@ def _paper_lifecycle_summary(**overrides):
             },
         },
     )
+    if "committed_position_snapshot" not in overrides:
+        summary["committed_position_snapshot"] = summary["last_lifecycle_identity"]
     summary.update(overrides)
     return summary
 
@@ -965,6 +967,7 @@ def test_scheduled_reconcile_waits_for_accepted_append_visibility_without_period
             advanced_summary = json.loads(json.dumps(caught_up_summary))
             advanced_summary["last_event_id"] = next_event_id
             advanced_summary["last_lifecycle_identity"] = next_lifecycle
+            advanced_summary["committed_position_snapshot"] = next_lifecycle
             fetch_summaries.return_value = [advanced_summary]
 
             advanced = client.post(
@@ -1059,6 +1062,7 @@ def test_scheduled_reconcile_accepts_receipted_reconciliation_before_new_aggrega
             next_summary = json.loads(json.dumps(first_summary))
             next_summary["last_event_id"] = next_signal_id
             next_summary["last_lifecycle_identity"] = next_signal
+            next_summary["committed_position_snapshot"] = next_signal
             next_summary["recent_lifecycle_event_ids"] = [
                 first_summary["last_lifecycle_identity"]["event_id"],
                 first_reconciliation["event_id"],
@@ -1279,12 +1283,14 @@ def test_scheduled_reconcile_never_appends_incomplete_identity_or_live_capital()
     )
     live_identity["correlation_envelope"]["environment"] = "live"
     live["last_lifecycle_identity"] = live_identity
+    live["committed_position_snapshot"] = live_identity
     incomplete = _paper_lifecycle_summary()
     incomplete["binding_id"] = "66666666-6666-4666-8666-666666666666"
     incomplete_identity = json.loads(json.dumps(incomplete["last_lifecycle_identity"]))
     incomplete_identity["binding_id"] = incomplete["binding_id"]
     incomplete_identity.pop("run_id")
     incomplete["last_lifecycle_identity"] = incomplete_identity
+    incomplete["committed_position_snapshot"] = incomplete_identity
     missing_persona = _paper_lifecycle_summary()
     missing_persona["binding_id"] = "77777777-7777-4777-8777-777777777777"
     missing_persona_identity = json.loads(
@@ -1294,6 +1300,11 @@ def test_scheduled_reconcile_never_appends_incomplete_identity_or_live_capital()
     missing_persona_identity["authority_refs"].pop("persona_id")
     missing_persona_identity["metadata"].pop("persona_id", None)
     missing_persona["last_lifecycle_identity"] = missing_persona_identity
+    missing_persona["committed_position_snapshot"] = missing_persona_identity
+    # Admitted-but-uncommitted position snapshot: has last_lifecycle_identity but no committed_position_snapshot
+    uncommitted = _paper_lifecycle_summary()
+    uncommitted["binding_id"] = "88888888-8888-4888-8888-888888888888"
+    uncommitted.pop("committed_position_snapshot", None)
 
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)
@@ -1306,7 +1317,7 @@ def test_scheduled_reconcile_never_appends_incomplete_identity_or_live_capital()
             mock.patch.object(
                 svc,
                 "fetch_runtime_summaries",
-                return_value=[missing, live, incomplete, missing_persona],
+                return_value=[missing, live, incomplete, missing_persona, uncommitted],
             ),
             mock.patch.object(svc, "_append_telemetry_lifecycle_event") as append,
         ):
@@ -1333,6 +1344,8 @@ def test_scheduled_reconcile_never_appends_incomplete_identity_or_live_capital()
             results[missing_persona["binding_id"]]["reason"]
             == "missing_lifecycle_persona_id"
         )
+        assert results[uncommitted["binding_id"]]["status"] == "not_eligible"
+        assert results[uncommitted["binding_id"]]["reason"] == "missing_lifecycle_identity"
 
 
 def test_telemetry_lifecycle_delivery_classifies_terminal_and_retryable_outcomes() -> None:
@@ -1865,6 +1878,10 @@ def _make_inflight_paper_summary(stage: str, sequence_no: int, **overrides) -> d
             "last_lifecycle_identity": identity,
         }
     )
+    if stage == "position_snapshot":
+        base["committed_position_snapshot"] = identity
+    else:
+        base.pop("committed_position_snapshot", None)
     base.update(overrides)
     return base
 

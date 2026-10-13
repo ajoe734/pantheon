@@ -52,6 +52,7 @@ import copy
 import hashlib
 import json
 import logging
+import math
 import os
 import threading
 import time
@@ -1879,27 +1880,25 @@ class TelemetryIngestService:
                 for x in raw:
                     if isinstance(x, str) and x.strip():
                         all_eids.append(x.strip())
-        all_eids = list(dict.fromkeys(all_eids))
+        all_eids = list(dict.fromkeys(all_eids))[:512]
         if not all_eids:
             return summaries
 
-        try:
-            events_by_id = self._event_reader(all_eids, tenant_id=tenant_id)
-        except TypeError:
-            events_by_id = self._event_reader(all_eids)
-        except Exception:
-            events_by_id = {}
+        events_by_id = self._event_reader(all_eids, tenant_id=tenant_id)
         if not isinstance(events_by_id, dict):
             return summaries
 
-        def _is_num(val: Any) -> bool:
+        def _is_finite_num(val: Any) -> bool:
             if isinstance(val, bool) or val is None:
                 return False
             try:
-                float(val)
-                return True
+                f = float(val)
+                return math.isfinite(f)
             except (ValueError, TypeError):
                 return False
+
+        def _is_positive_seq(val: Any) -> bool:
+            return isinstance(val, int) and not isinstance(val, bool) and val > 0
 
         for summary in summaries:
             if summary.get("committed_position_snapshot"):
@@ -1916,11 +1915,6 @@ class TelemetryIngestService:
             if not s_events:
                 continue
 
-            terminal_events = [
-                ev for ev in s_events
-                if ev.get("event_type") in ("reconciliation_completed", "reconciliation_failed")
-            ]
-
             s_tid = tenant_id or self._event_tenant_id(summary) or str(summary.get("tenant_id") or "").strip()
             s_bid = str(summary.get("binding_id") or summary.get("runtime_binding_id") or "").strip()
             s_rid = str(summary.get("runtime_id") or "").strip()
@@ -1929,13 +1923,48 @@ class TelemetryIngestService:
             s_pid = str(summary.get("deployment_plan_id") or summary.get("plan_id") or "").strip()
             s_cpid = str(summary.get("capital_pool_id") or "").strip()
             s_pcb = str(summary.get("persona_capital_binding_id") or "").strip()
+            s_auth = summary.get("authority_refs") if isinstance(summary.get("authority_refs"), dict) else {}
+            s_meta = summary.get("metadata") if isinstance(summary.get("metadata"), dict) else {}
+            s_persona = str(summary.get("persona_id") or s_auth.get("persona_id") or s_meta.get("persona_id") or "").strip()
+
+            terminal_events: list[dict[str, Any]] = []
+            for ev in s_events:
+                if ev.get("event_type") not in ("reconciliation_completed", "reconciliation_failed"):
+                    continue
+                t_seq = ev.get("ingested_seq")
+                if not _is_positive_seq(t_seq):
+                    continue
+                t_tid = self._event_tenant_id(ev) or str(ev.get("tenant_id") or "").strip()
+                if s_tid and t_tid and t_tid != s_tid:
+                    continue
+                t_bid = str(ev.get("binding_id") or ev.get("runtime_binding_id") or "").strip()
+                if s_bid and t_bid and t_bid != s_bid:
+                    continue
+                t_rid = str(ev.get("runtime_id") or "").strip()
+                if s_rid and t_rid and t_rid != s_rid:
+                    continue
+                t_aid = str(ev.get("artifact_id") or "").strip()
+                if s_aid and t_aid and t_aid != s_aid:
+                    continue
+                t_pid = str(ev.get("deployment_plan_id") or ev.get("plan_id") or "").strip()
+                if s_pid and t_pid and t_pid != s_pid:
+                    continue
+                t_cpid = str(ev.get("capital_pool_id") or "").strip()
+                if s_cpid and t_cpid and t_cpid != s_cpid:
+                    continue
+                t_auth = ev.get("authority_refs") if isinstance(ev.get("authority_refs"), dict) else {}
+                t_meta = ev.get("metadata") if isinstance(ev.get("metadata"), dict) else {}
+                t_persona = str(t_auth.get("persona_id") or t_meta.get("persona_id") or "").strip()
+                if s_persona and t_persona and t_persona != s_persona:
+                    continue
+                terminal_events.append(ev)
 
             candidates: list[dict[str, Any]] = []
             for ev in s_events:
                 if ev.get("event_type") != "position_snapshot":
                     continue
                 ingested_seq = ev.get("ingested_seq")
-                if not isinstance(ingested_seq, int):
+                if not _is_positive_seq(ingested_seq):
                     continue
 
                 if str(ev.get("deployment_stage") or "").strip().lower() != "paper":
@@ -1950,8 +1979,10 @@ class TelemetryIngestService:
                 if src_mode and src_mode != "live":
                     continue
 
-                ev_tid = self._event_tenant_id(ev)
+                ev_tid = self._event_tenant_id(ev) or str(ev.get("tenant_id") or "").strip()
                 if s_tid and ev_tid and ev_tid != s_tid:
+                    continue
+                if s_tid and not ev_tid:
                     continue
                 ev_bid = str(ev.get("binding_id") or ev.get("runtime_binding_id") or "").strip()
                 if s_bid and ev_bid != s_bid:
@@ -1976,15 +2007,24 @@ class TelemetryIngestService:
                 persona_id = str(auth_refs.get("persona_id") or meta.get("persona_id") or "").strip()
                 if not persona_id:
                     continue
+                if s_persona and persona_id != s_persona:
+                    continue
 
                 metrics = ev.get("metrics") if isinstance(ev.get("metrics"), dict) else {}
-                has_metric = any(_is_num(metrics.get(k)) or _is_num(ev.get(k)) for k in ("position_qty", "price", "cash"))
+                non_finite = any(
+                    val is not None and not _is_finite_num(val)
+                    for k in ("position_qty", "price", "cash")
+                    for val in (metrics.get(k), ev.get(k))
+                )
+                if non_finite:
+                    continue
+                has_metric = any(_is_finite_num(metrics.get(k)) or _is_finite_num(ev.get(k)) for k in ("position_qty", "price", "cash"))
                 if not has_metric:
                     continue
 
                 snap_eid = str(ev.get("event_id") or "").strip()
                 snap_run = str(ev.get("run_id") or meta.get("run_id") or "").strip()
-                snap_seq = ev.get("sequence_no") if isinstance(ev.get("sequence_no"), int) else meta.get("sequence_no")
+                snap_seq = ev.get("sequence_no") if _is_positive_seq(ev.get("sequence_no")) else meta.get("sequence_no")
                 reconciled = False
                 for t in terminal_events:
                     t_meta = t.get("metadata") if isinstance(t.get("metadata"), dict) else {}
@@ -1997,9 +2037,9 @@ class TelemetryIngestService:
                         reconciled = True
                         break
                     t_run = str(t.get("run_id") or t_meta.get("run_id") or "").strip()
-                    t_seq = t.get("sequence_no") if isinstance(t.get("sequence_no"), int) else t_meta.get("sequence_no")
+                    t_seq = t.get("sequence_no") if _is_positive_seq(t.get("sequence_no")) else t_meta.get("sequence_no")
                     if snap_run and t_run == snap_run:
-                        if isinstance(snap_seq, int) and isinstance(t_seq, int) and t_seq > snap_seq:
+                        if _is_positive_seq(snap_seq) and _is_positive_seq(t_seq) and t_seq > snap_seq:
                             reconciled = True
                             break
                         elif int(t.get("ingested_seq") or 0) > int(ev.get("ingested_seq") or 0):

@@ -1720,26 +1720,28 @@ def _summary_observed_metrics(summary: Dict[str, Any]) -> Dict[str, float]:
 
 
 def _resolve_scheduled_metrics(summary: Dict[str, Any]) -> Dict[str, float]:
+    observed = _summary_observed_metrics(summary)
     committed_snapshot = summary.get("committed_position_snapshot")
     if isinstance(committed_snapshot, dict):
-        observed: Dict[str, float] = {}
         nested = committed_snapshot.get("metrics") or {}
         if isinstance(nested, dict):
             for key, raw_value in nested.items():
                 num = _numeric(raw_value)
-                if num is not None:
+                if num is not None and math.isfinite(num):
                     observed[str(key)] = num
         for key in ("position_qty", "price", "cash"):
-            if key not in observed:
-                num = _numeric(committed_snapshot.get(key))
-                if num is not None:
-                    observed[key] = num
+            num = _numeric(committed_snapshot.get(key))
+            if num is not None and math.isfinite(num):
+                observed[key] = num
         for key in ("queue_lag_ms", "event_delivery_lag_ms"):
             num = _numeric(summary.get(key))
-            if num is not None:
+            if num is not None and math.isfinite(num):
                 observed[key] = num
-        return observed
-    return _summary_observed_metrics(summary)
+        if "pnl" not in nested and "pnl" not in committed_snapshot:
+            observed.pop("pnl", None)
+        if "drawdown" not in nested and "drawdown" not in committed_snapshot:
+            observed.pop("drawdown", None)
+    return observed
 
 
 def _paper_lifecycle_identity(
@@ -1749,9 +1751,27 @@ def _paper_lifecycle_identity(
     runtime_id: str,
 ) -> tuple[Dict[str, Any] | None, str | None]:
     """Return a complete live paper lifecycle identity or a fail-closed reason."""
-    raw_identity = summary.get("committed_position_snapshot") or summary.get("last_lifecycle_identity")
-    if not isinstance(raw_identity, dict):
-        return None, "missing_lifecycle_identity"
+    last = summary.get("last_lifecycle_identity")
+    if isinstance(last, dict) and str(last.get("event_type") or "").strip() in (
+        "reconciliation_completed",
+        "reconciliation_failed",
+    ):
+        raw_identity = last
+    else:
+        committed_snapshot = summary.get("committed_position_snapshot")
+        if not isinstance(committed_snapshot, dict):
+            if isinstance(last, dict):
+                evt_type = str(last.get("event_type") or "").strip()
+                if evt_type != "position_snapshot":
+                    raw_identity = last
+                else:
+                    # Admitted-but-not-committed position snapshot cannot qualify:
+                    return None, "missing_lifecycle_identity"
+            else:
+                return None, "missing_lifecycle_identity"
+        else:
+            raw_identity = committed_snapshot
+
     identity = json.loads(json.dumps(raw_identity))
     missing = [
         field
@@ -2948,14 +2968,12 @@ def _execute_scheduled_reconcile(
                     or cached_eval.get("run_id")
                     or ""
                 ).strip()
-                cached_status = (cached_eval.get("lifecycle_append") or {}).get("status")
-                if cached_status != "accepted":
-                    if cached_upstream and cached_upstream != snap_event_id:
-                        is_misjoined_cached_eval = True
-                    elif cached_run and snap_run_id and cached_run != snap_run_id:
-                        is_misjoined_cached_eval = True
-                    elif not cached_upstream and snap_event_id:
-                        is_misjoined_cached_eval = True
+                if cached_upstream and cached_upstream != snap_event_id:
+                    is_misjoined_cached_eval = True
+                elif cached_run and snap_run_id and cached_run != snap_run_id:
+                    is_misjoined_cached_eval = True
+                elif not cached_upstream and snap_event_id:
+                    is_misjoined_cached_eval = True
 
             if cached_eval is not None and not is_misjoined_cached_eval:
                 existing_evaluation = cached_eval
