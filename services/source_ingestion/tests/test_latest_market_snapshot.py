@@ -109,10 +109,9 @@ def _tw_official_record(*, source_id: str, event_time: str, close: float, calend
 
 
 def _ingest_prices(client: TestClient) -> None:
-    headers = _read_headers()
     configured = client.post(
         "/api/source-ingest/connectors",
-        headers=headers,
+        headers=_read_headers(),
         json={
             "connector": _connector(),
             "fetch": {
@@ -140,7 +139,6 @@ def _ingest_prices(client: TestClient) -> None:
     assert configured.status_code == 201, configured.text
     ingested = client.post(
         "/api/source-ingest/jobs",
-        headers=headers,
         json={"connector_id": "stored-price-test", "trace_id": "snapshot-contract-test"},
     )
     assert ingested.status_code == 201, ingested.text

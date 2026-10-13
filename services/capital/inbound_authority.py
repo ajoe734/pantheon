@@ -247,19 +247,16 @@ def authenticate_capital_request(
     except AuthError as exc:
         raise CapitalInboundAuthorityError(exc.code, exc.message, exc.status_code) from exc
 
-    explicit_services = _claim_strings(context.claims, ("service", "service_id", "serviceId"))
     bound_services = _claim_strings(context.claims, _SERVICE_CLAIMS)
     if context.token_kind == "structured":
         bound_services.append(context.actor_id)
-    clean_service = clean_service or (explicit_services[0] if explicit_services else (bound_services[0] if bound_services else None))
+    clean_service = clean_service or (bound_services[0] if bound_services else None)
     if not clean_service:
         raise CapitalInboundAuthorityError("ACTOR_SERVICE_REQUIRED", "X-Pantheon-Service is required for Capital mutations", 400)
     if clean_service not in allowed_services and "*" not in allowed_services:
         raise CapitalInboundAuthorityError("ACTOR_SERVICE_FORBIDDEN", "Caller service is not authorized for Capital mutations", 403)
     if not is_read:
-        if explicit_services and clean_service not in explicit_services:
-            raise CapitalInboundAuthorityError("ACTOR_SERVICE_MISMATCH", "X-Pantheon-Service does not match the verified token", 403)
-        if not explicit_services and context.token_kind == "structured" and clean_service not in bound_services:
+        if clean_service not in bound_services:
             raise CapitalInboundAuthorityError("ACTOR_SERVICE_MISMATCH", "X-Pantheon-Service does not match the verified token", 403)
     allowed_tenants = _claim_strings(context.claims, _TENANT_CLAIMS)
     if context.token_kind == "structured":

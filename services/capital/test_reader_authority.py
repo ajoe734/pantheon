@@ -646,17 +646,17 @@ def test_evaluator_viewer_token_mutation_is_rejected(capital_reader_env):
     assert res_post_bind.json()["error"]["code"] == "ACTOR_SERVICE_MISMATCH"
 
 
-def test_forwarded_user_jwt_mutation_positive_and_service_mismatch_negative(capital_reader_env):
+def test_forwarded_user_jwt_mutation_service_mismatch_denied(capital_reader_env):
     """
     Validates that:
-    1. A valid ordinary user JWT (sub, roles, allowed_tenants, but no service claim)
-       forwarded by control-plane-bff succeeds for legitimate mutations.
+    1. An arbitrary user JWT (sub='operator-alice', no service claim matching control-plane-bff)
+       cannot set X-Pantheon-Service: control-plane-bff on mutations; it is rejected with ACTOR_SERVICE_MISMATCH.
     2. A token with an explicit mismatched service claim is rejected with ACTOR_SERVICE_MISMATCH.
     """
     client, module, _ = capital_reader_env
     _seed_pool_and_binding(client, "tenant-alpha")
 
-    # 1. Ordinary user JWT without explicit service claim
+    # 1. Ordinary user JWT without service claim matching control-plane-bff is rejected for mutations
     user_token = encode_jwt_hs256(
         {
             "sub": "operator-alice",
@@ -687,8 +687,8 @@ def test_forwarded_user_jwt_mutation_positive_and_service_mismatch_negative(capi
         },
         headers=user_headers,
     )
-    assert res_user_pool.status_code == 201, res_user_pool.text
-    assert res_user_pool.json()["pool_id"] == "pool-alice-1"
+    assert res_user_pool.status_code == 403
+    assert res_user_pool.json()["error"]["code"] == "ACTOR_SERVICE_MISMATCH"
 
     # 2. Service JWT with explicit mismatched service claim
     mismatched_service_token = encode_jwt_hs256(

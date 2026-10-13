@@ -163,10 +163,11 @@ def test_evaluator_viewer_token_mutation_is_denied(owner):
     assert res.json()["error"]["code"] == "ACTOR_SERVICE_MISMATCH"
 
 
-def test_forwarded_user_jwt_mutation_positive_and_mismatched_service_negative(owner):
+def test_forwarded_user_jwt_mutation_service_mismatch_is_denied(owner):
     """
     Validates that:
-    1. A valid ordinary user JWT without service claim is admitted for mutations through control-plane-bff.
+    1. An arbitrary user JWT without service claim matching control-plane-bff is denied
+       for mutations through control-plane-bff with ACTOR_SERVICE_MISMATCH.
     2. A token with an explicit mismatched service claim is denied with ACTOR_SERVICE_MISMATCH.
     """
     client = owner
@@ -198,8 +199,8 @@ def test_forwarded_user_jwt_mutation_positive_and_mismatched_service_negative(ow
             "risk_policy_ref": "risk-main",
         },
     )
-    assert res_ok.status_code == 201, res_ok.text
-    assert res_ok.json()["pool_id"] == "pool-bob-created"
+    assert res_ok.status_code == 403
+    assert res_ok.json()["error"]["code"] == "ACTOR_SERVICE_MISMATCH"
 
     mismatched_token = encode_jwt_hs256(
         {
