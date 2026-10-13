@@ -1760,6 +1760,72 @@ class TestRunPoll:
         consume.assert_called_once()
 
 
+class TestExecuteRetirement:
+    def _saga(self, status: str = "retiring") -> dict[str, Any]:
+        return {**_binding_saga(), "status": status, "binding_id": "rb-001"}
+
+    def _run(self, worker, saga, client):
+        with patch.object(worker, "finalize_retirement") as finalize:
+            result = worker.execute_retirement(
+                api_url="http://deployment:8095",
+                saga=saga,
+                client=client,
+                timeout_seconds=10.0,
+            )
+        return result, finalize
+
+    def test_retires_exact_binding_with_readback_and_finalizes(self, worker):
+        client = MagicMock()
+        client.get.side_effect = [_runtime_binding(), _runtime_binding(status="retired")]
+        _, finalize = self._run(worker, self._saga(), client)
+        client.transition.assert_called_once_with("rb-001", "retired")
+        finalize.assert_called_once()
+
+    def test_replay_of_already_retired_binding_does_not_retransition(self, worker):
+        client = MagicMock()
+        client.get.side_effect = [
+            _runtime_binding(status="retired"),
+            _runtime_binding(status="retired"),
+        ]
+        _, finalize = self._run(worker, self._saga(), client)
+        client.transition.assert_not_called()
+        finalize.assert_called_once()
+
+    def test_replay_after_finalize_verifies_without_refinalizing(self, worker):
+        client = MagicMock()
+        client.get.side_effect = [
+            _runtime_binding(status="retired"),
+            _runtime_binding(status="retired"),
+        ]
+        _, finalize = self._run(worker, self._saga("retired"), client)
+        client.transition.assert_not_called()
+        finalize.assert_not_called()
+
+    def test_identity_mismatch_fails_closed(self, worker):
+        client = MagicMock()
+        client.get.return_value = _runtime_binding(plan_id="other-plan")
+        with pytest.raises(RuntimeError, match="identity mismatch"):
+            self._run(worker, self._saga(), client)
+        client.transition.assert_not_called()
+
+    def test_unexpected_binding_status_fails_closed(self, worker):
+        client = MagicMock()
+        client.get.return_value = _runtime_binding(status="failed")
+        with pytest.raises(RuntimeError, match="cannot converge"):
+            self._run(worker, self._saga(), client)
+        client.transition.assert_not_called()
+
+    def test_missing_retired_readback_fails_closed(self, worker):
+        client = MagicMock()
+        client.get.side_effect = [_runtime_binding(), _runtime_binding()]
+        with pytest.raises(RuntimeError, match="readback did not converge"):
+            self._run(worker, self._saga(), client)
+
+    def test_non_retiring_saga_is_rejected(self, worker):
+        with pytest.raises(RuntimeError, match="cannot execute retirement"):
+            self._run(worker, self._saga("completed"), MagicMock())
+
+
 class TestExecuteCompensation:
     def _event(self, command: str) -> dict[str, Any]:
         return {
