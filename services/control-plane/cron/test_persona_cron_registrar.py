@@ -1389,23 +1389,202 @@ class TestPersonaCronDeadlineContract(unittest.TestCase):
         urlopen.assert_not_called()
 
     def test_multi_call_pagination_shrinks_remaining_deadline(self):
-        deadlines_observed: list[float] = []
+        timeouts_observed: list[float] = []
+        clock = [1000.0]
 
         class PaginatingRuntime:
             def gateway_call(self, method, params=None, *, deadline=None, timeout_seconds=None):
-                if deadline is not None:
-                    deadlines_observed.append(deadline)
+                if timeout_seconds is not None:
+                    timeouts_observed.append(timeout_seconds)
+                clock[0] += 10.0
                 offset = (params or {}).get("offset", 0)
                 if offset == 0:
                     return {"jobs": [{"id": "j1"}], "hasMore": True, "nextOffset": 1}
                 return {"jobs": [{"id": "j2"}], "hasMore": False}
 
         registrar = PersonaCronRegistrar(gateway_runtime=PaginatingRuntime())
-        now = time.monotonic()
-        test_deadline = now + 60.0
-        jobs = registrar._list_jobs(PaginatingRuntime(), deadline=test_deadline)
+        test_deadline = 1000.0 + 60.0
+        with patch("services.control_plane.cron.persona_cron_registrar.time.monotonic", side_effect=lambda: clock[0]):
+            jobs = registrar._list_jobs(PaginatingRuntime(), deadline=test_deadline)
         self.assertEqual(len(jobs), 2)
-        self.assertEqual(deadlines_observed, [test_deadline, test_deadline])
+        self.assertEqual(len(timeouts_observed), 2)
+        self.assertAlmostEqual(timeouts_observed[0], 60.0, places=1)
+        self.assertAlmostEqual(timeouts_observed[1], 50.0, places=1)
+        self.assertGreater(timeouts_observed[0], timeouts_observed[1])
+
+    def test_delayed_initial_list_exceeding_former_30s_completes_within_single_operation_budget(self):
+        clock = [1000.0]
+        calls: list[dict[str, Any]] = []
+
+        workflow = WORKFLOW_CATALOG[PERSONA_FIRST_EVALUATION_WORKFLOW_ID]
+        patch_job = PersonaCronRegistrar()._build_job_patch(
+            workflow,
+            "persona-slow-alpha",
+            f"persona-provisioning:persona-slow-alpha:{workflow.workflow_id}",
+            runtime_id="rt-1",
+            runtime_binding_id="rb-1",
+            capital_pool_id="cp-1",
+            persona_capital_binding_id="pcb-1",
+        )
+        readback_job = {
+            "id": "job-slow-created",
+            "enabled": True,
+            **patch_job,
+        }
+
+        class ComposedControlledRuntime:
+            def gateway_call(self, method, params=None, *, deadline=None, timeout_seconds=None):
+                calls.append({
+                    "method": method,
+                    "params": params,
+                    "timeout_seconds": timeout_seconds,
+                    "clock_at_call": clock[0],
+                })
+                if method == "cron.list":
+                    if len(calls) == 1:
+                        # Initial list takes 35s (> 30s former socket timeout cap)
+                        clock[0] += 35.0
+                        return {"jobs": []}
+                    else:
+                        # Readback list takes 2s
+                        clock[0] += 2.0
+                        return {"jobs": [readback_job]}
+                if method == "cron.add":
+                    # Add mutation takes 5s
+                    clock[0] += 5.0
+                    return {"id": "job-slow-created"}
+                raise AssertionError(f"Unexpected method: {method}")
+
+        runtime = ComposedControlledRuntime()
+        registrar = PersonaCronRegistrar(gateway_runtime=runtime)
+        test_deadline = 1000.0 + 120.0
+
+        with patch("services.control_plane.cron.persona_cron_registrar.time.monotonic", side_effect=lambda: clock[0]):
+            result = registrar.register_for_persona(
+                "persona-slow-alpha",
+                workflow_ids=["pantheon.persona.first-evaluation"],
+                runtime_id="rt-1",
+                runtime_binding_id="rb-1",
+                capital_pool_id="cp-1",
+                persona_capital_binding_id="pcb-1",
+                deadline=test_deadline,
+            )
+            readback = registrar.get_first_evaluation_registration(
+                "persona-slow-alpha",
+                runtime=runtime,
+                runtime_id="rt-1",
+                runtime_binding_id="rb-1",
+                capital_pool_id="cp-1",
+                persona_capital_binding_id="pcb-1",
+                deadline=test_deadline,
+            )
+
+        self.assertEqual(len(result.failed), 0)
+        self.assertEqual(len(result.registered), 1)
+        self.assertEqual(result.registered[0].job_id, "job-slow-created")
+        self.assertIsNotNone(readback)
+        self.assertEqual(readback["id"], "job-slow-created")
+
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(calls[0]["method"], "cron.list")
+        self.assertEqual(calls[1]["method"], "cron.add")
+        self.assertEqual(calls[2]["method"], "cron.list")
+        self.assertAlmostEqual(calls[0]["timeout_seconds"], 120.0, places=1)
+        self.assertAlmostEqual(calls[1]["timeout_seconds"], 85.0, places=1)
+        self.assertAlmostEqual(calls[2]["timeout_seconds"], 80.0, places=1)
+        self.assertGreater(calls[0]["timeout_seconds"], calls[1]["timeout_seconds"])
+        self.assertGreater(calls[1]["timeout_seconds"], calls[2]["timeout_seconds"])
+
+    def test_delayed_initial_list_exceeding_total_operation_budget_fails_closed_without_blind_add(self):
+        clock = [1000.0]
+        calls: list[str] = []
+
+        class ExpiringRuntime:
+            def gateway_call(self, method, params=None, *, deadline=None, timeout_seconds=None):
+                calls.append(method)
+                if method == "cron.list":
+                    # Initial list takes 125s (exceeding 120s total budget)
+                    clock[0] += 125.0
+                    return {"jobs": []}
+                if method == "cron.add":
+                    raise AssertionError("Blind cron.add must NEVER be called after deadline expiry")
+
+        runtime = ExpiringRuntime()
+        registrar = PersonaCronRegistrar(gateway_runtime=runtime)
+        test_deadline = 1000.0 + 120.0
+
+        with patch("services.control_plane.cron.persona_cron_registrar.time.monotonic", side_effect=lambda: clock[0]):
+            result = registrar.register_for_persona(
+                "persona-slow-failclosed",
+                workflow_ids=["pantheon.persona.first-evaluation"],
+                deadline=test_deadline,
+            )
+
+        self.assertEqual(calls, ["cron.list"])
+        self.assertEqual(len(result.registered), 0)
+        self.assertEqual(len(result.failed), 1)
+        self.assertIn("schedule deadline exceeded", result.failed[0]["error"])
+
+    def test_cumulative_pagination_and_readback_polls_shrink_deadline_strictly(self):
+        clock = [1000.0]
+        timeouts: list[float] = []
+        workflow = WORKFLOW_CATALOG[PERSONA_FIRST_EVALUATION_WORKFLOW_ID]
+        patch_job = PersonaCronRegistrar()._build_job_patch(
+            workflow,
+            "persona-paged",
+            f"persona-provisioning:persona-paged:{workflow.workflow_id}",
+            runtime_id=None,
+            runtime_binding_id=None,
+            capital_pool_id=None,
+            persona_capital_binding_id=None,
+        )
+        matching_job = {
+            "id": "job-paged-match",
+            "enabled": True,
+            **patch_job,
+        }
+
+        class CumulativePagingRuntime:
+            def gateway_call(self, method, params=None, *, deadline=None, timeout_seconds=None):
+                timeouts.append(timeout_seconds)
+                clock[0] += 12.0
+                offset = (params or {}).get("offset", 0)
+                if method == "cron.list":
+                    if len(timeouts) <= 2:
+                        if offset == 0:
+                            return {"jobs": [{"id": "other-1"}], "hasMore": True, "nextOffset": 1}
+                        return {"jobs": [{"id": "other-2"}], "hasMore": False}
+                    else:
+                        return {"jobs": [matching_job]}
+                if method == "cron.add":
+                    return {"id": "job-paged-match"}
+                raise AssertionError(method)
+
+        runtime = CumulativePagingRuntime()
+        registrar = PersonaCronRegistrar(gateway_runtime=runtime)
+        test_deadline = 1000.0 + 150.0
+
+        with patch("services.control_plane.cron.persona_cron_registrar.time.monotonic", side_effect=lambda: clock[0]):
+            result = registrar.register_for_persona(
+                "persona-paged",
+                workflow_ids=["pantheon.persona.first-evaluation"],
+                deadline=test_deadline,
+            )
+            readback = registrar.get_first_evaluation_registration(
+                "persona-paged",
+                runtime=runtime,
+                deadline=test_deadline,
+            )
+
+        self.assertEqual(len(result.registered), 1)
+        self.assertIsNotNone(readback)
+        self.assertEqual(len(timeouts), 4)
+        for i in range(len(timeouts) - 1):
+            self.assertGreater(
+                timeouts[i],
+                timeouts[i + 1],
+                f"Timeout at step {i} ({timeouts[i]}) must be > step {i+1} ({timeouts[i+1]})",
+            )
 
     def test_register_for_persona_fails_closed_when_deadline_exceeded(self):
         class DummyRuntime:

@@ -329,7 +329,7 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> _Harness:
     monkeypatch.setattr(
         personas_service,
         "_remove_persona_cron_required",
-        lambda persona_id: {"persona_id": persona_id, "registered": False, "removed_ids": []},
+        lambda persona_id, *args, **kwargs: {"persona_id": persona_id, "registered": False, "removed_ids": []},
     )
     monkeypatch.setattr(
         personas_service,
@@ -574,6 +574,124 @@ def test_required_cron_registration_rejects_late_success_after_deadline_expired(
             runtime_binding_id=RUNTIME_BINDING_ID,
             deadline=deadline,
         )
+
+
+def test_remove_persona_cron_required_fails_closed_without_typeerror_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, float | None, float | None]] = []
+
+    class _ThrowingRegistrar:
+        def remove_first_evaluation_registration(
+            self,
+            persona_id: str,
+            *,
+            deadline: float | None = None,
+            timeout_seconds: float | None = None,
+        ) -> dict[str, Any]:
+            calls.append((persona_id, deadline, timeout_seconds))
+            raise TypeError("internal registrar type error after mutation")
+
+    fake_module = SimpleNamespace(PersonaCronRegistrar=_ThrowingRegistrar)
+    monkeypatch.setitem(sys.modules, "persona_cron_registrar", fake_module)
+    monkeypatch.setitem(
+        sys.modules, "services.control_plane.cron.persona_cron_registrar", fake_module
+    )
+
+    with pytest.raises(TypeError, match="internal registrar type error"):
+        personas_service._remove_persona_cron_required("persona-failclosed-typeerror", deadline=12345.0)
+
+    assert len(calls) == 1
+    assert calls[0][0] == "persona-failclosed-typeerror"
+    assert calls[0][1] == 12345.0
+
+
+def test_coordinate_persona_create_propagates_monotonic_deadline_with_response_reserve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.control_plane.bff.persona_provisioning import ProvisioningRecord
+
+    # Input record created 10 seconds ago
+    input_created_dt = datetime.now(timezone.utc) - timedelta(seconds=10.0)
+    input_created_at = input_created_dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    record = ProvisioningRecord(
+        tenant_id="tenant-test-deadline",
+        idempotency_key="key-test-deadline",
+        request_hash="hash-123",
+        normalized_name="test-persona",
+        persona_id="persona-test-deadline",
+        request_payload={"name": "Test Persona"},
+        created_at=input_created_at,
+    )
+
+    # Historical active record returned by store.reserve has an old created_at
+    historical_dt = datetime.now(timezone.utc) - timedelta(hours=2)
+    historical_created_at = historical_dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    class FakeStore:
+        def reserve(self, **kwargs: Any) -> tuple[ProvisioningRecord, bool]:
+            active = ProvisioningRecord(
+                tenant_id=record.tenant_id,
+                idempotency_key=record.idempotency_key,
+                request_hash=record.request_hash,
+                normalized_name=record.normalized_name,
+                persona_id=record.persona_id,
+                request_payload=record.request_payload,
+                created_at=historical_created_at,
+                lease_expires_at="2099-01-01T00:00:00Z",
+            )
+            return active, True
+
+    captured_deadline: list[float] = []
+
+    def fake_register_cron(
+        persona_id: str,
+        capital_pool_id: str,
+        binding_id: str,
+        *,
+        deadline: float | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        if deadline is not None:
+            captured_deadline.append(deadline)
+        return {"mode": "gateway_rpc", "registered": True, "authoritative_readback": {}}
+
+    class FakeCoordinator:
+        def __init__(self, **kwargs: Any) -> None:
+            self.schedule_registrar = kwargs.get("schedule_registrar")
+
+        def coordinate(self, active: ProvisioningRecord) -> ProvisioningRecord:
+            if self.schedule_registrar:
+                self.schedule_registrar("persona-test-deadline", "pool-1", "pcb-1")
+            active.state = "paper_running"
+            return active
+
+    monkeypatch.setattr(personas_service, "_persona_provisioning_store", lambda: FakeStore())
+    monkeypatch.setattr(personas_service, "PersonaProvisioningCoordinator", FakeCoordinator)
+    monkeypatch.setattr(personas_service, "_register_persona_cron_required", fake_register_cron)
+    monkeypatch.setattr(
+        personas_service,
+        "_persona_record_for_provisioning",
+        lambda active, **kw: ({"id": active.persona_id}, {"state": active.state}),
+    )
+
+    monotonic_start = 5000.0
+    monkeypatch.setattr(personas_service.time, "monotonic", lambda: monotonic_start)
+    monkeypatch.setenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")
+    monkeypatch.setenv("PANTHEON_PERSONA_SCHEDULE_RESPONSE_RESERVE_SECONDS", "2.0")
+
+    active, _, _, _ = personas_service._coordinate_persona_create(
+        record,
+        payload=record.request_payload,
+        owner="test-owner",
+    )
+
+    assert len(captured_deadline) == 1
+    # Expected remaining: 180s (attempt allowance) - 10s (elapsed) - 2.0s (response reserve) = 168.0s
+    # Expected deadline: monotonic_start (5000.0) + 168.0s = 5168.0s
+    assert captured_deadline[0] == pytest.approx(5000.0 + 168.0, abs=1.0)
+    assert captured_deadline[0] > 5000.0
 
 
 def _evaluate(
@@ -1306,7 +1424,7 @@ def test_cleanup_outage_does_not_erase_new_terminal_failure(
     monkeypatch.setattr(
         personas_service,
         "_remove_persona_cron_required",
-        lambda _persona_id: (_ for _ in ()).throw(RuntimeError("cron unavailable")),
+        lambda _persona_id, *args, **kwargs: (_ for _ in ()).throw(RuntimeError("cron unavailable")),
     )
     diagnostics: list[str] = []
     raw = _raw_persona()

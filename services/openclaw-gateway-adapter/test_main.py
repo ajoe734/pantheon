@@ -682,12 +682,15 @@ class TestCronServiceAuthentication(unittest.TestCase):
         patch_params = self._persona_job()
         patch_params.pop("id")
         calls = []
+        clock = [1000.0]
 
         def gateway_call(method, params, *, timeout_seconds=None, **kwargs):
             calls.append((method, params, timeout_seconds))
             if method == "cron.list":
+                clock[0] += 8.0  # 8s elapsed during namespace guard list
                 return {"jobs": [current]}
             if method == "cron.update":
+                clock[0] += 2.0
                 return {"updated": True}
             raise AssertionError(method)
 
@@ -697,6 +700,11 @@ class TestCronServiceAuthentication(unittest.TestCase):
                 adapter_main._OPENCLAW_AGENT_PROVIDER,
                 "gateway_cron_call",
                 side_effect=gateway_call,
+            ),
+            patch.object(
+                adapter_main.time,
+                "monotonic",
+                side_effect=lambda: clock[0],
             ),
         ):
             response = client.post(
@@ -718,7 +726,9 @@ class TestCronServiceAuthentication(unittest.TestCase):
         self.assertAlmostEqual(calls[0][2], 50.0, delta=1.0)
         self.assertEqual(calls[1][0], "cron.update")
         self.assertIsNotNone(calls[1][2])
-        self.assertAlmostEqual(calls[1][2], 50.0, delta=1.0)
+        # Update call observed remaining timeout after namespace guard spent 8s: 50.0 - 8.0 = 42.0
+        self.assertAlmostEqual(calls[1][2], 42.0, delta=1.0)
+        self.assertGreater(calls[0][2], calls[1][2])
 
     def test_cron_update_rejects_noncanonical_patch(self):
         current = self._persona_job()

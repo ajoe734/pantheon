@@ -1339,13 +1339,16 @@ def _evaluate_persona_provisioning_status(
         30.0,
         float(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
     )
-    eval_deadline = eval_start_time + lease_seconds
+    response_reserve = float(
+        os.getenv("PANTHEON_PERSONA_SCHEDULE_RESPONSE_RESERVE_SECONDS", "2.0")
+    )
+    eval_deadline = eval_start_time + max(0.0, lease_seconds - response_reserve)
     metadata = raw.get("metadata") or {}
     current_state = raw.get("lifecycle_state") or raw.get("state")
     if current_state == "provisioning_failed":
         terminal_updates: Dict[str, Any] = {}
         try:
-            schedule_cleanup = _remove_persona_cron_required(persona_id)
+            schedule_cleanup = _remove_persona_cron_required(persona_id, deadline=eval_deadline)
             terminal_updates["first_evaluation_schedule_cleanup"] = schedule_cleanup
         except Exception as exc:
             log.warning(
@@ -3429,7 +3432,10 @@ def _register_persona_cron_required(
             30.0,
             float(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
         )
-        operation_deadline = start_time + lease_seconds
+        response_reserve = float(
+            os.getenv("PANTHEON_PERSONA_SCHEDULE_RESPONSE_RESERVE_SECONDS", "2.0")
+        )
+        operation_deadline = start_time + max(0.0, lease_seconds - response_reserve)
 
     if time.monotonic() >= operation_deadline:
         raise TimeoutError("schedule deadline exceeded before cron registration")
@@ -3534,14 +3540,11 @@ def _remove_persona_cron_required(
     """Remove first-evaluation owner rows and require authoritative absence."""
     from services.control_plane.cron.persona_cron_registrar import PersonaCronRegistrar
 
-    try:
-        result = PersonaCronRegistrar().remove_first_evaluation_registration(
-            persona_id,
-            deadline=deadline,
-            timeout_seconds=timeout_seconds,
-        )
-    except TypeError:
-        result = PersonaCronRegistrar().remove_first_evaluation_registration(persona_id)
+    result = PersonaCronRegistrar().remove_first_evaluation_registration(
+        persona_id,
+        deadline=deadline,
+        timeout_seconds=timeout_seconds,
+    )
     if result.get("registered") is not False:
         raise RuntimeError("first-evaluation schedule removal lacks zero-owner readback")
     return result
@@ -4111,6 +4114,41 @@ def _coordinate_persona_create(
     payload: Mapping[str, Any],
     owner: str,
 ) -> Tuple[ProvisioningRecord, Dict[str, Any], Dict[str, Any], Optional[Dict[str, Any]]]:
+    # Retain the fresh input record.created_at before store.reserve replaces it with active.
+    # Convert remaining attempt allowance once to monotonic deadline, debiting
+    # pre-queue / prior-owner elapsed time and keeping explicit response reserve.
+    # Do not use historical active.created_at or renewable lease_expires_at, and do not
+    # reset at schedule entry.
+    input_created_at_raw = getattr(record, "created_at", None)
+    elapsed_since_input = 0.0
+    if input_created_at_raw:
+        try:
+            if isinstance(input_created_at_raw, str):
+                created_dt = datetime.fromisoformat(input_created_at_raw.replace("Z", "+00:00"))
+            elif isinstance(input_created_at_raw, datetime):
+                created_dt = input_created_at_raw
+            else:
+                created_dt = None
+            if created_dt is not None:
+                if created_dt.tzinfo is None:
+                    created_dt = created_dt.replace(tzinfo=timezone.utc)
+                now_dt = datetime.now(timezone.utc)
+                elapsed_since_input = max(0.0, (now_dt - created_dt).total_seconds())
+        except Exception:
+            elapsed_since_input = 0.0
+
+    monotonic_start = time.monotonic()
+    lease_seconds = max(
+        30,
+        int(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
+    )
+    attempt_allowance = float(lease_seconds)
+    response_reserve = float(
+        os.getenv("PANTHEON_PERSONA_SCHEDULE_RESPONSE_RESERVE_SECONDS", "2.0")
+    )
+    remaining_allowance = max(0.0, attempt_allowance - elapsed_since_input - response_reserve)
+    operation_deadline = monotonic_start + remaining_allowance
+
     store = _persona_provisioning_store()
     active, _ = store.reserve(
         tenant_id=record.tenant_id,
@@ -4120,12 +4158,6 @@ def _coordinate_persona_create(
         persona_id=record.persona_id,
         request_payload=record.request_payload,
     )
-    start_time = time.monotonic()
-    lease_seconds = max(
-        30,
-        int(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
-    )
-    operation_deadline = start_time + float(lease_seconds)
 
     def _bounded_schedule_registrar(
         persona_id: str,
