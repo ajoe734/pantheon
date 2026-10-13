@@ -3495,7 +3495,8 @@ verify_exact_component_deployment() {
   # mid-window (3 -> 4 -> 4) cannot be laundered into a stable 4 -> 4.
   local stability_errors=()
   declare -A baseline_container_id=() baseline_image_id=() baseline_started_at=() \
-    baseline_restart_count=() baseline_health=() observation_count=()
+    baseline_restart_count=() baseline_health=() observation_count=() \
+    service_bad_health=()
 
   # Bounded observation loop: at least two distinct observations, extended
   # while health is still starting, and an unresolved start fails.
@@ -3560,9 +3561,6 @@ verify_exact_component_deployment() {
         baseline_restart_count["$service"]="$restart_count"
         baseline_health["$service"]="$health"
         observation_count["$service"]=1
-        if [[ "$health" != "starting" && "$health" != "healthy" && "$health" != "not_configured" ]]; then
-          stability_errors+=("${service}: baseline health is ${health:-unknown}")
-        fi
       else
         observation_count["$service"]=$(( ${observation_count[$service]} + 1 ))
         if [[ "$container_id" != "${baseline_container_id[$service]}" ]]; then
@@ -3581,6 +3579,8 @@ verify_exact_component_deployment() {
       if [[ "$health" == "starting" ]]; then
         has_starting=true
       elif [[ "$health" != "healthy" && "$health" != "not_configured" ]]; then
+        service_bad_health["$service"]=1
+        stability_errors+=("${service}: health is ${health:-unknown}")
         unhealthy+=("${service}: health=${health}")
       fi
       if [[ -z "$image" ]]; then
@@ -3603,8 +3603,8 @@ import json, sys
 (
     service, cid, img, image_id, compose_image_id, rev, stat, rcount, hlth,
     cmd_json, exp_sha, started_at, obs_count, base_cid, base_image_id,
-    base_started_at, base_rcount, base_hlth,
-) = sys.argv[1:19]
+    base_started_at, base_rcount, base_hlth, bad_health,
+) = sys.argv[1:20]
 try:
     cmd_val = json.loads(cmd_json)
 except Exception as exc:
@@ -3622,7 +3622,7 @@ stable = (
     and image_id == base_image_id
     and started_at == base_started_at
     and int(rcount) == int(base_rcount)
-    and base_hlth in ("starting", "healthy", "not_configured")
+    and bad_health == "0"
 )
 print(json.dumps({
     "service": service,
@@ -3662,7 +3662,7 @@ print(json.dumps({
 ' "$service" "$container_id" "$image" "$image_id" "$compose_image_id" "$image_rev" "$status" "$restart_count" "$health" "$cmd" "$expected_sha" \
     "$started_at" "${observation_count[$service]}" "${baseline_container_id[$service]}" \
     "${baseline_image_id[$service]}" "${baseline_started_at[$service]}" \
-    "${baseline_restart_count[$service]}" "${baseline_health[$service]}")"; then
+    "${baseline_restart_count[$service]}" "${baseline_health[$service]}" "${service_bad_health[$service]:-0}")"; then
         identity_errors+=("${service}: receipt identity serialization failed")
         continue
       fi
