@@ -623,6 +623,70 @@ class ProductFunctionalClosureVerifier:
             "head_sha": expected_head_sha,
         }
 
+    def _verify_component_stability(
+        self, svc_name: str, svc_dict: Mapping[str, Any], restart_count: int
+    ) -> None:
+        field = f"gate_01.backend_components.{svc_name}.stability"
+        stability = _mapping(svc_dict.get("stability"), field)
+        observations = stability.get("observation_count")
+        if type(observations) is not int or observations < 2:
+            raise ProductFunctionalClosureAcceptanceError(
+                field,
+                f"service {svc_name} stability observation_count is {observations!r}, must be an integer >= 2",
+            )
+        if stability.get("stable") is not True:
+            raise ProductFunctionalClosureAcceptanceError(
+                field, f"service {svc_name} does not declare stable=true"
+            )
+        before = _mapping(stability.get("before"), f"{field}.before")
+        after = _mapping(stability.get("after"), f"{field}.after")
+        started_at = svc_dict.get("started_at")
+        if (
+            not isinstance(started_at, str)
+            or not re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T", started_at)
+            or started_at.startswith("0001-")
+        ):
+            raise ProductFunctionalClosureAcceptanceError(
+                f"gate_01.backend_components.{svc_name}.started_at",
+                f"service {svc_name} container StartedAt is invalid ({started_at!r})",
+            )
+        expected_after = {
+            "container_id": svc_dict.get("container_id"),
+            "image_id": svc_dict.get("image_id"),
+            "started_at": started_at,
+            "restart_count": restart_count,
+            "health": svc_dict.get("health"),
+        }
+        for key in ("container_id", "image_id", "started_at"):
+            for label, side in (("before", before), ("after", after)):
+                if side.get(key) != expected_after[key]:
+                    raise ProductFunctionalClosureAcceptanceError(
+                        field,
+                        f"service {svc_name} stability {label}.{key} {side.get(key)!r} "
+                        f"!= final {expected_after[key]!r}",
+                    )
+        before_count = before.get("restart_count")
+        after_count = after.get("restart_count")
+        if (
+            type(before_count) is not int
+            or type(after_count) is not int
+            or before_count < 0
+            or after_count != restart_count
+            or before_count != after_count
+        ):
+            raise ProductFunctionalClosureAcceptanceError(
+                field,
+                f"service {svc_name} restart_count changed or is invalid across observations: "
+                f"before={before_count!r}, after={after_count!r}, final={restart_count!r}",
+            )
+        if after.get("health") != expected_after["health"] or before.get(
+            "health"
+        ) not in {"starting", "healthy", "not_configured"}:
+            raise ProductFunctionalClosureAcceptanceError(
+                field,
+                f"service {svc_name} stability health observations are inconsistent with final health",
+            )
+
     def verify_gate_01_manifest_exact_pair(self) -> dict[str, Any]:
         """Gate 01: Verify served FE manifest and runtime BFF version exact pair."""
         manifest = self._get_json(
@@ -923,11 +987,12 @@ class ProductFunctionalClosureVerifier:
                     f"service {svc_name} fallback source identity must not claim an OCI revision match",
                 )
             restart_count = svc_dict.get("restart_count")
-            if type(restart_count) is not int or restart_count != 0:
+            if type(restart_count) is not int or restart_count < 0:
                 raise ProductFunctionalClosureAcceptanceError(
                     f"gate_01.backend_components.{svc_name}.restart_count",
-                    f"service {svc_name} restart_count is {restart_count!r}, must be 0",
+                    f"service {svc_name} restart_count is {restart_count!r}, must be a non-negative integer",
                 )
+            self._verify_component_stability(svc_name, svc_dict, restart_count)
             command = svc_dict.get("command")
             if not isinstance(command, (list, str)) or not command:
                 raise ProductFunctionalClosureAcceptanceError(

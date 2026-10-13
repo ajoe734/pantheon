@@ -622,6 +622,8 @@ elif [[ "$1" == "inspect" ]]; then
   cid="$4"
   if [[ "$fmt" == "{{.State.Status}}" ]]; then
     echo "running"
+  elif [[ "$fmt" == "{{.State.StartedAt}}" ]]; then
+    echo "2026-10-13T03:11:51.000000000Z"
   elif [[ "$fmt" == "{{.RestartCount}}" ]]; then
     echo "0"
   elif [[ "$fmt" == *"{{.State.Health.Status}}"* ]]; then
@@ -708,6 +710,411 @@ verify_exact_component_deployment operator-bff agora-interaction-worker loop-run
         assert s_info["source_revision"] == receipt_data["expected_sha"]
 
 
+def _run_sequenced_component_verifier(tmp_path: Path, sequences: dict[str, list[str]]) -> tuple[subprocess.CompletedProcess, Path, int]:
+    """Run the ORIGINAL verifier against a mock docker whose inspect fields
+    return the n-th line of a per-field sequence on the n-th observation.
+    ``sleep`` is a recorded no-op so only the observation count is exercised.
+    """
+    import os
+
+    func_def = _extract_verify_exact_component_deployment_func()
+    bin_dir = tmp_path / "bin"
+    state = tmp_path / "state"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    state.mkdir(parents=True, exist_ok=True)
+    defaults = {
+        "id": ["cid_bff_1"],
+        "status": ["running"],
+        "restart": ["3"],
+        "started": ["2026-10-13T03:11:51.000000000Z"],
+        "health": ["healthy"],
+        "image_id": ["sha256:" + "a" * 64],
+    }
+    defaults.update(sequences)
+    for key, values in defaults.items():
+        (state / f"{key}.seq").write_text("\n".join(values) + "\n", encoding="utf-8")
+    (bin_dir / "sleep").write_text(f"#!/usr/bin/env bash\necho \"$1\" >> {state}/sleeps\n", encoding="utf-8")
+    (bin_dir / "sleep").chmod(0o755)
+    (bin_dir / "docker").write_text(
+        f"""#!/usr/bin/env bash
+state="{state}"
+next_value() {{
+  local key="$1" n=0
+  [[ -f "$state/$key.n" ]] && n="$(cat "$state/$key.n")"
+  n=$((n + 1))
+  echo "$n" > "$state/$key.n"
+  local total
+  total="$(wc -l < "$state/$key.seq")"
+  (( n > total )) && n="$total"
+  sed -n "${{n}}p" "$state/$key.seq"
+}}
+if [[ "$1" == "compose" ]]; then
+  if [[ " $* " == *" images -q "* ]]; then
+    echo "sha256:{'a' * 64}"
+  else
+    next_value id
+  fi
+elif [[ "$1" == "inspect" ]]; then
+  fmt="$3"
+  if [[ "$fmt" == "{{{{.State.Status}}}}" ]]; then next_value status
+  elif [[ "$fmt" == "{{{{.RestartCount}}}}" ]]; then next_value restart
+  elif [[ "$fmt" == "{{{{.State.StartedAt}}}}" ]]; then next_value started
+  elif [[ "$fmt" == *"{{{{.State.Health.Status}}}}"* ]]; then next_value health
+  elif [[ "$fmt" == "{{{{.Config.Image}}}}" ]]; then echo "pantheon-bff:latest"
+  elif [[ "$fmt" == "{{{{.Image}}}}" ]]; then next_value image_id
+  elif [[ "$fmt" == *"org.opencontainers.image.revision"* ]]; then echo "7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+  elif [[ "$fmt" == *"{{{{json .Config.Cmd}}}}"* ]]; then echo '["python", "x.py"]'
+  fi
+fi
+""",
+        encoding="utf-8",
+    )
+    (bin_dir / "docker").chmod(0o755)
+    _write_mock_git(bin_dir, "7a9674ea259bbac883e42f3ee217b3e8f68170fe")
+    receipt_path = tmp_path / "receipts" / "backend-components-receipt.json"
+    runner = tmp_path / "run_verifier.sh"
+    runner.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+{func_def}
+export PATH="{bin_dir}:$PATH"
+export PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH="{receipt_path}"
+export PANTHEON_DEV_FRONTEND_SHA="8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf"
+export PANTHEON_BFF_BASE_URL="https://bff.example.test"
+export PANTHEON_FE_BASE_URL="https://fe.example.test"
+export GIT_SHA="7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+verify_exact_component_deployment operator-bff
+""",
+        encoding="utf-8",
+    )
+    proc = subprocess.run(["bash", str(runner)], capture_output=True, text=True, check=False, cwd=tmp_path, env=dict(os.environ))
+    sleeps = state / "sleeps"
+    return proc, receipt_path, len(sleeps.read_text().splitlines()) if sleeps.exists() else 0
+
+
+def test_component_stability_historical_restart_count_unchanged_passes(tmp_path: Path) -> None:
+    import json
+
+    proc, receipt_path, sleeps = _run_sequenced_component_verifier(tmp_path, {})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    receipt = json.loads(receipt_path.read_text())
+    entry = receipt["services"]["operator-bff"]
+    assert receipt["status"] == "passed" and receipt["all_passed"] is True
+    assert entry["restart_count"] == 3
+    stability = entry["stability"]
+    assert stability["observation_count"] >= 2 and sleeps >= 1
+    assert stability["stable"] is True
+    assert stability["before"] == stability["after"]
+    assert stability["before"]["restart_count"] == 3
+    assert entry["started_at"] == "2026-10-13T03:11:51.000000000Z"
+
+
+def test_component_stability_restart_during_observation_keeps_baseline_and_fails(tmp_path: Path) -> None:
+    import json
+
+    # 3 -> 4 -> 4: the baseline must stay 3 and the replacement cannot be laundered.
+    proc, receipt_path, _ = _run_sequenced_component_verifier(tmp_path, {"restart": ["3", "4", "4"]})
+    assert proc.returncode != 0 or json.loads(receipt_path.read_text())["all_passed"] is False
+    receipt = json.loads(receipt_path.read_text())
+    assert receipt["status"] == "failed" and receipt["all_passed"] is False
+    assert any("restart_count changed" in item for item in receipt["verification_failures"]["not_running_or_restarted"])
+    assert receipt["services"]["operator-bff"]["stability"]["before"]["restart_count"] == 3
+    assert receipt["services"]["operator-bff"]["stability"]["stable"] is False
+
+
+def test_component_stability_replacement_changes_fail(tmp_path: Path) -> None:
+    import json
+
+    cases = {
+        "container": ({"id": ["cid_bff_1", "cid_bff_2"]}, "container replaced"),
+        "started": ({"started": ["2026-10-13T03:11:51.000000000Z", "2026-10-13T04:00:00.000000000Z"]}, "StartedAt changed"),
+        "image": ({"image_id": ["sha256:" + "a" * 64, "sha256:" + "b" * 64]}, "image"),
+    }
+    for name, (sequence, marker) in cases.items():
+        proc, receipt_path, _ = _run_sequenced_component_verifier(tmp_path / name, sequence)
+        receipt = json.loads(receipt_path.read_text())
+        assert receipt["status"] == "failed", name
+        failures = receipt["verification_failures"]
+        flat = [item for values in failures.values() for item in values]
+        assert any(marker in item for item in flat), (name, flat)
+
+
+def test_component_stability_unresolved_starting_fails(tmp_path: Path) -> None:
+    import json
+
+    proc, receipt_path, sleeps = _run_sequenced_component_verifier(
+        tmp_path, {"health": ["starting"], "restart": ["0"]}
+    )
+    receipt = json.loads(receipt_path.read_text())
+    assert receipt["status"] == "failed" and receipt["all_passed"] is False
+    assert any("still starting" in item for item in receipt["verification_failures"]["unhealthy"])
+    assert sleeps == 14
+
+
+def test_component_stability_starting_then_healthy_passes(tmp_path: Path) -> None:
+    import json
+
+    proc, receipt_path, _ = _run_sequenced_component_verifier(
+        tmp_path, {"health": ["starting", "starting", "healthy"], "restart": ["0"]}
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    receipt = json.loads(receipt_path.read_text())
+    stability = receipt["services"]["operator-bff"]["stability"]
+    assert receipt["status"] == "passed"
+    assert stability["before"]["health"] == "starting" and stability["after"]["health"] == "healthy"
+    assert stability["observation_count"] == 3
+
+
+def test_component_stability_unhealthy_then_healthy_fails(tmp_path: Path) -> None:
+    import json
+
+    proc, receipt_path, _ = _run_sequenced_component_verifier(
+        tmp_path, {"health": ["unhealthy", "healthy"], "restart": ["0"]}
+    )
+    assert proc.returncode != 0
+    receipt = json.loads(receipt_path.read_text())
+    assert receipt["status"] == "failed" and receipt["all_passed"] is False
+    entry = receipt["services"]["operator-bff"]
+    stability = entry["stability"]
+    assert stability["stable"] is False
+    assert stability["before"]["health"] == "unhealthy"
+    assert stability["after"]["health"] == "healthy"
+    assert any("health is unhealthy" in item for item in receipt["verification_failures"]["not_running_or_restarted"])
+
+
+def test_component_stability_unknown_then_healthy_fails(tmp_path: Path) -> None:
+    import json
+
+    proc, receipt_path, _ = _run_sequenced_component_verifier(
+        tmp_path, {"health": ["unknown", "healthy"], "restart": ["0"]}
+    )
+    assert proc.returncode != 0
+    receipt = json.loads(receipt_path.read_text())
+    assert receipt["status"] == "failed" and receipt["all_passed"] is False
+    entry = receipt["services"]["operator-bff"]
+    stability = entry["stability"]
+    assert stability["stable"] is False
+    assert stability["before"]["health"] == "unknown"
+    assert stability["after"]["health"] == "healthy"
+    assert any("health is unknown" in item for item in receipt["verification_failures"]["not_running_or_restarted"])
+
+
+def _run_two_component_verifier(
+    tmp_path: Path,
+    sequences: dict[str, list[str]],
+) -> tuple[subprocess.CompletedProcess[str], Path, int]:
+    func_def = _extract_verify_exact_component_deployment_func()
+    bin_dir = tmp_path / "bin"
+    state = tmp_path / "state"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    state.mkdir(parents=True, exist_ok=True)
+    defaults = {
+        "id": ["cid_bff_1", "cid_paper_1"],
+        "status": ["running"],
+        "restart": ["3"],
+        "started": ["2026-10-13T03:11:51.000000000Z"],
+        "health": ["healthy"],
+        "image_id": ["sha256:" + "a" * 64],
+    }
+    defaults.update(sequences)
+    for key, values in defaults.items():
+        (state / f"{key}.seq").write_text("\n".join(values) + "\n", encoding="utf-8")
+    (bin_dir / "sleep").write_text(f"#!/usr/bin/env bash\necho \"$1\" >> {state}/sleeps\n", encoding="utf-8")
+    (bin_dir / "sleep").chmod(0o755)
+    (bin_dir / "docker").write_text(
+        f"""#!/usr/bin/env bash
+state="{state}"
+next_value() {{
+  local key="$1" n=0
+  [[ -f "$state/$key.n" ]] && n="$(cat "$state/$key.n")"
+  n=$((n + 1))
+  echo "$n" > "$state/$key.n"
+  local total
+  total="$(wc -l < "$state/$key.seq")"
+  (( n > total )) && n="$total"
+  sed -n "${{n}}p" "$state/$key.seq"
+}}
+if [[ "$1" == "compose" ]]; then
+  if [[ " $* " == *" images -q "* ]]; then
+    echo "sha256:{'a' * 64}"
+  else
+    next_value id
+  fi
+elif [[ "$1" == "inspect" ]]; then
+  fmt="$3"
+  if [[ "$fmt" == "{{{{.State.Status}}}}" ]]; then next_value status
+  elif [[ "$fmt" == "{{{{.RestartCount}}}}" ]]; then next_value restart
+  elif [[ "$fmt" == "{{{{.State.StartedAt}}}}" ]]; then next_value started
+  elif [[ "$fmt" == *"{{{{.State.Health.Status}}}}"* ]]; then next_value health
+  elif [[ "$fmt" == "{{{{.Config.Image}}}}" ]]; then echo "pantheon-bff:latest"
+  elif [[ "$fmt" == "{{{{.Image}}}}" ]]; then next_value image_id
+  elif [[ "$fmt" == *"org.opencontainers.image.revision"* ]]; then echo "7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+  elif [[ "$fmt" == *"{{{{json .Config.Cmd}}}}"* ]]; then echo '["python", "x.py"]'
+  fi
+fi
+""",
+        encoding="utf-8",
+    )
+    (bin_dir / "docker").chmod(0o755)
+    _write_mock_git(bin_dir, "7a9674ea259bbac883e42f3ee217b3e8f68170fe")
+    receipt_path = tmp_path / "receipts" / "backend-components-receipt.json"
+    runner = tmp_path / "run_verifier.sh"
+    runner.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+{func_def}
+export PATH="{bin_dir}:$PATH"
+export PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH="{receipt_path}"
+export PANTHEON_DEV_FRONTEND_SHA="8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf"
+export PANTHEON_BFF_BASE_URL="https://bff.example.test"
+export PANTHEON_FE_BASE_URL="https://fe.example.test"
+export GIT_SHA="7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+verify_exact_component_deployment operator-bff paper-signal-producer
+""",
+        encoding="utf-8",
+    )
+    proc = subprocess.run(["bash", str(runner)], capture_output=True, text=True, check=False, cwd=tmp_path, env=dict(os.environ))
+    sleeps = state / "sleeps"
+    return proc, receipt_path, len(sleeps.read_text().splitlines()) if sleeps.exists() else 0
+
+
+def test_component_stability_middle_unhealthy_two_services_fails(tmp_path: Path) -> None:
+    import json
+
+    proc, receipt_path, sleeps = _run_two_component_verifier(
+        tmp_path,
+        {
+            "id": [
+                "cid_bff_1",
+                "cid_paper_1",
+                "cid_bff_1",
+                "cid_paper_1",
+                "cid_bff_1",
+                "cid_paper_1",
+            ],
+            "health": [
+                "healthy",
+                "starting",
+                "unhealthy",
+                "starting",
+                "healthy",
+                "healthy",
+            ],
+            "restart": ["3"],
+        },
+    )
+    assert proc.returncode != 0
+    receipt = json.loads(receipt_path.read_text())
+    assert receipt["status"] == "failed" and receipt["all_passed"] is False
+    assert sleeps == 2
+    bff_stability = receipt["services"]["operator-bff"]["stability"]
+    paper_stability = receipt["services"]["paper-signal-producer"]["stability"]
+    assert bff_stability["stable"] is False
+    assert bff_stability["observation_count"] == 3
+    assert bff_stability["before"]["health"] == "healthy" and bff_stability["after"]["health"] == "healthy"
+    assert paper_stability["stable"] is True
+    assert paper_stability["observation_count"] == 3
+    assert paper_stability["before"]["health"] == "starting" and paper_stability["after"]["health"] == "healthy"
+    assert any("health is unhealthy" in item for item in receipt["verification_failures"]["not_running_or_restarted"])
+
+
+def test_component_stability_middle_unknown_two_services_fails(tmp_path: Path) -> None:
+    import json
+
+    proc, receipt_path, sleeps = _run_two_component_verifier(
+        tmp_path,
+        {
+            "id": [
+                "cid_bff_1",
+                "cid_paper_1",
+                "cid_bff_1",
+                "cid_paper_1",
+                "cid_bff_1",
+                "cid_paper_1",
+            ],
+            "health": [
+                "healthy",
+                "starting",
+                "unknown",
+                "starting",
+                "healthy",
+                "healthy",
+            ],
+            "restart": ["3"],
+        },
+    )
+    assert proc.returncode != 0
+    receipt = json.loads(receipt_path.read_text())
+    assert receipt["status"] == "failed" and receipt["all_passed"] is False
+    assert sleeps == 2
+    bff_stability = receipt["services"]["operator-bff"]["stability"]
+    paper_stability = receipt["services"]["paper-signal-producer"]["stability"]
+    assert bff_stability["stable"] is False
+    assert bff_stability["observation_count"] == 3
+    assert bff_stability["before"]["health"] == "healthy" and bff_stability["after"]["health"] == "healthy"
+    assert paper_stability["stable"] is True
+    assert paper_stability["observation_count"] == 3
+    assert paper_stability["before"]["health"] == "starting" and paper_stability["after"]["health"] == "healthy"
+    assert any("health is unknown" in item for item in receipt["verification_failures"]["not_running_or_restarted"])
+
+
+def test_component_stability_two_services_healthy_throughout_passes(tmp_path: Path) -> None:
+    import json
+
+    proc, receipt_path, sleeps = _run_two_component_verifier(
+        tmp_path,
+        {
+            "id": [
+                "cid_bff_1",
+                "cid_paper_1",
+                "cid_bff_1",
+                "cid_paper_1",
+                "cid_bff_1",
+                "cid_paper_1",
+            ],
+            "health": [
+                "healthy",
+                "starting",
+                "healthy",
+                "starting",
+                "healthy",
+                "healthy",
+            ],
+            "restart": ["3"],
+        },
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    receipt = json.loads(receipt_path.read_text())
+    assert receipt["status"] == "passed" and receipt["all_passed"] is True
+    assert sleeps == 2
+    bff_stability = receipt["services"]["operator-bff"]["stability"]
+    paper_stability = receipt["services"]["paper-signal-producer"]["stability"]
+    assert bff_stability["stable"] is True
+    assert bff_stability["observation_count"] == 3
+    assert bff_stability["before"]["health"] == "healthy" and bff_stability["after"]["health"] == "healthy"
+    assert paper_stability["stable"] is True
+    assert paper_stability["observation_count"] == 3
+    assert paper_stability["before"]["health"] == "starting" and paper_stability["after"]["health"] == "healthy"
+    assert not any(receipt["verification_failures"].values())
+
+
+def test_component_stability_invalid_evidence_fails(tmp_path: Path) -> None:
+    import json
+
+    for name, sequence in {
+        "bad_count": {"restart": ["abc"]},
+        "empty_count": {"restart": [""]},
+        "bad_started": {"started": ["0001-01-01T00:00:00Z"]},
+        "nondated_started": {"started": ["invalid-started-at"]},
+    }.items():
+        proc, receipt_path, _ = _run_sequenced_component_verifier(tmp_path / name, sequence)
+        assert proc.returncode != 0 or json.loads(receipt_path.read_text())["status"] == "failed", name
+        if receipt_path.exists():
+            assert json.loads(receipt_path.read_text())["all_passed"] is False, name
+
+
 def test_verify_exact_component_deployment_missing_service_fails(tmp_path: Path) -> None:
     """verify_exact_component_deployment must exit with error when a required service has no container."""
     import os
@@ -789,6 +1196,8 @@ elif [[ "$1" == "inspect" ]]; then
   fmt="$3"
   if [[ "$fmt" == "{{.State.Status}}" ]]; then
     echo "running"
+  elif [[ "$fmt" == "{{.State.StartedAt}}" ]]; then
+    echo "2026-10-13T03:11:51.000000000Z"
   elif [[ "$fmt" == "{{.RestartCount}}" ]]; then
     echo "0"
   elif [[ "$fmt" == *"{{.State.Health.Status}}"* ]]; then
@@ -867,6 +1276,8 @@ elif [[ "$1" == "inspect" ]]; then
   fmt="$3"
   if [[ "$fmt" == "{{.State.Status}}" ]]; then
     echo "running"
+  elif [[ "$fmt" == "{{.State.StartedAt}}" ]]; then
+    echo "2026-10-13T03:11:51.000000000Z"
   elif [[ "$fmt" == "{{.RestartCount}}" ]]; then
     echo "0"
   elif [[ "$fmt" == *"{{.State.Health.Status}}"* ]]; then
@@ -952,6 +1363,8 @@ elif [[ "$1" == "inspect" ]]; then
   fmt="$3"
   if [[ "$fmt" == "{{.State.Status}}" ]]; then
     echo "running"
+  elif [[ "$fmt" == "{{.State.StartedAt}}" ]]; then
+    echo "2026-10-13T03:11:51.000000000Z"
   elif [[ "$fmt" == "{{.RestartCount}}" ]]; then
     echo "0"
   elif [[ "$fmt" == *"{{.State.Health.Status}}"* ]]; then
@@ -1184,6 +1597,8 @@ elif [[ "$1" == "inspect" ]]; then
   fmt="$3"
   if [[ "$fmt" == "{{.State.Status}}" ]]; then
     echo "running"
+  elif [[ "$fmt" == "{{.State.StartedAt}}" ]]; then
+    echo "2026-10-13T03:11:51.000000000Z"
   elif [[ "$fmt" == "{{.RestartCount}}" ]]; then
     echo "0"
   elif [[ "$fmt" == *"{{.State.Health.Status}}"* ]]; then

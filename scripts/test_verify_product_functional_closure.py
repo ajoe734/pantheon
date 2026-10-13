@@ -296,6 +296,26 @@ def _write_evidence_files(root: Path) -> dict[str, Path]:
         },
     }
 
+    # Required components carry before/after stability evidence. operator-bff
+    # keeps a historical lifetime RestartCount of 3 that did not change while
+    # observed, which is stable.
+    for _svc in backend_components_payload["services"].values():
+        _svc["started_at"] = "2026-10-13T03:11:51.000000000Z"
+        _svc["restart_count"] = 3 if _svc["service"] == "operator-bff" else 0
+        _observation = {
+            "container_id": _svc["container_id"],
+            "image_id": _svc["image_id"],
+            "started_at": _svc["started_at"],
+            "restart_count": _svc["restart_count"],
+            "health": _svc["health"],
+        }
+        _svc["stability"] = {
+            "observation_count": 2,
+            "before": dict(_observation),
+            "after": dict(_observation),
+            "stable": True,
+        }
+
     paths: dict[str, Path] = {}
     for name, payload in (
         ("l12", l12_payload),
@@ -1771,6 +1791,126 @@ def test_gate_01_backend_components_service_wrong_revision_fails(tmp_path: Path)
     gate_01 = next(r for r in report.gate_results if r.gate_id == "gate_01_manifest_exact_pair")
     assert gate_01.status == "FAILED"
     assert "agora-interaction-worker image revision" in str(gate_01.error)
+
+
+def _gate_01_backend_components_error(tmp_path: Path, mutate) -> str:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    paths = _write_evidence_files(tmp_path)
+    bc = json.loads(paths["backend_components"].read_text())
+    mutate(bc["services"]["operator-bff"])
+    paths["backend_components"].write_text(json.dumps(bc))
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_01 = next(r for r in report.gate_results if r.gate_id == "gate_01_manifest_exact_pair")
+    assert gate_01.status == "FAILED"
+    return str(gate_01.error)
+
+
+def _set_after(field: str, value):
+    def mutate(svc):
+        svc["stability"]["after"][field] = value
+        svc["stability"]["stable"] = True
+    return mutate
+
+
+def test_gate_01_historical_restart_count_unchanged_is_accepted(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    bc = json.loads(paths["backend_components"].read_text())
+    assert bc["services"]["operator-bff"]["restart_count"] == 3
+    assert bc["services"]["operator-bff"]["stability"]["before"]["restart_count"] == 3
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "PASSED"
+
+
+def test_gate_01_restart_during_observation_fails(tmp_path: Path) -> None:
+    def mutate(svc):
+        svc["restart_count"] = 4
+        svc["stability"]["after"]["restart_count"] = 4
+    error = _gate_01_backend_components_error(tmp_path, mutate)
+    assert "restart_count changed" in error
+
+
+def test_gate_01_container_image_started_at_change_fails(tmp_path: Path) -> None:
+    for field, value in (
+        ("container_id", "replaced"),
+        ("image_id", "sha256:" + "9" * 64),
+        ("started_at", "2026-10-13T04:00:00.000000000Z"),
+    ):
+        error = _gate_01_backend_components_error(tmp_path / field, _set_after(field, value))
+        assert f"after.{field}" in error
+
+
+def test_gate_01_final_entry_inconsistent_with_before_fails(tmp_path: Path) -> None:
+    def mutate(svc):
+        svc["stability"]["before"]["started_at"] = "2026-10-13T01:00:00.000000000Z"
+    assert "before.started_at" in _gate_01_backend_components_error(tmp_path, mutate)
+
+
+def test_gate_01_missing_or_incomplete_stability_evidence_fails(tmp_path: Path) -> None:
+    def drop(svc):
+        del svc["stability"]
+    assert "stability" in _gate_01_backend_components_error(tmp_path / "drop", drop)
+
+    def single(svc):
+        svc["stability"]["observation_count"] = 1
+    assert "observation_count" in _gate_01_backend_components_error(tmp_path / "single", single)
+
+    def bool_count(svc):
+        svc["stability"]["observation_count"] = True
+    assert "observation_count" in _gate_01_backend_components_error(tmp_path / "boolobs", bool_count)
+
+    def not_stable(svc):
+        svc["stability"]["stable"] = False
+    assert "stable=true" in _gate_01_backend_components_error(tmp_path / "unstable", not_stable)
+
+    def no_started(svc):
+        del svc["started_at"]
+    assert "StartedAt" in _gate_01_backend_components_error(tmp_path / "nostart", no_started)
+
+    def no_before(svc):
+        del svc["stability"]["before"]
+    assert "before" in _gate_01_backend_components_error(tmp_path / "nobefore", no_before)
+
+
+def test_gate_01_invalid_restart_counts_fail(tmp_path: Path) -> None:
+    for name, value in (("bool", True), ("str", "3"), ("neg", -1), ("none", None), ("float", 3.0)):
+        def mutate(svc, value=value):
+            svc["restart_count"] = value
+            svc["stability"]["after"]["restart_count"] = value
+        error = _gate_01_backend_components_error(tmp_path / name, mutate)
+        assert "restart_count" in error
+
+    def bool_before(svc):
+        svc["stability"]["before"]["restart_count"] = False
+    assert "restart_count" in _gate_01_backend_components_error(tmp_path / "boolbefore", bool_before)
+
+
+def test_gate_01_starting_final_health_fails(tmp_path: Path) -> None:
+    def mutate(svc):
+        svc["health"] = "starting"
+        svc["stability"]["after"]["health"] = "starting"
+    assert "health" in _gate_01_backend_components_error(tmp_path, mutate)
+
+
+def test_gate_01_invalid_started_at_fails(tmp_path: Path) -> None:
+    for name, value in (
+        ("nondated", "invalid-started-at"),
+        ("zero", "0001-01-01T00:00:00Z"),
+    ):
+        def mutate(svc, value=value):
+            svc["started_at"] = value
+            svc["stability"]["before"]["started_at"] = value
+            svc["stability"]["after"]["started_at"] = value
+        error = _gate_01_backend_components_error(tmp_path / name, mutate)
+        assert "StartedAt" in error
 
 
 def test_gate_01_backend_components_absent_from_discovery_and_config_fails(tmp_path: Path) -> None:
