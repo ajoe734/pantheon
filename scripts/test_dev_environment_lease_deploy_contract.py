@@ -3185,12 +3185,12 @@ def test_release_case_retirement_is_evidence_only_and_runs_for_both_outcomes() -
     assert "timeout --kill-after" in step
 
 
-def test_release_case_retirement_uses_no_operator_or_mfa_route() -> None:
+def test_release_case_retirement_uses_original_runtime_owner_client() -> None:
     script = (SCRIPTS / "retire_dev_paper_release_cases.py").read_text(encoding="utf-8")
     code = script.split('"""', 2)[2]
-    assert "/retire" not in code and "/transition" not in code
-    assert "/api/runtime-bindings" not in code
-    assert "/api/deployment/sagas/" in code and "mark_binding_failed" not in code
+    assert "runtime.retire(" in code and "list_by_plan" in code
+    assert "/api/deployment/sagas" not in code and "mark_binding_failed" not in code
+    assert "mfa" not in code.lower() and "encode_jwt" not in code
     assert "psycopg" not in code and "DELETE" not in code.upper().replace("DELETION", "")
 
 

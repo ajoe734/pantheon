@@ -1,10 +1,10 @@
 {
   "task_id": "DEV-PAPER-RELEASE-CASE-RETIRE-20261012",
   "hosted_action_performed_by_worker": false,
-  "owner_path": "POST /api/deployment/sagas/{saga_id}/failure failed_step=runtime_load_requested -> mark_binding_failed_inactive via deployment outbox consumer",
+  "owner_path": "RuntimeManagerClient.list_by_plan(case plan) then retire(binding) -> POST /api/runtime-bindings/{id}/retire on the Runtime owner, using the BFF's existing runtime-manager service authority (no MFA header or claim added; MFA enforced by owner only when configured)",
   "forbidden_paths_not_used": [
-    "/api/runtime-bindings/{id}/retire",
-    "/api/runtime-bindings/{id}/transition",
+    "new endpoint, issuer, MFA grant or config",
+    "synthetic saga failure / outbox compensation",
     "direct database write",
     "record deletion"
   ],
@@ -15,9 +15,9 @@
   "dry_run": "docker exec -i pantheon-operator-bff-1 python - --dry-run --outcome accepted < scripts/retire_dev_paper_release_cases.py",
   "tests": [
     "scripts/test_retire_dev_paper_release_cases.py",
-    "scripts/test_dev_environment_lease_deploy_contract.py",
-    "scripts/test_loop_prod_tel_002_hosted_workflow.py (257 passed total)"
+    "scripts/test_dev_environment_lease_deploy_contract.py (262 passed total)"
   ],
-  "limitation": "consumer behaviour on an already-completed saga is verified only by reading outbox_consumer_worker.py; first hosted Root must confirm",
-  "coverage": "coordinate-dev-release step (accepted/compensated) and deploy-dev step after deploy_compensation (compensated before coordinator runs)"
+  "limitation": "hosted success/readback of the original retire handler is confirmed by the first hosted Root run; worker performed no hosted action",
+  "coverage": "coordinate-dev-release step (accepted/compensated) and deploy-dev step after deploy_compensation (compensated before coordinator runs)",
+  "identity_assertions": "binding plan_id, metadata.tenant_id and deployment_mode=paper must match the case; mismatch or unreadable state -> zero writes for that case; accepted run with unknown/unreadable/inactive served case refuses with zero writes"
 }

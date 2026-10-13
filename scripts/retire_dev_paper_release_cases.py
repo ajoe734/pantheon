@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Retire dev paper release probe cases that hosted no longer serves.
 
 Every Root deploy provisions one ``dev-paper-release-<run>-<attempt>`` Persona
@@ -8,14 +7,13 @@ controller has either accepted or compensated the release, this script moves
 every release case that is *not* the served one out of the active fleet
 (on a compensated release, only this run's own case).
 
-Retirement uses only an existing owner path: the Deployment owner's saga
-failure route (``POST /api/deployment/sagas/{id}/failure`` with
-``failed_step=runtime_load_requested``).  Deployment records the
-``mark_binding_failed_inactive`` compensation decision and its outbox consumer
-transitions the RuntimeBinding to ``failed`` with the runtime-manager service
-identity.  The script never calls the operator/MFA runtime-binding routes,
-never writes a database, and never deletes provisioning, registry or
-telemetry records.
+Retirement uses the Runtime owner's original retire route
+(``POST /api/runtime-bindings/{id}/retire``) through the existing
+``RuntimeManagerClient`` and its configured service authority.  Bindings are
+found by the case's deterministic DeploymentPlan id and are only retired when
+their plan, tenant and paper stage match the case.  The script never writes a
+database, never adds an endpoint or credential, and never deletes
+provisioning, registry or telemetry records.
 
 Run inside the dev operator-bff container (stdin keeps it independent of the
 checked-out image after a compensation)::
@@ -33,48 +31,52 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 CASE_KEY_PREFIX = "dev-paper-release-"
-RETIRE_FAILED_STEP = "runtime_load_requested"
 OUTCOMES = ("accepted", "compensated")
 
-SAGA_ACTIVE = "active"
-SAGA_PENDING = "pending"
-SAGA_RETIRED = "retired"
-SAGA_MISSING = "missing"
+BINDING_ACTIVE = "active"
+BINDING_RETIRED = "retired"
+BINDING_MISSING = "missing"
+TERMINAL_STATUSES = {"retired", "failed"}
 
 
 class RetireError(RuntimeError):
     """Raised when retirement inputs are unsafe."""
 
 
-def _saga_path(saga_id: str) -> str:
-    return f"/api/deployment/sagas/{saga_id}"
-
-
-def classify_saga(saga: Mapping[str, Any] | None) -> str:
-    if saga is None:
-        return SAGA_MISSING
-    status = str(saga.get("status") or "")
-    step = str(saga.get("current_step") or "")
-    if status in {"failed", "aborted"} and step == "compensated":
-        return SAGA_RETIRED
-    if status in {"compensating", "failed", "aborted"}:
-        return SAGA_PENDING
-    return SAGA_ACTIVE
-
-
-def case_ids(record: Any) -> tuple[str, str]:
-    """Return (plan_id, saga_id) derived exactly as provisioning derives them."""
+def case_plan_id(record: Any) -> str:
+    """Return the DeploymentPlan id derived exactly as provisioning derives it."""
     from services.control_plane.bff.persona_provisioning_coordinator import (
         deterministic_provisioning_ids,
     )
 
-    ids = deterministic_provisioning_ids(record)
-    return ids.deployment_plan_id, ids.deployment_saga_id
+    return deterministic_provisioning_ids(record).deployment_plan_id
+
+
+def case_bindings(runtime: Any, record: Any, plan_id: str) -> list[Mapping[str, Any]]:
+    """Paper bindings of this case, asserting plan, tenant and stage identity."""
+    verified = []
+    for binding in runtime.list_by_plan(plan_id):
+        tenant = str((binding.get("metadata") or {}).get("tenant_id") or "")
+        if binding.get("plan_id") != plan_id:
+            raise RetireError(f"binding {binding.get('binding_id')} has the wrong plan")
+        if tenant != record.tenant_id:
+            raise RetireError(f"binding {binding.get('binding_id')} has the wrong tenant")
+        if binding.get("deployment_mode") != "paper":
+            raise RetireError(f"binding {binding.get('binding_id')} is not paper")
+        verified.append(binding)
+    return verified
+
+
+def classify_bindings(bindings: Sequence[Mapping[str, Any]]) -> str:
+    if not bindings:
+        return BINDING_MISSING
+    if any(b.get("status") not in TERMINAL_STATUSES for b in bindings):
+        return BINDING_ACTIVE
+    return BINDING_RETIRED
 
 
 def release_cases(records: Sequence[Any]) -> list[Any]:
@@ -92,21 +94,20 @@ def release_cases(records: Sequence[Any]) -> list[Any]:
 
 def plan_retirement(
     cases: Sequence[Any],
-    sagas: Mapping[str, str],
+    states: Mapping[str, str],
     *,
     outcome: str,
     new_case_key: str,
 ) -> dict[str, Any]:
     """Pure decision: which cases stay served and which must be retired.
 
-    ``cases`` is newest first; ``sagas`` maps idempotency_key to its
-    classify_saga() state.  Already-retired cases are reported but never
-    re-posted; pending ones are re-observed only.
+    ``states`` maps idempotency_key to its classify_bindings() state.
+    Already-retired cases are reported but never re-posted.
     """
     if outcome not in OUTCOMES:
         raise RetireError(f"outcome must be one of {OUTCOMES}")
     keys = [str(case.idempotency_key) for case in cases]
-    live = [k for k in keys if sagas.get(k) != SAGA_RETIRED]
+    live = [k for k in keys if states.get(k) == BINDING_ACTIVE]
     if outcome == "accepted":
         served = new_case_key if new_case_key in keys else None
         retire = [k for k in live if k != served]
@@ -121,89 +122,50 @@ def plan_retirement(
         "new_case_key": new_case_key,
         "served_case_key": served,
         "retire": retire,
-        "already_retired": [k for k in keys if sagas.get(k) == SAGA_RETIRED],
+        "already_retired": [k for k in keys if states.get(k) == BINDING_RETIRED],
     }
 
 
-def _identity_ok(saga: Mapping[str, Any], plan_id: str, saga_id: str) -> bool:
-    return saga.get("saga_id") == saga_id and saga.get("plan_id") == plan_id
-
-
-def _read_state(
-    transport: Any, plan_id: str, saga_id: str
-) -> tuple[str, Mapping[str, Any] | None]:
-    saga = transport.get("deployment", _saga_path(saga_id))
-    if saga is not None and not _identity_ok(saga, plan_id, saga_id):
-        raise RetireError(f"saga readback for {saga_id} has the wrong identity")
-    return classify_saga(saga), saga
-
-
-def retire_case(
-    transport: Any,
-    *,
-    plan_id: str,
-    saga_id: str,
-    case_key: str,
-    run_id: str,
-) -> str:
-    """Request retirement once; idempotent on replay.  Returns post-request state."""
-    state, _ = _read_state(transport, plan_id, saga_id)
-    if state in {SAGA_RETIRED, SAGA_PENDING, SAGA_MISSING}:
-        return state
-    try:
-        transport.post(
-            "deployment",
-            f"{_saga_path(saga_id)}/failure",
-            {
-                "reason": f"retire dev paper release case {case_key} (run {run_id})",
-                "failed_step": RETIRE_FAILED_STEP,
-            },
-        )
-    except Exception:  # response loss is reconciled by the readback below
-        pass
-    state, _ = _read_state(transport, plan_id, saga_id)
-    return state
+def retire_case(runtime: Any, record: Any, plan_id: str) -> str:
+    """Retire the case's live bindings once; idempotent on replay."""
+    for binding in case_bindings(runtime, record, plan_id):
+        if binding.get("status") in TERMINAL_STATUSES:
+            continue
+        try:
+            runtime.retire(str(binding["binding_id"]))
+        except Exception:  # response loss is reconciled by the readback below
+            pass
+    return classify_bindings(case_bindings(runtime, record, plan_id))
 
 
 def execute(
     *,
     store: Any,
-    transport_factory: Callable[[str], Any],
+    runtime: Any,
     outcome: str,
     new_case_key: str,
     run_id: str,
     dry_run: bool,
     timeout_seconds: float,
-    poll_seconds: float = 3.0,
-    monotonic: Callable[[], float] = time.monotonic,
-    sleep: Callable[[float], None] = time.sleep,
+    monotonic: Callable[[], float] | None = None,
 ) -> dict[str, Any]:
+    import time
+
+    monotonic = monotonic or time.monotonic
     deadline = monotonic() + timeout_seconds
     cases = release_cases(store.list_all())
     by_key = {str(c.idempotency_key): c for c in cases}
-    transports: dict[str, Any] = {}
-
-    def transport_for(case: Any) -> Any:
-        if case.tenant_id not in transports:
-            transports[case.tenant_id] = transport_factory(case.tenant_id)
-        return transports[case.tenant_id]
-
-    ids = {key: case_ids(case) for key, case in by_key.items()}
-    sagas: dict[str, str] = {}
+    plan_ids = {key: case_plan_id(case) for key, case in by_key.items()}
+    states: dict[str, str] = {}
     errors: dict[str, str] = {}
     for key, case in by_key.items():
         try:
-            sagas[key], _ = _read_state(transport_for(case), *ids[key])
+            states[key] = classify_bindings(case_bindings(runtime, case, plan_ids[key]))
         except Exception as exc:  # noqa: BLE001 - recorded, never fatal
             errors[key] = f"{exc.__class__.__name__}: {exc}"
-            sagas[key] = SAGA_MISSING
-    decision = plan_retirement(
-        cases, sagas, outcome=outcome, new_case_key=new_case_key
-    )
-    # Cases whose state could not be read are never retired or relied upon.
-    decision["retire"] = [k for k in decision["retire"] if k not in errors]
+            states[key] = BINDING_MISSING
+    decision = plan_retirement(cases, states, outcome=outcome, new_case_key=new_case_key)
     served = decision["served_case_key"]
-    assert served not in decision["retire"]
     refusal = None
     if outcome == "accepted" and not dry_run:
         # Fail closed before any owner write: the accepted served case must be
@@ -213,13 +175,14 @@ def execute(
             refusal = "accepted served case identity is missing or unknown"
         elif served in errors:
             refusal = f"accepted served case {served} state is unreadable"
-        elif sagas.get(served) != SAGA_ACTIVE:
+        elif states.get(served) != BINDING_ACTIVE:
             refusal = (
                 f"accepted served case {served} is not active "
-                f"(saga state {sagas.get(served)})"
+                f"(binding state {states.get(served)})"
             )
         if refusal:
             decision["retire"] = []
+    assert served not in decision["retire"]
     result: dict[str, Any] = {
         "schema_version": "pantheon.dev-paper-release-case-retire.v1",
         "dry_run": dry_run,
@@ -242,48 +205,29 @@ def execute(
         if monotonic() >= deadline:
             results[key] = "not_attempted_deadline"
             continue
-        plan_id, saga_id = ids[key]
         try:
-            results[key] = retire_case(
-                transport_for(by_key[key]),
-                plan_id=plan_id,
-                saga_id=saga_id,
-                case_key=key,
-                run_id=run_id,
-            )
+            results[key] = retire_case(runtime, by_key[key], plan_ids[key])
         except Exception as exc:  # noqa: BLE001
             errors[key] = f"{exc.__class__.__name__}: {exc}"
             results[key] = "error"
-    # Bounded wait for the Deployment outbox consumer to converge bindings.
-    while monotonic() < deadline:
-        waiting = [k for k, v in results.items() if v == SAGA_PENDING]
-        if not waiting:
-            break
-        sleep(poll_seconds)
-        for key in waiting:
-            try:
-                state, _ = _read_state(transport_for(by_key[key]), *ids[key])
-            except Exception as exc:  # noqa: BLE001
-                errors[key] = f"{exc.__class__.__name__}: {exc}"
-                results[key] = "error"
-                continue
-            results[key] = state
     result["results"] = results
-    unsettled = [k for k, v in results.items() if v != SAGA_RETIRED]
+    unsettled = [k for k, v in results.items() if v != BINDING_RETIRED]
     result["status"] = "retired" if not unsettled and not errors else "partial"
     return result
 
 
-def _build_runtime() -> tuple[Any, Callable[[str], Any]]:
-    from services.control_plane.bff.personas.service import (
-        _persona_provisioning_store,
-        _PersonaOwnerHttpTransport,
-    )
+def _runtime_client() -> Any:
+    # The BFF's existing runtime-manager client: configured URL and service
+    # authority, no credential of its own.
+    from services.control_plane.bff import command_executor
 
-    return (
-        _persona_provisioning_store(),
-        lambda tenant_id: _PersonaOwnerHttpTransport(tenant_id=tenant_id),
-    )
+    return command_executor._runtime_manager_client()
+
+
+def _build_runtime() -> tuple[Any, Any]:
+    from services.control_plane.bff.personas.service import _persona_provisioning_store
+
+    return _persona_provisioning_store(), _runtime_client()
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -297,7 +241,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--run-id", default="manual")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--timeout-seconds", type=float, default=120.0)
-    parser.add_argument("--poll-seconds", type=float, default=3.0)
     args = parser.parse_args(argv)
     if args.new_case_key and not args.new_case_key.startswith(CASE_KEY_PREFIX):
         parser.error(f"--new-case-key must start with {CASE_KEY_PREFIX!r}")
@@ -309,16 +252,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        store, transport_factory = _build_runtime()
+        store, runtime = _build_runtime()
         result = execute(
             store=store,
-            transport_factory=transport_factory,
+            runtime=runtime,
             outcome=args.outcome,
             new_case_key=args.new_case_key,
             run_id=args.run_id,
             dry_run=args.dry_run,
             timeout_seconds=args.timeout_seconds,
-            poll_seconds=args.poll_seconds,
         )
     except Exception as exc:  # noqa: BLE001 - evidence, not a release failure
         result = {
