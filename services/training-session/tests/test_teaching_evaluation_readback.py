@@ -449,6 +449,62 @@ class TestTeachingEvaluationReadback(unittest.TestCase):
             harness._case_persona_teaching(case)
         self.assertIn("mismatched job/session identity", str(ctx.exception))
 
+        # C1: Missing queued eval_id must not pass
+        def missing_queued_eval(path: str, method: str, data: Any) -> Any:
+            if "/preview-jobs" in path and method == "POST":
+                data["eval_id"] = ""
+            return data
+
+        sess_missing_q_eval = _create_session("Test missing queued eval rejection")
+        harness, case = _make_test_harness(
+            module, client, sess_missing_q_eval, "persona-test", interceptor=missing_queued_eval
+        )
+        with self.assertRaises((RuntimeError, BoundaryFailure)) as ctx:
+            harness._case_persona_teaching(case)
+        self.assertIn("Teaching preview queue did not return eval_id", str(ctx.exception))
+
+        # C2: Missing job eval_id must not pass
+        def missing_job_eval(path: str, method: str, data: Any) -> Any:
+            if "/api/training/preview-jobs/" in path and method == "GET":
+                data["eval_id"] = ""
+            return data
+
+        sess_missing_j_eval = _create_session("Test missing job eval rejection")
+        harness, case = _make_test_harness(
+            module, client, sess_missing_j_eval, "persona-test", interceptor=missing_job_eval
+        )
+        with self.assertRaises((RuntimeError, BoundaryFailure)) as ctx:
+            harness._case_persona_teaching(case)
+        self.assertIn("Teaching preview job did not return eval_id", str(ctx.exception))
+
+        # C3: Wrong job eval_id must not pass
+        def wrong_job_eval(path: str, method: str, data: Any) -> Any:
+            if "/api/training/preview-jobs/" in path and method == "GET":
+                data["eval_id"] = "teval-different-job-id"
+            return data
+
+        sess_wrong_j_eval = _create_session("Test wrong job eval rejection")
+        harness, case = _make_test_harness(
+            module, client, sess_wrong_j_eval, "persona-test", interceptor=wrong_job_eval
+        )
+        with self.assertRaises((RuntimeError, BoundaryFailure)) as ctx:
+            harness._case_persona_teaching(case)
+        self.assertIn("Teaching preview job eval_id mismatch", str(ctx.exception))
+
+        # C4: Wrong queued eval_id against job must not pass
+        def wrong_queued_eval(path: str, method: str, data: Any) -> Any:
+            if "/preview-jobs" in path and method == "POST":
+                data["eval_id"] = "teval-different-queued-id"
+            return data
+
+        sess_wrong_q_eval = _create_session("Test wrong queued eval rejection")
+        harness, case = _make_test_harness(
+            module, client, sess_wrong_q_eval, "persona-test", interceptor=wrong_queued_eval
+        )
+        with self.assertRaises((RuntimeError, BoundaryFailure)) as ctx:
+            harness._case_persona_teaching(case)
+        self.assertIn("Teaching preview job eval_id mismatch", str(ctx.exception))
+
         # D1: Mismatched session_id in terminal readback must not pass (poll times out)
         def mismatch_session(path: str, method: str, data: Any) -> Any:
             if "/terminal-readback" in path and method == "GET":
@@ -490,6 +546,38 @@ class TestTeachingEvaluationReadback(unittest.TestCase):
         with self.assertRaises((RuntimeError, BoundaryFailure)) as ctx:
             harness._case_persona_teaching(case)
         self.assertIn("identity drifted", str(ctx.exception))
+
+        # E1: Mismatched durable evaluation eval_id must not pass
+        def mismatch_eval_eval(path: str, method: str, data: Any) -> Any:
+            if "/terminal-readback" in path and method == "GET":
+                if "evaluation_result" in data and isinstance(data["evaluation_result"], dict):
+                    data["evaluation_result"]["eval_id"] = "teval-different-readback"
+            return data
+
+        sess_mismatch_eval = _create_session("Test mismatched evaluation eval rejection")
+        harness, case = _make_test_harness(
+            module, client, sess_mismatch_eval, "persona-test", interceptor=mismatch_eval_eval
+        )
+        with self.assertRaises((RuntimeError, BoundaryFailure)) as ctx:
+            harness._case_persona_teaching(case)
+        self.assertIn("Teaching evaluation eval_id mismatch", str(ctx.exception))
+
+        # E2: Mismatched proof eval_id must not pass
+        def mismatch_proof_eval(path: str, method: str, data: Any) -> Any:
+            if "/terminal-readback" in path and method == "GET":
+                if "preview" in data and isinstance(data["preview"], dict):
+                    proof = data["preview"].get("evaluation_proof")
+                    if isinstance(proof, dict):
+                        proof["eval_id"] = "teval-different-proof"
+            return data
+
+        sess_mismatch_proof = _create_session("Test mismatched proof eval rejection")
+        harness, case = _make_test_harness(
+            module, client, sess_mismatch_proof, "persona-test", interceptor=mismatch_proof_eval
+        )
+        with self.assertRaises((RuntimeError, BoundaryFailure)) as ctx:
+            harness._case_persona_teaching(case)
+        self.assertIn("Teaching evaluation proof eval_id mismatch", str(ctx.exception))
 
         # F: Non-finite metric must not pass
         def bad_metric(path: str, method: str, data: Any) -> Any:

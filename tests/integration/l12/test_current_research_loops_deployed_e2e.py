@@ -980,6 +980,7 @@ class DeployedResearchHarness:
         job_id = str(queued.get("job_id") or "")
         self._require(bool(job_id), "Teaching preview queue did not return job_id")
         eval_id = str(queued.get("eval_id") or "")
+        self._require(bool(eval_id), "Teaching preview queue did not return eval_id")
         case["trigger"] = {"type": "PreviewEvaluationJob", "id": job_id, "session_id": session_id}
 
         def read_job() -> Any:
@@ -1006,6 +1007,9 @@ class DeployedResearchHarness:
             job.get("job_id") == job_id and job.get("session_id") == session_id,
             "Teaching preview job returned mismatched job/session identity",
         )
+        job_eval_id = str(job.get("eval_id") or "")
+        self._require(bool(job_eval_id), "Teaching preview job did not return eval_id")
+        self._require(job_eval_id == eval_id, "Teaching preview job eval_id mismatch")
         terminal = self._at(
             "teaching.authority_actual_state",
             lambda: self._poll(
@@ -1037,9 +1041,7 @@ class DeployedResearchHarness:
         self._require(evaluation.get("eval_identity") == eval_identity, "Teaching evaluation identity drifted")
         self._require(evaluation.get("session_id") == session_id, "Teaching evaluation session_id mismatch")
         self._require(evaluation.get("persona_id") == persona_id, "Teaching evaluation persona_id mismatch")
-        expected_eval_id = eval_id or str(job.get("eval_id") or "")
-        if expected_eval_id:
-            self._require(evaluation.get("eval_id") == expected_eval_id, "Teaching evaluation eval_id mismatch")
+        self._require(evaluation.get("eval_id") == eval_id, "Teaching evaluation eval_id mismatch")
 
         preview = terminal.get("preview") if isinstance(terminal.get("preview"), Mapping) else (job.get("preview") if isinstance(job.get("preview"), Mapping) else {})
         self._require(isinstance(preview, Mapping) and bool(preview), "Teaching preview missing from readback")
@@ -1047,6 +1049,7 @@ class DeployedResearchHarness:
         self._require(isinstance(proof, Mapping) and bool(proof), "Teaching evaluation proof missing from readback")
         self._require(proof.get("session_id") == session_id, "Teaching evaluation proof session_id mismatch")
         self._require(proof.get("job_id") == job_id, "Teaching evaluation proof job_id mismatch")
+        self._require(proof.get("eval_id") == eval_id, "Teaching evaluation proof eval_id mismatch")
         self._require(proof.get("eval_id") == evaluation.get("eval_id"), "Teaching evaluation proof eval_id mismatch")
         if evaluation.get("evaluation_proof_ref"):
             self._require(proof.get("proof_ref") == evaluation.get("evaluation_proof_ref"), "Teaching evaluation proof_ref mismatch")
