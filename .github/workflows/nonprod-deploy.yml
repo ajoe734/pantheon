@@ -2569,7 +2569,6 @@ jobs:
           PANTHEON_EXECUTE_PLANS_ROOT: ${{ vars.PANTHEON_EXECUTE_PLANS_ROOT || '/home/chloe_ong_dev_cctech_support_com/actions-runner-execute-plans/_work/execute-plans/execute-plans' }}
           PANTHEON_DEV_FE_DEPLOY_SCRIPT: ${{ vars.PANTHEON_DEV_FE_DEPLOY_SCRIPT || format('{0}/scripts/deploy-dev-vm.sh', vars.PANTHEON_EXECUTE_PLANS_ROOT || '/home/chloe_ong_dev_cctech_support_com/actions-runner-execute-plans/_work/execute-plans/execute-plans') }}
           PANTHEON_DEV_FE_NODE_BIN_DIR: ${{ vars.PANTHEON_DEV_FE_NODE_BIN_DIR || '' }}
-          RUNNER_TOOL_CACHE: ${{ runner.tool_cache || '' }}
           PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT && format('{0}/dev-{1}/docker-compose.yml', vars.DEV_DEPLOY_WORKTREE_ROOT, inputs.component == 'bff' && 'bff' || 'root') || '' }}
           PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPONENT: ${{ inputs.component == 'bff' && 'bff' || 'root' }}
           DEV_BFF_AUTH_STUB: "false"
@@ -2637,7 +2636,6 @@ jobs:
           PANTHEON_EXECUTE_PLANS_ROOT: ${{ vars.PANTHEON_EXECUTE_PLANS_ROOT || '/home/chloe_ong_dev_cctech_support_com/actions-runner-execute-plans/_work/execute-plans/execute-plans' }}
           PANTHEON_DEV_FE_DEPLOY_SCRIPT: ${{ vars.PANTHEON_DEV_FE_DEPLOY_SCRIPT || format('{0}/scripts/deploy-dev-vm.sh', vars.PANTHEON_EXECUTE_PLANS_ROOT || '/home/chloe_ong_dev_cctech_support_com/actions-runner-execute-plans/_work/execute-plans/execute-plans') }}
           PANTHEON_DEV_FE_NODE_BIN_DIR: ${{ vars.PANTHEON_DEV_FE_NODE_BIN_DIR || '' }}
-          RUNNER_TOOL_CACHE: ${{ runner.tool_cache || '' }}
           PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT && format('{0}/dev-{1}/docker-compose.yml', vars.DEV_DEPLOY_WORKTREE_ROOT, inputs.component == 'bff' && 'bff' || 'root') || '' }}
           PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPONENT: ${{ inputs.component == 'bff' && 'bff' || 'root' }}
           DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${{ vars.DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS || '300' }}
@@ -2743,7 +2741,6 @@ jobs:
           PANTHEON_EXECUTE_PLANS_ROOT: ${{ vars.PANTHEON_EXECUTE_PLANS_ROOT || '/home/chloe_ong_dev_cctech_support_com/actions-runner-execute-plans/_work/execute-plans/execute-plans' }}
           PANTHEON_DEV_FE_DEPLOY_SCRIPT: ${{ vars.PANTHEON_DEV_FE_DEPLOY_SCRIPT || format('{0}/scripts/deploy-dev-vm.sh', vars.PANTHEON_EXECUTE_PLANS_ROOT || '/home/chloe_ong_dev_cctech_support_com/actions-runner-execute-plans/_work/execute-plans/execute-plans') }}
           PANTHEON_DEV_FE_NODE_BIN_DIR: ${{ vars.PANTHEON_DEV_FE_NODE_BIN_DIR || '' }}
-          RUNNER_TOOL_CACHE: ${{ runner.tool_cache || '' }}
           PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT && format('{0}/dev-{1}/docker-compose.yml', vars.DEV_DEPLOY_WORKTREE_ROOT, inputs.component == 'bff' && 'bff' || 'root') || '' }}
           PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPONENT: ${{ inputs.component == 'bff' && 'bff' || 'root' }}
           DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${{ vars.DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS || '300' }}
@@ -2871,7 +2868,6 @@ jobs:
           PANTHEON_EXECUTE_PLANS_ROOT: ${{ vars.PANTHEON_EXECUTE_PLANS_ROOT || '/home/chloe_ong_dev_cctech_support_com/actions-runner-execute-plans/_work/execute-plans/execute-plans' }}
           PANTHEON_DEV_FE_DEPLOY_SCRIPT: ${{ vars.PANTHEON_DEV_FE_DEPLOY_SCRIPT || format('{0}/scripts/deploy-dev-vm.sh', vars.PANTHEON_EXECUTE_PLANS_ROOT || '/home/chloe_ong_dev_cctech_support_com/actions-runner-execute-plans/_work/execute-plans/execute-plans') }}
           PANTHEON_DEV_FE_NODE_BIN_DIR: ${{ vars.PANTHEON_DEV_FE_NODE_BIN_DIR || '' }}
-          RUNNER_TOOL_CACHE: ${{ runner.tool_cache || '' }}
           DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${{ vars.DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS || '300' }}
           DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
           DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
