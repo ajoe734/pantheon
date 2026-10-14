@@ -1925,17 +1925,11 @@ class TelemetryIngestService:
         if not all_eids:
             return summaries
 
-        try:
-            events_by_id = self._event_reader(
-                all_eids,
-                tenant_id=tenant_id,
-                event_types=("position_snapshot", "reconciliation_completed", "reconciliation_failed"),
-            )
-        except TypeError:
-            try:
-                events_by_id = self._event_reader(all_eids, tenant_id=tenant_id)
-            except TypeError:
-                events_by_id = self._event_reader(all_eids)
+        events_by_id = self._event_reader(
+            all_eids,
+            tenant_id=tenant_id,
+            event_types=("position_snapshot", "reconciliation_completed", "reconciliation_failed"),
+        )
         if not isinstance(events_by_id, dict):
             return summaries
 

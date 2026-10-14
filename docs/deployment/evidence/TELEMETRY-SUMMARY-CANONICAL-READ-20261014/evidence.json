@@ -87,7 +87,7 @@
     "docs/deployment/evidence/TELEMETRY-SUMMARY-CANONICAL-READ-20261014/evidence.json"
   ],
   "diff_budget": {
-    "net_production_lines": 17,
+    "net_production_lines": 11,
     "budget": 25,
     "verdict": "pass",
     "files": {

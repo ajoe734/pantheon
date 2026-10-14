@@ -563,55 +563,70 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
                 svc._enrich_with_committed_position_snapshots([already_enriched_summary, not_yet_enriched], tenant_id=tid)
                 self.assertEqual(queried_mixed, ["evt-second-target"])
 
+                # Reader TypeError propagates directly without swallowing or tenant-less fallback
+                err_reader_calls = []
+                def raising_reader(ids, tenant_id=None, event_types=None):
+                    err_reader_calls.append({"ids": list(ids), "tenant_id": tenant_id, "event_types": event_types})
+                    raise TypeError("simulated reader internal TypeError")
+                svc._event_reader = raising_reader
+                with self.assertRaises(TypeError):
+                    svc.list_runtime_summaries(tenant_id=tid)
+                self.assertEqual(len(err_reader_calls), 1)
+                self.assertEqual(err_reader_calls[0]["tenant_id"], tid)
+                self.assertEqual(
+                    err_reader_calls[0]["event_types"],
+                    ("position_snapshot", "reconciliation_completed", "reconciliation_failed"),
+                )
+
                 # AC3: Uncommitted / absence in event reader fails closed
                 svc._event_reader = lambda ids, tenant_id=None, **kw: {}
                 self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
 
                 # AC1: Cross-tenant guard
-                svc._event_reader = lambda ids, tenant_id=None: {
+                svc._event_reader = lambda ids, tenant_id=None, **kw: {
                     "evt-snap-runA": dict(snap_runA, tenant_id="other-tenant", ingested_seq=101)
                 }
                 self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
 
                 # AC1: Cross-binding guard
-                svc._event_reader = lambda ids, tenant_id=None: {
+                svc._event_reader = lambda ids, tenant_id=None, **kw: {
                     "evt-snap-runA": dict(snap_runA, binding_id="other-binding", ingested_seq=101)
                 }
                 self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
 
                 # AC1: Cross-runtime guard
-                svc._event_reader = lambda ids, tenant_id=None: {
+                svc._event_reader = lambda ids, tenant_id=None, **kw: {
                     "evt-snap-runA": dict(snap_runA, runtime_id="other-runtime", ingested_seq=101)
                 }
                 self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
 
                 # AC1: Cross-artifact guard
-                svc._event_reader = lambda ids, tenant_id=None: {
+                svc._event_reader = lambda ids, tenant_id=None, **kw: {
                     "evt-snap-runA": dict(snap_runA, artifact_id="other-artifact", ingested_seq=101)
                 }
                 self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
 
                 # AC1 / AC3: Missing numeric metrics guard
-                svc._event_reader = lambda ids, tenant_id=None: {
+                svc._event_reader = lambda ids, tenant_id=None, **kw: {
                     "evt-snap-runA": dict(snap_runA, metrics={}, ingested_seq=101)
                 }
                 self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
 
                 # Real positive DB sequence guard: bool is not sequence (True != valid seq)
-                svc._event_reader = lambda ids, tenant_id=None: {
+                svc._event_reader = lambda ids, tenant_id=None, **kw: {
                     "evt-snap-runA": dict(snap_runA, ingested_seq=True)
                 }
                 self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
 
                 # Finite numeric metrics guard (reject inf/nan)
-                svc._event_reader = lambda ids, tenant_id=None: {
+                svc._event_reader = lambda ids, tenant_id=None, **kw: {
                     "evt-snap-runA": dict(snap_runA, metrics={"position_qty": float("inf"), "price": 500.0, "cash": 50000.0}, ingested_seq=101)
                 }
                 self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
 
                 # 512 bound check: event reader receives at most 512 event ids per ring, and multiple summaries do not starve each other
                 queried_counts = []
-                def count_reader(ids, tenant_id=None):
+                def count_reader(ids, tenant_id=None, **kw):
                     queried_counts.append(len(ids))
                     return {}
                 svc._event_reader = count_reader
@@ -676,7 +691,7 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
                 partial_snap = copy.deepcopy(snap_runA)
                 partial_snap["metrics"].pop("cash", None)
                 partial_snap["ingested_seq"] = 101
-                svc._event_reader = lambda ids, tenant_id=None: {"evt-snap-runA": partial_snap}
+                svc._event_reader = lambda ids, tenant_id=None, **kw: {"evt-snap-runA": partial_snap}
                 self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
 
                 # Tenant conflict guard: conflicting tenant in metadata vs event root is rejected
@@ -684,7 +699,7 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
                 conflict_snap["tenant_id"] = tid
                 conflict_snap.setdefault("metadata", {})["tenant_id"] = "other-conflicting-tenant"
                 conflict_snap["ingested_seq"] = 101
-                svc._event_reader = lambda ids, tenant_id=None: {"evt-snap-runA": conflict_snap}
+                svc._event_reader = lambda ids, tenant_id=None, **kw: {"evt-snap-runA": conflict_snap}
                 self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
 
                 # Missing plan guard: candidate without plan_id or deployment_plan_id is rejected (no synthesis)
@@ -692,12 +707,12 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
                 no_plan_snap.pop("plan_id", None)
                 no_plan_snap.pop("deployment_plan_id", None)
                 no_plan_snap["ingested_seq"] = 101
-                svc._event_reader = lambda ids, tenant_id=None: {"evt-snap-runA": no_plan_snap}
+                svc._event_reader = lambda ids, tenant_id=None, **kw: {"evt-snap-runA": no_plan_snap}
                 self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
 
                 # get_runtime_summary returns raw stored summary without triggering event_reader
                 reader_called = []
-                svc._event_reader = lambda ids, tenant_id=None: reader_called.append(True) or {}
+                svc._event_reader = lambda ids, tenant_id=None, **kw: reader_called.append(True) or {}
                 raw_got = svc.get_runtime_summary(binding.runtime_id, tenant_id=tid)
                 self.assertIsNotNone(raw_got)
                 self.assertNotIn("committed_position_snapshot", raw_got)
@@ -726,7 +741,7 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
                 # If terminal event belongs to another tenant, it does not exclude candidate
                 other_term = dict(term_event, tenant_id="other-tenant")
                 db_store_term = dict(db_store, **{"evt-term-runA": other_term})
-                svc._event_reader = lambda ids, tenant_id=None: {k: v for k, v in db_store_term.items() if k in ids}
+                svc._event_reader = lambda ids, tenant_id=None, **kw: {k: v for k, v in db_store_term.items() if k in ids}
                 summary_store.project_event(other_term)
                 self.assertIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
 
