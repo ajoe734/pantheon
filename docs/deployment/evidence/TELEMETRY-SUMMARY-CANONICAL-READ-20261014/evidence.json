@@ -1,0 +1,104 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "TELEMETRY-SUMMARY-CANONICAL-READ-20261014",
+  "title": "Remove unrelated full-payload hydration from canonical runtime-summary enrichment",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "base_sha": "f8a9364e5b70cb797a13bc25c7da3d63c0dc272e",
+  "change_class": "corrective",
+  "summary": "Removes unrelated full-payload hydration from canonical runtime-summary enrichment by skipping already-enriched summaries before collecting event IDs, and querying only the canonical position_snapshot and reconciliation_completed/failed evidence required by the existing selector via an optional event_types filter in build_postgres_event_reader batch queries while preserving original scalar reader behavior unchanged. Retains generic accepted/observed pair behavior, original 5.0s deadlines, positive DB sequence validation, explicit paper/live boundaries, and complete finite numeric metrics from the same snapshot without loss of second bindings or older eligible positions.",
+  "acceptance_verification": [
+    {
+      "ac": "AC1",
+      "description": "Correct the existing hosted blocker, not new functionality. Original Root38533142791 failed paper_fleet convergence08:24:44UTC: monitoring_last_error=runtime summaries HTTP500; baseline/natural/FE/roundtrip skipped. Original same-window trace /tmp/pantheon-assist-20261013/Root38533142791-original-Telemetry-runtime-summaries-failure-window.log SHA8fd9fdcf9b8317d831ae425473912f76ddceb8f62c378955bd4c5e32acae2c6d proves main1163 -> enrichment1921 -> reader751 -> conn.fetch728 TimeoutError. Actual original fleet-authenticated GET reproduced500, receipt Root38533142791-original-runtime-summaries-GET-readonly-20261014T084417Z.json SHA250da5fe15adeeb6311320c32f2ff5c878c1ab3a493a1faed109c3cb1af4f2fa. Current08:56 readonlyEXPLAIN /tmp/pantheon-assist-20261013/Root38533142791-original-runtime-summary-actual-batch-query-plan-readonly-20261014T085634Z.json SHA3f0ac7164ca3f3e42ddb359e339f61aeeda0969c808be1c893e393021cac2b73 shows55tenant summaries/18458IDs/~6257492rows/10actualindexes/PKBitmap scan. Current input is not exact08:24 input and no IO attribution/ANALYZE was measured. Do not claim missingPK/SeqScan/connect/lease500 or409 historical cause. #6558 merge8bc expanded the original accepted/observed pair reader into all-summary enrichment. Keep real delivered #6561 merge989 and all archived tasks unchanged. Read status/remotes; clean currentdev task worktree.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC2",
+      "description": "Eliminate unrelated full-payload hydration in this existing enrichment query, and skip already-enriched summaries before collecting their IDs. Read the canonical position_snapshot and reconciliation_completed/failed evidence actually required by the existing selector. Choose the smallest maintainable existing-reader/query change; retain generic accepted/observed pair behavior and original deadlines. Preserve complete eligible candidates within each original recent ring, including older run-A position behind newer run-B lifecycle, all tenant/binding/runtime/artifact/version/plan/pool/PCB/Persona checks, positive DB-owned sequence, explicit paper/live-source boundaries, complete finite qty/price/cash from the SAME canonical snapshot, and terminal causal/sequence exclusion. Do not replace canonical truth with latest projection, synthesize metrics, impose a whole-tenant512 cap, use recent100 as completeness, discard bindings, weaken gates, remove enrichment, or change per-ID admission semantics. No new cache/store/writer/service/endpoint/schema/index migration/queue/config/pool/grant/dispatcher/parity wrapper, longer timeout/budget or new SLA. Only one production file, two existing tests and mandatory evidence.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC3",
+      "description": "Use the original PaperRuntimeTelemetryIngestContractTest.test_canonical_batch_read_cross_run_and_ineligible_guards and original durable-ingest reader tests. Adjust fake-reader query-shape assertions only where wiring changes; preserve business assertions. Focused observed-cardinality coverage must show unrelated lifecycle payloads are not hydrated, already-enriched summaries are not queried, and second bindings/older eligible positions are not lost by a global/recent100 shortcut. Retain terminal causal/run/DBseq exclusion, cross-tenant/owner rejection, incomplete/nonfinite metrics fail-closed and generic accepted/observed pair behavior. Verify relevant query/results rather than parity/copying validators or new fixture platforms. Run affected original paper-runtime/runtime-summary/durable-ingest/ingest-shock-absorption suites, record real stdout/exits/counts and explicit optionalPG/NATS skips. Existing downstream reconciliation cross-run/same-window replay tests must stay compatible. Synthetic scale tests do not prove hosted500 recovery or finance; Root owns original live readback after deployment.",
+      "verdict": "pass: Original PaperRuntimeTelemetryIngestContractTest.test_canonical_batch_read_cross_run_and_ineligible_guards uses retained fake-selector business assertions, and DurableIngestReceiptTest.test_runtime_summary_enrichment_queries_only_reconciliation_evidence_without_unrelated_payloads exercises build_postgres_event_reader with mocked DB transport capturing SQL and parameters. Tested bounded synthetic wide input reflecting the observed shape (55 summaries / 18,458 IDs); verified unrelated lifecycle payloads are not hydrated, already-enriched summaries are omitted before querying, and second bindings / older eligible positions in deep rings are preserved without global/recent-100 shortcut. Generic batch and scalar reader behavior verified, with scalar reader generating exact original scalar query without event_types filter. Real stdout/exits/counts recorded across all affected suites: 168 passed, 1 skipped (real NATS opt-in)."
+    },
+    {
+      "ac": "AC4",
+      "description": "Complete native source-only branch/commit/truthful required trailers/push/PR to currentdev/real assigned independent review/requiredCI/same-reviewed-tree merge/archive. Evidence delivery stays pending until native completion. No self-review/fake Reviewer-Human-MFA/vN branch/handedited canonicalJSON/old-task resurrection. Sourceworkers do not SSH/VM/provider/order/capital/deploy. Root owns NEW sameversionFULL and originalRoot, exactFE31240b105f6394cea4c68418b2aa603f50f60690/newBE gate-before-switch, real hostedL1-L12/finance/provider/Training/Pattern/Research/ONEactualeligiblehuman/exactrollback/independentfinal3artifacts. Parent original6AC/dependencies/artifacts unchanged. FULL38523980470 only qualifies old989. Report actual scope and limitations; source repair is not product delivery.",
+      "verdict": "pending_delivery: local source validation and clean task worktree with required trailers verified (168 tests passed, 1 skipped across original paper-runtime, durable-ingest, runtime-summary, shock-absorption, and reconciliation replay suites); downstream independent review by assigned reviewer Antigravity2, required CI checks, dev integration merge, and canonical finish remain pending delivery on task PR; source repair is not provider FULL or hosted L1-L12 acceptance"
+    }
+  ],
+  "verification": [
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest services/telemetry/test_paper_runtime_ingest_contract.py",
+      "passed": 9,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest services/telemetry/test_l12_tel_001_durable_ingest.py",
+      "passed": 7,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 1,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest services/telemetry/test_runtime_summary_projection.py services/telemetry/test_ingest_shock_absorption.py",
+      "passed": 105,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py services/reconciliation-drift/tests/test_tel005_replay_suite.py",
+      "passed": 47,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest services/telemetry/test_main_routes.py -k \"reader or event_reader or build_postgres\"",
+      "passed": 7,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest services/telemetry/test_paper_runtime_ingest_contract.py services/telemetry/test_l12_tel_001_durable_ingest.py services/telemetry/test_runtime_summary_projection.py services/telemetry/test_ingest_shock_absorption.py services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py services/reconciliation-drift/tests/test_tel005_replay_suite.py",
+      "passed": 168,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 1,
+      "exit_code": 0
+    }
+  ],
+  "declared_artifacts": [
+    "services/telemetry/ingest_svc.py",
+    "services/telemetry/test_paper_runtime_ingest_contract.py",
+    "services/telemetry/test_l12_tel_001_durable_ingest.py",
+    "docs/deployment/evidence/TELEMETRY-SUMMARY-CANONICAL-READ-20261014/evidence.json"
+  ],
+  "diff_budget": {
+    "evidence_max_added_lines": 400,
+    "net_production_lines": 9,
+    "files": {
+      "production": [
+        "services/telemetry/ingest_svc.py"
+      ],
+      "tests": [
+        "services/telemetry/test_paper_runtime_ingest_contract.py",
+        "services/telemetry/test_l12_tel_001_durable_ingest.py"
+      ],
+      "evidence": [
+        "docs/deployment/evidence/TELEMETRY-SUMMARY-CANONICAL-READ-20261014/evidence.json"
+      ]
+    }
+  }
+}

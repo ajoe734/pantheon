@@ -743,12 +743,15 @@ def build_postgres_event_reader(
         except Exception as exc:
             raise RuntimeError(f"PostgreSQL lineage store unavailable: {exc}") from exc
 
-    def _fetch_event(eid: Any, tenant_id: Optional[str] = None) -> Any:
+    def _fetch_event(eid: Any, tenant_id: Optional[str] = None, event_types: Optional[Any] = None) -> Any:
         if isinstance(eid, (list, tuple)):
             if not (clean := [s for x in eid if (s := str(x or "").strip())]): return {}
-            tid = str(tenant_id or "").strip()
-            sql = f"SELECT event_id, payload, ingested_seq FROM {table} WHERE event_id = ANY($1::text[])" + (" AND (payload->>'tenant_id' = $2 OR payload->'metadata'->>'tenant_id' = $2)" if tid else "")
-            return {r["event_id"]: r for r in (_sync(sql, clean, tid) if tid else _sync(sql, clean))}
+            clean_types = [s for x in event_types if (s := str(x or "").strip())] if isinstance(event_types, (list, tuple, set)) else None
+            tid, where, params = str(tenant_id or "").strip(), ["event_id = ANY($1::text[])"], [clean]
+            if clean_types: params.append(clean_types); where.append(f"event_type = ANY(${len(params)}::text[])")
+            if tid: params.append(tid); where.append(f"(payload->>'tenant_id' = ${len(params)} OR payload->'metadata'->>'tenant_id' = ${len(params)})")
+            sql = f"SELECT event_id, payload, ingested_seq FROM {table} WHERE " + " AND ".join(where)
+            return {r["event_id"]: r for r in _sync(sql, *params)}
         if not (clean_eid := str(eid or "").strip()): return None
         tid = str(tenant_id or "").strip()
         sql = f"SELECT event_id, payload, ingested_seq FROM {table} WHERE event_id = $1" + (" AND (payload->>'tenant_id' = $2 OR payload->'metadata'->>'tenant_id' = $2) LIMIT 1" if tid else " LIMIT 1")
@@ -1910,6 +1913,8 @@ class TelemetryIngestService:
 
         all_eids: list[str] = []
         for s in summaries:
+            if s.get("committed_position_snapshot"):
+                continue
             raw = s.get("recent_lifecycle_event_ids")
             if isinstance(raw, list):
                 ring = [str(x).strip() for x in raw if isinstance(x, str) and str(x).strip()][:512]
@@ -1918,7 +1923,11 @@ class TelemetryIngestService:
         if not all_eids:
             return summaries
 
-        events_by_id = self._event_reader(all_eids, tenant_id=tenant_id)
+        events_by_id = self._event_reader(
+            all_eids,
+            tenant_id=tenant_id,
+            event_types=("position_snapshot", "reconciliation_completed", "reconciliation_failed"),
+        )
         if not isinstance(events_by_id, dict):
             return summaries
 
@@ -1940,7 +1949,7 @@ class TelemetryIngestService:
             raw_eids = summary.get("recent_lifecycle_event_ids")
             if not isinstance(raw_eids, list):
                 continue
-            s_eids = [str(x).strip() for x in raw_eids if isinstance(x, str) and str(x).strip()]
+            s_eids = [str(x).strip() for x in raw_eids if isinstance(x, str) and str(x).strip()][:512]
             s_events = [
                 events_by_id[eid]
                 for eid in s_eids

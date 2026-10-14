@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 import multiprocessing
@@ -15,7 +16,7 @@ from pathlib import Path
 from services.telemetry.batch_writer import AsyncBatchWriter, WriteResult
 from services.telemetry.buffer import NatsJetStreamBuffer
 from services.telemetry.dead_letter import DeadLetterQueue
-from services.telemetry.ingest_svc import TelemetryIngestService
+from services.telemetry.ingest_svc import TelemetryIngestService, build_postgres_event_reader
 from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
 
 
@@ -183,6 +184,235 @@ class DurableIngestReceiptTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(summary["runtime_id"], event["runtime_id"])
             finally:
                 await service.stop(graceful=True)
+
+    async def test_runtime_summary_enrichment_queries_only_reconciliation_evidence_without_unrelated_payloads(self):
+        """Durable reader query restricts hydration to canonical reconciliation evidence."""
+        import sys, types
+        from unittest.mock import AsyncMock, patch
+
+        snap_event = dict(
+            _capital_runtime_event(),
+            event_id="evt-durable-snap-001",
+            event_type="position_snapshot",
+            authority_refs={"persona_id": "persona-l12-paper"},
+            metrics={"position_qty": 5.0, "price": 200.0, "cash": 10000.0},
+        )
+        second_snap = dict(
+            _capital_runtime_event(),
+            event_id="evt-durable-second-002",
+            binding_id="binding-l12-second",
+            runtime_id="rt-l12-second",
+            event_type="position_snapshot",
+            authority_refs={"persona_id": "persona-l12-paper"},
+            metrics={"position_qty": 10.0, "price": 150.0, "cash": 25000.0},
+        )
+        older_snap = dict(
+            _capital_runtime_event(),
+            event_id="evt-durable-older-003",
+            binding_id="binding-l12-third",
+            runtime_id="rt-l12-third",
+            event_type="position_snapshot",
+            authority_refs={"persona_id": "persona-l12-paper"},
+            metrics={"position_qty": 2.0, "price": 300.0, "cash": 5000.0},
+        )
+        fill_event = _capital_runtime_event()
+
+        mock_db_rows: dict[str, dict[str, Any]] = {
+            snap_event["event_id"]: dict(snap_event, ingested_seq=10),
+            second_snap["event_id"]: dict(second_snap, ingested_seq=11),
+            older_snap["event_id"]: dict(older_snap, ingested_seq=12),
+            fill_event["event_id"]: dict(fill_event, ingested_seq=13),
+        }
+
+        # Bounded synthetic wide input reflecting observed shape (55 summaries / 18,458 IDs):
+        # 54 summaries with 335 IDs each (18090) + 1 summary with 368 IDs = 18458 IDs total
+        # (each ring bounded <= 512)
+        def _make_summary(base_ev: dict[str, Any], ring: list[str]) -> dict[str, Any]:
+            return {
+                "tenant_id": base_ev["tenant_id"],
+                "binding_id": base_ev["binding_id"],
+                "runtime_id": base_ev["runtime_id"],
+                "artifact_id": base_ev["artifact_id"],
+                "artifact_version": base_ev["artifact_version"],
+                "plan_id": base_ev["plan_id"],
+                "capital_pool_id": base_ev["capital_pool_id"],
+                "persona_capital_binding_id": base_ev.get("persona_capital_binding_id"),
+                "persona_id": base_ev.get("authority_refs", {}).get("persona_id") or "persona-l12-paper",
+                "recent_lifecycle_event_ids": ring,
+            }
+
+        wide_summaries: list[dict[str, Any]] = []
+        cur_id = 0
+        for s_idx in range(55):
+            ring_size = 368 if s_idx == 0 else 335
+            ring_ids: list[str] = []
+            if s_idx == 0:
+                base_ev = snap_event
+                ring_ids.append("evt-durable-snap-001")
+                ring_ids.append(fill_event["event_id"])
+            elif s_idx == 1:
+                base_ev = second_snap
+                ring_ids.append("evt-durable-second-002")
+            elif s_idx == 2:
+                base_ev = older_snap
+                # Older eligible position snapshot behind 129 newer lifecycle events
+                ring_ids.extend([f"evt-unrelated-{cur_id + k}" for k in range(129)])
+                cur_id += 129
+                ring_ids.append("evt-durable-older-003")
+            else:
+                base_ev = dict(
+                    snap_event,
+                    binding_id=f"binding-l12-{s_idx}",
+                    runtime_id=f"rt-l12-{s_idx}",
+                )
+
+            needed = ring_size - len(ring_ids)
+            for _ in range(needed):
+                unrelated_id = f"evt-unrelated-{cur_id}"
+                cur_id += 1
+                ring_ids.append(unrelated_id)
+                mock_db_rows[unrelated_id] = {
+                    "event_id": unrelated_id,
+                    "event_type": "order_submitted",
+                    "tenant_id": "tenant-l12",
+                    "payload": {"tenant_id": "tenant-l12"},
+                    "ingested_seq": 100 + cur_id,
+                }
+            wide_summaries.append(_make_summary(base_ev, ring_ids))
+
+        total_collected_ids = sum(len(s["recent_lifecycle_event_ids"]) for s in wide_summaries)
+        self.assertEqual(len(wide_summaries), 55)
+        self.assertEqual(total_collected_ids, 18458)
+
+        captured_queries: list[dict[str, Any]] = []
+
+        class FakeConnection:
+            async def fetch(self, sql: str, *args: Any, timeout: float = 5.0) -> list[dict[str, Any]]:
+                captured_queries.append({"sql": sql, "args": args})
+                if "event_id = ANY($1::text[])" in sql:
+                    req_ids = args[0]
+                    clean_types = args[1] if len(args) > 1 and isinstance(args[1], (list, tuple)) else None
+                    tid = args[2] if len(args) > 2 else (args[1] if len(args) > 1 and isinstance(args[1], str) else None)
+                    results = []
+                    for eid in req_ids:
+                        row = mock_db_rows.get(eid)
+                        if not row:
+                            continue
+                        if clean_types and row.get("event_type") not in clean_types:
+                            continue
+                        if tid and row.get("tenant_id") != tid:
+                            continue
+                        results.append({
+                            "event_id": row["event_id"],
+                            "payload": json.dumps(row),
+                            "ingested_seq": row.get("ingested_seq", 1),
+                        })
+                    return results
+                if "event_id = $1" in sql:
+                    eid = args[0]
+                    tid = args[1] if len(args) > 1 else None
+                    row = mock_db_rows.get(eid)
+                    if row and (not tid or row.get("tenant_id") == tid):
+                        return [{
+                            "event_id": row["event_id"],
+                            "payload": json.dumps(row),
+                            "ingested_seq": row.get("ingested_seq", 1),
+                        }]
+                    return []
+                return []
+
+            async def close(self, timeout: float = 1.0) -> None:
+                pass
+
+            def terminate(self) -> None:
+                pass
+
+        fake_asyncpg = types.SimpleNamespace(connect=AsyncMock(return_value=FakeConnection()))
+
+        with patch.dict(sys.modules, {"asyncpg": fake_asyncpg}):
+            durable_reader, _ = build_postgres_event_reader("postgresql://test-l12/db", table="telemetry_events")
+            with tempfile.TemporaryDirectory() as td:
+                projection = RuntimeSummaryProjectionStore(
+                    Path(td) / "runtime-summaries.json"
+                )
+                service = TelemetryIngestService(
+                    runtime_summary_store=projection,
+                    event_reader=durable_reader,
+                )
+                await service.start()
+                try:
+                    # 1. Bounded synthetic wide input reflecting observed shape (55 summaries / 18,458 IDs)
+                    enriched = service._enrich_with_committed_position_snapshots(
+                        copy.deepcopy(wide_summaries), tenant_id="tenant-l12"
+                    )
+                    self.assertEqual(len(captured_queries), 1)
+                    q = captured_queries[0]
+                    self.assertIn("WHERE event_id = ANY($1::text[])", q["sql"])
+                    self.assertIn("event_type = ANY($2::text[])", q["sql"])
+                    self.assertIn("(payload->>'tenant_id' = $3 OR payload->'metadata'->>'tenant_id' = $3)", q["sql"])
+                    self.assertEqual(len(q["args"][0]), 18458)
+                    self.assertEqual(
+                        q["args"][1],
+                        ["position_snapshot", "reconciliation_completed", "reconciliation_failed"],
+                    )
+                    self.assertEqual(q["args"][2], "tenant-l12")
+
+                    # Verify that unrelated payloads (~18,455 events) were not hydrated by the DB query
+                    self.assertIn("committed_position_snapshot", enriched[0])
+                    self.assertEqual(enriched[0]["committed_position_snapshot"]["event_id"], "evt-durable-snap-001")
+
+                    # Second binding snapshot enriched
+                    self.assertIn("committed_position_snapshot", enriched[1])
+                    self.assertEqual(enriched[1]["committed_position_snapshot"]["event_id"], "evt-durable-second-002")
+
+                    # Older eligible position snapshot in deep ring (129 newer events) enriched (not dropped)
+                    self.assertIn("committed_position_snapshot", enriched[2])
+                    self.assertEqual(enriched[2]["committed_position_snapshot"]["event_id"], "evt-durable-older-003")
+
+                    # 2. Already-enriched summaries are skipped before collecting IDs and not queried
+                    query_count_before = len(captured_queries)
+                    already_enriched = [s for s in enriched if s.get("committed_position_snapshot")]
+                    self.assertEqual(len(already_enriched), 3)
+                    service._enrich_with_committed_position_snapshots(already_enriched, tenant_id="tenant-l12")
+                    self.assertEqual(len(captured_queries), query_count_before)
+
+                    # When all 55 summaries are already enriched, zero reader queries are made
+                    all_enriched_55 = [dict(s, committed_position_snapshot={"event_id": "snap"}) for s in wide_summaries]
+                    service._enrich_with_committed_position_snapshots(all_enriched_55, tenant_id="tenant-l12")
+                    self.assertEqual(len(captured_queries), query_count_before)
+
+                    # Mixed test: when some summaries are enriched and one is new, only unenriched IDs queried
+                    not_yet_enriched = {
+                        "tenant_id": "tenant-l12",
+                        "binding_id": "binding-l12-new",
+                        "runtime_id": "rt-l12-new",
+                        "recent_lifecycle_event_ids": ["evt-durable-snap-001"],
+                    }
+                    service._enrich_with_committed_position_snapshots(
+                        [enriched[0], not_yet_enriched], tenant_id="tenant-l12"
+                    )
+                    self.assertEqual(len(captured_queries), query_count_before + 1)
+                    self.assertEqual(captured_queries[-1]["args"][0], ["evt-durable-snap-001"])
+
+                    # 3. Generic batch and scalar reader behavior
+                    # Scalar reader call executes original scalar query without event_types filter
+                    scalar_res = durable_reader("evt-durable-snap-001", tenant_id="tenant-l12")
+                    self.assertIsNotNone(scalar_res)
+                    self.assertEqual(scalar_res["event_id"], "evt-durable-snap-001")
+                    self.assertEqual(scalar_res["ingested_seq"], 10)
+                    sq = captured_queries[-1]
+                    self.assertIn("WHERE event_id = $1 AND (payload->>'tenant_id' = $2 OR payload->'metadata'->>'tenant_id' = $2) LIMIT 1", sq["sql"])
+                    self.assertNotIn("event_type", sq["sql"])
+                    self.assertEqual(sq["args"], ("evt-durable-snap-001", "tenant-l12"))
+
+                    # Scalar without tenant
+                    scalar_no_tid = durable_reader("evt-durable-snap-001")
+                    self.assertIsNotNone(scalar_no_tid)
+                    sq_no_tid = captured_queries[-1]
+                    self.assertEqual(sq_no_tid["sql"], "SELECT event_id, payload, ingested_seq FROM telemetry_events WHERE event_id = $1 LIMIT 1")
+                    self.assertEqual(sq_no_tid["args"], ("evt-durable-snap-001",))
+                finally:
+                    await service.stop(graceful=True)
 
     async def test_put_succeeds_only_after_jetstream_puback(self):
         calls: list[str] = []
