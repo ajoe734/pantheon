@@ -2186,6 +2186,31 @@ def _append_telemetry_lifecycle_event(
     )
 
 
+def _fetch_telemetry_accepted_event(
+    telemetry_url: str,
+    event_id: str,
+    *,
+    tenant_id: str | None = None,
+    service_token: str | None = None,
+    timeout_seconds: float = 5.0,
+) -> Dict[str, Any] | None:
+    if not telemetry_url or not event_id:
+        return None
+    try:
+        from telemetry_client import fetch_accepted_event
+
+        tid = str(tenant_id or _current_tenant_id() or "").strip() or None
+        return fetch_accepted_event(
+            telemetry_url,
+            event_id,
+            tenant_id=tid,
+            service_token=service_token,
+            timeout_seconds=timeout_seconds,
+        )
+    except Exception:
+        return None
+
+
 def _ensure_scheduled_lifecycle_append(
     *,
     summary: Dict[str, Any],
@@ -2340,8 +2365,6 @@ def _scheduled_lifecycle_only_reconcile(
     lifecycle_terminal_rejections: List[Dict[str, Any]] = []
     lifecycle_ineligible_binding_ids: List[str] = []
 
-    seen_evaluations: Dict[str, Dict[str, Any]] = {}
-
     for summary in summaries:
         binding_id = _summary_binding_id(summary)
         runtime_id = str(summary.get("runtime_id") or "").strip()
@@ -2349,13 +2372,51 @@ def _scheduled_lifecycle_only_reconcile(
             continue
 
         evaluation_id = _tick_evaluation_id(tick_id, binding_id)
-        if evaluation_id in seen_evaluations:
-            prev_entry = seen_evaluations[evaluation_id]
-            prev_state = prev_entry.get("state") or {}
-            has_created_event = bool(prev_state.get("event") or prev_state.get("event_id"))
-            is_terminal_or_accepted = prev_state.get("status") in {"accepted", "terminal_rejected"}
-            if has_created_event or is_terminal_or_accepted:
-                continue
+        if evaluation_id in evaluation_ids:
+            continue
+
+        deterministic_event_id = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"pantheon:scheduled-reconciliation:{evaluation_id}",
+            )
+        )
+        existing_accepted_event = None
+        if telemetry_url:
+            existing_accepted_event = _fetch_telemetry_accepted_event(
+                telemetry_url,
+                deterministic_event_id,
+                tenant_id=_mapping_tenant_id(summary),
+            )
+
+        if existing_accepted_event is not None:
+            accepted_status = (
+                "ok"
+                if existing_accepted_event.get("event_type") == "reconciliation_completed"
+                else "degraded"
+            )
+            state = {
+                "status": "accepted",
+                "terminal": True,
+                "retryable": False,
+                "outcome": "accepted",
+                "reason": None,
+                "attempt_count": 1,
+                "event_id": deterministic_event_id,
+                "upstream_event_id": existing_accepted_event.get("causal_parent_id"),
+                "event": existing_accepted_event,
+                "created_at": existing_accepted_event.get("created_at") or timestamp,
+                "accepted_at": existing_accepted_event.get("created_at") or timestamp,
+                "updated_at": timestamp,
+                "http_status": 200,
+                "response": {"status": "accepted", "event_id": deterministic_event_id},
+            }
+            evaluation_ids.append(evaluation_id)
+            evaluation_statuses.append(accepted_status)
+            receipt = _lifecycle_append_receipt(binding_id, state)
+            lifecycle_append_results.append(receipt)
+            lifecycle_accepted_event_ids.append(deterministic_event_id)
+            continue
 
         telemetry_event_ids = _summary_telemetry_event_ids(summary)
         observed_metrics = _resolve_scheduled_metrics(summary)
@@ -2447,35 +2508,18 @@ def _scheduled_lifecycle_only_reconcile(
             if state.get("status") == "accepted":
                 state["accepted_at"] = timestamp
 
-        seen_evaluations[evaluation_id] = {
-            "state": state,
-            "status": status,
-        }
         receipt = _lifecycle_append_receipt(binding_id, state)
-        if evaluation_id not in evaluation_ids:
-            evaluation_ids.append(evaluation_id)
-            evaluation_statuses.append(status)
-            lifecycle_append_results.append(receipt)
-            if receipt["status"] == "accepted" and receipt["event_id"]:
-                lifecycle_accepted_event_ids.append(str(receipt["event_id"]))
-            elif receipt["status"] in {"retryable_error", "pending"}:
-                lifecycle_retryable_errors.append(receipt)
-            elif receipt["status"] == "terminal_rejected":
-                lifecycle_terminal_rejections.append(receipt)
-            elif receipt["status"] == "not_eligible":
-                lifecycle_ineligible_binding_ids.append(binding_id)
-        else:
-            idx = evaluation_ids.index(evaluation_id)
-            evaluation_statuses[idx] = status
-            lifecycle_append_results[idx] = receipt
-            if receipt["status"] == "accepted" and receipt["event_id"]:
-                lifecycle_accepted_event_ids.append(str(receipt["event_id"]))
-            elif receipt["status"] in {"retryable_error", "pending"}:
-                lifecycle_retryable_errors.append(receipt)
-            elif receipt["status"] == "terminal_rejected":
-                lifecycle_terminal_rejections.append(receipt)
-            if binding_id in lifecycle_ineligible_binding_ids and receipt["status"] != "not_eligible":
-                lifecycle_ineligible_binding_ids.remove(binding_id)
+        evaluation_ids.append(evaluation_id)
+        evaluation_statuses.append(status)
+        lifecycle_append_results.append(receipt)
+        if receipt["status"] == "accepted" and receipt["event_id"]:
+            lifecycle_accepted_event_ids.append(str(receipt["event_id"]))
+        elif receipt["status"] in {"retryable_error", "pending"}:
+            lifecycle_retryable_errors.append(receipt)
+        elif receipt["status"] == "terminal_rejected":
+            lifecycle_terminal_rejections.append(receipt)
+        elif receipt["status"] == "not_eligible":
+            lifecycle_ineligible_binding_ids.append(binding_id)
 
     tick_status = _worst_status(evaluation_statuses)
     if lifecycle_retryable_errors or lifecycle_terminal_rejections:
@@ -3009,7 +3053,6 @@ def _execute_scheduled_reconcile(
                     skipped_binding_ids.append(binding_id)
                     evaluation_statuses.append(str(existing_evaluation.get("status") or status))
                     target_evaluation = existing_evaluation
-
         if existing_evaluation is None:
             evaluation = {
                 "id": evaluation_id,
@@ -3155,6 +3198,12 @@ def _completed_window_response(claim: Dict[str, Any]) -> Dict[str, Any]:
         binding_id = str((evaluation or {}).get("binding_id") or "").strip()
         if binding_id:
             skipped_binding_ids.append(binding_id)
+    if not skipped_binding_ids:
+        for item in cached.get("lifecycle_append_results") or []:
+            if isinstance(item, dict) and item.get("binding_id"):
+                bid = str(item["binding_id"]).strip()
+                if bid and bid not in skipped_binding_ids:
+                    skipped_binding_ids.append(bid)
     cached.update(
         {
             "evaluated_binding_count": 0,

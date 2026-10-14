@@ -2526,7 +2526,9 @@ def test_same_window_replay_preserves_accepted_candidate_and_metrics() -> None:
         summary_B["event_delivery_lag_ms"] = 40
 
         class MockResponse:
-            status = 202
+            def __init__(self, status=202, body=b'{"status":"accepted"}'):
+                self.status = status
+                self._body = body
 
             def __enter__(self):
                 return self
@@ -2535,14 +2537,26 @@ def test_same_window_replay_preserves_accepted_candidate_and_metrics() -> None:
                 return False
 
             def read(self):
-                return b'{"status":"accepted"}'
+                return self._body
+
+            def getcode(self):
+                return self.status
 
         telemetry_calls = []
 
         def fake_urlopen(req, timeout=None):
-            data = json.loads(req.data.decode("utf-8"))
-            telemetry_calls.append(data)
-            return MockResponse()
+            req_data = getattr(req, "data", None)
+            if req_data:
+                data = json.loads(req_data.decode("utf-8"))
+                telemetry_calls.append(data)
+                return MockResponse(202, b'{"status":"accepted"}')
+            url = req.full_url if hasattr(req, "full_url") else str(getattr(req, "url", req))
+            event_id = url.split("/api/telemetry/events/")[-1].split("?")[0]
+            event_id = urllib.parse.unquote(event_id)
+            for call in telemetry_calls:
+                if call.get("event_id") == event_id:
+                    return MockResponse(200, json.dumps(call).encode("utf-8"))
+            raise urllib.error.HTTPError(url, 404, "Not Found", {}, io.BytesIO(b'{"error":{"code":"NOT_FOUND"}}'))
 
         tick_id = "tick-same-window-replay-001"
         eval_id = svc._tick_evaluation_id(tick_id, summary_A["binding_id"])
@@ -2599,15 +2613,19 @@ def test_same_window_replay_preserves_accepted_candidate_and_metrics() -> None:
             assert ev_persisted["observed_metrics"]["position_qty"] == 100.0
             assert ev_persisted["lifecycle_append"]["status"] == "accepted"
 
-        # 3. Lifecycle-only scheduled reconcile with candidate A then candidate B in same batch
+        # 3. Lifecycle-only scheduled reconcile cross-call replay: call 1 with candidate A,
+        # then call 2 with candidate B for same window. Must preserve candidate A without
+        # emitting candidate B or writing an evaluation store row.
         telemetry_calls.clear()
         tick_id_lo = "tick-lifecycle-only-same-window-001"
+        eval_id_lo = svc._tick_evaluation_id(tick_id_lo, summary_A["binding_id"])
+
         with (
             mock.patch.dict("os.environ", {"PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083"}),
-            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary_A, summary_B]),
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary_A]),
             mock.patch.object(svc.urllib.request, "urlopen", side_effect=fake_urlopen),
         ):
-            resp_lo = client.post(
+            resp_lo_1 = client.post(
                 "/api/reconciliation-drift/scheduled-reconcile",
                 json={
                     "tick_id": tick_id_lo,
@@ -2616,13 +2634,99 @@ def test_same_window_replay_preserves_accepted_candidate_and_metrics() -> None:
                     "binding_id": summary_A["binding_id"],
                 },
             )
-            assert resp_lo.status_code == 201
-            payload_lo = resp_lo.json()
-            assert len(telemetry_calls) == 1, "Lifecycle-only path must preserve first accepted event without emitting candidate B"
+            assert resp_lo_1.status_code == 201
+            payload_lo_1 = resp_lo_1.json()
+            assert len(telemetry_calls) == 1
             assert telemetry_calls[0]["run_id"] == "run-A"
             assert telemetry_calls[0]["causal_parent_id"] == snap_id_A
-            assert payload_lo["lifecycle_accepted_event_ids"] == [telemetry_calls[0]["event_id"]]
-            assert len(payload_lo["lifecycle_append_results"]) == 1
+            assert payload_lo_1["lifecycle_accepted_event_ids"] == [telemetry_calls[0]["event_id"]]
+            assert len(payload_lo_1["lifecycle_append_results"]) == 1
+            assert svc.store.get_evaluation(eval_id_lo) is None
+
+        with (
+            mock.patch.dict("os.environ", {"PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083"}),
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary_B]),
+            mock.patch.object(svc.urllib.request, "urlopen", side_effect=fake_urlopen),
+        ):
+            resp_lo_2 = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={
+                    "tick_id": tick_id_lo,
+                    "sla_seconds": 60.0,
+                    "lifecycle_only": True,
+                    "binding_id": summary_B["binding_id"],
+                },
+            )
+            assert resp_lo_2.status_code == 201
+            payload_lo_2 = resp_lo_2.json()
+            assert len(telemetry_calls) == 1, "Must not emit candidate B during cross-call replay"
+            assert payload_lo_2["lifecycle_accepted_event_ids"] == [telemetry_calls[0]["event_id"]]
+            assert len(payload_lo_2["lifecycle_append_results"]) == 1
+            assert payload_lo_2["lifecycle_append_results"][0]["status"] == "accepted"
+            assert svc.store.get_evaluation(eval_id_lo) is None
+
+        # 4. Failed-window / SLA breach replay: call 1 appends candidate A but breaches SLA
+        # so claim is failed; call 2 reacquires same window with candidate B.
+        # Must discover candidate A via owner and preserve it without emitting candidate B.
+        telemetry_calls.clear()
+        tick_id_failed = "tick-failed-window-replay-001"
+        binding_id_failed = "44444444-4444-4444-4444-444444444444"
+        summary_failed_A = dict(summary_A)
+        summary_failed_A["binding_id"] = binding_id_failed
+        snap_failed_A = dict(snap_runA)
+        snap_failed_A["binding_id"] = binding_id_failed
+        snap_failed_A["event_id"] = "evt-snap-failed-A"
+        snap_failed_A["correlation_envelope"] = dict(snap_runA["correlation_envelope"])
+        snap_failed_A["correlation_envelope"]["binding_id"] = binding_id_failed
+        snap_failed_A["correlation_envelope"]["event_id"] = "evt-snap-failed-A"
+        summary_failed_A["last_lifecycle_identity"] = snap_failed_A
+        summary_failed_A["committed_position_snapshot"] = snap_failed_A
+
+        summary_failed_B = dict(summary_B)
+        summary_failed_B["binding_id"] = binding_id_failed
+        snap_failed_B = dict(snap_runB)
+        snap_failed_B["binding_id"] = binding_id_failed
+        snap_failed_B["event_id"] = "evt-snap-failed-B"
+        snap_failed_B["correlation_envelope"] = dict(snap_runB["correlation_envelope"])
+        snap_failed_B["correlation_envelope"]["binding_id"] = binding_id_failed
+        snap_failed_B["correlation_envelope"]["event_id"] = "evt-snap-failed-B"
+        summary_failed_B["last_lifecycle_identity"] = snap_failed_B
+        summary_failed_B["committed_position_snapshot"] = snap_failed_B
+
+        eval_id_failed = svc._tick_evaluation_id(tick_id_failed, binding_id_failed)
+        t0 = svc.time.monotonic()
+
+        with (
+            mock.patch.dict("os.environ", {"PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083"}),
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary_failed_A]),
+            mock.patch.object(svc.urllib.request, "urlopen", side_effect=fake_urlopen),
+            mock.patch.object(svc, "_monotonic", side_effect=[t0, t0 + 100.0, t0 + 100.0]),
+        ):
+            resp_failed_1 = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": tick_id_failed, "sla_seconds": 10.0},
+            )
+            assert resp_failed_1.status_code == 201
+            payload_failed_1 = resp_failed_1.json()
+            assert payload_failed_1["within_sla"] is False
+            assert len(telemetry_calls) == 1
+            assert telemetry_calls[0]["run_id"] == "run-A"
+
+        with (
+            mock.patch.dict("os.environ", {"PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083"}),
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary_failed_B]),
+            mock.patch.object(svc.urllib.request, "urlopen", side_effect=fake_urlopen),
+        ):
+            resp_failed_2 = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": tick_id_failed, "sla_seconds": 60.0},
+            )
+            assert resp_failed_2.status_code == 201
+            payload_failed_2 = resp_failed_2.json()
+            assert len(telemetry_calls) == 1, "Must not emit candidate B after recovering failed window"
+            assert payload_failed_2["lifecycle_accepted_event_ids"] == [telemetry_calls[0]["event_id"]]
+            ev_recovered = svc.store.get_evaluation(eval_id_failed)
+            assert ev_recovered["run_id"] == "run-A"
 
 
 
