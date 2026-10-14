@@ -1086,13 +1086,13 @@ class PaperFleetReconciler:
                                         }
                                     }
                                     # paused -> active
-                                    self._transition_binding(binding_id, "active", metadata_patch=resume_patch)
-                                    eb["status"] = "active"
-                                    eb.setdefault("metadata", {})["session_admission"].update(resume_patch["session_admission"])
-                                    if binding_id in excluded_ids:
-                                        excluded_ids.remove(binding_id)
-                                    bindings.append(eb)
-                                    raw_excluded.remove(eb)
+                                    if self._transition_binding(binding_id, "active", metadata_patch=resume_patch):
+                                        eb["status"] = "active"
+                                        eb.setdefault("metadata", {})["session_admission"].update(resume_patch["session_admission"])
+                                        if binding_id in excluded_ids:
+                                            excluded_ids.remove(binding_id)
+                                        bindings.append(eb)
+                                        raw_excluded.remove(eb)
 
                 desired: Dict[str, Dict[str, Any]] = {
                     b["binding_id"]: b for b in bindings
