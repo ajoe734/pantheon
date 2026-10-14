@@ -1268,7 +1268,13 @@ class AssistantOpenClawProvider:
         {"cron.add", "cron.list", "cron.run", "cron.runs", "cron.update", "cron.remove"}
     )
 
-    def gateway_cron_call(self, method: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def gateway_cron_call(
+        self,
+        method: str,
+        params: Optional[Dict[str, Any]] = None,
+        *,
+        timeout_seconds: Optional[float] = None,
+    ) -> Dict[str, Any]:
         """Proxy a whitelisted `cron.*` gateway RPC via `openclaw gateway call`.
 
         Unlike `agent`, the `gateway call` subcommand DOES accept --url/--token.
@@ -1281,7 +1287,7 @@ class AssistantOpenClawProvider:
                 status_code=403,
                 error_code="OPENCLAW_GATEWAY_METHOD_FORBIDDEN",
             )
-        return self._gateway_call(method, params)
+        return self._gateway_call(method, params, timeout_seconds=timeout_seconds)
 
     def gateway_agents_list(self, *, timeout_seconds: Optional[float] = None) -> List[Dict[str, Any]]:
         """Read the gateway's live agent registry without widening the cron proxy."""

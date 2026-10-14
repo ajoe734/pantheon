@@ -79,11 +79,16 @@ def _test_extract_identity(
     parts = token.split(":")
     actor = parts[0] if parts else "system"
     roles = [r.strip() for r in parts[1].split(",")] if len(parts) > 1 else ["operator"]
+    has_mfa = len(parts) > 2 and parts[2] == "mfa"
+    tenant = parts[3].strip() if len(parts) > 3 and parts[3].strip() else None
+    claims = {"tenant_id": tenant} if tenant else {}
     return OperatorIdentity(
         operator_id=actor,
         roles=roles,
         auth_mode="bearer",
-        has_mfa=len(parts) > 2 and parts[2] == "mfa",
+        has_mfa=has_mfa,
+        claims=claims,
+        token_kind="structured" if tenant else "",
     )
 
 
@@ -438,13 +443,42 @@ def test_operator_command_status_readback() -> None:
         )
         client = TestClient(_test_app(store))
 
+        # 1. Unscoped legacy command fails closed (404)
         response = client.get("/api/v1/operator/commands/cmd-readback-1", headers=HEADERS)
-        assert response.status_code == 200, response.text
-        data = response.json()
-        assert data["command_id"] == "cmd-readback-1"
+        assert response.status_code == 404, response.text
+        assert response.json()["detail"] == "Command not found"
+
+        # 2. Scoped command submission and status readback
+        store.submit_command(
+            command_id="cmd-readback-scoped",
+            command_type=CommandType.CAPITAL_POOL_ACTION,
+            target=TargetObject(type=ObjectType.CAPITAL_POOL, id="pool-1"),
+            submitted_at="2026-08-30T12:00:00Z",
+            params={"action_id": "ApprovePool"},
+            audit_context={"actor": "op-test", "tenant_id": "tenant-test"},
+        )
+        headers_same = {"Authorization": "Bearer op-test:operator,approver:mfa:tenant-test"}
+        headers_other = {"Authorization": "Bearer op-test:operator,approver:mfa:tenant-other"}
+        headers_guest = {"Authorization": "Bearer op-test:guest:mfa:tenant-test"}
+
+        # Same tenant GET returns 200 with durable status
+        resp_same = client.get("/api/v1/operator/commands/cmd-readback-scoped", headers=headers_same)
+        assert resp_same.status_code == 200, resp_same.text
+        data = resp_same.json()
+        assert data["command_id"] == "cmd-readback-scoped"
         assert data["type"] == CommandType.CAPITAL_POOL_ACTION.value
         assert data["target"]["id"] == "pool-1"
         assert data["status"] == CommandStatus.SUBMITTED.value
+
+        # Cross-tenant GET fails closed (404)
+        resp_other = client.get("/api/v1/operator/commands/cmd-readback-scoped", headers=headers_other)
+        assert resp_other.status_code == 404, resp_other.text
+        assert resp_other.json()["detail"] == "Command not found"
+
+        # Unauthorized role returns 403
+        resp_guest = client.get("/api/v1/operator/commands/cmd-readback-scoped", headers=headers_guest)
+        assert resp_guest.status_code == 403, resp_guest.text
+
 
 
 def test_typed_domain_command_dispatch_and_receipt(monkeypatch) -> None:
@@ -984,7 +1018,7 @@ def _submit_alias(wrapper: str, verb: str, canonical: str, *, wrapped: bool, tok
         svc = CommandAdapterService(
             command_store=store,
             read_surface=_ApprovedDecisions(canonical, target),
-            extract_identity=lambda *_a, **_k: OperatorIdentity(operator_id="op-test", roles=["operator", "approver", "admin"], mfa_verified=True, claims={"tenant_id": "tenant-alias"}),
+            extract_identity=lambda *_a, **_k: OperatorIdentity(operator_id="op-test", roles=["operator", "approver", "admin"], mfa_verified=True, claims={"tenant_id": "tenant-alias"}, token_kind="structured"),
         )
         app = FastAPI()
         app.include_router(create_command_adapters_router(service=svc, submit_command_admission=svc.submit_command_admission))

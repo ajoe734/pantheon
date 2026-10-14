@@ -2742,6 +2742,7 @@ PY
   fi
 
   git submodule update --init --recursive
+  export PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE="${deploy_dir}/docker-compose.yml"
   info "prepared deploy worktree ${deploy_dir} at ${sha}"
 }
 
@@ -3489,9 +3490,18 @@ verify_exact_component_deployment() {
 
   local container_ids container_id status restart_count health image image_id compose_image_id image_rev cmd entry_json
   local receipt_entries=()
+  local started_at
+  # Stability is judged against the first observation of each component and
+  # that baseline is never refreshed, so a restart or replacement observed
+  # mid-window (3 -> 4 -> 4) cannot be laundered into a stable 4 -> 4.
+  local stability_errors=()
+  declare -A baseline_container_id=() baseline_image_id=() baseline_started_at=() \
+    baseline_restart_count=() baseline_health=() observation_count=() \
+    service_bad_health=()
 
-  # Bounded stabilization loop for services starting up
-  local attempt max_attempts=15
+  # Bounded observation loop: at least two distinct observations, extended
+  # while health is still starting, and an unresolved start fails.
+  local attempt max_attempts=15 min_observations=2
   for attempt in $(seq 1 $max_attempts); do
     missing=()
     duplicates=()
@@ -3534,16 +3544,44 @@ verify_exact_component_deployment() {
       fi
       image_rev="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$container_id" 2>/dev/null || true)"
       cmd="$(docker inspect --format '{{json .Config.Cmd}}' "$container_id" 2>/dev/null || true)"
+      started_at="$(docker inspect --format '{{.State.StartedAt}}' "$container_id" 2>/dev/null || true)"
 
       if [[ "$status" != "running" ]]; then
         restarting+=("${service}: status=${status}, restart_count=${restart_count}")
       fi
-      if [[ ! "$restart_count" =~ ^[0-9]+$ || "$restart_count" != "0" ]]; then
+      if [[ ! "$restart_count" =~ ^[0-9]+$ ]]; then
         restarting+=("${service}: restart_count=${restart_count:-unknown}")
+      fi
+      if [[ ! "$started_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T || "$started_at" == 0001-* ]]; then
+        identity_errors+=("${service}: container StartedAt is invalid (${started_at:-missing})")
+      fi
+      if [[ -z "${observation_count[$service]:-}" ]]; then
+        baseline_container_id["$service"]="$container_id"
+        baseline_image_id["$service"]="$image_id"
+        baseline_started_at["$service"]="$started_at"
+        baseline_restart_count["$service"]="$restart_count"
+        baseline_health["$service"]="$health"
+        observation_count["$service"]=1
+      else
+        observation_count["$service"]=$(( ${observation_count[$service]} + 1 ))
+        if [[ "$container_id" != "${baseline_container_id[$service]}" ]]; then
+          stability_errors+=("${service}: container replaced (${baseline_container_id[$service]} -> ${container_id})")
+        fi
+        if [[ "$image_id" != "${baseline_image_id[$service]}" ]]; then
+          stability_errors+=("${service}: image changed (${baseline_image_id[$service]} -> ${image_id})")
+        fi
+        if [[ "$started_at" != "${baseline_started_at[$service]}" ]]; then
+          stability_errors+=("${service}: StartedAt changed (${baseline_started_at[$service]} -> ${started_at})")
+        fi
+        if [[ "$restart_count" != "${baseline_restart_count[$service]}" ]]; then
+          stability_errors+=("${service}: restart_count changed during observation (${baseline_restart_count[$service]} -> ${restart_count})")
+        fi
       fi
       if [[ "$health" == "starting" ]]; then
         has_starting=true
       elif [[ "$health" != "healthy" && "$health" != "not_configured" ]]; then
+        service_bad_health["$service"]=1
+        stability_errors+=("${service}: health is ${health:-unknown}")
         unhealthy+=("${service}: health=${health}")
       fi
       if [[ -z "$image" ]]; then
@@ -3563,7 +3601,11 @@ verify_exact_component_deployment() {
 
       if ! entry_json="$(python3 -c '
 import json, sys
-service, cid, img, image_id, compose_image_id, rev, stat, rcount, hlth, cmd_json, exp_sha = sys.argv[1:12]
+(
+    service, cid, img, image_id, compose_image_id, rev, stat, rcount, hlth,
+    cmd_json, exp_sha, started_at, obs_count, base_cid, base_image_id,
+    base_started_at, base_rcount, base_hlth, bad_health,
+) = sys.argv[1:20]
 try:
     cmd_val = json.loads(cmd_json)
 except Exception as exc:
@@ -3572,6 +3614,17 @@ if not cmd_val:
     raise SystemExit(f"empty command identity for {service}")
 if not rcount.isdigit():
     raise SystemExit(f"invalid restart count for {service}: {rcount!r}")
+if not base_rcount.isdigit():
+    raise SystemExit(f"invalid baseline restart count for {service}: {base_rcount!r}")
+observations = int(obs_count)
+stable = (
+    observations >= 2
+    and cid == base_cid
+    and image_id == base_image_id
+    and started_at == base_started_at
+    and int(rcount) == int(base_rcount)
+    and bad_health == "0"
+)
 print(json.dumps({
     "service": service,
     "container_id": cid,
@@ -3587,20 +3640,52 @@ print(json.dumps({
     "command": cmd_val,
     "matches_expected_sha": rev == exp_sha if rev not in ("", "<no value>", "unknown") else None,
     "matches_expected_image": image_id == compose_image_id,
+    "started_at": started_at,
+    "stability": {
+        "observation_count": observations,
+        "before": {
+            "container_id": base_cid,
+            "image_id": base_image_id,
+            "started_at": base_started_at,
+            "restart_count": int(base_rcount),
+            "health": base_hlth,
+        },
+        "after": {
+            "container_id": cid,
+            "image_id": image_id,
+            "started_at": started_at,
+            "restart_count": int(rcount),
+            "health": hlth,
+        },
+        "stable": stable,
+    },
 }))
-' "$service" "$container_id" "$image" "$image_id" "$compose_image_id" "$image_rev" "$status" "$restart_count" "$health" "$cmd" "$expected_sha")"; then
+' "$service" "$container_id" "$image" "$image_id" "$compose_image_id" "$image_rev" "$status" "$restart_count" "$health" "$cmd" "$expected_sha" \
+    "$started_at" "${observation_count[$service]}" "${baseline_container_id[$service]}" \
+    "${baseline_image_id[$service]}" "${baseline_started_at[$service]}" \
+    "${baseline_restart_count[$service]}" "${baseline_health[$service]}" "${service_bad_health[$service]:-0}")"; then
         identity_errors+=("${service}: receipt identity serialization failed")
         continue
       fi
       receipt_entries+=("$entry_json")
     done
 
-    if [[ "$has_starting" == "true" ]] && (( attempt < max_attempts )); then
+    if { [[ "$has_starting" == "true" ]] || (( attempt < min_observations )); } && (( attempt < max_attempts )); then
       sleep 2
       continue
     fi
     break
   done
+
+  if [[ "$has_starting" == "true" ]]; then
+    unhealthy+=("health still starting after ${attempt} observation(s)")
+  fi
+  for service in "${target_services[@]}"; do
+    if [[ -n "${observation_count[$service]:-}" ]] && (( ${observation_count[$service]} < min_observations )); then
+      stability_errors+=("${service}: only ${observation_count[$service]} observation(s); ${min_observations} required")
+    fi
+  done
+  if (( ${#stability_errors[@]} > 0 )); then restarting+=("${stability_errors[@]}"); fi
 
   if (( ${#receipt_entries[@]} != ${#target_services[@]} )); then
     identity_errors+=("receipt entries=${#receipt_entries[@]} required=${#target_services[@]}")
@@ -4034,12 +4119,8 @@ ARTIFACT_PY
   if [[ "${operation}" == seal-candidate ]]; then
     [[ "${PANTHEON_DEPLOY_SHA}" == "${PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA}" ]] \
       || { info "candidate source differs from artifact admission" >&2; return 75; }
-    if [[ -n "${PANTHEON_REMOTE_DIR:-}" && -f "${PANTHEON_REMOTE_DIR}/docker-compose.yml" && ! -L "${PANTHEON_REMOTE_DIR}/docker-compose.yml" ]]; then
-      compose_file="${PANTHEON_REMOTE_DIR}/docker-compose.yml"
-    elif [[ -n "${PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE:-}" && -f "${PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE}" && ! -L "${PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE}" ]]; then
+    if [[ -n "${PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE:-}" && -f "${PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE}" && ! -L "${PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE}" ]]; then
       compose_file="${PANTHEON_DEV_ARTIFACT_CANDIDATE_COMPOSE_FILE}"
-    elif [[ -f "${PANTHEON_DEV_ARTIFACT_COMPOSE_FILE}" && ! -L "${PANTHEON_DEV_ARTIFACT_COMPOSE_FILE}" ]]; then
-      compose_file="${PANTHEON_DEV_ARTIFACT_COMPOSE_FILE}"
     else
       error "seal-candidate requires an existing non-symlink compose file"
     fi

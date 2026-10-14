@@ -651,6 +651,7 @@ def build_postgres_write_fn(
                 inserted_sequences: list[int] = []
                 if not rows:
                     return WriteResult.ok(0)
+                insert_stmt = await conn.prepare(insert_sql)
                 async with conn.transaction():
                     # Sequence values are allocated before commit. Serializing
                     # canonical writer transactions prevents a later sequence
@@ -660,8 +661,8 @@ def build_postgres_write_fn(
                         "SELECT pg_advisory_xact_lock(hashtext($1))",
                         table,
                     )
-                    inserted_rows = await conn.fetch(
-                        insert_sql, *(list(column) for column in zip(*rows))
+                    inserted_rows = await insert_stmt.fetch(
+                        *(list(column) for column in zip(*rows))
                     )
                     inserted_sequences = [int(r["ingested_seq"]) for r in inserted_rows]
                     # The first occurrence of an inserted id is the inserted row;

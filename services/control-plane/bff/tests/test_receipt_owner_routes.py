@@ -16,7 +16,7 @@ from services.control_plane.bff.core.owner_reads import OwnerReadContextMiddlewa
 from services.control_plane.bff.deployment.router import create_deployment_router
 from services.control_plane.bff.deployment.adapters import DeploymentReadSurfaceAdapter
 from services.control_plane.bff.evolution.router import create_evolution_programs_router
-from services.control_plane.bff.models import CommandType, ObjectType, OperatorIdentity, utc_now
+from services.control_plane.bff.models import CommandType, ObjectType, OperatorIdentity, TargetObject, utc_now
 from services.control_plane.bff.ports import create_read_surface_ports
 from services.evolution.program_service import ProgramService
 from services.evolution.program_store import JsonProgramStore
@@ -390,3 +390,192 @@ def test_evolution_pause_role_negative_and_authorized_control(mounted, owner, co
     record = store.get_command_by_idempotency_key(f"operator-cmd-{command}", operator_id="tenant-a")
     assert record is not None
     assert record["status"] == "executed"
+
+
+def _custom_tok(sub, tenant, roles=("operator", "approver")):
+    """Deterministic token with custom actor sub and tenant."""
+    from services.runtime_auth_inbound import encode_jwt_hs256
+    claims = {"sub": sub or "no-tenant", "roles": list(roles), "exp": 4102444800,
+              "iss": _JWT_ENV["PANTHEON_BFF_JWT_ISSUER"], "aud": _JWT_ENV["PANTHEON_BFF_JWT_AUDIENCE"]}
+    if tenant:
+        claims["tenant_id"] = tenant
+    return "Bearer " + encode_jwt_hs256(claims, secret=_JWT_ENV["PANTHEON_BFF_JWT_SECRET"])
+
+
+def test_generic_command_status_tenant_boundary_and_role_checks(mounted, owner, monkeypatch):
+    """AC5 regression: normal POST acknowledgement, same-tenant GET 200, cross-tenant 404,
+    role denial 403, and authorized reviewer/admin other-actor visibility within tenant."""
+    monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-a,tenant-b")
+    client, store, _ = mounted
+    payload = {
+        "command": "EvolutionProgramAction",
+        "target": {"type": "EvolutionProgram", "id": "program-a"},
+        "action": "pause_program",
+        "params": {"action_id": "pause_program", "program_id": "program-a"},
+        "audit_context": {"reason": "Tenant boundary regression check"},
+    }
+    # 1. Normal non-AdvanceLifecycle POST acknowledgement (202)
+    admission = client.post(
+        "/bff/v1/commands",
+        json=payload,
+        headers={"Authorization": _custom_tok("op-alice", "tenant-a"), "Idempotency-Key": "tenant-boundary-regr-1"},
+    )
+    assert admission.status_code == 202, admission.text
+    record = store.get_command_by_idempotency_key("tenant-boundary-regr-1", operator_id="op-alice")
+    assert record is not None
+    command_id = record["command_id"]
+    writes_before = json.loads(owner.read_text())["writes"]
+
+    # 2. Same-tenant submitter GET returns 200
+    resp_same = client.get(f"/api/v1/operator/commands/{command_id}", headers={"Authorization": _custom_tok("op-alice", "tenant-a")})
+    assert resp_same.status_code == 200, resp_same.text
+    data = resp_same.json()
+    assert data["command_id"] == command_id
+    assert data["type"] == CommandType.EVOLUTION_PROGRAM_ACTION.value
+
+    # 3. Different-tenant GET returns 404 non-disclosing with zero writes
+    resp_other = client.get(f"/api/v1/operator/commands/{command_id}", headers={"Authorization": _tok("tenant-b")})
+    assert resp_other.status_code == 404, resp_other.text
+    assert resp_other.json()["detail"] == "Command not found"
+    assert json.loads(owner.read_text())["writes"] == writes_before
+
+    # 4. Unauthorized role returns 403 before data exposure
+    resp_guest = client.get(f"/api/v1/operator/commands/{command_id}", headers={"Authorization": _tok("tenant-a", roles=["guest"])})
+    assert resp_guest.status_code == 403, resp_guest.text
+    assert resp_guest.json()["detail"]["error"]["code"] == "FORBIDDEN"
+
+    # 5. Missing auth returns 401
+    resp_noauth = client.get(f"/api/v1/operator/commands/{command_id}")
+    assert resp_noauth.status_code == 401
+
+    # 6. Authorized reviewer / admin in same tenant can read another actor's command
+    resp_rev = client.get(f"/api/v1/operator/commands/{command_id}", headers={"Authorization": _custom_tok("reviewer-bob", "tenant-a", roles=["reviewer"])})
+    assert resp_rev.status_code == 200, resp_rev.text
+    assert resp_rev.json()["command_id"] == command_id
+
+    resp_adm = client.get(f"/api/v1/operator/commands/{command_id}", headers={"Authorization": _custom_tok("admin-carol", "tenant-a", roles=["admin"])})
+    assert resp_adm.status_code == 200, resp_adm.text
+    assert resp_adm.json()["command_id"] == command_id
+
+    # 7. Admin in a DIFFERENT tenant fails closed with 404
+    resp_foreign_adm = client.get(f"/api/v1/operator/commands/{command_id}", headers={"Authorization": _custom_tok("admin-dan", "tenant-b", roles=["admin"])})
+    assert resp_foreign_adm.status_code == 404, resp_foreign_adm.text
+    assert resp_foreign_adm.json()["detail"] == "Command not found"
+
+
+def test_advance_lifecycle_command_status_tenant_protection(mounted, owner):
+    """AC5 regression: AdvanceLifecycle tenant protection contract."""
+    client, store, _ = mounted
+    store.submit_command(
+        command_id="cmd-lifecycle-test-1",
+        command_type=CommandType.ADVANCE_LIFECYCLE,
+        target=TargetObject(type=ObjectType.EVOLUTION_PROGRAM, id="program-a"),
+        submitted_at="2026-10-13T12:00:00Z",
+        params={},
+        audit_context={"actor": "tenant-a", "tenant_id": "tenant-a"},
+        foundation_context={
+            "command_envelope": {
+                "payload": {"tenant_id": "tenant-a"}
+            },
+            "trace_context": {
+                "tenant_ref": {"tenant_id": "tenant-a"}
+            }
+        }
+    )
+    # Same tenant -> 200
+    resp_same = client.get("/api/v1/operator/commands/cmd-lifecycle-test-1", headers={"Authorization": _tok("tenant-a")})
+    assert resp_same.status_code == 200, resp_same.text
+    assert resp_same.json()["command_id"] == "cmd-lifecycle-test-1"
+
+    # Different tenant -> 404
+    resp_other = client.get("/api/v1/operator/commands/cmd-lifecycle-test-1", headers={"Authorization": _tok("tenant-b")})
+    assert resp_other.status_code == 404, resp_other.text
+    assert resp_other.json()["detail"] == "Command not found"
+
+
+def test_unscoped_legacy_command_status_fails_closed(mounted, owner):
+    """AC4 & AC5 regression: Unknown/unscoped legacy records fail closed, including for admin."""
+    client, store, _ = mounted
+    store.submit_command(
+        command_id="cmd-legacy-unscoped-test",
+        command_type=CommandType.CAPITAL_POOL_ACTION,
+        target=TargetObject(type=ObjectType.CAPITAL_POOL, id="pool-1"),
+        submitted_at="2026-10-13T12:00:00Z",
+        params={},
+        audit_context={"actor": "legacy-operator"},
+    )
+    # Normal operator in tenant-a fails closed with 404
+    resp = client.get("/api/v1/operator/commands/cmd-legacy-unscoped-test", headers={"Authorization": _tok("tenant-a")})
+    assert resp.status_code == 404, resp.text
+    assert resp.json()["detail"] == "Command not found"
+
+    # Admin in tenant-a also fails closed with 404
+    resp_adm = client.get("/api/v1/operator/commands/cmd-legacy-unscoped-test", headers={"Authorization": _tok("tenant-a", roles=["admin"])})
+    assert resp_adm.status_code == 404, resp_adm.text
+    assert resp_adm.json()["detail"] == "Command not found"
+
+
+def test_confirm_token_trusted_tenant_save_and_status_readback(mounted, owner):
+    """AC3 & AC5 regression: Legitimate local confirmation trusted-tenant save and readback."""
+    client, store, _ = mounted
+    resp = client.post(
+        "/bff/confirm-tokens",
+        json={"reason": "Local confirmation tenant persistence check", "ttlSeconds": 300},
+        headers={"Authorization": _tok("tenant-a"), "Idempotency-Key": "confirm-token-regr-1"},
+    )
+    assert resp.status_code == 201, resp.text
+    record = store.get_command_by_idempotency_key("confirm-token-regr-1", operator_id="tenant-a")
+    assert record is not None
+    assert store._tenant_id_from_command(record) == "tenant-a"
+    assert (record.get("audit") or {}).get("tenant_id") == "tenant-a"
+    assert (((record.get("foundation") or {}).get("trace_context") or {}).get("tenant_ref") or {}).get("tenant_id") == "tenant-a"
+
+    cmd_id = record["command_id"]
+    # Same tenant GET returns 200
+    resp_read = client.get(f"/api/v1/operator/commands/{cmd_id}", headers={"Authorization": _tok("tenant-a")})
+    assert resp_read.status_code == 200, resp_read.text
+    assert resp_read.json()["command_id"] == cmd_id
+
+    # Foreign tenant GET returns 404
+    resp_other = client.get(f"/api/v1/operator/commands/{cmd_id}", headers={"Authorization": _tok("tenant-b")})
+    assert resp_other.status_code == 404, resp_other.text
+    assert resp_other.json()["detail"] == "Command not found"
+
+
+def test_confirm_token_mapping_tenant_standard_sub_save_and_status_readback(mounted, owner):
+    """AC3 & AC5 regression: Supported mapping tenant with standard string sub saves trusted tenant and allows readback."""
+    client, store, _ = mounted
+    from services.runtime_auth_inbound import encode_jwt_hs256
+    claims = {
+        "sub": "tenant-a",
+        "roles": ["operator", "approver"],
+        "exp": 4102444800,
+        "iss": _JWT_ENV["PANTHEON_BFF_JWT_ISSUER"],
+        "aud": _JWT_ENV["PANTHEON_BFF_JWT_AUDIENCE"],
+        "tenant_id": {"id": "tenant-a"},
+    }
+    token = "Bearer " + encode_jwt_hs256(claims, secret=_JWT_ENV["PANTHEON_BFF_JWT_SECRET"])
+    key = "confirm-token-mapping-tenant-regr-1"
+    resp = client.post(
+        "/bff/confirm-tokens",
+        json={"reason": "Mapping tenant confirmation persistence check", "ttlSeconds": 300},
+        headers={"Authorization": token, "Idempotency-Key": key},
+    )
+    assert resp.status_code == 201, resp.text
+    record = store.get_command_by_idempotency_key(key, operator_id="tenant-a")
+    assert record is not None
+    assert store._tenant_id_from_command(record) == "tenant-a"
+    assert (record.get("audit") or {}).get("tenant_id") == "tenant-a"
+    assert (((record.get("foundation") or {}).get("trace_context") or {}).get("tenant_ref") or {}).get("tenant_id") == "tenant-a"
+
+    cmd_id = record["command_id"]
+    # Same identity GET returns 200
+    resp_read = client.get(f"/api/v1/operator/commands/{cmd_id}", headers={"Authorization": token})
+    assert resp_read.status_code == 200, resp_read.text
+    assert resp_read.json()["command_id"] == cmd_id
+
+    # Foreign tenant GET returns 404
+    resp_other = client.get(f"/api/v1/operator/commands/{cmd_id}", headers={"Authorization": _tok("tenant-b")})
+    assert resp_other.status_code == 404, resp_other.text
+    assert resp_other.json()["detail"] == "Command not found"
+

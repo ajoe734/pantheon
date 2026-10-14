@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -24,6 +25,19 @@ from .workflows import (
     WORKFLOW_CATALOG,
     WorkflowDefinition,
 )
+
+# Default HTTP response allowance reserved for network transit, FastAPI serialization,
+# and adapter response headers. Bounded arithmetic against the 180-second provisioning
+# lease:
+# - Outer constraint: 180.0s (PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS / HTTP request limit)
+# - Adapter CLI process cap: 170.0s (OPENCLAW_ASSISTANT_TIMEOUT_SECONDS)
+# - Generic CLI startup overhead: ~8-10s (reproduced: 9.792s total with 67ms gateway RPC)
+# - Reserved response allowance: 2.0s (up to 5.0s when budget permits)
+# - Admitted process allowance: max(0.001, timeout_budget - response_allowance)
+# - HTTP socket timeout: timeout_budget (strictly encompasses process allowance + response allowance)
+# - Cumulative schedule operation: monotonic deadline spent across initial list, pagination,
+#   owner/namespace guard lookups, mutation, reconciliation, and authoritative readback polling.
+DEFAULT_HTTP_RESPONSE_ALLOWANCE_SECONDS = 2.0
 
 
 class AdapterCronRuntime:
@@ -52,13 +66,50 @@ class AdapterCronRuntime:
         )
         self._service_token = str(token or "").strip()
 
-    def gateway_call(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    def gateway_call(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        timeout_seconds: float | None = None,
+        deadline: float | None = None,
+    ) -> dict[str, Any]:
         if not self._service_token:
             raise RuntimeError(
                 "OpenClaw adapter cron service authentication is required, but "
                 "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN is not configured."
             )
-        body = json.dumps({"method": method, "params": params or {}}).encode("utf-8")
+        now = time.monotonic()
+        if deadline is not None:
+            remaining = deadline - now
+            if remaining <= 0:
+                raise TimeoutError(f"schedule deadline exceeded before {method}")
+            timeout_budget = (
+                remaining
+                if timeout_seconds is None
+                else min(remaining, float(timeout_seconds))
+            )
+        elif timeout_seconds is not None:
+            timeout_budget = float(timeout_seconds)
+        else:
+            timeout_budget = float(self._timeout)
+
+        if timeout_budget <= 0:
+            raise TimeoutError(f"schedule timeout exhausted before {method}")
+
+        http_timeout = timeout_budget
+        response_allowance = min(
+            DEFAULT_HTTP_RESPONSE_ALLOWANCE_SECONDS,
+            max(0.05, timeout_budget * 0.1),
+        )
+        process_allowance = max(0.001, timeout_budget - response_allowance)
+
+        payload_obj = {
+            "method": method,
+            "params": params or {},
+            "timeout_seconds": process_allowance,
+        }
+        body = json.dumps(payload_obj).encode("utf-8")
         req = urllib.request.Request(
             self._url,
             data=body,
@@ -69,13 +120,30 @@ class AdapterCronRuntime:
                 "X-Pantheon-Service-Token": self._service_token,
             },
         )
-        with urllib.request.urlopen(req, timeout=self._timeout) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(req, timeout=http_timeout) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            try:
+                error_body = exc.read().decode("utf-8")
+                payload = json.loads(error_body)
+            except Exception:
+                payload = None
+            if isinstance(payload, dict) and payload.get("message"):
+                raise RuntimeError(
+                    f"adapter cron proxy error for {method}: "
+                    f"{payload.get('error_code')}: {payload.get('message')}"
+                )
+            raise RuntimeError(
+                f"adapter cron proxy HTTP error {exc.code} for {method}: {exc}"
+            ) from exc
         if payload.get("status") != "ok":
             raise RuntimeError(
                 f"adapter cron proxy error for {method}: "
                 f"{payload.get('error_code')}: {payload.get('message')}"
             )
+        if deadline is not None and time.monotonic() > deadline:
+            raise TimeoutError(f"schedule deadline exceeded after {method}")
         data = payload.get("data")
         return data if isinstance(data, dict) else {}
 
@@ -180,7 +248,7 @@ class PersonaCronRegistrar:
             return delivery is None or delivery == {"mode": "none"}
         return delivery == {"mode": self._delivery_mode}
 
-    def _get_runtime(self) -> Any:
+    def _get_runtime(self, *, timeout_seconds: float | None = None) -> Any:
         if self._runtime is not None:
             return self._runtime
         # Preferred path from the BFF (which has no docker socket / openclaw
@@ -189,7 +257,12 @@ class PersonaCronRegistrar:
         # register live jobs instead of silently no-op'ing in dry_run.
         adapter_url = os.environ.get("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "").strip()
         if adapter_url:
-            return AdapterCronRuntime(adapter_url)
+            effective_timeout = (
+                timeout_seconds
+                if timeout_seconds is not None
+                else float(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180"))
+            )
+            return AdapterCronRuntime(adapter_url, timeout_seconds=int(effective_timeout))
         # Host-side fallback: direct docker-exec runtime (only where a docker
         # socket is available and explicitly enabled).
         if os.environ.get("OPENCLAW_PAPER_ADAPTER_ENABLED", "").lower() != "true":
@@ -209,6 +282,35 @@ class PersonaCronRegistrar:
             )
         except Exception:  # noqa: BLE001
             return None
+
+    @staticmethod
+    def _call_gateway(
+        runtime: Any,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        deadline: float | None = None,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        """Invoke runtime.gateway_call with monotonic deadline/timeout propagation where supported."""
+        if deadline is not None and time.monotonic() >= deadline:
+            raise TimeoutError(f"schedule deadline exceeded before {method}")
+        kwargs: dict[str, Any] = {}
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"schedule deadline exceeded before {method}")
+            kwargs["deadline"] = deadline
+            kwargs["timeout_seconds"] = (
+                remaining if timeout_seconds is None else min(remaining, float(timeout_seconds))
+            )
+        elif timeout_seconds is not None:
+            kwargs["timeout_seconds"] = float(timeout_seconds)
+
+        result = runtime.gateway_call(method, params, **kwargs)
+        if deadline is not None and time.monotonic() > deadline:
+            raise TimeoutError(f"schedule deadline exceeded after {method}")
+        return result
 
     def _build_system_event_text(
         self,
@@ -292,6 +394,8 @@ class PersonaCronRegistrar:
         persona_capital_binding_id: str | None,
         runtime_id: str | None,
         runtime_binding_id: str | None,
+        *,
+        deadline: float | None = None,
     ) -> PersonaCronJobRecord:
         # Stable owner correlation survives BFF/adapter response loss and
         # process restart. Persona identity is already tenant-scoped and
@@ -312,7 +416,12 @@ class PersonaCronRegistrar:
         # capital authority therefore travels in the systemEvent text.
         add_error: Exception | None = None
         try:
-            response = runtime.gateway_call("cron.add", params)
+            response = self._call_gateway(
+                runtime,
+                "cron.add",
+                params,
+                deadline=deadline,
+            )
             job_id = str(response.get("id") or "").strip()
             if not job_id:
                 raise RuntimeError(
@@ -324,9 +433,14 @@ class PersonaCronRegistrar:
             # the systemEvent lets a fresh authoritative list distinguish this
             # committed attempt from a pre-apply failure or concurrent writer.
             add_error = exc
+            if deadline is not None and time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"cron.add outcome unknown for {workflow.workflow_id} / "
+                    f"{persona_id}: {exc}; authoritative cron.list skipped: schedule deadline exceeded"
+                ) from exc
             try:
                 owner_jobs = self._matching_workflow_jobs(
-                    self._list_jobs(runtime),
+                    self._list_jobs(runtime, deadline=deadline),
                     persona_id,
                     workflow.workflow_id,
                 )
@@ -384,6 +498,8 @@ class PersonaCronRegistrar:
         runtime_id: str | None = None,
         runtime_binding_id: str | None = None,
         persona_capital_binding_id: str | None = None,
+        timeout_seconds: float | None = None,
+        deadline: float | None = None,
     ) -> PersonaCronRegistrationResult:
         """Register selected WORKFLOW_CATALOG workflows for *persona_id*.
 
@@ -445,7 +561,10 @@ class PersonaCronRegistrar:
             if persona_capital_binding_id is not None
             else binding_id
         )
-        runtime = None if self._dry_run else self._get_runtime()
+        if deadline is None and timeout_seconds is not None:
+            deadline = time.monotonic() + float(timeout_seconds)
+
+        runtime = None if self._dry_run else self._get_runtime(timeout_seconds=timeout_seconds)
 
         if runtime is None:
             mode = "dry_run"
@@ -471,8 +590,35 @@ class PersonaCronRegistrar:
         registered: list[PersonaCronJobRecord] = []
         failed: list[dict[str, Any]] = []
         skipped: list[str] = []
+
+        if deadline is not None and time.monotonic() >= deadline:
+            return PersonaCronRegistrationResult(
+                persona_id=persona_id,
+                capital_pool_id=capital_pool_id,
+                binding_id=effective_persona_capital_binding_id,
+                mode=mode,
+                failed=[
+                    {
+                        "workflow_id": (
+                            "all"
+                            if workflow_ids is None
+                            else ",".join(
+                                workflow.workflow_id for workflow in selected_workflows
+                            )
+                            or "none"
+                        ),
+                        "error": "cron.list failed, refusing to register blind: schedule deadline exceeded",
+                        "persona_id": persona_id,
+                    }
+                ],
+            )
+
         try:
-            existing_jobs = self._list_jobs(runtime)
+            existing_jobs = self._list_jobs(
+                runtime,
+                deadline=deadline,
+                timeout_seconds=timeout_seconds,
+            )
             existing = self._registration_pairs(existing_jobs)
         except Exception as exc:  # noqa: BLE001
             # Fail closed: if we cannot verify what's already registered, do
@@ -534,6 +680,15 @@ class PersonaCronRegistrar:
 
         for workflow in selected_workflows:
             job_name = _job_name(workflow.workflow_id, persona_id)
+            if deadline is not None and time.monotonic() >= deadline:
+                failed.append(
+                    {
+                        "workflow_id": workflow.workflow_id,
+                        "error": f"schedule deadline exceeded before registering {workflow.workflow_id}",
+                        "persona_id": persona_id,
+                    }
+                )
+                continue
             if workflow.workflow_id == PERSONA_FIRST_EVALUATION_WORKFLOW_ID:
                 owner_jobs = self._matching_first_evaluation_jobs(
                     existing_jobs,
@@ -550,6 +705,7 @@ class PersonaCronRegistrar:
                         persona_capital_binding_id=(
                             effective_persona_capital_binding_id
                         ),
+                        deadline=deadline,
                     )
                     if converged:
                         skipped.append(job_name)
@@ -576,6 +732,7 @@ class PersonaCronRegistrar:
                     effective_persona_capital_binding_id,
                     runtime_id,
                     runtime_binding_id,
+                    deadline=deadline,
                 )
                 registered.append(record)
             except Exception as exc:  # noqa: BLE001
@@ -603,6 +760,8 @@ class PersonaCronRegistrar:
         workflow_id: str,
         *,
         runtime: Any = None,
+        timeout_seconds: float | None = None,
+        deadline: float | None = None,
     ) -> bool:
         """Return whether the exact persona/workflow pair is registered.
 
@@ -620,13 +779,17 @@ class PersonaCronRegistrar:
 
         resolved_runtime = runtime
         if resolved_runtime is None and not self._dry_run:
-            resolved_runtime = self._get_runtime()
+            resolved_runtime = self._get_runtime(timeout_seconds=timeout_seconds)
         if resolved_runtime is None:
             return False
         return (
             clean_persona_id,
             clean_workflow_id,
-        ) in self._existing_registrations(resolved_runtime)
+        ) in self._existing_registrations(
+            resolved_runtime,
+            deadline=deadline,
+            timeout_seconds=timeout_seconds,
+        )
 
     def has_first_evaluation_registration(
         self,
@@ -637,6 +800,8 @@ class PersonaCronRegistrar:
         runtime_binding_id: str | None = None,
         capital_pool_id: str | None = None,
         persona_capital_binding_id: str | None = None,
+        timeout_seconds: float | None = None,
+        deadline: float | None = None,
     ) -> bool:
         return self.get_first_evaluation_registration(
             persona_id,
@@ -645,6 +810,8 @@ class PersonaCronRegistrar:
             runtime_binding_id=runtime_binding_id,
             capital_pool_id=capital_pool_id,
             persona_capital_binding_id=persona_capital_binding_id,
+            timeout_seconds=timeout_seconds,
+            deadline=deadline,
         ) is not None
 
     def get_first_evaluation_registration(
@@ -656,6 +823,8 @@ class PersonaCronRegistrar:
         runtime_binding_id: str | None = None,
         capital_pool_id: str | None = None,
         persona_capital_binding_id: str | None = None,
+        timeout_seconds: float | None = None,
+        deadline: float | None = None,
     ) -> dict[str, Any] | None:
         """Authoritatively verify one exact first-evaluation cron record.
 
@@ -669,13 +838,20 @@ class PersonaCronRegistrar:
         if not clean_persona_id:
             raise ValueError("persona_id is required for cron registration readback")
 
+        if deadline is not None and time.monotonic() >= deadline:
+            return None
+
         resolved_runtime = runtime
         if resolved_runtime is None and not self._dry_run:
-            resolved_runtime = self._get_runtime()
+            resolved_runtime = self._get_runtime(timeout_seconds=timeout_seconds)
         if resolved_runtime is None:
             return None
 
-        jobs = self._list_jobs(resolved_runtime)
+        jobs = self._list_jobs(
+            resolved_runtime,
+            deadline=deadline,
+            timeout_seconds=timeout_seconds,
+        )
         if self._ambiguous_first_evaluation_name_jobs(jobs, clean_persona_id):
             return None
         candidates = self._matching_first_evaluation_jobs(jobs, clean_persona_id)
@@ -699,6 +875,8 @@ class PersonaCronRegistrar:
         persona_id: str,
         *,
         runtime: Any = None,
+        timeout_seconds: float | None = None,
+        deadline: float | None = None,
     ) -> dict[str, Any]:
         """Remove every first-evaluation row owned by *persona_id* and prove it.
 
@@ -716,14 +894,18 @@ class PersonaCronRegistrar:
 
         resolved_runtime = runtime
         if resolved_runtime is None and not self._dry_run:
-            resolved_runtime = self._get_runtime()
+            resolved_runtime = self._get_runtime(timeout_seconds=timeout_seconds)
         if resolved_runtime is None:
             raise RuntimeError(
                 "authoritative cron runtime is unavailable for first-evaluation removal"
             )
 
         try:
-            jobs = self._list_jobs(resolved_runtime)
+            jobs = self._list_jobs(
+                resolved_runtime,
+                deadline=deadline,
+                timeout_seconds=timeout_seconds,
+            )
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(
                 f"authoritative cron.list failed before first-evaluation removal: {exc}"
@@ -753,8 +935,17 @@ class PersonaCronRegistrar:
 
         mutation_errors: list[str] = []
         for job_id in owner_ids:
+            if deadline is not None and time.monotonic() >= deadline:
+                mutation_errors.append(f"cron.remove {job_id}: schedule deadline exceeded")
+                continue
             try:
-                resolved_runtime.gateway_call("cron.remove", {"id": job_id})
+                self._call_gateway(
+                    resolved_runtime,
+                    "cron.remove",
+                    {"id": job_id},
+                    deadline=deadline,
+                    timeout_seconds=timeout_seconds,
+                )
             except Exception as exc:  # noqa: BLE001
                 # The remove may have committed before its response was lost.
                 # Preserve the error for diagnostics, but let final readback
@@ -762,7 +953,11 @@ class PersonaCronRegistrar:
                 mutation_errors.append(f"cron.remove {job_id}: {exc}")
 
         try:
-            final_jobs = self._list_jobs(resolved_runtime)
+            final_jobs = self._list_jobs(
+                resolved_runtime,
+                deadline=deadline,
+                timeout_seconds=timeout_seconds,
+            )
         except Exception as exc:  # noqa: BLE001
             details = "; ".join(mutation_errors)
             suffix = f"; mutation errors: {details}" if details else ""
@@ -1004,6 +1199,7 @@ class PersonaCronRegistrar:
         runtime_binding_id: str | None,
         capital_pool_id: str | None,
         persona_capital_binding_id: str | None,
+        deadline: float | None = None,
     ) -> tuple[bool, str | None]:
         """Converge owned first-evaluation rows, then prove exact readback.
 
@@ -1028,8 +1224,16 @@ class PersonaCronRegistrar:
             if not duplicate_id:
                 mutation_errors.append("duplicate owner row has no gateway id")
                 continue
+            if deadline is not None and time.monotonic() >= deadline:
+                mutation_errors.append(f"cron.remove {duplicate_id}: schedule deadline exceeded")
+                continue
             try:
-                runtime.gateway_call("cron.remove", {"id": duplicate_id})
+                self._call_gateway(
+                    runtime,
+                    "cron.remove",
+                    {"id": duplicate_id},
+                    deadline=deadline,
+                )
             except Exception as exc:  # noqa: BLE001
                 mutation_errors.append(f"cron.remove {duplicate_id}: {exc}")
 
@@ -1044,6 +1248,8 @@ class PersonaCronRegistrar:
             canonical_id = str(canonical.get("id") or "").strip()
             if not canonical_id:
                 mutation_errors.append("canonical owner row has no gateway id")
+            elif deadline is not None and time.monotonic() >= deadline:
+                mutation_errors.append(f"cron.update {canonical_id}: schedule deadline exceeded")
             else:
                 request_id = (
                     f"persona-provisioning:{persona_id}:{workflow.workflow_id}"
@@ -1058,15 +1264,17 @@ class PersonaCronRegistrar:
                     persona_capital_binding_id=persona_capital_binding_id,
                 )
                 try:
-                    runtime.gateway_call(
+                    self._call_gateway(
+                        runtime,
                         "cron.update",
                         {"id": canonical_id, "patch": patch},
+                        deadline=deadline,
                     )
                 except Exception as exc:  # noqa: BLE001
                     mutation_errors.append(f"cron.update {canonical_id}: {exc}")
 
         try:
-            final_jobs = self._list_jobs(runtime)
+            final_jobs = self._list_jobs(runtime, deadline=deadline)
         except Exception as exc:  # noqa: BLE001
             details = "; ".join(mutation_errors)
             suffix = f"; mutation errors: {details}" if details else ""
@@ -1113,7 +1321,13 @@ class PersonaCronRegistrar:
             f"one exact owner row (found {len(final_owner_jobs)}){suffix}",
         )
 
-    def _list_jobs(self, runtime: Any) -> list[dict[str, Any]]:
+    def _list_jobs(
+        self,
+        runtime: Any,
+        *,
+        deadline: float | None = None,
+        timeout_seconds: float | None = None,
+    ) -> list[dict[str, Any]]:
         """Return every raw gateway cron row without identity deduplication."""
         all_jobs: list[dict[str, Any]] = []
         offset = 0
@@ -1123,9 +1337,12 @@ class PersonaCronRegistrar:
                 raise RuntimeError("authoritative cron.list returned a pagination cycle")
             seen_offsets.add(offset)
             listing = (
-                runtime.gateway_call(
+                self._call_gateway(
+                    runtime,
                     "cron.list",
                     {"limit": 200, "offset": offset},
+                    deadline=deadline,
+                    timeout_seconds=timeout_seconds,
                 )
                 or {}
             )
@@ -1143,7 +1360,13 @@ class PersonaCronRegistrar:
             offset = next_offset
         return all_jobs
 
-    def _existing_registrations(self, runtime: Any) -> set[tuple[str, str]]:
+    def _existing_registrations(
+        self,
+        runtime: Any,
+        *,
+        deadline: float | None = None,
+        timeout_seconds: float | None = None,
+    ) -> set[tuple[str, str]]:
         """(persona_id, workflow_id) pairs already registered in the gateway.
 
         Identity is read from each job's systemEvent payload text, not its
@@ -1164,7 +1387,13 @@ class PersonaCronRegistrar:
         detecting it as already present). Raises on failure so the caller can
         fail closed instead of registering blind.
         """
-        return self._registration_pairs(self._list_jobs(runtime))
+        return self._registration_pairs(
+            self._list_jobs(
+                runtime,
+                deadline=deadline,
+                timeout_seconds=timeout_seconds,
+            )
+        )
 
     def _registration_pairs(
         self,

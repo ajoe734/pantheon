@@ -645,14 +645,24 @@ class TestPostgresWriteFn(unittest.IsolatedAsyncioTestCase):
                 captured["transaction_open"] = False
                 captured["transaction_committed"] = exc_type is None
 
+        class FakePreparedStatement:
+            def __init__(self, query):
+                self.query = query
+
+            async def fetch(self, *columns):
+                captured["query"] = self.query
+                captured["rows"] = list(zip(*columns))
+                captured["fetch_in_transaction"] = captured["transaction_open"]
+                return [{"event_id": "postgres-created-at", "ingested_seq": 17}]
+
         class FakeConnection:
             def transaction(self):
                 return FakeTransaction()
 
-            async def fetch(self, query, *columns):
-                captured["query"] = query
-                captured["rows"] = list(zip(*columns))
-                return [{"event_id": "postgres-created-at", "ingested_seq": 17}]
+            async def prepare(self, query):
+                captured["prepared_query"] = query
+                captured["prepare_in_transaction"] = captured.get("transaction_open", False)
+                return FakePreparedStatement(query)
 
             async def fetchval(self, query, *row):
                 raise AssertionError("new rows must not run the duplicate equality query")
@@ -686,6 +696,8 @@ class TestPostgresWriteFn(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured["dsn"], "postgresql://example/db")
         self.assertTrue(captured["closed"])
         self.assertTrue(captured["transaction_committed"])
+        self.assertFalse(captured["prepare_in_transaction"])
+        self.assertTrue(captured["fetch_in_transaction"])
         self.assertTrue(captured["writer_lock_in_transaction"])
         self.assertEqual(captured["writer_lock_args"], ("telemetry_events",))
         self.assertTrue(captured["notify_in_transaction"])
@@ -715,12 +727,19 @@ class TestPostgresWriteFn(unittest.IsolatedAsyncioTestCase):
                 captured["transaction_open"] = False
                 captured["transaction_committed"] = exc_type is None
 
+        class FakePreparedStatement:
+            def __init__(self, query):
+                self.query = query
+
+            async def fetch(self, *columns):
+                return []
+
         class FakeConnection:
             def transaction(self):
                 return FakeTransaction()
 
-            async def fetch(self, query, *columns):
-                return []
+            async def prepare(self, query):
+                return FakePreparedStatement(query)
 
             async def fetchval(self, query, *columns):
                 captured["duplicate_query"] = query
@@ -760,13 +779,20 @@ class TestPostgresWriteFn(unittest.IsolatedAsyncioTestCase):
                 captured["transaction_committed"] = exc_type is None
                 captured["rolled_back"] = exc_type is not None
 
+        class FakePreparedStatement:
+            def __init__(self, query):
+                self.query = query
+
+            async def fetch(self, *columns):
+                captured["fetchrow_calls"] += 1
+                return [{"event_id": "postgres-new-before-conflict", "ingested_seq": 18}]
+
         class FakeConnection:
             def transaction(self):
                 return FakeTransaction()
 
-            async def fetch(self, query, *columns):
-                captured["fetchrow_calls"] += 1
-                return [{"event_id": "postgres-new-before-conflict", "ingested_seq": 18}]
+            async def prepare(self, query):
+                return FakePreparedStatement(query)
 
             async def fetchval(self, query, *columns):
                 return "postgres-conflicting-duplicate"
@@ -809,16 +835,13 @@ class TestPostgresWriteFn(unittest.IsolatedAsyncioTestCase):
                 async def __aexit__(self, exc_type, exc, traceback):
                     return False
 
-            class FakeConnection:
-                def transaction(self):
-                    return FakeTransaction()
+            class FakePreparedStatement:
+                def __init__(self, query):
+                    self.query = query
 
-                async def execute(self, query, *args):
-                    statements.append(query)
-
-                async def fetch(self, query, *columns):
+                async def fetch(self, *columns):
                     assert any("pg_advisory_xact_lock" in q for q in statements)
-                    statements.append(query)
+                    statements.append(self.query)
                     ids = columns[0]
                     if duplicates:
                         return []
@@ -826,6 +849,17 @@ class TestPostgresWriteFn(unittest.IsolatedAsyncioTestCase):
                         {"event_id": event_id, "ingested_seq": 100 + i}
                         for i, event_id in enumerate(ids)
                     ]
+
+            class FakeConnection:
+                def transaction(self):
+                    return FakeTransaction()
+
+                async def prepare(self, query):
+                    assert not any("pg_advisory_xact_lock" in q for q in statements)
+                    return FakePreparedStatement(query)
+
+                async def execute(self, query, *args):
+                    statements.append(query)
 
                 async def fetchval(self, query, *columns):
                     statements.append(query)
@@ -850,6 +884,96 @@ class TestPostgresWriteFn(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(one), len(many))
             self.assertLessEqual(len(many), 4)
             self.assertIn("pg_advisory_xact_lock", one[0])
+
+    async def test_postgres_writer_delayed_prepare_leaves_canonical_fence_available(self):
+        """Delayed cold prepare leaves advisory lock fence free; execution/notification are fenced."""
+        order_of_events: list[str] = []
+        prepare_entered = asyncio.Event()
+        competitor_finished = asyncio.Event()
+        writer_lock_held = False
+        writer_committed = False
+
+        class FakeTransaction:
+            async def __aenter__(self):
+                order_of_events.append("writer_tx_enter")
+
+            async def __aexit__(self, exc_type, exc, traceback):
+                nonlocal writer_lock_held, writer_committed
+                writer_lock_held = False
+                writer_committed = exc_type is None
+                order_of_events.append("writer_tx_exit_committed" if writer_committed else "writer_tx_exit_aborted")
+
+        class FakePreparedStatement:
+            def __init__(self, query):
+                self.query = query
+
+            async def fetch(self, *columns):
+                self_in_lock = writer_lock_held
+                order_of_events.append(f"writer_insert_executed(in_lock={self_in_lock})")
+                return [{"event_id": "cold-prepare-test", "ingested_seq": 101}]
+
+        class FakeConnection:
+            def transaction(self):
+                return FakeTransaction()
+
+            async def prepare(self, query):
+                order_of_events.append(f"writer_prepare_start(in_lock={writer_lock_held})")
+                prepare_entered.set()
+                # Simulate cold preparation latency (e.g. type codec resolution)
+                await competitor_finished.wait()
+                order_of_events.append("writer_prepare_done")
+                return FakePreparedStatement(query)
+
+            async def execute(self, query, *args):
+                nonlocal writer_lock_held
+                if "pg_advisory_xact_lock" in query:
+                    writer_lock_held = True
+                    order_of_events.append("writer_lock_acquired")
+                elif "pg_notify" in query:
+                    order_of_events.append(f"writer_notify(in_lock={writer_lock_held})")
+
+            async def close(self):
+                order_of_events.append("writer_conn_closed")
+
+        async def connect(dsn):
+            return FakeConnection()
+
+        async def concurrent_competitor_acquirer():
+            await prepare_entered.wait()
+            # The canonical writer fence must be available while writer is preparing
+            self.assertFalse(writer_lock_held)
+            order_of_events.append("competitor_lock_acquired")
+            # Competitor holds lock and releases it
+            order_of_events.append("competitor_lock_released")
+            competitor_finished.set()
+
+        batch = [_make_event(event_id="cold-prepare-test")]
+        with patch.dict(sys.modules, {"asyncpg": types.SimpleNamespace(connect=connect)}):
+            write_task = asyncio.create_task(
+                build_postgres_write_fn("postgresql://example/db")(batch)
+            )
+            competitor_task = asyncio.create_task(concurrent_competitor_acquirer())
+            await competitor_task
+            result = await write_task
+
+        self.assertTrue(result.success, result.error)
+        self.assertEqual(result.count, 1)
+        self.assertTrue(writer_committed)
+        self.assertEqual(
+            order_of_events,
+            [
+                "writer_prepare_start(in_lock=False)",
+                "competitor_lock_acquired",
+                "competitor_lock_released",
+                "writer_prepare_done",
+                "writer_tx_enter",
+                "writer_lock_acquired",
+                "writer_insert_executed(in_lock=True)",
+                "writer_notify(in_lock=True)",
+                "writer_tx_exit_committed",
+                "writer_conn_closed",
+            ],
+        )
 
 
 class TestTelemetryIngestService(unittest.IsolatedAsyncioTestCase):
