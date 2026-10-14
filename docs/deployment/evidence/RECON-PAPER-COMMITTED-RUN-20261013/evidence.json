@@ -21,12 +21,12 @@
     {
       "ac": "AC3",
       "description": "In reconciliation scheduler, select paired committed snapshot identity and its own numeric metrics before evaluation/terminal construction. Never transplant older snapshot identity onto newer latest-summary financial metrics or cached evaluation from another run. Handle evaluation cache without misjoining cached pending/newer evaluations; same-window replay emits one deterministic stage 8 terminal.",
-      "verdict": "pass: persist-before-send stores deterministic evaluation and terminal intent in store before network append so SLA breach, business failure, or claim reacquisition preserves candidate A evaluation, receipt, and metrics without retargeting deterministic event_id to candidate B. In lifecycle-only mode (where test414-472 explicitly forbids evaluation store rows), ephemeral local seen_evaluations dict was removed and deduplication is reconciled with Telemetry owner discovery via _fetch_telemetry_accepted_event (GET /api/telemetry/events/{event_id}), preserving candidate A without emitting candidate B. Architectural boundary documented: under the lifecycle-only no-evaluation-store contract, accepted events are durably recovered from Telemetry owner, whereas in-flight unaccepted network timeouts cannot recover unpersisted intent without an evaluation store."
+      "verdict": "pass: persist-before-send stores deterministic evaluation and terminal intent in store before network append so SLA breach, business failure, or claim reacquisition preserves candidate A evaluation, receipt, and metrics without retargeting deterministic event_id to candidate B. In lifecycle-only mode (where test414-472 explicitly forbids evaluation store rows), deduplication is reconciled with Telemetry owner discovery via _fetch_telemetry_accepted_event (GET /api/telemetry/events/{event_id}), reusing canonical _paper_lifecycle_identity to validate terminal events against summary owner constraints and correlation envelope without loose validators. Truthful receipts preserve known outcomes, keep unknown http_status null when exceptions lack exact codes, and treat absent attempt_count as 0 and absent accepted_at as null without fabricating historical metadata."
     },
     {
       "ac": "AC4",
       "description": "Use original test modules and fixtures. Add cross-run regression with completed runA stage 7 plus later in-flight runB, verifying canonical batch read selects runA identity and metrics; reject admitted-but-not-committed, cross-tenant/binding/runtime/artifact, missing numeric metrics, and already-reconciled candidates. Cover cached pending/newer-run evaluation versus completed snapshot to prevent result/identity misjoin; same-window replay remains one deterministic stage 8 terminal. Run affected original complete telemetry and reconciliation modules.",
-      "verdict": "pass: 38 passed in test_reconciliation_drift_scheduler.py, 8 passed in test_paper_runtime_ingest_contract.py, and 274 passed (2 skipped) across the full 9-module telemetry and reconciliation regression suite. Cross-call lifecycle-only replay and failed-window SLA breach replay verified in test_same_window_replay_preserves_accepted_candidate_and_metrics."
+      "verdict": "pass: 38 passed in test_reconciliation_drift_scheduler.py, 8 passed in test_paper_runtime_ingest_contract.py, and 274 passed (2 skipped) across the full 9-module telemetry and reconciliation regression suite. Cross-call lifecycle-only replay, failed-window SLA breach replay, absent attempt_count, null http_status on unproven errors, and identity mismatch rejection verified in test_same_window_replay_preserves_accepted_candidate_and_metrics."
     },
     {
       "ac": "AC5",
@@ -68,7 +68,7 @@
     "docs/deployment/evidence/RECON-PAPER-COMMITTED-RUN-20261013/evidence.json"
   ],
   "diff_budget": {
-    "net_production_lines": 492,
+    "net_production_lines": 463,
     "verdict": "pass",
     "files": {
       "production": [

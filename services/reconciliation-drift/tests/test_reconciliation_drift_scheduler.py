@@ -2739,6 +2739,7 @@ def test_same_window_replay_preserves_accepted_candidate_and_metrics() -> None:
             assert len(telemetry_calls) == 1, "Must not emit candidate B after recovering failed window in lifecycle-only mode"
             assert payload_failed_2["lifecycle_accepted_event_ids"] == [telemetry_calls[0]["event_id"]], repr(payload_failed_2)
             assert payload_failed_2["lifecycle_append_results"][0]["status"] == "accepted"
+            assert payload_failed_2["lifecycle_append_results"][0]["attempt_count"] == 0, "absent attempt_count must remain 0"
             assert svc.store.get_evaluation(eval_id_failed) is None, "lifecycle-only must preserve no evaluation store row"
 
         # 5. Owner read failure / unproven state preserves auth/unavailable distinctions and emits ZERO POST
@@ -2781,6 +2782,7 @@ def test_same_window_replay_preserves_accepted_candidate_and_metrics() -> None:
             assert len(telemetry_calls) == 0, "Zero POST when owner read is unproven/unavailable"
             assert len(payload_err["lifecycle_retryable_errors"]) == 1
             assert payload_err["lifecycle_retryable_errors"][0]["reason"] == "telemetry_unavailable"
+            assert payload_err["lifecycle_retryable_errors"][0]["http_status"] is None, "unknown HTTP status without exact code must remain null"
 
         # 5b. Telemetry 401 auth failure -> terminal rejection, ZERO POST
         def fake_urlopen_401(req, timeout=None):
@@ -2809,6 +2811,7 @@ def test_same_window_replay_preserves_accepted_candidate_and_metrics() -> None:
             assert len(telemetry_calls) == 0, "Zero POST when owner read fails auth"
             assert len(payload_auth["lifecycle_terminal_rejections"]) == 1
             assert payload_auth["lifecycle_terminal_rejections"][0]["reason"] == "telemetry_auth_failed"
+            assert payload_auth["lifecycle_terminal_rejections"][0]["http_status"] is None, "unknown HTTP status without exact code must remain null"
 
         # 5c. Telemetry 200 with malformed / mismatched event -> terminal rejection, ZERO POST
         def fake_urlopen_malformed(req, timeout=None):
@@ -2838,6 +2841,51 @@ def test_same_window_replay_preserves_accepted_candidate_and_metrics() -> None:
             assert len(telemetry_calls) == 0, "Zero POST when owner event is malformed"
             assert len(payload_malformed["lifecycle_terminal_rejections"]) == 1
             assert payload_malformed["lifecycle_terminal_rejections"][0]["reason"] == "malformed_owner_event"
+
+        # 5d. Telemetry 200 with matching event_id but mismatched security/identity -> terminal rejection, ZERO POST
+        deterministic_id_mismatch = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"pantheon:scheduled-reconciliation:{svc._tick_evaluation_id(tick_id_err + '-mismatch', binding_id_err)}",
+            )
+        )
+        def fake_urlopen_mismatch(req, timeout=None):
+            req_data = getattr(req, "data", None)
+            if req_data:
+                telemetry_calls.append(json.loads(req_data.decode("utf-8")))
+                return MockResponse(202, b'{"status":"accepted"}')
+            bad_identity_event = {
+                "event_id": deterministic_id_mismatch,
+                "event_type": "reconciliation_completed",
+                "causal_parent_id": "evt-snap-001",
+                "binding_id": binding_id_err,
+                "artifact_id": "wrong-artifact-id",
+                "tenant_id": "default",
+                "environment": "paper",
+                "execution_mode": "paper",
+                "deployment_stage": "paper",
+            }
+            return MockResponse(200, json.dumps(bad_identity_event).encode("utf-8"))
+
+        with (
+            mock.patch.dict("os.environ", {"PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083"}),
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary_err]),
+            mock.patch.object(svc.urllib.request, "urlopen", side_effect=fake_urlopen_mismatch),
+        ):
+            resp_mismatch = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={
+                    "tick_id": tick_id_err + "-mismatch",
+                    "sla_seconds": 60.0,
+                    "lifecycle_only": True,
+                    "binding_id": binding_id_err,
+                },
+            )
+            assert resp_mismatch.status_code == 201
+            payload_mismatch = resp_mismatch.json()
+            assert len(telemetry_calls) == 0, "Zero POST when owner event has identity mismatch"
+            assert len(payload_mismatch["lifecycle_terminal_rejections"]) == 1
+            assert payload_mismatch["lifecycle_terminal_rejections"][0]["reason"] == "malformed_owner_event"
 
 
 
