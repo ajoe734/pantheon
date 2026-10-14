@@ -623,6 +623,50 @@ class TestMainRoutes(unittest.TestCase):
         self.assertIn("dlq_memory_entries", payload["metrics"])
         self.assertIn("startup_dlq_loaded", payload["metrics"])
 
+    def test_readyz_fails_when_telemetry_writer_task_is_dead(self):
+        """When writer background task terminates or crashes, /readyz reports error status with 503."""
+        resp = self.client.get("/readyz")
+        self.assertEqual(resp.status_code, 200)
+        payload = resp.get_json()
+        self.assertEqual(payload["dependencies"]["telemetry_writer"]["status"], "ok")
+        self.assertTrue(payload["dependencies"]["telemetry_writer"]["running"])
+
+        svc = _main._get_service()
+        writer = svc._writer
+        try:
+            if writer._task:
+                async def _cancel_and_wait():
+                    writer._task.cancel()
+                    try:
+                        await writer._task
+                    except asyncio.CancelledError:
+                        pass
+                    writer._mark_write_failure("nats: timeout")
+                fut = asyncio.run_coroutine_threadsafe(_cancel_and_wait(), _main._loop)
+                fut.result(timeout=2.0)
+
+            self.assertFalse(writer.is_running())
+            self.assertFalse(writer.stats()["running"])
+
+            # /readyz must fail with 503 Service Unavailable
+            resp_dead = self.client.get("/readyz")
+            self.assertEqual(resp_dead.status_code, 503)
+            dead_payload = resp_dead.get_json()
+            self.assertEqual(dead_payload["status"], "degraded")
+            self.assertFalse(dead_payload["ready"])
+            self.assertEqual(dead_payload["dependencies"]["telemetry_writer"]["status"], "error")
+            self.assertFalse(dead_payload["dependencies"]["telemetry_writer"]["running"])
+            self.assertEqual(dead_payload["dependencies"]["telemetry_writer"]["last_error"], "nats: timeout")
+
+            # Metrics must reflect writer_running=0
+            metrics_resp = self.client.get("/metrics")
+            self.assertEqual(metrics_resp.status_code, 200)
+            metrics = metrics_resp.get_json()
+            self.assertEqual(metrics["metrics"]["writer_running"], 0)
+        finally:
+            # Restore writer task for other test methods in this test case
+            asyncio.run_coroutine_threadsafe(writer.start(), _main._loop).result(timeout=2.0)
+
     def test_readyz_fails_when_canonical_table_missing(self):
         class _MissingTableConnection:
             async def fetchval(self, _query, table):

@@ -201,7 +201,7 @@ class InMemoryBuffer(DurableBuffer):
                 result = await asyncio.wait_for(self._queue.get(), timeout=1.0)
             self._total_dequeued += 1
             return result
-        except (asyncio.TimeoutError, asyncio.CancelledError):
+        except asyncio.TimeoutError:
             return None
 
     async def ack(self, events: list[dict[str, Any]]) -> None:
@@ -718,17 +718,24 @@ class NatsJetStreamBuffer(DurableBuffer):
             self._estimated_depth = max(0, self._estimated_depth - 1)
 
     async def release(self, events: list[dict[str, Any]]) -> bool:
+        all_ok = True
         for event in events:
             receipt_id = _durable_receipt_id(event)
             pending = self._pending.get(receipt_id)
             if not pending:
                 continue
-            message = pending.popleft()
-            await message.nak(delay=0.1)
+            message = pending[0]
+            try:
+                await message.nak(delay=0.1)
+            except Exception as exc:
+                all_ok = False
+                log.error("NatsJetStreamBuffer.release NAK failed: %s", exc)
+                continue
+            pending.popleft()
             if not pending:
                 self._pending.pop(receipt_id, None)
             self._total_released += 1
-        return True
+        return all_ok
 
     def size(self) -> int:
         return self._estimated_depth
