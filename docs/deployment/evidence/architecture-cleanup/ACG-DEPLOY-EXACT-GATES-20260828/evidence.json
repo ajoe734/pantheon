@@ -108,5 +108,21 @@
       "bash -n scripts/deploy_nonprod_vm.sh",
       "git diff --check"
     ]
+  },
+  "fe_owner_node_runtime_followup": {
+    "task_id": "DEV-FE-OWNER-NODE-RUNTIME-20261014",
+    "root_failure_reference": "Root38569825116 step 7 baseline restore and compensation failed exit 75: existing FE deploy-dev-vm.sh line 205 node: command not found (exit 127) under bare SSH without node on PATH.",
+    "change": "Added resolve_fe_node_runtime to scripts/deploy_nonprod_vm.sh and forwarded PANTHEON_DEV_FE_NODE_BIN_DIR and RUNNER_TOOL_CACHE via ssh_bash and nonprod-deploy.yml workflow steps; resolves provisioned Node 22 from runner toolcache or explicit bin directory, validates executable and version match (^v22.), prefixes PATH when calling FE owner restore-sealed, and fails closed before switch on missing or invalid runtime.",
+    "source_commit": "this task branch (DEV-FE-OWNER-NODE-RUNTIME-20261014); see git history",
+    "historical_note": "Prior verification results and failure references are retained as history; only the FE owner Node 22 runtime discovery, validation, and PATH prefixing across bare SSH were corrected.",
+    "hosted_acceptance_status": "not run by this source task; final deployment and hosted acceptance belong to the existing parent.",
+    "commands": [
+      {
+        "command": "pytest scripts/test_deploy_nonprod_vm.py scripts/test_deploy_nonprod_artifact_restore.py -q",
+        "result": "139 passed, 2 skipped (run in isolated test environment)"
+      },
+      "bash -n scripts/deploy_nonprod_vm.sh",
+      "git diff --check"
+    ]
   }
 }

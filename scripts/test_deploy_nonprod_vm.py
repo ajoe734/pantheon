@@ -2209,3 +2209,114 @@ def test_resolve_bounded_source_refresh_active_symbols_empty_when_no_baseline_de
     assert proc.returncode == 0, proc.stderr
     assert active == ""
 
+
+def _extract_resolve_fe_node_runtime_func() -> str:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = source.index("resolve_fe_node_runtime() {")
+    end = source.index("\n}\n", start) + 3
+    return source[start:end]
+
+
+def _run_resolve_fe_node_runtime(
+    script_arg: str = "",
+    *,
+    env_vars: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    func_def = _extract_resolve_fe_node_runtime_func()
+    shell_code = f"""#!/usr/bin/env bash
+set -euo pipefail
+error() {{ echo "ERROR: $*" >&2; exit 1; }}
+{func_def}
+resolve_fe_node_runtime "{script_arg}"
+"""
+    env = dict(os.environ)
+    env.pop("PANTHEON_DEV_FE_NODE_BIN_DIR", None)
+    env.pop("PANTHEON_EXECUTE_PLANS_ROOT", None)
+    env.pop("RUNNER_TOOL_CACHE", None)
+    if env_vars:
+        env.update(env_vars)
+    return subprocess.run(["bash", "-c", shell_code], capture_output=True, text=True, env=env)
+
+
+def test_resolve_fe_node_runtime_from_explicit_env(tmp_path: Path) -> None:
+    custom_bin = tmp_path / "custom" / "bin"
+    custom_bin.mkdir(parents=True)
+    node_bin = custom_bin / "node"
+    node_bin.write_text("#!/usr/bin/env bash\necho 'v22.23.2'\n", encoding="utf-8")
+    node_bin.chmod(0o755)
+
+    proc = _run_resolve_fe_node_runtime(
+        env_vars={"PANTHEON_DEV_FE_NODE_BIN_DIR": str(custom_bin)}
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == str(custom_bin)
+
+
+def test_resolve_fe_node_runtime_from_runner_tool_cache(tmp_path: Path) -> None:
+    toolcache = tmp_path / "_tool"
+    bin_dir = toolcache / "node" / "22.23.2" / "x64" / "bin"
+    bin_dir.mkdir(parents=True)
+    node_bin = bin_dir / "node"
+    node_bin.write_text("#!/usr/bin/env bash\necho 'v22.23.2'\n", encoding="utf-8")
+    node_bin.chmod(0o755)
+
+    proc = _run_resolve_fe_node_runtime(
+        env_vars={"RUNNER_TOOL_CACHE": str(toolcache)}
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == str(bin_dir)
+
+
+def test_resolve_fe_node_runtime_from_plans_root_toolcache(tmp_path: Path) -> None:
+    runner_work = tmp_path / "runner" / "_work"
+    bin_dir = runner_work / "_tool" / "node" / "22.19.0" / "x64" / "bin"
+    bin_dir.mkdir(parents=True)
+    node_bin = bin_dir / "node"
+    node_bin.write_text("#!/usr/bin/env bash\necho 'v22.19.0'\n", encoding="utf-8")
+    node_bin.chmod(0o755)
+
+    fe_script = runner_work / "execute-plans" / "execute-plans" / "scripts" / "deploy-dev-vm.sh"
+    fe_script.parent.mkdir(parents=True)
+    fe_script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    fe_script.chmod(0o755)
+
+    proc = _run_resolve_fe_node_runtime(str(fe_script))
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == str(bin_dir)
+
+
+def test_resolve_fe_node_runtime_rejects_missing_directory(tmp_path: Path) -> None:
+    proc = _run_resolve_fe_node_runtime(
+        env_vars={"PANTHEON_DEV_FE_NODE_BIN_DIR": str(tmp_path / "missing-bin")}
+    )
+    assert proc.returncode != 0
+    assert "FE owner Node runtime missing or unsafe" in proc.stderr
+    assert "could not locate provisioned Node 22 runtime" in proc.stderr
+
+
+def test_resolve_fe_node_runtime_rejects_non_executable(tmp_path: Path) -> None:
+    custom_bin = tmp_path / "nonexec" / "bin"
+    custom_bin.mkdir(parents=True)
+    node_bin = custom_bin / "node"
+    node_bin.write_text("#!/usr/bin/env bash\necho 'v22.23.2'\n", encoding="utf-8")
+    node_bin.chmod(0o644)
+
+    proc = _run_resolve_fe_node_runtime(
+        env_vars={"PANTHEON_DEV_FE_NODE_BIN_DIR": str(custom_bin)}
+    )
+    assert proc.returncode != 0
+    assert "is not executable" in proc.stderr
+
+
+def test_resolve_fe_node_runtime_rejects_wrong_major_version(tmp_path: Path) -> None:
+    custom_bin = tmp_path / "wrongver" / "bin"
+    custom_bin.mkdir(parents=True)
+    node_bin = custom_bin / "node"
+    node_bin.write_text("#!/usr/bin/env bash\necho 'v20.18.0'\n", encoding="utf-8")
+    node_bin.chmod(0o755)
+
+    proc = _run_resolve_fe_node_runtime(
+        env_vars={"PANTHEON_DEV_FE_NODE_BIN_DIR": str(custom_bin)}
+    )
+    assert proc.returncode != 0
+    assert "returned invalid version 'v20.18.0' (expected v22.*)" in proc.stderr
