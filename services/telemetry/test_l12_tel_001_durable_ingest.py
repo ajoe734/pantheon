@@ -12,6 +12,7 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 from services.telemetry.batch_writer import AsyncBatchWriter, WriteResult
 from services.telemetry.buffer import NatsJetStreamBuffer
@@ -21,30 +22,54 @@ from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
 
 
 class _Message:
-    def __init__(self, event: dict, calls: list[str]) -> None:
+    def __init__(
+        self,
+        event: dict,
+        calls: list[str],
+        *,
+        fail_ack: bool = False,
+        fail_nak: bool = False,
+        fail_ack_times: int = 0,
+    ) -> None:
         self.data = json.dumps(event).encode("utf-8")
         self.calls = calls
+        self.fail_ack = fail_ack
+        self.fail_nak = fail_nak
+        self.fail_ack_times = fail_ack_times
+        self._ack_attempts = 0
 
     async def ack_sync(self, timeout: float) -> None:
         self.calls.append("ack")
+        self._ack_attempts += 1
+        if self.fail_ack:
+            raise TimeoutError("nats: timeout")
+        if self._ack_attempts <= self.fail_ack_times:
+            raise TimeoutError("nats: timeout")
 
     async def nak(self, delay: float) -> None:
         self.calls.append("nak")
+        if self.fail_nak:
+            raise RuntimeError("nats: nak failed")
 
     async def term(self) -> None:
         self.calls.append("term")
 
 
 class _Subscription:
-    def __init__(self, message: _Message) -> None:
-        self.message = message
-        self.delivered = False
+    def __init__(self, message_or_messages: _Message | list[_Message]) -> None:
+        if isinstance(message_or_messages, list):
+            self.messages = list(message_or_messages)
+        else:
+            self.messages = [message_or_messages]
+        self.idx = 0
 
     async def fetch(self, *, batch: int, timeout: float):
-        if self.delivered:
+        if self.idx >= len(self.messages):
+            await asyncio.sleep(min(timeout, 0.05))
             raise TimeoutError()
-        self.delivered = True
-        return [self.message]
+        msg = self.messages[self.idx]
+        self.idx += 1
+        return [msg]
 
 
 class _JetStream:
@@ -528,6 +553,375 @@ class DurableIngestReceiptTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await buffer.release([fetched]))
         self.assertEqual(calls, ["nak"])
         self.assertEqual(buffer.stats()["total_acked"], 0)
+
+    async def test_canonical_write_success_with_exhausted_ack_failures_preserves_receipts_and_does_not_dlq(self):
+        """Canonical PG write success followed by exhausted broker ACK failures preserves receipt and does not DLQ."""
+        calls: list[str] = []
+        event = _event()
+        message = _Message(event, calls, fail_ack=True)
+        buffer = _started_buffer(
+            jetstream=_JetStream(calls),
+            subscription=_Subscription(message),
+        )
+        fetched = await buffer.get(timeout=0.1)
+        self.assertEqual(fetched, event)
+        receipt_id = _expected_receipt_id(event)
+        self.assertEqual(len(buffer._pending[receipt_id]), 1)
+
+        async def write_fn(batch: list[dict]) -> WriteResult:
+            calls.append("canonical_write")
+            return WriteResult.ok(len(batch))
+
+        with tempfile.TemporaryDirectory() as td:
+            dlq = DeadLetterQueue(spill_path=str(Path(td) / "dlq.jsonl"))
+            writer = AsyncBatchWriter(
+                buffer=buffer,
+                write_fn=write_fn,
+                dead_letter_queue=dlq,
+                max_retries=1,
+                base_retry_delay=0.01,
+            )
+            await writer._write_with_retry([event], "paper")
+
+            stats = writer.stats()
+            # Canonical write succeeded and was not misrouted to DLQ
+            self.assertEqual(stats["total_written"], 1)
+            self.assertEqual(stats["total_dlq"], 0)
+            self.assertEqual(stats["total_failed"], 0)
+            self.assertEqual(stats["last_error"], "nats: timeout")
+            # Ordering: write first, then ACKs
+            self.assertEqual(calls, ["canonical_write", "ack", "ack"])
+            # Broker receipt preserved in buffer for native idempotent redelivery
+            self.assertEqual(len(buffer._pending[receipt_id]), 1)
+            self.assertEqual(buffer.stats()["total_acked"], 0)
+            self.assertEqual(dlq.stats()["total_rejected"], 0)
+
+    async def test_canonical_write_success_with_recovered_ack_retry_clears_last_error(self):
+        """Canonical PG write success followed by a transient broker ACK failure and successful retry clears last_error."""
+        calls: list[str] = []
+        event = _event()
+        # Fail the first ACK attempt, then succeed on retry
+        message = _Message(event, calls, fail_ack_times=1)
+        buffer = _started_buffer(
+            jetstream=_JetStream(calls),
+            subscription=_Subscription(message),
+        )
+        fetched = await buffer.get(timeout=0.1)
+        self.assertEqual(fetched, event)
+        receipt_id = _expected_receipt_id(event)
+        self.assertEqual(len(buffer._pending[receipt_id]), 1)
+
+        async def write_fn(batch: list[dict]) -> WriteResult:
+            calls.append("canonical_write")
+            return WriteResult.ok(len(batch))
+
+        with tempfile.TemporaryDirectory() as td:
+            dlq = DeadLetterQueue(spill_path=str(Path(td) / "dlq.jsonl"))
+            writer = AsyncBatchWriter(
+                buffer=buffer,
+                write_fn=write_fn,
+                dead_letter_queue=dlq,
+                max_retries=1,
+                base_retry_delay=0.01,
+            )
+            await writer._write_with_retry([event], "paper")
+
+            stats = writer.stats()
+            self.assertEqual(stats["total_written"], 1)
+            self.assertEqual(stats["total_retried"], 1)
+            self.assertEqual(stats["total_dlq"], 0)
+            self.assertEqual(stats["total_failed"], 0)
+            # Crucial: _last_error is cleared on true ACK success without resetting write timestamps
+            self.assertIsNone(stats["last_error"])
+            self.assertIsNotNone(stats["last_successful_write_at"])
+            self.assertEqual(calls, ["canonical_write", "ack", "ack"])
+            self.assertEqual(buffer.stats()["total_acked"], 1)
+            self.assertNotIn(receipt_id, buffer._pending)
+            self.assertEqual(dlq.stats()["total_rejected"], 0)
+
+    async def test_failure_while_settling_durably_dead_lettered_work_preserves_receipts(self):
+        """Failure to settle DLQ work preserves receipts and records failure without terminating writer loop."""
+        calls: list[str] = []
+        event = _event()
+        message = _Message(event, calls, fail_ack=True)
+        buffer = _started_buffer(
+            jetstream=_JetStream(calls),
+            subscription=_Subscription(message),
+        )
+        receipt_id = _expected_receipt_id(event)
+
+        async def write_fn(batch: list[dict]) -> WriteResult:
+            calls.append("canonical_write")
+            return WriteResult.fail("poison payload", retryable=False)
+
+        with tempfile.TemporaryDirectory() as td:
+            dlq = DeadLetterQueue(spill_path=str(Path(td) / "dlq.jsonl"))
+            writer = AsyncBatchWriter(
+                buffer=buffer,
+                write_fn=write_fn,
+                dead_letter_queue=dlq,
+                max_retries=0,
+                batch_size=1,
+                batch_interval=0.01,
+            )
+            await writer.start()
+            self.assertTrue(writer.is_running())
+
+            # Wait for poison batch to be rejected to DLQ and settle attempted
+            for _ in range(50):
+                if writer.stats()["total_dlq"] >= 1:
+                    break
+                await asyncio.sleep(0.05)
+
+            stats = writer.stats()
+            self.assertEqual(stats["total_written"], 0)
+            self.assertEqual(stats["total_dlq"], 1)
+            self.assertEqual(stats["total_failed"], 1)
+            self.assertEqual(stats["last_error"], "nats: timeout")
+            self.assertEqual(len(buffer._pending[receipt_id]), 1)
+            self.assertEqual(buffer.stats()["total_acked"], 0)
+            self.assertEqual(calls, ["canonical_write", "ack"])
+            # Writer run loop remains alive despite DLQ settlement failure
+            self.assertTrue(writer.is_running())
+
+            await writer.stop(graceful=True)
+            self.assertFalse(writer.is_running())
+
+    async def test_later_independent_event_processed_after_recoverable_broker_failure(self):
+        """A subsequent independent event is processed after a recoverable broker ACK failure."""
+        calls: list[str] = []
+        event1 = dict(_event(), event_id="evt-1")
+        event2 = dict(_event(), event_id="evt-2")
+
+        msg1 = _Message(event1, calls, fail_ack=True)
+        msg2 = _Message(event2, calls, fail_ack=False)
+        subscription = _Subscription([msg1, msg2])
+        buffer = _started_buffer(
+            jetstream=_JetStream(calls),
+            subscription=subscription,
+        )
+
+        async def write_fn(batch: list[dict]) -> WriteResult:
+            for ev in batch:
+                calls.append(f"canonical_write_{ev['event_id']}")
+            return WriteResult.ok(len(batch))
+
+        with tempfile.TemporaryDirectory() as td:
+            writer = AsyncBatchWriter(
+                buffer=buffer,
+                write_fn=write_fn,
+                dead_letter_queue=DeadLetterQueue(spill_path=str(Path(td) / "dlq.jsonl")),
+                batch_size=1,
+                batch_interval=0.01,
+                max_retries=0,
+            )
+            await writer.start()
+            self.assertTrue(writer.is_running())
+
+            # Wait for both batches to be processed by writer run loop
+            for _ in range(50):
+                if writer.stats()["total_written"] >= 2:
+                    break
+                await asyncio.sleep(0.05)
+
+            stats = writer.stats()
+            self.assertEqual(stats["total_written"], 2)
+            self.assertEqual(stats["total_dlq"], 0)
+            self.assertEqual(stats["total_failed"], 0)
+            self.assertEqual(buffer.stats()["total_acked"], 1)
+            self.assertTrue(writer.is_running())
+
+            await writer.stop(graceful=True)
+            self.assertFalse(writer.is_running())
+
+    async def test_failed_nak_retains_receipt_in_pending(self):
+        """Failed NAK must not drop in-memory receipt from pending; remains recoverable."""
+        calls: list[str] = []
+        event = _event()
+        message = _Message(event, calls, fail_nak=True)
+        buffer = _started_buffer(
+            jetstream=_JetStream(calls),
+            subscription=_Subscription(message),
+        )
+        fetched = await buffer.get(timeout=0.1)
+        self.assertEqual(fetched, event)
+        receipt_id = _expected_receipt_id(event)
+        self.assertEqual(len(buffer._pending[receipt_id]), 1)
+
+        # Release fails because NAK raises
+        released = await buffer.release([fetched])
+        self.assertFalse(released)
+        # Receipt was NOT removed from pending (pending dropped 1->0 bug prevented)
+        self.assertEqual(len(buffer._pending[receipt_id]), 1)
+        self.assertEqual(calls, ["nak"])
+
+        # Once NAK recovers, release succeeds and clears pending
+        message.fail_nak = False
+        self.assertTrue(await buffer.release([fetched]))
+        self.assertNotIn(receipt_id, buffer._pending)
+        self.assertEqual(buffer.stats()["total_released"], 1)
+
+    async def test_immutable_redelivery_idempotency(self):
+        """Redelivered immutable receipt is processed idempotently by replacement canonical writer."""
+        calls: list[str] = []
+        event = _event()
+        receipt_id = _expected_receipt_id(event)
+
+        # Delivery 1: writer processes event to Postgres, but broker ACK fails before writer shutdown
+        msg1 = _Message(event, calls, fail_ack=True)
+        buffer1 = _started_buffer(
+            jetstream=_JetStream(calls),
+            subscription=_Subscription(msg1),
+        )
+
+        persisted: dict[str, dict] = {}
+
+        async def idempotent_write_fn(batch: list[dict]) -> WriteResult:
+            for ev in batch:
+                eid = ev["event_id"]
+                if eid in persisted:
+                    calls.append("idempotent_duplicate_write")
+                else:
+                    persisted[eid] = ev
+                    calls.append("canonical_first_write")
+            return WriteResult.ok(len(batch))
+
+        with tempfile.TemporaryDirectory() as td:
+            writer1 = AsyncBatchWriter(
+                buffer=buffer1,
+                write_fn=idempotent_write_fn,
+                dead_letter_queue=DeadLetterQueue(spill_path=str(Path(td) / "dlq1.jsonl")),
+                max_retries=0,
+            )
+            fetched1 = await buffer1.get(timeout=0.1)
+            self.assertEqual(fetched1, event)
+            await writer1._write_with_retry([fetched1], "paper")
+
+            # First delivery wrote to DB, but failed ACK and did not send to DLQ
+            self.assertEqual(writer1.stats()["total_written"], 1)
+            self.assertEqual(writer1.stats()["total_dlq"], 0)
+            self.assertEqual(buffer1.stats()["total_acked"], 0)
+            self.assertEqual(len(buffer1._pending[receipt_id]), 1)
+            self.assertIn("canonical_first_write", calls)
+
+            # Delivery 2: replacement worker receives redelivery of the exact same event
+            msg2 = _Message(event, calls, fail_ack=False)
+            buffer2 = _started_buffer(
+                jetstream=_JetStream(calls),
+                subscription=_Subscription(msg2),
+            )
+            writer2 = AsyncBatchWriter(
+                buffer=buffer2,
+                write_fn=idempotent_write_fn,
+                dead_letter_queue=DeadLetterQueue(spill_path=str(Path(td) / "dlq2.jsonl")),
+                max_retries=0,
+            )
+            fetched2 = await buffer2.get(timeout=0.1)
+            self.assertEqual(fetched2, event)
+            await writer2._write_with_retry([fetched2], "paper")
+
+            # Redelivery handled idempotently by Postgres write, and ACK succeeds
+            self.assertEqual(writer2.stats()["total_written"], 1)
+            self.assertEqual(writer2.stats()["total_dlq"], 0)
+            self.assertEqual(buffer2.stats()["total_acked"], 1)
+            self.assertNotIn(receipt_id, buffer2._pending)
+            self.assertIn("idempotent_duplicate_write", calls)
+
+        # Database retained single canonical event without duplicate records
+        self.assertEqual(len(persisted), 1)
+        self.assertEqual(persisted[event["event_id"]], event)
+
+    async def test_dlq_fsync_failure_releases_broker_receipt(self):
+        """When DLQ fsync fails in branch simulation, dead-lettered batch is released rather than ACKed."""
+        calls: list[str] = []
+        event = _event()
+        message = _Message(event, calls)
+        buffer = _started_buffer(
+            jetstream=_JetStream(calls),
+            subscription=_Subscription(message),
+        )
+        fetched = await buffer.get(timeout=0.1)
+
+        class FailingDLQ(DeadLetterQueue):
+            """Branch simulation of DeadLetterQueue.reject durability failure (reject returning False).
+            Note: This is a software branch simulation of DLQ reject durability failure, not an actual kernel disk fsync failure.
+            """
+            def reject(self, **kwargs) -> bool:
+                super().reject(**kwargs)
+                return False  # Branch simulation of DLQ durability/fsync failure
+
+        async def write_fn(batch: list[dict]) -> WriteResult:
+            return WriteResult.fail("poison", retryable=False)
+
+        with tempfile.TemporaryDirectory() as td:
+            writer = AsyncBatchWriter(
+                buffer=buffer,
+                write_fn=write_fn,
+                dead_letter_queue=FailingDLQ(spill_path=str(Path(td) / "dlq.jsonl")),
+                max_retries=0,
+            )
+            await writer._write_with_retry([fetched], "paper")
+
+        # Must release (NAK), NOT ack
+        self.assertEqual(calls, ["nak"])
+        self.assertEqual(buffer.stats()["total_acked"], 0)
+        self.assertEqual(buffer.stats()["total_released"], 1)
+
+    async def test_dead_writer_task_reflects_not_running_and_retains_error(self):
+        """Completed or crashed writer task reports running=False and retains error in stats."""
+        calls: list[str] = []
+        event = _event()
+        buffer = _started_buffer(
+            jetstream=_JetStream(calls),
+            subscription=_Subscription(_Message(event, calls)),
+        )
+
+        class CrashingBuffer(NatsJetStreamBuffer):
+            async def get(self, timeout: float = 5.0) -> dict | None:
+                raise RuntimeError("nats: connection lost fatal crash")
+
+        crash_buffer = CrashingBuffer()
+        with tempfile.TemporaryDirectory() as td:
+            # 1. Unhandled exception crash in run loop
+            writer = AsyncBatchWriter(
+                buffer=crash_buffer,
+                write_fn=AsyncMock(),
+                dead_letter_queue=DeadLetterQueue(spill_path=str(Path(td) / "dlq.jsonl")),
+            )
+            await writer.start()
+            for _ in range(50):
+                if not writer.is_running():
+                    break
+                await asyncio.sleep(0.02)
+
+            self.assertFalse(writer.is_running())
+            self.assertFalse(writer.stats()["running"])
+            self.assertIn("nats: connection lost fatal crash", writer.stats()["last_error"])
+
+            await writer.stop(graceful=False)
+            self.assertFalse(writer.stats()["running"])
+            self.assertIn("nats: connection lost fatal crash", writer.stats()["last_error"])
+
+            # 2. Cancelled task
+            normal_writer = AsyncBatchWriter(
+                buffer=buffer,
+                write_fn=AsyncMock(),
+                dead_letter_queue=DeadLetterQueue(spill_path=str(Path(td) / "dlq.jsonl")),
+            )
+            await normal_writer.start()
+            self.assertTrue(normal_writer.is_running())
+            self.assertTrue(normal_writer.stats()["running"])
+
+            normal_writer._task.cancel()
+            try:
+                await normal_writer._task
+            except asyncio.CancelledError:
+                pass
+
+            self.assertFalse(normal_writer.is_running())
+            self.assertFalse(normal_writer.stats()["running"])
+            await normal_writer.stop(graceful=False)
+            self.assertFalse(normal_writer.stats()["running"])
 
 
 @unittest.skipUnless(
