@@ -1,0 +1,50 @@
+{
+  "task_id": "TELEMETRY-INGEST-LOCK-LIFETIME-20261014",
+  "base_sha": "29325b7c727154f914f16c4b602a6a340bfcaecf",
+  "change_class": "functional",
+  "work_class": "defect_fix",
+  "summary": "Correct same-ID admission lock resource lifetime on cancelled wait/acquire and normal/error exits, and remove redundant post-validation same-ID conflict branch while preserving offloop writer progress, validation-before-buffer, and immutable winning payload semantics.",
+  "scope": [
+    "services/telemetry/ingest_svc.py",
+    "services/telemetry/test_paper_runtime_ingest_contract.py",
+    "docs/deployment/evidence/TELEMETRY-INGEST-LOCK-LIFETIME-20261014/evidence.json"
+  ],
+  "defect_context": {
+    "reproduction_evidence": "/tmp/pantheon-assist-20261013/telemetry-c584-lock-waiter-cancel-9e720d9d-immutable-snapshot.json",
+    "reproduction_sha256": "9e720d9dd8b3abf5a202827481446d07da21c66e7cdb7c54880225d2f6903310",
+    "symptom": "In commit c584 (PR6560), lock acquire and entry refcount increment occurred outside the try/finally block in ingest_svc.py (lines 1264-1266). When a concurrent waiter was cancelled during lock.acquire(), its refcount was never decremented and entry never pruned, leaving leaked unlocked refcounts in _event_locks. Furthermore, a redundant post-validation same-ID recheck was retained despite whole same-ID ingestion already being serialized by the lock.",
+    "resolution": "Moved lock acquire inside try/finally block with an acquired flag, ensuring cancelled waiters decrement their refcount and prune unused lock entries without attempting to release an unacquired lock. Removed the duplicate post-validation same-ID branch, maintaining a single canonical validation and admission path with immutable winning payload semantics."
+  },
+  "acceptance_verification": {
+    "ac1_demonstrated_synchronization_defect": "passed: Addressed the demonstrated local synchronization defect where cancelled same-ID waiter coroutines leaked refcounts and retained unused entries in _event_locks. Grounded in reproduction snapshot /tmp/pantheon-assist-20261013/telemetry-c584-lock-waiter-cancel-9e720d9d-immutable-snapshot.json (SHA 9e720d9dd8b3abf5a202827481446d07da21c66e7cdb7c54880225d2f6903310) showing A owning lock at ref1, B waiting at ref2, B cancellation leaving refcount 2 without finally decrement, and post-A completion leaving refcount 1 unlocked. Preserved delivered PR6560 (head c584 merged 29325b7) as immutable history; bounded defect fix without asserting causality for historical Root385020 latency.",
+    "ac2_lifetime_cleanup_and_redundancy_removal": "passed: Corrected local synchronization resource lifetime by placing lock acquire inside try/finally and releasing only when acquired is True while decrementing refcount and popping empty entries on normal, error, or cancelled exits. Removed the duplicate post-validation same-ID content/lineage recheck added in c584, preserving single-path validation, offloop authoritative lookup, guard-before-buffer, immutable winning payload, tenant/paper-live/temporal checks, and canonical writer fence/commit-before-ACK without new frameworks, caches, queues, or services.",
+    "ac3_bounded_synchronization_and_suite_verification": "passed: Enhanced test_authoritative_binding_lookup_offloads_from_asyncio_writer_loop in test_paper_runtime_ingest_contract.py to verify cancelled same-ID waiter cleanup without unacquired release, zero lock leakage (_event_locks fully cleaned up after completion and stop), and proper subsequent duplicate and conflicting-duplicate handling. All 4 telemetry test suites passed: paper-runtime (9 passed), runtime-summary (40 passed), durable-ingest (6 passed, 1 real-NATS opt-in skip), and ingest-shock-absorption (65 passed).",
+    "ac4_source_only_delivery_boundaries": "pending_delivery: Native source-only delivery on clean task branch task/TELEMETRY-INGEST-LOCK-LIFETIME-20261014. Delivery remains pending_delivery while exact review, CI checks, integration merge, and canonical archive are incomplete; does not mark a local clean branch as full native delivery. Preserved historical Root385020 and Parent DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 boundaries without modifying task JSON or producing unverified claims."
+  },
+  "test_expectation_classification": {
+    "status": "no_test_expectations_changed",
+    "details": "All existing test cases in test_paper_runtime_ingest_contract.py, test_runtime_summary_projection.py, test_l12_tel_001_durable_ingest.py, and test_ingest_shock_absorption.py pass without alteration. A new assertion set and waiter cancellation scenario (3.f) was added to test_paper_runtime_ingest_contract.py."
+  },
+  "validation": [
+    {
+      "suite": "services/telemetry/test_paper_runtime_ingest_contract.py",
+      "command": "python3 -m pytest -v services/telemetry/test_paper_runtime_ingest_contract.py",
+      "result": "9 passed in 6.02s"
+    },
+    {
+      "suite": "services/telemetry/test_runtime_summary_projection.py",
+      "command": "python3 -m pytest -v services/telemetry/test_runtime_summary_projection.py",
+      "result": "40 passed in 6.17s"
+    },
+    {
+      "suite": "services/telemetry/test_l12_tel_001_durable_ingest.py",
+      "command": "python3 -m pytest -v services/telemetry/test_l12_tel_001_durable_ingest.py",
+      "result": "6 passed, 1 skipped in 1.53s"
+    },
+    {
+      "suite": "services/telemetry/test_ingest_shock_absorption.py",
+      "command": "python3 -m pytest services/telemetry/test_ingest_shock_absorption.py",
+      "result": "65 passed in 21.68s"
+    }
+  ]
+}

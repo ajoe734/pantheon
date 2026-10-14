@@ -812,6 +812,7 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
                 outcomes = await asyncio.gather(task_1, task_2)
                 self.assertEqual(outcomes, [True, False])
                 self.assertEqual(svc._seen_event_ids["evt-concurrent-same-id"]["metrics"], {"heartbeat": 10})
+                self.assertNotIn("evt-concurrent-same-id", svc._event_locks)
 
                 # 3.e Concurrent same-ID ingestion with identical content:
                 store.block_lookups()
@@ -833,6 +834,52 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
                 dup_outcomes = await asyncio.gather(task_dup_1, task_dup_2)
                 self.assertEqual(dup_outcomes, [True, True])
                 self.assertEqual(svc._seen_event_ids["evt-concurrent-identical"]["metrics"], {"heartbeat": 100})
+                self.assertNotIn("evt-concurrent-identical", svc._event_locks)
+
+                # 3.f Cancelled same-ID waiter cleanup without leaking lock entry or unacquired release:
+                store.block_lookups()
+                cancel_evt_a = _paper_event(
+                    event_id="evt-concurrent-cancelled-waiter",
+                    binding_id=KNOWN_BINDING_ID,
+                    metrics={"heartbeat": 50},
+                )
+                cancel_evt_b = _paper_event(
+                    event_id="evt-concurrent-cancelled-waiter",
+                    binding_id=KNOWN_BINDING_ID,
+                    metrics={"heartbeat": 60},
+                )
+                task_cancel_a = asyncio.create_task(svc.ingest(cancel_evt_a))
+                task_cancel_b = asyncio.create_task(svc.ingest(cancel_evt_b))
+                # Wait until Task A enters lookup on worker thread (holding lock, refcount >= 1)
+                await asyncio.to_thread(store.lookup_started.wait, 5.0)
+                self.assertTrue(store.lookup_started.is_set())
+                # Allow loop to process Task B up to lock.acquire() wait
+                await asyncio.sleep(0.01)
+                self.assertFalse(task_cancel_b.done())
+                # Cancel only Task B while waiting
+                task_cancel_b.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task_cancel_b
+                # Release lookups and let Task A complete
+                store.release_lookups()
+                accepted_cancel_a = await task_cancel_a
+                self.assertTrue(accepted_cancel_a)
+                self.assertEqual(
+                    svc._seen_event_ids["evt-concurrent-cancelled-waiter"]["metrics"],
+                    {"heartbeat": 50},
+                )
+                # Verify lock entry is fully cleaned up (no leak of unlocked refcount)
+                self.assertNotIn("evt-concurrent-cancelled-waiter", svc._event_locks)
+
+                # Subsequent identical duplicate succeeds and cleans up lock
+                accepted_dup_after_cancel = await svc.ingest(dict(cancel_evt_a))
+                self.assertTrue(accepted_dup_after_cancel)
+                self.assertNotIn("evt-concurrent-cancelled-waiter", svc._event_locks)
+
+                # Subsequent conflicting duplicate rejects to DLQ and cleans up lock
+                rejected_conflict_after_cancel = await svc.ingest(dict(cancel_evt_b))
+                self.assertFalse(rejected_conflict_after_cancel)
+                self.assertNotIn("evt-concurrent-cancelled-waiter", svc._event_locks)
 
                 dlq = svc.get_dlq_entries()
                 reasons = [e["reason"].lower() for e in dlq]
@@ -843,11 +890,13 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
                 self.assertTrue(any("runtimebinding identity mismatch" in r for r in reasons))
                 self.assertTrue(any("content mismatch for duplicate event_id" in r for r in reasons))
                 self.assertTrue(any("content mismatch for duplicate event_id=evt-concurrent-same-id" in r for r in reasons))
+                self.assertTrue(any("content mismatch for duplicate event_id=evt-concurrent-cancelled-waiter" in r for r in reasons))
 
             finally:
                 store.release_lookups()
                 can_finish_write.set()
                 await svc.stop(graceful=True)
+                self.assertEqual(len(svc._event_locks), 0)
 
         asyncio.run(scenario())
 

@@ -1257,15 +1257,16 @@ class TelemetryIngestService:
         #    counted or written more than once within this service instance.
         event_id = event.get("event_id")
         lock: Optional[asyncio.Lock] = None
-        if event_id:
-            if event_id not in self._event_locks:
-                self._event_locks[event_id] = [asyncio.Lock(), 0]
-            entry = self._event_locks[event_id]
-            entry[1] += 1
-            lock = entry[0]
-            await lock.acquire()
-
+        acquired = False
         try:
+            if event_id:
+                if event_id not in self._event_locks:
+                    self._event_locks[event_id] = [asyncio.Lock(), 0]
+                entry = self._event_locks[event_id]
+                entry[1] += 1
+                lock = entry[0]
+                await lock.acquire()
+                acquired = True
             if event_id and event_id in self._seen_event_ids:
                 # 0.a. Validate schema on duplicate retry
                 valid_schema, schema_err = self._validate_event(event)
@@ -1363,33 +1364,6 @@ class TelemetryIngestService:
                 log.warning(f"Ingest rejected (evidence): {error_msg}")
                 return False
 
-            # Recheck seen event IDs before buffer admission to guard against concurrent admission
-            if event_id and event_id in self._seen_event_ids:
-                original_event = self._seen_event_ids[event_id]
-                mismatch = False
-                for k in (set(event.keys()) | set(original_event.keys())):
-                    if event.get(k) != original_event.get(k):
-                        mismatch = True
-                        break
-                if mismatch:
-                    self._total_rejected += 1
-                    self._dlq.reject(
-                        event=event,
-                        tags=[TAG_SCHEMA_VIOLATION],
-                        reason=f"Content mismatch for duplicate event_id={event_id}",
-                    )
-                    log.warning(f"Ingest duplicate retry rejected (content mismatch for event_id={event_id})")
-                    return False
-
-                self._total_duplicates += 1
-                log.debug(f"Ingest skipped (duplicate event_id): {event_id}")
-                if self._lineage_write_store is not None:
-                    try:
-                        self._lineage_write_store.admit_telemetry_event(original_event, resolved_binding)
-                    except Exception as exc:  # noqa: BLE001
-                        log.warning("Lineage live-write admission failed for duplicate event %s: %s", event_id, exc)
-                return True
-
             # 3. Push to durable buffer
             enqueued = await self._buffer.put(event, timeout=timeout)
             if not enqueued:
@@ -1440,7 +1414,8 @@ class TelemetryIngestService:
             return True
         finally:
             if lock is not None and event_id:
-                lock.release()
+                if acquired:
+                    lock.release()
                 entry = self._event_locks.get(event_id)
                 if entry is not None:
                     entry[1] -= 1
