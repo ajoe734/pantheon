@@ -1,0 +1,48 @@
+{
+  "task_id": "BFF-COMMAND-STATUS-TENANT-READ-20261013",
+  "change_class": "corrective",
+  "summary": "Enforce existing tenant boundary on command status readback (GET /api/v1/operator/commands/{command_id}), persist trusted caller tenant during local evidence admission (CreateConfirmToken), and maintain fail-closed semantics for unscoped legacy records.",
+  "incident_context": {
+    "defect": "AC4 tenant isolation violation on generic command status readback: GET /api/v1/operator/commands/{command_id} formerly enforced tenant boundary only for AdvanceLifecycle commands, allowing cross-tenant read of arbitrary operator commands. In addition, normal local evidence admission (CreateConfirmToken) omitted the trusted tenant in audit and trace contexts.",
+    "root_cause": "get_command_status in services/control-plane/bff/command_adapters/service.py only checked tenant for CommandType.ADVANCE_LIFECYCLE, and CommandStore._tenant_id_from_command in command_queue.py did not inspect foundation.command_envelope.payload.tenant_id or audit.foundation contexts.",
+    "resolution": "Applied role + trusted tenant + record visibility contract in get_command_status before status projection; updated CommandStore._tenant_id_from_command to resolve tenant from envelope payload and nested audit contexts; persisted verified identity tenant in _persist_local_evidence (CreateConfirmToken) and submit_command_admission using bff_me_tenant_payload normalization (supporting standard string sub and mapping tenant claims without raw stringification); preserved non-disclosing 404 for unknown/invisible/unscoped legacy commands."
+  },
+  "acceptance_verification": {
+    "ac1_reproduced_and_corrected": "passed: independent counter reproduction verified prior failure (exit code 1, cross-tenant GET returned 200 exposing tenant-a command to tenant-b); exact final source rerun verified 2 passed, same_tenant 200, other_tenant 404, zero store corruption or owner writes",
+    "ac2_role_and_tenant_boundary": "passed: get_command_status verifies authenticated identity, requires valid read role (403 for unauthorized roles before data exposure), and enforces record_tenant in allowed_tenants (404 non-disclosing for unpermitted tenant, preserving reviewer/admin cross-actor visibility within the same tenant)",
+    "ac3_trusted_tenant_provenance_and_local_evidence": "passed: CommandStore._tenant_id_from_command resolves tenant from foundation.command_envelope.payload.tenant_id; _persist_local_evidence and submit_command_admission store trusted identity tenant in audit.tenant_id, stored_params, and foundation.trace_context using existing bff_me_tenant_payload normalization; client-supplied tenant hints cannot override verified identity",
+    "ac4_legacy_record_fail_closed": "passed: legacy unscoped records (missing tenant provenance) fail closed with 404 (non-disclosing) for all callers including admins; GET remains read-only without mutations or history rewriting",
+    "ac5_focused_regressions": "passed: focused regressions added across all three scoped test modules covering normal POST ack, same-tenant GET 200, different-tenant 404, unauthorized role 403, authorized reviewer/admin other-actor visibility within tenant, AdvanceLifecycle guard, legacy unscoped fail-closed, and local confirmation trusted-tenant save/readback for both string and mapping tenant claims with standard sub",
+    "ac6_delivery_and_governance": "local scope validated/delivery pending: strictly scoped to the 6 declared artifacts with truthful trailers; no infrastructure/SSH/VM/deployment actions; independent reviewer assigned"
+  },
+  "scoped_artifacts": [
+    "services/control-plane/bff/command_adapters/service.py",
+    "services/control-plane/bff/command_queue.py",
+    "services/control-plane/bff/tests/test_command_adapters_router.py",
+    "services/control-plane/bff/tests/test_receipt_owner_routes.py",
+    "services/control-plane/bff/tests/test_command_store_multiprocess.py",
+    "docs/deployment/evidence/BFF-COMMAND-STATUS-TENANT-READ-20261013/evidence.json"
+  ],
+  "counter_receipts": {
+    "before_failure_receipt": "/tmp/pantheon-command-status-tenant-170af-j58fa794/capture/actual-http-source-counter.json",
+    "after_status_receipt": "/tmp/pantheon-command-status-tenant-170af-j58fa794/capture/after-independent-tenant-status-receipt.json",
+    "after_confirm_receipt": "/tmp/pantheon-command-status-tenant-170af-j58fa794/capture/after-independent-confirm-tenant-receipt.json",
+    "verification_summary": "/tmp/pantheon-command-status-tenant-170af-j58fa794/capture/verification-summary.json"
+  },
+  "local_verification": {
+    "commands": [
+      "pytest -v services/control-plane/bff/smoke_test.py",
+      "pytest -v services/control-plane/bff/tests/test_command_store_multiprocess.py",
+      "pytest -v services/control-plane/bff/tests/test_receipt_owner_routes.py",
+      "pytest -v services/control-plane/bff/tests/test_command_adapters_router.py",
+      "pytest -v /tmp/pantheon-tenant-9690-independent-receipts-20261013/test_supported_tenant_policy_counter.py"
+    ],
+    "results": {
+      "smoke_test": "26 passed in 23.11s",
+      "test_command_store_multiprocess": "6 passed in 3.42s",
+      "test_receipt_owner_routes": "22 passed in 30.61s",
+      "test_command_adapters_router": "509 passed, 1 skipped in 247.52s",
+      "supported_tenant_counter": "2 passed in 6.12s"
+    }
+  }
+}

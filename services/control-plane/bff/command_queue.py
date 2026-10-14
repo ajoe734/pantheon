@@ -329,6 +329,8 @@ class CommandStore:
 
     @staticmethod
     def _tenant_id_from_command(command: Dict[str, Any]) -> Optional[str]:
+        if not isinstance(command, dict):
+            return None
         audit = command.get("audit") if isinstance(command.get("audit"), dict) else {}
         for key in ("tenant_id", "tenant"):
             value = str(audit.get(key) or "").strip()
@@ -339,7 +341,37 @@ class CommandStore:
         trace = foundation.get("trace_context") if isinstance(foundation.get("trace_context"), dict) else {}
         tenant_ref = trace.get("tenant_ref") if isinstance(trace.get("tenant_ref"), dict) else {}
         value = str(tenant_ref.get("tenant_id") or trace.get("tenant_id") or "").strip()
-        return value or None
+        if value:
+            return value
+
+        command_envelope = foundation.get("command_envelope") if isinstance(foundation.get("command_envelope"), dict) else {}
+        payload = command_envelope.get("payload") if isinstance(command_envelope.get("payload"), dict) else {}
+        value = str(payload.get("tenant_id") or payload.get("tenant") or "").strip()
+        if value:
+            return value
+        if hasattr(command_envelope, "payload"):
+            env_payload = getattr(command_envelope, "payload", {})
+            if isinstance(env_payload, dict):
+                value = str(env_payload.get("tenant_id") or env_payload.get("tenant") or "").strip()
+                if value:
+                    return value
+
+        audit_foundation = audit.get("foundation") if isinstance(audit.get("foundation"), dict) else {}
+        audit_trace = audit_foundation.get("trace_context") if isinstance(audit_foundation.get("trace_context"), dict) else {}
+        audit_tenant_ref = audit_trace.get("tenant_ref") if isinstance(audit_trace.get("tenant_ref"), dict) else {}
+        value = str(audit_tenant_ref.get("tenant_id") or audit_trace.get("tenant_id") or "").strip()
+        if value:
+            return value
+
+        audit_envelope = audit_foundation.get("command_envelope") if isinstance(audit_foundation.get("command_envelope"), dict) else {}
+        audit_payload = audit_envelope.get("payload") if isinstance(audit_envelope.get("payload"), dict) else {}
+        value = str(audit_payload.get("tenant_id") or audit_payload.get("tenant") or "").strip()
+        if value:
+            return value
+
+        return None
+
+    tenant_id_from_command = _tenant_id_from_command
 
     def get_command_by_idempotency_key(
         self,

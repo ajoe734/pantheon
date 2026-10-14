@@ -226,3 +226,49 @@ def test_command_store_idempotency_operator_and_tenant_isolation() -> None:
             "idem-key-100", operator_id="op-alice", tenant_id="tenant-beta"
         )
         assert found_diff_tenant is None
+
+
+def test_command_store_tenant_id_from_command_extraction() -> None:
+    """Verify _tenant_id_from_command extracts tenant across all legitimate structures."""
+    # 1. Non-dict input
+    assert CommandStore._tenant_id_from_command(None) is None
+    assert CommandStore._tenant_id_from_command("not-a-dict") is None
+    assert CommandStore._tenant_id_from_command(123) is None
+    assert CommandStore._tenant_id_from_command([]) is None
+
+    # 2. Empty / legacy unscoped command
+    assert CommandStore._tenant_id_from_command({}) is None
+    assert CommandStore._tenant_id_from_command({"command_id": "c-1", "audit": {}}) is None
+
+    # 3. audit.tenant_id and audit.tenant
+    assert CommandStore._tenant_id_from_command({"audit": {"tenant_id": "tenant-a"}}) == "tenant-a"
+    assert CommandStore._tenant_id_from_command({"audit": {"tenant": "tenant-b"}}) == "tenant-b"
+    assert CommandStore._tenant_id_from_command({"audit": {"tenant_id": "  tenant-spaced  "}}) == "tenant-spaced"
+
+    # 4. foundation.trace_context
+    assert CommandStore._tenant_id_from_command({
+        "foundation": {"trace_context": {"tenant_ref": {"tenant_id": "tenant-c"}}}
+    }) == "tenant-c"
+    assert CommandStore._tenant_id_from_command({
+        "foundation": {"trace_context": {"tenant_id": "tenant-d"}}
+    }) == "tenant-d"
+
+    # 5. foundation.command_envelope.payload
+    assert CommandStore._tenant_id_from_command({
+        "foundation": {"command_envelope": {"payload": {"tenant_id": "tenant-e"}}}
+    }) == "tenant-e"
+    assert CommandStore._tenant_id_from_command({
+        "foundation": {"command_envelope": {"payload": {"tenant": "tenant-f"}}}
+    }) == "tenant-f"
+
+    # 6. audit.foundation nested paths
+    assert CommandStore._tenant_id_from_command({
+        "audit": {"foundation": {"trace_context": {"tenant_ref": {"tenant_id": "tenant-g"}}}}
+    }) == "tenant-g"
+    assert CommandStore._tenant_id_from_command({
+        "audit": {"foundation": {"command_envelope": {"payload": {"tenant_id": "tenant-h"}}}}
+    }) == "tenant-h"
+
+    # 7. Alias check
+    assert CommandStore.tenant_id_from_command is CommandStore._tenant_id_from_command
+    assert CommandStore.tenant_id_from_command({"audit": {"tenant_id": "tenant-alias"}}) == "tenant-alias"
