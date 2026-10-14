@@ -4533,7 +4533,7 @@ if [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" == true || "${PANTHEON_DEV_ARTIF
         fe_lease_epoch="${PANTHEON_DEPLOY_LEASE_EPOCH:-1}"
         fe_lease_run_id="${PANTHEON_DEPLOY_LEASE_RUN_ID:-${GITHUB_RUN_ID:-}}"
         fe_lease_delegated="${PANTHEON_DEPLOY_LEASE_DELEGATED:-true}"
-        fe_event_name="${GITHUB_EVENT_NAME:-${PANTHEON_DEV_EVENT_NAME:-push}}"
+        fe_event_name="${GITHUB_EVENT_NAME:-${PANTHEON_DEV_EVENT_NAME:-}}"
 
         PATH="${PANTHEON_DEV_FE_NODE_BIN_DIR}:${PATH}" \
         PANTHEON_DEV_FE_ROOT="${PANTHEON_DEV_FE_ROOT:-/var/www/pantheon-dev-fe}" \
