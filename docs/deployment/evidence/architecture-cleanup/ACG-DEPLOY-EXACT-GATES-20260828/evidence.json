@@ -108,5 +108,26 @@
       "bash -n scripts/deploy_nonprod_vm.sh",
       "git diff --check"
     ]
+  },
+  "fe_owner_node_runtime_followup": {
+    "task_id": "DEV-FE-OWNER-NODE-RUNTIME-20261014",
+    "root_failure_reference": "Root38569825116 step 7 baseline restore and compensation failed exit 75: existing FE deploy-dev-vm.sh line 205 node: command not found (exit 127) under bare SSH without node on PATH.",
+    "change": "Added validate_fe_node_runtime to scripts/deploy_nonprod_vm.sh and forwarded explicit PANTHEON_DEV_FE_NODE_BIN_DIR via ssh_bash and nonprod-deploy.yml workflow steps; validates node executable and version match (^v22.) without discovery/fallback chains, prefixes PATH when calling FE owner restore-sealed, and fails closed before switch on missing or invalid runtime. Removed duplicated mock-node stubs and mirror test family; exercised real existing Node 22 JavaScript execution in callee and full-chain fixtures under bad initial SSH PATH with explicit input, verifying real execution and result.",
+    "source_commit": "this task branch (DEV-FE-OWNER-NODE-RUNTIME-20261014); see git history",
+    "historical_note": "Prior 138 passed, 2 skipped synthetic result with mock-node stub is retained as history, not corrective Node proof; the 83-line mirror test family was removed in favor of direct callee and full-chain fixture verification.",
+    "hosted_acceptance_status": "not run by this source task; final deployment and hosted acceptance belong to the existing parent.",
+    "distinction": {
+      "hermetic_transport": "PANTHEON_DEV_FE_NODE_BIN_DIR forwarded explicitly across ssh_bash and nonprod-deploy.yml without discovery/fallback",
+      "real_node_local_original_chain": "Callee and full-chain restore tests exercise real existing Node 22 runtime under simulated bare SSH PATH (exit 127 stub) and observe real JavaScript execution output (v22.23.2), rejecting missing/unsafe runtime before switch",
+      "hosted_guarded_restore": "Hosted release restoration and final acceptance remain owed to the existing parent deployment workflow"
+    },
+    "commands": [
+      {
+        "command": "pytest scripts/test_deploy_nonprod_vm.py scripts/test_deploy_nonprod_artifact_restore.py -q",
+        "result": "133 passed, 2 skipped"
+      },
+      "bash -n scripts/deploy_nonprod_vm.sh",
+      "git diff --check"
+    ]
   }
 }

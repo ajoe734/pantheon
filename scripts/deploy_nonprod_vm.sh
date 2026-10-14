@@ -914,6 +914,7 @@ ssh_bash() {
     PANTHEON_DEV_ARTIFACT_FE_TARGET PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID \
     PANTHEON_DEV_ARTIFACT_SEALED_FROM_JSON PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON \
     PANTHEON_DEV_FE_DEPLOY_SCRIPT PANTHEON_EXECUTE_PLANS_ROOT PANTHEON_DEV_FE_CONTROLLER_SHA \
+    PANTHEON_DEV_FE_NODE_BIN_DIR \
     PANTHEON_DEV_FE_ROOT PANTHEON_DEV_FE_RELEASES_DIR \
     PANTHEON_DEPLOY_LEASE_OWNER PANTHEON_DEPLOY_LEASE_EPOCH \
     PANTHEON_DEPLOY_LEASE_RUN_ID PANTHEON_DEPLOY_LEASE_DELEGATED; do
@@ -4477,6 +4478,27 @@ verify_fe_controller_checkout() {
   done
 }
 
+# Validate the provisioned Node 22 runtime required by the FE owner script
+# across bare SSH. Requires explicit PANTHEON_DEV_FE_NODE_BIN_DIR.
+validate_fe_node_runtime() {
+  local bin_dir="${PANTHEON_DEV_FE_NODE_BIN_DIR:-}"
+
+  if [[ -z "${bin_dir}" || ! -d "${bin_dir}" ]]; then
+    error "FE owner Node runtime missing or unsafe: PANTHEON_DEV_FE_NODE_BIN_DIR must point to a valid directory"
+  fi
+
+  local node_bin="${bin_dir}/node"
+  if [[ ! -f "${node_bin}" || ! -x "${node_bin}" ]]; then
+    error "FE owner Node runtime missing or unsafe: '${node_bin}' is not executable"
+  fi
+
+  local node_version
+  node_version="$("${node_bin}" -v 2>/dev/null || true)"
+  if [[ ! "${node_version}" =~ ^v22\. ]]; then
+    error "FE owner Node runtime missing or unsafe: '${node_bin}' returned invalid version '${node_version}' (expected v22.*)"
+  fi
+}
+
 # Explicit external compensation exits before snapshots, worktree preparation,
 # principal issuance/revocation, build, cleanup, owner rollout or ingress writes.
 if [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" == true || "${PANTHEON_DEV_ARTIFACT_VERIFY:-false}" == true ]]; then
@@ -4505,6 +4527,7 @@ if [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" == true || "${PANTHEON_DEV_ARTIF
         info "FE live symlink already matches target sealed release (${to_target}); skipping redundant FE switch"
       else
         verify_fe_controller_checkout "${fe_script}" "${PANTHEON_DEV_FE_CONTROLLER_SHA:-}" "${artifact_operation}"
+        validate_fe_node_runtime
         info "invoking FE owner restore-sealed before BE ${artifact_operation}"
         fe_lease_owner="${PANTHEON_DEPLOY_LEASE_OWNER:-pantheon-dev-deploy}"
         fe_lease_epoch="${PANTHEON_DEPLOY_LEASE_EPOCH:-1}"
@@ -4512,6 +4535,7 @@ if [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" == true || "${PANTHEON_DEV_ARTIF
         fe_lease_delegated="${PANTHEON_DEPLOY_LEASE_DELEGATED:-true}"
         fe_event_name="${GITHUB_EVENT_NAME:-${PANTHEON_DEV_EVENT_NAME:-push}}"
 
+        PATH="${PANTHEON_DEV_FE_NODE_BIN_DIR}:${PATH}" \
         PANTHEON_DEV_FE_ROOT="${PANTHEON_DEV_FE_ROOT:-/var/www/pantheon-dev-fe}" \
         PANTHEON_DEV_FE_RELEASES_DIR="${PANTHEON_DEV_FE_RELEASES_DIR:-/var/www/pantheon-dev-fe-releases}" \
         GITHUB_EVENT_NAME="${fe_event_name}" \
