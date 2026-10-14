@@ -32,6 +32,7 @@ from telemetry_client import (
     TelemetryAuthError,
     TelemetryError,
     append_lifecycle_event,
+    fetch_accepted_event,
     fetch_runtime_summaries,
 )
 
@@ -2196,19 +2197,14 @@ def _fetch_telemetry_accepted_event(
 ) -> Dict[str, Any] | None:
     if not telemetry_url or not event_id:
         return None
-    try:
-        from telemetry_client import fetch_accepted_event
-
-        tid = str(tenant_id or _current_tenant_id() or "").strip() or None
-        return fetch_accepted_event(
-            telemetry_url,
-            event_id,
-            tenant_id=tid,
-            service_token=service_token,
-            timeout_seconds=timeout_seconds,
-        )
-    except Exception:
-        return None
+    tid = str(tenant_id or _current_tenant_id() or "").strip() or None
+    return fetch_accepted_event(
+        telemetry_url,
+        event_id,
+        tenant_id=tid,
+        service_token=service_token,
+        timeout_seconds=timeout_seconds,
+    )
 
 
 def _ensure_scheduled_lifecycle_append(
@@ -2383,16 +2379,131 @@ def _scheduled_lifecycle_only_reconcile(
         )
         existing_accepted_event = None
         if telemetry_url:
-            existing_accepted_event = _fetch_telemetry_accepted_event(
-                telemetry_url,
-                deterministic_event_id,
-                tenant_id=_mapping_tenant_id(summary),
-            )
+            try:
+                existing_accepted_event = _fetch_telemetry_accepted_event(
+                    telemetry_url,
+                    deterministic_event_id,
+                    tenant_id=_mapping_tenant_id(summary),
+                )
+            except TelemetryAuthError as exc:
+                receipt = {
+                    "binding_id": binding_id,
+                    "event_id": deterministic_event_id,
+                    "status": "terminal_rejected",
+                    "terminal": True,
+                    "retryable": False,
+                    "outcome": "auth_failure",
+                    "attempt_count": 0,
+                    "reason": "telemetry_auth_failed",
+                    "http_status": 401,
+                    "error": str(exc),
+                }
+                evaluation_ids.append(evaluation_id)
+                evaluation_statuses.append("failure")
+                lifecycle_append_results.append(receipt)
+                lifecycle_terminal_rejections.append(receipt)
+                continue
+            except TelemetryError as exc:
+                receipt = {
+                    "binding_id": binding_id,
+                    "event_id": deterministic_event_id,
+                    "status": "retryable_error",
+                    "terminal": False,
+                    "retryable": True,
+                    "outcome": "ambiguous",
+                    "attempt_count": 0,
+                    "reason": "telemetry_unavailable",
+                    "http_status": 503,
+                    "error": str(exc),
+                }
+                evaluation_ids.append(evaluation_id)
+                evaluation_statuses.append("degraded")
+                lifecycle_append_results.append(receipt)
+                lifecycle_retryable_errors.append(receipt)
+                continue
 
         if existing_accepted_event is not None:
+            evt_type = existing_accepted_event.get("event_type")
+            evt_id = existing_accepted_event.get("event_id")
+            causal_id = existing_accepted_event.get("causal_parent_id")
+            env = existing_accepted_event.get("correlation_envelope") or (existing_accepted_event.get("metadata") or {}).get("correlation_envelope")
+            is_terminal = evt_type in {"reconciliation_completed", "reconciliation_failed"}
+            is_matching_id = evt_id == deterministic_event_id
+            has_causal = bool(causal_id and isinstance(causal_id, str))
+            env_valid = False
+            if isinstance(env, dict):
+                try:
+                    validate_envelope(env)
+                    env_valid = True
+                except Exception:
+                    env_valid = False
+
+            def _summary_field(field: str) -> str:
+                val = summary.get(field)
+                if val:
+                    return str(val).strip()
+                ident = summary.get("committed_position_snapshot") or summary.get("last_lifecycle_identity") or {}
+                if isinstance(ident, dict) and ident.get(field):
+                    return str(ident[field]).strip()
+                return ""
+
+            expected_tenant = _summary_field("tenant_id") or str(_mapping_tenant_id(summary) or _current_tenant_id() or "").strip()
+            actual_tenant = str(existing_accepted_event.get("tenant_id") or "").strip()
+            tenant_ok = not expected_tenant or not actual_tenant or expected_tenant == actual_tenant
+
+            actual_binding = str(existing_accepted_event.get("binding_id") or "").strip()
+            binding_ok = actual_binding == binding_id
+
+            actual_runtime = str(existing_accepted_event.get("runtime_id") or "").strip()
+            expected_runtime = _summary_field("runtime_id")
+            runtime_ok = not expected_runtime or not actual_runtime or actual_runtime == expected_runtime
+
+            expected_artifact = _summary_field("artifact_id")
+            actual_artifact = str(existing_accepted_event.get("artifact_id") or "").strip()
+            artifact_ok = not expected_artifact or not actual_artifact or expected_artifact == actual_artifact
+
+            expected_plan = _summary_field("plan_id") or _summary_field("deployment_plan_id")
+            actual_plan = str(existing_accepted_event.get("plan_id") or "").strip()
+            plan_ok = not expected_plan or not actual_plan or expected_plan == actual_plan
+
+            expected_pool = _summary_field("capital_pool_id")
+            actual_pool = str(existing_accepted_event.get("capital_pool_id") or "").strip()
+            pool_ok = not expected_pool or not actual_pool or expected_pool == actual_pool
+
+            is_valid = (
+                is_terminal
+                and is_matching_id
+                and has_causal
+                and env_valid
+                and tenant_ok
+                and binding_ok
+                and runtime_ok
+                and artifact_ok
+                and plan_ok
+                and pool_ok
+            )
+
+            if not is_valid:
+                receipt = {
+                    "binding_id": binding_id,
+                    "event_id": deterministic_event_id,
+                    "status": "terminal_rejected",
+                    "terminal": True,
+                    "retryable": False,
+                    "outcome": "rejected",
+                    "reason": "malformed_owner_event",
+                    "http_status": 400,
+                    "error": "owner returned non-terminal or mismatched event",
+                }
+                evaluation_ids.append(evaluation_id)
+                evaluation_statuses.append("failure")
+                lifecycle_append_results.append(receipt)
+                lifecycle_terminal_rejections.append(receipt)
+                continue
+
             accepted_status = (
                 "ok"
-                if existing_accepted_event.get("event_type") == "reconciliation_completed"
+                if evt_type == "reconciliation_completed"
                 else "degraded"
             )
             state = {
@@ -2401,9 +2512,9 @@ def _scheduled_lifecycle_only_reconcile(
                 "retryable": False,
                 "outcome": "accepted",
                 "reason": None,
-                "attempt_count": 1,
+                "attempt_count": int(existing_accepted_event.get("attempt_count") or 1),
                 "event_id": deterministic_event_id,
-                "upstream_event_id": existing_accepted_event.get("causal_parent_id"),
+                "upstream_event_id": causal_id,
                 "event": existing_accepted_event,
                 "created_at": existing_accepted_event.get("created_at") or timestamp,
                 "accepted_at": existing_accepted_event.get("created_at") or timestamp,

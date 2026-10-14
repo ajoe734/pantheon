@@ -2480,6 +2480,8 @@ def test_cross_run_cache_misjoin_prevention() -> None:
 
 def test_same_window_replay_preserves_accepted_candidate_and_metrics() -> None:
     from fastapi.testclient import TestClient
+    import urllib.error
+    import urllib.parse
 
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)
@@ -2704,13 +2706,19 @@ def test_same_window_replay_preserves_accepted_candidate_and_metrics() -> None:
         ):
             resp_failed_1 = client.post(
                 "/api/reconciliation-drift/scheduled-reconcile",
-                json={"tick_id": tick_id_failed, "sla_seconds": 10.0},
+                json={
+                    "tick_id": tick_id_failed,
+                    "sla_seconds": 10.0,
+                    "lifecycle_only": True,
+                    "binding_id": binding_id_failed,
+                },
             )
             assert resp_failed_1.status_code == 201
             payload_failed_1 = resp_failed_1.json()
             assert payload_failed_1["within_sla"] is False
             assert len(telemetry_calls) == 1
             assert telemetry_calls[0]["run_id"] == "run-A"
+            assert svc.store.get_evaluation(eval_id_failed) is None, "lifecycle-only must not write evaluation store row"
 
         with (
             mock.patch.dict("os.environ", {"PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083"}),
@@ -2719,14 +2727,117 @@ def test_same_window_replay_preserves_accepted_candidate_and_metrics() -> None:
         ):
             resp_failed_2 = client.post(
                 "/api/reconciliation-drift/scheduled-reconcile",
-                json={"tick_id": tick_id_failed, "sla_seconds": 60.0},
+                json={
+                    "tick_id": tick_id_failed,
+                    "sla_seconds": 60.0,
+                    "lifecycle_only": True,
+                    "binding_id": binding_id_failed,
+                },
             )
             assert resp_failed_2.status_code == 201
             payload_failed_2 = resp_failed_2.json()
-            assert len(telemetry_calls) == 1, "Must not emit candidate B after recovering failed window"
-            assert payload_failed_2["lifecycle_accepted_event_ids"] == [telemetry_calls[0]["event_id"]]
-            ev_recovered = svc.store.get_evaluation(eval_id_failed)
-            assert ev_recovered["run_id"] == "run-A"
+            assert len(telemetry_calls) == 1, "Must not emit candidate B after recovering failed window in lifecycle-only mode"
+            assert payload_failed_2["lifecycle_accepted_event_ids"] == [telemetry_calls[0]["event_id"]], repr(payload_failed_2)
+            assert payload_failed_2["lifecycle_append_results"][0]["status"] == "accepted"
+            assert svc.store.get_evaluation(eval_id_failed) is None, "lifecycle-only must preserve no evaluation store row"
+
+        # 5. Owner read failure / unproven state preserves auth/unavailable distinctions and emits ZERO POST
+        telemetry_calls.clear()
+        tick_id_err = "tick-owner-err-001"
+        binding_id_err = "55555555-5555-4555-8555-555555555555"
+        summary_err = dict(summary_failed_A)
+        summary_err["binding_id"] = binding_id_err
+        snap_err = dict(summary_failed_A["committed_position_snapshot"])
+        snap_err["binding_id"] = binding_id_err
+        snap_err["correlation_envelope"] = dict(snap_err["correlation_envelope"])
+        snap_err["correlation_envelope"]["binding_id"] = binding_id_err
+        summary_err["last_lifecycle_identity"] = snap_err
+        summary_err["committed_position_snapshot"] = snap_err
+
+        # 5a. Telemetry 503 unavailable -> retryable error, ZERO POST
+        def fake_urlopen_503(req, timeout=None):
+            req_data = getattr(req, "data", None)
+            if req_data:
+                telemetry_calls.append(json.loads(req_data.decode("utf-8")))
+                return MockResponse(202, b'{"status":"accepted"}')
+            raise urllib.error.HTTPError("http://telemetry:8083", 503, "Service Unavailable", {}, io.BytesIO(b'{"error":"down"}'))
+
+        with (
+            mock.patch.dict("os.environ", {"PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083"}),
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary_err]),
+            mock.patch.object(svc.urllib.request, "urlopen", side_effect=fake_urlopen_503),
+        ):
+            resp_err = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={
+                    "tick_id": tick_id_err,
+                    "sla_seconds": 60.0,
+                    "lifecycle_only": True,
+                    "binding_id": binding_id_err,
+                },
+            )
+            assert resp_err.status_code == 201
+            payload_err = resp_err.json()
+            assert len(telemetry_calls) == 0, "Zero POST when owner read is unproven/unavailable"
+            assert len(payload_err["lifecycle_retryable_errors"]) == 1
+            assert payload_err["lifecycle_retryable_errors"][0]["reason"] == "telemetry_unavailable"
+
+        # 5b. Telemetry 401 auth failure -> terminal rejection, ZERO POST
+        def fake_urlopen_401(req, timeout=None):
+            req_data = getattr(req, "data", None)
+            if req_data:
+                telemetry_calls.append(json.loads(req_data.decode("utf-8")))
+                return MockResponse(202, b'{"status":"accepted"}')
+            raise urllib.error.HTTPError("http://telemetry:8083", 401, "Unauthorized", {}, io.BytesIO(b'{"error":"unauthorized"}'))
+
+        with (
+            mock.patch.dict("os.environ", {"PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083"}),
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary_err]),
+            mock.patch.object(svc.urllib.request, "urlopen", side_effect=fake_urlopen_401),
+        ):
+            resp_auth = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={
+                    "tick_id": tick_id_err + "-auth",
+                    "sla_seconds": 60.0,
+                    "lifecycle_only": True,
+                    "binding_id": binding_id_err,
+                },
+            )
+            assert resp_auth.status_code == 201
+            payload_auth = resp_auth.json()
+            assert len(telemetry_calls) == 0, "Zero POST when owner read fails auth"
+            assert len(payload_auth["lifecycle_terminal_rejections"]) == 1
+            assert payload_auth["lifecycle_terminal_rejections"][0]["reason"] == "telemetry_auth_failed"
+
+        # 5c. Telemetry 200 with malformed / mismatched event -> terminal rejection, ZERO POST
+        def fake_urlopen_malformed(req, timeout=None):
+            req_data = getattr(req, "data", None)
+            if req_data:
+                telemetry_calls.append(json.loads(req_data.decode("utf-8")))
+                return MockResponse(202, b'{"status":"accepted"}')
+            bad_event = {"event_id": "other", "event_type": "position_snapshot", "binding_id": "wrong"}
+            return MockResponse(200, json.dumps(bad_event).encode("utf-8"))
+
+        with (
+            mock.patch.dict("os.environ", {"PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083"}),
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary_err]),
+            mock.patch.object(svc.urllib.request, "urlopen", side_effect=fake_urlopen_malformed),
+        ):
+            resp_malformed = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={
+                    "tick_id": tick_id_err + "-malformed",
+                    "sla_seconds": 60.0,
+                    "lifecycle_only": True,
+                    "binding_id": binding_id_err,
+                },
+            )
+            assert resp_malformed.status_code == 201
+            payload_malformed = resp_malformed.json()
+            assert len(telemetry_calls) == 0, "Zero POST when owner event is malformed"
+            assert len(payload_malformed["lifecycle_terminal_rejections"]) == 1
+            assert payload_malformed["lifecycle_terminal_rejections"][0]["reason"] == "malformed_owner_event"
 
 
 
