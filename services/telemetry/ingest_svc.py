@@ -744,20 +744,18 @@ def build_postgres_event_reader(
             raise RuntimeError(f"PostgreSQL lineage store unavailable: {exc}") from exc
 
     def _fetch_event(eid: Any, tenant_id: Optional[str] = None, event_types: Optional[Any] = None) -> Any:
-        clean_types = [s for x in event_types if (s := str(x or "").strip())] if isinstance(event_types, (list, tuple, set)) else None
         if isinstance(eid, (list, tuple)):
             if not (clean := [s for x in eid if (s := str(x or "").strip())]): return {}
+            clean_types = [s for x in event_types if (s := str(x or "").strip())] if isinstance(event_types, (list, tuple, set)) else None
             tid, where, params = str(tenant_id or "").strip(), ["event_id = ANY($1::text[])"], [clean]
             if clean_types: params.append(clean_types); where.append(f"event_type = ANY(${len(params)}::text[])")
             if tid: params.append(tid); where.append(f"(payload->>'tenant_id' = ${len(params)} OR payload->'metadata'->>'tenant_id' = ${len(params)})")
             sql = f"SELECT event_id, payload, ingested_seq FROM {table} WHERE " + " AND ".join(where)
             return {r["event_id"]: r for r in _sync(sql, *params)}
         if not (clean_eid := str(eid or "").strip()): return None
-        tid, where, params = str(tenant_id or "").strip(), ["event_id = $1"], [clean_eid]
-        if clean_types: params.append(clean_types); where.append(f"event_type = ANY(${len(params)}::text[])")
-        if tid: params.append(tid); where.append(f"(payload->>'tenant_id' = ${len(params)} OR payload->'metadata'->>'tenant_id' = ${len(params)})")
-        sql = f"SELECT event_id, payload, ingested_seq FROM {table} WHERE " + " AND ".join(where) + " LIMIT 1"
-        r = _sync(sql, *params)
+        tid = str(tenant_id or "").strip()
+        sql = f"SELECT event_id, payload, ingested_seq FROM {table} WHERE event_id = $1" + (" AND (payload->>'tenant_id' = $2 OR payload->'metadata'->>'tenant_id' = $2) LIMIT 1" if tid else " LIMIT 1")
+        r = _sync(sql, clean_eid, tid) if tid else _sync(sql, clean_eid)
         return r[0] if r else None
 
     def _fetch_binding_events(bid: str, tenant_id: Optional[str] = None, limit: int = 50) -> list[dict[str, Any]]:

@@ -2,12 +2,11 @@
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "TELEMETRY-SUMMARY-CANONICAL-READ-20261014",
   "title": "Remove unrelated full-payload hydration from canonical runtime-summary enrichment",
-  "owner": "Antigravity2",
-  "reviewer": "Claude",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
   "base_sha": "989b51209d9bdb061707efb0e3f303667c0a06f3",
   "change_class": "corrective",
-  "net_prod_line_budget": 25,
-  "summary": "Fixes canonical runtime-summary enrichment timeout and HTTP 500 by skipping already-enriched summaries before collecting event IDs, and querying only the canonical position_snapshot and reconciliation_completed/failed evidence required by the existing selector via an optional event_types filter in build_postgres_event_reader. Unrelated lifecycle payloads (order_submitted, order_filled, heartbeats) are excluded at the database layer instead of hydrating thousands of full JSON payloads. Retains generic accepted/observed pair behavior, original 5.0s deadlines, positive DB sequence validation, explicit paper/live boundaries, and complete finite numeric metrics from the same snapshot without loss of second bindings or older eligible positions.",
+  "summary": "Removes unrelated full-payload hydration from canonical runtime-summary enrichment by skipping already-enriched summaries before collecting event IDs, and querying only the canonical position_snapshot and reconciliation_completed/failed evidence required by the existing selector via an optional event_types filter in build_postgres_event_reader batch queries while preserving original scalar reader behavior unchanged. Retains generic accepted/observed pair behavior, original 5.0s deadlines, positive DB sequence validation, explicit paper/live boundaries, and complete finite numeric metrics from the same snapshot without loss of second bindings or older eligible positions.",
   "acceptance_verification": [
     {
       "ac": "AC1",
@@ -22,17 +21,17 @@
     {
       "ac": "AC3",
       "description": "Use the original PaperRuntimeTelemetryIngestContractTest.test_canonical_batch_read_cross_run_and_ineligible_guards and original durable-ingest reader tests. Adjust fake-reader query-shape assertions only where wiring changes; preserve business assertions. Focused observed-cardinality coverage must show unrelated lifecycle payloads are not hydrated, already-enriched summaries are not queried, and second bindings/older eligible positions are not lost by a global/recent100 shortcut. Retain terminal causal/run/DBseq exclusion, cross-tenant/owner rejection, incomplete/nonfinite metrics fail-closed and generic accepted/observed pair behavior. Verify relevant query/results rather than parity/copying validators or new fixture platforms. Run affected original paper-runtime/runtime-summary/durable-ingest/ingest-shock-absorption suites, record real stdout/exits/counts and explicit optionalPG/NATS skips. Existing downstream reconciliation cross-run/same-window replay tests must stay compatible. Synthetic scale tests do not prove hosted500 recovery or finance; Root owns original live readback after deployment.",
-      "verdict": "pass"
+      "verdict": "pass: Original PaperRuntimeTelemetryIngestContractTest.test_canonical_batch_read_cross_run_and_ineligible_guards and DurableIngestReceiptTest.test_runtime_summary_enrichment_queries_only_reconciliation_evidence_without_unrelated_payloads exercise build_postgres_event_reader with mocked DB transport capturing SQL and parameters. Tested bounded synthetic wide input reflecting the observed shape (55 summaries / 18,458 IDs); verified unrelated lifecycle payloads are not hydrated, already-enriched summaries are omitted before querying, and second bindings / older eligible positions in deep rings are preserved without global/recent-100 shortcut. Generic batch and scalar reader behavior verified, with scalar reader generating exact original scalar query without event_types filter. Real stdout/exits/counts recorded across all affected suites: 168 passed, 1 skipped (real NATS opt-in)."
     },
     {
       "ac": "AC4",
       "description": "Complete native source-only branch/commit/truthful required trailers/push/PR to currentdev/real assigned independent review/requiredCI/same-reviewed-tree merge/archive. Evidence delivery stays pending until native completion. No self-review/fake Reviewer-Human-MFA/vN branch/handedited canonicalJSON/old-task resurrection. Sourceworkers do not SSH/VM/provider/order/capital/deploy. Root owns NEW sameversionFULL and originalRoot, exactFE31240b105f6394cea4c68418b2aa603f50f60690/newBE gate-before-switch, real hostedL1-L12/finance/provider/Training/Pattern/Research/ONEactualeligiblehuman/exactrollback/independentfinal3artifacts. Parent original6AC/dependencies/artifacts unchanged. FULL38523980470 only qualifies old989. Report actual scope and limitations; source repair is not product delivery.",
-      "verdict": "pending_delivery: local source validation and clean task worktree with required trailers verified (168 tests passed, 1 skipped across original paper-runtime, durable-ingest, runtime-summary, shock-absorption, and reconciliation replay suites); downstream independent review by assigned reviewer Claude, required CI checks, dev integration merge, and canonical finish remain pending delivery on task PR; source repair is not provider FULL or hosted L1-L12 acceptance"
+      "verdict": "pending_delivery: local source validation and clean task worktree with required trailers verified (168 tests passed, 1 skipped across original paper-runtime, durable-ingest, runtime-summary, shock-absorption, and reconciliation replay suites); downstream independent review by assigned reviewer Antigravity2, required CI checks, dev integration merge, and canonical finish remain pending delivery on task PR; source repair is not provider FULL or hosted L1-L12 acceptance"
     }
   ],
   "verification": [
     {
-      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest services/telemetry/test_paper_runtime_ingest_contract.py",
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest services/telemetry/test_paper_runtime_ingest_contract.py",
       "passed": 9,
       "failed": 0,
       "errors": 0,
@@ -40,7 +39,7 @@
       "exit_code": 0
     },
     {
-      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest services/telemetry/test_l12_tel_001_durable_ingest.py",
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest services/telemetry/test_l12_tel_001_durable_ingest.py",
       "passed": 7,
       "failed": 0,
       "errors": 0,
@@ -48,7 +47,7 @@
       "exit_code": 0
     },
     {
-      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest services/telemetry/test_runtime_summary_projection.py services/telemetry/test_ingest_shock_absorption.py",
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest services/telemetry/test_runtime_summary_projection.py services/telemetry/test_ingest_shock_absorption.py",
       "passed": 105,
       "failed": 0,
       "errors": 0,
@@ -56,7 +55,7 @@
       "exit_code": 0
     },
     {
-      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py services/reconciliation-drift/tests/test_tel005_replay_suite.py",
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py services/reconciliation-drift/tests/test_tel005_replay_suite.py",
       "passed": 47,
       "failed": 0,
       "errors": 0,
@@ -64,7 +63,7 @@
       "exit_code": 0
     },
     {
-      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest services/telemetry/test_main_routes.py -k \"reader or event_reader or build_postgres\"",
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest services/telemetry/test_main_routes.py -k \"reader or event_reader or build_postgres\"",
       "passed": 7,
       "failed": 0,
       "errors": 0,
@@ -72,7 +71,7 @@
       "exit_code": 0
     },
     {
-      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest services/telemetry/test_paper_runtime_ingest_contract.py services/telemetry/test_l12_tel_001_durable_ingest.py services/telemetry/test_runtime_summary_projection.py services/telemetry/test_ingest_shock_absorption.py services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py services/reconciliation-drift/tests/test_tel005_replay_suite.py",
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest services/telemetry/test_paper_runtime_ingest_contract.py services/telemetry/test_l12_tel_001_durable_ingest.py services/telemetry/test_runtime_summary_projection.py services/telemetry/test_ingest_shock_absorption.py services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py services/reconciliation-drift/tests/test_tel005_replay_suite.py",
       "passed": 168,
       "failed": 0,
       "errors": 0,
@@ -87,9 +86,8 @@
     "docs/deployment/evidence/TELEMETRY-SUMMARY-CANONICAL-READ-20261014/evidence.json"
   ],
   "diff_budget": {
+    "evidence_max_added_lines": 400,
     "net_production_lines": 11,
-    "budget": 25,
-    "verdict": "pass",
     "files": {
       "production": [
         "services/telemetry/ingest_svc.py"
