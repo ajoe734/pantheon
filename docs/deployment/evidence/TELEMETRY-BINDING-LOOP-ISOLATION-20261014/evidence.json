@@ -13,13 +13,13 @@
     "reproduction_evidence": "/tmp/pantheon-assist-20261013/telemetry-8bc-existing-paper-loop-binding-counter-receipt.json",
     "reproduction_sha256": "450f5dae866e45d18e7dfae38f266c233c77ec3bc3322d3594082c6a20512f31",
     "symptom": "Telemetry main.py submits ingest coroutines onto the same persistent background event loop that runs the AsyncBatchWriter. Synchronous RuntimeBinding owner lookups (ingest_svc.py calling get_binding) blocked the asyncio event loop thread, stalling in-flight batch writes and loop timers.",
-    "resolution": "Offloaded synchronous _validate_evidence_contract calls to worker threads via asyncio.to_thread in ingest() for both new-event admission and duplicate retries, ensuring the shared writer loop is never stalled during authority lookups."
+    "resolution": "Offloaded synchronous _validate_evidence_contract calls to worker threads via asyncio.to_thread in ingest() for both new-event admission and duplicate retries, ensuring the shared writer loop is never stalled during authority lookups. Serialized per-event_id admission order and rechecked seen state prior to buffer put to preserve immutable conflicting-duplicate rejection."
   },
   "acceptance_verification": {
     "ac1_demonstrated_scheduling_defect": "passed: Addressed the demonstrated scheduling defect where synchronous HTTP binding lookups on the shared loop stalled background writer progress and loop timers. Analysis grounded in reproduction receipt /tmp/pantheon-assist-20261013/telemetry-8bc-existing-paper-loop-binding-counter-receipt.json (SHA 450f5dae866e45d18e7dfae38f266c233c77ec3bc3322d3594082c6a20512f31) showing writer await delayed from 20.5ms to 177.4ms under 150ms HTTP lookup latency. Preserved historical unknowns; bounded defect fix without asserting causality for Root38502061978 late stage8.",
-    "ac2_thread_isolation_and_semantics_preserved": "passed: Used standard-library asyncio.to_thread(self._validate_evidence_contract, event) in ingest_svc.py for both new events and exact-duplicate retries. Maintained identical validation-before-buffer semantics, tenant and deployment stage cross-checks, temporal validity windows, and duplicate content-mismatch rejection without creating second validators, caches, queues, or state layers.",
-    "ac3_bounded_synchronization_and_suite_verification": "passed: Added test_authoritative_binding_lookup_offloads_from_asyncio_writer_loop in test_paper_runtime_ingest_contract.py using original paper fixtures and service.start() background writer. Deterministically verified that pending batch writes and loop callbacks progress while an ingestion waits for synchronous authority lookup, authority result is awaited before buffer placement, duplicate validation path is isolated, and all original negatives (unknown binding, identity mismatch, duplicate content mismatch) reject to DLQ with appropriate tags. All 4 telemetry test suites passed: paper-runtime (9 passed), runtime-summary (40 passed), durable-ingest (6 passed, 1 real-NATS opt-in skip), and ingest-shock-absorption (65 passed).",
-    "ac4_source_only_delivery_boundaries": "passed: Native source-only delivery on clean task branch task/TELEMETRY-BINDING-LOOP-ISOLATION-20261014. No production/capital/VM writes, no task-JSON edits, no fake reviewer attestations, preserving Root385020 FAILURE/late stage8 status and Parent DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 boundaries."
+    "ac2_thread_isolation_and_semantics_preserved": "passed: Used standard-library asyncio.to_thread(self._validate_evidence_contract, event) in ingest_svc.py for both new events and exact-duplicate retries. Maintained identical validation-before-buffer semantics, per-event_id arrival ordering, tenant and deployment stage cross-checks, temporal validity windows, and duplicate content-mismatch rejection without creating second validators, caches, queues, or state layers.",
+    "ac3_bounded_synchronization_and_suite_verification": "passed: Added test_authoritative_binding_lookup_offloads_from_asyncio_writer_loop in test_paper_runtime_ingest_contract.py using original paper fixtures and service.start() background writer. Deterministically verified that pending batch writes and loop callbacks progress while an ingestion waits for synchronous authority lookup, authority result is awaited before buffer placement, duplicate validation path is isolated, concurrent same-ID ingestion preserves arrival ordering and rejects conflicting duplicates to DLQ while admitting identical duplicates, and all original negatives (unknown binding, identity mismatch, duplicate content mismatch) reject to DLQ with appropriate tags. All 4 telemetry test suites passed: paper-runtime (9 passed), runtime-summary (40 passed), durable-ingest (6 passed, 1 real-NATS opt-in skip), and ingest-shock-absorption (65 passed).",
+    "ac4_source_only_delivery_boundaries": "pending_delivery: Native source-only delivery on clean task branch task/TELEMETRY-BINDING-LOOP-ISOLATION-20261014. Delivery remains pending_delivery while exact review, CI checks, integration merge, and canonical archive are incomplete; does not mark a local clean branch as full native delivery. Preserved historical Root385020 FAILURE/late stage8 status, zero Capital votes, and Parent DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 boundaries without modifying task JSON or producing unverified claims."
   },
   "test_expectation_classification": {
     "status": "no_test_expectations_changed",
@@ -29,22 +29,22 @@
     {
       "suite": "services/telemetry/test_paper_runtime_ingest_contract.py",
       "command": "python3 -m pytest -v services/telemetry/test_paper_runtime_ingest_contract.py",
-      "result": "9 passed in 5.81s"
+      "result": "9 passed in 6.03s"
     },
     {
       "suite": "services/telemetry/test_runtime_summary_projection.py",
       "command": "python3 -m pytest -v services/telemetry/test_runtime_summary_projection.py",
-      "result": "40 passed in 6.27s"
+      "result": "40 passed in 6.23s"
     },
     {
       "suite": "services/telemetry/test_l12_tel_001_durable_ingest.py",
       "command": "python3 -m pytest -v services/telemetry/test_l12_tel_001_durable_ingest.py",
-      "result": "6 passed, 1 skipped in 1.80s"
+      "result": "6 passed, 1 skipped in 1.40s"
     },
     {
       "suite": "services/telemetry/test_ingest_shock_absorption.py",
       "command": "python3 -m pytest services/telemetry/test_ingest_shock_absorption.py",
-      "result": "65 passed in 21.88s"
+      "result": "65 passed in 21.18s"
     }
   ]
 }

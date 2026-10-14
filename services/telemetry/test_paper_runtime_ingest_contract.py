@@ -792,6 +792,48 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
                 rejected_dup_mismatch = await svc.ingest(content_mismatch_event)
                 self.assertFalse(rejected_dup_mismatch)
 
+                # 3.d Concurrent same-ID ingestion ordering and conflicting-content rejection:
+                store.block_lookups()
+                concurrent_evt_1 = _paper_event(
+                    event_id="evt-concurrent-same-id",
+                    binding_id=KNOWN_BINDING_ID,
+                    metrics={"heartbeat": 10},
+                )
+                concurrent_evt_2 = _paper_event(
+                    event_id="evt-concurrent-same-id",
+                    binding_id=KNOWN_BINDING_ID,
+                    metrics={"heartbeat": 20},
+                )
+                task_1 = asyncio.create_task(svc.ingest(concurrent_evt_1))
+                task_2 = asyncio.create_task(svc.ingest(concurrent_evt_2))
+                await asyncio.to_thread(store.lookup_started.wait, 5.0)
+                self.assertTrue(store.lookup_started.is_set())
+                store.release_lookups()
+                outcomes = await asyncio.gather(task_1, task_2)
+                self.assertEqual(outcomes, [True, False])
+                self.assertEqual(svc._seen_event_ids["evt-concurrent-same-id"]["metrics"], {"heartbeat": 10})
+
+                # 3.e Concurrent same-ID ingestion with identical content:
+                store.block_lookups()
+                concurrent_dup_1 = _paper_event(
+                    event_id="evt-concurrent-identical",
+                    binding_id=KNOWN_BINDING_ID,
+                    metrics={"heartbeat": 100},
+                )
+                concurrent_dup_2 = _paper_event(
+                    event_id="evt-concurrent-identical",
+                    binding_id=KNOWN_BINDING_ID,
+                    metrics={"heartbeat": 100},
+                )
+                task_dup_1 = asyncio.create_task(svc.ingest(concurrent_dup_1))
+                task_dup_2 = asyncio.create_task(svc.ingest(concurrent_dup_2))
+                await asyncio.to_thread(store.lookup_started.wait, 5.0)
+                self.assertTrue(store.lookup_started.is_set())
+                store.release_lookups()
+                dup_outcomes = await asyncio.gather(task_dup_1, task_dup_2)
+                self.assertEqual(dup_outcomes, [True, True])
+                self.assertEqual(svc._seen_event_ids["evt-concurrent-identical"]["metrics"], {"heartbeat": 100})
+
                 dlq = svc.get_dlq_entries()
                 reasons = [e["reason"].lower() for e in dlq]
                 tags = [e["tags"] for e in dlq]
@@ -800,6 +842,7 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
                 self.assertTrue(any("not found in runtimebinding store" in r for r in reasons))
                 self.assertTrue(any("runtimebinding identity mismatch" in r for r in reasons))
                 self.assertTrue(any("content mismatch for duplicate event_id" in r for r in reasons))
+                self.assertTrue(any("content mismatch for duplicate event_id=evt-concurrent-same-id" in r for r in reasons))
 
             finally:
                 store.release_lookups()

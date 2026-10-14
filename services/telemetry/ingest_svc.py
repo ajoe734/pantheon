@@ -981,6 +981,7 @@ class TelemetryIngestService:
 
         # Idempotent deduplication by event_id
         self._seen_event_ids: dict[str, dict[str, Any]] = {}
+        self._event_locks: dict[str, list[Any]] = {}
         self._dedup_max_size = dedup_max_size
 
         # Durable infrastructure health admission ledger. Unlike the in-process
@@ -1255,25 +1256,97 @@ class TelemetryIngestService:
         # 0. Idempotent deduplication — prevent the same event_id from being
         #    counted or written more than once within this service instance.
         event_id = event.get("event_id")
-        if event_id and event_id in self._seen_event_ids:
-            # 0.a. Validate schema on duplicate retry
-            valid_schema, schema_err = self._validate_event(event)
-            if not valid_schema:
+        lock: Optional[asyncio.Lock] = None
+        if event_id:
+            if event_id not in self._event_locks:
+                self._event_locks[event_id] = [asyncio.Lock(), 0]
+            entry = self._event_locks[event_id]
+            entry[1] += 1
+            lock = entry[0]
+            await lock.acquire()
+
+        try:
+            if event_id and event_id in self._seen_event_ids:
+                # 0.a. Validate schema on duplicate retry
+                valid_schema, schema_err = self._validate_event(event)
+                if not valid_schema:
+                    self._total_rejected += 1
+                    self._dlq.reject(
+                        event=event,
+                        tags=[TAG_SCHEMA_VIOLATION],
+                        reason=f"Schema validation failed on duplicate retry: {schema_err}",
+                    )
+                    log.warning(f"Ingest duplicate retry rejected (schema): {schema_err}")
+                    return False
+
+                # 0.b. Validate evidence contract on duplicate retry
+                valid_ev, ev_err, resolved_binding = await asyncio.to_thread(
+                    self._validate_evidence_contract, event
+                )
+                if not valid_ev:
+                    err_lower = ev_err.lower()
+                    if "temporal" in err_lower or "effective_at" in err_lower or "retired_at" in err_lower:
+                        tag = TAG_TEMPORAL_VIOLATION
+                    elif "binding" in err_lower or "mismatch" in err_lower or "not found" in err_lower:
+                        tag = TAG_BINDING_MISMATCH
+                    else:
+                        tag = TAG_SCHEMA_VIOLATION
+
+                    self._total_rejected += 1
+                    self._dlq.reject(
+                        event=event,
+                        tags=[tag],
+                        reason=f"Evidence contract violation on duplicate retry: {ev_err}",
+                    )
+                    log.warning(f"Ingest duplicate retry rejected (evidence): {ev_err}")
+                    return False
+
+                # 0.c. Reject same-ID content mismatch
+                original_event = self._seen_event_ids[event_id]
+                mismatch = False
+                for k in (set(event.keys()) | set(original_event.keys())):
+                    if event.get(k) != original_event.get(k):
+                        mismatch = True
+                        break
+                if mismatch:
+                    self._total_rejected += 1
+                    self._dlq.reject(
+                        event=event,
+                        tags=[TAG_SCHEMA_VIOLATION],
+                        reason=f"Content mismatch for duplicate event_id={event_id}",
+                    )
+                    log.warning(f"Ingest duplicate retry rejected (content mismatch for event_id={event_id})")
+                    return False
+
+                self._total_duplicates += 1
+                log.debug(f"Ingest skipped (duplicate event_id): {event_id}")
+                if self._lineage_write_store is not None:
+                    try:
+                        # Lineage repair must use the immutable originally accepted payload
+                        self._lineage_write_store.admit_telemetry_event(original_event, resolved_binding)
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("Lineage live-write admission failed for duplicate event %s: %s", event_id, exc)
+                return True  # idempotent: already delivered, treat as success
+
+            # 1. Schema validation
+            valid, error_msg = self._validate_event(event)
+            if not valid:
                 self._total_rejected += 1
                 self._dlq.reject(
                     event=event,
                     tags=[TAG_SCHEMA_VIOLATION],
-                    reason=f"Schema validation failed on duplicate retry: {schema_err}",
+                    reason=f"Schema validation failed: {error_msg}",
                 )
-                log.warning(f"Ingest duplicate retry rejected (schema): {schema_err}")
+                log.warning(f"Ingest rejected (schema): {error_msg}")
                 return False
 
-            # 0.b. Validate evidence contract on duplicate retry
-            valid_ev, ev_err, resolved_binding = await asyncio.to_thread(
+            # 2. Evidence contract validation (field presence + RuntimeBinding cross-check)
+            valid, error_msg, resolved_binding = await asyncio.to_thread(
                 self._validate_evidence_contract, event
             )
-            if not valid_ev:
-                err_lower = ev_err.lower()
+            if not valid:
+                # Classify the tag based on the error type
+                err_lower = error_msg.lower()
                 if "temporal" in err_lower or "effective_at" in err_lower or "retired_at" in err_lower:
                     tag = TAG_TEMPORAL_VIOLATION
                 elif "binding" in err_lower or "mismatch" in err_lower or "not found" in err_lower:
@@ -1285,121 +1358,94 @@ class TelemetryIngestService:
                 self._dlq.reject(
                     event=event,
                     tags=[tag],
-                    reason=f"Evidence contract violation on duplicate retry: {ev_err}",
+                    reason=f"Evidence contract violation: {error_msg}",
                 )
-                log.warning(f"Ingest duplicate retry rejected (evidence): {ev_err}")
+                log.warning(f"Ingest rejected (evidence): {error_msg}")
                 return False
 
-            # 0.c. Reject same-ID content mismatch
-            original_event = self._seen_event_ids[event_id]
-            mismatch = False
-            for k in (set(event.keys()) | set(original_event.keys())):
-                if event.get(k) != original_event.get(k):
-                    mismatch = True
-                    break
-            if mismatch:
+            # Recheck seen event IDs before buffer admission to guard against concurrent admission
+            if event_id and event_id in self._seen_event_ids:
+                original_event = self._seen_event_ids[event_id]
+                mismatch = False
+                for k in (set(event.keys()) | set(original_event.keys())):
+                    if event.get(k) != original_event.get(k):
+                        mismatch = True
+                        break
+                if mismatch:
+                    self._total_rejected += 1
+                    self._dlq.reject(
+                        event=event,
+                        tags=[TAG_SCHEMA_VIOLATION],
+                        reason=f"Content mismatch for duplicate event_id={event_id}",
+                    )
+                    log.warning(f"Ingest duplicate retry rejected (content mismatch for event_id={event_id})")
+                    return False
+
+                self._total_duplicates += 1
+                log.debug(f"Ingest skipped (duplicate event_id): {event_id}")
+                if self._lineage_write_store is not None:
+                    try:
+                        self._lineage_write_store.admit_telemetry_event(original_event, resolved_binding)
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("Lineage live-write admission failed for duplicate event %s: %s", event_id, exc)
+                return True
+
+            # 3. Push to durable buffer
+            enqueued = await self._buffer.put(event, timeout=timeout)
+            if not enqueued:
                 self._total_rejected += 1
                 self._dlq.reject(
                     event=event,
-                    tags=[TAG_SCHEMA_VIOLATION],
-                    reason=f"Content mismatch for duplicate event_id={event_id}",
+                    tags=[TAG_BUFFER_OVERFLOW],
+                    reason="Buffer full — backpressure overflow to DLQ",
                 )
-                log.warning(f"Ingest duplicate retry rejected (content mismatch for event_id={event_id})")
+                log.warning("Ingest rejected (buffer overflow): buffer at capacity")
                 return False
 
-            self._total_duplicates += 1
-            log.debug(f"Ingest skipped (duplicate event_id): {event_id}")
+            # Track event_id for idempotent dedup after successful enqueue
+            if event_id:
+                # Keep an immutable snapshot so producer-side mutation cannot turn
+                # a conflicting retry into an apparent exact duplicate.
+                self._seen_event_ids[event_id] = copy.deepcopy(event)
+                # Evict oldest half when the dedup set exceeds its size limit
+                if len(self._seen_event_ids) > self._dedup_max_size:
+                    evict = list(self._seen_event_ids.keys())[: self._dedup_max_size // 2]
+                    for eid in evict:
+                        self._seen_event_ids.pop(eid, None)
+
+            self._total_ingested += 1
+            if self._runtime_summary_store is not None:
+                try:
+                    self._runtime_summary_store.project_event(event)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("Runtime summary projection failed for event %s: %s", event_id, exc)
+
             if self._lineage_write_store is not None:
                 try:
-                    # Lineage repair must use the immutable originally accepted payload
-                    self._lineage_write_store.admit_telemetry_event(original_event, resolved_binding)
+                    self._lineage_write_store.admit_telemetry_event(event, resolved_binding)
                 except Exception as exc:  # noqa: BLE001
-                    log.warning("Lineage live-write admission failed for duplicate event %s: %s", event_id, exc)
-            return True  # idempotent: already delivered, treat as success
+                    log.warning("Lineage live-write admission failed for event %s: %s", event_id, exc)
 
-        # 1. Schema validation
-        valid, error_msg = self._validate_event(event)
-        if not valid:
-            self._total_rejected += 1
-            self._dlq.reject(
-                event=event,
-                tags=[TAG_SCHEMA_VIOLATION],
-                reason=f"Schema validation failed: {error_msg}",
-            )
-            log.warning(f"Ingest rejected (schema): {error_msg}")
-            return False
-
-        # 2. Evidence contract validation (field presence + RuntimeBinding cross-check)
-        valid, error_msg, resolved_binding = await asyncio.to_thread(
-            self._validate_evidence_contract, event
-        )
-        if not valid:
-            # Classify the tag based on the error type
-            err_lower = error_msg.lower()
-            if "temporal" in err_lower or "effective_at" in err_lower or "retired_at" in err_lower:
-                tag = TAG_TEMPORAL_VIOLATION
-            elif "binding" in err_lower or "mismatch" in err_lower or "not found" in err_lower:
-                tag = TAG_BINDING_MISMATCH
-            else:
-                tag = TAG_SCHEMA_VIOLATION
-
-            self._total_rejected += 1
-            self._dlq.reject(
-                event=event,
-                tags=[tag],
-                reason=f"Evidence contract violation: {error_msg}",
-            )
-            log.warning(f"Ingest rejected (evidence): {error_msg}")
-            return False
-
-        # 3. Push to durable buffer
-        enqueued = await self._buffer.put(event, timeout=timeout)
-        if not enqueued:
-            self._total_rejected += 1
-            self._dlq.reject(
-                event=event,
-                tags=[TAG_BUFFER_OVERFLOW],
-                reason="Buffer full — backpressure overflow to DLQ",
-            )
-            log.warning("Ingest rejected (buffer overflow): buffer at capacity")
-            return False
-
-        # Track event_id for idempotent dedup after successful enqueue
-        if event_id:
-            # Keep an immutable snapshot so producer-side mutation cannot turn
-            # a conflicting retry into an apparent exact duplicate.
-            self._seen_event_ids[event_id] = copy.deepcopy(event)
-            # Evict oldest half when the dedup set exceeds its size limit
-            if len(self._seen_event_ids) > self._dedup_max_size:
-                evict = list(self._seen_event_ids.keys())[: self._dedup_max_size // 2]
-                for eid in evict:
-                    self._seen_event_ids.pop(eid, None)
-
-        self._total_ingested += 1
-        if self._runtime_summary_store is not None:
-            try:
-                self._runtime_summary_store.project_event(event)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("Runtime summary projection failed for event %s: %s", event_id, exc)
-
-        if self._lineage_write_store is not None:
-            try:
-                self._lineage_write_store.admit_telemetry_event(event, resolved_binding)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("Lineage live-write admission failed for event %s: %s", event_id, exc)
-
-        if self._trade_episode_projection_store is not None:
-            has_episode = (
-                event.get("trade_episode_id")
-                or event.get("payload", {}).get("trade_episode_id")
-                or event.get("metadata", {}).get("trade_episode_id")
-            )
-            if has_episode:
-                try:
-                    self._trade_episode_projection_store.project_event(event)
-                except Exception as exc:  # noqa: BLE001
-                    log.warning("Trade episode projection failed for event %s: %s", event_id, exc)
-        return True
+            if self._trade_episode_projection_store is not None:
+                has_episode = (
+                    event.get("trade_episode_id")
+                    or event.get("payload", {}).get("trade_episode_id")
+                    or event.get("metadata", {}).get("trade_episode_id")
+                )
+                if has_episode:
+                    try:
+                        self._trade_episode_projection_store.project_event(event)
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("Trade episode projection failed for event %s: %s", event_id, exc)
+            return True
+        finally:
+            if lock is not None and event_id:
+                lock.release()
+                entry = self._event_locks.get(event_id)
+                if entry is not None:
+                    entry[1] -= 1
+                    if entry[1] <= 0:
+                        self._event_locks.pop(event_id, None)
 
     async def ingest_batch(self, events: list[dict[str, Any]]) -> dict[str, int]:
         """
