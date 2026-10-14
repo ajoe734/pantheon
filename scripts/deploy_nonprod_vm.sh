@@ -914,6 +914,7 @@ ssh_bash() {
     PANTHEON_DEV_ARTIFACT_FE_TARGET PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID \
     PANTHEON_DEV_ARTIFACT_SEALED_FROM_JSON PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON \
     PANTHEON_DEV_FE_DEPLOY_SCRIPT PANTHEON_EXECUTE_PLANS_ROOT PANTHEON_DEV_FE_CONTROLLER_SHA \
+    PANTHEON_DEV_FE_NODE_BIN_DIR \
     PANTHEON_DEV_FE_ROOT PANTHEON_DEV_FE_RELEASES_DIR \
     PANTHEON_DEPLOY_LEASE_OWNER PANTHEON_DEPLOY_LEASE_EPOCH \
     PANTHEON_DEPLOY_LEASE_RUN_ID PANTHEON_DEPLOY_LEASE_DELEGATED; do
@@ -4477,6 +4478,73 @@ verify_fe_controller_checkout() {
   done
 }
 
+# Explicitly supply the provisioned Node 22 runtime required by the FE owner
+# script across bare SSH. Reuses the existing runner toolcache under the FE
+# workspace root or accepts an explicit PANTHEON_DEV_FE_NODE_BIN_DIR.
+resolve_fe_node_runtime() {
+  local script="$1"
+  local candidate_bin_dir="${PANTHEON_DEV_FE_NODE_BIN_DIR:-}"
+
+  if [[ -z "${candidate_bin_dir}" ]]; then
+    local plans_root="${PANTHEON_EXECUTE_PLANS_ROOT:-}"
+    if [[ -z "${plans_root}" && -n "${script}" ]]; then
+      plans_root="$(dirname "$(dirname "${script}")")"
+    fi
+
+    local toolcache_node=""
+    if [[ -n "${plans_root}" ]]; then
+      local runner_work
+      runner_work="$(cd "${plans_root}/../.." 2>/dev/null && pwd || true)"
+      if [[ -d "${runner_work}/_tool/node" ]]; then
+        toolcache_node="${runner_work}/_tool/node"
+      fi
+    fi
+    if [[ -z "${toolcache_node}" && -n "${RUNNER_TOOL_CACHE:-}" && -d "${RUNNER_TOOL_CACHE}/node" ]]; then
+      toolcache_node="${RUNNER_TOOL_CACHE}/node"
+    fi
+
+    if [[ -n "${toolcache_node}" && -d "${toolcache_node}" ]]; then
+      local arch
+      arch="$(uname -m 2>/dev/null || true)"
+      case "${arch}" in
+        x86_64) arch="x64" ;;
+        aarch64) arch="arm64" ;;
+      esac
+
+      local version_dir
+      for version_dir in $(ls -d "${toolcache_node}"/22.* 2>/dev/null | sort -V -r); do
+        local cand="${version_dir}/${arch}/bin"
+        if [[ -d "${cand}" && -x "${cand}/node" ]]; then
+          candidate_bin_dir="${cand}"
+          break
+        fi
+        local direct_cand="${version_dir}/bin"
+        if [[ -d "${direct_cand}" && -x "${direct_cand}/node" ]]; then
+          candidate_bin_dir="${direct_cand}"
+          break
+        fi
+      done
+    fi
+  fi
+
+  if [[ -z "${candidate_bin_dir}" || ! -d "${candidate_bin_dir}" ]]; then
+    error "FE owner Node runtime missing or unsafe: could not locate provisioned Node 22 runtime"
+  fi
+
+  local node_bin="${candidate_bin_dir}/node"
+  if [[ ! -f "${node_bin}" || ! -x "${node_bin}" ]]; then
+    error "FE owner Node runtime missing or unsafe: '${node_bin}' is not executable"
+  fi
+
+  local node_version
+  node_version="$("${node_bin}" -v 2>/dev/null || true)"
+  if [[ ! "${node_version}" =~ ^v22\. ]]; then
+    error "FE owner Node runtime missing or unsafe: '${node_bin}' returned invalid version '${node_version}' (expected v22.*)"
+  fi
+
+  printf '%s' "${candidate_bin_dir}"
+}
+
 # Explicit external compensation exits before snapshots, worktree preparation,
 # principal issuance/revocation, build, cleanup, owner rollout or ingress writes.
 if [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" == true || "${PANTHEON_DEV_ARTIFACT_VERIFY:-false}" == true ]]; then
@@ -4505,6 +4573,7 @@ if [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" == true || "${PANTHEON_DEV_ARTIF
         info "FE live symlink already matches target sealed release (${to_target}); skipping redundant FE switch"
       else
         verify_fe_controller_checkout "${fe_script}" "${PANTHEON_DEV_FE_CONTROLLER_SHA:-}" "${artifact_operation}"
+        fe_node_bin_dir="$(resolve_fe_node_runtime "${fe_script}")"
         info "invoking FE owner restore-sealed before BE ${artifact_operation}"
         fe_lease_owner="${PANTHEON_DEPLOY_LEASE_OWNER:-pantheon-dev-deploy}"
         fe_lease_epoch="${PANTHEON_DEPLOY_LEASE_EPOCH:-1}"
@@ -4512,6 +4581,7 @@ if [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" == true || "${PANTHEON_DEV_ARTIF
         fe_lease_delegated="${PANTHEON_DEPLOY_LEASE_DELEGATED:-true}"
         fe_event_name="${GITHUB_EVENT_NAME:-${PANTHEON_DEV_EVENT_NAME:-push}}"
 
+        PATH="${fe_node_bin_dir}:${PATH}" \
         PANTHEON_DEV_FE_ROOT="${PANTHEON_DEV_FE_ROOT:-/var/www/pantheon-dev-fe}" \
         PANTHEON_DEV_FE_RELEASES_DIR="${PANTHEON_DEV_FE_RELEASES_DIR:-/var/www/pantheon-dev-fe-releases}" \
         GITHUB_EVENT_NAME="${fe_event_name}" \
