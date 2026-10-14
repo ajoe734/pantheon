@@ -825,6 +825,7 @@ def test_fe_owner_restore_sealed_invocation(fixture, tmp_path):
         '        "owner": os.environ.get("PANTHEON_DEPLOY_LEASE_OWNER"),\n'
         '        "epoch": os.environ.get("PANTHEON_DEPLOY_LEASE_EPOCH"),\n'
         '        "run_id": os.environ.get("PANTHEON_DEPLOY_LEASE_RUN_ID"),\n'
+        '        "event_name": os.environ.get("GITHUB_EVENT_NAME"),\n'
         '        "node_version": os.environ.get("NODE_VERSION"),\n'
         '        "from": from_doc,\n'
         '        "to": to_doc,\n'
@@ -863,11 +864,28 @@ def test_fe_owner_restore_sealed_invocation(fixture, tmp_path):
     assert events[0]["command"] == "fe_deploy"
     assert events[0]["action"] == "restore-sealed"
     assert events[0]["owner"] == "pantheon-dev-deploy"
+    assert events[0]["event_name"] == ""
     assert events[0]["node_version"].startswith("v22.")
     assert events[0]["from"] == from_seal
     assert events[0]["to"] == to_seal
     assert events[1]["command"] == "driver"
     assert events[1]["operation"] == "restore"
+
+    env_dispatch = dict(env, GITHUB_EVENT_NAME="workflow_dispatch")
+    Path(env["RECORDER"]).write_text("")
+    res_dispatch = _run(_remote(), env_dispatch)
+    assert res_dispatch.returncode == 0, res_dispatch.stderr
+    ev_dispatch = _events(recorder)
+    assert len(ev_dispatch) == 2
+    assert ev_dispatch[0]["event_name"] == "workflow_dispatch"
+
+    env_pantheon_event = dict(env, GITHUB_EVENT_NAME="", PANTHEON_DEV_EVENT_NAME="workflow_dispatch")
+    Path(env["RECORDER"]).write_text("")
+    res_pantheon_event = _run(_remote(), env_pantheon_event)
+    assert res_pantheon_event.returncode == 0, res_pantheon_event.stderr
+    ev_pantheon_event = _events(recorder)
+    assert len(ev_pantheon_event) == 2
+    assert ev_pantheon_event[0]["event_name"] == "workflow_dispatch"
 
     fe_root = tmp_path / "live-fe"
     baseline_dir = tmp_path / "baseline-release"
@@ -1181,7 +1199,8 @@ with open("@RECORDER@", "a") as out:
     out.write(json.dumps({"command": "fe_deploy", **{key: os.environ.get(name) for key, name in (
         ("action", "PANTHEON_DEPLOY_ACTION"), ("profile", "PANTHEON_DEPLOY_PROFILE"),
         ("delegated", "PANTHEON_DEPLOY_LEASE_DELEGATED"), ("owner", "PANTHEON_DEPLOY_LEASE_OWNER"),
-        ("epoch", "PANTHEON_DEPLOY_LEASE_EPOCH"), ("run_id", "PANTHEON_DEPLOY_LEASE_RUN_ID"))},
+        ("epoch", "PANTHEON_DEPLOY_LEASE_EPOCH"), ("run_id", "PANTHEON_DEPLOY_LEASE_RUN_ID"),
+        ("event_name", "GITHUB_EVENT_NAME"))},
         "node_version": os.environ.get("NODE_VERSION"),
         "from_target": from_doc["target"], "to_target": to_doc["target"]}) + "\n")
 PY
@@ -1365,8 +1384,10 @@ def _run_original_chain(case, tmp_path, monkeypatch, *, env_override=None, tampe
         "RUNNER_TEMP": str(runner_temp),
         "PANTHEON_RELEASE_REPO_ROOT": str(ROOT),
         "DEV_REMOTE_DIR": str(tmp_path / "MUST_NOT_ACCESS_OWNER_CHECKOUT"),
-        "GITHUB_RUN_ID": "987654321",
-        "GITHUB_RUN_ATTEMPT": "3",
+        "PANTHEON_DEPLOY_LEASE_OWNER": "pantheon-dev-deploy",
+        "PANTHEON_DEPLOY_LEASE_EPOCH": "1",
+        "PANTHEON_DEPLOY_LEASE_RUN_ID": "987654321",
+        "PANTHEON_DEPLOY_LEASE_DELEGATED": "true",
         "PANTHEON_RELEASE_CANDIDATE_ID": candidate_id,
         "PANTHEON_FAILED_BACKEND_SHA": identity["candidate_backend_sha"],
         "PANTHEON_FAILED_FRONTEND_SHA": identity["candidate_frontend_sha"],
@@ -1426,6 +1447,7 @@ def test_full_cli_restore_final_executes_original_bff_chain(case, tmp_path, monk
     fe_event, driver_event = events
     assert (fe_event["action"], fe_event["owner"], fe_event["delegated"], fe_event["run_id"]) == (
         "restore-sealed", "pantheon-dev-deploy", "true", "987654321")
+    assert fe_event["event_name"] == ""
     assert fe_event["node_version"].startswith("v22.")
     assert (fe_event["from_target"], fe_event["to_target"]) == (from_seal["target"], to_seal["target"])
     assert os.path.realpath(d.FE_LINK) == os.path.realpath(candidate_release)
@@ -1441,6 +1463,20 @@ def test_full_cli_restore_final_executes_original_bff_chain(case, tmp_path, monk
     up_calls = [call for call in docker_calls if call[0] == "compose" and "up" in call]
     assert len(up_calls) == 1 and "--no-build" in up_calls[0] and "--force-recreate" in up_calls[0]
     assert not any(call[0] in ("build", "pull") or call[:2] in (["image", "pull"], ["image", "build"]) for call in docker_calls)
+
+
+def test_full_cli_restore_final_preserves_explicit_workflow_dispatch(case, tmp_path, monkeypatch):
+    chain = _run_original_chain(case, tmp_path, monkeypatch,
+                                env_override={"GITHUB_EVENT_NAME": "workflow_dispatch"})
+    result, readback_out, recorder = chain.result, chain.readback_out, chain.recorder
+    assert result.returncode == 0, f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+    events = _events(recorder)
+    assert [event["command"] for event in events] == ["fe_deploy", "driver"], events
+    fe_event = events[0]
+    assert fe_event["event_name"] == "workflow_dispatch"
+    assert (fe_event["action"], fe_event["owner"], fe_event["delegated"], fe_event["run_id"]) == (
+        "restore-sealed", "pantheon-dev-deploy", "true", "987654321")
+    assert fe_event["node_version"].startswith("v22.")
 
 
 def test_original_chain_rejects_tampered_final_fe_seal_after_driver_readback(case, tmp_path, monkeypatch):

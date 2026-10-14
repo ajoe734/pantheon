@@ -129,5 +129,26 @@
       "bash -n scripts/deploy_nonprod_vm.sh",
       "git diff --check"
     ]
+  },
+  "sealed_manual_event_handoff_followup": {
+    "task_id": "DEV-SEALED-MANUAL-EVENT-HANDOFF-20261014",
+    "root_failure_reference": "Root38569825116-original-manual-restore-retry1 (observed 16:20:42Z, exit 75): FE profile exit 2 -> BE exit 75 before sealed restore and CAS; FE deploy-dev-vm.sh operator-live profile required GITHUB_EVENT_NAME=workflow_dispatch, while BE caller scripts/deploy_nonprod_vm.sh line 4536 fe_event_name=${GITHUB_EVENT_NAME:-${PANTHEON_DEV_EVENT_NAME:-push}} invented 'push' when real manual context was absent, conflicting with FE profile admission and ssh_bash line 923 empty preservation.",
+    "change": "Updated fe_event_name assignment in scripts/deploy_nonprod_vm.sh to '${GITHUB_EVENT_NAME:-${PANTHEON_DEV_EVENT_NAME:-}}', forwarding genuinely absent/empty GitHub event context as empty for actual local manual sealed recovery instead of inventing push, while preserving explicit GitHub events and explicit PANTHEON_DEV_EVENT_NAME inputs. Extended callee and full-chain restore fixtures in scripts/test_deploy_nonprod_artifact_restore.py to record and assert the FE-owner event argument, verifying empty event under absent GitHub context with explicit manual delegation/run and real provisioned Node execution, as well as explicit workflow_dispatch preservation.",
+    "source_commit": "this task branch (DEV-SEALED-MANUAL-EVENT-HANDOFF-20261014); see git history",
+    "historical_note": "Prior 133 passed, 2 skipped result is retained as history; caller push default was removed and callee/full-chain fixtures were extended with honest event argument recording and assertion.",
+    "hosted_acceptance_status": "not run by this source task; final deployment and hosted acceptance require both FE profile and BE handoff deliveries before genuine guarded baseline recovery and freezing true final FE/BE.",
+    "distinction": {
+      "source_correction": "Caller fe_event_name default removed without manufacturing workflow_dispatch or falsifying GitHub execution origin/run/repository",
+      "callee_and_full_chain_fixture": "Verified empty event and explicit workflow_dispatch handoff with real provisioned Node 22 execution under isolated transport shim",
+      "hosted_manual_recovery": "Hosted deployment acceptance and manual sealed recovery remain to be verified after both FE and BE source deliveries are integrated"
+    },
+    "commands": [
+      {
+        "command": "pytest scripts/test_deploy_nonprod_vm.py scripts/test_deploy_nonprod_artifact_restore.py -q",
+        "result": "134 passed, 2 skipped"
+      },
+      "bash -n scripts/deploy_nonprod_vm.sh",
+      "git diff --check"
+    ]
   }
 }
