@@ -120,6 +120,8 @@ def validate_receipt(result: dict, context: dict) -> str:
 
 
 class CandidateReceiptObserver:
+    prefix = PREFIX
+
     def __init__(self, *, context_path: Path, output_path: Path):
         self.context = private_document(context_path)
         validate_context(self.context)
