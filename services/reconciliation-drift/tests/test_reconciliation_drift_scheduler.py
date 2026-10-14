@@ -411,7 +411,7 @@ def test_scheduled_reconcile_can_skip_incident_dispatch_for_targeted_probe() -> 
         assert classify.call_count == 0
 
 
-def test_scheduled_reconcile_lifecycle_only_appends_without_evaluation_store() -> None:
+def test_scheduled_reconcile_lifecycle_only_appends_with_durable_evaluation() -> None:
     from fastapi.testclient import TestClient
 
     with tempfile.TemporaryDirectory() as data_dir:
@@ -422,6 +422,22 @@ def test_scheduled_reconcile_lifecycle_only_appends_without_evaluation_store() -
         tick_id = "tick-target-lifecycle-only-001"
         evaluation_id = svc._tick_evaluation_id(tick_id, binding_id)
 
+        saved_before_append = []
+
+        def fake_append(*args, **kwargs):
+            eval_in_store = svc.store.get_evaluation(evaluation_id)
+            if eval_in_store is not None:
+                saved_before_append.append(json.loads(json.dumps(eval_in_store)))
+            return {
+                "status": "accepted",
+                "terminal": True,
+                "retryable": False,
+                "outcome": "accepted",
+                "http_status": 202,
+                "response": {"status": "accepted"},
+                "error": None,
+            }
+
         with (
             mock.patch.object(
                 svc,
@@ -431,15 +447,7 @@ def test_scheduled_reconcile_lifecycle_only_appends_without_evaluation_store() -
             mock.patch.object(
                 svc,
                 "_append_telemetry_lifecycle_event",
-                return_value={
-                    "status": "accepted",
-                    "terminal": True,
-                    "retryable": False,
-                    "outcome": "accepted",
-                    "http_status": 202,
-                    "response": {"status": "accepted"},
-                    "error": None,
-                },
+                side_effect=fake_append,
             ) as append,
             mock.patch.object(
                 svc,
@@ -461,14 +469,30 @@ def test_scheduled_reconcile_lifecycle_only_appends_without_evaluation_store() -
         payload = response.json()
         assert payload["lifecycle_only"] is True
         assert payload["incident_dispatch_enabled"] is False
+        assert payload["drift_report_ids"] == []
+        assert payload["incident_ids"] == []
+        assert payload["incident_delivery_errors"] == []
         assert payload["evaluation_ids"] == [evaluation_id]
         assert payload["lifecycle_append_results"][0]["binding_id"] == binding_id
         assert payload["lifecycle_append_results"][0]["status"] == "accepted"
         assert payload["lifecycle_accepted_event_ids"] == [
             payload["lifecycle_append_results"][0]["event_id"]
         ]
-        assert svc.store.get_evaluation(evaluation_id) is None
+        # Proves one same-tenant durable evaluation/intent saved BEFORE append
+        assert len(saved_before_append) == 1
+        assert saved_before_append[0]["evaluation_id"] == evaluation_id
+        assert saved_before_append[0]["lifecycle_append"]["status"] == "pending"
+        assert saved_before_append[0]["lifecycle_append"]["event_id"] is not None
+
+        # After append, evaluation in store is updated to accepted
+        ev_persisted = svc.store.get_evaluation(evaluation_id)
+        assert ev_persisted is not None
+        assert ev_persisted["lifecycle_append"]["status"] == "accepted"
+        assert ev_persisted["lifecycle_append"]["event_id"] == payload["lifecycle_append_results"][0]["event_id"]
         append.assert_called_once()
+
+
+test_scheduled_reconcile_lifecycle_only_appends_without_evaluation_store = test_scheduled_reconcile_lifecycle_only_appends_with_durable_evaluation
 
 
 def test_scheduled_lag_breach_creates_deterministic_report_and_dedup_incident() -> None:
@@ -2617,14 +2641,37 @@ def test_same_window_replay_preserves_accepted_candidate_and_metrics() -> None:
 
         # 3. Lifecycle-only scheduled reconcile cross-call replay: call 1 with candidate A,
         # then call 2 with candidate B for same window. Must preserve candidate A without
-        # emitting candidate B or writing an evaluation store row.
+        # emitting candidate B or retargeting event ID.
         telemetry_calls.clear()
         tick_id_lo = "tick-lifecycle-only-same-window-001"
-        eval_id_lo = svc._tick_evaluation_id(tick_id_lo, summary_A["binding_id"])
+        binding_id_lo = "12345678-1234-4234-8234-123456789abc"
+        summary_lo_A = dict(summary_A)
+        summary_lo_A["binding_id"] = binding_id_lo
+        snap_lo_A = dict(snap_runA)
+        snap_lo_A["binding_id"] = binding_id_lo
+        snap_lo_A["event_id"] = "evt-snap-lo-A"
+        snap_lo_A["correlation_envelope"] = dict(snap_runA["correlation_envelope"])
+        snap_lo_A["correlation_envelope"]["binding_id"] = binding_id_lo
+        snap_lo_A["correlation_envelope"]["event_id"] = "evt-snap-lo-A"
+        summary_lo_A["last_lifecycle_identity"] = snap_lo_A
+        summary_lo_A["committed_position_snapshot"] = snap_lo_A
+
+        summary_lo_B = dict(summary_B)
+        summary_lo_B["binding_id"] = binding_id_lo
+        snap_lo_B = dict(snap_runB)
+        snap_lo_B["binding_id"] = binding_id_lo
+        snap_lo_B["event_id"] = "evt-snap-lo-B"
+        snap_lo_B["correlation_envelope"] = dict(snap_runB["correlation_envelope"])
+        snap_lo_B["correlation_envelope"]["binding_id"] = binding_id_lo
+        snap_lo_B["correlation_envelope"]["event_id"] = "evt-snap-lo-B"
+        summary_lo_B["last_lifecycle_identity"] = snap_lo_B
+        summary_lo_B["committed_position_snapshot"] = snap_lo_B
+
+        eval_id_lo = svc._tick_evaluation_id(tick_id_lo, binding_id_lo)
 
         with (
             mock.patch.dict("os.environ", {"PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083"}),
-            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary_A]),
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary_lo_A]),
             mock.patch.object(svc.urllib.request, "urlopen", side_effect=fake_urlopen),
         ):
             resp_lo_1 = client.post(
@@ -2633,21 +2680,28 @@ def test_same_window_replay_preserves_accepted_candidate_and_metrics() -> None:
                     "tick_id": tick_id_lo,
                     "sla_seconds": 60.0,
                     "lifecycle_only": True,
-                    "binding_id": summary_A["binding_id"],
+                    "binding_id": binding_id_lo,
                 },
             )
             assert resp_lo_1.status_code == 201
             payload_lo_1 = resp_lo_1.json()
             assert len(telemetry_calls) == 1
             assert telemetry_calls[0]["run_id"] == "run-A"
-            assert telemetry_calls[0]["causal_parent_id"] == snap_id_A
+            assert telemetry_calls[0]["causal_parent_id"] == "evt-snap-lo-A"
             assert payload_lo_1["lifecycle_accepted_event_ids"] == [telemetry_calls[0]["event_id"]]
             assert len(payload_lo_1["lifecycle_append_results"]) == 1
-            assert svc.store.get_evaluation(eval_id_lo) is None
+            assert payload_lo_1["lifecycle_only"] is True
+            assert payload_lo_1["incident_dispatch_enabled"] is False
+            ev_lo = svc.store.get_evaluation(eval_id_lo)
+            assert ev_lo is not None
+            assert ev_lo["run_id"] == "run-A"
+            assert ev_lo["snapshot_event_id"] == "evt-snap-lo-A"
+            assert ev_lo["observed_metrics"]["position_qty"] == 100.0
+            assert ev_lo["lifecycle_append"]["status"] == "accepted"
 
         with (
             mock.patch.dict("os.environ", {"PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083"}),
-            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary_B]),
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary_lo_B]),
             mock.patch.object(svc.urllib.request, "urlopen", side_effect=fake_urlopen),
         ):
             resp_lo_2 = client.post(
@@ -2656,20 +2710,25 @@ def test_same_window_replay_preserves_accepted_candidate_and_metrics() -> None:
                     "tick_id": tick_id_lo,
                     "sla_seconds": 60.0,
                     "lifecycle_only": True,
-                    "binding_id": summary_B["binding_id"],
+                    "binding_id": binding_id_lo,
                 },
             )
             assert resp_lo_2.status_code == 201
             payload_lo_2 = resp_lo_2.json()
             assert len(telemetry_calls) == 1, "Must not emit candidate B during cross-call replay"
+            assert binding_id_lo in payload_lo_2["skipped_binding_ids"]
             assert payload_lo_2["lifecycle_accepted_event_ids"] == [telemetry_calls[0]["event_id"]]
             assert len(payload_lo_2["lifecycle_append_results"]) == 1
             assert payload_lo_2["lifecycle_append_results"][0]["status"] == "accepted"
-            assert svc.store.get_evaluation(eval_id_lo) is None
+            assert payload_lo_2["lifecycle_only"] is True
+            ev_lo_2 = svc.store.get_evaluation(eval_id_lo)
+            assert ev_lo_2 is not None
+            assert ev_lo_2["run_id"] == "run-A"
+            assert ev_lo_2["snapshot_event_id"] == "evt-snap-lo-A"
 
         # 4. Failed-window / SLA breach replay: call 1 appends candidate A but breaches SLA
         # so claim is failed; call 2 reacquires same window with candidate B.
-        # Must discover candidate A via owner and preserve it without emitting candidate B.
+        # Must preserve candidate A evaluation from store without emitting candidate B.
         telemetry_calls.clear()
         tick_id_failed = "tick-failed-window-replay-001"
         binding_id_failed = "44444444-4444-4444-4444-444444444444"
@@ -2718,7 +2777,9 @@ def test_same_window_replay_preserves_accepted_candidate_and_metrics() -> None:
             assert payload_failed_1["within_sla"] is False
             assert len(telemetry_calls) == 1
             assert telemetry_calls[0]["run_id"] == "run-A"
-            assert svc.store.get_evaluation(eval_id_failed) is None, "lifecycle-only must not write evaluation store row"
+            assert svc.store.get_evaluation(eval_id_failed) is not None
+            assert svc.store.get_evaluation(eval_id_failed)["run_id"] == "run-A"
+            assert svc.store.get_evaluation(eval_id_failed)["snapshot_event_id"] == snap_failed_A["event_id"]
 
         with (
             mock.patch.dict("os.environ", {"PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083"}),
@@ -2739,153 +2800,108 @@ def test_same_window_replay_preserves_accepted_candidate_and_metrics() -> None:
             assert len(telemetry_calls) == 1, "Must not emit candidate B after recovering failed window in lifecycle-only mode"
             assert payload_failed_2["lifecycle_accepted_event_ids"] == [telemetry_calls[0]["event_id"]], repr(payload_failed_2)
             assert payload_failed_2["lifecycle_append_results"][0]["status"] == "accepted"
-            assert payload_failed_2["lifecycle_append_results"][0]["attempt_count"] == 0, "absent attempt_count must remain 0"
-            assert svc.store.get_evaluation(eval_id_failed) is None, "lifecycle-only must preserve no evaluation store row"
+            assert svc.store.get_evaluation(eval_id_failed) is not None
+            assert svc.store.get_evaluation(eval_id_failed)["run_id"] == "run-A"
 
-        # 5. Owner read failure / unproven state preserves auth/unavailable distinctions and emits ZERO POST
+        # 5. Ambiguous / crash replay: call 1 creates candidate A event and persists intent
+        # into evaluation store, but network append raises retryable error (504/timeout).
+        # When call 2 retries the window while candidate B has appeared, it must retry
+        # candidate A's exact persisted event payload rather than generating candidate B.
         telemetry_calls.clear()
-        tick_id_err = "tick-owner-err-001"
-        binding_id_err = "55555555-5555-4555-8555-555555555555"
-        summary_err = dict(summary_failed_A)
-        summary_err["binding_id"] = binding_id_err
-        snap_err = dict(summary_failed_A["committed_position_snapshot"])
-        snap_err["binding_id"] = binding_id_err
-        snap_err["correlation_envelope"] = dict(snap_err["correlation_envelope"])
-        snap_err["correlation_envelope"]["binding_id"] = binding_id_err
-        summary_err["last_lifecycle_identity"] = snap_err
-        summary_err["committed_position_snapshot"] = snap_err
+        tick_id_ambig = "tick-ambiguous-crash-replay-001"
+        binding_id_ambig = "66666666-6666-4666-8666-666666666666"
+        summary_ambig_A = dict(summary_failed_A)
+        summary_ambig_A["binding_id"] = binding_id_ambig
+        snap_ambig_A = dict(snap_failed_A)
+        snap_ambig_A["binding_id"] = binding_id_ambig
+        snap_ambig_A["event_id"] = "evt-snap-ambig-A"
+        snap_ambig_A["correlation_envelope"] = dict(snap_ambig_A["correlation_envelope"])
+        snap_ambig_A["correlation_envelope"]["binding_id"] = binding_id_ambig
+        snap_ambig_A["correlation_envelope"]["event_id"] = "evt-snap-ambig-A"
+        summary_ambig_A["last_lifecycle_identity"] = snap_ambig_A
+        summary_ambig_A["committed_position_snapshot"] = snap_ambig_A
 
-        # 5a. Telemetry 503 unavailable -> retryable error, ZERO POST
-        def fake_urlopen_503(req, timeout=None):
+        summary_ambig_B = dict(summary_failed_B)
+        summary_ambig_B["binding_id"] = binding_id_ambig
+        snap_ambig_B = dict(snap_failed_B)
+        snap_ambig_B["binding_id"] = binding_id_ambig
+        snap_ambig_B["event_id"] = "evt-snap-ambig-B"
+        snap_ambig_B["correlation_envelope"] = dict(snap_ambig_B["correlation_envelope"])
+        snap_ambig_B["correlation_envelope"]["binding_id"] = binding_id_ambig
+        snap_ambig_B["correlation_envelope"]["event_id"] = "evt-snap-ambig-B"
+        summary_ambig_B["last_lifecycle_identity"] = snap_ambig_B
+        summary_ambig_B["committed_position_snapshot"] = snap_ambig_B
+
+        eval_id_ambig = svc._tick_evaluation_id(tick_id_ambig, binding_id_ambig)
+
+        def fake_urlopen_crash_first(req, timeout=None):
             req_data = getattr(req, "data", None)
             if req_data:
-                telemetry_calls.append(json.loads(req_data.decode("utf-8")))
+                data = json.loads(req_data.decode("utf-8"))
+                telemetry_calls.append(data)
+                if len(telemetry_calls) == 1:
+                    raise urllib.error.HTTPError("http://telemetry:8083", 504, "Gateway Timeout", {}, io.BytesIO(b'{"error":"timeout"}'))
                 return MockResponse(202, b'{"status":"accepted"}')
-            raise urllib.error.HTTPError("http://telemetry:8083", 503, "Service Unavailable", {}, io.BytesIO(b'{"error":"down"}'))
+            raise urllib.error.HTTPError("http://telemetry:8083", 404, "Not Found", {}, io.BytesIO(b'{"error":{"code":"NOT_FOUND"}}'))
 
         with (
             mock.patch.dict("os.environ", {"PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083"}),
-            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary_err]),
-            mock.patch.object(svc.urllib.request, "urlopen", side_effect=fake_urlopen_503),
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary_ambig_A]),
+            mock.patch.object(svc.urllib.request, "urlopen", side_effect=fake_urlopen_crash_first),
         ):
-            resp_err = client.post(
+            resp_ambig_1 = client.post(
                 "/api/reconciliation-drift/scheduled-reconcile",
                 json={
-                    "tick_id": tick_id_err,
+                    "tick_id": tick_id_ambig,
                     "sla_seconds": 60.0,
                     "lifecycle_only": True,
-                    "binding_id": binding_id_err,
+                    "binding_id": binding_id_ambig,
                 },
             )
-            assert resp_err.status_code == 201
-            payload_err = resp_err.json()
-            assert len(telemetry_calls) == 0, "Zero POST when owner read is unproven/unavailable"
-            assert len(payload_err["lifecycle_retryable_errors"]) == 1
-            assert payload_err["lifecycle_retryable_errors"][0]["reason"] == "telemetry_unavailable"
-            assert payload_err["lifecycle_retryable_errors"][0]["http_status"] is None, "unknown HTTP status without exact code must remain null"
+            assert resp_ambig_1.status_code == 201
+            payload_ambig_1 = resp_ambig_1.json()
+            assert payload_ambig_1["status"] == "failure"
+            assert len(payload_ambig_1["lifecycle_retryable_errors"]) == 1
+            assert len(telemetry_calls) == 1
+            assert telemetry_calls[0]["run_id"] == "run-A"
 
-        # 5b. Telemetry 401 auth failure -> terminal rejection, ZERO POST
-        def fake_urlopen_401(req, timeout=None):
-            req_data = getattr(req, "data", None)
-            if req_data:
-                telemetry_calls.append(json.loads(req_data.decode("utf-8")))
-                return MockResponse(202, b'{"status":"accepted"}')
-            raise urllib.error.HTTPError("http://telemetry:8083", 401, "Unauthorized", {}, io.BytesIO(b'{"error":"unauthorized"}'))
+            # Intent and created event for Candidate A were saved before network call:
+            ev_ambig_1 = svc.store.get_evaluation(eval_id_ambig)
+            assert ev_ambig_1 is not None
+            assert ev_ambig_1["run_id"] == "run-A"
+            assert ev_ambig_1["lifecycle_append"]["event_id"] == telemetry_calls[0]["event_id"]
+            assert ev_ambig_1["lifecycle_append"]["status"] == "retryable_error"
 
+        # Now call 2 retries while Candidate B is in summaries:
         with (
             mock.patch.dict("os.environ", {"PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083"}),
-            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary_err]),
-            mock.patch.object(svc.urllib.request, "urlopen", side_effect=fake_urlopen_401),
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary_ambig_B]),
+            mock.patch.object(svc.urllib.request, "urlopen", side_effect=fake_urlopen_crash_first),
         ):
-            resp_auth = client.post(
+            resp_ambig_2 = client.post(
                 "/api/reconciliation-drift/scheduled-reconcile",
                 json={
-                    "tick_id": tick_id_err + "-auth",
+                    "tick_id": tick_id_ambig,
                     "sla_seconds": 60.0,
                     "lifecycle_only": True,
-                    "binding_id": binding_id_err,
+                    "binding_id": binding_id_ambig,
                 },
             )
-            assert resp_auth.status_code == 201
-            payload_auth = resp_auth.json()
-            assert len(telemetry_calls) == 0, "Zero POST when owner read fails auth"
-            assert len(payload_auth["lifecycle_terminal_rejections"]) == 1
-            assert payload_auth["lifecycle_terminal_rejections"][0]["reason"] == "telemetry_auth_failed"
-            assert payload_auth["lifecycle_terminal_rejections"][0]["http_status"] is None, "unknown HTTP status without exact code must remain null"
+            assert resp_ambig_2.status_code == 201
+            payload_ambig_2 = resp_ambig_2.json()
+            assert payload_ambig_2["status"] == "ok"
+            assert len(telemetry_calls) == 2
+            # Both calls must use candidate A's event_id and run-A!
+            assert telemetry_calls[1]["run_id"] == "run-A"
+            assert telemetry_calls[1]["event_id"] == telemetry_calls[0]["event_id"]
+            assert telemetry_calls[1]["causal_parent_id"] == snap_ambig_A["event_id"]
+            assert payload_ambig_2["lifecycle_accepted_event_ids"] == [telemetry_calls[0]["event_id"]]
+            assert payload_ambig_2["lifecycle_append_results"][0]["status"] == "accepted"
 
-        # 5c. Telemetry 200 with malformed / mismatched event -> terminal rejection, ZERO POST
-        def fake_urlopen_malformed(req, timeout=None):
-            req_data = getattr(req, "data", None)
-            if req_data:
-                telemetry_calls.append(json.loads(req_data.decode("utf-8")))
-                return MockResponse(202, b'{"status":"accepted"}')
-            bad_event = {"event_id": "other", "event_type": "position_snapshot", "binding_id": "wrong"}
-            return MockResponse(200, json.dumps(bad_event).encode("utf-8"))
+            ev_ambig_2 = svc.store.get_evaluation(eval_id_ambig)
+            assert ev_ambig_2["run_id"] == "run-A"
+            assert ev_ambig_2["lifecycle_append"]["status"] == "accepted"
 
-        with (
-            mock.patch.dict("os.environ", {"PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083"}),
-            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary_err]),
-            mock.patch.object(svc.urllib.request, "urlopen", side_effect=fake_urlopen_malformed),
-        ):
-            resp_malformed = client.post(
-                "/api/reconciliation-drift/scheduled-reconcile",
-                json={
-                    "tick_id": tick_id_err + "-malformed",
-                    "sla_seconds": 60.0,
-                    "lifecycle_only": True,
-                    "binding_id": binding_id_err,
-                },
-            )
-            assert resp_malformed.status_code == 201
-            payload_malformed = resp_malformed.json()
-            assert len(telemetry_calls) == 0, "Zero POST when owner event is malformed"
-            assert len(payload_malformed["lifecycle_terminal_rejections"]) == 1
-            assert payload_malformed["lifecycle_terminal_rejections"][0]["reason"] == "malformed_owner_event"
-
-        # 5d. Telemetry 200 with matching event_id but mismatched security/identity -> terminal rejection, ZERO POST
-        deterministic_id_mismatch = str(
-            uuid.uuid5(
-                uuid.NAMESPACE_URL,
-                f"pantheon:scheduled-reconciliation:{svc._tick_evaluation_id(tick_id_err + '-mismatch', binding_id_err)}",
-            )
-        )
-        def fake_urlopen_mismatch(req, timeout=None):
-            req_data = getattr(req, "data", None)
-            if req_data:
-                telemetry_calls.append(json.loads(req_data.decode("utf-8")))
-                return MockResponse(202, b'{"status":"accepted"}')
-            bad_identity_event = {
-                "event_id": deterministic_id_mismatch,
-                "event_type": "reconciliation_completed",
-                "causal_parent_id": "evt-snap-001",
-                "binding_id": binding_id_err,
-                "artifact_id": "wrong-artifact-id",
-                "tenant_id": "default",
-                "environment": "paper",
-                "execution_mode": "paper",
-                "deployment_stage": "paper",
-            }
-            return MockResponse(200, json.dumps(bad_identity_event).encode("utf-8"))
-
-        with (
-            mock.patch.dict("os.environ", {"PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083"}),
-            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary_err]),
-            mock.patch.object(svc.urllib.request, "urlopen", side_effect=fake_urlopen_mismatch),
-        ):
-            resp_mismatch = client.post(
-                "/api/reconciliation-drift/scheduled-reconcile",
-                json={
-                    "tick_id": tick_id_err + "-mismatch",
-                    "sla_seconds": 60.0,
-                    "lifecycle_only": True,
-                    "binding_id": binding_id_err,
-                },
-            )
-            assert resp_mismatch.status_code == 201
-            payload_mismatch = resp_mismatch.json()
-            assert len(telemetry_calls) == 0, "Zero POST when owner event has identity mismatch"
-            assert len(payload_mismatch["lifecycle_terminal_rejections"]) == 1
-            assert payload_mismatch["lifecycle_terminal_rejections"][0]["reason"] == "malformed_owner_event"
 
 
 

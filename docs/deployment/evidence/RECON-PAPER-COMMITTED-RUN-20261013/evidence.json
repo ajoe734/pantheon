@@ -21,17 +21,17 @@
     {
       "ac": "AC3",
       "description": "In reconciliation scheduler, select paired committed snapshot identity and its own numeric metrics before evaluation/terminal construction. Never transplant older snapshot identity onto newer latest-summary financial metrics or cached evaluation from another run. Handle evaluation cache without misjoining cached pending/newer evaluations; same-window replay emits one deterministic stage 8 terminal.",
-      "verdict": "pass: persist-before-send stores deterministic evaluation and terminal intent in store before network append so SLA breach, business failure, or claim reacquisition preserves candidate A evaluation, receipt, and metrics without retargeting deterministic event_id to candidate B. In lifecycle-only mode (where test414-472 explicitly forbids evaluation store rows), deduplication is reconciled with Telemetry owner discovery via _fetch_telemetry_accepted_event (GET /api/telemetry/events/{event_id}), reusing canonical _paper_lifecycle_identity to validate terminal events against summary owner constraints and correlation envelope without loose validators. Truthful receipts preserve known outcomes, keep unknown http_status null when exceptions lack exact codes, and treat absent attempt_count as 0 and absent accepted_at as null without fabricating historical metadata."
+      "verdict": "pass: scheduled reconciliation in lifecycle-only mode shares the normal evaluation loop and existing evaluation store with _ensure_scheduled_lifecycle_append persist-before-send. Deterministic evaluation and terminal intent are persisted in the evaluation store before telemetry network append, guaranteeing that SLA breach, business failure, crash 504 retry, or claim reacquisition preserves candidate A evaluation, receipt, and metrics without generating candidate B or retargeting deterministic event_id. lifecycle_only forces dispatch_incidents=False (zero incidents created or dispatched) and returns lifecycle_only=True. Truthful receipts preserve known outcomes, keep unknown http_status null when exceptions lack exact codes, and treat absent attempt_count as 0 and absent accepted_at as null without fabricating historical metadata."
     },
     {
       "ac": "AC4",
       "description": "Use original test modules and fixtures. Add cross-run regression with completed runA stage 7 plus later in-flight runB, verifying canonical batch read selects runA identity and metrics; reject admitted-but-not-committed, cross-tenant/binding/runtime/artifact, missing numeric metrics, and already-reconciled candidates. Cover cached pending/newer-run evaluation versus completed snapshot to prevent result/identity misjoin; same-window replay remains one deterministic stage 8 terminal. Run affected original complete telemetry and reconciliation modules.",
-      "verdict": "pass: 38 passed in test_reconciliation_drift_scheduler.py, 8 passed in test_paper_runtime_ingest_contract.py, and 274 passed (2 skipped) across the full 9-module telemetry and reconciliation regression suite. Cross-call lifecycle-only replay, failed-window SLA breach replay, absent attempt_count, null http_status on unproven errors, and identity mismatch rejection verified in test_same_window_replay_preserves_accepted_candidate_and_metrics."
+      "verdict": "pass: 39 passed in test_reconciliation_drift_scheduler.py, 8 passed in test_paper_runtime_ingest_contract.py, and 275 passed (2 skipped) across the full 9-module telemetry and reconciliation regression suite. Cross-call lifecycle-only replay, failed-window SLA breach replay, crash 504 retry preserving candidate A payload, durable evaluation/intent saved in store before append, absent attempt_count, null http_status on unproven errors, and identity mismatch rejection verified in test_reconciliation_drift_scheduler.py."
     },
     {
       "ac": "AC5",
       "description": "Complete native source-only delivery: clean scoped branch, exact committed head with truthful required trailers, push one PR to current dev, assigned independent reviewer role review, required CI, same-reviewed-tree integration and canonical finish/archive. Evidence distinguishes tested source from pending actual review/integration/native completion.",
-      "verdict": "pending_delivery: local source validation and clean task worktree with required trailers verified (274 passed, 2 skipped across 9 scoped test suites); downstream independent review by assigned reviewer Antigravity, required CI checks, dev integration merge, and canonical finish remain pending delivery on task PR #6558; source repair is not provider FULL or hosted L1-L12 acceptance"
+      "verdict": "pending_delivery: local source validation and clean task worktree with required trailers verified (275 passed, 2 skipped across 9 scoped test suites); downstream independent review by assigned reviewer Antigravity, required CI checks, dev integration merge, and canonical finish remain pending delivery on task PR #6558; source repair is not provider FULL or hosted L1-L12 acceptance"
     }
   ],
   "verification": [
@@ -45,7 +45,7 @@
     },
     {
       "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest -v services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py",
-      "passed": 38,
+      "passed": 39,
       "failed": 0,
       "errors": 0,
       "skipped": 0,
@@ -53,7 +53,7 @@
     },
     {
       "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest services/telemetry/test_paper_runtime_ingest_contract.py services/telemetry/test_runtime_summary_projection.py services/telemetry/test_l12_tel_001_durable_ingest.py services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py services/reconciliation-drift/test_reconciliation_drift_http_service.py services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py services/reconciliation-drift/test_telemetry_client.py services/reconciliation-drift/tests/test_telemetry_client_auth.py services/trade_journey/test_hosted_lifecycle_probe.py",
-      "passed": 274,
+      "passed": 275,
       "failed": 0,
       "errors": 0,
       "skipped": 2,
@@ -68,7 +68,7 @@
     "docs/deployment/evidence/RECON-PAPER-COMMITTED-RUN-20261013/evidence.json"
   ],
   "diff_budget": {
-    "net_production_lines": 463,
+    "net_production_lines": 157,
     "verdict": "pass",
     "files": {
       "production": [
