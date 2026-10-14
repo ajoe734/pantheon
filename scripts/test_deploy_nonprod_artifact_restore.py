@@ -25,6 +25,8 @@ SCRIPT = ROOT / "scripts/deploy_nonprod_vm.sh"
 SHA = "a" * 40
 PRIOR = "b" * 40
 CONTROLLER_ROOT = "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/release-artifacts/controllers"
+REAL_NODE = Path(__import__("shutil").which("node") or "/usr/bin/node").resolve()
+REAL_NODE_DIR = str(REAL_NODE.parent)
 
 
 def _source() -> str:
@@ -107,22 +109,14 @@ def fixture(tmp_path: Path):
                         ' out.write(json.dumps({"command":sys.argv[0].split("/")[-1],"args":sys.argv[1:]})+"\\n")\n'
                         'raise SystemExit(97)\n')
         stub.chmod(0o755)
-    node_bin_dir = tmp_path / "mock-node-22" / "bin"
-    node_bin_dir.mkdir(parents=True, exist_ok=True)
-    node_bin = node_bin_dir / "node"
-    node_bin.write_text('#!/usr/bin/env bash\n'
-                        'if [[ "${1:-}" == "-v" || "${1:-}" == "--version" ]]; then\n'
-                        '    echo "v22.23.2"\n'
-                        '    exit 0\n'
-                        'fi\n'
-                        'if [[ "${1:-}" == "-e" ]]; then\n'
-                        '    exit 0\n'
-                        'fi\n'
-                        'exit 0\n')
-    node_bin.chmod(0o755)
+    stub_node = bin_dir / "node"
+    stub_node.write_text('#!/usr/bin/env bash\n'
+                         'echo "node: command not found" >&2\n'
+                         'exit 127\n')
+    stub_node.chmod(0o755)
     env = {"PATH": f"{bin_dir}:{os.environ['PATH']}", "RECORDER": str(recorder),
            "SYNTHETIC_CONTROLLER_ROOT": str(controller_root),
-           "PANTHEON_DEV_FE_NODE_BIN_DIR": str(node_bin_dir)}
+           "PANTHEON_DEV_FE_NODE_BIN_DIR": REAL_NODE_DIR}
     # Explicitly synthetic environment for the actual approved-prefix function.
     for variable in re.findall(r'\$\{([A-Z][A-Z0-9_]*)', _function("with_dev_bff_runtime_env")):
         env[variable] = "fixture"
@@ -813,7 +807,7 @@ def test_fe_owner_restore_sealed_invocation(fixture, tmp_path):
         '    echo "Deployment rejected: non-delegated lease." >&2\n'
         '    exit 2\n'
         'fi\n'
-        'node -e \'const v = process.version; if (!v.startsWith("v22.")) { process.exit(1); }\'\n'
+        'export NODE_VERSION="$(node -e \'const v = process.version; if (!v.startsWith("v22.")) { process.exit(1); } console.log(v);\')"\n'
         'python3 - <<\'PY\'\n'
         'import json, os, sys\n'
         'from_doc = json.loads(os.environ.get("PANTHEON_DEPLOY_SEALED_FROM_JSON", "{}"))\n'
@@ -831,6 +825,7 @@ def test_fe_owner_restore_sealed_invocation(fixture, tmp_path):
         '        "owner": os.environ.get("PANTHEON_DEPLOY_LEASE_OWNER"),\n'
         '        "epoch": os.environ.get("PANTHEON_DEPLOY_LEASE_EPOCH"),\n'
         '        "run_id": os.environ.get("PANTHEON_DEPLOY_LEASE_RUN_ID"),\n'
+        '        "node_version": os.environ.get("NODE_VERSION"),\n'
         '        "from": from_doc,\n'
         '        "to": to_doc,\n'
         '    }) + "\\n")\n'
@@ -868,6 +863,7 @@ def test_fe_owner_restore_sealed_invocation(fixture, tmp_path):
     assert events[0]["command"] == "fe_deploy"
     assert events[0]["action"] == "restore-sealed"
     assert events[0]["owner"] == "pantheon-dev-deploy"
+    assert events[0]["node_version"].startswith("v22.")
     assert events[0]["from"] == from_seal
     assert events[0]["to"] == to_seal
     assert events[1]["command"] == "driver"
@@ -890,12 +886,31 @@ def test_fe_owner_restore_sealed_invocation(fixture, tmp_path):
     assert len(events) == 1
     assert events[0]["command"] == "driver"
 
+    empty_node_env = dict(env,
+                          PANTHEON_DEV_FE_NODE_BIN_DIR="",
+                          PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON=json.dumps(to_seal))
+    res_empty = _run(_remote(), empty_node_env)
+    assert res_empty.returncode != 0
+    assert "FE owner Node runtime missing or unsafe" in res_empty.stderr
+
     bad_node_env = dict(env,
                         PANTHEON_DEV_FE_NODE_BIN_DIR=str(tmp_path / "missing-node-bin"),
                         PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON=json.dumps(to_seal))
     res_bad = _run(_remote(), bad_node_env)
     assert res_bad.returncode != 0
     assert "FE owner Node runtime missing or unsafe" in res_bad.stderr
+
+    wrong_node_dir = tmp_path / "wrong-node" / "bin"
+    wrong_node_dir.mkdir(parents=True)
+    wrong_node = wrong_node_dir / "node"
+    wrong_node.write_text("#!/usr/bin/env bash\necho 'v20.18.0'\n")
+    wrong_node.chmod(0o755)
+    wrong_node_env = dict(env,
+                          PANTHEON_DEV_FE_NODE_BIN_DIR=str(wrong_node_dir),
+                          PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON=json.dumps(to_seal))
+    res_wrong = _run(_remote(), wrong_node_env)
+    assert res_wrong.returncode != 0
+    assert "returned invalid version 'v20.18.0' (expected v22.*)" in res_wrong.stderr
 
 
 def test_fe_owner_restore_sealed_rejects_unauthorized_owner(fixture, tmp_path):
@@ -1157,7 +1172,7 @@ owner="${PANTHEON_DEPLOY_LEASE_OWNER:-}"
 [[ "${owner}" =~ ^(pantheon-release-controller|pantheon-dev-deploy|parent-controller|pantheon-proof-watchdog|pantheon-fe-deploy)$ ]] \
   || { echo "Deployment rejected: unauthorized lease owner '${owner}'." >&2; exit 2; }
 [[ "${PANTHEON_DEPLOY_LEASE_DELEGATED:-}" == "true" ]] || { echo "Deployment rejected: non-delegated lease." >&2; exit 2; }
-node -e 'const v = process.version; if (!v.startsWith("v22.")) { process.exit(1); }'
+export NODE_VERSION="$(node -e 'const v = process.version; if (!v.startsWith("v22.")) { process.exit(1); } console.log(v);')"
 python3 - <<'PY'
 import json, os
 to_doc = json.loads(os.environ["PANTHEON_DEPLOY_SEALED_TO_JSON"])
@@ -1167,6 +1182,7 @@ with open("@RECORDER@", "a") as out:
         ("action", "PANTHEON_DEPLOY_ACTION"), ("profile", "PANTHEON_DEPLOY_PROFILE"),
         ("delegated", "PANTHEON_DEPLOY_LEASE_DELEGATED"), ("owner", "PANTHEON_DEPLOY_LEASE_OWNER"),
         ("epoch", "PANTHEON_DEPLOY_LEASE_EPOCH"), ("run_id", "PANTHEON_DEPLOY_LEASE_RUN_ID"))},
+        "node_version": os.environ.get("NODE_VERSION"),
         "from_target": from_doc["target"], "to_target": to_doc["target"]}) + "\n")
 PY
 target="$(python3 -c 'import json,os; print(json.loads(os.environ["PANTHEON_DEPLOY_SEALED_TO_JSON"])["target"])')"
@@ -1315,20 +1331,7 @@ def _run_original_chain(case, tmp_path, monkeypatch, *, env_override=None, tampe
         "PANTHEON_DEV_FE_ROOT": str(d.FE_LINK),
         "PANTHEON_DEV_FE_RELEASES_DIR": str(d.FE_STORE),
     }
-    node_bin_dir = tmp_path / "mock-node-22" / "bin"
-    node_bin_dir.mkdir(parents=True, exist_ok=True)
-    node_bin = node_bin_dir / "node"
-    node_bin.write_text('#!/usr/bin/env bash\n'
-                        'if [[ "${1:-}" == "-v" || "${1:-}" == "--version" ]]; then\n'
-                        '    echo "v22.23.2"\n'
-                        '    exit 0\n'
-                        'fi\n'
-                        'if [[ "${1:-}" == "-e" ]]; then\n'
-                        '    exit 0\n'
-                        'fi\n'
-                        'exit 0\n')
-    node_bin.chmod(0o755)
-    artifact_env["PANTHEON_DEV_FE_NODE_BIN_DIR"] = str(node_bin_dir)
+    artifact_env["PANTHEON_DEV_FE_NODE_BIN_DIR"] = REAL_NODE_DIR
     env, args_file, stdin_file = _setup_stubbed_dev_environment(tmp_path, sha=identity["candidate_backend_sha"], extra_env=artifact_env)
     real_git = __import__("shutil").which("git")
     stub_git = tmp_path / "bin/git"
@@ -1354,7 +1357,7 @@ def _run_original_chain(case, tmp_path, monkeypatch, *, env_override=None, tampe
     _install_chain_shims(tmp_path, artifact_root=artifact_root, fe_store=d.FE_STORE, state=state, recorder=recorder)
     lease = os.environ["PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID"]
     env.update({
-        "PANTHEON_DEV_FE_NODE_BIN_DIR": str(node_bin_dir),
+        "PANTHEON_DEV_FE_NODE_BIN_DIR": REAL_NODE_DIR,
         "TARGET_ENV": "dev",
         "GCP_DEPLOY_PROJECT_ID": "pantheon-dev-20260902",
         "DEV_VM": "pantheon-dev-deploy",
@@ -1423,6 +1426,7 @@ def test_full_cli_restore_final_executes_original_bff_chain(case, tmp_path, monk
     fe_event, driver_event = events
     assert (fe_event["action"], fe_event["owner"], fe_event["delegated"], fe_event["run_id"]) == (
         "restore-sealed", "pantheon-dev-deploy", "true", "987654321")
+    assert fe_event["node_version"].startswith("v22.")
     assert (fe_event["from_target"], fe_event["to_target"]) == (from_seal["target"], to_seal["target"])
     assert os.path.realpath(d.FE_LINK) == os.path.realpath(candidate_release)
     argv = driver_event["argv"]
@@ -1452,6 +1456,7 @@ def test_original_chain_rejects_missing_or_unsafe_fe_node_runtime(case, tmp_path
     assert chain.result.returncode != 0
     assert "FE owner Node runtime missing or unsafe" in chain.result.stderr
     assert not chain.readback_out.exists()
+    assert _events(chain.recorder) == []
 
 
 def test_original_chain_rejects_unadmitted_fe_controller_before_fe_or_driver(case, tmp_path, monkeypatch):
