@@ -1720,9 +1720,9 @@ def _summary_observed_metrics(summary: Dict[str, Any]) -> Dict[str, float]:
 
 
 def _resolve_scheduled_metrics(summary: Dict[str, Any]) -> Dict[str, float]:
-    observed: Dict[str, float] = {}
     committed_snapshot = summary.get("committed_position_snapshot")
     if isinstance(committed_snapshot, dict):
+        observed: Dict[str, float] = {}
         # Retain operational lag and baseline slippage from summary with own provenance
         for key in ("queue_lag_ms", "event_delivery_lag_ms", "avg_slippage_bps"):
             num = _numeric(summary.get(key))
@@ -1749,36 +1749,8 @@ def _resolve_scheduled_metrics(summary: Dict[str, Any]) -> Dict[str, float]:
             num = _numeric(committed_snapshot.get(key))
             if num is not None and math.isfinite(num):
                 observed[key] = num
-    elif str(summary.get("deployment_stage") or "").strip().lower() != "paper":
-        # Non-paper stages use summary observed metrics as originally designed
-        nested = summary.get("observed_metrics") or summary.get("metrics") or {}
-        if isinstance(nested, dict):
-            for key, raw_value in nested.items():
-                number = _numeric(raw_value)
-                if number is not None and math.isfinite(number):
-                    observed[str(key)] = number
-        for key in (
-            "pnl",
-            "drawdown",
-            "sharpe_ratio",
-            "fill_rate",
-            "avg_slippage_bps",
-            "total_trades",
-            "queue_lag_ms",
-            "event_delivery_lag_ms",
-        ):
-            number = _numeric(summary.get(key))
-            if number is not None and math.isfinite(number):
-                observed[key] = number
-    else:
-        # Paper summary without committed position snapshot: preserve operational lag/slippage,
-        # but do not retain uncommitted in-flight financial keys from latest summary
-        for key in ("queue_lag_ms", "event_delivery_lag_ms", "avg_slippage_bps"):
-            num = _numeric(summary.get(key))
-            if num is not None and math.isfinite(num):
-                observed[key] = num
-
-    return observed
+        return observed
+    return _summary_observed_metrics(summary)
 
 
 def _paper_lifecycle_identity(
@@ -1792,25 +1764,7 @@ def _paper_lifecycle_identity(
     last = summary.get("last_lifecycle_identity")
 
     if isinstance(committed_snapshot, dict):
-        is_terminal_for_snapshot = False
-        if isinstance(last, dict) and str(last.get("event_type") or "").strip() in (
-            "reconciliation_completed",
-            "reconciliation_failed",
-        ):
-            last_run = str(last.get("run_id") or (last.get("metadata") or {}).get("run_id") or "").strip()
-            snap_run = str(committed_snapshot.get("run_id") or (committed_snapshot.get("metadata") or {}).get("run_id") or "").strip()
-            snap_eid = str(committed_snapshot.get("event_id") or "").strip()
-            last_parent = str(last.get("causal_parent_id") or (last.get("metadata") or {}).get("causal_parent_id") or "").strip()
-            last_env = last.get("correlation_envelope") if isinstance(last.get("correlation_envelope"), dict) else {}
-            last_causation = str(last_env.get("causation_event_id") or "").strip()
-
-            if (snap_eid and (last_parent == snap_eid or last_causation == snap_eid)) or (snap_run and last_run and last_run == snap_run):
-                is_terminal_for_snapshot = True
-
-        if is_terminal_for_snapshot:
-            raw_identity = last
-        else:
-            raw_identity = committed_snapshot
+        raw_identity = committed_snapshot
     elif isinstance(last, dict):
         evt_type = str(last.get("event_type") or "").strip()
         if evt_type == "position_snapshot":
@@ -2386,6 +2340,8 @@ def _scheduled_lifecycle_only_reconcile(
     lifecycle_terminal_rejections: List[Dict[str, Any]] = []
     lifecycle_ineligible_binding_ids: List[str] = []
 
+    seen_evaluations: Dict[str, Dict[str, Any]] = {}
+
     for summary in summaries:
         binding_id = _summary_binding_id(summary)
         runtime_id = str(summary.get("runtime_id") or "").strip()
@@ -2393,6 +2349,14 @@ def _scheduled_lifecycle_only_reconcile(
             continue
 
         evaluation_id = _tick_evaluation_id(tick_id, binding_id)
+        if evaluation_id in seen_evaluations:
+            prev_entry = seen_evaluations[evaluation_id]
+            prev_state = prev_entry.get("state") or {}
+            has_created_event = bool(prev_state.get("event") or prev_state.get("event_id"))
+            is_terminal_or_accepted = prev_state.get("status") in {"accepted", "terminal_rejected"}
+            if has_created_event or is_terminal_or_accepted:
+                continue
+
         telemetry_event_ids = _summary_telemetry_event_ids(summary)
         observed_metrics = _resolve_scheduled_metrics(summary)
         committed_snapshot = summary.get("committed_position_snapshot")
@@ -2483,18 +2447,35 @@ def _scheduled_lifecycle_only_reconcile(
             if state.get("status") == "accepted":
                 state["accepted_at"] = timestamp
 
-        evaluation_ids.append(evaluation_id)
-        evaluation_statuses.append(status)
+        seen_evaluations[evaluation_id] = {
+            "state": state,
+            "status": status,
+        }
         receipt = _lifecycle_append_receipt(binding_id, state)
-        lifecycle_append_results.append(receipt)
-        if receipt["status"] == "accepted" and receipt["event_id"]:
-            lifecycle_accepted_event_ids.append(str(receipt["event_id"]))
-        elif receipt["status"] in {"retryable_error", "pending"}:
-            lifecycle_retryable_errors.append(receipt)
-        elif receipt["status"] == "terminal_rejected":
-            lifecycle_terminal_rejections.append(receipt)
-        elif receipt["status"] == "not_eligible":
-            lifecycle_ineligible_binding_ids.append(binding_id)
+        if evaluation_id not in evaluation_ids:
+            evaluation_ids.append(evaluation_id)
+            evaluation_statuses.append(status)
+            lifecycle_append_results.append(receipt)
+            if receipt["status"] == "accepted" and receipt["event_id"]:
+                lifecycle_accepted_event_ids.append(str(receipt["event_id"]))
+            elif receipt["status"] in {"retryable_error", "pending"}:
+                lifecycle_retryable_errors.append(receipt)
+            elif receipt["status"] == "terminal_rejected":
+                lifecycle_terminal_rejections.append(receipt)
+            elif receipt["status"] == "not_eligible":
+                lifecycle_ineligible_binding_ids.append(binding_id)
+        else:
+            idx = evaluation_ids.index(evaluation_id)
+            evaluation_statuses[idx] = status
+            lifecycle_append_results[idx] = receipt
+            if receipt["status"] == "accepted" and receipt["event_id"]:
+                lifecycle_accepted_event_ids.append(str(receipt["event_id"]))
+            elif receipt["status"] in {"retryable_error", "pending"}:
+                lifecycle_retryable_errors.append(receipt)
+            elif receipt["status"] == "terminal_rejected":
+                lifecycle_terminal_rejections.append(receipt)
+            if binding_id in lifecycle_ineligible_binding_ids and receipt["status"] != "not_eligible":
+                lifecycle_ineligible_binding_ids.remove(binding_id)
 
     tick_status = _worst_status(evaluation_statuses)
     if lifecycle_retryable_errors or lifecycle_terminal_rejections:
@@ -3003,31 +2984,31 @@ def _execute_scheduled_reconcile(
                 evaluation_id,
                 tenant_id=tenant_id,
             )
-            is_misjoined_cached_eval = False
-            if cached_eval is not None and snap_event_id:
-                cached_upstream = str(
-                    (cached_eval.get("lifecycle_append") or {}).get("upstream_event_id")
-                    or cached_eval.get("snapshot_event_id")
-                    or cached_eval.get("upstream_event_id")
-                    or ""
-                ).strip()
-                cached_run = str(
-                    (cached_eval.get("lifecycle_append") or {}).get("run_id")
-                    or cached_eval.get("run_id")
-                    or ""
-                ).strip()
-                if cached_upstream and cached_upstream != snap_event_id:
-                    is_misjoined_cached_eval = True
-                elif cached_run and snap_run_id and cached_run != snap_run_id:
-                    is_misjoined_cached_eval = True
-                elif not cached_upstream and snap_event_id:
-                    is_misjoined_cached_eval = True
+            if cached_eval is not None:
+                cached_append = cached_eval.get("lifecycle_append")
+                has_created_event = isinstance(cached_append, dict) and bool(
+                    cached_append.get("event") or cached_append.get("event_id")
+                )
+                is_terminal_or_accepted = isinstance(cached_append, dict) and cached_append.get("status") in {
+                    "accepted",
+                    "terminal_rejected",
+                }
 
-            if cached_eval is not None and not is_misjoined_cached_eval:
-                existing_evaluation = cached_eval
-                skipped_binding_ids.append(binding_id)
-                evaluation_statuses.append(str(existing_evaluation.get("status") or status))
-                target_evaluation = existing_evaluation
+                # A pending evaluation without any created lifecycle event may still be
+                # paired to a newly eligible snapshot. But once an evaluation has an
+                # accepted/terminal state or an originally persisted lifecycle event /
+                # pending retry payload, preserve it; do not retarget its event ID to B.
+                can_pair_pending_to_snapshot = (
+                    snap_event_id
+                    and not has_created_event
+                    and not is_terminal_or_accepted
+                )
+
+                if not can_pair_pending_to_snapshot:
+                    existing_evaluation = cached_eval
+                    skipped_binding_ids.append(binding_id)
+                    evaluation_statuses.append(str(existing_evaluation.get("status") or status))
+                    target_evaluation = existing_evaluation
 
         if existing_evaluation is None:
             evaluation = {
