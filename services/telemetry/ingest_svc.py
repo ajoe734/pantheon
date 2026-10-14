@@ -1269,7 +1269,9 @@ class TelemetryIngestService:
                 return False
 
             # 0.b. Validate evidence contract on duplicate retry
-            valid_ev, ev_err, resolved_binding = self._validate_evidence_contract(event)
+            valid_ev, ev_err, resolved_binding = await asyncio.to_thread(
+                self._validate_evidence_contract, event
+            )
             if not valid_ev:
                 err_lower = ev_err.lower()
                 if "temporal" in err_lower or "effective_at" in err_lower or "retired_at" in err_lower:
@@ -1328,7 +1330,9 @@ class TelemetryIngestService:
             return False
 
         # 2. Evidence contract validation (field presence + RuntimeBinding cross-check)
-        valid, error_msg, resolved_binding = self._validate_evidence_contract(event)
+        valid, error_msg, resolved_binding = await asyncio.to_thread(
+            self._validate_evidence_contract, event
+        )
         if not valid:
             # Classify the tag based on the error type
             err_lower = error_msg.lower()

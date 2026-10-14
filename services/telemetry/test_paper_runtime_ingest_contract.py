@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import threading
 import types
 import unittest
 import uuid
@@ -12,6 +13,8 @@ from typing import Any
 
 from services.execution.lean_runtime.paper_runtime import RuntimeTelemetryEmitter
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
+from services.telemetry.batch_writer import WriteResult
+from services.telemetry.dead_letter import TAG_BINDING_MISMATCH, TAG_SCHEMA_VIOLATION
 from services.telemetry.ingest_svc import TelemetryIngestService
 from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
 from services.telemetry.trade_episode_projection import TradeEpisodeProjectionStore
@@ -39,6 +42,33 @@ def _known_binding() -> types.SimpleNamespace:
 
 class _StubBindingStore:
     def get_binding(self, binding_id: str):
+        if binding_id == KNOWN_BINDING_ID:
+            return _known_binding()
+        return None
+
+
+class _ControlledBindingStore:
+    def __init__(self):
+        self.lookup_started = threading.Event()
+        self.can_complete_lookup = threading.Event()
+        self.can_complete_lookup.set()
+        self.lookup_thread_id: int | None = None
+        self.call_count = 0
+
+    def block_lookups(self):
+        self.can_complete_lookup.clear()
+        self.lookup_started.clear()
+
+    def release_lookups(self):
+        self.can_complete_lookup.set()
+
+    def get_binding(self, binding_id: str):
+        self.call_count += 1
+        self.lookup_thread_id = threading.get_ident()
+        self.lookup_started.set()
+        released = self.can_complete_lookup.wait(timeout=5.0)
+        if not released:
+            raise TimeoutError("Controlled binding lookup timed out")
         if binding_id == KNOWN_BINDING_ID:
             return _known_binding()
         return None
@@ -625,6 +655,156 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
                 self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
             finally:
                 await svc.stop(graceful=False)
+
+        asyncio.run(scenario())
+
+    def test_authoritative_binding_lookup_offloads_from_asyncio_writer_loop(self):
+        async def scenario():
+            loop = asyncio.get_running_loop()
+            main_thread_id = threading.get_ident()
+            store = _ControlledBindingStore()
+            written_batches: list[list[dict[str, Any]]] = []
+            write_in_flight = asyncio.Event()
+            can_finish_write = asyncio.Event()
+            can_finish_write.set()
+
+            async def controlled_write_fn(batch: list[dict[str, Any]]) -> WriteResult:
+                written_batches.append(batch)
+                write_in_flight.set()
+                await can_finish_write.wait()
+                return WriteResult.ok(len(batch))
+
+            svc = TelemetryIngestService(
+                schema_path=SCHEMA_PATH,
+                binding_store=store,
+                write_fn=controlled_write_fn,
+                batch_size=1,
+                batch_interval=0.01,
+            )
+            await svc.start()
+
+            try:
+                # 1. Normal validation path with concurrent write progress:
+                event_a = _paper_event(event_id="evt-paper-A")
+                can_finish_write.clear()
+                write_in_flight.clear()
+
+                accepted_a = await svc.ingest(event_a)
+                self.assertTrue(accepted_a)
+                # Wait until background writer picks up Event A and enters write_fn
+                await write_in_flight.wait()
+
+                # Writer is now paused in write_fn awaiting can_finish_write.
+                # Prepare Event B with blocking lookup
+                event_b = _paper_event(event_id="evt-paper-B")
+                store.block_lookups()
+                loop_callback_ran = False
+
+                def loop_callback():
+                    nonlocal loop_callback_ran
+                    loop_callback_ran = True
+
+                # Start Event B ingestion concurrently
+                ingest_b_task = asyncio.create_task(svc.ingest(event_b))
+
+                # Wait for Event B to enter get_binding on a worker thread
+                await asyncio.to_thread(store.lookup_started.wait, 5.0)
+                self.assertTrue(store.lookup_started.is_set())
+                self.assertIsNotNone(store.lookup_thread_id)
+                self.assertNotEqual(store.lookup_thread_id, main_thread_id)
+
+                # Event B is currently blocked in get_binding.
+                # Verify Event B has NOT entered buffer yet (authority awaited before buffer)
+                self.assertFalse(ingest_b_task.done())
+                self.assertEqual(svc._buffer.size(), 0)
+
+                # Show pending write (Event A) and loop callback can progress while B is in lookup
+                loop.call_soon(loop_callback)
+                can_finish_write.set()
+
+                # Allow loop to process writer completion and loop callback
+                await asyncio.sleep(0.02)
+                self.assertTrue(loop_callback_ran)
+                self.assertEqual(len(written_batches), 1)
+                self.assertEqual(written_batches[0][0]["event_id"], "evt-paper-A")
+
+                # Event B must STILL be awaiting authority lookup and NOT in buffer
+                self.assertFalse(ingest_b_task.done())
+                self.assertEqual(svc._buffer.size(), 0)
+
+                # Release Event B lookup and confirm admission
+                store.release_lookups()
+                accepted_b = await ingest_b_task
+                self.assertTrue(accepted_b)
+
+                # Let writer flush Event B
+                await asyncio.sleep(0.05)
+                self.assertEqual(len(written_batches), 2)
+                self.assertEqual(written_batches[1][0]["event_id"], "evt-paper-B")
+
+                # 2. Duplicate validation path:
+                # Event B is now seen. Ingest duplicate with blocking lookup.
+                store.block_lookups()
+                dup_loop_callback_ran = False
+
+                def dup_loop_callback():
+                    nonlocal dup_loop_callback_ran
+                    dup_loop_callback_ran = True
+
+                ingest_dup_task = asyncio.create_task(svc.ingest(dict(event_b)))
+                await asyncio.to_thread(store.lookup_started.wait, 5.0)
+                self.assertTrue(store.lookup_started.is_set())
+                self.assertFalse(ingest_dup_task.done())
+
+                # Show loop callback progresses while duplicate is waiting for lookup
+                loop.call_soon(dup_loop_callback)
+                await asyncio.sleep(0.02)
+                self.assertTrue(dup_loop_callback_ran)
+                self.assertFalse(ingest_dup_task.done())
+
+                # Release duplicate lookup
+                store.release_lookups()
+                accepted_dup = await ingest_dup_task
+                self.assertTrue(accepted_dup)
+                self.assertEqual(svc.stats()["service"]["total_duplicates"], 1)
+
+                # 3. Retain original rejection/identity/idempotency negatives:
+                # 3.a Unknown binding rejection
+                bad_binding_event = _paper_event(
+                    event_id="evt-bad-binding",
+                    binding_id="unknown-binding-uuid",
+                )
+                rejected_binding = await svc.ingest(bad_binding_event)
+                self.assertFalse(rejected_binding)
+
+                # 3.b Runtime identity mismatch rejection
+                mismatch_event = _paper_event(
+                    event_id="evt-mismatch",
+                    binding_id=KNOWN_BINDING_ID,
+                )
+                mismatch_event["runtime_id"] = "rt-wrong-mismatch"
+                rejected_mismatch = await svc.ingest(mismatch_event)
+                self.assertFalse(rejected_mismatch)
+
+                # 3.c Duplicate content mismatch rejection
+                content_mismatch_event = dict(event_b)
+                content_mismatch_event["metrics"] = {"heartbeat": 9999}
+                rejected_dup_mismatch = await svc.ingest(content_mismatch_event)
+                self.assertFalse(rejected_dup_mismatch)
+
+                dlq = svc.get_dlq_entries()
+                reasons = [e["reason"].lower() for e in dlq]
+                tags = [e["tags"] for e in dlq]
+
+                self.assertTrue(any(TAG_BINDING_MISMATCH in t for t in tags))
+                self.assertTrue(any("not found in runtimebinding store" in r for r in reasons))
+                self.assertTrue(any("runtimebinding identity mismatch" in r for r in reasons))
+                self.assertTrue(any("content mismatch for duplicate event_id" in r for r in reasons))
+
+            finally:
+                store.release_lookups()
+                can_finish_write.set()
+                await svc.stop(graceful=True)
 
         asyncio.run(scenario())
 
