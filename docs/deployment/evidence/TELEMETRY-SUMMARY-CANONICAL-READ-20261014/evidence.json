@@ -4,7 +4,7 @@
   "title": "Remove unrelated full-payload hydration from canonical runtime-summary enrichment",
   "owner": "Antigravity",
   "reviewer": "Antigravity2",
-  "base_sha": "989b51209d9bdb061707efb0e3f303667c0a06f3",
+  "base_sha": "f8a9364e5b70cb797a13bc25c7da3d63c0dc272e",
   "change_class": "corrective",
   "summary": "Removes unrelated full-payload hydration from canonical runtime-summary enrichment by skipping already-enriched summaries before collecting event IDs, and querying only the canonical position_snapshot and reconciliation_completed/failed evidence required by the existing selector via an optional event_types filter in build_postgres_event_reader batch queries while preserving original scalar reader behavior unchanged. Retains generic accepted/observed pair behavior, original 5.0s deadlines, positive DB sequence validation, explicit paper/live boundaries, and complete finite numeric metrics from the same snapshot without loss of second bindings or older eligible positions.",
   "acceptance_verification": [
@@ -87,7 +87,7 @@
   ],
   "diff_budget": {
     "evidence_max_added_lines": 400,
-    "net_production_lines": 11,
+    "net_production_lines": 9,
     "files": {
       "production": [
         "services/telemetry/ingest_svc.py"
