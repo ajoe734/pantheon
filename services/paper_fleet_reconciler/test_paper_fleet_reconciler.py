@@ -1850,6 +1850,62 @@ class TestPaperFleetStaleSessionAdmissionAndResume(unittest.TestCase):
         self.assertEqual(len(self.transitions), 0)
         self.assertEqual(store.get("b-stale-idemp").status, "paused")
 
+    def _paused_resume_fixture(self, binding_id: str) -> Tuple[Any, Any]:
+        now = datetime.now(timezone.utc)
+        old_time = (now - timedelta(seconds=100000)).isoformat().replace("+00:00", "Z")
+        new_snap = {
+            "snapshot_id": "snap-fresh-002",
+            "symbol": "AAPL.US",
+            "event_time": (now - timedelta(seconds=120)).isoformat().replace("+00:00", "Z"),
+            "observed_at": now.isoformat().replace("+00:00", "Z"),
+            "source_ref": "source-ingest://normalized/us-price/AAPL",
+            "lineage": {"source": "manual_pull"},
+            "closes": [155.0, 156.0, 157.0],
+        }
+        b = _make_binding(
+            binding_id,
+            status="paused",
+            symbol="AAPL.US",
+            market_data_policy={"owner": "source-ingest", "contract": "latest_stored_normalized", "max_age_seconds": 86400, "minimum_closes": 2},
+            metadata={
+                "session_admission": {
+                    "reason_code": "market_input_stale",
+                    "source_snapshot_id": "snap-old-001",
+                    "source_event_time": old_time,
+                    "observed_at": old_time,
+                    "max_age_seconds": 86400,
+                    "resume_snapshot_id": None,
+                    "resumed_at": None,
+                }
+            },
+        )
+        return self._make_store_and_recon([b], source_snapshot=new_snap)
+
+    def test_owner_rejected_reactivation_does_not_plan_or_start_worker(self) -> None:
+        store, recon = self._paused_resume_fixture("b-owner-reject-001")
+        real_transition = store.transition_status
+
+        def owner_failed_after_stale_read(binding_id, status, **kwargs):
+            # Legitimate owner failure lands after the reconciler's paused read.
+            real_transition(binding_id, "failed")
+            return real_transition(binding_id, status, **kwargs)
+
+        with patch.object(store, "transition_status", side_effect=owner_failed_after_stale_read):
+            snap = recon.reconcile_once()
+        self.assertEqual(len(self.transitions), 1)
+        self.assertEqual(store.get("b-owner-reject-001").status, "failed")
+        self.assertEqual(snap["worker_count"], 0)
+        self.assertNotIn("b-owner-reject-001", recon._workers)
+
+    def test_remote_transition_denied_is_not_treated_as_reactivated(self) -> None:
+        store, recon = self._paused_resume_fixture("b-remote-reject-001")
+        recon._url = "http://runtime.invalid"
+        recon._store = None
+        import urllib.error
+        denied = urllib.error.HTTPError("http://runtime.invalid", 409, "Conflict", {}, None)
+        with patch("urllib.request.urlopen", side_effect=denied):
+            self.assertFalse(recon._transition_binding("b-remote-reject-001", "active"))
+
     def test_new_admitted_snapshot_resumes_paused_binding_once(self) -> None:
         now = datetime.now(timezone.utc)
         old_time = (now - timedelta(seconds=100000)).isoformat().replace("+00:00", "Z")
