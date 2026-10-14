@@ -1719,6 +1719,40 @@ def _summary_observed_metrics(summary: Dict[str, Any]) -> Dict[str, float]:
     return observed
 
 
+def _resolve_scheduled_metrics(summary: Dict[str, Any]) -> Dict[str, float]:
+    committed_snapshot = summary.get("committed_position_snapshot")
+    if isinstance(committed_snapshot, dict):
+        observed: Dict[str, float] = {}
+        # Retain operational lag and baseline slippage from summary with own provenance
+        for key in ("queue_lag_ms", "event_delivery_lag_ms", "avg_slippage_bps"):
+            num = _numeric(summary.get(key))
+            if num is not None and math.isfinite(num):
+                observed[key] = num
+
+        # Resolve snapshot financial metrics from that event only
+        nested = committed_snapshot.get("metrics") or {}
+        if isinstance(nested, dict):
+            for key, raw_value in nested.items():
+                num = _numeric(raw_value)
+                if num is not None and math.isfinite(num):
+                    observed[str(key)] = num
+        for key in (
+            "position_qty",
+            "price",
+            "cash",
+            "pnl",
+            "drawdown",
+            "sharpe_ratio",
+            "fill_rate",
+            "total_trades",
+        ):
+            num = _numeric(committed_snapshot.get(key))
+            if num is not None and math.isfinite(num):
+                observed[key] = num
+        return observed
+    return _summary_observed_metrics(summary)
+
+
 def _paper_lifecycle_identity(
     summary: Dict[str, Any],
     *,
@@ -1726,9 +1760,20 @@ def _paper_lifecycle_identity(
     runtime_id: str,
 ) -> tuple[Dict[str, Any] | None, str | None]:
     """Return a complete live paper lifecycle identity or a fail-closed reason."""
-    raw_identity = summary.get("last_lifecycle_identity")
-    if not isinstance(raw_identity, dict):
+    committed_snapshot = summary.get("committed_position_snapshot")
+    last = summary.get("last_lifecycle_identity")
+
+    if isinstance(committed_snapshot, dict):
+        raw_identity = committed_snapshot
+    elif isinstance(last, dict):
+        evt_type = str(last.get("event_type") or "").strip()
+        if evt_type == "position_snapshot":
+            # Admitted-but-not-committed position snapshot cannot qualify:
+            return None, "missing_lifecycle_identity"
+        raw_identity = last
+    else:
         return None, "missing_lifecycle_identity"
+
     identity = json.loads(json.dumps(raw_identity))
     missing = [
         field
@@ -2280,155 +2325,6 @@ def _summary_binding_id(summary: Dict[str, Any]) -> str:
     ).strip()
 
 
-def _scheduled_lifecycle_only_reconcile(
-    *,
-    summaries: List[Dict[str, Any]],
-    tick_id: str,
-    timestamp: str,
-    telemetry_url: str,
-) -> Dict[str, Any]:
-    evaluation_ids: List[str] = []
-    evaluation_statuses: List[str] = []
-    lifecycle_append_results: List[Dict[str, Any]] = []
-    lifecycle_accepted_event_ids: List[str] = []
-    lifecycle_retryable_errors: List[Dict[str, Any]] = []
-    lifecycle_terminal_rejections: List[Dict[str, Any]] = []
-    lifecycle_ineligible_binding_ids: List[str] = []
-
-    for summary in summaries:
-        binding_id = _summary_binding_id(summary)
-        runtime_id = str(summary.get("runtime_id") or "").strip()
-        if not binding_id:
-            continue
-
-        evaluation_id = _tick_evaluation_id(tick_id, binding_id)
-        telemetry_event_ids = _summary_telemetry_event_ids(summary)
-        observed_metrics = _summary_observed_metrics(summary)
-        raw_baseline_metrics = summary.get("baseline_metrics") or {}
-        baseline_metrics: Dict[str, Any] = (
-            raw_baseline_metrics if isinstance(raw_baseline_metrics, dict) else {}
-        )
-        raw_thresholds = summary.get("thresholds") or summary.get("drift_thresholds") or {}
-        thresholds: Dict[str, Any] = raw_thresholds if isinstance(raw_thresholds, dict) else {}
-        drift_checks = _drift_checks(baseline_metrics, observed_metrics, thresholds)
-        reconciliation_checks = _summary_actual_state_checks(
-            summary,
-            binding_id=binding_id,
-            runtime_id=runtime_id,
-            telemetry_event_ids=telemetry_event_ids,
-            observed_metrics=observed_metrics,
-        )
-        status = _worst_status(
-            [
-                str(check.get("status") or "degraded")
-                for check in [*drift_checks, *reconciliation_checks]
-            ]
-        )
-        evaluation = {
-            "id": evaluation_id,
-            "evaluation_id": evaluation_id,
-            "binding_id": binding_id,
-            "runtime_id": runtime_id or None,
-            "status": status,
-            "tick_id": tick_id,
-            "trigger": "scheduled",
-            "drift_checks": drift_checks,
-            "reconciliation_checks": reconciliation_checks,
-            "evaluated_at": timestamp,
-        }
-        event, reason = _scheduled_lifecycle_event(
-            summary=summary,
-            evaluation=evaluation,
-            timestamp=timestamp,
-        )
-        if event is None:
-            inflight = reason == "lifecycle_in_flight"
-            state: Dict[str, Any] = {
-                "status": "pending" if inflight else "not_eligible",
-                "terminal": not inflight,
-                "retryable": inflight,
-                "outcome": "pending" if inflight else "not_eligible",
-                "reason": reason,
-                "attempt_count": 0,
-                "event_id": None,
-                "updated_at": timestamp,
-            }
-        else:
-            try:
-                delivery = _append_telemetry_lifecycle_event(
-                    telemetry_url,
-                    event,
-                    tenant_id=str(event.get("tenant_id") or "").strip() or None,
-                )
-            except Exception as exc:  # noqa: BLE001 - preserve retryable ambiguity
-                delivery = {
-                    "status": "retryable_error",
-                    "terminal": False,
-                    "retryable": True,
-                    "outcome": "ambiguous",
-                    "http_status": None,
-                    "response": None,
-                    "error": str(exc),
-                }
-            state = {
-                "status": "pending",
-                "terminal": False,
-                "retryable": True,
-                "reason": None,
-                "attempt_count": 1,
-                "event_id": event["event_id"],
-                "upstream_event_id": event["causal_parent_id"],
-                "event": event,
-                "created_at": timestamp,
-                "attempted_at": timestamp,
-                "updated_at": timestamp,
-                **delivery,
-            }
-            if state.get("status") == "accepted":
-                state["accepted_at"] = timestamp
-
-        evaluation_ids.append(evaluation_id)
-        evaluation_statuses.append(status)
-        receipt = _lifecycle_append_receipt(binding_id, state)
-        lifecycle_append_results.append(receipt)
-        if receipt["status"] == "accepted" and receipt["event_id"]:
-            lifecycle_accepted_event_ids.append(str(receipt["event_id"]))
-        elif receipt["status"] in {"retryable_error", "pending"}:
-            lifecycle_retryable_errors.append(receipt)
-        elif receipt["status"] == "terminal_rejected":
-            lifecycle_terminal_rejections.append(receipt)
-        elif receipt["status"] == "not_eligible":
-            lifecycle_ineligible_binding_ids.append(binding_id)
-
-    tick_status = _worst_status(evaluation_statuses)
-    if lifecycle_retryable_errors or lifecycle_terminal_rejections:
-        tick_status = "failure"
-    elif not evaluation_ids:
-        tick_status = "degraded"
-
-    return {
-        "status": tick_status,
-        "tick_id": tick_id,
-        "trigger": "scheduled",
-        "evaluated_binding_count": len(evaluation_ids),
-        "skipped_binding_count": 0,
-        "evaluation_ids": evaluation_ids,
-        "skipped_binding_ids": [],
-        "drift_report_ids": [],
-        "incident_ids": [],
-        "incident_delivery_errors": [],
-        "lifecycle_append_results": lifecycle_append_results,
-        "lifecycle_accepted_event_ids": list(dict.fromkeys(lifecycle_accepted_event_ids)),
-        "lifecycle_retryable_errors": lifecycle_retryable_errors,
-        "lifecycle_terminal_rejections": lifecycle_terminal_rejections,
-        "lifecycle_ineligible_binding_ids": list(dict.fromkeys(lifecycle_ineligible_binding_ids)),
-        "incident_dispatch_enabled": False,
-        "lifecycle_only": True,
-        "telemetry_summaries_fetched": len(summaries),
-        "triggered_at": timestamp,
-    }
-
-
 def _lag_check(metric: str, value: float | None, *, warning: float, critical: float) -> Dict[str, Any]:
     if value is None:
         return {
@@ -2771,7 +2667,7 @@ def _execute_scheduled_reconcile(
             timeout_seconds=min(10.0, max(1.0, tick_deadline - time.monotonic())),
         )
     except TelemetryError as exc:
-        return {
+        err_result = {
             "status": "failure",
             "failure_code": (
                 "telemetry_auth_failed"
@@ -2788,6 +2684,9 @@ def _execute_scheduled_reconcile(
             "triggered_at": timestamp,
             "detail": str(exc),
         }
+        if body.lifecycle_only:
+            err_result["lifecycle_only"] = True
+        return err_result
 
     scoped_summaries: List[Dict[str, Any]] = []
     for summary in summaries:
@@ -2813,7 +2712,7 @@ def _execute_scheduled_reconcile(
         ]
 
     if not summaries:
-        return {
+        empty_result = {
             "status": "degraded",
             "tick_id": tick_id,
             "trigger": "scheduled",
@@ -2825,14 +2724,9 @@ def _execute_scheduled_reconcile(
             "triggered_at": timestamp,
             "detail": "telemetry summaries empty",
         }
-
-    if body.lifecycle_only:
-        return _scheduled_lifecycle_only_reconcile(
-            summaries=summaries,
-            tick_id=tick_id,
-            timestamp=timestamp,
-            telemetry_url=telemetry_url,
-        )
+        if body.lifecycle_only:
+            empty_result["lifecycle_only"] = True
+        return empty_result
 
     existing_evaluations = _tenant_scoped(store.list_evaluations())
     existing_evaluation_ids = {
@@ -2851,7 +2745,7 @@ def _execute_scheduled_reconcile(
     lifecycle_retryable_errors: List[Dict[str, Any]] = []
     lifecycle_terminal_rejections: List[Dict[str, Any]] = []
     lifecycle_ineligible_binding_ids: List[str] = []
-    dispatch_incidents = bool(body.dispatch_incidents)
+    dispatch_incidents = False if body.lifecycle_only else bool(body.dispatch_incidents)
     incident_candidates: List[tuple[Dict[str, Any], Dict[str, Any], List[str]]] = []
 
     def record_lifecycle_append(binding_id: str, state: Dict[str, Any]) -> None:
@@ -2874,7 +2768,12 @@ def _execute_scheduled_reconcile(
 
         evaluation_id = _tick_evaluation_id(tick_id, binding_id)
         telemetry_event_ids = _summary_telemetry_event_ids(summary)
-        observed_metrics = _summary_observed_metrics(summary)
+        observed_metrics = _resolve_scheduled_metrics(summary)
+        committed_snapshot = summary.get("committed_position_snapshot")
+        snap_event_id = str((committed_snapshot or {}).get("event_id") or "").strip() if isinstance(committed_snapshot, dict) else ""
+        snap_run_id = str((committed_snapshot or {}).get("run_id") or ((committed_snapshot or {}).get("metadata") or {}).get("run_id") or "").strip() if isinstance(committed_snapshot, dict) else ""
+        if snap_event_id and snap_event_id not in telemetry_event_ids:
+            telemetry_event_ids = [snap_event_id, *telemetry_event_ids]
         raw_baseline_metrics = summary.get("baseline_metrics") or {}
         baseline_metrics: Dict[str, Any] = (
             raw_baseline_metrics if isinstance(raw_baseline_metrics, dict) else {}
@@ -2896,23 +2795,46 @@ def _execute_scheduled_reconcile(
             ]
         )
 
+        existing_evaluation = None
         if evaluation_id in existing_evaluation_ids:
-            skipped_binding_ids.append(binding_id)
-            existing_evaluation = store.get_evaluation(
+            cached_eval = store.get_evaluation(
                 evaluation_id,
                 tenant_id=tenant_id,
             )
-            if existing_evaluation is None:
-                continue
-            evaluation_statuses.append(str(existing_evaluation.get("status") or status))
-            target_evaluation = existing_evaluation
-        else:
+            if cached_eval is not None:
+                cached_append = cached_eval.get("lifecycle_append")
+                has_created_event = isinstance(cached_append, dict) and bool(
+                    cached_append.get("event") or cached_append.get("event_id")
+                )
+                is_terminal_or_accepted = isinstance(cached_append, dict) and cached_append.get("status") in {
+                    "accepted",
+                    "terminal_rejected",
+                }
+
+                # A pending evaluation without any created lifecycle event may still be
+                # paired to a newly eligible snapshot. But once an evaluation has an
+                # accepted/terminal state or an originally persisted lifecycle event /
+                # pending retry payload, preserve it; do not retarget its event ID to B.
+                can_pair_pending_to_snapshot = (
+                    snap_event_id
+                    and not has_created_event
+                    and not is_terminal_or_accepted
+                )
+
+                if not can_pair_pending_to_snapshot:
+                    existing_evaluation = cached_eval
+                    skipped_binding_ids.append(binding_id)
+                    evaluation_statuses.append(str(existing_evaluation.get("status") or status))
+                    target_evaluation = existing_evaluation
+        if existing_evaluation is None:
             evaluation = {
                 "id": evaluation_id,
                 "evaluation_id": evaluation_id,
                 "tenant_id": tenant_id,
                 "binding_id": binding_id,
                 "runtime_id": runtime_id or None,
+                "run_id": snap_run_id or None,
+                "snapshot_event_id": snap_event_id or None,
                 "status": status,
                 "summary": {
                     "status": status,
@@ -3013,7 +2935,7 @@ def _execute_scheduled_reconcile(
     elif not created_evaluation_ids:
         tick_status = "degraded"
 
-    return {
+    response = {
         "status": tick_status,
         "tick_id": tick_id,
         "trigger": "scheduled",
@@ -3033,6 +2955,9 @@ def _execute_scheduled_reconcile(
         "telemetry_summaries_fetched": len(summaries),
         "triggered_at": timestamp,
     }
+    if body.lifecycle_only:
+        response["lifecycle_only"] = True
+    return response
 
 
 def _completed_window_response(claim: Dict[str, Any]) -> Dict[str, Any]:
@@ -3049,6 +2974,12 @@ def _completed_window_response(claim: Dict[str, Any]) -> Dict[str, Any]:
         binding_id = str((evaluation or {}).get("binding_id") or "").strip()
         if binding_id:
             skipped_binding_ids.append(binding_id)
+    if not skipped_binding_ids:
+        for item in cached.get("lifecycle_append_results") or []:
+            if isinstance(item, dict) and item.get("binding_id"):
+                bid = str(item["binding_id"]).strip()
+                if bid and bid not in skipped_binding_ids:
+                    skipped_binding_ids.append(bid)
     cached.update(
         {
             "evaluated_binding_count": 0,

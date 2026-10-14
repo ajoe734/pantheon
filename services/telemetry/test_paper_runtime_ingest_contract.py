@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import types
 import unittest
 import uuid
@@ -404,6 +405,229 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
         self.assertEqual(final_proj["status"], "open")
         self.assertIsNone(final_proj["closed_at"])
         self.assertEqual(final_proj["position_snapshot_refs"], [snap_id])
+
+    def test_canonical_batch_read_cross_run_and_ineligible_guards(self):
+        async def scenario():
+            summary_store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+            binding = _known_binding()
+            tid = "tenant-paper-recon"
+
+            snap_runA = _paper_event(
+                event_type="position_snapshot",
+                event_id="evt-snap-runA",
+                created_at="2026-05-01T00:01:00Z",
+                metrics={"position_qty": 100.0, "price": 500.0, "cash": 50000.0},
+                metadata={
+                    "run_id": "run-A",
+                    "signal_id": "sig-A",
+                    "persona_id": "persona-paper-contract",
+                    "sequence_no": 7,
+                },
+            )
+            snap_runA.update({
+                "tenant_id": tid,
+                "trace_id": str(uuid.uuid4()),
+                "run_id": "run-A",
+                "signal_id": "sig-A",
+                "sequence_no": 7,
+                "authority_refs": {"persona_id": "persona-paper-contract"},
+            })
+
+            order_runB = _paper_event(
+                event_type="order_submitted",
+                event_id="evt-order-runB",
+                created_at="2026-05-01T00:02:00Z",
+                metrics={"order_qty": 50.0},
+                metadata={
+                    "run_id": "run-B",
+                    "signal_id": "sig-B",
+                    "persona_id": "persona-paper-contract",
+                    "sequence_no": 4,
+                },
+            )
+            order_runB.update({
+                "tenant_id": tid,
+                "trace_id": str(uuid.uuid4()),
+                "run_id": "run-B",
+                "signal_id": "sig-B",
+                "sequence_no": 4,
+                "authority_refs": {"persona_id": "persona-paper-contract"},
+            })
+
+            db_store = {
+                "evt-snap-runA": dict(snap_runA, ingested_seq=101),
+                "evt-order-runB": dict(order_runB, ingested_seq=102),
+            }
+
+            def fake_event_reader(ids, tenant_id=None):
+                return {k: v for k, v in db_store.items() if k in ids}
+
+            svc = TelemetryIngestService(
+                schema_path=SCHEMA_PATH,
+                binding_store=_StubBindingStore(),
+                runtime_summary_store=summary_store,
+                event_reader=fake_event_reader,
+                batch_size=10,
+                batch_interval=0.01,
+            )
+            await svc.start()
+            try:
+                await svc.ingest(snap_runA)
+                await svc.ingest(order_runB)
+                await asyncio.sleep(0.05)
+
+                raw_summary = summary_store.get(binding.runtime_id, tenant_id=tid)
+                self.assertEqual(raw_summary["last_lifecycle_identity"]["run_id"], "run-B")
+                self.assertEqual(raw_summary["last_lifecycle_identity"]["event_type"], "order_submitted")
+
+                summaries = svc.list_runtime_summaries(tenant_id=tid)
+                self.assertEqual(len(summaries), 1)
+                selected = summaries[0].get("committed_position_snapshot")
+                self.assertIsNotNone(selected)
+                self.assertEqual(selected["event_id"], "evt-snap-runA")
+                self.assertEqual(selected["run_id"], "run-A")
+                self.assertEqual(selected["metrics"]["position_qty"], 100.0)
+                self.assertEqual(selected["metrics"]["price"], 500.0)
+                self.assertEqual(selected["metrics"]["cash"], 50000.0)
+
+                # AC3: Uncommitted / absence in event reader fails closed
+                svc._event_reader = lambda ids, tenant_id=None: {}
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # AC1: Cross-tenant guard
+                svc._event_reader = lambda ids, tenant_id=None: {
+                    "evt-snap-runA": dict(snap_runA, tenant_id="other-tenant", ingested_seq=101)
+                }
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # AC1: Cross-binding guard
+                svc._event_reader = lambda ids, tenant_id=None: {
+                    "evt-snap-runA": dict(snap_runA, binding_id="other-binding", ingested_seq=101)
+                }
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # AC1: Cross-runtime guard
+                svc._event_reader = lambda ids, tenant_id=None: {
+                    "evt-snap-runA": dict(snap_runA, runtime_id="other-runtime", ingested_seq=101)
+                }
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # AC1: Cross-artifact guard
+                svc._event_reader = lambda ids, tenant_id=None: {
+                    "evt-snap-runA": dict(snap_runA, artifact_id="other-artifact", ingested_seq=101)
+                }
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # AC1 / AC3: Missing numeric metrics guard
+                svc._event_reader = lambda ids, tenant_id=None: {
+                    "evt-snap-runA": dict(snap_runA, metrics={}, ingested_seq=101)
+                }
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # Real positive DB sequence guard: bool is not sequence (True != valid seq)
+                svc._event_reader = lambda ids, tenant_id=None: {
+                    "evt-snap-runA": dict(snap_runA, ingested_seq=True)
+                }
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # Finite numeric metrics guard (reject inf/nan)
+                svc._event_reader = lambda ids, tenant_id=None: {
+                    "evt-snap-runA": dict(snap_runA, metrics={"position_qty": float("inf"), "price": 500.0, "cash": 50000.0}, ingested_seq=101)
+                }
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # 512 bound check: event reader receives at most 512 event ids per ring, and multiple summaries do not starve each other
+                queried_counts = []
+                def count_reader(ids, tenant_id=None):
+                    queried_counts.append(len(ids))
+                    return {}
+                svc._event_reader = count_reader
+                summary_key = list(summary_store._summaries.keys())[0]
+                summary_store._summaries[summary_key]["recent_lifecycle_event_ids"] = [f"evt-{i}" for i in range(1000)]
+                svc.list_runtime_summaries(tenant_id=tid)
+                self.assertEqual(queried_counts[-1], 512)
+
+                # Two summaries with 512 and 1 event IDs: neither is starved
+                two_summaries = [
+                    {"recent_lifecycle_event_ids": [f"first-{i}" for i in range(512)]},
+                    {"recent_lifecycle_event_ids": ["second-target-id"]},
+                ]
+                queried_ids = []
+                svc._event_reader = lambda ids, tenant_id=None: queried_ids.extend(ids) or {}
+                svc._enrich_with_committed_position_snapshots(two_summaries, tenant_id=tid)
+                self.assertIn("second-target-id", queried_ids)
+                self.assertEqual(len(queried_ids), 513)
+
+                summary_store._summaries[summary_key]["recent_lifecycle_event_ids"] = ["evt-snap-runA", "evt-order-runB"]
+
+                # Missing cash fail-closed: candidate with only position_qty and price (no cash) is rejected
+                partial_snap = copy.deepcopy(snap_runA)
+                partial_snap["metrics"].pop("cash", None)
+                partial_snap["ingested_seq"] = 101
+                svc._event_reader = lambda ids, tenant_id=None: {"evt-snap-runA": partial_snap}
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # Tenant conflict guard: conflicting tenant in metadata vs event root is rejected
+                conflict_snap = copy.deepcopy(snap_runA)
+                conflict_snap["tenant_id"] = tid
+                conflict_snap.setdefault("metadata", {})["tenant_id"] = "other-conflicting-tenant"
+                conflict_snap["ingested_seq"] = 101
+                svc._event_reader = lambda ids, tenant_id=None: {"evt-snap-runA": conflict_snap}
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # Missing plan guard: candidate without plan_id or deployment_plan_id is rejected (no synthesis)
+                no_plan_snap = copy.deepcopy(snap_runA)
+                no_plan_snap.pop("plan_id", None)
+                no_plan_snap.pop("deployment_plan_id", None)
+                no_plan_snap["ingested_seq"] = 101
+                svc._event_reader = lambda ids, tenant_id=None: {"evt-snap-runA": no_plan_snap}
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # get_runtime_summary returns raw stored summary without triggering event_reader
+                reader_called = []
+                svc._event_reader = lambda ids, tenant_id=None: reader_called.append(True) or {}
+                raw_got = svc.get_runtime_summary(binding.runtime_id, tenant_id=tid)
+                self.assertIsNotNone(raw_got)
+                self.assertNotIn("committed_position_snapshot", raw_got)
+                self.assertEqual(len(reader_called), 0)
+
+                # AC2: Already-reconciled position snapshot exclusion
+                term_event = _paper_event(
+                    event_type="reconciliation_completed",
+                    event_id="evt-term-runA",
+                    created_at="2026-05-01T00:03:00Z",
+                    metadata={
+                        "run_id": "run-A",
+                        "signal_id": "sig-A",
+                        "persona_id": "persona-paper-contract",
+                        "sequence_no": 8,
+                    },
+                )
+                term_event.update({
+                    "tenant_id": tid,
+                    "trace_id": str(uuid.uuid4()),
+                    "causal_parent_id": "evt-snap-runA",
+                    "run_id": "run-A",
+                    "sequence_no": 8,
+                    "ingested_seq": 103,
+                })
+                # If terminal event belongs to another tenant, it does not exclude candidate
+                other_term = dict(term_event, tenant_id="other-tenant")
+                db_store_term = dict(db_store, **{"evt-term-runA": other_term})
+                svc._event_reader = lambda ids, tenant_id=None: {k: v for k, v in db_store_term.items() if k in ids}
+                summary_store.project_event(other_term)
+                self.assertIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # When terminal matches current tenant/binding/plan, it excludes candidate
+                db_store["evt-term-runA"] = term_event
+                summary_store.project_event(term_event)
+                svc._event_reader = fake_event_reader
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+            finally:
+                await svc.stop(graceful=False)
+
+        asyncio.run(scenario())
+
 
 
 if __name__ == "__main__":
