@@ -184,6 +184,62 @@ class DurableIngestReceiptTest(unittest.IsolatedAsyncioTestCase):
             finally:
                 await service.stop(graceful=True)
 
+    async def test_runtime_summary_enrichment_queries_only_reconciliation_evidence_without_unrelated_payloads(self):
+        """Durable reader query restricts hydration to canonical reconciliation evidence."""
+        snap_event = dict(
+            _capital_runtime_event(),
+            event_id="evt-durable-snap-001",
+            event_type="position_snapshot",
+            authority_refs={"persona_id": "persona-l12-paper"},
+            metrics={"position_qty": 5.0, "price": 200.0, "cash": 10000.0},
+        )
+        fill_event = _capital_runtime_event()
+        reader_queries: list[dict] = []
+
+        def test_event_reader(ids, tenant_id=None, event_types=None):
+            reader_queries.append({
+                "ids": list(ids),
+                "tenant_id": tenant_id,
+                "event_types": event_types,
+            })
+            store = {
+                snap_event["event_id"]: dict(snap_event, ingested_seq=10),
+                fill_event["event_id"]: dict(fill_event, ingested_seq=11),
+            }
+            if event_types is not None:
+                return {k: v for k, v in store.items() if k in ids and v.get("event_type") in event_types}
+            return {k: v for k, v in store.items() if k in ids}
+
+        with tempfile.TemporaryDirectory() as td:
+            projection = RuntimeSummaryProjectionStore(
+                Path(td) / "runtime-summaries.json"
+            )
+            service = TelemetryIngestService(
+                runtime_summary_store=projection,
+                event_reader=test_event_reader,
+            )
+            await service.start()
+            try:
+                self.assertTrue(await service.ingest(snap_event))
+                self.assertTrue(await service.ingest(fill_event))
+                summaries = service.list_runtime_summaries(tenant_id="tenant-l12")
+                self.assertEqual(len(summaries), 1)
+                self.assertIn("committed_position_snapshot", summaries[0])
+                self.assertEqual(
+                    summaries[0]["committed_position_snapshot"]["event_id"],
+                    "evt-durable-snap-001",
+                )
+                self.assertEqual(len(reader_queries), 1)
+                self.assertEqual(
+                    reader_queries[0]["event_types"],
+                    ("position_snapshot", "reconciliation_completed", "reconciliation_failed"),
+                )
+                # Second call with already-enriched summaries skips querying the reader
+                service._enrich_with_committed_position_snapshots(summaries, tenant_id="tenant-l12")
+                self.assertEqual(len(reader_queries), 1)
+            finally:
+                await service.stop(graceful=True)
+
     async def test_put_succeeds_only_after_jetstream_puback(self):
         calls: list[str] = []
         message = _Message(_event(), calls)
