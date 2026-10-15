@@ -1,7 +1,7 @@
 {
   "task_id": "L12-WORKER-HEALTH-NAMESPACE-WIRING-20261015",
   "change_class": "architecture_corrective",
-  "summary": "Connect 10 existing worker health files to the operator BFF with original health contracts. Repair namespace using one dedicated health-only shared named volume (worker-health-data), mounted RW on the 10 worker containers and RO on operator-bff at /data/health, retaining existing HEALTH_FILE env names and unique filenames. Align downstream_health_monitor.py with original lightweight worker/Docker contracts, cadence, and max-age envs (starting/ticks0 rejected, legitimate scheduler sleeps beyond 180s permitted, consultation functional failure preserved, evolution identity unforced).",
+  "summary": "Connect 10 existing worker health files to the operator BFF with original health contracts. Repair namespace using one dedicated health-only shared named volume (worker-health-data), mounted RW on the 10 worker containers and RO on operator-bff at /data/health, retaining existing HEALTH_FILE env names and unique filenames. Align downstream_health_monitor.py with original lightweight worker/Docker contracts by calling existing validators (services.worker_health, services.background_worker_health, services.evolution.worker_health, services.deployment.outbox_consumer_worker) and original Consultation inline recipe, preserving missing/malformed/stale/failure reporting, functional unready reason extraction, and cadence/safety semantics without duplicate mappings.",
   "worker_namespace_wiring": {
     "volume_name": "worker-health-data",
     "mount_path": "/data/health",
@@ -71,27 +71,27 @@
   },
   "validation": {
     "test_deploy_nonprod_vm": {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_deploy_nonprod_vm.py",
+      "command": "python3 -m pytest -q scripts/test_deploy_nonprod_vm.py",
       "result": "62 passed, 2 skipped (including test_worker_health_namespace_wiring_in_compose)"
     },
     "evolution_compose_activation": {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/evolution/test_compose_activation.py",
+      "command": "python3 -m pytest -q services/evolution/test_compose_activation.py",
       "result": "3 passed"
     },
     "reconciliation_drift_compose_activation": {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py",
+      "command": "python3 -m pytest -q services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py",
       "result": "3 passed"
     },
     "bff_downstream_health_monitor": {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_downstream_health_monitor.py",
+      "command": "python3 -m pytest -q services/control-plane/bff/test_bff_downstream_health_monitor.py",
       "result": "40 passed (including 12 TestFileWorkerHealthProbes unit tests)"
     },
     "downstream_health_monitor": {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_downstream_health_monitor.py",
+      "command": "python3 -m pytest -q services/control-plane/bff/test_downstream_health_monitor.py",
       "result": "33 passed"
     },
     "bff_v5_loop_sentinel_contract": {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py",
+      "command": "python3 -m pytest -q services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py",
       "result": "38 passed"
     }
   }
