@@ -94,9 +94,9 @@ class _FakeTrainingSessionStore:
         self.calls.append(("get_trainer_session", session_id))
         return {"session_id": session_id}
 
-    def get_trainer_controls(self, session_id):
+    def get_trainer_controls(self, session_id, **kwargs):
         self.calls.append(("get_trainer_controls", session_id))
-        return {"session_id": session_id, "controls": []}
+        return {"session_id": session_id, "controls": [], **kwargs}
 
     def patch_trainer_controls(self, session_id, **kwargs):
         self.calls.append(("patch_trainer_controls", session_id, kwargs))
@@ -219,6 +219,7 @@ class TestTrainingSessionTrainerPort:
         port = TrainingSessionTrainerPort(training=training)
 
         assert port.get_trainer_controls("trn-1")["session_id"] == "trn-1"
+        assert port.get_trainer_controls("trn-1", snapshot_at="2026-10-15T10:19:36Z")["snapshot_at"] == "2026-10-15T10:19:36Z"
         assert port.patch_trainer_controls("trn-1", patch={})["session_id"] == "trn-1"
         assert port.append_trainer_message("trn-1", text="hi")["session_id"] == "trn-1"
         assert port.get_trainer_preview("trn-1")["session_id"] == "trn-1"
@@ -357,6 +358,15 @@ class TestProductionDefaultOwnerWiring:
             match="RapidEvaluationPort has no backend bound to its owner",
         ):
             read_ports.create_rapid_eval("trn-20261012-001", eval_scope="persona_patch")
+
+    def test_default_read_surface_ports_get_trainer_controls_signature_accepts_snapshot_at(self):
+        """Verify default ReadSurfacePorts.get_trainer_controls accepts kwargs / snapshot_at without signature mismatch."""
+        import inspect
+        from services.control_plane.bff.ports.read_surface_ports import create_read_surface_ports
+
+        read_ports = create_read_surface_ports()
+        sig = inspect.signature(read_ports.get_trainer_controls)
+        assert "kwargs" in sig.parameters or "snapshot_at" in sig.parameters
 
 
 class TestTrainingSessionHttpStoreUnit:
@@ -697,6 +707,12 @@ class TestTrainingSessionHttpStoreUnit:
             # 3. get controls
             ctrls = store.get_trainer_controls("trn-1")
             assert ctrls["session_id"] == "trn-1"
+            assert ctrls["meta"]["snapshot_at"] is not None
+
+            # 3b. get controls with explicit snapshot_at
+            ctrls_snapshot = store.get_trainer_controls("trn-1", snapshot_at="2026-10-15T10:19:36Z")
+            assert ctrls_snapshot["session_id"] == "trn-1"
+            assert ctrls_snapshot["meta"]["snapshot_at"] == "2026-10-15T10:19:36Z"
 
             # 4. patch controls
             patched = store.patch_trainer_controls("trn-1", patches=[{"parameter_key": "p1", "proposed_value": 2.0}])

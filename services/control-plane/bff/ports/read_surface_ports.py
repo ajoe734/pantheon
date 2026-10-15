@@ -880,8 +880,8 @@ class ReadSurfacePorts:
     def get_trainer_session(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
         return self.persona_training.get_trainer_session(session_id)
 
-    def get_trainer_controls(self, session_id: str) -> Optional[Dict[str, Any]]:
-        return self.persona_training.get_trainer_controls(session_id)
+    def get_trainer_controls(self, session_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self.persona_training.get_trainer_controls(session_id, **kwargs)
 
     def patch_trainer_controls(self, session_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
         return self.persona_training.patch_trainer_controls(session_id, **kwargs)
