@@ -502,6 +502,7 @@ def run_controller_tick(
                 queue.redrive_transient_dead_letters(
                     requested_by="strategy-distillation-controller",
                     note="registry reachable again; transient delivery failure redrive",
+                    tenant_id=state.tenant_id,
                 )
             run_result = worker.catch_up(
                 source_records,

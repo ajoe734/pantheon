@@ -676,3 +676,33 @@ class TestTransientDeadLetterRedrive:
             count = conn.execute("SELECT redrive_count FROM distillation_dead_letters").fetchone()[0]
         assert count == 2
         assert len(queue.list_dead_letters()) == 1
+
+    def test_tenant_scoped_redrive_leaves_foreign_and_unowned_untouched(self, tmp_path: Path) -> None:
+        queue = DistillationJobQueue(tmp_path / "queue.jsonl", default_max_attempts=1)
+        worker = DistillationWorker(
+            queue,
+            StrategySpecSeedStore(tmp_path / "seeds.jsonl"),
+            created_by="test_worker",
+            registry_sync=lambda request: (_ for _ in ()).throw(RuntimeError("Failed to query registry: timed out")),
+            retry_base_seconds=0,
+        )
+        for sid, tenant in (("src-dev", "tenant-dev"), ("src-other", "tenant-other")):
+            worker.enqueue_from_source_record(_normalized_source(sid, tenant_id=tenant))
+        assert worker.run_pending().dead_lettered == 2
+
+        redriven = queue.redrive_transient_dead_letters(requested_by="ctl", tenant_id="tenant-dev")
+        assert len(redriven) == 1
+        with sqlite3.connect(queue.path) as conn:
+            rows = dict(
+                conn.execute(
+                    "SELECT o.source_id, o.status || ':' || o.attempts || ':' || d.redrive_count"
+                    " FROM distillation_outbox o JOIN distillation_dead_letters d ON d.job_id = o.job_id"
+                ).fetchall()
+            )
+            actors = conn.execute(
+                "SELECT COUNT(*) FROM distillation_dead_letters WHERE last_redrive_actor IS NOT NULL"
+            ).fetchone()[0]
+        assert rows["src-dev"] == "pending:0:1"
+        assert rows["src-other"] == "dead_letter:1:0"
+        assert actors == 1
+        assert queue.redrive_transient_dead_letters(requested_by="ctl", tenant_id="tenant-missing") == []

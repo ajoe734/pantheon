@@ -1243,6 +1243,7 @@ class DistillationJobQueue:
         note: str = "transient registry failure redrive",
         max_redrives: int = DEFAULT_MAX_TRANSIENT_REDRIVES,
         limit: int = 100,
+        tenant_id: str | None = None,
     ) -> list[str]:
         """Re-queue unresolved dead letters whose cause was a transient Registry error.
 
@@ -1251,20 +1252,41 @@ class DistillationJobQueue:
         calls cannot redrive the same dead letter twice. A dead letter is
         redriven at most ``max_redrives`` times; permanent failures and
         exhausted budgets stay dead-lettered. Returns the redriven job ids.
+        When ``tenant_id`` is given only jobs whose source version carries that
+        tenant are redriven; unowned or foreign jobs are left untouched.
         """
+        tenant = str(tenant_id or "").strip() or None
+        if tenant_id is not None and tenant is None:
+            raise ValueError("tenant_id must be a non-empty explicit tenant")
         now = self._now()
         redriven: list[str] = []
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
-                rows = connection.execute(
+                tenant_clause = ""
+                params: tuple[Any, ...] = (max(0, int(max_redrives)),)
+                if tenant is not None:
+                    tenant_clause = """
+                       AND EXISTS (
+                           SELECT 1
+                             FROM distillation_outbox AS outbox
+                             JOIN distillation_source_versions AS source_version
+                               ON source_version.source_id = outbox.source_id
+                              AND source_version.source_digest = outbox.source_digest
+                            WHERE outbox.job_id = distillation_dead_letters.job_id
+                              AND json_extract(source_version.payload_json, '$.metadata.tenant_id') = ?
+                       )
                     """
+                    params = (max(0, int(max_redrives)), tenant)
+                rows = connection.execute(
+                    f"""
                     SELECT job_id, reason
                       FROM distillation_dead_letters
                      WHERE resolved_at IS NULL AND redrive_count < ?
+                       {tenant_clause}
                      ORDER BY created_at, job_id
                     """,
-                    (max(0, int(max_redrives)),),
+                    params,
                 ).fetchall()
                 for row in rows:
                     if len(redriven) >= max(0, int(limit)):
