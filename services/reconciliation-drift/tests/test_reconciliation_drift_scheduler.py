@@ -3039,3 +3039,107 @@ def test_scheduled_tick_stops_lookups_after_first_failure_and_skips_healthy() ->
                 json={"tick_id": "tick-lookup-fail-001"},
             )
         assert lookup.call_count == 1
+
+
+def _seed_accepted_append(svc, binding_id: str) -> None:
+    svc.store.put_evaluation(
+        {
+            "evaluation_id": f"evaluation-{binding_id}",
+            "binding_id": binding_id,
+            "evaluated_at": "2026-10-14T16:13:00Z",
+            "lifecycle_append": {
+                "status": "accepted",
+                "accepted_at": "2026-10-14T16:13:38Z",
+                "event_id": "accepted-old",
+                "event": {
+                    "event_id": "accepted-old",
+                    "aggregate_type": "runtime_binding",
+                    "aggregate_id": binding_id,
+                    "sequence_no": 3,
+                },
+            },
+        }
+    )
+
+
+def _superseded_summary(binding_id: str) -> dict:
+    return {
+        "tenant_id": "tenant-a",
+        "runtime_id": "rt-1",
+        "artifact_id": "art-1",
+        "artifact_version": "1",
+        "last_lifecycle_identity": {
+            "event_id": "observed-new",
+            "tenant_id": "tenant-a",
+            "binding_id": binding_id,
+            "runtime_id": "rt-1",
+            "artifact_id": "art-1",
+            "artifact_version": "1",
+            "aggregate_type": "runtime_binding",
+            "aggregate_id": binding_id,
+            "sequence_no": 9,
+        },
+        "recent_lifecycle_event_ids": ["observed-new"],
+    }
+
+
+def test_superseded_append_outside_recent_window_confirmed_by_committed_telemetry() -> None:
+    import telemetry_client
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        binding_id = "binding-superseded-001"
+        _seed_accepted_append(svc, binding_id)
+        pair = {
+            "accepted_event_id": "accepted-old",
+            "observed_event_id": "observed-new",
+            "binding_id": binding_id,
+        }
+        with (
+            mock.patch.object(telemetry_client, "fetch_accepted_event", return_value={"event_id": "accepted-old"}),
+            mock.patch.object(telemetry_client, "verify_durable_event_order", return_value=(True, None, pair)),
+        ):
+            for tick in ("2026-10-15T13:00:00Z", "2026-10-15T13:01:00Z"):
+                reason, _ = svc._accepted_append_visibility_reason(
+                    summary=_superseded_summary(binding_id),
+                    binding_id=binding_id,
+                    timestamp=tick,
+                    telemetry_url="http://telemetry:8083",
+                    tenant_id="tenant-a",
+                )
+                assert reason is None
+        state = svc.store.get_evaluation(f"evaluation-{binding_id}")["lifecycle_append"]
+        assert state["summary_visibility_source"] == "committed_telemetry_superseded"
+
+
+def test_missing_accepted_append_defers_then_terminal_without_failing_tick() -> None:
+    import telemetry_client
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        binding_id = "binding-missing-001"
+        _seed_accepted_append(svc, binding_id)
+        kwargs = dict(
+            summary=_superseded_summary(binding_id),
+            binding_id=binding_id,
+            telemetry_url="http://telemetry:8083",
+            tenant_id="tenant-a",
+        )
+        with mock.patch.object(telemetry_client, "fetch_accepted_event", return_value=None):
+            first, _ = svc._accepted_append_visibility_reason(timestamp="2026-10-15T13:00:00Z", **kwargs)
+            assert first == "accepted_lifecycle_append_not_visible"
+            last, _ = svc._accepted_append_visibility_reason(timestamp="2026-10-15T14:00:00Z", **kwargs)
+            assert last == "accepted_lifecycle_append_missing_terminal"
+            replay, _ = svc._accepted_append_visibility_reason(timestamp="2026-10-15T14:01:00Z", **kwargs)
+            assert replay == "accepted_lifecycle_append_missing_terminal"
+
+        evaluation = {"evaluation_id": "e2", "binding_id": binding_id, "tenant_id": "tenant-a"}
+        with mock.patch.object(telemetry_client, "fetch_accepted_event", return_value=None):
+            state = svc._ensure_scheduled_lifecycle_append(
+                summary=kwargs["summary"],
+                evaluation=evaluation,
+                telemetry_url="http://telemetry:8083",
+                timestamp="2026-10-15T14:02:00Z",
+            )
+        assert state["status"] == "terminal_failed" and state["terminal"] is True
+        assert state["retryable"] is False

@@ -2039,6 +2039,76 @@ def _strict_lifecycle_datetime(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+_MISSING_APPEND_DEADLINE_SECONDS = float(
+    os.getenv("PANTHEON_RECON_MISSING_APPEND_DEADLINE_SECONDS", "1800")
+)
+
+
+def _committed_append_evidence(
+    *,
+    summary: Dict[str, Any],
+    identity: Dict[str, Any],
+    binding_id: str,
+    accepted_event_id: str,
+    observed_event_id: str,
+    telemetry_url: Optional[str],
+    tenant_id: Optional[str],
+    service_token: Optional[str],
+    timeout_seconds: float,
+) -> str:
+    """Classify an accepted append against committed telemetry.
+
+    Returns "superseded" (event committed and a later same-binding event is
+    ordered after it), "missing" (no committed event) or "unknown".
+    """
+    if not telemetry_url or timeout_seconds <= 0:
+        return "unknown"
+    tid = str(summary.get("tenant_id") or identity.get("tenant_id") or tenant_id or "").strip()
+    if not tid:
+        return "unknown"
+    try:
+        from telemetry_client import fetch_accepted_event, verify_durable_event_order
+
+        if fetch_accepted_event(
+            telemetry_url,
+            accepted_event_id,
+            tenant_id=tid,
+            service_token=service_token,
+            timeout_seconds=timeout_seconds,
+        ) is None:
+            return "missing"
+        if not observed_event_id or observed_event_id == accepted_event_id:
+            return "unknown"
+        fields = {}
+        for key in ("runtime_id", "artifact_id", "artifact_version"):
+            value = summary.get(key) or identity.get(key)
+            if not isinstance(value, str) or not value.strip():
+                return "unknown"
+            fields[key] = value.strip()
+        ok, _, pair = verify_durable_event_order(
+            telemetry_url,
+            accepted_event_id=accepted_event_id,
+            observed_event_id=observed_event_id,
+            tenant_id=tid,
+            service_token=service_token,
+            timeout_seconds=timeout_seconds,
+            expected_binding_id=binding_id,
+            expected_runtime_id=fields["runtime_id"],
+            expected_artifact_id=fields["artifact_id"],
+            expected_artifact_version=fields["artifact_version"],
+        )
+        if (
+            ok
+            and pair.get("accepted_event_id") == accepted_event_id
+            and pair.get("observed_event_id") == observed_event_id
+            and pair.get("binding_id") == binding_id
+        ):
+            return "superseded"
+    except Exception:  # noqa: BLE001 - uncertain evidence stays deferred.
+        return "unknown"
+    return "unknown"
+
+
 def _accepted_append_visibility_reason(
     *,
     summary: Dict[str, Any],
@@ -2113,8 +2183,52 @@ def _accepted_append_visibility_reason(
     if observed_event_id == accepted_event_id:
         return None, visibility
 
+    if accepted_state.get("visibility_terminal_failure_at"):
+        return "accepted_lifecycle_append_missing_terminal", visibility
+
     if not accepted_state.get("summary_visibility_confirmed_at"):
-        return "accepted_lifecycle_append_not_visible", visibility
+        # The accepted event may have fallen out of the bounded recent window
+        # after a later lifecycle event superseded it. Committed telemetry is
+        # the authority; the window and ordering checks stay unchanged.
+        committed = _committed_append_evidence(
+            summary=summary,
+            identity=identity,
+            binding_id=binding_id,
+            accepted_event_id=accepted_event_id,
+            observed_event_id=observed_event_id,
+            telemetry_url=telemetry_url,
+            tenant_id=tenant_id,
+            service_token=service_token,
+            timeout_seconds=timeout_seconds,
+        )
+        if committed == "superseded":
+            accepted_state["summary_visibility_confirmed_at"] = timestamp
+            accepted_state["summary_visibility_event_id"] = accepted_event_id
+            accepted_state["summary_visibility_observed_event_id"] = observed_event_id or None
+            accepted_state["summary_visibility_source"] = "committed_telemetry_superseded"
+            accepted_evaluation["lifecycle_append"] = accepted_state
+            store.put_evaluation(accepted_evaluation)
+        elif committed == "missing":
+            missing_since = str(accepted_state.get("committed_missing_since") or "")
+            if not missing_since:
+                accepted_state["committed_missing_since"] = timestamp
+                missing_since = timestamp
+            started = _strict_lifecycle_datetime(missing_since)
+            now = _strict_lifecycle_datetime(timestamp)
+            if (
+                started is not None
+                and now is not None
+                and (now - started).total_seconds() >= _MISSING_APPEND_DEADLINE_SECONDS
+            ):
+                accepted_state["visibility_terminal_failure_at"] = timestamp
+                accepted_evaluation["lifecycle_append"] = accepted_state
+                store.put_evaluation(accepted_evaluation)
+                return "accepted_lifecycle_append_missing_terminal", visibility
+            accepted_evaluation["lifecycle_append"] = accepted_state
+            store.put_evaluation(accepted_evaluation)
+            return "accepted_lifecycle_append_not_visible", visibility
+        else:
+            return "accepted_lifecycle_append_not_visible", visibility
 
     raw_observed_sequence = identity.get("sequence_no")
     raw_accepted_sequence = accepted_event.get("sequence_no")
@@ -2206,7 +2320,12 @@ def _ensure_scheduled_lifecycle_append(
     """Persist-before-send and retry the same event for an idempotent evaluation."""
     raw_state = evaluation.get("lifecycle_append")
     state: Dict[str, Any] = dict(raw_state) if isinstance(raw_state, dict) else {}
-    if state.get("status") in {"accepted", "terminal_rejected", "not_eligible"}:
+    if state.get("status") in {
+        "accepted",
+        "terminal_rejected",
+        "not_eligible",
+        "terminal_failed",
+    }:
         return state
 
     event = state.get("event") if isinstance(state.get("event"), dict) else None
@@ -2216,6 +2335,23 @@ def _ensure_scheduled_lifecycle_append(
             timestamp=timestamp, evaluations=evaluations, telemetry_url=telemetry_url,
             tenant_id=evaluation.get("tenant_id"), timeout_seconds=timeout_seconds,
         )
+        if visibility_reason == "accepted_lifecycle_append_missing_terminal":
+            state.update(
+                {
+                    "status": "terminal_failed",
+                    "terminal": True,
+                    "retryable": False,
+                    "outcome": "terminal_failed",
+                    "reason": visibility_reason,
+                    "attempt_count": int(state.get("attempt_count") or 0),
+                    "event_id": None,
+                    "updated_at": timestamp,
+                    **visibility,
+                }
+            )
+            evaluation["lifecycle_append"] = state
+            store.put_evaluation(evaluation)
+            return state
         if visibility_reason is not None:
             state.update(
                 {
@@ -2800,6 +2936,7 @@ def _execute_scheduled_reconcile(
     lifecycle_accepted_event_ids: List[str] = []
     lifecycle_retryable_errors: List[Dict[str, Any]] = []
     lifecycle_terminal_rejections: List[Dict[str, Any]] = []
+    lifecycle_terminal_failures: List[Dict[str, Any]] = []
     lifecycle_ineligible_binding_ids: List[str] = []
     retired_binding_ids: List[str] = []
     binding_lookup_failed = False
@@ -2815,6 +2952,8 @@ def _execute_scheduled_reconcile(
             lifecycle_retryable_errors.append(receipt)
         elif receipt["status"] == "terminal_rejected":
             lifecycle_terminal_rejections.append(receipt)
+        elif receipt["status"] == "terminal_failed":
+            lifecycle_terminal_failures.append(receipt)
         elif receipt["status"] == "not_eligible":
             lifecycle_ineligible_binding_ids.append(binding_id)
 
@@ -3034,6 +3173,7 @@ def _execute_scheduled_reconcile(
         "lifecycle_accepted_event_ids": list(dict.fromkeys(lifecycle_accepted_event_ids)),
         "lifecycle_retryable_errors": lifecycle_retryable_errors,
         "lifecycle_terminal_rejections": lifecycle_terminal_rejections,
+        "lifecycle_terminal_failures": lifecycle_terminal_failures,
         "lifecycle_ineligible_binding_ids": list(dict.fromkeys(lifecycle_ineligible_binding_ids)),
         "retired_binding_ids": retired_binding_ids,
         "incident_dispatch_enabled": dispatch_incidents,
