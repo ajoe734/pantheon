@@ -614,3 +614,65 @@ class TestEventAdmissionSharesQueueWithCatchUp:
         assert DistillationJobQueue(queue_path).get(source.source_id, source_version_digest(source)).job_id == (
             admitted.job_id
         )
+
+
+class TestTransientDeadLetterRedrive:
+    def _dead_letter(self, tmp_path: Path, error: Exception):
+        from services.source_ingestion.distillation_worker import RegistrySyncResult
+
+        queue = DistillationJobQueue(tmp_path / "queue.jsonl", default_max_attempts=1)
+        seed_store = StrategySpecSeedStore(tmp_path / "seeds.jsonl")
+        state = {"error": error}
+
+        def sync(request):
+            if state["error"] is not None:
+                raise state["error"]
+            return RegistrySyncResult(registry_id="reg-1", status="synced")
+
+        worker = DistillationWorker(
+            queue, seed_store, created_by="test_worker", registry_sync=sync, retry_base_seconds=0
+        )
+        source = _normalized_source()
+        worker.enqueue_from_source_record(source)
+        result = worker.run_pending()
+        assert result.dead_lettered == 1
+        return worker, queue, state
+
+    def test_transient_registry_dead_letter_is_redriven_and_completes(self, tmp_path: Path) -> None:
+        worker, queue, state = self._dead_letter(tmp_path, RuntimeError("Failed to query registry: timed out"))
+        assert len(queue.list_dead_letters()) == 1
+
+        state["error"] = None
+        redriven = queue.redrive_transient_dead_letters(requested_by="ctl", note="n")
+        assert len(redriven) == 1
+        assert queue.list_dead_letters() == []
+        result = worker.run_pending()
+        assert result.registry_synced == 1
+        assert queue.metrics()["dead_letter"] == 0
+        assert queue.metrics()["done"] == 1
+        with sqlite3.connect(queue.path) as conn:
+            row = conn.execute(
+                "SELECT redrive_count, last_redrive_actor, last_redrive_note FROM distillation_dead_letters"
+            ).fetchone()
+        assert row == (1, "ctl", "n")
+
+    def test_permanent_failure_stays_dead_lettered(self, tmp_path: Path) -> None:
+        _, queue, _ = self._dead_letter(
+            tmp_path, RuntimeError("Registry artifact x exists with conflicting distillation lineage")
+        )
+        assert queue.redrive_transient_dead_letters(requested_by="ctl") == []
+        assert len(queue.list_dead_letters()) == 1
+        assert queue.metrics()["dead_letter"] == 1
+
+    def test_redrive_is_idempotent_and_bounded(self, tmp_path: Path) -> None:
+        worker, queue, _ = self._dead_letter(tmp_path, RuntimeError("registry down: Failed to query registry: timed out"))
+        assert len(queue.redrive_transient_dead_letters(requested_by="ctl")) == 1
+        assert queue.redrive_transient_dead_letters(requested_by="ctl") == []
+        # Still failing: dead-letters again; redrive budget caps total redrives.
+        for _ in range(10):
+            worker.run_pending()
+            queue.redrive_transient_dead_letters(requested_by="ctl", max_redrives=2)
+        with sqlite3.connect(queue.path) as conn:
+            count = conn.execute("SELECT redrive_count FROM distillation_dead_letters").fetchone()[0]
+        assert count == 2
+        assert len(queue.list_dead_letters()) == 1

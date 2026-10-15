@@ -166,6 +166,33 @@ def _timestamp_text(value: float | None) -> str | None:
     )
 
 
+DEFAULT_MAX_TRANSIENT_REDRIVES = 5
+
+_REGISTRY_FAILURE_MARKERS = (
+    "registry_sync_failed",
+    "failed to query registry",
+    "failed to register strategy spec",
+)
+_TRANSIENT_NETWORK_MARKERS = (
+    "timed out",
+    "temporary failure in name resolution",
+    "name or service not known",
+    "nodename nor servname",
+    "connection refused",
+    "connection reset",
+    "connection aborted",
+    "network is unreachable",
+)
+
+
+def is_transient_registry_failure(reason: str) -> bool:
+    """True for Registry delivery errors caused by timeouts or DNS/connection loss."""
+    text = reason.lower()
+    return any(m in text for m in _REGISTRY_FAILURE_MARKERS) and any(
+        m in text for m in _TRANSIENT_NETWORK_MARKERS
+    )
+
+
 class DistillationJobStatus(str, Enum):
     PENDING = "pending"
     LEASED = "leased"
@@ -1209,6 +1236,81 @@ class DistillationJobQueue:
         assert row is not None
         return self._job_from_row(row)
 
+    def redrive_transient_dead_letters(
+        self,
+        *,
+        requested_by: str,
+        note: str = "transient registry failure redrive",
+        max_redrives: int = DEFAULT_MAX_TRANSIENT_REDRIVES,
+        limit: int = 100,
+    ) -> list[str]:
+        """Re-queue unresolved dead letters whose cause was a transient Registry error.
+
+        Each redrive is one ``BEGIN IMMEDIATE`` transaction that only touches
+        rows still ``dead_letter`` in the outbox, so concurrent or repeated
+        calls cannot redrive the same dead letter twice. A dead letter is
+        redriven at most ``max_redrives`` times; permanent failures and
+        exhausted budgets stay dead-lettered. Returns the redriven job ids.
+        """
+        now = self._now()
+        redriven: list[str] = []
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                rows = connection.execute(
+                    """
+                    SELECT job_id, reason
+                      FROM distillation_dead_letters
+                     WHERE resolved_at IS NULL AND redrive_count < ?
+                     ORDER BY created_at, job_id
+                    """,
+                    (max(0, int(max_redrives)),),
+                ).fetchall()
+                for row in rows:
+                    if len(redriven) >= max(0, int(limit)):
+                        break
+                    if not is_transient_registry_failure(str(row["reason"])):
+                        continue
+                    job_id = str(row["job_id"])
+                    changed = connection.execute(
+                        """
+                        UPDATE distillation_outbox
+                           SET status = 'pending', available_at = ?,
+                               processed_at = NULL, attempts = 0,
+                               lease_owner = NULL, lease_token = NULL,
+                               lease_expires_at = NULL, updated_at = ?
+                         WHERE job_id = ? AND status = 'dead_letter'
+                        """,
+                        (now, now, job_id),
+                    ).rowcount
+                    if changed != 1:
+                        continue
+                    connection.execute(
+                        """
+                        UPDATE distillation_inbox
+                           SET status = 'retry_wait', updated_at = ?
+                         WHERE job_id = ? AND status = 'dead_letter'
+                        """,
+                        (now, job_id),
+                    )
+                    connection.execute(
+                        """
+                        UPDATE distillation_dead_letters
+                           SET redrive_count = redrive_count + 1,
+                               last_redrive_actor = ?,
+                               last_redrive_note = ?,
+                               resolved_at = ?
+                         WHERE job_id = ? AND resolved_at IS NULL
+                        """,
+                        (requested_by, note, now, job_id),
+                    )
+                    redriven.append(job_id)
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+        return redriven
+
     def count(self) -> int:
         with self._connect() as connection:
             row = connection.execute(
@@ -1719,6 +1821,7 @@ __all__ = [
     "DistillationJobStatus",
     "DistillationRunResult",
     "DistillationWorker",
+    "is_transient_registry_failure",
     "RegistrySyncResult",
     "make_distillation_worker",
     "source_version_digest",

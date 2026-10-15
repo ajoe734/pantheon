@@ -489,6 +489,20 @@ def run_controller_tick(
                 max_attempts=config.max_attempts,
                 registry_sync=_make_registry_sync(config),
             )
+            # Re-drive dead letters from transient Registry outages, but only
+            # once the Registry answers again (404 on a probe id is an answer).
+            registry_reachable = False
+            if queue.list_dead_letters():
+                try:
+                    _get_registry_entry(config.registry_url, "distillation-redrive-probe")
+                    registry_reachable = True
+                except Exception:
+                    pass
+            if registry_reachable:
+                queue.redrive_transient_dead_letters(
+                    requested_by="strategy-distillation-controller",
+                    note="registry reachable again; transient delivery failure redrive",
+                )
             run_result = worker.catch_up(
                 source_records,
                 limit=100,
