@@ -1,0 +1,10 @@
+{
+  "task": "PAPER-SIGNAL-REDELIVERY-CONFLICT-20261015",
+  "scope": "source only; no FULL, deploy, or hosted acceptance claimed; historical FULL38822778571 enqueue sequence not claimed observed",
+  "change": "SignalConsumer._resolve_conflicts collapses same-signal_id copies before conflict resolution; extra copies are ACKed only after the kept copy is ACKed (execution/duplicate/loser disposition), and left un-ACKed for retry if execution fails",
+  "tests": {
+    "command": "python3 -m unittest services.execution.lean_runtime.test_signal_consumer services.execution.lean_runtime.test_paper_signal_producer",
+    "result": "112 tests OK on repair",
+    "baseline_protected_b9": "TestSameIdRedeliveryBatch 3/3 fail on original signal_consumer.py (executions 0 for same-ID three copies)"
+  }
+}

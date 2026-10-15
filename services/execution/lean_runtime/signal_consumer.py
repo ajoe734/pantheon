@@ -147,6 +147,10 @@ class SignalConsumer:
             lambda: {"signals": [], "bars_waited": 0}
         )
         self._processed_signal_ids: set[str] = set()
+        # Extra same-signal_id deliveries of one logical decision, held until
+        # the selected copy reaches a genuine disposition.
+        self._redelivered_copies: dict[str, list[dict]] = {}
+        self._acked_signal_ids: set[str] = set()
 
     # ------------------------------------------------------------------
     # Public API
@@ -245,14 +249,13 @@ class SignalConsumer:
                 singles.append(signal)
 
         # Execute individual signals (conflict-resolved per symbol)
-        resolved = self._resolve_conflicts(singles, algo=algo)
-        for signal in resolved:
-            self._execute_one(signal, algo)
+        self._execute_resolved(singles, algo)
 
         # Tick rebalance buffer; execute complete or timed-out batches
         self._tick_rebalance_buffer(algo)
 
     def _ack_signal(self, signal: dict) -> None:
+        self._acked_signal_ids.add(str(signal.get("signal_id", "")))
         if hasattr(self._store, "ack"):
             try:
                 self._store.ack(signal)
@@ -475,13 +478,43 @@ class SignalConsumer:
     # Conflict resolution (same symbol, different signals)
     # ------------------------------------------------------------------
 
+    def _collapse_redeliveries(self, signals: list[dict]) -> list[dict]:
+        """Keep the first delivery of each signal_id; hold later copies.
+
+        Copies of one signal_id are one logical decision, not conflict
+        losers.  They are ACKed only once the kept copy is acknowledged.
+        """
+        kept: dict[str, dict] = {}
+        for sig in signals:
+            sid = str(sig["signal_id"])
+            if sid in kept:
+                self._redelivered_copies.setdefault(sid, []).append(sig)
+            else:
+                kept[sid] = sig
+        return list(kept.values())
+
+    def _ack_redelivered_copies(self, signal_id: str) -> None:
+        for copy in self._redelivered_copies.pop(str(signal_id), []):
+            self._ack_signal(copy)
+
+    def _execute_resolved(self, signals: list[dict], algo: Any | None) -> None:
+        for sig in self._resolve_conflicts(signals, algo=algo):
+            sid = str(sig["signal_id"])
+            self._acked_signal_ids.discard(sid)
+            self._execute_one(sig, algo)
+            if sid in self._acked_signal_ids:
+                self._ack_redelivered_copies(sid)
+            else:
+                # Not dispositioned: leave copies un-ACKed for normal retry.
+                self._redelivered_copies.pop(sid, None)
+
     def _resolve_conflicts(self, signals: list[dict], algo: Any | None = None) -> list[dict]:
         """
         Last-write-wins by timestamp.  Tie-break by confidence_score (higher wins).
         Returns one signal per symbol.
         """
         by_symbol: dict[str, dict] = {}
-        for sig in signals:
+        for sig in self._collapse_redeliveries(signals):
             sym = sig["symbol"]
             if sym not in by_symbol:
                 by_symbol[sym] = sig
@@ -515,6 +548,7 @@ class SignalConsumer:
             },
         )
         self._ack_signal(loser)
+        self._ack_redelivered_copies(loser["signal_id"])
 
     # ------------------------------------------------------------------
     # FinRL rebalance batching
@@ -607,8 +641,7 @@ class SignalConsumer:
                     "executing partial batch",
                     run_id, self._rebalance_timeout, n,
                 )
-                for sig in self._resolve_conflicts(batch["signals"], algo=algo):
-                    self._execute_one(sig, algo)
+                self._execute_resolved(batch["signals"], algo)
                 completed.append(run_id)
 
         for run_id in completed:
@@ -621,8 +654,7 @@ class SignalConsumer:
         """
         batch = self._rebalance_buffer.pop(run_id, None)
         if batch:
-            for sig in self._resolve_conflicts(batch["signals"], algo=algo):
-                self._execute_one(sig, algo)
+            self._execute_resolved(batch["signals"], algo)
 
     # ------------------------------------------------------------------
     # Execution
