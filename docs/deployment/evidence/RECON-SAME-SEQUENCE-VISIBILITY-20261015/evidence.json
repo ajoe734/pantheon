@@ -1,0 +1,11 @@
+{
+  "task_id": "RECON-SAME-SEQUENCE-VISIBILITY-20261015",
+  "base": "1cfaf933f",
+  "change": "same aggregate + equal sequence_no + different event now uses verify_durable_event_order (strict binding/runtime/artifact checks); lower sequence keeps deferral; higher unchanged",
+  "tests": {
+    "command": "pytest services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py",
+    "result": "49 passed",
+    "base_failure": "test_same_sequence_different_event_visible_when_durably_ordered fails on base"
+  },
+  "hosted_verification": "pending deploy; expect lifecycle_retryable_errors to clear for rb-495d..., rb-46f3..., rb-2480..."
+}
