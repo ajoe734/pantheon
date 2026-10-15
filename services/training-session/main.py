@@ -445,9 +445,79 @@ PERSISTENCE_POSTURE = require_persistence_posture("training-session")
 store = build_training_session_store(_data_dir())
 
 
+def _is_completed_negative_preview(result: Dict[str, Any]) -> bool:
+    if not isinstance(result, dict):
+        return False
+    operation = str(result.get("operation") or "").lower()
+    if operation != "preview_evaluation":
+        return False
+    tenant_id = str(result.get("tenant_id") or "").strip()
+    if not tenant_id:
+        return False
+    detail = result.get("detail")
+    if not isinstance(detail, dict):
+        return False
+    if detail.get("error_code"):
+        return False
+
+    job_id = str(detail.get("job_id") or "").strip()
+    session_id = str(detail.get("session_id") or "").strip()
+    proof_ref = str(detail.get("evaluation_proof_ref") or "").strip()
+
+    if job_id:
+        try:
+            job = store.get_preview_job(job_id)
+        except Exception:
+            return False
+        if not isinstance(job, dict) or str(job.get("status") or "").lower() != "completed":
+            return False
+        if str(job.get("tenant_id") or "").strip() != tenant_id:
+            return False
+        if session_id and str(job.get("session_id") or "").strip() != session_id:
+            return False
+        job_proof_ref = str(job.get("evaluation_proof_ref") or "").strip()
+        if not job_proof_ref or (proof_ref and proof_ref != job_proof_ref):
+            return False
+        actual_session_id = str(job.get("session_id") or session_id).strip()
+        if not actual_session_id:
+            return False
+        try:
+            session = store.get_session(actual_session_id)
+        except Exception:
+            return False
+        if not isinstance(session, dict) or str(session.get("tenant_id") or "").strip() != tenant_id:
+            return False
+        return True
+
+    if session_id:
+        try:
+            session = store.get_session(session_id)
+            bundle = store.get_preview_bundle(session_id)
+        except Exception:
+            return False
+        if not isinstance(session, dict) or str(session.get("tenant_id") or "").strip() != tenant_id:
+            return False
+        if not isinstance(bundle, dict) or str(bundle.get("tenant_id") or "").strip() != tenant_id:
+            return False
+        if str(bundle.get("session_id") or "").strip() != session_id:
+            return False
+        preview = bundle.get("preview")
+        if not isinstance(preview, dict):
+            return False
+        proof = preview.get("evaluation_proof")
+        if not isinstance(proof, dict):
+            return False
+        bundle_proof_ref = str(proof.get("proof_ref") or "").strip()
+        if not bundle_proof_ref or (proof_ref and proof_ref != bundle_proof_ref):
+            return False
+        return True
+
+    return False
+
+
 def _functional_health() -> Dict[str, Any]:
     try:
-        results = store.list_functional_results()
+        raw_results = store.list_functional_results()
     except Exception as exc:  # noqa: BLE001 - health must degrade, never crash.
         return {
             "status": "error",
@@ -457,12 +527,13 @@ def _functional_health() -> Dict[str, Any]:
         }
     failures = [
         result
-        for result in results
+        for result in raw_results
         if str(result.get("status") or "").lower() not in {"ok", "passed", "completed"}
+        and not _is_completed_negative_preview(result)
     ]
     return {
         "status": "degraded" if failures else "ok",
-        "result_count": len(results),
+        "result_count": len(raw_results),
         "failure_count": len(failures),
         "failures": failures[-10:],
     }
@@ -1761,19 +1832,14 @@ def refresh_preview(session_id: str, body: RefreshPreviewBody) -> Dict[str, Any]
             detail={"session_id": session_id, "error_code": "preview_evidence_unavailable"},
         )
         raise HTTPException(status_code=503, detail=f"preview evidence unavailable: {exc}") from exc
+    proof = preview.get("evaluation_proof") or {}
     _record_functional_result(
         "preview_evaluation",
-        status=(
-            "ok"
-            if (preview.get("evaluation_proof") or {}).get("governance_gate_state")
-            == "passed"
-            else "failed"
-        ),
+        status="ok",
         detail={
             "session_id": session_id,
-            "evaluation_proof_ref": (
-                preview.get("evaluation_proof") or {}
-            ).get("proof_ref"),
+            "evaluation_proof_ref": proof.get("proof_ref"),
+            "governance_gate_state": proof.get("governance_gate_state"),
         },
     )
     return preview
@@ -2205,11 +2271,7 @@ def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Di
     completed_job = store.mutate_preview_job(job_id, complete)
     _record_functional_result(
         "preview_evaluation",
-        status=(
-            "ok"
-            if completed_job.get("governance_gate_state") == "passed"
-            else "failed"
-        ),
+        status="ok",
         detail={
             "job_id": job_id,
             "session_id": session_id,

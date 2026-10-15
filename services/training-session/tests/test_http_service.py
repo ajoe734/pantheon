@@ -640,6 +640,164 @@ def test_canonical_dataset_validation_and_fail_closed_and_evidence() -> None:
     assert complete.status_code == 409
     assert "evaluation governance gate is not passed" in complete.text
     assert persona_mutations == []
+    ready_async = client.get("/readyz")
+    assert ready_async.status_code == 200
+    assert ready_async.json()["dependencies"]["functional"]["status"] == "ok"
+    assert ready_async.json()["dependencies"]["functional"]["failure_count"] == 0
+
+    session_id_sync = client.post(
+        "/api/training/sessions",
+        json={
+            "persona_id": "persona-alpha",
+            "objective": "Test sync fail closed validation",
+            "created_at": "2026-04-28T22:30:00Z",
+        },
+    ).json()["session_id"]
+    seed_changed_supported_controls(module, session_id_sync)
+    sync_preview_resp = client.post(
+        f"/api/training/sessions/{session_id_sync}/preview",
+        json={"mode": "refresh"},
+    )
+    assert sync_preview_resp.status_code == 201, sync_preview_resp.text
+    sync_preview = sync_preview_resp.json()
+    assert sync_preview["validation_status"] == "failed"
+    assert sync_preview["evaluation_proof"]["status"] == "failed"
+    assert sync_preview["evaluation_proof"]["governance_gate_state"] == "failed"
+    complete_sync = client.post(f"/api/training/sessions/{session_id_sync}/complete")
+    assert complete_sync.status_code == 409
+    assert "evaluation governance gate is not passed" in complete_sync.text
+    assert persona_mutations == []
+    ready_sync = client.get("/readyz")
+    assert ready_sync.status_code == 200
+    assert ready_sync.json()["dependencies"]["functional"]["status"] == "ok"
+    assert ready_sync.json()["dependencies"]["functional"]["failure_count"] == 0
+
+    test_tenant_id = job["tenant_id"]
+    persisted_negative_record = {
+        "status": "failed",
+        "checked_at": "2026-10-15T20:03:12Z",
+        "actor_service": "training-session-preview-worker",
+        "detail": {
+            "evaluation_proof_ref": preview["evaluation_proof"]["proof_ref"],
+            "governance_gate_state": "failed",
+            "job_id": job["job_id"],
+            "session_id": session_id,
+        },
+    }
+    module.store.put_functional_result(
+        "preview_evaluation",
+        test_tenant_id,
+        persisted_negative_record,
+    )
+    records_before = module.store.list_functional_results()
+    ready_reconciled = client.get("/readyz")
+    assert ready_reconciled.status_code == 200
+    assert ready_reconciled.json()["dependencies"]["functional"]["status"] == "ok"
+    assert ready_reconciled.json()["dependencies"]["functional"]["failure_count"] == 0
+    # No-write case: health read must be read-only and preserve raw failure audit in store
+    records_after = module.store.list_functional_results()
+    assert records_after == records_before
+    persisted_raw = [
+        r for r in records_after
+        if r.get("operation") == "preview_evaluation" and r.get("tenant_id") == test_tenant_id
+    ][0]
+    assert persisted_raw["status"] == "failed"
+
+    # Missing authority: bare detail proof_ref / governance state with missing job or session degrades
+    module.store.put_functional_result(
+        "preview_evaluation",
+        test_tenant_id,
+        {
+            "status": "failed",
+            "checked_at": "2026-10-15T20:04:00Z",
+            "actor_service": "training-session-preview-worker",
+            "detail": {
+                "evaluation_proof_ref": "missing-original-proof",
+                "governance_gate_state": "failed",
+                "job_id": "missing-original-job",
+                "session_id": "missing-original-session",
+            },
+        },
+    )
+    ready_missing_auth = client.get("/readyz")
+    assert ready_missing_auth.status_code == 503
+    assert ready_missing_auth.json()["dependencies"]["functional"]["status"] == "degraded"
+    assert ready_missing_auth.json()["dependencies"]["functional"]["failure_count"] == 1
+
+    # Store error: storage backend lookup error remains honestly degraded
+    module.store.put_functional_result(
+        "preview_evaluation",
+        test_tenant_id,
+        persisted_negative_record,
+    )
+    original_get_preview_job = module.store.get_preview_job
+
+    def _exploding_get_preview_job(jid: str):
+        raise OSError("storage backend disk fault")
+
+    module.store.get_preview_job = _exploding_get_preview_job
+    try:
+        ready_store_error = client.get("/readyz")
+        assert ready_store_error.status_code == 503
+        assert ready_store_error.json()["dependencies"]["functional"]["status"] == "degraded"
+        assert ready_store_error.json()["dependencies"]["functional"]["failure_count"] == 1
+    finally:
+        module.store.get_preview_job = original_get_preview_job
+
+    # Valid persisted sync negative record: valid session and bundle owner authority recognized as ok
+    persisted_sync_negative = {
+        "status": "failed",
+        "checked_at": "2026-10-15T20:04:30Z",
+        "actor_service": "training-session",
+        "detail": {
+            "evaluation_proof_ref": sync_preview["evaluation_proof"]["proof_ref"],
+            "governance_gate_state": "failed",
+            "session_id": session_id_sync,
+        },
+    }
+    module.store.put_functional_result(
+        "preview_evaluation",
+        test_tenant_id,
+        persisted_sync_negative,
+    )
+    ready_sync_reconciled = client.get("/readyz")
+    assert ready_sync_reconciled.status_code == 200
+    assert ready_sync_reconciled.json()["dependencies"]["functional"]["status"] == "ok"
+    assert ready_sync_reconciled.json()["dependencies"]["functional"]["failure_count"] == 0
+
+    # Sync missing authority: non-existent session_id degrades to 503
+    module.store.put_functional_result(
+        "preview_evaluation",
+        test_tenant_id,
+        {
+            "status": "failed",
+            "checked_at": "2026-10-15T20:04:45Z",
+            "actor_service": "training-session",
+            "detail": {
+                "evaluation_proof_ref": "missing-sync-proof",
+                "governance_gate_state": "failed",
+                "session_id": "missing-sync-session",
+            },
+        },
+    )
+    ready_missing_sync = client.get("/readyz")
+    assert ready_missing_sync.status_code == 503
+    assert ready_missing_sync.json()["dependencies"]["functional"]["status"] == "degraded"
+    assert ready_missing_sync.json()["dependencies"]["functional"]["failure_count"] == 1
+
+    module.store.put_functional_result(
+        "preview_evaluation",
+        test_tenant_id,
+        {
+            "status": "failed",
+            "checked_at": "2026-10-15T20:05:00Z",
+            "actor_service": "training-session",
+            "detail": {
+                "session_id": session_id,
+                "error_code": "preview_evidence_unavailable",
+            },
+        },
+    )
     degraded = client.get("/readyz")
     assert degraded.status_code == 503
     assert degraded.json()["dependencies"]["functional"]["status"] == "degraded"
