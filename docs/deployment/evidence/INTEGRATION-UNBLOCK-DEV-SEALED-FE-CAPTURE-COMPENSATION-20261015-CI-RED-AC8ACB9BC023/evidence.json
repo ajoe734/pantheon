@@ -1,0 +1,9 @@
+{
+  "task": "INTEGRATION-UNBLOCK-DEV-SEALED-FE-CAPTURE-COMPENSATION-20261015-CI-RED-AC8ACB9BC023",
+  "original_pr": 6580,
+  "original_branch": "task/DEV-SEALED-FE-CAPTURE-COMPENSATION-20261015",
+  "root_cause": "Check 'Import smoke services-evolution-Dockerfile' (run 38758543743) attempt 1, job 116504111645, was cancelled, not failed by code. Attempt 2 (job 116551262526) re-ran the same head and completed successfully on all steps including 'Build image and import every service entrypoint inside it'. The integrator treated the transient cancelled/in-progress state as ci-red.",
+  "code_change": "none; PR #6580 needs no update. Re-run integration once checks settle.",
+  "observed_at": "2026-10-15T16:52Z",
+  "pr_state": {"mergeable": "MERGEABLE", "success": 48, "skipped": 6, "pending_at_observation": 1}
+}
