@@ -3010,3 +3010,32 @@ def test_scheduled_retired_at_rejection_is_terminal_and_not_a_failure() -> None:
             svc._tick_evaluation_id("tick-rejected-001", summary["binding_id"])
         )
         assert evaluation["incident_delivery"]["status"] == "terminal_rejected"
+
+
+def test_runtime_manager_client_imports_through_real_service_path() -> None:
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        assert svc.RuntimeManagerClient is not None
+
+
+def test_scheduled_tick_stops_lookups_after_first_failure_and_skips_healthy() -> None:
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        bad_a = _healthy_runtime_summary(queue_lag_ms=20_000)
+        bad_b = {**_healthy_runtime_summary(queue_lag_ms=20_000), "binding_id": "rb-other"}
+        healthy = {**_healthy_runtime_summary(), "binding_id": "rb-healthy"}
+        with (
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[healthy, bad_a, bad_b]),
+            mock.patch.object(
+                svc, "_authoritative_runtime_binding", side_effect=RuntimeError("down")
+            ) as lookup,
+            mock.patch.object(svc, "_classify_drift_report_incident", return_value=None),
+        ):
+            client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": "tick-lookup-fail-001"},
+            )
+        assert lookup.call_count == 1

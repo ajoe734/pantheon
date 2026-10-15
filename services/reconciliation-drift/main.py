@@ -7,17 +7,28 @@ import logging
 import math
 import os
 import re
+import sys
 import time
 import urllib.error
 import urllib.request
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from statistics import mean
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+
+_RUNTIME_MANAGER_DIR = Path(__file__).resolve().parents[1] / "runtime-manager"
+if str(_RUNTIME_MANAGER_DIR) not in sys.path:
+    sys.path.insert(0, str(_RUNTIME_MANAGER_DIR))
+
+try:
+    from runtime_manager_client import RuntimeManagerClient  # type: ignore
+except ImportError:  # pragma: no cover - defensive fallback
+    RuntimeManagerClient = None  # type: ignore[assignment]
 
 from consumer import build_drift_report_from_event
 from services.foundation.health import register_fastapi_health_routes
@@ -2547,23 +2558,29 @@ def _scheduled_drift_report(
     }
 
 
-def _authoritative_runtime_binding(binding_id: str) -> Dict[str, Any] | None:
+def _authoritative_runtime_binding(
+    binding_id: str, *, timeout_seconds: float = 5.0
+) -> Dict[str, Any] | None:
     """Read one RuntimeBinding from runtime-manager, the source incident validation uses.
 
     Returns None when runtime-manager is not configured or unreachable so callers
     keep their pre-existing behaviour instead of guessing at lifecycle state.
+    Raises RuntimeError on lookup failure so callers can stop further lookups.
     """
     if not os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip():
         return None
+    if RuntimeManagerClient is None:
+        raise RuntimeError("runtime_manager_client is not importable")
     try:
-        from runtime_manager_client import RuntimeManagerClient  # type: ignore
-
-        binding = RuntimeManagerClient(require_remote=True).get(binding_id)
-    except Exception:  # noqa: BLE001 - lifecycle lookup is best-effort
+        binding = RuntimeManagerClient(
+            require_remote=True,
+            timeout_seconds=max(1, math.ceil(timeout_seconds)),
+        ).get(binding_id)
+    except Exception as exc:  # noqa: BLE001 - lifecycle lookup is best-effort
         logging.getLogger(__name__).warning(
             "runtime-manager binding lookup failed for %s", binding_id, exc_info=True
         )
-        return None
+        raise RuntimeError(f"runtime-manager lookup failed: {exc}") from exc
     return dict(binding) if isinstance(binding, dict) else None
 
 
@@ -2785,6 +2802,7 @@ def _execute_scheduled_reconcile(
     lifecycle_terminal_rejections: List[Dict[str, Any]] = []
     lifecycle_ineligible_binding_ids: List[str] = []
     retired_binding_ids: List[str] = []
+    binding_lookup_failed = False
     dispatch_incidents = False if body.lifecycle_only else bool(body.dispatch_incidents)
     incident_candidates: List[tuple[Dict[str, Any], Dict[str, Any], List[str]]] = []
 
@@ -2805,11 +2823,6 @@ def _execute_scheduled_reconcile(
         runtime_id = str(summary.get("runtime_id") or "").strip()
         if not binding_id:
             continue
-        if _binding_retired_before(_authoritative_runtime_binding(binding_id), timestamp):
-            retired_binding_ids.append(binding_id)
-            lifecycle_ineligible_binding_ids.append(binding_id)
-            continue
-
         evaluation_id = _tick_evaluation_id(tick_id, binding_id)
         telemetry_event_ids = _summary_telemetry_event_ids(summary)
         observed_metrics = _resolve_scheduled_metrics(summary)
@@ -2838,6 +2851,29 @@ def _execute_scheduled_reconcile(
                 for check in [*drift_checks, *reconciliation_checks]
             ]
         )
+
+        # Only consult runtime-manager for bindings that could raise an incident or
+        # whose telemetry state is not active; stop after the first failure/budget miss.
+        summary_state = str(summary.get("state") or "").strip().lower()
+        if (
+            not binding_lookup_failed
+            and (status != "ok" or summary_state not in {"active", "running", "healthy"})
+        ):
+            lookup_budget = dispatch_timeout()
+            if lookup_budget > 0:
+                try:
+                    authoritative = _authoritative_runtime_binding(
+                        binding_id, timeout_seconds=lookup_budget
+                    )
+                except RuntimeError:
+                    binding_lookup_failed = True
+                else:
+                    if _binding_retired_before(authoritative, timestamp):
+                        retired_binding_ids.append(binding_id)
+                        lifecycle_ineligible_binding_ids.append(binding_id)
+                        continue
+            else:
+                binding_lookup_failed = True
 
         existing_evaluation = None
         if evaluation_id in existing_evaluation_ids:
