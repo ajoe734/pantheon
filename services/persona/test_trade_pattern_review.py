@@ -173,3 +173,30 @@ def test_agent_host_counts_failures_and_skips_other_tenants():
     result = agent.pattern_review_once(persona_url="http://persona", token="t", tenant="t", fetch=fetch)
     assert result == {"status": "degraded", "reviewed": 0, "unchanged": 0, "no_op": 1, "failed": 1}
     assert len(posted) == 2
+
+
+def test_real_provider_transport_uses_adapter_token_and_dedupes(stack, monkeypatch):
+    from services.persona.test_trade_reflection_owner import _patch_transport
+    from services.persona.write_owner import OpenClawReflectionProvider, create_app
+
+    monkeypatch.setenv("PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN", "adapter-svc-token")
+    sent = _patch_transport(monkeypatch)
+    provider = OpenClawReflectionProvider(adapter_url="http://adapter:8104")
+    client = TestClient(create_app(stack["owner"], reflection_provider=provider, pattern_episode_lister=lambda p, t: stack["rows"], telemetry_fetcher=lambda e, t, a: _episode(e)))
+    first = client.post(URL, json={"tenant_id": "tenant-1"}, headers=SERVICE)
+    assert first.status_code == 200 and first.json()["data"]["status"] == "reviewed"
+    calls = len(sent)
+    assert calls >= 1 and {r.get_header("X-pantheon-service-token") for r in sent} == {"adapter-svc-token"}
+    assert client.post(URL, json={"tenant_id": "tenant-1"}, headers=SERVICE).status_code == 200
+    assert len(sent) == calls
+
+
+def test_real_provider_missing_adapter_token_is_visible_failure(stack, monkeypatch):
+    from services.persona.write_owner import OpenClawReflectionProvider, create_app
+
+    monkeypatch.delenv("PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN", raising=False)
+    provider = OpenClawReflectionProvider(adapter_url="http://adapter:8104")
+    client = TestClient(create_app(stack["owner"], reflection_provider=provider, pattern_episode_lister=lambda p, t: stack["rows"], telemetry_fetcher=lambda e, t, a: _episode(e)))
+    resp = client.post(URL, json={"tenant_id": "tenant-1"}, headers=SERVICE)
+    assert resp.status_code >= 500 or resp.status_code == 503
+    assert _stored(stack) == []

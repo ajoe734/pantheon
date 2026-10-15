@@ -311,3 +311,65 @@ def test_concurrent_same_key_atomic_claim_single_provider_call(monkeypatch: pyte
         receipts = [r.json()["data"]["receipt_id"] for r in (r1, r2) if r.status_code == 202]
         assert len(set(receipts)) == 1
 
+
+
+class _FakeResp:
+    def __init__(self, output: dict[str, Any]) -> None:
+        self._body = json.dumps({"data": {"output": {"structured_data": output}}}).encode("utf-8")
+
+    def __enter__(self) -> "_FakeResp":
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self._body
+
+
+def _patch_transport(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    from services.persona import write_owner
+
+    sent: list[Any] = []
+    output = MockReflectionProvider().reflect(facts={}, trigger="t")
+
+    def fake_urlopen(req: Any, timeout: float = 0) -> _FakeResp:
+        sent.append(req)
+        return _FakeResp(output)
+
+    monkeypatch.setattr(write_owner, "urlopen", fake_urlopen)
+    return sent
+
+
+def test_openclaw_provider_sends_adapter_token_not_persona_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.persona.write_owner import OpenClawReflectionProvider
+
+    monkeypatch.setenv("PANTHEON_PERSONA_SERVICE_TOKEN", "persona-svc-token")
+    monkeypatch.setenv("PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN", "adapter-svc-token")
+    sent = _patch_transport(monkeypatch)
+    provider = OpenClawReflectionProvider(adapter_url="http://adapter:8104")
+    assert provider.reflect(facts={"a": 1}, trigger="ep-1")["attribution"] == "process"
+    assert sent[0].get_header("X-pantheon-service-token") == "adapter-svc-token"
+    assert sent[0].full_url.endswith("/api/openclaw-adapter/assistant/providers/openclaw/structured")
+
+
+def test_openclaw_provider_missing_adapter_token_fails_without_persona_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.persona.write_owner import OpenClawReflectionProvider
+
+    monkeypatch.setenv("PANTHEON_PERSONA_SERVICE_TOKEN", "persona-svc-token")
+    monkeypatch.setenv("PERSONA_SERVICE_TOKEN", "persona-svc-token")
+    monkeypatch.delenv("PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN", raising=False)
+    sent = _patch_transport(monkeypatch)
+    provider = OpenClawReflectionProvider(adapter_url="http://adapter:8104")
+    with pytest.raises(RuntimeError, match="adapter service token"):
+        provider.reflect(facts={}, trigger="ep-1")
+    assert sent == []
+
+
+def test_openclaw_provider_explicit_token_injection(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.persona.write_owner import OpenClawReflectionProvider
+
+    monkeypatch.delenv("PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN", raising=False)
+    sent = _patch_transport(monkeypatch)
+    OpenClawReflectionProvider(adapter_url="http://adapter:8104", token="explicit").reflect(facts={}, trigger="ep-1")
+    assert sent[0].get_header("X-pantheon-service-token") == "explicit"

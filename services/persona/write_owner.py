@@ -1702,10 +1702,11 @@ class OpenClawReflectionProvider:
 
     def __init__(self, adapter_url: str | None = None, token: str | None = None) -> None:
         self.adapter_url = (adapter_url or os.getenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL") or os.getenv("OPENCLAW_GATEWAY_ADAPTER_URL") or os.getenv("PANTHEON_OPENCLAW_ADAPTER_URL") or os.getenv("OPENCLAW_ADAPTER_URL") or "").rstrip("/")
-        self.token = token or os.getenv("PANTHEON_PERSONA_SERVICE_TOKEN") or os.getenv("PERSONA_SERVICE_TOKEN") or ""
+        self.token = token or os.getenv("PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN") or ""
 
     def reflect(self, *, facts: Mapping[str, Any], trigger: str) -> Mapping[str, Any]:
         if not self.adapter_url: raise RuntimeError("OpenClaw adapter is not configured")
+        if not self.token: raise RuntimeError("OpenClaw adapter service token is not configured")
         body = {
             "prompt": f"Reflect on trade episode {trigger} with facts: {json.dumps(dict(facts), sort_keys=True)}",
             "extraction_schema": {
