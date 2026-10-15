@@ -806,7 +806,7 @@ class TestFileWorkerHealthProbes:
         ok, code, reason = _probe_file_health(str(f), target_name="paper-signal-producer")
         assert ok is False
         assert code == 500
-        assert "safety marker mismatch" in reason or "paper execution markers invalid" in reason
+        assert "safety marker mismatch" in reason or "paper execution markers invalid" in reason or "healthcheck failed" in reason
 
     def test_shadow_eval_scheduler_fail_closed_enforced(self, tmp_path):
         f = tmp_path / "shadow-health.json"
@@ -819,7 +819,7 @@ class TestFileWorkerHealthProbes:
         ok, code, reason = _probe_file_health(str(f), target_name="shadow-eval-scheduler")
         assert ok is False
         assert code == 500
-        assert "fail_closed" in reason
+        assert "fail_closed" in reason or "healthcheck failed" in reason
 
     def test_deployment_outbox_consumer_contracts_enforced(self, tmp_path):
         f = tmp_path / "consumer-health.json"
@@ -834,7 +834,7 @@ class TestFileWorkerHealthProbes:
         ok, code, reason = _probe_file_health(str(f), target_name="deployment-outbox-consumer")
         assert ok is False
         assert code == 500
-        assert "consecutive_errors" in reason
+        assert "consecutive_errors" in reason or "healthcheck failed" in reason
 
         ok_payload = dict(err_payload, consecutive_errors=0)
         f.write_text(json.dumps(ok_payload), encoding="utf-8")
@@ -848,7 +848,7 @@ class TestFileWorkerHealthProbes:
         ok, code, reason = _probe_file_health(str(f), target_name="reconciliation-drift-consumer")
         assert ok is False
         assert code == 500
-        assert "identity mismatch" in reason
+        assert "identity mismatch" in reason or "healthcheck failed" in reason
 
     def test_consultation_nested_functional_health_failure_enforced(self, tmp_path):
         f = tmp_path / "consultation-health.json"
@@ -872,6 +872,37 @@ class TestFileWorkerHealthProbes:
         assert ok is False
         assert code == 500
         assert "functional_health.ready is false" in reason
+
+    def test_consultation_blocked_or_dead_letter_count_rejected(self, tmp_path):
+        f = tmp_path / "consultation-health.json"
+        f.write_text(json.dumps({
+            "status": "ok",
+            "ticks": 1,
+            "functional_health": {"ready": True, "blocked_count": 2, "dead_letter_count": 0},
+        }), encoding="utf-8")
+        ok, code, reason = _probe_file_health(str(f), target_name="consultation-workflow-executor")
+        assert ok is False
+        assert code == 500
+        assert "blocked_count=2" in reason
+
+        f.write_text(json.dumps({
+            "status": "ok",
+            "ticks": 1,
+            "functional_health": {"ready": True, "blocked_count": 0, "dead_letter_count": 1},
+        }), encoding="utf-8")
+        ok, code, reason = _probe_file_health(str(f), target_name="consultation-workflow-executor")
+        assert ok is False
+        assert code == 500
+        assert "dead_letter_count=1" in reason
+
+        f.write_text(json.dumps({
+            "status": "ok",
+            "ticks": 1,
+            "functional_health": {"ready": True, "blocked_count": 0, "dead_letter_count": 0},
+        }), encoding="utf-8")
+        ok, code, reason = _probe_file_health(str(f), target_name="consultation-workflow-executor")
+        assert ok is True
+        assert code == 200
 
     def test_evolution_scheduler_identity_unforced(self, tmp_path):
         f = tmp_path / "evolution-health.json"

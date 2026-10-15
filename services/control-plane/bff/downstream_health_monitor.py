@@ -23,10 +23,8 @@ Key guarantees
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import contextvars
 import hashlib
-import io
 import json
 import logging
 import os
@@ -43,7 +41,6 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 import services.background_worker_health as _background_worker_health
-import services.deployment.outbox_consumer_worker as _deployment_outbox_worker
 import services.evolution.worker_health as _evolution_worker_health
 import services.worker_health as _worker_health
 from services.service_token_file import configured_service_token
@@ -308,16 +305,6 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-def _run_validator(fn: Any, *args: Any, **kwargs: Any) -> tuple[int, str]:
-    buf = io.StringIO()
-    with contextlib.redirect_stderr(buf):
-        try:
-            rc = fn(*args, **kwargs)
-        except Exception as exc:
-            return 1, str(exc)
-    return rc, buf.getvalue().strip()
-
-
 def _probe_file_health(
     file_path: str,
     timeout: float = 0.0,
@@ -325,7 +312,7 @@ def _probe_file_health(
     target_name: Optional[str] = None,
 ) -> tuple[bool, int, str]:
     """Return (ok, status_code, failure_reason) for a file-backed worker health document."""
-    resolved_target = target_name
+    resolved_target = target_name or ""
     p = Path(file_path)
     if not p.exists():
         return False, 404, f"worker health file missing: {file_path}"
@@ -380,10 +367,15 @@ def _probe_file_health(
             fh = payload.get("functional_health")
             if not isinstance(fh, Mapping) or fh.get("ready") is not True:
                 return False, 500, "consultation-workflow-executor functional_health.ready is false"
-            if int(fh.get("blocked_count") or 0) > 0:
-                return False, 500, f"consultation-workflow-executor functional_degraded: {fh.get('blocked_count')} blocked item(s)"
-            if int(fh.get("dead_letter_count") or 0) > 0:
-                return False, 500, f"consultation-workflow-executor functional_degraded: {fh.get('dead_letter_count')} dead-letter item(s)"
+            try:
+                blocked = int(fh.get("blocked_count") or 0)
+                dead_letter = int(fh.get("dead_letter_count") or 0)
+            except (ValueError, TypeError):
+                return False, 500, "consultation-workflow-executor functional_health counts invalid"
+            if blocked != 0:
+                return False, 500, f"consultation-workflow-executor functional_degraded: blocked_count={blocked} (must be 0)"
+            if dead_letter != 0:
+                return False, 500, f"consultation-workflow-executor functional_degraded: dead_letter_count={dead_letter} (must be 0)"
             age_seconds = max(0.0, time.time() - p.stat().st_mtime)
             if age_seconds > 90.0:
                 return False, -1, f"consultation-workflow-executor health is stale: age_seconds={age_seconds:.1f} max_age_seconds=90.0"
@@ -400,8 +392,8 @@ def _probe_file_health(
         # Delegate to existing lightweight worker validators for identity, safety, and cadence
         if resolved_target == "paper-signal-producer":
             interval = max(1, int(_env_float("PAPER_PRODUCER_INTERVAL_SECONDS", 60.0)))
-            rc, msg = _run_validator(
-                _worker_health.healthcheck,
+            max_age = max(60.0, float(interval * 3))
+            rc = _worker_health.healthcheck(
                 health_file=str(p),
                 interval_seconds=interval,
                 worker_name="paper-signal-producer",
@@ -413,8 +405,8 @@ def _probe_file_health(
             )
         elif resolved_target in {"shadow-eval-scheduler", "policy-learning-shadow-eval-scheduler"}:
             interval = max(1, int(_env_float("SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS", 3600.0)))
-            rc, msg = _run_validator(
-                _worker_health.healthcheck,
+            max_age = max(60.0, float(interval * 3))
+            rc = _worker_health.healthcheck(
                 health_file=str(p),
                 interval_seconds=interval,
                 worker_name="policy-learning-shadow-eval-scheduler",
@@ -427,8 +419,8 @@ def _probe_file_health(
             max_age_env = os.getenv("DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_MAX_AGE_SECONDS", "").strip()
             max_age = float(max_age_env) if max_age_env else max(60.0, interval * 3)
             cname = os.getenv("DEPLOYMENT_OUTBOX_CONSUMER_NAME", "deployment-outbox-consumer")
-            rc, msg = _run_validator(
-                _deployment_outbox_worker.healthcheck,
+            import services.deployment.outbox_consumer_worker as _deployment_outbox_worker
+            rc = _deployment_outbox_worker.healthcheck(
                 health_file=str(p),
                 interval_seconds=interval,
                 consumer_name=cname,
@@ -438,8 +430,7 @@ def _probe_file_health(
             interval = _env_float("RECONCILIATION_DRIFT_CONSUMER_INTERVAL_SECONDS", 60.0)
             max_age_env = os.getenv("RECONCILIATION_DRIFT_CONSUMER_HEALTH_MAX_AGE_SECONDS", "").strip()
             max_age = float(max_age_env) if max_age_env else max(300.0, interval * 3)
-            rc, msg = _run_validator(
-                _background_worker_health.healthcheck,
+            rc = _background_worker_health.healthcheck(
                 health_file=str(p),
                 interval_seconds=interval,
                 worker_name="reconciliation-drift-consumer",
@@ -449,8 +440,7 @@ def _probe_file_health(
             interval = _env_float("RECONCILIATION_DRIFT_SCHEDULER_INTERVAL_SECONDS", 300.0)
             max_age_env = os.getenv("RECONCILIATION_DRIFT_SCHEDULER_HEALTH_MAX_AGE_SECONDS", "").strip()
             max_age = float(max_age_env) if max_age_env else max(300.0, interval * 3)
-            rc, msg = _run_validator(
-                _background_worker_health.healthcheck,
+            rc = _background_worker_health.healthcheck(
                 health_file=str(p),
                 interval_seconds=interval,
                 worker_name="reconciliation-drift-scheduler",
@@ -460,8 +450,7 @@ def _probe_file_health(
             interval = _env_float("RECONCILIATION_DRIFT_INCIDENT_LISTENER_INTERVAL_SECONDS", 15.0)
             max_age_env = os.getenv("RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_MAX_AGE_SECONDS", "").strip()
             max_age = float(max_age_env) if max_age_env else max(300.0, interval * 3)
-            rc, msg = _run_validator(
-                _background_worker_health.healthcheck,
+            rc = _background_worker_health.healthcheck(
                 health_file=str(p),
                 interval_seconds=interval,
                 worker_name="reconciliation-drift-incident-listener",
@@ -469,39 +458,48 @@ def _probe_file_health(
             )
         elif resolved_target in {"evolution-scheduler", "evolution-daily-sweep-scheduler"}:
             interval = max(1, int(_env_float("EVOLUTION_SCHEDULER_INTERVAL_SECONDS", 86400.0)))
-            rc, msg = _run_validator(
-                _evolution_worker_health.healthcheck,
+            max_age = max(60.0, float(interval * 3))
+            rc = _evolution_worker_health.healthcheck(
                 health_file=str(p),
                 interval_seconds=interval,
                 worker_name="evolution-scheduler",
             )
         elif resolved_target in {"evolution-dispatch", "evolution-dispatch-worker"}:
             interval = max(1, int(_env_float("EVOLUTION_DISPATCH_INTERVAL_SECONDS", 30.0)))
-            rc, msg = _run_validator(
-                _evolution_worker_health.healthcheck,
+            max_age = max(60.0, float(interval * 3))
+            rc = _evolution_worker_health.healthcheck(
                 health_file=str(p),
                 interval_seconds=interval,
                 worker_name="evolution-dispatch",
             )
         elif resolved_target in {"evolution-threshold-sweep", "evolution-threshold-sweep-producer"}:
             interval = max(1, int(_env_float("EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS", 86400.0)))
-            rc, msg = _run_validator(
-                _evolution_worker_health.healthcheck,
+            max_age = max(60.0, float(interval * 3))
+            rc = _evolution_worker_health.healthcheck(
                 health_file=str(p),
                 interval_seconds=interval,
                 worker_name="evolution-threshold-sweep",
             )
         else:
+            max_age = 180.0
             age_seconds = max(0.0, time.time() - p.stat().st_mtime)
-            if age_seconds > 180.0:
-                return False, -1, f"worker health file stale (age={age_seconds:.1f}s, max_age=180.0s)"
+            if age_seconds > max_age:
+                return False, -1, f"worker health file stale (age={age_seconds:.1f}s, max_age={max_age:.1f}s)"
             return True, 200, ""
 
         if rc != 0:
-            msg_str = msg or "worker health check failed"
-            if "stale" in msg_str.lower():
-                return False, -1, msg_str
-            return False, 500, msg_str
+            age_seconds = max(0.0, time.time() - p.stat().st_mtime)
+            if age_seconds > max_age:
+                return False, -1, f"{resolved_target} health is stale: age_seconds={age_seconds:.1f} max_age_seconds={max_age:.1f}"
+            payload_reason = (
+                payload.get("reason")
+                or payload.get("failure_reason")
+                or payload.get("error_code")
+                or payload.get("message")
+            )
+            if payload_reason:
+                return False, 500, f"{resolved_target} functional failure: {payload_reason}"
+            return False, 500, f"{resolved_target} healthcheck failed"
 
         return True, 200, ""
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:

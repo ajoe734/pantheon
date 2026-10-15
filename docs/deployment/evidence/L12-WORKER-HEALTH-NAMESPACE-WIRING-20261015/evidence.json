@@ -84,7 +84,7 @@
     },
     "bff_downstream_health_monitor": {
       "command": "python3 -m pytest -q services/control-plane/bff/test_bff_downstream_health_monitor.py",
-      "result": "40 passed (including 12 TestFileWorkerHealthProbes unit tests)"
+      "result": "41 passed (including 13 TestFileWorkerHealthProbes unit tests)"
     },
     "downstream_health_monitor": {
       "command": "python3 -m pytest -q services/control-plane/bff/test_downstream_health_monitor.py",
