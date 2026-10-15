@@ -149,11 +149,11 @@ class OutputObserver:
             else:
                 if (self.prefix is not None
                         and line.startswith(self.prefix)
-                        and len(line) > 65536):
+                        and len(line.rstrip(b"\n")) > 65536):
                     raise TransportError("candidate receipt exceeds bound")
                 self._line(line)
             count += 1
-        if len(self.buffer) >= 65536 and b"\n" not in self.buffer:
+        if len(self.buffer) > 65536 and b"\n" not in self.buffer:
             is_candidate = (
                 self.prefix is not None
                 and not self.in_ordinary_line
