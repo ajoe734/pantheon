@@ -1,0 +1,26 @@
+{
+  "task_id": "DISTILL-TRANSIENT-DLQ-REDRIVE-20261015",
+  "tests": {
+    "command": "pytest services/source_ingestion/tests/test_distillation_worker.py test_distillation_controller.py test_distillation_queue_lifetime.py",
+    "head": "68 passed",
+    "base_source_with_new_tests": "4 failed (3 worker redrive, 1 controller recovery), 55 passed"
+  },
+  "design": {
+    "redrive": "DistillationJobQueue.redrive_transient_dead_letters: one BEGIN IMMEDIATE txn, only rows still dead_letter, attempts reset to 0, redrive_count/actor/note recorded, capped at 5 redrives per job; reasons must be Registry delivery errors with timeout/DNS/connection markers, others stay dead-lettered",
+    "trigger": "controller tick: only when unresolved dead letters exist and a read-only GET probe of the Registry gets an answer (404 counts); no new endpoint, no direct DB edit, same single queue object and connection lifetime",
+    "degraded": "unresolved permanent dead letters still make registry_sync degraded"
+  },
+  "pending_1268_finding": {
+    "cause": "claim_due constrains claims to the controller tenant via json_extract(source_versions.payload_json,'$.metadata.tenant_id') = state.tenant_id (L2-DESIRED-OWNER-READS-20261006). Pending rows whose committed source snapshot lacks or has a different metadata.tenant_id are intentionally never claimed, which matches rows enqueued 10-07/10-08 by source ingestion while newer done rows advanced. Not provable from code alone; hosted read-only query of distinct json_extract tenant_id over the pending rows confirms.",
+    "fix_in_declared_files": false,
+    "owner": "source_ingestion enqueue path (stamping metadata.tenant_id at admission) / coordinator decision on adopting unowned rows; deliberately not weakened here"
+  },
+  "hosted_action": "none; coordinator verifies after next accepted Root",
+  "tenant_scope_fix": {
+    "problem": "exact 864516a62 redrive had no tenant parameter: isolated fixture with tenant-dev and tenant-other transient DLQs redriven together (attempts 1->0, redrive_count 0->1, actor/resolved_at written for both)",
+    "fix": "redrive_transient_dead_letters(tenant_id=...) applies the claim_due source-version tenant EXISTS condition inside the same BEGIN IMMEDIATE txn; controller passes state.tenant_id. Unowned (no tenant) and foreign dead letters stay untouched; no data change, claim condition unchanged.",
+    "test": "TestTransientDeadLetterRedrive::test_tenant_scoped_redrive_leaves_foreign_and_unowned_untouched fails on 864516a62, passes after fix",
+    "verification": "/tmp/rv-venv pytest of the three distillation test files: 69 passed, exit 0 (on the fix commit's parent working tree + this change); other venvs lack asyncpg for one pre-existing controller test",
+    "hosted_action": "none; 1268 unowned pending rows deliberately not assigned to a tenant"
+  }
+}

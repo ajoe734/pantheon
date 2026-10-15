@@ -535,3 +535,79 @@ def test_failed_tick_publishes_failure_not_reconciled_proof(tmp_path, monkeypatc
         assert report["truth_level"] == "scheduled_tick"
         assert report["reason"].startswith("desired_read:")
         assert report["payload"]["error_stage"] == "desired_read"
+
+
+def test_controller_redrives_transient_dead_letters_after_registry_recovers(tmp_path, monkeypatch) -> None:
+    evidence_path = tmp_path / "source_evidence.jsonl"
+    job_queue_path = tmp_path / "job_queue.jsonl"
+    state_path = tmp_path / "controller_state.json"
+    record = _normalized_source("src-note-test-003", tenant_id="test")
+    evidence_path.write_text(
+        json.dumps({"record_type": "source_record", "payload": record.to_dict()}) + "\n",
+        encoding="utf-8",
+    )
+    config = DistillationControllerConfig(
+        database_url="postgresql://test:test@localhost:5432/test",
+        registry_url="http://mock-registry:8087",
+        interval_seconds=60,
+        max_ticks=1,
+        state_path=state_path,
+        alive_path=tmp_path / "alive",
+        job_queue_path=job_queue_path,
+        seed_store_path=tmp_path / "seeds.jsonl",
+        evidence_store_path=evidence_path,
+        source_dirs=[tmp_path],
+        max_attempts=1,
+    )
+    state = ControllerState(
+        controller_id="test-controller",
+        controller_name="test-distillation-controller",
+        environment="test",
+        tenant_id="test",
+        deployment={"git_sha": "test-sha"},
+    )
+    store = ControllerStateStore(state_path)
+    store.save(state)
+    registry = {"up": False, "entries": {}}
+
+    def get_entry(url, registry_id):
+        if not registry["up"]:
+            raise RuntimeError("Failed to query registry: timed out")
+        return registry["entries"].get(registry_id)
+
+    def register(url, payload):
+        metadata = dict(payload.get("metadata") or {})
+        if isinstance(payload.get("strategy_spec"), dict):
+            metadata.setdefault("strategy_spec", payload["strategy_spec"])
+        entry = {
+            **payload,
+            "artifact_type": "strategy_spec",
+            "artifact_state": "draft",
+            "lineage": {
+                "parent_registry_ids": None,
+                **dict(payload.get("lineage") or {}),
+                "source_strategy_spec_id": None,
+            },
+            "metadata": metadata,
+        }
+        entry.pop("strategy_spec", None)
+        entry.pop("source_digest", None)
+        registry["entries"][payload["registry_id"]] = {"entry": entry}
+        return {"entry": entry}
+
+    mod = "services.source_ingestion.distillation_controller"
+    monkeypatch.setattr(f"{mod}._get_registry_entry", get_entry)
+    monkeypatch.setattr(f"{mod}._register_strategy_spec_if_absent", register)
+
+    with pytest.raises(Exception, match="degraded"):
+        run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter())
+
+    # Registry outage persists: still degraded, nothing redriven.
+    with pytest.raises(Exception, match="degraded"):
+        run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter())
+
+    registry["up"] = True
+    res = run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter())
+    assert res["status"] == "success"
+    assert res["actual"]["outbox"]["dead_letter"] == 0
+    assert res["actual"]["synced_count"] == 1
