@@ -98,6 +98,9 @@ def _assert_alert_source_fails_closed(module, store, original: bytes) -> None:
         store.list_alert_handoffs()
 
     with pytest.raises(module.ReconciliationStoreError):
+        store.count_alert_handoffs()
+
+    with pytest.raises(module.ReconciliationStoreError):
         store.put_alert_handoff({"alert_id": "alert-new", "status": "sent"})
 
     surviving_bytes = store.alerts_path.read_bytes()
@@ -627,6 +630,9 @@ def test_postgres_store_owns_records_reports_worker_state_and_work_claims(
         def list_all(self):
             return list(self.records.values())
 
+        def count(self):
+            return len(self.records)
+
         def get(self, record_id):
             value = self.records.get(record_id)
             return dict(value) if value is not None else None
@@ -673,6 +679,11 @@ def test_postgres_store_owns_records_reports_worker_state_and_work_claims(
     assert store.get_drift_report("report-1", tenant_id="tenant-a") == report
     assert store.get_worker_state("state-1", tenant_id="tenant-a") == state
     assert claim["acquired"] is True
+    assert store.count_reconciliation_records() == 1
+    assert store.count_drift_reports() == 1
+    assert store.count_worker_states() == 1
+    assert store.count_evaluations() == 0
+    assert store.count_alert_handoffs() == 0
     assert not store.reconciliation_records_path.exists()
     assert not store.drift_reports_path.exists()
     assert not store.worker_states_path.exists()
@@ -717,6 +728,8 @@ def test_live_postgres_reconciliation_drift_store_loopback(tmp_path: Path) -> No
             {"evaluation_id": "eval-live-1", "tenant_id": "tenant-live", "status": "ok"}
         )
         assert store.get_evaluation("eval-live-1", tenant_id="tenant-live") == eval_rec
+        assert store.count_evaluations() == 1
+        assert store.count_alert_handoffs() == 0
 
         claim = store.claim_work(
             tenant_id="tenant-live",
@@ -735,4 +748,59 @@ def test_live_postgres_reconciliation_drift_store_loopback(tmp_path: Path) -> No
                 conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
         except Exception:
             pass
+
+
+def test_reconciliation_drift_store_counts_match_real_totals_and_bypass_full_list(
+    tmp_path: Path,
+) -> None:
+    module = _load_store_module()
+
+    # 1. JSON store contract: count returns real record totals
+    json_store = module.ReconciliationDriftStore(tmp_path / "json_data")
+    assert json_store.count_evaluations() == 0
+    assert json_store.count_alert_handoffs() == 0
+    assert json_store.count_reconciliation_records() == 0
+    assert json_store.count_drift_reports() == 0
+    assert json_store.count_worker_states() == 0
+
+    json_store.put_evaluation({"evaluation_id": "eval-1", "status": "ok"})
+    json_store.put_evaluation({"evaluation_id": "eval-2", "status": "warning"})
+    json_store.put_alert_handoff({"alert_id": "alert-1", "status": "sent"})
+    json_store.put_reconciliation_record({"record_id": "rec-1", "severity": "low"})
+    json_store.put_drift_report({"drift_report_id": "rep-1", "status": "open"})
+    json_store.put_worker_state({"state_id": "st-1", "status": "healthy"})
+
+    assert json_store.count_evaluations() == len(json_store.list_evaluations()) == 2
+    assert json_store.count_alert_handoffs() == len(json_store.list_alert_handoffs()) == 1
+    assert json_store.count_reconciliation_records() == len(json_store.list_reconciliation_records()) == 1
+    assert json_store.count_drift_reports() == len(json_store.list_drift_reports()) == 1
+    assert json_store.count_worker_states() == len(json_store.list_worker_states()) == 1
+
+    # 2. Postgres store contract: verify delegation to owner store count without list_all
+    call_log = []
+
+    class MockOwnerStore:
+        def __init__(self, *, table, **_kwargs):
+            self.table = table
+            self.records = {"eval-1": {"id": "eval-1"}, "eval-2": {"id": "eval-2"}}
+
+        def count(self):
+            call_log.append((self.table, "count"))
+            return len(self.records)
+
+        def list_all(self):
+            call_log.append((self.table, "list_all"))
+            return list(self.records.values())
+
+    with mock.patch.object(module, "PostgresJsonOwnerStore", MockOwnerStore):
+        pg_store = module.PostgresReconciliationDriftStore(
+            tmp_path / "pg_data",
+            dsn="postgresql://unused",
+        )
+        call_log.clear()
+
+        eval_count = pg_store.count_evaluations()
+        assert eval_count == 2
+        assert ("reconciliation_drift.drift_evaluations", "count") in call_log
+        assert ("reconciliation_drift.drift_evaluations", "list_all") not in call_log
 

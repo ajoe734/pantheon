@@ -66,6 +66,9 @@ class _FakeConnection:
                 return _FakeCursor([])
             removed = table_rows.pop(record_id)
             return _FakeCursor([(removed,)])
+        if normalized.startswith("SELECT COUNT(*)"):
+            count = len(self.rows.get(table, {}))
+            return _FakeCursor([(count,)])
         if normalized.startswith("SELECT PAYLOAD") and "PAYLOAD ->> 'INCIDENT_ID'" in normalized:
             incident_id = str(params[0])
             matching = [
@@ -731,3 +734,39 @@ def test_wave3_postgres_builders_are_env_gated():
         "reconciliation_drift",
     ):
         assert table in ddl
+
+
+def test_postgres_json_owner_store_count_aggregates_without_payload_hydration_or_sorting():
+    from services.foundation.postgres_json_store import PostgresJsonOwnerStore
+
+    fake_psycopg = _fake_psycopg()
+    with mock.patch.dict(sys.modules, {"psycopg": fake_psycopg}):
+        store = PostgresJsonOwnerStore(
+            dsn="postgresql://test:test@localhost:5432/test",
+            table="reconciliation_drift.drift_evaluations",
+            owner_service="reconciliation-drift-svc",
+            bootstrap=False,
+        )
+        assert store.count() == 0
+
+        store.put("rec-1", {"evaluation_id": "rec-1", "large_payload": "x" * 1000})
+        store.put("rec-2", {"evaluation_id": "rec-2", "large_payload": "y" * 1000})
+
+        _FakeConnection.statements.clear()
+        total = store.count()
+        assert total == 2
+
+        statements = list(_FakeConnection.statements)
+        assert len(statements) == 1
+        count_sql = statements[0]
+        assert "SELECT COUNT(*)" in count_sql.upper()
+        assert "PAYLOAD" not in count_sql.upper()
+        assert "ORDER BY" not in count_sql.upper()
+
+        def _failing_execute(sql, params=()):
+            raise RuntimeError("Postgres connection failure")
+
+        conn = fake_psycopg.connect("postgresql://test:test@localhost:5432/test")
+        with mock.patch.object(conn, "execute", side_effect=_failing_execute):
+            with pytest.raises(RuntimeError, match="Postgres connection failure"):
+                store.count()
