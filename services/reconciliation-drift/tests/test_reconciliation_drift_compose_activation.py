@@ -31,6 +31,10 @@ def test_compose_wires_reconciliation_drift_as_derived_read_model() -> None:
     assert drift["environment"]["PANTHEON_TELEMETRY_API_URL"] == "http://telemetry:8083"
     assert drift["environment"]["PANTHEON_LINEAGE_READ_URL"] == "http://lineage-read:8094"
     assert drift["environment"]["PANTHEON_RUNTIME_MANAGER_URL"] == "http://runtime-manager:8081"
+    assert (
+        drift["environment"]["PANTHEON_RUNTIME_MANAGER_TOKEN"]
+        == "runtime-control-internal"
+    )
     assert drift["environment"]["PANTHEON_INCIDENTS_API_URL"] == "http://incidents:8090"
     assert "reconciliation-drift-data:/data/reconciliation-drift" in drift["volumes"]
     assert drift["ports"] == ["${RECONCILIATION_DRIFT_PORT:-18102}:8102"]
