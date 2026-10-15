@@ -848,11 +848,11 @@ register_fastapi_health_routes(
         },
     },
     metrics=lambda: {
-        "evaluation_count": len(store.list_evaluations()),
-        "alert_count": len(store.list_alert_handoffs()),
-        "reconciliation_record_count": len(store.list_reconciliation_records()),
-        "drift_report_count": len(store.list_drift_reports()),
-        "worker_state_count": len(store.list_worker_states()),
+        "evaluation_count": store.count_evaluations(),
+        "alert_count": store.count_alert_handoffs(),
+        "reconciliation_record_count": store.count_reconciliation_records(),
+        "drift_report_count": store.count_drift_reports(),
+        "worker_state_count": store.count_worker_states(),
     },
     details=lambda: {
         "data_dir": DATA_DIR,
@@ -867,17 +867,14 @@ register_fastapi_health_routes(
 
 @app.get("/health")
 def health() -> Dict[str, Any]:
-    evaluations = store.list_evaluations()
-    alerts = store.list_alert_handoffs()
-    records = store.list_reconciliation_records()
     return {
         "status": "ok",
         "service": "reconciliation-drift",
         "data_dir": DATA_DIR,
-        "evaluation_count": len(evaluations),
-        "alert_handoff_count": len(alerts),
-        "reconciliation_record_count": len(records),
-        "drift_report_count": len(store.list_drift_reports()),
+        "evaluation_count": store.count_evaluations(),
+        "alert_handoff_count": store.count_alert_handoffs(),
+        "reconciliation_record_count": store.count_reconciliation_records(),
+        "drift_report_count": store.count_drift_reports(),
         "telemetry_api_url": os.getenv("PANTHEON_TELEMETRY_API_URL", ""),
         "lineage_read_url": os.getenv("PANTHEON_LINEAGE_READ_URL", ""),
         "runtime_manager_url": os.getenv("PANTHEON_RUNTIME_MANAGER_URL", ""),

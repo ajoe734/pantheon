@@ -373,6 +373,26 @@ class PostgresJsonOwnerStore:
                 records.append(decoded)
         return records
 
+    def count(self, *, conn: Optional[Any] = None) -> int:
+        """Count the number of rows in this owner-store table without hydrating payloads."""
+        with self._use_conn(conn) as conn:
+            cursor = conn.execute(f"SELECT COUNT(*) FROM {self.table}")
+            row = self._fetch_one(cursor)
+        if row is None:
+            return 0
+        if isinstance(row, tuple):
+            value = row[0]
+        elif isinstance(row, dict):
+            value = row.get("count")
+            if value is None and row:
+                value = next(iter(row.values()))
+        else:
+            try:
+                value = row[0]
+            except (TypeError, KeyError, IndexError):
+                value = getattr(row, "count", 0)
+        return int(value or 0)
+
     def lock_table(self, *, conn: Any) -> None:
         """Acquire this table's SHARE ROW EXCLUSIVE lock on its own, with no insert.
 
