@@ -640,6 +640,72 @@ def test_canonical_dataset_validation_and_fail_closed_and_evidence() -> None:
     assert complete.status_code == 409
     assert "evaluation governance gate is not passed" in complete.text
     assert persona_mutations == []
+    ready_async = client.get("/readyz")
+    assert ready_async.status_code == 200
+    assert ready_async.json()["dependencies"]["functional"]["status"] == "ok"
+    assert ready_async.json()["dependencies"]["functional"]["failure_count"] == 0
+
+    session_id_sync = client.post(
+        "/api/training/sessions",
+        json={
+            "persona_id": "persona-alpha",
+            "objective": "Test sync fail closed validation",
+            "created_at": "2026-04-28T22:30:00Z",
+        },
+    ).json()["session_id"]
+    seed_changed_supported_controls(module, session_id_sync)
+    sync_preview_resp = client.post(
+        f"/api/training/sessions/{session_id_sync}/preview",
+        json={"mode": "refresh"},
+    )
+    assert sync_preview_resp.status_code == 201, sync_preview_resp.text
+    sync_preview = sync_preview_resp.json()
+    assert sync_preview["validation_status"] == "failed"
+    assert sync_preview["evaluation_proof"]["status"] == "failed"
+    assert sync_preview["evaluation_proof"]["governance_gate_state"] == "failed"
+    complete_sync = client.post(f"/api/training/sessions/{session_id_sync}/complete")
+    assert complete_sync.status_code == 409
+    assert "evaluation governance gate is not passed" in complete_sync.text
+    assert persona_mutations == []
+    ready_sync = client.get("/readyz")
+    assert ready_sync.status_code == 200
+    assert ready_sync.json()["dependencies"]["functional"]["status"] == "ok"
+    assert ready_sync.json()["dependencies"]["functional"]["failure_count"] == 0
+
+    test_tenant_id = job["tenant_id"]
+    module.store.put_functional_result(
+        "preview_evaluation",
+        test_tenant_id,
+        {
+            "status": "failed",
+            "checked_at": "2026-10-15T20:03:12Z",
+            "actor_service": "training-session-preview-worker",
+            "detail": {
+                "evaluation_proof_ref": preview["evaluation_proof"]["proof_ref"],
+                "governance_gate_state": "failed",
+                "job_id": job["job_id"],
+                "session_id": session_id,
+            },
+        },
+    )
+    ready_reconciled = client.get("/readyz")
+    assert ready_reconciled.status_code == 200
+    assert ready_reconciled.json()["dependencies"]["functional"]["status"] == "ok"
+    assert ready_reconciled.json()["dependencies"]["functional"]["failure_count"] == 0
+
+    module.store.put_functional_result(
+        "preview_evaluation",
+        test_tenant_id,
+        {
+            "status": "failed",
+            "checked_at": "2026-10-15T20:05:00Z",
+            "actor_service": "training-session",
+            "detail": {
+                "session_id": session_id,
+                "error_code": "preview_evidence_unavailable",
+            },
+        },
+    )
     degraded = client.get("/readyz")
     assert degraded.status_code == 503
     assert degraded.json()["dependencies"]["functional"]["status"] == "degraded"

@@ -445,9 +445,43 @@ PERSISTENCE_POSTURE = require_persistence_posture("training-session")
 store = build_training_session_store(_data_dir())
 
 
+def _reconcile_functional_result(result: Dict[str, Any]) -> Dict[str, Any]:
+    status = str(result.get("status") or "").lower()
+    if status in {"ok", "passed", "completed"}:
+        return result
+    operation = str(result.get("operation") or "").lower()
+    if operation == "preview_evaluation":
+        detail = result.get("detail") or {}
+        if not detail.get("error_code"):
+            job_id = detail.get("job_id")
+            session_id = detail.get("session_id")
+            is_completed = False
+            if job_id:
+                job = store.get_preview_job(job_id)
+                if job and str(job.get("status") or "").lower() == "completed" and job.get("evaluation_proof_ref"):
+                    is_completed = True
+            if not is_completed and session_id:
+                bundle = store.get_preview_bundle(session_id)
+                if bundle and (bundle.get("preview") or {}).get("evaluation_proof"):
+                    is_completed = True
+            if not is_completed and detail.get("evaluation_proof_ref") and detail.get("governance_gate_state") in {"passed", "failed"}:
+                is_completed = True
+
+            if is_completed:
+                reconciled = dict(result)
+                reconciled["status"] = "ok"
+                try:
+                    tenant_id = str(result.get("tenant_id") or "tenant-dev")
+                    store.put_functional_result(operation, tenant_id, reconciled)
+                except Exception:
+                    pass
+                return reconciled
+    return result
+
+
 def _functional_health() -> Dict[str, Any]:
     try:
-        results = store.list_functional_results()
+        raw_results = store.list_functional_results()
     except Exception as exc:  # noqa: BLE001 - health must degrade, never crash.
         return {
             "status": "error",
@@ -455,6 +489,7 @@ def _functional_health() -> Dict[str, Any]:
             "failure_count": 1,
             "error": type(exc).__name__,
         }
+    results = [_reconcile_functional_result(res) for res in raw_results]
     failures = [
         result
         for result in results
@@ -1761,19 +1796,14 @@ def refresh_preview(session_id: str, body: RefreshPreviewBody) -> Dict[str, Any]
             detail={"session_id": session_id, "error_code": "preview_evidence_unavailable"},
         )
         raise HTTPException(status_code=503, detail=f"preview evidence unavailable: {exc}") from exc
+    proof = preview.get("evaluation_proof") or {}
     _record_functional_result(
         "preview_evaluation",
-        status=(
-            "ok"
-            if (preview.get("evaluation_proof") or {}).get("governance_gate_state")
-            == "passed"
-            else "failed"
-        ),
+        status="ok",
         detail={
             "session_id": session_id,
-            "evaluation_proof_ref": (
-                preview.get("evaluation_proof") or {}
-            ).get("proof_ref"),
+            "evaluation_proof_ref": proof.get("proof_ref"),
+            "governance_gate_state": proof.get("governance_gate_state"),
         },
     )
     return preview
@@ -2205,11 +2235,7 @@ def run_preview_job(job_id: str, body: Optional[RunPreviewJobBody] = None) -> Di
     completed_job = store.mutate_preview_job(job_id, complete)
     _record_functional_result(
         "preview_evaluation",
-        status=(
-            "ok"
-            if completed_job.get("governance_gate_state") == "passed"
-            else "failed"
-        ),
+        status="ok",
         detail={
             "job_id": job_id,
             "session_id": session_id,
