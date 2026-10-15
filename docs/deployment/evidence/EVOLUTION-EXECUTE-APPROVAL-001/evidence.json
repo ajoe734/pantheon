@@ -46,5 +46,32 @@
     "Governance human vote from Evolution /approve",
     "Downstream runtime rollback authorization"
   ],
-  "configuration_blocker": "docker-compose.yml omits EVOLUTION_GOVERNANCE_BASE_URL, EVOLUTION_GOVERNANCE_SERVICE_TOKEN(_FILE), and timeout wiring for both evolution and evolution-dispatch-worker. File is outside task artifacts; Human/Ops must add its scope before configuration repair. Missing configuration fails closed; deployment is unverified."
+  "configuration_blocker": "docker-compose.yml omits EVOLUTION_GOVERNANCE_BASE_URL, EVOLUTION_GOVERNANCE_SERVICE_TOKEN(_FILE), and timeout wiring for both evolution and evolution-dispatch-worker. File is outside task artifacts; Human/Ops must add its scope before configuration repair. Missing configuration fails closed; deployment is unverified.",
+  "sweep_read_cost_followup_20261015": {
+    "task_id": "EVOLUTION-SWEEP-READ-COST-20261015",
+    "change": "EvolutionDecisionStore skips JSON reload when inode/size/mtime of the durable file are unchanged (checked under the existing thread/flock lock; writes still reload under the exclusive lock); reads copy only matching records via _select; new find_by_linked_incident replaces sweep list_all scan; target_type compared without to_dict().",
+    "commands": [
+      {
+        "cmd": "pytest -q services/control-plane/governance/test_evolution_decision.py services/evolution/test_evolution_service.py",
+        "result": "150 passed, 0 skipped, exit 0 (python /tmp/rv venv)"
+      },
+      {
+        "cmd": "git diff --check",
+        "result": "exit 0"
+      }
+    ],
+    "isolated_comparison": {
+      "data": "fresh private copies of immutable baseline decisions.json/incidents.json (172 decisions/231 open incidents); no network, no original owner writes",
+      "before_head": {
+        "elapsed_s": 29.328,
+        "cpu_s": 29.31
+      },
+      "after": {
+        "elapsed_s": 0.208,
+        "cpu_s": 0.199
+      },
+      "same_result": "scanned 231, created 1, existing 172, cooldown_blocked 58, skipped 0 in both"
+    },
+    "limits": "Isolated timing is not hosted acceptance. Scheduler 30s and health 5s timeouts unchanged; release-owner deployment verification remains outstanding. Original approval/delivery evidence untouched."
+  }
 }
