@@ -2907,3 +2907,106 @@ def test_same_window_replay_preserves_accepted_candidate_and_metrics() -> None:
 
 
 
+
+
+def _retired_binding(binding_id: str, retired_at: str) -> dict:
+    return {"binding_id": binding_id, "status": "retired", "retired_at": retired_at}
+
+
+def test_scheduled_tick_skips_binding_retired_before_tick() -> None:
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        summary = _healthy_runtime_summary(state="retired")
+        with (
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary]),
+            mock.patch.object(
+                svc,
+                "_authoritative_runtime_binding",
+                return_value=_retired_binding(summary["binding_id"], "2000-01-01T00:00:00Z"),
+            ),
+            mock.patch.object(svc, "_classify_drift_report_incident") as classify,
+        ):
+            response = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": "tick-retired-001"},
+            )
+
+        payload = response.json()
+        assert payload["status"] == "ok"
+        assert payload["retired_binding_ids"] == [summary["binding_id"]]
+        assert payload["incident_delivery_errors"] == []
+        assert payload["evaluated_binding_count"] == 0
+        classify.assert_not_called()
+
+
+def test_scheduled_tick_keeps_incident_when_observed_before_retired_at() -> None:
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        summary = _healthy_runtime_summary(queue_lag_ms=20_000)
+        with (
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary]),
+            mock.patch.object(
+                svc,
+                "_authoritative_runtime_binding",
+                return_value=_retired_binding(summary["binding_id"], "2999-01-01T00:00:00Z"),
+            ),
+            mock.patch.object(
+                svc,
+                "_classify_drift_report_incident",
+                return_value={"incident_id": "inc-before-retire-001"},
+            ) as classify,
+        ):
+            payload = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": "tick-before-retire-001"},
+            ).json()
+
+        assert payload["status"] == "critical"
+        assert payload["retired_binding_ids"] == []
+        assert payload["incident_ids"] == ["inc-before-retire-001"]
+        assert classify.call_count == 1
+
+
+def test_scheduled_retired_at_rejection_is_terminal_and_not_a_failure() -> None:
+    from fastapi.testclient import TestClient
+
+    detail = (
+        "incident created_at '2026-10-15T10:09:29Z' is after RuntimeBinding "
+        "'rb-1' retired_at '2026-10-15T10:09:20Z'"
+    )
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        summary = _healthy_runtime_summary(queue_lag_ms=20_000)
+        with (
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary]),
+            mock.patch.object(svc, "_authoritative_runtime_binding", return_value=None),
+            mock.patch.object(
+                svc,
+                "_classify_drift_report_incident",
+                side_effect=svc.HTTPException(status_code=502, detail=detail),
+            ) as classify,
+        ):
+            first = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": "tick-rejected-001"},
+            ).json()
+            replay = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": "tick-rejected-001"},
+            ).json()
+
+        assert first["status"] == "critical"
+        assert first["incident_delivery_errors"] == []
+        assert replay["status"] == "critical"
+        assert classify.call_count == 1
+        evaluation = svc.store.get_evaluation(
+            svc._tick_evaluation_id("tick-rejected-001", summary["binding_id"])
+        )
+        assert evaluation["incident_delivery"]["status"] == "terminal_rejected"

@@ -1,0 +1,12 @@
+{
+  "task_id": "RECON-RETIRED-BINDING-INCIDENTS-20261015",
+  "base": "09eb4546b",
+  "change": "Scheduled reconciliation reads RuntimeBinding from runtime-manager (same source as incident validation); bindings retired at/before the observation are skipped and reported in retired_binding_ids; incident rejections 'created_at is after RuntimeBinding retired_at' become terminal_rejected (no retry, not a tick failure). Incident validation and retire flow untouched.",
+  "tests": {
+    "command": "pytest services/reconciliation-drift/tests (ignoring compose_activation and telemetry_client_auth: missing deps in local venv)",
+    "result": "129 passed, 1 skipped, 4 failed",
+    "preexisting_failures": "4 scheduler tests fail identically on base: ModuleNotFoundError asyncpg (services/loop-control/store.py)",
+    "new_tests_fail_on_base": true
+  },
+  "hosted_verification": "not performed in worker; requires deploy"
+}

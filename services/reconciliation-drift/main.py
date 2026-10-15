@@ -2547,6 +2547,42 @@ def _scheduled_drift_report(
     }
 
 
+def _authoritative_runtime_binding(binding_id: str) -> Dict[str, Any] | None:
+    """Read one RuntimeBinding from runtime-manager, the source incident validation uses.
+
+    Returns None when runtime-manager is not configured or unreachable so callers
+    keep their pre-existing behaviour instead of guessing at lifecycle state.
+    """
+    if not os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip():
+        return None
+    try:
+        from runtime_manager_client import RuntimeManagerClient  # type: ignore
+
+        binding = RuntimeManagerClient(require_remote=True).get(binding_id)
+    except Exception:  # noqa: BLE001 - lifecycle lookup is best-effort
+        logging.getLogger(__name__).warning(
+            "runtime-manager binding lookup failed for %s", binding_id, exc_info=True
+        )
+        return None
+    return dict(binding) if isinstance(binding, dict) else None
+
+
+def _binding_retired_before(binding: Dict[str, Any] | None, observed_at: str) -> bool:
+    """True when the authoritative binding is retired and observed_at is not before retired_at."""
+    if not binding:
+        return False
+    retired_at = _strict_lifecycle_datetime(binding.get("retired_at"))
+    if retired_at is None:
+        return str(binding.get("status") or "").strip().lower() == "retired"
+    observed = _strict_lifecycle_datetime(observed_at)
+    return observed is None or observed > retired_at
+
+
+def _is_retired_binding_rejection(detail: Any) -> bool:
+    text = str(detail)
+    return "is after RuntimeBinding" in text and "retired_at" in text
+
+
 def _dispatch_scheduled_drift_report(report: Dict[str, Any], *, timeout_seconds: float = 5.0) -> Dict[str, Any]:
     stored = store.put_drift_report(report)
     result: Dict[str, Any] = {
@@ -2562,6 +2598,12 @@ def _dispatch_scheduled_drift_report(report: Dict[str, Any], *, timeout_seconds:
     try:
         incident = _classify_drift_report_incident(stored, timeout_seconds=timeout_seconds)
     except HTTPException as exc:
+        if _is_retired_binding_rejection(exc.detail):
+            # Retirement is governance, not a fault: terminal, never retried.
+            result["status"] = "terminal_rejected"
+            result["reason"] = "runtime_binding_retired"
+            result["detail"] = exc.detail
+            return result
         result["status"] = "retryable_error"
         result["error"] = {"status_code": exc.status_code, "detail": exc.detail}
         return result
@@ -2742,6 +2784,7 @@ def _execute_scheduled_reconcile(
     lifecycle_retryable_errors: List[Dict[str, Any]] = []
     lifecycle_terminal_rejections: List[Dict[str, Any]] = []
     lifecycle_ineligible_binding_ids: List[str] = []
+    retired_binding_ids: List[str] = []
     dispatch_incidents = False if body.lifecycle_only else bool(body.dispatch_incidents)
     incident_candidates: List[tuple[Dict[str, Any], Dict[str, Any], List[str]]] = []
 
@@ -2761,6 +2804,10 @@ def _execute_scheduled_reconcile(
         binding_id = _summary_binding_id(summary)
         runtime_id = str(summary.get("runtime_id") or "").strip()
         if not binding_id:
+            continue
+        if _binding_retired_before(_authoritative_runtime_binding(binding_id), timestamp):
+            retired_binding_ids.append(binding_id)
+            lifecycle_ineligible_binding_ids.append(binding_id)
             continue
 
         evaluation_id = _tick_evaluation_id(tick_id, binding_id)
@@ -2904,6 +2951,8 @@ def _execute_scheduled_reconcile(
             if incident_id:
                 incident_ids.append(incident_id)
             continue
+        if isinstance(delivery, dict) and delivery.get("status") == "terminal_rejected":
+            continue
         delivery_result = _dispatch_scheduled_drift_report(
             report_to_dispatch,
             timeout_seconds=dispatch_timeout(),
@@ -2929,6 +2978,8 @@ def _execute_scheduled_reconcile(
         tick_status = "failure"
     elif not created_evaluation_ids and skipped_binding_ids:
         tick_status = _worst_status(evaluation_statuses)
+    elif not created_evaluation_ids and retired_binding_ids:
+        tick_status = "ok"
     elif not created_evaluation_ids:
         tick_status = "degraded"
 
@@ -2948,6 +2999,7 @@ def _execute_scheduled_reconcile(
         "lifecycle_retryable_errors": lifecycle_retryable_errors,
         "lifecycle_terminal_rejections": lifecycle_terminal_rejections,
         "lifecycle_ineligible_binding_ids": list(dict.fromkeys(lifecycle_ineligible_binding_ids)),
+        "retired_binding_ids": retired_binding_ids,
         "incident_dispatch_enabled": dispatch_incidents,
         "telemetry_summaries_fetched": len(summaries),
         "triggered_at": timestamp,
