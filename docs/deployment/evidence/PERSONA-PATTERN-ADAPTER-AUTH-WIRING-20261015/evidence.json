@@ -1,0 +1,17 @@
+{
+  "task_id": "PERSONA-PATTERN-ADAPTER-AUTH-WIRING-20261015",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "scope": "source-only; no VM access, no real provider/Pattern call, no deployment",
+  "baseline": "Original900s Pattern cycle: telemetry GET 200, Persona structured-adapter POST 401, Pattern 503 (provider sent Persona inbound token; adapter expects PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN). Retained as immutable original evidence.",
+  "changes": [
+    "services/persona/write_owner.py: OpenClawReflectionProvider token = explicit ctor arg or PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN; no Persona-token fallback; missing token raises at reflect() only",
+    "docker-compose.yml: persona service gets existing PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN reference (no new setting, no hardcoded value)",
+    "tests: real provider transport (patched urlopen) with distinct persona/adapter tokens; missing-credential failure; explicit injection; pattern-review persistence/dedupe"
+  ],
+  "verification": {
+    "command": "python -m pytest services/persona/test_trade_reflection_owner.py services/persona/test_trade_pattern_review.py -q",
+    "result": "32 passed"
+  },
+  "not_verified": "Hosted same-version qualification, deployment and natural 900s Pattern verification are Root-owned; source completion is not hosted provider acceptance."
+}
