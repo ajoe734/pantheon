@@ -1315,20 +1315,35 @@ def _model_authority(*, tenant_id: str = "tenant-test", **artifact_kwargs) -> di
 
 def _create_model_session(module, client: TestClient, persona: dict | None, persona_id: str | None = None):
     """Create through the service, serving ``persona`` from the owner readback it performs itself."""
-    env = {"TRAINING_SESSION_PERSONA_READBACK_URL_TEMPLATE": "http://persona.test/personas/{persona_id}"}
+    env = {"TRAINING_SESSION_PERSONA_READBACK_URL_TEMPLATE": "http://persona:8002/api/personas/{persona_id}/training-target"}
+    requested: list[str] = []
+
+    def _owner_get(_transport, _method, url, **_kwargs):
+        requested.append(url)
+        if url.endswith("/training-target"):
+            # Real training-target shape: generation/controller state, no model metadata.
+            return {"persona_id": persona_id or _FX_PERSONA_ID, "generation": 1, "controller": {}}
+        return {"persona": persona}
+
     with mock.patch.dict(os.environ, env), \
             mock.patch.object(module, "_persona_authority_token", return_value="tok"), \
-            mock.patch.object(module, "_request_json_object", return_value={"persona": persona}):
-        return client.post(
-            "/api/training/sessions",
-            json={
-                "persona_id": persona_id or _FX_PERSONA_ID,
-                "objective": "Teach the canonical momentum model",
-                "created_at": "2026-04-28T22:00:00Z",
-                # A caller-carried model is ignored: only the owner readback selects it.
-                "model_authority": {"artifact_id": "forged", "strategy_artifact": {"parameters": {"lookback_bars": 9}}},
-            },
-        )
+            mock.patch.object(module, "_request_json_object", side_effect=_owner_get):
+        response = _post_create_model_session(client, persona_id)
+    assert requested and not requested[0].endswith("/training-target"), requested
+    return response
+
+
+def _post_create_model_session(client: TestClient, persona_id: str | None):
+    return client.post(
+        "/api/training/sessions",
+        json={
+            "persona_id": persona_id or _FX_PERSONA_ID,
+            "objective": "Teach the canonical momentum model",
+            "created_at": "2026-04-28T22:00:00Z",
+            # A caller-carried model is ignored: only the owner readback selects it.
+            "model_authority": {"artifact_id": "forged", "strategy_artifact": {"parameters": {"lookback_bars": 9}}},
+        },
+    )
 
 
 def test_model_bound_session_controls_come_from_artifact_mutation_surface() -> None:

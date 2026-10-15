@@ -428,12 +428,17 @@ def _persona_model(persona_id: str, tenant_id: str) -> Optional[Dict[str, Any]]:
 
     if not str(os.getenv("TRAINING_SESSION_PERSONA_READBACK_URL_TEMPLATE") or "").strip():
         return None
+    # The configured readback is the shared ``.../training-target`` contract, which
+    # carries generation/controller state only; the approved model lives on the
+    # Persona owner's own GET, the same base without that suffix.
     url = _persona_target_url(
         "TRAINING_SESSION_PERSONA_READBACK_URL_TEMPLATE",
         persona_id=persona_id,
         tenant_id=tenant_id,
         session_id="",
     )
+    if url.rstrip("/").endswith("/training-target"):
+        url = url.rstrip("/")[: -len("/training-target")]
     payload = _request_json_object(
         UrllibPersonaTargetTransport(),
         "GET",

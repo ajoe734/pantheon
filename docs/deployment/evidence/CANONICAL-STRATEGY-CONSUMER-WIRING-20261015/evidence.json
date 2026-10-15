@@ -4,7 +4,7 @@
   "scope": "source only; no VM, provider, deployment, queue, store, token, or user-artifact mutation",
   "model_authority": {
     "single_authority": "Persona metadata.provisioning_authoritative_readback.runtime_binding -> existing ArtifactLoader.load_exact -> validate_strategy_artifact, performed at each owner boundary that reads the Persona itself",
-    "training_owner_boundary": "services/training-session/main.py::_persona_model reads the Persona through the service's existing TRAINING_SESSION_PERSONA_READBACK_URL_TEMPLATE/token/transport; the BFF forwards nothing (router.py and persona_training.py are unchanged) and a caller-carried model_authority body field is ignored",
+    "training_owner_boundary": "services/training-session/main.py::_persona_model reads the Persona owner GET (the configured TRAINING_SESSION_PERSONA_READBACK_URL_TEMPLATE with its shared /training-target suffix removed, because training-target carries generation/controller state, not model metadata) using the service's existing token/transport; the BFF forwards nothing (router.py and persona_training.py are unchanged) and a caller-carried model_authority body field is ignored",
     "research_owner_boundary": "BFF AgoraResearchService._freeze_model_authority reads Spec entry.metadata.persona_id, the trusted Persona, then load_exact; research orchestrator uses only the saved run's model after checking it against its frozen strategy_artifact_checksum",
     "no_new_global_resolver_schema_reverify_fixture_endpoint_setting_or_approval_mechanism": true,
     "no_active_binding_prerequisite": "valid approved immutable model is readable for analysis regardless of binding status; tenant, persona, artifact identity/checksum and execution mode still enforced by load_exact"
