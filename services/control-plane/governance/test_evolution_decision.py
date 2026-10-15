@@ -531,6 +531,58 @@ class TestEvolutionDecisionStore(unittest.TestCase):
                 "First writer committed a reviewed rationale.",
             )
 
+    def test_reads_skip_unchanged_reload_and_copy_only_returned_records(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "decisions.json")
+            store = EvolutionDecisionStore(path)
+            store.put(make_decision())
+            other = make_decision(
+                decision_id="evo-002",
+                target_id="artifact-002",
+                linked_postmortem_id=None,
+                linked_incident_id="legacy-inc",
+            )
+            store.put(other)
+
+            with patch.object(
+                EvolutionDecision, "from_dict", wraps=EvolutionDecision.from_dict
+            ) as from_dict:
+                for _ in range(5):
+                    found = store.find_by_target(
+                        EvolutionTargetType.CANDIDATE_ARTIFACT, "artifact-002"
+                    )
+                    linked = store.find_by_linked_incident("legacy-inc")
+                self.assertEqual([d.decision_id for d in found], ["evo-002"])
+                self.assertEqual([d.decision_id for d in linked], ["evo-002"])
+                # Unchanged durable file: no reload; copies only for matches.
+                self.assertEqual(from_dict.call_count, 10)
+
+    def test_reads_see_other_owner_writes_after_cached_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "decisions.json")
+            reader = EvolutionDecisionStore(path)
+            writer = EvolutionDecisionStore(path)
+            writer.put(make_decision())
+            self.assertIsNotNone(reader.get("evo-001"))
+            self.assertEqual(reader.find_by_linked_incident("inc-002"), [])
+
+            writer.put(
+                make_decision(
+                    decision_id="evo-002",
+                    target_id="artifact-002",
+                    linked_postmortem_id=None,
+                    linked_incident_id="inc-002",
+                )
+            )
+            self.assertEqual(
+                [d.decision_id for d in reader.find_by_linked_incident("inc-002")],
+                ["evo-002"],
+            )
+            self.assertEqual(
+                reader.find_by_linked_incident("inc-002", tenant_id="other-tenant"),
+                [],
+            )
+
 
 class TestAuditEvent(unittest.TestCase):
     def test_audit_event_uses_latest_actor(self):
