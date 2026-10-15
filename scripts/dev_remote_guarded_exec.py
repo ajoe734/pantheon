@@ -103,6 +103,8 @@ class OutputObserver:
         self.eof = False
         self.receipt = None
         self.pending_receipt = None
+        self.prefix = getattr(observer, "prefix", getattr(observer, "PREFIX", None))
+        self.in_ordinary_line = False
         os.set_blocking(fd, False)
 
     def _line(self, line: bytes) -> None:
@@ -139,17 +141,36 @@ class OutputObserver:
         count = 0
         while b"\n" in self.buffer and count < 64 and len(self.forward) < 65536:
             index = self.buffer.index(b"\n")
-            if index > 65536:
-                raise TransportError("stdout line exceeds bound")
-            self._line(bytes(self.buffer[:index + 1]))
+            line = bytes(self.buffer[:index + 1])
             del self.buffer[:index + 1]
+            if self.in_ordinary_line:
+                self.forward.extend(line)
+                self.in_ordinary_line = False
+            else:
+                if (self.prefix is not None
+                        and line.startswith(self.prefix)
+                        and len(line) > 65536):
+                    raise TransportError("candidate receipt exceeds bound")
+                self._line(line)
             count += 1
-        if len(self.buffer) > 65536:
-            raise TransportError("stdout line exceeds bound")
+        if len(self.buffer) >= 65536 and b"\n" not in self.buffer:
+            is_candidate = (
+                self.prefix is not None
+                and not self.in_ordinary_line
+                and self.buffer.startswith(self.prefix)
+            )
+            if is_candidate:
+                raise TransportError("candidate receipt exceeds bound")
+            chunk_size = max(0, min(len(self.buffer), 65536 - len(self.forward)))
+            if chunk_size > 0:
+                self.forward.extend(self.buffer[:chunk_size])
+                del self.buffer[:chunk_size]
+                self.in_ordinary_line = True
         if self.eof and self.buffer and b"\n" not in self.buffer:
             # An unterminated tail may be forwarded, but is not a receipt frame.
             self.forward.extend(self.buffer)
             self.buffer.clear()
+            self.in_ordinary_line = False
 
     @property
     def done(self) -> bool:

@@ -150,5 +150,24 @@
       "bash -n scripts/deploy_nonprod_vm.sh",
       "git diff --check"
     ]
+  },
+  "stdout_line_forwarding_followup": {
+    "task_id": "DEV-STDOUT-LINE-FORWARDING-20261014",
+    "root_failure_reference": "Root38627568661 step 19 failed 20:24:08Z at dev_remote_guarded_exec.py:143 (transport/contract/75): stdout line index > 65536 TransportError from Codex cf24df3552 aborting ordinary stdout forwarding when log lines exceed 64KiB.",
+    "change": "Updated OutputObserver in scripts/dev_remote_guarded_exec.py to forward ordinary stdout in bounded chunks with backpressure, without treating ordinary line length or unterminated logs as deployment failures; preserved candidate receipt size/format bounds and failure on oversized candidate receipts by inspecting candidate prefix only when present and tracking ordinary line fragments; added prefix attribute to CandidateReceiptObserver in scripts/dev_candidate_receipt.py; adjusted ordinary-long-output test in scripts/test_dev_remote_guarded_exec.py to assert correct forwarding.",
+    "source_commit": "this task branch (DEV-STDOUT-LINE-FORWARDING-20261014); see git history",
+    "historical_note": "Prior ordinary x*70000 fatal assertion is corrected to verified forwarding; candidate receipt size bounds and malformed receipt negative checks are retained.",
+    "hosted_acceptance_status": "not run by this source task; final deployment and hosted acceptance belong to the existing parent.",
+    "distinction": {
+      "source_local_repair": "Repaired OutputObserver ordinary line forwarding and candidate boundary in transport scripts; validated via pytest -q scripts/test_dev_remote_guarded_exec.py scripts/test_dev_candidate_receipt.py and git diff --check",
+      "hosted_release": "Hosted deployment and VM operations belong to the existing parent workflow; source worker does not touch the VM"
+    },
+    "commands": [
+      {
+        "command": "pytest -q scripts/test_dev_remote_guarded_exec.py scripts/test_dev_candidate_receipt.py",
+        "result": "160 passed"
+      },
+      "git diff --check"
+    ]
   }
 }
