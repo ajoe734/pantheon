@@ -35,5 +35,32 @@
       "bash -n scripts/deploy_nonprod_vm.sh"
     ],
     "result": "passed: compose activation (2 passed), store tests (27 passed, 1 skipped for missing TEST_DATABASE_URL), deploy vm wiring test (1 passed), deploy vm dry run (1 passed), deploy script syntax check (passed)."
+  },
+  "recon_health_counts_followup": {
+    "task_id": "RECON-HEALTH-COUNTS-20261015",
+    "summary": "Read reconciliation health counts without hydrating owner records via PostgresJsonOwnerStore.count and store count operations.",
+    "final_source_validation": [
+      {
+        "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest -q services/foundation/tests/test_control_plane_postgres_owner_stores.py services/reconciliation-drift/tests/test_reconciliation_drift_store.py services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py",
+        "exit_code": 0,
+        "passed": 49,
+        "skipped": 1,
+        "skip_reason": "test_live_postgres_reconciliation_drift_store_loopback skipped when TEST_DATABASE_URL is unset",
+        "output": "49 passed, 1 skipped in 20.44s"
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0,
+        "output": "clean"
+      }
+    ],
+    "counterexample_limits": [
+      "Local fakes do not certify hosted Postgres readiness, financial results, original BFF503 causality or complete product delivery.",
+      "The sampled SQL began 2.257 seconds before the one diagnostic GET, so it is an existing same-owner request; do not claim the diagnostic GET started it.",
+      "Same-container connection match does not expose the exact Python thread/call stack.",
+      "No PG lock blockers were present in this sample; no evidence of NATS or a PG lock failure.",
+      "This pertains to current Root38675783899 component health gating, not retrospective proof of Root38669642095 BFF503 cause.",
+      "Source count repair is not hosted acceptance: release owner completes failed release compensation, exact qualification, and hosted twelve-loop acceptance."
+    ]
   }
 }

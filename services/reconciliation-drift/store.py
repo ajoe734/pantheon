@@ -235,6 +235,9 @@ class ReconciliationDriftStore:
     def _list_records(self, path: Path) -> List[Dict[str, Any]]:
         return list(self._read_map(path).values())
 
+    def _count_records(self, path: Path) -> int:
+        return len(self._read_map(path))
+
     @staticmethod
     def _record_matches_tenant(
         record: Optional[Dict[str, Any]],
@@ -295,6 +298,9 @@ class ReconciliationDriftStore:
     def list_evaluations(self) -> List[Dict[str, Any]]:
         return self._list_records(self.evaluations_path)
 
+    def count_evaluations(self) -> int:
+        return self._count_records(self.evaluations_path)
+
     def get_evaluation(
         self, evaluation_id: str, tenant_id: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
@@ -313,6 +319,9 @@ class ReconciliationDriftStore:
     def list_alert_handoffs(self) -> List[Dict[str, Any]]:
         return self._list_records(self.alerts_path)
 
+    def count_alert_handoffs(self) -> int:
+        return self._count_records(self.alerts_path)
+
     def get_alert_handoff(
         self, alert_id: str, tenant_id: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
@@ -326,6 +335,9 @@ class ReconciliationDriftStore:
 
     def list_reconciliation_records(self) -> List[Dict[str, Any]]:
         return self._list_records(self.reconciliation_records_path)
+
+    def count_reconciliation_records(self) -> int:
+        return self._count_records(self.reconciliation_records_path)
 
     def get_reconciliation_record(
         self, record_id: str, tenant_id: Optional[str] = None
@@ -345,6 +357,9 @@ class ReconciliationDriftStore:
     def list_drift_reports(self) -> List[Dict[str, Any]]:
         return self._list_records(self.drift_reports_path)
 
+    def count_drift_reports(self) -> int:
+        return self._count_records(self.drift_reports_path)
+
     def get_drift_report(
         self, report_id: str, tenant_id: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
@@ -362,6 +377,9 @@ class ReconciliationDriftStore:
 
     def list_worker_states(self) -> List[Dict[str, Any]]:
         return self._list_records(self.worker_states_path)
+
+    def count_worker_states(self) -> int:
+        return self._count_records(self.worker_states_path)
 
     def get_worker_state(
         self, state_id: str, tenant_id: Optional[str] = None
@@ -763,6 +781,9 @@ class PostgresReconciliationDriftStore(ReconciliationDriftStore):
     def list_evaluations(self) -> List[Dict[str, Any]]:
         return self._evaluation_records.list_all()
 
+    def count_evaluations(self) -> int:
+        return self._evaluation_records.count()
+
     def get_evaluation(
         self, evaluation_id: str, tenant_id: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
@@ -788,6 +809,9 @@ class PostgresReconciliationDriftStore(ReconciliationDriftStore):
     def list_alert_handoffs(self) -> List[Dict[str, Any]]:
         return self._alert_records.list_all()
 
+    def count_alert_handoffs(self) -> int:
+        return self._alert_records.count()
+
     def get_alert_handoff(
         self, alert_id: str, tenant_id: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
@@ -809,6 +833,9 @@ class PostgresReconciliationDriftStore(ReconciliationDriftStore):
 
     def list_reconciliation_records(self) -> List[Dict[str, Any]]:
         return self._reconciliation_records.list_all()
+
+    def count_reconciliation_records(self) -> int:
+        return self._reconciliation_records.count()
 
     def get_reconciliation_record(
         self, record_id: str, tenant_id: Optional[str] = None
@@ -834,6 +861,9 @@ class PostgresReconciliationDriftStore(ReconciliationDriftStore):
     def list_drift_reports(self) -> List[Dict[str, Any]]:
         return self._drift_reports.list_all()
 
+    def count_drift_reports(self) -> int:
+        return self._drift_reports.count()
+
     def get_drift_report(
         self, report_id: str, tenant_id: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
@@ -857,6 +887,9 @@ class PostgresReconciliationDriftStore(ReconciliationDriftStore):
 
     def list_worker_states(self) -> List[Dict[str, Any]]:
         return self._worker_state_records.list_all()
+
+    def count_worker_states(self) -> int:
+        return self._worker_state_records.count()
 
     def get_worker_state(
         self, state_id: str, tenant_id: Optional[str] = None

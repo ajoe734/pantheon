@@ -66,6 +66,17 @@ class _FakeConnection:
                 return _FakeCursor([])
             removed = table_rows.pop(record_id)
             return _FakeCursor([(removed,)])
+        if normalized.startswith("SELECT COUNT(*)"):
+            table_rows = self.rows.get(table, {})
+            count = 0
+            for payload in table_rows.values():
+                if isinstance(payload, str):
+                    decoded = json.loads(payload)
+                    if isinstance(decoded, dict):
+                        count += 1
+                elif isinstance(payload, dict):
+                    count += 1
+            return _FakeCursor([(count,)])
         if normalized.startswith("SELECT PAYLOAD") and "PAYLOAD ->> 'INCIDENT_ID'" in normalized:
             incident_id = str(params[0])
             matching = [
@@ -731,3 +742,60 @@ def test_wave3_postgres_builders_are_env_gated():
         "reconciliation_drift",
     ):
         assert table in ddl
+
+
+def test_postgres_json_owner_store_count_aggregates_without_payload_hydration_or_sorting():
+    from services.foundation.postgres_json_store import PostgresJsonOwnerStore
+
+    fake_psycopg = _fake_psycopg()
+    with mock.patch.dict(sys.modules, {"psycopg": fake_psycopg}):
+        store = PostgresJsonOwnerStore(
+            dsn="postgresql://test:test@localhost:5432/test",
+            table="reconciliation_drift.drift_evaluations",
+            owner_service="reconciliation-drift-svc",
+            bootstrap=False,
+        )
+        assert store.count() == 0
+
+        store.put("rec-1", {"evaluation_id": "rec-1", "large_payload": "x" * 1000})
+        store.put("rec-2", {"evaluation_id": "rec-2", "large_payload": "y" * 1000})
+
+        _FakeConnection.statements.clear()
+        total = store.count()
+        assert total == 2
+
+        statements = list(_FakeConnection.statements)
+        assert len(statements) == 1
+        count_sql = statements[0]
+        assert "SELECT COUNT(*)" in count_sql.upper()
+        assert "JSONB_TYPEOF" in count_sql.upper()
+        assert "ORDER BY" not in count_sql.upper()
+
+        # Permitted mixed jsonb shapes (object, array, null, number, string-encoded object)
+        table_key = store.table
+        _FakeConnection.rows[table_key]["rec-str"] = '{"id": "rec-str"}'
+        _FakeConnection.rows[table_key]["rec-arr"] = []
+        _FakeConnection.rows[table_key]["rec-null"] = None
+        _FakeConnection.rows[table_key]["rec-num"] = 42
+        assert store.count() == 3  # rec-1, rec-2, rec-str
+
+        # String decode error fails closed
+        _FakeConnection.rows[table_key]["rec-bad"] = "not-json"
+        with pytest.raises(Exception):
+            store.count()
+        del _FakeConnection.rows[table_key]["rec-bad"]
+
+        conn = fake_psycopg.connect("postgresql://test:test@localhost:5432/test")
+
+        # Missing aggregate row fails closed without default-zero fallback
+        with mock.patch.object(conn, "execute", return_value=_FakeCursor([])):
+            with pytest.raises(RuntimeError, match="Aggregate count query returned no rows"):
+                store.count()
+
+        # Postgres connection / storage failure
+        def _failing_execute(sql, params=()):
+            raise RuntimeError("Postgres connection failure")
+
+        with mock.patch.object(conn, "execute", side_effect=_failing_execute):
+            with pytest.raises(RuntimeError, match="Postgres connection failure"):
+                store.count()
