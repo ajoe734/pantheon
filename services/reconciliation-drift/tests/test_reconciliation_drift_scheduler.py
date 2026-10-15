@@ -3143,3 +3143,93 @@ def test_missing_accepted_append_defers_then_terminal_without_failing_tick() -> 
             )
         assert state["status"] == "terminal_failed" and state["terminal"] is True
         assert state["retryable"] is False
+
+
+def _seed_confirmed_same_sequence(svc, binding_id: str) -> dict:
+    svc.store.put_evaluation(
+        {
+            "evaluation_id": f"evaluation-{binding_id}",
+            "binding_id": binding_id,
+            "evaluated_at": "2026-10-14T16:13:00Z",
+            "lifecycle_append": {
+                "status": "accepted",
+                "event_id": "accepted-old",
+                "summary_visibility_confirmed_at": "2026-10-14T16:21:43Z",
+                "event": {
+                    "event_id": "accepted-old",
+                    "aggregate_type": "trade_journey",
+                    "aggregate_id": "tj-1",
+                    "sequence_no": 8,
+                },
+            },
+        }
+    )
+    summary = _superseded_summary(binding_id)
+    summary["last_lifecycle_identity"].update(
+        {"aggregate_type": "trade_journey", "aggregate_id": "tj-1", "sequence_no": 8}
+    )
+    return summary
+
+
+def _same_sequence_reason(svc, binding_id, summary, verify_result, sequence=None):
+    import telemetry_client
+
+    if sequence is not None:
+        summary["last_lifecycle_identity"]["sequence_no"] = sequence
+    with mock.patch.object(
+        telemetry_client, "verify_durable_event_order", return_value=verify_result
+    ) as verify:
+        reason, _ = svc._accepted_append_visibility_reason(
+            summary=summary,
+            binding_id=binding_id,
+            timestamp="2026-10-15T20:00:00Z",
+            telemetry_url="http://telemetry:8083",
+            tenant_id="tenant-a",
+        )
+    return reason, verify
+
+
+def test_same_sequence_different_event_visible_when_durably_ordered() -> None:
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        binding_id = "binding-same-seq-001"
+        summary = _seed_confirmed_same_sequence(svc, binding_id)
+        pair = {
+            "accepted_event_id": "accepted-old",
+            "observed_event_id": "observed-new",
+            "binding_id": binding_id,
+        }
+        for _ in range(2):  # replay stays visible
+            reason, verify = _same_sequence_reason(svc, binding_id, summary, (True, None, pair))
+            assert reason is None
+            kwargs = verify.call_args.kwargs
+            assert kwargs["expected_binding_id"] == binding_id
+            assert kwargs["expected_runtime_id"] == "rt-1"
+
+
+def test_same_sequence_different_event_deferred_when_order_unverified() -> None:
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        binding_id = "binding-same-seq-002"
+        summary = _seed_confirmed_same_sequence(svc, binding_id)
+        for result in ((False, "unordered", {}), (True, None, {"accepted_event_id": "other"})):
+            reason, _ = _same_sequence_reason(svc, binding_id, summary, result)
+            assert reason == "accepted_lifecycle_append_not_visible"
+
+
+def test_lower_sequence_never_consults_durable_order_and_higher_stays_visible() -> None:
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        binding_id = "binding-same-seq-003"
+        summary = _seed_confirmed_same_sequence(svc, binding_id)
+        pair = {
+            "accepted_event_id": "accepted-old",
+            "observed_event_id": "observed-new",
+            "binding_id": binding_id,
+        }
+        reason, verify = _same_sequence_reason(svc, binding_id, summary, (True, None, pair), sequence=7)
+        assert reason == "accepted_lifecycle_append_not_visible"
+        verify.assert_not_called()
+        reason, verify = _same_sequence_reason(svc, binding_id, summary, (False, None, {}), sequence=9)
+        assert reason is None
+        verify.assert_not_called()

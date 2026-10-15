@@ -2250,19 +2250,9 @@ def _accepted_append_visibility_reason(
         and str(identity.get("aggregate_id") or "")
         == str(accepted_event.get("aggregate_id") or "")
     )
-    if same_aggregate:
-        if observed_sequence <= accepted_sequence:
-            return "accepted_lifecycle_append_not_visible", visibility
-        return None, visibility
-
-    # Aggregate sequence numbers restart for a new journey. Ordered projector
-    # receipts are the only authoritative proof that the new aggregate was
-    # observed after the accepted reconciliation; producer timestamps can be
-    # skewed or backfilled and therefore cannot replace projector order.
-    if ordered_after_accepted:
-        return None, visibility
-
-    if accepted_state.get("summary_visibility_confirmed_at") and telemetry_url and accepted_event_id and observed_event_id:
+    def _durable_order_verified() -> bool:
+        if not (accepted_state.get("summary_visibility_confirmed_at") and telemetry_url and accepted_event_id and observed_event_id):
+            return False
         try:
             from telemetry_client import verify_durable_event_order
             if "last_lifecycle_identity" in summary and not isinstance(summary["last_lifecycle_identity"], dict): raise ValueError
@@ -2283,8 +2273,30 @@ def _accepted_append_visibility_reason(
                 expected_binding_id=bid, expected_runtime_id=rid.strip(), expected_artifact_id=aid.strip(), expected_artifact_version=av.strip(),
             )
             if ok and p and p.get("accepted_event_id") == accepted_event_id and p.get("observed_event_id") == observed_event_id and p.get("binding_id") == bid:
-                return None, visibility
+                return True
         except Exception: pass
+        return False
+
+    if same_aggregate:
+        if observed_sequence < accepted_sequence:
+            return "accepted_lifecycle_append_not_visible", visibility
+        if observed_sequence == accepted_sequence:
+            # Same-sequence reuse by a different event: only committed
+            # telemetry order can prove the observed event is later.
+            if observed_event_id != accepted_event_id and _durable_order_verified():
+                return None, visibility
+            return "accepted_lifecycle_append_not_visible", visibility
+        return None, visibility
+
+    # Aggregate sequence numbers restart for a new journey. Ordered projector
+    # receipts are the only authoritative proof that the new aggregate was
+    # observed after the accepted reconciliation; producer timestamps can be
+    # skewed or backfilled and therefore cannot replace projector order.
+    if ordered_after_accepted:
+        return None, visibility
+
+    if _durable_order_verified():
+        return None, visibility
 
     return "accepted_lifecycle_append_not_visible", visibility
 
