@@ -1,0 +1,44 @@
+{
+  "task_id": "CANONICAL-STRATEGY-CONSUMER-WIRING-20261015",
+  "kind": "source_delivery_evidence",
+  "scope": "source only; no VM, provider, deployment, queue, store, token, or user-artifact mutation",
+  "model_authority": {
+    "single_authority": "Persona metadata.provisioning_authoritative_readback.runtime_binding -> existing ArtifactLoader.load_exact -> validate_strategy_artifact, performed at each owner boundary that reads the Persona itself",
+    "training_owner_boundary": "services/training-session/main.py::_persona_model reads the Persona owner GET (the configured TRAINING_SESSION_PERSONA_READBACK_URL_TEMPLATE with its shared /training-target suffix removed, because training-target carries generation/controller state, not model metadata) using the service's existing token/transport; the BFF forwards nothing (router.py and persona_training.py are unchanged) and a caller-carried model_authority body field is ignored",
+    "research_owner_boundary": "BFF AgoraResearchService._freeze_model_authority reads Spec entry.metadata.persona_id, the trusted Persona, then load_exact; research orchestrator uses only the saved run's model after checking it against its frozen strategy_artifact_checksum",
+    "no_new_global_resolver_schema_reverify_fixture_endpoint_setting_or_approval_mechanism": true,
+    "no_active_binding_prerequisite": "valid approved immutable model is readable for analysis regardless of binding status; tenant, persona, artifact identity/checksum and execution mode still enforced by load_exact"
+  },
+  "acceptance": {
+    "AC1": "Training create reads the real Persona/Registry model server-side in training-session (caller body model_authority ignored; tamper, foreign persona/tenant -> 409; readback outage -> 503). Agora research create_workshop_plan (ordinary and servant) freezes plan.model_authority from Spec persona_id -> Persona -> load_exact before approval.",
+    "AC2": "Training controls come from artifact mutation_surface; preview derives a candidate via mutate_strategy_artifact; proof backend.model keeps base vs candidate checksum distinct. Research executes only the saved run's model (caller model rejected 400) with base vs evaluated checksum in the bundle.",
+    "AC3": "VectorbtBackend evaluates close_to_close_momentum through evaluate_strategy_action and vbt.Portfolio.from_orders with signed share quantities (BUY long, SELL to short, accumulating). Only artifact symbols (normalized with normalize_taiwan_symbol) trade; a two-instrument dataset yields one instrument; a dataset missing the artifact symbol is rejected; StubVectorbtBackend refuses canonical artifacts instead of running SMA.",
+    "AC4": "CurrentArtifactStrategy no longer uses seq/now in identity. signal_id/decision_id/run_id derive from binding, exact artifact registry id/version/checksum, symbol, and the admitted bar (calendar date for 1d artifacts; close-series digest when an inline input has no event_time). PaperSignalProducer consults the store's existing is_processed before rebuilding/enqueueing; the consumer's existing begin_execution/complete_execution/_is_duplicate fence handles duplicates enqueued before completion. Real payload timestamp is preserved. No new cache, store, lock, scheduler, or TTL; the 24h processed tombstone bound is unchanged and this is not a permanent exactly-once claim. SmokeStrategy and the 60s poll are untouched. Rationale: the artifact declares daily bar-close cadence, so the old per-minute identity turned one Source15 bar into one fill per minute; keying on the bar is a correction of declared cadence, not an extra gate.",
+    "AC5": "Unbound personas/specs (no runtime_binding / no spec persona_id / no registry configured) keep the old path unchanged; the existing training-session HTTP, BFF training contract and Research orchestrator suites pass. No migration of the saved Persona508 SID or its proof.",
+    "AC6": "see tests below"
+  },
+  "tests_run": {
+    "environment": "python 3.12 venv with pytest, fastapi, pydantic, jsonschema, numpy<2, plotly 5.24.1, vectorbt 0.26.2 (real). Repo lock pins vectorbt 1.1.1; from_orders without the 'accumulate' argument was used so it is compatible with both.",
+    "real_backend_tests": [
+      "services/research/vectorbt/test_adapter.py::TestCanonicalArtifactBacktest (39 passed total in file)",
+      "services/training-session/tests/test_http_service.py::test_model_bound_preview_runs_real_backend_on_derived_candidate",
+      "services/research/tests/test_research_orchestrator_http_service.py::test_saved_model_* (real VectorbtBackend)"
+    ],
+    "other_new_tests": [
+      "services/control-plane/bff/tests/test_research_router.py (5 plan freeze tests)",
+      "services/training-session/tests/test_http_service.py model-bound tests (server-read persona, forged body ignored, tamper/foreign rejected, unbound stays SMA)",
+      "services/execution/lean_runtime/test_paper_signal_producer.py::TestDailyBarDecisionIdentity"
+    ],
+    "suites_passing": "after rework: training-session test_http_service 19 passed; research orchestrator + BFF research/training router 75 passed (2 baseline failures); lean_runtime producer/consumer + vectorbt adapter 156 passed",
+    "baseline_or_environmental_failures": [
+      "services/training-session/tests/test_compose_activation.py and test_main.py error at collection both before and after this change",
+      "research orchestrator test_execute_research_stage_derivatives_pricing_risk_provenance[False|True] fail identically on the base commit (QuantLib not installed)"
+    ]
+  },
+  "known_limits": [
+    "The strict training-session authority fixture dataset is crypto (BTCUSD/ETHUSD). The model-bound preview test swaps in a TW daily dataset before invoking the real backend, so it proves backend/config consumption, not the hosted Source15 dataset.",
+    "Redis Lua paths were exercised through InMemoryPendingSignalStore (same API); lupa is not installed so RedisPendingSignalStore Lua was not run locally.",
+    "Hosted new-same-model Teaching/Research/provider/registration/promotion acceptance, provider transmission, and VM checks remain with Root and were not performed.",
+    "Research orchestrator relies on the BFF-saved plan model (owner-persisted, caller override rejected); it does not re-read the Persona itself."
+  ]
+}

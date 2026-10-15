@@ -15,6 +15,8 @@ runtime activation guard.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import math
 import os
@@ -280,9 +282,6 @@ class CurrentArtifactStrategy:
         "services.registry.strategy_artifact:evaluate_strategy_action"
     )
 
-    def __init__(self) -> None:
-        self._seq = 0
-
     def __call__(self, binding: Any, now_iso: str) -> dict[str, Any]:
         b_dict = _binding_dict_from_obj(binding)
         binding_id = _required_binding_text(b_dict, "binding_id")
@@ -411,11 +410,25 @@ class CurrentArtifactStrategy:
                 f"binding {binding_id} is {environment!r}, expected 'paper'",
             )
 
-        self._seq += 1
         persona_capital_binding_id = b_dict.get("persona_capital_binding_id")
         direction = "SHORT" if action == "SELL" else "LONG"
+        # The artifact declares its bar cadence, so one admitted bar of one exact
+        # model is one decision regardless of how often the poll observes it.
+        bar_key = _bar_identity(market_input, closes, parameters.get("bar_frequency"))
+        decision_key = {
+            "binding_id": binding_id,
+            "artifact_registry_id": loaded.metadata["registry_id"],
+            "artifact_version": artifact_version,
+            "artifact_checksum": loaded.metadata["checksum"],
+            "symbol": symbol,
+            "bar": bar_key,
+        }
+        decision_digest = hashlib.sha256(
+            json.dumps(decision_key, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
         return {
-            "decision_id": f"dec-{binding_id}-{now_iso}-{self._seq}",
+            "decision_id": f"dec-{binding_id}-{decision_digest[:24]}",
+            "signal_id": f"sig-{decision_digest[:32]}",
             "strategy_id": strategy_id,
             "timestamp": now_iso,
             "symbol": symbol,
@@ -426,7 +439,7 @@ class CurrentArtifactStrategy:
             "binding_id": binding_id,
             "runtime_id": _required_binding_text(b_dict, "runtime_id"),
             "capital_pool_id": _required_binding_text(b_dict, "capital_pool_id"),
-            "run_id": f"run-{binding_id}-{now_iso}-{self._seq}",
+            "run_id": f"run-{binding_id}-{decision_digest[:24]}",
             "tenant_id": tenant_id,
             "environment": environment,
             "source_worker": "paper-signal-producer",
@@ -445,6 +458,7 @@ class CurrentArtifactStrategy:
                 "market_input_observed_at": market_input.get("observed_at"),
                 "market_input_snapshot_id": market_input.get("snapshot_id"),
                 "market_input_event_time": market_input.get("event_time"),
+                "market_input_bar": bar_key,
                 "market_input_lineage": market_input.get("lineage"),
                 "market_data": {
                     "close": closes[-1],
@@ -477,6 +491,27 @@ class CurrentArtifactStrategy:
                     "artifact_identity_mismatch",
                     f"binding {binding_id} expected {field}={expected_value!r}, got {actual or None!r}",
                 )
+
+
+
+def _bar_identity(market_input: Mapping[str, Any], closes: Sequence[float], bar_frequency: Any) -> str:
+    """Identity of the latest admitted bar, independent of when it was observed.
+
+    Daily artifacts key on the bar's calendar date; other cadences key on the
+    exact ``event_time``.  Inline inputs without an ``event_time`` are keyed by
+    their close series, so identical observations stay one bar.
+    """
+
+    event_time = str(market_input.get("event_time") or "").strip()
+    if not event_time:
+        series = json.dumps([float(close) for close in closes], separators=(",", ":"))
+        return f"closes:{hashlib.sha256(series.encode('utf-8')).hexdigest()[:16]}"
+    if str(bar_frequency or "").strip().lower() in {"1d", "d", "1day", "daily"}:
+        try:
+            return datetime.fromisoformat(event_time.replace("Z", "+00:00")).date().isoformat()
+        except ValueError:
+            return event_time
+    return event_time
 
 
 def _required_binding_text(binding: Mapping[str, Any], field: str) -> str:
@@ -1125,6 +1160,19 @@ class PaperSignalProducer:
             # First-class decision dict flow
             from services.execution.lean_runtime.signal_producer import DecisionSignalProducer
             dsp = DecisionSignalProducer(store)
+
+            # An explicit signal_id marks a decision whose identity is already
+            # deterministic; reuse the store's processed record instead of
+            # rebuilding and re-enqueueing a decision that has completed.
+            explicit_signal_id = str(out.get("signal_id") or "").strip()
+            is_processed = getattr(store, "is_processed", None)
+            if explicit_signal_id and callable(is_processed) and is_processed(explicit_signal_id):
+                log.info(
+                    "paper_signal_producer skipped completed decision %s for binding %s",
+                    explicit_signal_id,
+                    binding_id,
+                )
+                return 0
 
             if "metadata" not in out:
                 out["metadata"] = {}

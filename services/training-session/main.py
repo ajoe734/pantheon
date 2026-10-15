@@ -29,7 +29,14 @@ from inbound_authority import (
     reset_current_authority,
     set_current_authority,
 )
+from services.execution.artifact_loader import ArtifactLoader, ArtifactLoadError
 from services.knowledge.evidence.runtime_log import RuntimeEvidenceLog
+from services.registry.strategy_artifact import (
+    StrategyArtifactValidationError,
+    mutate_strategy_artifact,
+    strategy_artifact_checksum,
+    validate_strategy_artifact,
+)
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 from services.research.vectorbt.adapter.vectorbt_adapter import (
@@ -44,6 +51,9 @@ from models import TeachingEvent, TeachingEvaluationResult, TeachingSession
 from consultation_client import TrainingConsultationClient
 from persona_target import (
     PersonaTargetError,
+    UrllibPersonaTargetTransport,
+    _request_json_object,
+    _unwrap,
     commit_persona_target,
     read_persona_target_precondition,
 )
@@ -381,6 +391,109 @@ def _default_governed_controls(timestamp: str) -> List[Dict[str, Any]]:
     ]
 
 
+def _model_controls(artifact: Dict[str, Any], timestamp: str) -> List[Dict[str, Any]]:
+    """Governed controls straight from the frozen artifact's mutation_surface."""
+
+    controls: List[Dict[str, Any]] = []
+    for control in artifact["mutation_surface"]["controls"]:
+        key = control["parameter_key"]
+        entry = {
+            "parameter_key": key,
+            "display_label": str(control.get("display_label") or key),
+            "baseline_value": control["current_value"],
+            "current_value": control["current_value"],
+            "allowed_range": dict(control["allowed_range"]),
+            "value_type": control.get("value_type"),
+            "last_modified_at": timestamp,
+        }
+        if control.get("step") is not None:
+            entry["step"] = control["step"]
+        controls.append(entry)
+    return controls
+
+
+def _frozen_model(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    model = (session.get("metadata") or {}).get("model_authority")
+    return model if isinstance(model, dict) else None
+
+
+def _persona_model(persona_id: str, tenant_id: str) -> Optional[Dict[str, Any]]:
+    """Freeze the model the owner Persona runs, read from the Persona and Registry here.
+
+    Nothing the caller sent selects the model: the Persona's authoritative
+    runtime binding is read from the Persona service and its approved artifact
+    is re-read through ``ArtifactLoader.load_exact``.  Without a configured
+    Persona readback or a runtime binding the session stays unbound (legacy SMA).
+    """
+
+    if not str(os.getenv("TRAINING_SESSION_PERSONA_READBACK_URL_TEMPLATE") or "").strip():
+        return None
+    # The configured readback is the shared ``.../training-target`` contract, which
+    # carries generation/controller state only; the approved model lives on the
+    # Persona owner's own GET, the same base without that suffix.
+    url = _persona_target_url(
+        "TRAINING_SESSION_PERSONA_READBACK_URL_TEMPLATE",
+        persona_id=persona_id,
+        tenant_id=tenant_id,
+        session_id="",
+    )
+    if url.rstrip("/").endswith("/training-target"):
+        url = url.rstrip("/")[: -len("/training-target")]
+    payload = _request_json_object(
+        UrllibPersonaTargetTransport(),
+        "GET",
+        url,
+        label="persona model readback",
+        expected_statuses=(200,),
+        timeout_seconds=_persona_target_timeout_seconds(),
+        headers={"Authorization": f"Bearer {_persona_authority_token()}", "X-Tenant-Id": tenant_id},
+    )
+    persona = _unwrap(payload, ("persona", "target"))
+    metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+    readback = metadata.get("provisioning_authoritative_readback")
+    binding = readback.get("runtime_binding") if isinstance(readback, dict) else None
+    if not isinstance(binding, dict) or not binding:
+        return None
+    binding_meta = binding.get("metadata") if isinstance(binding.get("metadata"), dict) else {}
+    for label, actual, expected in (
+        ("persona", persona.get("persona_id") or binding_meta.get("persona_id"), persona_id),
+        ("tenant", persona.get("tenant_id") or metadata.get("tenant_id") or binding_meta.get("tenant_id"), tenant_id),
+    ):
+        if str(actual or "").strip() != expected:
+            raise ArtifactLoadError(f"Persona runtime binding {label} does not match the session")
+    registry_id = str(binding.get("artifact_id") or "").strip()
+    strategy_id = str(binding_meta.get("strategy_id") or "").strip()
+    version = str(binding.get("artifact_version") or "").strip()
+    mode = str(binding.get("execution_mode") or "paper").strip().lower()
+    loaded = ArtifactLoader(dict(binding_meta.get("object_store") or {})).load_exact(
+        registry_id=registry_id,
+        strategy_id=strategy_id,
+        version=version,
+        execution_mode=mode,
+        expected_checksum=str(binding_meta.get("artifact_checksum") or "").strip() or None,
+    )
+    artifact = loaded.json_payload()
+    validate_strategy_artifact(artifact)
+    if artifact.get("artifact_id") != registry_id or artifact.get("strategy_id") != strategy_id:
+        raise ArtifactLoadError("Persona strategy artifact identity does not match its runtime binding")
+    parameters = artifact["parameters"]
+    return {
+        "persona_id": persona_id,
+        "tenant_id": tenant_id,
+        "artifact_id": registry_id,
+        "strategy_id": strategy_id,
+        "artifact_version": version,
+        "artifact_checksum": str(binding_meta.get("artifact_checksum") or ""),
+        "strategy_artifact_checksum": strategy_artifact_checksum(artifact),
+        "execution_mode": mode,
+        "strategy_kind": artifact["strategy_logic"]["kind"],
+        "symbols": list(parameters.get("symbols") or []),
+        "bar_frequency": parameters.get("bar_frequency"),
+        "strategy_spec_registry_id": (artifact.get("lineage") or {}).get("source_strategy_spec_id"),
+        "strategy_artifact": artifact,
+    }
+
+
 class CreateSessionBody(BaseModel):
     persona_id: str
     objective: str
@@ -650,6 +763,12 @@ def create_session(body: CreateSessionBody) -> Dict[str, Any]:
     timestamp = body.created_at or utc_now()
     existing_ids = {str(session.get("session_id") or "") for session in store.list_sessions()}
     session_id = _session_id(timestamp, existing_ids)
+    try:
+        model = _persona_model(body.persona_id, authority.tenant_id)
+    except (ArtifactLoadError, StrategyArtifactValidationError) as exc:
+        raise HTTPException(status_code=409, detail=f"persona model authority failed verification: {exc}") from exc
+    except PersonaTargetError as exc:
+        raise HTTPException(status_code=503, detail=f"persona model authority unavailable: {exc}") from exc
     session = _teaching_session_contract({
         "id": session_id,
         "session_id": session_id,
@@ -669,6 +788,7 @@ def create_session(body: CreateSessionBody) -> Dict[str, Any]:
         "actor_context": authority.actor_context(),
         "events": [],
         "outcomes": [],
+        **({"metadata": {"model_authority": model}} if model else {}),
     })
     store.put_session(session)
     store.put_controls(
@@ -676,7 +796,9 @@ def create_session(body: CreateSessionBody) -> Dict[str, Any]:
         {
             "session_id": session_id,
             "tenant_id": authority.tenant_id,
-            "controls": _default_governed_controls(timestamp),
+            "controls": _model_controls(model["strategy_artifact"], timestamp)
+            if model
+            else _default_governed_controls(timestamp),
         },
     )
     store.put_preview_bundle(
@@ -1091,7 +1213,11 @@ def _canonical_controls(session_id: str) -> List[Dict[str, Any]]:
     return sorted(controls, key=lambda control: control["parameter_key"])
 
 
-def _backtest_config(controls: List[Dict[str, Any]], requested_by: str) -> BacktestConfig:
+def _backtest_config(
+    controls: List[Dict[str, Any]], requested_by: str, model: Optional[Dict[str, Any]] = None
+) -> BacktestConfig:
+    if model is not None:
+        return _model_backtest_config(controls, requested_by, model)
     supported = {"short_window", "long_window", "strategy.short_window", "strategy.long_window"}
     unsupported = sorted(
         control["parameter_key"] for control in controls if control["parameter_key"] not in supported
@@ -1112,6 +1238,55 @@ def _backtest_config(controls: List[Dict[str, Any]], requested_by: str) -> Backt
     if short_window >= long_window:
         raise AuthorityValidationError("candidate short_window must be less than long_window")
     return BacktestConfig(requested_by=requested_by, strategy_params=params)
+
+
+def _model_backtest_config(
+    controls: List[Dict[str, Any]], requested_by: str, model: Dict[str, Any]
+) -> BacktestConfig:
+    """Derive the candidate artifact from the frozen base via the Registry mutation helper."""
+
+    base = model["strategy_artifact"]
+    updates = {
+        control["parameter_key"]: control["current_value"]
+        for control in controls
+        if control["current_value"] != control["baseline_value"]
+    }
+    digest = stable_json_sha256({"base": model["strategy_artifact_checksum"], "updates": updates})[:12]
+    major, minor, patch = (int(part) for part in str(base["version"]).split("."))
+    try:
+        candidate = mutate_strategy_artifact(
+            base,
+            new_artifact_id=f"{base['artifact_id']}-cand-{digest}",
+            new_version=f"{major}.{minor}.{patch + 1}",
+            parameter_updates=updates,
+            source_run_ids=[f"teaching-candidate-{digest}"],
+            parent_registry_id=base["artifact_id"],
+        )
+    except StrategyArtifactValidationError as exc:
+        raise AuthorityValidationError(f"candidate controls violate the artifact mutation surface: {exc}") from exc
+    return BacktestConfig(
+        requested_by=requested_by,
+        strategy_params=dict(candidate["parameters"]),
+        strategy_artifact=candidate,
+    )
+
+
+def _model_proof_identity(model: Dict[str, Any], candidate: Dict[str, Any]) -> Dict[str, Any]:
+    """Distinguish the frozen base checksum from the derived candidate checksum."""
+
+    return {
+        "base_artifact_id": model["artifact_id"],
+        "base_artifact_version": model["artifact_version"],
+        "base_artifact_checksum": model["strategy_artifact_checksum"],
+        "strategy_id": model["strategy_id"],
+        "strategy_kind": model["strategy_kind"],
+        "strategy_spec_registry_id": model.get("strategy_spec_registry_id"),
+        "tenant_id": model["tenant_id"],
+        "symbols": list(model["symbols"]),
+        "candidate_artifact_id": candidate["artifact_id"],
+        "candidate_artifact_version": candidate["version"],
+        "candidate_artifact_checksum": strategy_artifact_checksum(candidate),
+    }
 
 
 def _finite_metric(metrics: Dict[str, Any], key: str) -> float:
@@ -1232,6 +1407,8 @@ def _build_preview_evaluation_proof(
         "target_generation": target_precondition["target_generation"],
         "precondition_digest": target_precondition["precondition_digest"],
     }
+    if backend.get("model"):
+        candidate_binding["model"] = stable_json_sha256(backend["model"])
     proof = {
         "schema_version": "persona_teaching_evaluation_proof.v2",
         "proof_id": f"teval-proof-{eval_id}",
@@ -1310,7 +1487,8 @@ def _run_preview_evaluation(
     trusted_now = _parse_utc_timestamp(timestamp, "evaluation timestamp")
     eval_id = eval_id or f"teval-{uuid.uuid4().hex[:12]}"
     controls = _canonical_controls(session_id)
-    config = _backtest_config(controls, requested_by)
+    model = _frozen_model(session)
+    config = _backtest_config(controls, requested_by, model)
     authority = _load_authority_snapshot(
         trusted_now=trusted_now,
         strategy_id=f"preview-{session_id}",
@@ -1416,6 +1594,7 @@ def _run_preview_evaluation(
             "framework": "vectorbt",
             "framework_version": VECTORBT_VERSION_PIN,
             "artifact_checksum": result.registry_entry.get("checksum"),
+            **({"model": _model_proof_identity(model, config.strategy_artifact)} if model else {}),
         },
         controls=controls,
         metrics=metrics,
