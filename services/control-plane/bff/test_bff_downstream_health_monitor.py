@@ -27,6 +27,7 @@ from services.control_plane.bff.downstream_health_monitor import (
     DownstreamHealthMonitor,
     DownstreamProbeResult,
     _DurableHealthStore,
+    _probe_file_health,
     _probe_http,
     _post_json,
     _utc_now_rfc3339,
@@ -714,3 +715,167 @@ class TestDegradedModeIsolation:
         )
         assert dh_response.status_code == 200
         assert dh_response.json()["data"]["overall_ok"] is False
+
+
+# ---------------------------------------------------------------------------
+# File worker health probes (L12-WORKER-HEALTH-NAMESPACE-WIRING-20261015)
+# ---------------------------------------------------------------------------
+
+
+class TestFileWorkerHealthProbes:
+    def test_missing_health_file_returns_404(self, tmp_path):
+        missing = tmp_path / "does-not-exist.json"
+        ok, code, reason = _probe_file_health(str(missing), target_name="shadow-eval-scheduler")
+        assert ok is False
+        assert code == 404
+        assert "missing" in reason
+
+    def test_starting_status_rejected_with_500(self, tmp_path):
+        f = tmp_path / "worker-health.json"
+        f.write_text(json.dumps({"status": "starting", "ticks": 0, "ready": True}), encoding="utf-8")
+        ok, code, reason = _probe_file_health(str(f), target_name="shadow-eval-scheduler")
+        assert ok is False
+        assert code == 500
+        assert "status is not ok" in reason or "starting" in reason
+
+    def test_ticks_zero_rejected_with_500(self, tmp_path):
+        f = tmp_path / "worker-health.json"
+        f.write_text(json.dumps({"status": "ok", "ticks": 0, "ready": True}), encoding="utf-8")
+        ok, code, reason = _probe_file_health(str(f), target_name="deployment-outbox-consumer")
+        assert ok is False
+        assert code == 500
+        assert "unready ticks" in reason or "ticks=0" in reason
+
+    def test_legitimate_scheduler_sleep_beyond_180s_accepted(self, tmp_path):
+        # Shadow scheduler interval is 3600s, max age 10800s.
+        # An update 500s ago is well beyond 180s, but within max age.
+        f = tmp_path / "shadow-health.json"
+        payload = {
+            "status": "ok",
+            "ticks": 10,
+            "ready": True,
+            "worker_name": "policy-learning-shadow-eval-scheduler",
+            "production_training": "fail_closed",
+            "timestamp": "2026-10-15T10:00:00Z",
+        }
+        f.write_text(json.dumps(payload), encoding="utf-8")
+        past_mtime = time.time() - 500
+        os.utime(str(f), (past_mtime, past_mtime))
+
+        ok, code, reason = _probe_file_health(str(f), target_name="shadow-eval-scheduler")
+        assert ok is True
+        assert code == 200
+        assert reason == ""
+
+    def test_stale_heartbeat_beyond_worker_max_age_returns_negative_one(self, tmp_path):
+        # Shadow scheduler max age is 10800s.
+        f = tmp_path / "shadow-health.json"
+        payload = {
+            "status": "ok",
+            "ticks": 10,
+            "ready": True,
+            "worker_name": "policy-learning-shadow-eval-scheduler",
+            "production_training": "fail_closed",
+        }
+        f.write_text(json.dumps(payload), encoding="utf-8")
+        stale_mtime = time.time() - 11000
+        os.utime(str(f), (stale_mtime, stale_mtime))
+
+        ok, code, reason = _probe_file_health(str(f), target_name="shadow-eval-scheduler")
+        assert ok is False
+        assert code == -1
+        assert "stale" in reason
+
+    def test_paper_signal_producer_safety_markers_enforced(self, tmp_path):
+        f = tmp_path / "paper-health.json"
+        safe_payload = {
+            "status": "ok",
+            "ticks": 1,
+            "worker_name": "paper-signal-producer",
+            "execution_mode": "paper",
+            "live_capital_enabled": False,
+            "live_order_submission_enabled": False,
+        }
+        f.write_text(json.dumps(safe_payload), encoding="utf-8")
+        ok, code, reason = _probe_file_health(str(f), target_name="paper-signal-producer")
+        assert ok is True
+        assert code == 200
+
+        unsafe_payload = dict(safe_payload, live_capital_enabled=True)
+        f.write_text(json.dumps(unsafe_payload), encoding="utf-8")
+        ok, code, reason = _probe_file_health(str(f), target_name="paper-signal-producer")
+        assert ok is False
+        assert code == 500
+        assert "safety marker mismatch" in reason or "paper execution markers invalid" in reason
+
+    def test_shadow_eval_scheduler_fail_closed_enforced(self, tmp_path):
+        f = tmp_path / "shadow-health.json"
+        f.write_text(json.dumps({
+            "status": "ok",
+            "ticks": 1,
+            "worker_name": "policy-learning-shadow-eval-scheduler",
+            "production_training": "open",
+        }), encoding="utf-8")
+        ok, code, reason = _probe_file_health(str(f), target_name="shadow-eval-scheduler")
+        assert ok is False
+        assert code == 500
+        assert "fail_closed" in reason
+
+    def test_deployment_outbox_consumer_contracts_enforced(self, tmp_path):
+        f = tmp_path / "consumer-health.json"
+        err_payload = {
+            "status": "ok",
+            "ticks": 5,
+            "consumer_name": "deployment-outbox-consumer",
+            "last_success": "2026-10-15T10:00:00Z",
+            "consecutive_errors": 1,
+        }
+        f.write_text(json.dumps(err_payload), encoding="utf-8")
+        ok, code, reason = _probe_file_health(str(f), target_name="deployment-outbox-consumer")
+        assert ok is False
+        assert code == 500
+        assert "consecutive_errors" in reason
+
+        ok_payload = dict(err_payload, consecutive_errors=0)
+        f.write_text(json.dumps(ok_payload), encoding="utf-8")
+        ok, code, reason = _probe_file_health(str(f), target_name="deployment-outbox-consumer")
+        assert ok is True
+        assert code == 200
+
+    def test_reconciliation_worker_identity_enforced(self, tmp_path):
+        f = tmp_path / "recon-health.json"
+        f.write_text(json.dumps({"status": "ok", "ticks": 2, "worker_name": "wrong-name"}), encoding="utf-8")
+        ok, code, reason = _probe_file_health(str(f), target_name="reconciliation-drift-consumer")
+        assert ok is False
+        assert code == 500
+        assert "identity mismatch" in reason
+
+    def test_consultation_nested_functional_health_failure_enforced(self, tmp_path):
+        f = tmp_path / "consultation-health.json"
+        f.write_text(json.dumps({
+            "status": "ok",
+            "ticks": 1,
+            "functional_health": {"ready": False, "reason": "db connection failed"},
+        }), encoding="utf-8")
+        ok, code, reason = _probe_file_health(str(f), target_name="consultation-workflow-executor")
+        assert ok is False
+        assert code == 500
+        assert "functional_health.ready is false" in reason
+
+    def test_consultation_missing_functional_health_rejected(self, tmp_path):
+        f = tmp_path / "consultation-health.json"
+        f.write_text(json.dumps({
+            "status": "ok",
+            "ticks": 1,
+        }), encoding="utf-8")
+        ok, code, reason = _probe_file_health(str(f), target_name="consultation-workflow-executor")
+        assert ok is False
+        assert code == 500
+        assert "functional_health.ready is false" in reason
+
+    def test_evolution_scheduler_identity_unforced(self, tmp_path):
+        f = tmp_path / "evolution-health.json"
+        f.write_text(json.dumps({"status": "ok", "ticks": 3, "scheduler": "evolution-daily-sweep"}), encoding="utf-8")
+        ok, code, reason = _probe_file_health(str(f), target_name="evolution-daily-sweep-scheduler")
+        assert ok is True
+        assert code == 200

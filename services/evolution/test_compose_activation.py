@@ -32,8 +32,9 @@ def test_daily_sweep_scheduler_is_enabled_by_default_in_root_compose() -> None:
         == "${EVOLUTION_SCHEDULER_INTERVAL_SECONDS:-86400}"
     )
     assert scheduler["environment"]["EVOLUTION_SCHEDULER_HEALTH_FILE"] == (
-        "${EVOLUTION_SCHEDULER_HEALTH_FILE:-/tmp/evolution-scheduler-health.json}"
+        "${EVOLUTION_SCHEDULER_HEALTH_FILE:-/data/health/evolution-scheduler-health.json}"
     )
+    assert "worker-health-data:/data/health" in scheduler["volumes"]
     assert scheduler["depends_on"]["evolution"]["condition"] == "service_healthy"
     assert scheduler["healthcheck"]["test"] == [
         "CMD",
@@ -82,7 +83,7 @@ def test_threshold_sweep_producer_compose_shape_matches_acceptance_criteria() ->
         == "${EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS:-86400}"
     )
     assert producer["environment"]["EVOCHAIN_THRESHOLD_SWEEP_HEALTH_FILE"] == (
-        "${EVOCHAIN_THRESHOLD_SWEEP_HEALTH_FILE:-/tmp/evolution-threshold-sweep-health.json}"
+        "${EVOCHAIN_THRESHOLD_SWEEP_HEALTH_FILE:-/data/health/evolution-threshold-sweep-health.json}"
     )
 
     # Config/baselines are bind-mounted read-only so an operator can retune
@@ -91,6 +92,7 @@ def test_threshold_sweep_producer_compose_shape_matches_acceptance_criteria() ->
     # (and its quarantine tombstones) survive a container restart.
     assert "./services/evolution/config:/workspace/services/evolution/config:ro" in producer["volumes"]
     assert "evolution-data:/data/evolution" in producer["volumes"]
+    assert "worker-health-data:/data/health" in producer["volumes"]
     assert (
         producer["environment"]["EVOCHAIN_THRESHOLD_SWEEP_STATE_PATH"]
         == "/data/evolution/threshold_sweep_state.json"
@@ -150,9 +152,10 @@ def test_dispatch_worker_is_enabled_by_default_in_root_compose() -> None:
         "${EVOLUTION_DISPATCH_TIMEOUT_SECONDS:-10}"
     )
     assert environment["EVOLUTION_DISPATCH_HEALTH_FILE"] == (
-        "${EVOLUTION_DISPATCH_HEALTH_FILE:-/tmp/evolution-dispatch-health.json}"
+        "${EVOLUTION_DISPATCH_HEALTH_FILE:-/data/health/evolution-dispatch-health.json}"
     )
     assert "evolution-data:/data/evolution" in worker["volumes"]
+    assert "worker-health-data:/data/health" in worker["volumes"]
     api = compose["services"]["evolution"]
     assert api["stop_grace_period"] == "30s"
     assert "evolution-data:/data/evolution" in api["volumes"]
