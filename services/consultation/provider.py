@@ -9,6 +9,10 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, Mapping
 
+from pydantic import ValidationError
+
+from services.consultation.models import ConsultFinding
+
 
 _PARTICIPANT_TO_AUTHOR = {
     "committee": "committee",
@@ -148,6 +152,16 @@ class QualifiedContribution:
             not isinstance(item, Mapping) for item in raw_findings
         ):
             raise ContributionProviderError("provider findings must be an array of objects")
+        for index, item in enumerate(raw_findings):
+            try:
+                ConsultFinding.model_validate(item)
+            except ValidationError as exc:
+                fields = ", ".join(
+                    sorted({".".join(str(p) for p in e["loc"]) or "?" for e in exc.errors()})
+                )
+                raise ContributionProviderError(
+                    f"provider findings[{index}] violates the consult finding contract: {fields}"
+                ) from exc
         return cls(
             contribution_id=_required_text(payload, "contribution_id"),
             tenant_id=tenant_id,

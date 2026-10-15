@@ -24,6 +24,7 @@ from assistant_openclaw_provider import (
     AssistantOpenClawProvider,
     OpenClawProviderError,
 )
+from services.consultation.models import FindingSeverity
 from services.consultation.provider import (
     ContributionProviderError,
     QualifiedContribution,
@@ -258,7 +259,15 @@ def _prompt(payload: ConsultationContributionRequest) -> str:
                 "link": "durable evidence reference",
             }
         ],
-        "findings": [],
+        "findings": [
+            {
+                "severity": " | ".join(item.value for item in FindingSeverity),
+                "category": "non-empty finding category",
+                "claim": "non-empty finding claim",
+                "evidence_refs": ["evidence id"],
+                "recommendation": "non-empty finding recommendation",
+            }
+        ],
     }
     return (
         "You are producing an advisory Pantheon Consultation contribution. "

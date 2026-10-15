@@ -116,6 +116,7 @@ def _request_json(
 class FakeOpenClawProvider:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.findings_override: list[Any] | None = None
 
     def invoke(self, prompt: str, **kwargs: Any) -> Any:
         context = dict(kwargs["context_pack"])
@@ -151,6 +152,8 @@ class FakeOpenClawProvider:
                 }
             ],
         }
+        if self.findings_override is not None:
+            contribution["findings"] = self.findings_override
         self.calls.append({"prompt": prompt, "kwargs": kwargs})
         return SimpleNamespace(
             status="completed",
@@ -438,6 +441,15 @@ def test_current_provider_publishes_one_memo_and_replays_acknowledgement(
     )
     assert len(memos) == 1
     assert memos[0]["status"] == "published"
+    assert memos[0]["findings"] == [
+        {
+            "severity": "medium",
+            "category": "risk",
+            "claim": "Live authority remains disabled.",
+            "evidence_refs": [f"openclaw-evidence-{request_id}"],
+            "recommendation": "Retain paper-only rollout.",
+        }
+    ]
     assert len(handoffs) == 1
     assert handoffs[0]["status"] == "acknowledged"
 
@@ -545,3 +557,56 @@ def test_workflow_executor_loop_control_observation(
     assert record["type"] == "success"
     assert record["loop_id"] == "consultation"
     assert "consultation://memos/" in record["kwargs"]["evidence_refs"][0]
+
+
+@pytest.mark.parametrize(
+    "findings",
+    [
+        [{}],
+        [
+            {
+                "severity": "catastrophic",
+                "category": "risk",
+                "claim": "c",
+                "recommendation": "r",
+            }
+        ],
+    ],
+)
+def test_malformed_findings_are_never_qualified_cached_or_submitted(
+    current_stack: CurrentStack,
+    findings: list[Any],
+) -> None:
+    request_id = "malformed-findings-handoff"
+    request = current_stack.create_request(request_id)
+    config = current_stack.config()
+    current_stack.provider.findings_override = findings
+
+    with pytest.raises(ContributionBlocked, match="findings\\[0\\]"):
+        _http_provider(config).obtain(tenant_id=TENANT, request=request)
+    result = run_tick(config=config, state=WorkflowStateStore(config.state_path))
+
+    assert result["completed"] == 0
+    assert current_stack.handoff.calls == []
+    memos = _request_json(
+        current_stack.api_url + f"/api/consult/memos?request_id={request_id}"
+    )
+    assert memos == []
+
+    # The failed turn was released, not cached: a corrected provider turn succeeds.
+    calls_before = len(current_stack.provider.calls)
+    current_stack.provider.findings_override = None
+    ok = _http_provider(config).obtain(tenant_id=TENANT, request=request)
+    assert len(current_stack.provider.calls) == calls_before + 1
+    assert ok.findings[0]["claim"] == "Live authority remains disabled."
+
+
+def test_provider_prompt_describes_canonical_finding_contract(
+    current_stack: CurrentStack,
+) -> None:
+    request = current_stack.create_request("prompt-finding-contract")
+    _http_provider(current_stack.config()).obtain(tenant_id=TENANT, request=request)
+    prompt = current_stack.provider.calls[0]["prompt"]
+    for token in ("severity", "category", "claim", "evidence_refs", "recommendation", "critical"):
+        assert token in prompt
+    assert "no approval, deployment" in prompt
