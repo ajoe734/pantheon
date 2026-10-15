@@ -699,6 +699,54 @@ def test_candidate_cli_rejects_oversized_candidate_receipt(children, tmp_path, f
     assert not doc["output"].exists()
 
 
+def test_candidate_cli_accepts_exact_boundary_candidate_receipt(children, tmp_path, fake_ssh, candidate_documents):
+    doc = candidate_documents
+    action = tmp_path / "after-ack-action"
+    after_ack = f"assert os.path.exists({str(doc['output'])!r}); open({str(action)!r},'w').write('after-durable-ack')"
+    digest = doc["result"]["candidate_image_manifest_sha256"]
+    script_tail = ack_script(digest, after_ack=after_ack).split("\n", 1)[1]
+    unpadded = doc["line"].rstrip(b"\n")
+    padded = unpadded + b" " * (65536 - len(unpadded))
+    assert len(padded) == 65536
+    encoded_padded = base64.b64encode(padded).decode()
+    script = (f"{shlex.quote(sys.executable)} - <<'PY'\n"
+              f"import base64, sys, time\n"
+              f"sys.stdout.buffer.write(base64.b64decode({encoded_padded!r}))\n"
+              f"sys.stdout.buffer.flush()\n"
+              f"time.sleep(0.05)\n"
+              f"sys.stdout.buffer.write(bytes([10]))\n"
+              f"sys.stdout.buffer.flush()\n"
+              f"PY\n"
+              + script_tail)
+    process = launch_sender(children, tmp_path, fake_ssh, script, candidate_args=doc["args"],
+                            extra_env={"PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID": doc["guard"]})
+    output, errors = process.communicate(timeout=6)
+    assert process.returncode == 0, errors.decode()
+    assert json.loads(doc["output"].read_bytes()) == doc["result"]
+    assert action.read_text() == "after-durable-ack"
+
+
+def test_candidate_cli_rejects_exact_oversized_boundary_receipt(children, tmp_path, fake_ssh, candidate_documents):
+    doc = candidate_documents
+    unpadded = doc["line"].rstrip(b"\n")
+    padded = unpadded + b" " * (65537 - len(unpadded))
+    assert len(padded) == 65537
+    encoded_padded = base64.b64encode(padded).decode()
+    script = (f"{shlex.quote(sys.executable)} - <<'PY'\n"
+              f"import base64, sys, time\n"
+              f"sys.stdout.buffer.write(base64.b64decode({encoded_padded!r}))\n"
+              f"sys.stdout.buffer.flush()\n"
+              f"time.sleep(0.05)\n"
+              f"sys.stdout.buffer.write(bytes([10]))\n"
+              f"sys.stdout.buffer.flush()\n"
+              f"PY\n")
+    process = launch_sender(children, tmp_path, fake_ssh, script, candidate_args=doc["args"],
+                            extra_env={"PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID": doc["guard"]})
+    output, errors = process.communicate(timeout=6)
+    assert process.returncode == 75
+    assert not doc["output"].exists()
+
+
 def test_candidate_cli_real_receiver_persists_and_acknowledges_before_action(children, tmp_path, fake_ssh, candidate_documents):
     doc = candidate_documents
     action = tmp_path / "after-ack-action"
