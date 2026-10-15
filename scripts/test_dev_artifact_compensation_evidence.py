@@ -600,3 +600,15 @@ def test_compensation_evidence_handles_none_failure_log_for_restore_final(case):
     assert res["rejected_pair"] is None
     assert res["restored_pair"]["backend_sha"] == case["identity"]["candidate_backend_sha"]
     assert res["controller_failure_log_sha256"] is None
+
+
+def test_baseline_restore_without_qualified_seal_exports_only_sealed_baseline_to(case):
+    actions(case["env"])
+    assert not (case["retained"] / "candidate/candidate-frontend.json").exists()
+    case["env"].pop(e.ENV_PREFIX + "FINAL_FE_SEAL_FILE", None)
+    evidence = e.prepare(case["env"], "actions-download", case["retained"] / "baseline.env")
+    exports = evidence["exports"]
+    assert exports[e.ENV_PREFIX + "OPERATION"] == "restore"
+    assert evidence["fe_seal"] is None
+    assert e.ENV_PREFIX + "SEALED_FROM_JSON" not in exports
+    assert json.loads(exports[e.ENV_PREFIX + "SEALED_TO_JSON"]) == evidence["baseline"]["frontend"]

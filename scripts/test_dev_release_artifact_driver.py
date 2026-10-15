@@ -1251,6 +1251,25 @@ def test_verify_target_final_does_not_publish_fe_seal_on_gate_failure(case):
     assert not (folder / "candidate-frontend.json").exists()
 
 
+def test_failed_final_verify_retains_unqualified_candidate_fe_capture(case):
+    captured = seal(case)
+    folder = Path(captured["manifest_path"]).parent
+    deploy_candidate_frontend(case)
+    case.args.compose_file = case.docker.candidate_compose
+    case.args.target = "final"
+    case.http.fail = "/health"
+    with pytest.raises(d.a.ArtifactError):
+        execute(case, "verify")
+    assert not (folder / "candidate-frontend.json").exists()
+    retained = json.loads((folder / d.CAPTURED_FE).read_bytes())
+    assert set(retained) == {"target", "dist_sha256", "manifest_sha256", "frontend_sha", "backend_sha"}
+    assert retained == d.a.capture_frontend(
+        release_store=case.args.fe_release_store, live_link=case.args.fe_live_link,
+        frontend_sha=case.args.candidate_frontend_sha, backend_sha=case.args.candidate_backend_sha)
+    with pytest.raises(d.a.ArtifactError, match="candidate frontend seal is missing"):
+        execute(case, "restore-final")
+
+
 def test_restore_final_fails_closed_on_unsealed_v1_candidate_receipt(case):
     captured = seal(case)
     folder = Path(captured["manifest_path"]).parent
