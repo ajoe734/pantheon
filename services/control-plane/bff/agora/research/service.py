@@ -244,7 +244,12 @@ class AgoraResearchService:
             CanonicalOperationError,
             WorkshopCanonicalOperations,
         )
-        from services.execution.artifact_loader import ArtifactLoadError, resolve_persona_model_authority
+        from services.execution.artifact_loader import ArtifactLoader, ArtifactLoadError
+        from services.registry.strategy_artifact import (
+            StrategyArtifactValidationError,
+            strategy_artifact_checksum,
+            validate_strategy_artifact,
+        )
 
         operations = self.canonical_operations or WorkshopCanonicalOperations()
         if not operations.registry_base_url and operations.transport is None:
@@ -279,18 +284,54 @@ class AgoraResearchService:
         persona_tenant = str(persona.get("tenant_id") or (persona.get("metadata") or {}).get("tenant_id") or "").strip()
         if persona_tenant and persona_tenant != scope.tenant_id:
             raise self.bff_error(409, conflict, "Persona belongs to another tenant", persona_id)
-        try:
-            authority = resolve_persona_model_authority(persona)
-        except ArtifactLoadError as exc:
-            raise self.bff_error(409, conflict, "Persona model authority unavailable", f"{persona_id}: {exc}") from exc
-        if authority is None:
+        readback = (persona.get("metadata") or {}).get("provisioning_authoritative_readback")
+        binding = readback.get("runtime_binding") if isinstance(readback, dict) else None
+        if not isinstance(binding, dict) or not binding:
             return None
-        if authority.get("strategy_spec_registry_id") not in (None, spec_id):
-            raise self.bff_error(
-                409, conflict, "Persona artifact was not derived from this StrategySpec",
-                f"{authority.get('strategy_spec_registry_id')} != {spec_id}",
+        binding_meta = binding.get("metadata") if isinstance(binding.get("metadata"), dict) else {}
+        bound_tenant = str(binding_meta.get("tenant_id") or "").strip()
+        if bound_tenant and bound_tenant != scope.tenant_id:
+            raise self.bff_error(409, conflict, "Persona runtime binding belongs to another tenant", persona_id)
+        registry_id = str(binding.get("artifact_id") or "").strip()
+        strategy_id = str(binding_meta.get("strategy_id") or "").strip()
+        version = str(binding.get("artifact_version") or "").strip()
+        mode = str(binding.get("execution_mode") or "paper").strip().lower()
+        checksum = str(binding_meta.get("artifact_checksum") or "").strip()
+        try:
+            loaded = ArtifactLoader(dict(binding_meta.get("object_store") or {})).load_exact(
+                registry_id=registry_id,
+                strategy_id=strategy_id,
+                version=version,
+                execution_mode=mode,
+                expected_checksum=checksum or None,
             )
-        return authority
+            artifact = loaded.json_payload()
+            validate_strategy_artifact(artifact)
+            if artifact.get("artifact_id") != registry_id or artifact.get("strategy_id") != strategy_id:
+                raise ArtifactLoadError("artifact identity does not match the Persona runtime binding")
+        except (ArtifactLoadError, StrategyArtifactValidationError) as exc:
+            raise self.bff_error(409, conflict, "Persona model authority unavailable", f"{persona_id}: {exc}") from exc
+        source_spec = (artifact.get("lineage") or {}).get("source_strategy_spec_id")
+        if source_spec not in (None, spec_id):
+            raise self.bff_error(
+                409, conflict, "Persona artifact was not derived from this StrategySpec", f"{source_spec} != {spec_id}",
+            )
+        parameters = artifact["parameters"]
+        return {
+            "persona_id": persona_id,
+            "tenant_id": scope.tenant_id,
+            "artifact_id": registry_id,
+            "strategy_id": strategy_id,
+            "artifact_version": version,
+            "artifact_checksum": checksum,
+            "strategy_artifact_checksum": strategy_artifact_checksum(artifact),
+            "execution_mode": mode,
+            "strategy_kind": artifact["strategy_logic"]["kind"],
+            "symbols": list(parameters.get("symbols") or []),
+            "bar_frequency": parameters.get("bar_frequency"),
+            "strategy_spec_registry_id": source_spec,
+            "strategy_artifact": artifact,
+        }
 
     def get_plan(self, plan_id: str, *, scope: Any) -> Optional[Dict[str, Any]]:
         plan = self.store.get_plan(plan_id)

@@ -29,12 +29,13 @@ from inbound_authority import (
     reset_current_authority,
     set_current_authority,
 )
-from services.execution.artifact_loader import ArtifactLoadError, reverify_model_authority
+from services.execution.artifact_loader import ArtifactLoader, ArtifactLoadError
 from services.knowledge.evidence.runtime_log import RuntimeEvidenceLog
 from services.registry.strategy_artifact import (
     StrategyArtifactValidationError,
     mutate_strategy_artifact,
     strategy_artifact_checksum,
+    validate_strategy_artifact,
 )
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
@@ -50,6 +51,9 @@ from models import TeachingEvent, TeachingEvaluationResult, TeachingSession
 from consultation_client import TrainingConsultationClient
 from persona_target import (
     PersonaTargetError,
+    UrllibPersonaTargetTransport,
+    _request_json_object,
+    _unwrap,
     commit_persona_target,
     read_persona_target_precondition,
 )
@@ -413,6 +417,78 @@ def _frozen_model(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return model if isinstance(model, dict) else None
 
 
+def _persona_model(persona_id: str, tenant_id: str) -> Optional[Dict[str, Any]]:
+    """Freeze the model the owner Persona runs, read from the Persona and Registry here.
+
+    Nothing the caller sent selects the model: the Persona's authoritative
+    runtime binding is read from the Persona service and its approved artifact
+    is re-read through ``ArtifactLoader.load_exact``.  Without a configured
+    Persona readback or a runtime binding the session stays unbound (legacy SMA).
+    """
+
+    if not str(os.getenv("TRAINING_SESSION_PERSONA_READBACK_URL_TEMPLATE") or "").strip():
+        return None
+    url = _persona_target_url(
+        "TRAINING_SESSION_PERSONA_READBACK_URL_TEMPLATE",
+        persona_id=persona_id,
+        tenant_id=tenant_id,
+        session_id="",
+    )
+    payload = _request_json_object(
+        UrllibPersonaTargetTransport(),
+        "GET",
+        url,
+        label="persona model readback",
+        expected_statuses=(200,),
+        timeout_seconds=_persona_target_timeout_seconds(),
+        headers={"Authorization": f"Bearer {_persona_authority_token()}", "X-Tenant-Id": tenant_id},
+    )
+    persona = _unwrap(payload, ("persona", "target"))
+    metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+    readback = metadata.get("provisioning_authoritative_readback")
+    binding = readback.get("runtime_binding") if isinstance(readback, dict) else None
+    if not isinstance(binding, dict) or not binding:
+        return None
+    binding_meta = binding.get("metadata") if isinstance(binding.get("metadata"), dict) else {}
+    for label, actual, expected in (
+        ("persona", persona.get("persona_id") or binding_meta.get("persona_id"), persona_id),
+        ("tenant", persona.get("tenant_id") or metadata.get("tenant_id") or binding_meta.get("tenant_id"), tenant_id),
+    ):
+        if str(actual or "").strip() != expected:
+            raise ArtifactLoadError(f"Persona runtime binding {label} does not match the session")
+    registry_id = str(binding.get("artifact_id") or "").strip()
+    strategy_id = str(binding_meta.get("strategy_id") or "").strip()
+    version = str(binding.get("artifact_version") or "").strip()
+    mode = str(binding.get("execution_mode") or "paper").strip().lower()
+    loaded = ArtifactLoader(dict(binding_meta.get("object_store") or {})).load_exact(
+        registry_id=registry_id,
+        strategy_id=strategy_id,
+        version=version,
+        execution_mode=mode,
+        expected_checksum=str(binding_meta.get("artifact_checksum") or "").strip() or None,
+    )
+    artifact = loaded.json_payload()
+    validate_strategy_artifact(artifact)
+    if artifact.get("artifact_id") != registry_id or artifact.get("strategy_id") != strategy_id:
+        raise ArtifactLoadError("Persona strategy artifact identity does not match its runtime binding")
+    parameters = artifact["parameters"]
+    return {
+        "persona_id": persona_id,
+        "tenant_id": tenant_id,
+        "artifact_id": registry_id,
+        "strategy_id": strategy_id,
+        "artifact_version": version,
+        "artifact_checksum": str(binding_meta.get("artifact_checksum") or ""),
+        "strategy_artifact_checksum": strategy_artifact_checksum(artifact),
+        "execution_mode": mode,
+        "strategy_kind": artifact["strategy_logic"]["kind"],
+        "symbols": list(parameters.get("symbols") or []),
+        "bar_frequency": parameters.get("bar_frequency"),
+        "strategy_spec_registry_id": (artifact.get("lineage") or {}).get("source_strategy_spec_id"),
+        "strategy_artifact": artifact,
+    }
+
+
 class CreateSessionBody(BaseModel):
     persona_id: str
     objective: str
@@ -422,7 +498,6 @@ class CreateSessionBody(BaseModel):
     current_control_state_ref: Optional[str] = None
     trace_id: Optional[str] = None
     created_at: Optional[str] = None
-    model_authority: Optional[Dict[str, Any]] = None
 
 
 class AppendEventBody(BaseModel):
@@ -683,15 +758,12 @@ def create_session(body: CreateSessionBody) -> Dict[str, Any]:
     timestamp = body.created_at or utc_now()
     existing_ids = {str(session.get("session_id") or "") for session in store.list_sessions()}
     session_id = _session_id(timestamp, existing_ids)
-    model: Optional[Dict[str, Any]] = None
-    if body.model_authority:
-        try:
-            model = reverify_model_authority(body.model_authority)
-        except (ArtifactLoadError, StrategyArtifactValidationError) as exc:
-            raise HTTPException(status_code=409, detail=f"model authority failed verification: {exc}") from exc
-        if model["persona_id"] != body.persona_id or model["tenant_id"] != authority.tenant_id:
-            raise HTTPException(status_code=409, detail="model authority does not belong to this persona and tenant")
-        model.pop("runtime_binding", None)
+    try:
+        model = _persona_model(body.persona_id, authority.tenant_id)
+    except (ArtifactLoadError, StrategyArtifactValidationError) as exc:
+        raise HTTPException(status_code=409, detail=f"persona model authority failed verification: {exc}") from exc
+    except PersonaTargetError as exc:
+        raise HTTPException(status_code=503, detail=f"persona model authority unavailable: {exc}") from exc
     session = _teaching_session_contract({
         "id": session_id,
         "session_id": session_id,

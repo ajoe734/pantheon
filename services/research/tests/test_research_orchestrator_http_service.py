@@ -1045,11 +1045,149 @@ def test_execute_research_stage_durable_idempotency_replay() -> None:
 
 # --- Saved canonical model authority consumed by the real backtest ------------
 
-def _model_run(module, *, params=None, with_model=True, run_id="run-model-001"):
-    from services.execution.artifact_loader import resolve_persona_model_authority
-    from services.execution.model_authority_fixture import persona_with_model
+# --- Persona/model fixture (mirrors a real provisioning readback) ---
+import copy as _fx_copy
+import json as _fx_json
 
-    authority = resolve_persona_model_authority(persona_with_model())
+from services.registry.strategy_artifact import strategy_artifact_checksum as _fx_checksum
+
+_FX_PERSONA_ID = "persona-132519698e6199e80326"
+_FX_TENANT_ID = "tenant-dev"
+_FX_ARTIFACT_ID = "artifact-persona-paper-aa060d53ff712cbba704"
+_FX_STRATEGY_ID = "strategy-persona-aa060d53ff712cbba704"
+
+
+def _fx_momentum_artifact(
+    *, lookback: int = 2, threshold: float = 0.0, symbols: tuple[str, ...] = ("2330.TW",)
+) -> dict[str, Any]:
+    return {
+        "artifact_id": _FX_ARTIFACT_ID,
+        "strategy_id": _FX_STRATEGY_ID,
+        "version": "1.0.0",
+        "artifact_schema_version": "1.0",
+        "lineage": {
+            "source_run_ids": ["persona-provisioning-forward-artifact-aa060d53ff712cbba704"],
+            "parent_registry_ids": ["artifact-persona-paper-baseline-aa060d53ff712cbba704"],
+            "source_strategy_spec_id": "reg-strategy-spec-persona-aa060d53ff712cbba704",
+        },
+        "algorithm_ref": {
+            "path": "services/registry/strategy_artifact.py",
+            "commit": "1cfaf933fbcc119605a455ebea483d54d2521ebb",
+            "engine": "lean",
+            "entrypoint": "services.registry.strategy_artifact:evaluate_strategy_action",
+            "repository": "ajoe734/pantheon",
+            "signal_interface": "services.execution.lean_runtime.paper_signal_producer:Strategy",
+            "logic_interpreter": "services.registry.strategy_artifact:evaluate_strategy_action",
+            "signal_schema_version": "1.0",
+        },
+        "strategy_logic": {
+            "kind": "close_to_close_momentum",
+            "positive_action": "BUY",
+            "non_positive_action": "SELL",
+            "lookback_parameter": "lookback_bars",
+            "threshold_parameter": "momentum_threshold",
+        },
+        "parameters": {
+            "market": "TW",
+            "symbols": list(symbols),
+            "data_source": "source-ingest:paper/persona-bootstrap",
+            "bar_frequency": "1d",
+            "lookback_bars": lookback,
+            "quantity_type": "SHARES",
+            "order_quantity": 1,
+            "momentum_threshold": threshold,
+            "zero_momentum_action": "SELL",
+        },
+        "provenance_refs": ["task:LOOP-PROD-PER-001"],
+        "mutation_surface": {
+            "controls": [
+                {"parameter_key": "lookback_bars", "value_type": "integer", "current_value": lookback,
+                 "allowed_range": {"min": 2, "max": 60}, "step": 1},
+                {"parameter_key": "momentum_threshold", "value_type": "number", "current_value": threshold,
+                 "allowed_range": {"min": 0.0, "max": 0.05}, "step": 0.001},
+            ],
+            "immutable_parameters": [
+                "symbols", "bar_frequency", "data_source", "order_quantity",
+                "quantity_type", "zero_momentum_action", "market",
+            ],
+        },
+    }
+
+
+def _fx_runtime_binding(artifact: dict[str, Any] | None = None, *, tenant_id: str = _FX_TENANT_ID) -> dict[str, Any]:
+    artifact = _fx_copy.deepcopy(artifact or _fx_momentum_artifact())
+    payload = _fx_json.dumps(artifact, sort_keys=True, separators=(",", ":"))
+    checksum = _fx_checksum(artifact)
+    metadata = {
+        "version": artifact["version"],
+        "checksum": checksum,
+        "registry_id": artifact["artifact_id"],
+        "strategy_id": artifact["strategy_id"],
+        "artifact_type": "execution_bundle",
+        "artifact_state": "approved",
+        "runtime_action": "deploy_new_binding",
+        "promotion_state": "paper",
+        "deployment_stage": "paper",
+        "created_at": "2026-10-15T19:19:47Z",
+        "approved_at": "2026-10-15T19:19:48Z",
+        "lineage": _fx_copy.deepcopy(artifact["lineage"]),
+        "rollback": {
+            "action_type": "pause_then_replace",
+            "target_version": "0.0.1",
+            "target_registry_id": "artifact-persona-paper-baseline-aa060d53ff712cbba704",
+        },
+        "capital_pool_id": "pool-persona-paper-aa060d53ff712cbba704",
+        "gross_scale_pct": 100.0,
+        "capital_scale_pct": 0.0,
+        "deployment_plan_id": "plan-persona-paper-aa060d53ff712cbba704",
+        "sponsor_persona_id": _FX_PERSONA_ID,
+        "approval_decision_id": "apv-persona-paper-artifact-aa060d53ff712cbba704",
+    }
+    base = f"openclaw/registry/{artifact['strategy_id']}/{artifact['version']}"
+    return {
+        "status": "active",
+        "binding_id": "rb-ece1ab6cfcdc4c518c40874a97a58a66",
+        "runtime_id": "rt-a47d6729",
+        "artifact_id": artifact["artifact_id"],
+        "artifact_version": artifact["version"],
+        "execution_mode": "paper",
+        "metadata": {
+            "tenant_id": tenant_id,
+            "persona_id": _FX_PERSONA_ID,
+            "strategy_id": artifact["strategy_id"],
+            "artifact_checksum": checksum,
+            "object_store": {f"{base}/artifact.bin": payload, f"{base}/metadata.json": metadata},
+        },
+    }
+
+
+def _fx_persona_with_model(artifact: dict[str, Any] | None = None, *, tenant_id: str = _FX_TENANT_ID) -> dict[str, Any]:
+    return {
+        "persona_id": _FX_PERSONA_ID,
+        "tenant_id": tenant_id,
+        "metadata": {
+            "tenant_id": tenant_id,
+            "provisioning_authoritative_readback": {"runtime_binding": _fx_runtime_binding(artifact, tenant_id=tenant_id)},
+        },
+    }
+
+
+def _saved_model() -> dict:
+    """The model the BFF freezes into a saved plan from the owner Persona."""
+    artifact = _fx_momentum_artifact()
+    return {
+        "persona_id": _FX_PERSONA_ID, "tenant_id": _FX_TENANT_ID,
+        "artifact_id": artifact["artifact_id"], "strategy_id": artifact["strategy_id"],
+        "artifact_version": artifact["version"], "artifact_checksum": _fx_checksum(artifact),
+        "strategy_artifact_checksum": _fx_checksum(artifact), "execution_mode": "paper",
+        "strategy_kind": "close_to_close_momentum", "symbols": list(artifact["parameters"]["symbols"]),
+        "bar_frequency": "1d", "strategy_spec_registry_id": artifact["lineage"]["source_strategy_spec_id"],
+        "strategy_artifact": artifact,
+    }
+
+
+def _model_run(module, *, params=None, with_model=True, run_id="run-model-001"):
+    authority = _saved_model()
     plan = {
         "plan_id": "plan-model-1",
         "strategy_id": authority["strategy_id"],
@@ -1161,16 +1299,13 @@ def test_saved_model_rejects_ungoverned_or_sma_parameters(monkeypatch: pytest.Mo
 
 
 def test_caller_cannot_supply_model_authority_outside_the_saved_run(monkeypatch: pytest.MonkeyPatch) -> None:
-    from services.execution.artifact_loader import resolve_persona_model_authority
-    from services.execution.model_authority_fixture import persona_with_model
-
     module = _load_service_module()
     monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "real")
     _model_run(module, with_model=False)
     stage = {"stage_id": "s1", "stage_type": "prototype_backtest", "dataset": _tw_dataset()}
     response = TestClient(module.app).post("/stages/prototype_backtest/execute", json={
         "stage": stage,
-        "plan": {"plan_id": "plan-model-1", "model_authority": resolve_persona_model_authority(persona_with_model())},
+        "plan": {"plan_id": "plan-model-1", "model_authority": _saved_model()},
         "run_id": "run-model-001", "correlation_id": "corr-caller",
     })
     assert response.status_code == 400, response.text

@@ -1182,37 +1182,165 @@ def test_terminal_session_recovery_claim_lease_fences_duplicate_claims_before_ex
 
 # --- Canonical model-bound teaching sessions ---------------------------------
 
-def _model_authority(*, tenant_id: str = "tenant-test", **artifact_kwargs) -> dict:
-    from services.execution.artifact_loader import resolve_persona_model_authority
-    from services.execution.model_authority_fixture import momentum_artifact, persona_with_model
+# --- Persona/model fixture (mirrors a real provisioning readback) ---
+import copy as _fx_copy
+import json as _fx_json
 
-    persona = persona_with_model(momentum_artifact(**artifact_kwargs), tenant_id=tenant_id)
-    return resolve_persona_model_authority(persona)
+from services.registry.strategy_artifact import strategy_artifact_checksum as _fx_checksum
+
+_FX_PERSONA_ID = "persona-132519698e6199e80326"
+_FX_TENANT_ID = "tenant-dev"
+_FX_ARTIFACT_ID = "artifact-persona-paper-aa060d53ff712cbba704"
+_FX_STRATEGY_ID = "strategy-persona-aa060d53ff712cbba704"
 
 
-def _create_model_session(client: TestClient, authority: dict, persona_id: str | None = None):
-    return client.post(
-        "/api/training/sessions",
-        json={
-            "persona_id": persona_id or authority["persona_id"],
-            "objective": "Teach the canonical momentum model",
-            "created_at": "2026-04-28T22:00:00Z",
-            "model_authority": authority,
+def _fx_momentum_artifact(
+    *, lookback: int = 2, threshold: float = 0.0, symbols: tuple[str, ...] = ("2330.TW",)
+) -> dict[str, Any]:
+    return {
+        "artifact_id": _FX_ARTIFACT_ID,
+        "strategy_id": _FX_STRATEGY_ID,
+        "version": "1.0.0",
+        "artifact_schema_version": "1.0",
+        "lineage": {
+            "source_run_ids": ["persona-provisioning-forward-artifact-aa060d53ff712cbba704"],
+            "parent_registry_ids": ["artifact-persona-paper-baseline-aa060d53ff712cbba704"],
+            "source_strategy_spec_id": "reg-strategy-spec-persona-aa060d53ff712cbba704",
         },
-    )
+        "algorithm_ref": {
+            "path": "services/registry/strategy_artifact.py",
+            "commit": "1cfaf933fbcc119605a455ebea483d54d2521ebb",
+            "engine": "lean",
+            "entrypoint": "services.registry.strategy_artifact:evaluate_strategy_action",
+            "repository": "ajoe734/pantheon",
+            "signal_interface": "services.execution.lean_runtime.paper_signal_producer:Strategy",
+            "logic_interpreter": "services.registry.strategy_artifact:evaluate_strategy_action",
+            "signal_schema_version": "1.0",
+        },
+        "strategy_logic": {
+            "kind": "close_to_close_momentum",
+            "positive_action": "BUY",
+            "non_positive_action": "SELL",
+            "lookback_parameter": "lookback_bars",
+            "threshold_parameter": "momentum_threshold",
+        },
+        "parameters": {
+            "market": "TW",
+            "symbols": list(symbols),
+            "data_source": "source-ingest:paper/persona-bootstrap",
+            "bar_frequency": "1d",
+            "lookback_bars": lookback,
+            "quantity_type": "SHARES",
+            "order_quantity": 1,
+            "momentum_threshold": threshold,
+            "zero_momentum_action": "SELL",
+        },
+        "provenance_refs": ["task:LOOP-PROD-PER-001"],
+        "mutation_surface": {
+            "controls": [
+                {"parameter_key": "lookback_bars", "value_type": "integer", "current_value": lookback,
+                 "allowed_range": {"min": 2, "max": 60}, "step": 1},
+                {"parameter_key": "momentum_threshold", "value_type": "number", "current_value": threshold,
+                 "allowed_range": {"min": 0.0, "max": 0.05}, "step": 0.001},
+            ],
+            "immutable_parameters": [
+                "symbols", "bar_frequency", "data_source", "order_quantity",
+                "quantity_type", "zero_momentum_action", "market",
+            ],
+        },
+    }
+
+
+def _fx_runtime_binding(artifact: dict[str, Any] | None = None, *, tenant_id: str = _FX_TENANT_ID) -> dict[str, Any]:
+    artifact = _fx_copy.deepcopy(artifact or _fx_momentum_artifact())
+    payload = _fx_json.dumps(artifact, sort_keys=True, separators=(",", ":"))
+    checksum = _fx_checksum(artifact)
+    metadata = {
+        "version": artifact["version"],
+        "checksum": checksum,
+        "registry_id": artifact["artifact_id"],
+        "strategy_id": artifact["strategy_id"],
+        "artifact_type": "execution_bundle",
+        "artifact_state": "approved",
+        "runtime_action": "deploy_new_binding",
+        "promotion_state": "paper",
+        "deployment_stage": "paper",
+        "created_at": "2026-10-15T19:19:47Z",
+        "approved_at": "2026-10-15T19:19:48Z",
+        "lineage": _fx_copy.deepcopy(artifact["lineage"]),
+        "rollback": {
+            "action_type": "pause_then_replace",
+            "target_version": "0.0.1",
+            "target_registry_id": "artifact-persona-paper-baseline-aa060d53ff712cbba704",
+        },
+        "capital_pool_id": "pool-persona-paper-aa060d53ff712cbba704",
+        "gross_scale_pct": 100.0,
+        "capital_scale_pct": 0.0,
+        "deployment_plan_id": "plan-persona-paper-aa060d53ff712cbba704",
+        "sponsor_persona_id": _FX_PERSONA_ID,
+        "approval_decision_id": "apv-persona-paper-artifact-aa060d53ff712cbba704",
+    }
+    base = f"openclaw/registry/{artifact['strategy_id']}/{artifact['version']}"
+    return {
+        "status": "active",
+        "binding_id": "rb-ece1ab6cfcdc4c518c40874a97a58a66",
+        "runtime_id": "rt-a47d6729",
+        "artifact_id": artifact["artifact_id"],
+        "artifact_version": artifact["version"],
+        "execution_mode": "paper",
+        "metadata": {
+            "tenant_id": tenant_id,
+            "persona_id": _FX_PERSONA_ID,
+            "strategy_id": artifact["strategy_id"],
+            "artifact_checksum": checksum,
+            "object_store": {f"{base}/artifact.bin": payload, f"{base}/metadata.json": metadata},
+        },
+    }
+
+
+def _fx_persona_with_model(artifact: dict[str, Any] | None = None, *, tenant_id: str = _FX_TENANT_ID) -> dict[str, Any]:
+    return {
+        "persona_id": _FX_PERSONA_ID,
+        "tenant_id": tenant_id,
+        "metadata": {
+            "tenant_id": tenant_id,
+            "provisioning_authoritative_readback": {"runtime_binding": _fx_runtime_binding(artifact, tenant_id=tenant_id)},
+        },
+    }
+
+def _model_authority(*, tenant_id: str = "tenant-test", **artifact_kwargs) -> dict:
+    """Persona served by the (faked) owner readback; the service derives the model itself."""
+    return _fx_persona_with_model(_fx_momentum_artifact(**artifact_kwargs), tenant_id=tenant_id)
+
+
+def _create_model_session(module, client: TestClient, persona: dict | None, persona_id: str | None = None):
+    """Create through the service, serving ``persona`` from the owner readback it performs itself."""
+    env = {"TRAINING_SESSION_PERSONA_READBACK_URL_TEMPLATE": "http://persona.test/personas/{persona_id}"}
+    with mock.patch.dict(os.environ, env), \
+            mock.patch.object(module, "_persona_authority_token", return_value="tok"), \
+            mock.patch.object(module, "_request_json_object", return_value={"persona": persona}):
+        return client.post(
+            "/api/training/sessions",
+            json={
+                "persona_id": persona_id or _FX_PERSONA_ID,
+                "objective": "Teach the canonical momentum model",
+                "created_at": "2026-04-28T22:00:00Z",
+                # A caller-carried model is ignored: only the owner readback selects it.
+                "model_authority": {"artifact_id": "forged", "strategy_artifact": {"parameters": {"lookback_bars": 9}}},
+            },
+        )
 
 
 def test_model_bound_session_controls_come_from_artifact_mutation_surface() -> None:
     module = _load_service_module()
     client = TestClient(module.app)
-    authority = _model_authority()
-    created = _create_model_session(client, authority)
+    persona = _model_authority()
+    created = _create_model_session(module, client, persona)
     assert created.status_code == 201, created.text
     session_id = created.json()["session_id"]
     frozen = created.json()["metadata"]["model_authority"]
-    assert frozen["artifact_id"] == authority["artifact_id"]
-    assert frozen["artifact_checksum"] == authority["artifact_checksum"]
-    assert "runtime_binding" not in frozen
+    assert frozen["artifact_id"] == _FX_ARTIFACT_ID
+    assert frozen["strategy_artifact"]["parameters"]["lookback_bars"] == 2
 
     controls = client.get(f"/api/training/controls/{session_id}").json()["controls"]
     assert [c["parameter_key"] for c in controls] == ["lookback_bars", "momentum_threshold"]
@@ -1231,24 +1359,30 @@ def test_model_bound_session_controls_come_from_artifact_mutation_surface() -> N
     assert sma_key["field_errors"][0]["reason"] == "unknown_parameter_key"
 
 
-def test_model_bound_create_rejects_tampered_or_foreign_authority() -> None:
+def test_model_bound_create_rejects_tampered_or_foreign_owner_model() -> None:
     module = _load_service_module()
     client = TestClient(module.app)
-    authority = _model_authority()
+    persona = _model_authority()
 
-    tampered = json.loads(json.dumps(authority))
-    store = tampered["runtime_binding"]["metadata"]["object_store"]
+    tampered = json.loads(json.dumps(persona))
+    store = tampered["metadata"]["provisioning_authoritative_readback"]["runtime_binding"]["metadata"]["object_store"]
     artifact_key = next(key for key in store if key.endswith("artifact.bin"))
     store[artifact_key] = store[artifact_key].replace('"order_quantity":1', '"order_quantity":9')
-    assert _create_model_session(client, tampered).status_code == 409
+    assert _create_model_session(module, client, tampered).status_code == 409
 
-    forged_identity = json.loads(json.dumps(authority))
-    forged_identity["strategy_artifact"]["parameters"]["lookback_bars"] = 3
-    assert _create_model_session(client, forged_identity).status_code == 409
+    assert _create_model_session(module, client, persona, persona_id="persona-someone-else").status_code == 409
+    assert _create_model_session(module, client, _model_authority(tenant_id="tenant-other")).status_code == 409
 
-    assert _create_model_session(client, authority, persona_id="persona-someone-else").status_code == 409
-    other_tenant = _model_authority(tenant_id="tenant-other")
-    assert _create_model_session(client, other_tenant).status_code == 409
+
+def test_persona_without_runtime_binding_or_readback_stays_unbound() -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+    plain = {"persona_id": _FX_PERSONA_ID, "tenant_id": "tenant-test", "metadata": {}}
+    created = _create_model_session(module, client, plain)
+    assert created.status_code == 201, created.text
+    assert "model_authority" not in (created.json().get("metadata") or {})
+    controls = client.get(f"/api/training/controls/{created.json()['session_id']}").json()["controls"]
+    assert "short_window" in {c["parameter_key"] for c in controls}
 
 
 def test_model_bound_preview_runs_real_backend_on_derived_candidate() -> None:
@@ -1279,7 +1413,9 @@ def test_model_bound_preview_runs_real_backend_on_derived_candidate() -> None:
     module.run_vectorbt_workflow = real_workflow_on_tw_dataset
     client = TestClient(module.app)
     authority = _model_authority()
-    session_id = _create_model_session(client, authority).json()["session_id"]
+    session_id = _create_model_session(module, client, authority).json()["session_id"]
+    authority = {"artifact_id": _FX_ARTIFACT_ID}
+    base_checksum = _fx_checksum(_fx_momentum_artifact())
     patched = client.patch(
         f"/api/training/sessions/{session_id}/controls",
         json={"patches": [
@@ -1308,7 +1444,7 @@ def test_model_bound_preview_runs_real_backend_on_derived_candidate() -> None:
     proof = run.json()["preview"]["evaluation_proof"]
     model = proof["backend"]["model"]
     assert proof["backend"]["run_id"].startswith("vbt-real-")
-    assert model["base_artifact_checksum"] == authority["strategy_artifact_checksum"]
+    assert model["base_artifact_checksum"] == base_checksum
     assert model["candidate_artifact_checksum"] != model["base_artifact_checksum"]
     assert model["symbols"] == ["2330.TW"]
     assert proof["candidate_binding"]["model"]

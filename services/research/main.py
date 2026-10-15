@@ -19,7 +19,6 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger("research-orchestrator")
 
-from services.execution.artifact_loader import ArtifactLoadError, reverify_model_authority
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 from services.registry.split_api import RegistryService
@@ -27,6 +26,7 @@ from services.registry.strategy_artifact import (
     StrategyArtifactValidationError,
     mutate_strategy_artifact,
     strategy_artifact_checksum,
+    validate_strategy_artifact,
 )
 from services.registry.storage import get_store as get_registry_store
 from services.research.alpha_replication.admission import ReplicationAdmissionStore
@@ -129,15 +129,18 @@ CAPABILITY_REGISTRY: Dict[str, Dict[str, Any]] = {
 def _model_backtest_config(saved_model: Dict[str, Any], stage_params: Dict[str, Any], requested_by: str) -> Any:
     """Backtest config for a plan whose model was frozen from the owner Persona.
 
-    The saved authority is re-read through ``ArtifactLoader.load_exact``; stage
-    parameters may only move governed mutation-surface controls, in which case
+    The saved model was frozen by the BFF from the owner Persona through
+    ``ArtifactLoader.load_exact``; here it is only checked against its own
+    frozen checksum before use.  Stage parameters may only move governed mutation-surface controls, in which case
     the evaluated artifact is a Registry-derived candidate of the frozen base.
     """
 
     from services.research.vectorbt.adapter.vectorbt_adapter import BacktestConfig
 
-    verified = reverify_model_authority(saved_model)
-    base = verified["strategy_artifact"]
+    base = saved_model["strategy_artifact"]
+    validate_strategy_artifact(base)
+    if strategy_artifact_checksum(base) != saved_model["strategy_artifact_checksum"]:
+        raise ValueError("saved model artifact does not match its frozen checksum")
     controls = {c["parameter_key"]: c for c in base["mutation_surface"]["controls"]}
     unknown = sorted(key for key in stage_params if key not in base["parameters"])
     if unknown:
@@ -148,7 +151,7 @@ def _model_backtest_config(saved_model: Dict[str, Any], stage_params: Dict[str, 
         immutable = sorted(key for key in updates if key not in controls)
         if immutable:
             raise ValueError("stage parameters are immutable in the frozen strategy artifact: " + ", ".join(immutable))
-        digest = hashlib.sha256(json.dumps({"base": verified["strategy_artifact_checksum"], "updates": updates}, sort_keys=True).encode()).hexdigest()[:12]
+        digest = hashlib.sha256(json.dumps({"base": saved_model["strategy_artifact_checksum"], "updates": updates}, sort_keys=True).encode()).hexdigest()[:12]
         major, minor, patch = (int(part) for part in str(base["version"]).split("."))
         candidate = mutate_strategy_artifact(
             base,

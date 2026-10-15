@@ -680,12 +680,9 @@ class TrainingSessionHttpStore:
         context_refs: Optional[List[Dict[str, Any]]] = None,
         actor_id: str = "operator",
         created_at: Optional[str] = None,
-        model_authority: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Optional[Dict[str, Any]]:
         payload = {"persona_id": persona_id, "objective": objective, "context_refs": context_refs or [], "actor_id": actor_id, "created_at": created_at}
-        if model_authority:
-            payload["model_authority"] = model_authority
         raw = self._request("/api/training/sessions", method="POST", payload=payload)
         return _project_trainer_session_detail(raw) if isinstance(raw, dict) else None
 
