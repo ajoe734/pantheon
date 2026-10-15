@@ -3,14 +3,14 @@
   "scope": "source-only; training-session service readiness and functional health boundary",
   "changes": [
     "services/training-session/main.py: decouple candidate governance gate failure from operational service readiness; record status=ok on preview computation completion in both sync (refresh_preview) and async (complete_preview_job) paths while preserving candidate governance_gate_state and evaluation proof references in detail",
-    "services/training-session/main.py: _reconcile_functional_result reconciles already-persisted completed preview evaluation results using original store owner authority (store.get_preview_job / store.get_preview_bundle) when no error_code is present, restoring readyz=200 without recomputing previews or manual record edits",
-    "services/training-session/tests/test_http_service.py: update test_authoritative_persona_target_replay_and_fail_closed_validation to assert readyz remains 200 OK when candidate governance rejects metrics; verify sync and async negative-preview behavior remains fail-closed for adoption; verify already-persisted completed negative-governance record reconciles to readyz 200 OK; verify genuine operational failures (with error_code) still degrade readyz to 503"
+    "services/training-session/main.py: classify actual historical completed-negative preview evaluation results in _functional_health using matching true tenant/session/job/proof owner evidence; remove _reconcile_functional_result writer and Exception:pass / defaulttenant / detail-only success; keep health checks strictly read-only and retain raw failure/audit in store without recomputing previews or manual record edits; degrade honestly when authority is missing, mismatched, or store errors occur",
+    "services/training-session/tests/test_http_service.py: update test_canonical_dataset_validation_and_fail_closed_and_evidence to assert readyz remains 200 OK when candidate governance rejects metrics; verify sync and async negative-preview behavior remains fail-closed for adoption; verify valid persisted negative record is classified as ok without mutating store (read-only no-write); verify missing authority degrades to 503; verify store error degrades to 503; verify genuine operational failures (with error_code) degrade readyz to 503"
   ],
   "verification": {
     "local_tests": "services/training-session/tests/test_http_service.py passed (15 passed); full suite services/training-session/tests passed (213 passed, 2 skipped)",
     "candidate_boundary": "candidate metric rejection retains governance_gate_state=failed, commit_eligible=false, and 409 rejection on session complete, while service readyz remains 200 OK",
     "operational_failures": "admission, evidence, and execution failures with error_code continue to degrade functional health and readyz to 503",
-    "persisted_recovery": "existing completed jobs with negative governance reconcile to readyz 200 via store owner authority without recomputing previews or mutating proof records"
+    "persisted_recovery": "read-only classification recognizes existing completed jobs with negative governance via store owner authority without mutating store records or recomputing previews; missing authority or store errors remain honestly degraded"
   },
   "not_claimed": [
     "live container restart / deployment / provider calls belong to parent task; source worker does not perform hosted L1-L12 closure"

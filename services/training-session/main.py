@@ -445,38 +445,74 @@ PERSISTENCE_POSTURE = require_persistence_posture("training-session")
 store = build_training_session_store(_data_dir())
 
 
-def _reconcile_functional_result(result: Dict[str, Any]) -> Dict[str, Any]:
-    status = str(result.get("status") or "").lower()
-    if status in {"ok", "passed", "completed"}:
-        return result
+def _is_completed_negative_preview(result: Dict[str, Any]) -> bool:
+    if not isinstance(result, dict):
+        return False
     operation = str(result.get("operation") or "").lower()
-    if operation == "preview_evaluation":
-        detail = result.get("detail") or {}
-        if not detail.get("error_code"):
-            job_id = detail.get("job_id")
-            session_id = detail.get("session_id")
-            is_completed = False
-            if job_id:
-                job = store.get_preview_job(job_id)
-                if job and str(job.get("status") or "").lower() == "completed" and job.get("evaluation_proof_ref"):
-                    is_completed = True
-            if not is_completed and session_id:
-                bundle = store.get_preview_bundle(session_id)
-                if bundle and (bundle.get("preview") or {}).get("evaluation_proof"):
-                    is_completed = True
-            if not is_completed and detail.get("evaluation_proof_ref") and detail.get("governance_gate_state") in {"passed", "failed"}:
-                is_completed = True
+    if operation != "preview_evaluation":
+        return False
+    tenant_id = str(result.get("tenant_id") or "").strip()
+    if not tenant_id:
+        return False
+    detail = result.get("detail")
+    if not isinstance(detail, dict):
+        return False
+    if detail.get("error_code"):
+        return False
 
-            if is_completed:
-                reconciled = dict(result)
-                reconciled["status"] = "ok"
-                try:
-                    tenant_id = str(result.get("tenant_id") or "tenant-dev")
-                    store.put_functional_result(operation, tenant_id, reconciled)
-                except Exception:
-                    pass
-                return reconciled
-    return result
+    job_id = str(detail.get("job_id") or "").strip()
+    session_id = str(detail.get("session_id") or "").strip()
+    proof_ref = str(detail.get("evaluation_proof_ref") or "").strip()
+
+    if job_id:
+        try:
+            job = store.get_preview_job(job_id)
+        except Exception:
+            return False
+        if not isinstance(job, dict) or str(job.get("status") or "").lower() != "completed":
+            return False
+        if str(job.get("tenant_id") or "").strip() != tenant_id:
+            return False
+        if session_id and str(job.get("session_id") or "").strip() != session_id:
+            return False
+        job_proof_ref = str(job.get("evaluation_proof_ref") or "").strip()
+        if not job_proof_ref or (proof_ref and proof_ref != job_proof_ref):
+            return False
+        actual_session_id = str(job.get("session_id") or session_id).strip()
+        if not actual_session_id:
+            return False
+        try:
+            session = store.get_session(actual_session_id)
+        except Exception:
+            return False
+        if not isinstance(session, dict) or str(session.get("tenant_id") or "").strip() != tenant_id:
+            return False
+        return True
+
+    if session_id:
+        try:
+            session = store.get_session(session_id)
+            bundle = store.get_preview_bundle(session_id)
+        except Exception:
+            return False
+        if not isinstance(session, dict) or str(session.get("tenant_id") or "").strip() != tenant_id:
+            return False
+        if not isinstance(bundle, dict) or str(bundle.get("tenant_id") or "").strip() != tenant_id:
+            return False
+        if str(bundle.get("session_id") or "").strip() != session_id:
+            return False
+        preview = bundle.get("preview")
+        if not isinstance(preview, dict):
+            return False
+        proof = preview.get("evaluation_proof")
+        if not isinstance(proof, dict):
+            return False
+        bundle_proof_ref = str(proof.get("proof_ref") or "").strip()
+        if not bundle_proof_ref or (proof_ref and proof_ref != bundle_proof_ref):
+            return False
+        return True
+
+    return False
 
 
 def _functional_health() -> Dict[str, Any]:
@@ -489,15 +525,15 @@ def _functional_health() -> Dict[str, Any]:
             "failure_count": 1,
             "error": type(exc).__name__,
         }
-    results = [_reconcile_functional_result(res) for res in raw_results]
     failures = [
         result
-        for result in results
+        for result in raw_results
         if str(result.get("status") or "").lower() not in {"ok", "passed", "completed"}
+        and not _is_completed_negative_preview(result)
     ]
     return {
         "status": "degraded" if failures else "ok",
-        "result_count": len(results),
+        "result_count": len(raw_results),
         "failure_count": len(failures),
         "failures": failures[-10:],
     }
