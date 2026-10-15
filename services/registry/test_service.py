@@ -955,7 +955,8 @@ def strict_client(monkeypatch):
     monkeypatch.setenv("PANTHEON_REGISTRY_JWT_SECRET", _JWT_SECRET)
     monkeypatch.setenv("PANTHEON_REGISTRY_JWT_ISSUER", "")
     monkeypatch.setenv("PANTHEON_REGISTRY_JWT_AUDIENCE", "")
-    return TestClient(app)
+    with TestClient(app) as client:
+        yield client
 
 
 def _create_entry(client: TestClient, token: str, *, strategy_id: str, version: str = "1.0.0") -> dict:
@@ -1082,13 +1083,13 @@ def test_builtin_artifact_mutation_is_denied_and_survives_restart(strict_client)
     # Restart invariant: a fresh service/store must still register builtins
     # cleanly (the denied PATCH above must not have partially mutated it).
     reset_store()
-    fresh = TestClient(app)
-    health = fresh.get("/health")
-    assert health.status_code == 200, health.text
-    readback = fresh.get(
-        f"/api/registry/strategy-artifacts/{registry_id}", headers=_bearer(token)
-    )
-    assert readback.status_code == 200, readback.text
+    with TestClient(app) as fresh:
+        health = fresh.get("/health")
+        assert health.status_code == 200, health.text
+        readback = fresh.get(
+            f"/api/registry/strategy-artifacts/{registry_id}", headers=_bearer(token)
+        )
+        assert readback.status_code == 200, readback.text
 
 
 def test_builtin_artifact_is_publicly_readable_across_tenants(strict_client):
