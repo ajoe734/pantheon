@@ -69,11 +69,12 @@ def test_compose_wires_reconciliation_drift_as_derived_read_model() -> None:
         == "${RECONCILIATION_DRIFT_CONSUMER_MAX_TICKS:-0}"
     )
     assert "reconciliation-drift-data:/data/reconciliation-drift" in consumer["volumes"]
+    assert "worker-health-data:/data/health" in consumer["volumes"]
     assert consumer["depends_on"]["reconciliation-drift-svc"]["condition"] == "service_healthy"
     assert consumer["depends_on"]["telemetry"]["condition"] == "service_healthy"
     assert consumer["environment"]["RECONCILIATION_DRIFT_CONSUMER_HEALTH_FILE"] == (
         "${RECONCILIATION_DRIFT_CONSUMER_HEALTH_FILE:-"
-        "/tmp/reconciliation-drift-consumer-health.json}"
+        "/data/health/reconciliation-drift-consumer-health.json}"
     )
     assert consumer["environment"][
         "RECONCILIATION_DRIFT_CONSUMER_HEALTH_MAX_AGE_SECONDS"
@@ -105,9 +106,10 @@ def test_compose_wires_reconciliation_drift_as_derived_read_model() -> None:
         scheduler["environment"]["RECONCILIATION_DRIFT_SCHEDULER_MAX_ATTEMPTS"]
         == "${RECONCILIATION_DRIFT_SCHEDULER_MAX_ATTEMPTS:-3}"
     )
+    assert "worker-health-data:/data/health" in scheduler["volumes"]
     assert scheduler["environment"]["RECONCILIATION_DRIFT_SCHEDULER_HEALTH_FILE"] == (
         "${RECONCILIATION_DRIFT_SCHEDULER_HEALTH_FILE:-"
-        "/tmp/reconciliation-drift-scheduler-health.json}"
+        "/data/health/reconciliation-drift-scheduler-health.json}"
     )
     assert scheduler["environment"][
         "RECONCILIATION_DRIFT_SCHEDULER_HEALTH_MAX_AGE_SECONDS"
@@ -142,11 +144,12 @@ def test_compose_wires_reconciliation_drift_as_derived_read_model() -> None:
         == "/data/reconciliation-drift/incident-listener-state.json"
     )
     assert "reconciliation-drift-data:/data/reconciliation-drift" in listener["volumes"]
+    assert "worker-health-data:/data/health" in listener["volumes"]
     assert listener["environment"][
         "RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE"
     ] == (
         "${RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE:-"
-        "/tmp/reconciliation-drift-incident-listener-health.json}"
+        "/data/health/reconciliation-drift-incident-listener-health.json}"
     )
     assert listener["environment"][
         "RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_MAX_AGE_SECONDS"

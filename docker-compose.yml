@@ -132,10 +132,11 @@ services:
       # JWT and grants only durable advisory-handoff intake.
       CONSULTATION_HANDOFF_SINK_URL: http://governance:8082/api/governance/consultation-handoffs
       CONSULTATION_HANDOFF_TOKEN: ${CONSULTATION_HANDOFF_TOKEN:-pantheon-local-consultation-handoff-token}
-      CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE: /data/consultation/workflow-health.json
+      CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE: ${CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE:-/data/health/workflow-health.json}
       CONSULTATION_WORKFLOW_EXECUTOR_INTERVAL_SECONDS: ${CONSULTATION_WORKFLOW_EXECUTOR_INTERVAL_SECONDS:-15}
     volumes:
       - consultation-data:/data/consultation
+      - worker-health-data:/data/health
     ports:
       - "${CONSULTATION_PORT:-18096}:8096"
     depends_on:
@@ -687,7 +688,7 @@ services:
       SHADOW_EVAL_SCHEDULER_MAX_TICKS: ${SHADOW_EVAL_SCHEDULER_MAX_TICKS:-0}
       SHADOW_EVAL_TYPE: ${SHADOW_EVAL_TYPE:-shadow}
       SHADOW_EVAL_MAX_DATASETS: ${SHADOW_EVAL_MAX_DATASETS:-}
-      SHADOW_EVAL_SCHEDULER_HEALTH_FILE: ${SHADOW_EVAL_SCHEDULER_HEALTH_FILE:-/tmp/policy-learning-shadow-eval-scheduler-health.json}
+      SHADOW_EVAL_SCHEDULER_HEALTH_FILE: ${SHADOW_EVAL_SCHEDULER_HEALTH_FILE:-/data/health/policy-learning-shadow-eval-scheduler-health.json}
       # Same credential and same tenant scope as policy-learning-svc above.
       # The scheduler presents this token as `Authorization: Bearer` and the
       # tenant as `X-Tenant-Id`; both must resolve to the same values the API
@@ -699,6 +700,8 @@ services:
       AGORA_HANDOFF_SERVICE_TOKEN: ${AGORA_HANDOFF_SERVICE_TOKEN:-pantheon-local-agora-handoff-service-token}
       POLICY_LEARNING_AGORA_TENANT_ID: ${POLICY_LEARNING_AGORA_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-pantheon-local}}
       POLICY_LEARNING_AGORA_USER_ID: ${POLICY_LEARNING_AGORA_USER_ID:-}
+    volumes:
+      - worker-health-data:/data/health
     depends_on:
       policy-learning-svc:
         condition: service_healthy
@@ -1436,12 +1439,37 @@ services:
       PANTHEON_RECONCILIATION_DRIFT_API_URL: ${PANTHEON_RECONCILIATION_DRIFT_API_URL:-http://reconciliation-drift-svc:8102}
       RECONCILIATION_DRIFT_URL: ${RECONCILIATION_DRIFT_URL:-http://reconciliation-drift-svc:8102}
       RECONCILIATION_DRIFT_AUTH_TOKEN: ${RECONCILIATION_DRIFT_AUTH_TOKEN:-pantheon-local-reconciliation-drift-service}
+      PAPER_PRODUCER_HEALTH_FILE: ${PAPER_PRODUCER_HEALTH_FILE:-/data/health/paper-signal-producer-health.json}
+      CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE: ${CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE:-/data/health/workflow-health.json}
+      SHADOW_EVAL_SCHEDULER_HEALTH_FILE: ${SHADOW_EVAL_SCHEDULER_HEALTH_FILE:-/data/health/policy-learning-shadow-eval-scheduler-health.json}
+      DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE: ${DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE:-/data/health/deployment-outbox-consumer-health.json}
+      RECONCILIATION_DRIFT_CONSUMER_HEALTH_FILE: ${RECONCILIATION_DRIFT_CONSUMER_HEALTH_FILE:-/data/health/reconciliation-drift-consumer-health.json}
+      RECONCILIATION_DRIFT_SCHEDULER_HEALTH_FILE: ${RECONCILIATION_DRIFT_SCHEDULER_HEALTH_FILE:-/data/health/reconciliation-drift-scheduler-health.json}
+      RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE:-/data/health/reconciliation-drift-incident-listener-health.json}
+      EVOLUTION_SCHEDULER_HEALTH_FILE: ${EVOLUTION_SCHEDULER_HEALTH_FILE:-/data/health/evolution-scheduler-health.json}
+      EVOLUTION_DISPATCH_HEALTH_FILE: ${EVOLUTION_DISPATCH_HEALTH_FILE:-/data/health/evolution-dispatch-health.json}
+      EVOCHAIN_THRESHOLD_SWEEP_HEALTH_FILE: ${EVOCHAIN_THRESHOLD_SWEEP_HEALTH_FILE:-/data/health/evolution-threshold-sweep-health.json}
+      PAPER_PRODUCER_INTERVAL_SECONDS: ${PAPER_PRODUCER_INTERVAL_SECONDS:-60}
+      CONSULTATION_WORKFLOW_EXECUTOR_INTERVAL_SECONDS: ${CONSULTATION_WORKFLOW_EXECUTOR_INTERVAL_SECONDS:-15}
+      SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS: ${SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS:-3600}
+      DEPLOYMENT_OUTBOX_CONSUMER_INTERVAL_SECONDS: ${DEPLOYMENT_OUTBOX_CONSUMER_INTERVAL_SECONDS:-10}
+      DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_MAX_AGE_SECONDS: ${DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_MAX_AGE_SECONDS:-120}
+      RECONCILIATION_DRIFT_CONSUMER_INTERVAL_SECONDS: ${RECONCILIATION_DRIFT_CONSUMER_INTERVAL_SECONDS:-60}
+      RECONCILIATION_DRIFT_CONSUMER_HEALTH_MAX_AGE_SECONDS: ${RECONCILIATION_DRIFT_CONSUMER_HEALTH_MAX_AGE_SECONDS:-300}
+      RECONCILIATION_DRIFT_SCHEDULER_INTERVAL_SECONDS: ${RECONCILIATION_DRIFT_SCHEDULER_INTERVAL_SECONDS:-300}
+      RECONCILIATION_DRIFT_SCHEDULER_HEALTH_MAX_AGE_SECONDS: ${RECONCILIATION_DRIFT_SCHEDULER_HEALTH_MAX_AGE_SECONDS:-900}
+      RECONCILIATION_DRIFT_INCIDENT_LISTENER_INTERVAL_SECONDS: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_INTERVAL_SECONDS:-15}
+      RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_MAX_AGE_SECONDS: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_MAX_AGE_SECONDS:-300}
+      EVOLUTION_SCHEDULER_INTERVAL_SECONDS: ${EVOLUTION_SCHEDULER_INTERVAL_SECONDS:-86400}
+      EVOLUTION_DISPATCH_INTERVAL_SECONDS: ${EVOLUTION_DISPATCH_INTERVAL_SECONDS:-30}
+      EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS: ${EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS:-86400}
     volumes:
       - bff-data:/data/bff
       - dev-paper-bff-tokens:/run/pantheon-principals:ro
       - governance-data:/data/governance:ro
       - runtime-data:/data/runtime:ro
       - incident-data:/data/incidents:ro
+      - worker-health-data:/data/health:ro
     depends_on:
       registry:
         condition: service_healthy
@@ -2066,7 +2094,7 @@ services:
       DEPLOYMENT_OUTBOX_CONSUMER_MAX_TICKS: ${DEPLOYMENT_OUTBOX_CONSUMER_MAX_TICKS:-0}
       # Default the heartbeat on. The consumer rewrites this file on every
       # tick (success or failure), which is what the healthcheck below reads.
-      DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE: ${DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE:-/tmp/deployment-outbox-consumer-health.json}
+      DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE: ${DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE:-/data/health/deployment-outbox-consumer-health.json}
       DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_MAX_AGE_SECONDS: ${DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_MAX_AGE_SECONDS:-120}
       # Empty for the default global consumer; task-scoped one-shot recovery can
       # isolate a single saga without racing unrelated pending aggregates.
@@ -2084,6 +2112,7 @@ services:
       PANTHEON_INCIDENTS_API_URL: http://incidents:8090
     volumes:
       - dev-paper-deployment-tokens:/run/pantheon-principals:ro
+      - worker-health-data:/data/health
     depends_on:
       deployment:
         condition: service_healthy
@@ -2183,10 +2212,11 @@ services:
       EVOLUTION_DISPATCH_INTERVAL_SECONDS: ${EVOLUTION_DISPATCH_INTERVAL_SECONDS:-30}
       EVOLUTION_DISPATCH_MAX_TICKS: ${EVOLUTION_DISPATCH_MAX_TICKS:-0}
       EVOLUTION_DISPATCH_TIMEOUT_SECONDS: ${EVOLUTION_DISPATCH_TIMEOUT_SECONDS:-10}
-      EVOLUTION_DISPATCH_HEALTH_FILE: ${EVOLUTION_DISPATCH_HEALTH_FILE:-/tmp/evolution-dispatch-health.json}
+      EVOLUTION_DISPATCH_HEALTH_FILE: ${EVOLUTION_DISPATCH_HEALTH_FILE:-/data/health/evolution-dispatch-health.json}
     volumes:
       - evolution-data:/data/evolution
       - dev-paper-evolution-tokens:/run/pantheon-principals:ro
+      - worker-health-data:/data/health
     depends_on:
       evolution:
         condition: service_healthy
@@ -2214,7 +2244,9 @@ services:
       EVOLUTION_SCHEDULER_INTERVAL_SECONDS: ${EVOLUTION_SCHEDULER_INTERVAL_SECONDS:-86400}
       EVOLUTION_SCHEDULER_MAX_TICKS: ${EVOLUTION_SCHEDULER_MAX_TICKS:-0}
       EVOLUTION_SWEEP_MAX_INCIDENTS: ${EVOLUTION_SWEEP_MAX_INCIDENTS:-}
-      EVOLUTION_SCHEDULER_HEALTH_FILE: ${EVOLUTION_SCHEDULER_HEALTH_FILE:-/tmp/evolution-scheduler-health.json}
+      EVOLUTION_SCHEDULER_HEALTH_FILE: ${EVOLUTION_SCHEDULER_HEALTH_FILE:-/data/health/evolution-scheduler-health.json}
+    volumes:
+      - worker-health-data:/data/health
     depends_on:
       evolution:
         condition: service_healthy
@@ -2243,12 +2275,13 @@ services:
       EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS: ${EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS:-86400}
       EVOCHAIN_THRESHOLD_SWEEP_MAX_TICKS: ${EVOCHAIN_THRESHOLD_SWEEP_MAX_TICKS:-0}
       EVOCHAIN_THRESHOLD_SWEEP_METRIC_MAX_AGE_SECONDS: ${EVOCHAIN_THRESHOLD_SWEEP_METRIC_MAX_AGE_SECONDS:-172800}
-      EVOCHAIN_THRESHOLD_SWEEP_HEALTH_FILE: ${EVOCHAIN_THRESHOLD_SWEEP_HEALTH_FILE:-/tmp/evolution-threshold-sweep-health.json}
+      EVOCHAIN_THRESHOLD_SWEEP_HEALTH_FILE: ${EVOCHAIN_THRESHOLD_SWEEP_HEALTH_FILE:-/data/health/evolution-threshold-sweep-health.json}
     volumes:
       # Bind-mounted so operators can retune threshold values without an
       # image rebuild: edit the host file, then restart this one service.
       - ./services/evolution/config:/workspace/services/evolution/config:ro
       - evolution-data:/data/evolution
+      - worker-health-data:/data/health
     depends_on:
       telemetry:
         condition: service_healthy
@@ -2357,9 +2390,11 @@ services:
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
       PAPER_PRODUCER_INTERVAL_SECONDS: ${PAPER_PRODUCER_INTERVAL_SECONDS:-60}
       PAPER_SIGNAL_STRATEGY: ${PAPER_SIGNAL_STRATEGY:-artifact}
-      PAPER_PRODUCER_HEALTH_FILE: ${PAPER_PRODUCER_HEALTH_FILE:-/tmp/paper-signal-producer-health.json}
+      PAPER_PRODUCER_HEALTH_FILE: ${PAPER_PRODUCER_HEALTH_FILE:-/data/health/paper-signal-producer-health.json}
       PANTHEON_LIVE_BROKER_ENABLED: "false"
       PANTHEON_CANARY_EXECUTION_ENABLED: "false"
+    volumes:
+      - worker-health-data:/data/health
     depends_on:
       runtime-manager:
         condition: service_healthy
@@ -2447,11 +2482,12 @@ services:
       RECONCILIATION_DRIFT_CONSUMER_MAX_ATTEMPTS: ${RECONCILIATION_DRIFT_CONSUMER_MAX_ATTEMPTS:-3}
       RECONCILIATION_DRIFT_CONSUMER_RETRY_BACKOFF_SECONDS: ${RECONCILIATION_DRIFT_CONSUMER_RETRY_BACKOFF_SECONDS:-1}
       RECONCILIATION_DRIFT_CONSUMER_REPLAY_DLQ: ${RECONCILIATION_DRIFT_CONSUMER_REPLAY_DLQ:-false}
-      RECONCILIATION_DRIFT_CONSUMER_HEALTH_FILE: ${RECONCILIATION_DRIFT_CONSUMER_HEALTH_FILE:-/tmp/reconciliation-drift-consumer-health.json}
+      RECONCILIATION_DRIFT_CONSUMER_HEALTH_FILE: ${RECONCILIATION_DRIFT_CONSUMER_HEALTH_FILE:-/data/health/reconciliation-drift-consumer-health.json}
       RECONCILIATION_DRIFT_CONSUMER_HEALTH_MAX_AGE_SECONDS: ${RECONCILIATION_DRIFT_CONSUMER_HEALTH_MAX_AGE_SECONDS:-300}
       RECONCILIATION_DRIFT_AUTH_TOKEN: ${RECONCILIATION_DRIFT_AUTH_TOKEN:-pantheon-local-reconciliation-drift-service}
     volumes:
       - reconciliation-drift-data:/data/reconciliation-drift
+      - worker-health-data:/data/health
     depends_on:
       reconciliation-drift-svc:
         condition: service_healthy
@@ -2484,9 +2520,11 @@ services:
       RECONCILIATION_DRIFT_SCHEDULER_MAX_TICKS: ${RECONCILIATION_DRIFT_SCHEDULER_MAX_TICKS:-0}
       RECONCILIATION_DRIFT_SCHEDULER_MAX_ATTEMPTS: ${RECONCILIATION_DRIFT_SCHEDULER_MAX_ATTEMPTS:-3}
       RECONCILIATION_DRIFT_SCHEDULER_RETRY_BACKOFF_SECONDS: ${RECONCILIATION_DRIFT_SCHEDULER_RETRY_BACKOFF_SECONDS:-1}
-      RECONCILIATION_DRIFT_SCHEDULER_HEALTH_FILE: ${RECONCILIATION_DRIFT_SCHEDULER_HEALTH_FILE:-/tmp/reconciliation-drift-scheduler-health.json}
+      RECONCILIATION_DRIFT_SCHEDULER_HEALTH_FILE: ${RECONCILIATION_DRIFT_SCHEDULER_HEALTH_FILE:-/data/health/reconciliation-drift-scheduler-health.json}
       RECONCILIATION_DRIFT_SCHEDULER_HEALTH_MAX_AGE_SECONDS: ${RECONCILIATION_DRIFT_SCHEDULER_HEALTH_MAX_AGE_SECONDS:-900}
       RECONCILIATION_DRIFT_AUTH_TOKEN: ${RECONCILIATION_DRIFT_AUTH_TOKEN:-pantheon-local-reconciliation-drift-service}
+    volumes:
+      - worker-health-data:/data/health
     depends_on:
       reconciliation-drift-svc:
         condition: service_healthy
@@ -2514,7 +2552,7 @@ services:
       RECONCILIATION_DRIFT_INCIDENT_LISTENER_STATE_PATH: /data/reconciliation-drift/incident-listener-state.json
       RECONCILIATION_DRIFT_INCIDENT_LISTENER_MAX_ATTEMPTS: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_MAX_ATTEMPTS:-3}
       RECONCILIATION_DRIFT_INCIDENT_LISTENER_RETRY_BACKOFF_SECONDS: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_RETRY_BACKOFF_SECONDS:-1}
-      RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE:-/tmp/reconciliation-drift-incident-listener-health.json}
+      RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE:-/data/health/reconciliation-drift-incident-listener-health.json}
       RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_MAX_AGE_SECONDS: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_MAX_AGE_SECONDS:-300}
       RECONCILIATION_DRIFT_AUTH_TOKEN: ${RECONCILIATION_DRIFT_AUTH_TOKEN:-pantheon-local-reconciliation-drift-service}
       # Fetches from incidents, whose tenant is the product/BFF fallback chain;
@@ -2522,6 +2560,7 @@ services:
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
     volumes:
       - reconciliation-drift-data:/data/reconciliation-drift
+      - worker-health-data:/data/health
     depends_on:
       reconciliation-drift-svc:
         condition: service_healthy
@@ -3036,3 +3075,4 @@ volumes:
   source-ingest-data:
   lineage-data:
   telemetry-data:
+  worker-health-data:
