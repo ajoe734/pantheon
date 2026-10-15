@@ -25,14 +25,13 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Coroutine, Optional
 
-from .backpressure import BackpressureController, CRITICAL_EVENT_TYPES
+from .backpressure import BackpressureController
 from .buffer import DurableBuffer
 from .dead_letter import (
     DeadLetterQueue,
     TAG_RETRY_EXHAUSTED,
     TAG_WRITER_ERROR,
     TAG_POISON_EVENT,
-    TAG_BUFFER_OVERFLOW,
 )
 
 log = logging.getLogger(__name__)
@@ -268,32 +267,14 @@ class AsyncBatchWriter:
                     self._backpressure.evaluate()
 
                 # Get event from buffer (with timeout)
-                get_timeout = 0.5  # Short timeout for responsive shutdown
+                if batch:
+                    time_until_flush = max(0.001, self._batch_interval - (time.monotonic() - last_flush))
+                    get_timeout = min(0.5, time_until_flush)
+                else:
+                    get_timeout = 0.5
                 event = await self._buffer.get(timeout=get_timeout)
 
                 if event is not None:
-                    # Check if event should be delayed under backpressure
-                    event_type = event.get("event_type", "")
-                    if self._backpressure and self._backpressure.should_delay(event_type):
-                        # Release it through the buffer's native retry mechanism.
-                        # Durable backends retain the original broker record; they
-                        # must not publish a second copy merely to delay delivery.
-                        await asyncio.sleep(0.1)
-                        released = await self._buffer.release([event])
-                        if not released:
-                            self._dlq.reject(
-                                event=event,
-                                tags=[TAG_BUFFER_OVERFLOW],
-                                reason="Backpressure delay release failed: buffer remained full",
-                            )
-                            self._mark_write_failure(
-                                "Backpressure delay release failed: buffer remained full"
-                            )
-                            self._mark_dlq_write()
-                            self._total_dlq += 1
-                            self._total_failed += 1
-                        continue
-
                     batch.append(event)
                 elif not batch:
                     # Yield to event loop if buffer.get returned None without waiting
