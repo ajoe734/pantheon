@@ -1178,3 +1178,138 @@ def test_terminal_session_recovery_claim_lease_fences_duplicate_claims_before_ex
     session2 = module.store.get_session(session_id2)
     assert session2["status"] == "active"
     assert session2.get("ended_at") is None
+
+
+# --- Canonical model-bound teaching sessions ---------------------------------
+
+def _model_authority(*, tenant_id: str = "tenant-test", **artifact_kwargs) -> dict:
+    from services.execution.artifact_loader import resolve_persona_model_authority
+    from services.execution.model_authority_fixture import momentum_artifact, persona_with_model
+
+    persona = persona_with_model(momentum_artifact(**artifact_kwargs), tenant_id=tenant_id)
+    return resolve_persona_model_authority(persona)
+
+
+def _create_model_session(client: TestClient, authority: dict, persona_id: str | None = None):
+    return client.post(
+        "/api/training/sessions",
+        json={
+            "persona_id": persona_id or authority["persona_id"],
+            "objective": "Teach the canonical momentum model",
+            "created_at": "2026-04-28T22:00:00Z",
+            "model_authority": authority,
+        },
+    )
+
+
+def test_model_bound_session_controls_come_from_artifact_mutation_surface() -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+    authority = _model_authority()
+    created = _create_model_session(client, authority)
+    assert created.status_code == 201, created.text
+    session_id = created.json()["session_id"]
+    frozen = created.json()["metadata"]["model_authority"]
+    assert frozen["artifact_id"] == authority["artifact_id"]
+    assert frozen["artifact_checksum"] == authority["artifact_checksum"]
+    assert "runtime_binding" not in frozen
+
+    controls = client.get(f"/api/training/controls/{session_id}").json()["controls"]
+    assert [c["parameter_key"] for c in controls] == ["lookback_bars", "momentum_threshold"]
+    assert controls[0]["allowed_range"] == {"min": 2, "max": 60}
+    assert controls[0]["baseline_value"] == controls[0]["current_value"] == 2
+
+    rejected = client.patch(
+        f"/api/training/sessions/{session_id}/controls",
+        json={"patches": [{"parameter_key": "lookback_bars", "proposed_value": 61}]},
+    ).json()
+    assert rejected["status"] == "rejected"
+    sma_key = client.patch(
+        f"/api/training/sessions/{session_id}/controls",
+        json={"patches": [{"parameter_key": "short_window", "proposed_value": 7}]},
+    ).json()
+    assert sma_key["field_errors"][0]["reason"] == "unknown_parameter_key"
+
+
+def test_model_bound_create_rejects_tampered_or_foreign_authority() -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+    authority = _model_authority()
+
+    tampered = json.loads(json.dumps(authority))
+    store = tampered["runtime_binding"]["metadata"]["object_store"]
+    artifact_key = next(key for key in store if key.endswith("artifact.bin"))
+    store[artifact_key] = store[artifact_key].replace('"order_quantity":1', '"order_quantity":9')
+    assert _create_model_session(client, tampered).status_code == 409
+
+    forged_identity = json.loads(json.dumps(authority))
+    forged_identity["strategy_artifact"]["parameters"]["lookback_bars"] = 3
+    assert _create_model_session(client, forged_identity).status_code == 409
+
+    assert _create_model_session(client, authority, persona_id="persona-someone-else").status_code == 409
+    other_tenant = _model_authority(tenant_id="tenant-other")
+    assert _create_model_session(client, other_tenant).status_code == 409
+
+
+def test_model_bound_preview_runs_real_backend_on_derived_candidate() -> None:
+    from services.research.vectorbt.adapter import vectorbt_adapter as adapter
+
+    module = _load_service_module()
+    seen: dict = {}
+
+    def real_workflow_on_tw_dataset(dataset, *, backend=None, config=None):
+        # The strict fixture dataset is crypto; swap in a TW daily dataset that
+        # holds the artifact symbol plus a second instrument, then run the REAL backend.
+        from datetime import date, timedelta
+
+        start = date(2024, 1, 1)
+        series = [100.0, 101.0, 100.5, 102.0, 101.0, 103.0, 102.0, 104.0] * 5
+        records = [
+            {"instrument": symbol, "date": (start + timedelta(days=i)).isoformat(),
+             "open": c, "high": c, "low": c, "close": c, "volume": 1000}
+            for symbol, offset in (("2330.TWSE", 0.0), ("2317.TWSE", 10.0))
+            for i, c in enumerate(series)
+            for c in (c + offset,)
+        ]
+        seen["config"] = config
+        return adapter.run_vectorbt_workflow(
+            {**dataset, "records": records}, backend=backend, config=config
+        )
+
+    module.run_vectorbt_workflow = real_workflow_on_tw_dataset
+    client = TestClient(module.app)
+    authority = _model_authority()
+    session_id = _create_model_session(client, authority).json()["session_id"]
+    patched = client.patch(
+        f"/api/training/sessions/{session_id}/controls",
+        json={"patches": [
+            {"parameter_key": "lookback_bars", "proposed_value": 5},
+            {"parameter_key": "momentum_threshold", "proposed_value": 0.01},
+        ]},
+    ).json()
+    assert patched["status"] == "accepted"
+
+    with mock.patch.dict(os.environ, {"PANTHEON_VECTORBT_BACKEND": "real"}):
+        queued = client.post(
+            f"/api/training/sessions/{session_id}/preview-jobs",
+            json={"mode": "refresh", "requested_by": "operator-1", "requested_at": "2026-07-15T12:00:00Z"},
+            headers={"Idempotency-Key": "model-preview-001"},
+        )
+        assert queued.status_code == 201, queued.text
+        run = client.post(f"/api/training/preview-jobs/{queued.json()['job_id']}/run", json={})
+    assert run.status_code == 200, run.text
+
+    candidate = seen["config"].strategy_artifact
+    assert candidate["strategy_logic"]["kind"] == "close_to_close_momentum"
+    assert candidate["parameters"]["lookback_bars"] == 5
+    assert candidate["parameters"]["momentum_threshold"] == 0.01
+    assert candidate["lineage"]["parent_registry_ids"] == [authority["artifact_id"]]
+
+    proof = run.json()["preview"]["evaluation_proof"]
+    model = proof["backend"]["model"]
+    assert proof["backend"]["run_id"].startswith("vbt-real-")
+    assert model["base_artifact_checksum"] == authority["strategy_artifact_checksum"]
+    assert model["candidate_artifact_checksum"] != model["base_artifact_checksum"]
+    assert model["symbols"] == ["2330.TW"]
+    assert proof["candidate_binding"]["model"]
+    assert {c["parameter_key"] for c in proof["controls"]} == {"lookback_bars", "momentum_threshold"}

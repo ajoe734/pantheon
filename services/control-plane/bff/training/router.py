@@ -5,6 +5,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Body, Header, Query
 
+from services.execution.artifact_loader import ArtifactLoadError, resolve_persona_model_authority
+
 from ..models import ErrorCode
 
 from .service import TrainingSessionService
@@ -61,12 +63,27 @@ def create_training_router(
                 f"Persona {persona_id} does not exist",
             )
     
+        # The owner Persona is the only model authority; nothing the caller
+        # sent in the payload can select or override the frozen artifact.
+        try:
+            model_authority = resolve_persona_model_authority(persona)
+        except ArtifactLoadError as exc:
+            raise bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "Persona model authority unavailable",
+                f"Persona {persona_id} runtime artifact failed verification: {exc}",
+                precondition_failed="model_authority",
+            ) from exc
+        model_kwargs = {"model_authority": model_authority} if model_authority else {}
+
         session = service.read_store.create_trainer_session(
             persona_id=persona_id,
             objective=objective,
             context_refs=context_refs,
             actor_id=identity.operator_id,
             created_at=utc_now(),
+            **model_kwargs,
         )
         if session is None:
             raise bff_error(

@@ -1404,3 +1404,141 @@ def test_inventory_routes_publish_legacy_request_and_query_contracts_to_openapi(
     assert "requestBody" in launch
     experiment_list_params = {item["name"] for item in schema["/api/v1/experiments"]["get"]["parameters"]}
     assert {"ticket_id", "status", "page_token", "page_size"} <= experiment_list_params
+
+
+# --- Agora research plans freeze the owner Persona's canonical model ---------
+
+from services.execution.model_authority_fixture import PERSONA_ID, momentum_artifact, persona_with_model  # noqa: E402
+
+_AGORA_WORKSHOP = "ws-model-freeze"
+_SPEC_ID = "reg-strategy-spec-persona-aa060d53ff712cbba704"
+
+
+def _plan_body(spec_id: str = _SPEC_ID) -> Dict[str, Any]:
+    return {
+        "spec_version": "1.0",
+        "strategy_id": "strategy-persona-aa060d53ff712cbba704",
+        "strategy_spec_registry_id": spec_id,
+        "stages": [{"stage_type": "prototype_backtest"}],
+    }
+
+
+def _agora_client(monkeypatch, *, spec_meta: Optional[Dict[str, Any]], persona: Optional[Dict[str, Any]], spec_status: int = 200):
+    # Imported lazily: these modules install global BFF state other tests in this file must not see.
+    from services.control_plane.bff.agora.research.router import create_research_router as create_agora_research_router
+    from services.control_plane.bff.agora.research.store import MemoryResearchPlanStore
+    from services.control_plane.bff.agora.strategy_workshop.operations import (
+        CanonicalOperationError,
+        WorkshopCanonicalOperations,
+    )
+    from services.control_plane.bff.agora.strategy_workshop.store import MemoryWorkshopStore
+    from services.control_plane.bff.personas.service import _bff_error, _require_operator_role, _require_read_role
+
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", "http://research-owner.test")
+    monkeypatch.setattr(WorkshopCanonicalOperations, "list_research_runs", lambda _self, **_kwargs: [])
+
+    def transport(authority, method, base_url, path, payload):
+        assert authority == "strategy_registry" and method == "GET"
+        if spec_status != 200:
+            raise CanonicalOperationError(authority, "spec lookup failed", status_code=spec_status)
+        registry_id = path.rsplit("/", 1)[-1]
+        return {"entry": {"registry_id": registry_id, "metadata": dict(spec_meta or {})}}
+
+    workshops = MemoryWorkshopStore()
+    workshops.create_session({"workshop_id": _AGORA_WORKSHOP, "tenant_id": "tenant-dev", "user_id": "owner"})
+    identity = SimpleNamespace(operator_id="owner", roles=["operator"], claims={"sub": "owner", "tenant_id": "tenant-dev"})
+    reads: List[str] = []
+
+    class _Store:
+        def get_persona(self, persona_id):
+            reads.append(persona_id)
+            return persona
+
+    router = create_agora_research_router(
+        extract_identity=lambda _: identity,
+        require_read_role=_require_read_role,
+        require_write_role=_require_operator_role,
+        bff_error=_bff_error,
+        utc_now=lambda: "2026-10-15T00:00:00Z",
+        research_plan_store=MemoryResearchPlanStore(),
+        workshop_store=workshops,
+        get_read_store=lambda: _Store(),
+        canonical_operations=WorkshopCanonicalOperations(
+            registry_base_url="http://registry.test", transport=transport
+        ),
+    )
+    monkeypatch.setattr(router.service, "_publish_research_event", lambda *args: None)
+    app = FastAPI()
+    app.include_router(router)
+    return TestClient(app), reads
+
+
+def _post_plan(client: TestClient, key: str, body: Optional[Dict[str, Any]] = None):
+    return client.post(
+        f"/bff/agora/workshops/{_AGORA_WORKSHOP}/research-plans",
+        headers={"X-Tenant-Id": "tenant-dev", "Idempotency-Key": key},
+        json=body or _plan_body(),
+    )
+
+
+def test_ordinary_plan_freezes_owner_persona_model_from_spec_persona_id(monkeypatch) -> None:
+    client, reads = _agora_client(
+        monkeypatch, spec_meta={"persona_id": PERSONA_ID, "tenant_id": "tenant-dev"}, persona=persona_with_model()
+    )
+    response = _post_plan(client, "freeze-ordinary")
+    assert response.status_code == 201, response.text
+    frozen = response.json()["data"]["model_authority"]
+    assert reads == [PERSONA_ID]
+    assert frozen["artifact_id"] == momentum_artifact()["artifact_id"]
+    assert frozen["strategy_spec_registry_id"] == _SPEC_ID
+    assert frozen["symbols"] == ["2330.TW"]
+    assert frozen["strategy_artifact"]["parameters"]["lookback_bars"] == 2
+
+
+def test_servant_plan_uses_the_same_freeze_path(monkeypatch) -> None:
+    from services.control_plane.bff.agora.research.routes import plans as agora_plan_routes
+
+    client, _reads = _agora_client(
+        monkeypatch, spec_meta={"persona_id": PERSONA_ID, "tenant_id": "tenant-dev"}, persona=persona_with_model()
+    )
+    monkeypatch.setattr(agora_plan_routes, "draft_research_plan", lambda *_a, **_k: _plan_body())
+    response = client.post(
+        f"/bff/agora/workshops/{_AGORA_WORKSHOP}/research-plans/servant-proposal",
+        headers={"X-Tenant-Id": "tenant-dev", "Idempotency-Key": "freeze-servant"},
+        json={"prompt": "momentum"},
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["data"]["model_authority"]["artifact_id"] == momentum_artifact()["artifact_id"]
+
+
+def test_plan_without_spec_persona_stays_unbound(monkeypatch) -> None:
+    client, reads = _agora_client(monkeypatch, spec_meta={"tenant_id": "tenant-dev"}, persona=persona_with_model())
+    response = _post_plan(client, "freeze-unbound")
+    assert response.status_code == 201, response.text
+    assert "model_authority" not in response.json()["data"]
+    assert reads == []
+
+
+def test_plan_fails_closed_on_tenant_tamper_and_spec_mismatch(monkeypatch) -> None:
+    foreign, _ = _agora_client(
+        monkeypatch, spec_meta={"persona_id": PERSONA_ID, "tenant_id": "tenant-other"}, persona=persona_with_model()
+    )
+    assert _post_plan(foreign, "freeze-foreign-spec").status_code == 409
+
+    tampered = persona_with_model()
+    objects = tampered["metadata"]["provisioning_authoritative_readback"]["runtime_binding"]["metadata"]["object_store"]
+    key = next(k for k in objects if k.endswith("artifact.bin"))
+    objects[key] = objects[key].replace('"order_quantity":1', '"order_quantity":7')
+    bad, _ = _agora_client(monkeypatch, spec_meta={"persona_id": PERSONA_ID}, persona=tampered)
+    assert _post_plan(bad, "freeze-tampered").status_code == 409
+
+    mismatched, _ = _agora_client(monkeypatch, spec_meta={"persona_id": PERSONA_ID}, persona=persona_with_model())
+    assert _post_plan(mismatched, "freeze-other-spec", _plan_body("reg-strategy-spec-someone-else")).status_code == 409
+
+    gone, _ = _agora_client(monkeypatch, spec_meta={"persona_id": PERSONA_ID}, persona=None)
+    assert _post_plan(gone, "freeze-no-persona").status_code == 409
+
+    unavailable, _ = _agora_client(monkeypatch, spec_meta=None, persona=None, spec_status=503)
+    assert _post_plan(unavailable, "freeze-registry-down").status_code == 503

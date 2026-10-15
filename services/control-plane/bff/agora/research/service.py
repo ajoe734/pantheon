@@ -92,8 +92,12 @@ class AgoraResearchService:
         trading_room_store: Optional[TradingRoomStore] = None,
         utc_now: Optional[Callable[[], str]] = None,
         bff_error: Optional[Callable[..., HTTPException]] = None,
+        persona_reader: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None,
+        canonical_operations: Optional[Any] = None,
     ) -> None:
 
+        self.persona_reader = persona_reader
+        self.canonical_operations = canonical_operations
         self.store = store
         self.workshop_store = workshop_store
         self.dataset_store = dataset_store
@@ -186,6 +190,7 @@ class AgoraResearchService:
     ) -> Dict[str, Any]:
         now = self.utc_now()
         plan_id = str(uuid.uuid4())
+        model_authority = self._freeze_model_authority(body, scope)
         plan = _build_plan(
             body,
             workshop_id,
@@ -196,6 +201,8 @@ class AgoraResearchService:
             trace_id=trace_id,
             correlation_id=correlation_id,
         )
+        if model_authority is not None:
+            plan["model_authority"] = model_authority
         plan = self.store.create_plan(plan)
         self.store.record_audit_action({
             "action_type": "research_plan.create",
@@ -212,6 +219,70 @@ class AgoraResearchService:
             {"plan_id": plan_id, "status": plan["status"]},
         )
         return plan
+
+    def _freeze_model_authority(self, body: Any, scope: Any) -> Optional[Dict[str, Any]]:
+        """Freeze the owner Persona's canonical model for both ordinary and servant plans.
+
+        The StrategySpec registry entry names its owning Persona in
+        ``metadata.persona_id``; the Persona's authoritative runtime binding is then
+        re-read through ``ArtifactLoader.load_exact``.  Specs without an owner
+        Persona (or deployments without a registry) stay unbound.
+        """
+
+        spec_id = str(getattr(body, "strategy_spec_registry_id", "") or "").strip()
+        if not spec_id or self.persona_reader is None:
+            return None
+        from services.control_plane.bff.agora.strategy_workshop.operations import (
+            CanonicalOperationError,
+            WorkshopCanonicalOperations,
+        )
+        from services.execution.artifact_loader import ArtifactLoadError, resolve_persona_model_authority
+
+        operations = self.canonical_operations or WorkshopCanonicalOperations()
+        if not operations.registry_base_url and operations.transport is None:
+            return None
+        conflict = self._error_code("RESOURCE_CONFLICT")
+        try:
+            entry = operations.get_strategy_spec(spec_id)["entry"]
+        except CanonicalOperationError as exc:
+            if exc.status_code == 404:
+                return None
+            raise self.bff_error(
+                503, self._error_code("DEPENDENCY_UNAVAILABLE"),
+                "StrategySpec authority unavailable", f"{spec_id}: {exc.reason}",
+            ) from exc
+        spec_meta = entry.get("metadata") if isinstance(entry.get("metadata"), dict) else {}
+        persona_id = str(spec_meta.get("persona_id") or "").strip()
+        if not persona_id:
+            return None
+        spec_tenant = str(spec_meta.get("tenant_id") or "").strip()
+        if spec_tenant and spec_tenant != scope.tenant_id:
+            raise self.bff_error(409, conflict, "StrategySpec belongs to another tenant", spec_id)
+        try:
+            persona = self.persona_reader(persona_id)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise self.bff_error(
+                503, self._error_code("DEPENDENCY_UNAVAILABLE"), "Persona authority unavailable", persona_id
+            ) from exc
+        if not persona:
+            raise self.bff_error(409, conflict, "StrategySpec owner Persona not found", persona_id)
+        persona_tenant = str(persona.get("tenant_id") or (persona.get("metadata") or {}).get("tenant_id") or "").strip()
+        if persona_tenant and persona_tenant != scope.tenant_id:
+            raise self.bff_error(409, conflict, "Persona belongs to another tenant", persona_id)
+        try:
+            authority = resolve_persona_model_authority(persona)
+        except ArtifactLoadError as exc:
+            raise self.bff_error(409, conflict, "Persona model authority unavailable", f"{persona_id}: {exc}") from exc
+        if authority is None:
+            return None
+        if authority.get("strategy_spec_registry_id") not in (None, spec_id):
+            raise self.bff_error(
+                409, conflict, "Persona artifact was not derived from this StrategySpec",
+                f"{authority.get('strategy_spec_registry_id')} != {spec_id}",
+            )
+        return authority
 
     def get_plan(self, plan_id: str, *, scope: Any) -> Optional[Dict[str, Any]]:
         plan = self.store.get_plan(plan_id)

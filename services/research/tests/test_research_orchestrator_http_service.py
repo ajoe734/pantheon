@@ -1041,3 +1041,146 @@ def test_execute_research_stage_durable_idempotency_replay() -> None:
     assert data1["receipt"]["receipt_id"] == data2["receipt"]["receipt_id"]
     assert data1["artifact_digest"] == data2["artifact_digest"]
     assert data1["receipt"]["completed_at"] == data2["receipt"]["completed_at"]
+
+
+# --- Saved canonical model authority consumed by the real backtest ------------
+
+def _model_run(module, *, params=None, with_model=True, run_id="run-model-001"):
+    from services.execution.artifact_loader import resolve_persona_model_authority
+    from services.execution.model_authority_fixture import persona_with_model
+
+    authority = resolve_persona_model_authority(persona_with_model())
+    plan = {
+        "plan_id": "plan-model-1",
+        "strategy_id": authority["strategy_id"],
+        "stages": [{"stage_id": "s1", "stage_type": "prototype_backtest", "parameters": params or {}}],
+    }
+    if with_model:
+        plan["model_authority"] = authority
+    module.store.put_run({
+        "run_id": run_id, "status": "queued", "stage_id": "s1", "stage_type": "prototype_backtest",
+        "parameters": {"plan": plan, "stage": plan["stages"][0]},
+    })
+    return authority, plan
+
+
+def _tw_dataset() -> dict:
+    from datetime import date, timedelta
+
+    start = date(2024, 1, 1)
+    series = [100.0, 101.0, 100.5, 102.0, 101.0, 103.0, 102.0, 104.0] * 5
+    records = [
+        {"instrument": symbol, "date": (start + timedelta(days=i)).isoformat(),
+         "open": c + off, "high": c + off, "low": c + off, "close": c + off, "volume": 1000.0}
+        for symbol, off in (("2330.TWSE", 0.0), ("2317.TWSE", 10.0))
+        for i, c in enumerate(series)
+    ]
+    return {"dataset_id": "dataset:tw-model", "strategy_id": "strategy-persona-aa060d53ff712cbba704",
+            "source_dataset_refs": ["dataset:seed:tw"], "data_frequency": "daily", "records": records}
+
+
+def _execute_model_run(module, plan, *, run_id="run-model-001", params=None):
+    stage = {"stage_id": "s1", "stage_type": "prototype_backtest", "dataset": _tw_dataset()}
+    if params is not None:
+        stage["parameters"] = params
+    return TestClient(module.app).post("/stages/prototype_backtest/execute", json={
+        "stage": stage, "plan": {k: v for k, v in plan.items() if k != "model_authority"},
+        "run_id": run_id, "correlation_id": f"corr-{run_id}",
+    })
+
+
+@pytest.mark.skipif(
+    not all(importlib.util.find_spec(m) for m in ("vectorbt", "pandas", "numpy")), reason="real vectorbt is not installed"
+)
+def test_saved_model_is_evaluated_by_real_backend_with_derived_candidate(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.research.vectorbt.adapter import vectorbt_adapter
+
+    module = _load_service_module()
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "real")
+    authority, plan = _model_run(module, params={"lookback_bars": 5, "momentum_threshold": 0.01})
+    seen = {}
+    real_workflow = vectorbt_adapter.run_vectorbt_workflow
+
+    def spy(dataset, *, backend=None, config=None):
+        result = real_workflow(dataset, backend=backend, config=config)
+        seen.update(config=config, result=result)
+        return result
+
+    monkeypatch.setattr(vectorbt_adapter, "run_vectorbt_workflow", spy)
+    response = _execute_model_run(module, plan, params={"lookback_bars": 5, "momentum_threshold": 0.01})
+    assert response.status_code == 200, response.text
+    assert response.json()["provenance"] == "real"
+
+    candidate = seen["config"].strategy_artifact
+    assert candidate["parameters"]["lookback_bars"] == 5 and candidate["parameters"]["momentum_threshold"] == 0.01
+    result = seen["result"]
+    assert result.backtest_result.backend == "vectorbt_portfolio"
+    assert list(result.backtest_result.per_instrument_metrics) == ["2330.TWSE"]
+    provenance = result.artifact_bundle["model_authority"]
+    assert provenance["base_artifact_checksum"] == authority["strategy_artifact_checksum"]
+    assert provenance["evaluated_artifact_checksum"] != provenance["base_artifact_checksum"]
+    assert provenance["derived_candidate"] is True
+    assert result.registry_entry["metadata"]["strategy"] == "close_to_close_momentum"
+
+
+@pytest.mark.skipif(
+    not all(importlib.util.find_spec(m) for m in ("vectorbt", "pandas", "numpy")), reason="real vectorbt is not installed"
+)
+def test_saved_model_without_parameter_overrides_runs_the_base_artifact(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.research.vectorbt.adapter import vectorbt_adapter
+
+    module = _load_service_module()
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "real")
+    authority, plan = _model_run(module)
+    seen = {}
+    real_workflow = vectorbt_adapter.run_vectorbt_workflow
+    monkeypatch.setattr(
+        vectorbt_adapter, "run_vectorbt_workflow",
+        lambda dataset, *, backend=None, config=None: seen.setdefault("r", real_workflow(dataset, backend=backend, config=config)),
+    )
+    response = _execute_model_run(module, plan)
+    assert response.status_code == 200, response.text
+    provenance = seen["r"].artifact_bundle["model_authority"]
+    assert provenance["derived_candidate"] is False
+    assert provenance["evaluated_artifact_checksum"] == authority["strategy_artifact_checksum"]
+
+
+@pytest.mark.parametrize(
+    "params,expected",
+    [({"order_quantity": 9}, "immutable"), ({"short_window": 5, "long_window": 20}, "not parameters")],
+)
+def test_saved_model_rejects_ungoverned_or_sma_parameters(monkeypatch: pytest.MonkeyPatch, params, expected) -> None:
+    module = _load_service_module()
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "real")
+    _authority, plan = _model_run(module, params=params)
+    with mock.patch("services.research.vectorbt.adapter.vectorbt_adapter.VectorbtBackend.run") as run:
+        response = _execute_model_run(module, plan, params=params)
+    assert response.status_code == 400, response.text
+    assert expected in response.json()["detail"]
+    run.assert_not_called()
+
+
+def test_caller_cannot_supply_model_authority_outside_the_saved_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.execution.artifact_loader import resolve_persona_model_authority
+    from services.execution.model_authority_fixture import persona_with_model
+
+    module = _load_service_module()
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "real")
+    _model_run(module, with_model=False)
+    stage = {"stage_id": "s1", "stage_type": "prototype_backtest", "dataset": _tw_dataset()}
+    response = TestClient(module.app).post("/stages/prototype_backtest/execute", json={
+        "stage": stage,
+        "plan": {"plan_id": "plan-model-1", "model_authority": resolve_persona_model_authority(persona_with_model())},
+        "run_id": "run-model-001", "correlation_id": "corr-caller",
+    })
+    assert response.status_code == 400, response.text
+    assert "saved research run" in response.json()["detail"]
+
+
+def test_saved_model_is_never_run_by_the_stub_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_service_module()
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "stub")
+    _authority, plan = _model_run(module)
+    response = _execute_model_run(module, plan)
+    assert response.status_code == 400, response.text
+    assert "canonical strategy artifact" in response.json()["detail"]

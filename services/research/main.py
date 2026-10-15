@@ -19,9 +19,15 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger("research-orchestrator")
 
+from services.execution.artifact_loader import ArtifactLoadError, reverify_model_authority
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 from services.registry.split_api import RegistryService
+from services.registry.strategy_artifact import (
+    StrategyArtifactValidationError,
+    mutate_strategy_artifact,
+    strategy_artifact_checksum,
+)
 from services.registry.storage import get_store as get_registry_store
 from services.research.alpha_replication.admission import ReplicationAdmissionStore
 from services.research.experiments import (
@@ -118,6 +124,65 @@ CAPABILITY_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
 }
 
+
+
+def _model_backtest_config(saved_model: Dict[str, Any], stage_params: Dict[str, Any], requested_by: str) -> Any:
+    """Backtest config for a plan whose model was frozen from the owner Persona.
+
+    The saved authority is re-read through ``ArtifactLoader.load_exact``; stage
+    parameters may only move governed mutation-surface controls, in which case
+    the evaluated artifact is a Registry-derived candidate of the frozen base.
+    """
+
+    from services.research.vectorbt.adapter.vectorbt_adapter import BacktestConfig
+
+    verified = reverify_model_authority(saved_model)
+    base = verified["strategy_artifact"]
+    controls = {c["parameter_key"]: c for c in base["mutation_surface"]["controls"]}
+    unknown = sorted(key for key in stage_params if key not in base["parameters"])
+    if unknown:
+        raise ValueError("stage parameters are not parameters of the frozen strategy artifact: " + ", ".join(unknown))
+    updates = {key: value for key, value in stage_params.items() if value != base["parameters"][key]}
+    candidate = base
+    if updates:
+        immutable = sorted(key for key in updates if key not in controls)
+        if immutable:
+            raise ValueError("stage parameters are immutable in the frozen strategy artifact: " + ", ".join(immutable))
+        digest = hashlib.sha256(json.dumps({"base": verified["strategy_artifact_checksum"], "updates": updates}, sort_keys=True).encode()).hexdigest()[:12]
+        major, minor, patch = (int(part) for part in str(base["version"]).split("."))
+        candidate = mutate_strategy_artifact(
+            base,
+            new_artifact_id=f"{base['artifact_id']}-cand-{digest}",
+            new_version=f"{major}.{minor}.{patch + 1}",
+            parameter_updates=updates,
+            source_run_ids=[f"research-candidate-{digest}"],
+            parent_registry_id=base["artifact_id"],
+        )
+    return BacktestConfig(
+        version="1.0.0",
+        requested_by=requested_by,
+        strategy_params=dict(candidate["parameters"]),
+        strategy_artifact=candidate,
+    )
+
+
+def _model_provenance(saved_model: Dict[str, Any], evaluated: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep the frozen base checksum distinct from the evaluated (possibly derived) checksum."""
+
+    return {
+        "base_artifact_id": saved_model["artifact_id"],
+        "base_artifact_version": saved_model["artifact_version"],
+        "base_artifact_checksum": saved_model["strategy_artifact_checksum"],
+        "persona_id": saved_model["persona_id"],
+        "tenant_id": saved_model["tenant_id"],
+        "strategy_id": saved_model["strategy_id"],
+        "strategy_spec_registry_id": saved_model.get("strategy_spec_registry_id"),
+        "symbols": list(saved_model["symbols"]),
+        "evaluated_artifact_id": evaluated["artifact_id"],
+        "evaluated_artifact_version": evaluated["version"],
+        "evaluated_artifact_checksum": strategy_artifact_checksum(evaluated),
+        "derived_candidate": evaluated["artifact_id"] != saved_model["artifact_id"],
+    }
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -2449,6 +2514,11 @@ def execute_research_stage(
     if req_mode and req_mode not in {"real", "simulation", "fixture", "stub", "offline"}:
         _fail_stage(f"Unknown research execution mode '{req_mode}'", 400)
 
+    saved_model = persisted_plan.get("model_authority") if isinstance(persisted_plan, dict) else None
+    caller_model = plan.get("model_authority") if isinstance(plan, dict) else None
+    if caller_model and caller_model != saved_model:
+        _fail_stage("model_authority must come from the saved research run, not the caller", 400)
+
     if backend_name == "vectorbt" or stage_type == "prototype_backtest":
         try:
             from services.research.vectorbt.adapter.vectorbt_adapter import (
@@ -2465,11 +2535,14 @@ def execute_research_stage(
             # while retaining a real receipt label.
             backend_runner = VectorbtBackend() if use_real else StubVectorbtBackend()
             provenance = "real" if use_real else "simulation"
-            vbt_config = BacktestConfig(
-                version="1.0.0",
-                requested_by=executor,
-                strategy_params=stage.get("parameters") or {},
-            )
+            if saved_model:
+                vbt_config = _model_backtest_config(saved_model, stage.get("parameters") or {}, executor)
+            else:
+                vbt_config = BacktestConfig(
+                    version="1.0.0",
+                    requested_by=executor,
+                    strategy_params=stage.get("parameters") or {},
+                )
             vbt_dataset = dataset_input
             if isinstance(dataset_input, list):
                 records = []
@@ -2492,6 +2565,8 @@ def execute_research_stage(
                 }
             workflow_res = run_vectorbt_workflow(vbt_dataset, backend=backend_runner, config=vbt_config)
             artifact_bundle = workflow_res.artifact_bundle
+            if saved_model:
+                artifact_bundle["model_authority"] = _model_provenance(saved_model, vbt_config.strategy_artifact)
             agg_m = workflow_res.backtest_result.aggregate_metrics
             metrics = [
                 {"metric": "mean_total_return", "value": float(agg_m.get("mean_total_return", 0.0)), "provenance": provenance},
