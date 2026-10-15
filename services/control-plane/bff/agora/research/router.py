@@ -50,8 +50,6 @@ def create_research_router(
     workshop_store: Any = None,
     dataset_store: Any = None,
     service: Optional[Any] = None,
-    get_read_store: Optional[Callable[[], Any]] = None,
-    canonical_operations: Optional[Any] = None,
 ) -> APIRouter:
     """Build and return the Agora research APIRouter with strict write role and tenant isolation."""
     store = research_plan_store if research_plan_store is not None else make_research_plan_store()
@@ -64,8 +62,6 @@ def create_research_router(
             dataset_store=dataset_store,
             utc_now=utc_now,
             bff_error=bff_error,
-            persona_reader=(lambda persona_id: get_read_store().get_persona(persona_id)) if get_read_store else None,
-            canonical_operations=canonical_operations,
         )
     ctx = AgoraResearchRouteContext(
         extract_identity=extract_identity,

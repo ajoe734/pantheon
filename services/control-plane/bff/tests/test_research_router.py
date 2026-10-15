@@ -1464,10 +1464,10 @@ def _agora_client(monkeypatch, *, spec_meta: Optional[Dict[str, Any]], persona: 
         utc_now=lambda: "2026-10-15T00:00:00Z",
         research_plan_store=MemoryResearchPlanStore(),
         workshop_store=workshops,
-        get_read_store=lambda: _Store(),
-        canonical_operations=WorkshopCanonicalOperations(
-            registry_base_url="http://registry.test", transport=transport
-        ),
+    )
+    router.service.persona_reader = _Store().get_persona
+    router.service.canonical_operations = WorkshopCanonicalOperations(
+        registry_base_url="http://registry.test", transport=transport
     )
     monkeypatch.setattr(router.service, "_publish_research_event", lambda *args: None)
     app = FastAPI()

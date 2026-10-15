@@ -368,8 +368,6 @@ def create_agora_router(
         require_write_role=require_write_role,
         workshop_store=workshop_store,
         dataset_store=ds_store,
-        get_read_store=get_read_store,
-        canonical_operations=workshop_canonical_operations,
     )
     router.include_router(research_router)
     router.research_store = getattr(research_router, "store", None)

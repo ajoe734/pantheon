@@ -80,6 +80,14 @@ def _default_utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _owner_persona_reader(persona_id: str) -> Optional[Dict[str, Any]]:
+    """Read the trusted Persona through the BFF's active owner read store."""
+
+    from services.control_plane.bff.personas.service import _get_active_read_store
+
+    return _get_active_read_store().get_persona(persona_id)
+
+
 class AgoraResearchService:
     """Dedicated application service for Agora Research domain."""
 
@@ -230,7 +238,7 @@ class AgoraResearchService:
         """
 
         spec_id = str(getattr(body, "strategy_spec_registry_id", "") or "").strip()
-        if not spec_id or self.persona_reader is None:
+        if not spec_id:
             return None
         from services.control_plane.bff.agora.strategy_workshop.operations import (
             CanonicalOperationError,
@@ -259,7 +267,7 @@ class AgoraResearchService:
         if spec_tenant and spec_tenant != scope.tenant_id:
             raise self.bff_error(409, conflict, "StrategySpec belongs to another tenant", spec_id)
         try:
-            persona = self.persona_reader(persona_id)
+            persona = (self.persona_reader or _owner_persona_reader)(persona_id)
         except HTTPException:
             raise
         except Exception as exc:
