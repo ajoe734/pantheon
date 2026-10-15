@@ -6,7 +6,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Union
 
-from jsonschema import Draft7Validator
 from pydantic import BaseModel, Field
 
 
@@ -45,6 +44,8 @@ def _location(error: Any) -> str:
 def _validate_payload(payload: Mapping[str, Any], schema: Mapping[str, Any], label: str) -> None:
     if not isinstance(payload, Mapping):
         raise ConsultValidationError(f"{label} payload must be a JSON object")
+    from jsonschema import Draft7Validator
+
     validator = Draft7Validator(dict(schema))
     errors = sorted(validator.iter_errors(dict(payload)), key=lambda item: list(item.path))
     if errors:

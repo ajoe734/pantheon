@@ -4,10 +4,12 @@
   "changes": [
     "services/consultation/provider.py: QualifiedContribution.from_payload validates each finding with canonical models.ConsultFinding; malformed raises ContributionProviderError (adapter releases replay claim, returns typed 502 blocked)",
     "services/openclaw-gateway-adapter/consultation_provider.py: prompt describes ConsultFinding fields and FindingSeverity values",
-    "services/consultation/tests/test_current_provider_handoff.py: malformed findings ([{}], bad severity) never cached/submitted; valid findings retained through owner memo; prompt contract"
+    "services/consultation/tests/test_current_provider_handoff.py: malformed findings ([{}], bad severity) never cached/submitted; valid findings retained through owner memo; prompt contract",
+    "services/consultation/models.py: defer jsonschema Draft7Validator import to sole _validate_payload consumer so models import succeeds without requiring jsonschema"
   ],
   "tests": {
     "test_current_provider_handoff.py": "7 passed, 1 failed (test_workflow_executor_loop_control_observation fails identically on unmodified base; unrelated)",
+    "adapter_and_models_import": "verified import of services.consultation.provider and services.consultation.models without jsonschema present; verified _validate_payload raises ConsultValidationError on invalid schema",
     "other services/consultation tests": "3 modules error at collection (Postgres env required); not run"
   },
   "not_claimed": [
