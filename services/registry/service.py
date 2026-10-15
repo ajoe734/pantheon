@@ -59,7 +59,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def registry_lifespan(_: FastAPI):
     """Fail service startup if a checked-in built-in cannot be registered."""
-    get_registry_service()
+    ensure_builtin_strategy_artifacts(RegistryService(get_store()))
     yield
 
 
@@ -72,10 +72,8 @@ app = FastAPI(
 
 
 def get_registry_service() -> RegistryService:
-    """Build the service and idempotently expose checked-in built-in artifacts."""
-    registry_service = RegistryService(get_store())
-    ensure_builtin_strategy_artifacts(registry_service)
-    return registry_service
+    """Build the service over the selected owner; built-ins are seeded at startup."""
+    return RegistryService(get_store())
 
 
 # -- Request/Response wrappers --------------------------------------------
@@ -1066,7 +1064,7 @@ def _resolve_entry_or_draft_payload(
 
 
 @app.post("/api/registry/entries", response_model=RegistryEntryView)
-async def register_entry(
+def register_entry(
     payload: RegistryEntryOrDraftRequest,
     authorization: Optional[str] = Header(default=None),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -1186,7 +1184,7 @@ async def register_entry(
 
 
 @app.get("/api/registry/entries/{registry_id}", response_model=RegistryEntryView)
-async def get_entry(registry_id: str, authorization: Optional[str] = Header(default=None)):
+def get_entry(registry_id: str, authorization: Optional[str] = Header(default=None)):
     """Read one registry entry with derived deployment_stage (tenant-scoped)."""
     ctx = _authenticate_registry_read(authorization)
     registry_service = get_registry_service()
@@ -1201,7 +1199,7 @@ async def get_entry(registry_id: str, authorization: Optional[str] = Header(defa
     "/api/registry/strategies/{strategy_id}/entries",
     response_model=list[RegistryEntryView],
 )
-async def list_entries(strategy_id: str, authorization: Optional[str] = Header(default=None)):
+def list_entries(strategy_id: str, authorization: Optional[str] = Header(default=None)):
     """Enumerate all versions within a strategy family visible to this caller's tenant."""
     ctx = _authenticate_registry_read(authorization)
     views = get_registry_service().list_by_strategy(strategy_id)
@@ -1212,7 +1210,7 @@ async def list_entries(strategy_id: str, authorization: Optional[str] = Header(d
     "/api/registry/entries/{registry_id}/advance",
     response_model=RegistryEntryView,
 )
-async def advance_state(
+def advance_state(
     registry_id: str,
     body: AdvanceRequest,
     authorization: Optional[str] = Header(default=None),
@@ -1253,7 +1251,7 @@ async def advance_state(
     "/api/registry/entries/{registry_id}/metadata",
     response_model=RegistryEntryView,
 )
-async def update_metadata(
+def update_metadata(
     registry_id: str,
     body: MetadataUpdateRequest,
     response: Response,
@@ -1297,7 +1295,7 @@ async def update_metadata(
 @app.get(
     "/api/registry/entries/{registry_id}/receipts/{command_key}",
 )
-async def get_entry_command_receipt(
+def get_entry_command_receipt(
     registry_id: str,
     command_key: str,
     command_type: str = Query(default="metadata"),
@@ -1329,7 +1327,7 @@ async def get_entry_command_receipt(
     "/api/registry/strategies/{strategy_id}/latest-approved",
     response_model=RegistryEntryView,
 )
-async def latest_approved(strategy_id: str, authorization: Optional[str] = Header(default=None)):
+def latest_approved(strategy_id: str, authorization: Optional[str] = Header(default=None)):
     """Return the newest approved entry for a strategy family, scoped to the
     caller's verified tenant (reviewer finding 1) — never another tenant's
     approved entry just because it is the semver-latest across all tenants.
@@ -1347,7 +1345,7 @@ async def latest_approved(strategy_id: str, authorization: Optional[str] = Heade
     "/api/registry/strategies/{strategy_id}/deployment-view",
     response_model=DeploymentView,
 )
-async def deployment_view(strategy_id: str, authorization: Optional[str] = Header(default=None)):
+def deployment_view(strategy_id: str, authorization: Optional[str] = Header(default=None)):
     """Return the derived deployment-stage view for a strategy, scoped to the
     caller's verified tenant (reviewer finding 1)."""
     ctx = _authenticate_registry_read(authorization)
@@ -1362,7 +1360,7 @@ async def deployment_view(strategy_id: str, authorization: Optional[str] = Heade
     "/api/registry/entries/{registry_id}/deployment-summary",
     response_model=RegistryEntryView,
 )
-async def update_deployment_summary(
+def update_deployment_summary(
     registry_id: str,
     body: DeploymentSummaryUpdate,
     authorization: Optional[str] = Header(default=None),
@@ -1399,7 +1397,7 @@ async def update_deployment_summary(
 # -- StrategySpec registry facade ----------------------------------------
 
 @app.post("/api/registry/strategy-specs", response_model=RegistryEntryView)
-async def register_strategy_spec(
+def register_strategy_spec(
     payload: StrategySpecRegisterRequest,
     authorization: Optional[str] = Header(default=None),
 ):
@@ -1458,7 +1456,7 @@ async def register_strategy_spec(
 
 
 @app.get("/api/registry/strategy-specs/{registry_id}", response_model=RegistryEntryView)
-async def get_strategy_spec_entry(registry_id: str, authorization: Optional[str] = Header(default=None)):
+def get_strategy_spec_entry(registry_id: str, authorization: Optional[str] = Header(default=None)):
     """Read one StrategySpec registry entry (tenant-scoped)."""
     ctx = _authenticate_registry_read(authorization)
     registry_service = get_registry_service()
@@ -1473,7 +1471,7 @@ async def get_strategy_spec_entry(registry_id: str, authorization: Optional[str]
     "/api/registry/strategies/{strategy_id}/strategy-specs",
     response_model=list[RegistryEntryView],
 )
-async def list_strategy_spec_entries(
+def list_strategy_spec_entries(
     strategy_id: str,
     artifact_state: Optional[ArtifactState] = None,
     authorization: Optional[str] = Header(default=None),
@@ -1494,7 +1492,7 @@ async def list_strategy_spec_entries(
     "/api/registry/strategy-specs/{registry_id}/advance",
     response_model=RegistryEntryView,
 )
-async def advance_strategy_spec_state(
+def advance_strategy_spec_state(
     registry_id: str,
     body: AdvanceRequest,
     authorization: Optional[str] = Header(default=None),
@@ -1530,7 +1528,7 @@ async def advance_strategy_spec_state(
 # -- Evolvable StrategyArtifact registry facade (EVOLOOP-003) ------------
 
 @app.post("/api/registry/strategy-artifacts", response_model=RegistryEntryView)
-async def register_strategy_artifact(
+def register_strategy_artifact(
     payload: StrategyArtifactRegisterRequest,
     authorization: Optional[str] = Header(default=None),
 ):
@@ -1554,7 +1552,7 @@ async def register_strategy_artifact(
     "/api/registry/strategy-artifacts/{registry_id}",
     response_model=RegistryEntryView,
 )
-async def get_strategy_artifact_entry(registry_id: str, authorization: Optional[str] = Header(default=None)):
+def get_strategy_artifact_entry(registry_id: str, authorization: Optional[str] = Header(default=None)):
     """Read one execution_bundle carrying a StrategyArtifact overlay (tenant-scoped; builtins are public)."""
     ctx = _authenticate_registry_read(authorization)
     registry_service = get_registry_service()
@@ -1571,7 +1569,7 @@ async def get_strategy_artifact_entry(registry_id: str, authorization: Optional[
     "/api/registry/strategies/{strategy_id}/strategy-artifacts",
     response_model=list[RegistryEntryView],
 )
-async def list_strategy_artifact_entries(
+def list_strategy_artifact_entries(
     strategy_id: str,
     artifact_state: Optional[ArtifactState] = None,
     authorization: Optional[str] = Header(default=None),
@@ -1592,7 +1590,7 @@ async def list_strategy_artifact_entries(
     "/api/registry/strategy-artifacts/{registry_id}/mutate",
     response_model=RegistryEntryView,
 )
-async def mutate_strategy_artifact_entry(
+def mutate_strategy_artifact_entry(
     registry_id: str,
     body: StrategyArtifactMutationRequest,
     authorization: Optional[str] = Header(default=None),
@@ -1639,7 +1637,7 @@ async def mutate_strategy_artifact_entry(
     "/api/registry/strategy-artifacts/{registry_id}/advance",
     response_model=RegistryEntryView,
 )
-async def advance_strategy_artifact_state(
+def advance_strategy_artifact_state(
     registry_id: str,
     body: AdvanceRequest,
     authorization: Optional[str] = Header(default=None),
@@ -1865,7 +1863,7 @@ def _ensure_alloc_policy_registration_matches(
     "/api/registry/allocation-policy-artifacts",
     response_model=RegistryEntryView,
 )
-async def register_allocation_policy_artifact(
+def register_allocation_policy_artifact(
     payload: AllocationPolicyArtifactRegisterRequest,
     authorization: Optional[str] = Header(default=None),
 ):
@@ -1917,7 +1915,7 @@ async def register_allocation_policy_artifact(
     "/api/registry/allocation-policy-artifacts/{registry_id}",
     response_model=RegistryEntryView,
 )
-async def get_allocation_policy_artifact_entry(registry_id: str, authorization: Optional[str] = Header(default=None)):
+def get_allocation_policy_artifact_entry(registry_id: str, authorization: Optional[str] = Header(default=None)):
     """Read one AllocationPolicyArtifact registry entry (tenant-scoped)."""
     ctx = _authenticate_registry_read(authorization)
     registry_service = get_registry_service()
@@ -1934,7 +1932,7 @@ async def get_allocation_policy_artifact_entry(registry_id: str, authorization: 
     "/api/registry/pools/{capital_pool_id}/allocation-policy-artifacts",
     response_model=list[RegistryEntryView],
 )
-async def list_allocation_policy_artifacts(
+def list_allocation_policy_artifacts(
     capital_pool_id: str,
     artifact_state: Optional[ArtifactState] = None,
     authorization: Optional[str] = Header(default=None),
@@ -1959,7 +1957,7 @@ async def list_allocation_policy_artifacts(
     "/api/registry/allocation-policy-artifacts/{registry_id}/advance",
     response_model=RegistryEntryView,
 )
-async def advance_allocation_policy_artifact_state(
+def advance_allocation_policy_artifact_state(
     registry_id: str,
     body: AdvanceRequest,
     authorization: Optional[str] = Header(default=None),
