@@ -262,6 +262,16 @@
         "command": "$PANTHEON_DEPENDENCY_PYTHON -m unittest services.telemetry.test_main_routes",
         "conclusion": "47 tests ran in 15.775s with 0 errors; all passed, including dead-task /readyz 503 error regression.",
         "result": "pass"
+      },
+      {
+        "command": "pytest -q services/telemetry/test_ingest_shock_absorption.py services/telemetry/test_l12_tel_001_durable_ingest.py",
+        "conclusion": "83 passed, 1 skipped (RealNatsCrashRecoveryTest); exit 0.",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --check",
+        "conclusion": "exit 0.",
+        "result": "pass"
       }
     ],
     "validated_at": "2026-07-26T12:24:06Z",

@@ -14,6 +14,7 @@ import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock
 
+from services.telemetry.backpressure import BackpressureController, PressureLevel
 from services.telemetry.batch_writer import AsyncBatchWriter, WriteResult
 from services.telemetry.buffer import NatsJetStreamBuffer
 from services.telemetry.dead_letter import DeadLetterQueue
@@ -553,6 +554,107 @@ class DurableIngestReceiptTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await buffer.release([fetched]))
         self.assertEqual(calls, ["nak"])
         self.assertEqual(buffer.stats()["total_acked"], 0)
+
+    async def test_high_pressure_backlog_with_delayable_and_critical_events_drains_and_acks(self):
+        calls: list[str] = []
+        event1 = _event()
+        event1["event_id"] = "evt-delayable-heartbeat"
+        event1["event_type"] = "heartbeat"
+        event2 = copy.deepcopy(event1)
+        event2["event_id"] = "evt-critical-fill"
+        event2["event_type"] = "order_filled"
+
+        msg1 = _Message(event1, calls)
+        msg2 = _Message(event2, calls)
+        buffer = _started_buffer(
+            jetstream=_JetStream(calls),
+            subscription=_Subscription([msg1, msg2]),
+        )
+        ctrl = BackpressureController(evaluation_interval=999.0)
+        ctrl._pressure_level = PressureLevel.CRITICAL
+
+        written: list[dict] = []
+
+        async def write_fn(batch: list[dict]) -> WriteResult:
+            written.extend(batch)
+            calls.append("canonical_write")
+            return WriteResult.ok(len(batch))
+
+        with tempfile.TemporaryDirectory() as td:
+            writer = AsyncBatchWriter(
+                buffer=buffer,
+                write_fn=write_fn,
+                dead_letter_queue=DeadLetterQueue(
+                    spill_path=str(Path(td) / "dlq.jsonl")
+                ),
+                backpressure=ctrl,
+                batch_size=10,
+                batch_interval=0.05,
+            )
+            await writer.start()
+            await asyncio.sleep(0.2)
+            await writer.stop(graceful=True)
+
+        self.assertEqual(
+            [e["event_id"] for e in written],
+            ["evt-delayable-heartbeat", "evt-critical-fill"],
+        )
+        self.assertIn("canonical_write", calls)
+        self.assertIn("ack", calls)
+        self.assertNotIn("nak", calls)
+        self.assertEqual(buffer.stats()["total_acked"], 2)
+        self.assertEqual(writer.stats()["total_written"], 2)
+        self.assertEqual(writer.stats()["total_dlq"], 0)
+        self.assertEqual(writer.stats()["total_failed"], 0)
+
+    async def test_held_batch_flushed_on_interval_without_starvation_under_high_pressure(self):
+        calls: list[str] = []
+        event1 = _event()
+        event1["event_id"] = "evt-held-critical"
+        event1["event_type"] = "order_filled"
+        event2 = copy.deepcopy(event1)
+        event2["event_id"] = "evt-delayable-heartbeat"
+        event2["event_type"] = "heartbeat"
+
+        msg1 = _Message(event1, calls)
+        msg2 = _Message(event2, calls)
+        buffer = _started_buffer(
+            jetstream=_JetStream(calls),
+            subscription=_Subscription([msg1, msg2]),
+        )
+        ctrl = BackpressureController(evaluation_interval=999.0)
+        ctrl._pressure_level = PressureLevel.HIGH
+
+        written: list[dict] = []
+
+        async def write_fn(batch: list[dict]) -> WriteResult:
+            written.extend(batch)
+            calls.append("canonical_write")
+            return WriteResult.ok(len(batch))
+
+        with tempfile.TemporaryDirectory() as td:
+            writer = AsyncBatchWriter(
+                buffer=buffer,
+                write_fn=write_fn,
+                dead_letter_queue=DeadLetterQueue(
+                    spill_path=str(Path(td) / "dlq.jsonl")
+                ),
+                backpressure=ctrl,
+                batch_size=5,
+                batch_interval=0.05,
+            )
+            await writer.start()
+            await asyncio.sleep(0.2)
+            await writer.stop(graceful=True)
+
+        self.assertEqual(
+            [e["event_id"] for e in written],
+            ["evt-held-critical", "evt-delayable-heartbeat"],
+        )
+        self.assertIn("canonical_write", calls)
+        self.assertIn("ack", calls)
+        self.assertEqual(buffer.stats()["total_acked"], 2)
+        self.assertEqual(writer.stats()["total_written"], 2)
 
     async def test_canonical_write_success_with_exhausted_ack_failures_preserves_receipts_and_does_not_dlq(self):
         """Canonical PG write success followed by exhausted broker ACK failures preserves receipt and does not DLQ."""
