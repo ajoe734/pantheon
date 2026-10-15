@@ -549,18 +549,24 @@ class TestAsyncBatchWriter(unittest.IsolatedAsyncioTestCase):
 
         await buf.put(delayed_event)
         await buf.put(critical_event)
-        await writer.start()
-        await asyncio.sleep(0.3)
-        await writer.stop(graceful=True)
+        try:
+            await writer.start()
+            for _ in range(50):
+                if len(written_ids) >= 2:
+                    break
+                await asyncio.sleep(0.01)
 
-        self.assertIn("critical-fill", written_ids)
-        self.assertIn("delayed-heartbeat", written_ids)
-
-        dlq_entries = dlq.get_entries_as_dicts(tag_filter=TAG_BUFFER_OVERFLOW)
-        self.assertEqual(len(dlq_entries), 0)
-        self.assertEqual(writer._total_failed, 0)
-        self.assertEqual(writer._total_dlq, 0)
-        self.assertEqual(writer._total_written, 2)
+            # Assert actual write and IDs while writer is running BEFORE stop
+            self.assertIn("critical-fill", written_ids)
+            self.assertIn("delayed-heartbeat", written_ids)
+            self.assertEqual(len(written_ids), 2)
+            dlq_entries = dlq.get_entries_as_dicts(tag_filter=TAG_BUFFER_OVERFLOW)
+            self.assertEqual(len(dlq_entries), 0)
+            self.assertEqual(writer._total_failed, 0)
+            self.assertEqual(writer._total_dlq, 0)
+            self.assertEqual(writer._total_written, 2)
+        finally:
+            await writer.stop(graceful=True)
 
     async def test_held_batch_flushed_on_interval_without_starvation_under_high_pressure(self):
         """A held batch is flushed when interval elapses under HIGH pressure rather than being starved."""
@@ -594,22 +600,33 @@ class TestAsyncBatchWriter(unittest.IsolatedAsyncioTestCase):
         )
 
         await buf.put(critical_event)
-        await writer.start()
+        try:
+            await writer.start()
 
-        # Wait briefly for critical_event to be picked into batch
-        for _ in range(50):
-            if buf.size() == 0:
-                break
-            await asyncio.sleep(0.01)
+            # Wait briefly for critical_event to be picked into batch
+            for _ in range(50):
+                if buf.size() == 0:
+                    break
+                await asyncio.sleep(0.01)
 
-        await buf.put(delayed_event)
-        await asyncio.sleep(0.2)
-        await writer.stop(graceful=True)
+            await buf.put(delayed_event)
 
-        self.assertIn("critical-initial", written_ids)
-        self.assertIn("delayed-subsequent", written_ids)
-        self.assertEqual(len(dlq.get_entries_as_dicts()), 0)
-        self.assertEqual(writer._total_written, 2)
+            # Wait for held batch to flush on interval while writer is running
+            for _ in range(50):
+                if len(written_ids) >= 2:
+                    break
+                await asyncio.sleep(0.01)
+
+            # Assert actual write and IDs while writer is running BEFORE stop
+            self.assertIn("critical-initial", written_ids)
+            self.assertIn("delayed-subsequent", written_ids)
+            self.assertEqual(len(written_ids), 2)
+            self.assertEqual(len(dlq.get_entries_as_dicts()), 0)
+            self.assertEqual(writer._total_written, 2)
+            self.assertEqual(writer._total_failed, 0)
+            self.assertEqual(writer._total_dlq, 0)
+        finally:
+            await writer.stop(graceful=True)
 
     async def test_partition_routing(self):
         buf = InMemoryBuffer(maxsize=100)

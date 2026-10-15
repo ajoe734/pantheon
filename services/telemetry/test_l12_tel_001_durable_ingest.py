@@ -556,6 +556,10 @@ class DurableIngestReceiptTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(buffer.stats()["total_acked"], 0)
 
     async def test_high_pressure_backlog_with_delayable_and_critical_events_drains_and_acks(self):
+        """Accepted backlog with delayable and critical events drains and ACKs while writer is running under CRITICAL pressure.
+
+        Note: The in-memory _Subscription test double does not simulate broker redelivery after NAK.
+        """
         calls: list[str] = []
         event1 = _event()
         event1["event_id"] = "evt-delayable-heartbeat"
@@ -591,23 +595,33 @@ class DurableIngestReceiptTest(unittest.IsolatedAsyncioTestCase):
                 batch_size=10,
                 batch_interval=0.05,
             )
-            await writer.start()
-            await asyncio.sleep(0.2)
-            await writer.stop(graceful=True)
+            try:
+                await writer.start()
+                for _ in range(50):
+                    if len(written) >= 2:
+                        break
+                    await asyncio.sleep(0.01)
 
-        self.assertEqual(
-            [e["event_id"] for e in written],
-            ["evt-delayable-heartbeat", "evt-critical-fill"],
-        )
-        self.assertIn("canonical_write", calls)
-        self.assertIn("ack", calls)
-        self.assertNotIn("nak", calls)
-        self.assertEqual(buffer.stats()["total_acked"], 2)
-        self.assertEqual(writer.stats()["total_written"], 2)
-        self.assertEqual(writer.stats()["total_dlq"], 0)
-        self.assertEqual(writer.stats()["total_failed"], 0)
+                # Assert actual write/ACK and IDs while writer is running BEFORE stop
+                self.assertEqual(
+                    [e["event_id"] for e in written],
+                    ["evt-delayable-heartbeat", "evt-critical-fill"],
+                )
+                self.assertIn("canonical_write", calls)
+                self.assertIn("ack", calls)
+                self.assertNotIn("nak", calls)
+                self.assertEqual(buffer.stats()["total_acked"], 2)
+                self.assertEqual(writer.stats()["total_written"], 2)
+                self.assertEqual(writer.stats()["total_dlq"], 0)
+                self.assertEqual(writer.stats()["total_failed"], 0)
+            finally:
+                await writer.stop(graceful=True)
 
     async def test_held_batch_flushed_on_interval_without_starvation_under_high_pressure(self):
+        """Held batch is flushed on interval without starvation under HIGH pressure while writer is running.
+
+        Note: The in-memory _Subscription test double does not simulate broker redelivery after NAK.
+        """
         calls: list[str] = []
         event1 = _event()
         event1["event_id"] = "evt-held-critical"
@@ -643,18 +657,27 @@ class DurableIngestReceiptTest(unittest.IsolatedAsyncioTestCase):
                 batch_size=5,
                 batch_interval=0.05,
             )
-            await writer.start()
-            await asyncio.sleep(0.2)
-            await writer.stop(graceful=True)
+            try:
+                await writer.start()
+                for _ in range(50):
+                    if len(written) >= 2:
+                        break
+                    await asyncio.sleep(0.01)
 
-        self.assertEqual(
-            [e["event_id"] for e in written],
-            ["evt-held-critical", "evt-delayable-heartbeat"],
-        )
-        self.assertIn("canonical_write", calls)
-        self.assertIn("ack", calls)
-        self.assertEqual(buffer.stats()["total_acked"], 2)
-        self.assertEqual(writer.stats()["total_written"], 2)
+                # Assert actual write/ACK and IDs while writer is running BEFORE stop
+                self.assertEqual(
+                    [e["event_id"] for e in written],
+                    ["evt-held-critical", "evt-delayable-heartbeat"],
+                )
+                self.assertIn("canonical_write", calls)
+                self.assertIn("ack", calls)
+                self.assertNotIn("nak", calls)
+                self.assertEqual(buffer.stats()["total_acked"], 2)
+                self.assertEqual(writer.stats()["total_written"], 2)
+                self.assertEqual(writer.stats()["total_dlq"], 0)
+                self.assertEqual(writer.stats()["total_failed"], 0)
+            finally:
+                await writer.stop(graceful=True)
 
     async def test_canonical_write_success_with_exhausted_ack_failures_preserves_receipts_and_does_not_dlq(self):
         """Canonical PG write success followed by exhausted broker ACK failures preserves receipt and does not DLQ."""

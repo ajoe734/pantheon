@@ -265,7 +265,7 @@
       },
       {
         "command": "pytest -q services/telemetry/test_ingest_shock_absorption.py services/telemetry/test_l12_tel_001_durable_ingest.py",
-        "conclusion": "83 passed, 1 skipped (RealNatsCrashRecoveryTest); exit 0.",
+        "conclusion": "83 passed, 1 skipped (RealNatsCrashRecoveryTest) across 84 tests run; exit 0.",
         "result": "pass"
       },
       {
