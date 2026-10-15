@@ -46,6 +46,7 @@ VM = "pantheon-dev-deploy"
 FE_STORE = Path("/var/www/pantheon-dev-fe-releases")
 FE_LINK = Path("/var/www/pantheon-dev-fe")
 OUTER_SCHEMA = "pantheon.dev-release-artifact-baseline.v1"
+CAPTURED_FE = "candidate-frontend-captured.json"
 CANDIDATE_SCHEMA = "pantheon.dev-candidate-image-admission.v2"
 DOCKERFILES = dict(zip(a.SERVICES, ("services/control-plane/bff/Dockerfile", "services/control-plane/bff/Dockerfile", "services/telemetry/Dockerfile")))
 OWNERS = ("governance", "registry", "deployment", "runtime-manager", "deployment-outbox-consumer", "capital", "dev-paper-principal-issuer")
@@ -753,6 +754,10 @@ def run(args, *, docker, http, barrier):
         if (is_restore and not fe_m) or (fe_m and target_frontend["manifest_sha256"] != fe_m): raise a.ArtifactError("candidate FE manifest digest mismatch")
         if (is_restore and not fe_d) or (fe_d and target_frontend["dist_sha256"] != fe_d): raise a.ArtifactError("candidate FE dist digest mismatch")
         if getattr(args, "fe_target", None) and target_frontend["target"] != args.fe_target: raise a.ArtifactError("candidate FE target mismatch")
+        # Unqualified bytes survive a failed public gate solely as the FROM
+        # side of baseline compensation; the qualified seal is published only
+        # after every gate below passes.
+        if not is_restore: _publish(folder / CAPTURED_FE, a.manifest_bytes(target_frontend))
         target_images = {s: candidate["services"][s]["image_id"] for s in a.SERVICES}
         compose_files = ((args.compose_file, compose_digest), (_candidate_paths(folder)[1], candidate["image_override_sha256"]))
     a.verify_frontend(target_frontend, release_store=args.fe_release_store, live_link=args.fe_live_link)

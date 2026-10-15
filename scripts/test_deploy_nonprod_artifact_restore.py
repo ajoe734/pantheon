@@ -1534,3 +1534,46 @@ def test_fe_controller_checkout_must_match_admitted_commit_and_tracked_sources(t
     copied = tmp_path / "copied-deploy-dev-vm.sh"
     copied.write_text(FE_MOCK_SCRIPT)
     assert _fe_controller_check(copied, sha).returncode != 0
+
+
+def _fe_recorder_script(tmp_path):
+    fe_script = tmp_path / "deploy-dev-vm.sh"
+    fe_script.write_text(
+        '#!/usr/bin/env bash\n'
+        'python3 - <<\'PY\'\n'
+        'import json, os\n'
+        'with open(os.environ["RECORDER"], "a") as f:\n'
+        '    f.write(json.dumps({"command": "fe_deploy", "action": os.environ.get("PANTHEON_DEPLOY_ACTION"),\n'
+        '        "from": json.loads(os.environ["PANTHEON_DEPLOY_SEALED_FROM_JSON"]),\n'
+        '        "to": json.loads(os.environ["PANTHEON_DEPLOY_SEALED_TO_JSON"])}) + "\\n")\n'
+        'PY\n')
+    fe_script.chmod(0o755)
+    return fe_script
+
+
+def test_baseline_restore_sources_from_retained_unqualified_candidate_capture(fixture, tmp_path):
+    env, recorder, driver, library = fixture
+    folder = Path(env["PANTHEON_DEV_ARTIFACT_MANIFEST_PATH"]).parent
+    captured = {"target": "/var/www/pantheon-dev-fe-releases/candidate", "dist_sha256": "4" * 64,
+                "manifest_sha256": "3" * 64, "frontend_sha": "e" * 40, "backend_sha": SHA}
+    to_seal = {"target": "/var/www/pantheon-dev-fe-releases/baseline", "dist_sha256": "5" * 64,
+               "manifest_sha256": "6" * 64, "frontend_sha": "f" * 40, "backend_sha": PRIOR}
+    env.update({"PANTHEON_DEV_FE_DEPLOY_SCRIPT": str(_fe_recorder_script(tmp_path)),
+                "PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON": json.dumps(to_seal),
+                "PANTHEON_DEPLOY_LEASE_OWNER": "pantheon-dev-deploy"})
+    path = folder / "candidate-frontend-captured.json"
+    path.write_text(json.dumps(captured)); path.chmod(0o600)
+    result = _run(_remote(), env)
+    assert result.returncode == 0, result.stderr
+    events = _events(recorder)
+    assert [e["command"] for e in events] == ["fe_deploy", "driver"]
+    assert events[0]["action"] == "restore-sealed"
+    assert events[0]["from"] == captured and events[0]["to"] == to_seal
+
+    for mutate in (lambda v: dict(v, backend_sha=PRIOR), lambda v: dict(v, extra="x"),
+                   lambda v: {k: x for k, x in v.items() if k != "dist_sha256"}):
+        Path(env["RECORDER"]).write_text("")
+        path.write_text(json.dumps(mutate(captured)))
+        rejected = _run(_remote(), env)
+        assert rejected.returncode != 0
+        assert not any(e["command"] in ("fe_deploy", "driver") for e in _events(recorder))

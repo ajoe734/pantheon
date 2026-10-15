@@ -249,6 +249,11 @@ def load_evidence(env: dict[str, str], provenance: str) -> dict:
                 to_seal = baseline_fe
             exports[ENV_PREFIX + "SEALED_FROM_JSON"] = json.dumps(from_seal, sort_keys=True)
             exports[ENV_PREFIX + "SEALED_TO_JSON"] = json.dumps(to_seal, sort_keys=True)
+    elif operation == "restore" and not is_final and isinstance(baseline.get("frontend"), dict):
+        # No qualified seal (failed final gate): the VM owner supplies FROM from
+        # the retained unqualified candidate capture; TO stays the sealed baseline.
+        capture.exact_keys(baseline["frontend"], ("target", "dist_sha256", "manifest_sha256", "frontend_sha", "backend_sha"))
+        exports[ENV_PREFIX + "SEALED_TO_JSON"] = json.dumps(baseline["frontend"], sort_keys=True)
     for fe_var in (
         "PANTHEON_DEV_FE_DEPLOY_SCRIPT",
         "PANTHEON_EXECUTE_PLANS_ROOT",
