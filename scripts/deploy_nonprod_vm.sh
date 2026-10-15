@@ -4513,6 +4513,52 @@ if [[ "${PANTHEON_DEV_ARTIFACT_RESTORE:-false}" == true || "${PANTHEON_DEV_ARTIF
   [[ "${PANTHEON_DEV_ARTIFACT_TARGET:-baseline}" != "final" || "${artifact_operation}" != "restore" ]] || artifact_operation=restore-final
 
   if [[ "${artifact_operation}" == "restore" || "${artifact_operation}" == "restore-final" ]]; then
+    if [[ "${artifact_operation}" == restore && -z "${PANTHEON_DEV_ARTIFACT_SEALED_FROM_JSON:-}" && -n "${PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON:-}" ]]; then
+      # Failed final gate: only the unqualified candidate capture retained by the
+      # driver can name the live FE to leave. Absent capture keeps prior behavior.
+      PANTHEON_DEV_ARTIFACT_SEALED_FROM_JSON="$(python3 - <<'CAPTURED_FE_PY'
+import json
+import os
+from pathlib import Path
+import re
+import stat
+
+env = os.environ
+root = Path("/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/release-artifacts")
+folder = root / ("baseline-" + env["PANTHEON_DEV_ARTIFACT_RUN_ID"] + "-" +
+                 env["PANTHEON_DEV_ARTIFACT_ATTEMPT"] + "-" + env["PANTHEON_DEV_ARTIFACT_CANDIDATE_ID"])
+path = folder / "candidate-frontend-captured.json"
+if not path.is_symlink() and not path.exists():
+    raise SystemExit(0)
+for directory in (root, folder):
+    info = directory.lstat()
+    if (directory.resolve() != directory or not stat.S_ISDIR(info.st_mode) or
+            info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700):
+        raise SystemExit("captured FE directory is not owner-private")
+fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+with os.fdopen(fd, "rb") as stream:
+    info = os.fstat(stream.fileno())
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+        raise SystemExit("captured FE is not an owner-private regular file")
+    raw = stream.read(65537)
+if len(raw) > 65536:
+    raise SystemExit("captured FE exceeds its bound")
+value = json.loads(raw)
+keys = ("target", "dist_sha256", "manifest_sha256", "frontend_sha", "backend_sha")
+if not isinstance(value, dict) or set(value) != set(keys) or not all(isinstance(value[k], str) for k in keys):
+    raise SystemExit("captured FE must have exactly the five sealed fields")
+if (value["frontend_sha"] != env["PANTHEON_DEV_ARTIFACT_CANDIDATE_FRONTEND_SHA"] or
+        value["backend_sha"] != env["PANTHEON_DEV_ARTIFACT_CANDIDATE_BACKEND_SHA"] or
+        not re.fullmatch(r"[0-9a-f]{64}", value["dist_sha256"]) or
+        not re.fullmatch(r"[0-9a-f]{64}", value["manifest_sha256"])):
+    raise SystemExit("captured FE is not the admitted candidate")
+for key, name in (("manifest_sha256", "FE_MANIFEST_SHA256"), ("dist_sha256", "FE_DIST_SHA256"), ("target", "FE_TARGET")):
+    if env.get("PANTHEON_DEV_ARTIFACT_" + name) and value[key] != env["PANTHEON_DEV_ARTIFACT_" + name]:
+        raise SystemExit("captured FE differs from the external seal")
+print(json.dumps(value, sort_keys=True))
+CAPTURED_FE_PY
+)" || error "retained candidate FE capture rejected"
+    fi
     if [[ -n "${PANTHEON_DEV_ARTIFACT_SEALED_FROM_JSON:-}" && -n "${PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON:-}" ]]; then
       fe_script="${PANTHEON_DEV_FE_DEPLOY_SCRIPT:-${PANTHEON_EXECUTE_PLANS_ROOT:-${HOME:-/home/chloe_ong_dev_cctech_support_com}/actions-runner-execute-plans/_work/execute-plans/execute-plans}/scripts/deploy-dev-vm.sh}"
       if [[ ! -f "${fe_script}" || -L "${fe_script}" ]]; then

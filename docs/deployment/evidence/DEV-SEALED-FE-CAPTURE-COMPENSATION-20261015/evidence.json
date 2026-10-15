@@ -1,0 +1,24 @@
+{
+  "task_id": "DEV-SEALED-FE-CAPTURE-COMPENSATION-20261015",
+  "evidence_class": "source-validation-only",
+  "hosted_proof": false,
+  "parent_completion_claimed": false,
+  "original_root_status": "Root38741907220 remains FAIL; original compensation unproven",
+  "original_references": {
+    "job_log_sha256": "c9ad1426d1e68620151cf5c1238789ef17560d0e9c8fbdc7142e0dc6d6d4a7cb",
+    "fe_evidence_zip_sha256": "d1d9a28a5e69619888052ba7e57b1a1a83748bbd2046b39ac868fabb6f4b67fa",
+    "observation_gap": "verify timeout record (dev_release_artifact_driver.py:172, exit124) has no concrete URL; product cause not guessed, timeout unchanged"
+  },
+  "change": {
+    "driver": "verify --target final retains the unqualified five-field candidate FE capture as candidate-frontend-captured.json before the public gate; qualified candidate-frontend.json is still published only after all gates pass",
+    "evidence": "baseline restore without a qualified seal exports only the sealed baseline TO seal",
+    "deploy_script": "baseline restore derives FROM from the retained capture (owner-private regular file, exact five fields, bound to candidate FE/BE SHA and external digests) before FE owner restore-sealed and exact baseline BFF restore"
+  },
+  "tests": {
+    "test_dev_release_artifact_driver.py": "252 passed (includes new failed-verify retention test; fe-seal-absent test preserved)",
+    "test_dev_artifact_compensation_evidence.py": "95 passed",
+    "test_nonprod_dev_artifact_workflow.py": "151 passed",
+    "test_deploy_nonprod_artifact_restore.py": "68 passed, 6 failed; the same 6 fail identically on unmodified dev (direct-ssh transport contract exit 75 at dev_remote_guarded_exec.py:76 in this sandbox), none related to this change"
+  },
+  "not_changed": ["dev_release_artifacts.py", "compensate_cross_repo_release.sh", "nonprod-deploy.yml", "timeouts", "lease/watchdog/guard"]
+}
