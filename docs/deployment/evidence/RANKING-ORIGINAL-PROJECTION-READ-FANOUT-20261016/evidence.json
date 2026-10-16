@@ -1,0 +1,49 @@
+{
+  "task_id": "RANKING-ORIGINAL-PROJECTION-READ-FANOUT-20261016",
+  "base_sha": "7ce6be2b7420afaa5f749c1e27c4b479c5d236f7",
+  "change_class": "functional",
+  "work_class": "performance_optimization",
+  "summary": "Remove unused rich Persona reads (route policy, health, allowed actions) from the existing quarterly ranking projection path while reusing pre-fetched runtime bindings and bulk sessions, eliminating unnecessary fanout reads on the fresh full-universe ranking path and preserving full rich UI summaries for all other consumers.",
+  "scope": [
+    "services/control-plane/bff/personas/service.py",
+    "services/control-plane/bff/tests/test_bff_pm12_persona_league.py",
+    "services/control-plane/bff/tests/test_persona_evaluator_mounted_ranking.py",
+    "docs/deployment/evidence/RANKING-ORIGINAL-PROJECTION-READ-FANOUT-20261016/evidence.json"
+  ],
+  "defect_context": {
+    "reproduction_evidence": "/tmp/pantheon-assist-20261013/Root38835128564-original-evaluator-ranking01_58-immutable-raw-observation.json",
+    "reproduction_sha256": "5022ef7aac373821eec247d4a84b033bdd37bd2dc3075a8a704a87a3385bdaad",
+    "diagnosis_evidence": "/tmp/pantheon-assist-20261013/Root38835128564-original-evaluator-ranking01_58-independent-readonly-diagnosis.json",
+    "diagnosis_sha256": "23548b402091a7ab1bb94ac682ed9cf74c530eb9a5499ca1fc1faff234a1a934",
+    "supplement_evidence": "/tmp/pantheon-assist-20261013/Root38835128564-original-ranking-existing-consumers-and-prefetch-source-readonly.json",
+    "supplement_sha256": "52b20e181eb55208bd828ab1d097b829a6e6a6122062315f988fc96a76d757b9",
+    "symptom": "GET http://operator-bff:8001/bff/management/quarterly-ranking reproduced a TimeoutError after ~20.07s on actual75aa commit with original query and genuine viewer token. Analysis established that full projection expanded every Persona into unused rich UI fields (route policy, health, allowed actions) and failed to pass pre-fetched runtime bindings (forcing N redundant list_runtime_bindings calls) and session lookups before ranking and pagination.",
+    "resolution": "Omitted route_policy_summary, health_summary, and allowed_action_summary on the quarterly ranking path via include_route_policy=False, include_health=False, include_allowed_actions=False; passed pre-fetched all_runtimes into _project_persona_league_row to eliminate redundant list_runtime_bindings fanout; threaded bulk persona sessions and authoritative paper monitoring sessions into projection and session resolution; enriched route policy and health summary on-demand for single-persona drilldown; and preserved default rich UI summaries for all other nine consumers."
+  },
+  "acceptance_verification": {
+    "ac1_ranking_integrity_and_fanout_elimination": "passed: Fresh full-universe quarterly ranking preserves real activity scores (sessions.active, evaluations.completed, capabilities.has_snapshot, routed_strategy_count, memory.total), eligibility exclusions, tenant boundaries, and rank ordering without fabricating values or paginating before ranking. Unused route-policy, health, and allowed-actions fanout reads are completely eliminated (0 calls), and pre-fetched runtime bindings are reused (1 call instead of 1+N). All other consumers retain full rich UI fields.",
+    "ac2_counter_regression_and_parity_verification": "passed: Added test_pm12_quarterly_ranking_read_fanout_reduction_and_parity in test_bff_pm12_persona_league.py demonstrating before/after read counter verification: get_route_policy_for_persona=0, get_persona_allowed_actions=0, list_runtime_bindings=1 on /bff/management/quarterly-ranking; while /bff/management/persona-league retains >=N calls and rich fields; drilldown performs single on-demand load; ordering, filters, pagination, and tenant isolation strictly maintained.",
+    "ac3_source_boundaries_and_evaluator_deadlines": "passed: Restricted changes strictly to the 4 scoped artifacts. No timeouts extended (evaluator 20s budget intact). No caching layers, facades, or new public endpoints introduced. Mounted evaluator tests in test_persona_evaluator_mounted_ranking.py pass without modification."
+  },
+  "test_expectation_classification": {
+    "status": "no_test_expectations_changed",
+    "details": "All existing test cases in test_bff_pm12_persona_league.py and test_persona_evaluator_mounted_ranking.py pass without alteration. Added test_pm12_quarterly_ranking_read_fanout_reduction_and_parity to test_bff_pm12_persona_league.py."
+  },
+  "validation": [
+    {
+      "suite": "services/control-plane/bff/tests/test_bff_pm12_persona_league.py",
+      "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_bff_pm12_persona_league.py",
+      "result": "15 passed in 14.5s"
+    },
+    {
+      "suite": "services/control-plane/bff/tests/test_persona_evaluator_mounted_ranking.py",
+      "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_persona_evaluator_mounted_ranking.py",
+      "result": "3 passed in 2.8s"
+    },
+    {
+      "suite": "combined",
+      "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/control-plane/bff/tests/test_persona_evaluator_mounted_ranking.py",
+      "result": "18 passed in 17.28s"
+    }
+  ]
+}
