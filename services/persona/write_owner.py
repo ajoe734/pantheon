@@ -1692,9 +1692,12 @@ from services.persona.trade_reflection_pipeline import (
     ReflectionProvider,
     ReflectionRequest,
     TradeReflectionPipeline,
+    episode_missing_refs,
     facts_snapshot,
+    provider_extraction_schema,
+    reflection_schema_errors,
 )
-from services.persona.trade_pattern_review import EpisodeLister, review_pattern, telemetry_episode_lister
+from services.persona.trade_pattern_review import EpisodeLister, covered_episode_ids, review_pattern, telemetry_episode_lister
 
 
 class OpenClawReflectionProvider:
@@ -1709,11 +1712,7 @@ class OpenClawReflectionProvider:
         if not self.token: raise RuntimeError("OpenClaw adapter service token is not configured")
         body = {
             "prompt": f"Reflect on trade episode {trigger} with facts: {json.dumps(dict(facts), sort_keys=True)}",
-            "extraction_schema": {
-                "type": "object",
-                "properties": {k: {"type": "object" if k == "expected_vs_actual" else ("string" if k == "attribution" else "array")} for k in ("expected_vs_actual", "attribution", "counterfactuals", "lesson_candidates")},
-                "required": ["expected_vs_actual", "attribution", "counterfactuals", "lesson_candidates"],
-            },
+            "extraction_schema": provider_extraction_schema(),
         }
         req = UrllibRequest(f"{self.adapter_url}/api/openclaw-adapter/assistant/providers/openclaw/structured", data=json.dumps(body).encode("utf-8"), headers={"Content-Type": "application/json", "X-Operator-Id": "persona-reflection", "X-Pantheon-Service-Token": self.token}, method="POST")
         try:
@@ -2030,7 +2029,7 @@ def create_app(
             try:
                 artifact = TradeReflectionPipeline(active_reflection_provider).process(ReflectionRequest(
                     request_id=f"reflection-{episode_id}-{uuid.uuid4().hex[:8]}", persona_id=persona_id,
-                    trade_episode_ids=(episode_id,), trigger="manual_retry", facts=raw_facts, missing_refs=tuple(raw_facts.get("missing_refs") or ()),
+                    trade_episode_ids=(episode_id,), trigger="manual_retry", facts=raw_facts, missing_refs=episode_missing_refs(raw_facts),
                 ))
             except Exception as exc: raise HTTPException(status_code=503, detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": f"Reflection generation failed: {exc}", "retryable": True}}) from exc
             resp = {
@@ -2084,14 +2083,18 @@ def create_app(
 
         def _not_yet_persisted(cur: PersonaBody) -> bool:
             rows = (cur.metadata or {}).get("trade_reflections", [])
-            covered = {e for r in rows if r.get("trigger") == "scheduled_pattern" for e in r.get("covered_episode_ids") or ()}
-            return not covered.intersection(artifact.get("covered_episode_ids") or ()) and not any(r.get("trade_episode_id") == identity and r.get("facts_snapshot_hash") == snapshot_hash for r in rows)
+            valid = [r for r in rows if not reflection_schema_errors(r)]
+            return not covered_episode_ids(rows).intersection(artifact.get("covered_episode_ids") or ()) and not any(r.get("trade_episode_id") == identity and r.get("facts_snapshot_hash") == snapshot_hash for r in valid)
+
+        def _quarantine_invalid(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            # Keep schema-invalid pattern evidence visible; only the review state changes.
+            return [{**r, "review_state": "quarantined"} if r.get("trigger") == "scheduled_pattern" and reflection_schema_errors(r) else r for r in rows]
 
         for _ in range(5):
             try:
                 ok, _ = persistent_owner.try_metadata_cas(
                     persona_id, guard=_not_yet_persisted,
-                    metadata_updates=lambda cur: {"trade_reflections": [r for r in (cur.metadata or {}).get("trade_reflections", []) if r.get("trade_episode_id") != identity] + [artifact]},
+                    metadata_updates=lambda cur: {"trade_reflections": [r for r in _quarantine_invalid(list((cur.metadata or {}).get("trade_reflections", []))) if r.get("trade_episode_id") != identity or reflection_schema_errors(r)] + [artifact]},
                     actor_id=authority.actor_id,
                 )
                 return {"data": {**result, "status": "reviewed" if ok else "unchanged", "reflection_id": artifact["reflection_id"] if ok else None}}

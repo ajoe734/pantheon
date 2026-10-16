@@ -200,3 +200,67 @@ def test_real_provider_missing_adapter_token_is_visible_failure(stack, monkeypat
     resp = client.post(URL, json={"tenant_id": "tenant-1"}, headers=SERVICE)
     assert resp.status_code >= 500 or resp.status_code == 503
     assert _stored(stack) == []
+
+
+def _seed(stack, rows):
+    ok, _ = stack["owner"].try_metadata_cas("p-alpha", guard=lambda cur: True, metadata_updates=lambda cur: {"trade_reflections": rows}, actor_id="fixture")
+    assert ok
+
+
+def _row(stack, covered, **changes):
+    from services.persona.trade_reflection_pipeline import ReflectionRequest, TradeReflectionPipeline
+    art = TradeReflectionPipeline(stack["provider"]).process(ReflectionRequest(
+        request_id=f"seed-{covered[0]}", persona_id="p-alpha", trade_episode_ids=tuple(covered),
+        trigger="scheduled_pattern", facts={"seed": covered}))
+    stack["provider"].calls = 0
+    return {**art, "trade_episode_id": pattern_identity(covered), "covered_episode_ids": list(covered), **changes}
+
+
+def _invalid(stack, covered):
+    row = _row(stack, covered)
+    row["lesson_candidates"][0]["confidence"] = "medium"
+    return row
+
+
+def test_nested_coverage_missing_refs_make_partial_with_unknowns(stack):
+    gap = {"missing_refs": ["opened_event", "attribution"]}
+    stack["rows"] = [_episode("ep-1", coverage=gap), _episode("ep-2", coverage=gap)]
+    stack["client"].post(URL, json={"tenant_id": "tenant-1"}, headers=SERVICE)
+    row = _stored(stack)[0]
+    assert row["evidence_coverage"] == "partial"
+    assert row["unknowns"] == ["missing canonical ref: opened_event", "missing canonical ref: attribution"]
+
+
+def test_invalid_provider_output_persists_nothing_and_next_run_recovers(stack):
+    good = stack["provider"].reflect
+    stack["provider"].reflect = lambda **kw: {**good(**kw), "lesson_candidates": [{"lesson": "x", "confidence": "high"}]}
+    assert stack["client"].post(URL, json={"tenant_id": "tenant-1"}, headers=SERVICE).status_code == 503
+    assert _stored(stack) == []
+    stack["provider"].reflect = good
+    assert stack["client"].post(URL, json={"tenant_id": "tenant-1"}, headers=SERVICE).json()["data"]["status"] == "reviewed"
+
+
+def test_schema_invalid_saved_row_is_quarantined_and_recovered_once(stack):
+    old = _invalid(stack, ["ep-1", "ep-2"])
+    _seed(stack, [old])
+    first = stack["client"].post(URL, json={"tenant_id": "tenant-1"}, headers=SERVICE).json()["data"]
+    assert first["status"] == "reviewed" and stack["provider"].calls == 1
+    rows = _stored(stack)
+    assert rows[0] == {**old, "review_state": "quarantined"}
+    assert rows[1]["review_state"] == "proposed" and rows[1]["lesson_candidates"][0]["confidence"] == 0.8
+    again = stack["client"].post(URL, json={"tenant_id": "tenant-1"}, headers=SERVICE).json()["data"]
+    assert again["status"] == "unchanged" and stack["provider"].calls == 1 and len(_stored(stack)) == 2
+
+
+def test_recovery_failure_keeps_old_row_untouched_and_valid_rows_never_recharge(stack):
+    valid, old = _row(stack, ["ep-1", "ep-2"]), _invalid(stack, ["ep-3", "ep-4"])
+    _seed(stack, [valid, old])
+    stack["rows"] = [_episode(f"ep-{i}") for i in range(1, 5)]
+    stack["provider"].fail = True
+    assert stack["client"].post(URL, json={"tenant_id": "tenant-1"}, headers=SERVICE).status_code == 503
+    assert _stored(stack) == [valid, old]
+    stack["provider"].fail = False
+    assert stack["client"].post(URL, json={"tenant_id": "tenant-1"}, headers=SERVICE).json()["data"]["status"] == "reviewed"
+    rows = _stored(stack)
+    assert rows[0] == valid and rows[1]["review_state"] == "quarantined" and set(rows[2]["covered_episode_ids"]) == {"ep-3", "ep-4"}
+    assert stack["provider"].calls == 2  # failed attempt + one recovery; valid pair never recharged

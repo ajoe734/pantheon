@@ -24,7 +24,9 @@ from urllib.request import Request, urlopen
 from services.persona.trade_reflection_pipeline import (
     ReflectionRequest,
     TradeReflectionPipeline,
+    episode_missing_refs,
     facts_snapshot,
+    reflection_schema_errors,
 )
 
 CLOSED_STATUSES = frozenset({"closed", "reflected", "force_closed"})
@@ -40,6 +42,14 @@ EpisodeLister = Callable[[str, str], list[dict[str, Any]]]
 def pattern_identity(episode_ids: Iterable[str]) -> str:
     """Stable uuid over the whole episode set; schema-valid ``trade_episode_id``."""
     return str(uuid.uuid5(PATTERN_NAMESPACE, "\n".join(sorted(set(episode_ids)))))
+
+
+def covered_episode_ids(rows: Iterable[Mapping[str, Any]]) -> set[str]:
+    """Episodes covered by canonical-valid pattern rows; schema-invalid rows are quarantined, not coverage."""
+    return {
+        episode_id for row in rows if row.get("trigger") == "scheduled_pattern" and not reflection_schema_errors(row)
+        for episode_id in row.get("covered_episode_ids") or ()
+    }
 
 
 def qualifying_episodes(rows: list[Mapping[str, Any]], persona_id: str, tenant_id: str) -> list[dict[str, Any]]:
@@ -102,10 +112,7 @@ def review_pattern(
     Returns ``{"status": "no_op" | "unchanged", ...}`` without any provider call,
     or ``{"status": "reviewed", "artifact": ...}`` for the caller to persist.
     """
-    covered = {
-        episode_id for row in existing if row.get("trigger") == "scheduled_pattern"
-        for episode_id in row.get("covered_episode_ids") or ()
-    }
+    covered = covered_episode_ids(existing)
     pending = [
         row for row in qualifying_episodes(list_episodes(persona_id, tenant_id), persona_id, tenant_id)
         if row["trade_episode_id"] not in covered
@@ -123,7 +130,7 @@ def review_pattern(
     facts = {"persona_id": persona_id, "tenant_id": tenant_id, "episodes": episodes}
     snapshot_ref, snapshot_hash, _ = facts_snapshot(facts)
     base = {"pattern_id": identity, "qualifying_episodes": len(episodes), "facts_snapshot_ref": snapshot_ref}
-    missing = tuple(ref for row in episodes for ref in row.get("missing_refs") or ())
+    missing = tuple(dict.fromkeys(ref for row in episodes for ref in episode_missing_refs(row)))
     artifact = pipeline.process(ReflectionRequest(
         request_id=f"pattern-{identity}-{snapshot_hash[-12:]}", persona_id=persona_id,
         trade_episode_ids=episode_ids, trigger="scheduled_pattern", facts=facts, missing_refs=missing,

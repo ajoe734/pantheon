@@ -12,7 +12,16 @@ import uuid
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol, Sequence
+
+from jsonschema import Draft7Validator
+
+REFLECTION_SCHEMA = json.loads(Path(__file__).with_name("persona_trade_reflection.schema.json").read_text())
+_REFLECTION_VALIDATOR = Draft7Validator(REFLECTION_SCHEMA)
+_LESSON_SCHEMA = REFLECTION_SCHEMA["properties"]["lesson_candidates"]["items"]
+SERVER_LESSON_FIELDS = ("lesson_candidate_id", "supporting_episode_ids", "expiry")
+PROVIDER_ARRAYS = ("mistakes", "what_worked", "unknowns", "followups")
 
 
 class ReflectionProvider(Protocol):
@@ -38,6 +47,38 @@ class ReflectionRequest:
     trigger: str
     facts: Mapping[str, Any]
     missing_refs: tuple[str, ...] = ()
+
+
+def reflection_schema_errors(row: Mapping[str, Any]) -> list[str]:
+    """Canonical Draft7 errors for one reflection row; empty when valid."""
+    return [e.message for e in _REFLECTION_VALIDATOR.iter_errors(dict(row))]
+
+
+def provider_extraction_schema() -> dict[str, Any]:
+    """Provider-owned slice of the canonical reflection schema; server fields stay server-owned."""
+    props = REFLECTION_SCHEMA["properties"]
+    lesson = {
+        "type": "object",
+        "properties": {k: v for k, v in _LESSON_SCHEMA["properties"].items() if k not in SERVER_LESSON_FIELDS},
+        "required": [k for k in _LESSON_SCHEMA["required"] if k not in SERVER_LESSON_FIELDS],
+        "additionalProperties": False,
+    }
+    properties = {
+        key: props[key] for key in ("expected_vs_actual", "attribution", "counterfactuals", *PROVIDER_ARRAYS)
+    }
+    properties["lesson_candidates"] = {"type": "array", "items": lesson}
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": ["expected_vs_actual", "attribution", "counterfactuals", "lesson_candidates"],
+    }
+
+
+def episode_missing_refs(row: Mapping[str, Any]) -> tuple[str, ...]:
+    """Canonical gaps a telemetry episode declares, top-level or under ``coverage``."""
+    coverage = row.get("coverage")
+    refs = [*(row.get("missing_refs") or ()), *((coverage.get("missing_refs") or ()) if isinstance(coverage, Mapping) else ())]
+    return tuple(dict.fromkeys(str(ref) for ref in refs))
 
 
 def _canonical(value: Mapping[str, Any]) -> bytes:
@@ -121,34 +162,23 @@ class TradeReflectionPipeline:
         coverage = "partial" if request.missing_refs else "complete"
         unknowns = list(generated.get("unknowns", []))
         unknowns.extend(f"missing canonical ref: {ref}" for ref in request.missing_refs)
-        counterfactuals = [
+        expiry = (self.now() + timedelta(days=30)).isoformat()
+        lessons = [
             {
-                "alternative_action": str(item.get("alternative_action", "unknown")),
-                "estimated_impact": str(item.get("estimated_impact", "unknown")),
-                "assumptions": str(item.get("assumptions", "unknown")),
-            }
-            for item in generated.get("counterfactuals", [])
-        ]
-
-        lessons = []
-        for item in generated.get("lesson_candidates", []):
-            lesson = {
-                "lesson_candidate_id": item.get("lesson_candidate_id", str(uuid.uuid4())),
-                "scope": str(item.get("scope", "unknown")),
-                "proposed_change": str(item.get("proposed_change", "unknown")),
+                **deepcopy(item),
+                "lesson_candidate_id": str(uuid.uuid4()),
                 "supporting_episode_ids": list(request.trade_episode_ids),
-                "confidence": item.get("confidence", 0),
-                "expiry": item.get("expiry", (self.now() + timedelta(days=30)).isoformat()),
+                "expiry": expiry,
             }
-            lessons.append(lesson)
+            if isinstance(item, Mapping)
+            else item
+            for item in generated.get("lesson_candidates") or ()
+        ]
+        comparison = generated.get("expected_vs_actual")
+        if isinstance(comparison, Mapping):
+            comparison = {**dict.fromkeys(REFLECTION_SCHEMA["properties"]["expected_vs_actual"]["required"]), **comparison}
 
-        generated_comparison = generated.get("expected_vs_actual", {})
-        expected_vs_actual = {
-            key: generated_comparison.get(key)
-            for key in ("thesis", "entry_quality", "exit_quality", "sizing", "timing", "risk_adherence")
-        }
-
-        return {
+        artifact = {
             "reflection_id": str(uuid.uuid4()),
             "trade_episode_id": request.trade_episode_ids[0],
             "persona_id": request.persona_id,
@@ -156,9 +186,9 @@ class TradeReflectionPipeline:
             "trigger": request.trigger,
             "facts_snapshot_ref": snapshot_ref,
             "facts_snapshot_hash": snapshot_hash,
-            "expected_vs_actual": expected_vs_actual,
-            "counterfactuals": counterfactuals,
-            "attribution": generated.get("attribution", "unknown"),
+            "expected_vs_actual": comparison,
+            "counterfactuals": deepcopy(generated.get("counterfactuals")),
+            "attribution": generated.get("attribution"),
             "mistakes": list(generated.get("mistakes", [])),
             "what_worked": list(generated.get("what_worked", [])),
             "unknowns": unknowns,
@@ -172,6 +202,10 @@ class TradeReflectionPipeline:
             "evidence_coverage": coverage,
             "review_state": "proposed",
         }
+        errors = reflection_schema_errors(artifact)
+        if errors:
+            raise ReflectionError(f"provider output violates canonical reflection schema: {errors[0]}")
+        return artifact
 
 
 def due_pattern_requests(
