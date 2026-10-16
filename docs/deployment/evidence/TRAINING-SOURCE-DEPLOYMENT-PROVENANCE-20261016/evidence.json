@@ -1,0 +1,23 @@
+{
+  "task_id": "TRAINING-SOURCE-DEPLOYMENT-PROVENANCE-20261016",
+  "change": "_normalize_payload_for_comparison now also excludes controller_identity.controller_id and controller_identity.deployment (observer process/deployment epoch) alongside the existing sequence exclusions. Existing immutable DatasetVersion is reused with original path/payload/digest and frozen original provenance.",
+  "files_changed": [
+    "services/training-session/source_dataset_authority.py",
+    "services/training-session/tests/test_source_dataset_authority.py"
+  ],
+  "still_rejected": [
+    "tenant change",
+    "selected connector desired_state change",
+    "storage binding/bytes change",
+    "policy selection change",
+    "sequence regression",
+    "malformed/incomplete current deployment identity (current readback validation unchanged)"
+  ],
+  "tests": {
+    "command": "python -m pytest services/training-session/tests/test_source_dataset_authority.py -q",
+    "result": "64 passed",
+    "added": "test_controller_deployment_change_reuses_original_immutable_authority",
+    "replaced_expectation": "deployment.git_sha-only rejection removed from test_semantic_authority_changes_are_rejected_on_rematerialization"
+  },
+  "not_done": "No VM/provider access, no product POSTs, no retry of the failed job; root owns later FULL/deploy."
+}
