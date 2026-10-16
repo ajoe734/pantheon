@@ -13,12 +13,14 @@ Validates:
 
 import sys
 from pathlib import Path
+import pytest
 
 BFF_DIR = Path(__file__).resolve().parent.parent
 if str(BFF_DIR) not in sys.path:
     pass
 
-from ports.persona_capital_runtime import (
+from services.control_plane.bff.command_adapters.base import ActionUnavailableError
+from services.control_plane.bff.ports.persona_capital_runtime import (
     EvolutionProjectionPort,
     PersonaCapitalRuntimeDomainPort,
     RankingProjectionPort,
@@ -246,6 +248,89 @@ class TestEvolutionProjectionPort:
         pending = port.list_evolution_decisions(status="pending")
         assert len(pending) == 1
         assert pending[0]["decision_id"] == "dec-1"
+
+    def test_list_evolution_decisions_filters_and_projection(self):
+        decisions = [
+            {
+                "decision_id": "dec-1",
+                "program_id": "prog-1",
+                "decision_state": "proposed",
+                "action_type": "rollback",
+                "risk_level": "low",
+            },
+            {
+                "decision_id": "dec-2",
+                "program_id": "prog-1",
+                "decision_state": "approved",
+                "action_type": "redeploy",
+                "risk_level": "high",
+            },
+            {
+                "decision_id": "dec-3",
+                "program_id": "prog-2",
+                "status": "rejected",
+                "action_type": "rollback",
+                "risk_level": "medium",
+            },
+        ]
+        port = EvolutionProjectionPort(evolution_decisions_reader=lambda: decisions)
+        # All
+        assert len(port.list_evolution_decisions()) == 3
+        # action_type filter
+        rollbacks = port.list_evolution_decisions(action_type="rollback")
+        assert len(rollbacks) == 2
+        assert {d["decision_id"] for d in rollbacks} == {"dec-1", "dec-3"}
+        # risk_level filter
+        high_risk = port.list_evolution_decisions(risk_level="high")
+        assert len(high_risk) == 1
+        assert high_risk[0]["decision_id"] == "dec-2"
+        # status filter via decision_state projection
+        proposed = port.list_evolution_decisions(status="proposed")
+        assert len(proposed) == 1
+        assert proposed[0]["decision_id"] == "dec-1"
+        assert proposed[0]["status"] == "proposed"
+        assert proposed[0]["decision_state"] == "proposed"
+        # Combined filters
+        combined = port.list_evolution_decisions(action_type="rollback", risk_level="low", status="proposed")
+        assert len(combined) == 1
+        assert combined[0]["decision_id"] == "dec-1"
+        # Unexpected argument raises TypeError (no **kwargs sink)
+        with pytest.raises(TypeError):
+            port.list_evolution_decisions(unknown_arg="invalid")
+
+    def test_evolution_readers_error_propagation(self):
+        # 1. Unconfigured reader raises ActionUnavailableError 503
+        unconfigured_port = EvolutionProjectionPort()
+        with pytest.raises(ActionUnavailableError) as exc_info:
+            unconfigured_port.list_evolution_decisions()
+        assert exc_info.value.downstream_status == 503
+        with pytest.raises(ActionUnavailableError) as exc_info:
+            unconfigured_port.list_evolution_programs()
+        assert exc_info.value.downstream_status == 503
+
+        # 2. Downstream 403 error propagates with downstream_status 403
+        def reader_403():
+            raise ActionUnavailableError("Forbidden", downstream_status=403)
+        port_403 = EvolutionProjectionPort(evolution_decisions_reader=reader_403)
+        with pytest.raises(ActionUnavailableError) as exc_info:
+            port_403.list_evolution_decisions()
+        assert exc_info.value.downstream_status == 403
+
+        # 3. Downstream 503 error propagates with downstream_status 503
+        def reader_503():
+            raise ActionUnavailableError("Unavailable", downstream_status=503)
+        port_503 = EvolutionProjectionPort(evolution_decisions_reader=reader_503)
+        with pytest.raises(ActionUnavailableError) as exc_info:
+            port_503.list_evolution_decisions()
+        assert exc_info.value.downstream_status == 503
+
+        # 4. Generic exception is wrapped into ActionUnavailableError 503
+        def reader_error():
+            raise RuntimeError("network timeout")
+        port_err = EvolutionProjectionPort(evolution_decisions_reader=reader_error)
+        with pytest.raises(ActionUnavailableError) as exc_info:
+            port_err.list_evolution_decisions()
+        assert exc_info.value.downstream_status == 503
 
     def test_derived_program_runs(self):
         programs = [{"program_id": "prog-1", "status": "active", "created_at": "2026-08-28T00:00:00Z"}]

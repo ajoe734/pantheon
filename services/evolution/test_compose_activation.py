@@ -25,7 +25,7 @@ def test_daily_sweep_scheduler_is_enabled_by_default_in_root_compose() -> None:
         "${EVOLUTION_AUTH_TOKEN:-pantheon-local-evolution-service}"
     )
     assert scheduler["environment"]["EVOLUTION_SCHEDULER_TENANT_ID"] == (
-        "${EVOLUTION_DEFAULT_TENANT_ID:-pantheon-default}"
+        "${EVOLUTION_DEFAULT_TENANT_ID:-${PANTHEON_DEV_BFF_TENANT_ID:-pantheon-default}}"
     )
     assert (
         scheduler["environment"]["EVOLUTION_SCHEDULER_INTERVAL_SECONDS"]
@@ -176,7 +176,7 @@ def test_dispatch_worker_is_enabled_by_default_in_root_compose() -> None:
         "EVOLUTION_AUTH_TOKEN"
     ]
     assert api["environment"]["EVOLUTION_AUTH_ALLOWED_TENANTS"] == (
-        "${EVOLUTION_AUTH_ALLOWED_TENANTS:-pantheon-default}"
+        "${EVOLUTION_AUTH_ALLOWED_TENANTS:-${PANTHEON_DEV_BFF_TENANT_ID:-pantheon-default}}"
     )
     assert worker["depends_on"]["evolution"]["condition"] == "service_healthy"
     assert worker["healthcheck"]["test"] == [
