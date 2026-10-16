@@ -416,3 +416,12 @@ def test_openclaw_provider_timeout_covers_adapter_budget_and_surfaces_failures_o
     with pytest.raises(RuntimeError, match="OpenClaw reflection provider failed"):
         provider.reflect(facts={}, trigger="ep-1")
     assert len(bad_calls) == 1
+
+
+def test_openclaw_provider_request_schema_is_the_canonical_slice(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.persona.trade_reflection_pipeline import provider_extraction_schema
+    from services.persona.write_owner import OpenClawReflectionProvider
+
+    sent = _patch_transport(monkeypatch)
+    OpenClawReflectionProvider(adapter_url="http://adapter:8104", token="explicit").reflect(facts={}, trigger="ep-1")
+    assert json.loads(sent[0].data)["extraction_schema"] == provider_extraction_schema()
