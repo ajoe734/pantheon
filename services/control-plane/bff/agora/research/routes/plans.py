@@ -115,7 +115,12 @@ def build_plans_router(ctx: AgoraResearchRouteContext) -> APIRouter:
         )
         errors = ctx.error_code_enum()
         try:
-            draft = draft_research_plan(body.prompt, operator_id=scope.user_id, trace_id=x_trace_id)
+            draft = draft_research_plan(
+                body.prompt,
+                operator_id=scope.user_id,
+                trace_id=x_trace_id,
+                canonical_schema=ResearchPlanCreateRequest.model_json_schema(),
+            )
             plan_body = ResearchPlanCreateRequest.model_validate(draft)
         except ServantDraftError as exc:
             raise ctx.bff_error(exc.status_code, errors.UPSTREAM_ERROR, "Servant research draft failed", exc.message)
