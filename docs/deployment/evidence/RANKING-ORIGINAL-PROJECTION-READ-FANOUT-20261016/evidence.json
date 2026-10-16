@@ -1,6 +1,6 @@
 {
   "task_id": "RANKING-ORIGINAL-PROJECTION-READ-FANOUT-20261016",
-  "base_sha": "75aa1e47182c845d1bfc0d6665a74e6e834694cd",
+  "base_sha": "7ce6be2b7420afaa5f749c1e27c4b479c5d236f7",
   "change_class": "functional",
   "work_class": "performance_optimization",
   "summary": "Remove unused rich Persona reads (route policy, health, allowed actions) from the existing quarterly ranking projection path while reusing pre-fetched runtime bindings and bulk sessions, eliminating unnecessary fanout reads on the fresh full-universe ranking path and preserving full rich UI summaries for all other consumers.",
