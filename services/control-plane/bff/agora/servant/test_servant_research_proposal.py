@@ -1,7 +1,6 @@
 """Servant research proposals: data-only draft -> 'draft' plan, nothing dispatched until approval."""
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -20,10 +19,7 @@ from services.control_plane.bff.agora.strategy_workshop.store import MemoryWorks
 from services.control_plane.bff.personas.service import _bff_error, _require_operator_role, _require_read_role
 from services.research.constants import ALLOWLISTED_STAGE_BACKENDS
 
-_adapter_dir = str(Path(__file__).resolve().parents[4] / "openclaw-gateway-adapter")
-if _adapter_dir not in sys.path:
-    sys.path.insert(0, _adapter_dir)
-from assistant_openclaw_provider import _validate_extraction_arguments, OpenClawProviderError
+
 
 _WORKSHOP = "ws-servant-proposal"
 _URL = f"/bff/agora/workshops/{_WORKSHOP}/research-plans/servant-proposal"
@@ -248,12 +244,16 @@ def test_schema_derived_from_canonical_dto_and_forbids_stage_extras():
     assert routing_prop["additionalProperties"] is False
 
 
-def test_three_extra_field_counterexample_rejected_by_adapter_and_dto_and_creates_no_plan(client, fake):
+def test_three_extra_field_counterexample_rejected_by_adapter_and_dto_and_creates_no_plan(client, fake, monkeypatch):
+    adapter_dir = str(Path(__file__).resolve().parents[4] / "openclaw-gateway-adapter")
+    monkeypatch.syspath_prepend(adapter_dir)
+    import assistant_openclaw_provider as adapter
+
     schema = research_proposal.research_plan_extraction_schema()
 
     # Adapter rejects extra stage properties because stage items forbids extras
-    with pytest.raises(OpenClawProviderError) as adapter_exc:
-        _validate_extraction_arguments(_COUNTEREXAMPLE_EXTRA_FIELDS, schema)
+    with pytest.raises(adapter.OpenClawProviderError) as adapter_exc:
+        adapter._validate_extraction_arguments(_COUNTEREXAMPLE_EXTRA_FIELDS, schema)
     err_msg = str(adapter_exc.value)
     assert "stages[0].model" in err_msg
     assert "additionalProperties is false" in err_msg
@@ -273,11 +273,15 @@ def test_three_extra_field_counterexample_rejected_by_adapter_and_dto_and_create
     assert _plans(client) == []
 
 
-def test_valid_complete_draft_accepted_by_adapter_and_dto_and_stored_as_draft(client, fake):
+def test_valid_complete_draft_accepted_by_adapter_and_dto_and_stored_as_draft(client, fake, monkeypatch):
+    adapter_dir = str(Path(__file__).resolve().parents[4] / "openclaw-gateway-adapter")
+    monkeypatch.syspath_prepend(adapter_dir)
+    import assistant_openclaw_provider as adapter
+
     schema = research_proposal.research_plan_extraction_schema()
 
     # Adapter accepts complete valid draft
-    _validate_extraction_arguments(_VALID_COMPLETE, schema)
+    adapter._validate_extraction_arguments(_VALID_COMPLETE, schema)
 
     # Canonical DTO accepts complete valid draft
     dto_plan = ResearchPlanCreateRequest.model_validate(_VALID_COMPLETE)
@@ -301,11 +305,15 @@ def test_valid_complete_draft_accepted_by_adapter_and_dto_and_stored_as_draft(cl
     assert client.get(f"/bff/agora/research-plans/{plan_id}/runs", headers=_headers()).json()["items"] == []
 
 
-def test_valid_draft_with_nullable_fields_accepted_by_adapter_and_dto(client, fake):
+def test_valid_draft_with_nullable_fields_accepted_by_adapter_and_dto(client, fake, monkeypatch):
+    adapter_dir = str(Path(__file__).resolve().parents[4] / "openclaw-gateway-adapter")
+    monkeypatch.syspath_prepend(adapter_dir)
+    import assistant_openclaw_provider as adapter
+
     schema = research_proposal.research_plan_extraction_schema()
 
     # Adapter accepts nullable fields set to None
-    _validate_extraction_arguments(_VALID_NULLABLE, schema)
+    adapter._validate_extraction_arguments(_VALID_NULLABLE, schema)
 
     # Canonical DTO accepts nullable fields set to None
     dto_plan = ResearchPlanCreateRequest.model_validate(_VALID_NULLABLE)
@@ -355,7 +363,11 @@ def test_schema_projection_fails_closed_on_unknown_cyclic_refs_and_general_union
     assert exc_info.value.status_code == 422
 
 
-def test_schema_projection_retains_unsupported_constraints_for_fail_closed_validation():
+def test_schema_projection_retains_unsupported_constraints_for_fail_closed_validation(monkeypatch):
+    adapter_dir = str(Path(__file__).resolve().parents[4] / "openclaw-gateway-adapter")
+    monkeypatch.syspath_prepend(adapter_dir)
+    import assistant_openclaw_provider as adapter
+
     schema_with_multiple_of = {
         "type": "object",
         "properties": {
@@ -368,7 +380,7 @@ def test_schema_projection_retains_unsupported_constraints_for_fail_closed_valid
     proj = research_proposal._project_canonical_schema(schema_with_multiple_of)
     assert proj["properties"]["num"]["multipleOf"] == 5
 
-    with pytest.raises(OpenClawProviderError) as exc_info:
-        _validate_extraction_arguments({"num": 10}, proj)
+    with pytest.raises(adapter.OpenClawProviderError) as exc_info:
+        adapter._validate_extraction_arguments({"num": 10}, proj)
     assert "multipleOf" in str(exc_info.value)
 

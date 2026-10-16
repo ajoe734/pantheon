@@ -6,7 +6,19 @@
   "reviewer": "Claude",
   "base_sha": "7ce6be2b7420afaa5f749c1e27c4b479c5d236f7",
   "change_class": "corrective",
-  "summary": "Derives the servant research proposal extraction schema directly from canonical ResearchPlanCreateRequest DTO rather than maintaining a divergent handwritten schema that permitted arbitrary nested properties under stages while the strict DTO forbade them. Projections into the OpenClaw adapter subset resolve local acyclic $defs references, project nullable anyOf unions into type: [T, null], remove default annotations without dropping validation keywords, enforce additionalProperties: false on stage items, and preserve domain enums for spec_version ('1.0') and stage_type (ALLOWLISTED_STAGE_BACKENDS). Fails closed on cyclic or unknown refs, unsupported general unions, and preserves unsupported constraint keywords for fail-closed adapter validation. Extends tests to verify against actual canonical DTO and actual adapter validator on the three-extra-field counterexample (model, universe, quantity1) and complete valid drafts with routing, dependencies, budget, execution constraints, and nullables.",
+  "rework_history": {
+    "prior_pr": 6592,
+    "prior_approved_head": "f720d171aabf3d9d7387497723373e40d0680b34",
+    "prior_approval_by": "Claude",
+    "prior_approval_at": "2026-10-16T03:11:32Z",
+    "ci_run_id": "38843988289",
+    "ci_job_id": "116790881136",
+    "ci_failure_at": "2026-10-16T03:15:33Z",
+    "ci_failure_test": "test_bff_test_architecture.py::test_migrated_suites_do_not_mutate_sys_path",
+    "ci_failure_cause": "services/control-plane/bff/agora/servant/test_servant_research_proposal.py:25 sys.path.insert",
+    "resolution": "Replaced global sys.path.insert with test-scoped monkeypatch.syspath_prepend(adapter_dir) conforming to established pattern in services/control-plane/bff/agora/interaction/test_worker.py:1018-1025"
+  },
+  "summary": "Derives the servant research proposal extraction schema directly from canonical ResearchPlanCreateRequest DTO rather than maintaining a divergent handwritten schema that permitted arbitrary nested properties under stages while the strict DTO forbade them. Projections into the OpenClaw adapter subset resolve local acyclic $defs references, project nullable anyOf unions into type: [T, null], remove default annotations without dropping validation keywords, enforce additionalProperties: false on stage items, and preserve domain enums for spec_version ('1.0') and stage_type (ALLOWLISTED_STAGE_BACKENDS). Fails closed on cyclic or unknown refs, unsupported general unions, and preserves unsupported constraint keywords for fail-closed adapter validation. Extends tests to verify against actual canonical DTO and actual adapter validator on the three-extra-field counterexample (model, universe, quantity1) and complete valid drafts with routing, dependencies, budget, execution constraints, and nullables. Preserves true PR 6592 head f720d171a Claude approval history (2026-10-16T03:11:32Z) and subsequent Smoke 38843988289/job 116790881136 CI failure (2026-10-16T03:15:33Z: test_bff_test_architecture.py::test_migrated_suites_do_not_mutate_sys_path, 1FAIL/38PASS on sys.path.insert at line 25). Corrects test loading to reuse monkeypatch.syspath_prepend within test cases without global sys.path mutation.",
   "acceptance_verification": [
     {
       "ac": "AC1",
@@ -21,10 +33,29 @@
     {
       "ac": "AC3",
       "description": "Only two original production files and the original servant test plus mandatory evidence may change; retain one data-only provider invocation and no execution before actual plan approval; genuine assigned exact-head review and requiredCI and native integration and DONE are mandatory; no VM/deploy/provider/product POST or key retries or new normalizer/fallback/compiler service/cache/setting/API or rewrite of stored provider output",
-      "verdict": "pending_delivery: local source validation and clean task worktree with required trailers verified (15 servant proposal tests passed including canonical DTO and adapter validation of 3-extra-field counterexample, complete routing, dependencies, budget, constraints, nullables, cyclic/unknown refs, and fail-closed constraints; 48 research router tests passed; 57 adapter structured tool contract tests passed); downstream independent review by assigned reviewer Claude, required CI checks, dev integration merge, and canonical finish remain pending delivery on task PR"
+      "verdict": "pending_delivery: local source validation and clean task worktree with required trailers verified (15 servant proposal tests passed including canonical DTO and adapter validation of 3-extra-field counterexample, complete routing, dependencies, budget, constraints, nullables, cyclic/unknown refs, and fail-closed constraints; architecture check test_migrated_suites_do_not_mutate_sys_path passed with zero sys.path mutations; 48 research router tests passed; 57 adapter structured tool contract tests passed); truthfully records original CI failure (Smoke 38843988289/job 116790881136) on historical f720 head and test loading fix; downstream independent review by assigned reviewer Claude, required CI checks, dev integration merge, and canonical finish remain pending delivery on task PR"
     }
   ],
   "verification": [
+    {
+      "command": "GitHub Actions Smoke 38843988289/job 116790881136 (head f720d171aabf3d9d7387497723373e40d0680b34)",
+      "suite": "test_bff_test_architecture.py::test_migrated_suites_do_not_mutate_sys_path",
+      "passed": 38,
+      "failed": 1,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 1,
+      "failure_detail": "AssertionError: Non-composition suites must not mutate sys.path: agora/servant/test_servant_research_proposal.py:25: sys.path.insert"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_bff_test_architecture.py -k test_migrated_suites_do_not_mutate_sys_path",
+      "passed": 1,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "deselected": 38,
+      "exit_code": 0
+    },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/agora/servant/test_servant_research_proposal.py",
       "passed": 15,
