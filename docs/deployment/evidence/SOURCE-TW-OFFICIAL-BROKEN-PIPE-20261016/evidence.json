@@ -1,0 +1,50 @@
+{
+  "task_id": "SOURCE-TW-OFFICIAL-BROKEN-PIPE-20261016",
+  "base_sha": "a846d246ff77b1c993f351af7bf7a76f0e055103",
+  "problem": {
+    "gate_run": 38872188141,
+    "attempt": 1,
+    "artifact_id": 12034181789,
+    "observed": "ControllerTickError: scheduled source tick reported 1 failed connector tw-twse-tpex-official-market; [Errno 32] Broken pipe. Bounded Taiwan official pull failed before all three domains.",
+    "diagnostics": {
+      "job_log_sha256": "d58502a7025f07e358fe133a9c4efcb707a80099bb1de12a6479de79f5bd3b5d",
+      "zip_sha256": "d0aa7ff87a7e80169767031ac4f3b4a9e87b3cfbcbac56d85a9ffdc1c65da9e7",
+      "report_json_present": false,
+      "exact_original_URL_or_stack_available": false,
+      "offline_counter": "TW-existing-original-bounded-reader-BrokenPipe-counter-20261016.json (SHA a34cf64cbdf2b8214ac4e10a5d7776e866f003bb048e3688cda2684d956f3546)",
+      "offline_observation": "direct_BrokenPipeError and wrapped_BrokenPipeError each failed after 1 call; existing TimeoutError retried to full body in 2 calls; HTTP 403 failed after 1 call"
+    },
+    "cause": "services/source_ingestion/connectors/taiwan_official.py _fetch_official retried only (ResponseTruncated, TimeoutError, http.client.IncompleteRead, json.JSONDecodeError). Direct BrokenPipeError and urllib.error.URLError wrapping BrokenPipeError escaped on attempt 1 without retry."
+  },
+  "change": [
+    "Extend _fetch_official exception catching in services/source_ingestion/connectors/taiwan_official.py to include BrokenPipeError and urllib.error.URLError.",
+    "Check structured reason for URLError: if reason is BrokenPipeError, record attempt and retry up to OFFICIAL_FETCH_ATTEMPTS = 3 with existing backoff (1s, 2s).",
+    "Fail closed immediately on urllib.error.HTTPError (subclass of URLError) and unrelated URLError (e.g. DNS or TLS certificate failures) without string matching.",
+    "Preserve immediate failure for egress denial (ExternalEgressBlocked) and byte limit (SourceEvidenceError) on attempt 1.",
+    "Keep existing request URL, parse logic, byte limits, and retry attempt budget without introducing new helpers, wrappers, or transport abstractions."
+  ],
+  "unchanged": "Official endpoints, headers, caller names, byte limits, parsing, record normalization, freshness, and external egress security guards remain unchanged.",
+  "test_changes": [
+    "Extended services/source_ingestion/tests/test_taiwan_official_fetch_retry.py with 7 new tests:",
+    "- test_direct_broken_pipe_then_complete_response_is_retried: verifies 1 BrokenPipeError followed by full payload recovers on attempt 2 with 1s sleep",
+    "- test_wrapped_broken_pipe_then_complete_response_is_retried: verifies 1 URLError(reason=BrokenPipeError) followed by full payload recovers on attempt 2 with 1s sleep",
+    "- test_persistent_direct_broken_pipe_fails_after_bounded_attempts: verifies 3 BrokenPipeErrors fail with SourceEvidenceError detailing all 3 attempts",
+    "- test_persistent_wrapped_broken_pipe_fails_after_bounded_attempts: verifies 3 URLError(reason=BrokenPipeError) fail with SourceEvidenceError detailing all 3 attempts",
+    "- test_unrelated_url_error_is_not_retried: verifies unrelated URLError (e.g. getaddrinfo failed) fails immediately on attempt 1",
+    "- test_http_403_error_is_not_retried: verifies HTTP 403 Forbidden fails immediately on attempt 1",
+    "- test_egress_denial_is_not_retried: verifies ExternalEgressBlocked fails immediately on attempt 1"
+  ],
+  "validation": {
+    "retry_tests": "19 passed in 3.54s",
+    "bounded_reader_tests": "17 passed in 3.03s",
+    "external_egress_tests": "25 passed in 4.18s",
+    "provider_management_tests": "29 passed, 1 warning in 8.95s"
+  },
+  "honest_limitations": "The exact original URL and Python stack trace were not captured in run 38872188141 diagnostics (artifact 12034181789 had only diagnostics and no report.json). Offline fixture tests prove mechanism recovery for direct and wrapped BrokenPipeError but are not labeled as original network reproduction or hosted PASS.",
+  "review_status": "Author validation only; independent exact-head review by the assigned reviewer Claude pending.",
+  "delivery_verification": {
+    "agent": "Antigravity2",
+    "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/63ed487cbff98476/bin/python -m pytest services/source_ingestion/tests/test_taiwan_official_fetch_retry.py services/source_ingestion/tests/test_bounded_reader.py services/test_external_egress.py services/source_ingestion/tests/test_provider_management_coverage.py",
+    "result": "90 passed, 1 warning (StarletteDeprecationWarning), exit 0"
+  }
+}
