@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Mapping, Protocol, Sequence
 
-VECTORBT_VERSION_PIN = "0.26.2"
+VECTORBT_VERSION_PIN = "1.1.1"
 PRIMARY_BACKEND = "vectorbt_portfolio"
 STUB_BACKEND = "stub_backtest"
 REQUIRED_OHLCV_FIELDS = ("open", "high", "low", "close", "volume")
@@ -363,7 +363,7 @@ class StubVectorbtBackend:
 class VectorbtBackend:
     """Real upstream backend using vbt.Portfolio.from_signals().
 
-    Requires: pip install vectorbt==0.26.2
+    Requires: pip install vectorbt==1.1.1
     Gated behind PANTHEON_VECTORBT_BACKEND=real environment variable.
     """
 

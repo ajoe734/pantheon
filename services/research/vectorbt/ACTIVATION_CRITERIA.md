@@ -25,7 +25,7 @@ replication gate.
 |---|---|
 | Upstream project | `polakowo/vectorbt` |
 | Package source | `https://pypi.org/project/vectorbt/` |
-| Selected package | `vectorbt==0.26.2` |
+| Selected package | `vectorbt==1.1.1` |
 | License | Apache 2.0 (open-source edition) |
 | Rationale | vectorbt-pro is a commercial fork; use the Apache-licensed OSS edition |
 
