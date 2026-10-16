@@ -177,3 +177,13 @@ def test_provider_request_schema_reuses_canonical_properties():
     lesson = schema["properties"]["lesson_candidates"]["items"]
     assert lesson["properties"]["confidence"] == canonical["lesson_candidates"]["items"]["properties"]["confidence"]
     assert set(lesson["properties"]) == {"scope", "proposed_change", "confidence"}
+
+
+def test_unknown_root_fields_are_rejected_not_dropped():
+    assert provider_extraction_schema()["additionalProperties"] is False
+    pipeline = TradeReflectionPipeline(Fixed(_generated(follow_ups=["review exit"])), max_attempts=1)
+    with pytest.raises(ReflectionError):
+        pipeline.process(request())
+    assert pipeline.completed == {} and pipeline.dead_letters[0]["error_type"] == "ReflectionError"
+    artifact = TradeReflectionPipeline(Fixed(_generated(followups=["review exit"]))).process(request())
+    assert artifact["followups"] == ["review exit"]

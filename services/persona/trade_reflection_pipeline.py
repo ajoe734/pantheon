@@ -71,6 +71,7 @@ def provider_extraction_schema() -> dict[str, Any]:
         "type": "object",
         "properties": properties,
         "required": ["expected_vs_actual", "attribution", "counterfactuals", "lesson_candidates"],
+        "additionalProperties": REFLECTION_SCHEMA["additionalProperties"],
     }
 
 
@@ -159,6 +160,9 @@ class TradeReflectionPipeline:
         snapshot_ref: str,
         snapshot_hash: str,
     ) -> dict[str, Any]:
+        extra = sorted(set(generated) - set(provider_extraction_schema()["properties"]))
+        if extra:
+            raise ReflectionError(f"provider output has unexpected root fields: {extra}")
         coverage = "partial" if request.missing_refs else "complete"
         unknowns = list(generated.get("unknowns", []))
         unknowns.extend(f"missing canonical ref: {ref}" for ref in request.missing_refs)
