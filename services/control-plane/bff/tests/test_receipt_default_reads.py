@@ -75,6 +75,7 @@ def test_evolution_readers_preserve_static_auth_and_tenant_contract(monkeypatch,
         create_evolution_programs_router,
         create_evolution_router,
     )
+    from services.control_plane.bff.incidents.router import create_incident_router
     from services.control_plane.bff.models import utc_now
     from services.control_plane.bff.ports import create_read_surface_ports
     from services.evolution import main as evo_main
@@ -254,6 +255,19 @@ def test_evolution_readers_preserve_static_auth_and_tenant_contract(monkeypatch,
 
     # Default BFF composition with OwnerReadContextMiddleware
     ports = create_read_surface_ports()
+    ports.lifecycle_telemetry_governance.incidents._incidents = {}
+    ports.lifecycle_telemetry_governance.create_incident({
+        "incident_id": "inc-1",
+        "severity": "high",
+        "status": "open",
+        "tenant_id": "tenant-dev",
+    })
+    ports.lifecycle_telemetry_governance.create_incident({
+        "incident_id": "inc-2",
+        "severity": "medium",
+        "status": "open",
+        "tenant_id": "tenant-dev",
+    })
     app = FastAPI()
     app.add_middleware(OwnerReadContextMiddleware)
     common = dict(
@@ -266,21 +280,34 @@ def test_evolution_readers_preserve_static_auth_and_tenant_contract(monkeypatch,
     )
     app.include_router(create_evolution_programs_router(**common))
     app.include_router(create_evolution_router(**common))
+    app.include_router(create_incident_router(**common))
     client = TestClient(app)
 
     # 1. Unauthenticated request to real BFF routes fails admission with 401
     assert client.get("/api/v1/evolution-decisions").status_code == 401
     assert client.get("/bff/evolution-programs").status_code == 401
+    assert client.get("/api/v1/evolution-decisions/dec-1").status_code == 401
+    assert client.get("/api/v1/operator/post-incident-review/inc-1").status_code == 401
 
     # Caller without read role rejected with 403
     no_role_headers = {"Authorization": f"Bearer {_tok('tenant-dev', roles=[])}", "X-Tenant-Id": "tenant-dev"}
     assert client.get("/api/v1/evolution-decisions", headers=no_role_headers).status_code == 403
+    assert client.get("/api/v1/evolution-decisions/dec-1", headers=no_role_headers).status_code == 403
+    assert client.get("/api/v1/operator/post-incident-review/inc-1", headers=no_role_headers).status_code == 403
 
     # Direct port call without authorization context raises ActionUnavailableError
     with pytest.raises(ActionUnavailableError) as exc_info:
         ports.list_evolution_decisions()
     assert exc_info.value.downstream_status == 503
     assert ports.dataset_source("evolution_decisions") == "unavailable"
+
+    with pytest.raises(ActionUnavailableError) as exc_info:
+        ports.get_evolution_decision_by_id("dec-1")
+    assert exc_info.value.downstream_status == 503
+
+    with pytest.raises(ActionUnavailableError) as exc_info:
+        ports.get_evolution_decisions_by_incident("inc-1")
+    assert exc_info.value.downstream_status == 503
 
     with pytest.raises(ActionUnavailableError) as exc_info:
         ports.list_evolution_programs()
@@ -344,6 +371,148 @@ def test_evolution_readers_preserve_static_auth_and_tenant_contract(monkeypatch,
         selected_tenant.reset(t_tok)
         authorization.reset(token)
 
+    # Evolution decision detail through mounted route by exact ID
+    dec1_detail_resp = client.get("/api/v1/evolution-decisions/dec-1", headers=valid_headers)
+    assert dec1_detail_resp.status_code == 200
+    dec1_detail = dec1_detail_resp.json()
+    assert dec1_detail["decision_id"] == "dec-1"
+    assert dec1_detail["id"] == "dec-1"
+    assert dec1_detail["status"] == "proposed"
+    assert dec1_detail["action_type"] == "retrain"
+    assert dec1_detail["linked_incident_id"] == "inc-1"
+    assert dec1_detail["incident_ref"] == "inc-1"
+    assert dec1_detail["resolved_at"] == "2026-10-16T03:30:00Z"
+
+    dec2_detail_resp = client.get("/api/v1/evolution-decisions/dec-2", headers=valid_headers)
+    assert dec2_detail_resp.status_code == 200
+    assert dec2_detail_resp.json()["decision_id"] == "dec-2"
+    assert dec2_detail_resp.json()["status"] == "approved"
+
+    # Incident link through mounted router
+    inc1_resp = client.get("/api/v1/operator/post-incident-review/inc-1", headers=valid_headers)
+    assert inc1_resp.status_code == 200
+    inc1_evos = inc1_resp.json()["data"]["evolution_decisions"]
+    assert len(inc1_evos) == 1
+    assert inc1_evos[0]["decision_id"] == "dec-1"
+    assert inc1_evos[0]["linked_incident_id"] == "inc-1"
+
+    # Direct port detail and incident reads with authorization context
+    token = authorization.set(f"Bearer {_tok('tenant-dev')}")
+    t_tok = selected_tenant.set("tenant-dev")
+    try:
+        assert ports.get_evolution_decision_by_id("dec-1")["decision_id"] == "dec-1"
+        assert ports.get_evolution_decision_by_id("dec-2")["decision_id"] == "dec-2"
+        assert ports.get_evolution_decisions_by_incident("inc-1")[0]["decision_id"] == "dec-1"
+        assert ports.get_evolution_decisions_by_incident("inc-2")[0]["decision_id"] == "dec-2"
+        assert ports.get_evolution_decision_by_id("dec-missing-nonexistent") is None
+        assert ports.get_evolution_decisions_by_incident("inc-missing-nonexistent") == []
+    finally:
+        selected_tenant.reset(t_tok)
+        authorization.reset(token)
+
+    # Genuine missing through router returns 404
+    missing_detail_resp = client.get("/api/v1/evolution-decisions/dec-missing-nonexistent", headers=valid_headers)
+    assert missing_detail_resp.status_code == 404
+    assert missing_detail_resp.json()["detail"]["error"]["code"] == "RESOURCE_NOT_FOUND"
+
+    # Seed decisions beyond default first 20 (dec-3 through dec-25)
+    for idx in range(3, 26):
+        r_extra = evo_client.post(
+            "/api/evolution/proposals",
+            headers=evo_h,
+            json={
+                "decision_id": f"dec-{idx}",
+                "tenant_id": "tenant-dev",
+                "target_type": "candidate_artifact",
+                "target_id": f"art-extra-{idx}",
+                "target_version": "1.0.0",
+                "action_type": "retrain" if idx % 2 == 1 else "flag_for_review",
+                "rationale": f"Decision beyond first 20: {idx}",
+                "created_by_id": "ctrl-1",
+                "linked_incident_id": f"inc-{idx}",
+            },
+        )
+        assert r_extra.status_code == 201
+
+    ports.lifecycle_telemetry_governance.create_incident({
+        "incident_id": "inc-25",
+        "severity": "low",
+        "status": "open",
+        "tenant_id": "tenant-dev",
+    })
+
+    # Default list returns first 20 items only; dec-25 is beyond first 20
+    paged_resp = client.get("/api/v1/evolution-decisions", headers=valid_headers)
+    assert paged_resp.status_code == 200
+    paged_items = paged_resp.json()["items"]
+    assert len(paged_items) == 20
+    assert not any(d["decision_id"] == "dec-25" for d in paged_items)
+    assert paged_resp.json()["page_info"]["next_page_token"] is not None
+
+    # Prove dec-25 (beyond first 20) is consistently visible by exact ID and linked Incident
+    d25_resp = client.get("/api/v1/evolution-decisions/dec-25", headers=valid_headers)
+    assert d25_resp.status_code == 200
+    assert d25_resp.json()["decision_id"] == "dec-25"
+
+    inc25_resp = client.get("/api/v1/operator/post-incident-review/inc-25", headers=valid_headers)
+    assert inc25_resp.status_code == 200
+    inc25_evos = inc25_resp.json()["data"]["evolution_decisions"]
+    assert len(inc25_evos) == 1
+    assert inc25_evos[0]["decision_id"] == "dec-25"
+
+    token = authorization.set(f"Bearer {_tok('tenant-dev')}")
+    t_tok = selected_tenant.set("tenant-dev")
+    try:
+        assert ports.get_evolution_decision_by_id("dec-25")["decision_id"] == "dec-25"
+        assert ports.get_evolution_decisions_by_incident("inc-25")[0]["decision_id"] == "dec-25"
+    finally:
+        selected_tenant.reset(t_tok)
+        authorization.reset(token)
+
+    # Prove fresh owner record on the same ports without restart
+    ports.lifecycle_telemetry_governance.create_incident({
+        "incident_id": "inc-fresh",
+        "severity": "medium",
+        "status": "open",
+        "tenant_id": "tenant-dev",
+    })
+    r_fresh = evo_client.post(
+        "/api/evolution/proposals",
+        headers=evo_h,
+        json={
+            "decision_id": "dec-fresh",
+            "tenant_id": "tenant-dev",
+            "target_type": "candidate_artifact",
+            "target_id": "art-fresh",
+            "target_version": "1.0.0",
+            "action_type": "retrain",
+            "rationale": "Fresh live owner decision",
+            "created_by_id": "ctrl-1",
+            "linked_incident_id": "inc-fresh",
+        },
+    )
+    assert r_fresh.status_code == 201
+
+    # Fresh record is visible on the exact same ports and client
+    fresh_resp = client.get("/api/v1/evolution-decisions/dec-fresh", headers=valid_headers)
+    assert fresh_resp.status_code == 200
+    assert fresh_resp.json()["decision_id"] == "dec-fresh"
+
+    fresh_inc_resp = client.get("/api/v1/operator/post-incident-review/inc-fresh", headers=valid_headers)
+    assert fresh_inc_resp.status_code == 200
+    fresh_inc_evos = fresh_inc_resp.json()["data"]["evolution_decisions"]
+    assert len(fresh_inc_evos) == 1
+    assert fresh_inc_evos[0]["decision_id"] == "dec-fresh"
+
+    token = authorization.set(f"Bearer {_tok('tenant-dev')}")
+    t_tok = selected_tenant.set("tenant-dev")
+    try:
+        assert ports.get_evolution_decision_by_id("dec-fresh")["decision_id"] == "dec-fresh"
+        assert ports.get_evolution_decisions_by_incident("inc-fresh")[0]["decision_id"] == "dec-fresh"
+    finally:
+        selected_tenant.reset(t_tok)
+        authorization.reset(token)
+
     # 3. Valid empty collection remains distinct from failure
     empty_tmp = tmp_path / "empty_evolution"
     empty_tmp.mkdir()
@@ -351,11 +520,14 @@ def test_evolution_readers_preserve_static_auth_and_tenant_contract(monkeypatch,
     empty_resp = client.get("/api/v1/evolution-decisions", headers=valid_headers)
     assert empty_resp.status_code == 200
     assert empty_resp.json()["items"] == []
+    assert client.get("/api/v1/evolution-decisions/dec-1", headers=valid_headers).status_code == 404
 
     token = authorization.set(f"Bearer {_tok('tenant-dev')}")
     t_tok = selected_tenant.set("tenant-dev")
     try:
         assert ports.list_evolution_decisions() == []
+        assert ports.get_evolution_decision_by_id("dec-1") is None
+        assert ports.get_evolution_decisions_by_incident("inc-1") == []
         assert ports.dataset_source("evolution_decisions") == "service"
     finally:
         selected_tenant.reset(t_tok)
@@ -366,6 +538,8 @@ def test_evolution_readers_preserve_static_auth_and_tenant_contract(monkeypatch,
     foreign_headers = {"Authorization": f"Bearer {_tok('tenant-dev')}", "X-Tenant-Id": "foreign-tenant"}
     foreign_resp = client.get("/api/v1/evolution-decisions", headers=foreign_headers)
     assert foreign_resp.status_code == 403
+    assert client.get("/api/v1/evolution-decisions/dec-1", headers=foreign_headers).status_code == 403
+    assert client.get("/api/v1/operator/post-incident-review/inc-1", headers=foreign_headers).status_code == 403
     assert len(calls) == calls_before  # zero network packets sent to owner!
 
     # 5. Owner 403 (unauthorized caller tenant) is not swallowed into fake empty []
@@ -374,6 +548,8 @@ def test_evolution_readers_preserve_static_auth_and_tenant_contract(monkeypatch,
     assert denied_resp.status_code == 403
     assert denied_resp.json()["detail"]["error"]["code"] == "ACTION_UNAVAILABLE"
     assert "tenant-other" in denied_resp.json()["detail"]["error"]["message"]
+    assert client.get("/api/v1/evolution-decisions/dec-1", headers=other_headers).status_code == 403
+    assert client.get("/api/v1/operator/post-incident-review/inc-1", headers=other_headers).status_code == 403
 
     token = authorization.set(f"Bearer {_tok('tenant-other')}")
     t_tok = selected_tenant.set("tenant-other")
@@ -381,6 +557,12 @@ def test_evolution_readers_preserve_static_auth_and_tenant_contract(monkeypatch,
         with pytest.raises(ActionUnavailableError) as err_403:
             ports.list_evolution_decisions()
         assert err_403.value.downstream_status == 403
+        with pytest.raises(ActionUnavailableError) as err_d_403:
+            ports.get_evolution_decision_by_id("dec-1")
+        assert err_d_403.value.downstream_status == 403
+        with pytest.raises(ActionUnavailableError) as err_i_403:
+            ports.get_evolution_decisions_by_incident("inc-1")
+        assert err_i_403.value.downstream_status == 403
     finally:
         selected_tenant.reset(t_tok)
         authorization.reset(token)
@@ -391,6 +573,8 @@ def test_evolution_readers_preserve_static_auth_and_tenant_contract(monkeypatch,
     assert unavail_resp.status_code == 503
     assert unavail_resp.json()["detail"]["error"]["code"] == "ACTION_UNAVAILABLE"
     assert "503" in unavail_resp.json()["detail"]["error"]["message"]
+    assert client.get("/api/v1/evolution-decisions/dec-1", headers=valid_headers).status_code == 503
+    assert client.get("/api/v1/operator/post-incident-review/inc-1", headers=valid_headers).status_code == 503
 
     token = authorization.set(f"Bearer {_tok('tenant-dev')}")
     t_tok = selected_tenant.set("tenant-dev")
@@ -398,6 +582,12 @@ def test_evolution_readers_preserve_static_auth_and_tenant_contract(monkeypatch,
         with pytest.raises(ActionUnavailableError) as err_503:
             ports.list_evolution_decisions()
         assert err_503.value.downstream_status == 503
+        with pytest.raises(ActionUnavailableError) as err_d_503:
+            ports.get_evolution_decision_by_id("dec-1")
+        assert err_d_503.value.downstream_status == 503
+        with pytest.raises(ActionUnavailableError) as err_i_503:
+            ports.get_evolution_decisions_by_incident("inc-1")
+        assert err_i_503.value.downstream_status == 503
     finally:
         selected_tenant.reset(t_tok)
         authorization.reset(token)

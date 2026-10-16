@@ -823,11 +823,24 @@ class ReadSurfacePorts:
     def artifact_exists(self, artifact_id: str) -> bool:
         return self.lifecycle_telemetry_governance.artifact_exists(artifact_id)
 
-    def get_evolution_decision_by_id(self, decision_id: str) -> Optional[Dict[str, Any]]:
-        return self.lifecycle_telemetry_governance.get_evolution_decision_by_id(decision_id)
+    def get_evolution_decision_by_id(self, decision_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        clean_id = str(decision_id or "").strip()
+        if not clean_id:
+            return None
+        for decision in self.list_evolution_decisions():
+            if str(decision.get("decision_id") or decision.get("id") or "").strip() == clean_id:
+                return decision
+        return None
 
-    def get_evolution_decisions_by_incident(self, incident_id: str) -> List[Dict[str, Any]]:
-        return self.lifecycle_telemetry_governance.get_evolution_decisions_by_incident(incident_id)
+    def get_evolution_decisions_by_incident(self, incident_id: Optional[str]) -> List[Dict[str, Any]]:
+        clean_id = str(incident_id or "").strip()
+        if not clean_id:
+            return []
+        return [
+            d
+            for d in self.list_evolution_decisions()
+            if str(d.get("linked_incident_id") or d.get("incident_ref") or "").strip() == clean_id
+        ]
 
     def get_inspiration_graph(self, artifact_id: str) -> Optional[Dict[str, Any]]:
         return self.lifecycle_telemetry_governance.get_inspiration_graph(artifact_id)
