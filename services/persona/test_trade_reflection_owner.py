@@ -373,3 +373,46 @@ def test_openclaw_provider_explicit_token_injection(monkeypatch: pytest.MonkeyPa
     sent = _patch_transport(monkeypatch)
     OpenClawReflectionProvider(adapter_url="http://adapter:8104", token="explicit").reflect(facts={}, trigger="ep-1")
     assert sent[0].get_header("X-pantheon-service-token") == "explicit"
+
+
+def test_openclaw_provider_timeout_covers_adapter_budget_and_surfaces_failures_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.persona import write_owner
+    from services.persona.write_owner import OpenClawReflectionProvider
+
+    monkeypatch.setenv("PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN", "adapter-svc-token")
+    output = MockReflectionProvider().reflect(facts={}, trigger="t")
+    timeouts: list[float] = []
+
+    def ok_urlopen(req: Any, timeout: float = 0) -> _FakeResp:
+        timeouts.append(timeout)
+        return _FakeResp(output)
+
+    monkeypatch.setattr(write_owner, "urlopen", ok_urlopen)
+    provider = OpenClawReflectionProvider(adapter_url="http://adapter:8104")
+    assert provider.reflect(facts={}, trigger="ep-1") == output
+    # Adapter CLI cap is 170s and the evaluator outer allowance is 180s; a 25s provider turn must fit.
+    assert timeouts == [170] and 25 < timeouts[0] <= 180
+
+    calls: list[Any] = []
+
+    def timeout_urlopen(req: Any, timeout: float = 0) -> _FakeResp:
+        calls.append(req)
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(write_owner, "urlopen", timeout_urlopen)
+    with pytest.raises(RuntimeError, match="OpenClaw reflection provider failed: timed out"):
+        provider.reflect(facts={}, trigger="ep-1")
+    assert len(calls) == 1
+
+    bad_calls: list[Any] = []
+
+    def bad_shape_urlopen(req: Any, timeout: float = 0) -> Any:
+        bad_calls.append(req)
+        resp = _FakeResp({})
+        resp._body = b'{"data": {}}'
+        return resp
+
+    monkeypatch.setattr(write_owner, "urlopen", bad_shape_urlopen)
+    with pytest.raises(RuntimeError, match="OpenClaw reflection provider failed"):
+        provider.reflect(facts={}, trigger="ep-1")
+    assert len(bad_calls) == 1
