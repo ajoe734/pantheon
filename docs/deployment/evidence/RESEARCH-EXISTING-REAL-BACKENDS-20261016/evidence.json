@@ -1,0 +1,46 @@
+{
+  "task_id": "RESEARCH-EXISTING-REAL-BACKENDS-20261016",
+  "base_sha": "ab53a4bce36c641ec91147a24c130dfeb553e1cb",
+  "scoped_artifacts": [
+    "services/research/runtime-requirements.txt",
+    "dependencies/locks/services-research.txt",
+    "docker-compose.yml",
+    "docs/deployment/evidence/RESEARCH-EXISTING-REAL-BACKENDS-20261016/evidence.json"
+  ],
+  "problem": {
+    "observed": "Actual Research container had backend flags unset (PANTHEON_VECTORBT_BACKEND, PANTHEON_OPENCLAW_BACKEND) and OpenClawOpsClient.configured=false; runtime-requirements.txt omitted vectorbt and pandas; lock dependencies/locks/services-research.txt omitted upstream vectorbt dependencies; vectorbt find_spec was resolving only the local /workspace/services/research/vectorbt directory while distribution metadata was missing.",
+    "root_cause": "The Research service runtime requirement manifest and hash-locked closure were incomplete for prototype_backtest and evidence_synthesis real backends, and docker-compose.yml did not forward the real backend flags and OpenClaw adapter URL."
+  },
+  "changes": {
+    "runtime_requirements": "Added vectorbt==1.1.1 and pandas==3.0.6 to services/research/runtime-requirements.txt; updated numpy==1.26.4 to numpy==2.4.6 as required by upstream vectorbt 1.1.1 on Python 3.11.",
+    "lockfile": "Regenerated dependencies/locks/services-research.txt with exact sha256 hashes using uv pip compile for Python 3.11 x86_64 target.",
+    "compose_environment": "Forwarded PANTHEON_VECTORBT_BACKEND (default real), PANTHEON_OPENCLAW_BACKEND (default real), PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL (http://openclaw-gateway-adapter:8104), PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN, PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED (true), and PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS (180.0) in docker-compose.yml under research-orchestrator-svc."
+  },
+  "boundary_compliance": {
+    "python_source_modified": false,
+    "production_adapters_enabled": false,
+    "new_services_or_workers": 0,
+    "non_lock_production_delta_lines": 10,
+    "non_lock_line_budget": 30,
+    "total_diff_lines": 1338,
+    "total_diff_budget": 5000,
+    "secret_or_fake_token_added": false
+  },
+  "validation": {
+    "host_unit_tests": "pytest services/research/tests passed 92, 2 skipped (expected on host lacking upstream vectorbt)",
+    "compose_contract_tests": "pytest tests/integration/test_product_functional_compose_contract.py passed 6, exit 0",
+    "container_build": "Built test-research-image from services/research/Dockerfile with --require-hashes exit 0",
+    "container_upstream_imports": {
+      "command": "docker run --rm test-research-image python -c 'import numpy as np, pandas as pd, vectorbt as vbt; from vectorbt.portfolio.base import Portfolio; import QuantLib as ql; print(np.__version__, pd.__version__, vbt.__version__, Portfolio, ql.__version__)'",
+      "output": "VERIFIED_IMPORTS: 2.4.6 3.0.6 1.1.1 <class 'vectorbt.portfolio.base.Portfolio'> 1.43",
+      "exit_code": 0
+    },
+    "container_real_stage_tests": {
+      "command": "docker run --rm test-research-image pytest services/research/tests/test_research_orchestrator_http_service.py -k 'test_saved_model'",
+      "output": "5 passed, 22 deselected, 11 warnings in 45.69s (0 skips, verified real vectorbt portfolio evaluation)",
+      "exit_code": 0
+    },
+    "fail_closed_missing_backend": "test_requested_real_backend_missing_dependency_never_uses_stub passed; returns HTTP 400 'backend unavailable' without stub fallback"
+  },
+  "limits": "Package and deployment-source validation only; no provider calls made, no research plans created or executed, no dev VM access. Independent exact-head review by assigned reviewer Claude pending."
+}
