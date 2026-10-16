@@ -989,7 +989,6 @@ class AlphaRevalidationWorker:
             "persona_id": persona_id,
             "objective": objective,
             "mode": str(entry.get("mode") or "evaluation"),
-            "actor_id": self._worker_id,
             "trace_id": str(entry.get("trace_id") or f"trace-teaching-{run_id}"),
             "context_refs": [
                 {

@@ -17,7 +17,7 @@ from services.research.experiment_orchestrator.authority import (
 from services.research.experiments.models import ExperimentRun, ExperimentTask
 
 from .queue import AlphaReplicationQueue
-from .revalidation_worker import AlphaRevalidationWorker, SAFE_DISPATCH_MODES
+from .revalidation_worker import AlphaRevalidationWorker, RevalidationAttemptError, SAFE_DISPATCH_MODES
 
 
 def _queue_payload(
@@ -880,6 +880,7 @@ def test_real_http_teaching_invocation_and_headers(tmp_path, monkeypatch) -> Non
     assert post_headers["X-tenant-id"] == payload["tenant_id"]
     assert post_headers["X-pantheon-service"] == "training-session-preview-worker"
     assert post_headers["Authorization"] == "Bearer bearer-teaching-secret"
+    assert "actor_id" not in post_body
     exp_run_id = result["created_experiment_run_ids"][0]
     assert post_body["context_refs"] == [
         {
@@ -944,3 +945,202 @@ def test_alpha_revalidation_teaching_token_file_rotation(tmp_path, monkeypatch) 
     )
     req2 = captured_requests[-1]
     assert req2.get_header("Authorization") == "Bearer token-teaching-2"
+
+
+def test_alpha_teaching_invocation_with_real_training_inbound_and_issued_principal(
+    tmp_path, monkeypatch
+) -> None:
+    import importlib.util
+    import io
+    import sys
+    import urllib.error
+    import urllib.parse
+    from pathlib import Path
+    from fastapi.testclient import TestClient
+    from scripts.issue_dev_paper_principals import issue_environment
+    from scripts.test_issue_dev_paper_principals import configured, KEY
+    from services.research.experiment_orchestrator.authority import ResearchAuthorityHttpClient
+
+    # 1. Load real Training session service module and initialize isolated test store
+    training_main_path = (
+        Path(__file__).resolve().parents[3] / "services/training-session/main.py"
+    )
+    sys.path.insert(0, str(training_main_path.parent))
+    spec = importlib.util.spec_from_file_location(
+        "training_session_main", training_main_path
+    )
+    training_mod = importlib.util.module_from_spec(spec)
+    sys.modules["training_session_main"] = training_mod
+    spec.loader.exec_module(training_mod)
+
+    training_store_dir = tmp_path / "training_store"
+    training_mod.store = training_mod.TrainingSessionStore(training_store_dir)
+    client = TestClient(training_mod.app)
+
+    # 2. Configure Training service inbound authority in strict auth mode
+    monkeypatch.setenv("TRAINING_SESSION_AUTH_MODE", "strict")
+    monkeypatch.delenv("TRAINING_SESSION_AUTH_DISABLED", raising=False)
+    monkeypatch.setenv("TRAINING_SESSION_JWT_SECRET", KEY)
+    monkeypatch.setenv("TRAINING_SESSION_JWT_ISSUER", "isolated-issuer")
+    monkeypatch.setenv("TRAINING_SESSION_JWT_AUDIENCE", "isolated-audience")
+    monkeypatch.setenv(
+        "TRAINING_SESSION_ALLOWED_CALLER_SERVICES",
+        "training-session-preview-worker",
+    )
+
+    # 3. Issue genuine token with issue_environment and place in token file
+    token = issue_environment(configured())["TRAINING_SESSION_WORKER_TOKEN"]
+    token_file = tmp_path / "TRAINING_SESSION_WORKER_TOKEN"
+    token_file.write_text(token, encoding="utf-8")
+    token_file.chmod(0o600)
+    monkeypatch.delenv(
+        "ALPHA_REPLICATION_TRAINING_SERVICE_TOKEN_FILE", raising=False
+    )
+    monkeypatch.delenv(
+        "ALPHA_REPLICATION_TRAINING_SERVICE_TOKEN", raising=False
+    )
+    monkeypatch.setenv(
+        "TRAINING_SESSION_WORKER_TOKEN_FILE", str(token_file)
+    )
+
+    # 4. Wire urlopen adapter that forwards real urllib requests to TestClient(training_mod.app)
+    class TestClientHTTPResponse(io.BytesIO):
+        def __init__(self, resp):
+            super().__init__(resp.content)
+            self.status = resp.status_code
+            self.headers = resp.headers
+
+        def getcode(self):
+            return self.status
+
+        def info(self):
+            return self.headers
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    def app_urlopen(req, timeout=10):
+        url = req.full_url
+        method = req.get_method()
+        headers = {k: v for k, v in req.headers.items()}
+        path = urllib.parse.urlparse(url).path
+        body = json.loads(req.data.decode("utf-8")) if req.data else None
+        resp = client.request(method, path, headers=headers, json=body)
+        if resp.status_code >= 400:
+            raise urllib.error.HTTPError(
+                url,
+                resp.status_code,
+                resp.text,
+                resp.headers,
+                io.BytesIO(resp.content),
+            )
+        return TestClientHTTPResponse(resp)
+
+    monkeypatch.setattr("urllib.request.urlopen", app_urlopen)
+
+    # 5. Setup AlphaRevalidationWorker with ResearchAuthorityHttpClient stub
+    research_auth = ResearchAuthorityHttpClient(
+        "http://research-orchestrator.test:8101"
+    )
+    queue = AlphaReplicationQueue(tmp_path / "alpha_queue")
+    worker = AlphaRevalidationWorker(
+        queue,
+        tmp_path / "alpha_worker",
+        dispatch_mode="authoritative",
+        authority=research_auth,
+        registry_url="http://registry.test:8087",
+        training_session_url="http://training-session.test:8099",
+    )
+
+    payload = _queue_payload()
+    payload["tenant_id"] = "tenant-dev"
+    entry = _registry_entry(payload)
+
+    monkeypatch.setattr(worker, "_fetch_strategy_spec_entry", lambda spec_id: entry)
+    monkeypatch.setattr(
+        "services.research.replication.gate.ReplicationGate.evaluate_candidate",
+        lambda self, task: FakeGateResponse(passed=True, summary="gate passed"),
+    )
+    monkeypatch.setattr(
+        research_auth,
+        "ensure_task",
+        lambda task, **kwargs: AuthoritativeTaskReceipt(
+            authority_task_id="rtask:auth-001", task=task, record={}
+        ),
+    )
+    monkeypatch.setattr(
+        research_auth,
+        "ensure_run",
+        lambda authority_task_id, run, **kwargs: AuthoritativeRunReceipt(
+            authority_run_id="rrun:auth-001", run=run, record={}
+        ),
+    )
+
+    # Enqueue and execute run_once
+    queue.enqueue(payload)
+    result = worker.run_once(tenant_id="tenant-dev")
+
+    assert result["errors"] == []
+    assert len(result["created_teaching_session_ids"]) == 1
+    session_id = result["created_teaching_session_ids"][0]
+    assert session_id.startswith("trn-")
+
+    # Verify loop record and readback
+    loop_rec = worker.get_loop_record("tenant-dev", payload["strategy_spec_id"])
+    assert loop_rec is not None
+    assert loop_rec["next_consumer_receipt_id"] == session_id
+    assert loop_rec["owner_worker_identity"] == "alpha-revalidation-worker"
+    assert (
+        loop_rec["durable_reload_readback"]["opened_by"]
+        == "training-session-preview-worker"
+    )
+    assert loop_rec["durable_reload_readback"]["session_id"] == session_id
+
+    # 6. Negative contracts:
+    # a. Caller-declared mismatched actor is rejected with HTTP 403 by Training _trusted_actor_id
+    mismatched_payload = {
+        "persona_id": "persona-test",
+        "objective": "test mismatched actor",
+        "actor_id": "alpha-revalidation-worker",
+        "context_refs": [],
+    }
+    with pytest.raises(RevalidationAttemptError) as exc_info:
+        worker._post_teaching_session(
+            mismatched_payload, tenant_id="tenant-dev"
+        )
+    assert "HTTP 403" in str(exc_info.value)
+    assert "declared actor does not match" in str(exc_info.value)
+
+    # b. Missing token sends request without Authorization and is rejected with HTTP 401 by Training
+    monkeypatch.delenv("ALPHA_REPLICATION_TRAINING_SERVICE_TOKEN_FILE", raising=False)
+    monkeypatch.delenv("ALPHA_REPLICATION_TRAINING_SERVICE_TOKEN", raising=False)
+    monkeypatch.delenv("TRAINING_SESSION_WORKER_TOKEN_FILE", raising=False)
+    monkeypatch.delenv("TRAINING_SESSION_WORKER_TOKEN", raising=False)
+    monkeypatch.delenv("PANTHEON_L12_TRAINING_TOKEN", raising=False)
+    monkeypatch.delenv("LOCAL_TRAINING_WORKER_TOKEN", raising=False)
+    with pytest.raises(RevalidationAttemptError) as exc_info:
+        worker._post_teaching_session(
+            {"persona_id": "p-1"}, tenant_id="tenant-dev"
+        )
+    assert "HTTP 401" in str(exc_info.value)
+    assert "missing Bearer token" in str(exc_info.value)
+
+    # c. Foreign tenant is rejected with HTTP 403
+    monkeypatch.delenv(
+        "ALPHA_REPLICATION_TRAINING_SERVICE_TOKEN_FILE", raising=False
+    )
+    monkeypatch.delenv(
+        "ALPHA_REPLICATION_TRAINING_SERVICE_TOKEN", raising=False
+    )
+    monkeypatch.setenv(
+        "TRAINING_SESSION_WORKER_TOKEN_FILE", str(token_file)
+    )
+    with pytest.raises(RevalidationAttemptError) as exc_info:
+        worker._post_teaching_session(
+            {"persona_id": "p-1"}, tenant_id="tenant-foreign"
+        )
+    assert "HTTP 403" in str(exc_info.value)
+

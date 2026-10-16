@@ -81,7 +81,10 @@ CONSUMER_FILES = {
     "evolution": ("EVOLUTION_GOVERNANCE_SERVICE_TOKEN",),
     "operator-bff": ("PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN", "PANTHEON_BFF_HEALTH_TELEMETRY_JWT"),
     "strategy-distillation-worker": ("DISTILLATION_REGISTRY_SERVICE_TOKEN",),
-    "alpha-replication-worker": ("ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN",),
+    "alpha-replication-worker": (
+        "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN",
+        "TRAINING_SESSION_WORKER_TOKEN",
+    ),
     "persona-evaluator-agent": ("PERSONA_EVALUATOR_BFF_TOKEN", "PERSONA_EVALUATOR_GOVERNANCE_TOKEN"),
     "training-session-preview-worker": ("TRAINING_SESSION_WORKER_TOKEN",),
     "training-session-svc": ("TRAINING_SESSION_SOURCE_READ_TOKEN", "TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN"),
