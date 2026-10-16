@@ -8,7 +8,7 @@
     "docker-compose.yml: Distributed EVOLUTION_AUTH_TOKEN to operator-bff; aligned EVOLUTION_DEFAULT_TENANT_ID, EVOLUTION_AUTH_ALLOWED_TENANTS, and EVOLUTION_SCHEDULER_TENANT_ID across postmortems, evolution, and evolution-daily-sweep-scheduler using dev selector fallback ${...:-${PANTHEON_DEV_BFF_TENANT_ID:-pantheon-default}} while preserving explicit overrides and non-dev defaults.",
     "scripts/test_current_l12_compose_wiring.py: Aligned TRAINING_SESSION_JWT_SECRET assertion with compose verifier chain; asserted operator-bff EVOLUTION_AUTH_TOKEN matches evolution; updated postmortems tenant assertion with dev selector fallback.",
     "services/evolution/test_compose_activation.py: Updated EVOLUTION_SCHEDULER_TENANT_ID and EVOLUTION_AUTH_ALLOWED_TENANTS assertions to match the dev selector fallback.",
-    "services/control-plane/bff/tests/test_receipt_default_reads.py: Kept generic owners in parametrize; added test_evolution_readers_preserve_static_auth_and_tenant_contract exercising real signed JWT tokens, real localhost HTTPServer owner transport enforcing static token and tenant contract, and real BFF route admission (/api/v1/evolution-decisions and /bff/evolution-programs) for populated, empty, foreign-tenant pre-I/O rejection, and owner 403/503 propagation.",
+    "services/control-plane/bff/tests/test_receipt_default_reads.py: Replaced fake EvolutionOwnerHandler with actual Evolution app (services.evolution.main.app), authenticate_tenant middleware, create_program_router, and isolated stores on tmp_path; verified default composition against actual owner auth and collection shape via TestClient transport convention; covered admission, populated reads with static token and tenant forwarding, route-level filters (action_type, risk_level, status), programs list, derived program runs, true empty collection, foreign tenant pre-I/O rejection, and owner 403/503 propagation.",
     "services/control-plane/bff/tests/test_ranking_evolution_projection_ports.py: Added test_list_evolution_decisions_filters_and_projection (action_type, risk_level, status filters, decision_state mapping, no **kwargs sink) and test_evolution_readers_error_propagation (unconfigured and 403/503 error propagation)."
   ],
   "verification": {
@@ -21,7 +21,7 @@
   "acceptance_criteria": {
     "ac1": "PASSED - Evolution projection aligned with route and owner fields; explicit action_type, risk_level, status filtering; real decision_state projection; unavailable or auth-denied raises ActionUnavailableError instead of fake empty list.",
     "ac2": "PASSED - Verified caller identity and tenant admission before owner read; adapted Evolution read wiring to static token contract with EVOLUTION_AUTH_TOKEN in BFF; bound Evolution owner, producer, and scheduler to dev tenant using selectors; no new token issuer, JWT verifier, or alternate tenant fallback.",
-    "ac3": "PASSED - Edits strictly limited to scoped artifacts; comprehensive tests in existing test modules; true empty and unavailable/denied and foreign tenant verified; other owner reads preserved unchanged."
+    "ac3": "PASSED - Tested default composition against ACTUAL owner auth (services.evolution.main.authenticate_tenant middleware) and collection shape using actual Evolution app, create_program_router, and isolated stores on tmp_path via TestClient transport convention; covered filters, true empty, unavailable, denied, and foreign tenant pre-I/O rejection; edits strictly limited to scoped artifacts; diff budget passes."
   },
   "not_claimed": [
     "hosted accepted",
