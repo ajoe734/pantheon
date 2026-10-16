@@ -1,0 +1,13 @@
+{
+  "task_id": "L12-RUNTIME-EXISTING-TENANT-20261016",
+  "baseline": "7df949fa84ad6f003e2be5307134e221255f1386",
+  "change": "Runtime Evolution fixture header now reuses TENANT_ID (PANTHEON_L12_TENANT_ID); removed hard-coded EVOLUTION_TENANT_ID=pantheon-default.",
+  "validation": {
+    "command": "python -m pytest scripts/test_run_isolated_l12_runtime_e2e.py -q",
+    "historical_result": "49 passed (initial candidate verified status_code != 403, preserved as historical run without treating as proof of positive 200)",
+    "current_result": "49 passed (positive 200 with meaningful response payload, owner proposals verification, and real foreign tenant 403)",
+    "result": "49 passed",
+    "new_test": "test_runtime_evolution_fixture_uses_selected_tenant_against_real_evolution_auth (real services.evolution app in token mode: tenant-dev admitted with 200 OK and expected payload, pantheon-default foreign tenant 403)"
+  },
+  "not_done": ["no VM/GHA dispatch", "no deploy", "no hosted PASS claimed", "no product code changes"]
+}
