@@ -4,7 +4,7 @@
   "title": "Derive the existing servant draft extraction schema from the canonical Research DTO",
   "owner": "Antigravity2",
   "reviewer": "Claude",
-  "base_sha": "7ce6be2b7420afaa5f749c1e27c4b479c5d236f7",
+  "base_sha": "3973c3d2221251f6e3db2019832424d98b6539bf",
   "change_class": "corrective",
   "rework_history": {
     "prior_pr": 6592,
