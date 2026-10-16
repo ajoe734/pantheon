@@ -1,0 +1,8 @@
+{
+  "task": "PERSONA-REFLECTION-ROOT-FIELDS-20261016",
+  "change": "provider_extraction_schema carries canonical root additionalProperties=false; _artifact rejects unknown provider root fields before owner artifact construction drops them",
+  "tests": "pytest services/persona/test_trade_reflection_pipeline.py + reflection/pattern owner tests: 59 passed",
+  "new_test": "test_unknown_root_fields_are_rejected_not_dropped (follow_ups rejected, no completed artifact; followups survives)",
+  "provider_calls": 0,
+  "business_POSTs": 0
+}
