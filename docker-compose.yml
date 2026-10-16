@@ -739,6 +739,12 @@ services:
       # Keep HTTP admission and the supervised alpha worker on one durable
       # volume so accepted research specs survive a service restart.
       ALPHA_REPLICATION_DATA_DIR: /data/research-orchestrator/alpha-replication
+      PANTHEON_VECTORBT_BACKEND: ${PANTHEON_VECTORBT_BACKEND:-real}
+      PANTHEON_OPENCLAW_BACKEND: ${PANTHEON_OPENCLAW_BACKEND:-real}
+      PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
+      PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}
+      PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}
+      PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS: ${PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS:-180.0}
     volumes:
       - research-orchestrator-data:/data/research-orchestrator
     ports:

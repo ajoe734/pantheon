@@ -4,5 +4,7 @@ pydantic==2.13.5
 psycopg[binary]==3.3.6
 asyncpg==0.31.0
 jsonschema==4.26.0
-numpy==1.26.4
+numpy==2.4.6
 quantlib==1.43
+vectorbt==1.1.1
+pandas==3.0.6
