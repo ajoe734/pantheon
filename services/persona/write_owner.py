@@ -1717,7 +1717,7 @@ class OpenClawReflectionProvider:
         }
         req = UrllibRequest(f"{self.adapter_url}/api/openclaw-adapter/assistant/providers/openclaw/structured", data=json.dumps(body).encode("utf-8"), headers={"Content-Type": "application/json", "X-Operator-Id": "persona-reflection", "X-Pantheon-Service-Token": self.token}, method="POST")
         try:
-            with urlopen(req, timeout=10) as resp: return json.loads(resp.read().decode("utf-8"))["data"]["output"]["structured_data"]
+            with urlopen(req, timeout=170) as resp: return json.loads(resp.read().decode("utf-8"))["data"]["output"]["structured_data"]
         except Exception as exc: raise RuntimeError(f"OpenClaw reflection provider failed: {exc}") from exc
 
 
