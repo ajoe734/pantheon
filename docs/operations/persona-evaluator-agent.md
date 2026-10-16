@@ -13,6 +13,11 @@ formulas are unchanged and are read-only evidence.
    scores, tier, state, stage, eligibility, exclusion codes and evidence refs.
    Read every page and verify the complete content-addressed snapshot identity;
    unavailable, empty, redacted/incomplete or changing evidence is a degraded run.
+   The only per-row exception: a row whose `eligible` is the boolean `false` AND whose
+   evidence is missing/unavailable is skipped (not sent to the provider); the full
+   snapshot is still admitted unchanged. Any other row with missing evidence degrades the
+   run, and if no row is admitted the run is degraded with no provider call. The
+   `MAX_PERSONAS` prompt bound counts admitted rows, in ranking order.
    Before asking the provider or reusing saved advice, admit that immutable snapshot
    through `services.rankings.store` into the existing Rankings table. Same-content
    replay preserves the first creation time; differing contents or evidence assertion
