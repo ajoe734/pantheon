@@ -1,10 +1,11 @@
 {
   "task": "PAPER-SIGNAL-REDELIVERY-CONFLICT-20261015",
   "scope": "source only; no FULL, deploy, or hosted acceptance claimed; historical FULL38822778571 enqueue sequence not claimed observed",
-  "change": "SignalConsumer._resolve_conflicts collapses same-signal_id copies before conflict resolution; extra copies are ACKed only after the kept copy is ACKed (execution/duplicate/loser disposition), and left un-ACKed for retry if execution fails",
+  "change": "SignalConsumer._execute_resolved groups same-signal_id copies locally within one batch (no new cache/set/store state); only the kept copy enters conflict resolution/execution. Extra copies are ACKed through the original _ack_signal only after the kept copy has a processed disposition; failed execution leaves them un-ACKed under original retry/fence semantics.",
   "tests": {
     "command": "python3 -m unittest services.execution.lean_runtime.test_signal_consumer services.execution.lean_runtime.test_paper_signal_producer",
     "result": "112 tests OK on repair",
-    "baseline_protected_b9": "TestSameIdRedeliveryBatch 3/3 fail on original signal_consumer.py (executions 0 for same-ID three copies)"
+    "baseline_protected_b9": "TestSameIdRedeliveryBatch 3/3 fail on original signal_consumer.py (executions 0 for same-ID three copies)",
+    "regression": "3 same-ID copies enter across default 3 drains: 0 execution/0 ACK/not processed before third, then 1 execution/3 ACK, replay no second execution; distinct-ID conflict control and failed-execution control retained"
   }
 }

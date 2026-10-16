@@ -739,14 +739,21 @@ class TestSameIdRedeliveryBatch(unittest.TestCase):
         return sig
 
     def _consumer(self, store):
-        return SignalConsumer(store_client=store, rebalance_timeout_bars=1)
+        return SignalConsumer(store_client=store)
 
     def test_three_same_id_copies_execute_once_and_ack_all_then_replay_is_noop(self):
         now = datetime.now(timezone.utc).replace(microsecond=0)
-        store = self._store([self._rebalance_signal("s-daily", now) for _ in range(3)])
+        store = self._store([])
         c = self._consumer(store)
         algo = _NoopRecordingAlgo(now.replace(tzinfo=None))
         with patch("services.execution.lean_runtime.signal_consumer.execute") as mock_exec:
+            for _ in range(2):
+                store.enqueue(self._rebalance_signal("s-daily", now))
+                c.drain(algo=algo)
+                self.assertEqual(mock_exec.call_count, 0)
+                self.assertEqual(store.acks, [])
+                self.assertNotIn("s-daily", c._processed_signal_ids)
+            store.enqueue(self._rebalance_signal("s-daily", now))
             c.drain(algo=algo)
             self.assertEqual(mock_exec.call_count, 1)
             self.assertEqual(store.acks, ["s-daily"] * 3)
@@ -760,7 +767,7 @@ class TestSameIdRedeliveryBatch(unittest.TestCase):
     def test_failed_execution_does_not_ack_redelivered_copies(self):
         now = datetime.now(timezone.utc).replace(microsecond=0)
         store = self._store([self._rebalance_signal("s-fail", now) for _ in range(3)])
-        c = self._consumer(store)
+        c = SignalConsumer(store_client=store, rebalance_timeout_bars=1)
         algo = _NoopRecordingAlgo(now.replace(tzinfo=None))
         with patch(
             "services.execution.lean_runtime.signal_consumer.execute",
@@ -776,7 +783,7 @@ class TestSameIdRedeliveryBatch(unittest.TestCase):
         older = self._rebalance_signal("s-old", now - timedelta(minutes=2))
         newer = self._rebalance_signal("s-new", now)
         store = self._store([older, newer, dict(newer)])
-        c = self._consumer(store)
+        c = SignalConsumer(store_client=store, rebalance_timeout_bars=1)
         algo = _NoopRecordingAlgo(now.replace(tzinfo=None))
         with patch("services.execution.lean_runtime.signal_consumer.execute") as mock_exec:
             c.drain(algo=algo)
