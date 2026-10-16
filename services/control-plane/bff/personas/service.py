@@ -6100,26 +6100,28 @@ def _pm12_persona_league_rows(
         ]
     except Exception:
         all_league_entries = []
-    try:
-        all_authoritative_sessions = [
-            record
-            for record in (_get_active_read_store().list_authoritative_paper_runtime_monitoring_sessions() or [])
-            if isinstance(record, dict)
-        ]
-    except Exception:
-        all_authoritative_sessions = []
+    active_store = _get_active_read_store()
+    raw_authoritative = (
+        active_store.list_authoritative_paper_runtime_monitoring_sessions()
+        if hasattr(active_store, "list_authoritative_paper_runtime_monitoring_sessions")
+        else []
+    )
+    all_authoritative_sessions = [
+        record
+        for record in (raw_authoritative or [])
+        if isinstance(record, dict)
+    ]
 
     sessions_by_persona: Optional[Dict[str, List[Dict[str, Any]]]] = None
     clean_tenant = str(tenant_id or "").strip()
     if clean_tenant:
         try:
-            active_store = _get_active_read_store()
             bulk_sessions = None
             if hasattr(active_store, "list_sessions_for_persona"):
                 bulk_sessions = active_store.list_sessions_for_persona(None)
             elif hasattr(active_store, "get_sessions_for_persona"):
                 bulk_sessions = active_store.get_sessions_for_persona(None)
-            if bulk_sessions:
+            if bulk_sessions is not None:
                 sessions_by_persona = {}
                 for s in bulk_sessions:
                     if not isinstance(s, dict):
