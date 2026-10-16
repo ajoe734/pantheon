@@ -32,6 +32,7 @@ from services.control_plane.bff.shared.cross_domain_utils import (
 
 from services.control_plane.bff.persona_provisioning import MemoryPersonaProvisioningStore
 from services.control_plane.bff.test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt
+from services.control_plane.bff.ports.read_surface_ports import PaperReconcilerUnavailableError
 
 
 from pathlib import Path
@@ -354,6 +355,8 @@ class _Pm12LeagueTestStore:
         return self.ranking_snapshots.get(snapshot_id)
 
     def list_authoritative_paper_runtime_monitoring_sessions(self) -> list[dict[str, Any]]:
+        if getattr(self, "paper_reconciler_unavailable", False):
+            raise PaperReconcilerUnavailableError("paper fleet reconciler connection refused")
         return []
 
     def write_ranking_snapshot(self, *args: Any, **kwargs: Any) -> None:
@@ -394,6 +397,7 @@ class _CountingPm12LeagueTestStore(_Pm12LeagueTestStore):
             "get_persona": 0,
             "list_personas": 0,
             "get_sessions_for_persona": 0,
+            "list_authoritative_paper_runtime_monitoring_sessions": 0,
         }
 
     def reset_counts(self) -> None:
@@ -423,6 +427,10 @@ class _CountingPm12LeagueTestStore(_Pm12LeagueTestStore):
     def get_sessions_for_persona(self, persona_id: str | None) -> list[dict[str, Any]]:
         self.calls["get_sessions_for_persona"] += 1
         return super().get_sessions_for_persona(persona_id)
+
+    def list_authoritative_paper_runtime_monitoring_sessions(self) -> list[dict[str, Any]]:
+        self.calls["list_authoritative_paper_runtime_monitoring_sessions"] += 1
+        return super().list_authoritative_paper_runtime_monitoring_sessions()
 
 
 
@@ -1188,6 +1196,9 @@ def test_pm12_quarterly_ranking_read_fanout_reduction_and_parity() -> None:
         assert store.calls["list_runtime_bindings"] == 1, (
             f"Expected 1 runtime bindings prefetch call, got {store.calls['list_runtime_bindings']}"
         )
+        assert store.calls["get_sessions_for_persona"] == 1, (
+            f"Expected 1 bulk session prefetch call, got {store.calls['get_sessions_for_persona']}"
+        )
 
         # Integrity of ranking output: real scores, rank ordering, exclusions preserved
         prev_score = float("inf")
@@ -1206,6 +1217,46 @@ def test_pm12_quarterly_ranking_read_fanout_reduction_and_parity() -> None:
             assert "route_policy_summary" not in item
             assert "health_summary" not in item
             assert "allowed_action_summary" not in item
+
+        # 1b. Regression: Successful empty [] bulk sessions must remain authoritative request-local prefetch
+        # without falling back to N per-Persona rereads.
+        orig_sessions = dict(store.raw_data.get("sessions") or {})
+        orig_persona_sessions = dict(store.raw_data.get("persona_sessions") or {})
+        try:
+            store.raw_data["sessions"] = {}
+            store.raw_data["persona_sessions"] = {}
+            store.reset_counts()
+            empty_bulk_resp = client.get(
+                "/bff/management/quarterly-ranking",
+                headers=HEADERS,
+                params={"quarter": "2026-Q1"},
+            )
+            assert empty_bulk_resp.status_code == 200, empty_bulk_resp.text
+            assert store.calls["get_sessions_for_persona"] == 1, (
+                f"Expected exactly 1 bulk session read and 0 per-persona rereads for empty bulk result, got {store.calls['get_sessions_for_persona']}"
+            )
+            assert store.calls["get_route_policy_for_persona"] == 0
+            assert store.calls["get_persona_allowed_actions"] == 0
+            assert store.calls["list_runtime_bindings"] == 1
+            assert len(empty_bulk_resp.json()["data"]["items"]) == persona_count
+        finally:
+            store.raw_data["sessions"] = orig_sessions
+            store.raw_data["persona_sessions"] = orig_persona_sessions
+
+        # 1c. Regression: Authoritative paper runtime monitoring owner error must NOT be swallowed into []
+        # and must propagate to produce HTTP 503 instead of falling back to healthy empty result.
+        store.paper_reconciler_unavailable = True
+        try:
+            store.reset_counts()
+            reconciler_down_resp = client.get(
+                "/bff/management/quarterly-ranking",
+                headers=HEADERS,
+                params={"quarter": "2026-Q1"},
+            )
+            assert reconciler_down_resp.status_code == 503, reconciler_down_resp.text
+            assert "Paper fleet reconciler unavailable" in reconciler_down_resp.text
+        finally:
+            store.paper_reconciler_unavailable = False
 
         # 2. Rich UI Route Preserves Full Summaries:
         # Default behavior for other callers (e.g. /bff/management/persona-league) must retain rich summaries.
@@ -1255,8 +1306,9 @@ def test_pm12_quarterly_ranking_read_fanout_reduction_and_parity() -> None:
         assert page_body["page_info"]["total"] == persona_count
         assert page_body["page_info"]["next_page_token"] is not None
 
-        # 5. Tenant Boundary Isolation:
+        # 5. Tenant Boundary Isolation & Evaluator Read Contract:
         # Cross-tenant caller cannot see tenant personas or leak private state
+        store.reset_counts()
         alien_resp = client.get(
             "/bff/management/quarterly-ranking",
             headers={"Authorization": "Bearer op-alien:operator,reviewer:alien-tenant-999"},
@@ -1265,4 +1317,26 @@ def test_pm12_quarterly_ranking_read_fanout_reduction_and_parity() -> None:
         assert alien_resp.status_code == 200, alien_resp.text
         assert alien_resp.json()["data"]["summary"]["ranking_universe_count"] == 0
         assert len(alien_resp.json()["data"]["items"]) == 0
+        assert store.calls["list_authoritative_paper_runtime_monitoring_sessions"] == 0
+
+        # Original tenant-visible boundary: evaluator principal has 0 unnecessary monitoring reads,
+        # GET ranking remains 200, and denied write remains 403.
+        store.reset_counts()
+        evaluator_headers = {"Authorization": "Bearer evaluator-token:viewer:tenant-dev"}
+        eval_resp = client.get(
+            "/bff/management/quarterly-ranking",
+            headers=evaluator_headers,
+            params={"quarter": "2026-Q1"},
+        )
+        assert eval_resp.status_code == 200, eval_resp.text
+        assert eval_resp.json()["data"]["summary"]["ranking_universe_count"] == 0
+        assert len(eval_resp.json()["data"]["items"]) == 0
+        assert store.calls["list_authoritative_paper_runtime_monitoring_sessions"] == 0
+
+        denied = client.post(
+            "/bff/management/quarterly-ranking/recommendations/r1/submit",
+            headers={**evaluator_headers, "Idempotency-Key": "evaluator-denied"},
+            json={"quarter": "2026-Q1"},
+        )
+        assert denied.status_code == 403
 
