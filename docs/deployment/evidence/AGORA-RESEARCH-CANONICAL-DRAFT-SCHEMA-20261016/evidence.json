@@ -1,0 +1,59 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "AGORA-RESEARCH-CANONICAL-DRAFT-SCHEMA-20261016",
+  "title": "Derive the existing servant draft extraction schema from the canonical Research DTO",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "base_sha": "7ce6be2b7420afaa5f749c1e27c4b479c5d236f7",
+  "change_class": "corrective",
+  "summary": "Derives the servant research proposal extraction schema directly from canonical ResearchPlanCreateRequest DTO rather than maintaining a divergent handwritten schema that permitted arbitrary nested properties under stages while the strict DTO forbade them. Projections into the OpenClaw adapter subset resolve local acyclic $defs references, project nullable anyOf unions into type: [T, null], remove default annotations without dropping validation keywords, enforce additionalProperties: false on stage items, and preserve domain enums for spec_version ('1.0') and stage_type (ALLOWLISTED_STAGE_BACKENDS). Fails closed on cyclic or unknown refs, unsupported general unions, and preserves unsupported constraint keywords for fail-closed adapter validation. Extends tests to verify against actual canonical DTO and actual adapter validator on the three-extra-field counterexample (model, universe, quantity1) and complete valid drafts with routing, dependencies, budget, execution constraints, and nullables.",
+  "acceptance_verification": [
+    {
+      "ac": "AC1",
+      "description": "The existing servant proposal route must supply its original ResearchPlanCreateRequest schema to the original servant call and replace the divergent handwritten schema with a small local projection into the existing adapter subset; preserve required fields and nullability and numeric/string/array constraints and additionalProperties forbids plus existing version/stage domain enums and existing business validation; no duplicated DTO or independently maintained field list or adapter constraint weakening",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC2",
+      "description": "Extend the existing servant tests to use the actual canonical DTO and actual adapter validator for the real three-extra-field counterexample plus valid complete stage routing/dependencies and valid optional budget/dataset/execution constraints and nullable fields; original bad draft must remain rejected with zero plan/dispatch while valid draft stores only draft; unknown/external/cyclic refs or non-nullable general unions must fail closed and no constraint may be silently dropped; no real provider or replay is permitted",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC3",
+      "description": "Only two original production files and the original servant test plus mandatory evidence may change; retain one data-only provider invocation and no execution before actual plan approval; genuine assigned exact-head review and requiredCI and native integration and DONE are mandatory; no VM/deploy/provider/product POST or key retries or new normalizer/fallback/compiler service/cache/setting/API or rewrite of stored provider output",
+      "verdict": "pending_delivery: local source validation and clean task worktree with required trailers verified (15 servant proposal tests passed including canonical DTO and adapter validation of 3-extra-field counterexample, complete routing, dependencies, budget, constraints, nullables, cyclic/unknown refs, and fail-closed constraints; 48 research router tests passed; 57 adapter structured tool contract tests passed); downstream independent review by assigned reviewer Claude, required CI checks, dev integration merge, and canonical finish remain pending delivery on task PR"
+    }
+  ],
+  "verification": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/agora/servant/test_servant_research_proposal.py",
+      "passed": 15,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_research_router.py",
+      "passed": 48,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "PYTHONPATH=services/openclaw-gateway-adapter .venv-pantheon/bin/python3 -m pytest -v services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py",
+      "passed": 57,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    }
+  ],
+  "declared_artifacts": [
+    "services/control-plane/bff/agora/servant/research_proposal.py",
+    "services/control-plane/bff/agora/research/routes/plans.py",
+    "services/control-plane/bff/agora/servant/test_servant_research_proposal.py",
+    "docs/deployment/evidence/AGORA-RESEARCH-CANONICAL-DRAFT-SCHEMA-20261016/evidence.json"
+  ]
+}
