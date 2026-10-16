@@ -340,10 +340,19 @@ def _check_compose_config(compose_file, expected, docker):
 def _public(args, expected_fe, http, barrier, *, expected_backend_sha=None):
     expected_backend = expected_backend_sha or args.previous_backend_sha
     def request(method, path, *, fe=False, **kwargs):
-        barrier.check()
-        response = http.request(method, _url(args.fe_url if fe else args.bff_url, "fe" if fe else "bff") + path, **kwargs)
-        barrier.check()
-        return response
+        url = _url(args.fe_url if fe else args.bff_url, "fe" if fe else "bff") + path
+        for attempt in range(3 if method == "GET" else 1):
+            barrier.check()
+            try:
+                response = http.request(method, url, **kwargs)
+                barrier.check()
+                return response
+            except (TimeoutError, urllib.error.URLError) as error:
+                reason = getattr(error, "reason", error)
+                if method != "GET" or not isinstance(reason, TimeoutError) or attempt == 2:
+                    if error.__cause__ is None and isinstance(reason, BaseException):
+                        error.__cause__ = reason
+                    raise
     status, _ = request("GET", "/health")
     if status != 200: raise a.ArtifactError("BFF health readback failed")
     status, raw = request("GET", "/bff/version")

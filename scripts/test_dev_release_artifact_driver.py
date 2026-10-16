@@ -1399,6 +1399,180 @@ def test_restore_final_rejects_tampered_fe_even_when_adjacent_seal_rewritten(cas
     no_replacement(case)
 
 
+def test_public_get_transient_timeout_settles_and_completes_readback(case):
+    seal(case)
+    case.http.calls.clear()
+    case.docker.calls.clear()
+    original_request = case.http.request
+    attempt_count = 0
+
+    def flappy_request(method, url, **kwargs):
+        nonlocal attempt_count
+        path = d.urllib.parse.urlsplit(url).path
+        if method == "GET" and path == "/health":
+            attempt_count += 1
+            if attempt_count == 1:
+                raise TimeoutError("fixture-private-transient-timeout")
+        return original_request(method, url, **kwargs)
+
+    case.http.request = flappy_request
+    result = execute(case, "restore")
+    assert attempt_count == 2
+    assert result["public"]["source_sha"] == case.args.previous_backend_sha
+    assert result["public"]["authenticated_viewer_readback_verified"] is True
+    assert "fixture-private" not in json.dumps(result)
+    compose_ups = [c for c in case.docker.calls if c[0] == "compose" and "up" in c]
+    assert len(compose_ups) == 1
+
+
+def test_public_get_transient_urllib_timeout_settles_and_completes_readback(case):
+    seal(case)
+    case.http.calls.clear()
+    original_request = case.http.request
+    attempt_count = 0
+
+    def flappy_request(method, url, **kwargs):
+        nonlocal attempt_count
+        path = d.urllib.parse.urlsplit(url).path
+        if method == "GET" and path == "/bff/version":
+            attempt_count += 1
+            if attempt_count == 1:
+                raise d.urllib.error.URLError(TimeoutError("fixture-private-socket-timeout"))
+        return original_request(method, url, **kwargs)
+
+    case.http.request = flappy_request
+    result = execute(case, "verify")
+    assert attempt_count == 2
+    assert result["public"]["source_sha"] == case.args.previous_backend_sha
+    assert result["public"]["authenticated_viewer_readback_verified"] is True
+
+
+def test_public_get_persistent_timeout_fails_at_bound_without_extra_attempts(case):
+    seal(case)
+    case.http.calls.clear()
+    original_request = case.http.request
+    attempts = 0
+
+    def timeout_request(method, url, **kwargs):
+        nonlocal attempts
+        path = d.urllib.parse.urlsplit(url).path
+        if method == "GET" and path == "/health":
+            attempts += 1
+            raise TimeoutError("fixture-private-persistent-timeout")
+        return original_request(method, url, **kwargs)
+
+    case.http.request = timeout_request
+    with pytest.raises(TimeoutError, match="fixture-private-persistent-timeout"):
+        execute(case, "restore")
+    assert attempts == 3
+
+
+@pytest.mark.parametrize("bad_field,expected_err", [
+    ("health_500", "BFF health readback failed"),
+    ("version_source", "public BFF source readback mismatch"),
+    ("auth_posture", "public BFF strict auth posture mismatch"),
+])
+def test_public_bad_identity_or_status_or_auth_fails_immediately_without_retry(case, bad_field, expected_err):
+    seal(case)
+    case.http.calls.clear()
+    original_request = case.http.request
+    version_attempts = 0
+    health_attempts = 0
+
+    def failing_request(method, url, **kwargs):
+        nonlocal version_attempts, health_attempts
+        path = d.urllib.parse.urlsplit(url).path
+        if path == "/health":
+            health_attempts += 1
+            if bad_field == "health_500":
+                return 500, b'{"error":"fail"}'
+        elif path == "/bff/version":
+            version_attempts += 1
+            if bad_field == "version_source":
+                return 200, json.dumps({"source_commit_sha": "0" * 40, "config_posture": {"auth_stub": False, "auth_mode": "strict"}}).encode()
+            elif bad_field == "auth_posture":
+                return 200, json.dumps({"source_commit_sha": case.args.previous_backend_sha, "config_posture": {"auth_stub": True, "auth_mode": "strict"}}).encode()
+        return original_request(method, url, **kwargs)
+
+    case.http.request = failing_request
+    with pytest.raises(d.a.ArtifactError, match=expected_err):
+        execute(case, "verify")
+    if bad_field == "health_500":
+        assert health_attempts == 1
+    elif bad_field in ("version_source", "auth_posture"):
+        assert version_attempts == 1
+
+
+def test_public_login_post_timeout_is_never_retried(case):
+    seal(case)
+    case.http.calls.clear()
+    original_request = case.http.request
+    post_attempts = 0
+
+    def timeout_post(method, url, **kwargs):
+        nonlocal post_attempts
+        path = d.urllib.parse.urlsplit(url).path
+        if method == "POST" and path == "/bff/auth/dev-login":
+            post_attempts += 1
+            raise TimeoutError("fixture-private-post-timeout")
+        return original_request(method, url, **kwargs)
+
+    case.http.request = timeout_post
+    with pytest.raises(TimeoutError, match="fixture-private-post-timeout"):
+        execute(case, "restore")
+    assert post_attempts == 1
+
+
+def test_public_get_lease_loss_cancels_between_attempts(case):
+    seal(case)
+    case.http.calls.clear()
+    original_request = case.http.request
+    attempt_count = 0
+
+    def fail_with_timeout_and_arm_barrier(method, url, **kwargs):
+        nonlocal attempt_count
+        path = d.urllib.parse.urlsplit(url).path
+        if method == "GET" and path == "/health":
+            attempt_count += 1
+            case.barrier.fail_at = case.barrier.calls + 1
+            raise TimeoutError("fixture-transient-timeout")
+        return original_request(method, url, **kwargs)
+
+    case.http.request = fail_with_timeout_and_arm_barrier
+    with pytest.raises(d.a.ArtifactError, match="fixture cancellation"):
+        execute(case, "restore")
+    assert attempt_count == 1
+
+
+def test_main_reports_actual_restore_public_timeout_without_secret_leak(case, monkeypatch, capsys):
+    seal(case)
+    case.args.command = "restore"
+    case.args.guard_channel_fd = 9
+    case.args.guard_max_silence_seconds = 10
+    monkeypatch.setattr(d, "parse_args", lambda _argv: case.args)
+    monkeypatch.setattr(d, "CancellationBarrier", lambda *_args, **_kwargs: case.barrier)
+    monkeypatch.setattr(d, "GuardedDocker", lambda _barrier: case.docker)
+    monkeypatch.setattr(d, "HTTP", lambda: case.http)
+
+    original_request = case.http.request
+    def timeout_health(method, url, **kwargs):
+        path = d.urllib.parse.urlsplit(url).path
+        if method == "GET" and path == "/health":
+            raise TimeoutError("fixture-private-persistent-timeout")
+        return original_request(method, url, **kwargs)
+
+    case.http.request = timeout_health
+    assert d.main([]) == 124
+    output = capsys.readouterr()
+    row = json.loads(output.err)
+    assert row["failure_stage"] == "restore"
+    assert row["failure_kind"] == "timeout"
+    assert row["exit_code"] == 124
+    assert row["failure_location"].startswith("dev_release_artifact_driver.py:")
+    assert "fixture-private" not in output.err
+
+
+
 
 
 
