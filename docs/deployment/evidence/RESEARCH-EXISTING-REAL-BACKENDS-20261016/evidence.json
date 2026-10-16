@@ -1,6 +1,6 @@
 {
   "task_id": "RESEARCH-EXISTING-REAL-BACKENDS-20261016",
-  "base_sha": "ab53a4bce36c641ec91147a24c130dfeb553e1cb",
+  "base_sha": "ab53a4bce2a0d30c81ab71eb0c8dcd2195bbe27c",
   "scoped_artifacts": [
     "services/research/runtime-requirements.txt",
     "dependencies/locks/services-research.txt",
@@ -36,7 +36,8 @@
       "exit_code": 0
     },
     "container_real_stage_tests": {
-      "command": "docker run --rm test-research-image pytest services/research/tests/test_research_orchestrator_http_service.py -k 'test_saved_model'",
+      "command": "docker run --rm test-research-image bash -c \"pip install pytest httpx > /dev/null 2>&1 && pytest -v services/research/tests/test_research_orchestrator_http_service.py -k 'test_saved_model'\"",
+      "step_reference": "native step 425 (step 423 recorded prior no-httpx collection error)",
       "output": "5 passed, 22 deselected, 11 warnings in 45.69s (0 skips, verified real vectorbt portfolio evaluation)",
       "exit_code": 0
     },
