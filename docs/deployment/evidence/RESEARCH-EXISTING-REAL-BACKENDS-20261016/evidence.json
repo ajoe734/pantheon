@@ -1,6 +1,6 @@
 {
   "task_id": "RESEARCH-EXISTING-REAL-BACKENDS-20261016",
-  "base_sha": "ab53a4bce2a0d30c81ab71eb0c8dcd2195bbe27c",
+  "base_sha": "725f5ae84c9d310fd29c387fdbc1e8aa4096623c",
   "scoped_artifacts": [
     "services/research/runtime-requirements.txt",
     "dependencies/locks/services-research.txt",
