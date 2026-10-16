@@ -884,10 +884,6 @@ class EvolutionProjectionPort:
             if "resolved_at" in meta and not d.get("resolved_at"):
                 d["resolved_at"] = meta["resolved_at"]
             projected = {**d, **DomainGovernancePort.project_evolution_decision(d)}
-            if "program_id" in meta and not projected.get("program_id"):
-                projected["program_id"] = meta["program_id"]
-            if "resolved_at" in meta and not projected.get("resolved_at"):
-                projected["resolved_at"] = meta["resolved_at"]
             items.append(projected)
 
         if action_type:

@@ -108,8 +108,9 @@ def test_evolution_readers_preserve_static_auth_and_tenant_contract(monkeypatch,
             storage_path=str(tmp_path / "decisions.json")
         ),
     )
-    evo_main.program_store = build_program_store(tmp_path / "programs.json")
-    monkeypatch.setattr(evo_main.program_service, "_store", evo_main.program_store)
+    program_store = build_program_store(tmp_path / "programs.json")
+    monkeypatch.setattr(evo_main, "program_store", program_store)
+    monkeypatch.setattr(evo_main.program_service, "_store", program_store)
     monkeypatch.setattr(
         evo_main,
         "dispatch_outbox",
@@ -370,8 +371,9 @@ def test_evolution_readers_preserve_static_auth_and_tenant_contract(monkeypatch,
     # 5. Owner 403 (unauthorized caller tenant) is not swallowed into fake empty []
     other_headers = {"Authorization": f"Bearer {_tok('tenant-other')}", "X-Tenant-Id": "tenant-other"}
     denied_resp = client.get("/api/v1/evolution-decisions", headers=other_headers)
-    assert denied_resp.status_code in (403, 500, 503)
-    assert denied_resp.status_code != 200
+    assert denied_resp.status_code == 403
+    assert denied_resp.json()["detail"]["error"]["code"] == "ACTION_UNAVAILABLE"
+    assert "tenant-other" in denied_resp.json()["detail"]["error"]["message"]
 
     token = authorization.set(f"Bearer {_tok('tenant-other')}")
     t_tok = selected_tenant.set("tenant-other")
@@ -386,8 +388,9 @@ def test_evolution_readers_preserve_static_auth_and_tenant_contract(monkeypatch,
     # 6. Owner 503 is not swallowed into fake empty []
     server_state["mode"] = "503"
     unavail_resp = client.get("/api/v1/evolution-decisions", headers=valid_headers)
-    assert unavail_resp.status_code in (500, 503)
-    assert unavail_resp.status_code != 200
+    assert unavail_resp.status_code == 503
+    assert unavail_resp.json()["detail"]["error"]["code"] == "ACTION_UNAVAILABLE"
+    assert "503" in unavail_resp.json()["detail"]["error"]["message"]
 
     token = authorization.set(f"Bearer {_tok('tenant-dev')}")
     t_tok = selected_tenant.set("tenant-dev")
