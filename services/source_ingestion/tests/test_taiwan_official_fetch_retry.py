@@ -199,3 +199,101 @@ def test_official_dataset_fetch_uses_the_retrying_reader(monkeypatch: pytest.Mon
 
     assert payload == json.loads(BODY)
     assert len(recorder.calls) == 2
+
+
+def test_direct_broken_pipe_then_complete_response_is_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    recorder = _install(
+        monkeypatch,
+        [
+            BrokenPipeError(32, "Broken pipe"),
+            _Response(BODY, declared=len(BODY)),
+        ],
+    )
+
+    assert _fetch() == json.loads(BODY)
+    assert len(recorder.calls) == 2
+    assert recorder.sleeps == [taiwan_official.OFFICIAL_FETCH_BACKOFF_SECONDS]
+
+
+def test_wrapped_broken_pipe_then_complete_response_is_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    recorder = _install(
+        monkeypatch,
+        [
+            urllib.error.URLError(BrokenPipeError(32, "Broken pipe")),
+            _Response(BODY, declared=len(BODY)),
+        ],
+    )
+
+    assert _fetch() == json.loads(BODY)
+    assert len(recorder.calls) == 2
+    assert recorder.sleeps == [taiwan_official.OFFICIAL_FETCH_BACKOFF_SECONDS]
+
+
+def test_persistent_direct_broken_pipe_fails_after_bounded_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
+    errors = [BrokenPipeError(32, "Broken pipe") for _ in range(OFFICIAL_FETCH_ATTEMPTS)]
+    recorder = _install(monkeypatch, errors)
+
+    with pytest.raises(SourceEvidenceError) as raised:
+        _fetch()
+
+    message = str(raised.value)
+    assert f"official endpoint https://www.tpex.org.tw/openapi/v1/x failed after {OFFICIAL_FETCH_ATTEMPTS} attempts" in message
+    for attempt in range(1, OFFICIAL_FETCH_ATTEMPTS + 1):
+        assert f"attempt {attempt}: BrokenPipeError" in message
+    assert len(recorder.calls) == OFFICIAL_FETCH_ATTEMPTS
+    assert len(recorder.sleeps) == OFFICIAL_FETCH_ATTEMPTS - 1
+
+
+def test_persistent_wrapped_broken_pipe_fails_after_bounded_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
+    errors = [urllib.error.URLError(BrokenPipeError(32, "Broken pipe")) for _ in range(OFFICIAL_FETCH_ATTEMPTS)]
+    recorder = _install(monkeypatch, errors)
+
+    with pytest.raises(SourceEvidenceError) as raised:
+        _fetch()
+
+    message = str(raised.value)
+    assert f"official endpoint https://www.tpex.org.tw/openapi/v1/x failed after {OFFICIAL_FETCH_ATTEMPTS} attempts" in message
+    for attempt in range(1, OFFICIAL_FETCH_ATTEMPTS + 1):
+        assert f"attempt {attempt}: URLError" in message
+    assert len(recorder.calls) == OFFICIAL_FETCH_ATTEMPTS
+    assert len(recorder.sleeps) == OFFICIAL_FETCH_ATTEMPTS - 1
+
+
+def test_unrelated_url_error_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    error = urllib.error.URLError(OSError("getaddrinfo failed"))
+    recorder = _install(monkeypatch, [error, _Response(BODY, declared=len(BODY))])
+
+    with pytest.raises(urllib.error.URLError) as exc_info:
+        _fetch()
+    assert not isinstance(getattr(exc_info.value, "reason", None), BrokenPipeError)
+    assert len(recorder.calls) == 1
+    assert len(recorder.sleeps) == 0
+
+
+def test_http_403_error_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    error = urllib.error.HTTPError("https://www.tpex.org.tw/openapi/v1/x", 403, "Forbidden", {}, None)
+    recorder = _install(monkeypatch, [error, _Response(BODY, declared=len(BODY))])
+
+    with pytest.raises(urllib.error.HTTPError):
+        _fetch()
+    assert len(recorder.calls) == 1
+    assert len(recorder.sleeps) == 0
+
+
+def test_egress_denial_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.external_egress import ExternalEgressBlocked
+
+    error = ExternalEgressBlocked(
+        url="https://www.tpex.org.tw/openapi/v1/x",
+        host="www.tpex.org.tw",
+        mode="test",
+        caller="source_ingest.taiwan_official",
+        reason_code="blocked",
+        detail="egress blocked",
+    )
+    recorder = _install(monkeypatch, [error, _Response(BODY, declared=len(BODY))])
+
+    with pytest.raises(ExternalEgressBlocked):
+        _fetch()
+    assert len(recorder.calls) == 1
+    assert len(recorder.sleeps) == 0
