@@ -52,7 +52,6 @@ from l12_owner_auth import approve_registry_entry, bearer, human_token, registry
 TASK_ID = "PFG-L12-RUNTIME-E2E-20260820"
 # The isolated harness runs the stack as the hosted dev tenant.
 TENANT_ID = os.getenv("PANTHEON_L12_TENANT_ID", "default").strip()
-EVOLUTION_TENANT_ID = "pantheon-default"
 PARENT_ARTIFACT_ID = "artifact-tw-session-momentum-v1"
 CANONICAL_LOOP_IDS = {
     "source_ingestion",
@@ -472,7 +471,7 @@ class RuntimeChain:
         }
         self.evolution_headers = {
             "Authorization": "Bearer pantheon-local-evolution-service",
-            "X-Tenant-Id": EVOLUTION_TENANT_ID,
+            "X-Tenant-Id": TENANT_ID,
         }
         self.bff_headers = _bff_bearer()
         self.source_ingest_headers = {
