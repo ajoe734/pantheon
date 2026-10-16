@@ -32,17 +32,17 @@
     {
       "suite": "scripts/test_issue_dev_paper_principals.py",
       "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest scripts/test_issue_dev_paper_principals.py",
-      "result": "41 passed in 7.54s"
+      "result": "41 passed in 7.60s"
     },
     {
       "suite": "scripts/test_dev_paper_principal_renewal.py",
       "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest scripts/test_dev_paper_principal_renewal.py",
-      "result": "19 passed in 5.32s"
+      "result": "19 passed in 6.12s"
     },
     {
       "suite": "services/research/alpha_replication/test_revalidation_worker.py",
       "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest services/research/alpha_replication/test_revalidation_worker.py",
-      "result": "23 passed, 13 warnings in 6.25s"
+      "result": "23 passed, 13 warnings in 6.58s"
     }
   ]
 }

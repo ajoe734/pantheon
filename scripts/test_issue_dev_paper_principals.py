@@ -322,7 +322,6 @@ def test_alpha_replication_worker_receives_training_principal_and_compose_mounts
     assert claims["tenant_id"] == "tenant-dev" and claims["allowed_tenants"] == ["tenant-dev"]
     assert claims["exp"] - claims["iat"] <= TTL_SECONDS
     assert values[training_var + "_FILE"] == "/run/pantheon-principals/" + training_var
-    assert values["ALPHA_REPLICATION_TRAINING_SERVICE_TOKEN_FILE"] == "/run/pantheon-principals/" + training_var
     compose = yaml.safe_load((root / "docker-compose.yml").read_text())
     worker = compose["services"]["alpha-replication-worker"]
     assert "dev-paper-alpha-replication-tokens:/run/pantheon-principals:ro" in worker["volumes"]
@@ -333,7 +332,7 @@ def test_alpha_replication_worker_receives_training_principal_and_compose_mounts
         "/run/pantheon-principals/" + training_var + "}"
     )
     assert training_var not in worker["environment"]  # no published fixture token
-    assert "ALPHA_REPLICATION_TRAINING_SERVICE_TOKEN" in worker["environment"]
+    assert "ALPHA_REPLICATION_TRAINING_SERVICE_TOKEN" not in worker["environment"]
     issuer_volumes = compose["services"]["dev-paper-principal-issuer"]["volumes"]
     assert "dev-paper-alpha-replication-tokens:/issued/alpha-replication-worker" in issuer_volumes
     assert "dev-paper-alpha-replication-tokens" in compose["volumes"]

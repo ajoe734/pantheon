@@ -149,9 +149,6 @@ def issue_environment(env: Mapping[str, str], *, now: int | None = None) -> dict
     for variables in CONSUMER_FILES.values():
         for variable in variables:
             values[variable + "_FILE"] = "/run/pantheon-principals/" + variable
-    values["ALPHA_REPLICATION_TRAINING_SERVICE_TOKEN_FILE"] = (
-        "/run/pantheon-principals/TRAINING_SESSION_WORKER_TOKEN"
-    )
     return values
 
 
@@ -165,10 +162,6 @@ def revoked_environment(env: Mapping[str, str]) -> dict[str, str]:
         for variable in variables:
             values[variable] = ""
             values[variable + "_FILE"] = "/run/pantheon-principals/" + variable
-    values["ALPHA_REPLICATION_TRAINING_SERVICE_TOKEN"] = ""
-    values["ALPHA_REPLICATION_TRAINING_SERVICE_TOKEN_FILE"] = (
-        "/run/pantheon-principals/TRAINING_SESSION_WORKER_TOKEN"
-    )
     return values
 
 
