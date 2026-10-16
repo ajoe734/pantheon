@@ -6101,16 +6101,6 @@ def _pm12_persona_league_rows(
     except Exception:
         all_league_entries = []
     active_store = _get_active_read_store()
-    raw_authoritative = (
-        active_store.list_authoritative_paper_runtime_monitoring_sessions()
-        if hasattr(active_store, "list_authoritative_paper_runtime_monitoring_sessions")
-        else []
-    )
-    all_authoritative_sessions = [
-        record
-        for record in (raw_authoritative or [])
-        if isinstance(record, dict)
-    ]
 
     sessions_by_persona: Optional[Dict[str, List[Dict[str, Any]]]] = None
     clean_tenant = str(tenant_id or "").strip()
@@ -6185,7 +6175,6 @@ def _pm12_persona_league_rows(
             runtime_bindings=all_runtimes,
             persona_bindings=persona_bindings,
             persona_sessions=persona_sessions,
-            authoritative_sessions=all_authoritative_sessions,
             include_route_policy=include_route_policy,
             include_health=include_health,
             include_allowed_actions=include_allowed_actions,
@@ -6227,7 +6216,6 @@ def _pm12_persona_league_rows(
                 runtimes=list(runtime_candidates.values()),
                 persona=raw,
                 league_entry=league_by_persona.get(persona_id, {}),
-                authoritative_sessions=all_authoritative_sessions,
                 persona_sessions=persona_sessions,
             )
         )

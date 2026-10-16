@@ -1199,9 +1199,6 @@ def test_pm12_quarterly_ranking_read_fanout_reduction_and_parity() -> None:
         assert store.calls["get_sessions_for_persona"] == 1, (
             f"Expected 1 bulk session prefetch call, got {store.calls['get_sessions_for_persona']}"
         )
-        assert store.calls["list_authoritative_paper_runtime_monitoring_sessions"] == 1, (
-            f"Expected 1 authoritative monitoring prefetch call, got {store.calls['list_authoritative_paper_runtime_monitoring_sessions']}"
-        )
 
         # Integrity of ranking output: real scores, rank ordering, exclusions preserved
         prev_score = float("inf")
@@ -1309,8 +1306,9 @@ def test_pm12_quarterly_ranking_read_fanout_reduction_and_parity() -> None:
         assert page_body["page_info"]["total"] == persona_count
         assert page_body["page_info"]["next_page_token"] is not None
 
-        # 5. Tenant Boundary Isolation:
+        # 5. Tenant Boundary Isolation & Evaluator Read Contract:
         # Cross-tenant caller cannot see tenant personas or leak private state
+        store.reset_counts()
         alien_resp = client.get(
             "/bff/management/quarterly-ranking",
             headers={"Authorization": "Bearer op-alien:operator,reviewer:alien-tenant-999"},
@@ -1319,4 +1317,26 @@ def test_pm12_quarterly_ranking_read_fanout_reduction_and_parity() -> None:
         assert alien_resp.status_code == 200, alien_resp.text
         assert alien_resp.json()["data"]["summary"]["ranking_universe_count"] == 0
         assert len(alien_resp.json()["data"]["items"]) == 0
+        assert store.calls["list_authoritative_paper_runtime_monitoring_sessions"] == 0
+
+        # Original tenant-visible boundary: evaluator principal has 0 unnecessary monitoring reads,
+        # GET ranking remains 200, and denied write remains 403.
+        store.reset_counts()
+        evaluator_headers = {"Authorization": "Bearer evaluator-token:viewer:tenant-dev"}
+        eval_resp = client.get(
+            "/bff/management/quarterly-ranking",
+            headers=evaluator_headers,
+            params={"quarter": "2026-Q1"},
+        )
+        assert eval_resp.status_code == 200, eval_resp.text
+        assert eval_resp.json()["data"]["summary"]["ranking_universe_count"] == 0
+        assert len(eval_resp.json()["data"]["items"]) == 0
+        assert store.calls["list_authoritative_paper_runtime_monitoring_sessions"] == 0
+
+        denied = client.post(
+            "/bff/management/quarterly-ranking/recommendations/r1/submit",
+            headers={**evaluator_headers, "Idempotency-Key": "evaluator-denied"},
+            json={"quarter": "2026-Q1"},
+        )
+        assert denied.status_code == 403
 
