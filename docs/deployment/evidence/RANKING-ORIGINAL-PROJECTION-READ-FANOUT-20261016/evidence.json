@@ -1,6 +1,6 @@
 {
   "task_id": "RANKING-ORIGINAL-PROJECTION-READ-FANOUT-20261016",
-  "base_sha": "3973c3d2221251f6e3db2019832424d98b6539bf",
+  "base_sha": "d26c42d92980818415cb28d302775887e0fa9739",
   "change_class": "functional",
   "work_class": "performance_optimization",
   "summary": "Remove unused rich Persona reads (route policy, health, allowed actions) from the existing quarterly ranking projection path while reusing pre-fetched runtime bindings and bulk sessions, eliminating unnecessary fanout reads on the fresh full-universe ranking path, treating empty bulk sessions [] as authoritative request-local prefetch without per-persona rereads, removing the unnecessary upfront global monitoring prefetch layer, consulting canonical monitoring authority only for actual tenant-visible paper needs through existing projection/enrichment composition, preserving tenant admission and the original 200 evaluator read contract, preserving required authoritative monitoring owner errors as HTTP 503, and preserving full rich UI summaries for all other consumers.",
