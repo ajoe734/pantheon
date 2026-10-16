@@ -171,7 +171,6 @@ def test_deploy_and_compose_connect_authorized_environment_without_embedded_toke
     assert "DISTILLATION_REGISTRY_SERVICE_TOKEN_FILE" in compose["strategy-distillation-worker"]["environment"]
     assert "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN" in compose["alpha-replication-worker"]["environment"]
     assert "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN_FILE" in compose["alpha-replication-worker"]["environment"]
-    assert "ALPHA_REPLICATION_TRAINING_SERVICE_TOKEN_FILE" in compose["alpha-replication-worker"]["environment"]
     assert "TRAINING_SESSION_WORKER_TOKEN_FILE" in compose["alpha-replication-worker"]["environment"]
     assert "RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN" in compose["runtime-manager"]["environment"]
     assert "RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN_FILE" in compose["runtime-manager"]["environment"]
@@ -325,14 +324,12 @@ def test_alpha_replication_worker_receives_training_principal_and_compose_mounts
     compose = yaml.safe_load((root / "docker-compose.yml").read_text())
     worker = compose["services"]["alpha-replication-worker"]
     assert "dev-paper-alpha-replication-tokens:/run/pantheon-principals:ro" in worker["volumes"]
-    assert worker["environment"]["ALPHA_REPLICATION_TRAINING_SERVICE_TOKEN_FILE"].endswith(
-        "/run/pantheon-principals/" + training_var + "}"
-    )
     assert worker["environment"]["TRAINING_SESSION_WORKER_TOKEN_FILE"].endswith(
         "/run/pantheon-principals/" + training_var + "}"
     )
     assert training_var not in worker["environment"]  # no published fixture token
     assert "ALPHA_REPLICATION_TRAINING_SERVICE_TOKEN" not in worker["environment"]
+    assert "ALPHA_REPLICATION_TRAINING_SERVICE_TOKEN_FILE" not in worker["environment"]
     issuer_volumes = compose["services"]["dev-paper-principal-issuer"]["volumes"]
     assert "dev-paper-alpha-replication-tokens:/issued/alpha-replication-worker" in issuer_volumes
     assert "dev-paper-alpha-replication-tokens" in compose["volumes"]

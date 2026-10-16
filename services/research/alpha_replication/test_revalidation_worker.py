@@ -993,8 +993,14 @@ def test_alpha_teaching_invocation_with_real_training_inbound_and_issued_princip
     token_file = tmp_path / "TRAINING_SESSION_WORKER_TOKEN"
     token_file.write_text(token, encoding="utf-8")
     token_file.chmod(0o600)
+    monkeypatch.delenv(
+        "ALPHA_REPLICATION_TRAINING_SERVICE_TOKEN_FILE", raising=False
+    )
+    monkeypatch.delenv(
+        "ALPHA_REPLICATION_TRAINING_SERVICE_TOKEN", raising=False
+    )
     monkeypatch.setenv(
-        "ALPHA_REPLICATION_TRAINING_SERVICE_TOKEN_FILE", str(token_file)
+        "TRAINING_SESSION_WORKER_TOKEN_FILE", str(token_file)
     )
 
     # 4. Wire urlopen adapter that forwards real urllib requests to TestClient(training_mod.app)
@@ -1123,8 +1129,14 @@ def test_alpha_teaching_invocation_with_real_training_inbound_and_issued_princip
     assert "missing Bearer token" in str(exc_info.value)
 
     # c. Foreign tenant is rejected with HTTP 403
+    monkeypatch.delenv(
+        "ALPHA_REPLICATION_TRAINING_SERVICE_TOKEN_FILE", raising=False
+    )
+    monkeypatch.delenv(
+        "ALPHA_REPLICATION_TRAINING_SERVICE_TOKEN", raising=False
+    )
     monkeypatch.setenv(
-        "ALPHA_REPLICATION_TRAINING_SERVICE_TOKEN_FILE", str(token_file)
+        "TRAINING_SESSION_WORKER_TOKEN_FILE", str(token_file)
     )
     with pytest.raises(RevalidationAttemptError) as exc_info:
         worker._post_teaching_session(
