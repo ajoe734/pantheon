@@ -1015,17 +1015,36 @@ def create_evolution_router(
                     "threshold_snapshots",
                 )
             ):
-                proj = {
-                    "decision_id": dec_id,
-                    "target_type": dec.get("target_type") or "artifact",
-                    "target_id": dec.get("target_id") or dec.get("artifact_id"),
-                    "target_version": dec.get("target_version") or dec.get("artifact_version"),
-                    "action_type": dec.get("action_type") or "mutation",
-                    "decision_state": dec.get("status") or dec.get("decision_state") or "pending",
-                    "risk_level": dec.get("risk_level") or "low",
-                    "created_at": dec.get("created_at") or snapshot_at,
-                    "proposed_changes": dec.get("proposed_changes") or {},
-                }
+                if mutation_review_projection is not None:
+                    proposed_changes = dict(dec.get("proposed_changes") or {})
+                    if "summary" not in proposed_changes:
+                        proposed_changes["summary"] = dec.get("rationale") or dec.get("notes") or ""
+                    proj = {
+                        "decision_id": dec_id,
+                        "target_type": dec.get("target_type"),
+                        "target_id": dec.get("target_id") or dec.get("artifact_id"),
+                        "target_version": dec.get("target_version"),
+                        "action_type": dec.get("action_type"),
+                        "decision_state": dec.get("decision_state") or dec.get("status"),
+                        "risk_level": dec.get("risk_level"),
+                        "created_at": dec.get("created_at") or snapshot_at,
+                        "proposed_changes": proposed_changes,
+                        "approval_decision_id": dec.get("approval_decision_id"),
+                        "linked_incident_id": dec.get("linked_incident_id"),
+                        "linked_postmortem_id": dec.get("linked_postmortem_id"),
+                    }
+                else:
+                    proj = {
+                        "decision_id": dec_id,
+                        "target_type": dec.get("target_type") or "artifact",
+                        "target_id": dec.get("target_id") or dec.get("artifact_id"),
+                        "target_version": dec.get("target_version") or dec.get("artifact_version"),
+                        "action_type": dec.get("action_type") or "mutation",
+                        "decision_state": dec.get("status") or dec.get("decision_state") or "pending",
+                        "risk_level": dec.get("risk_level") or "low",
+                        "created_at": dec.get("created_at") or snapshot_at,
+                        "proposed_changes": dec.get("proposed_changes") or {},
+                    }
                 for field in ("metadata", "provenance", "origin"):
                     if field in dec:
                         proj[field] = dec[field]
