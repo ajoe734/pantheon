@@ -960,6 +960,11 @@ def _binding_retired(binding: dict[str, Any] | None, observed_at: str | None) ->
     return observed is None or observed > retired_at
 
 
+def _binding_status_retired(binding: dict[str, Any] | None) -> bool:
+    """Authoritative retirement status, independent of any event time (record cleanup)."""
+    return bool(binding) and str(binding.get("status") or "").strip().lower() == "retired"
+
+
 def _lookup_runtime_binding(binding_id: str, *, timeout_seconds: float = 5.0) -> dict[str, Any] | None:
     """Read one RuntimeBinding from runtime-manager; None when it is not configured."""
     if not os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip():
@@ -1066,7 +1071,7 @@ def run_runtime_summary_consumer_once(
             if not binding_id:
                 continue
             binding, usable = lookup_binding(binding_id)
-            if usable and _binding_retired(binding, event.get("created_at")):
+            if usable and _binding_status_retired(binding):
                 del bucket[key]
                 purged_retired.append(
                     {"binding_id": binding_id, "event_id": event.get("event_id"), "from": bucket_name}

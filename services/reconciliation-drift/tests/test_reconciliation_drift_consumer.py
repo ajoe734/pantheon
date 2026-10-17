@@ -538,8 +538,10 @@ def _dead_letter_record(binding_id: str, event_id: str) -> dict[str, object]:
 def test_retired_binding_dead_letters_and_pending_are_purged_once_per_binding() -> None:
     consumer = _load_consumer_module()
     bindings = {
-        "b-retired": {"status": "retired"},
+        # real runtime-manager shape: retired_at is AFTER the records' created_at (pre-retirement events)
+        "b-retired": {"status": "retired", "retired_at": "2026-10-11T00:00:00Z"},
         "b-paused": {"status": "paused"},
+        "b-active": {"status": "active"},
         "b-fail": RuntimeError("down"),
     }
     calls: list[str] = []
@@ -558,6 +560,7 @@ def test_retired_binding_dead_letters_and_pending_are_purged_once_per_binding() 
         state.dead_letters["k2"] = _dead_letter_record("b-retired", "e2")
         state.dead_letters["k3"] = _dead_letter_record("b-paused", "e3")
         state.pending["k4"] = _dead_letter_record("b-retired", "e4")
+        state.dead_letters["k5"] = _dead_letter_record("b-active", "e5")
         path.write_text(json.dumps({"version": consumer.CONSUMER_STATE_VERSION, "pending": state.pending, "dead_letters": state.dead_letters, "completed": {}}), encoding="utf-8")
         state.reload()
         with mock.patch.object(consumer, "fetch_runtime_summaries", return_value=[]), mock.patch.object(
@@ -568,7 +571,7 @@ def test_retired_binding_dead_letters_and_pending_are_purged_once_per_binding() 
     assert result["retired_purged_count"] == 3
     assert result["retired_purged_binding_ids"] == ["b-retired"]
     assert sorted(item["from"] for item in result["retired_purged"]) == ["dead_letter", "dead_letter", "pending"]
-    assert list(state.dead_letters) == ["k3"]
+    assert sorted(state.dead_letters) == ["k3", "k5"]
     assert saved["last_retired_purge"]["binding_ids"] == ["b-retired"]
     assert saved["last_retired_purge"]["count"] == 3
     assert calls.count("b-retired") == 1
