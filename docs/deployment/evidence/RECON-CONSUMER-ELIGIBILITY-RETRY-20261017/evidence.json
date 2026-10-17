@@ -1,0 +1,18 @@
+{
+  "task_id": "RECON-CONSUMER-ELIGIBILITY-RETRY-20261017",
+  "validation": {
+    "command": "pytest services/reconciliation-drift/tests/test_reconciliation_drift_consumer.py -q",
+    "head_result": "17 passed",
+    "base_result_with_new_tests": "6 failed, 11 passed (all six new tests fail on base consumer.py)"
+  },
+  "changes": [
+    "trace-less summaries and summaries whose runtime-manager binding is retired are counted ineligible, not invalid",
+    "TransientDeliveryError (URLError/OSError/timeout/502-504/lease active) stays pending with exponential backoff (30s..900s), dead-lettered only after 24h",
+    "completed set trimmed by completed_at, current-summary keys protected",
+    "last_success_at recorded for a pass with delivery or nothing pending and no new failure, regardless of old dead letters"
+  ],
+  "notes": [
+    "Retirement rule mirrors main._binding_retired_before; main imports consumer so it cannot be imported here without a cycle. main.py and scheduler unchanged.",
+    "Existing dead letters untouched; no hosted state written."
+  ]
+}
