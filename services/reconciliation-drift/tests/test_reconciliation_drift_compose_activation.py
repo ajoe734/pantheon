@@ -224,3 +224,12 @@ def test_reconciliation_drift_compose_environment_builds_postgres_store_and_fail
         ):
             store_mod.build_reconciliation_drift_store(tmp_path)
 
+
+
+def test_compose_consumer_reaches_runtime_manager_for_retired_binding_filter() -> None:
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    env = compose["services"]["reconciliation-drift-consumer"]["environment"]
+    drift_env = compose["services"]["reconciliation-drift-svc"]["environment"]
+    assert env["PANTHEON_RUNTIME_MANAGER_URL"] == "http://runtime-manager:8081"
+    assert env["PANTHEON_RUNTIME_MANAGER_URL"] == drift_env["PANTHEON_RUNTIME_MANAGER_URL"]
+    assert env["PANTHEON_RUNTIME_MANAGER_TOKEN"] == "runtime-control-internal"

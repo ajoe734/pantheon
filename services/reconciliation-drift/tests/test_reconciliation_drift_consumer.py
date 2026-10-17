@@ -526,6 +526,73 @@ def test_retired_binding_summary_is_ineligible(monkeypatch) -> None:
     post.assert_not_called()
 
 
+def _dead_letter_record(binding_id: str, event_id: str) -> dict[str, object]:
+    return {
+        "event": {"event_id": event_id, "binding_id": binding_id, "created_at": "2026-10-10T00:00:00Z"},
+        "attempt_count": 3,
+        "first_seen_at": "2026-10-10T00:00:00Z",
+        "last_error": "boom",
+    }
+
+
+def test_retired_binding_dead_letters_and_pending_are_purged_once_per_binding() -> None:
+    consumer = _load_consumer_module()
+    bindings = {
+        # real runtime-manager shape: retired_at is AFTER the records' created_at (pre-retirement events)
+        "b-retired": {"status": "retired", "retired_at": "2026-10-11T00:00:00Z"},
+        "b-paused": {"status": "paused"},
+        "b-active": {"status": "active"},
+        "b-fail": RuntimeError("down"),
+    }
+    calls: list[str] = []
+
+    def lookup(binding_id, **_kw):
+        calls.append(binding_id)
+        result = bindings[binding_id]
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        path = Path(data_dir) / "state.json"
+        state = consumer.ConsumerWorkerState(path)
+        state.dead_letters["k1"] = _dead_letter_record("b-retired", "e1")
+        state.dead_letters["k2"] = _dead_letter_record("b-retired", "e2")
+        state.dead_letters["k3"] = _dead_letter_record("b-paused", "e3")
+        state.pending["k4"] = _dead_letter_record("b-retired", "e4")
+        state.dead_letters["k5"] = _dead_letter_record("b-active", "e5")
+        path.write_text(json.dumps({"version": consumer.CONSUMER_STATE_VERSION, "pending": state.pending, "dead_letters": state.dead_letters, "completed": {}}), encoding="utf-8")
+        state.reload()
+        with mock.patch.object(consumer, "fetch_runtime_summaries", return_value=[]), mock.patch.object(
+            consumer, "_lookup_runtime_binding", side_effect=lookup
+        ), mock.patch.object(consumer, "post_events", return_value={}):
+            result = _run_once(consumer, state, datetime(2026, 10, 17, 1, 0, tzinfo=timezone.utc))
+        saved = json.loads(path.read_text(encoding="utf-8"))
+    assert result["retired_purged_count"] == 3
+    assert result["retired_purged_binding_ids"] == ["b-retired"]
+    assert sorted(item["from"] for item in result["retired_purged"]) == ["dead_letter", "dead_letter", "pending"]
+    assert sorted(state.dead_letters) == ["k3", "k5"]
+    assert saved["last_retired_purge"]["binding_ids"] == ["b-retired"]
+    assert saved["last_retired_purge"]["count"] == 3
+    assert calls.count("b-retired") == 1
+    assert calls.count("b-paused") == 1
+
+
+def test_lookup_failure_keeps_dead_letters_and_stops_lookups() -> None:
+    consumer = _load_consumer_module()
+    with tempfile.TemporaryDirectory() as data_dir:
+        state = consumer.ConsumerWorkerState(Path(data_dir) / "state.json")
+        state.dead_letters["k1"] = _dead_letter_record("b1", "e1")
+        state.dead_letters["k2"] = _dead_letter_record("b2", "e2")
+        with mock.patch.object(consumer, "fetch_runtime_summaries", return_value=[]), mock.patch.object(
+            consumer, "_lookup_runtime_binding", side_effect=RuntimeError("down")
+        ) as lookup, mock.patch.object(consumer, "post_events", return_value={}):
+            result = _run_once(consumer, state, datetime(2026, 10, 17, 1, 0, tzinfo=timezone.utc))
+    assert result["retired_purged_count"] == 0
+    assert set(state.dead_letters) == {"k1", "k2"}
+    assert lookup.call_count == 1
+
+
 def test_dns_failure_stays_pending_then_recovers_with_backoff() -> None:
     consumer = _load_consumer_module()
     err = consumer.TransientDeliveryError(
