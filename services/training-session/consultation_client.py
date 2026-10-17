@@ -172,6 +172,11 @@ class TrainingConsultationClient:
         if not isinstance(ack, dict):
             raise ConsultationClientError(f"consultation request {request_id} not found on readback")
 
+        if ack.get("request_id") != request_id:
+            raise ConsultationClientError(
+                f"consultation request id {ack.get('request_id')} does not match {request_id}"
+            )
+
         ack_status = str(ack.get("status") or "")
         if ack_status not in ("submitted", "assigned", "in_progress", "memo_pending", "published"):
             raise ConsultationClientError(f"consultation request status {ack_status} is not acknowledged")

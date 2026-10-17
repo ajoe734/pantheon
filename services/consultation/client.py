@@ -50,7 +50,7 @@ class ConsultationServiceClient:
             else os.getenv("PANTHEON_CONSULTATION_API_TIMEOUT_SECONDS", "10")
         )
         self._token = token.strip() if token is not None else (os.getenv("CONSULTATION_SERVICE_TOKEN") or os.getenv("CONSULTATION_API_TOKEN") or "").strip()
-        self._service_actor = (service_actor or os.getenv("CONSULTATION_SERVICE_ACTOR") or os.getenv("PANTHEON_SERVICE_ACTOR") or "training-session").strip()
+        self._service_actor = (service_actor or os.getenv("CONSULTATION_SERVICE_ACTOR") or os.getenv("PANTHEON_SERVICE_ACTOR") or "").strip()
         self._tenant_id = (tenant_id or os.getenv("PANTHEON_TENANT_ID") or "").strip()
 
     @classmethod
@@ -211,21 +211,21 @@ class ConsultationServiceClient:
         if payload is not None:
             body = json.dumps(payload).encode("utf-8")
             headers["Content-Type"] = "application/json"
-        effective_tenant = tenant_id or self._tenant_id
-        if effective_tenant:
-            headers["X-Pantheon-Tenant-Id"] = effective_tenant
-        effective_token = token or self._token
-        if effective_token:
-            headers["Authorization"] = f"Bearer {effective_token}"
-        effective_actor = service_actor or self._service_actor
-        if effective_actor:
-            headers["X-Pantheon-Service-Actor"] = effective_actor
         request = urllib.request.Request(
             f"{self._base_url}/{path.lstrip('/')}",
             data=body,
             headers=headers,
             method=method,
         )
+        effective_tenant = tenant_id or self._tenant_id
+        if effective_tenant:
+            request.add_unredirected_header("X-Pantheon-Tenant-Id", effective_tenant)
+        effective_token = token or self._token
+        if effective_token:
+            request.add_unredirected_header("Authorization", f"Bearer {effective_token}")
+        effective_actor = service_actor or self._service_actor
+        if effective_actor:
+            request.add_unredirected_header("X-Pantheon-Service-Actor", effective_actor)
         try:
             with urllib.request.urlopen(request, timeout=self._timeout_seconds) as response:
                 text = response.read().decode("utf-8").strip()

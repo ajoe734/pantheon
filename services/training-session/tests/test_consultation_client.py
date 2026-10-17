@@ -214,6 +214,210 @@ class TestTrainingConsultationClient(unittest.TestCase):
             )
         self.assertIn("unavailable", str(ctx.exception))
 
+    def test_readback_wrong_request_id_raises_error(self):
+        client = TrainingConsultationClient(
+            base_url=self._base_url,
+            token="test-service-token-secret",
+            service_actor="training-session",
+        )
+        from unittest import mock
+        from services.consultation.client import ConsultationServiceClient
+        orig_get = ConsultationServiceClient.get_request
+
+        def mock_wrong_id(self_client, req_id, **kwargs):
+            res = orig_get(self_client, req_id, **kwargs)
+            if res:
+                corrupted = dict(res)
+                corrupted["request_id"] = "wrong-owner-response-ID"
+                return corrupted
+            return res
+
+        with mock.patch.object(ConsultationServiceClient, "get_request", mock_wrong_id):
+            with self.assertRaises(ConsultationClientError) as ctx:
+                client.create_teaching_consult_request(
+                    session_id="trn-20260813-c4-001",
+                    tenant_id="tenant-alpha",
+                    persona_id="persona-beta",
+                    eval_id="teval-c4-001",
+                    validation_errors=["sharpe_ratio_below_threshold"],
+                    metrics={"total_return": -0.1},
+                    trace_id="trace-test-wrong-id",
+                )
+            self.assertIn("does not match", str(ctx.exception))
+
+    def test_readback_wrong_tenant_raises_error(self):
+        client = TrainingConsultationClient(
+            base_url=self._base_url,
+            token="test-service-token-secret",
+            service_actor="training-session",
+        )
+        from unittest import mock
+        from services.consultation.client import ConsultationServiceClient
+        orig_get = ConsultationServiceClient.get_request
+
+        def mock_wrong_tenant(self_client, req_id, **kwargs):
+            res = orig_get(self_client, req_id, **kwargs)
+            if res:
+                corrupted = dict(res)
+                corrupted["tenant_id"] = "wrong-tenant-id"
+                return corrupted
+            return res
+
+        with mock.patch.object(ConsultationServiceClient, "get_request", mock_wrong_tenant):
+            with self.assertRaises(ConsultationClientError) as ctx:
+                client.create_teaching_consult_request(
+                    session_id="trn-20260813-c4-002",
+                    tenant_id="tenant-alpha",
+                    persona_id="persona-beta",
+                    eval_id="teval-c4-002",
+                    validation_errors=["sharpe_ratio_below_threshold"],
+                    metrics={"total_return": -0.1},
+                    trace_id="trace-test-wrong-tenant",
+                )
+            self.assertIn("does not match", str(ctx.exception))
+
+    def test_readback_wrong_target_raises_error(self):
+        client = TrainingConsultationClient(
+            base_url=self._base_url,
+            token="test-service-token-secret",
+            service_actor="training-session",
+        )
+        from unittest import mock
+        from services.consultation.client import ConsultationServiceClient
+        orig_get = ConsultationServiceClient.get_request
+
+        def mock_wrong_target(self_client, req_id, **kwargs):
+            res = orig_get(self_client, req_id, **kwargs)
+            if res:
+                corrupted = dict(res)
+                corrupted["target_id"] = "different-session-id"
+                return corrupted
+            return res
+
+        with mock.patch.object(ConsultationServiceClient, "get_request", mock_wrong_target):
+            with self.assertRaises(ConsultationClientError) as ctx:
+                client.create_teaching_consult_request(
+                    session_id="trn-20260813-c4-003",
+                    tenant_id="tenant-alpha",
+                    persona_id="persona-beta",
+                    eval_id="teval-c4-003",
+                    validation_errors=["sharpe_ratio_below_threshold"],
+                    metrics={"total_return": -0.1},
+                    trace_id="trace-test-wrong-target",
+                )
+            self.assertIn("target does not match", str(ctx.exception))
+
+    def test_readback_wrong_eval_id_raises_error(self):
+        client = TrainingConsultationClient(
+            base_url=self._base_url,
+            token="test-service-token-secret",
+            service_actor="training-session",
+        )
+        from unittest import mock
+        from services.consultation.client import ConsultationServiceClient
+        orig_get = ConsultationServiceClient.get_request
+
+        def mock_wrong_eval(self_client, req_id, **kwargs):
+            res = orig_get(self_client, req_id, **kwargs)
+            if res:
+                corrupted = dict(res)
+                meta = dict(corrupted.get("metadata") or {})
+                meta["eval_id"] = "different-eval-id"
+                corrupted["metadata"] = meta
+                return corrupted
+            return res
+
+        with mock.patch.object(ConsultationServiceClient, "get_request", mock_wrong_eval):
+            with self.assertRaises(ConsultationClientError) as ctx:
+                client.create_teaching_consult_request(
+                    session_id="trn-20260813-c4-004",
+                    tenant_id="tenant-alpha",
+                    persona_id="persona-beta",
+                    eval_id="teval-c4-004",
+                    validation_errors=["sharpe_ratio_below_threshold"],
+                    metrics={"total_return": -0.1},
+                    trace_id="trace-test-wrong-eval",
+                )
+            self.assertIn("metadata eval_id does not match", str(ctx.exception))
+
+    def test_submit_failure_raises_error(self):
+        client = TrainingConsultationClient(
+            base_url=self._base_url,
+            token="test-service-token-secret",
+            service_actor="training-session",
+        )
+        from unittest import mock
+        from services.consultation.client import ConsultationServiceClient
+
+        def mock_fail_submit(self_client, req_id, **kwargs):
+            raise ConsultationClientError("simulated submit failure", status_code=500)
+
+        with mock.patch.object(ConsultationServiceClient, "submit_request", mock_fail_submit):
+            with self.assertRaises(ConsultationClientError) as ctx:
+                client.create_teaching_consult_request(
+                    session_id="trn-20260813-c4-005",
+                    tenant_id="tenant-alpha",
+                    persona_id="persona-beta",
+                    eval_id="teval-c4-005",
+                    validation_errors=["sharpe_ratio_below_threshold"],
+                    metrics={"total_return": -0.1},
+                    trace_id="trace-test-submit-fail",
+                )
+            self.assertEqual(ctx.exception.status_code, 500)
+
+    def test_readback_not_found_raises_error(self):
+        client = TrainingConsultationClient(
+            base_url=self._base_url,
+            token="test-service-token-secret",
+            service_actor="training-session",
+        )
+        from unittest import mock
+        from services.consultation.client import ConsultationServiceClient
+
+        with mock.patch.object(ConsultationServiceClient, "get_request", return_value=None):
+            with self.assertRaises(ConsultationClientError) as ctx:
+                client.create_teaching_consult_request(
+                    session_id="trn-20260813-c4-006",
+                    tenant_id="tenant-alpha",
+                    persona_id="persona-beta",
+                    eval_id="teval-c4-006",
+                    validation_errors=["sharpe_ratio_below_threshold"],
+                    metrics={"total_return": -0.1},
+                    trace_id="trace-test-readback-none",
+                )
+            self.assertIn("not found on readback", str(ctx.exception))
+
+    def test_readback_unacknowledged_status_raises_error(self):
+        client = TrainingConsultationClient(
+            base_url=self._base_url,
+            token="test-service-token-secret",
+            service_actor="training-session",
+        )
+        from unittest import mock
+        from services.consultation.client import ConsultationServiceClient
+        orig_get = ConsultationServiceClient.get_request
+
+        def mock_draft_status(self_client, req_id, **kwargs):
+            res = orig_get(self_client, req_id, **kwargs)
+            if res:
+                corrupted = dict(res)
+                corrupted["status"] = "draft"
+                return corrupted
+            return res
+
+        with mock.patch.object(ConsultationServiceClient, "get_request", mock_draft_status):
+            with self.assertRaises(ConsultationClientError) as ctx:
+                client.create_teaching_consult_request(
+                    session_id="trn-20260813-c4-007",
+                    tenant_id="tenant-alpha",
+                    persona_id="persona-beta",
+                    eval_id="teval-c4-007",
+                    validation_errors=["sharpe_ratio_below_threshold"],
+                    metrics={"total_return": -0.1},
+                    trace_id="trace-test-unack-status",
+                )
+            self.assertIn("is not acknowledged", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

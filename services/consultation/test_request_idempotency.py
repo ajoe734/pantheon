@@ -239,7 +239,56 @@ def test_consultation_client_request_json_sets_exact_headers() -> None:
 
         req = mock_urlopen.call_args[0][0]
         assert isinstance(req, urllib.request.Request)
-        assert req.headers.get("Authorization") == "Bearer machine-bearer-token"
-        assert req.headers.get("X-pantheon-tenant-id") == "tenant-override"
-        assert req.headers.get("X-pantheon-service-actor") == "training-session"
+        assert req.get_header("Authorization") == "Bearer machine-bearer-token"
+        assert req.get_header("X-pantheon-tenant-id") == "tenant-override"
+        assert req.get_header("X-pantheon-service-actor") == "training-session"
+
+
+def test_consultation_client_default_service_actor_is_generic() -> None:
+    import os
+    import urllib.request
+    with mock.patch.dict(os.environ, {}, clear=True):
+        client = ConsultationServiceClient(
+            base_url="http://127.0.0.1:8096",
+            token="test-token",
+            tenant_id="tenant-alpha",
+        )
+        assert client._service_actor == ""
+
+        with mock.patch("urllib.request.urlopen") as mock_urlopen:
+            mock_resp = mock.MagicMock()
+            mock_resp.read.return_value = b'{"status": "ok"}'
+            mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+            client.get_request("cr-002")
+            req = mock_urlopen.call_args[0][0]
+            assert req.get_header("X-pantheon-service-actor") is None
+
+
+def test_consultation_client_unredirected_headers_not_forwarded_on_redirect() -> None:
+    import urllib.request
+    client = ConsultationServiceClient(
+        base_url="http://127.0.0.1:8096",
+        token="secret-token",
+        service_actor="training-session",
+        tenant_id="tenant-alpha",
+    )
+    with mock.patch("urllib.request.urlopen") as mock_urlopen:
+        mock_resp = mock.MagicMock()
+        mock_resp.read.return_value = b'{"status": "ok"}'
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        client.get_request("cr-003")
+        req = mock_urlopen.call_args[0][0]
+
+        handler = urllib.request.HTTPRedirectHandler()
+        redirected = handler.redirect_request(
+            req, None, 302, "Found", {}, "http://cross-origin.example.com/api"
+        )
+        assert redirected is not None
+        redirected_headers = dict(redirected.header_items())
+        assert "Authorization" not in redirected_headers
+        assert "X-pantheon-tenant-id" not in redirected_headers
+        assert "X-pantheon-service-actor" not in redirected_headers
+
 
