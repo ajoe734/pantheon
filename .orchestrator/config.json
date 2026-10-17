@@ -486,13 +486,13 @@
       "antigravity": {
         "cli": ".orchestrator/bin/agy",
         "include_directories": true,
-        "model": "gemini-3.8-flash-high",
+        "model": "gemini-4-argon-high",
         "output_format": "stream-json",
         "print_timeout": "2h"
       },
       "model_rotation": {
         "enabled": true,
-        "primary": "gemini-3.8-flash-high",
+        "primary": "gemini-4-argon-high",
         "fallback": "claude-sonnet-4-6",
         "cooldown_seconds": 900
       },
@@ -523,13 +523,13 @@
           "PANTHEON_HOST_HOME": "~"
         },
         "include_directories": true,
-        "model": "gemini-3.8-flash-high",
+        "model": "gemini-4-argon-high",
         "output_format": "stream-json",
         "print_timeout": "2h"
       },
       "model_rotation": {
         "enabled": true,
-        "primary": "gemini-3.8-flash-high",
+        "primary": "gemini-4-argon-high",
         "fallback": "claude-sonnet-4-6",
         "cooldown_seconds": 900
       },
