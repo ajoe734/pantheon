@@ -1,0 +1,10 @@
+{
+  "task_id": "RECON-CONSUMER-RETIRED-DLQ-20261017",
+  "date": "2026-10-17",
+  "changes": [
+    "docker-compose.yml: reconciliation-drift-consumer gets PANTHEON_RUNTIME_MANAGER_URL and PANTHEON_RUNTIME_MANAGER_TOKEN",
+    "consumer.py: each pass purges dead letters and pending records of runtime-manager-retired bindings; one lookup per binding per pass; result retired_purged_* and state last_retired_purge"
+  ],
+  "tests": "services/reconciliation-drift/tests: 3 new tests fail on base, pass on branch; full suite 164 passed before the final binding_id guard, targeted re-run 10 passed",
+  "hosted_effect": "none until Root coordinator FULL+Root delivers the image; no deployment dispatched"
+}

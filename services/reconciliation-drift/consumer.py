@@ -589,6 +589,7 @@ class ConsumerWorkerState:
         self.last_success_at: str | None = None
         self.last_failure_at: str | None = None
         self.last_failure_error: str | None = None
+        self.last_retired_purge: dict[str, Any] | None = None
         self.lease_owner: str | None = None
         self.lease_token: str | None = None
         self.lease_expires_at: str | None = None
@@ -660,6 +661,7 @@ class ConsumerWorkerState:
         self.last_success_at = payload.get("last_success_at")
         self.last_failure_at = payload.get("last_failure_at")
         self.last_failure_error = payload.get("last_failure_error")
+        self.last_retired_purge = payload.get("last_retired_purge")
         self.lease_owner = payload.get("lease_owner")
         self.lease_token = payload.get("lease_token")
         self.lease_expires_at = payload.get("lease_expires_at")
@@ -697,6 +699,7 @@ class ConsumerWorkerState:
             "last_success_at": self.last_success_at,
             "last_failure_at": self.last_failure_at,
             "last_failure_error": self.last_failure_error,
+            "last_retired_purge": self.last_retired_purge,
             "lease_owner": self.lease_owner,
             "lease_token": self.lease_token,
             "lease_expires_at": self.lease_expires_at,
@@ -1033,6 +1036,49 @@ def run_runtime_summary_consumer_once(
             "lease_expires_at": state.lease_expires_at,
         }
     replayed_count = state.replay_dead_letters() if replay_dead_letters else 0
+    # Stop starting attempts once the budget is spent so a slow downstream cannot
+    # outlast the health max age; leftover events stay pending for the next tick.
+    tick_deadline = time.monotonic() + tick_budget_seconds
+    binding_cache: dict[str, dict[str, Any] | None] = {}
+    binding_lookup_failed = False
+
+    def lookup_binding(binding_id: str) -> tuple[dict[str, Any] | None, bool]:
+        """One runtime-manager read per binding per pass; (binding, usable)."""
+        nonlocal binding_lookup_failed
+        if binding_id in binding_cache:
+            return binding_cache[binding_id], True
+        if binding_lookup_failed or time.monotonic() >= tick_deadline:
+            return None, False
+        try:
+            binding = _lookup_runtime_binding(binding_id)
+        except RuntimeError:
+            binding_lookup_failed = True  # stop further lookups this pass; fail open
+            logger.warning("runtime-manager binding lookup failed", exc_info=True)
+            return None, False
+        binding_cache[binding_id] = binding
+        return binding, True
+
+    purged_retired: list[dict[str, Any]] = []
+    for bucket_name, bucket in (("dead_letter", state.dead_letters), ("pending", state.pending)):
+        for key, record in list(bucket.items()):
+            event = record.get("event") if isinstance(record, dict) else None
+            binding_id = str((event or {}).get("binding_id") or "").strip()
+            if not binding_id:
+                continue
+            binding, usable = lookup_binding(binding_id)
+            if usable and _binding_retired(binding, event.get("created_at")):
+                del bucket[key]
+                purged_retired.append(
+                    {"binding_id": binding_id, "event_id": event.get("event_id"), "from": bucket_name}
+                )
+    if purged_retired:
+        state.last_retired_purge = {
+            "at": observed_at,
+            "count": len(purged_retired),
+            "binding_ids": sorted({item["binding_id"] for item in purged_retired}),
+        }
+        state.save()
+        logger.info("purged %d retired-binding record(s)", len(purged_retired))
     invalid_summaries: list[dict[str, Any]] = []
     source_error: str | None = None
     summaries: list[dict[str, Any]] = []
@@ -1047,7 +1093,6 @@ def run_runtime_summary_consumer_once(
     source_lags: list[float] = []
     ineligible_summaries: list[dict[str, Any]] = []
     current_keys: set[str] = set()
-    binding_lookup_failed = False
     for index, summary in enumerate(summaries):
         try:
             event = runtime_summary_to_event(summary)
@@ -1058,18 +1103,13 @@ def run_runtime_summary_consumer_once(
             invalid_summaries.append({"index": index, "detail": str(exc)})
             continue
         summary_state = str(summary.get("state") or "").strip().lower()
-        if not binding_lookup_failed and summary_state not in _ACTIVE_SUMMARY_STATES:
-            try:
-                binding = _lookup_runtime_binding(event["binding_id"])
-            except RuntimeError:
-                binding_lookup_failed = True  # stop further lookups this pass; fail open
-                logger.warning("runtime-manager binding lookup failed", exc_info=True)
-            else:
-                if _binding_retired(binding, event.get("created_at")):
-                    ineligible_summaries.append(
-                        {"index": index, "reason": "binding_retired", "binding_id": event["binding_id"]}
-                    )
-                    continue
+        if summary_state not in _ACTIVE_SUMMARY_STATES and event.get("binding_id"):
+            binding, usable = lookup_binding(event["binding_id"])
+            if usable and _binding_retired(binding, event.get("created_at")):
+                ineligible_summaries.append(
+                    {"index": index, "reason": "binding_retired", "binding_id": event["binding_id"]}
+                )
+                continue
         current_keys.add(state.event_key(event))
         event_at = _parse_timestamp(event.get("created_at"))
         if event_at is not None:
@@ -1083,9 +1123,6 @@ def run_runtime_summary_consumer_once(
     drift_report_count = 0
     incident_case_count = 0
     terminal_incident_ids: list[str] = []
-    # Stop starting attempts once the budget is spent so a slow downstream cannot
-    # outlast the health max age; leftover events stay pending for the next tick.
-    tick_deadline = time.monotonic() + tick_budget_seconds
     transient_failure_count = 0
     for key, record in list(state.pending.items()):
         retry_at = _parse_timestamp(record.get("next_attempt_at"))
@@ -1206,6 +1243,9 @@ def run_runtime_summary_consumer_once(
         "oldest_backlog_lag_seconds": state.oldest_backlog_lag_seconds(now=now),
         "max_source_lag_seconds": max(source_lags) if source_lags else None,
         "replayed_dead_letter_count": replayed_count,
+        "retired_purged_count": len(purged_retired),
+        "retired_purged_binding_ids": sorted({item["binding_id"] for item in purged_retired}),
+        "retired_purged": purged_retired,
         "source_error": source_error,
         "delivery_errors": delivery_errors,
         "last_success_at": state.last_success_at,
