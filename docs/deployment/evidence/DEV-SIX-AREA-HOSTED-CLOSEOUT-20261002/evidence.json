@@ -1,33 +1,57 @@
 {
-  "task": "DEV-SIX-AREA-SOURCE-ADOPTION-CHECKPOINT-20261011",
+  "task": "DEV-SIX-AREA-ACTUAL-DELIVERY-CHECKPOINT-20261017",
   "parent_task": "DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002",
-  "predecessor_checkpoint_task": "DEV-SIX-AREA-EVIDENCE-CHECKPOINT-20261011",
-  "checkpoint_timestamp": "2026-10-11T15:16:00Z",
-  "historical_snapshot_timestamp": "2026-10-11T04:40:00Z",
+  "predecessor_checkpoint_task": "DEV-SIX-AREA-SOURCE-ADOPTION-CHECKPOINT-20261011",
+  "checkpoint_timestamp": "2026-10-17T03:30:00Z",
+  "historical_snapshot_timestamp": "2026-10-11T15:16:00Z",
   "status": "INCOMPLETE",
-  "phase": "PARTIAL SOURCE ADOPTION (Not Final Release)",
+  "phase": "ACTUAL DELIVERY REFRESH (Not Final Release)",
   "documentation_only": true,
   "production_delta": 0,
+  "overall": "INCOMPLETE",
+  "all12_complete": false,
   "parent_governance": {
-    "generation": 16,
+    "generation": 17,
     "owner": "Human/Ops",
-    "reviewer": "Codex2",
+    "reviewer": "Antigravity",
     "acceptance_criteria_count": 6,
     "canonical_parent_acceptance_areas": [
-      "AC1: Manual central release/acceptance checkpoint only; release owner coordination, nonprod-deploy.yml, environment lease; no worker VM access or parallel root release or fabricated human business approval",
-      "AC2: Pin and gate one exact latest-dev FE/BFF pair and actual owner/worker image identities after all source work; verify hosted manifest, served identities, safe write/strict auth/CORS posture; preserve incumbent artifacts",
-      "AC3: Use existing hosted harnesses with new specifically authorized labelled paper fixtures to prove all twelve loops on one fresh causal chain and Management/Agora/Persona/Research/approval journeys; actual provider results required where specified",
-      "AC4: Verify saved owner state after refresh and independent process restart plus tenant/auth/idempotency/version conflicts and provider failure visibility; genuine separate humans make business approvals; no existing dev pools or real capital effects",
-      "AC5: Exercise exact prior FE/BFF artifact rollback and reactivation with readback while preserving acknowledged data; update existing Agora/Persona/Research/FE approval hosted obligations only after real proof",
-      "AC6: Publish the exact PR/merge/run/artifact/readback matrix and independently reviewed scoped evidence; all mandatory items must pass for overall completion"
+      "Manual central release/acceptance checkpoint only. Coordinate with the existing release owner and obtain the preserved per-operation authorization; no worker VM access or parallel root release or fabricated human business approval. Use only existing nonprod-deploy.yml and environment lease.",
+      "Pin and gate one exact latest-dev FE/BFF pair and actual owner/worker image identities after all source work; verify hosted manifest and served identities and safe write/strict auth/CORS posture. Preserve real incumbent artifacts and config/data compatibility. Required failure or skipped gate prevents activation.",
+      "Use existing hosted harnesses with new specifically authorized labelled paper fixtures to prove all twelve loops on one fresh causal chain and Management/Agora/Persona/Research/approval journeys. Actual provider results and real supported computation are required where specified; no fixture or old IDs relabelled as hosted success.",
+      "Verify saved owner state after refresh and independent process restart plus tenant/auth/idempotency/version conflicts and provider failure visibility. Genuine separate humans make business approvals; no existing dev pools or real capital effects. Any missing authority or capability remains explicit unfinished work.",
+      "Exercise exact prior FE/BFF artifact rollback and reactivation with readback while preserving acknowledged data. Only after real proof update the existing Agora/Persona/Research/FE approval hosted obligations through official commands. Do not close merely because source tasks or historical S5 reports are done.",
+      "Publish the exact PR/merge/run/artifact/readback matrix and independently reviewed scoped evidence; all mandatory items must pass for overall completion. No new deployment or evidence platform and no credential/budget/production changes."
     ],
     "scoped_artifacts": [
       "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/",
       "docs/deployment/latest-dev-six-area-closure.md",
-      "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json",
-      "docs/deployment/evidence/DEV-SIX-AREA-SOURCE-ADOPTION-CHECKPOINT-20261011/evidence.json"
+      "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json"
     ],
-    "closure_authority_note": "Child task DEV-SIX-AREA-SOURCE-ADOPTION-CHECKPOINT-20261011 documents honest timestamped PARTIAL SOURCE ADOPTION checkpoint only; does NOT accept closeout or replace parent independent final acceptance or release owner authority"
+    "depends_on": [
+      "L12-SOURCE-CLOSURE-20261002",
+      "AGORA-SYNTHESIS-AGENT-001",
+      "PERSONA-EVALUATOR-AGENT-002",
+      "BFF-RESEARCH-SINGLE-OWNER-001",
+      "FE-APPROVAL-OWNER-READBACK-001",
+      "OPENCLAW-STRUCTURED-AGENT-DEV-20261003",
+      "RESEARCH-HOSTED-ACCEPTANCE-001",
+      "OPS-CLOSEOUT-ACTIVATION-EVIDENCE-20261004",
+      "PERSONA-OWNER-JWT-VERIFIER-DEV-20261004",
+      "OPS-WATCHDOG-CRON-READONLY-RUNTIME-20261004",
+      "FE-APPROVAL-BROWSER-ACCEPTANCE-20261004",
+      "CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001",
+      "OPS-WATCHDOG-ACTIVATION-EVIDENCE-20261004",
+      "TRADE-JOURNAL-CLAIM-GUARD-CORRECTION-20261004",
+      "OSS-PROFILES-RUNTIME-GROUPING-CORRECTION-20261004",
+      "BFF-RANKING-DEFAULT-OWNER-CORRECTION-20261004",
+      "OSS-PROFILES-OWNER-GROUPS-CORRECTION-20261004",
+      "BFF-STRICT-SOURCE-OWNER-CONSUMER-CORRECTION-20261005",
+      "BFF-ACTUAL-PERSONA-SESSION-CONSUMER-20261005",
+      "DEV-EXISTING-OWNER-VERIFIER-BINDINGS-20261005",
+      "BFF-ACTUAL-OWNER-SURFACE-STATUS-20261005"
+    ],
+    "closure_authority_note": "Child task DEV-SIX-AREA-ACTUAL-DELIVERY-CHECKPOINT-20261017 documents honest timestamped ACTUAL DELIVERY REFRESH checkpoint only; does NOT accept closeout or replace parent independent final acceptance or release owner authority"
   },
   "six_area_checkpoint_matrix": {
     "ac1_release_owner_coordination_and_governed_deployment_gate": {
@@ -42,235 +66,729 @@
     },
     "ac2_pinned_fe_bff_pair_and_sealed_artifacts": {
       "parent_area": "AC2: Pinned & gated exact latest-dev FE/BFF pair, hosted identities & sealed artifacts",
-      "status": "PARTIAL_SERVED_PAIR_ACCEPTED_NEW_ROOT_FAILED_FULL_SKIPPED",
-      "actual_tls_hosted_pair": {
-        "observed_at": "2026-10-11T13:36:22Z",
-        "endpoint": "https://app.dev.mvl-cap.tw/deployment.json",
-        "bff_sha": "420598fe643be541ca28419a1abe4b03acb2dd73",
-        "fe_sha": "79aacd97f770dafb58471bba59d2fc9b98b4dff5",
-        "root_run_id": 38102321809,
-        "controller_accepted_at": "2026-10-11T02:33:31Z"
+      "status": "ACTUAL_PAIR_ACCEPTED_FOUR_RUNS_SUCCESS",
+      "actual_accepted_pair": {
+        "BE": "6ef8507e5ed62ff355d951000f2780d14ccb04ce",
+        "FE": "281ceed31f39d8a248d949d16ec8b7e8f18132b3",
+        "FULL_run_id": 38991740527,
+        "Root_run_id": 38993144359,
+        "FE_gate_run_id": 38995134562,
+        "FE_deploy_run_id": 38996380209,
+        "candidate_id": "3f96e4f1e8a00556a8ec255c719890306cd845aa6e543505cde6537dec482290",
+        "official_outcome": "accepted; four official runs success"
       },
-      "attempted_root_run_38124492288": {
-        "run_id": 38124492288,
-        "attempted_backend_sha": "8f532314a0aaa34ac4621c8fcbb4f35e5d9e5ea4",
-        "attempted_frontend_sha": "4211acdf31f9a28bd63f3d64fe0e6e23f98d395a",
-        "outcome": "whole outcome FAILED paper probe; FULL and exact pair admission SKIPPED",
-        "artifacts_verified": "six original artifacts API hash and size verified",
-        "public_compensation": "restored exact baseline 420598fe + 79aacd97",
-        "quarantine_ttl": "quarantine TTL is NOT release acceptance"
+      "exact_artifact19_checks": {
+        "official_Root_and_FE_deploy_terminal_success": true,
+        "original_controller_accepted_exact_pair_and_child_runs": true,
+        "official_artifact_zip_digest_size_and_same_run": true,
+        "original_baseline_and_candidate_raw_copies_unchanged": true,
+        "same_candidate_and_original_actions_download_provenance": true,
+        "exact_old_FE_target_raw_manifest_and_dist": true,
+        "exact_old_three_core_images": true,
+        "exact_same_final_FE_artifact_return": true,
+        "exact_same_final_three_core_images": true,
+        "seven_protected_owners_preserved_during_roundtrip": true,
+        "baseline_nonsecret_config_and_public_auth_preserved": true,
+        "original_restore_and_return_pair_identities": true,
+        "actual_final_public_raw_manifest_matches_sealed_candidate": true,
+        "actual_final_BFF_and_original_six_completed_records_and_two_Patterns": true,
+        "actual_final_three_core_container_images_match_original_seal": true,
+        "actual_final_seven_protected_owner_identities_match_readback": true,
+        "original_formal_FE_gate_no_unexpected_or_flaky_and_focus_pass": true,
+        "actual_final_original_Research_and_Evolution_UI_readonly": true,
+        "original_Workshop295_all13_on_clean_exact_FE": true
       },
-      "current_committed_source": {
-        "backend_sha": "d0695d2c89a1fdcaac1eea56309532fda3fabf2e",
-        "frontend_sha": "4211acdf31f9a28bd63f3d64fe0e6e23f98d395a",
-        "status": "undeployed and unqualified; reread remote after doc delivery; do NOT claim d069 is FINAL"
+      "prior_pair": {
+        "BE": "df5241b07888d73ffa7d97861229bd744609fc4b",
+        "FE": "281ceed31f39d8a248d949d16ec8b7e8f18132b3"
       },
-      "sealed_images": {
-        "agora-interaction-worker": "sha256:0acbfe4d037bbb505ad790ac54ad2b8cc37e36b58d208fa71b5688cef7af3909",
-        "loop-run-projector-scheduler": "sha256:a07b15f5991e9eca7bf99ca40d62890de5a81462a783ab4eccb2d9306b9c5e7e",
-        "operator-bff": "sha256:353dc659c2384411e55bbed103b0aca04fe38536a4172e01c182f8ae1cd45819"
+      "roundtrip_scope": "Exact prior artifact and same sealed final artifact return; seven protected owners only DURINGroundtrip. Not all owners unchanged for entire deployment.",
+      "fe_gate": {
+        "stats": {
+          "startTime": "2026-10-17T02:44:59.223Z",
+          "duration": 84724.25,
+          "expected": 49,
+          "skipped": 11,
+          "unexpected": 0,
+          "flaky": 0
+        },
+        "focus": [
+          {
+            "title": "batch partial failure opens BulkResultDrawer and keeps failed selected",
+            "ok": true,
+            "results": [
+              {
+                "status": "passed",
+                "retry": 0
+              }
+            ]
+          },
+          {
+            "title": "drawer focus returns to the trigger after keyboard close",
+            "ok": true,
+            "results": [
+              {
+                "status": "passed",
+                "retry": 0
+              }
+            ]
+          },
+          {
+            "title": "incident resolution confirmation restores focus without submitting on Escape",
+            "ok": true,
+            "results": [
+              {
+                "status": "passed",
+                "retry": 0
+              }
+            ]
+          }
+        ],
+        "summary_status_counts": {
+          "pass": 61,
+          "skip": 7,
+          "warn": 4
+        },
+        "overall": "warn",
+        "checks": {
+          "actual_original_raw_BFF_and_release_identity_exact": true,
+          "official_terminal_success": true,
+          "original_Playwright_no_unexpected_or_flaky": true,
+          "all_three_original_focus_cases_pass_without_retry": true
+        },
+        "desktop_advisory_stats": {
+          "startTime": "2026-10-17T02:46:47.515Z",
+          "duration": 88187.29699999999,
+          "expected": 42,
+          "skipped": 11,
+          "unexpected": 1,
+          "flaky": 0
+        },
+        "original_step_outcomes": {
+          "release_identity": {
+            "outcome": "success",
+            "evidence": ".lovable/audits/current-run/release-identity.json"
+          },
+          "release_admission": {
+            "outcome": "success",
+            "evidence": ".lovable/audits/current-run/release-candidate-ledger.json"
+          },
+          "proof_source_pair": {
+            "outcome": "skipped",
+            "evidence": ".lovable/audits/current-run/pint-source-pair.txt"
+          },
+          "release_identity_final": {
+            "outcome": "success",
+            "evidence": ".lovable/audits/current-run/bff-version-final.json"
+          },
+          "install": {
+            "outcome": "success",
+            "evidence": ".lovable/audits/current-run/npm-ci.log"
+          },
+          "lint": {
+            "outcome": "success",
+            "evidence": ".lovable/audits/current-run/npm-run-lint.log"
+          },
+          "test": {
+            "outcome": "success",
+            "evidence": ".lovable/audits/current-run/npm-run-test.log"
+          },
+          "deploy_controller": {
+            "outcome": "success",
+            "evidence": ".lovable/audits/current-run/deploy-controller-regression.log"
+          },
+          "build": {
+            "outcome": "success",
+            "evidence": ".lovable/audits/current-run/npm-run-build.log"
+          },
+          "build_operator_live": {
+            "outcome": "success",
+            "evidence": ".lovable/audits/current-run/npm-run-build-operator-live.log"
+          },
+          "build_write_proof": {
+            "outcome": "success",
+            "evidence": ".lovable/audits/current-run/npm-run-build-write-proof.log"
+          },
+          "candidate": {
+            "outcome": "success",
+            "evidence": ".release-candidate/candidate.json"
+          },
+          "candidate_final": {
+            "outcome": "success",
+            "evidence": ".lovable/audits/current-run/final-candidate-pair.txt"
+          },
+          "bundle_budget": {
+            "outcome": "success",
+            "evidence": ".lovable/audits/current-run/bundle-budget-check.log"
+          },
+          "contract": {
+            "outcome": "success",
+            "evidence": ".lovable/audits/current-run/contract-drift.log"
+          },
+          "mgmt_persona_3000": {
+            "outcome": "success",
+            "evidence": ".lovable/audits/current-run/mgmt-persona-3000-validation.log"
+          },
+          "route_probe": {
+            "outcome": "success",
+            "evidence": ".lovable/audits/current-run/bff-route-probe-anonymous.log"
+          },
+          "auth_smoke": {
+            "outcome": "skipped",
+            "evidence": ".lovable/audits/current-run/bff-authenticated-live-smoke.log"
+          },
+          "write_probe": {
+            "outcome": "skipped",
+            "evidence": ".lovable/audits/current-run/bff-write-path-probe.log"
+          },
+          "pint_manifest_before": {
+            "outcome": "skipped",
+            "evidence": ".lovable/audits/current-run/deployment-before-pint.json"
+          },
+          "mgmt_live_deep": {
+            "outcome": "success",
+            "evidence": ".lovable/audits/current-run/management-live-deep-validation.log"
+          },
+          "install_playwright": {
+            "outcome": "success",
+            "evidence": ".lovable/audits/current-run/playwright-install.log"
+          },
+          "fixture_e2e": {
+            "outcome": "success",
+            "evidence": ".lovable/audits/current-run/playwright-fixture-e2e.log"
+          },
+          "browser_probe": {
+            "outcome": "success",
+            "evidence": ".lovable/audits/current-run/hosted-browser-bff-probe.log"
+          },
+          "route_load": {
+            "outcome": "failure",
+            "evidence": ".lovable/audits/current-run/route-load-baseline.log"
+          },
+          "mgmt_load_gate": {
+            "outcome": "failure",
+            "evidence": ".lovable/audits/current-run/release-load-gate.log"
+          },
+          "mgmt_hosted_accept": {
+            "outcome": "failure",
+            "evidence": ".lovable/audits/current-run/management-hosted-acceptance.log"
+          },
+          "pint_hosted_e2e": {
+            "outcome": "skipped",
+            "evidence": ".lovable/audits/current-run/pint-hosted-desktop-e2e.log"
+          },
+          "pint_manifest_after": {
+            "outcome": "skipped",
+            "evidence": ".lovable/audits/current-run/deployment-after-all-proof-steps.json"
+          },
+          "pr_preview": {
+            "outcome": "success",
+            "evidence": ".lovable/audits/current-run/pr-frontend-server.log"
+          },
+          "e2e": {
+            "outcome": "failure",
+            "evidence": ".lovable/audits/current-run/playwright-e2e.log"
+          }
+        }
       },
-      "all_images_match": true,
-      "full_job_state": "SKIPPED_not_qualified",
-      "prior_full_run_id": 38092806870,
-      "prior_full_failure_reason": "weekly provider weekly quota limit reported reset Oct 12 12:00 UTC (unverified / availability not guaranteed)"
+      "historical_prior_runs": {
+        "root_38102321809": "accepted baseline 420598fe + 79aacd97 (historical Oct 11)",
+        "root_38124492288": "failed paper probe, compensated baseline (historical Oct 11)"
+      }
     },
     "ac3_hosted_harness_and_twelve_loop_causal_chain": {
       "parent_area": "AC3: Hosted harness, twelve-loop causal chain & journey verification",
-      "status": "PARTIAL_WORKSHOP_PASS_GOVERNANCE_FAIL_ALL_LOOPS_NOT_PROVEN",
-      "causal_chain_state": "INCOMPLETE; no ALL-loop browser proof or FULL qualification exists",
-      "workshop_journey": {
-        "browser_run_id": 38109227221,
-        "operation_id": "803e8330-75e4-4d31-83fd-57f48b0ee1c3",
-        "workshop_id": "295726c7-47b5-4516-a74a-c5ba8765ee48",
-        "title_sha256": "f697a21ccd124c051cf40715d1fd622d0314f8af2d0c7cd9c7c13682cf9c3093",
-        "content_sha256": "b241456e7d88c7468b8cb01d58129ebf639d8c0590bb301797e0ad09ffd02490",
-        "real_steps_passed": 13,
-        "real_steps_total": 13,
-        "observed_bff_owner_restart": "2026-10-11T01:58:33.264523039Z",
-        "acknowledged_save_before_restart": "2026-10-09T01:16:15.438Z",
-        "hash_retention_truth": "post-save BFF restart verified with later full content hash b241...2490, NOT original save-time full hash; zero create/PATCH/resave",
-        "scope_boundary": "proves Workshop persistence journey on workshop 295; does NOT prove Governance, all owner data, or rollback PASS"
-      },
-      "governance_journey": {
-        "browser_run_id": 38108525681,
-        "status": "FAILED",
-        "steps_passed": 7,
-        "failed_step": "navigate_governance_case_ui_first",
-        "hosted_failure_label": "run 38108525681 executed 7 PASS then UI navigation FAIL at step 8 navigate_governance_case_ui_first; hosted Playwright run log did not capture hosted browser console error stack",
-        "source_ast_counter_label": "complete original AST inspection of GovernanceReview.tsx revealed audit.filter((e) => e.target.includes(id)...) accesses undefined e.target because GET /bff/audit returns target_id, causing TypeError: Cannot read properties of undefined (reading 'includes')",
-        "reopen_resolution": "terminal reopen DENIED; referenced successor task created",
-        "successor_task": "FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011",
-        "successor_delivery": {
-          "pr": 832,
-          "frozen_head": "1e2aa7d7e1085ba085a2ad820dc95cb3806a4a86",
-          "merge_commit": "4211acdf31f9a28bd63f3d64fe0e6e23f98d395a",
-          "merged_at": "2026-10-11T05:05:14Z",
-          "native_done_generation": 2,
-          "native_done_at": "2026-10-11T05:07:19Z",
-          "verification": "75 originals + 1 discovery PASS",
-          "cumulative_production_budget": "26 <= 40",
-          "status": "MERGED (FE source; native DONE gen 2; undeployed on hosted dev VM, not hosted acceptance)"
+      "status": "PARTIAL_QUALIFIED_ISOLATED_BACKEND_AND_PAPER_EVENT_CHAIN_FRESH_ALL12_INCOMPLETE",
+      "causal_chain_state": "INCOMPLETE; isolated FULL 38991740527 qualified backend and paper event chain dev-paper-release-38993144359-1 verified; fresh causal all12 across all loops remains incomplete",
+      "backend_isolated_qualification": {
+        "checks": {
+          "report_passed": true,
+          "exact_source": true,
+          "no_report_error": true,
+          "canonical_12_unique_ids": true,
+          "all_original_receipts_nonempty": true,
+          "three_domains_passed": true,
+          "teardown_zero": true,
+          "live_capital_disabled": true,
+          "original_TW_official_source": true
         },
-        "historical_0440_state": {
-          "pending_pr": 832,
-          "head": "88b5c6152500d17c2c119b10bdbae33943259810",
-          "status": "source rework active under Antigravity2 (PID 2775529), pending PR #832; preserved in explicitly labelled 04:40 historical object, not current fields"
+        "loop_ids": [
+          "source_ingestion",
+          "strategy_distillation",
+          "alpha_replication",
+          "persona_teaching",
+          "agora_interaction_evidence",
+          "human_imitation_shadow_evaluation",
+          "consultation",
+          "promotion_deployment",
+          "capital_pool_execution",
+          "telemetry_reconciliation",
+          "evolution",
+          "bff_health_monitoring"
+        ],
+        "domain_suites": {
+          "human": {
+            "report_sha256": "sha256:1e3cbe4431f52aa83c9ff140c71abf96670312ef2a42c9c51ba1277578786d22",
+            "report_status": "passed",
+            "started_by_parent_at": "2026-10-17T01:48:31Z",
+            "suite": "tests/integration/l12/test_current_human_learning_deployed_e2e.py"
+          },
+          "research": {
+            "report_sha256": "sha256:eae94af3efe62284281b08057366d1bcbb7e347a190f227825afec12d99aa0c4",
+            "report_status": "passed",
+            "started_by_parent_at": "2026-10-17T01:45:53Z",
+            "suite": "tests/integration/l12/test_current_research_loops_deployed_e2e.py"
+          },
+          "runtime": {
+            "report_sha256": "sha256:2d1f52c9f707358e03dc81f0b42289978157aa9781e09ed8c520b957df2bd922",
+            "report_status": "passed",
+            "started_by_parent_at": "2026-10-17T01:50:38Z",
+            "suite": "tests/integration/l12/test_current_runtime_loops_deployed_e2e.py"
+          }
+        },
+        "teardown": {
+          "command": [
+            "docker",
+            "compose",
+            "-p",
+            "l12q38991740527x1",
+            "-f",
+            "/home/runner/work/pantheon/pantheon/docker-compose.yml",
+            "--profile",
+            "*",
+            "down",
+            "--volumes",
+            "--remove-orphans",
+            "--rmi",
+            "local"
+          ],
+          "compose_project": "l12q38991740527x1",
+          "down_returncode": 0,
+          "remaining_container_ids": [],
+          "zero_project_containers": true
+        },
+        "TW_official_pull": {
+          "connector_id": "tw-twse-tpex-official-market",
+          "snapshot_closes": 40,
+          "snapshot_symbol": "2330.TW",
+          "scheduler_returncode": 0
+        },
+        "scope": "Original backend isolated real-provider qualification only. It neither activates hosted FE/BFF nor re-executes completed Research ad64. Child hashes/status are original parent records; child raw reports are not independently rehashed. Not hosted same-causal-all12 or UI proof."
+      },
+      "current_natural_paper": {
+        "case": "dev-paper-release-38993144359-1",
+        "identity": {
+          "artifact_id": "artifact-persona-paper-a9c86f47a7b9c58d5f46",
+          "artifact_version": "1.0.0",
+          "binding_id": "rb-ecc7256d807b44ffb3ec1b3f08d2bfa0",
+          "capital_pool_id": "pool-persona-paper-a9c86f47a7b9c58d5f46",
+          "environment": "paper",
+          "journey_id": "tj_529c1ee7-1c16-4db4-a4e3-02be4d70c2ab",
+          "loop_run_id": "lr-run-rb-ecc7256d807b44ffb3ec1b3f08d2bfa0-edba17bdbd3a6e48612f13ae",
+          "persona_capital_binding_id": "pcb-persona-paper-a9c86f47a7b9c58d5f46",
+          "persona_id": "persona-f157083b2b8cc5b8b98a",
+          "plan_id": "plan-persona-paper-a9c86f47a7b9c58d5f46",
+          "run_id": "run-rb-ecc7256d807b44ffb3ec1b3f08d2bfa0-edba17bdbd3a6e48612f13ae",
+          "runtime_id": "rt-d0903e6d",
+          "signal_id": "sig-edba17bdbd3a6e48612f13aea0da193f",
+          "strategy_id": "strategy-persona-a9c86f47a7b9c58d5f46",
+          "tenant_id": "tenant-dev",
+          "trace_id": "b26f81f0-5b0d-4f89-968a-318f32c94324"
+        },
+        "eight_events": [
+          {
+            "causal_parent_event_id": "signal:sig-edba17bdbd3a6e48612f13aea0da193f",
+            "event_id": "907a7849-99be-43be-b73a-235943590384",
+            "event_type": "signal_generation",
+            "ingested_seq": 6794020,
+            "producer": "execution.paper_runtime",
+            "reconciliation_evaluation_id": "",
+            "sequence_no": 1
+          },
+          {
+            "causal_parent_event_id": "907a7849-99be-43be-b73a-235943590384",
+            "event_id": "337365a6-d4b3-5925-908b-74626fe076c8",
+            "event_type": "trade_decision",
+            "ingested_seq": 6794021,
+            "producer": "execution.paper_runtime",
+            "reconciliation_evaluation_id": "",
+            "sequence_no": 2
+          },
+          {
+            "causal_parent_event_id": "337365a6-d4b3-5925-908b-74626fe076c8",
+            "event_id": "8aaf764d-4192-5ef5-8720-66f28def5d24",
+            "event_type": "risk_evaluation",
+            "ingested_seq": 6794027,
+            "producer": "execution.paper_runtime",
+            "reconciliation_evaluation_id": "",
+            "sequence_no": 3
+          },
+          {
+            "causal_parent_event_id": "8aaf764d-4192-5ef5-8720-66f28def5d24",
+            "event_id": "43b3d3af-3821-57f6-ac41-9155666ad216",
+            "event_type": "order_submitted",
+            "ingested_seq": 6794028,
+            "producer": "execution.paper_runtime",
+            "reconciliation_evaluation_id": "",
+            "sequence_no": 4
+          },
+          {
+            "causal_parent_event_id": "43b3d3af-3821-57f6-ac41-9155666ad216",
+            "event_id": "acde5e39-84e0-5970-8a44-026f3c5ca811",
+            "event_type": "order_accepted",
+            "ingested_seq": 6794031,
+            "producer": "execution.paper_runtime",
+            "reconciliation_evaluation_id": "",
+            "sequence_no": 5
+          },
+          {
+            "causal_parent_event_id": "acde5e39-84e0-5970-8a44-026f3c5ca811",
+            "event_id": "4af2ddbd-f4e9-42d2-a248-1f68e85e91de",
+            "event_type": "paper_fill_simulated",
+            "ingested_seq": 6794033,
+            "producer": "execution.paper_runtime",
+            "reconciliation_evaluation_id": "",
+            "sequence_no": 6
+          },
+          {
+            "causal_parent_event_id": "4af2ddbd-f4e9-42d2-a248-1f68e85e91de",
+            "event_id": "734938cb-b1b6-57cf-ba51-30b0315fbb0b",
+            "event_type": "position_snapshot",
+            "ingested_seq": 6794040,
+            "producer": "execution.paper_runtime",
+            "reconciliation_evaluation_id": "",
+            "sequence_no": 7
+          },
+          {
+            "causal_parent_event_id": "734938cb-b1b6-57cf-ba51-30b0315fbb0b",
+            "event_id": "63288b60-b44d-57bd-af2d-a75d59bd8989",
+            "event_type": "reconciliation_completed",
+            "ingested_seq": 6794340,
+            "producer": "reconciliation-drift.scheduled",
+            "reconciliation_evaluation_id": "rdeval-sched-scheduled-tenant-dev-2026-10-17T-rb-ecc7256d807b44ffb3ec1-c3aa8c851a0b5c85",
+            "sequence_no": 8
+          }
+        ],
+        "causal14_checks": {
+          "original_two_reports_passed_exact_source": true,
+          "original_bff_report_binds_exact_raw_probe_bytes": true,
+          "one_original_governed_case": true,
+          "original_natural_and_readonly_probe": true,
+          "eight_unique_actual_events_in_original_order": true,
+          "causal_chain_exact_parent_ids": true,
+          "actual_producers_and_scheduled_success": true,
+          "original_source_highwatermark_bounds": true,
+          "signal_binds_same_original_runtime_and_strategy_artifact": true,
+          "paper_only_no_real_orders_or_capital": true,
+          "original_official_TW_source_not_relabelled_today": true,
+          "current_actual_projection_and_public_BFF_exact_source": true,
+          "public_actual_eight_event_readback_and_monotonic_generations": true,
+          "original_auth_scope_and_page_conflicts_fail_closed": true
+        },
+        "financial16_checks": {
+          "original_SQL_readonly_and_not_truncated": true,
+          "broker_limit_not_hit_and_unique": true,
+          "all_committed_fill_counts_contiguous": true,
+          "all_ledger_fills_and_actual_broker_orders_bijection": true,
+          "exact_original_paper_scope": true,
+          "current_cash_and_positions_match_durable_ledger": true,
+          "exact_two_valuation_legs_and_original_pair": true,
+          "both_legs_same_binding_runtime_pool_and_persona": true,
+          "both_legs_valuation_equals_independent": true,
+          "official_source_identity_and_marks_exact": true,
+          "full_saved_curve_independently_recalculated": true,
+          "rolling20day_drawdown_peak_and_value_match": true,
+          "actual_runtime_summary_scope_and_finance_match": true,
+          "actual_committed_position_links_same_fill": true,
+          "actual_scheduled_reconciliation_links_same_position_and_fill": true,
+          "no_pending_valuation_or_lifecycle_delivery": true
+        },
+        "independent_values": {
+          "initial_cash": "100000.0",
+          "cash": "102420.00",
+          "holdings": {
+            "2330.TW": "-1.0"
+          },
+          "mark": "2420.0",
+          "portfolio_value": "100000.00",
+          "pnl": "0.00",
+          "drawdown_pct": "0.0",
+          "peak": "100000.0"
+        },
+        "scope": "One actual fill/one saved curve point; configured20days is not20daysobserved orrealizedclosedprofit. This is a different model/persona fromResearch1325, never splice intoonefreshall12chain.",
+        "scheduled_evaluation_status": "ok",
+        "scheduled_six_checks": [
+          {
+            "check": "authoritative_actual_identity",
+            "detail": "authoritative runtime identity and event evidence linked",
+            "status": "ok",
+            "missing_fields": [],
+            "telemetry_event_ids": [
+              "734938cb-b1b6-57cf-ba51-30b0315fbb0b",
+              "c20f380a-b1d3-47c7-9711-7b52e28b7c01"
+            ]
+          },
+          {
+            "check": "runtime_state",
+            "detail": "authoritative runtime state is active",
+            "status": "ok",
+            "observed": "active"
+          },
+          {
+            "check": "runtime_health_summary",
+            "detail": "runtime health summary is authoritative and healthy",
+            "status": "ok",
+            "observed": {
+              "bridge": "not_applicable",
+              "broker": "not_applicable",
+              "telemetry": "ok",
+              "paper_runtime": "ok"
+            },
+            "unhealthy": {}
+          },
+          {
+            "check": "actual_metrics_presence",
+            "detail": "runtime summary exposes authoritative numeric actual-state metrics",
+            "status": "ok",
+            "metric_names": [
+              "avg_slippage_bps",
+              "cash",
+              "event_delivery_lag_ms",
+              "position_qty",
+              "price",
+              "queue_lag_ms"
+            ]
+          },
+          {
+            "check": "queue_lag_ms",
+            "detail": "queue_lag_ms=542.365ms",
+            "status": "ok",
+            "observed": 542.365,
+            "warning_threshold": 5000.0,
+            "critical_threshold": 15000.0
+          },
+          {
+            "check": "event_delivery_lag_ms",
+            "detail": "event_delivery_lag_ms=91.995ms",
+            "status": "ok",
+            "observed": 91.995,
+            "warning_threshold": 10000.0,
+            "critical_threshold": 30000.0
+          }
+        ],
+        "observed_metrics": {
+          "cash": 102420.0,
+          "price": 2420.0,
+          "position_qty": -1.0,
+          "queue_lag_ms": 542.365,
+          "avg_slippage_bps": 0.0,
+          "event_delivery_lag_ms": 91.995
+        },
+        "old_DF_variance": "Original19.196436s>15s and15true1false retained; new queue startsatmax(enqueued_at,runtimestart). Not endtoend latency fix.",
+        "original_source_day": "Actual official2330inputOct16, not relabelledOct17NEWdata."
+      },
+      "research_ad64": {
+        "plan_id": "ad64f196-eac9-40c3-940f-258cb3da1db7",
+        "workshop_id": "b06627a9-4711-4baa-be58-23fa9a5400bc",
+        "principal": "pantheon-dev-operator-a /tenant-dev; real existing dev session, NOT a fabricated human",
+        "approval_POSTs": 1,
+        "dispatch_POSTs": 1,
+        "runs": [
+          "rrun-20261016-006",
+          "rrun-20261016-007"
+        ],
+        "status": "completed/succeeded/succeeded; original Vectorbt result and one actual Claude synthesis saved",
+        "artifacts": {
+          "rart-8e15bee77f67": "sha256:aec72d69b356c75d16d65ad1197abb59b22c2fa618c25d169d79b2fff9035734",
+          "rart-d8c50a13303d": "sha256:f7461b1511fc9d79d8e81d401536c4e85db913a237f785529054f13fc70c87fd"
+        },
+        "model": "Original persona132519698e6199e80326 strategy aa060d53ff712cbba704 momentumlookback2/threshold0/qty1SHARES model41f53f37... unchanged",
+        "dataset": "Original DSV602c80stored 2317+2330; ONLY2330.TWSE40bars actuallycomputed toOct15. No new dataset/parameters.",
+        "results": {
+          "return_pct": -0.1106,
+          "Sharpe": -0.734083,
+          "max_drawdown_magnitude_pct": 0.2846,
+          "final_value": 99889.395,
+          "trade_count": 39,
+          "net_position": -1
+        },
+        "provider": "Actual retained Gateway Claude CLI/claude-opus-4-8 response equals saved stage2 JSON; one logical synthesis, no claim unretained attempts=0.",
+        "authority": "Finite user consent CONSUMED; no further save/approve/dispatch/stage2/model/recompute/adoption/order/funds. Negative result is valid research, not strategy adoption.",
+        "post_release_saved_six_equal": {
+          "Workshop295": true,
+          "Research_ad64": true,
+          "rrun-20261016-006": true,
+          "rrun-20261016-007": true,
+          "artifact:rart-8e15bee77f67": true,
+          "artifact:rart-d8c50a13303d": true
+        },
+        "post_release_two_Patterns_equal": {
+          "72215b2f-7601-44bb-997d-0b4687bdf934": true,
+          "7ce68816-129d-4228-b3c5-878c6749b729": true
+        },
+        "new_list_equals_completed_detail": true,
+        "completed_owner_process_recreated": true,
+        "UI46_checks": {
+          "initialPlanCompleted": true,
+          "initialNoRepeatApprovalOrDispatch": true,
+          "initialrrun-20261016-006Succeeded": true,
+          "initialrrun-20261016-006SavedArtifact": true,
+          "initialrrun-20261016-007Succeeded": true,
+          "initialrrun-20261016-007SavedArtifact": true,
+          "initialListCompletedOwnerStatus": true,
+          "initialListEqualsDetail": true,
+          "initialExactlyOriginalTwoRuns": true,
+          "reloadPlanCompleted": true,
+          "reloadNoRepeatApprovalOrDispatch": true,
+          "reloadrrun-20261016-006Succeeded": true,
+          "reloadrrun-20261016-006SavedArtifact": true,
+          "reloadrrun-20261016-007Succeeded": true,
+          "reloadrrun-20261016-007SavedArtifact": true,
+          "reloadListCompletedOwnerStatus": true,
+          "reloadListEqualsDetail": true,
+          "reloadExactlyOriginalTwoRuns": true,
+          "firstRealSignOut": true,
+          "firstOldSessionInvalidated": true,
+          "newContextPlanCompleted": true,
+          "newContextNoRepeatApprovalOrDispatch": true,
+          "newContextrrun-20261016-006Succeeded": true,
+          "newContextrrun-20261016-006SavedArtifact": true,
+          "newContextrrun-20261016-007Succeeded": true,
+          "newContextrrun-20261016-007SavedArtifact": true,
+          "newContextListCompletedOwnerStatus": true,
+          "newContextListEqualsDetail": true,
+          "newContextExactlyOriginalTwoRuns": true,
+          "actualAcceptedPair": true,
+          "originalEvolutionDecisionVisible": true,
+          "sameOriginalEvolutionAfterReload": true,
+          "genuineSessionStillValidAfterEvolutionReload": true,
+          "afterEvolutionPlanCompleted": true,
+          "afterEvolutionNoRepeatApprovalOrDispatch": true,
+          "afterEvolutionrrun-20261016-006Succeeded": true,
+          "afterEvolutionrrun-20261016-006SavedArtifact": true,
+          "afterEvolutionrrun-20261016-007Succeeded": true,
+          "afterEvolutionrrun-20261016-007SavedArtifact": true,
+          "afterEvolutionListCompletedOwnerStatus": true,
+          "afterEvolutionListEqualsDetail": true,
+          "afterEvolutionExactlyOriginalTwoRuns": true,
+          "secondRealSignOut": true,
+          "secondOldSessionInvalidated": true,
+          "originalServerFocusForwarded": true,
+          "noBusinessWrites": true
+        },
+        "UI_scope": "Workshop UI displays actual plan/run statuses and outcomes. Complete metric/synthesis documents are read via original authenticated API in same browser context; no claim the existing panel renders full report content.",
+        "journal_actual_responses": [
+          {
+            "http": 200,
+            "search": "?decision=evo-sweep-inc-drift-a24770da155d",
+            "total": 1,
+            "targetReturned": true
+          },
+          {
+            "http": 200,
+            "search": "?decision=evo-sweep-inc-drift-a24770da155d",
+            "total": 1,
+            "targetReturned": true
+          }
+        ],
+        "business_writes": [],
+        "Workshop13_checks": {
+          "exit0": true,
+          "original_evidence_passed": true,
+          "all13_original_steps": true,
+          "same_clean_exact_source": true
+        },
+        "F12": {
+          "stats": {
+            "startTime": "2026-10-17T03:22:21.783Z",
+            "duration": 1781.2119999999998,
+            "expected": 1,
+            "skipped": 0,
+            "unexpected": 0,
+            "flaky": 0
+          },
+          "checks": {
+            "original_test_exit0": true,
+            "exactly_original_one_pass_no_skip_unexpected_flaky": true,
+            "clean_original_exact_FE_source": true
+          },
+          "scope": "Original e2e/12-approvals.spec.ts F12 authenticated approval owner readback; one actual GET /bff/approvals, no intercept or synthetic session"
         }
       },
-      "fleet_owner_legacy_us_bindings": {
-        "observed_at": "2026-10-11T14:25:01Z",
-        "method": "GET only with configured auth (require_remote=true, allow_local=false, default principal assertion passing)",
-        "archived_personas_audited": 25,
-        "matched_runtime_bindings": 24,
-        "binding_state_breakdown": {
-          "retired": 7,
-          "failed": 1,
-          "paused": 16
-        },
-        "paused_admission_reasons": {
-          "market_input_stale": 15,
-          "cause_unknown": 1
-        },
-        "rb_b529_pause_cause": "rb-b5299c1b77f149feb9174e935032fb52 pause cause unknown (empty public owner metadata state)",
-        "unknown_owner_scope_count": 0,
-        "unmatched_original_personas": [
-          "persona-0f94f05389a7e092b469"
-        ],
-        "active_workers_joined": 0,
-        "paused_is_terminal": false,
-        "runtime_commands_issued": "none (no pause, retire, or capital commands; paused state NOT claimed to be irreversible terminal)",
-        "collector_disposition": "wrong runtime-container collector refused missing PANTHEON_RUNTIME_MANAGER_URL and failed closed unused; correct configured Fleet-owner remote auth succeeded without fallback or credential export",
-        "historical_figure_correction": "historical 1191 represents 10-minute SPY snapshot polls in logs, NOT 1191 runtime bindings"
-      },
-      "all_loop_browser_proof": "NONE; no product Research, provider/Alpha, Capital, or human imitation browser proof exists; all loop browser states in L1-L12 ledger remain NOT_PROVEN / not_applicable without loop-specific UI proof. Workshop persistence journey (13 PASS) and Governance journey (7 PASS, step 8 FAIL) are separately documented as cross-cutting AC3/AC4 journey receipts, not loop-specific proofs for L4 or L10."
+      "agora_consent_status": "Agora separate two-Persona-plus-one-synthesis consent asked once / pending no reply; POST 0 / provider 0. Old normal A Oct 3 degraded one opinion is historical negative proof, NOT fresh TW positive.",
+      "all12_complete": false,
+      "all_loop_browser_proof": "Workshop UI displays actual plan/run statuses and outcomes (UI46 checks passed, Workshop13 passed, F12 1 GET /bff/approvals passed). Complete metric/synthesis documents read via authenticated API; no claim existing panel renders full report content. Fresh causal all12 across all loops remains INCOMPLETE."
     },
     "ac4_saved_owner_state_persistence_and_fault_visibility": {
       "parent_area": "AC4: Saved owner state persistence across restart, fault visibility & human approval",
-      "status": "PARTIAL_RESTART_PERSISTENCE_PROVEN_FAULT_UNHEALTHY_HUMAN_VOTES_ZERO",
-      "historical_pg_lineage": {
-        "telemetry_process_restart": "2026-10-11T01:49:17Z",
-        "cold_read_result": "HTTP 200 for historical incident canonical traces and binding projections (d39 and 69fff recovered from prior 404)",
-        "pg_mutation": false
+      "status": "RESTART_PERSISTENCE_PROVEN_PUBLISHER_ACTIVE_HUMAN_GATES_WITHDRAWN",
+      "saved_owner_persistence": {
+        "research_owner_process_recreated": true,
+        "saved_six_equal": {
+          "Workshop295": true,
+          "Research_ad64": true,
+          "rrun-20261016-006": true,
+          "rrun-20261016-007": true,
+          "artifact:rart-8e15bee77f67": true,
+          "artifact:rart-d8c50a13303d": true
+        },
+        "saved_two_patterns_equal": {
+          "72215b2f-7601-44bb-997d-0b4687bdf934": true,
+          "7ce68816-129d-4228-b3c5-878c6749b729": true
+        },
+        "new_list_equals_completed_detail": true
       },
-      "live_management_health": {
-        "observed_at": "2026-10-11T13:37:00Z",
-        "healthy_loops_count": 11,
-        "total_loops_count": 12,
-        "loop_10_status": "unhealthy; record_accepted=false, reason: record lacks accepted current controller-runtime provenance",
-        "historical_transfer_prohibited": "Management 11/12 current accepted records reflects fresh functional and provenance status; historical 09:21 12/12 report is NOT transferred; does not constitute 12 scenario / browser / FULL qualification",
-        "incident_timing_diagnostics_separately_dated": {
-          "observed_at": "2026-10-11T04:40:00.000000+00:00",
-          "historical_checkpoint": "DEV-SIX-AREA-EVIDENCE-CHECKPOINT-20261011 (receipt: telemetry-scheduler-incident-summary.json)",
-          "incident_timeouts": 2,
-          "visibility_deferrals": 18,
-          "binding_projections": "HTTP 503 (5.086s, 7.718s) on rb-52d16f8d and rb-5354aba5 while event traces PASS (1.527s, 3.066s)",
-          "pg_durable_order": "READONLY verified 3445658 < 4005801 and 3457957 < 4005806",
-          "pg_explain": "EXPLAIN (not ANALYZE) confirmed costly created_at index scan on OR runtime binding query without dedicated index; no held blocking table lock"
-        },
-        "successor_source_deliveries": {
-          "be_6495": {
-            "task": "RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011",
-            "frozen_head": "e8411fbe59f1199028684aa7efe6e49f2f5868dc",
-            "merge_commit": "f1f6c32cab68c449dc0e7a462940de6a193d1412",
-            "merged_at": "2026-10-11T05:15:20Z",
-            "native_done_generation": 2,
-            "verification": "185 original tests PASS",
-            "net_production_budget": "net 118 <= 120",
-            "status": "MERGED (source; undeployed on hosted dev VM, not hosted acceptance)"
-          },
-          "be_6497": {
-            "task": "TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011",
-            "frozen_head": "95ca929b6ed9016615f3db12d8fbdbb8246533fd",
-            "merge_commit": "c69d90931d57b5ca7a792fd65431f3c4faad247b",
-            "merged_at": "2026-10-11T05:40:20Z",
-            "native_done_generation": 1,
-            "native_done_at": "2026-10-11T05:43:14Z",
-            "verification": "144 original tests PASS",
-            "net_production_budget": "net 17 <= 40",
-            "status": "MERGED (source; undeployed on hosted dev VM, not hosted acceptance)"
-          },
-          "be_6498": {
-            "task": "RECON-CURRENT-OWNER-ANCHORS-FAILCLOSED-20261011",
-            "frozen_head": "c357437b1d6f219480f92f2e13ac5015c2a929d6",
-            "merge_commit": "9c15f1d9bdef2c3e9011c7a893b6c6521520f59f",
-            "merged_at": "2026-10-11T05:45:19Z",
-            "native_done_generation": 1,
-            "native_done_at": "2026-10-11T05:46:52Z",
-            "verification": "190 original tests PASS",
-            "net_production_budget": "net 1 <= 2, cumulative 119 <= 120",
-            "status": "MERGED (source; undeployed on hosted dev VM, not hosted acceptance)"
-          }
-        },
-        "historical_0440_state": {
-          "successor_6495_head": "14de008e4bd5786eca8c2870c3afd35a32c784b0",
-          "status": "source rework active; numeric tenant coercion and pair deadline counter rework pending (183 passed); TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011 queued waiting for 6495 writer-order; preserved as 04:40 historical fact, not erased"
-        }
+      "publisher": {
+        "state": "active",
+        "restore_required": false,
+        "enable_HTTP": 204,
+        "correct_lease_HTTP": 404,
+        "correct_lease": "execute-plans/environment-coordination/.pantheon/environment-leases/pantheon-dev-environment.json"
       },
-      "training_consumer_token_rotation": {
-        "service": "training-session-svc",
-        "instance_continuity": "same running instance across rotation",
-        "mount_path": "/run/pantheon-principals/TRAINING_SESSION_SOURCE_READ_TOKEN",
-        "rotation_window_utc": "2026-10-11T02:45:46Z -> 2026-10-11T03:45:46Z",
-        "rotation_type": "natural scheduled rotation occurring before 24h expiry, NOT an expiration event (iat advanced after 1h from 1791686746 to 1791690346; exp remains 24h from issuance)",
-        "public_claims": {
-          "sub": "pantheon-dev-training-session-svc",
-          "scope": "pantheon:dev-owner-read",
-          "aud": "bff-operators",
-          "tenant_id": "tenant-dev",
-          "roles": ["source_ingest_reader"]
-        },
-        "authenticated_get_adoption": {
-          "source_records_get_before": true,
-          "source_records_get_after": true,
-          "controller_readback_get_before": true,
-          "controller_readback_get_after": true
-        },
-        "issuer_healthcheck": {
-          "signature_valid": true,
-          "fixed_grant_valid": true,
-          "headroom_exit_code": 0
-        },
-        "boundary_limitation": "proves single consumer adoption across one natural rotation; does NOT claim projector adoption, infinite continuity, or training job completion; zero forced mint, restart, or secret export"
+      "financial_accounting": {
+        "original_SQL_readonly_and_not_truncated": true,
+        "broker_limit_not_hit_and_unique": true,
+        "all_committed_fill_counts_contiguous": true,
+        "all_ledger_fills_and_actual_broker_orders_bijection": true,
+        "exact_original_paper_scope": true,
+        "current_cash_and_positions_match_durable_ledger": true,
+        "exact_two_valuation_legs_and_original_pair": true,
+        "both_legs_same_binding_runtime_pool_and_persona": true,
+        "both_legs_valuation_equals_independent": true,
+        "official_source_identity_and_marks_exact": true,
+        "full_saved_curve_independently_recalculated": true,
+        "rolling20day_drawdown_peak_and_value_match": true,
+        "actual_runtime_summary_scope_and_finance_match": true,
+        "actual_committed_position_links_same_fill": true,
+        "actual_scheduled_reconciliation_links_same_position_and_fill": true,
+        "no_pending_valuation_or_lifecycle_delivery": true
       },
-      "human_approval_votes": {
-        "historical_fixture_observation": {
-          "observed_at": "2026-10-11T13:37:29Z",
-          "case_id": "approval-paper-human-quorum-closeout-20261010-v1",
-          "observed_votes": 0,
-          "status": "pending (version 1); zero votes cast; no AI votes, PATCH, or new browser",
-          "fixture_disposition": "obsolete historical fixture with zero votes; omitted execution_context=paper owner contract; retained without fabricated cancellation; not a release blocker"
+      "pipeline_source_audit": {
+        "receipt": {
+          "path": "/tmp/pantheon-assist-20261013/Root38993144359-existing-FE-controller-regression-repetition-source-audit-readonly.json",
+          "raw_sha256": "26e9385b4b0d1009373b25698175e1eed95c933de61ccf3ff5426277984f1cca"
         },
-        "operator_policy_clarification_20261011": {
-          "timestamp": "2026-10-11T15:02:00Z",
-          "operator_instruction": "User explicitly rejected demanding two human approvers for ordinary dev/paper closeout; supersedes earlier blanket two-human interpretation",
-          "capital_paper_onboarding_approval_required": 0,
-          "capital_guard_policy": "services/capital/capital_guard.py:is_paper_operation/authorize allows correctly scoped paper pool activation, paper_owner binding and paper_ledger rebalance without Capital approval; CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001 AC3 explicitly requires paper onboarding without Capital approval",
-          "non_capital_business_approval_policy": "Real non-capital business approval UI acceptance uses existing one-authorized-human policy for its actual target; retains true login, owner version/readback, tenant, idempotency, persistence and no-proxy-vote",
-          "current_required_votes": 1
-        },
-        "required_votes": 1,
-        "eligible_distinct_humans": 1,
-        "observed_votes": 0,
-        "status": "applicable one-human noncapital business decision required; zero Capital approval for genuine paper onboarding; obsolete fixture pending with zero votes (not a blocker)"
-      }
+        "finding": "Same full shell regression suite is serialized in two different runner environments. Shared suite repetition and dev-host execution are confirmed; necessity of every duplicate case, precise per-case cost, and direct cause of previous product latency are NOT established. No workflow/test/gate changed or skipped."
+      },
+      "preserved_observer_and_integration_errors": [
+        "Source60initiale82 test snapshottedownermock notrawcommandstore; cancelledfixturewasnotactuallycancelled; evidencefalse. ActualA2approvedthenRootnativeHumanOpsreopen84c594e2 returned same3AC3paths, nativeg2 head57ac genuinelyre-reviewed, currentmerge6ef. Do notrewriteoldapprovalasreviewerrejection.",
+        "RootdidFULLd731 before checkingcompletedlist: genuine oldlist/detail mismatch52eca2a6 discoveredafterqualification. Withdrawnd731ROOTPOST0, neverrepeatoldcaller. This wasRoot orderingrework.",
+        "Earlierobserver usedwrongserviceJWT, wrongAgoraURL, assumedallFULLreceiptsdict/flatFEZIP, UIreporterwrongkey and Source58CSV commas. All oldfailures preserved; notproductnewAPIs/platform requests.",
+        "Current supplementalbyteobserver firstSSHnonzero originalstderrnotretained; exactexceptionunknown. Secondassumed/app beforeDockerfile/read_exit1all. ActualDockerfiles WORKDIR/COPY /workspace; correctedallthreeSHA256/Gitblob bytes equal8d6b1b0f. Preservebothfailures; no productrepairwasneeded."
+      ],
+      "human_approval_policy": "User explicitly withdrew extra two-human / MFA / issuer / execution-grant / business-rollback gates; preserve real tenant/secret/paper-live boundaries without inventing human votes. Real non-capital business approval UI retains existing one-authorized-human policy; genuine paper onboarding requires zero Capital approval per services/capital/capital_guard.py:is_paper_operation."
     },
     "ac5_rollback_verification_and_hosted_obligation_status": {
       "parent_area": "AC5: Rollback verification & hosted obligation status update",
-      "status": "ROLLBACK_DRIVER_AUGMENTED_LIVE_UNEXECUTED_OBLIGATIONS_OPEN",
-      "prior_artifact_rollback": "unexecuted; exact prior FE/BFF artifact rollback and reactivation with readback while preserving acknowledged data remains unverified on live dev VM",
-      "native_task_delivery": {
-        "task_id": "DEV-SEALED-FINAL-ARTIFACT-RETURN-20261011",
-        "status": "DONE (PR #6504, merge commit 50f0cbeea4c6809596191cb40255ee53ef1fe7b4, auto integrator receipt at 13:45:07Z, previous receipt 6502/c94fa491 preserved, owner finalizer archived DONE at 13:47:54Z)",
-        "summary": "Completed native delivery augmenting artifact driver with supported exact same sealed candidate bytes return path and mandatory fail-closed FE digests (--fe-manifest-sha256, --fe-dist-sha256)"
-      },
+      "status": "ROUNDTRIP_EXACT_ARTIFACTS_VERIFIED_HOSTED_OBLIGATIONS_OPEN",
+      "exact_artifact_roundtrip": "Sealed candidate return and prior artifact roundtrip verified under Root 38993144359; 19 exact-artifact checks passed during roundtrip.",
       "hosted_obligations_status": {
-        "agora": "OPEN / INCOMPLETE",
-        "persona": "OPEN / INCOMPLETE",
-        "research": "OPEN / INCOMPLETE",
+        "agora": "OPEN / INCOMPLETE (consent pending POST 0, provider 0)",
+        "persona": "OPEN / INCOMPLETE (Source 15 finite approval expired Oct 16 T 23:44:26Z; negative Sharpe/Teaching rejection and Pattern quarantine/dedupe are valid outcomes, not approval)",
+        "research": "OPEN / INCOMPLETE (ad64 finite one approval one dispatch one synthesis is DONE and consumed; no rerun or adoption)",
         "fe_approval": "OPEN / INCOMPLETE"
       },
-      "premature_closure_guard": "hosted obligations NOT updated or closed; source task completion or loaded tooling promotion do not satisfy hosted closure or product acceptance"
+      "premature_closure_guard": "Hosted obligations NOT updated or closed; source task completion or loaded tooling promotion do not satisfy hosted closure or product acceptance."
     },
     "ac6_matrix_publication_and_independent_review_evidence": {
       "parent_area": "AC6: Matrix publication & independent review evidence",
@@ -279,330 +797,212 @@
         "docs/deployment/latest-dev-six-area-closure.md",
         "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json",
         "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/source-delivery-ledger.json",
-        "docs/deployment/evidence/DEV-SIX-AREA-SOURCE-ADOPTION-CHECKPOINT-20261011/evidence.json",
-        "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/browser-governance-negative-receipt.json",
-        "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/browser-workshop295-receipt.json",
-        "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/legacy-us-persona-binding-summary.json",
-        "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/root38102321809-receipt.json",
-        "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/telemetry-scheduler-incident-summary.json",
-        "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/training-consumer-rotation-receipt.json"
+        "docs/deployment/evidence/DEV-SIX-AREA-ACTUAL-DELIVERY-CHECKPOINT-20261017/evidence.json"
       ],
       "production_delta_lines": 0,
       "unfulfilled_obligations": [
-        {
-          "item": "full_loop_qualification",
-          "detail": "Failed FULL 38092806870 due to provider weekly quota; reported reset Oct 12 12:00 UTC (unverified / availability not guaranteed); Root 38102321809 skipped FULL; Root 38124492288 skipped FULL"
-        },
-        {
-          "item": "taiwan_natural_market_data",
-          "detail": "Mandatory Oct 12 NEW natural Taiwan market data arrival, freshness verification, and downstream pipeline consumption"
-        },
-        {
-          "item": "human_approval_and_paper_onboarding_policy",
-          "detail": "One authorized human required for real non-capital business approval UI acceptance (retaining true login, owner version/readback, tenant, idempotency, persistence, no-proxy-vote); zero Capital approval required for genuine paper onboarding per services/capital/capital_guard.py:is_paper_operation and CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001 AC3; obsolete fixture approval-paper-human-quorum-closeout-20261010-v1 is not a release blocker"
-        },
-        {
-          "item": "positive_financial_reconciliation",
-          "detail": "Positive financial accounting, ledger reconciliation, and variance resolution"
-        },
-        {
-          "item": "main_provider_and_docker_replay",
-          "detail": "Original main post-config / provider execution and pinned Docker replay"
-        },
-        {
-          "item": "legacy_us_scope_limitations",
-          "detail": "Formal retirement and terminal disposition of legacy US bindings without runtime commands"
-        },
-        {
-          "item": "exact_sealed_bytes_roundtrip",
-          "detail": "Exact prior-to-same FINAL sealed bytes roundtrip and all acknowledged data retention on hosted dev VM"
-        },
-        {
-          "item": "latest_own_pair_root_seals_and_governance_browser",
-          "detail": "Latest own pair Root seals and image-served 12-loop + Governance browser qualification"
-        },
-        {
-          "item": "independent_final_acceptance",
-          "detail": "Independent final acceptance by parent reviewer Codex2 and release owner Human/Ops across all six areas"
-        }
-      ]
+        "Parent remainsINCOMPLETE g17/manualHumanOps/reviewerAntigravity. Exactsamefreshcausalall12 and other originalManagement/Persona/Agora/Research/approval journeys not certified by isolatedFULL or oneeight-eventpaperchain.",
+        "Agora specifictwoexistingPersonaopinions+onesynthesis consent askedonce/pendingno reply; POST0/provider0. OldnormalA Oct3int_fb7f otherWorkshop/SPY degraded oneopinion, failedstream, policydeniedsynthesis is historicalnegativeproof, NOTfreshTWpositive.",
+        "Original hosted missing/foreign/unavailable inputs, cancellation/retry/idempotency/version conflicts and remaining domain operations require truthful existingproof mapping. PositiveResearchDAG/restart and focusedUI are nowcovered; no blanket claimallnegative/cancel/retrytests done. Reuse genuine existingproof, do notcreate newpositive cases or newrequirements to fillmatrix.",
+        "Original persona/teaching/evaluator/consultation/adoption obligations remain as actualoldproof shows. Source15finiteapproval expiredOct16T234426Z, no backdate/renewunnecessarily. ValidnegativeSharpe/Teachingrejection, Patternquarantine/dedupe, Evaluator74/72ineligible2valid with[]abstention are validoutcomes, notapproval/adoption or allhostedUI.",
+        "Original formal3artifacts are staleOct11. This documentation checkpoint updates their current facts/status; publication/docreview is not wholeproductacceptance.",
+        "Genuine final independent totalreview stillowed; neither Root tests nor docsreview is automaticallyparentdone. No inventedtwohumanbusinessrule/MFA/issuer/executiongrants/businessrollbackreactivation gate. Operator explicitly withdrewthose extraassistantgates; originalscope/tenant/secret/paperlive preserved."
+      ],
+      "independent_review": "Assigned reviewer Antigravity for task DEV-SIX-AREA-ACTUAL-DELIVERY-CHECKPOINT-20261017. Actual final independent total review of parent DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 still owed."
     }
   },
   "source_ledger": {
-    "be_pr_6494": {
-      "task": "TELEMETRY-CANONICAL-OWNER-METADATA-TENANT-20261010",
-      "head": "9d7092a3945dbdbb94a9122dd832b5bbf9acba26",
-      "merge_commit": "420598fe643be541ca28419a1abe4b03acb2dd73",
-      "tests": "142 passed, 0 skipped",
-      "status": "canonical DONE"
+    "count": 60,
+    "count_meaning": "Delivery records include integration rework and a loaded supervisor-runtime promotion; NOT sixty new product features, commits or independent hosted acceptances. Git ancestry proves source inclusion, not source review quality or hosted deployment.",
+    "all_in_candidate_git_ancestry": true,
+    "sanitized_export": {
+      "path": "/tmp/pantheon-assist-20261013/Source60-existing-delivery-ledger-sanitized-and-ancestry-audited-readonly-20261017.json",
+      "raw_sha256": "1d9b034e0a23ec3919a9896112663bb48a88fba91cf22bbbb07fa02e58f95d4d"
     },
-    "fe_pr_830": {
-      "task": "FE-GOVERNANCE-OWNER-READABLE-DETAIL-20261010",
-      "head": "753bd23928d87af1d761975ee703e8d8568248d0",
-      "merge_commit": "79aacd97f770dafb58471bba59d2fc9b98b4dff5",
-      "tests": "54 passed + 1 Playwright discovery",
-      "status": "archived DONE"
-    },
-    "fe_pr_831": {
-      "task": "FE-GOVERNANCE-CANONICAL-AUDIT-READBACK-20261011",
-      "head": "491afee837bfee57b24016a6fa9a552e747b6a44",
-      "merge_commit": "3fa4b1aab4877786e109f66156018213e4c4cb95",
-      "merged_at": "2026-10-11T04:10:14Z",
-      "native_done_at": "2026-10-11T04:13:17Z",
-      "tests": "67 passed + 1 discovery",
-      "status": "canonical DONE"
-    },
-    "pi_pr_6505": {
-      "task": "PI-REDIS-PROOF-CLEANUP-20261011",
-      "head": "f5f2f5554d5168f509ef9fbc6ca3669611f6b59a",
-      "merge_commit": "100b88c88555beba8991bd4c63d2a81b728be053",
-      "merged_at": "2026-10-11T12:20:12Z",
-      "tests": "125 real Redis tests PASS, 0 skip; 118 AST original test bodies unchanged; missing-redis 105 tests 4 explicit SkipTest unchanged 67 preexisting containers, 7 cleanup boundary tests and 4 labelled-owned real start/failure cases clean before propagation",
-      "status": "MERGED (tooling)"
-    },
-    "pi_pr_6506": {
-      "task": "PI-RECOVERY-PRIVATE-INDEX-20261011",
-      "head": "0bb607d713eac2ca22ea4fc5fb2198ea826f4d42",
-      "merge_commit": "bb044b67e25196c84a45db61f2bb091d0c0997f6",
-      "merged_at": "2026-10-11T12:43:46Z",
-      "status": "MERGED (tooling)"
-    },
-    "pi_pr_6507": {
-      "task": "PI-LANDED-REOPEN-GENERATION-20261011",
-      "head": "429457494bb11c3e635a6eb277b37f1aaaec7214",
-      "merge_commit": "d0695d2c89a1fdcaac1eea56309532fda3fabf2e",
-      "merged_at": "2026-10-11T13:40:30Z",
-      "tests": "786 passed, 1031 subtests passed in 160.83s; 3 required CI checks passed (Commit trailers, Publish canonical review status, Smoke acceptance; mechanical delivery tooling only)",
-      "status": "MERGED (tooling)"
-    },
-    "supervisor_loaded_runtime": {
-      "command_root": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/d0695d2c89a1fdcaac1eea56309532fda3fabf2e",
-      "source_sha": "d0695d2c89a1fdcaac1eea56309532fda3fabf2e",
-      "promoted_at": "2026-10-11T13:44:32Z",
-      "supervisor_pid": 3553496,
-      "health": "healthy",
-      "task_state_v2_caught_up": true,
-      "event_count": 37801,
-      "runtime_deletions": 0,
-      "same_integrator": true
-    },
-    "be_pr_6504": {
-      "task": "DEV-SEALED-FINAL-ARTIFACT-RETURN-20261011",
-      "owner": "Antigravity2",
-      "reviewer": "Antigravity",
-      "head": "401de086463b4c07a55f9b5a597aa8ad41e43adf",
-      "merge_commit": "50f0cbeea4c6809596191cb40255ee53ef1fe7b4",
-      "canonical_integration_receipt_at": "2026-10-11T13:45:07Z",
-      "generation": 3,
-      "previous_integration_receipt_retained": {
-        "pr": 6502,
-        "head": "1e19083957cb4560577a19f2b03e0a9eb2f54713",
-        "merge_commit": "c94fa49119e6c9084041534d798a21235896fb8d",
-        "observed_at": "2026-10-11T10:25:20Z"
+    "three_current_delivered_fixes": [
+      {
+        "task": "BFF-EVOLUTION-JOURNAL-ORIGINAL-READ-ISOLATION-20261017",
+        "container": "pantheon-operator-bff-1",
+        "repo_path": "services/control-plane/bff/evolution/router.py",
+        "expected_sha256": "22a83ff5e90cb90a0c9fb03506bfa1eed9240b3155b254181548d56a5eb6190e",
+        "expected_git_blob_sha1": "34e61d5e81b7b0781b45e6bc09d0f8fbf7d8fc43",
+        "physical": {
+          "container_id": "4ffc4d5ed846ffa83cd7242538fc05935e3c7378dedc0bfae7eee262e8d4b252",
+          "image_id": "sha256:7df1c5f297af4e9ecd9164024fc0ef37cb22b10dbb572d6282574a840124025f",
+          "started_at": "2026-10-17T03:15:42.452958862Z",
+          "working_dir": "/workspace"
+        },
+        "read_exit": 0,
+        "actual": {
+          "path": "/workspace/services/control-plane/bff/evolution/router.py",
+          "sha256": "22a83ff5e90cb90a0c9fb03506bfa1eed9240b3155b254181548d56a5eb6190e",
+          "git_blob_sha1": "34e61d5e81b7b0781b45e6bc09d0f8fbf7d8fc43"
+        },
+        "exact_bytes_equal": true
       },
-      "owner_finalizer_lease": {
-        "queue_event_id": "evt-20261011T134515Z-46134bbc",
-        "worker_run_id": "antigravity2-20261011T134529Z-44a787a9",
-        "pid": 3554711,
-        "archived_at": "2026-10-11T13:47:54Z",
-        "terminal_status": "done",
-        "terminal_outcome": "completed"
+      {
+        "task": "PAPER-RUNTIME-QUEUE-LAG-STARTUP-20261017",
+        "container": "pantheon-paper-fleet-reconciler-1",
+        "repo_path": "services/execution/lean_runtime/paper_runtime.py",
+        "expected_sha256": "9e9d9769e34136373dd054c635015af9d36d4a902f75e2a95520698d790abd6b",
+        "expected_git_blob_sha1": "ca92891777e732000ec1f155720fe2eecf32a330",
+        "physical": {
+          "container_id": "22aac905319b148ca6abb4c5a4939691cd6a3c224124c844244e6be5c1c6a804",
+          "image_id": "sha256:bf42d384a25a6be950957af1b53c044a9c78d8ead33bf184405adb24add7f325",
+          "started_at": "2026-10-17T02:16:06.366692128Z",
+          "working_dir": "/workspace"
+        },
+        "read_exit": 0,
+        "actual": {
+          "path": "/workspace/services/execution/lean_runtime/paper_runtime.py",
+          "sha256": "9e9d9769e34136373dd054c635015af9d36d4a902f75e2a95520698d790abd6b",
+          "git_blob_sha1": "ca92891777e732000ec1f155720fe2eecf32a330"
+        },
+        "exact_bytes_equal": true
       },
-      "status": "canonical DONE",
-      "notes": "source/loaded tooling/native DONE not live FINAL/all DATA/FULL/product"
-    },
-    "redis_superseded_task": {
-      "task": "TEST-REDIS-CONTAINER-LEAK-20261010",
-      "owner": "Claude",
-      "reviewer": "Antigravity",
-      "terminal_status": "done",
-      "terminal_outcome": "superseded",
-      "superseded_by": "DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002",
-      "archived_at": "2026-10-11T14:45:14Z",
-      "pr": 6481,
-      "pr_state": "CLOSED",
-      "pr_closed_at": "2026-10-11T14:48:05Z",
-      "retained_head": "3da34d4f1c6e7f272242a2c40092bd689bb79f05",
-      "status": "native SUPERSEDED (archive preserved; PR #6481 CLOSED unmerged)",
-      "notes": "Preserved Claude owner, Antigravity reviewer, PR #6481 history with bad trailers commit d5c6cd304 and hook denial; superseded not falsely completed"
-    },
-    "source_rework_superseded_task": {
-      "task": "WORKER-NATIVE-SOURCE-REWORK-BINDING-20261011",
-      "owner": "Antigravity2",
-      "reviewer": "Antigravity",
-      "terminal_status": "done",
-      "terminal_outcome": "superseded",
-      "superseded_by": "DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002",
-      "archived_at": "2026-10-11T14:45:20Z",
-      "status": "native SUPERSEDED (design anchor 03bd68630 preserved; net production 0, cumulative 40 unchanged)",
-      "notes": "Obsolete only as dependency needed to recover old blocked Redis PR6481 after authorized Pi direct tooling delivery 6505 already discharged 4 fixture ACs; parent DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 adopts authentic source and survives all product obligations; native consumer not implemented"
-    },
-    "be_pr_6495": {
-      "task": "RECON-DURABLE-ACCEPTED-APPEND-VISIBILITY-20261011",
-      "head": "e8411fbe59f1199028684aa7efe6e49f2f5868dc",
-      "merge_commit": "f1f6c32cab68c449dc0e7a462940de6a193d1412",
-      "merged_at": "2026-10-11T05:15:20Z",
-      "native_done_generation": 2,
-      "verification": "185 original tests PASS",
-      "net_production_budget": "net 118 <= 120",
-      "status": "MERGED (source; undeployed on hosted dev VM, not hosted acceptance)",
-      "historical_0440_state": "head 14de008e4bd5786eca8c2870c3afd35a32c784b0 in source rework (183 passed); preserved as 04:40 historical fact; landed at 05:15:20Z"
-    },
-    "fe_pr_832": {
-      "task": "FE-GOVERNANCE-AUDIT-IDENTITY-FAILCLOSED-20261011",
-      "head": "1e2aa7d7e1085ba085a2ad820dc95cb3806a4a86",
-      "merge_commit": "4211acdf31f9a28bd63f3d64fe0e6e23f98d395a",
-      "merged_at": "2026-10-11T05:05:14Z",
-      "native_done_generation": 2,
-      "native_done_at": "2026-10-11T05:07:19Z",
-      "verification": "75 originals + 1 discovery PASS",
-      "cumulative_production_budget": "26 <= 40",
-      "status": "MERGED (FE source; native DONE gen 2; undeployed on hosted dev VM, not hosted acceptance)",
-      "historical_0440_state": "head 88b5c6152500d17c2c119b10bdbae33943259810 pending PR #832; preserved as 04:40 historical fact; landed at 05:05:14Z"
-    },
-    "telemetry_indexed_binding_task": {
-      "task": "TELEMETRY-INDEXED-CANONICAL-BINDING-READ-20261011",
-      "head": "95ca929b6ed9016615f3db12d8fbdbb8246533fd",
-      "merge_commit": "c69d90931d57b5ca7a792fd65431f3c4faad247b",
-      "merged_at": "2026-10-11T05:40:20Z",
-      "native_done_generation": 1,
-      "native_done_at": "2026-10-11T05:43:14Z",
-      "verification": "144 original tests PASS",
-      "net_production_budget": "net 17 <= 40",
-      "status": "MERGED (source; native DONE gen 1; undeployed on hosted dev VM, not hosted acceptance)",
-      "historical_0440_state": "queued, waiting for 6495 writer-order; preserved as 04:40 historical fact; landed at 05:40:20Z"
-    },
-    "be_pr_6498": {
-      "task": "RECON-CURRENT-OWNER-ANCHORS-FAILCLOSED-20261011",
-      "head": "c357437b1d6f219480f92f2e13ac5015c2a929d6",
-      "merge_commit": "9c15f1d9bdef2c3e9011c7a893b6c6521520f59f",
-      "merged_at": "2026-10-11T05:45:19Z",
-      "native_done_generation": 1,
-      "native_done_at": "2026-10-11T05:46:52Z",
-      "verification": "190 original tests PASS",
-      "net_production_budget": "net 1 <= 2, cumulative 119 <= 120",
-      "status": "MERGED (source; native DONE gen 1; undeployed on hosted dev VM, not hosted acceptance)"
-    }
+      {
+        "task": "RESEARCH-PLAN-LIST-OWNER-PROJECTION-20261017",
+        "container": "pantheon-operator-bff-1",
+        "repo_path": "services/control-plane/bff/agora/research/service.py",
+        "expected_sha256": "9cb1c781088897c27094acf5d0059bf17ec975226ad7cab99078e892fdf6b6ec",
+        "expected_git_blob_sha1": "a37f001cf9ff076a7c1d60dc1c761021373573d7",
+        "physical": {
+          "container_id": "4ffc4d5ed846ffa83cd7242538fc05935e3c7378dedc0bfae7eee262e8d4b252",
+          "image_id": "sha256:7df1c5f297af4e9ecd9164024fc0ef37cb22b10dbb572d6282574a840124025f",
+          "started_at": "2026-10-17T03:15:42.452958862Z",
+          "working_dir": "/workspace"
+        },
+        "read_exit": 0,
+        "actual": {
+          "path": "/workspace/services/control-plane/bff/agora/research/service.py",
+          "sha256": "9cb1c781088897c27094acf5d0059bf17ec975226ad7cab99078e892fdf6b6ec",
+          "git_blob_sha1": "a37f001cf9ff076a7c1d60dc1c761021373573d7"
+        },
+        "exact_bytes_equal": true
+      }
+    ],
+    "historical_oct11_deliveries_retained": true,
+    "entries_ref": "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/source-delivery-ledger.json"
   },
   "operational_l1_l12_ledger": [
     {
       "loop": "L1",
       "name": "source_ingestion",
       "source_status": "PREDECESSOR_MERGED",
-      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact 420598fe + 79aacd97)",
-      "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
-      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
-      "full_qualified": false,
+      "served_pair_release_admission": "accepted (Root 38993144359: BE 6ef8507e5 + FE 281ceed31)",
+      "loop_owner_admission_health": "QUALIFIED_ISOLATED_BACKEND / loop qualified in backend isolated runner under FULL 38991740527",
+      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof (Workshop UI displays plan/run outcomes; full reports read via authenticated API)",
+      "full_qualified": true,
       "final_acceptance": false
     },
     {
       "loop": "L2",
       "name": "strategy_distillation",
       "source_status": "PREDECESSOR_MERGED",
-      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact 420598fe + 79aacd97)",
-      "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
-      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
-      "full_qualified": false,
+      "served_pair_release_admission": "accepted (Root 38993144359: BE 6ef8507e5 + FE 281ceed31)",
+      "loop_owner_admission_health": "QUALIFIED_ISOLATED_BACKEND / loop qualified in backend isolated runner under FULL 38991740527",
+      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof (Workshop UI displays plan/run outcomes; full reports read via authenticated API)",
+      "full_qualified": true,
       "final_acceptance": false
     },
     {
       "loop": "L3",
       "name": "alpha_replication",
       "source_status": "PREDECESSOR_MERGED",
-      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact 420598fe + 79aacd97)",
-      "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
-      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
-      "full_qualified": false,
+      "served_pair_release_admission": "accepted (Root 38993144359: BE 6ef8507e5 + FE 281ceed31)",
+      "loop_owner_admission_health": "QUALIFIED_ISOLATED_BACKEND / loop qualified in backend isolated runner under FULL 38991740527",
+      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof (Workshop UI displays plan/run outcomes; full reports read via authenticated API)",
+      "full_qualified": true,
       "final_acceptance": false
     },
     {
       "loop": "L4",
       "name": "persona_teaching",
       "source_status": "PREDECESSOR_MERGED",
-      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact 420598fe + 79aacd97)",
-      "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
-      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof (Workshop 295 persistence journey run 38109227221 is evaluated separately in AC3/AC4, not loop-specific teaching proof)",
-      "full_qualified": false,
+      "served_pair_release_admission": "accepted (Root 38993144359: BE 6ef8507e5 + FE 281ceed31)",
+      "loop_owner_admission_health": "QUALIFIED_ISOLATED_BACKEND / loop qualified in backend isolated runner under FULL 38991740527",
+      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof (Workshop UI displays plan/run outcomes; full reports read via authenticated API)",
+      "full_qualified": true,
       "final_acceptance": false
     },
     {
       "loop": "L5",
       "name": "agora_interaction_evidence",
       "source_status": "PREDECESSOR_MERGED",
-      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact 420598fe + 79aacd97)",
-      "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
-      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
-      "full_qualified": false,
+      "served_pair_release_admission": "accepted (Root 38993144359: BE 6ef8507e5 + FE 281ceed31)",
+      "loop_owner_admission_health": "QUALIFIED_ISOLATED_BACKEND / loop qualified in backend isolated runner under FULL 38991740527",
+      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof (Workshop UI displays plan/run outcomes; full reports read via authenticated API)",
+      "full_qualified": true,
       "final_acceptance": false
     },
     {
       "loop": "L6",
       "name": "human_imitation_shadow_evaluation",
       "source_status": "PREDECESSOR_MERGED",
-      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact 420598fe + 79aacd97)",
-      "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
-      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
-      "full_qualified": false,
+      "served_pair_release_admission": "accepted (Root 38993144359: BE 6ef8507e5 + FE 281ceed31)",
+      "loop_owner_admission_health": "QUALIFIED_ISOLATED_BACKEND / loop qualified in backend isolated runner under FULL 38991740527",
+      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof (Workshop UI displays plan/run outcomes; full reports read via authenticated API)",
+      "full_qualified": true,
       "final_acceptance": false
     },
     {
       "loop": "L7",
       "name": "consultation",
       "source_status": "PREDECESSOR_MERGED",
-      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact 420598fe + 79aacd97)",
-      "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
-      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
-      "full_qualified": false,
+      "served_pair_release_admission": "accepted (Root 38993144359: BE 6ef8507e5 + FE 281ceed31)",
+      "loop_owner_admission_health": "QUALIFIED_ISOLATED_BACKEND / loop qualified in backend isolated runner under FULL 38991740527",
+      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof (Workshop UI displays plan/run outcomes; full reports read via authenticated API)",
+      "full_qualified": true,
       "final_acceptance": false
     },
     {
       "loop": "L8",
       "name": "promotion_deployment",
       "source_status": "PREDECESSOR_MERGED",
-      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact 420598fe + 79aacd97)",
-      "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
-      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
-      "full_qualified": false,
+      "served_pair_release_admission": "accepted (Root 38993144359: BE 6ef8507e5 + FE 281ceed31)",
+      "loop_owner_admission_health": "QUALIFIED_ISOLATED_BACKEND / loop qualified in backend isolated runner under FULL 38991740527",
+      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof (Workshop UI displays plan/run outcomes; full reports read via authenticated API)",
+      "full_qualified": true,
       "final_acceptance": false
     },
     {
       "loop": "L9",
       "name": "capital_pool_execution",
       "source_status": "PREDECESSOR_MERGED",
-      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact 420598fe + 79aacd97)",
-      "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
-      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
-      "full_qualified": false,
+      "served_pair_release_admission": "accepted (Root 38993144359: BE 6ef8507e5 + FE 281ceed31)",
+      "loop_owner_admission_health": "QUALIFIED_ISOLATED_BACKEND / loop qualified in backend isolated runner under FULL 38991740527",
+      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof (Workshop UI displays plan/run outcomes; full reports read via authenticated API)",
+      "full_qualified": true,
       "final_acceptance": false
     },
     {
       "loop": "L10",
       "name": "telemetry_reconciliation",
-      "source_status": "PREDECESSOR_MERGED (BE 6494, 6495, 6497, 6498 and FE 832 merged; undeployed on hosted dev VM)",
-      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact 420598fe + 79aacd97)",
-      "loop_owner_admission_health": "UNHEALTHY / unobserved (13:37 controller report rejected: lacks accepted current controller-runtime provenance [record_accepted: false]; landed source deliveries BE 6494, 6495, 6497, 6498 and FE 832 undeployed on hosted dev VM; not hosted acceptance; historical 04:40:00Z incident timeouts/visibility deferrals diagnostics kept separately as 04:40 checkpoint)",
-      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof (Governance review journey run 38108525681 is evaluated separately in AC3, not loop-specific telemetry proof)",
-      "full_qualified": false,
+      "source_status": "PREDECESSOR_MERGED",
+      "served_pair_release_admission": "accepted (Root 38993144359: BE 6ef8507e5 + FE 281ceed31)",
+      "loop_owner_admission_health": "QUALIFIED_ISOLATED_BACKEND / loop qualified in backend isolated runner under FULL 38991740527",
+      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof (Workshop UI displays plan/run outcomes; full reports read via authenticated API)",
+      "full_qualified": true,
       "final_acceptance": false
     },
     {
       "loop": "L11",
       "name": "evolution",
       "source_status": "PREDECESSOR_MERGED",
-      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact 420598fe + 79aacd97)",
-      "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
-      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
-      "full_qualified": false,
+      "served_pair_release_admission": "accepted (Root 38993144359: BE 6ef8507e5 + FE 281ceed31)",
+      "loop_owner_admission_health": "QUALIFIED_ISOLATED_BACKEND / loop qualified in backend isolated runner under FULL 38991740527",
+      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof (Workshop UI displays plan/run outcomes; full reports read via authenticated API)",
+      "full_qualified": true,
       "final_acceptance": false
     },
     {
       "loop": "L12",
       "name": "bff_health_monitoring",
       "source_status": "PREDECESSOR_MERGED",
-      "served_pair_release_admission": "accepted (Root 38102321809: 420598fe + 79aacd97; Root 38124492288 whole outcome FAILED paper probe, FULL and exact pair admission SKIPPED, compensated exact 420598fe + 79aacd97)",
-      "loop_owner_admission_health": "NOT_PROVEN / loop-level admission not qualified (Root pair release admission does not imply loop admission; FULL loop SKIPPED)",
-      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof",
-      "full_qualified": false,
+      "served_pair_release_admission": "accepted (Root 38993144359: BE 6ef8507e5 + FE 281ceed31)",
+      "loop_owner_admission_health": "QUALIFIED_ISOLATED_BACKEND / loop qualified in backend isolated runner under FULL 38991740527",
+      "browser_verified": "NOT_PROVEN / not_applicable without loop-specific UI proof (Workshop UI displays plan/run outcomes; full reports read via authenticated API)",
+      "full_qualified": true,
       "final_acceptance": false
     }
   ]
