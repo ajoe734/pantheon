@@ -2308,6 +2308,75 @@ class TestPaperFleetStaleSessionAdmissionAndResume(unittest.TestCase):
         self.assertEqual(store.get("b-op-pause-1").status, "paused")
         self.assertEqual(store.get("b-op-pause-2").status, "paused")
 
+    def _paused_market_input_binding_with_newer_snapshot(self, binding_id: str):
+        now = datetime.now(timezone.utc)
+        old_time = (now - timedelta(seconds=100000)).isoformat().replace("+00:00", "Z")
+        new_snap = {
+            "snapshot_id": "snap-fresh-sm",
+            "symbol": "AAPL.US",
+            "event_time": (now - timedelta(seconds=120)).isoformat().replace("+00:00", "Z"),
+            "observed_at": now.isoformat().replace("+00:00", "Z"),
+            "source_ref": "source-ingest://normalized/us-price/AAPL",
+            "lineage": {"source": "manual_pull"},
+            "closes": [155.0, 156.0, 157.0],
+        }
+        b = _make_binding(
+            binding_id,
+            status="paused",
+            symbol="AAPL.US",
+            market_data_policy={"owner": "source-ingest", "contract": "latest_stored_normalized", "max_age_seconds": 86400, "minimum_closes": 2},
+            metadata={
+                "session_admission": {
+                    "reason_code": "market_input_missing",
+                    "source_snapshot_id": "snap-old-sm",
+                    "source_event_time": old_time,
+                    "observed_at": old_time,
+                    "max_age_seconds": 86400,
+                    "pause_command_ref": "cmd-pause-sm",
+                    "resume_snapshot_id": None,
+                    "resumed_at": None,
+                }
+            },
+        )
+        return b, new_snap
+
+    def _inject_safe_mode(self, recon, safe_mode: str) -> None:
+        real = recon._fetch_fleet_state
+
+        def _fetch():
+            fleet = real()
+            for eb in fleet[2]:
+                eb["safe_mode"] = safe_mode
+            return fleet
+
+        recon._fetch_fleet_state = _fetch
+
+    def test_paused_pool_safe_mode_blocks_resume_request_and_logs_once(self) -> None:
+        b, new_snap = self._paused_market_input_binding_with_newer_snapshot("b-sm-paused")
+        store, recon = self._make_store_and_recon([b], source_snapshot=new_snap)
+        self._inject_safe_mode(recon, "paused")
+
+        with self.assertLogs("services.paper_fleet_reconciler.paper_fleet_reconciler", level="INFO") as logs:
+            recon.reconcile_once()
+            recon.reconcile_once()
+        self.assertEqual(self.transitions, [])
+        self.assertEqual(store.get("b-sm-paused").status, "paused")
+        skips = [m for m in logs.output if "skipping resume" in m]
+        self.assertEqual(len(skips), 1)
+
+    def test_normal_restored_pool_safe_mode_keeps_resume(self) -> None:
+        b, new_snap = self._paused_market_input_binding_with_newer_snapshot("b-sm-ok")
+        store, recon = self._make_store_and_recon([b], source_snapshot=new_snap)
+        self._inject_safe_mode(recon, "normal_restored")
+        recon.reconcile_once()
+        self.assertEqual([t["new_status"] for t in self.transitions], ["active"])
+
+    def test_missing_safe_mode_keeps_resume(self) -> None:
+        b, new_snap = self._paused_market_input_binding_with_newer_snapshot("b-sm-none")
+        store, recon = self._make_store_and_recon([b], source_snapshot=new_snap)
+        recon.reconcile_once()
+        self.assertEqual([t["new_status"] for t in self.transitions], ["active"])
+
 class TestPaperFleetTaiwanSessionFreshness(unittest.TestCase):
     """Governed Taiwan (Asia/Taipei) market-session freshness at the fleet
     reconciler's admission defense (services.execution.market_snapshot_admission),
