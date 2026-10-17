@@ -2535,7 +2535,6 @@ class PaperRuntimeService:
         max_batch_size: int | None = None,
         lifecycle_outbox_path: str | os.PathLike[str] | None = None,
     ) -> None:
-        self._observed_queue_lag_ms: float | None = None
         if runtime_context is None:
             mf, stg = os.getenv("PANTHEON_RUNTIME_CONTEXT_MANIFEST"), os.getenv("PANTHEON_DEPLOYMENT_STAGE") or os.getenv("PANTHEON_RUNTIME_MODE")
             try:
@@ -3093,14 +3092,6 @@ class PaperRuntimeService:
 
     def _handle_order_event(self, event: OrderEvent) -> None:
         if event.event_type == "signal_generation":
-            rcpt = event.metadata.get("causal_queue_receipt")
-            raw_ts = event.metadata.get("enqueued_at") or (rcpt.get("enqueued_at") if isinstance(rcpt, Mapping) else None)
-            sig_dt = _parse_iso_utc(raw_ts) if isinstance(raw_ts, str) else None
-            # A signal enqueued before this runtime started was waiting for its worker
-            # to start, not for runtime backlog: measure from the later of the two.
-            wait_start = max(sig_dt, self._started_at_dt) if sig_dt is not None else None
-            lag = (datetime.now(timezone.utc) - wait_start).total_seconds() * 1000.0 if wait_start is not None else None
-            self._observed_queue_lag_ms = round(lag, 3) if lag is not None and lag >= 0 else None
             signal_metadata = self._signal_lifecycle_metadata(event.metadata)
             signal_metadata.setdefault("symbol", event.symbol)
             signal_metadata.setdefault("order_type", event.metadata.get("order_type", "MARKET"))
