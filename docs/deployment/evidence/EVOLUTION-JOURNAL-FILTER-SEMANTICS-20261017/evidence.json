@@ -1,0 +1,51 @@
+{
+  "task_id": "EVOLUTION-JOURNAL-FILTER-SEMANTICS-20261017",
+  "base_sha": "e4cbc0de2a2738818c375441dc8345eb2d6c8978",
+  "change_class": "corrective",
+  "net_prod_line_budget": 30,
+  "net_prod_lines_changed": 20,
+  "summary": "Preserve canonical Evolution Journal filtering, status projection, and Persona lineage before pagination. Ensure decision_state precedence and lightweight field normalization (proposed_changes summary, linked_incident_id, linked_postmortem_id) so filtering by status matches rendered row status and full summary counts reflect canonical states without deep hydration outside sliced pages.",
+  "root_cause": "Lightweight pre-filter projection in evolution/router.py duplicated canonical mutation_review_projection fields but preferred status before decision_state, causing approved items to be filtered out under ?status=approved and returned under ?status=pending. Full-summary mixed normalized returned rows and unnormalized off-page rows. Initial record also omitted linked_incident_id and linked_postmortem_id used by Persona lineage filtering.",
+  "solution": {
+    "router": "In services/control-plane/bff/evolution/router.py, apply canonical decision_state precedence to both decision and mutation review items in the pre-filter loop. Populate proposed_changes summary, linked_incident_id, and linked_postmortem_id in lightweight projection, and resolve postmortem_ids in Persona lineage matching so items linked via incident or postmortem are correctly matched before pagination."
+  },
+  "scope": [
+    "services/control-plane/bff/evolution/router.py",
+    "services/control-plane/bff/governance/service.py",
+    "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py",
+    "docs/deployment/evidence/EVOLUTION-JOURNAL-FILTER-SEMANTICS-20261017/evidence.json"
+  ],
+  "acceptance_criteria_verification": {
+    "ac1": "Read actual final PR6626 source and reproduced contradictory approved/pending filtering on base with sanitized counterexample /tmp/pantheon-assist-20261013/Evolution-e4cbc-real-mounted-filter-regression-actual-tool-result-20261017.json (defect_reproduced changed from true on base to false on head).",
+    "ac2": "Preserved canonical GovernanceService.mutation_review_projection field semantics before slicing, including decision_state precedence and proposed_changes summary default.",
+    "ac3": "Preserved Persona lineage filtering through linked_incident_id and linked_postmortem_id. Deep authoritative hydration remains bounded strictly to returned page_items with 0 per-row store lookups for off-page rows.",
+    "ac4": "Added mounted base-fail/head-pass unit tests in test_bff_b3_evolution_journal.py covering divergent status/decision_state filtering, full summary consistency across history sizes, and Persona lineage through linked incident/postmortem references with assertions on bounded owner reads. Net production line change is +20 lines, within budget <= 30."
+  },
+  "validation": [
+    {
+      "suite": "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py",
+      "command": "PYTHONPATH=. python3 -m pytest services/control-plane/bff/tests/test_bff_b3_evolution_journal.py",
+      "result": "23 passed"
+    },
+    {
+      "suite": "services/control-plane/bff/tests/test_mutation_review_projection_policy.py",
+      "command": "PYTHONPATH=. python3 -m pytest services/control-plane/bff/tests/test_mutation_review_projection_policy.py",
+      "result": "8 passed"
+    },
+    {
+      "suite": "services/control-plane/bff/tests/test_evolution_router.py",
+      "command": "PYTHONPATH=. python3 -m pytest services/control-plane/bff/tests/test_evolution_router.py",
+      "result": "9 passed"
+    },
+    {
+      "suite": "services/control-plane/bff/tests/test_governance_router.py",
+      "command": "PYTHONPATH=. python3 -m pytest services/control-plane/bff/tests/test_governance_router.py",
+      "result": "8 passed"
+    },
+    {
+      "suite": "services/control-plane/bff/test_mgmt_ooda_004_bff_routes.py",
+      "command": "PYTHONPATH=. python3 -m pytest services/control-plane/bff/test_mgmt_ooda_004_bff_routes.py",
+      "result": "6 passed"
+    }
+  ]
+}
