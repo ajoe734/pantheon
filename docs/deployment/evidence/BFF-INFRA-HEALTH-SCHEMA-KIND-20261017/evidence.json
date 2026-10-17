@@ -1,0 +1,13 @@
+{
+  "task_id": "BFF-INFRA-HEALTH-SCHEMA-KIND-20261017",
+  "date": "2026-10-17",
+  "change": "services/control-plane/bff/downstream_health_monitor.py: telemetry_component_kind() maps configured target kind to a telemetry-schema value in infrastructure-health events (file_worker -> scheduler; all other HTTP-probed kinds -> http_service). Configured label preserved in metadata.configured_component_kind. Probe selection and incident-create body still use the configured kind.",
+  "unchanged": ["services/telemetry/telemetry_event.schema.json", "docker-compose.yml"],
+  "incidents_consumer": "services/incidents/consumer.py still requires component.component_kind as a non-empty string; satisfied by the mapped value.",
+  "tests": {
+    "command": "python -m pytest services/control-plane/bff/test_downstream_health_monitor.py -q",
+    "head_with_fix": "35 passed",
+    "base_code_with_new_tests": "2 failed (new schema tests), 33 passed"
+  },
+  "hosted_state_touched": false
+}

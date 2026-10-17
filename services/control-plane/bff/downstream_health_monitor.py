@@ -124,6 +124,29 @@ class DownstreamTarget:
         }
 
 
+# services/telemetry/telemetry_event.schema.json restricts component.component_kind
+# to this set.  Configured target kinds are descriptive labels (for example
+# "runtime-owner-api") that only the BFF understands, so events carry the schema
+# value and keep the configured label in metadata.configured_component_kind.
+_TELEMETRY_COMPONENT_KINDS = frozenset(
+    {"http_service", "queue", "database", "cache", "scheduler", "external_api"}
+)
+
+
+def telemetry_component_kind(configured_kind: str) -> str:
+    """Map a configured target kind to a telemetry-schema component_kind.
+
+    File-heartbeat workers are periodic background jobs and map to
+    ``scheduler``; every other kind is probed over HTTP and maps to
+    ``http_service`` unless it is already a schema value.
+    """
+    if configured_kind in _TELEMETRY_COMPONENT_KINDS:
+        return configured_kind
+    if configured_kind == "file_worker":
+        return "scheduler"
+    return "http_service"
+
+
 # The environment names provisioned on the operator-bff service.  Aliases are
 # grouped so a single configured service is probed exactly once.
 _DEFAULT_TARGET_SPECS: Sequence[tuple[str, Sequence[str]]] = (
@@ -2362,7 +2385,7 @@ class DownstreamHealthMonitor:
             "producer": self._producer,
             "component": {
                 "service_name": result.target_name,
-                "component_kind": target.component_kind,
+                "component_kind": telemetry_component_kind(target.component_kind),
                 "endpoint": target.health_url,
             },
             "health_status": health_status,
@@ -2371,6 +2394,7 @@ class DownstreamHealthMonitor:
             "metadata": {
                 "controller": "bff-downstream-health-monitor",
                 "target_registry_source": target.source_env,
+                "configured_component_kind": target.component_kind,
             },
         }
         if incident_ref:
