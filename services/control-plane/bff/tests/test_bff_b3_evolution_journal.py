@@ -133,6 +133,8 @@ class _EvolutionJournalTestStore:
             lifecycle_telemetry_governance_kwargs=lifecycle_kwargs,
             ooda_management_kwargs=ooda_kwargs,
         )
+        self.list_evolution_decisions_call_count = 0
+        self.get_evolution_decision_by_id_call_count = 0
 
     def dataset_source(self, dataset: str) -> str:
         key = dataset
@@ -161,6 +163,7 @@ class _EvolutionJournalTestStore:
         return list(val.values()) if isinstance(val, dict) else list(val)
 
     def list_evolution_decisions(self, **kwargs: Any) -> list[dict[str, Any]]:
+        self.list_evolution_decisions_call_count += 1
         val = self.data.get("evolution_decisions")
         if val is None:
             val = self.default_data.get("evolution_decisions") or {}
@@ -184,20 +187,13 @@ class _EvolutionJournalTestStore:
         return {"id": decision_id, "approval_decision_id": decision_id, "status": "approved"}
 
     def get_evolution_decision_by_id(self, decision_id: str) -> Optional[dict[str, Any]]:
-        val = self.data.get("evolution_decisions")
-        if isinstance(val, dict) and decision_id in val:
-            return val[decision_id]
-        if isinstance(val, list):
-            for d in val:
-                if d.get("decision_id") == decision_id or d.get("id") == decision_id:
-                    return d
-        def_val = self.default_data.get("evolution_decisions")
-        if isinstance(def_val, dict) and decision_id in def_val:
-            return def_val[decision_id]
-        if isinstance(def_val, list):
-            for d in def_val:
-                if d.get("decision_id") == decision_id or d.get("id") == decision_id:
-                    return d
+        self.get_evolution_decision_by_id_call_count += 1
+        clean_id = str(decision_id or "").strip()
+        if not clean_id:
+            return None
+        for d in self.list_evolution_decisions():
+            if str(d.get("decision_id") or d.get("id") or "").strip() == clean_id:
+                return d
         return None
 
     def get_evolution_decision(self, decision_id: str) -> Optional[dict[str, Any]]:
@@ -388,9 +384,9 @@ def _create_app_for_store(store: Any) -> FastAPI:
         extract_identity=_extract_identity,
         require_read_role=_require_read,
         dataset_surface_status=_dataset_surface_status,
-        mutation_review_projection=lambda dec_id, identity=None, snapshot_at=None: (
+        mutation_review_projection=lambda dec_id, identity=None, snapshot_at=None, **kw: (
             GovernanceService(app.state.store).mutation_review_projection(
-                dec_id, identity=identity, snapshot_at=snapshot_at
+                dec_id, identity=identity, snapshot_at=snapshot_at, **kw
             )
         ),
     )
@@ -1558,3 +1554,157 @@ def test_evochain_007_filter_dependency_surfaces_reported_and_fail_closed() -> N
             headers=OPERATOR_HEADERS,
         )
         assert resp.status_code == 503, resp.text
+
+
+def test_focused_decision_read_amplification_bounded() -> None:
+    """EVOLUTION-JOURNAL-OWNER-READ-FANOUT-20261017: Focused originalID request
+    must not fan out to repeated per-row owner hydration across all history.
+
+    With 77 proposals in the owner store (matching the production incident state
+    where GET4ea430bd returned 77 proposals), a narrow request for
+    ?decision=evo-sweep-inc-drift-a24770da155d must execute exactly 1 list_evolution_decisions
+    call and 0 get_evolution_decision_by_id calls (down from 78 and 77 on base).
+    """
+    with tempfile.TemporaryDirectory() as td:
+        target_id = "evo-sweep-inc-drift-a24770da155d"
+        decisions: list[dict[str, Any]] = [
+            {
+                "id": f"dec-{i:03d}",
+                "decision_id": f"dec-{i:03d}",
+                "target_type": "artifact",
+                "target_id": f"art-{i:03d}",
+                "target_version": "v1.0.0",
+                "action_type": "mutation",
+                "status": "pending",
+                "decision_state": "pending",
+                "risk_level": "low",
+                "created_at": "2026-06-01T00:00:00Z",
+                "updated_at": "2026-06-01T00:00:00Z",
+                "occurred_at": "2026-06-01T00:00:00Z",
+                "proposed_changes": {"summary": f"Summary for dec-{i:03d}"},
+                "approval_decision_id": f"appr-{i:03d}",
+                "risk_assessment": {"risk_summary": "low risk"},
+            }
+            for i in range(76)
+        ]
+        decisions.append(
+            {
+                "id": target_id,
+                "decision_id": target_id,
+                "target_type": "artifact",
+                "target_id": "art-target",
+                "target_version": "v1.0.0",
+                "action_type": "mutation",
+                "status": "approved",
+                "decision_state": "approved",
+                "risk_level": "low",
+                "created_at": "2026-06-02T00:00:00Z",
+                "updated_at": "2026-06-02T00:00:00Z",
+                "occurred_at": "2026-06-02T00:00:00Z",
+                "proposed_changes": {"summary": "Target decision proposal"},
+                "approval_decision_id": "appr-target",
+                "risk_assessment": {"risk_summary": "low risk"},
+            }
+        )
+
+        data = {
+            "evolution_decisions": {d["decision_id"]: d for d in decisions},
+            "approval_decisions": {},
+            "postmortems": {},
+            "freeze_orders": {},
+            "all_rollbacks": {},
+        }
+        store = _EvolutionJournalTestStore(data)
+        app = _create_app_for_store(store)
+        client = _JournalTestClient(app, raise_server_exceptions=True)
+
+        store.list_evolution_decisions_call_count = 0
+        store.get_evolution_decision_by_id_call_count = 0
+
+        resp = client.get(
+            f"/bff/management/evolution-journal?decision={target_id}",
+            headers=OPERATOR_HEADERS,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        items = body["data"]["items"]
+
+        assert len(items) == 1
+        assert items[0]["source_id"] == target_id
+        assert items[0]["entry_type"] == "evolution_decision"
+
+        # Owner calls must remain strictly bounded: exactly 1 list call, 0 per-row hydration calls
+        assert store.list_evolution_decisions_call_count == 1
+        assert store.get_evolution_decision_by_id_call_count == 0
+
+
+def test_unfiltered_default_page_read_amplification_bounded_across_history_sizes() -> None:
+    """EVOLUTION-JOURNAL-OWNER-READ-FANOUT-20261017: Unfiltered default page
+    must bound owner reads across multiple history sizes (N=10, N=50).
+
+    In both cases, list_evolution_decisions must be called exactly once, and
+    mutation review hydration must reuse the already-read decision without
+    issuing get_evolution_decision_by_id calls.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        for n_decisions in (10, 50):
+            decisions = [
+                {
+                    "id": f"evo-dec-hist-{n_decisions}-{i:03d}",
+                    "decision_id": f"evo-dec-hist-{n_decisions}-{i:03d}",
+                    "target_type": "artifact",
+                    "target_id": f"art-hist-{i:03d}",
+                    "target_version": "v1.0.0",
+                    "action_type": "mutation",
+                    "status": "pending",
+                    "decision_state": "pending",
+                    "risk_level": "low",
+                    "created_at": f"2026-06-{1 + (i % 25):02d}T00:00:00Z",
+                    "updated_at": f"2026-06-{1 + (i % 25):02d}T00:00:00Z",
+                    "occurred_at": f"2026-06-{1 + (i % 25):02d}T00:00:00Z",
+                    "proposed_changes": {"summary": f"Summary {i}"},
+                    "approval_decision_id": f"appr-{i:03d}",
+                    "risk_assessment": {"risk_summary": "low"},
+                }
+                for i in range(n_decisions)
+            ]
+            data = {
+                "evolution_decisions": {d["decision_id"]: d for d in decisions},
+                "approval_decisions": {},
+                "postmortems": {},
+                "freeze_orders": {},
+                "all_rollbacks": {},
+            }
+            store = _EvolutionJournalTestStore(data)
+            app = _create_app_for_store(store)
+            client = _JournalTestClient(app, raise_server_exceptions=True)
+
+            store.list_evolution_decisions_call_count = 0
+            store.get_evolution_decision_by_id_call_count = 0
+
+            resp = client.get(
+                "/bff/management/evolution-journal",
+                headers=OPERATOR_HEADERS,
+            )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            items = body["data"]["items"]
+            page_info = body["page_info"]
+            summary = body["data"]["summary"]
+
+            # Owner reads must be exactly 1 list call, 0 per-row lookups
+            assert store.list_evolution_decisions_call_count == 1
+            assert store.get_evolution_decision_by_id_call_count == 0
+
+            # Sliced page items must not exceed page_size (20)
+            expected_total = n_decisions * 2 + 6  # 2 decisions per entry (decision + mutation_review) + 6 fixture items (postmortems, freeze orders, rollbacks)
+            expected_page_size = min(expected_total, 20)
+            assert len(items) == expected_page_size
+            assert page_info["page_size"] == 20
+
+            # Summary preserves full filtered totals across all history
+            assert summary["total_items"] == expected_total
+            assert summary["returned_items"] == expected_page_size
+            assert summary["decision_count"] == n_decisions
+            assert summary["mutation_review_count"] == n_decisions
+

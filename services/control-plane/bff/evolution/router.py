@@ -995,12 +995,15 @@ def create_evolution_router(
         rollbacks = list(getattr(read_store, "list_all_rollbacks", lambda: [])() or [])
 
         items: List[Dict[str, Any]] = []
+        dec_by_id: Dict[str, Dict[str, Any]] = {}
         for dec in decisions:
             dec_item = evolution_journal_decision_item(dec)
             if dec_item is not None:
                 items.append(dec_item)
             # Mutation review item projection
             dec_id = _management_record_id(dec, "decision_id", "id", "evolution_decision_id")
+            if dec_id:
+                dec_by_id[dec_id] = dec
             if dec_id and any(
                 dec.get(field) is not None
                 for field in (
@@ -1012,27 +1015,19 @@ def create_evolution_router(
                     "threshold_snapshots",
                 )
             ):
-                proj = (
-                    mutation_review_projection(dec_id, identity=identity, snapshot_at=snapshot_at)
-                    if mutation_review_projection is not None
-                    else None
-                )
-                if proj is None:
-                    app_dec = getattr(read_store, "get_approval_decision_by_id", lambda aid: None)(dec.get("approval_decision_id"))
-                    proj = {
-                        "decision_id": dec_id,
-                        "target_type": dec.get("target_type") or "artifact",
-                        "target_id": dec.get("target_id") or dec.get("artifact_id"),
-                        "target_version": dec.get("target_version") or dec.get("artifact_version"),
-                        "action_type": dec.get("action_type") or "mutation",
-                        "decision_state": dec.get("status") or dec.get("decision_state") or "pending",
-                        "risk_level": dec.get("risk_level") or "low",
-                        "created_at": dec.get("created_at") or snapshot_at,
-                        "proposed_changes": dec.get("proposed_changes") or {},
-                        "approval_decision": app_dec,
-                    }
+                proj = {
+                    "decision_id": dec_id,
+                    "target_type": dec.get("target_type") or "artifact",
+                    "target_id": dec.get("target_id") or dec.get("artifact_id"),
+                    "target_version": dec.get("target_version") or dec.get("artifact_version"),
+                    "action_type": dec.get("action_type") or "mutation",
+                    "decision_state": dec.get("status") or dec.get("decision_state") or "pending",
+                    "risk_level": dec.get("risk_level") or "low",
+                    "created_at": dec.get("created_at") or snapshot_at,
+                    "proposed_changes": dec.get("proposed_changes") or {},
+                }
                 for field in ("metadata", "provenance", "origin"):
-                    if field in dec and field not in proj:
+                    if field in dec:
                         proj[field] = dec[field]
 
                 mr_item = evolution_journal_base_item(
@@ -1054,7 +1049,7 @@ def create_evolution_router(
                     route=f"/management/evolution-journal?mutation_review={dec_id}",
                     bff_detail_path=f"/api/v1/operator/mutation-review/{dec_id}",
                 )
-                mr_item["mutation_review"] = json.loads(json.dumps(proj))
+                mr_item["mutation_review"] = proj
                 mr_item["record"] = mr_item["mutation_review"]
                 items.append(mr_item)
 
@@ -1285,6 +1280,41 @@ def create_evolution_router(
 
         total = len(filtered)
         page_items, next_page_token = _page_slice_fn(filtered, page_token, page_size)
+        for it in page_items:
+            if it.get("entry_type") == "mutation_review":
+                dec_id = str(it.get("source_id") or "")
+                raw_dec = dec_by_id.get(dec_id) or {}
+                full_proj = None
+                if mutation_review_projection is not None:
+                    try:
+                        full_proj = mutation_review_projection(
+                            dec_id, identity=identity, snapshot_at=snapshot_at, decision=raw_dec or None
+                        )
+                    except TypeError:
+                        full_proj = mutation_review_projection(
+                            dec_id, identity=identity, snapshot_at=snapshot_at
+                        )
+                if full_proj is None:
+                    app_dec = getattr(read_store, "get_approval_decision_by_id", lambda aid: None)(raw_dec.get("approval_decision_id"))
+                    full_proj = dict(it.get("mutation_review") or {})
+                    full_proj["approval_decision"] = app_dec
+                for field in ("metadata", "provenance", "origin"):
+                    if field in raw_dec and field not in full_proj:
+                        full_proj[field] = raw_dec[field]
+                it["mutation_review"] = full_proj
+                it["record"] = full_proj
+                it["status"] = str(full_proj.get("decision_state") or it.get("status") or "unknown").lower()
+                it["summary"] = str((full_proj.get("proposed_changes") or {}).get("summary") or it.get("summary") or "")
+                it["risk_level"] = full_proj.get("risk_level") or it.get("risk_level")
+                it["action_type"] = full_proj.get("action_type") or it.get("action_type")
+                target_dict = evolution_journal_target(
+                    target_type=full_proj.get("target_type"),
+                    target_id=full_proj.get("target_id"),
+                    target_version=full_proj.get("target_version"),
+                )
+                if target_dict:
+                    it["target"] = target_dict
+
         meta = _snap_meta(snapshot_at)
         meta["surfaces"] = surfaces
         meta["composition_sources"] = [
