@@ -416,6 +416,74 @@ def create_incident(
         )
 
 
+def list_open_incidents_for_binding(
+    *, base_url: str, binding_id: str, timeout_seconds: float = 10.0
+) -> list[dict[str, Any]]:
+    query = urllib.parse.urlencode({"binding_id": binding_id, "open_only": "true"})
+    url = base_url.rstrip("/") + f"/api/incidents?{query}"
+    request = urllib.request.Request(
+        url, headers={"Accept": "application/json"}, method="GET"
+    )
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        body = response.read().decode("utf-8")
+    parsed = json.loads(body) if body else []
+    if not isinstance(parsed, list):
+        raise RuntimeError("incident list response was not a list")
+    return [item for item in parsed if isinstance(item, dict)]
+
+
+def resolve_incident(
+    *, base_url: str, incident_id: str, timeout_seconds: float = 10.0
+) -> dict[str, Any]:
+    url = base_url.rstrip("/") + f"/api/incidents/{incident_id}/status"
+    request = urllib.request.Request(
+        url,
+        data=json.dumps({"status": "resolved"}).encode("utf-8"),
+        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        body = response.read().decode("utf-8")
+    return json.loads(body) if body else {}
+
+
+def resolve_binding_incidents(
+    *, base_url: str, binding_id: str, timeout_seconds: float = 10.0
+) -> list[str]:
+    """Resolve every open/investigating incident of a retired binding.
+
+    Idempotent: resolved/closed incidents are never listed or changed.  Every
+    incident is attempted; any failure raises afterwards so the outbox retries.
+    """
+    resolved: list[str] = []
+    failures: list[str] = []
+    for incident in list_open_incidents_for_binding(
+        base_url=base_url, binding_id=binding_id, timeout_seconds=timeout_seconds
+    ):
+        incident_id = str(incident.get("incident_id") or "")
+        if (
+            not incident_id
+            or incident.get("binding_id") != binding_id
+            or incident.get("status") not in {"open", "investigating"}
+        ):
+            continue
+        try:
+            resolve_incident(
+                base_url=base_url,
+                incident_id=incident_id,
+                timeout_seconds=timeout_seconds,
+            )
+            resolved.append(incident_id)
+        except Exception as exc:  # retried by the outbox; retirement stays done
+            failures.append(f"{incident_id}: {exc}")
+    if failures:
+        raise RuntimeError(
+            f"binding {binding_id} retired but incident resolve failed: "
+            + "; ".join(failures)
+        )
+    return resolved
+
+
 def run_compatibility_check(
     *,
     api_url: str,
@@ -1392,6 +1460,7 @@ def execute_retirement(
     saga: Mapping[str, Any],
     client: RuntimeManagerClient,
     timeout_seconds: float,
+    incident_url: str = "",
 ) -> str:
     """Retire the exact saga RuntimeBinding and finalize after readback.
 
@@ -1436,6 +1505,14 @@ def execute_retirement(
             note=note,
             timeout_seconds=timeout_seconds,
         )
+    if incident_url:
+        resolved = resolve_binding_incidents(
+            base_url=incident_url,
+            binding_id=binding_id,
+            timeout_seconds=timeout_seconds,
+        )
+        if resolved:
+            note += f"; resolved {len(resolved)} incident(s)"
     return note
 
 
@@ -2551,6 +2628,7 @@ def run_poll(
                     saga=saga,
                     client=RuntimeManagerClient(require_remote=True),
                     timeout_seconds=timeout_seconds,
+                    incident_url=os.getenv("PANTHEON_INCIDENTS_API_URL", "").strip(),
                 )
                 receipt = consume_event(
                     api_url=api_url,
