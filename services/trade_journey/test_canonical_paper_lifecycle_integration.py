@@ -16,6 +16,7 @@ from services.execution.lean_runtime.pending_signal_store import (
 )
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
 from services.execution.lean_runtime.signal_producer import build_decision_signals
+from services.telemetry.ingest_svc import TelemetryIngestService
 from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
 from services.trade_journey.lifecycle_projector import LifecycleProjector, RelationalLifecycleProjector
 
@@ -240,6 +241,29 @@ def test_real_paper_producer_runtime_reconciliation_projects_one_canonical_loop(
     for event in lifecycle:
         summary = summary_store.project_event(event)
     assert summary is not None
+
+    # The scheduled reconciliation only accepts a *committed* position snapshot.
+    # Build it through the same read path telemetry serves: resolve the
+    # summary's lifecycle event ids against the committed event log.
+    committed_events = {
+        event["event_id"]: {**event, "ingested_seq": ingested_seq}
+        for ingested_seq, event in enumerate(lifecycle, start=1)
+    }
+    assert summary.get("recent_lifecycle_event_ids")
+    telemetry_service = TelemetryIngestService(
+        storage_dir=str(tmp_path / "telemetry"),
+        event_reader=lambda event_ids, tenant_id=None, event_types=None: {
+            event_id: committed_events[event_id]
+            for event_id in event_ids
+            if event_id in committed_events
+            and (event_types is None or committed_events[event_id]["event_type"] in event_types)
+        },
+    )
+    [summary] = telemetry_service._enrich_with_committed_position_snapshots(
+        [dict(summary)],
+        tenant_id=binding["tenant_id"],
+    )
+    assert summary["committed_position_snapshot"]["event_type"] == "position_snapshot"
 
     reconciliation = _load_reconciliation_service(
         tmp_path / "reconciliation",

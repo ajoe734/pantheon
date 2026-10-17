@@ -1,0 +1,20 @@
+{
+  "task_id": "LEAN-RUNTIME-STALE-TESTS-CI-20261017",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "production_code_changed": false,
+  "changes": {
+    "services/execution/lean_runtime/test_paper_runtime_smoke.py": "signals carry runtime_id; each service gets an isolated temp lifecycle outbox",
+    "services/execution/lean_runtime/test_devloop_wire.py": "per-runtime temp outbox; build_event delegates to the production RuntimeTelemetryEmitter; binding-scoped store stamps runtime_id; drains run for the rebalance timeout bars",
+    "services/trade_journey/test_canonical_paper_lifecycle_integration.py": "committed_position_snapshot built via TelemetryIngestService._enrich_with_committed_position_snapshots over the committed events",
+    ".github/workflows/branch-ci.yml": "Smoke acceptance job runs services/execution/lean_runtime and the canonical paper lifecycle integration test"
+  },
+  "assertions_removed_or_weakened": 0,
+  "verification": {
+    "command": "python -m pytest -q services/execution/lean_runtime services/trade_journey/test_canonical_paper_lifecycle_integration.py",
+    "environment": "read-only /data (no writable /data), pyyaml installed",
+    "result": "388 passed, 40 subtests passed, 0 failed",
+    "workflow_contract": "python -m unittest scripts.test_branch_ci_gate_selection: 13 tests OK"
+  },
+  "baseline": "origin/dev: 10 failed + 1 trade_journey failure; lean_runtime had no CI workflow"
+}
