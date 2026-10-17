@@ -980,6 +980,7 @@ def create_task(body: CreateTaskBody) -> Dict[str, Any]:
         "title": body.title,
         "objective": body.objective,
         "status": "ready",
+        "generation": 1,
         "source_refs": body.source_refs,
         "constraints": body.constraints,
         "created_by": body.actor_id,

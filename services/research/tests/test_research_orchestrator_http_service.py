@@ -19,11 +19,12 @@ def _load_service_module(
     max_active_runs: str = "8",
     production_adapters_enabled: str = "false",
     offline_gate: str = "false",
+    data_dir: str | None = None,
 ):
     with mock.patch.dict(
         "os.environ",
         {
-            "RESEARCH_ORCHESTRATOR_DATA_DIR": tempfile.mkdtemp(),
+            "RESEARCH_ORCHESTRATOR_DATA_DIR": data_dir or tempfile.mkdtemp(),
             "RESEARCH_ORCHESTRATOR_MAX_ACTIVE_RUNS": max_active_runs,
             "RESEARCH_ORCHESTRATOR_ENABLE_PRODUCTION_ADAPTERS": production_adapters_enabled,
             "PANTHEON_OFFLINE_GATE_ENABLED": offline_gate,
@@ -1321,62 +1322,179 @@ def test_saved_model_is_never_run_by_the_stub_backend(monkeypatch: pytest.Monkey
     assert "canonical strategy artifact" in response.json()["detail"]
 
 
-def _canceled_run(client, key: str, title: str = "t") -> dict:
+def _canceled_run(client: TestClient, key: str, title: str = "t", parameters: dict | None = None) -> dict:
     task = client.post("/api/research-orchestrator/tasks", json={"title": title, "objective": "o"}).json()
-    run = client.post(f"/api/research-orchestrator/tasks/{task['task_id']}/runs", json={"idempotency_key": key}).json()
+    params = parameters if parameters is not None else {
+        "stage": {"stage_id": "s1", "stage_type": "prototype_backtest"},
+        "plan": {"plan_id": f"plan-{title}", "stages": [{"stage_id": "s1"}]},
+    }
+    run = client.post(
+        f"/api/research-orchestrator/tasks/{task['task_id']}/runs",
+        json={
+            "idempotency_key": key,
+            "adapter": "vectorbt",
+            "parameters": params,
+        },
+    ).json()
     client.post(f"/api/research-orchestrator/runs/{run['run_id']}/cancel", json={})
     return run
 
 
-def test_run_retry_idempotency_is_scoped_to_parent_and_actor() -> None:
+def test_run_retry_idempotency_is_scoped_to_parent_and_actor(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _load_service_module()
     client = TestClient(module.app)
+
+    # Bounded local spies at existing dispatch entry points
+    stage_dispatch_spy = mock.MagicMock()
+    retrain_dispatch_spy = mock.MagicMock()
+    monkeypatch.setattr(module, "_progress_plan_stages", stage_dispatch_spy)
+    monkeypatch.setattr(module, "_trigger_retrain_execution", retrain_dispatch_spy)
+
+    # Parent A is stage-backed; Parent B is retrain-backed
     parent_a = _canceled_run(client, "dispatch-a", "A")
-    parent_b = _canceled_run(client, "raw-shared", "B")
+    parent_b = _canceled_run(
+        client,
+        "raw-shared",
+        "B",
+        parameters={"decision_id": "dec-1", "target_artifact_id": "art-1", "work_item_id": "wi-1"},
+    )
     url = lambda r: f"/api/research-orchestrator/runs/{r['run_id']}/retry"
 
-    # raw key already used by an unrelated run's initial dispatch must not be returned
+    # Reset spies after setup so they only record retry operations
+    stage_dispatch_spy.reset_mock()
+    retrain_dispatch_spy.reset_mock()
+
+    # Initial persisted task generation is 1
+    assert client.get(f"/api/research-orchestrator/tasks/{parent_a['task_id']}").json()["generation"] == 1
+
+    # 1. raw key already used by an unrelated run's initial dispatch must not be returned
     first = client.post(url(parent_a), json={"idempotency_key": "raw-shared", "actor_id": "alice"}).json()
     assert first["run_id"] != parent_b["run_id"]
     assert first["parent_run_id"] == parent_a["run_id"]
+    assert first["attempt_number"] == 2
+    assert stage_dispatch_spy.call_count == 1
+    assert retrain_dispatch_spy.call_count == 0
 
-    # retry key colliding with another parent's retry key
+    # 2. retry key colliding with another parent's retry key (parent_b retrain dispatch)
     other = client.post(url(parent_b), json={"idempotency_key": "raw-shared", "actor_id": "alice"}).json()
-    assert other["run_id"] != first["run_id"] and other["parent_run_id"] == parent_b["run_id"]
+    assert other["run_id"] != first["run_id"]
+    assert other["parent_run_id"] == parent_b["run_id"]
+    assert other["attempt_number"] == 2
+    assert stage_dispatch_spy.call_count == 1
+    assert retrain_dispatch_spy.call_count == 1
 
-    # different actor on same parent is a distinct retry (parent_a is not retryable-status-changing)
+    # 3. different actor on same parent is a distinct retry
     other_actor = client.post(url(parent_a), json={"idempotency_key": "raw-shared", "actor_id": "bob"}).json()
     assert other_actor["run_id"] not in {first["run_id"], other["run_id"]}
+    assert other_actor["parent_run_id"] == parent_a["run_id"]
+    assert other_actor["attempt_number"] == 2
+    assert stage_dispatch_spy.call_count == 2
+    assert retrain_dispatch_spy.call_count == 1
 
-    # exact same-scope replay returns the original child without side effects
-    gen = client.get(f"/api/research-orchestrator/tasks/{parent_a['task_id']}").json().get("generation")
-    events = len(module.store.get_run(parent_a["run_id"])["events"])
-    runs = len(module.store.list_runs())
+    # 4. exact same-scope replay returns the original child without side effects
+    task_a_before = client.get(f"/api/research-orchestrator/tasks/{parent_a['task_id']}").json()
+    gen = task_a_before["generation"]
+    assert isinstance(gen, int) and gen == 3  # advanced for alice (1->2) and bob (2->3)
+    events_count = len(module.store.get_run(parent_a["run_id"])["events"])
+    runs_count = len(module.store.list_runs())
+
     replay = client.post(url(parent_a), json={"idempotency_key": "raw-shared", "actor_id": "alice"}).json()
     assert replay["run_id"] == first["run_id"]
-    assert len(module.store.list_runs()) == runs
-    assert len(module.store.get_run(parent_a["run_id"])["events"]) == events
-    assert module.store.get_task(parent_a["task_id"]).get("generation") == gen or gen is None
-    assert module.store.get_run(first["run_id"])["run_id"] == first["run_id"]
+    assert replay["attempt_number"] == first["attempt_number"] == 2
+    assert len(module.store.list_runs()) == runs_count
+    assert len(module.store.get_run(parent_a["run_id"])["events"]) == events_count
+    assert module.store.get_task(parent_a["task_id"])["generation"] == gen
+    # No duplicate dispatch on replay
+    assert stage_dispatch_spy.call_count == 2
+    assert retrain_dispatch_spy.call_count == 1
 
-    # persisted readback/reload of the same child with no duplicate attempt/events/generation/dispatch
-    reloaded_store = module.build_research_orchestrator_store(module.DATA_DIR)
-    assert reloaded_store.get_run(first["run_id"])["run_id"] == first["run_id"]
-    assert len([r for r in reloaded_store.list_runs() if r.get("parent_run_id") == parent_a["run_id"] and r.get("created_by") == "alice"]) == 1
-    assert len(reloaded_store.get_run(parent_a["run_id"])["events"]) == events
+    # 5. persisted readback/reload and replay against that loaded owner from disk persistence
+    reloaded_module = _load_service_module(data_dir=module.DATA_DIR)
+    reloaded_stage_spy = mock.MagicMock()
+    reloaded_retrain_spy = mock.MagicMock()
+    monkeypatch.setattr(reloaded_module, "_progress_plan_stages", reloaded_stage_spy)
+    monkeypatch.setattr(reloaded_module, "_trigger_retrain_execution", reloaded_retrain_spy)
+    reloaded_client = TestClient(reloaded_module.app)
+
+    # Replay retry against the loaded owner
+    reloaded_replay = reloaded_client.post(url(parent_a), json={"idempotency_key": "raw-shared", "actor_id": "alice"}).json()
+    assert reloaded_replay["run_id"] == first["run_id"]
+    assert reloaded_replay["attempt_number"] == 2
+    # Zero duplicate dispatches against reloaded owner
+    assert reloaded_stage_spy.call_count == 0
+    assert reloaded_retrain_spy.call_count == 0
+
+    # Invariants in persisted reloaded store
+    assert reloaded_module.store.get_run(first["run_id"])["run_id"] == first["run_id"]
+    alice_children = [
+        r for r in reloaded_module.store.list_runs()
+        if r.get("parent_run_id") == parent_a["run_id"] and r.get("created_by") == "alice"
+    ]
+    assert len(alice_children) == 1
+    assert alice_children[0]["attempt_number"] == 2
+    assert len(reloaded_module.store.get_run(parent_a["run_id"])["events"]) == events_count
+    persisted_task = reloaded_module.store.get_task(parent_a["task_id"])
+    assert persisted_task["generation"] == gen
+    assert isinstance(persisted_task["generation"], int)
 
 
-def test_run_retry_overlapping_same_scope_requests_create_one_child() -> None:
+def test_run_retry_overlapping_same_scope_requests_create_one_child(monkeypatch: pytest.MonkeyPatch) -> None:
     from concurrent.futures import ThreadPoolExecutor
 
     module = _load_service_module()
     client = TestClient(module.app)
+
+    # Bounded local spy at stage dispatch entry
+    dispatch_spy = mock.MagicMock()
+    monkeypatch.setattr(module, "_progress_plan_stages", dispatch_spy)
+
     parent = _canceled_run(client, "d")
+    dispatch_spy.reset_mock()
+
+    parent_task_init = client.get(f"/api/research-orchestrator/tasks/{parent['task_id']}").json()
+    assert parent_task_init["generation"] == 1
+
     url = f"/api/research-orchestrator/runs/{parent['run_id']}/retry"
     with ThreadPoolExecutor(max_workers=6) as pool:
         results = list(pool.map(lambda _: client.post(url, json={"idempotency_key": "k", "actor_id": "alice"}).json(), range(6)))
-    assert len({r["run_id"] for r in results}) == 1
+
+    # Invariant: exactly one child run ID returned across all concurrent responses
+    child_ids = {r["run_id"] for r in results}
+    assert len(child_ids) == 1
+    child_id = next(iter(child_ids))
+
+    # Invariant: child attempt invariant is preserved
+    assert all(r["attempt_number"] == 2 for r in results)
+
+    # Invariant: exactly one child in disk store with attempt #2
     children = [r for r in module.store.list_runs() if r.get("parent_run_id") == parent["run_id"]]
     assert len(children) == 1
-    retried = [e for e in module.store.get_run(parent["run_id"])["events"] if e["event_type"] == "run_retried"]
-    assert len(retried) == 1
+    assert children[0]["run_id"] == child_id
+    assert children[0]["attempt_number"] == 2
+
+    # Invariant: exactly one retry event on parent run
+    retried_events = [e for e in module.store.get_run(parent["run_id"])["events"] if e["event_type"] == "run_retried"]
+    assert len(retried_events) == 1
+
+    # Invariant: persisted generation field is incremented to 2 and is strictly an int
+    persisted_task = module.store.get_task(parent["task_id"])
+    assert persisted_task["generation"] == 2
+    assert isinstance(persisted_task["generation"], int)
+    task_res = client.get(f"/api/research-orchestrator/tasks/{parent['task_id']}").json()
+    assert task_res["generation"] == 2
+
+    # Invariant: exactly one dispatch across all 6 overlapping concurrent requests
+    assert dispatch_spy.call_count == 1
+
+    # Invariant across reload replay: replay against loaded owner produces no duplicate child/attempt/event/generation/dispatch
+    reloaded_module = _load_service_module(data_dir=module.DATA_DIR)
+    reloaded_dispatch_spy = mock.MagicMock()
+    monkeypatch.setattr(reloaded_module, "_progress_plan_stages", reloaded_dispatch_spy)
+    reloaded_client = TestClient(reloaded_module.app)
+
+    reloaded_res = reloaded_client.post(url, json={"idempotency_key": "k", "actor_id": "alice"}).json()
+    assert reloaded_res["run_id"] == child_id
+    assert reloaded_res["attempt_number"] == 2
+    assert reloaded_dispatch_spy.call_count == 0
+    assert reloaded_module.store.get_task(parent["task_id"])["generation"] == 2
+    assert len([r for r in reloaded_module.store.list_runs() if r.get("parent_run_id") == parent["run_id"]]) == 1
