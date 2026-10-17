@@ -744,6 +744,46 @@ class TestIncidentEvidenceMergeBound(unittest.TestCase):
             self.assertTrue(updated_dup.evidence_summary.startswith("[older entries dropped] "))
             self.assertLessEqual(len(updated_dup.evidence_summary), 4000)
 
+    def test_merge_incident_evidence_skips_save_when_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = IncidentStore(path=Path(tmpdir) / "incidents.json")
+            store.create_incident(_make_incident(
+                incident_id="inc-noop-001",
+                evidence_summary="drift=breach",
+                telemetry_event_ids=["te-0"],
+                reconciliation_ids=["rec-0"],
+            ))
+
+            def incoming(**kw):
+                return _make_incident(incident_id="inc-noop-001", **kw)
+
+            saves = []
+            original_save = store._save
+
+            def counting_save(*args, **kwargs):
+                saves.append(1)
+                return original_save(*args, **kwargs)
+
+            store._save = counting_save
+
+            same = dict(
+                evidence_summary="drift=breach",
+                telemetry_event_ids=["te-0"],
+                reconciliation_ids=["rec-0"],
+            )
+            first = store.merge_incident_evidence("inc-noop-001", incoming(**same))
+            second = store.merge_incident_evidence("inc-noop-001", incoming(**same))
+            self.assertEqual(saves, [])
+            self.assertEqual(first.to_dict(), second.to_dict())
+
+            changed = store.merge_incident_evidence(
+                "inc-noop-001",
+                incoming(evidence_summary="drift=breach2", telemetry_event_ids=["te-1"], reconciliation_ids=["rec-0"]),
+            )
+            self.assertEqual(len(saves), 1)
+            self.assertIn("te-1", changed.telemetry_event_ids)
+            self.assertIn("te-1", store.get_incident("inc-noop-001").telemetry_event_ids)
+
 
 if __name__ == "__main__":
     unittest.main()
