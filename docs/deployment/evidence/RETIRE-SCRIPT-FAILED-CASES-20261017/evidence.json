@@ -1,0 +1,10 @@
+{
+  "task_id": "RETIRE-SCRIPT-FAILED-CASES-20261017",
+  "change": "record_retirement accepts failed sagas at step compensated; retire script selects succeeded/failed/compensated/provisioning release cases classified by saga readback; served case still excluded; kill-switch untouched",
+  "tests": {
+    "services/control-plane/governance/test_deployment_saga.py": "13 passed (unittest)",
+    "scripts/test_retire_dev_paper_release_cases.py": "22 passed",
+    "services/deployment/test_outbox_consumer_worker.py -k Retirement": "8 passed"
+  },
+  "hosted_effect": "none until the next FULL+Root deploy; no hosted writes performed"
+}
