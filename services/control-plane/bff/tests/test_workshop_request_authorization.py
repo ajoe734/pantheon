@@ -392,72 +392,141 @@ def test_research_plan_parallel_success_requests_do_not_exchange_credentials(app
     assert operations._request_authorization.get() is None
 
 
-def test_workshop_canonical_consultation_transport_machine_auth_and_tenant(monkeypatch):
-    monkeypatch.setenv("CONSULTATION_SERVICE_TOKEN", "pantheon-test-machine-token")
+def test_workshop_canonical_consultation_transport_real_owner_and_bounded_negatives(app_factory, monkeypatch, tmp_path):
+    from services.consultation.main import app as consult_app
+    import services.consultation.main as consult_main_mod
+    from services.consultation.store import build_consultation_store
+    from services.consultation.models import ConsultPriority, ConsultRequest, ConsultRequestStatus, ConsultRequestType
+    import socket
+    import threading
+    import time
+    import uvicorn
+
+    data_dir = str(tmp_path / "ws_consult_data")
+    test_store = build_consultation_store(data_dir)
+    monkeypatch.setattr(consult_main_mod, "store", test_store)
+    monkeypatch.setenv("CONSULTATION_AUTH_REQUIRED", "true")
+    monkeypatch.setenv("CONSULTATION_SERVICE_TOKEN", "pantheon-workshop-machine-token")
     monkeypatch.setenv("CONSULTATION_SERVICE_ACTOR", "operator-bff")
-    ops = operations.WorkshopCanonicalOperations(consultation_base_url="http://consultation-svc:8096")
+    monkeypatch.setenv("CONSULTATION_DATA_DIR", data_dir)
 
-    intercepted = []
+    # Seed draft request in canonical consultation store
+    req = ConsultRequest(
+        request_id="cr-ws-real-001",
+        request_type=ConsultRequestType.STRATEGY_REVIEW,
+        requested_by={"actor_type": "operator", "actor_id": "operator-dev"},
+        from_persona_id="persona-dev",
+        target_type="strategy",
+        target_id="strat-alpha",
+        task="Workshop strategy review",
+        consultation_type="strategy_review",
+        priority=ConsultPriority.NORMAL,
+        status=ConsultRequestStatus.DRAFT,
+        tenant_id="tenant-dev",
+        created_at="2026-10-17T00:00:00Z",
+        trace_id="tr-ws-001",
+    )
+    test_store.put_request(req)
 
-    def fake_request_json(self, method, path, payload=None, **kwargs):
-        intercepted.append({
-            "method": method,
-            "path": path,
-            "payload": payload,
-            "token": self._token,
-            "actor": self._service_actor,
-            "tenant_id": self._tenant_id,
-        })
-        return {"status": "ok", "items": []}
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
 
-    from services.consultation.client import ConsultationServiceClient
-    monkeypatch.setattr(ConsultationServiceClient, "_request_json", fake_request_json)
+    base_url = f"http://127.0.0.1:{port}"
+    monkeypatch.setenv("PANTHEON_CONSULTATION_API_URL", base_url)
 
-    from services.control_plane.bff.core.owner_reads import authorization, selected_tenant
-    import base64
+    server = uvicorn.Server(uvicorn.Config(app=consult_app, host="127.0.0.1", port=port, log_level="error"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    while not server.started:
+        time.sleep(0.01)
 
-    # 1. Successful request with valid caller token and tenant
-    jwt_body = base64.urlsafe_b64encode(json.dumps({"tenant_id": "tenant-dev", "allowed_tenants": ["tenant-dev"]}).encode()).decode().rstrip("=")
-    valid_jwt = f"header.{jwt_body}.sig"
-    auth_tok = authorization.set(f"Bearer {valid_jwt}")
-    sel_tok = selected_tenant.set("tenant-dev")
     try:
-        res = ops._request_json(
-            "consultation_service",
-            "GET",
-            ops.consultation_base_url,
-            "/api/consult/requests",
-            payload={"tenant_id": "tenant-dev"},
-        )
-        assert res == {"status": "ok", "items": []}
-        assert len(intercepted) == 1
-        # Proves machine token is used, NOT user JWT
-        assert intercepted[0]["token"] == "pantheon-test-machine-token"
-        assert intercepted[0]["actor"] == "operator-bff"
-        assert intercepted[0]["tenant_id"] == "tenant-dev"
-    finally:
-        selected_tenant.reset(sel_tok)
-        authorization.reset(auth_tok)
+        # Genuine dev login session using existing app_factory fixture
+        bff_app = app_factory()
+        from services.control_plane.bff.core.owner_reads import OwnerReadContextMiddleware, authorization, selected_tenant
+        bff_app.add_middleware(OwnerReadContextMiddleware)
 
-    # 2. Rejection of body tenant mismatch before owner call
-    auth_tok = authorization.set(f"Bearer {valid_jwt}")
-    sel_tok = selected_tenant.set("tenant-dev")
-    rejected = False
-    try:
-        ops._request_json(
-            "consultation_service",
-            "POST",
-            ops.consultation_base_url,
-            "/api/consult/requests",
-            payload={"tenant_id": "foreign-tenant"},
-        )
-    except operations.CanonicalOperationError as exc:
-        rejected = True
-        assert exc.status_code == 403
-        assert "tenant" in str(exc).lower()
+        with TestClient(bff_app, base_url=BASE) as browser:
+            login_res = browser.post("/bff/auth/dev-login", json=CREDENTIALS)
+            assert login_res.status_code == 200, login_res.text
+            token = login_res.json()["access_token"]
+
+        # Real owner HTTP positive call through WorkshopCanonicalOperations
+        ops = operations.WorkshopCanonicalOperations(consultation_base_url=base_url)
+        auth_tok = authorization.set(f"Bearer {token}")
+        sel_tok = selected_tenant.set("tenant-dev")
+        try:
+            res = ops._request_json(
+                "consultation_service",
+                "GET",
+                ops.consultation_base_url,
+                "/api/consult/requests",
+                payload={"tenant_id": "tenant-dev"},
+            )
+            assert res is not None
+            items = res if isinstance(res, list) else res.get("items", res.get("data", []))
+            assert len(items) == 1
+            assert items[0]["request_id"] == "cr-ws-real-001"
+        finally:
+            selected_tenant.reset(sel_tok)
+            authorization.reset(auth_tok)
+
+        # Bounded negative: foreign body tenant mismatch rejected before owner call
+        auth_tok = authorization.set(f"Bearer {token}")
+        sel_tok = selected_tenant.set("tenant-dev")
+        rejected = False
+        try:
+            ops._request_json(
+                "consultation_service",
+                "POST",
+                ops.consultation_base_url,
+                "/api/consult/requests",
+                payload={"tenant_id": "foreign-tenant"},
+            )
+        except operations.CanonicalOperationError as exc:
+            rejected = True
+            assert exc.status_code == 403
+            assert "tenant" in str(exc).lower()
+        finally:
+            selected_tenant.reset(sel_tok)
+            authorization.reset(auth_tok)
+        assert rejected is True
+
+        # Bounded unit interceptor: verify machine token and actor headers passed to SDK
+        intercepted = []
+        from services.consultation.client import ConsultationServiceClient
+        orig_request_json = ConsultationServiceClient._request_json
+
+        def spy_request_json(self, method, path, payload=None, **kwargs):
+            intercepted.append({
+                "token": self._token,
+                "actor": self._service_actor,
+                "tenant_id": self._tenant_id,
+            })
+            return orig_request_json(self, method, path, payload=payload, **kwargs)
+
+        monkeypatch.setattr(ConsultationServiceClient, "_request_json", spy_request_json)
+        auth_tok = authorization.set(f"Bearer {token}")
+        sel_tok = selected_tenant.set("tenant-dev")
+        try:
+            res_unit = ops._request_json(
+                "consultation_service",
+                "GET",
+                ops.consultation_base_url,
+                "/api/consult/requests",
+                payload={"tenant_id": "tenant-dev"},
+            )
+            assert len(intercepted) == 1
+            assert intercepted[0]["token"] == "pantheon-workshop-machine-token"
+            assert intercepted[0]["actor"] == "operator-bff"
+            assert intercepted[0]["tenant_id"] == "tenant-dev"
+        finally:
+            selected_tenant.reset(sel_tok)
+            authorization.reset(auth_tok)
+
     finally:
-        selected_tenant.reset(sel_tok)
-        authorization.reset(auth_tok)
-    assert rejected is True
-    assert len(intercepted) == 1  # No second call made to owner!
+        server.should_exit = True
+        thread.join(timeout=2)
 

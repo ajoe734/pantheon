@@ -158,7 +158,11 @@ class WorkshopCanonicalOperations:
                     status_code=exc.status_code,
                     retryable=False,
                 ) from exc
-            machine_token = (os.getenv("CONSULTATION_SERVICE_TOKEN") or os.getenv("CONSULTATION_API_TOKEN") or "").strip()
+            machine_token = (
+                os.getenv("BFF_CONSULTATION_SERVICE_TOKEN")
+                if "BFF_CONSULTATION_SERVICE_TOKEN" in os.environ
+                else (os.getenv("CONSULTATION_SERVICE_TOKEN") or os.getenv("CONSULTATION_API_TOKEN") or "")
+            ).strip()
             service_actor = (os.getenv("CONSULTATION_SERVICE_ACTOR") or "operator-bff").strip()
             client = ConsultationServiceClient(
                 base_url=base_url,
