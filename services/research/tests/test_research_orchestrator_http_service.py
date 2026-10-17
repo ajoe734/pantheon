@@ -1319,3 +1319,64 @@ def test_saved_model_is_never_run_by_the_stub_backend(monkeypatch: pytest.Monkey
     response = _execute_model_run(module, plan)
     assert response.status_code == 400, response.text
     assert "canonical strategy artifact" in response.json()["detail"]
+
+
+def _canceled_run(client, key: str, title: str = "t") -> dict:
+    task = client.post("/api/research-orchestrator/tasks", json={"title": title, "objective": "o"}).json()
+    run = client.post(f"/api/research-orchestrator/tasks/{task['task_id']}/runs", json={"idempotency_key": key}).json()
+    client.post(f"/api/research-orchestrator/runs/{run['run_id']}/cancel", json={})
+    return run
+
+
+def test_run_retry_idempotency_is_scoped_to_parent_and_actor() -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+    parent_a = _canceled_run(client, "dispatch-a", "A")
+    parent_b = _canceled_run(client, "raw-shared", "B")
+    url = lambda r: f"/api/research-orchestrator/runs/{r['run_id']}/retry"
+
+    # raw key already used by an unrelated run's initial dispatch must not be returned
+    first = client.post(url(parent_a), json={"idempotency_key": "raw-shared", "actor_id": "alice"}).json()
+    assert first["run_id"] != parent_b["run_id"]
+    assert first["parent_run_id"] == parent_a["run_id"]
+
+    # retry key colliding with another parent's retry key
+    other = client.post(url(parent_b), json={"idempotency_key": "raw-shared", "actor_id": "alice"}).json()
+    assert other["run_id"] != first["run_id"] and other["parent_run_id"] == parent_b["run_id"]
+
+    # different actor on same parent is a distinct retry (parent_a is not retryable-status-changing)
+    other_actor = client.post(url(parent_a), json={"idempotency_key": "raw-shared", "actor_id": "bob"}).json()
+    assert other_actor["run_id"] not in {first["run_id"], other["run_id"]}
+
+    # exact same-scope replay returns the original child without side effects
+    gen = client.get(f"/api/research-orchestrator/tasks/{parent_a['task_id']}").json().get("generation")
+    events = len(module.store.get_run(parent_a["run_id"])["events"])
+    runs = len(module.store.list_runs())
+    replay = client.post(url(parent_a), json={"idempotency_key": "raw-shared", "actor_id": "alice"}).json()
+    assert replay["run_id"] == first["run_id"]
+    assert len(module.store.list_runs()) == runs
+    assert len(module.store.get_run(parent_a["run_id"])["events"]) == events
+    assert module.store.get_task(parent_a["task_id"]).get("generation") == gen or gen is None
+    assert module.store.get_run(first["run_id"])["run_id"] == first["run_id"]
+
+    # persisted readback/reload of the same child with no duplicate attempt/events/generation/dispatch
+    reloaded_store = module.build_research_orchestrator_store(module.DATA_DIR)
+    assert reloaded_store.get_run(first["run_id"])["run_id"] == first["run_id"]
+    assert len([r for r in reloaded_store.list_runs() if r.get("parent_run_id") == parent_a["run_id"] and r.get("created_by") == "alice"]) == 1
+    assert len(reloaded_store.get_run(parent_a["run_id"])["events"]) == events
+
+
+def test_run_retry_overlapping_same_scope_requests_create_one_child() -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    module = _load_service_module()
+    client = TestClient(module.app)
+    parent = _canceled_run(client, "d")
+    url = f"/api/research-orchestrator/runs/{parent['run_id']}/retry"
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        results = list(pool.map(lambda _: client.post(url, json={"idempotency_key": "k", "actor_id": "alice"}).json(), range(6)))
+    assert len({r["run_id"] for r in results}) == 1
+    children = [r for r in module.store.list_runs() if r.get("parent_run_id") == parent["run_id"]]
+    assert len(children) == 1
+    retried = [e for e in module.store.get_run(parent["run_id"])["events"] if e["event_type"] == "run_retried"]
+    assert len(retried) == 1

@@ -1690,6 +1690,34 @@ def cancel_run(run_id: str, body: Optional[CancelRunBody] = None) -> Dict[str, A
 
 @app.post("/api/research-orchestrator/runs/{run_id}/retry", status_code=201)
 def retry_run(run_id: str, body: Optional[RetryRunBody] = None) -> Dict[str, Any]:
+    with _plan_progress_lock:
+        new_run, replayed = _create_retry_run(run_id, body)
+    if replayed:
+        return new_run
+    b = body or RetryRunBody()
+    timestamp = b.requested_at or utc_now()
+    params = new_run.get("parameters") or {}
+    plan_payload = params.get("plan") or {}
+    stage_payload = params.get("stage") or {}
+    if str(plan_payload.get("status") or "").lower() in {"canceled", "cancelled"}:
+        plan_payload["status"] = "running"
+    if isinstance(plan_payload.get("stages"), list):
+        for stage in plan_payload["stages"]:
+            if isinstance(stage, dict) and stage.get("stage_id") == stage_payload.get("stage_id"):
+                if params.get("dataset"):
+                    stage["dataset"] = params["dataset"]
+                break
+    adapter = new_run.get("adapter", "stub")
+    supported_stage_backends = {"vectorbt", "statsmodels", "quantlib", "openclaw_result_synthesis", "prototype_backtest", "econometric_validation", "derivatives_pricing_risk", "evidence_synthesis"}
+    is_stage_backend = adapter in supported_stage_backends or params.get("stage") is not None
+    if "decision_id" in params and "target_artifact_id" in params:
+        _trigger_retrain_execution(new_run["run_id"], params)
+    elif is_stage_backend and (params.get("stage") or (params.get("plan") and params["plan"].get("stages"))):
+        _progress_plan_stages(params.get("plan") or {}, new_run, b.actor_id, store, timestamp)
+    return new_run
+
+
+def _create_retry_run(run_id: str, body: Optional[RetryRunBody]) -> tuple[Dict[str, Any], bool]:
     run = get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="research run not found")
@@ -1702,9 +1730,15 @@ def retry_run(run_id: str, body: Optional[RetryRunBody] = None) -> Dict[str, Any
         )
     b = body or RetryRunBody()
     if b.idempotency_key:
-        existing = _idempotent_match(store.list_runs(), b.idempotency_key)
+        scoped = [
+            r for r in store.list_runs()
+            if r.get("parent_run_id") == run_id
+            and r.get("task_id") == run.get("task_id")
+            and r.get("created_by") == (b.actor_id or run.get("created_by"))
+        ]
+        existing = _idempotent_match(scoped, b.idempotency_key)
         if existing:
-            return existing
+            return existing, True
 
     timestamp = b.requested_at or utc_now()
     task_id = run["task_id"]
@@ -1769,25 +1803,7 @@ def retry_run(run_id: str, body: Optional[RetryRunBody] = None) -> Dict[str, Any
         store.put_run(new_run)
         store.append_event(events[-1])
 
-    params = new_run.get("parameters") or {}
-    plan_payload = params.get("plan") or {}
-    stage_payload = params.get("stage") or {}
-    if str(plan_payload.get("status") or "").lower() in {"canceled", "cancelled"}:
-        plan_payload["status"] = "running"
-    if isinstance(plan_payload.get("stages"), list):
-        for stage in plan_payload["stages"]:
-            if isinstance(stage, dict) and stage.get("stage_id") == stage_payload.get("stage_id"):
-                if params.get("dataset"):
-                    stage["dataset"] = params["dataset"]
-                break
-    adapter = new_run.get("adapter", "stub")
-    supported_stage_backends = {"vectorbt", "statsmodels", "quantlib", "openclaw_result_synthesis", "prototype_backtest", "econometric_validation", "derivatives_pricing_risk", "evidence_synthesis"}
-    is_stage_backend = adapter in supported_stage_backends or params.get("stage") is not None
-    if "decision_id" in params and "target_artifact_id" in params:
-        _trigger_retrain_execution(new_run["run_id"], params)
-    elif is_stage_backend and (params.get("stage") or (params.get("plan") and params["plan"].get("stages"))):
-        _progress_plan_stages(params.get("plan") or {}, new_run, b.actor_id, store, timestamp)
-    return new_run
+    return new_run, False
 
 
 @app.post("/api/research-orchestrator/runs/{run_id}/artifacts", status_code=201)
