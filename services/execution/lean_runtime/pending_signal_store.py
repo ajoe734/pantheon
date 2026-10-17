@@ -96,6 +96,9 @@ class PendingSignalStore(Protocol):
     def queue_depth(self) -> int:
         """Return the current pending queue depth."""
 
+    def oldest_pending_enqueued_at(self) -> str | None:
+        """Return the enqueued_at of the oldest unclaimed signal, or None if unknown."""
+
 
 def _observed_enqueue_payload(payload: dict[str, Any]) -> dict[str, Any]:
     validate_signal_payload_minimal(payload)
@@ -184,6 +187,12 @@ class InMemoryPendingSignalStore:
 
     def queue_depth(self) -> int:
         return len(self._pending)
+
+    def oldest_pending_enqueued_at(self) -> str | None:
+        if not self._pending:
+            return None
+        value = self._pending[0].get("enqueued_at")
+        return value if isinstance(value, str) and value else None
 
     def inflight_depth(self) -> int:
         return len(self._inflight)
@@ -553,6 +562,18 @@ return moved
 
     def queue_depth(self) -> int:
         return int(self._client.llen(self._queue_key))
+
+    def oldest_pending_enqueued_at(self) -> str | None:
+        # Claims LPOP from the head, so index 0 is the oldest pending item (read-only).
+        raw = self._client.lindex(self._queue_key, 0)
+        if raw is None:
+            return None
+        try:
+            item = json.loads(self._as_text(raw))
+        except Exception:  # noqa: BLE001
+            return None
+        value = item.get("enqueued_at") if isinstance(item, dict) else None
+        return value if isinstance(value, str) and value else None
 
     def inflight_depth(self) -> int:
         return int(self._client.hlen(self._inflight_key))

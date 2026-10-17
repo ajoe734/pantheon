@@ -2535,7 +2535,6 @@ class PaperRuntimeService:
         max_batch_size: int | None = None,
         lifecycle_outbox_path: str | os.PathLike[str] | None = None,
     ) -> None:
-        self._observed_queue_lag_ms: float | None = None
         if runtime_context is None:
             mf, stg = os.getenv("PANTHEON_RUNTIME_CONTEXT_MANIFEST"), os.getenv("PANTHEON_DEPLOYMENT_STAGE") or os.getenv("PANTHEON_RUNTIME_MODE")
             try:
@@ -2815,7 +2814,7 @@ class PaperRuntimeService:
                 }
             )
             d_lag = getattr(self._telemetry, "last_delivery_lag_ms", None)
-            lags = {"queue_lag_ms": self._observed_queue_lag_ms, "event_delivery_lag_ms": d_lag, "delivery_lag_ms": d_lag}
+            lags = {"queue_lag_ms": self._current_queue_lag_ms(), "event_delivery_lag_ms": d_lag, "delivery_lag_ms": d_lag}
             return {
                 **self._identity.to_health_payload(),
                 "status": (
@@ -3093,14 +3092,6 @@ class PaperRuntimeService:
 
     def _handle_order_event(self, event: OrderEvent) -> None:
         if event.event_type == "signal_generation":
-            rcpt = event.metadata.get("causal_queue_receipt")
-            raw_ts = event.metadata.get("enqueued_at") or (rcpt.get("enqueued_at") if isinstance(rcpt, Mapping) else None)
-            sig_dt = _parse_iso_utc(raw_ts) if isinstance(raw_ts, str) else None
-            # A signal enqueued before this runtime started was waiting for its worker
-            # to start, not for runtime backlog: measure from the later of the two.
-            wait_start = max(sig_dt, self._started_at_dt) if sig_dt is not None else None
-            lag = (datetime.now(timezone.utc) - wait_start).total_seconds() * 1000.0 if wait_start is not None else None
-            self._observed_queue_lag_ms = round(lag, 3) if lag is not None and lag >= 0 else None
             signal_metadata = self._signal_lifecycle_metadata(event.metadata)
             signal_metadata.setdefault("symbol", event.symbol)
             signal_metadata.setdefault("order_type", event.metadata.get("order_type", "MARKET"))
@@ -3339,7 +3330,7 @@ class PaperRuntimeService:
         now = _iso_now()
         if self._last_heartbeat_at == now:
             return
-        q_lag, d_lag = self._observed_queue_lag_ms, getattr(self._telemetry, "last_delivery_lag_ms", None)
+        q_lag, d_lag = self._current_queue_lag_ms(), getattr(self._telemetry, "last_delivery_lag_ms", None)
         lags = {k: v for k, v in (("queue_lag_ms", q_lag), ("event_delivery_lag_ms", d_lag), ("delivery_lag_ms", d_lag)) if v is not None}
         hb_meta = {
             "runtime_package": "paper_execution_runtime",
@@ -3681,6 +3672,24 @@ class PaperRuntimeService:
     def _emit_deploy_completed(self) -> None:
         if self._telemetry.enabled:
             self._telemetry.emit_deploy_completed()
+
+    def _current_queue_lag_ms(self) -> float | None:
+        """0 when idle, else age of the oldest pending signal from max(enqueued_at, runtime start)."""
+        depth = self._safe_queue_depth()
+        if depth is None:
+            return None
+        if depth <= 0:
+            return 0.0
+        try:
+            raw_ts = self._store.oldest_pending_enqueued_at()
+        except Exception:  # noqa: BLE001
+            return None
+        enq_dt = _parse_iso_utc(raw_ts) if isinstance(raw_ts, str) else None
+        if enq_dt is None:
+            return None
+        wait_start = max(enq_dt, self._started_at_dt)
+        lag = (datetime.now(timezone.utc) - wait_start).total_seconds() * 1000.0
+        return round(lag, 3) if lag >= 0 else None
 
     def _safe_queue_depth(self) -> int | None:
         try:

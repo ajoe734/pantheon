@@ -1,0 +1,10 @@
+{
+  "task_id": "PAPER-RUNTIME-QUEUE-LAG-CURRENT-20261017",
+  "change": "snapshot and heartbeat queue_lag_ms now report current queue wait: 0 when idle, else age of oldest pending signal from max(enqueued_at, runtime start), None when depth or enqueue time unreadable; stores gain oldest_pending_enqueued_at()",
+  "tests": {
+    "command": "python3 -m unittest services.execution.lean_runtime.test_paper_runtime",
+    "result": "86 passed on fix; with paper_runtime.py and pending_signal_store.py reverted to base: 5 failures, 2 errors"
+  },
+  "unchanged": ["reconciliation thresholds", "services/reconciliation-drift", "claim/ack semantics"],
+  "delivery": "hosted only via next FULL+Root; no deployment dispatched"
+}
