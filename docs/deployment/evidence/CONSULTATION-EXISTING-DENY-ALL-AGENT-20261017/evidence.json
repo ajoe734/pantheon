@@ -1,0 +1,50 @@
+{
+  "task_id": "CONSULTATION-EXISTING-DENY-ALL-AGENT-20261017",
+  "base_sha": "a9123f055d1140bc337d8308958eeeed72afa972",
+  "change_class": "functional",
+  "work_class": "defect_fix",
+  "summary": "Enforce existing Consultation no-tool contract with existing restricted agent (structured-extraction) via existing STRUCTURED_AGENT_ID per-call mechanism.",
+  "scope": [
+    "services/openclaw-gateway-adapter/consultation_provider.py",
+    "services/consultation/tests/test_current_provider_handoff.py",
+    "docs/deployment/evidence/CONSULTATION-EXISTING-DENY-ALL-AGENT-20261017/evidence.json"
+  ],
+  "bounded_input": {
+    "sha256": "9185eb6ba14b82f35e60c429fad6559b51127295127643ad52455e35fafca7c1",
+    "path": "/tmp/pantheon-assist-20261013/CONSULTATION-EXISTING-DENY-ALL-AGENT-20261017-bounded-input.json"
+  },
+  "negative_proof": {
+    "sha256": "5401c3cdad06a9496b3788d67a96616633c3a7828452745da6ddf10b851229ca",
+    "path": "/tmp/pantheon-assist-20261013/Consultation-a912-existing-tool-boundary-negative-proof-20261017.json",
+    "negative_finding": "At base a9123f055d1140bc337d8308958eeeed72afa972, consultation_provider.py called provider.invoke() without agent_id, inheriting default 'main' agent despite metadata allowed_tools=[] and execution_authority='none'."
+  },
+  "head_correction": {
+    "agent_selection": "Explicitly pass agent_id=STRUCTURED_AGENT_ID ('structured-extraction') at provider.invoke() in consultation_provider.py.",
+    "enforcement_boundary": "Structured extraction agent possesses configured deny: ['*'] policy.",
+    "fail_closed": "Missing or rejected restricted agent fails closed with ContributionBlocked and never reroutes to main.",
+    "net_prod_lines": 2,
+    "net_prod_line_budget": 8
+  },
+  "acceptance_verification": {
+    "ac1_restricted_agent_selection": "passed: consultation_provider.py explicitly imports STRUCTURED_AGENT_ID and passes agent_id=STRUCTURED_AGENT_ID on provider.invoke. Preserves request/context/trace/session identity and qualified contribution/replay/handoff behavior without changing main or other agent behavior.",
+    "ac2_fail_closed_no_workaround": "passed: Missing or rejected restricted agent produces provider error / blocked response and never falls back to main. No Gateway/auth-profile changes or new platforms.",
+    "ac3_extended_test_verification": "passed: test_current_provider_handoff.py extended to assert restricted agent selection on actual Consultation caller (FakeOpenClawProvider calls[0]['kwargs']['agent_id'] == 'structured-extraction') and on real AssistantOpenClawProvider request path using local stream spy before network, plus fail-closed rejection test. All 10 tests passed.",
+    "ac4_scope_and_budget": "passed: Exactly three declared paths modified/added, net production lines = 2 (<= 8 budget). Source-only delivery."
+  },
+  "test_expectation_classification": {
+    "status": "expected_contract_correction",
+    "details": "Caller check verifies restricted agent selection in existing handoff regression, pre-existing loop truth evidence_refs assertion aligned with tick ref prepend, and 2 new tests verify real provider spy path and fail-closed rejection."
+  },
+  "validation": [
+    {
+      "suite": "services/consultation/tests/test_current_provider_handoff.py",
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -v services/consultation/tests/test_current_provider_handoff.py",
+      "result": "10 passed in 12.27s"
+    },
+    {
+      "suite": "services/consultation/test_workflow_executor.py + services/consultation/test_models.py",
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -v services/consultation/test_workflow_executor.py services/consultation/test_models.py",
+      "result": "20 passed in 15.68s"
+    }
+  ]
+}
