@@ -1,0 +1,10 @@
+{
+  "task": "BFF-DEV-HEALTH-REPLAY-AUTH-20261017",
+  "scope": "source-only; no hosted replay, provider call, purge or deployment",
+  "base": {"command": "pytest test_downstream_health_monitor.py (service.py reverted)", "result": "2 failed, 37 passed",
+    "failed": ["test_dev_matching_tenant_without_mfa_succeeds (denied by unconditional MFA check)", "test_dev_wrong_or_missing_tenant_denied_even_with_mfa (no tenant check; adapter called)"],
+    "non_reproducing": ["non-dev MFA denial, missing approval_ref/invalid channel 422 and off-event-loop replay already passed on base"]},
+  "head": {"result": "39 passed"},
+  "production_net_growth_lines": 12,
+  "note": "synthetic local identities do not certify production auth boundaries; hosted 403 evidence SHA 130640c7... is not a valid replay"
+}

@@ -867,7 +867,19 @@ class ControlLoopsService:
         identity: Any,
         payload: Dict[str, Any],
     ) -> Dict[str, Any]:
-        if not bool(getattr(identity, "mfa_verified", False)):
+        if self.deployed_environment == "dev":
+            tenant = str(getattr(self.downstream_health_monitor, "tenant_id", "") or "")
+            if not tenant or tenant not in _claim_strings(
+                identity, "tenant_id", "tenantId", "tenant.id", "allowed_tenants", "tenant_ids"
+            ):
+                raise self._error(
+                    403,
+                    ErrorCode.FORBIDDEN,
+                    "Downstream health replay tenant denied",
+                    "Caller must hold the monitor's concrete tenant scope.",
+                    precondition_failed="tenant_scope",
+                )
+        elif not bool(getattr(identity, "mfa_verified", False)):
             raise self._error(
                 403,
                 ErrorCode.FORBIDDEN,
