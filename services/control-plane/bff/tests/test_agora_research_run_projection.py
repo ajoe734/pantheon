@@ -821,3 +821,39 @@ def test_bff_accepts_supported_synthesis_owner(monkeypatch: pytest.MonkeyPatch) 
     service.approve_plan("p", scope=SimpleNamespace(tenant_id="a", user_id="u", roles=["operator"]))
     service.dispatch_plan("p", scope=SimpleNamespace(tenant_id="a", user_id="u", roles=["operator"]))
     assert sent.call_count == 1
+
+
+@pytest.mark.parametrize(
+    ("owner_status", "exec_status", "outcome", "phase", "percent"),
+    [
+        ("completed", "succeeded", "pass", "completed", 100),
+        ("failed", "failed", "fail", "failed", 100),
+        ("cancelled", "cancelled", "pending", "cancelled", 100),
+        ("running", "running", "pending", "running", 0),
+        ("queued", "queued", "pending", "queued", 0),
+    ],
+)
+def test_run_progress_follows_owner_status_in_list_and_detail(
+    monkeypatch: pytest.MonkeyPatch, owner_status, exec_status, outcome, phase, percent
+) -> None:
+    """Fixture-scope unit test: DTO-derived progress only; owner records untouched."""
+    client = _client(monkeypatch)
+    created = _create_plan(client, f"ws-progress-{owner_status}", f"progress-create-{owner_status}")
+    plan_id = created["data"]["plan_id"]
+    _approve_plan(client, plan_id, created["meta"]["etag"], f"progress-approve-{owner_status}")
+    run_id = _dispatch_plan(client, plan_id, _get_plan(client, plan_id)["meta"]["etag"], f"progress-dispatch-{owner_status}")
+    client.owner_research_runs[run_id]["status"] = owner_status
+    before = deepcopy(client.owner_research_runs)
+
+    detail = client.get(f"/bff/agora/research-runs/{run_id}", headers=_headers()).json()
+    listed = client.get(f"/bff/agora/research-plans/{plan_id}/runs", headers=_headers()).json()
+    items = listed.get("items") or listed.get("data") or listed
+    row = next(r for r in items if r["run_id"] == run_id)
+    for view in (detail, row):
+        assert view["execution_status"] == exec_status
+        assert view["outcome"] == outcome
+        assert view["progress"]["phase"] == phase
+        assert view["progress"]["percent"] == percent
+        if exec_status != "queued":
+            assert "queued" not in view["progress"]["message"].lower()
+    assert client.owner_research_runs == before
