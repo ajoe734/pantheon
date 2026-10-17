@@ -184,6 +184,48 @@ def test_cancel_before_dispatch_and_active_cancel_are_terminal(monkeypatch: pyte
     assert replay.json()["data"]["run_id"] == first_run
 
 
+def test_workshop_plan_list_matches_owner_completed_detail(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client(monkeypatch)
+    workshop_id = "ws-list-owner-projection"
+    created = _create_plan(client, workshop_id, "list-owner-create")
+    plan_id = created["data"]["plan_id"]
+    _approve_plan(client, plan_id, created["meta"]["etag"], "list-owner-approve")
+    run_id = _dispatch_plan(client, plan_id, _get_plan(client, plan_id)["meta"]["etag"], "list-owner-dispatch")
+    cancelled = _create_plan(client, workshop_id, "list-owner-cancel-create")
+    cancelled_id = cancelled["data"]["plan_id"]
+    cancel_response = client.post(
+        f"/bff/agora/research-plans/{cancelled_id}/cancel",
+        headers=_headers("list-owner-cancel", cancelled["meta"]["etag"]),
+    )
+    assert cancel_response.status_code == 200, cancel_response.text
+    store = getattr(client, "router", None) and getattr(client.router, "research_store", None) or getattr(client, "app_instance", None) and getattr(client.app_instance, "research_store", None)
+
+    def listed() -> dict:
+        response = client.get(f"/bff/agora/workshops/{workshop_id}/research-plans", headers=_headers())
+        assert response.status_code == 200, response.text
+        return {item["plan_id"]: item for item in response.json()["items"]}
+
+    assert listed()[plan_id]["status"] == "running"
+    client.owner_research_runs[run_id]["status"] = "completed"
+    before = deepcopy(client.owner_research_runs)
+    raw_before = deepcopy({pid: store.get_plan(pid) for pid in (plan_id, cancelled_id)})
+    items = listed()
+    detail = _get_plan(client, plan_id)["data"]
+    assert items[plan_id]["status"] == detail["status"] == "completed"
+    assert items[plan_id]["run_ids"] == detail["run_ids"] == [run_id]
+    assert [s["status"] for s in items[plan_id]["stages"]] == [s["status"] for s in detail["stages"]]
+    assert items[cancelled_id]["status"] == _get_plan(client, cancelled_id)["data"]["status"] == "cancelled"
+    assert client.owner_research_runs == before
+    assert {pid: store.get_plan(pid) for pid in (plan_id, cancelled_id)} == raw_before
+    assert raw_before[plan_id]["status"] != "completed"
+
+    other = client.get(
+        f"/bff/agora/workshops/{workshop_id}/research-plans",
+        headers={**_headers(), "X-Tenant-Id": "other-tenant"},
+    )
+    assert plan_id not in {item["plan_id"] for item in other.json().get("items", [])}
+
+
 def test_research_run_detail_returns_schema_projection(monkeypatch: pytest.MonkeyPatch) -> None:
     client = _client(monkeypatch)
     workshop_id = "ws-ag-be-rs-002-projection"

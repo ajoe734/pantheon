@@ -180,11 +180,12 @@ class AgoraResearchService:
     # -----------------------------------------------------------------------
 
     def list_workshop_plans(self, workshop_id: str, *, scope: Any) -> List[Dict[str, Any]]:
-        return self.store.list_plans_for_workshop(
+        plans = self.store.list_plans_for_workshop(
             workshop_id,
             tenant_id=scope.tenant_id,
             user_id=scope.user_id,
         )
+        return [self._project_plan_from_owner(plan, scope) for plan in plans]
 
     def create_workshop_plan(
         self,
