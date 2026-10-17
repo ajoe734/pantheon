@@ -2664,6 +2664,7 @@ class PaperRuntimeService:
         self._thread: threading.Thread | None = None
         self._heartbeat_thread: threading.Thread | None = None
         self._started_at = _iso_now()
+        self._started_at_dt = datetime.now(timezone.utc)
         self._synthetic_market = (
             SyntheticMarketData()
             if _as_bool(os.getenv("PANTHEON_PAPER_SYNTHETIC_MARKET_DATA"))
@@ -3095,7 +3096,10 @@ class PaperRuntimeService:
             rcpt = event.metadata.get("causal_queue_receipt")
             raw_ts = event.metadata.get("enqueued_at") or (rcpt.get("enqueued_at") if isinstance(rcpt, Mapping) else None)
             sig_dt = _parse_iso_utc(raw_ts) if isinstance(raw_ts, str) else None
-            lag = (datetime.now(timezone.utc) - sig_dt).total_seconds() * 1000.0 if sig_dt is not None else None
+            # A signal enqueued before this runtime started was waiting for its worker
+            # to start, not for runtime backlog: measure from the later of the two.
+            wait_start = max(sig_dt, self._started_at_dt) if sig_dt is not None else None
+            lag = (datetime.now(timezone.utc) - wait_start).total_seconds() * 1000.0 if wait_start is not None else None
             self._observed_queue_lag_ms = round(lag, 3) if lag is not None and lag >= 0 else None
             signal_metadata = self._signal_lifecycle_metadata(event.metadata)
             signal_metadata.setdefault("symbol", event.symbol)
