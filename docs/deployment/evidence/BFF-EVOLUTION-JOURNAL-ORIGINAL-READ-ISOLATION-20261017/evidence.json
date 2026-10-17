@@ -1,0 +1,48 @@
+{
+  "task_id": "BFF-EVOLUTION-JOURNAL-ORIGINAL-READ-ISOLATION-20261017",
+  "base_sha": "df5241b07888d73ffa7d97861229bd744609fc4b",
+  "scoped_artifacts": [
+    "services/control-plane/bff/evolution/router.py",
+    "services/control-plane/bff/test_mgmt_load_005_read_concurrency.py",
+    "docs/deployment/evidence/BFF-EVOLUTION-JOURNAL-ORIGINAL-READ-ISOLATION-20261017/evidence.json"
+  ],
+  "counter_references": {
+    "root_counter": "Root389761",
+    "browser_counter_sha256": "8045aade244f567b39c54954d58e6243dc84410521884383f3c9d7f7d5d3b11e",
+    "script_counter_sha256": "0e8b289ea27359ca3b946fe2b7864992b514129f26ac829b4da2c99760bbb0c1",
+    "diagnostic_readonly_json": "/tmp/pantheon-assist-20261013/Root38976194960-existing-Research-and-Evolution-return-navigation-diagnostic-readonly.json",
+    "publisher_active_hash": "70b465d8",
+    "exact17checks_hash": "409709a9",
+    "technical_broad19_hash": "2ec77529"
+  },
+  "problem": {
+    "observed": "Actual accepted Root389761 browser counter 8045aade: genuine normalA login 200; first focused Evolution Journal GET 200 took about 25s; after reload /bff/me and /auth/readiness aborted. Browser redirected to /auth while independent same-context /bff/me still 200. Original first script 0e8b289e also read original ResearchDraft and Evolution/reload successfully then timed out returning Workshop.",
+    "root_cause": "The route handler bff_management_evolution_journal in services/control-plane/bff/evolution/router.py was defined as async def without any await expressions, executing synchronous owner read-store aggregation (list_evolution_decisions, list_postmortems, list_freeze_orders, list_all_rollbacks) directly on the persistent asyncio event loop thread and blocking concurrent requests (/health, /bff/me, auth checks)."
+  },
+  "changes": {
+    "router": "Converted bff_management_evolution_journal from async def to def in services/control-plane/bff/evolution/router.py, utilizing FastAPI native synchronous-handler threadpool dispatch (anyio.to_thread.run_sync) without modifying auth, error semantics, DTO schemas, or adding external cache/wrappers. Production net diff relative to dev is exactly 0 lines.",
+    "test_harness": "Extended services/control-plane/bff/test_mgmt_load_005_read_concurrency.py with native _isolated_journal_client persistent-event-loop harness with OwnerReadContextMiddleware and strict JWT authentication. Added test_health_and_auth_rejection_stay_responsive_while_evolution_journal_read_is_slow and test_evolution_journal_preserves_synchronous_dispatch_filters_and_errors asserting concurrent /health, 401 anonymous, and 401 tampered JWT rejections remain responsive (< 0.3s) during slow synchronous reads while preserving filters and tenant ContextVars."
+  },
+  "boundary_compliance": {
+    "production_net_line_delta": 0,
+    "production_line_budget": 0,
+    "preserved_auth_before_owner_reads": true,
+    "preserved_tenant_contextvars": true,
+    "no_new_executor_cache_or_queue": true,
+    "no_timeout_extensions": true,
+    "no_relaxed_401": true,
+    "no_empty_healthy_fallback": true,
+    "no_business_rule_or_projection_changes": true,
+    "secret_or_fake_token_added": false
+  },
+  "distinction": "Local source proof verifies native synchronous-handler threadpool dispatch and event-loop unblocking across concurrent /health and strict auth requests on the persistent-event-loop TestClient harness. This is distinguished from still-owed final accepted-pair genuine browser reload/navigation validation in the deployed environment.",
+  "validation": {
+    "test_mgmt_load_005_read_concurrency": "14 passed, 1 warning in 13.61s (verified slow journal reads do not block /health or auth rejections)",
+    "test_bff_b3_evolution_journal": "18 passed, 3 warnings in 12.20s",
+    "test_evolution_router": "9 passed, 3 warnings in 4.92s",
+    "test_evolution_center_contract": "4 passed, 1 warning in 4.51s",
+    "test_bff_promotion_review_governance": "13 passed, 1 warning in 16.14s",
+    "test_persona_evaluator_mounted_ranking": "3 passed, 3 warnings in 3.58s",
+    "test_owner_reads_capital_authority": "6 passed, 2 warnings in 5.10s"
+  }
+}

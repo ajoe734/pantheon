@@ -966,7 +966,7 @@ def create_evolution_router(
 
     # 13. Management Evolution Journal
     @router.get("/bff/management/evolution-journal")
-    async def bff_management_evolution_journal(
+    def bff_management_evolution_journal(
         source_type: Optional[str] = None,
         status: Optional[str] = None,
         action_type: Optional[str] = None,
