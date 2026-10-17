@@ -832,9 +832,6 @@ class ReadSurfacePorts:
                 return decision
         return None
 
-    def get_evolution_decision(self, decision_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        return self.get_evolution_decision_by_id(decision_id)
-
     def get_evolution_decisions_by_incident(self, incident_id: Optional[str]) -> List[Dict[str, Any]]:
         clean_id = str(incident_id or "").strip()
         if not clean_id:

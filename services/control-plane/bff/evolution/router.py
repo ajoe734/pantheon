@@ -1286,14 +1286,9 @@ def create_evolution_router(
                 raw_dec = dec_by_id.get(dec_id) or {}
                 full_proj = None
                 if mutation_review_projection is not None:
-                    try:
-                        full_proj = mutation_review_projection(
-                            dec_id, identity=identity, snapshot_at=snapshot_at, decision=raw_dec or None
-                        )
-                    except TypeError:
-                        full_proj = mutation_review_projection(
-                            dec_id, identity=identity, snapshot_at=snapshot_at
-                        )
+                    full_proj = mutation_review_projection(
+                        dec_id, identity=identity, snapshot_at=snapshot_at, decision=raw_dec or None
+                    )
                 if full_proj is None:
                     app_dec = getattr(read_store, "get_approval_decision_by_id", lambda aid: None)(raw_dec.get("approval_decision_id"))
                     full_proj = dict(it.get("mutation_review") or {})
