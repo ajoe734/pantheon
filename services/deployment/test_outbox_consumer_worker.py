@@ -1781,6 +1781,17 @@ class TestExecuteRetirement:
         client.transition.assert_called_once_with("rb-001", "retired")
         finalize.assert_called_once()
 
+    def test_paused_binding_of_compensated_failed_saga_retires(self, worker):
+        client = MagicMock()
+        client.get.side_effect = [
+            _runtime_binding(status="paused"),
+            _runtime_binding(status="retired"),
+        ]
+        saga = {**self._saga(), "current_step": "retirement_requested"}
+        _, finalize = self._run(worker, saga, client)
+        client.transition.assert_called_once_with("rb-001", "retired")
+        finalize.assert_called_once()
+
     def test_replay_of_already_retired_binding_does_not_retransition(self, worker):
         client = MagicMock()
         client.get.side_effect = [

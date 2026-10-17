@@ -33,8 +33,9 @@ from typing import Any
 
 CASE_KEY_PREFIX = "dev-paper-release-"
 OUTCOMES = ("accepted", "compensated")
+RETIRABLE_CASE_STATES = frozenset({"succeeded", "failed", "compensated", "provisioning"})
 
-SAGA_ACTIVE = "active"  # completed: can be retired
+SAGA_ACTIVE = "active"  # completed or failed-and-compensated: can be retired
 SAGA_PENDING = "pending"  # retiring: waiting for the outbox consumer
 SAGA_RETIRED = "retired"
 SAGA_NOT_RETIRABLE = "not_retirable"  # failed/compensated/in flight
@@ -65,6 +66,16 @@ def classify_saga(saga: Mapping[str, Any] | None) -> str:
         return SAGA_PENDING
     if status == "completed":
         return SAGA_ACTIVE
+    if status == "failed" and str(saga.get("current_step") or "") == "compensated":
+        compensation = saga.get("compensation")
+        command = (
+            str(compensation.get("command_type") or "")
+            if isinstance(compensation, Mapping)
+            else ""
+        )
+        if command == "mark_binding_failed_inactive":
+            return SAGA_NOT_RETIRABLE  # binding FAILED is terminal; cannot retire
+        return SAGA_ACTIVE  # contained failure: binding paused, compensation done
     return SAGA_NOT_RETIRABLE
 
 
@@ -79,12 +90,17 @@ def case_ids(record: Any) -> tuple[str, str]:
 
 
 def release_cases(records: Sequence[Any]) -> list[Any]:
-    """Succeeded release probe cases, in a stable order."""
+    """Release probe cases that may hold a retirable saga, in a stable order.
+
+    Besides ``succeeded`` this covers contained failures (``failed`` /
+    ``compensated``) and cases stuck in ``provisioning``; the saga readback,
+    not the case state, decides retirability.
+    """
     cases = [
         record
         for record in records
         if str(record.idempotency_key).startswith(CASE_KEY_PREFIX)
-        and record.state == "succeeded"
+        and record.state in RETIRABLE_CASE_STATES
     ]
     return sorted(cases, key=lambda r: (str(r.created_at), str(r.idempotency_key)))
 

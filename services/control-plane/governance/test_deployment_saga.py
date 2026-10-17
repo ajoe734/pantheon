@@ -183,6 +183,54 @@ class TestDeploymentSagaRetirement(unittest.TestCase):
         with self.assertRaises(DeploymentSagaError):
             store.finalize_retirement(saga_id)
 
+    def test_failed_saga_retires_only_after_compensation_finishes(self):
+        store = DeploymentSagaStore()
+        saga_id = self._completed(store)
+        store.record_failure(saga_id, reason="boom")
+        with self.assertRaises(DeploymentSagaError):  # compensating, unfinished
+            store.record_retirement(saga_id, reason="too soon")
+        store.finalize_compensation(saga_id, terminal_status=SagaStatus.FAILED)
+        saga = store.get(saga_id)
+        self.assertEqual(saga.status, SagaStatus.FAILED)
+        self.assertEqual(saga.current_step, SagaStep.COMPENSATED)
+
+        record = store.record_retirement(saga_id, reason="contained failure")
+        self.assertEqual(record.event.event_type, "deployment.retirement.requested")
+        self.assertEqual(store.get(saga_id).status, SagaStatus.RETIRING)
+        store.finalize_retirement(saga_id)
+        self.assertEqual(store.get(saga_id).status, SagaStatus.RETIRED)
+
+    def test_rollback_compensated_saga_records_request_rollback(self):
+        store = DeploymentSagaStore()
+        saga_id = self._completed(store)
+        decision = store.record_failure(saga_id, reason="boom")
+        self.assertEqual(decision.command_type, CompensationCommand.REQUEST_ROLLBACK)
+        store.finalize_compensation(saga_id, terminal_status=SagaStatus.FAILED)
+        store.record_retirement(saga_id, reason="paused binding retires")
+        self.assertEqual(store.get(saga_id).status, SagaStatus.RETIRING)
+
+    def test_failed_inactive_compensated_saga_cannot_retire(self):
+        store = DeploymentSagaStore()
+        saga_id = store.bootstrap_for_plan(build_plan(), trace_id="trace-001").saga.saga_id
+        store.record_binding_created(saga_id, binding_id="binding-001", runtime_id="runtime-001")
+        decision = store.record_failure(saga_id, reason="runtime load timed out")
+        self.assertEqual(decision.command_type, CompensationCommand.MARK_BINDING_FAILED_INACTIVE)
+        store.finalize_compensation(saga_id, terminal_status=SagaStatus.FAILED)
+        saga = store.get(saga_id)
+        self.assertEqual(saga.status, SagaStatus.FAILED)
+        self.assertEqual(saga.current_step, SagaStep.COMPENSATED)
+        with self.assertRaisesRegex(DeploymentSagaError, "failed_inactive"):
+            store.record_retirement(saga_id, reason="terminal binding")
+        self.assertEqual(store.get(saga_id).status, SagaStatus.FAILED)
+
+    def test_failed_saga_without_binding_cannot_retire(self):
+        store = DeploymentSagaStore()
+        saga_id = store.bootstrap_for_plan(build_plan(), trace_id="trace-001").saga.saga_id
+        store.record_failure(saga_id, reason="boom")
+        store.finalize_compensation(saga_id, terminal_status=SagaStatus.FAILED)
+        with self.assertRaises(DeploymentSagaError):
+            store.record_retirement(saga_id, reason="no binding")
+
 
 class TestDeploymentSagaCompensation(unittest.TestCase):
     def test_binding_create_failure_maps_to_abort_plan(self):
