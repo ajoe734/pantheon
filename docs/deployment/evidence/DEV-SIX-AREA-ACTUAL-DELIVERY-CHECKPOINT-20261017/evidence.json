@@ -22,67 +22,17 @@
     "owner": "Human/Ops",
     "reviewer": "Antigravity",
     "acceptance_criteria_count": 6,
-    "canonical_parent_acceptance_areas": [
-      "Manual central release/acceptance checkpoint only. Coordinate with the existing release owner and obtain the preserved per-operation authorization; no worker VM access or parallel root release or fabricated human business approval. Use only existing nonprod-deploy.yml and environment lease.",
-      "Pin and gate one exact latest-dev FE/BFF pair and actual owner/worker image identities after all source work; verify hosted manifest and served identities and safe write/strict auth/CORS posture. Preserve real incumbent artifacts and config/data compatibility. Required failure or skipped gate prevents activation.",
-      "Use existing hosted harnesses with new specifically authorized labelled paper fixtures to prove all twelve loops on one fresh causal chain and Management/Agora/Persona/Research/approval journeys. Actual provider results and real supported computation are required where specified; no fixture or old IDs relabelled as hosted success.",
-      "Verify saved owner state after refresh and independent process restart plus tenant/auth/idempotency/version conflicts and provider failure visibility. Genuine separate humans make business approvals; no existing dev pools or real capital effects. Any missing authority or capability remains explicit unfinished work.",
-      "Exercise exact prior FE/BFF artifact rollback and reactivation with readback while preserving acknowledged data. Only after real proof update the existing Agora/Persona/Research/FE approval hosted obligations through official commands. Do not close merely because source tasks or historical S5 reports are done.",
-      "Publish the exact PR/merge/run/artifact/readback matrix and independently reviewed scoped evidence; all mandatory items must pass for overall completion. No new deployment or evidence platform and no credential/budget/production changes."
-    ],
-    "scoped_artifacts": [
-      "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/",
-      "docs/deployment/latest-dev-six-area-closure.md",
-      "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json"
-    ],
-    "depends_on": [
-      "L12-SOURCE-CLOSURE-20261002",
-      "AGORA-SYNTHESIS-AGENT-001",
-      "PERSONA-EVALUATOR-AGENT-002",
-      "BFF-RESEARCH-SINGLE-OWNER-001",
-      "FE-APPROVAL-OWNER-READBACK-001",
-      "OPENCLAW-STRUCTURED-AGENT-DEV-20261003",
-      "RESEARCH-HOSTED-ACCEPTANCE-001",
-      "OPS-CLOSEOUT-ACTIVATION-EVIDENCE-20261004",
-      "PERSONA-OWNER-JWT-VERIFIER-DEV-20261004",
-      "OPS-WATCHDOG-CRON-READONLY-RUNTIME-20261004",
-      "FE-APPROVAL-BROWSER-ACCEPTANCE-20261004",
-      "CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001",
-      "OPS-WATCHDOG-ACTIVATION-EVIDENCE-20261004",
-      "TRADE-JOURNAL-CLAIM-GUARD-CORRECTION-20261004",
-      "OSS-PROFILES-RUNTIME-GROUPING-CORRECTION-20261004",
-      "BFF-RANKING-DEFAULT-OWNER-CORRECTION-20261004",
-      "OSS-PROFILES-OWNER-GROUPS-CORRECTION-20261004",
-      "BFF-STRICT-SOURCE-OWNER-CONSUMER-CORRECTION-20261005",
-      "BFF-ACTUAL-PERSONA-SESSION-CONSUMER-20261005",
-      "DEV-EXISTING-OWNER-VERIFIER-BINDINGS-20261005",
-      "BFF-ACTUAL-OWNER-SURFACE-STATUS-20261005"
-    ],
+    "canonical_parent_acceptance_areas": ["Manual central release/acceptance checkpoint only. Coordinate with the existing release owner and obtain the preserved per-operation authorization; no worker VM access or parallel root release or fabricated human business approval. Use only existing nonprod-deploy.yml and environment lease.", "Pin and gate one exact latest-dev FE/BFF pair and actual owner/worker image identities after all source work; verify hosted manifest and served identities and safe write/strict auth/CORS posture. Preserve real incumbent artifacts and config/data compatibility. Required failure or skipped gate prevents activation.", "Use existing hosted harnesses with new specifically authorized labelled paper fixtures to prove all twelve loops on one fresh causal chain and Management/Agora/Persona/Research/approval journeys. Actual provider results and real supported computation are required where specified; no fixture or old IDs relabelled as hosted success.", "Verify saved owner state after refresh and independent process restart plus tenant/auth/idempotency/version conflicts and provider failure visibility. Genuine separate humans make business approvals; no existing dev pools or real capital effects. Any missing authority or capability remains explicit unfinished work.", "Exercise exact prior FE/BFF artifact rollback and reactivation with readback while preserving acknowledged data. Only after real proof update the existing Agora/Persona/Research/FE approval hosted obligations through official commands. Do not close merely because source tasks or historical S5 reports are done.", "Publish the exact PR/merge/run/artifact/readback matrix and independently reviewed scoped evidence; all mandatory items must pass for overall completion. No new deployment or evidence platform and no credential/budget/production changes."],
+    "scoped_artifacts": ["docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/", "docs/deployment/latest-dev-six-area-closure.md", "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json"],
+    "depends_on": ["L12-SOURCE-CLOSURE-20261002", "AGORA-SYNTHESIS-AGENT-001", "PERSONA-EVALUATOR-AGENT-002", "BFF-RESEARCH-SINGLE-OWNER-001", "FE-APPROVAL-OWNER-READBACK-001", "OPENCLAW-STRUCTURED-AGENT-DEV-20261003", "RESEARCH-HOSTED-ACCEPTANCE-001", "OPS-CLOSEOUT-ACTIVATION-EVIDENCE-20261004", "PERSONA-OWNER-JWT-VERIFIER-DEV-20261004", "OPS-WATCHDOG-CRON-READONLY-RUNTIME-20261004", "FE-APPROVAL-BROWSER-ACCEPTANCE-20261004", "CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001", "OPS-WATCHDOG-ACTIVATION-EVIDENCE-20261004", "TRADE-JOURNAL-CLAIM-GUARD-CORRECTION-20261004", "OSS-PROFILES-RUNTIME-GROUPING-CORRECTION-20261004", "BFF-RANKING-DEFAULT-OWNER-CORRECTION-20261004", "OSS-PROFILES-OWNER-GROUPS-CORRECTION-20261004", "BFF-STRICT-SOURCE-OWNER-CONSUMER-CORRECTION-20261005", "BFF-ACTUAL-PERSONA-SESSION-CONSUMER-20261005", "DEV-EXISTING-OWNER-VERIFIER-BINDINGS-20261005", "BFF-ACTUAL-OWNER-SURFACE-STATUS-20261005"],
     "closure_authority_note": "Child task DEV-SIX-AREA-ACTUAL-DELIVERY-CHECKPOINT-20261017 documents honest timestamped actual delivery refresh checkpoint only; does NOT accept closeout or replace parent independent final acceptance or release owner authority"
   },
   "scope": {
-    "declared_artifacts": [
-      "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json",
-      "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/source-delivery-ledger.json",
-      "docs/deployment/latest-dev-six-area-closure.md",
-      "docs/deployment/evidence/DEV-SIX-AREA-ACTUAL-DELIVERY-CHECKPOINT-20261017/evidence.json"
-    ],
-    "changed_artifacts": [
-      "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json",
-      "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/source-delivery-ledger.json",
-      "docs/deployment/latest-dev-six-area-closure.md",
-      "docs/deployment/evidence/DEV-SIX-AREA-ACTUAL-DELIVERY-CHECKPOINT-20261017/evidence.json"
-    ],
+    "declared_artifacts": ["docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json", "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/source-delivery-ledger.json", "docs/deployment/latest-dev-six-area-closure.md", "docs/deployment/evidence/DEV-SIX-AREA-ACTUAL-DELIVERY-CHECKPOINT-20261017/evidence.json"],
+    "changed_artifacts": ["docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json", "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/source-delivery-ledger.json", "docs/deployment/latest-dev-six-area-closure.md", "docs/deployment/evidence/DEV-SIX-AREA-ACTUAL-DELIVERY-CHECKPOINT-20261017/evidence.json"],
     "evidence_manifest": "docs/deployment/evidence/DEV-SIX-AREA-ACTUAL-DELIVERY-CHECKPOINT-20261017/evidence.json"
   },
-  "diff_budget": {
-    "net_production_budget": 0,
-    "production_lines_added": 0,
-    "production_lines_deleted": 0,
-    "net_production_lines": 0,
-    "documentation_only": true,
-    "verdict": "pass"
-  },
+  "diff_budget": {"net_production_budget": 0, "production_lines_added": 0, "production_lines_deleted": 0, "net_production_lines": 0, "documentation_only": true, "verdict": "pass"},
   "product_pair": {
     "BE": "6ef8507e5ed62ff355d951000f2780d14ccb04ce",
     "FE": "281ceed31f39d8a248d949d16ec8b7e8f18132b3",
@@ -92,116 +42,23 @@
     "FE_deploy": 38996380209,
     "candidate_id": "3f96e4f1e8a00556a8ec255c719890306cd845aa6e543505cde6537dec482290",
     "official_outcome": "accepted; four official runs success",
-    "release19_checks": {
-      "official_Root_and_FE_deploy_terminal_success": true,
-      "original_controller_accepted_exact_pair_and_child_runs": true,
-      "official_artifact_zip_digest_size_and_same_run": true,
-      "original_baseline_and_candidate_raw_copies_unchanged": true,
-      "same_candidate_and_original_actions_download_provenance": true,
-      "exact_old_FE_target_raw_manifest_and_dist": true,
-      "exact_old_three_core_images": true,
-      "exact_same_final_FE_artifact_return": true,
-      "exact_same_final_three_core_images": true,
-      "seven_protected_owners_preserved_during_roundtrip": true,
-      "baseline_nonsecret_config_and_public_auth_preserved": true,
-      "original_restore_and_return_pair_identities": true,
-      "actual_final_public_raw_manifest_matches_sealed_candidate": true,
-      "actual_final_BFF_and_original_six_completed_records_and_two_Patterns": true,
-      "actual_final_three_core_container_images_match_original_seal": true,
-      "actual_final_seven_protected_owner_identities_match_readback": true,
-      "original_formal_FE_gate_no_unexpected_or_flaky_and_focus_pass": true,
-      "actual_final_original_Research_and_Evolution_UI_readonly": true,
-      "original_Workshop295_all13_on_clean_exact_FE": true
-    },
-    "prior_pair": {
-      "BE": "df5241b07888d73ffa7d97861229bd744609fc4b",
-      "FE": "281ceed31f39d8a248d949d16ec8b7e8f18132b3"
-    },
+    "release19_checks": {"official_Root_and_FE_deploy_terminal_success": true, "original_controller_accepted_exact_pair_and_child_runs": true, "official_artifact_zip_digest_size_and_same_run": true, "original_baseline_and_candidate_raw_copies_unchanged": true, "same_candidate_and_original_actions_download_provenance": true, "exact_old_FE_target_raw_manifest_and_dist": true, "exact_old_three_core_images": true, "exact_same_final_FE_artifact_return": true, "exact_same_final_three_core_images": true, "seven_protected_owners_preserved_during_roundtrip": true, "baseline_nonsecret_config_and_public_auth_preserved": true, "original_restore_and_return_pair_identities": true, "actual_final_public_raw_manifest_matches_sealed_candidate": true, "actual_final_BFF_and_original_six_completed_records_and_two_Patterns": true, "actual_final_three_core_container_images_match_original_seal": true, "actual_final_seven_protected_owner_identities_match_readback": true, "original_formal_FE_gate_no_unexpected_or_flaky_and_focus_pass": true, "actual_final_original_Research_and_Evolution_UI_readonly": true, "original_Workshop295_all13_on_clean_exact_FE": true},
+    "prior_pair": {"BE": "df5241b07888d73ffa7d97861229bd744609fc4b", "FE": "281ceed31f39d8a248d949d16ec8b7e8f18132b3"},
     "scope": "Exact prior artifact and same sealed final artifact return; seven protected owners only DURINGroundtrip. Not all owners unchanged for entire deployment."
   },
   "qualification": {
-    "checks": {
-      "report_passed": true,
-      "exact_source": true,
-      "no_report_error": true,
-      "canonical_12_unique_ids": true,
-      "all_original_receipts_nonempty": true,
-      "three_domains_passed": true,
-      "teardown_zero": true,
-      "live_capital_disabled": true,
-      "original_TW_official_source": true
-    },
-    "loop_ids": [
-      "source_ingestion",
-      "strategy_distillation",
-      "alpha_replication",
-      "persona_teaching",
-      "agora_interaction_evidence",
-      "human_imitation_shadow_evaluation",
-      "consultation",
-      "promotion_deployment",
-      "capital_pool_execution",
-      "telemetry_reconciliation",
-      "evolution",
-      "bff_health_monitoring"
-    ],
-    "domain_suites": {
-      "human": {
-        "report_sha256": "sha256:1e3cbe4431f52aa83c9ff140c71abf96670312ef2a42c9c51ba1277578786d22",
-        "report_status": "passed",
-        "started_by_parent_at": "2026-10-17T01:48:31Z",
-        "suite": "tests/integration/l12/test_current_human_learning_deployed_e2e.py"
-      },
-      "research": {
-        "report_sha256": "sha256:eae94af3efe62284281b08057366d1bcbb7e347a190f227825afec12d99aa0c4",
-        "report_status": "passed",
-        "started_by_parent_at": "2026-10-17T01:45:53Z",
-        "suite": "tests/integration/l12/test_current_research_loops_deployed_e2e.py"
-      },
-      "runtime": {
-        "report_sha256": "sha256:2d1f52c9f707358e03dc81f0b42289978157aa9781e09ed8c520b957df2bd922",
-        "report_status": "passed",
-        "started_by_parent_at": "2026-10-17T01:50:38Z",
-        "suite": "tests/integration/l12/test_current_runtime_loops_deployed_e2e.py"
-      }
-    },
-    "teardown": {
-      "command": [
-        "docker",
-        "compose",
-        "-p",
-        "l12q38991740527x1",
-        "-f",
-        "/home/runner/work/pantheon/pantheon/docker-compose.yml",
-        "--profile",
-        "*",
-        "down",
-        "--volumes",
-        "--remove-orphans",
-        "--rmi",
-        "local"
-      ],
-      "compose_project": "l12q38991740527x1",
-      "down_returncode": 0,
-      "remaining_container_ids": [],
-      "zero_project_containers": true
-    },
-    "TW_official_pull": {
-      "connector_id": "tw-twse-tpex-official-market",
-      "snapshot_closes": 40,
-      "snapshot_symbol": "2330.TW",
-      "scheduler_returncode": 0
-    },
+    "checks": {"report_passed": true, "exact_source": true, "no_report_error": true, "canonical_12_unique_ids": true, "all_original_receipts_nonempty": true, "three_domains_passed": true, "teardown_zero": true, "live_capital_disabled": true, "original_TW_official_source": true},
+    "loop_ids": ["source_ingestion", "strategy_distillation", "alpha_replication", "persona_teaching", "agora_interaction_evidence", "human_imitation_shadow_evaluation", "consultation", "promotion_deployment", "capital_pool_execution", "telemetry_reconciliation", "evolution", "bff_health_monitoring"],
+    "domain_suites": {"human": {"report_sha256": "sha256:1e3cbe4431f52aa83c9ff140c71abf96670312ef2a42c9c51ba1277578786d22", "report_status": "passed", "started_by_parent_at": "2026-10-17T01:48:31Z", "suite": "tests/integration/l12/test_current_human_learning_deployed_e2e.py"}, "research": {"report_sha256": "sha256:eae94af3efe62284281b08057366d1bcbb7e347a190f227825afec12d99aa0c4", "report_status": "passed", "started_by_parent_at": "2026-10-17T01:45:53Z", "suite": "tests/integration/l12/test_current_research_loops_deployed_e2e.py"}, "runtime": {"report_sha256": "sha256:2d1f52c9f707358e03dc81f0b42289978157aa9781e09ed8c520b957df2bd922", "report_status": "passed", "started_by_parent_at": "2026-10-17T01:50:38Z", "suite": "tests/integration/l12/test_current_runtime_loops_deployed_e2e.py"}},
+    "teardown": {"command": ["docker", "compose", "-p", "l12q38991740527x1", "-f", "/home/runner/work/pantheon/pantheon/docker-compose.yml", "--profile", "*", "down", "--volumes", "--remove-orphans", "--rmi", "local"], "compose_project": "l12q38991740527x1", "down_returncode": 0, "remaining_container_ids": [], "zero_project_containers": true},
+    "TW_official_pull": {"connector_id": "tw-twse-tpex-official-market", "snapshot_closes": 40, "snapshot_symbol": "2330.TW", "scheduler_returncode": 0},
     "scope": "Original backend isolated real-provider qualification only. It neither activates hosted FE/BFF nor re-executes completed Research ad64. Child hashes/status are original parent records; child raw reports are not independently rehashed. Not hosted same-causal-all12 or UI proof."
   },
   "source60": {
     "count": 60,
     "count_meaning": "Delivery records include integration rework and a loaded supervisor-runtime promotion; NOT sixty new product features, commits or independent hosted acceptances. Git ancestry proves source inclusion, not source review quality or hosted deployment.",
     "all_in_candidate_git_ancestry": true,
-    "sanitized_export": {
-      "path": "/tmp/pantheon-assist-20261013/Source60-existing-delivery-ledger-sanitized-and-ancestry-audited-readonly-20261017.json",
-      "raw_sha256": "1d9b034e0a23ec3919a9896112663bb48a88fba91cf22bbbb07fa02e58f95d4d"
-    },
+    "sanitized_export": {"path": "/tmp/pantheon-assist-20261013/Source60-existing-delivery-ledger-sanitized-and-ancestry-audited-readonly-20261017.json", "raw_sha256": "1d9b034e0a23ec3919a9896112663bb48a88fba91cf22bbbb07fa02e58f95d4d"},
     "three_current_delivered_fixes": [
       {
         "task": "BFF-EVOLUTION-JOURNAL-ORIGINAL-READ-ISOLATION-20261017",
@@ -272,127 +129,27 @@
     "principal": "pantheon-dev-operator-a /tenant-dev; real existing dev session, NOT a fabricated human",
     "approval_POSTs": 1,
     "dispatch_POSTs": 1,
-    "runs": [
-      "rrun-20261016-006",
-      "rrun-20261016-007"
-    ],
+    "runs": ["rrun-20261016-006", "rrun-20261016-007"],
     "status": "completed/succeeded/succeeded; original Vectorbt result and one actual Claude synthesis saved",
-    "artifacts": {
-      "rart-8e15bee77f67": "sha256:aec72d69b356c75d16d65ad1197abb59b22c2fa618c25d169d79b2fff9035734",
-      "rart-d8c50a13303d": "sha256:f7461b1511fc9d79d8e81d401536c4e85db913a237f785529054f13fc70c87fd"
-    },
+    "artifacts": {"rart-8e15bee77f67": "sha256:aec72d69b356c75d16d65ad1197abb59b22c2fa618c25d169d79b2fff9035734", "rart-d8c50a13303d": "sha256:f7461b1511fc9d79d8e81d401536c4e85db913a237f785529054f13fc70c87fd"},
     "model": "Original persona132519698e6199e80326 strategy aa060d53ff712cbba704 momentumlookback2/threshold0/qty1SHARES model41f53f37... unchanged",
     "dataset": "Original DSV602c80stored 2317+2330; ONLY2330.TWSE40bars actuallycomputed toOct15. No new dataset/parameters.",
-    "results": {
-      "return_pct": -0.1106,
-      "Sharpe": -0.734083,
-      "max_drawdown_magnitude_pct": 0.2846,
-      "final_value": 99889.395,
-      "trade_count": 39,
-      "net_position": -1
-    },
+    "results": {"return_pct": -0.1106, "Sharpe": -0.734083, "max_drawdown_magnitude_pct": 0.2846, "final_value": 99889.395, "trade_count": 39, "net_position": -1},
     "provider": "Actual retained Gateway Claude CLI/claude-opus-4-8 response equals saved stage2 JSON; one logical synthesis, no claim unretained attempts=0.",
     "authority": "Finite user consent CONSUMED; no further save/approve/dispatch/stage2/model/recompute/adoption/order/funds. Negative result is valid research, not strategy adoption.",
-    "post_release_saved_six_equal": {
-      "Workshop295": true,
-      "Research_ad64": true,
-      "rrun-20261016-006": true,
-      "rrun-20261016-007": true,
-      "artifact:rart-8e15bee77f67": true,
-      "artifact:rart-d8c50a13303d": true
-    },
-    "post_release_two_Patterns_equal": {
-      "72215b2f-7601-44bb-997d-0b4687bdf934": true,
-      "7ce68816-129d-4228-b3c5-878c6749b729": true
-    },
+    "post_release_saved_six_equal": {"Workshop295": true, "Research_ad64": true, "rrun-20261016-006": true, "rrun-20261016-007": true, "artifact:rart-8e15bee77f67": true, "artifact:rart-d8c50a13303d": true},
+    "post_release_two_Patterns_equal": {"72215b2f-7601-44bb-997d-0b4687bdf934": true, "7ce68816-129d-4228-b3c5-878c6749b729": true},
     "new_list_equals_completed_detail": true,
     "completed_owner_process_recreated": true,
-    "UI46_checks": {
-      "initialPlanCompleted": true,
-      "initialNoRepeatApprovalOrDispatch": true,
-      "initialrrun-20261016-006Succeeded": true,
-      "initialrrun-20261016-006SavedArtifact": true,
-      "initialrrun-20261016-007Succeeded": true,
-      "initialrrun-20261016-007SavedArtifact": true,
-      "initialListCompletedOwnerStatus": true,
-      "initialListEqualsDetail": true,
-      "initialExactlyOriginalTwoRuns": true,
-      "reloadPlanCompleted": true,
-      "reloadNoRepeatApprovalOrDispatch": true,
-      "reloadrrun-20261016-006Succeeded": true,
-      "reloadrrun-20261016-006SavedArtifact": true,
-      "reloadrrun-20261016-007Succeeded": true,
-      "reloadrrun-20261016-007SavedArtifact": true,
-      "reloadListCompletedOwnerStatus": true,
-      "reloadListEqualsDetail": true,
-      "reloadExactlyOriginalTwoRuns": true,
-      "firstRealSignOut": true,
-      "firstOldSessionInvalidated": true,
-      "newContextPlanCompleted": true,
-      "newContextNoRepeatApprovalOrDispatch": true,
-      "newContextrrun-20261016-006Succeeded": true,
-      "newContextrrun-20261016-006SavedArtifact": true,
-      "newContextrrun-20261016-007Succeeded": true,
-      "newContextrrun-20261016-007SavedArtifact": true,
-      "newContextListCompletedOwnerStatus": true,
-      "newContextListEqualsDetail": true,
-      "newContextExactlyOriginalTwoRuns": true,
-      "actualAcceptedPair": true,
-      "originalEvolutionDecisionVisible": true,
-      "sameOriginalEvolutionAfterReload": true,
-      "genuineSessionStillValidAfterEvolutionReload": true,
-      "afterEvolutionPlanCompleted": true,
-      "afterEvolutionNoRepeatApprovalOrDispatch": true,
-      "afterEvolutionrrun-20261016-006Succeeded": true,
-      "afterEvolutionrrun-20261016-006SavedArtifact": true,
-      "afterEvolutionrrun-20261016-007Succeeded": true,
-      "afterEvolutionrrun-20261016-007SavedArtifact": true,
-      "afterEvolutionListCompletedOwnerStatus": true,
-      "afterEvolutionListEqualsDetail": true,
-      "afterEvolutionExactlyOriginalTwoRuns": true,
-      "secondRealSignOut": true,
-      "secondOldSessionInvalidated": true,
-      "originalServerFocusForwarded": true,
-      "noBusinessWrites": true
-    },
+    "UI46_checks": {"initialPlanCompleted": true, "initialNoRepeatApprovalOrDispatch": true, "initialrrun-20261016-006Succeeded": true, "initialrrun-20261016-006SavedArtifact": true, "initialrrun-20261016-007Succeeded": true, "initialrrun-20261016-007SavedArtifact": true, "initialListCompletedOwnerStatus": true, "initialListEqualsDetail": true, "initialExactlyOriginalTwoRuns": true, "reloadPlanCompleted": true, "reloadNoRepeatApprovalOrDispatch": true, "reloadrrun-20261016-006Succeeded": true, "reloadrrun-20261016-006SavedArtifact": true, "reloadrrun-20261016-007Succeeded": true, "reloadrrun-20261016-007SavedArtifact": true, "reloadListCompletedOwnerStatus": true, "reloadListEqualsDetail": true, "reloadExactlyOriginalTwoRuns": true, "firstRealSignOut": true, "firstOldSessionInvalidated": true, "newContextPlanCompleted": true, "newContextNoRepeatApprovalOrDispatch": true, "newContextrrun-20261016-006Succeeded": true, "newContextrrun-20261016-006SavedArtifact": true, "newContextrrun-20261016-007Succeeded": true, "newContextrrun-20261016-007SavedArtifact": true, "newContextListCompletedOwnerStatus": true, "newContextListEqualsDetail": true, "newContextExactlyOriginalTwoRuns": true, "actualAcceptedPair": true, "originalEvolutionDecisionVisible": true, "sameOriginalEvolutionAfterReload": true, "genuineSessionStillValidAfterEvolutionReload": true, "afterEvolutionPlanCompleted": true, "afterEvolutionNoRepeatApprovalOrDispatch": true, "afterEvolutionrrun-20261016-006Succeeded": true, "afterEvolutionrrun-20261016-006SavedArtifact": true, "afterEvolutionrrun-20261016-007Succeeded": true, "afterEvolutionrrun-20261016-007SavedArtifact": true, "afterEvolutionListCompletedOwnerStatus": true, "afterEvolutionListEqualsDetail": true, "afterEvolutionExactlyOriginalTwoRuns": true, "secondRealSignOut": true, "secondOldSessionInvalidated": true, "originalServerFocusForwarded": true, "noBusinessWrites": true},
     "UI_scope": "Workshop UI displays actual plan/run statuses and outcomes. Complete metric/synthesis documents are read via original authenticated API in same browser context; no claim the existing panel renders full report content.",
     "journal_actual_responses": [
-      {
-        "http": 200,
-        "search": "?decision=evo-sweep-inc-drift-a24770da155d",
-        "total": 1,
-        "targetReturned": true
-      },
-      {
-        "http": 200,
-        "search": "?decision=evo-sweep-inc-drift-a24770da155d",
-        "total": 1,
-        "targetReturned": true
-      }
+      {"http": 200, "search": "?decision=evo-sweep-inc-drift-a24770da155d", "total": 1, "targetReturned": true},
+      {"http": 200, "search": "?decision=evo-sweep-inc-drift-a24770da155d", "total": 1, "targetReturned": true}
     ],
     "business_writes": [],
-    "Workshop13_checks": {
-      "exit0": true,
-      "original_evidence_passed": true,
-      "all13_original_steps": true,
-      "same_clean_exact_source": true
-    },
-    "F12": {
-      "stats": {
-        "startTime": "2026-10-17T03:22:21.783Z",
-        "duration": 1781.2119999999998,
-        "expected": 1,
-        "skipped": 0,
-        "unexpected": 0,
-        "flaky": 0
-      },
-      "checks": {
-        "original_test_exit0": true,
-        "exactly_original_one_pass_no_skip_unexpected_flaky": true,
-        "clean_original_exact_FE_source": true
-      },
-      "scope": "Original e2e/12-approvals.spec.ts F12 authenticated approval owner readback; one actual GET /bff/approvals, no intercept or synthetic session"
-    }
+    "Workshop13_checks": {"exit0": true, "original_evidence_passed": true, "all13_original_steps": true, "same_clean_exact_source": true},
+    "F12": {"stats": {"startTime": "2026-10-17T03:22:21.783Z", "duration": 1781.2119999999998, "expected": 1, "skipped": 0, "unexpected": 0, "flaky": 0}, "checks": {"original_test_exit0": true, "exactly_original_one_pass_no_skip_unexpected_flaky": true, "clean_original_exact_FE_source": true}, "scope": "Original e2e/12-approvals.spec.ts F12 authenticated approval owner readback; one actual GET /bff/approvals, no intercept or synthetic session"}
   },
   "current_natural_paper": {
     "case": "dev-paper-release-38993144359-1",
@@ -414,259 +171,24 @@
       "tenant_id": "tenant-dev",
       "trace_id": "b26f81f0-5b0d-4f89-968a-318f32c94324"
     },
-    "eight_events": [
-      {
-        "causal_parent_event_id": "signal:sig-edba17bdbd3a6e48612f13aea0da193f",
-        "event_id": "907a7849-99be-43be-b73a-235943590384",
-        "event_type": "signal_generation",
-        "ingested_seq": 6794020,
-        "producer": "execution.paper_runtime",
-        "reconciliation_evaluation_id": "",
-        "sequence_no": 1
-      },
-      {
-        "causal_parent_event_id": "907a7849-99be-43be-b73a-235943590384",
-        "event_id": "337365a6-d4b3-5925-908b-74626fe076c8",
-        "event_type": "trade_decision",
-        "ingested_seq": 6794021,
-        "producer": "execution.paper_runtime",
-        "reconciliation_evaluation_id": "",
-        "sequence_no": 2
-      },
-      {
-        "causal_parent_event_id": "337365a6-d4b3-5925-908b-74626fe076c8",
-        "event_id": "8aaf764d-4192-5ef5-8720-66f28def5d24",
-        "event_type": "risk_evaluation",
-        "ingested_seq": 6794027,
-        "producer": "execution.paper_runtime",
-        "reconciliation_evaluation_id": "",
-        "sequence_no": 3
-      },
-      {
-        "causal_parent_event_id": "8aaf764d-4192-5ef5-8720-66f28def5d24",
-        "event_id": "43b3d3af-3821-57f6-ac41-9155666ad216",
-        "event_type": "order_submitted",
-        "ingested_seq": 6794028,
-        "producer": "execution.paper_runtime",
-        "reconciliation_evaluation_id": "",
-        "sequence_no": 4
-      },
-      {
-        "causal_parent_event_id": "43b3d3af-3821-57f6-ac41-9155666ad216",
-        "event_id": "acde5e39-84e0-5970-8a44-026f3c5ca811",
-        "event_type": "order_accepted",
-        "ingested_seq": 6794031,
-        "producer": "execution.paper_runtime",
-        "reconciliation_evaluation_id": "",
-        "sequence_no": 5
-      },
-      {
-        "causal_parent_event_id": "acde5e39-84e0-5970-8a44-026f3c5ca811",
-        "event_id": "4af2ddbd-f4e9-42d2-a248-1f68e85e91de",
-        "event_type": "paper_fill_simulated",
-        "ingested_seq": 6794033,
-        "producer": "execution.paper_runtime",
-        "reconciliation_evaluation_id": "",
-        "sequence_no": 6
-      },
-      {
-        "causal_parent_event_id": "4af2ddbd-f4e9-42d2-a248-1f68e85e91de",
-        "event_id": "734938cb-b1b6-57cf-ba51-30b0315fbb0b",
-        "event_type": "position_snapshot",
-        "ingested_seq": 6794040,
-        "producer": "execution.paper_runtime",
-        "reconciliation_evaluation_id": "",
-        "sequence_no": 7
-      },
-      {
-        "causal_parent_event_id": "734938cb-b1b6-57cf-ba51-30b0315fbb0b",
-        "event_id": "63288b60-b44d-57bd-af2d-a75d59bd8989",
-        "event_type": "reconciliation_completed",
-        "ingested_seq": 6794340,
-        "producer": "reconciliation-drift.scheduled",
-        "reconciliation_evaluation_id": "rdeval-sched-scheduled-tenant-dev-2026-10-17T-rb-ecc7256d807b44ffb3ec1-c3aa8c851a0b5c85",
-        "sequence_no": 8
-      }
-    ],
-    "causal14_checks": {
-      "original_two_reports_passed_exact_source": true,
-      "original_bff_report_binds_exact_raw_probe_bytes": true,
-      "one_original_governed_case": true,
-      "original_natural_and_readonly_probe": true,
-      "eight_unique_actual_events_in_original_order": true,
-      "causal_chain_exact_parent_ids": true,
-      "actual_producers_and_scheduled_success": true,
-      "original_source_highwatermark_bounds": true,
-      "signal_binds_same_original_runtime_and_strategy_artifact": true,
-      "paper_only_no_real_orders_or_capital": true,
-      "original_official_TW_source_not_relabelled_today": true,
-      "current_actual_projection_and_public_BFF_exact_source": true,
-      "public_actual_eight_event_readback_and_monotonic_generations": true,
-      "original_auth_scope_and_page_conflicts_fail_closed": true
-    },
-    "financial16_checks": {
-      "original_SQL_readonly_and_not_truncated": true,
-      "broker_limit_not_hit_and_unique": true,
-      "all_committed_fill_counts_contiguous": true,
-      "all_ledger_fills_and_actual_broker_orders_bijection": true,
-      "exact_original_paper_scope": true,
-      "current_cash_and_positions_match_durable_ledger": true,
-      "exact_two_valuation_legs_and_original_pair": true,
-      "both_legs_same_binding_runtime_pool_and_persona": true,
-      "both_legs_valuation_equals_independent": true,
-      "official_source_identity_and_marks_exact": true,
-      "full_saved_curve_independently_recalculated": true,
-      "rolling20day_drawdown_peak_and_value_match": true,
-      "actual_runtime_summary_scope_and_finance_match": true,
-      "actual_committed_position_links_same_fill": true,
-      "actual_scheduled_reconciliation_links_same_position_and_fill": true,
-      "no_pending_valuation_or_lifecycle_delivery": true
-    },
-    "independent_values": {
-      "initial_cash": "100000.0",
-      "cash": "102420.00",
-      "holdings": {
-        "2330.TW": "-1.0"
-      },
-      "mark": "2420.0",
-      "portfolio_value": "100000.00",
-      "pnl": "0.00",
-      "drawdown_pct": "0.0",
-      "peak": "100000.0"
-    },
+    "eight_events": [{"causal_parent_event_id": "signal:sig-edba17bdbd3a6e48612f13aea0da193f", "event_id": "907a7849-99be-43be-b73a-235943590384", "event_type": "signal_generation", "ingested_seq": 6794020, "producer": "execution.paper_runtime", "reconciliation_evaluation_id": "", "sequence_no": 1}, {"causal_parent_event_id": "907a7849-99be-43be-b73a-235943590384", "event_id": "337365a6-d4b3-5925-908b-74626fe076c8", "event_type": "trade_decision", "ingested_seq": 6794021, "producer": "execution.paper_runtime", "reconciliation_evaluation_id": "", "sequence_no": 2}, {"causal_parent_event_id": "337365a6-d4b3-5925-908b-74626fe076c8", "event_id": "8aaf764d-4192-5ef5-8720-66f28def5d24", "event_type": "risk_evaluation", "ingested_seq": 6794027, "producer": "execution.paper_runtime", "reconciliation_evaluation_id": "", "sequence_no": 3}, {"causal_parent_event_id": "8aaf764d-4192-5ef5-8720-66f28def5d24", "event_id": "43b3d3af-3821-57f6-ac41-9155666ad216", "event_type": "order_submitted", "ingested_seq": 6794028, "producer": "execution.paper_runtime", "reconciliation_evaluation_id": "", "sequence_no": 4}, {"causal_parent_event_id": "43b3d3af-3821-57f6-ac41-9155666ad216", "event_id": "acde5e39-84e0-5970-8a44-026f3c5ca811", "event_type": "order_accepted", "ingested_seq": 6794031, "producer": "execution.paper_runtime", "reconciliation_evaluation_id": "", "sequence_no": 5}, {"causal_parent_event_id": "acde5e39-84e0-5970-8a44-026f3c5ca811", "event_id": "4af2ddbd-f4e9-42d2-a248-1f68e85e91de", "event_type": "paper_fill_simulated", "ingested_seq": 6794033, "producer": "execution.paper_runtime", "reconciliation_evaluation_id": "", "sequence_no": 6}, {"causal_parent_event_id": "4af2ddbd-f4e9-42d2-a248-1f68e85e91de", "event_id": "734938cb-b1b6-57cf-ba51-30b0315fbb0b", "event_type": "position_snapshot", "ingested_seq": 6794040, "producer": "execution.paper_runtime", "reconciliation_evaluation_id": "", "sequence_no": 7}, {"causal_parent_event_id": "734938cb-b1b6-57cf-ba51-30b0315fbb0b", "event_id": "63288b60-b44d-57bd-af2d-a75d59bd8989", "event_type": "reconciliation_completed", "ingested_seq": 6794340, "producer": "reconciliation-drift.scheduled", "reconciliation_evaluation_id": "rdeval-sched-scheduled-tenant-dev-2026-10-17T-rb-ecc7256d807b44ffb3ec1-c3aa8c851a0b5c85", "sequence_no": 8}],
+    "causal14_checks": {"original_two_reports_passed_exact_source": true, "original_bff_report_binds_exact_raw_probe_bytes": true, "one_original_governed_case": true, "original_natural_and_readonly_probe": true, "eight_unique_actual_events_in_original_order": true, "causal_chain_exact_parent_ids": true, "actual_producers_and_scheduled_success": true, "original_source_highwatermark_bounds": true, "signal_binds_same_original_runtime_and_strategy_artifact": true, "paper_only_no_real_orders_or_capital": true, "original_official_TW_source_not_relabelled_today": true, "current_actual_projection_and_public_BFF_exact_source": true, "public_actual_eight_event_readback_and_monotonic_generations": true, "original_auth_scope_and_page_conflicts_fail_closed": true},
+    "financial16_checks": {"original_SQL_readonly_and_not_truncated": true, "broker_limit_not_hit_and_unique": true, "all_committed_fill_counts_contiguous": true, "all_ledger_fills_and_actual_broker_orders_bijection": true, "exact_original_paper_scope": true, "current_cash_and_positions_match_durable_ledger": true, "exact_two_valuation_legs_and_original_pair": true, "both_legs_same_binding_runtime_pool_and_persona": true, "both_legs_valuation_equals_independent": true, "official_source_identity_and_marks_exact": true, "full_saved_curve_independently_recalculated": true, "rolling20day_drawdown_peak_and_value_match": true, "actual_runtime_summary_scope_and_finance_match": true, "actual_committed_position_links_same_fill": true, "actual_scheduled_reconciliation_links_same_position_and_fill": true, "no_pending_valuation_or_lifecycle_delivery": true},
+    "independent_values": {"initial_cash": "100000.0", "cash": "102420.00", "holdings": {"2330.TW": "-1.0"}, "mark": "2420.0", "portfolio_value": "100000.00", "pnl": "0.00", "drawdown_pct": "0.0", "peak": "100000.0"},
     "scope": "One actual fill/one saved curve point; configured20days is not20daysobserved orrealizedclosedprofit. This is a different model/persona fromResearch1325, never splice intoonefreshall12chain.",
     "scheduled_evaluation_status": "ok",
-    "scheduled_six_checks": [
-      {
-        "check": "authoritative_actual_identity",
-        "detail": "authoritative runtime identity and event evidence linked",
-        "status": "ok",
-        "missing_fields": [],
-        "telemetry_event_ids": [
-          "734938cb-b1b6-57cf-ba51-30b0315fbb0b",
-          "c20f380a-b1d3-47c7-9711-7b52e28b7c01"
-        ]
-      },
-      {
-        "check": "runtime_state",
-        "detail": "authoritative runtime state is active",
-        "status": "ok",
-        "observed": "active"
-      },
-      {
-        "check": "runtime_health_summary",
-        "detail": "runtime health summary is authoritative and healthy",
-        "status": "ok",
-        "observed": {
-          "bridge": "not_applicable",
-          "broker": "not_applicable",
-          "telemetry": "ok",
-          "paper_runtime": "ok"
-        },
-        "unhealthy": {}
-      },
-      {
-        "check": "actual_metrics_presence",
-        "detail": "runtime summary exposes authoritative numeric actual-state metrics",
-        "status": "ok",
-        "metric_names": [
-          "avg_slippage_bps",
-          "cash",
-          "event_delivery_lag_ms",
-          "position_qty",
-          "price",
-          "queue_lag_ms"
-        ]
-      },
-      {
-        "check": "queue_lag_ms",
-        "detail": "queue_lag_ms=542.365ms",
-        "status": "ok",
-        "observed": 542.365,
-        "warning_threshold": 5000.0,
-        "critical_threshold": 15000.0
-      },
-      {
-        "check": "event_delivery_lag_ms",
-        "detail": "event_delivery_lag_ms=91.995ms",
-        "status": "ok",
-        "observed": 91.995,
-        "warning_threshold": 10000.0,
-        "critical_threshold": 30000.0
-      }
-    ],
-    "observed_metrics": {
-      "cash": 102420.0,
-      "price": 2420.0,
-      "position_qty": -1.0,
-      "queue_lag_ms": 542.365,
-      "avg_slippage_bps": 0.0,
-      "event_delivery_lag_ms": 91.995
-    },
+    "scheduled_six_checks": [{"check": "authoritative_actual_identity", "detail": "authoritative runtime identity and event evidence linked", "status": "ok", "missing_fields": [], "telemetry_event_ids": ["734938cb-b1b6-57cf-ba51-30b0315fbb0b", "c20f380a-b1d3-47c7-9711-7b52e28b7c01"]}, {"check": "runtime_state", "detail": "authoritative runtime state is active", "status": "ok", "observed": "active"}, {"check": "runtime_health_summary", "detail": "runtime health summary is authoritative and healthy", "status": "ok", "observed": {"bridge": "not_applicable", "broker": "not_applicable", "telemetry": "ok", "paper_runtime": "ok"}, "unhealthy": {}}, {"check": "actual_metrics_presence", "detail": "runtime summary exposes authoritative numeric actual-state metrics", "status": "ok", "metric_names": ["avg_slippage_bps", "cash", "event_delivery_lag_ms", "position_qty", "price", "queue_lag_ms"]}, {"check": "queue_lag_ms", "detail": "queue_lag_ms=542.365ms", "status": "ok", "observed": 542.365, "warning_threshold": 5000.0, "critical_threshold": 15000.0}, {"check": "event_delivery_lag_ms", "detail": "event_delivery_lag_ms=91.995ms", "status": "ok", "observed": 91.995, "warning_threshold": 10000.0, "critical_threshold": 30000.0}],
+    "observed_metrics": {"cash": 102420.0, "price": 2420.0, "position_qty": -1.0, "queue_lag_ms": 542.365, "avg_slippage_bps": 0.0, "event_delivery_lag_ms": 91.995},
     "old_DF_variance": "Original19.196436s>15s and15true1false retained; new queue startsatmax(enqueued_at,runtimestart). Not endtoend latency fix.",
     "original_source_day": "Actual official2330inputOct16, not relabelledOct17NEWdata."
   },
   "FE_gate": {
-    "stats": {
-      "startTime": "2026-10-17T02:44:59.223Z",
-      "duration": 84724.25,
-      "expected": 49,
-      "skipped": 11,
-      "unexpected": 0,
-      "flaky": 0
-    },
-    "focus": [
-      {
-        "title": "batch partial failure opens BulkResultDrawer and keeps failed selected",
-        "ok": true,
-        "results": [
-          {
-            "status": "passed",
-            "retry": 0
-          }
-        ]
-      },
-      {
-        "title": "drawer focus returns to the trigger after keyboard close",
-        "ok": true,
-        "results": [
-          {
-            "status": "passed",
-            "retry": 0
-          }
-        ]
-      },
-      {
-        "title": "incident resolution confirmation restores focus without submitting on Escape",
-        "ok": true,
-        "results": [
-          {
-            "status": "passed",
-            "retry": 0
-          }
-        ]
-      }
-    ],
-    "summary_status_counts": {
-      "pass": 61,
-      "skip": 7,
-      "warn": 4
-    },
+    "stats": {"startTime": "2026-10-17T02:44:59.223Z", "duration": 84724.25, "expected": 49, "skipped": 11, "unexpected": 0, "flaky": 0},
+    "focus": [{"title": "batch partial failure opens BulkResultDrawer and keeps failed selected", "ok": true, "results": [{"status": "passed", "retry": 0}]}, {"title": "drawer focus returns to the trigger after keyboard close", "ok": true, "results": [{"status": "passed", "retry": 0}]}, {"title": "incident resolution confirmation restores focus without submitting on Escape", "ok": true, "results": [{"status": "passed", "retry": 0}]}],
+    "summary_status_counts": {"pass": 61, "skip": 7, "warn": 4},
     "overall": "warn",
-    "checks": {
-      "actual_original_raw_BFF_and_release_identity_exact": true,
-      "official_terminal_success": true,
-      "original_Playwright_no_unexpected_or_flaky": true,
-      "all_three_original_focus_cases_pass_without_retry": true
-    },
-    "desktop_advisory_stats": {
-      "startTime": "2026-10-17T02:46:47.515Z",
-      "duration": 88187.29699999999,
-      "expected": 42,
-      "skipped": 11,
-      "unexpected": 1,
-      "flaky": 0
-    },
+    "checks": {"actual_original_raw_BFF_and_release_identity_exact": true, "official_terminal_success": true, "original_Playwright_no_unexpected_or_flaky": true, "all_three_original_focus_cases_pass_without_retry": true},
+    "desktop_advisory_stats": {"startTime": "2026-10-17T02:46:47.515Z", "duration": 88187.29699999999, "expected": 42, "skipped": 11, "unexpected": 1, "flaky": 0},
     "original_step_outcomes": {
       "release_identity": {
         "outcome": "success",
@@ -794,121 +316,35 @@
       }
     }
   },
-  "Publisher": {
-    "state": "active",
-    "restore_required": false,
-    "enable_HTTP": 204,
-    "correct_lease_HTTP": 404,
-    "correct_lease": "execute-plans/environment-coordination/.pantheon/environment-leases/pantheon-dev-environment.json"
-  },
+  "Publisher": {"state": "active", "restore_required": false, "enable_HTTP": 204, "correct_lease_HTTP": 404, "correct_lease": "execute-plans/environment-coordination/.pantheon/environment-leases/pantheon-dev-environment.json"},
   "pipeline_source_audit": {
-    "receipt": {
-      "path": "/tmp/pantheon-assist-20261013/Root38993144359-existing-FE-controller-regression-repetition-source-audit-readonly.json",
-      "raw_sha256": "26e9385b4b0d1009373b25698175e1eed95c933de61ccf3ff5426277984f1cca"
-    },
+    "receipt": {"path": "/tmp/pantheon-assist-20261013/Root38993144359-existing-FE-controller-regression-repetition-source-audit-readonly.json", "raw_sha256": "26e9385b4b0d1009373b25698175e1eed95c933de61ccf3ff5426277984f1cca"},
     "finding": "Same full shell regression suite is serialized in two different runner environments. Shared suite repetition and dev-host execution are confirmed; necessity of every duplicate case, precise per-case cost, and direct cause of previous product latency are NOT established. No workflow/test/gate changed or skipped."
   },
   "proof_refs": {
-    "FULL": {
-      "path": "/tmp/pantheon-assist-20261013/FULL38991740527-original-qualification-actual-schema-verified-readonly.json",
-      "raw_sha256": "a118250e0d22914e4d42319e094578f7de962b8756e76cc9055d3bc9538f0a80"
-    },
-    "release19": {
-      "path": "/tmp/pantheon-assist-20261013/Root38993144359-original-exact-artifact-roundtrip-and-original-ACK-verified-readonly.json",
-      "raw_sha256": "7e031496cfb63995bc2cad0deaa9510351c055251bcd16a7cdf6bf22d95f419f"
-    },
-    "saved_owner": {
-      "path": "/tmp/pantheon-assist-20261013/Root38993144359-completed-original-records-and-physical-owner-readonly.json",
-      "raw_sha256": "eb5ece2a3471d4d200b2b71d30cba80da0920552c2d7013e03bdb66d76083f17"
-    },
-    "UI46": {
-      "path": "/tmp/pantheon-assist-20261013/Root38993144359-completed-Research-and-original-Evolution-UI-readonly.json",
-      "raw_sha256": "9619c53aadbb6501df49e9f9db580db16d9f99555dc0b667bc47e3cafc95e820"
-    },
-    "F12": {
-      "path": "/tmp/pantheon-assist-20261013/Root38993144359-original-F12-genuine-session-readonly.json",
-      "raw_sha256": "8b235e0eda63a06b35d1e65b6cf5983d3e56a40fe95201141474468e56753222"
-    },
-    "finance16": {
-      "path": "/tmp/pantheon-assist-20261013/Root38993144359-final-paper-finance-independent-arithmetic-readonly.json",
-      "raw_sha256": "869bbb7a99416f88b97054596010de2c7ddbf5a2b3b9fe18df9ef71501f184a9"
-    },
-    "reconciliation": {
-      "path": "/tmp/pantheon-assist-20261013/Root38993144359-original-BFF-service-port-reconciliation-evaluation-readonly.json",
-      "raw_sha256": "cb78069ce8994cb2573972526676109e776e417a9dc67c5ec0c7d4e5872da6a0"
-    },
-    "Publisher": {
-      "path": "/tmp/pantheon-assist-20261013/Root38993144359-original-Publisher-restoration-and-correct-lease-receipt.json",
-      "raw_sha256": "852f2af520633c85f6e9e8caf72e6098c598c910cb534e1405eb3759519757f6"
-    },
-    "source_bytes": {
-      "path": "/tmp/pantheon-assist-20261013/Root38993144359-existing-Dockerfile-path-three-production-bytes-verified-readonly.json",
-      "raw_sha256": "8d6b1b0fb66cbdde67af8bc44173d3cc2570b15f8887bcde7447c27dd4269214"
-    },
-    "FEgate": {
-      "path": "/tmp/pantheon-assist-20261013/Root38993144359-formal-FEgate-original-qualification-readonly.json",
-      "raw_sha256": "34feca326895a6967302072d606ef760a0504f469330c047e4cdd42fc6c08822"
-    },
-    "Research_original_two_stages": {
-      "path": "/tmp/pantheon-assist-20261013/Research-existing-ad64-original-two-stage-results-and-checksums-verified-readonly-20261017.json",
-      "raw_sha256": "54510a9c6d19f536f972aa64719b84905d51f38c65c3fa39c007ffc2bbad0255"
-    },
-    "Research_actual_provider_matches_saved": {
-      "path": "/tmp/pantheon-assist-20261013/Research-existing-ad64-provider-response-equals-saved-synthesis-verified-readonly-20261017.json",
-      "raw_sha256": "32adaced3e0434bcdcdae0a20f087ddb089f74e44b1cd838a4bfcd405d58c981"
-    },
-    "eight_events": {
-      "path": "/tmp/pantheon-assist-20261013/Root38993144359-original-natural-eight-events-and-public-scope-independently-verified-readonly.json",
-      "raw_sha256": "8fa92b20a5af8117b920b258f1ce7a43727a0f19c9be82aeb3c4b579e5ef191c"
-    },
-    "ancestry60": {
-      "path": "/tmp/pantheon-assist-20261013/Source60-existing-delivery-ledger-sanitized-and-ancestry-audited-readonly-20261017.json",
-      "raw_sha256": "1d9b034e0a23ec3919a9896112663bb48a88fba91cf22bbbb07fa02e58f95d4d"
-    },
-    "old_DF_finance15true1false": {
-      "path": "/tmp/pantheon-assist-20261013/Root38976194960-final-paper-finance-independent-arithmetic-readonly.json",
-      "raw_sha256": "2ff0a1f72aa72712a16d73bb7a8cd3c30b684e11a0be517959bb00d1804fdc21"
-    },
-    "pipeline_repetition": {
-      "path": "/tmp/pantheon-assist-20261013/Root38993144359-existing-FE-controller-regression-repetition-source-audit-readonly.json",
-      "raw_sha256": "26e9385b4b0d1009373b25698175e1eed95c933de61ccf3ff5426277984f1cca"
-    },
-    "Workshop13": {
-      "path": "/tmp/pantheon-assist-20261013/Root38993144359-Workshop295-original-browser-existing-20261017T032104Z/execution-readonly-summary.json",
-      "raw_sha256": "ccb07c75f48fb34aade45e1dbb9aa864b045801e3deca437752e32a67169abe0"
-    },
-    "PR6609_supplement": {
-      "path": "/tmp/pantheon-assist-20261013/PR6609-original-canonical-PR-identities-and-scoped-UI-corrections-readonly.json",
-      "raw_sha256": "5cb8af8e62715d7fea3c9a046de58d51d04aa7a21feaab49131cce02426d1db7"
-    }
+    "FULL": {"path": "/tmp/pantheon-assist-20261013/FULL38991740527-original-qualification-actual-schema-verified-readonly.json", "raw_sha256": "a118250e0d22914e4d42319e094578f7de962b8756e76cc9055d3bc9538f0a80"},
+    "release19": {"path": "/tmp/pantheon-assist-20261013/Root38993144359-original-exact-artifact-roundtrip-and-original-ACK-verified-readonly.json", "raw_sha256": "7e031496cfb63995bc2cad0deaa9510351c055251bcd16a7cdf6bf22d95f419f"},
+    "saved_owner": {"path": "/tmp/pantheon-assist-20261013/Root38993144359-completed-original-records-and-physical-owner-readonly.json", "raw_sha256": "eb5ece2a3471d4d200b2b71d30cba80da0920552c2d7013e03bdb66d76083f17"},
+    "UI46": {"path": "/tmp/pantheon-assist-20261013/Root38993144359-completed-Research-and-original-Evolution-UI-readonly.json", "raw_sha256": "9619c53aadbb6501df49e9f9db580db16d9f99555dc0b667bc47e3cafc95e820"},
+    "F12": {"path": "/tmp/pantheon-assist-20261013/Root38993144359-original-F12-genuine-session-readonly.json", "raw_sha256": "8b235e0eda63a06b35d1e65b6cf5983d3e56a40fe95201141474468e56753222"},
+    "finance16": {"path": "/tmp/pantheon-assist-20261013/Root38993144359-final-paper-finance-independent-arithmetic-readonly.json", "raw_sha256": "869bbb7a99416f88b97054596010de2c7ddbf5a2b3b9fe18df9ef71501f184a9"},
+    "reconciliation": {"path": "/tmp/pantheon-assist-20261013/Root38993144359-original-BFF-service-port-reconciliation-evaluation-readonly.json", "raw_sha256": "cb78069ce8994cb2573972526676109e776e417a9dc67c5ec0c7d4e5872da6a0"},
+    "Publisher": {"path": "/tmp/pantheon-assist-20261013/Root38993144359-original-Publisher-restoration-and-correct-lease-receipt.json", "raw_sha256": "852f2af520633c85f6e9e8caf72e6098c598c910cb534e1405eb3759519757f6"},
+    "source_bytes": {"path": "/tmp/pantheon-assist-20261013/Root38993144359-existing-Dockerfile-path-three-production-bytes-verified-readonly.json", "raw_sha256": "8d6b1b0fb66cbdde67af8bc44173d3cc2570b15f8887bcde7447c27dd4269214"},
+    "FEgate": {"path": "/tmp/pantheon-assist-20261013/Root38993144359-formal-FEgate-original-qualification-readonly.json", "raw_sha256": "34feca326895a6967302072d606ef760a0504f469330c047e4cdd42fc6c08822"},
+    "Research_original_two_stages": {"path": "/tmp/pantheon-assist-20261013/Research-existing-ad64-original-two-stage-results-and-checksums-verified-readonly-20261017.json", "raw_sha256": "54510a9c6d19f536f972aa64719b84905d51f38c65c3fa39c007ffc2bbad0255"},
+    "Research_actual_provider_matches_saved": {"path": "/tmp/pantheon-assist-20261013/Research-existing-ad64-provider-response-equals-saved-synthesis-verified-readonly-20261017.json", "raw_sha256": "32adaced3e0434bcdcdae0a20f087ddb089f74e44b1cd838a4bfcd405d58c981"},
+    "eight_events": {"path": "/tmp/pantheon-assist-20261013/Root38993144359-original-natural-eight-events-and-public-scope-independently-verified-readonly.json", "raw_sha256": "8fa92b20a5af8117b920b258f1ce7a43727a0f19c9be82aeb3c4b579e5ef191c"},
+    "ancestry60": {"path": "/tmp/pantheon-assist-20261013/Source60-existing-delivery-ledger-sanitized-and-ancestry-audited-readonly-20261017.json", "raw_sha256": "1d9b034e0a23ec3919a9896112663bb48a88fba91cf22bbbb07fa02e58f95d4d"},
+    "old_DF_finance15true1false": {"path": "/tmp/pantheon-assist-20261013/Root38976194960-final-paper-finance-independent-arithmetic-readonly.json", "raw_sha256": "2ff0a1f72aa72712a16d73bb7a8cd3c30b684e11a0be517959bb00d1804fdc21"},
+    "pipeline_repetition": {"path": "/tmp/pantheon-assist-20261013/Root38993144359-existing-FE-controller-regression-repetition-source-audit-readonly.json", "raw_sha256": "26e9385b4b0d1009373b25698175e1eed95c933de61ccf3ff5426277984f1cca"},
+    "Workshop13": {"path": "/tmp/pantheon-assist-20261013/Root38993144359-Workshop295-original-browser-existing-20261017T032104Z/execution-readonly-summary.json", "raw_sha256": "ccb07c75f48fb34aade45e1dbb9aa864b045801e3deca437752e32a67169abe0"},
+    "PR6609_supplement": {"path": "/tmp/pantheon-assist-20261013/PR6609-original-canonical-PR-identities-and-scoped-UI-corrections-readonly.json", "raw_sha256": "5cb8af8e62715d7fea3c9a046de58d51d04aa7a21feaab49131cce02426d1db7"}
   },
-  "authoring_rules": [
-    "Only declareddocs/JSONpaths and productiondelta0. No code/frontend/workflow/tooling/VM/provider/credentials/votes/deploy/lease/Publisher/canonicaltask changes.",
-    "Use this packet and sanitized60export as content inputs; existingrepo docs and immutableGitHubmetadata forsourceverification. Do not read/send rawOHLCV orcredentials orfullrawGET reports. Hash referencedrawfiles orproject only declaredchecks/IDs ifnecessary, neverdumpuserdata.",
-    "Keep historical datedsnapshots, realfailures, partialoutcomes andcurrentoverallINCOMPLETE. PreserveparentsixAC/threeoriginalartifactitems/g17/HumanOps/Antigravity/21deps, neverresetobsoleteg16/Codex2.",
-    "Latestproductacceptance isBE6ef/FE281/Root389931, regardlessnew documentationcommitSHA. Do not claimmetadata commitdeployed/qualified orstartanotherFULL/Root because ofdoc-onlychange.",
-    "No fabricatedreviewer/attestation orreview-onlyidentity; use existing worker_commit/taskbranch/genuineassignedreview/currentCI/nativeintegrator workflow. One docs PR, no -vN duplicate branch/task orforcepush."
-  ],
-  "remaining_original_obligations": [
-    "Parent remainsINCOMPLETE g17/manualHumanOps/reviewerAntigravity. Exactsamefreshcausalall12 and other originalManagement/Persona/Agora/Research/approval journeys not certified by isolatedFULL or oneeight-eventpaperchain.",
-    "Agora specifictwoexistingPersonaopinions+onesynthesis consent askedonce/pendingno reply; POST0/provider0. OldnormalA Oct3int_fb7f otherWorkshop/SPY degraded oneopinion, failedstream, policydeniedsynthesis is historicalnegativeproof, NOTfreshTWpositive.",
-    "Original hosted missing/foreign/unavailable inputs, cancellation/retry/idempotency/version conflicts and remaining domain operations require truthful existingproof mapping. PositiveResearchDAG/restart and focusedUI are nowcovered; no blanket claimallnegative/cancel/retrytests done. Reuse genuine existingproof, do notcreate newpositive cases or newrequirements to fillmatrix.",
-    "Original persona/teaching/evaluator/consultation/adoption obligations remain as actualoldproof shows. Source15finiteapproval expiredOct16T234426Z, no backdate/renewunnecessarily. ValidnegativeSharpe/Teachingrejection, Patternquarantine/dedupe, Evaluator74/72ineligible2valid with[]abstention are validoutcomes, notapproval/adoption or allhostedUI.",
-    "Original formal3artifacts are staleOct11. This documentation checkpoint updates their current facts/status; publication/docreview is not wholeproductacceptance.",
-    "Genuine final independent totalreview stillowed; neither Root tests nor docsreview is automaticallyparentdone. No inventedtwohumanbusinessrule/MFA/issuer/executiongrants/businessrollbackreactivation gate. Operator explicitly withdrewthose extraassistantgates; originalscope/tenant/secret/paperlive preserved."
-  ],
-  "preserved_observer_and_integration_errors": [
-    "Source60initiale82 test snapshottedownermock notrawcommandstore; cancelledfixturewasnotactuallycancelled; evidencefalse. ActualA2approvedthenRootnativeHumanOpsreopen84c594e2 returned same3AC3paths, nativeg2 head57ac genuinelyre-reviewed, currentmerge6ef. Do notrewriteoldapprovalasreviewerrejection.",
-    "RootdidFULLd731 before checkingcompletedlist: genuine oldlist/detail mismatch52eca2a6 discoveredafterqualification. Withdrawnd731ROOTPOST0, neverrepeatoldcaller. This wasRoot orderingrework.",
-    "Earlierobserver usedwrongserviceJWT, wrongAgoraURL, assumedallFULLreceiptsdict/flatFEZIP, UIreporterwrongkey and Source58CSV commas. All oldfailures preserved; notproductnewAPIs/platform requests.",
-    "Current supplementalbyteobserver firstSSHnonzero originalstderrnotretained; exactexceptionunknown. Secondassumed/app beforeDockerfile/read_exit1all. ActualDockerfiles WORKDIR/COPY /workspace; correctedallthreeSHA256/Gitblob bytes equal8d6b1b0f. Preservebothfailures; no productrepairwasneeded.",
-    "Initial child task PR #6609 head 251822806253758284bf151d0a9e9247bfdbd3a9 returned by Root/Human/Ops for factual corrections (predecessor PR #6509, formal PRs #6596-#6600, operational loops partial UI/financial proofs, markdown table repair); previous actual review state was Root factual return, not reviewer rejection; old history preserved; no fake acceptance or metadata SHA deployment claim."
-  ],
-  "verification": {
-    "test_command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/control-plane/bff/tests/test_latest_dev_six_area_closure.py",
-    "verdict": "pass",
-    "clean_worktree": true
-  },
+  "authoring_rules": ["Only declareddocs/JSONpaths and productiondelta0. No code/frontend/workflow/tooling/VM/provider/credentials/votes/deploy/lease/Publisher/canonicaltask changes.", "Use this packet and sanitized60export as content inputs; existingrepo docs and immutableGitHubmetadata forsourceverification. Do not read/send rawOHLCV orcredentials orfullrawGET reports. Hash referencedrawfiles orproject only declaredchecks/IDs ifnecessary, neverdumpuserdata.", "Keep historical datedsnapshots, realfailures, partialoutcomes andcurrentoverallINCOMPLETE. PreserveparentsixAC/threeoriginalartifactitems/g17/HumanOps/Antigravity/21deps, neverresetobsoleteg16/Codex2.", "Latestproductacceptance isBE6ef/FE281/Root389931, regardlessnew documentationcommitSHA. Do not claimmetadata commitdeployed/qualified orstartanotherFULL/Root because ofdoc-onlychange.", "No fabricatedreviewer/attestation orreview-onlyidentity; use existing worker_commit/taskbranch/genuineassignedreview/currentCI/nativeintegrator workflow. One docs PR, no -vN duplicate branch/task orforcepush."],
+  "remaining_original_obligations": ["Parent remainsINCOMPLETE g17/manualHumanOps/reviewerAntigravity. Exactsamefreshcausalall12 and other originalManagement/Persona/Agora/Research/approval journeys not certified by isolatedFULL or oneeight-eventpaperchain.", "Agora specifictwoexistingPersonaopinions+onesynthesis consent askedonce/pendingno reply; POST0/provider0. OldnormalA Oct3int_fb7f otherWorkshop/SPY degraded oneopinion, failedstream, policydeniedsynthesis is historicalnegativeproof, NOTfreshTWpositive.", "Original hosted missing/foreign/unavailable inputs, cancellation/retry/idempotency/version conflicts and remaining domain operations require truthful existingproof mapping. PositiveResearchDAG/restart and focusedUI are nowcovered; no blanket claimallnegative/cancel/retrytests done. Reuse genuine existingproof, do notcreate newpositive cases or newrequirements to fillmatrix.", "Original persona/teaching/evaluator/consultation/adoption obligations remain as actualoldproof shows. Source15finiteapproval expiredOct16T234426Z, no backdate/renewunnecessarily. ValidnegativeSharpe/Teachingrejection, Patternquarantine/dedupe, Evaluator74/72ineligible2valid with[]abstention are validoutcomes, notapproval/adoption or allhostedUI.", "Original formal3artifacts are staleOct11. This documentation checkpoint updates their current facts/status; publication/docreview is not wholeproductacceptance.", "Genuine final independent totalreview stillowed; neither Root tests nor docsreview is automaticallyparentdone. No inventedtwohumanbusinessrule/MFA/issuer/executiongrants/businessrollbackreactivation gate. Operator explicitly withdrewthose extraassistantgates; originalscope/tenant/secret/paperlive preserved."],
+  "preserved_observer_and_integration_errors": ["Source60initiale82 test snapshottedownermock notrawcommandstore; cancelledfixturewasnotactuallycancelled; evidencefalse. ActualA2approvedthenRootnativeHumanOpsreopen84c594e2 returned same3AC3paths, nativeg2 head57ac genuinelyre-reviewed, currentmerge6ef. Do notrewriteoldapprovalasreviewerrejection.", "RootdidFULLd731 before checkingcompletedlist: genuine oldlist/detail mismatch52eca2a6 discoveredafterqualification. Withdrawnd731ROOTPOST0, neverrepeatoldcaller. This wasRoot orderingrework.", "Earlierobserver usedwrongserviceJWT, wrongAgoraURL, assumedallFULLreceiptsdict/flatFEZIP, UIreporterwrongkey and Source58CSV commas. All oldfailures preserved; notproductnewAPIs/platform requests.", "Current supplementalbyteobserver firstSSHnonzero originalstderrnotretained; exactexceptionunknown. Secondassumed/app beforeDockerfile/read_exit1all. ActualDockerfiles WORKDIR/COPY /workspace; correctedallthreeSHA256/Gitblob bytes equal8d6b1b0f. Preservebothfailures; no productrepairwasneeded.", "Initial child task PR #6609 head 251822806253758284bf151d0a9e9247bfdbd3a9 returned by Root/Human/Ops for factual corrections (predecessor PR #6509, formal PRs #6596-#6600, operational loops partial UI/financial proofs, markdown table repair); previous actual review state was Root factual return, not reviewer rejection; old history preserved; no fake acceptance or metadata SHA deployment claim."],
+  "verification": {"test_command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/control-plane/bff/tests/test_latest_dev_six_area_closure.py", "verdict": "pass", "clean_worktree": true},
   "predecessor_delivery": {
     "task": "DEV-SIX-AREA-SOURCE-ADOPTION-CHECKPOINT-20261011",
     "pr": 6509,
