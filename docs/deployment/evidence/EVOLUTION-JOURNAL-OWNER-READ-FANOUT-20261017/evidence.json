@@ -1,6 +1,6 @@
 {
   "task_id": "EVOLUTION-JOURNAL-OWNER-READ-FANOUT-20261017",
-  "base_sha": "e45b0ff928be861bf7c1c996592820c49f99f20d",
+  "base_sha": "9de7a2e0b9f45762b284503776b0966ca8c25378",
   "change_class": "corrective",
   "net_prod_line_budget": 60,
   "net_prod_lines_changed": 39,
