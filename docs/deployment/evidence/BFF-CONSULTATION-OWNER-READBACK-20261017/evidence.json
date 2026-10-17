@@ -35,6 +35,11 @@
         "test_workshop_request_authorization.py": 6,
         "test_agora_workshop_partial_effects.py": 14
       }
+    },
+    {
+      "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest -v services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "total_passed": 39,
+      "exit_status": 0
     }
   ]
 }

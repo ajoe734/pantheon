@@ -27,8 +27,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import services.consultation.auth as consult_auth_mod
-from services.consultation.main import app as consult_app
-import services.consultation.main as consult_main_mod
 from services.consultation.store import build_consultation_store
 from services.control_plane.bff.core.owner_reads import OwnerReadContextMiddleware
 from services.control_plane.bff.governance.router import create_governance_router
@@ -697,6 +695,9 @@ class TestCompositeAndInMemoryPorts:
 class TestConsultationOwnerHttpReadback:
     @pytest.fixture
     def consultation_server(self, temp_consultation_dir, monkeypatch):
+        import importlib
+        consult_main_mod = importlib.import_module("services.consultation.main")
+        consult_app = getattr(consult_main_mod, "app")
         test_store = build_consultation_store(temp_consultation_dir)
         monkeypatch.setattr(consult_main_mod, "store", test_store)
         monkeypatch.setenv("CONSULTATION_AUTH_REQUIRED", "true")
