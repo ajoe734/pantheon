@@ -422,6 +422,9 @@ def _complete_candidates(
             "reconciliation_evaluation_id": str(
                 metadata.get("reconciliation_evaluation_id") or ""
             ),
+            "reconciliation_status": str(
+                metadata.get("reconciliation_status") or "unknown"
+            ),
         })
         if event_type == "signal_generation":
             src = {**metadata, **event}
@@ -478,6 +481,15 @@ def _complete_candidates(
             if not evaluation_id or reconciliation["event_id"] != str(
                 uuid.uuid5(uuid.NAMESPACE_URL, f"pantheon:scheduled-reconciliation:{evaluation_id}")
             ):
+                continue
+            if mode == "natural" and reconciliation["event_type"] != "reconciliation_completed":
+                if rejections is not None:
+                    rejections.append(ProbeError(
+                        "reconciliation_failed",
+                        "journey ended in reconciliation_failed "
+                        f"(reconciliation_status={reconciliation['reconciliation_status']}); "
+                        "natural mode requires reconciliation_completed",
+                    ))
                 continue
             if mode == "natural":
                 try:
