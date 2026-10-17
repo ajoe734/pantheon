@@ -681,3 +681,75 @@ class TestTelemetryTokenFileAuthority:
         with pytest.raises(RuntimeError) as failure:
             self._headers(self._monitor())
         assert "stale" not in str(failure.value)
+
+
+# ---------------------------------------------------------------------------
+# BFF-INFRA-HEALTH-SCHEMA-KIND-20261017: events must satisfy the telemetry schema
+# ---------------------------------------------------------------------------
+import re as _re
+from pathlib import Path as _Path
+
+_REPO_ROOT = _Path(__file__).resolve().parents[3]
+
+
+def _infra_event_validator():
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = json.loads(
+        (_REPO_ROOT / "services/telemetry/telemetry_event.schema.json").read_text()
+    )
+    sub = dict(schema["definitions"]["InfrastructureHealthEvent"])
+    sub["definitions"] = schema["definitions"]
+    return jsonschema.Draft7Validator(sub, format_checker=jsonschema.FormatChecker())
+
+
+def _compose_targets():
+    text = (_REPO_ROOT / "docker-compose.yml").read_text()
+    match = _re.search(
+        r"PANTHEON_BFF_HEALTH_TARGETS_JSON:\s*>-\s*\n\s*(\[.*\])\s*\n", text
+    )
+    assert match, "compose PANTHEON_BFF_HEALTH_TARGETS_JSON not found"
+    return json.loads(match.group(1))
+
+
+def _event_for(monitor, name, kind, base_url, health_path="/readyz"):
+    target = DownstreamTarget(
+        name=name, base_url=base_url, health_path=health_path, component_kind=kind
+    )
+    monitor._resolve_target_registry = lambda: {name: target}
+    result = DownstreamProbeResult(
+        target_name=name,
+        ok=False,
+        status_code=503,
+        latency_ms=12.0,
+        checked_at="2026-10-17T09:00:00Z",
+        failure_reason="HTTP 503",
+        consecutive_failures=2,
+        window_started_at="2026-10-17T09:00:00Z",
+    )
+    return monitor._event_for_result(result, incident_ref=None)
+
+
+def test_events_for_every_compose_kind_and_file_worker_match_telemetry_schema(tmp_path):
+    validator = _infra_event_validator()
+    monitor = _safety_monitor(tmp_path)
+    entries = _compose_targets()
+    assert len({e["component_kind"] for e in entries}) > 5
+    cases = [
+        (e["name"], e["component_kind"], e["url"], e["health_path"]) for e in entries
+    ]
+    cases.append(("file-worker-x", "file_worker", "file:///tmp/hb.json", "/tmp/hb.json"))
+    for name, kind, url, path in cases:
+        event = _event_for(monitor, name, kind, url, path)
+        errors = [e.message for e in validator.iter_errors(event)]
+        assert not errors, f"{name} ({kind}): {errors}"
+        # Configured label survives for operators/incident consumers.
+        assert event["metadata"]["configured_component_kind"] == kind
+        assert event["component"]["component_kind"]
+
+
+def test_file_worker_maps_to_scheduler_and_http_kinds_to_http_service(tmp_path):
+    monitor = _safety_monitor(tmp_path)
+    worker = _event_for(monitor, "w", "file_worker", "file:///tmp/hb", "/tmp/hb")
+    assert worker["component"]["component_kind"] == "scheduler"
+    http = _event_for(monitor, "a", "runtime-owner-api", "http://a:1")
+    assert http["component"]["component_kind"] == "http_service"
