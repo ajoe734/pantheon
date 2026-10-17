@@ -1,0 +1,40 @@
+{
+  "task_id": "BFF-CONSULTATION-OWNER-READBACK-20261017",
+  "summary": "Correct existing BFF Consultation owner authentication and readback. Wired operator-bff machine token in docker-compose.yml, resolved verified caller tenant using existing OwnerReadContextMiddleware and bound_tenant in owner_reads.py, bound Consultation client with machine auth and verified tenant in operations_consultation.py without swallowing owner errors or falling back to local store, routed Workshop canonical consultation transport through shared ConsultationServiceClient with machine auth and caller tenant, and proved with real in-repo Consultation HTTP owner tests.",
+  "bounded_input_sha256": "8cb2bd437a7de1ee88a4be61ce2acf356c978ce63bb26d0f90d234c75e0595c0",
+  "predecessor": {
+    "task": "TEACHING-CONSULTATION-OWNER-ACK-20261017",
+    "status": "done"
+  },
+  "net_production_line_growth": 108,
+  "budget": 160,
+  "files_scoped": [
+    "services/control-plane/bff/core/owner_reads.py",
+    "services/control-plane/bff/ports/operations_consultation.py",
+    "services/control-plane/bff/agora/strategy_workshop/operations.py",
+    "docker-compose.yml",
+    "services/control-plane/bff/tests/test_operations_consultation_ports.py",
+    "services/control-plane/bff/tests/test_workshop_request_authorization.py",
+    "docs/deployment/evidence/BFF-CONSULTATION-OWNER-READBACK-20261017/evidence.json"
+  ],
+  "verification_proofs": {
+    "owner_draft_list_and_detail": "BFF lists and reads labelled owner DRAFT for verified operator tenant with allowedActions.canCancel=True",
+    "empty_and_missing_isolation": "BFF returns empty list and 404 for tenant B with no records; non-existent ID returns genuine 404",
+    "machine_auth_visible_error": "Invalid/missing machine token returns visible 403 DOWNSTREAM_AUTH_ERROR without store fallback or false 404",
+    "tenant_mismatch_rejected": "Foreign tenant in X-Selected-Tenant or body mismatch rejected with 403 TENANT_MISMATCH before owner call",
+    "outage_and_malformed_visible_error": "Connection failure / malformed JSON returns visible 503 DEPENDENCY_UNAVAILABLE without fallback to local store",
+    "workshop_canonical_transport": "Workshop canonical consultation transport verified sending machine token and caller tenant, rejecting body mismatch and foreign tenant"
+  },
+  "validation": [
+    {
+      "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/control-plane/bff/tests/test_operations_consultation_ports.py services/control-plane/bff/tests/test_workshop_request_authorization.py services/control-plane/bff/tests/test_agora_workshop_partial_effects.py",
+      "total_passed": 44,
+      "exit_status": 0,
+      "breakdown": {
+        "test_operations_consultation_ports.py": 24,
+        "test_workshop_request_authorization.py": 7,
+        "test_agora_workshop_partial_effects.py": 13
+      }
+    }
+  ]
+}

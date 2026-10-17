@@ -390,3 +390,74 @@ def test_research_plan_parallel_success_requests_do_not_exchange_credentials(app
     assert len(requests) == 12
     assert {request.get_header("Authorization") for request in requests} == {f"Bearer {token}" for token in tokens}
     assert operations._request_authorization.get() is None
+
+
+def test_workshop_canonical_consultation_transport_machine_auth_and_tenant(monkeypatch):
+    monkeypatch.setenv("CONSULTATION_SERVICE_TOKEN", "pantheon-test-machine-token")
+    monkeypatch.setenv("CONSULTATION_SERVICE_ACTOR", "operator-bff")
+    ops = operations.WorkshopCanonicalOperations(consultation_base_url="http://consultation-svc:8096")
+
+    intercepted = []
+
+    def fake_request_json(self, method, path, payload=None, **kwargs):
+        intercepted.append({
+            "method": method,
+            "path": path,
+            "payload": payload,
+            "token": self._token,
+            "actor": self._service_actor,
+            "tenant_id": self._tenant_id,
+        })
+        return {"status": "ok", "items": []}
+
+    from services.consultation.client import ConsultationServiceClient
+    monkeypatch.setattr(ConsultationServiceClient, "_request_json", fake_request_json)
+
+    from services.control_plane.bff.core.owner_reads import authorization, selected_tenant
+    import base64
+
+    # 1. Successful request with valid caller token and tenant
+    jwt_body = base64.urlsafe_b64encode(json.dumps({"tenant_id": "tenant-dev", "allowed_tenants": ["tenant-dev"]}).encode()).decode().rstrip("=")
+    valid_jwt = f"header.{jwt_body}.sig"
+    auth_tok = authorization.set(f"Bearer {valid_jwt}")
+    sel_tok = selected_tenant.set("tenant-dev")
+    try:
+        res = ops._request_json(
+            "consultation_service",
+            "GET",
+            ops.consultation_base_url,
+            "/api/consult/requests",
+            payload={"tenant_id": "tenant-dev"},
+        )
+        assert res == {"status": "ok", "items": []}
+        assert len(intercepted) == 1
+        # Proves machine token is used, NOT user JWT
+        assert intercepted[0]["token"] == "pantheon-test-machine-token"
+        assert intercepted[0]["actor"] == "operator-bff"
+        assert intercepted[0]["tenant_id"] == "tenant-dev"
+    finally:
+        selected_tenant.reset(sel_tok)
+        authorization.reset(auth_tok)
+
+    # 2. Rejection of body tenant mismatch before owner call
+    auth_tok = authorization.set(f"Bearer {valid_jwt}")
+    sel_tok = selected_tenant.set("tenant-dev")
+    rejected = False
+    try:
+        ops._request_json(
+            "consultation_service",
+            "POST",
+            ops.consultation_base_url,
+            "/api/consult/requests",
+            payload={"tenant_id": "foreign-tenant"},
+        )
+    except operations.CanonicalOperationError as exc:
+        rejected = True
+        assert exc.status_code == 403
+        assert "tenant" in str(exc).lower()
+    finally:
+        selected_tenant.reset(sel_tok)
+        authorization.reset(auth_tok)
+    assert rejected is True
+    assert len(intercepted) == 1  # No second call made to owner!
+

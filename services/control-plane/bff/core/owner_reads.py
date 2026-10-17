@@ -48,6 +48,13 @@ class OwnerReadContextMiddleware:
             authorization.reset(token)
 
 
+def verified_caller_tenant(payload: Any = None, tenant_id: Optional[str] = None) -> str:
+    auth = authorization.get()
+    caller_token = auth.removeprefix("Bearer ").strip() if auth else None
+    tid = tenant_id or selected_tenant.get()
+    return bound_tenant(payload or {}, tenant_id=tid, auth_token=caller_token)
+
+
 def read_records(url_builder, path, key=None):
     auth = authorization.get()
     if not auth:
