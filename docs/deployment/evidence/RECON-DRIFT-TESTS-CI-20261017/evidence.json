@@ -1,0 +1,14 @@
+{
+  "task_id": "RECON-DRIFT-TESTS-CI-20261017",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "delivery": "source-only; no deployment dispatched",
+  "findings": {
+    "consumer": "services/reconciliation-drift/consumer.py on current dev (after RECON-CONSUMER-RETIRED-DLQ-20261017) already reads event.get('binding_id') and skips the runtime-manager lookup when it is absent; no consumer change needed.",
+    "ci": "Added 'Run reconciliation drift tests' step to the Smoke acceptance job in .github/workflows/branch-ci.yml running the whole services/reconciliation-drift directory with no known-failures list."
+  },
+  "verification": {
+    "command": "python3 -m pytest -q services/reconciliation-drift",
+    "result": "215 passed, 1 skipped (includes test_consumer_delivery_identity_is_tenant_plus_event)"
+  }
+}
