@@ -1,0 +1,6 @@
+{
+  "task_id": "PAPER-PROBE-REQUIRE-RECON-OK-20261017",
+  "change": "natural mode rejects journeys ending in reconciliation_failed (code reconciliation_failed, message names reconciliation_status)",
+  "tests": "services/trade_journey/test_hosted_lifecycle_probe.py: 117 passed, 1 skipped; new failed-case test fails on base",
+  "hosted_state_written": false
+}
