@@ -1,0 +1,7 @@
+{
+  "task_id": "INCIDENT-AUTO-RESOLVE-ON-RETIRE-20261017",
+  "change": "execute_retirement resolves open/investigating incidents of the retired binding via POST /api/incidents/{id}/status after retired readback and finalize; failures raise for outbox retry without undoing retirement",
+  "tests": "services/deployment/test_outbox_consumer_worker.py: 98 passed (TestRetirementResolvesIncidents covers drift+compensation incidents, other-binding/resolved untouched, failure then retry)",
+  "base_behavior": "new tests fail on base: resolve helpers and incident_url parameter do not exist",
+  "hosted_state_written": false
+}
