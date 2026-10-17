@@ -1,0 +1,47 @@
+{
+  "task": "BFF-EXISTING-COOKIE-API-GUARD-20261017",
+  "task_id": "BFF-EXISTING-COOKIE-API-GUARD-20261017",
+  "change_class": "corrective",
+  "net_prod_line_budget": 2,
+  "production_net_lines": 0,
+  "summary": "Extend DevBrowserSessionMiddleware business API recognition from /api/v1/operator/ to /api/v1/ product namespace. Preserve existing guarded cookie adaptation, Origin validation, durable session lifecycle and Authorization header precedence. Retain existing /bff/ behavior and production disabled posture.",
+  "scoped_artifacts": [
+    "services/control-plane/bff/auth/browser_session.py",
+    "services/control-plane/bff/auth/test_browser_session.py",
+    "docs/deployment/evidence/BFF-EXISTING-COOKIE-API-GUARD-20261017/evidence.json"
+  ],
+  "bounded_input_ref": {
+    "path": "/tmp/pantheon-assist-20261013/BFF-EXISTING-COOKIE-API-GUARD-20261017-bounded-input.json",
+    "sha256": "3bcaf4ca2cbdb6bcb215d475b849876eefeb8fb08198506257856d5dd19ad5ae",
+    "proof": "/tmp/pantheon-assist-20261013/Consultation-current-real-cookie-versus-same-token-bearer-GET-only-20261017.json",
+    "proof_sha256": "64b30f9414d3fdbf1299daef2d37db001d5fbd68a96af2d1a762604add06252c"
+  },
+  "base_failure": {
+    "command": "python -m pytest -q services/control-plane/bff/auth/test_browser_session.py",
+    "outcome": "5 failed, 3 passed",
+    "failed_tests": [
+      "test_browser_login_reload_business_and_durable_logout (assert 401 == 200 on /api/v1/consult/test-cookie-business)",
+      "test_cookie_mutations_and_login_require_exact_origin[None] (assert 401 == 403 on /api/v1/consult/test-cookie-business)",
+      "test_cookie_mutations_and_login_require_exact_origin[null] (assert 401 == 403 on /api/v1/consult/test-cookie-business)",
+      "test_cookie_mutations_and_login_require_exact_origin[https://attacker.example] (assert 401 == 403 on /api/v1/consult/test-cookie-business)",
+      "test_cookie_mutations_and_login_require_exact_origin[https://app.dev.mvl-cap.tw.attacker.example] (assert 401 == 403 on /api/v1/consult/test-cookie-business)"
+    ]
+  },
+  "head_pass": {
+    "command": "python -m pytest -q services/control-plane/bff/auth/test_browser_session.py",
+    "outcome": "8 passed in 6.74s, exit 0",
+    "auth_suite_command": "python -m pytest -q services/control-plane/bff/auth/",
+    "auth_suite_outcome": "34 passed in 28.44s, exit 0"
+  },
+  "changes": [
+    "services/control-plane/bff/auth/browser_session.py: replaced path.startswith('/api/v1/operator/') with path.startswith('/api/v1/') in DevBrowserSessionMiddleware.browser_api predicate. Net production diff: 0 lines (+1, -1).",
+    "services/control-plane/bff/auth/test_browser_session.py: added /api/v1/consult/test-cookie-business to test routes and verified active cookie adaptation, reload, durable logout rejection, Origin enforcement on mutations, bad bearer precedence, CLI bearer compatibility, and production disablement."
+  ],
+  "acceptance_verification": {
+    "AC1_business_api_recognition": "DevBrowserSessionMiddleware covers /bff/ and /api/v1/ with no new middleware or tokens. Non-business and production disabled posture unchanged.",
+    "AC2_origin_and_session_checks": "Allowed Origin check for mutations and SessionLifecycleStore validation preserved before Authorization injection. Explicit Authorization header retains priority.",
+    "AC3_test_coverage_and_base_failure": "Original tests extended with real login JWT and session store on /api/v1/consult/test-cookie-business without route collision with /requests. Base failure (5 failed) and head pass (8 passed, 34 passed across auth package) recorded.",
+    "AC4_artifacts_and_budget": "Only 3 scoped artifacts. Net production growth is 0 <= 2 budget limit."
+  },
+  "worker_VM_SSH_models_or_business_calls": false
+}
