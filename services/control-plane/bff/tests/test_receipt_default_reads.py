@@ -13,14 +13,12 @@ from services.control_plane.bff.ports import create_read_surface_ports
     ("bindings", "list_bindings", "/api/bindings", None),
     ("deployment_plans", "list_deployment_plans", "/api/deployment/plans", None),
     ("runtime_bindings", "list_runtime_bindings", "/api/runtime-bindings", "bindings"),
-    ("evolution_programs", "list_evolution_programs", "/api/evolution/programs", "items"),
-    ("evolution_decisions", "list_evolution_decisions", "/api/evolution/proposals", None),
 ])
 def test_default_readers_preserve_auth_and_availability(monkeypatch, dataset, method, path, key):
-    for env in ("PANTHEON_CAPITAL_API_URL", "PANTHEON_DEPLOYMENT_API_URL", "PANTHEON_RUNTIME_MANAGER_URL", "PANTHEON_EVOLUTION_API_URL"):
+    for env in ("PANTHEON_CAPITAL_API_URL", "PANTHEON_DEPLOYMENT_API_URL", "PANTHEON_RUNTIME_MANAGER_URL"):
         monkeypatch.setenv(env, "http://owner")
     calls = []
-    row = {"pool_id": "p1", "binding_id": "b1", "plan_id": "d1", "program_id": "e1", "decision_id": "v1"}
+    row = {"pool_id": "p1", "binding_id": "b1", "plan_id": "d1"}
     rows = [row]
 
     def transport(url, **kwargs):
@@ -48,6 +46,551 @@ def test_default_readers_preserve_auth_and_availability(monkeypatch, dataset, me
         assert ports.dataset_source(dataset) == "unavailable"
     finally:
         owner_reads.authorization.reset(token)
+
+
+def test_evolution_readers_preserve_static_auth_and_tenant_contract(monkeypatch, tmp_path):
+    import io
+    import json
+    import os
+    import urllib.error
+    import urllib.request
+    from urllib.parse import urlsplit
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from services.control_plane.bff.auth.policy import (
+        bff_error,
+        extract_identity_jwt,
+        require_operator_role,
+        require_read_role,
+    )
+    from services.control_plane.bff.command_adapters.base import ActionUnavailableError
+    from services.control_plane.bff.core.owner_reads import (
+        OwnerReadContextMiddleware,
+        authorization,
+        selected_tenant,
+    )
+    from services.control_plane.bff.evolution.router import (
+        create_evolution_programs_router,
+        create_evolution_router,
+    )
+    from services.control_plane.bff.incidents.router import create_incident_router
+    from services.control_plane.bff.models import utc_now
+    from services.control_plane.bff.ports import create_read_surface_ports
+    from services.evolution import main as evo_main
+    from services.evolution.dispatch_outbox import (
+        CompensationLedger,
+        EvolutionDispatchOutbox,
+        build_dispatch_outbox_store,
+    )
+    from services.evolution.program_store import build_program_store
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    _JWT_ENV = {
+        "PANTHEON_BFF_JWT_SECRET": "receipt-owner-signing-secret-0123456789",
+        "PANTHEON_BFF_JWT_ISSUER": "receipt-owner-tests",
+        "PANTHEON_BFF_JWT_AUDIENCE": "bff-operators",
+        "PANTHEON_BFF_AUTH_MODE": "strict",
+    }
+    for k, v in _JWT_ENV.items():
+        monkeypatch.setenv(k, v)
+
+    service_token = "pantheon-local-evolution-service"
+    monkeypatch.setenv("EVOLUTION_AUTH_MODE", "token")
+    monkeypatch.setenv("EVOLUTION_AUTH_TOKEN", service_token)
+    monkeypatch.setenv("EVOLUTION_AUTH_ALLOWED_TENANTS", "tenant-dev")
+    monkeypatch.setenv("PANTHEON_EVOLUTION_API_URL", "http://evolution-owner.local")
+
+    monkeypatch.setattr(
+        evo_main,
+        "store",
+        evo_main.EvolutionDecisionStore(
+            storage_path=str(tmp_path / "decisions.json")
+        ),
+    )
+    program_store = build_program_store(tmp_path / "programs.json")
+    monkeypatch.setattr(evo_main, "program_store", program_store)
+    monkeypatch.setattr(evo_main.program_service, "_store", program_store)
+    monkeypatch.setattr(
+        evo_main,
+        "dispatch_outbox",
+        EvolutionDispatchOutbox(build_dispatch_outbox_store(data_dir=tmp_path)),
+    )
+    monkeypatch.setattr(
+        evo_main,
+        "compensation_ledger",
+        CompensationLedger(data_dir=tmp_path),
+    )
+
+    def _tok(tenant, roles=("operator", "viewer")):
+        claims = {
+            "sub": "operator-1",
+            "roles": list(roles),
+            "exp": 4102444800,
+            "iss": _JWT_ENV["PANTHEON_BFF_JWT_ISSUER"],
+            "aud": _JWT_ENV["PANTHEON_BFF_JWT_AUDIENCE"],
+        }
+        if tenant:
+            claims["tenant_id"] = tenant
+        return encode_jwt_hs256(claims, secret=_JWT_ENV["PANTHEON_BFF_JWT_SECRET"])
+
+    evo_client = TestClient(evo_main.app)
+
+    class MockHttpResponse:
+        def __init__(self, status: int, content: bytes):
+            self.status = status
+            self._io = io.BytesIO(content)
+
+        def read(self) -> bytes:
+            return self._io.read()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    server_state = {"mode": "200"}
+    calls = []
+
+    def transport_urlopen(req, timeout=30):
+        if server_state.get("mode") == "503":
+            raise urllib.error.HTTPError(
+                req.full_url,
+                503,
+                "Service Unavailable",
+                {},
+                io.BytesIO(b'{"detail":"Evolution owner unavailable"}'),
+            )
+        url = req.full_url
+        split = urlsplit(url)
+        path = split.path + ("?" + split.query if split.query else "")
+        headers = {k: v for k, v in req.header_items()}
+        calls.append({
+            "path": split.path,
+            "auth": headers.get("Authorization", ""),
+            "tenant": headers.get("X-tenant-id", ""),
+            "service": headers.get("X-pantheon-service", ""),
+        })
+        resp = evo_client.get(path, headers=headers)
+        if resp.status_code >= 400:
+            raise urllib.error.HTTPError(
+                url,
+                resp.status_code,
+                getattr(resp, "reason_phrase", "Error"),
+                {},
+                io.BytesIO(resp.content),
+            )
+        return MockHttpResponse(resp.status_code, resp.content)
+
+    monkeypatch.setattr(urllib.request, "urlopen", transport_urlopen)
+
+    # Seed program using real Evolution program store/service
+    prog, _ = evo_main.program_service.create_program(
+        tenant_id="tenant-dev", actor_id="admin-1", name="Alpha Program"
+    )
+    prog_id = prog["program_id"]
+
+    # Seed decisions via real Evolution service proposal endpoints
+    evo_h = {"Authorization": f"Bearer {service_token}", "X-Tenant-Id": "tenant-dev"}
+    r1 = evo_client.post(
+        "/api/evolution/proposals",
+        headers=evo_h,
+        json={
+            "decision_id": "dec-1",
+            "tenant_id": "tenant-dev",
+            "target_type": "candidate_artifact",
+            "target_id": "art-1",
+            "target_version": "1.0.0",
+            "action_type": "retrain",
+            "rationale": "Rolling drawdown breached expected baseline",
+            "created_by_id": "ctrl-1",
+            "linked_incident_id": "inc-1",
+            "metadata": {"program_id": prog_id, "resolved_at": "2026-10-16T03:30:00Z"},
+        },
+    )
+    assert r1.status_code == 201
+
+    r2 = evo_client.post(
+        "/api/evolution/proposals",
+        headers=evo_h,
+        json={
+            "decision_id": "dec-2",
+            "tenant_id": "tenant-dev",
+            "target_type": "candidate_artifact",
+            "target_id": "art-2",
+            "target_version": "1.0.0",
+            "action_type": "retire",
+            "rationale": "Severity-1 incident recurrence",
+            "created_by_id": "ctrl-1",
+            "linked_incident_id": "inc-2",
+            "metadata": {"program_id": prog_id},
+        },
+    )
+    assert r2.status_code == 201
+
+    rev_r2 = evo_client.post(
+        "/api/evolution/proposals/dec-2/review",
+        headers=evo_h,
+        json={
+            "actor_role": "governance_committee",
+            "actor_id": "gov-1",
+            "approval_decision_id": "app-2",
+            "tenant_id": "tenant-dev",
+        },
+    )
+    assert rev_r2.status_code == 200
+
+    app_r2 = evo_client.post(
+        "/api/evolution/proposals/dec-2/approve",
+        headers=evo_h,
+        json={
+            "actor_role": "governance_committee",
+            "actor_id": "gov-2",
+            "tenant_id": "tenant-dev",
+        },
+    )
+    assert app_r2.status_code == 200
+
+    # Default BFF composition with OwnerReadContextMiddleware
+    ports = create_read_surface_ports()
+    ports.lifecycle_telemetry_governance.incidents._incidents = {}
+    ports.lifecycle_telemetry_governance.create_incident({
+        "incident_id": "inc-1",
+        "severity": "high",
+        "status": "open",
+        "tenant_id": "tenant-dev",
+    })
+    ports.lifecycle_telemetry_governance.create_incident({
+        "incident_id": "inc-2",
+        "severity": "medium",
+        "status": "open",
+        "tenant_id": "tenant-dev",
+    })
+    app = FastAPI()
+    app.add_middleware(OwnerReadContextMiddleware)
+    common = dict(
+        read_surface=ports,
+        extract_identity=extract_identity_jwt,
+        require_read_role=require_read_role,
+        require_operator_role=require_operator_role,
+        bff_error=bff_error,
+        utc_now=utc_now,
+    )
+    app.include_router(create_evolution_programs_router(**common))
+    app.include_router(create_evolution_router(**common))
+    app.include_router(create_incident_router(**common))
+    client = TestClient(app)
+
+    # 1. Unauthenticated request to real BFF routes fails admission with 401
+    assert client.get("/api/v1/evolution-decisions").status_code == 401
+    assert client.get("/bff/evolution-programs").status_code == 401
+    assert client.get("/api/v1/evolution-decisions/dec-1").status_code == 401
+    assert client.get("/api/v1/operator/post-incident-review/inc-1").status_code == 401
+
+    # Caller without read role rejected with 403
+    no_role_headers = {"Authorization": f"Bearer {_tok('tenant-dev', roles=[])}", "X-Tenant-Id": "tenant-dev"}
+    assert client.get("/api/v1/evolution-decisions", headers=no_role_headers).status_code == 403
+    assert client.get("/api/v1/evolution-decisions/dec-1", headers=no_role_headers).status_code == 403
+    assert client.get("/api/v1/operator/post-incident-review/inc-1", headers=no_role_headers).status_code == 403
+
+    # Direct port call without authorization context raises ActionUnavailableError
+    with pytest.raises(ActionUnavailableError) as exc_info:
+        ports.list_evolution_decisions()
+    assert exc_info.value.downstream_status == 503
+    assert ports.dataset_source("evolution_decisions") == "unavailable"
+
+    with pytest.raises(ActionUnavailableError) as exc_info:
+        ports.get_evolution_decision_by_id("dec-1")
+    assert exc_info.value.downstream_status == 503
+
+    with pytest.raises(ActionUnavailableError) as exc_info:
+        ports.get_evolution_decisions_by_incident("inc-1")
+    assert exc_info.value.downstream_status == 503
+
+    with pytest.raises(ActionUnavailableError) as exc_info:
+        ports.list_evolution_programs()
+    assert exc_info.value.downstream_status == 503
+    assert ports.dataset_source("evolution_programs") == "unavailable"
+
+    # 2. Populated reads with valid signed token and matching tenant
+    valid_headers = {"Authorization": f"Bearer {_tok('tenant-dev')}", "X-Tenant-Id": "tenant-dev"}
+
+    # Evolution decisions list through real route
+    dec_resp = client.get("/api/v1/evolution-decisions", headers=valid_headers)
+    assert dec_resp.status_code == 200
+    dec_items = dec_resp.json()["items"]
+    assert len(dec_items) == 2
+    # Verify static service token and caller tenant were delivered to Evolution owner
+    assert calls[-1]["auth"] == f"Bearer {service_token}"
+    assert calls[-1]["tenant"] == "tenant-dev"
+    assert calls[-1]["service"] == "control-plane-bff"
+
+    # Verify decision_state is projected to status via DomainGovernancePort
+    assert dec_items[0]["decision_id"] == "dec-1"
+    assert dec_items[0]["status"] == "proposed"
+    assert dec_items[0]["decision_state"] == "proposed"
+    assert dec_items[0]["resolved_at"] == "2026-10-16T03:30:00Z"
+    assert dec_items[1]["decision_id"] == "dec-2"
+    assert dec_items[1]["status"] == "approved"
+    assert dec_items[1]["decision_state"] == "approved"
+
+    # Verify 3 route-level filters: action_type, risk_level, status
+    r_action = client.get("/api/v1/evolution-decisions?action_type=retrain", headers=valid_headers)
+    assert r_action.status_code == 200
+    assert len(r_action.json()["items"]) == 1
+    assert r_action.json()["items"][0]["decision_id"] == "dec-1"
+
+    r_risk = client.get("/api/v1/evolution-decisions?risk_level=low", headers=valid_headers)
+    assert r_risk.status_code == 200
+    assert len(r_risk.json()["items"]) == 1
+    assert r_risk.json()["items"][0]["decision_id"] == "dec-1"
+
+    r_status = client.get("/api/v1/evolution-decisions?status=approved", headers=valid_headers)
+    assert r_status.status_code == 200
+    assert len(r_status.json()["items"]) == 1
+    assert r_status.json()["items"][0]["decision_id"] == "dec-2"
+
+    # Evolution programs list through real route
+    prog_resp = client.get("/bff/evolution-programs", headers=valid_headers)
+    assert prog_resp.status_code == 200
+    prog_items = prog_resp.json()["items"]
+    assert len(prog_items) == 1
+    assert prog_items[0]["program_id"] == prog_id
+
+    # Derived program runs projection preserves resolved_at
+    token = authorization.set(f"Bearer {_tok('tenant-dev')}")
+    t_tok = selected_tenant.set("tenant-dev")
+    try:
+        runs = ports.list_evolution_program_runs(prog_id)
+        assert len(runs) == 2
+        assert runs[0]["run_id"] == "dec-1"
+        assert runs[0]["completed_at"] == "2026-10-16T03:30:00Z"
+    finally:
+        selected_tenant.reset(t_tok)
+        authorization.reset(token)
+
+    # Evolution decision detail through mounted route by exact ID
+    dec1_detail_resp = client.get("/api/v1/evolution-decisions/dec-1", headers=valid_headers)
+    assert dec1_detail_resp.status_code == 200
+    dec1_detail = dec1_detail_resp.json()
+    assert dec1_detail["decision_id"] == "dec-1"
+    assert dec1_detail["id"] == "dec-1"
+    assert dec1_detail["status"] == "proposed"
+    assert dec1_detail["action_type"] == "retrain"
+    assert dec1_detail["linked_incident_id"] == "inc-1"
+    assert dec1_detail["incident_ref"] == "inc-1"
+    assert dec1_detail["resolved_at"] == "2026-10-16T03:30:00Z"
+
+    dec2_detail_resp = client.get("/api/v1/evolution-decisions/dec-2", headers=valid_headers)
+    assert dec2_detail_resp.status_code == 200
+    assert dec2_detail_resp.json()["decision_id"] == "dec-2"
+    assert dec2_detail_resp.json()["status"] == "approved"
+
+    # Incident link through mounted router
+    inc1_resp = client.get("/api/v1/operator/post-incident-review/inc-1", headers=valid_headers)
+    assert inc1_resp.status_code == 200
+    inc1_evos = inc1_resp.json()["data"]["evolution_decisions"]
+    assert len(inc1_evos) == 1
+    assert inc1_evos[0]["decision_id"] == "dec-1"
+    assert inc1_evos[0]["linked_incident_id"] == "inc-1"
+
+    # Direct port detail and incident reads with authorization context
+    token = authorization.set(f"Bearer {_tok('tenant-dev')}")
+    t_tok = selected_tenant.set("tenant-dev")
+    try:
+        assert ports.get_evolution_decision_by_id("dec-1")["decision_id"] == "dec-1"
+        assert ports.get_evolution_decision_by_id("dec-2")["decision_id"] == "dec-2"
+        assert ports.get_evolution_decisions_by_incident("inc-1")[0]["decision_id"] == "dec-1"
+        assert ports.get_evolution_decisions_by_incident("inc-2")[0]["decision_id"] == "dec-2"
+        assert ports.get_evolution_decision_by_id("dec-missing-nonexistent") is None
+        assert ports.get_evolution_decisions_by_incident("inc-missing-nonexistent") == []
+    finally:
+        selected_tenant.reset(t_tok)
+        authorization.reset(token)
+
+    # Genuine missing through router returns 404
+    missing_detail_resp = client.get("/api/v1/evolution-decisions/dec-missing-nonexistent", headers=valid_headers)
+    assert missing_detail_resp.status_code == 404
+    assert missing_detail_resp.json()["detail"]["error"]["code"] == "RESOURCE_NOT_FOUND"
+
+    # Seed decisions beyond default first 20 (dec-3 through dec-25)
+    for idx in range(3, 26):
+        r_extra = evo_client.post(
+            "/api/evolution/proposals",
+            headers=evo_h,
+            json={
+                "decision_id": f"dec-{idx}",
+                "tenant_id": "tenant-dev",
+                "target_type": "candidate_artifact",
+                "target_id": f"art-extra-{idx}",
+                "target_version": "1.0.0",
+                "action_type": "retrain" if idx % 2 == 1 else "flag_for_review",
+                "rationale": f"Decision beyond first 20: {idx}",
+                "created_by_id": "ctrl-1",
+                "linked_incident_id": f"inc-{idx}",
+            },
+        )
+        assert r_extra.status_code == 201
+
+    ports.lifecycle_telemetry_governance.create_incident({
+        "incident_id": "inc-25",
+        "severity": "low",
+        "status": "open",
+        "tenant_id": "tenant-dev",
+    })
+
+    # Default list returns first 20 items only; dec-25 is beyond first 20
+    paged_resp = client.get("/api/v1/evolution-decisions", headers=valid_headers)
+    assert paged_resp.status_code == 200
+    paged_items = paged_resp.json()["items"]
+    assert len(paged_items) == 20
+    assert not any(d["decision_id"] == "dec-25" for d in paged_items)
+    assert paged_resp.json()["page_info"]["next_page_token"] is not None
+
+    # Prove dec-25 (beyond first 20) is consistently visible by exact ID and linked Incident
+    d25_resp = client.get("/api/v1/evolution-decisions/dec-25", headers=valid_headers)
+    assert d25_resp.status_code == 200
+    assert d25_resp.json()["decision_id"] == "dec-25"
+
+    inc25_resp = client.get("/api/v1/operator/post-incident-review/inc-25", headers=valid_headers)
+    assert inc25_resp.status_code == 200
+    inc25_evos = inc25_resp.json()["data"]["evolution_decisions"]
+    assert len(inc25_evos) == 1
+    assert inc25_evos[0]["decision_id"] == "dec-25"
+
+    token = authorization.set(f"Bearer {_tok('tenant-dev')}")
+    t_tok = selected_tenant.set("tenant-dev")
+    try:
+        assert ports.get_evolution_decision_by_id("dec-25")["decision_id"] == "dec-25"
+        assert ports.get_evolution_decisions_by_incident("inc-25")[0]["decision_id"] == "dec-25"
+    finally:
+        selected_tenant.reset(t_tok)
+        authorization.reset(token)
+
+    # Prove fresh owner record on the same ports without restart
+    ports.lifecycle_telemetry_governance.create_incident({
+        "incident_id": "inc-fresh",
+        "severity": "medium",
+        "status": "open",
+        "tenant_id": "tenant-dev",
+    })
+    r_fresh = evo_client.post(
+        "/api/evolution/proposals",
+        headers=evo_h,
+        json={
+            "decision_id": "dec-fresh",
+            "tenant_id": "tenant-dev",
+            "target_type": "candidate_artifact",
+            "target_id": "art-fresh",
+            "target_version": "1.0.0",
+            "action_type": "retrain",
+            "rationale": "Fresh live owner decision",
+            "created_by_id": "ctrl-1",
+            "linked_incident_id": "inc-fresh",
+        },
+    )
+    assert r_fresh.status_code == 201
+
+    # Fresh record is visible on the exact same ports and client
+    fresh_resp = client.get("/api/v1/evolution-decisions/dec-fresh", headers=valid_headers)
+    assert fresh_resp.status_code == 200
+    assert fresh_resp.json()["decision_id"] == "dec-fresh"
+
+    fresh_inc_resp = client.get("/api/v1/operator/post-incident-review/inc-fresh", headers=valid_headers)
+    assert fresh_inc_resp.status_code == 200
+    fresh_inc_evos = fresh_inc_resp.json()["data"]["evolution_decisions"]
+    assert len(fresh_inc_evos) == 1
+    assert fresh_inc_evos[0]["decision_id"] == "dec-fresh"
+
+    token = authorization.set(f"Bearer {_tok('tenant-dev')}")
+    t_tok = selected_tenant.set("tenant-dev")
+    try:
+        assert ports.get_evolution_decision_by_id("dec-fresh")["decision_id"] == "dec-fresh"
+        assert ports.get_evolution_decisions_by_incident("inc-fresh")[0]["decision_id"] == "dec-fresh"
+    finally:
+        selected_tenant.reset(t_tok)
+        authorization.reset(token)
+
+    # 3. Valid empty collection remains distinct from failure
+    empty_tmp = tmp_path / "empty_evolution"
+    empty_tmp.mkdir()
+    evo_main.store = evo_main.EvolutionDecisionStore(storage_path=str(empty_tmp / "empty_decisions.json"))
+    empty_resp = client.get("/api/v1/evolution-decisions", headers=valid_headers)
+    assert empty_resp.status_code == 200
+    assert empty_resp.json()["items"] == []
+    assert client.get("/api/v1/evolution-decisions/dec-1", headers=valid_headers).status_code == 404
+
+    token = authorization.set(f"Bearer {_tok('tenant-dev')}")
+    t_tok = selected_tenant.set("tenant-dev")
+    try:
+        assert ports.list_evolution_decisions() == []
+        assert ports.get_evolution_decision_by_id("dec-1") is None
+        assert ports.get_evolution_decisions_by_incident("inc-1") == []
+        assert ports.dataset_source("evolution_decisions") == "service"
+    finally:
+        selected_tenant.reset(t_tok)
+        authorization.reset(token)
+
+    # 4. Foreign tenant is rejected before network I/O
+    calls_before = len(calls)
+    foreign_headers = {"Authorization": f"Bearer {_tok('tenant-dev')}", "X-Tenant-Id": "foreign-tenant"}
+    foreign_resp = client.get("/api/v1/evolution-decisions", headers=foreign_headers)
+    assert foreign_resp.status_code == 403
+    assert client.get("/api/v1/evolution-decisions/dec-1", headers=foreign_headers).status_code == 403
+    assert client.get("/api/v1/operator/post-incident-review/inc-1", headers=foreign_headers).status_code == 403
+    assert len(calls) == calls_before  # zero network packets sent to owner!
+
+    # 5. Owner 403 (unauthorized caller tenant) is not swallowed into fake empty []
+    other_headers = {"Authorization": f"Bearer {_tok('tenant-other')}", "X-Tenant-Id": "tenant-other"}
+    denied_resp = client.get("/api/v1/evolution-decisions", headers=other_headers)
+    assert denied_resp.status_code == 403
+    assert denied_resp.json()["detail"]["error"]["code"] == "ACTION_UNAVAILABLE"
+    assert "tenant-other" in denied_resp.json()["detail"]["error"]["message"]
+    assert client.get("/api/v1/evolution-decisions/dec-1", headers=other_headers).status_code == 403
+    assert client.get("/api/v1/operator/post-incident-review/inc-1", headers=other_headers).status_code == 403
+
+    token = authorization.set(f"Bearer {_tok('tenant-other')}")
+    t_tok = selected_tenant.set("tenant-other")
+    try:
+        with pytest.raises(ActionUnavailableError) as err_403:
+            ports.list_evolution_decisions()
+        assert err_403.value.downstream_status == 403
+        with pytest.raises(ActionUnavailableError) as err_d_403:
+            ports.get_evolution_decision_by_id("dec-1")
+        assert err_d_403.value.downstream_status == 403
+        with pytest.raises(ActionUnavailableError) as err_i_403:
+            ports.get_evolution_decisions_by_incident("inc-1")
+        assert err_i_403.value.downstream_status == 403
+    finally:
+        selected_tenant.reset(t_tok)
+        authorization.reset(token)
+
+    # 6. Owner 503 is not swallowed into fake empty []
+    server_state["mode"] = "503"
+    unavail_resp = client.get("/api/v1/evolution-decisions", headers=valid_headers)
+    assert unavail_resp.status_code == 503
+    assert unavail_resp.json()["detail"]["error"]["code"] == "ACTION_UNAVAILABLE"
+    assert "503" in unavail_resp.json()["detail"]["error"]["message"]
+    assert client.get("/api/v1/evolution-decisions/dec-1", headers=valid_headers).status_code == 503
+    assert client.get("/api/v1/operator/post-incident-review/inc-1", headers=valid_headers).status_code == 503
+
+    token = authorization.set(f"Bearer {_tok('tenant-dev')}")
+    t_tok = selected_tenant.set("tenant-dev")
+    try:
+        with pytest.raises(ActionUnavailableError) as err_503:
+            ports.list_evolution_decisions()
+        assert err_503.value.downstream_status == 503
+        with pytest.raises(ActionUnavailableError) as err_d_503:
+            ports.get_evolution_decision_by_id("dec-1")
+        assert err_d_503.value.downstream_status == 503
+        with pytest.raises(ActionUnavailableError) as err_i_503:
+            ports.get_evolution_decisions_by_incident("inc-1")
+        assert err_i_503.value.downstream_status == 503
+    finally:
+        selected_tenant.reset(t_tok)
+        authorization.reset(token)
 
 
 def test_rankings_read_the_same_injected_owner_store():

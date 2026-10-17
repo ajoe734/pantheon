@@ -35,6 +35,11 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Tuple
 
+from starlette.exceptions import HTTPException
+
+from services.control_plane.bff.command_adapters.base import ActionUnavailableError
+from services.control_plane.bff.ports.lifecycle_telemetry_governance import DomainGovernancePort
+
 
 def _utc_now_rfc3339() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -828,8 +833,15 @@ class EvolutionProjectionPort:
         return str(record.get("program_id") or record.get("id") or "").strip()
 
     def list_evolution_programs(self, *, status: Optional[str] = None) -> List[Dict[str, Any]]:
-        _, raw = self._read(self._evolution_programs_reader)
-        items = [_deep_copy(r) for r in raw if self._program_id(r)]
+        if self._evolution_programs_reader is None:
+            raise ActionUnavailableError("Evolution programs reader is unconfigured", downstream_status=503)
+        try:
+            raw = self._evolution_programs_reader()
+        except (ActionUnavailableError, HTTPException):
+            raise
+        except Exception as exc:
+            raise ActionUnavailableError(f"Evolution programs reader failed: {exc}", downstream_status=503) from exc
+        items = [_deep_copy(r) for r in (raw or []) if self._program_id(r)]
         if status:
             items = [r for r in items if str(r.get("status") or "") == status]
         return sorted(
@@ -847,11 +859,40 @@ class EvolutionProjectionPort:
                 return program
         return None
 
-    def list_evolution_decisions(self, *, status: Optional[str] = None) -> List[Dict[str, Any]]:
-        _, raw = self._read(self._evolution_decisions_reader)
-        items = [_deep_copy(r) for r in raw]
+    def list_evolution_decisions(
+        self,
+        *,
+        action_type: Optional[str] = None,
+        risk_level: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        if self._evolution_decisions_reader is None:
+            raise ActionUnavailableError("Evolution decisions reader is unconfigured", downstream_status=503)
+        try:
+            raw = self._evolution_decisions_reader()
+        except (ActionUnavailableError, HTTPException):
+            raise
+        except Exception as exc:
+            raise ActionUnavailableError(f"Evolution decisions reader failed: {exc}", downstream_status=503) from exc
+
+        items = []
+        for r in (raw or []):
+            d = dict(r)
+            meta = d.get("metadata") or {}
+            if "program_id" in meta and not d.get("program_id"):
+                d["program_id"] = meta["program_id"]
+            if "resolved_at" in meta and not d.get("resolved_at"):
+                d["resolved_at"] = meta["resolved_at"]
+            projected = {**d, **DomainGovernancePort.project_evolution_decision(d)}
+            items.append(projected)
+
+        if action_type:
+            items = [r for r in items if str(r.get("action_type") or "") == action_type]
+        if risk_level:
+            items = [r for r in items if str(r.get("risk_level") or "") == risk_level]
         if status:
             items = [r for r in items if str(r.get("status") or "") == status]
+
         return items
 
     def list_evolution_program_runs(self, program_id: Optional[str]) -> List[Dict[str, Any]]:
@@ -1015,8 +1056,18 @@ class PersonaCapitalRuntimeDomainPort:
     def get_evolution_program(self, program_id: Optional[str]) -> Optional[Dict[str, Any]]:
         return self.evolution.get_evolution_program(program_id)
 
-    def list_evolution_decisions(self, **kwargs: Any) -> List[Dict[str, Any]]:
-        return self.evolution.list_evolution_decisions(**kwargs)
+    def list_evolution_decisions(
+        self,
+        *,
+        action_type: Optional[str] = None,
+        risk_level: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        return self.evolution.list_evolution_decisions(
+            action_type=action_type,
+            risk_level=risk_level,
+            status=status,
+        )
 
     def list_evolution_program_runs(self, program_id: Optional[str]) -> List[Dict[str, Any]]:
         return self.evolution.list_evolution_program_runs(program_id)

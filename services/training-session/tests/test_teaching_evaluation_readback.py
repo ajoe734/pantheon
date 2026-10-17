@@ -6,14 +6,18 @@ import copy
 import importlib.util
 import math
 import os
+import socket
 import sys
 import tempfile
+import threading
+import time
 import unittest
 import uuid
 from pathlib import Path
 from typing import Any, Sequence
 from unittest import mock
 
+import uvicorn
 from fastapi.testclient import TestClient
 
 SERVICE_DIR = Path(__file__).resolve().parents[1]
@@ -25,6 +29,8 @@ for path_str in (str(SERVICE_DIR), str(REPO_ROOT), str(L12_DIR)):
         sys.path.insert(0, path_str)
 
 from models import TeachingEvaluationResult
+from services.consultation import main as consultation_main
+from services.consultation.store import ConsultationStore
 from strict_test_support import (
     FIXED_TRUSTED_NOW,
     make_fake_persona_target_commit,
@@ -130,6 +136,67 @@ def _make_test_harness(
 
 
 class TestTeachingEvaluationReadback(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls._consult_temp_dir = tempfile.TemporaryDirectory()
+        cls._consult_store = ConsultationStore(cls._consult_temp_dir.name)
+        cls._orig_consult_store = consultation_main.store
+        consultation_main.store = cls._consult_store
+
+        cls._orig_auth_required = os.environ.get("CONSULTATION_AUTH_REQUIRED")
+        cls._orig_service_token = os.environ.get("CONSULTATION_SERVICE_TOKEN")
+        cls._orig_consult_url = os.environ.get("PANTHEON_CONSULTATION_API_URL")
+
+        os.environ["CONSULTATION_AUTH_REQUIRED"] = "true"
+        os.environ["CONSULTATION_SERVICE_TOKEN"] = "test-consultation-service-token"
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            cls._consult_port = int(s.getsockname()[1])
+
+        cls._consult_server = uvicorn.Server(
+            uvicorn.Config(
+                consultation_main.app,
+                host="127.0.0.1",
+                port=cls._consult_port,
+                log_level="error",
+            )
+        )
+        cls._consult_thread = threading.Thread(target=cls._consult_server.run, daemon=True)
+        cls._consult_thread.start()
+        deadline = time.monotonic() + 10
+        while not cls._consult_server.started:
+            if time.monotonic() >= deadline:
+                raise RuntimeError("consultation test server did not start")
+            time.sleep(0.01)
+
+        os.environ["PANTHEON_CONSULTATION_API_URL"] = f"http://127.0.0.1:{cls._consult_port}"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._consult_server.should_exit = True
+        cls._consult_thread.join(timeout=5)
+        consultation_main.store = cls._orig_consult_store
+
+        if cls._orig_auth_required is not None:
+            os.environ["CONSULTATION_AUTH_REQUIRED"] = cls._orig_auth_required
+        else:
+            os.environ.pop("CONSULTATION_AUTH_REQUIRED", None)
+
+        if cls._orig_service_token is not None:
+            os.environ["CONSULTATION_SERVICE_TOKEN"] = cls._orig_service_token
+        else:
+            os.environ.pop("CONSULTATION_SERVICE_TOKEN", None)
+
+        if cls._orig_consult_url is not None:
+            os.environ["PANTHEON_CONSULTATION_API_URL"] = cls._orig_consult_url
+        else:
+            os.environ.pop("PANTHEON_CONSULTATION_API_URL", None)
+
+        cls._consult_temp_dir.cleanup()
+        super().tearDownClass()
 
     def test_teaching_evaluation_result_model(self):
         result = TeachingEvaluationResult(
@@ -650,6 +717,95 @@ class TestTeachingEvaluationReadback(unittest.TestCase):
             str(ctx.exception),
         )
 
+    def test_review_required_teaching_fails_when_consultation_unconfigured(self):
+        module = _load_service_module()
+        client = TestClient(module.app)
+        headers = {"X-Pantheon-Tenant-ID": "tenant-test", "X-Pantheon-Actor-ID": "operator"}
+
+        resp = client.post(
+            "/api/training/sessions",
+            json={
+                "persona_id": "persona-test",
+                "objective": "Test consultation handoff failure when unconfigured",
+                "opened_by": "operator",
+                "mode": "coaching",
+            },
+            headers=headers,
+        )
+        self.assertEqual(resp.status_code, 201)
+        session_id = resp.json()["session_id"]
+        seed_changed_supported_controls(module, session_id)
+
+        queued = client.post(
+            f"/api/training/sessions/{session_id}/preview-jobs",
+            json={"mode": "consultation_required", "requested_by": "operator", "terminalize_session": False},
+            headers={**headers, "Idempotency-Key": "test-key-unconfigured-1"},
+        )
+        self.assertEqual(queued.status_code, 201)
+        job_id = queued.json()["job_id"]
+
+        with mock.patch.dict("os.environ", {"PANTHEON_CONSULTATION_API_URL": "", "PANTHEON_CONSULTATION_SERVICE_URL": ""}):
+            ran = client.post(f"/api/training/preview-jobs/{job_id}/run", headers=headers)
+        self.assertEqual(ran.status_code, 200)
+        job_res = ran.json()
+        self.assertEqual(job_res["status"], "failed")
+        self.assertEqual(job_res.get("error_code"), "runtime_evidence_unavailable")
+
+        readback_resp = client.get(f"/api/training/sessions/{session_id}/readback", headers=headers)
+        self.assertEqual(readback_resp.status_code, 200)
+        readback_data = readback_resp.json()
+        self.assertIsNone(readback_data.get("consultation_receipt"))
+        self.assertIsNone(readback_data.get("consult_request_id"))
+        self.assertIsNone(readback_data.get("evaluation_result"))
+
+    def test_review_required_teaching_fails_when_consultation_unauthorized(self):
+        module = _load_service_module()
+        client = TestClient(module.app)
+        headers = {"X-Pantheon-Tenant-ID": "tenant-test", "X-Pantheon-Actor-ID": "operator"}
+
+        resp = client.post(
+            "/api/training/sessions",
+            json={
+                "persona_id": "persona-test",
+                "objective": "Test consultation handoff failure when unauthorized",
+                "opened_by": "operator",
+                "mode": "coaching",
+            },
+            headers=headers,
+        )
+        self.assertEqual(resp.status_code, 201)
+        session_id = resp.json()["session_id"]
+        seed_changed_supported_controls(module, session_id)
+
+        queued = client.post(
+            f"/api/training/sessions/{session_id}/preview-jobs",
+            json={"mode": "consultation_required", "requested_by": "operator", "terminalize_session": False},
+            headers={**headers, "Idempotency-Key": "test-key-unauthorized-1"},
+        )
+        self.assertEqual(queued.status_code, 201)
+        job_id = queued.json()["job_id"]
+
+        orig_init = module.TrainingConsultationClient.__init__
+
+        def bad_token_init(client_self, *args, **kwargs):
+            orig_init(client_self, *args, **kwargs)
+            client_self.token = "bad-unauthorized-token"
+
+        with mock.patch.object(module.TrainingConsultationClient, "__init__", bad_token_init):
+            ran = client.post(f"/api/training/preview-jobs/{job_id}/run", headers=headers)
+        self.assertEqual(ran.status_code, 200)
+        job_res = ran.json()
+        self.assertEqual(job_res["status"], "failed")
+        self.assertEqual(job_res.get("error_code"), "runtime_evidence_unavailable")
+
+        readback_resp = client.get(f"/api/training/sessions/{session_id}/readback", headers=headers)
+        self.assertEqual(readback_resp.status_code, 200)
+        readback_data = readback_resp.json()
+        self.assertIsNone(readback_data.get("consultation_receipt"))
+        self.assertIsNone(readback_data.get("consult_request_id"))
+        self.assertIsNone(readback_data.get("evaluation_result"))
+
 
 if __name__ == "__main__":
     unittest.main()
+

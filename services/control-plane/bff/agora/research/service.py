@@ -32,6 +32,24 @@ _OWNER_STATUS_TO_EXEC_STATUS: dict[str, str] = {
     "cancelled": "cancelled",
 }
 
+_EXEC_STATUS_PROGRESS: dict[str, tuple[str, int, str]] = {
+    "running": ("running", 0, "Run in progress"),
+    "succeeded": ("completed", 100, "Run completed"),
+    "failed": ("failed", 100, "Run failed"),
+    "cancelled": ("cancelled", 100, "Run cancelled"),
+}
+
+
+def _owner_progress(owner: dict, exec_status: str, updated_at: Any) -> Optional[dict]:
+    """DTO-only progress derived from the owner status; never persisted."""
+    if isinstance(owner.get("progress"), dict) and owner["progress"]:
+        return dict(owner["progress"])
+    mapped = _EXEC_STATUS_PROGRESS.get(exec_status)
+    if mapped is None:
+        return None
+    phase, percent, message = mapped
+    return {"phase": phase, "percent": percent, "message": message, "updated_at": updated_at}
+
 from .routes.common import (
     CandidateDiscussionRequest,
     CandidateMemberReviewRequest,
@@ -80,6 +98,14 @@ def _default_utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _owner_persona_reader(persona_id: str) -> Optional[Dict[str, Any]]:
+    """Read the trusted Persona through the BFF's active owner read store."""
+
+    from services.control_plane.bff.personas.service import _get_active_read_store
+
+    return _get_active_read_store().get_persona(persona_id)
+
+
 class AgoraResearchService:
     """Dedicated application service for Agora Research domain."""
 
@@ -92,8 +118,12 @@ class AgoraResearchService:
         trading_room_store: Optional[TradingRoomStore] = None,
         utc_now: Optional[Callable[[], str]] = None,
         bff_error: Optional[Callable[..., HTTPException]] = None,
+        persona_reader: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None,
+        canonical_operations: Optional[Any] = None,
     ) -> None:
 
+        self.persona_reader = persona_reader
+        self.canonical_operations = canonical_operations
         self.store = store
         self.workshop_store = workshop_store
         self.dataset_store = dataset_store
@@ -168,11 +198,12 @@ class AgoraResearchService:
     # -----------------------------------------------------------------------
 
     def list_workshop_plans(self, workshop_id: str, *, scope: Any) -> List[Dict[str, Any]]:
-        return self.store.list_plans_for_workshop(
+        plans = self.store.list_plans_for_workshop(
             workshop_id,
             tenant_id=scope.tenant_id,
             user_id=scope.user_id,
         )
+        return [self._project_plan_from_owner(plan, scope) for plan in plans]
 
     def create_workshop_plan(
         self,
@@ -186,6 +217,7 @@ class AgoraResearchService:
     ) -> Dict[str, Any]:
         now = self.utc_now()
         plan_id = str(uuid.uuid4())
+        model_authority = self._freeze_model_authority(body, scope)
         plan = _build_plan(
             body,
             workshop_id,
@@ -196,6 +228,8 @@ class AgoraResearchService:
             trace_id=trace_id,
             correlation_id=correlation_id,
         )
+        if model_authority is not None:
+            plan["model_authority"] = model_authority
         plan = self.store.create_plan(plan)
         self.store.record_audit_action({
             "action_type": "research_plan.create",
@@ -212,6 +246,111 @@ class AgoraResearchService:
             {"plan_id": plan_id, "status": plan["status"]},
         )
         return plan
+
+    def _freeze_model_authority(self, body: Any, scope: Any) -> Optional[Dict[str, Any]]:
+        """Freeze the owner Persona's canonical model for both ordinary and servant plans.
+
+        The StrategySpec registry entry names its owning Persona in
+        ``metadata.persona_id``; the Persona's authoritative runtime binding is then
+        re-read through ``ArtifactLoader.load_exact``.  Specs without an owner
+        Persona (or deployments without a registry) stay unbound.
+        """
+
+        spec_id = str(getattr(body, "strategy_spec_registry_id", "") or "").strip()
+        if not spec_id:
+            return None
+        from services.control_plane.bff.agora.strategy_workshop.operations import (
+            CanonicalOperationError,
+            WorkshopCanonicalOperations,
+        )
+        from services.execution.artifact_loader import ArtifactLoader, ArtifactLoadError
+        from services.registry.strategy_artifact import (
+            StrategyArtifactValidationError,
+            strategy_artifact_checksum,
+            validate_strategy_artifact,
+        )
+
+        operations = self.canonical_operations or WorkshopCanonicalOperations()
+        if not operations.registry_base_url and operations.transport is None:
+            return None
+        conflict = self._error_code("RESOURCE_CONFLICT")
+        try:
+            entry = operations.get_strategy_spec(spec_id)["entry"]
+        except CanonicalOperationError as exc:
+            if exc.status_code == 404:
+                return None
+            raise self.bff_error(
+                503, self._error_code("DEPENDENCY_UNAVAILABLE"),
+                "StrategySpec authority unavailable", f"{spec_id}: {exc.reason}",
+            ) from exc
+        spec_meta = entry.get("metadata") if isinstance(entry.get("metadata"), dict) else {}
+        persona_id = str(spec_meta.get("persona_id") or "").strip()
+        if not persona_id:
+            return None
+        spec_tenant = str(spec_meta.get("tenant_id") or "").strip()
+        if spec_tenant and spec_tenant != scope.tenant_id:
+            raise self.bff_error(409, conflict, "StrategySpec belongs to another tenant", spec_id)
+        try:
+            persona = (self.persona_reader or _owner_persona_reader)(persona_id)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise self.bff_error(
+                503, self._error_code("DEPENDENCY_UNAVAILABLE"), "Persona authority unavailable", persona_id
+            ) from exc
+        if not persona:
+            raise self.bff_error(409, conflict, "StrategySpec owner Persona not found", persona_id)
+        persona_tenant = str(persona.get("tenant_id") or (persona.get("metadata") or {}).get("tenant_id") or "").strip()
+        if persona_tenant and persona_tenant != scope.tenant_id:
+            raise self.bff_error(409, conflict, "Persona belongs to another tenant", persona_id)
+        readback = (persona.get("metadata") or {}).get("provisioning_authoritative_readback")
+        binding = readback.get("runtime_binding") if isinstance(readback, dict) else None
+        if not isinstance(binding, dict) or not binding:
+            return None
+        binding_meta = binding.get("metadata") if isinstance(binding.get("metadata"), dict) else {}
+        bound_tenant = str(binding_meta.get("tenant_id") or "").strip()
+        if bound_tenant and bound_tenant != scope.tenant_id:
+            raise self.bff_error(409, conflict, "Persona runtime binding belongs to another tenant", persona_id)
+        registry_id = str(binding.get("artifact_id") or "").strip()
+        strategy_id = str(binding_meta.get("strategy_id") or "").strip()
+        version = str(binding.get("artifact_version") or "").strip()
+        mode = str(binding.get("execution_mode") or "paper").strip().lower()
+        checksum = str(binding_meta.get("artifact_checksum") or "").strip()
+        try:
+            loaded = ArtifactLoader(dict(binding_meta.get("object_store") or {})).load_exact(
+                registry_id=registry_id,
+                strategy_id=strategy_id,
+                version=version,
+                execution_mode=mode,
+                expected_checksum=checksum or None,
+            )
+            artifact = loaded.json_payload()
+            validate_strategy_artifact(artifact)
+            if artifact.get("artifact_id") != registry_id or artifact.get("strategy_id") != strategy_id:
+                raise ArtifactLoadError("artifact identity does not match the Persona runtime binding")
+        except (ArtifactLoadError, StrategyArtifactValidationError) as exc:
+            raise self.bff_error(409, conflict, "Persona model authority unavailable", f"{persona_id}: {exc}") from exc
+        source_spec = (artifact.get("lineage") or {}).get("source_strategy_spec_id")
+        if source_spec not in (None, spec_id):
+            raise self.bff_error(
+                409, conflict, "Persona artifact was not derived from this StrategySpec", f"{source_spec} != {spec_id}",
+            )
+        parameters = artifact["parameters"]
+        return {
+            "persona_id": persona_id,
+            "tenant_id": scope.tenant_id,
+            "artifact_id": registry_id,
+            "strategy_id": strategy_id,
+            "artifact_version": version,
+            "artifact_checksum": checksum,
+            "strategy_artifact_checksum": strategy_artifact_checksum(artifact),
+            "execution_mode": mode,
+            "strategy_kind": artifact["strategy_logic"]["kind"],
+            "symbols": list(parameters.get("symbols") or []),
+            "bar_frequency": parameters.get("bar_frequency"),
+            "strategy_spec_registry_id": source_spec,
+            "strategy_artifact": artifact,
+        }
 
     def get_plan(self, plan_id: str, *, scope: Any) -> Optional[Dict[str, Any]]:
         plan = self.store.get_plan(plan_id)
@@ -515,6 +654,9 @@ class AgoraResearchService:
                 "parent_run_id": owner.get("parent_run_id"),
                 "execution_status": _OWNER_STATUS_TO_EXEC_STATUS.get(status, status),
                 "outcome": outcome,
+                **({"progress": prog} if (prog := _owner_progress(
+                    owner, _OWNER_STATUS_TO_EXEC_STATUS.get(status, status),
+                    owner.get("updated_at") or owner.get("created_at"))) else {}),
                 "artifact_refs": owner.get("artifact_refs") or [],
                 "evidence_refs": owner.get("evidence_refs") or [],
                 "updated_at": owner.get("updated_at") or owner.get("created_at"),
@@ -748,6 +890,9 @@ class AgoraResearchService:
             "artifact_refs": owner_run.get("artifact_refs") or [],
             "evidence_refs": owner_run.get("evidence_refs") or [],
             "metrics": owner_run.get("metrics") or [],
+            **({"progress": prog} if (prog := _owner_progress(
+                owner_run, _OWNER_STATUS_TO_EXEC_STATUS.get(status, status),
+                owner_run.get("updated_at") or owner_run.get("created_at"))) else {}),
             "receipt": owner_run.get("receipt"),
             "correlation_id": owner_run.get("correlation_id"),
             "executor": owner_run.get("executor"),

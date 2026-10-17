@@ -1505,6 +1505,35 @@ def test_regressing_controller_or_requirement_sequence_fails_closed(tmp_path: Pa
         _materialize(case)
 
 
+def test_controller_deployment_change_reuses_original_immutable_authority(tmp_path: Path) -> None:
+    case = _make_tw_case(tmp_path)
+    res1 = _materialize(case)
+    original_bytes = res1.path.read_bytes()
+    readback = case.responses[f"{BASE_URL}/api/source-ingest/controller/readback"]
+    state = readback["controller_state"]
+    state["controller_id"] = "source-ingestion:prod-next"
+    state["deployment"].update(
+        {
+            "git_sha": "fedcba987654",
+            "build_time": "2026-07-15T09:00:00Z",
+            "deployment_id": "source-ingest-dev-20260716",
+            "runtime_instance_id": "source-ingest-instance-002",
+        }
+    )
+    res2 = _materialize(case)
+    assert res2.path == res1.path
+    assert res2.payload == res1.payload
+    assert res2.payload_sha256 == res1.payload_sha256
+    assert res2.payload["metadata_json"]["controller_identity"]["deployment"]["git_sha"] == "abc123def456"
+    assert res1.path.read_bytes() == original_bytes
+    assert len(list(case.output_root.glob("dataset-version-*.json"))) == 1
+
+    # Current readback identity is still validated.
+    state["deployment"]["git_sha"] = "unknown"
+    with pytest.raises(SourceDatasetAuthorityError):
+        _materialize(case)
+
+
 def test_semantic_authority_changes_are_rejected_on_rematerialization(tmp_path: Path) -> None:
     # 1. Changed tenant
     case1 = _make_tw_case(tmp_path / "tenant_case")
@@ -1514,15 +1543,7 @@ def test_semantic_authority_changes_are_rejected_on_rematerialization(tmp_path: 
     with pytest.raises(SourceDatasetAuthorityError, match="differing authority bindings"):
         _materialize(case1)
 
-    # 2. Changed deployment git_sha
-    case2 = _make_tw_case(tmp_path / "deploy_case")
-    _materialize(case2)
-    readback2 = case2.responses[f"{BASE_URL}/api/source-ingest/controller/readback"]
-    readback2["controller_state"]["deployment"]["git_sha"] = "different-sha"
-    with pytest.raises(SourceDatasetAuthorityError, match="differing authority bindings"):
-        _materialize(case2)
-
-    # 3. Changed desired_state
+    # 2. Changed desired_state
     case3 = _make_tw_case(tmp_path / "desired_case")
     _materialize(case3)
     readback3 = case3.responses[f"{BASE_URL}/api/source-ingest/controller/readback"]

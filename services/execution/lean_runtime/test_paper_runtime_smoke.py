@@ -20,6 +20,7 @@ Acceptance criteria verified by this module:
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
 from datetime import datetime, timezone
 
@@ -105,6 +106,7 @@ def _signal(action="BUY", direction="LONG", symbol="AAPL.US", quantity=10):
         "signal_id": "smoke-signal-001",
         "version": "1.0",
         "strategy_id": "strat-smoke",
+        "runtime_id": "rt-smoke-001",
         "timestamp": datetime.now(timezone.utc)
         .replace(microsecond=0)
         .isoformat()
@@ -309,6 +311,8 @@ class PaperRuntimeSmokeTest(unittest.TestCase):
         store = InMemoryPendingSignalStore(signals or [])
         rm_client = _FakeRuntimeManagerClient([binding_dict])
 
+        outbox_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(outbox_dir.cleanup)
         service = PaperRuntimeService(
             store=store,
             identity=identity,
@@ -318,6 +322,7 @@ class PaperRuntimeSmokeTest(unittest.TestCase):
             runtime_context=context,
             poll_interval_seconds=3600,
             max_batch_size=50,
+            lifecycle_outbox_path=f"{outbox_dir.name}/lifecycle-outbox.json",
         )
         return service, telemetry, context, request
 

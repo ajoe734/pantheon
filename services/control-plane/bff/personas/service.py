@@ -2182,6 +2182,7 @@ def _list_persona_records(
                 record,
                 payload=record.request_payload,
                 owner=str(record.request_payload.get("requested_by") or "pantheon-bff"),
+                existing=records_by_id.get(record.persona_id),
             )
         except ProvisioningConflict:
             # A ledger row cannot relabel a different canonical owner record.
@@ -3874,6 +3875,7 @@ def _persona_record_for_provisioning(
     payload: Mapping[str, Any],
     owner: str,
     mutate_store: bool = False,
+    existing: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     canonical_owner = str(record.request_payload.get("requested_by") or owner).strip()
     ids = deterministic_provisioning_ids(record)
@@ -3928,7 +3930,8 @@ def _persona_record_for_provisioning(
     _active_writer = _get_active_write_owner()
     creator = getattr(_active_writer, "create_persona", None) if _active_writer else None
     updater = getattr(_active_writer, "update_persona", None) if _active_writer else None
-    existing = _get_active_read_store().get_persona(record.persona_id)
+    if existing is None:
+        existing = _get_active_read_store().get_persona(record.persona_id)
     if existing is None:
         if mutate_store:
             if not callable(creator):
@@ -4421,8 +4424,10 @@ def _pm12_persona_binding_summary(
     persona_id: str,
     *,
     runtime_bindings: Optional[Sequence[Dict[str, Any]]] = None,
+    bindings: Optional[Sequence[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    bindings = _get_active_read_store().get_bindings_for_persona(persona_id) or []
+    if bindings is None:
+        bindings = _get_active_read_store().get_bindings_for_persona(persona_id) or []
     binding_ids = _pm12_compact_ids(
         bindings,
         ("persona_capital_binding_id", "binding_id", "id"),
@@ -5164,6 +5169,8 @@ def _enrich_persona_item_with_bindings(
     runtimes: Optional[List[Dict[str, Any]]] = None,
     persona: Optional[Dict[str, Any]] = None,
     league_entry: Optional[Dict[str, Any]] = None,
+    authoritative_sessions: Optional[Sequence[Dict[str, Any]]] = None,
+    persona_sessions: Optional[Sequence[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     persona_id = str(item.get("persona_id") or item.get("personaId") or item.get("id") or "")
     if not persona_id:
@@ -5262,6 +5269,8 @@ def _enrich_persona_item_with_bindings(
     runtime_session, session_resolution = _pm12_runtime_session_resolution(
         persona_id,
         runtime,
+        authoritative_sessions=authoritative_sessions,
+        persona_sessions=persona_sessions,
     )
     matching_runtimes = [runtime] if runtime else []
 
@@ -5941,33 +5950,50 @@ def _project_persona_league_row(
     raw: Dict[str, Any],
     *,
     runtime_bindings: Optional[Sequence[Dict[str, Any]]] = None,
+    persona_bindings: Optional[Sequence[Dict[str, Any]]] = None,
+    persona_sessions: Optional[Sequence[Dict[str, Any]]] = None,
+    authoritative_sessions: Optional[Sequence[Dict[str, Any]]] = None,
+    include_route_policy: bool = True,
+    include_health: bool = True,
+    include_allowed_actions: bool = True,
 ) -> Dict[str, Any]:
     persona_id = str(raw.get("persona_id") or raw.get("id") or "")
     metadata = dict(raw.get("metadata") or {}) if isinstance(raw.get("metadata"), dict) else {}
     routed = _routed_strategies_for_persona(persona_id)
-    route_policy = _pm12_persona_route_summary(persona_id)
+    route_policy = _pm12_persona_route_summary(persona_id) if include_route_policy else None
     capabilities = _pm12_persona_capability_summary(persona_id)
     bindings = _pm12_persona_binding_summary(
         persona_id,
         runtime_bindings=runtime_bindings,
+        bindings=persona_bindings,
     )
-    sessions = _pm12_persona_session_summary(persona_id)
+    sessions = _pm12_persona_session_summary(
+        persona_id,
+        persona_sessions=persona_sessions,
+        persona_bindings=persona_bindings,
+        runtime_bindings=runtime_bindings,
+        authoritative_sessions=authoritative_sessions,
+    )
     evaluations = _pm12_persona_evaluation_summary(persona_id)
     memory = _pm12_persona_memory_summary(persona_id)
-    health = _pm12_persona_health_summary(raw, sessions, capabilities)
-    allowed_actions = _get_active_read_store().get_persona_allowed_actions(persona_id) or {}
-    enabled_actions = sorted(
-        str(action_id)
-        for action_id, enabled in allowed_actions.items()
-        if enabled
-    )
+    health = _pm12_persona_health_summary(raw, sessions, capabilities) if include_health else None
+    if include_allowed_actions:
+        allowed_actions = _get_active_read_store().get_persona_allowed_actions(persona_id) or {}
+        enabled_actions = sorted(
+            str(action_id)
+            for action_id, enabled in allowed_actions.items()
+            if enabled
+        )
+    else:
+        allowed_actions = None
+        enabled_actions = None
     archetype = str(
         metadata.get("archetype")
         or raw.get("strategy_family")
         or raw.get("mandate")
         or "generalist"
     )
-    return {
+    row: Dict[str, Any] = {
         "id": persona_id,
         "persona_id": persona_id,
         "name": raw.get("name") or persona_id,
@@ -5981,18 +6007,11 @@ def _project_persona_league_row(
         "success_rate": float(metadata.get("success_rate") or 0.0),
         "mandate": raw.get("mandate") or "",
         "strategy_family": raw.get("strategy_family") or "",
-        "route_policy_summary": route_policy,
         "capability_summary": capabilities,
         "binding_summary": bindings,
         "session_summary": sessions,
         "evaluation_summary": evaluations,
         "memory_summary": memory,
-        "health_summary": health,
-        "allowed_action_summary": {
-            "count": len(allowed_actions),
-            "enabled_count": len(enabled_actions),
-            "enabled_actions": enabled_actions,
-        },
         "links": {
             "detail": f"/bff/personas/{persona_id}",
             "route_policy": f"/bff/personas/{persona_id}/route-policy",
@@ -6002,6 +6021,17 @@ def _project_persona_league_row(
             "activity": f"/bff/personas/{persona_id}/activity",
         },
     }
+    if include_route_policy and route_policy is not None:
+        row["route_policy_summary"] = route_policy
+    if include_health and health is not None:
+        row["health_summary"] = health
+    if include_allowed_actions and allowed_actions is not None:
+        row["allowed_action_summary"] = {
+            "count": len(allowed_actions),
+            "enabled_count": len(enabled_actions),
+            "enabled_actions": enabled_actions,
+        }
+    return row
 
 
 # --- _pm12_filter_persona_items ---
@@ -6041,6 +6071,9 @@ def _pm12_persona_league_rows(
     archetype: Optional[str] = None,
     q: str = "",
     tenant_id: Optional[str] = None,
+    include_route_policy: bool = True,
+    include_health: bool = True,
+    include_allowed_actions: bool = True,
 ) -> List[Dict[str, Any]]:
     raw_records = _list_persona_records(tenant_id)
     try:
@@ -6067,6 +6100,34 @@ def _pm12_persona_league_rows(
         ]
     except Exception:
         all_league_entries = []
+    active_store = _get_active_read_store()
+
+    sessions_by_persona: Optional[Dict[str, List[Dict[str, Any]]]] = None
+    clean_tenant = str(tenant_id or "").strip()
+    if clean_tenant:
+        try:
+            bulk_sessions = None
+            if hasattr(active_store, "list_sessions_for_persona"):
+                bulk_sessions = active_store.list_sessions_for_persona(None)
+            elif hasattr(active_store, "get_sessions_for_persona"):
+                bulk_sessions = active_store.get_sessions_for_persona(None)
+            if bulk_sessions is not None:
+                sessions_by_persona = {}
+                for s in bulk_sessions:
+                    if not isinstance(s, dict):
+                        continue
+                    s_tenant = str(s.get("tenant_id") or s.get("metadata", {}).get("tenant_id") or "").strip()
+                    if s_tenant and s_tenant != clean_tenant:
+                        continue
+                    p_id = str(s.get("persona_id") or "").strip()
+                    if p_id:
+                        sessions_by_persona.setdefault(p_id, []).append(s)
+                    for alt_pid in (s.get("personas") or []):
+                        alt_clean = str(alt_pid or "").strip()
+                        if alt_clean and alt_clean != p_id:
+                            sessions_by_persona.setdefault(alt_clean, []).append(s)
+        except Exception:
+            sessions_by_persona = None
 
     bindings_by_persona: Dict[str, List[Dict[str, Any]]] = {}
     for binding in all_bindings:
@@ -6106,9 +6167,19 @@ def _pm12_persona_league_rows(
 
     enriched_rows: List[Dict[str, Any]] = []
     for raw in raw_records:
-        projected = _project_persona_league_row(raw)
-        persona_id = str(projected.get("persona_id") or projected.get("id") or "").strip()
+        persona_id = str(raw.get("persona_id") or raw.get("id") or "").strip()
         persona_bindings = bindings_by_persona.get(persona_id, [])
+        persona_sessions = sessions_by_persona.get(persona_id, []) if sessions_by_persona is not None else None
+        projected = _project_persona_league_row(
+            raw,
+            runtime_bindings=all_runtimes,
+            persona_bindings=persona_bindings,
+            persona_sessions=persona_sessions,
+            include_route_policy=include_route_policy,
+            include_health=include_health,
+            include_allowed_actions=include_allowed_actions,
+        )
+        persona_id = str(projected.get("persona_id") or projected.get("id") or "").strip()
         runtime_candidates: Dict[str, Dict[str, Any]] = {}
 
         def include_runtime(runtime: Dict[str, Any]) -> None:
@@ -6145,6 +6216,7 @@ def _pm12_persona_league_rows(
                 runtimes=list(runtime_candidates.values()),
                 persona=raw,
                 league_entry=league_by_persona.get(persona_id, {}),
+                persona_sessions=persona_sessions,
             )
         )
     rows = sorted(
@@ -11252,6 +11324,9 @@ def _pm12_authoritative_paper_monitoring_sessions(
 def _pm12_runtime_session_resolution(
     persona_id: str,
     runtime: Dict[str, Any],
+    *,
+    authoritative_sessions: Optional[Sequence[Dict[str, Any]]] = None,
+    persona_sessions: Optional[Sequence[Dict[str, Any]]] = None,
 ) -> tuple[Optional[Dict[str, Any]], str]:
     if not runtime:
         return None, "missing_runtime"
@@ -11261,16 +11336,22 @@ def _pm12_runtime_session_resolution(
         # for paper runtimes. A local/persona session may be useful for display,
         # but it cannot prove that the canonical paper worker joined this exact
         # RuntimeBinding.
-        authoritative_sessions = (
-            _get_active_read_store().list_authoritative_paper_runtime_monitoring_sessions() or []
-        )
+        if authoritative_sessions is None:
+            authoritative_sessions = (
+                _get_active_read_store().list_authoritative_paper_runtime_monitoring_sessions() or []
+            )
         sessions = _pm12_authoritative_paper_monitoring_sessions(
             runtime_aliases,
             authoritative_sessions=authoritative_sessions,
         )
         if not sessions and not authoritative_sessions:
             sessions = []
-            for raw_session in _get_active_read_store().get_sessions_for_persona(persona_id) or []:
+            raw_persona_sessions = (
+                persona_sessions
+                if persona_sessions is not None
+                else (_get_active_read_store().get_sessions_for_persona(persona_id) or [])
+            )
+            for raw_session in raw_persona_sessions:
                 if not isinstance(raw_session, dict):
                     continue
                 session = dict(raw_session)
@@ -11284,7 +11365,12 @@ def _pm12_runtime_session_resolution(
             return None, "identity_mismatch"
     else:
         sessions = []
-        for raw_session in _get_active_read_store().get_sessions_for_persona(persona_id) or []:
+        raw_persona_sessions = (
+            persona_sessions
+            if persona_sessions is not None
+            else (_get_active_read_store().get_sessions_for_persona(persona_id) or [])
+        )
+        for raw_session in raw_persona_sessions:
             if not isinstance(raw_session, dict):
                 continue
             session = dict(raw_session)
@@ -11329,23 +11415,44 @@ def _pm12_runtime_session_resolution(
 
 
 # --- _pm12_persona_session_summary ---
-def _pm12_persona_session_summary(persona_id: str) -> Dict[str, Any]:
+def _pm12_persona_session_summary(
+    persona_id: str,
+    *,
+    persona_sessions: Optional[Sequence[Dict[str, Any]]] = None,
+    persona_bindings: Optional[Sequence[Dict[str, Any]]] = None,
+    runtime_bindings: Optional[Sequence[Dict[str, Any]]] = None,
+    authoritative_sessions: Optional[Sequence[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    raw_sessions = (
+        persona_sessions
+        if persona_sessions is not None
+        else (_get_active_read_store().get_sessions_for_persona(persona_id) or [])
+    )
     sessions = [
         dict(session)
-        for session in (_get_active_read_store().get_sessions_for_persona(persona_id) or [])
+        for session in raw_sessions
         if isinstance(session, dict)
     ]
     for session in sessions:
         session.setdefault("session_authority", "persona_session_store")
+    raw_bindings = (
+        persona_bindings
+        if persona_bindings is not None
+        else (_get_active_read_store().get_bindings_for_persona(persona_id) or [])
+    )
     persona_binding_ids = set(
         _pm12_compact_ids(
-            _get_active_read_store().get_bindings_for_persona(persona_id) or [],
+            raw_bindings,
             ("persona_capital_binding_id", "binding_id", "id"),
         )
     )
     paper_runtimes = [
         runtime
-        for runtime in (_get_active_read_store().list_runtime_bindings() or [])
+        for runtime in (
+            runtime_bindings
+            if runtime_bindings is not None
+            else (_get_active_read_store().list_runtime_bindings() or [])
+        )
         if _pm12_runtime_deployment_mode(runtime) == "paper"
         and (
             str(runtime.get("persona_id") or "").strip() == persona_id
@@ -11359,7 +11466,10 @@ def _pm12_persona_session_summary(persona_id: str) -> Dict[str, Any]:
         for alias in _pm12_runtime_identity_aliases(runtime)
     }
     if paper_runtime_aliases:
-        authoritative = _pm12_authoritative_paper_monitoring_sessions(paper_runtime_aliases)
+        authoritative = _pm12_authoritative_paper_monitoring_sessions(
+            paper_runtime_aliases,
+            authoritative_sessions=authoritative_sessions,
+        )
         if authoritative:
             sessions = [
                 session
@@ -13923,7 +14033,12 @@ class PersonaService:
     ) -> Dict[str, Any]:
         snap = snapshot_at or self._utc_now()
         quarter_window = _pm12_quarter_window(quarter, snap)
-        rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id)
+        rows = _pm12_persona_league_rows(
+            tenant_id=caller_tenant_id,
+            include_route_policy=False,
+            include_health=False,
+            include_allowed_actions=False,
+        )
         ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
         (
             public_evidence_refs,
@@ -14745,6 +14860,17 @@ class PersonaService:
 
             ranking_item = filtered_results[0]
             row = _pm12_quarterly_find_persona_row(rows, resolved_persona_id)
+            if row is not None and isinstance(row, dict):
+                row = dict(row)
+                if "route_policy_summary" not in row:
+                    row["route_policy_summary"] = _pm12_persona_route_summary(resolved_persona_id)
+                if "health_summary" not in row:
+                    raw_persona = self.get_persona(resolved_persona_id) or {"persona_id": resolved_persona_id}
+                    row["health_summary"] = _pm12_persona_health_summary(
+                        raw_persona,
+                        row.get("session_summary") or {},
+                        row.get("capability_summary") or {},
+                    )
             item_evidence_refs = list(ranking_item.get("evidence_refs") or [])
             drilldown = _pm12_quarterly_drilldown_payload(
                 item=ranking_item,

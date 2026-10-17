@@ -8,10 +8,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Header, Query, Response
+from fastapi import APIRouter, Depends, Header, Query, Response
 from pydantic import ValidationError
 
 from ...servant.research_proposal import ServantDraftError, draft_research_plan
+from ...strategy_workshop.operations import bind_workshop_authorization
 
 from .common import (
     AgoraResearchRouteContext,
@@ -25,7 +26,7 @@ from .common import (
 
 
 def build_plans_router(ctx: AgoraResearchRouteContext) -> APIRouter:
-    router = APIRouter(tags=["agora-research-plans"])
+    router = APIRouter(tags=["agora-research-plans"], dependencies=[Depends(bind_workshop_authorization)])
 
     # -------------------------------------------------------------------
     # GET /bff/agora/workshops/{workshop_id}/research-plans
@@ -115,7 +116,12 @@ def build_plans_router(ctx: AgoraResearchRouteContext) -> APIRouter:
         )
         errors = ctx.error_code_enum()
         try:
-            draft = draft_research_plan(body.prompt, operator_id=scope.user_id, trace_id=x_trace_id)
+            draft = draft_research_plan(
+                body.prompt,
+                operator_id=scope.user_id,
+                trace_id=x_trace_id,
+                canonical_schema=ResearchPlanCreateRequest.model_json_schema(),
+            )
             plan_body = ResearchPlanCreateRequest.model_validate(draft)
         except ServantDraftError as exc:
             raise ctx.bff_error(exc.status_code, errors.UPSTREAM_ERROR, "Servant research draft failed", exc.message)

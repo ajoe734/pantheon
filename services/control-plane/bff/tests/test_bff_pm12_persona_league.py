@@ -32,6 +32,7 @@ from services.control_plane.bff.shared.cross_domain_utils import (
 
 from services.control_plane.bff.persona_provisioning import MemoryPersonaProvisioningStore
 from services.control_plane.bff.test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt
+from services.control_plane.bff.ports.read_surface_ports import PaperReconcilerUnavailableError
 
 
 from pathlib import Path
@@ -159,7 +160,11 @@ def _canonical_persona_owner_fakes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(personas_service, "_PERSONA_PROVISIONING_STORE", store)
     monkeypatch.setattr(personas_service, "_persona_provisioning_store", lambda: store)
     monkeypatch.setattr(personas_service, "_PersonaOwnerHttpTransport", lambda *a, **kw: transport)
-    monkeypatch.setattr(personas_service, "_register_persona_cron_required", _schedule_receipt)
+    monkeypatch.setattr(
+        personas_service,
+        "_register_persona_cron_required",
+        lambda persona_id, pool_id, binding_id, **kw: _schedule_receipt(persona_id, pool_id, binding_id),
+    )
     try:
         from services.persona.runtime_profile import build_persona_runtime_profile
         monkeypatch.setattr(personas_service, "build_persona_runtime_profile", build_persona_runtime_profile, raising=False)
@@ -307,15 +312,17 @@ class _Pm12LeagueTestStore:
             return raw_list
         return []
 
-    def get_sessions_for_persona(self, persona_id: str) -> list[dict[str, Any]]:
+    def get_sessions_for_persona(self, persona_id: str | None) -> list[dict[str, Any]]:
         if self.fallback:
             sessions = self.raw_data.get("sessions") or self.raw_data.get("persona_sessions") or {}
             raw_list = [dict(s) for s in (sessions.values() if isinstance(sessions, dict) else sessions) if isinstance(s, dict)]
+            if persona_id is None:
+                return raw_list
             matching = [s for s in raw_list if s.get("persona_id") == persona_id or persona_id in s.get("personas", [])]
             return matching
         return []
 
-    def list_sessions_for_persona(self, persona_id: str, **kwargs: Any) -> list[dict[str, Any]]:
+    def list_sessions_for_persona(self, persona_id: str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
         return self.get_sessions_for_persona(persona_id)
 
     def get_teaching_sessions_for_persona(self, persona_id: str) -> list[dict[str, Any]]:
@@ -348,6 +355,8 @@ class _Pm12LeagueTestStore:
         return self.ranking_snapshots.get(snapshot_id)
 
     def list_authoritative_paper_runtime_monitoring_sessions(self) -> list[dict[str, Any]]:
+        if getattr(self, "paper_reconciler_unavailable", False):
+            raise PaperReconcilerUnavailableError("paper fleet reconciler connection refused")
         return []
 
     def write_ranking_snapshot(self, *args: Any, **kwargs: Any) -> None:
@@ -360,6 +369,13 @@ class _Pm12LeagueTestStore:
             return self.personas[pid]
         return kwargs
 
+    def get_route_policy_for_persona(self, persona_id: str) -> dict[str, Any] | None:
+        return {
+            "version": "1.0",
+            "rules": [{"mode": "consult_required"}],
+            "consult_policy": {"version": "1.0", "trigger_rules": []},
+        }
+
     def get_persona_allowed_actions(self, persona_id: str) -> dict[str, bool]:
         return {"paper_deploy": True, "kill_switch": True}
 
@@ -369,6 +385,52 @@ class _Pm12LeagueTestStore:
         if name.startswith("get_"):
             return lambda *a, **kw: None
         raise AttributeError(f"'_Pm12LeagueTestStore' has no attribute '{name}'")
+
+
+class _CountingPm12LeagueTestStore(_Pm12LeagueTestStore):
+    def __init__(self, fallback: bool = True) -> None:
+        super().__init__(fallback=fallback)
+        self.calls: Dict[str, int] = {
+            "get_route_policy_for_persona": 0,
+            "get_persona_allowed_actions": 0,
+            "list_runtime_bindings": 0,
+            "get_persona": 0,
+            "list_personas": 0,
+            "get_sessions_for_persona": 0,
+            "list_authoritative_paper_runtime_monitoring_sessions": 0,
+        }
+
+    def reset_counts(self) -> None:
+        for k in self.calls:
+            self.calls[k] = 0
+
+    def get_route_policy_for_persona(self, persona_id: str) -> dict[str, Any] | None:
+        self.calls["get_route_policy_for_persona"] += 1
+        return super().get_route_policy_for_persona(persona_id)
+
+    def get_persona_allowed_actions(self, persona_id: str) -> dict[str, bool]:
+        self.calls["get_persona_allowed_actions"] += 1
+        return super().get_persona_allowed_actions(persona_id)
+
+    def list_runtime_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
+        self.calls["list_runtime_bindings"] += 1
+        return super().list_runtime_bindings(**kwargs)
+
+    def get_persona(self, persona_id: str) -> dict[str, Any] | None:
+        self.calls["get_persona"] += 1
+        return super().get_persona(persona_id)
+
+    def list_personas(self, **kwargs: Any) -> list[dict[str, Any]]:
+        self.calls["list_personas"] += 1
+        return super().list_personas(**kwargs)
+
+    def get_sessions_for_persona(self, persona_id: str | None) -> list[dict[str, Any]]:
+        self.calls["get_sessions_for_persona"] += 1
+        return super().get_sessions_for_persona(persona_id)
+
+    def list_authoritative_paper_runtime_monitoring_sessions(self) -> list[dict[str, Any]]:
+        self.calls["list_authoritative_paper_runtime_monitoring_sessions"] += 1
+        return super().list_authoritative_paper_runtime_monitoring_sessions()
 
 
 
@@ -442,9 +504,10 @@ def _compile_pm12_namespace(store):
 
 _ACTIVE_PM12_NS = {}
 
-def _fresh_client(td: str, *, fallback: bool = True) -> TestClient:
+def _fresh_client(td: str, *, fallback: bool = True, store: Optional[_Pm12LeagueTestStore] = None) -> TestClient:
     global _ACTIVE_PM12_NS
-    store = _Pm12LeagueTestStore(fallback=fallback)
+    if store is None:
+        store = _Pm12LeagueTestStore(fallback=fallback)
     cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
     service = PersonaService(
         read_store=store,
@@ -1096,3 +1159,184 @@ def test_pm12_persona_league_requires_auth() -> None:
             assert formula.status_code == 401, formula.text
         finally:
             pass
+
+
+def test_pm12_quarterly_ranking_read_fanout_reduction_and_parity() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        store = _CountingPm12LeagueTestStore(fallback=True)
+        client = _fresh_client(td, store=store)
+        client.raise_server_exceptions = True
+
+        all_personas = store.list_personas()
+        persona_count = len(all_personas)
+        assert persona_count >= 2, "Expected at least 2 personas in test fixtures"
+
+        # 1. Quarterly Ranking Fanout Reduction:
+        # Verify that quarterly ranking avoids fanout reads for unused UI summaries
+        # (route policy, allowed actions, health) while reusing pre-fetched runtime bindings.
+        store.reset_counts()
+        response = client.get(
+            "/bff/management/quarterly-ranking",
+            headers=HEADERS,
+            params={"quarter": "2026-Q1"},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        items = body["data"]["items"]
+        assert len(items) == persona_count
+
+        # Read counters: Route policy and allowed actions must be completely eliminated (0 calls).
+        # Runtime bindings must be fetched in bulk exactly once (1 call instead of 1 + N).
+        assert store.calls["get_route_policy_for_persona"] == 0, (
+            f"Expected 0 route policy calls on quarterly ranking path, got {store.calls['get_route_policy_for_persona']}"
+        )
+        assert store.calls["get_persona_allowed_actions"] == 0, (
+            f"Expected 0 allowed actions calls on quarterly ranking path, got {store.calls['get_persona_allowed_actions']}"
+        )
+        assert store.calls["list_runtime_bindings"] == 1, (
+            f"Expected 1 runtime bindings prefetch call, got {store.calls['list_runtime_bindings']}"
+        )
+        assert store.calls["get_sessions_for_persona"] == 1, (
+            f"Expected 1 bulk session prefetch call, got {store.calls['get_sessions_for_persona']}"
+        )
+
+        # Integrity of ranking output: real scores, rank ordering, exclusions preserved
+        prev_score = float("inf")
+        for idx, item in enumerate(items, start=1):
+            assert item["rank"] == idx
+            assert item["quarter"] == "2026-Q1"
+            assert isinstance(item["overall_score"], (int, float))
+            assert item["overall_score"] <= prev_score
+            prev_score = item["overall_score"]
+            assert item["tier"] in {"tier-1", "tier-2", "tier-3", "tier-4"}
+            assert "eligible" in item
+            assert "exclusion_codes" in item
+            assert "exclusion_reasons" in item
+
+            # Unused rich UI summaries must NOT be present or fabricated on ranking items
+            assert "route_policy_summary" not in item
+            assert "health_summary" not in item
+            assert "allowed_action_summary" not in item
+
+        # 1b. Regression: Successful empty [] bulk sessions must remain authoritative request-local prefetch
+        # without falling back to N per-Persona rereads.
+        orig_sessions = dict(store.raw_data.get("sessions") or {})
+        orig_persona_sessions = dict(store.raw_data.get("persona_sessions") or {})
+        try:
+            store.raw_data["sessions"] = {}
+            store.raw_data["persona_sessions"] = {}
+            store.reset_counts()
+            empty_bulk_resp = client.get(
+                "/bff/management/quarterly-ranking",
+                headers=HEADERS,
+                params={"quarter": "2026-Q1"},
+            )
+            assert empty_bulk_resp.status_code == 200, empty_bulk_resp.text
+            assert store.calls["get_sessions_for_persona"] == 1, (
+                f"Expected exactly 1 bulk session read and 0 per-persona rereads for empty bulk result, got {store.calls['get_sessions_for_persona']}"
+            )
+            assert store.calls["get_route_policy_for_persona"] == 0
+            assert store.calls["get_persona_allowed_actions"] == 0
+            assert store.calls["list_runtime_bindings"] == 1
+            assert len(empty_bulk_resp.json()["data"]["items"]) == persona_count
+        finally:
+            store.raw_data["sessions"] = orig_sessions
+            store.raw_data["persona_sessions"] = orig_persona_sessions
+
+        # 1c. Regression: Authoritative paper runtime monitoring owner error must NOT be swallowed into []
+        # and must propagate to produce HTTP 503 instead of falling back to healthy empty result.
+        store.paper_reconciler_unavailable = True
+        try:
+            store.reset_counts()
+            reconciler_down_resp = client.get(
+                "/bff/management/quarterly-ranking",
+                headers=HEADERS,
+                params={"quarter": "2026-Q1"},
+            )
+            assert reconciler_down_resp.status_code == 503, reconciler_down_resp.text
+            assert "Paper fleet reconciler unavailable" in reconciler_down_resp.text
+        finally:
+            store.paper_reconciler_unavailable = False
+
+        # 2. Rich UI Route Preserves Full Summaries:
+        # Default behavior for other callers (e.g. /bff/management/persona-league) must retain rich summaries.
+        store.reset_counts()
+        league_resp = client.get("/bff/management/persona-league", headers=HEADERS)
+        assert league_resp.status_code == 200, league_resp.text
+        league_items = league_resp.json()["data"]["items"]
+        assert len(league_items) == persona_count
+
+        for item in league_items:
+            assert "route_policy_summary" in item
+            assert "health_summary" in item
+            assert "allowed_action_summary" in item
+
+        assert store.calls["get_route_policy_for_persona"] >= persona_count
+        assert store.calls["get_persona_allowed_actions"] >= persona_count
+        assert store.calls["list_runtime_bindings"] == 1
+
+        # 3. Drilldown Route Enriches On-Demand:
+        # When drilldown is called for a single persona, route policy and health summary are loaded
+        # on-demand for that single persona only.
+        store.reset_counts()
+        drilldown_resp = client.get(
+            "/bff/management/quarterly-ranking/drilldown",
+            headers=HEADERS,
+            params={"quarter": "2026-Q1", "persona_id": "persona-alpha"},
+        )
+        assert drilldown_resp.status_code == 200, drilldown_resp.text
+        drilldown_body = drilldown_resp.json()
+        assert drilldown_body["data"]["persona_id"] == "persona-alpha"
+        assert drilldown_body["data"]["source_breakdown"]["route_policy_summary"]["rule_count"] >= 0
+        assert drilldown_body["data"]["source_breakdown"]["health"] is not None
+        assert store.calls["get_route_policy_for_persona"] == 1, (
+            f"Expected exactly 1 route policy call for drilldown target, got {store.calls['get_route_policy_for_persona']}"
+        )
+
+        # 4. Ordering, Filters, and Pagination:
+        page_resp = client.get(
+            "/bff/management/quarterly-ranking",
+            headers=HEADERS,
+            params={"quarter": "2026-Q1", "page_size": 1},
+        )
+        assert page_resp.status_code == 200, page_resp.text
+        page_body = page_resp.json()
+        assert len(page_body["data"]["items"]) == 1
+        assert page_body["data"]["items"][0]["persona_id"] == items[0]["persona_id"]
+        assert page_body["page_info"]["total"] == persona_count
+        assert page_body["page_info"]["next_page_token"] is not None
+
+        # 5. Tenant Boundary Isolation & Evaluator Read Contract:
+        # Cross-tenant caller cannot see tenant personas or leak private state
+        store.reset_counts()
+        alien_resp = client.get(
+            "/bff/management/quarterly-ranking",
+            headers={"Authorization": "Bearer op-alien:operator,reviewer:alien-tenant-999"},
+            params={"quarter": "2026-Q1"},
+        )
+        assert alien_resp.status_code == 200, alien_resp.text
+        assert alien_resp.json()["data"]["summary"]["ranking_universe_count"] == 0
+        assert len(alien_resp.json()["data"]["items"]) == 0
+        assert store.calls["list_authoritative_paper_runtime_monitoring_sessions"] == 0
+
+        # Original tenant-visible boundary: evaluator principal has 0 unnecessary monitoring reads,
+        # GET ranking remains 200, and denied write remains 403.
+        store.reset_counts()
+        evaluator_headers = {"Authorization": "Bearer evaluator-token:viewer:tenant-dev"}
+        eval_resp = client.get(
+            "/bff/management/quarterly-ranking",
+            headers=evaluator_headers,
+            params={"quarter": "2026-Q1"},
+        )
+        assert eval_resp.status_code == 200, eval_resp.text
+        assert eval_resp.json()["data"]["summary"]["ranking_universe_count"] == 0
+        assert len(eval_resp.json()["data"]["items"]) == 0
+        assert store.calls["list_authoritative_paper_runtime_monitoring_sessions"] == 0
+
+        denied = client.post(
+            "/bff/management/quarterly-ranking/recommendations/r1/submit",
+            headers={**evaluator_headers, "Idempotency-Key": "evaluator-denied"},
+            json={"quarter": "2026-Q1"},
+        )
+        assert denied.status_code == 403
+

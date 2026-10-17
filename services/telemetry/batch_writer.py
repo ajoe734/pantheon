@@ -25,14 +25,13 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Coroutine, Optional
 
-from .backpressure import BackpressureController, CRITICAL_EVENT_TYPES
+from .backpressure import BackpressureController
 from .buffer import DurableBuffer
 from .dead_letter import (
     DeadLetterQueue,
     TAG_RETRY_EXHAUSTED,
     TAG_WRITER_ERROR,
     TAG_POISON_EVENT,
-    TAG_BUFFER_OVERFLOW,
 )
 
 log = logging.getLogger(__name__)
@@ -181,9 +180,13 @@ class AsyncBatchWriter:
         date_part = created_at[:10] if created_at else "unknown"
         return f"{date_part}:{deployment_stage}"
 
+    def is_running(self) -> bool:
+        """Return True only if the background writer task is actively running."""
+        return bool(self._running and self._task is not None and not self._task.done())
+
     async def start(self) -> None:
         """Start the batch writer loop."""
-        if self._running:
+        if self.is_running():
             return
         self._running = True
         self._task = asyncio.create_task(self._run())
@@ -199,26 +202,52 @@ class AsyncBatchWriter:
             If True, drain remaining buffer events before stopping.
         """
         self._running = False
-        if self._task:
+        task = self._task
+        self._task = None
+        if task:
             if graceful:
-                # Let the run loop flush the batch it already fetched, then
-                # drain messages that are still pending in the buffer.
-                try:
-                    await asyncio.wait_for(self._task, timeout=2.0)
-                except asyncio.TimeoutError:
-                    self._task.cancel()
+                # If the task is already done, check its exception
+                if task.done():
+                    if not task.cancelled():
+                        try:
+                            exc = task.exception()
+                            if exc is not None and not self._last_error:
+                                self._mark_write_failure(exc)
+                        except Exception:
+                            pass
+                else:
                     try:
-                        await self._task
-                    except asyncio.CancelledError:
-                        pass
+                        await asyncio.wait_for(asyncio.shield(task), timeout=2.0)
+                    except (asyncio.TimeoutError, asyncio.CancelledError):
+                        task.cancel()
+                        try:
+                            await task
+                        except asyncio.CancelledError:
+                            pass
+                        except Exception as exc:
+                            if not self._last_error:
+                                self._mark_write_failure(exc)
+                    except Exception as exc:
+                        if not self._last_error:
+                            self._mark_write_failure(exc)
                 await self._flush_batch()
             else:
-                self._task.cancel()
-                try:
-                    await self._task
-                except asyncio.CancelledError:
-                    pass
-            self._task = None
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception as exc:
+                        if not self._last_error:
+                            self._mark_write_failure(exc)
+                elif not task.cancelled():
+                    try:
+                        exc = task.exception()
+                        if exc is not None and not self._last_error:
+                            self._mark_write_failure(exc)
+                    except Exception:
+                        pass
         log.info(
             f"AsyncBatchWriter stopped. "
             f"written={self._total_written}, failed={self._total_failed}, "
@@ -228,53 +257,46 @@ class AsyncBatchWriter:
 
     async def _run(self) -> None:
         """Main writer loop."""
-        batch: list[dict[str, Any]] = []
-        last_flush = time.monotonic()
+        try:
+            batch: list[dict[str, Any]] = []
+            last_flush = time.monotonic()
 
-        while self._running:
-            # Check backpressure
-            if self._backpressure:
-                self._backpressure.evaluate()
+            while self._running:
+                # Check backpressure
+                if self._backpressure:
+                    self._backpressure.evaluate()
 
-            # Get event from buffer (with timeout)
-            get_timeout = 0.5  # Short timeout for responsive shutdown
-            event = await self._buffer.get(timeout=get_timeout)
+                # Get event from buffer (with timeout)
+                if batch:
+                    time_until_flush = max(0.001, self._batch_interval - (time.monotonic() - last_flush))
+                    get_timeout = min(0.5, time_until_flush)
+                else:
+                    get_timeout = 0.5
+                event = await self._buffer.get(timeout=get_timeout)
 
-            if event is not None:
-                # Check if event should be delayed under backpressure
-                event_type = event.get("event_type", "")
-                if self._backpressure and self._backpressure.should_delay(event_type):
-                    # Release it through the buffer's native retry mechanism.
-                    # Durable backends retain the original broker record; they
-                    # must not publish a second copy merely to delay delivery.
-                    await asyncio.sleep(0.1)
-                    released = await self._buffer.release([event])
-                    if not released:
-                        self._dlq.reject(
-                            event=event,
-                            tags=[TAG_BUFFER_OVERFLOW],
-                            reason="Backpressure delay release failed: buffer remained full",
-                        )
-                        self._mark_write_failure(
-                            "Backpressure delay release failed: buffer remained full"
-                        )
-                        self._mark_dlq_write()
-                        self._total_dlq += 1
-                        self._total_failed += 1
-                    continue
+                if event is not None:
+                    batch.append(event)
+                elif not batch:
+                    # Yield to event loop if buffer.get returned None without waiting
+                    await asyncio.sleep(0.01)
 
-                batch.append(event)
+                # Flush conditions: batch full or interval elapsed
+                now = time.monotonic()
+                if len(batch) >= self._batch_size or (batch and (now - last_flush) >= self._batch_interval):
+                    await self._flush_partitioned_batch(batch)
+                    batch = []
+                    last_flush = now
 
-            # Flush conditions: batch full or interval elapsed
-            now = time.monotonic()
-            if len(batch) >= self._batch_size or (batch and (now - last_flush) >= self._batch_interval):
+            # Final drain
+            if batch:
                 await self._flush_partitioned_batch(batch)
-                batch = []
-                last_flush = now
-
-        # Final drain
-        if batch:
-            await self._flush_partitioned_batch(batch)
+        except Exception as exc:
+            self._running = False
+            self._mark_write_failure(exc)
+            log.exception("AsyncBatchWriter run loop crashed: %s", exc)
+            raise
+        finally:
+            self._running = False
 
     async def _flush_batch(self) -> None:
         """Flush any remaining events from the buffer."""
@@ -310,15 +332,38 @@ class AsyncBatchWriter:
                 result = await self._write_fn(batch)
 
                 if result.success:
-                    # The durable broker receipt remains pending until the
-                    # canonical write is complete. ack_sync failures retry the
-                    # idempotent Postgres write and never create data loss.
-                    await self._buffer.ack(batch)
                     self._total_written += result.count
                     self._mark_write_success()
                     if self._backpressure:
                         self._backpressure.record_write(success=True)
-                    return
+
+                    # Durable broker receipt remains pending until canonical
+                    # write succeeds. Settle the broker receipts; if the broker
+                    # ACK fails, retry with exponential backoff.
+                    ack_delay = self._base_retry_delay
+                    for ack_attempt in range(self._max_retries + 1):
+                        try:
+                            await self._buffer.ack(batch)
+                            self._last_error = None
+                            return
+                        except Exception as ack_err:
+                            self._mark_write_failure(ack_err)
+                            if ack_attempt < self._max_retries:
+                                self._total_retried += 1
+                                log.warning(
+                                    f"Broker ACK failed (attempt {ack_attempt + 1}/{self._max_retries}), "
+                                    f"partition={partition_key}, retrying in {ack_delay}s: {ack_err}"
+                                )
+                                await asyncio.sleep(ack_delay)
+                                ack_delay = min(ack_delay * 2, self._max_retry_delay)
+                            else:
+                                log.error(
+                                    f"Broker ACK exhausted after {self._max_retries} retries: {ack_err}. "
+                                    "Canonical Postgres write succeeded; preserving broker receipts."
+                                )
+                                # Canonical write succeeded; broker receipts remain in pending
+                                # for native idempotent redelivery/retry. Do not send to DLQ.
+                                return
 
                 # Write failed
                 self._mark_write_failure(result.error or "write failed")
@@ -403,19 +448,36 @@ class AsyncBatchWriter:
         durable_dlq: bool,
     ) -> None:
         """Move a failed durable receipt only after the DLQ fsync succeeds."""
-        if durable_dlq or not self._buffer.is_durable():
-            await self._buffer.ack(batch)
-            return
-        log.error(
-            "Durable telemetry DLQ persistence failed; releasing %s broker receipts",
-            len(batch),
-        )
-        await self._buffer.release(batch)
+        try:
+            if durable_dlq or not self._buffer.is_durable():
+                await self._buffer.ack(batch)
+                return
+            log.error(
+                "Durable telemetry DLQ persistence failed; releasing %s broker receipts",
+                len(batch),
+            )
+            await self._buffer.release(batch)
+        except Exception as exc:
+            self._mark_write_failure(exc)
+            log.warning(
+                "Failed to settle dead-lettered batch (durable_dlq=%s): %s",
+                durable_dlq,
+                exc,
+            )
 
     def stats(self) -> dict[str, Any]:
         """Return writer statistics."""
+        running = self.is_running()
+        last_error = self._last_error
+        if self._task is not None and self._task.done() and not self._task.cancelled():
+            try:
+                task_exc = self._task.exception()
+                if task_exc is not None and not last_error:
+                    last_error = str(task_exc)
+            except Exception:
+                pass
         return {
-            "running": self._running,
+            "running": running,
             "total_written": self._total_written,
             "total_failed": self._total_failed,
             "total_retried": self._total_retried,
@@ -433,5 +495,5 @@ class AsyncBatchWriter:
             "seconds_since_last_successful_write": self._age_seconds(self._last_successful_write_ts),
             "seconds_since_last_failed_write": self._age_seconds(self._last_failed_write_ts),
             "seconds_since_last_dlq": self._age_seconds(self._last_dlq_ts),
-            "last_error": self._last_error,
+            "last_error": last_error,
         }

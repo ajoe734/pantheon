@@ -1,0 +1,7 @@
+{
+  "task_id": "PERSONA-REFLECTION-CALLER-DEADLINE-20261016",
+  "change": "OpenClawReflectionProvider urlopen timeout 10 -> 170 (matches adapter OPENCLAW_ASSISTANT_TIMEOUT_SECONDS=170; fits evaluator 180s outer allowance)",
+  "files": ["services/persona/write_owner.py", "services/persona/test_trade_reflection_owner.py"],
+  "tests": {"command": "pytest services/persona/test_trade_reflection_owner.py -q", "result": "14 passed"},
+  "evidence_limits": "Original TimeoutError/HTTP detail was not retained; no hosted saved reflection claimed. No VM, provider, or Pattern invocation performed."
+}

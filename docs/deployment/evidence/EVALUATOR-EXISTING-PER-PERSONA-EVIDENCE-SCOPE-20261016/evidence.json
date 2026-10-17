@@ -1,0 +1,1 @@
+{"task":"EVALUATOR-EXISTING-PER-PERSONA-EVIDENCE-SCOPE-20261016","tests":"pytest services/persona-evaluator-agent: 41 passed","change":"collect_evidence skips only eligible is False + missing evidence rows; MAX_PERSONAS counts admitted rows; empty admitted set degrades","snapshot":"full snapshot returned unchanged"}

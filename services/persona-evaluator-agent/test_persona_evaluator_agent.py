@@ -452,3 +452,65 @@ def test_main_uses_rotated_token_and_records_missing_file_as_degraded(tmp_path, 
     pea.main()
     assert seen == [({"Authorization": "Bearer bff-1"}, "gov-1"), ({"Authorization": "Bearer bff-2"}, "gov-2")]
     assert pea.Store(tmp_path / "state.json").load()["last_run"]["status"] == "degraded"
+
+
+def _skipped(pid, **over):
+    return {**_item(pid), "eligible": False, "telemetry_resolution": "missing", "source_confidence": "unavailable",
+            "evidence_refs": [], **over}
+
+
+def _prompt_ids(log):
+    prompts = [d["prompt"] for u, d in log if "/structured" in u]
+    return [json.loads(p.split("PERSONAS=", 1)[1]) for p in prompts]
+
+
+def test_explicit_ineligible_missing_evidence_rows_are_skipped_and_snapshot_is_full(tmp_path):
+    items = [_skipped(f"x{i}") for i in range(72)] + [_item("p1"), _item("p2")]
+    fetch, log = _fetch(items, [_rec("p1")])
+    got, snap = pea.collect_evidence("http://bff", QUARTER, {}, fetch)
+    assert [i["persona_id"] for i in got] == ["p1", "p2"]
+    full = pea.snapshot_record([{**i, "formula_version": "snap-1"} for i in items], surface="quarterly", period=QUARTER)
+    assert snap.ranking_snapshot_id == full.ranking_snapshot_id
+    out = _run(tmp_path, fetch)
+    assert out["status"] != "degraded" and out["created"] == 1
+    assert [p["persona_id"] for p in _prompt_ids(log)[0]] == ["p1", "p2"]
+
+
+def test_ineligible_with_valid_evidence_is_still_model_input():
+    ine = {**_item("p0"), "eligible": False}
+    fetch, _ = _fetch([ine, _item("p1")], [])
+    got, _ = pea.collect_evidence("http://bff", QUARTER, {}, fetch)
+    assert [i["persona_id"] for i in got] == ["p0", "p1"]
+
+
+@pytest.mark.parametrize("eligible", [True, "false", 0, None, "absent"])
+def test_non_strict_false_eligibility_with_missing_evidence_degrades(tmp_path, eligible):
+    bad = _skipped("p0")
+    if eligible == "absent":
+        del bad["eligible"]
+    else:
+        bad["eligible"] = eligible
+    fetch, log = _fetch([bad, _item("p1")], [_rec("p1")])
+    out = _run(tmp_path, fetch)
+    assert out["status"] == "degraded" and out["created"] == 0 and _proposals(log) == []
+    assert not [u for u, _ in log if "/structured" in u]
+
+
+def test_all_excluded_is_degraded_without_provider(tmp_path):
+    fetch, log = _fetch([_skipped("a"), _skipped("b")], [_rec("a")])
+    out = _run(tmp_path, fetch)
+    assert out["status"] == "degraded" and out["created"] == 0 and _proposals(log) == []
+    assert not [u for u, _ in log if "/structured" in u]
+
+
+def test_global_unavailable_surface_still_degrades_with_skippable_rows(tmp_path):
+    fetch, log = _fetch([_skipped("a"), _item("p1")], [_rec("p1")], surfaces={"persona_health": {"status": "unavailable"}})
+    out = _run(tmp_path, fetch)
+    assert out["status"] == "degraded" and not [u for u, _ in log if "/structured" in u]
+
+
+def test_max_personas_bound_applies_to_admitted_rows_in_order():
+    items = [_skipped("x0")] + [_item(f"p{i}") for i in range(pea.MAX_PERSONAS + 5)]
+    fetch, _ = _fetch(items, [])
+    got, _ = pea.collect_evidence("http://bff", QUARTER, {}, fetch)
+    assert [i["persona_id"] for i in got] == [f"p{i}" for i in range(pea.MAX_PERSONAS)]

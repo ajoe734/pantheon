@@ -93,6 +93,38 @@ def _new_readiness_id(workshop_id: str, assessment_version: int) -> str:
     return f"ready_{_safe_id_fragment(workshop_id)}_{assessment_version}"
 
 
+def _format_snapshot_row(snapshot: Dict[str, Any], workshop_id: str, now: str) -> Dict[str, Any]:
+    return {
+        "snapshot_id": snapshot.get("snapshot_id") or _new_id(),
+        "workshop_id": workshop_id,
+        "strategy_version_id": snapshot.get("strategy_version_id"),
+        "state_map_json": snapshot.get("state_map_json"),
+        "blocking_items_json": snapshot.get("blocking_items_json"),
+        "next_question_json": snapshot.get("next_question_json"),
+        "created_at": now,
+    }
+
+
+def _format_readiness_row(assessment: Dict[str, Any], workshop_id: str, version: int, now: str) -> Dict[str, Any]:
+    row: Dict[str, Any] = {
+        "spec_version": assessment.get("spec_version", "1.0"),
+        "assessment_id": assessment.get("assessment_id") or _new_readiness_id(workshop_id, version),
+        "workshop_id": workshop_id,
+        "strategy_id": assessment["strategy_id"],
+        "workshop_version_id": assessment["workshop_version_id"],
+        "strategy_spec_registry_id": assessment["strategy_spec_registry_id"],
+        "assessment_version": version,
+        "gates": assessment.get("gates", []),
+        "highest_ready_gate": assessment.get("highest_ready_gate"),
+        "staleness_reasons": assessment.get("staleness_reasons", []),
+        "assessed_at": now,
+        "evidence_refs": assessment.get("evidence_refs", []),
+    }
+    if assessment.get("valid_until") is not None:
+        row["valid_until"] = assessment["valid_until"]
+    return row
+
+
 def _decode_json(value: Any) -> Any:
     if isinstance(value, (dict, list)):
         return value
@@ -1376,17 +1408,8 @@ class MemoryWorkshopStore:
 
     def create_completeness_snapshot(self, snapshot: Dict[str, Any]) -> Dict[str, Any]:
         with self._lock:
-            wid = snapshot["workshop_id"]
-            snap: Dict[str, Any] = {
-                "snapshot_id": snapshot.get("snapshot_id") or _new_id(),
-                "workshop_id": wid,
-                "strategy_version_id": snapshot.get("strategy_version_id"),
-                "state_map_json": snapshot.get("state_map_json"),
-                "blocking_items_json": snapshot.get("blocking_items_json"),
-                "next_question_json": snapshot.get("next_question_json"),
-                "created_at": snapshot.get("created_at", _utc_now()),
-            }
-            self._snapshots.setdefault(wid, []).append(snap)
+            snap = _format_snapshot_row(snapshot, snapshot["workshop_id"], snapshot.get("created_at") or _utc_now())
+            self._snapshots.setdefault(snapshot["workshop_id"], []).append(snap)
             return dict(snap)
 
     def get_latest_completeness_snapshot(
@@ -1396,6 +1419,47 @@ class MemoryWorkshopStore:
             snaps = self._snapshots.get(workshop_id, [])
             return dict(snaps[-1]) if snaps else None
 
+    def create_completeness_snapshot_cas(
+        self,
+        workshop_id: str,
+        expected_lock_version: int,
+        snapshot: Dict[str, Any],
+        *,
+        readiness_assessment: Optional[Dict[str, Any]] = None,
+        idempotency_scope: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[int], Optional[str]]:
+        """Atomically verify version, record idempotency key, save snapshot & readiness, and bump lock version."""
+        with self._lock:
+            session = self._sessions.get(workshop_id)
+            if session is None:
+                return (None, None, None, "not_found")
+            current_version = int(session.get("lock_version", 1))
+            if current_version != expected_lock_version:
+                return (None, None, current_version, "version_conflict")
+
+            composite = f"{idempotency_scope}:{idempotency_key}" if (idempotency_scope and idempotency_key) else None
+            if composite and composite in self._idempotency_keys:
+                return (None, None, current_version, "idempotency_conflict")
+
+            now = snapshot.get("created_at") or _utc_now()
+            snap = _format_snapshot_row(snapshot, workshop_id, now)
+
+            stored_assessment: Optional[Dict[str, Any]] = None
+            if readiness_assessment is not None:
+                bucket = self._readiness.get(workshop_id, [])
+                version = int(readiness_assessment.get("assessment_version") or (len(bucket) + 1))
+                stored_assessment = _format_readiness_row(readiness_assessment, workshop_id, version, readiness_assessment.get("assessed_at") or now)
+
+            if composite:
+                self._idempotency_keys[composite] = True
+            self._snapshots.setdefault(workshop_id, []).append(snap)
+            if stored_assessment is not None:
+                self._readiness.setdefault(workshop_id, []).append(stored_assessment)
+            session["lock_version"] = current_version + 1
+            session["updated_at"] = _utc_now()
+            return (dict(snap), dict(stored_assessment) if stored_assessment else None, session["lock_version"], None)
+
     # --- readiness assessment ---
 
     def create_readiness_assessment(self, assessment: Dict[str, Any]) -> Dict[str, Any]:
@@ -1403,23 +1467,7 @@ class MemoryWorkshopStore:
             wid = assessment["workshop_id"]
             bucket = self._readiness.setdefault(wid, [])
             version = int(assessment.get("assessment_version") or (len(bucket) + 1))
-            now = assessment.get("assessed_at", _utc_now())
-            row: Dict[str, Any] = {
-                "spec_version": assessment.get("spec_version", "1.0"),
-                "assessment_id": assessment.get("assessment_id") or _new_readiness_id(wid, version),
-                "workshop_id": wid,
-                "strategy_id": assessment["strategy_id"],
-                "workshop_version_id": assessment["workshop_version_id"],
-                "strategy_spec_registry_id": assessment["strategy_spec_registry_id"],
-                "assessment_version": version,
-                "gates": assessment.get("gates", []),
-                "highest_ready_gate": assessment.get("highest_ready_gate"),
-                "staleness_reasons": assessment.get("staleness_reasons", []),
-                "assessed_at": now,
-                "evidence_refs": assessment.get("evidence_refs", []),
-            }
-            if assessment.get("valid_until") is not None:
-                row["valid_until"] = assessment["valid_until"]
+            row = _format_readiness_row(assessment, wid, version, assessment.get("assessed_at") or _utc_now())
             bucket.append(row)
             return dict(row)
 
@@ -3235,15 +3283,7 @@ class PostgresWorkshopStore:
 
     def create_completeness_snapshot(self, snapshot: Dict[str, Any]) -> Dict[str, Any]:
         now = _utc_now()
-        row: Dict[str, Any] = {
-            "snapshot_id": snapshot.get("snapshot_id") or _new_id(),
-            "workshop_id": snapshot["workshop_id"],
-            "strategy_version_id": snapshot.get("strategy_version_id"),
-            "state_map_json": snapshot.get("state_map_json"),
-            "blocking_items_json": snapshot.get("blocking_items_json"),
-            "next_question_json": snapshot.get("next_question_json"),
-            "created_at": now,
-        }
+        row = _format_snapshot_row(snapshot, snapshot["workshop_id"], now)
         with self._connect() as conn:
             conn.execute(
                 f"""
@@ -3253,12 +3293,9 @@ class PostgresWorkshopStore:
                 VALUES (%s,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb,%s)
                 """,
                 (
-                    row["snapshot_id"], row["workshop_id"],
-                    row["strategy_version_id"],
-                    _json_dumps(row["state_map_json"]),
-                    _json_dumps(row["blocking_items_json"]),
-                    _json_dumps(row["next_question_json"]),
-                    row["created_at"],
+                    row["snapshot_id"], row["workshop_id"], row["strategy_version_id"],
+                    _json_dumps(row["state_map_json"]), _json_dumps(row["blocking_items_json"]),
+                    _json_dumps(row["next_question_json"]), row["created_at"],
                 ),
             )
         return row
@@ -3288,38 +3325,94 @@ class PostgresWorkshopStore:
         r["next_question_json"] = _decode_json(r.get("next_question_json"))
         return r
 
+    def create_completeness_snapshot_cas(
+        self,
+        workshop_id: str,
+        expected_lock_version: int,
+        snapshot: Dict[str, Any],
+        *,
+        readiness_assessment: Optional[Dict[str, Any]] = None,
+        idempotency_scope: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[int], Optional[str]]:
+        """Atomically verify version, record idempotency key, save snapshot & readiness, and bump lock version."""
+        now = snapshot.get("created_at") or _utc_now()
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"""
+                UPDATE {self._st}
+                   SET lock_version = lock_version + 1,
+                       updated_at   = now()
+                 WHERE workshop_id = %s AND lock_version = %s
+                RETURNING lock_version
+                """,
+                (workshop_id, expected_lock_version),
+            )
+            bump_row = cur.fetchone()
+            if bump_row is None:
+                cur2 = conn.execute(f"SELECT lock_version FROM {self._st} WHERE workshop_id = %s", (workshop_id,))
+                current_row = cur2.fetchone()
+                if current_row is None:
+                    return (None, None, None, "not_found")
+                return (None, None, current_row[0], "version_conflict")
+            new_version = bump_row[0]
+
+            if idempotency_scope and idempotency_key:
+                cur_idem = conn.execute(
+                    f"INSERT INTO {self._ikt} (scope, idempotency_key, recorded_at) VALUES (%s, %s, now()) ON CONFLICT DO NOTHING RETURNING 1",
+                    (idempotency_scope, idempotency_key),
+                )
+                if cur_idem.fetchone() is None:
+                    conn.rollback()
+                    return (None, None, expected_lock_version, "idempotency_conflict")
+
+            snap_row = _format_snapshot_row(snapshot, workshop_id, now)
+            conn.execute(
+                f"""
+                INSERT INTO {self._cst}
+                    (snapshot_id, workshop_id, strategy_version_id,
+                     state_map_json, blocking_items_json, next_question_json, created_at)
+                VALUES (%s,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb,%s)
+                """,
+                (
+                    snap_row["snapshot_id"], snap_row["workshop_id"], snap_row["strategy_version_id"],
+                    _json_dumps(snap_row["state_map_json"]), _json_dumps(snap_row["blocking_items_json"]),
+                    _json_dumps(snap_row["next_question_json"]), snap_row["created_at"],
+                ),
+            )
+
+            stored_assessment: Optional[Dict[str, Any]] = None
+            if readiness_assessment is not None:
+                cur_rat = conn.execute(f"SELECT COALESCE(MAX(assessment_version), 0) + 1 FROM {self._rat} WHERE workshop_id = %s", (workshop_id,))
+                next_rat_row = cur_rat.fetchone()
+                version = int(readiness_assessment.get("assessment_version") or (next_rat_row[0] if next_rat_row else 1))
+                stored_assessment = _format_readiness_row(readiness_assessment, workshop_id, version, readiness_assessment.get("assessed_at") or now)
+                conn.execute(
+                    f"""
+                    INSERT INTO {self._rat}
+                        (assessment_id, workshop_id, strategy_id, workshop_version_id,
+                         strategy_spec_registry_id, assessment_version, assessment_json,
+                         assessed_at, created_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb,%s,now())
+                    """,
+                    (
+                        stored_assessment["assessment_id"], stored_assessment["workshop_id"], stored_assessment["strategy_id"],
+                        stored_assessment["workshop_version_id"], stored_assessment["strategy_spec_registry_id"],
+                        stored_assessment["assessment_version"], _json_dumps(stored_assessment), stored_assessment["assessed_at"],
+                    ),
+                )
+
+        return (snap_row, stored_assessment, new_version, None)
+
     # --- readiness assessment ---
 
     def create_readiness_assessment(self, assessment: Dict[str, Any]) -> Dict[str, Any]:
         workshop_id = assessment["workshop_id"]
         with self._connect() as conn:
-            cur = conn.execute(
-                f"""
-                SELECT COALESCE(MAX(assessment_version), 0) + 1
-                FROM {self._rat}
-                WHERE workshop_id = %s
-                """,
-                (workshop_id,),
-            )
+            cur = conn.execute(f"SELECT COALESCE(MAX(assessment_version), 0) + 1 FROM {self._rat} WHERE workshop_id = %s", (workshop_id,))
             next_row = cur.fetchone()
             version = int(assessment.get("assessment_version") or (next_row[0] if next_row else 1))
-            now = assessment.get("assessed_at", _utc_now())
-            row: Dict[str, Any] = {
-                "spec_version": assessment.get("spec_version", "1.0"),
-                "assessment_id": assessment.get("assessment_id") or _new_readiness_id(workshop_id, version),
-                "workshop_id": workshop_id,
-                "strategy_id": assessment["strategy_id"],
-                "workshop_version_id": assessment["workshop_version_id"],
-                "strategy_spec_registry_id": assessment["strategy_spec_registry_id"],
-                "assessment_version": version,
-                "gates": assessment.get("gates", []),
-                "highest_ready_gate": assessment.get("highest_ready_gate"),
-                "staleness_reasons": assessment.get("staleness_reasons", []),
-                "assessed_at": now,
-                "evidence_refs": assessment.get("evidence_refs", []),
-            }
-            if assessment.get("valid_until") is not None:
-                row["valid_until"] = assessment["valid_until"]
+            row = _format_readiness_row(assessment, workshop_id, version, assessment.get("assessed_at") or _utc_now())
             conn.execute(
                 f"""
                 INSERT INTO {self._rat}

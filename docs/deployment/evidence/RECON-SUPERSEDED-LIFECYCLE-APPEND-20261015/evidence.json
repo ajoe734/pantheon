@@ -1,0 +1,7 @@
+{
+  "task_id": "RECON-SUPERSEDED-LIFECYCLE-APPEND-20261015",
+  "change": "Accepted lifecycle appends absent from recent_lifecycle_event_ids are confirmed via committed telemetry (fetch_accepted_event + verify_durable_event_order); missing ones stay deferred until PANTHEON_RECON_MISSING_APPEND_DEADLINE_SECONDS (default 1800) then become terminal_failed, reported in lifecycle_terminal_failures without failing the tick.",
+  "unchanged": ["recent_lifecycle_event_ids window", "ordering checks", "retired-binding skip", "incident handling"],
+  "tests": "services/reconciliation-drift/tests: 139 passed, 1 skipped (tests/test_telemetry_client_auth.py excluded: collection error in local venv); 2 new tests fail on base",
+  "hosted_verification": "pending post-deploy"
+}

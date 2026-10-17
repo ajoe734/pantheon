@@ -31,6 +31,10 @@ def test_compose_wires_reconciliation_drift_as_derived_read_model() -> None:
     assert drift["environment"]["PANTHEON_TELEMETRY_API_URL"] == "http://telemetry:8083"
     assert drift["environment"]["PANTHEON_LINEAGE_READ_URL"] == "http://lineage-read:8094"
     assert drift["environment"]["PANTHEON_RUNTIME_MANAGER_URL"] == "http://runtime-manager:8081"
+    assert (
+        drift["environment"]["PANTHEON_RUNTIME_MANAGER_TOKEN"]
+        == "runtime-control-internal"
+    )
     assert drift["environment"]["PANTHEON_INCIDENTS_API_URL"] == "http://incidents:8090"
     assert "reconciliation-drift-data:/data/reconciliation-drift" in drift["volumes"]
     assert drift["ports"] == ["${RECONCILIATION_DRIFT_PORT:-18102}:8102"]
@@ -65,11 +69,12 @@ def test_compose_wires_reconciliation_drift_as_derived_read_model() -> None:
         == "${RECONCILIATION_DRIFT_CONSUMER_MAX_TICKS:-0}"
     )
     assert "reconciliation-drift-data:/data/reconciliation-drift" in consumer["volumes"]
+    assert "worker-health-data:/data/health" in consumer["volumes"]
     assert consumer["depends_on"]["reconciliation-drift-svc"]["condition"] == "service_healthy"
     assert consumer["depends_on"]["telemetry"]["condition"] == "service_healthy"
     assert consumer["environment"]["RECONCILIATION_DRIFT_CONSUMER_HEALTH_FILE"] == (
         "${RECONCILIATION_DRIFT_CONSUMER_HEALTH_FILE:-"
-        "/tmp/reconciliation-drift-consumer-health.json}"
+        "/data/health/reconciliation-drift-consumer-health.json}"
     )
     assert consumer["environment"][
         "RECONCILIATION_DRIFT_CONSUMER_HEALTH_MAX_AGE_SECONDS"
@@ -101,9 +106,10 @@ def test_compose_wires_reconciliation_drift_as_derived_read_model() -> None:
         scheduler["environment"]["RECONCILIATION_DRIFT_SCHEDULER_MAX_ATTEMPTS"]
         == "${RECONCILIATION_DRIFT_SCHEDULER_MAX_ATTEMPTS:-3}"
     )
+    assert "worker-health-data:/data/health" in scheduler["volumes"]
     assert scheduler["environment"]["RECONCILIATION_DRIFT_SCHEDULER_HEALTH_FILE"] == (
         "${RECONCILIATION_DRIFT_SCHEDULER_HEALTH_FILE:-"
-        "/tmp/reconciliation-drift-scheduler-health.json}"
+        "/data/health/reconciliation-drift-scheduler-health.json}"
     )
     assert scheduler["environment"][
         "RECONCILIATION_DRIFT_SCHEDULER_HEALTH_MAX_AGE_SECONDS"
@@ -138,11 +144,12 @@ def test_compose_wires_reconciliation_drift_as_derived_read_model() -> None:
         == "/data/reconciliation-drift/incident-listener-state.json"
     )
     assert "reconciliation-drift-data:/data/reconciliation-drift" in listener["volumes"]
+    assert "worker-health-data:/data/health" in listener["volumes"]
     assert listener["environment"][
         "RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE"
     ] == (
         "${RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE:-"
-        "/tmp/reconciliation-drift-incident-listener-health.json}"
+        "/data/health/reconciliation-drift-incident-listener-health.json}"
     )
     assert listener["environment"][
         "RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_MAX_AGE_SECONDS"
@@ -217,3 +224,12 @@ def test_reconciliation_drift_compose_environment_builds_postgres_store_and_fail
         ):
             store_mod.build_reconciliation_drift_store(tmp_path)
 
+
+
+def test_compose_consumer_reaches_runtime_manager_for_retired_binding_filter() -> None:
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    env = compose["services"]["reconciliation-drift-consumer"]["environment"]
+    drift_env = compose["services"]["reconciliation-drift-svc"]["environment"]
+    assert env["PANTHEON_RUNTIME_MANAGER_URL"] == "http://runtime-manager:8081"
+    assert env["PANTHEON_RUNTIME_MANAGER_URL"] == drift_env["PANTHEON_RUNTIME_MANAGER_URL"]
+    assert env["PANTHEON_RUNTIME_MANAGER_TOKEN"] == "runtime-control-internal"

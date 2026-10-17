@@ -171,6 +171,7 @@ def test_deploy_and_compose_connect_authorized_environment_without_embedded_toke
     assert "DISTILLATION_REGISTRY_SERVICE_TOKEN_FILE" in compose["strategy-distillation-worker"]["environment"]
     assert "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN" in compose["alpha-replication-worker"]["environment"]
     assert "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN_FILE" in compose["alpha-replication-worker"]["environment"]
+    assert "TRAINING_SESSION_WORKER_TOKEN_FILE" in compose["alpha-replication-worker"]["environment"]
     assert "RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN" in compose["runtime-manager"]["environment"]
     assert "RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN_FILE" in compose["runtime-manager"]["environment"]
     assert "CAPITAL_ALLOWED_READER_SERVICES" in compose["capital"]["environment"]
@@ -305,4 +306,32 @@ def test_agora_projector_principal_is_exact_and_mounted_for_projector():
         compose["services"]["dev-paper-principal-issuer"]["volumes"]
     )
     assert "dev-paper-agora-projector-tokens" in compose["volumes"]
+
+
+def test_alpha_replication_worker_receives_training_principal_and_compose_mounts():
+    import yaml
+    root = Path(__file__).resolve().parents[1]
+    registry_var = "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN"
+    training_var = "TRAINING_SESSION_WORKER_TOKEN"
+    assert CONSUMER_FILES["alpha-replication-worker"] == (registry_var, training_var)
+    values = issue_environment(configured(), now=NOW)
+    claims = verify(values[training_var])
+    assert claims["sub"] == claims["service"] == "training-session-preview-worker"
+    assert claims["roles"] == ["training-service"]
+    assert claims["tenant_id"] == "tenant-dev" and claims["allowed_tenants"] == ["tenant-dev"]
+    assert claims["exp"] - claims["iat"] <= TTL_SECONDS
+    assert values[training_var + "_FILE"] == "/run/pantheon-principals/" + training_var
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text())
+    worker = compose["services"]["alpha-replication-worker"]
+    assert "dev-paper-alpha-replication-tokens:/run/pantheon-principals:ro" in worker["volumes"]
+    assert worker["environment"]["TRAINING_SESSION_WORKER_TOKEN_FILE"].endswith(
+        "/run/pantheon-principals/" + training_var + "}"
+    )
+    assert training_var not in worker["environment"]  # no published fixture token
+    assert "ALPHA_REPLICATION_TRAINING_SERVICE_TOKEN" not in worker["environment"]
+    assert "ALPHA_REPLICATION_TRAINING_SERVICE_TOKEN_FILE" not in worker["environment"]
+    issuer_volumes = compose["services"]["dev-paper-principal-issuer"]["volumes"]
+    assert "dev-paper-alpha-replication-tokens:/issued/alpha-replication-worker" in issuer_volumes
+    assert "dev-paper-alpha-replication-tokens" in compose["volumes"]
+
 

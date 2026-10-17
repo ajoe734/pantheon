@@ -321,6 +321,23 @@ jobs:
             services/trade_journey/test_lifecycle_projector_compose.py \
             tests/integration/test_product_functional_compose_contract.py
 
+      # Unconditional (no path filter): the lean runtime suite and the canonical
+      # paper lifecycle integration had no workflow, so stale-contract reds went
+      # unnoticed. The runner has no writable /data; tests isolate their own outbox.
+      - name: Run lean runtime and paper lifecycle tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q \
+            services/execution/lean_runtime \
+            services/trade_journey/test_canonical_paper_lifecycle_integration.py
+
+      # Unconditional: the reconciliation-drift suite had no workflow, so a red
+      # consumer test merged unnoticed. Whole directory, no known-failures list.
+      - name: Run reconciliation drift tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/reconciliation-drift
+
       # Run the existing real boundary cases even for a workflow-only change.
       # unittest normally treats skipped tests as success; these are required.
       - name: Verify real worker sandbox boundaries

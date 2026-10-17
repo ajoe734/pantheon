@@ -25,6 +25,8 @@ SCRIPT = ROOT / "scripts/deploy_nonprod_vm.sh"
 SHA = "a" * 40
 PRIOR = "b" * 40
 CONTROLLER_ROOT = "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/release-artifacts/controllers"
+REAL_NODE = Path(__import__("shutil").which("node") or "/usr/bin/node").resolve()
+REAL_NODE_DIR = str(REAL_NODE.parent)
 
 
 def _source() -> str:
@@ -107,8 +109,14 @@ def fixture(tmp_path: Path):
                         ' out.write(json.dumps({"command":sys.argv[0].split("/")[-1],"args":sys.argv[1:]})+"\\n")\n'
                         'raise SystemExit(97)\n')
         stub.chmod(0o755)
+    stub_node = bin_dir / "node"
+    stub_node.write_text('#!/usr/bin/env bash\n'
+                         'echo "node: command not found" >&2\n'
+                         'exit 127\n')
+    stub_node.chmod(0o755)
     env = {"PATH": f"{bin_dir}:{os.environ['PATH']}", "RECORDER": str(recorder),
-           "SYNTHETIC_CONTROLLER_ROOT": str(controller_root)}
+           "SYNTHETIC_CONTROLLER_ROOT": str(controller_root),
+           "PANTHEON_DEV_FE_NODE_BIN_DIR": REAL_NODE_DIR}
     # Explicitly synthetic environment for the actual approved-prefix function.
     for variable in re.findall(r'\$\{([A-Z][A-Z0-9_]*)', _function("with_dev_bff_runtime_env")):
         env[variable] = "fixture"
@@ -799,6 +807,7 @@ def test_fe_owner_restore_sealed_invocation(fixture, tmp_path):
         '    echo "Deployment rejected: non-delegated lease." >&2\n'
         '    exit 2\n'
         'fi\n'
+        'export NODE_VERSION="$(node -e \'const v = process.version; if (!v.startsWith("v22.")) { process.exit(1); } console.log(v);\')"\n'
         'python3 - <<\'PY\'\n'
         'import json, os, sys\n'
         'from_doc = json.loads(os.environ.get("PANTHEON_DEPLOY_SEALED_FROM_JSON", "{}"))\n'
@@ -816,6 +825,8 @@ def test_fe_owner_restore_sealed_invocation(fixture, tmp_path):
         '        "owner": os.environ.get("PANTHEON_DEPLOY_LEASE_OWNER"),\n'
         '        "epoch": os.environ.get("PANTHEON_DEPLOY_LEASE_EPOCH"),\n'
         '        "run_id": os.environ.get("PANTHEON_DEPLOY_LEASE_RUN_ID"),\n'
+        '        "event_name": os.environ.get("GITHUB_EVENT_NAME"),\n'
+        '        "node_version": os.environ.get("NODE_VERSION"),\n'
         '        "from": from_doc,\n'
         '        "to": to_doc,\n'
         '    }) + "\\n")\n'
@@ -853,10 +864,28 @@ def test_fe_owner_restore_sealed_invocation(fixture, tmp_path):
     assert events[0]["command"] == "fe_deploy"
     assert events[0]["action"] == "restore-sealed"
     assert events[0]["owner"] == "pantheon-dev-deploy"
+    assert events[0]["event_name"] == ""
+    assert events[0]["node_version"].startswith("v22.")
     assert events[0]["from"] == from_seal
     assert events[0]["to"] == to_seal
     assert events[1]["command"] == "driver"
     assert events[1]["operation"] == "restore"
+
+    env_dispatch = dict(env, GITHUB_EVENT_NAME="workflow_dispatch")
+    Path(env["RECORDER"]).write_text("")
+    res_dispatch = _run(_remote(), env_dispatch)
+    assert res_dispatch.returncode == 0, res_dispatch.stderr
+    ev_dispatch = _events(recorder)
+    assert len(ev_dispatch) == 2
+    assert ev_dispatch[0]["event_name"] == "workflow_dispatch"
+
+    env_pantheon_event = dict(env, GITHUB_EVENT_NAME="", PANTHEON_DEV_EVENT_NAME="workflow_dispatch")
+    Path(env["RECORDER"]).write_text("")
+    res_pantheon_event = _run(_remote(), env_pantheon_event)
+    assert res_pantheon_event.returncode == 0, res_pantheon_event.stderr
+    ev_pantheon_event = _events(recorder)
+    assert len(ev_pantheon_event) == 2
+    assert ev_pantheon_event[0]["event_name"] == "workflow_dispatch"
 
     fe_root = tmp_path / "live-fe"
     baseline_dir = tmp_path / "baseline-release"
@@ -874,6 +903,32 @@ def test_fe_owner_restore_sealed_invocation(fixture, tmp_path):
     events = _events(recorder)
     assert len(events) == 1
     assert events[0]["command"] == "driver"
+
+    empty_node_env = dict(env,
+                          PANTHEON_DEV_FE_NODE_BIN_DIR="",
+                          PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON=json.dumps(to_seal))
+    res_empty = _run(_remote(), empty_node_env)
+    assert res_empty.returncode != 0
+    assert "FE owner Node runtime missing or unsafe" in res_empty.stderr
+
+    bad_node_env = dict(env,
+                        PANTHEON_DEV_FE_NODE_BIN_DIR=str(tmp_path / "missing-node-bin"),
+                        PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON=json.dumps(to_seal))
+    res_bad = _run(_remote(), bad_node_env)
+    assert res_bad.returncode != 0
+    assert "FE owner Node runtime missing or unsafe" in res_bad.stderr
+
+    wrong_node_dir = tmp_path / "wrong-node" / "bin"
+    wrong_node_dir.mkdir(parents=True)
+    wrong_node = wrong_node_dir / "node"
+    wrong_node.write_text("#!/usr/bin/env bash\necho 'v20.18.0'\n")
+    wrong_node.chmod(0o755)
+    wrong_node_env = dict(env,
+                          PANTHEON_DEV_FE_NODE_BIN_DIR=str(wrong_node_dir),
+                          PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON=json.dumps(to_seal))
+    res_wrong = _run(_remote(), wrong_node_env)
+    assert res_wrong.returncode != 0
+    assert "returned invalid version 'v20.18.0' (expected v22.*)" in res_wrong.stderr
 
 
 def test_fe_owner_restore_sealed_rejects_unauthorized_owner(fixture, tmp_path):
@@ -1135,6 +1190,7 @@ owner="${PANTHEON_DEPLOY_LEASE_OWNER:-}"
 [[ "${owner}" =~ ^(pantheon-release-controller|pantheon-dev-deploy|parent-controller|pantheon-proof-watchdog|pantheon-fe-deploy)$ ]] \
   || { echo "Deployment rejected: unauthorized lease owner '${owner}'." >&2; exit 2; }
 [[ "${PANTHEON_DEPLOY_LEASE_DELEGATED:-}" == "true" ]] || { echo "Deployment rejected: non-delegated lease." >&2; exit 2; }
+export NODE_VERSION="$(node -e 'const v = process.version; if (!v.startsWith("v22.")) { process.exit(1); } console.log(v);')"
 python3 - <<'PY'
 import json, os
 to_doc = json.loads(os.environ["PANTHEON_DEPLOY_SEALED_TO_JSON"])
@@ -1143,7 +1199,9 @@ with open("@RECORDER@", "a") as out:
     out.write(json.dumps({"command": "fe_deploy", **{key: os.environ.get(name) for key, name in (
         ("action", "PANTHEON_DEPLOY_ACTION"), ("profile", "PANTHEON_DEPLOY_PROFILE"),
         ("delegated", "PANTHEON_DEPLOY_LEASE_DELEGATED"), ("owner", "PANTHEON_DEPLOY_LEASE_OWNER"),
-        ("epoch", "PANTHEON_DEPLOY_LEASE_EPOCH"), ("run_id", "PANTHEON_DEPLOY_LEASE_RUN_ID"))},
+        ("epoch", "PANTHEON_DEPLOY_LEASE_EPOCH"), ("run_id", "PANTHEON_DEPLOY_LEASE_RUN_ID"),
+        ("event_name", "GITHUB_EVENT_NAME"))},
+        "node_version": os.environ.get("NODE_VERSION"),
         "from_target": from_doc["target"], "to_target": to_doc["target"]}) + "\n")
 PY
 target="$(python3 -c 'import json,os; print(json.loads(os.environ["PANTHEON_DEPLOY_SEALED_TO_JSON"])["target"])')"
@@ -1292,6 +1350,7 @@ def _run_original_chain(case, tmp_path, monkeypatch, *, env_override=None, tampe
         "PANTHEON_DEV_FE_ROOT": str(d.FE_LINK),
         "PANTHEON_DEV_FE_RELEASES_DIR": str(d.FE_STORE),
     }
+    artifact_env["PANTHEON_DEV_FE_NODE_BIN_DIR"] = REAL_NODE_DIR
     env, args_file, stdin_file = _setup_stubbed_dev_environment(tmp_path, sha=identity["candidate_backend_sha"], extra_env=artifact_env)
     real_git = __import__("shutil").which("git")
     stub_git = tmp_path / "bin/git"
@@ -1308,9 +1367,16 @@ def _run_original_chain(case, tmp_path, monkeypatch, *, env_override=None, tampe
                         f'open({str(recorder)!r},"a").write(json.dumps({{"command":"UNEXPECTED_"+sys.argv[0].split("/")[-1],"args":sys.argv[1:]}})+"\\n")\n'
                         'sys.exit(97)\n')
         stub.chmod(0o755)
+    # Bare SSH has no Node on PATH; simulate with failing stub (reproducing Root38569825116)
+    stub_node = tmp_path / "bin/node"
+    stub_node.write_text('#!/usr/bin/env bash\n'
+                         'echo "node: command not found" >&2\n'
+                         'exit 127\n')
+    stub_node.chmod(0o755)
     _install_chain_shims(tmp_path, artifact_root=artifact_root, fe_store=d.FE_STORE, state=state, recorder=recorder)
     lease = os.environ["PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID"]
     env.update({
+        "PANTHEON_DEV_FE_NODE_BIN_DIR": REAL_NODE_DIR,
         "TARGET_ENV": "dev",
         "GCP_DEPLOY_PROJECT_ID": "pantheon-dev-20260902",
         "DEV_VM": "pantheon-dev-deploy",
@@ -1318,8 +1384,10 @@ def _run_original_chain(case, tmp_path, monkeypatch, *, env_override=None, tampe
         "RUNNER_TEMP": str(runner_temp),
         "PANTHEON_RELEASE_REPO_ROOT": str(ROOT),
         "DEV_REMOTE_DIR": str(tmp_path / "MUST_NOT_ACCESS_OWNER_CHECKOUT"),
-        "GITHUB_RUN_ID": "987654321",
-        "GITHUB_RUN_ATTEMPT": "3",
+        "PANTHEON_DEPLOY_LEASE_OWNER": "pantheon-dev-deploy",
+        "PANTHEON_DEPLOY_LEASE_EPOCH": "1",
+        "PANTHEON_DEPLOY_LEASE_RUN_ID": "987654321",
+        "PANTHEON_DEPLOY_LEASE_DELEGATED": "true",
         "PANTHEON_RELEASE_CANDIDATE_ID": candidate_id,
         "PANTHEON_FAILED_BACKEND_SHA": identity["candidate_backend_sha"],
         "PANTHEON_FAILED_FRONTEND_SHA": identity["candidate_frontend_sha"],
@@ -1379,6 +1447,8 @@ def test_full_cli_restore_final_executes_original_bff_chain(case, tmp_path, monk
     fe_event, driver_event = events
     assert (fe_event["action"], fe_event["owner"], fe_event["delegated"], fe_event["run_id"]) == (
         "restore-sealed", "pantheon-dev-deploy", "true", "987654321")
+    assert fe_event["event_name"] == ""
+    assert fe_event["node_version"].startswith("v22.")
     assert (fe_event["from_target"], fe_event["to_target"]) == (from_seal["target"], to_seal["target"])
     assert os.path.realpath(d.FE_LINK) == os.path.realpath(candidate_release)
     argv = driver_event["argv"]
@@ -1395,11 +1465,34 @@ def test_full_cli_restore_final_executes_original_bff_chain(case, tmp_path, monk
     assert not any(call[0] in ("build", "pull") or call[:2] in (["image", "pull"], ["image", "build"]) for call in docker_calls)
 
 
+def test_full_cli_restore_final_preserves_explicit_workflow_dispatch(case, tmp_path, monkeypatch):
+    chain = _run_original_chain(case, tmp_path, monkeypatch,
+                                env_override={"GITHUB_EVENT_NAME": "workflow_dispatch"})
+    result, readback_out, recorder = chain.result, chain.readback_out, chain.recorder
+    assert result.returncode == 0, f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+    events = _events(recorder)
+    assert [event["command"] for event in events] == ["fe_deploy", "driver"], events
+    fe_event = events[0]
+    assert fe_event["event_name"] == "workflow_dispatch"
+    assert (fe_event["action"], fe_event["owner"], fe_event["delegated"], fe_event["run_id"]) == (
+        "restore-sealed", "pantheon-dev-deploy", "true", "987654321")
+    assert fe_event["node_version"].startswith("v22.")
+
+
 def test_original_chain_rejects_tampered_final_fe_seal_after_driver_readback(case, tmp_path, monkeypatch):
     chain = _run_original_chain(case, tmp_path, monkeypatch, tamper_fe_seal=True)
     assert chain.result.returncode != 0
     assert not chain.readback_out.exists()
     assert "evidence rejected" in chain.result.stderr or "dev-artifact-compensation" in chain.result.stderr
+
+
+def test_original_chain_rejects_missing_or_unsafe_fe_node_runtime(case, tmp_path, monkeypatch):
+    chain = _run_original_chain(case, tmp_path, monkeypatch,
+                                env_override={"PANTHEON_DEV_FE_NODE_BIN_DIR": str(tmp_path / "missing-node-bin")})
+    assert chain.result.returncode != 0
+    assert "FE owner Node runtime missing or unsafe" in chain.result.stderr
+    assert not chain.readback_out.exists()
+    assert _events(chain.recorder) == []
 
 
 def test_original_chain_rejects_unadmitted_fe_controller_before_fe_or_driver(case, tmp_path, monkeypatch):
@@ -1441,3 +1534,46 @@ def test_fe_controller_checkout_must_match_admitted_commit_and_tracked_sources(t
     copied = tmp_path / "copied-deploy-dev-vm.sh"
     copied.write_text(FE_MOCK_SCRIPT)
     assert _fe_controller_check(copied, sha).returncode != 0
+
+
+def _fe_recorder_script(tmp_path):
+    fe_script = tmp_path / "deploy-dev-vm.sh"
+    fe_script.write_text(
+        '#!/usr/bin/env bash\n'
+        'python3 - <<\'PY\'\n'
+        'import json, os\n'
+        'with open(os.environ["RECORDER"], "a") as f:\n'
+        '    f.write(json.dumps({"command": "fe_deploy", "action": os.environ.get("PANTHEON_DEPLOY_ACTION"),\n'
+        '        "from": json.loads(os.environ["PANTHEON_DEPLOY_SEALED_FROM_JSON"]),\n'
+        '        "to": json.loads(os.environ["PANTHEON_DEPLOY_SEALED_TO_JSON"])}) + "\\n")\n'
+        'PY\n')
+    fe_script.chmod(0o755)
+    return fe_script
+
+
+def test_baseline_restore_sources_from_retained_unqualified_candidate_capture(fixture, tmp_path):
+    env, recorder, driver, library = fixture
+    folder = Path(env["PANTHEON_DEV_ARTIFACT_MANIFEST_PATH"]).parent
+    captured = {"target": "/var/www/pantheon-dev-fe-releases/candidate", "dist_sha256": "4" * 64,
+                "manifest_sha256": "3" * 64, "frontend_sha": "e" * 40, "backend_sha": SHA}
+    to_seal = {"target": "/var/www/pantheon-dev-fe-releases/baseline", "dist_sha256": "5" * 64,
+               "manifest_sha256": "6" * 64, "frontend_sha": "f" * 40, "backend_sha": PRIOR}
+    env.update({"PANTHEON_DEV_FE_DEPLOY_SCRIPT": str(_fe_recorder_script(tmp_path)),
+                "PANTHEON_DEV_ARTIFACT_SEALED_TO_JSON": json.dumps(to_seal),
+                "PANTHEON_DEPLOY_LEASE_OWNER": "pantheon-dev-deploy"})
+    path = folder / "candidate-frontend-captured.json"
+    path.write_text(json.dumps(captured)); path.chmod(0o600)
+    result = _run(_remote(), env)
+    assert result.returncode == 0, result.stderr
+    events = _events(recorder)
+    assert [e["command"] for e in events] == ["fe_deploy", "driver"]
+    assert events[0]["action"] == "restore-sealed"
+    assert events[0]["from"] == captured and events[0]["to"] == to_seal
+
+    for mutate in (lambda v: dict(v, backend_sha=PRIOR), lambda v: dict(v, extra="x"),
+                   lambda v: {k: x for k, x in v.items() if k != "dist_sha256"}):
+        Path(env["RECORDER"]).write_text("")
+        path.write_text(json.dumps(mutate(captured)))
+        rejected = _run(_remote(), env)
+        assert rejected.returncode != 0
+        assert not any(e["command"] in ("fe_deploy", "driver") for e in _events(recorder))

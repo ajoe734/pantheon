@@ -13,6 +13,8 @@ from services.persona.trade_reflection_pipeline import (
     TradeReflectionPipeline,
     due_pattern_requests,
     facts_snapshot,
+    provider_extraction_schema,
+    reflection_schema_errors,
 )
 
 
@@ -123,3 +125,65 @@ def test_pattern_review_requires_multiple_episodes_and_scheduler_threshold():
         for i in range(3)
     ] + [{"persona_id": "p2", "trade_episode_id": "open", "status": "open"}]
     assert due_pattern_requests(episodes) == [("p1", ("e0", "e1", "e2"))]
+
+
+def _generated(**changes):
+    base = Provider().reflect(facts={}, trigger="t")
+    base["expected_vs_actual"] = {"thesis": "held", "entry_quality": "late", "exit_quality": None}
+    return {**base, **changes}
+
+
+class Fixed:
+    name, model = "fixed", "fixed-v1"
+
+    def __init__(self, output):
+        self.output, self.calls = output, 0
+
+    def reflect(self, *, facts, trigger):
+        self.calls += 1
+        return self.output
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"expected_vs_actual": {"expected": "up", "actual": "down", "comparison": "missed"}},
+        {"counterfactuals": [{"scenario": "wait", "expected_effect": "better"}]},
+        {"lesson_candidates": [{"lesson": "wait", "confidence": "medium", "evidence_refs": ["e1"]}]},
+        {"lesson_candidates": [{"scope": "s", "proposed_change": "c", "confidence": "medium"}]},
+        {"lesson_candidates": [{"scope": "s", "proposed_change": "c", "confidence": 1.5}]},
+    ],
+)
+def test_real_provider_shapes_and_bad_confidence_are_rejected_not_nulled(bad):
+    pipeline = TradeReflectionPipeline(Fixed(_generated(**bad)), max_attempts=1)
+    with pytest.raises(ReflectionError):
+        pipeline.process(request())
+    assert pipeline.completed == {} and pipeline.dead_letters[0]["error_type"] == "ReflectionError"
+
+
+def test_meaningful_provider_content_survives_canonical_validation():
+    artifact = TradeReflectionPipeline(Fixed(_generated())).process(request())
+    assert reflection_schema_errors(artifact) == []
+    assert artifact["expected_vs_actual"]["entry_quality"] == "late"
+    assert artifact["counterfactuals"][0]["alternative_action"] == "wait"
+    assert artifact["lesson_candidates"][0]["confidence"] == 0.6
+
+
+def test_provider_request_schema_reuses_canonical_properties():
+    schema = provider_extraction_schema()
+    canonical = json.loads(Path(__file__).with_name("persona_trade_reflection.schema.json").read_text())["properties"]
+    assert schema["properties"]["expected_vs_actual"] == canonical["expected_vs_actual"]
+    assert schema["properties"]["counterfactuals"] == canonical["counterfactuals"]
+    lesson = schema["properties"]["lesson_candidates"]["items"]
+    assert lesson["properties"]["confidence"] == canonical["lesson_candidates"]["items"]["properties"]["confidence"]
+    assert set(lesson["properties"]) == {"scope", "proposed_change", "confidence"}
+
+
+def test_unknown_root_fields_are_rejected_not_dropped():
+    assert provider_extraction_schema()["additionalProperties"] is False
+    pipeline = TradeReflectionPipeline(Fixed(_generated(follow_ups=["review exit"])), max_attempts=1)
+    with pytest.raises(ReflectionError):
+        pipeline.process(request())
+    assert pipeline.completed == {} and pipeline.dead_letters[0]["error_type"] == "ReflectionError"
+    artifact = TradeReflectionPipeline(Fixed(_generated(followups=["review exit"]))).process(request())
+    assert artifact["followups"] == ["review exit"]

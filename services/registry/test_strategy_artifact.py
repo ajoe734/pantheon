@@ -1,19 +1,23 @@
 """EVOLOOP-003 tests for the minimal evolvable StrategyArtifact contract."""
 from __future__ import annotations
 
+import asyncio
 import copy
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 
 import pytest
 from services.governance.test_approval_authority import (advance_registry_http, advance_registry_unit, registry_unit_headers, configure_registry_unit_auth)
+import httpx
 from fastapi.testclient import TestClient
 
 from services.runtime_auth_inbound import AuthContext
 
 from .models import ArtifactState, ArtifactType, DeploymentStage
+from . import service as service_module
 from .service import _register_strategy_artifact, app, get_registry_service
-from .split_api import RegistryError
+from .split_api import RegistryError, RegistryService
 from .storage import get_store, reset_store
 from .strategy_artifact import (
     BUILTIN_STRATEGY_ARTIFACT_PATHS,
@@ -76,37 +80,45 @@ def test_builtin_v1_is_schema_valid_and_maps_to_execution_bundle():
     )
 
 
+@pytest.fixture
+def started_client():
+    """TestClient inside its lifespan, so startup registers the built-ins."""
+    with TestClient(app, headers=registry_unit_headers()) as client:
+        yield client
+
+
 def test_builtin_v1_is_registered_idempotently_after_store_reset():
-    client = TestClient(app, headers=registry_unit_headers())
-    registry_id = "artifact-tw-session-momentum-v1"
+    with TestClient(app, headers=registry_unit_headers()) as client:
+        registry_id = "artifact-tw-session-momentum-v1"
 
-    first = client.get(f"/api/registry/strategy-artifacts/{registry_id}")
-    assert first.status_code == 200, first.text
-    entry = first.json()["entry"]
-    assert entry["registry_id"] == registry_id
-    assert entry["strategy_id"] == "tw_session_momentum"
-    assert entry["artifact_state"] == "candidate"
-    assert first.json()["deployment_stage"] == "none"
+        first = client.get(f"/api/registry/strategy-artifacts/{registry_id}")
+        assert first.status_code == 200, first.text
+        entry = first.json()["entry"]
+        assert entry["registry_id"] == registry_id
+        assert entry["strategy_id"] == "tw_session_momentum"
+        assert entry["artifact_state"] == "candidate"
+        assert first.json()["deployment_stage"] == "none"
 
-    retry = client.post(
-        "/api/registry/strategy-artifacts",
-        json=_registration(),
-    )
-    assert retry.status_code == 200, retry.text
-    assert retry.json()["entry"]["checksum"] == entry["checksum"]
+        retry = client.post(
+            "/api/registry/strategy-artifacts",
+            json=_registration(),
+        )
+        assert retry.status_code == 200, retry.text
+        assert retry.json()["entry"]["checksum"] == entry["checksum"]
 
-    listed = client.get(
-        "/api/registry/strategies/tw_session_momentum/strategy-artifacts"
-    )
-    assert listed.status_code == 200, listed.text
-    assert [item["entry"]["registry_id"] for item in listed.json()] == [
-        registry_id
-    ]
+        listed = client.get(
+            "/api/registry/strategies/tw_session_momentum/strategy-artifacts"
+        )
+        assert listed.status_code == 200, listed.text
+        assert [item["entry"]["registry_id"] for item in listed.json()] == [
+            registry_id
+        ]
 
     reset_store()
-    after_reset = TestClient(app, headers=registry_unit_headers()).get(
-        f"/api/registry/strategy-artifacts/{registry_id}"
-    )
+    with TestClient(app, headers=registry_unit_headers()) as restarted:
+        after_reset = restarted.get(
+            f"/api/registry/strategy-artifacts/{registry_id}"
+        )
     assert after_reset.status_code == 200, after_reset.text
 
 
@@ -131,8 +143,8 @@ def test_v1_logic_interpreter_uses_declared_parameters():
     assert evaluate_strategy_action(artifact, [10**1000, 10**1000 + 1]) == "BUY"
 
 
-def test_mutation_api_creates_real_child_delta_and_preserves_parent():
-    client = TestClient(app, headers=registry_unit_headers())
+def test_mutation_api_creates_real_child_delta_and_preserves_parent(started_client):
+    client = started_client
     parent_id = "artifact-tw-session-momentum-v1"
     child_id = "artifact-tw-session-momentum-v2"
 
@@ -434,8 +446,8 @@ def test_strategy_artifact_facade_rejects_malformed_or_mismatched_overlay(embedd
         ("rollback_target", "artifact-prior"),
     ],
 )
-def test_idempotent_retry_rejects_changed_registration_envelope(field, value):
-    client = TestClient(app, headers=registry_unit_headers())
+def test_idempotent_retry_rejects_changed_registration_envelope(field, value, started_client):
+    client = started_client
     registry_id = "artifact-tw-session-momentum-v1"
     seeded = client.get(f"/api/registry/strategy-artifacts/{registry_id}")
     assert seeded.status_code == 200, seeded.text
@@ -496,6 +508,114 @@ def test_fastapi_startup_registers_builtin_before_health_only_request():
         health = client.get("/health")
         assert health.status_code == 200, health.text
         assert get_store().get(registry_id) is not None
+
+
+def test_startup_failure_is_visible_and_requests_do_not_bootstrap(monkeypatch):
+    calls = []
+    real = service_module.ensure_builtin_strategy_artifacts
+
+    def counting(registry_service):
+        calls.append(registry_service)
+        return real(registry_service)
+
+    monkeypatch.setattr(service_module, "ensure_builtin_strategy_artifacts", counting)
+    registry_id = "artifact-tw-session-momentum-v1"
+    with TestClient(app, headers=registry_unit_headers()) as client:
+        assert len(calls) == 1
+        assert client.get("/health").status_code == 200
+        assert client.get(f"/api/registry/strategy-artifacts/{registry_id}").status_code == 200
+        assert client.get(f"/api/registry/entries/{registry_id}").status_code == 200
+        assert len(calls) == 1
+
+    def failing(_registry_service):
+        raise RegistryError("conflicting builtin")
+
+    monkeypatch.setattr(service_module, "ensure_builtin_strategy_artifacts", failing)
+    with pytest.raises(RegistryError, match="conflicting builtin"):
+        with TestClient(app, headers=registry_unit_headers()):
+            pass
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body", "blocked_method"),
+    [
+        ("GET", "/api/registry/entries/reg-blocked-owner-call", None, "get"),
+        (
+            "POST",
+            "/api/registry/strategy-specs",
+            {
+                "strategy_id": "blocked-owner-strat",
+                "version": "1.0.0",
+                "lineage": {"source_run_ids": ["source"]},
+                "strategy_spec": {
+                    "spec_version": "1.0",
+                    "strategy_id": "blocked-owner-strat",
+                    "title": "Blocked owner probe strategy",
+                    "hypothesis": "Deterministic probe hypothesis for event loop tests.",
+                    "objective": "Prove a blocked owner call leaves the event loop free.",
+                    "market_scope": {"symbols": ["TEST"], "frequency": "1d"},
+                    "data_dependencies": [{"ref": "test-fixture", "kind": "note"}],
+                    "execution_profile": {
+                        "signal_schema_version": "1.0",
+                        "quantity_type": "SHARES",
+                    },
+                    "evaluation_plan": {"metrics": ["sharpe"]},
+                    "governance": {"approval_required": True},
+                    "provenance": {
+                        "source_kind": "manual",
+                        "created_at": "2026-01-01T00:00:00Z",
+                    },
+                },
+            },
+            "register_strategy_spec_revision",
+        ),
+    ],
+)
+def test_blocked_owner_call_does_not_block_event_loop(
+    monkeypatch, method, path, body, blocked_method
+):
+    service_module.ensure_builtin_strategy_artifacts(RegistryService(get_store()))
+    entered = threading.Event()
+    release = threading.Event()
+    real = getattr(RegistryService, blocked_method)
+
+    def blocking(self, *args, **kwargs):
+        if blocked_method == "get" and args[:1] != ("reg-blocked-owner-call",):
+            return real(self, *args, **kwargs)
+        entered.set()
+        assert release.wait(10)
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(RegistryService, blocked_method, blocking)
+    headers = registry_unit_headers()
+
+    async def scenario():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://registry") as client:
+            blocked = asyncio.ensure_future(
+                client.request(method, path, json=body, headers=headers)
+            )
+            try:
+                loop = asyncio.get_running_loop()
+                assert await asyncio.wait_for(
+                    loop.run_in_executor(None, entered.wait, 5), 8
+                )
+                health = await asyncio.wait_for(client.get("/health"), 5)
+                assert health.status_code == 200
+                peer = await asyncio.wait_for(
+                    client.get(
+                        "/api/registry/entries/artifact-tw-session-momentum-v1",
+                        headers=headers,
+                    ),
+                    5,
+                )
+                assert peer.status_code == 200, peer.text
+                assert not blocked.done()
+            finally:
+                release.set()
+            await asyncio.wait_for(blocked, 10)
+
+    asyncio.run(scenario())
 
 
 def test_strategy_artifact_advance_preserves_deployment_split():

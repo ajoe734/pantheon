@@ -1869,3 +1869,116 @@ def test_live_mounted_replay_get_and_idempotency_key_forwarding(live_training_se
     finally:
         authorization.reset(auth_token)
         selected_tenant.reset(tenant_token)
+
+
+def test_live_mounted_trainer_controls_snapshot_and_patch_pre_read(live_training_session_service):
+    """Default factory + mounted routes + real localhost owner: controls GET request-time snapshot and POST patch pre-read."""
+    base_url, training_service = live_training_session_service
+    ports = create_read_surface_ports()
+    token, _ = _dev_login(roles=["operator"], tenant_id="tenant-live")
+    session_id = "trn-controls-snapshot-test-001"
+    training_service.store.put_session(
+        {
+            "session_id": session_id,
+            "tenant_id": "tenant-live",
+            "persona_id": "persona-alpha",
+            "objective": "isolated test-only controls snapshot fixture",
+            "status": "active",
+            "started_at": "2026-10-15T10:00:00Z",
+            "ended_at": None,
+        }
+    )
+    training_service.store.put_controls(
+        session_id,
+        {
+            "session_id": session_id,
+            "tenant_id": "tenant-live",
+            "controls": [
+                {
+                    "parameter_key": "risk.max_drawdown",
+                    "current_value": 0.08,
+                    "allowed_range": {"min": 0.02, "max": 0.2},
+                }
+            ],
+        },
+    )
+
+    auth_token = authorization.set(f"Bearer {token}")
+    tenant_token = selected_tenant.set("tenant-live")
+    try:
+        app = FastAPI()
+
+        @app.exception_handler(HTTPException)
+        @app.exception_handler(StarletteHTTPException)
+        async def _http_exception_handler(request: Any, exc: Any) -> JSONResponse:
+            if isinstance(exc.detail, dict) and "error" in exc.detail:
+                return JSONResponse(status_code=exc.status_code, content=exc.detail)
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}},
+            )
+
+        frozen_snapshot = "2026-10-15T10:19:36.765000Z"
+        app.include_router(
+            create_training_router(
+                read_surface=ports,
+                extract_identity=extract_identity_stub,
+                require_read_role=require_read_role,
+                bff_error=bff_error,
+                utc_now=lambda: frozen_snapshot,
+                page_slice=_page_slice,
+                dataset_surface_status=_dataset_surface_status,
+            )
+        )
+        client = TestClient(app)
+        headers = {"Authorization": "Bearer pantheon-dev-operator:operator"}
+
+        # 1. Mounted GET controls forwards snapshot_at from router to ReadSurfacePorts facade and returns owner data.
+        got = client.get(f"/api/v1/trainer/sessions/{session_id}/controls", headers=headers)
+        assert got.status_code == 200, got.text
+        ctrls = got.json()
+        assert ctrls["session_id"] == session_id
+        assert ctrls["status"] == "active"
+        assert ctrls["allowedActions"]["canPatchControls"] is True
+        assert len(ctrls["controls"]) == 1
+        assert ctrls["controls"][0]["parameter_key"] == "risk.max_drawdown"
+        assert ctrls["controls"][0]["current_value"] == 0.08
+        assert ctrls["meta"]["snapshot_at"] == frozen_snapshot
+        assert ctrls["meta"]["staleness"]["status"] == "fresh"
+
+        # 2. Direct facade call with explicit keyword snapshot_at works and preserves timestamp.
+        explicit_snapshot = "2026-10-15T10:20:00Z"
+        direct_with_kw = ports.get_trainer_controls(session_id, snapshot_at=explicit_snapshot)
+        assert direct_with_kw is not None
+        assert direct_with_kw["session_id"] == session_id
+        assert direct_with_kw["meta"]["snapshot_at"] == explicit_snapshot
+
+        # 3. Direct facade call without kwargs continues to work (preserving original direct calls).
+        direct_no_kw = ports.get_trainer_controls(session_id)
+        assert direct_no_kw is not None
+        assert direct_no_kw["session_id"] == session_id
+        assert direct_no_kw["meta"]["snapshot_at"] is not None
+
+        # 4. Mounted POST patch pre-reads controls using the same facade snapshot_at contract and succeeds.
+        patch_payload = {
+            "patches": [
+                {"parameter_key": "risk.max_drawdown", "proposed_value": 0.1}
+            ]
+        }
+        patched = client.post(
+            f"/api/v1/trainer/sessions/{session_id}/patch",
+            json=patch_payload,
+            headers=headers,
+        )
+        assert patched.status_code == 200, patched.text
+        patch_data = patched.json()
+        assert patch_data["status"] == "accepted"
+        assert patch_data["current_controls"][0]["current_value"] == 0.1
+
+        # 5. Mounted GET on missing session truthfully returns 404.
+        missing = client.get("/api/v1/trainer/sessions/trn-nonexistent/controls", headers=headers)
+        assert missing.status_code == 404
+        assert missing.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
+    finally:
+        authorization.reset(auth_token)
+        selected_tenant.reset(tenant_token)

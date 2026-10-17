@@ -1,0 +1,65 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "RECON-RUNTIME-MANAGER-TOKEN-WIRING-20261015",
+  "title": "Reconciliation service gets the runtime-manager read credential",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "base_sha": "9d488d304",
+  "change_class": "corrective",
+  "summary": "docker-compose.yml wires PANTHEON_RUNTIME_MANAGER_TOKEN: runtime-control-internal to reconciliation-drift-svc, matching the incident service credential so scheduled reconciliation can query runtime-manager without 401/403 authorization failures on hosted environments.",
+  "acceptance_verification": [
+    {
+      "ac": "AC1",
+      "description": "docker-compose.yml gives reconciliation-drift-svc exactly one new environment entry PANTHEON_RUNTIME_MANAGER_TOKEN with the same value the incident service uses and changes nothing else",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC2",
+      "description": "The reconciliation-drift compose activation test asserts that entry; the same assertion fails on the base",
+      "verdict": "pass: test_compose_wires_reconciliation_drift_as_derived_read_model fails on base with KeyError: 'PANTHEON_RUNTIME_MANAGER_TOKEN' and passes with the entry added"
+    },
+    {
+      "ac": "AC3",
+      "description": "The commit subject is at most 72 characters with LLM-Agent and Task-ID and Reviewer trailers; the branch is pushed and a PR to dev is open before handoff",
+      "verdict": "pass"
+    }
+  ],
+  "verification": [
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py",
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest services/reconciliation-drift/tests/",
+      "passed": 145,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 1,
+      "exit_code": 0
+    }
+  ],
+  "declared_artifacts": [
+    "docker-compose.yml",
+    "services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py",
+    "docs/deployment/evidence/RECON-RUNTIME-MANAGER-TOKEN-WIRING-20261015/evidence.json"
+  ],
+  "diff_budget": {
+    "net_production_lines": 1,
+    "verdict": "pass",
+    "files": {
+      "production": [
+        "docker-compose.yml"
+      ],
+      "tests": [
+        "services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py"
+      ],
+      "evidence": [
+        "docs/deployment/evidence/RECON-RUNTIME-MANAGER-TOKEN-WIRING-20261015/evidence.json"
+      ]
+    }
+  }
+}

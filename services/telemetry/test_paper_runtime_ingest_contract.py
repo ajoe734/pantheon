@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+import threading
 import types
 import unittest
 import uuid
@@ -11,6 +13,8 @@ from typing import Any
 
 from services.execution.lean_runtime.paper_runtime import RuntimeTelemetryEmitter
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
+from services.telemetry.batch_writer import WriteResult
+from services.telemetry.dead_letter import TAG_BINDING_MISMATCH, TAG_SCHEMA_VIOLATION
 from services.telemetry.ingest_svc import TelemetryIngestService
 from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
 from services.telemetry.trade_episode_projection import TradeEpisodeProjectionStore
@@ -38,6 +42,33 @@ def _known_binding() -> types.SimpleNamespace:
 
 class _StubBindingStore:
     def get_binding(self, binding_id: str):
+        if binding_id == KNOWN_BINDING_ID:
+            return _known_binding()
+        return None
+
+
+class _ControlledBindingStore:
+    def __init__(self):
+        self.lookup_started = threading.Event()
+        self.can_complete_lookup = threading.Event()
+        self.can_complete_lookup.set()
+        self.lookup_thread_id: int | None = None
+        self.call_count = 0
+
+    def block_lookups(self):
+        self.can_complete_lookup.clear()
+        self.lookup_started.clear()
+
+    def release_lookups(self):
+        self.can_complete_lookup.set()
+
+    def get_binding(self, binding_id: str):
+        self.call_count += 1
+        self.lookup_thread_id = threading.get_ident()
+        self.lookup_started.set()
+        released = self.can_complete_lookup.wait(timeout=5.0)
+        if not released:
+            raise TimeoutError("Controlled binding lookup timed out")
         if binding_id == KNOWN_BINDING_ID:
             return _known_binding()
         return None
@@ -404,6 +435,568 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
         self.assertEqual(final_proj["status"], "open")
         self.assertIsNone(final_proj["closed_at"])
         self.assertEqual(final_proj["position_snapshot_refs"], [snap_id])
+
+    def test_canonical_batch_read_cross_run_and_ineligible_guards(self):
+        async def scenario():
+            summary_store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+            binding = _known_binding()
+            tid = "tenant-paper-recon"
+
+            snap_runA = _paper_event(
+                event_type="position_snapshot",
+                event_id="evt-snap-runA",
+                created_at="2026-05-01T00:01:00Z",
+                metrics={"position_qty": 100.0, "price": 500.0, "cash": 50000.0},
+                metadata={
+                    "run_id": "run-A",
+                    "signal_id": "sig-A",
+                    "persona_id": "persona-paper-contract",
+                    "sequence_no": 7,
+                },
+            )
+            snap_runA.update({
+                "tenant_id": tid,
+                "trace_id": str(uuid.uuid4()),
+                "run_id": "run-A",
+                "signal_id": "sig-A",
+                "sequence_no": 7,
+                "authority_refs": {"persona_id": "persona-paper-contract"},
+            })
+
+            order_runB = _paper_event(
+                event_type="order_submitted",
+                event_id="evt-order-runB",
+                created_at="2026-05-01T00:02:00Z",
+                metrics={"order_qty": 50.0},
+                metadata={
+                    "run_id": "run-B",
+                    "signal_id": "sig-B",
+                    "persona_id": "persona-paper-contract",
+                    "sequence_no": 4,
+                },
+            )
+            order_runB.update({
+                "tenant_id": tid,
+                "trace_id": str(uuid.uuid4()),
+                "run_id": "run-B",
+                "signal_id": "sig-B",
+                "sequence_no": 4,
+                "authority_refs": {"persona_id": "persona-paper-contract"},
+            })
+
+            db_store = {
+                "evt-snap-runA": dict(snap_runA, ingested_seq=101),
+                "evt-order-runB": dict(order_runB, ingested_seq=102),
+            }
+
+            fake_reader_calls = []
+
+            def fake_event_reader(ids, tenant_id=None, event_types=None):
+                fake_reader_calls.append({"ids": list(ids), "tenant_id": tenant_id, "event_types": event_types})
+                if event_types is not None:
+                    return {k: v for k, v in db_store.items() if k in ids and v.get("event_type") in event_types}
+                return {k: v for k, v in db_store.items() if k in ids}
+
+            svc = TelemetryIngestService(
+                schema_path=SCHEMA_PATH,
+                binding_store=_StubBindingStore(),
+                runtime_summary_store=summary_store,
+                event_reader=fake_event_reader,
+                batch_size=10,
+                batch_interval=0.01,
+            )
+            await svc.start()
+            try:
+                await svc.ingest(snap_runA)
+                await svc.ingest(order_runB)
+                await asyncio.sleep(0.05)
+
+                raw_summary = summary_store.get(binding.runtime_id, tenant_id=tid)
+                self.assertEqual(raw_summary["last_lifecycle_identity"]["run_id"], "run-B")
+                self.assertEqual(raw_summary["last_lifecycle_identity"]["event_type"], "order_submitted")
+
+                summaries = svc.list_runtime_summaries(tenant_id=tid)
+                self.assertEqual(len(summaries), 1)
+                selected = summaries[0].get("committed_position_snapshot")
+                self.assertIsNotNone(selected)
+                self.assertEqual(selected["event_id"], "evt-snap-runA")
+                self.assertEqual(selected["run_id"], "run-A")
+                self.assertEqual(selected["metrics"]["position_qty"], 100.0)
+                self.assertEqual(selected["metrics"]["price"], 500.0)
+                self.assertEqual(selected["metrics"]["cash"], 50000.0)
+
+                # Observed cardinality: reader was called with reconciliation event_types,
+                # and unrelated lifecycle payload evt-order-runB was not hydrated
+                self.assertEqual(len(fake_reader_calls), 1)
+                self.assertEqual(
+                    fake_reader_calls[0]["event_types"],
+                    ("position_snapshot", "reconciliation_completed", "reconciliation_failed"),
+                )
+                self.assertIn("evt-snap-runA", fake_reader_calls[0]["ids"])
+                self.assertIn("evt-order-runB", fake_reader_calls[0]["ids"])
+                hydrated = fake_event_reader(
+                    fake_reader_calls[0]["ids"],
+                    tenant_id=tid,
+                    event_types=fake_reader_calls[0]["event_types"],
+                )
+                self.assertIn("evt-snap-runA", hydrated)
+                self.assertNotIn("evt-order-runB", hydrated)
+
+                # Already-enriched summaries are skipped before collecting IDs and not queried
+                already_enriched_summary = copy.deepcopy(summaries[0])
+                reader_call_count = len(fake_reader_calls)
+                svc._enrich_with_committed_position_snapshots([already_enriched_summary], tenant_id=tid)
+                self.assertEqual(len(fake_reader_calls), reader_call_count)
+
+                # When one summary is enriched and a second is not, only the un-enriched summary's IDs are queried
+                not_yet_enriched = {
+                    "tenant_id": tid,
+                    "binding_id": "binding-second",
+                    "runtime_id": "rt-second",
+                    "recent_lifecycle_event_ids": ["evt-second-target"],
+                }
+                queried_mixed = []
+                def mixed_reader(ids, tenant_id=None, **kw):
+                    queried_mixed.extend(ids)
+                    return {}
+                svc._event_reader = mixed_reader
+                svc._enrich_with_committed_position_snapshots([already_enriched_summary, not_yet_enriched], tenant_id=tid)
+                self.assertEqual(queried_mixed, ["evt-second-target"])
+
+                # Reader TypeError propagates directly without swallowing or tenant-less fallback
+                err_reader_calls = []
+                def raising_reader(ids, tenant_id=None, event_types=None):
+                    err_reader_calls.append({"ids": list(ids), "tenant_id": tenant_id, "event_types": event_types})
+                    raise TypeError("simulated reader internal TypeError")
+                svc._event_reader = raising_reader
+                with self.assertRaises(TypeError):
+                    svc.list_runtime_summaries(tenant_id=tid)
+                self.assertEqual(len(err_reader_calls), 1)
+                self.assertEqual(err_reader_calls[0]["tenant_id"], tid)
+                self.assertEqual(
+                    err_reader_calls[0]["event_types"],
+                    ("position_snapshot", "reconciliation_completed", "reconciliation_failed"),
+                )
+
+                # AC3: Uncommitted / absence in event reader fails closed
+                svc._event_reader = lambda ids, tenant_id=None, **kw: {}
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # AC1: Cross-tenant guard
+                svc._event_reader = lambda ids, tenant_id=None, **kw: {
+                    "evt-snap-runA": dict(snap_runA, tenant_id="other-tenant", ingested_seq=101)
+                }
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # AC1: Cross-binding guard
+                svc._event_reader = lambda ids, tenant_id=None, **kw: {
+                    "evt-snap-runA": dict(snap_runA, binding_id="other-binding", ingested_seq=101)
+                }
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # AC1: Cross-runtime guard
+                svc._event_reader = lambda ids, tenant_id=None, **kw: {
+                    "evt-snap-runA": dict(snap_runA, runtime_id="other-runtime", ingested_seq=101)
+                }
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # AC1: Cross-artifact guard
+                svc._event_reader = lambda ids, tenant_id=None, **kw: {
+                    "evt-snap-runA": dict(snap_runA, artifact_id="other-artifact", ingested_seq=101)
+                }
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # AC1 / AC3: Missing numeric metrics guard
+                svc._event_reader = lambda ids, tenant_id=None, **kw: {
+                    "evt-snap-runA": dict(snap_runA, metrics={}, ingested_seq=101)
+                }
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # Real positive DB sequence guard: bool is not sequence (True != valid seq)
+                svc._event_reader = lambda ids, tenant_id=None, **kw: {
+                    "evt-snap-runA": dict(snap_runA, ingested_seq=True)
+                }
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # Finite numeric metrics guard (reject inf/nan)
+                svc._event_reader = lambda ids, tenant_id=None, **kw: {
+                    "evt-snap-runA": dict(snap_runA, metrics={"position_qty": float("inf"), "price": 500.0, "cash": 50000.0}, ingested_seq=101)
+                }
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # 512 bound check: event reader receives at most 512 event ids per ring, and multiple summaries do not starve each other
+                queried_counts = []
+                def count_reader(ids, tenant_id=None, **kw):
+                    queried_counts.append(len(ids))
+                    return {}
+                svc._event_reader = count_reader
+                summary_key = list(summary_store._summaries.keys())[0]
+                summary_store._summaries[summary_key]["recent_lifecycle_event_ids"] = [f"evt-{i}" for i in range(1000)]
+                svc.list_runtime_summaries(tenant_id=tid)
+                self.assertEqual(queried_counts[-1], 512)
+
+                # Two summaries with 512 and 1 event IDs: neither is starved
+                two_summaries = [
+                    {"recent_lifecycle_event_ids": [f"first-{i}" for i in range(512)]},
+                    {"recent_lifecycle_event_ids": ["second-target-id"]},
+                ]
+                queried_ids = []
+                svc._event_reader = lambda ids, tenant_id=None, **kw: queried_ids.extend(ids) or {}
+                svc._enrich_with_committed_position_snapshots(two_summaries, tenant_id=tid)
+                self.assertIn("second-target-id", queried_ids)
+                self.assertEqual(len(queried_ids), 513)
+
+                # Second bindings / older eligible positions are not lost by a global/recent100 shortcut
+                older_snap = dict(snap_runA, event_id="evt-older-snap", sequence_no=2)
+                second_snap = dict(snap_runA, event_id="evt-second-snap", binding_id="binding-2", runtime_id="rt-2", sequence_no=5)
+                db_store["evt-older-snap"] = dict(older_snap, ingested_seq=90)
+                db_store["evt-second-snap"] = dict(second_snap, ingested_seq=95)
+                ring_with_older_snap = ["evt-older-snap"] + [f"newer-lifecycle-{i}" for i in range(129)]
+                summary_ring_deep = {
+                    "tenant_id": tid,
+                    "binding_id": binding.binding_id,
+                    "runtime_id": binding.runtime_id,
+                    "artifact_id": binding.artifact_id,
+                    "artifact_version": binding.artifact_version,
+                    "plan_id": binding.plan_id,
+                    "capital_pool_id": binding.capital_pool_id,
+                    "persona_capital_binding_id": "pcb-paper-contract",
+                    "persona_id": "persona-paper-contract",
+                    "recent_lifecycle_event_ids": ring_with_older_snap,
+                }
+                summary_second_binding = {
+                    "tenant_id": tid,
+                    "binding_id": "binding-2",
+                    "runtime_id": "rt-2",
+                    "artifact_id": binding.artifact_id,
+                    "artifact_version": binding.artifact_version,
+                    "plan_id": binding.plan_id,
+                    "capital_pool_id": binding.capital_pool_id,
+                    "persona_capital_binding_id": "pcb-paper-contract",
+                    "persona_id": "persona-paper-contract",
+                    "recent_lifecycle_event_ids": ["evt-second-snap"],
+                }
+                svc._event_reader = fake_event_reader
+                multi_enriched = svc._enrich_with_committed_position_snapshots(
+                    [summary_ring_deep, summary_second_binding], tenant_id=tid
+                )
+                self.assertIn("committed_position_snapshot", multi_enriched[0])
+                self.assertEqual(multi_enriched[0]["committed_position_snapshot"]["event_id"], "evt-older-snap")
+                self.assertIn("committed_position_snapshot", multi_enriched[1])
+                self.assertEqual(multi_enriched[1]["committed_position_snapshot"]["event_id"], "evt-second-snap")
+
+                summary_store._summaries[summary_key]["recent_lifecycle_event_ids"] = ["evt-snap-runA", "evt-order-runB"]
+
+                # Missing cash fail-closed: candidate with only position_qty and price (no cash) is rejected
+                partial_snap = copy.deepcopy(snap_runA)
+                partial_snap["metrics"].pop("cash", None)
+                partial_snap["ingested_seq"] = 101
+                svc._event_reader = lambda ids, tenant_id=None, **kw: {"evt-snap-runA": partial_snap}
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # Tenant conflict guard: conflicting tenant in metadata vs event root is rejected
+                conflict_snap = copy.deepcopy(snap_runA)
+                conflict_snap["tenant_id"] = tid
+                conflict_snap.setdefault("metadata", {})["tenant_id"] = "other-conflicting-tenant"
+                conflict_snap["ingested_seq"] = 101
+                svc._event_reader = lambda ids, tenant_id=None, **kw: {"evt-snap-runA": conflict_snap}
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # Missing plan guard: candidate without plan_id or deployment_plan_id is rejected (no synthesis)
+                no_plan_snap = copy.deepcopy(snap_runA)
+                no_plan_snap.pop("plan_id", None)
+                no_plan_snap.pop("deployment_plan_id", None)
+                no_plan_snap["ingested_seq"] = 101
+                svc._event_reader = lambda ids, tenant_id=None, **kw: {"evt-snap-runA": no_plan_snap}
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # get_runtime_summary returns raw stored summary without triggering event_reader
+                reader_called = []
+                svc._event_reader = lambda ids, tenant_id=None, **kw: reader_called.append(True) or {}
+                raw_got = svc.get_runtime_summary(binding.runtime_id, tenant_id=tid)
+                self.assertIsNotNone(raw_got)
+                self.assertNotIn("committed_position_snapshot", raw_got)
+                self.assertEqual(len(reader_called), 0)
+
+                # AC2: Already-reconciled position snapshot exclusion
+                term_event = _paper_event(
+                    event_type="reconciliation_completed",
+                    event_id="evt-term-runA",
+                    created_at="2026-05-01T00:03:00Z",
+                    metadata={
+                        "run_id": "run-A",
+                        "signal_id": "sig-A",
+                        "persona_id": "persona-paper-contract",
+                        "sequence_no": 8,
+                    },
+                )
+                term_event.update({
+                    "tenant_id": tid,
+                    "trace_id": str(uuid.uuid4()),
+                    "causal_parent_id": "evt-snap-runA",
+                    "run_id": "run-A",
+                    "sequence_no": 8,
+                    "ingested_seq": 103,
+                })
+                # If terminal event belongs to another tenant, it does not exclude candidate
+                other_term = dict(term_event, tenant_id="other-tenant")
+                db_store_term = dict(db_store, **{"evt-term-runA": other_term})
+                svc._event_reader = lambda ids, tenant_id=None, **kw: {k: v for k, v in db_store_term.items() if k in ids}
+                summary_store.project_event(other_term)
+                self.assertIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+
+                # When terminal matches current tenant/binding/plan, it excludes candidate
+                db_store["evt-term-runA"] = term_event
+                summary_store.project_event(term_event)
+                svc._event_reader = fake_event_reader
+                self.assertNotIn("committed_position_snapshot", svc.list_runtime_summaries(tenant_id=tid)[0])
+            finally:
+                await svc.stop(graceful=False)
+
+        asyncio.run(scenario())
+
+    def test_authoritative_binding_lookup_offloads_from_asyncio_writer_loop(self):
+        async def scenario():
+            loop = asyncio.get_running_loop()
+            main_thread_id = threading.get_ident()
+            store = _ControlledBindingStore()
+            written_batches: list[list[dict[str, Any]]] = []
+            write_in_flight = asyncio.Event()
+            can_finish_write = asyncio.Event()
+            can_finish_write.set()
+
+            async def controlled_write_fn(batch: list[dict[str, Any]]) -> WriteResult:
+                written_batches.append(batch)
+                write_in_flight.set()
+                await can_finish_write.wait()
+                return WriteResult.ok(len(batch))
+
+            svc = TelemetryIngestService(
+                schema_path=SCHEMA_PATH,
+                binding_store=store,
+                write_fn=controlled_write_fn,
+                batch_size=1,
+                batch_interval=0.01,
+            )
+            await svc.start()
+
+            try:
+                # 1. Normal validation path with concurrent write progress:
+                event_a = _paper_event(event_id="evt-paper-A")
+                can_finish_write.clear()
+                write_in_flight.clear()
+
+                accepted_a = await svc.ingest(event_a)
+                self.assertTrue(accepted_a)
+                # Wait until background writer picks up Event A and enters write_fn
+                await write_in_flight.wait()
+
+                # Writer is now paused in write_fn awaiting can_finish_write.
+                # Prepare Event B with blocking lookup
+                event_b = _paper_event(event_id="evt-paper-B")
+                store.block_lookups()
+                loop_callback_ran = False
+
+                def loop_callback():
+                    nonlocal loop_callback_ran
+                    loop_callback_ran = True
+
+                # Start Event B ingestion concurrently
+                ingest_b_task = asyncio.create_task(svc.ingest(event_b))
+
+                # Wait for Event B to enter get_binding on a worker thread
+                await asyncio.to_thread(store.lookup_started.wait, 5.0)
+                self.assertTrue(store.lookup_started.is_set())
+                self.assertIsNotNone(store.lookup_thread_id)
+                self.assertNotEqual(store.lookup_thread_id, main_thread_id)
+
+                # Event B is currently blocked in get_binding.
+                # Verify Event B has NOT entered buffer yet (authority awaited before buffer)
+                self.assertFalse(ingest_b_task.done())
+                self.assertEqual(svc._buffer.size(), 0)
+
+                # Show pending write (Event A) and loop callback can progress while B is in lookup
+                loop.call_soon(loop_callback)
+                can_finish_write.set()
+
+                # Allow loop to process writer completion and loop callback
+                await asyncio.sleep(0.02)
+                self.assertTrue(loop_callback_ran)
+                self.assertEqual(len(written_batches), 1)
+                self.assertEqual(written_batches[0][0]["event_id"], "evt-paper-A")
+
+                # Event B must STILL be awaiting authority lookup and NOT in buffer
+                self.assertFalse(ingest_b_task.done())
+                self.assertEqual(svc._buffer.size(), 0)
+
+                # Release Event B lookup and confirm admission
+                store.release_lookups()
+                accepted_b = await ingest_b_task
+                self.assertTrue(accepted_b)
+
+                # Let writer flush Event B
+                await asyncio.sleep(0.05)
+                self.assertEqual(len(written_batches), 2)
+                self.assertEqual(written_batches[1][0]["event_id"], "evt-paper-B")
+
+                # 2. Duplicate validation path:
+                # Event B is now seen. Ingest duplicate with blocking lookup.
+                store.block_lookups()
+                dup_loop_callback_ran = False
+
+                def dup_loop_callback():
+                    nonlocal dup_loop_callback_ran
+                    dup_loop_callback_ran = True
+
+                ingest_dup_task = asyncio.create_task(svc.ingest(dict(event_b)))
+                await asyncio.to_thread(store.lookup_started.wait, 5.0)
+                self.assertTrue(store.lookup_started.is_set())
+                self.assertFalse(ingest_dup_task.done())
+
+                # Show loop callback progresses while duplicate is waiting for lookup
+                loop.call_soon(dup_loop_callback)
+                await asyncio.sleep(0.02)
+                self.assertTrue(dup_loop_callback_ran)
+                self.assertFalse(ingest_dup_task.done())
+
+                # Release duplicate lookup
+                store.release_lookups()
+                accepted_dup = await ingest_dup_task
+                self.assertTrue(accepted_dup)
+                self.assertEqual(svc.stats()["service"]["total_duplicates"], 1)
+
+                # 3. Retain original rejection/identity/idempotency negatives:
+                # 3.a Unknown binding rejection
+                bad_binding_event = _paper_event(
+                    event_id="evt-bad-binding",
+                    binding_id="unknown-binding-uuid",
+                )
+                rejected_binding = await svc.ingest(bad_binding_event)
+                self.assertFalse(rejected_binding)
+
+                # 3.b Runtime identity mismatch rejection
+                mismatch_event = _paper_event(
+                    event_id="evt-mismatch",
+                    binding_id=KNOWN_BINDING_ID,
+                )
+                mismatch_event["runtime_id"] = "rt-wrong-mismatch"
+                rejected_mismatch = await svc.ingest(mismatch_event)
+                self.assertFalse(rejected_mismatch)
+
+                # 3.c Duplicate content mismatch rejection
+                content_mismatch_event = dict(event_b)
+                content_mismatch_event["metrics"] = {"heartbeat": 9999}
+                rejected_dup_mismatch = await svc.ingest(content_mismatch_event)
+                self.assertFalse(rejected_dup_mismatch)
+
+                # 3.d Concurrent same-ID ingestion ordering and conflicting-content rejection:
+                store.block_lookups()
+                concurrent_evt_1 = _paper_event(
+                    event_id="evt-concurrent-same-id",
+                    binding_id=KNOWN_BINDING_ID,
+                    metrics={"heartbeat": 10},
+                )
+                concurrent_evt_2 = _paper_event(
+                    event_id="evt-concurrent-same-id",
+                    binding_id=KNOWN_BINDING_ID,
+                    metrics={"heartbeat": 20},
+                )
+                task_1 = asyncio.create_task(svc.ingest(concurrent_evt_1))
+                task_2 = asyncio.create_task(svc.ingest(concurrent_evt_2))
+                await asyncio.to_thread(store.lookup_started.wait, 5.0)
+                self.assertTrue(store.lookup_started.is_set())
+                store.release_lookups()
+                outcomes = await asyncio.gather(task_1, task_2)
+                self.assertEqual(outcomes, [True, False])
+                self.assertEqual(svc._seen_event_ids["evt-concurrent-same-id"]["metrics"], {"heartbeat": 10})
+                self.assertNotIn("evt-concurrent-same-id", svc._event_locks)
+
+                # 3.e Concurrent same-ID ingestion with identical content:
+                store.block_lookups()
+                concurrent_dup_1 = _paper_event(
+                    event_id="evt-concurrent-identical",
+                    binding_id=KNOWN_BINDING_ID,
+                    metrics={"heartbeat": 100},
+                )
+                concurrent_dup_2 = _paper_event(
+                    event_id="evt-concurrent-identical",
+                    binding_id=KNOWN_BINDING_ID,
+                    metrics={"heartbeat": 100},
+                )
+                task_dup_1 = asyncio.create_task(svc.ingest(concurrent_dup_1))
+                task_dup_2 = asyncio.create_task(svc.ingest(concurrent_dup_2))
+                await asyncio.to_thread(store.lookup_started.wait, 5.0)
+                self.assertTrue(store.lookup_started.is_set())
+                store.release_lookups()
+                dup_outcomes = await asyncio.gather(task_dup_1, task_dup_2)
+                self.assertEqual(dup_outcomes, [True, True])
+                self.assertEqual(svc._seen_event_ids["evt-concurrent-identical"]["metrics"], {"heartbeat": 100})
+                self.assertNotIn("evt-concurrent-identical", svc._event_locks)
+
+                # 3.f Cancelled same-ID waiter cleanup without leaking lock entry or unacquired release:
+                store.block_lookups()
+                cancel_evt_a = _paper_event(
+                    event_id="evt-concurrent-cancelled-waiter",
+                    binding_id=KNOWN_BINDING_ID,
+                    metrics={"heartbeat": 50},
+                )
+                cancel_evt_b = _paper_event(
+                    event_id="evt-concurrent-cancelled-waiter",
+                    binding_id=KNOWN_BINDING_ID,
+                    metrics={"heartbeat": 60},
+                )
+                task_cancel_a = asyncio.create_task(svc.ingest(cancel_evt_a))
+                task_cancel_b = asyncio.create_task(svc.ingest(cancel_evt_b))
+                # Wait until Task A enters lookup on worker thread (holding lock, refcount >= 1)
+                await asyncio.to_thread(store.lookup_started.wait, 5.0)
+                self.assertTrue(store.lookup_started.is_set())
+                # Allow loop to process Task B up to lock.acquire() wait
+                await asyncio.sleep(0.01)
+                self.assertFalse(task_cancel_b.done())
+                # Cancel only Task B while waiting
+                task_cancel_b.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task_cancel_b
+                # Release lookups and let Task A complete
+                store.release_lookups()
+                accepted_cancel_a = await task_cancel_a
+                self.assertTrue(accepted_cancel_a)
+                self.assertEqual(
+                    svc._seen_event_ids["evt-concurrent-cancelled-waiter"]["metrics"],
+                    {"heartbeat": 50},
+                )
+                # Verify lock entry is fully cleaned up (no leak of unlocked refcount)
+                self.assertNotIn("evt-concurrent-cancelled-waiter", svc._event_locks)
+
+                # Subsequent identical duplicate succeeds and cleans up lock
+                accepted_dup_after_cancel = await svc.ingest(dict(cancel_evt_a))
+                self.assertTrue(accepted_dup_after_cancel)
+                self.assertNotIn("evt-concurrent-cancelled-waiter", svc._event_locks)
+
+                # Subsequent conflicting duplicate rejects to DLQ and cleans up lock
+                rejected_conflict_after_cancel = await svc.ingest(dict(cancel_evt_b))
+                self.assertFalse(rejected_conflict_after_cancel)
+                self.assertNotIn("evt-concurrent-cancelled-waiter", svc._event_locks)
+
+                dlq = svc.get_dlq_entries()
+                reasons = [e["reason"].lower() for e in dlq]
+                tags = [e["tags"] for e in dlq]
+
+                self.assertTrue(any(TAG_BINDING_MISMATCH in t for t in tags))
+                self.assertTrue(any("not found in runtimebinding store" in r for r in reasons))
+                self.assertTrue(any("runtimebinding identity mismatch" in r for r in reasons))
+                self.assertTrue(any("content mismatch for duplicate event_id" in r for r in reasons))
+                self.assertTrue(any("content mismatch for duplicate event_id=evt-concurrent-same-id" in r for r in reasons))
+                self.assertTrue(any("content mismatch for duplicate event_id=evt-concurrent-cancelled-waiter" in r for r in reasons))
+
+            finally:
+                store.release_lookups()
+                can_finish_write.set()
+                await svc.stop(graceful=True)
+                self.assertEqual(len(svc._event_locks), 0)
+
+        asyncio.run(scenario())
+
 
 
 if __name__ == "__main__":

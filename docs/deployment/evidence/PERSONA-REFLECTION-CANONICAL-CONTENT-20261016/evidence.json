@@ -1,0 +1,16 @@
+{
+  "task_id": "PERSONA-REFLECTION-CANONICAL-CONTENT-20261016",
+  "scope": "source-only; no deploy, VM, live provider, product POST or GHA dispatch",
+  "tests": {
+    "command": "pytest services/persona/test_trade_reflection_owner.py services/persona/test_trade_reflection_pipeline.py services/persona/test_trade_pattern_review.py",
+    "result": "52 passed",
+    "preexisting_unrelated_failures": ["test_lifecycle_approval_verifier.py (2, fail identically without this change)"]
+  },
+  "behavior": [
+    "provider extraction schema derived from persona_trade_reflection.schema.json (schema files unchanged)",
+    "pipeline validates artifact with canonical Draft7 before persistence; invalid provider output raises ReflectionError, nothing persisted",
+    "episode coverage.missing_refs read alongside top-level missing_refs",
+    "schema-invalid scheduled_pattern rows are marked quarantined (retained) in the existing pattern-review CAS and no longer count as coverage; valid rows untouched"
+  ],
+  "production_net_lines": 86
+}

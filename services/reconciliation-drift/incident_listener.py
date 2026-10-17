@@ -69,6 +69,15 @@ def _incident_identity(incident: dict[str, Any]) -> str:
     return f"payload-sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
 
 
+def _incident_version(incident: dict[str, Any]) -> str:
+    """Evidence version: the API's updated_at, else a digest of the payload."""
+    updated_at = incident.get("updated_at")
+    if updated_at:
+        return f"updated_at:{updated_at}"
+    canonical = json.dumps(incident, sort_keys=True, separators=(",", ":"), default=str)
+    return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
+
+
 def _is_infrastructure_incident(incident: dict[str, Any]) -> bool:
     binding = str(incident.get("binding_id") or incident.get("runtime_binding_id") or "")
     evidence = str(incident.get("evidence_summary") or "")
@@ -114,6 +123,7 @@ class IncidentListenerState:
     def __init__(self, state_path: str | Path | None = None) -> None:
         self.path = Path(state_path) if state_path else None
         self.backlog: dict[str, dict[str, Any]] = {}
+        self.delivered: dict[str, str] = {}
         self.last_success_at: str | None = None
         self.last_failure_at: str | None = None
         self.last_failure_error: str | None = None
@@ -133,7 +143,11 @@ class IncidentListenerState:
                 if not isinstance(entry, dict) or not isinstance(entry.get("incident"), dict):
                     raise ValueError(f"invalid backlog entry for {identity}")
                 backlog[str(identity)] = dict(entry)
+            raw_delivered = payload.get("delivered", {})
+            if not isinstance(raw_delivered, dict):
+                raise ValueError("listener state delivered must be an object")
             self.backlog = backlog
+            self.delivered = {str(k): str(v) for k, v in raw_delivered.items()}
             self.last_success_at = payload.get("last_success_at")
             self.last_failure_at = payload.get("last_failure_at")
             self.last_failure_error = payload.get("last_failure_error")
@@ -145,6 +159,7 @@ class IncidentListenerState:
         return {
             "version": 1,
             "backlog": self.backlog,
+            "delivered": self.delivered,
             "last_success_at": self.last_success_at,
             "last_failure_at": self.last_failure_at,
             "last_failure_error": self.last_failure_error,
@@ -214,6 +229,24 @@ class IncidentListenerState:
         except Exception:
             self.backlog[identity] = old
             raise
+
+    def record_delivered(self, identity: str, version: str) -> None:
+        had = identity in self.delivered
+        old = self.delivered.get(identity)
+        self.delivered[identity] = version
+        try:
+            self.save()
+        except Exception:
+            if had:
+                self.delivered[identity] = str(old)
+            else:
+                self.delivered.pop(identity, None)
+            raise
+
+    def prune_delivered(self, open_identities: set[str]) -> None:
+        """Drop remembered ids that are no longer open; saved by record_tick."""
+        for identity in [i for i in self.delivered if i not in open_identities]:
+            del self.delivered[identity]
 
     def record_tick(self, *, successful: bool, at: str, error: str | None = None) -> None:
         previous = (self.last_success_at, self.last_failure_at, self.last_failure_error)
@@ -480,6 +513,7 @@ def run_tick(
         if result is not None:
             try:
                 listener_state.remove_delivery(identity)
+                listener_state.record_delivered(identity, _incident_version(incident))
                 replayed += 1
                 results.append(
                     {
@@ -537,6 +571,9 @@ def run_tick(
         incidents = incidents_result if isinstance(incidents_result, list) else []
 
     deduplicated = 0
+    unchanged = 0
+    if not fetch_failed:
+        listener_state.prune_delivered({_incident_identity(i) for i in incidents})
     for incident in incidents:
         if time.monotonic() >= tick_deadline:
             break
@@ -555,6 +592,10 @@ def run_tick(
                 "result": {"status": "ok", "skipped": True, "not_applicable": True},
             })
             _notify()
+            continue
+        version = _incident_version(incident)
+        if listener_state.delivered.get(identity) == version:
+            unchanged += 1
             continue
         result, op_attempts, op_errors = _retry_operation(
             lambda incident=incident: post_incident_trigger(
@@ -579,6 +620,13 @@ def run_tick(
                     "result": result,
                 }
             )
+            try:
+                listener_state.record_delivered(identity, version)
+            except Exception as exc:
+                persistence_failed = True
+                errors.append(
+                    _error_record(exc, attempt=0, phase="persist_state", identity=identity)
+                )
             _notify()
         else:
             delivery_failures += 1
@@ -647,6 +695,7 @@ def run_tick(
         "replay_attempted_count": replay_attempted,
         "replayed_incident_count": replayed,
         "deduplicated_incident_count": deduplicated,
+        "unchanged_incident_count": unchanged,
         "backlog_count": backlog_count,
         "oldest_backlog_age_seconds": oldest_age,
         "last_success_at": listener_state.last_success_at,

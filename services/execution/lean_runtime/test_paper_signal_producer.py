@@ -46,6 +46,21 @@ class TestSmokeSignalContract(unittest.TestCase):
         self.assertTrue(validated["run_id"].startswith("run-rb-test-001-"))
 
 
+class TestSmokeSignalRuntimeId(unittest.TestCase):
+    def test_smoke_strategy_signal_carries_runtime_id_and_is_accepted(self) -> None:
+        binding = BindingRef(
+            binding_id="rb-rt-001", strategy_id="strategy-rt-001", runtime_id="paper-runtime-001"
+        )
+        store = InMemoryPendingSignalStore()
+        producer = PaperSignalProducer(store_for=lambda b: store, strategy=SmokeStrategy())
+        self.assertEqual(producer.produce(binding, _NOW), 1)
+        [sig] = store.get_pending()
+        self.assertEqual(sig["runtime_id"], "paper-runtime-001")
+        validated = SignalConsumer(store_client=MagicMock())._validate(sig)
+        self.assertIsNotNone(validated)
+        self.assertEqual(validated["runtime_id"], "paper-runtime-001")
+
+
 class TestPaperSignalProducer(unittest.TestCase):
     def test_producer_enqueues_per_binding(self) -> None:
         stores = {}
@@ -1755,3 +1770,118 @@ class TestExecutableSymbolContract(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDailyBarDecisionIdentity(unittest.TestCase):
+    """A daily-bar artifact is one decision per admitted bar, not one per poll."""
+
+    BAR = "2026-06-12T00:00:00+08:00"
+
+    def _binding(self, *, event_time: str | None = None, threshold: float = 0.0, closes=(100.0, 110.0)):
+        from services.execution.lean_runtime.test_current_artifact_signal import _artifact, _binding
+
+        art = _artifact()
+        art["parameters"]["momentum_threshold"] = threshold
+        art["mutation_surface"]["controls"][1]["current_value"] = threshold
+        binding = _binding(art, binding_id="rb-daily", include_market_input=False)
+        binding["market_input"] = {
+            "symbol": "AAPL.US",
+            "closes": list(closes),
+            "source_ref": "source-ingest://normalized/us-price/AAPL",
+            "observed_at": _NOW,
+            "event_time": event_time or self.BAR,
+        }
+        return binding
+
+    def _producer(self, store):
+        from services.execution.lean_runtime.paper_signal_producer import CurrentArtifactStrategy
+
+        return PaperSignalProducer(store_for=lambda _: store, strategy=CurrentArtifactStrategy())
+
+    @staticmethod
+    def _complete_all(store) -> list[str]:
+        """Drive the original claim/fence/processed APIs exactly as the consumer does."""
+        done = []
+        for signal in store.get_pending():
+            fence = store.begin_execution(signal)
+            assert fence.status == "acquired", fence.status
+            assert store.complete_execution(signal["signal_id"], fence.token)
+            store.ack(signal)
+            done.append(signal["signal_id"])
+        return done
+
+    def test_repeated_minute_polls_of_one_bar_execute_once(self) -> None:
+        store = InMemoryPendingSignalStore()
+        producer = self._producer(store)
+        binding = self._binding()
+        self.assertEqual(producer.produce(binding, "2026-06-12T10:30:00Z"), 1)
+        executed = self._complete_all(store)
+        for minute in range(31, 36):
+            self.assertEqual(producer.produce(binding, f"2026-06-12T10:{minute}:00Z"), 0)
+        self.assertEqual(store.queue_depth(), 0)
+        self.assertEqual(len(executed), 1)
+
+    def test_decision_identity_is_independent_of_poll_time_and_seq(self) -> None:
+        first_store, second_store = InMemoryPendingSignalStore(), InMemoryPendingSignalStore()
+        binding = self._binding()
+        self._producer(first_store).produce(binding, "2026-06-12T10:30:00Z")
+        self._producer(second_store).produce(binding, "2026-06-12T11:45:00Z")
+        [first] = first_store.get_pending()
+        [second] = second_store.get_pending()
+        self.assertEqual(first["signal_id"], second["signal_id"])
+        self.assertEqual(first["run_id"], second["run_id"])
+        self.assertEqual(first["timestamp"], "2026-06-12T10:30:00Z")
+        self.assertEqual(second["timestamp"], "2026-06-12T11:45:00Z")
+        self.assertEqual(first["metadata"]["market_input_bar"], "2026-06-12")
+
+    def test_producer_restart_does_not_duplicate_a_completed_decision(self) -> None:
+        store = InMemoryPendingSignalStore()
+        binding = self._binding()
+        self.assertEqual(self._producer(store).produce(binding, "2026-06-12T10:30:00Z"), 1)
+        self._complete_all(store)
+        restarted = self._producer(store)
+        self.assertEqual(restarted.produce(binding, "2026-06-12T10:31:00Z"), 0)
+        self.assertEqual(store.queue_depth(), 0)
+
+    def test_duplicate_before_completion_is_fenced_by_the_consumer_processed_check(self) -> None:
+        store = InMemoryPendingSignalStore()
+        producer = self._producer(store)
+        binding = self._binding()
+        producer.produce(binding, "2026-06-12T10:30:00Z")
+        producer.produce(binding, "2026-06-12T10:31:00Z")  # consumer has not run yet
+        ids = {signal["signal_id"] for signal in store.get_pending()}
+        self.assertEqual(len(ids), 1)
+        [signal_id] = ids
+        store.mark_processed(signal_id)
+        self.assertTrue(SignalConsumer(store_client=store)._is_duplicate({"signal_id": signal_id}))
+
+    def test_new_bar_and_new_model_are_distinct_decisions(self) -> None:
+        store = InMemoryPendingSignalStore()
+        producer = self._producer(store)
+        self.assertEqual(producer.produce(self._binding(), "2026-06-12T10:30:00Z"), 1)
+        self._complete_all(store)
+        next_bar = self._binding(event_time="2026-06-15T00:00:00+08:00")
+        self.assertEqual(producer.produce(next_bar, "2026-06-15T10:30:00Z"), 1)
+        new_model = self._binding(threshold=0.01)
+        self.assertEqual(producer.produce(new_model, "2026-06-15T10:31:00Z"), 1)
+        ids = [signal["signal_id"] for signal in store.get_pending()]
+        self.assertEqual(len(ids), 2)
+        self.assertEqual(len(set(ids)), 2)
+
+    def test_inline_input_without_event_time_keys_on_the_close_series(self) -> None:
+        store = InMemoryPendingSignalStore()
+        producer = self._producer(store)
+        binding = self._binding()
+        del binding["market_input"]["event_time"]
+        self.assertEqual(producer.produce(binding, "2026-06-12T10:30:00Z"), 1)
+        self._complete_all(store)
+        self.assertEqual(producer.produce(binding, "2026-06-12T10:31:00Z"), 0)
+        binding["market_input"]["closes"] = [100.0, 90.0]
+        self.assertEqual(producer.produce(binding, "2026-06-12T10:32:00Z"), 1)
+
+    def test_smoke_strategy_keeps_its_per_tick_identity(self) -> None:
+        store = InMemoryPendingSignalStore()
+        producer = PaperSignalProducer(store_for=lambda _: store, strategy=SmokeStrategy())
+        producer.produce(_BINDING, "2026-06-12T10:30:00Z")
+        producer.produce(_BINDING, "2026-06-12T10:31:00Z")
+        self.assertEqual(len({signal["signal_id"] for signal in store.get_pending()}), 2)

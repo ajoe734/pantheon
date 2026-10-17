@@ -16,6 +16,7 @@ import math
 import os
 import re
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
@@ -368,7 +369,19 @@ def _fetch_official(
             with open_external_url(request, caller=caller, timeout=timeout_seconds) as response:
                 raw_bytes = read_bounded_response(response, max_bytes=max_bytes)
             return parse(raw_bytes)
-        except (ResponseTruncated, TimeoutError, http.client.IncompleteRead, json.JSONDecodeError) as exc:
+        except (
+            ResponseTruncated,
+            TimeoutError,
+            http.client.IncompleteRead,
+            json.JSONDecodeError,
+            BrokenPipeError,
+            urllib.error.URLError,
+        ) as exc:
+            if isinstance(exc, urllib.error.HTTPError) or (
+                isinstance(exc, urllib.error.URLError)
+                and not isinstance(getattr(exc, "reason", None), BrokenPipeError)
+            ):
+                raise
             failures.append(f"attempt {attempt}: {type(exc).__name__}: {str(exc)[:200]}")
             if attempt < OFFICIAL_FETCH_ATTEMPTS:
                 time.sleep(OFFICIAL_FETCH_BACKOFF_SECONDS * attempt)

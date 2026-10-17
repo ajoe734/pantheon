@@ -409,3 +409,63 @@ def test_paper_run_can_open_incident_case_via_incident_service() -> None:
     assert created.status_code == 201, created.text
     assert created.json()["incident_case"]["incident_id"] == "recon-paper-http-incident-001"
     assert urlopen.call_count == 1
+
+
+def test_health_and_readyz_use_bounded_store_counts_without_full_list_hydration() -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+
+    module.store.put_evaluation({"evaluation_id": "eval-h1", "status": "ok"})
+    module.store.put_evaluation({"evaluation_id": "eval-h2", "status": "warning"})
+    module.store.put_alert_handoff({"alert_id": "alert-h1", "status": "sent"})
+    module.store.put_reconciliation_record({"record_id": "rec-h1", "severity": "low"})
+    module.store.put_drift_report({"drift_report_id": "rep-h1", "status": "open"})
+    module.store.put_worker_state({"state_id": "state-h1", "status": "healthy"})
+
+    def _forbidden_list(*_args, **_kwargs):
+        raise AssertionError("list_* must not be called by health/readiness count callers")
+
+    with mock.patch.dict(
+        "os.environ",
+        {
+            "PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083",
+            "PANTHEON_LINEAGE_READ_URL": "http://lineage-read:8094",
+            "PANTHEON_RUNTIME_MANAGER_URL": "http://runtime-manager:8081",
+        },
+    ):
+        with mock.patch.object(module.store, "list_evaluations", side_effect=_forbidden_list), \
+             mock.patch.object(module.store, "list_alert_handoffs", side_effect=_forbidden_list), \
+             mock.patch.object(module.store, "list_reconciliation_records", side_effect=_forbidden_list), \
+             mock.patch.object(module.store, "list_drift_reports", side_effect=_forbidden_list), \
+             mock.patch.object(module.store, "list_worker_states", side_effect=_forbidden_list):
+
+            readyz = client.get("/readyz")
+            assert readyz.status_code == 200
+            metrics = readyz.json()["metrics"]
+            assert metrics["evaluation_count"] == 2
+            assert metrics["alert_count"] == 1
+            assert metrics["reconciliation_record_count"] == 1
+            assert metrics["drift_report_count"] == 1
+            assert metrics["worker_state_count"] == 1
+
+            legacy_health = client.get("/health")
+            assert legacy_health.status_code == 200
+            health_data = legacy_health.json()
+            assert health_data["status"] == "ok"
+            assert health_data["service"] == "reconciliation-drift"
+            assert health_data["evaluation_count"] == 2
+            assert health_data["alert_handoff_count"] == 1
+            assert health_data["reconciliation_record_count"] == 1
+            assert health_data["drift_report_count"] == 1
+
+        failing_client = TestClient(module.app, raise_server_exceptions=False)
+        with mock.patch.object(
+            module.store,
+            "count_evaluations",
+            side_effect=RuntimeError("authoritative storage failure"),
+        ):
+            failing_readyz = failing_client.get("/readyz")
+            assert failing_readyz.status_code == 500
+
+            failing_health = failing_client.get("/health")
+            assert failing_health.status_code == 500

@@ -1,0 +1,29 @@
+{
+  "task_id": "EVOLUTION-EXISTING-LIST-DETAIL-AUTHORITY-20261016",
+  "title": "Use the existing live Evolution decision authority for detail and Incident links",
+  "change_class": "corrective",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "summary": "Repair ReadSurfacePorts Evolution decision detail (get_evolution_decision_by_id) and by-Incident lookup (get_evolution_decisions_by_incident) to consume the same existing authorized live Evolution collection as list_evolution_decisions(). Extends default-composition tests with real protected owner contract and authorization middleware.",
+  "incident_context": {
+    "frozen_evidence": "/tmp/pantheon-assist-20261013/original-Incident-a247-existing-sweep-readonly-20261016T131549Z.json",
+    "symptom": "In tenant-dev live collection, GET /api/v1/evolution-decisions returned 47 decisions including evo-sweep-inc-drift-a24770da155d linked to open Incident a24770da155d, but GET /api/v1/evolution-decisions/evo-sweep-inc-drift-a24770da155d returned 404, and post-incident review for the incident showed empty evolution_decisions.",
+    "root_cause": "ReadSurfacePorts.list_evolution_decisions delegated to persona_capital_runtime.list_evolution_decisions (querying live Evolution service proposals via authenticated core.owner_reads), but get_evolution_decision_by_id and get_evolution_decisions_by_incident delegated to lifecycle_telemetry_governance which held only empty in-memory collections.",
+    "resolution": "Updated ReadSurfacePorts.get_evolution_decision_by_id and get_evolution_decisions_by_incident to resolve from self.list_evolution_decisions(). Preserves existing canonical projection, exact IDs, true missing 404, populated/empty semantics, without adding new clients, caches, or duplicate stores."
+  },
+  "acceptance_verification": {
+    "ac1_live_evolution_authority_reused": "passed: get_evolution_decision_by_id and get_evolution_decisions_by_incident consume self.list_evolution_decisions(), preserving existing canonical projection, exact IDs, true missing 404, and populated/empty semantics without caches, duplicate stores, or modifying Evolution producer / single-active rule.",
+    "ac2_default_composition_tests_extended": "passed: services/control-plane/bff/tests/test_receipt_default_reads.py verifies mounted /api/v1/evolution-decisions/{id} and /api/v1/operator/post-incident-review/{id} endpoints under real protected owner contract; proves decision visibility by exact ID and linked Incident including beyond default first 20 (dec-25) and fresh live record on the same ports (dec-fresh); distinguishes genuine missing (404) from owner denied (403) and owner unavailable (503); verifies pre-network static auth (401) and foreign-tenant (403) denial.",
+    "ac3_production_line_budget_and_artifacts": "passed: production change in services/control-plane/bff/ports/read_surface_ports.py is +17 / -4 lines (+13 net lines <= 25 budget) without compressed code; scope is strictly limited to the 3 declared artifacts."
+  },
+  "production_diff_stat": {
+    "file": "services/control-plane/bff/ports/read_surface_ports.py",
+    "insertions": 17,
+    "deletions": 4,
+    "net_lines": 13
+  },
+  "local_verification": {
+    "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_receipt_default_reads.py",
+    "result": "14 passed, 3 warnings in 6.81s"
+  }
+}

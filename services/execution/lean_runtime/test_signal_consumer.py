@@ -710,3 +710,85 @@ class TestPersistentDedup(unittest.TestCase):
         from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
         c = SignalConsumer(store_client=InMemoryPendingSignalStore())
         self.assertFalse(c._is_duplicate(_make_signal("sig-fresh")))
+
+
+class TestSameIdRedeliveryBatch(unittest.TestCase):
+    """Same signal_id copies in one rebalance run are one decision, not conflict losers."""
+
+    @staticmethod
+    def _store(signals):
+        from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
+
+        class _AckRecordingStore(InMemoryPendingSignalStore):
+            def __init__(self, pending):
+                super().__init__(pending)
+                self.acks: list[str] = []
+
+            def ack(self, signal_or_id):
+                sid = signal_or_id if isinstance(signal_or_id, str) else signal_or_id["signal_id"]
+                self.acks.append(sid)
+                super().ack(signal_or_id)
+
+        return _AckRecordingStore(signals)
+
+    @staticmethod
+    def _rebalance_signal(signal_id, ts, run_id="run-1"):
+        sig = _make_signal(signal_id)
+        sig["run_id"] = run_id
+        sig["timestamp"] = ts.isoformat()
+        return sig
+
+    def _consumer(self, store):
+        return SignalConsumer(store_client=store)
+
+    def test_three_same_id_copies_execute_once_and_ack_all_then_replay_is_noop(self):
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        store = self._store([])
+        c = self._consumer(store)
+        algo = _NoopRecordingAlgo(now.replace(tzinfo=None))
+        with patch("services.execution.lean_runtime.signal_consumer.execute") as mock_exec:
+            for _ in range(2):
+                store.enqueue(self._rebalance_signal("s-daily", now))
+                c.drain(algo=algo)
+                self.assertEqual(mock_exec.call_count, 0)
+                self.assertEqual(store.acks, [])
+                self.assertNotIn("s-daily", c._processed_signal_ids)
+            store.enqueue(self._rebalance_signal("s-daily", now))
+            c.drain(algo=algo)
+            self.assertEqual(mock_exec.call_count, 1)
+            self.assertEqual(store.acks, ["s-daily"] * 3)
+            self.assertEqual(
+                [n for n in algo.signal_noops if n["noop_reason"] == "signal_conflict_loser"], []
+            )
+            store.enqueue(self._rebalance_signal("s-daily", now))
+            c.drain(algo=algo)
+            self.assertEqual(mock_exec.call_count, 1)
+
+    def test_failed_execution_does_not_ack_redelivered_copies(self):
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        store = self._store([self._rebalance_signal("s-fail", now) for _ in range(3)])
+        c = SignalConsumer(store_client=store, rebalance_timeout_bars=1)
+        algo = _NoopRecordingAlgo(now.replace(tzinfo=None))
+        with patch(
+            "services.execution.lean_runtime.signal_consumer.execute",
+            side_effect=RuntimeError("boom"),
+        ) as mock_exec:
+            c.drain(algo=algo)
+        self.assertEqual(mock_exec.call_count, 1)
+        self.assertEqual(store.acks, [])
+        self.assertNotIn("s-fail", c._processed_signal_ids)
+
+    def test_distinct_ids_still_resolve_as_conflict(self):
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        older = self._rebalance_signal("s-old", now - timedelta(minutes=2))
+        newer = self._rebalance_signal("s-new", now)
+        store = self._store([older, newer, dict(newer)])
+        c = SignalConsumer(store_client=store, rebalance_timeout_bars=1)
+        algo = _NoopRecordingAlgo(now.replace(tzinfo=None))
+        with patch("services.execution.lean_runtime.signal_consumer.execute") as mock_exec:
+            c.drain(algo=algo)
+        self.assertEqual(mock_exec.call_count, 1)
+        self.assertEqual(mock_exec.call_args[0][0]["signal_id"], "s-new")
+        losers = [n for n in algo.signal_noops if n["noop_reason"] == "signal_conflict_loser"]
+        self.assertEqual([n["signal_id"] for n in losers], ["s-old"])
+        self.assertEqual(sorted(store.acks), ["s-new", "s-new", "s-old"])

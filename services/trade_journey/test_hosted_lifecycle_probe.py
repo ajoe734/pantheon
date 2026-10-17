@@ -906,6 +906,33 @@ def _counterexample_rows() -> list[dict]:
     return rows
 
 
+def _reconciliation_failed_rows() -> list[dict]:
+    rows = _natural_lifecycle_rows()
+    event = rows[-1]["payload"]
+    rows[-1]["event_type"] = event["event_type"] = "reconciliation_failed"
+    event["metadata"]["reconciliation_status"] = "critical"
+    return rows
+
+
+def test_natural_mode_rejects_journey_ending_in_reconciliation_failed(tmp_path):
+    root, rows = _publish(tmp_path, rows=_reconciliation_failed_rows())
+    code, artifact = _execute(tmp_path, root=root, rows=rows, mode="natural")
+    assert code == 1
+    assert artifact["outcome"] == "failed"
+    assert artifact["failure"]["code"] == "reconciliation_failed"
+    assert "reconciliation_failed" in artifact["failure"]["message"]
+    assert "reconciliation_status=critical" in artifact["failure"]["message"]
+
+
+def test_natural_mode_accepts_journey_ending_in_reconciliation_completed(tmp_path):
+    rows = _natural_lifecycle_rows()
+    rows[-1]["payload"]["metadata"]["reconciliation_status"] = "ok"
+    root, rows = _publish(tmp_path, rows=rows)
+    code, artifact = _execute(tmp_path, root=root, rows=rows, mode="natural")
+    assert code == 0
+    assert artifact["proof"]["events"][-1]["event_type"] == "reconciliation_completed"
+
+
 def test_counterexample_rejected_in_natural_mode(tmp_path):
     root, rows = _publish(tmp_path, rows=_counterexample_rows())
     code, artifact = _execute(tmp_path, root=root, rows=rows, mode="natural")

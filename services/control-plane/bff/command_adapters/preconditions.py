@@ -2090,6 +2090,7 @@ def _mutation_review_projection(
     *,
     identity: OperatorIdentity,
     snapshot_at: str,
+    decision: Optional[Dict[str, Any]] = None,
     read_surface: Optional[Any] = None,
     utc_now_fn: Optional[Callable[[], str]] = None,
 ) -> Optional[Dict[str, Any]]:
@@ -2103,7 +2104,12 @@ def _mutation_review_projection(
         store,
         utc_now=now_fn,
     )
-    return service.mutation_review_projection(decision_id, identity=identity, snapshot_at=snapshot_at)
+    return service.mutation_review_projection(
+        decision_id,
+        identity=identity,
+        snapshot_at=snapshot_at,
+        decision=decision,
+    )
 
 
 def _validate_record_sponsor_decision(

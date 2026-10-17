@@ -969,9 +969,10 @@ class GovernanceService:
         return list(records or [])
 
     def mutation_review_inputs(
-        self, decision_id: str
+        self, decision_id: str, *, decision: Optional[Dict[str, Any]] = None
     ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-        decision = self._call("get_evolution_decision_by_id", decision_id, default=None)
+        if decision is None:
+            decision = self._call("get_evolution_decision_by_id", decision_id, default=None)
         if decision is None:
             return None, None, None, None
         approval_decision_id = str(decision.get("approval_decision_id") or "").strip()
@@ -1135,9 +1136,16 @@ class GovernanceService:
         return approvals
 
     def mutation_review_projection(
-        self, decision_id: str, *, identity: Any, snapshot_at: Optional[str] = None
+        self,
+        decision_id: str,
+        *,
+        identity: Any,
+        snapshot_at: Optional[str] = None,
+        decision: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
-        decision, approval_decision, linked_incident, linked_postmortem = self.mutation_review_inputs(decision_id)
+        decision, approval_decision, linked_incident, linked_postmortem = self.mutation_review_inputs(
+            decision_id, decision=decision
+        )
         if decision is None:
             return None
         snap = snapshot_at or self.utc_now()

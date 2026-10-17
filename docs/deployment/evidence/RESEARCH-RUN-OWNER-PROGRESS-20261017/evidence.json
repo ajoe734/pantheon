@@ -1,0 +1,13 @@
+{
+  "task_id": "RESEARCH-RUN-OWNER-PROGRESS-20261017",
+  "scope": "fixture/unit-level; DTO-derived progress only; no raw canonical data, owner records, or stores modified; no hosted/provider calls",
+  "change": "services/control-plane/bff/agora/research/service.py: _owner_progress derives progress from owner status (or owner-provided progress) in list_runs_for_plan and get_run",
+  "production_lines_added": 24,
+  "tests": {
+    "file": "services/control-plane/bff/tests/test_agora_research_run_projection.py",
+    "new": "test_run_progress_follows_owner_status_in_list_and_detail (5 params: completed/failed/cancelled/running/queued)",
+    "base": "4 failed, 1 passed (queued control)",
+    "head": "full file 24 passed"
+  },
+  "real_diagnostic_reference": "UI2df1f151 (not new compute proof)"
+}

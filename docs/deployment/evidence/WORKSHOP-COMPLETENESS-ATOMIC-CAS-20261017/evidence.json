@@ -1,0 +1,51 @@
+{
+  "task_id": "WORKSHOP-COMPLETENESS-ATOMIC-CAS-20261017",
+  "change_class": "corrective",
+  "summary": "Fix observed Workshop completeness write concurrency hole where two concurrent writes with the same ETag both succeeded with HTTP 201. Synthesize owner version condition, snapshot creation, optional readiness assessment persistence, version increment, and scoped idempotency into a single atomic store transaction in PostgresWorkshopStore (with rollback on failure) and single lock operation in MemoryWorkshopStore. Delete split route-side write path in session.py.",
+  "technical_fixture": "822ca900-99e9-40b8-8136-92e00f854fdf",
+  "net_production_lines": {
+    "budget": 120,
+    "actual": 105,
+    "insertions": 214,
+    "deletions": 109,
+    "files": [
+      "services/control-plane/bff/agora/strategy_workshop/routes/session.py",
+      "services/control-plane/bff/agora/strategy_workshop/store.py"
+    ]
+  },
+  "scoped_artifacts": [
+    "services/control-plane/bff/agora/strategy_workshop/routes/session.py",
+    "services/control-plane/bff/agora/strategy_workshop/store.py",
+    "services/control-plane/bff/tests/test_agora_strategy_workshop.py",
+    "docs/deployment/evidence/WORKSHOP-COMPLETENESS-ATOMIC-CAS-20261017/evidence.json"
+  ],
+  "findings_addressed": {
+    "F1": "Route uses effective_assessment = stored_assessment or assessment for websocket events and response payloads, ensuring persist_readiness=false produces ephemeral readiness without HTTP 500.",
+    "F2": "MemoryWorkshopStore constructs and validates snapshot and readiness records before mutating in-memory state under lock, preventing partial mutations on exception.",
+    "F3": "Deterministic concurrency barrier added at the route read/write boundary (hooking list_events) proving base-fail overlap. Postgres test includes real concurrent 2-thread CAS overlap, losing-write absence, and rollback verification.",
+    "F4": "Production diff net growth is 105 lines, well within the 120 line budget, achieved by extracting format helpers without minification."
+  },
+  "verification": {
+    "full_test_suite_with_postgres": {
+      "command": "TEST_DATABASE_URL=\"postgresql://postgres:postgres@127.0.0.1:15432/pantheon\" .venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_agora_strategy_workshop.py",
+      "result": "89 passed in 89.98s (100% pass including live Postgres tests)",
+      "concurrency_tests": [
+        "TestWorkshopConcurrencyContract::test_completeness_concurrent_same_version_exactly_one_winner",
+        "TestWorkshopConcurrencyContract::test_completeness_duplicate_idempotency_key_returns_409",
+        "TestWorkshopStoreFactory::test_postgres_create_completeness_snapshot_cas_atomic",
+        "TestMemoryWorkshopStoreConcurrencyHelpers::test_completeness_snapshot_cas_success",
+        "TestMemoryWorkshopStoreConcurrencyHelpers::test_completeness_snapshot_cas_conflict",
+        "TestMemoryWorkshopStoreConcurrencyHelpers::test_completeness_snapshot_cas_duplicate_idempotency_key",
+        "TestMemoryWorkshopStoreConcurrencyHelpers::test_completeness_snapshot_cas_no_partial_effects_on_exception"
+      ]
+    }
+  },
+  "contracts_preserved": {
+    "stale_etag_409": true,
+    "duplicate_idempotency_key_409": true,
+    "missing_if_match_428": true,
+    "missing_idempotency_key_400": true,
+    "tenant_user_authorization": true,
+    "payload_and_websocket_events": true
+  }
+}

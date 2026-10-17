@@ -24,6 +24,10 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from services.control_plane.bff.evolution.router import create_evolution_router
 from services.control_plane.bff.governance.service import GovernanceService
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.command_adapters.preconditions import (
+    _mutation_review_projection,
+    set_ops_console_precondition_resolvers,
+)
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b3-evolution:operator,reviewer"}
 
@@ -133,6 +137,8 @@ class _EvolutionJournalTestStore:
             lifecycle_telemetry_governance_kwargs=lifecycle_kwargs,
             ooda_management_kwargs=ooda_kwargs,
         )
+        self.list_evolution_decisions_call_count = 0
+        self.get_evolution_decision_by_id_call_count = 0
 
     def dataset_source(self, dataset: str) -> str:
         key = dataset
@@ -161,6 +167,7 @@ class _EvolutionJournalTestStore:
         return list(val.values()) if isinstance(val, dict) else list(val)
 
     def list_evolution_decisions(self, **kwargs: Any) -> list[dict[str, Any]]:
+        self.list_evolution_decisions_call_count += 1
         val = self.data.get("evolution_decisions")
         if val is None:
             val = self.default_data.get("evolution_decisions") or {}
@@ -184,20 +191,13 @@ class _EvolutionJournalTestStore:
         return {"id": decision_id, "approval_decision_id": decision_id, "status": "approved"}
 
     def get_evolution_decision_by_id(self, decision_id: str) -> Optional[dict[str, Any]]:
-        val = self.data.get("evolution_decisions")
-        if isinstance(val, dict) and decision_id in val:
-            return val[decision_id]
-        if isinstance(val, list):
-            for d in val:
-                if d.get("decision_id") == decision_id or d.get("id") == decision_id:
-                    return d
-        def_val = self.default_data.get("evolution_decisions")
-        if isinstance(def_val, dict) and decision_id in def_val:
-            return def_val[decision_id]
-        if isinstance(def_val, list):
-            for d in def_val:
-                if d.get("decision_id") == decision_id or d.get("id") == decision_id:
-                    return d
+        self.get_evolution_decision_by_id_call_count += 1
+        clean_id = str(decision_id or "").strip()
+        if not clean_id:
+            return None
+        for d in self.list_evolution_decisions():
+            if str(d.get("decision_id") or d.get("id") or "").strip() == clean_id:
+                return d
         return None
 
     def get_evolution_decision(self, decision_id: str) -> Optional[dict[str, Any]]:
@@ -326,7 +326,10 @@ class _JournalTestClient(TestClient):
         self.app.state.store = val
 
 
-def _create_app_for_store(store: Any) -> FastAPI:
+def _create_app_for_store(
+    store: Any,
+    mutation_review_projection: Any = _mutation_review_projection,
+) -> FastAPI:
     app = FastAPI()
 
     @app.exception_handler(HTTPException)
@@ -383,16 +386,13 @@ def _create_app_for_store(store: Any) -> FastAPI:
         return {"status": "available", "dataset": dataset, "snapshot_at": snapshot_at, "source": source}
 
     app.state.store = store
+    set_ops_console_precondition_resolvers(read_surface=lambda: app.state.store)
     router = create_evolution_router(
         read_surface=lambda: app.state.store,
         extract_identity=_extract_identity,
         require_read_role=_require_read,
         dataset_surface_status=_dataset_surface_status,
-        mutation_review_projection=lambda dec_id, identity=None, snapshot_at=None: (
-            GovernanceService(app.state.store).mutation_review_projection(
-                dec_id, identity=identity, snapshot_at=snapshot_at
-            )
-        ),
+        mutation_review_projection=mutation_review_projection,
     )
     app.include_router(router)
     return app
@@ -1558,3 +1558,573 @@ def test_evochain_007_filter_dependency_surfaces_reported_and_fail_closed() -> N
             headers=OPERATOR_HEADERS,
         )
         assert resp.status_code == 503, resp.text
+
+
+def test_focused_decision_read_amplification_bounded() -> None:
+    """EVOLUTION-JOURNAL-OWNER-READ-FANOUT-20261017: Focused originalID request
+    must not fan out to repeated per-row owner hydration across all history.
+
+    With 77 proposals in the owner store (matching the production incident state
+    where GET4ea430bd returned 77 proposals), a narrow request for
+    ?decision=evo-sweep-inc-drift-a24770da155d must execute exactly 1 list_evolution_decisions
+    call and 0 get_evolution_decision_by_id calls (down from 78 and 77 on base).
+    """
+    with tempfile.TemporaryDirectory() as td:
+        target_id = "evo-sweep-inc-drift-a24770da155d"
+        decisions: list[dict[str, Any]] = [
+            {
+                "id": f"dec-{i:03d}",
+                "decision_id": f"dec-{i:03d}",
+                "target_type": "artifact",
+                "target_id": f"art-{i:03d}",
+                "target_version": "v1.0.0",
+                "action_type": "mutation",
+                "status": "pending",
+                "decision_state": "pending",
+                "risk_level": "low",
+                "created_at": "2026-06-01T00:00:00Z",
+                "updated_at": "2026-06-01T00:00:00Z",
+                "occurred_at": "2026-06-01T00:00:00Z",
+                "proposed_changes": {"summary": f"Summary for dec-{i:03d}"},
+                "approval_decision_id": f"appr-{i:03d}",
+                "risk_assessment": {"risk_summary": "low risk"},
+            }
+            for i in range(76)
+        ]
+        decisions.append(
+            {
+                "id": target_id,
+                "decision_id": target_id,
+                "target_type": "artifact",
+                "target_id": "art-target",
+                "target_version": "v1.0.0",
+                "action_type": "mutation",
+                "status": "approved",
+                "decision_state": "approved",
+                "risk_level": "low",
+                "created_at": "2026-06-02T00:00:00Z",
+                "updated_at": "2026-06-02T00:00:00Z",
+                "occurred_at": "2026-06-02T00:00:00Z",
+                "proposed_changes": {"summary": "Target decision proposal"},
+                "approval_decision_id": "appr-target",
+                "risk_assessment": {"risk_summary": "low risk"},
+            }
+        )
+
+        data = {
+            "evolution_decisions": {d["decision_id"]: d for d in decisions},
+            "approval_decisions": {},
+            "postmortems": {},
+            "freeze_orders": {},
+            "all_rollbacks": {},
+        }
+        store = _EvolutionJournalTestStore(data)
+        app = _create_app_for_store(store)
+        client = _JournalTestClient(app, raise_server_exceptions=True)
+
+        store.list_evolution_decisions_call_count = 0
+        store.get_evolution_decision_by_id_call_count = 0
+
+        resp = client.get(
+            f"/bff/management/evolution-journal?decision={target_id}",
+            headers=OPERATOR_HEADERS,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        items = body["data"]["items"]
+
+        assert len(items) == 1
+        assert items[0]["source_id"] == target_id
+        assert items[0]["entry_type"] == "evolution_decision"
+
+        # Owner calls must remain strictly bounded: exactly 1 list call, 0 per-row hydration calls
+        assert store.list_evolution_decisions_call_count == 1
+        assert store.get_evolution_decision_by_id_call_count == 0
+
+
+def test_unfiltered_default_page_read_amplification_bounded_across_history_sizes() -> None:
+    """EVOLUTION-JOURNAL-OWNER-READ-FANOUT-20261017: Unfiltered default page
+    must bound owner reads across multiple history sizes (N=10, N=50).
+
+    In both cases, list_evolution_decisions must be called exactly once, and
+    mutation review hydration must reuse the already-read decision without
+    issuing get_evolution_decision_by_id calls.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        for n_decisions in (10, 50):
+            decisions = [
+                {
+                    "id": f"evo-dec-hist-{n_decisions}-{i:03d}",
+                    "decision_id": f"evo-dec-hist-{n_decisions}-{i:03d}",
+                    "target_type": "artifact",
+                    "target_id": f"art-hist-{i:03d}",
+                    "target_version": "v1.0.0",
+                    "action_type": "mutation",
+                    "status": "pending",
+                    "decision_state": "pending",
+                    "risk_level": "low",
+                    "created_at": f"2026-06-{1 + (i % 25):02d}T00:00:00Z",
+                    "updated_at": f"2026-06-{1 + (i % 25):02d}T00:00:00Z",
+                    "occurred_at": f"2026-06-{1 + (i % 25):02d}T00:00:00Z",
+                    "proposed_changes": {"summary": f"Summary {i}"},
+                    "approval_decision_id": f"appr-{i:03d}",
+                    "risk_assessment": {"risk_summary": "low"},
+                }
+                for i in range(n_decisions)
+            ]
+            data = {
+                "evolution_decisions": {d["decision_id"]: d for d in decisions},
+                "approval_decisions": {},
+                "postmortems": {},
+                "freeze_orders": {},
+                "all_rollbacks": {},
+            }
+            store = _EvolutionJournalTestStore(data)
+            app = _create_app_for_store(store)
+            client = _JournalTestClient(app, raise_server_exceptions=True)
+
+            store.list_evolution_decisions_call_count = 0
+            store.get_evolution_decision_by_id_call_count = 0
+
+            resp = client.get(
+                "/bff/management/evolution-journal",
+                headers=OPERATOR_HEADERS,
+            )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            items = body["data"]["items"]
+            page_info = body["page_info"]
+            summary = body["data"]["summary"]
+
+            # Owner reads must be exactly 1 list call, 0 per-row lookups
+            assert store.list_evolution_decisions_call_count == 1
+            assert store.get_evolution_decision_by_id_call_count == 0
+
+            # Sliced page items must not exceed page_size (20)
+            expected_total = n_decisions * 2 + 6  # 2 decisions per entry (decision + mutation_review) + 6 fixture items (postmortems, freeze orders, rollbacks)
+            expected_page_size = min(expected_total, 20)
+            assert len(items) == expected_page_size
+            assert page_info["page_size"] == 20
+
+            # Summary preserves full filtered totals across all history
+            assert summary["total_items"] == expected_total
+            assert summary["returned_items"] == expected_page_size
+            assert summary["decision_count"] == n_decisions
+            assert summary["mutation_review_count"] == n_decisions
+
+
+def test_divergent_status_decision_state_filtering_and_canonical_summary() -> None:
+    """EVOLUTION-JOURNAL-FILTER-SEMANTICS-20261017: Status filtering and full summary
+    must obey canonical decision_state precedence for mutation_review and status
+    precedence for evolution_decision BEFORE slicing.
+
+    A decision with status='pending' and decision_state='approved' produces:
+    - evolution_decision with status='pending' (status FIRST)
+    - mutation_review with status='approved' (decision_state FIRST)
+
+    Filtering ?status=approved selects mutation_review and omits evolution_decision.
+    Filtering ?status=pending selects evolution_decision and omits mutation_review.
+    Summary by_status preserves both distinct canonical counts, and owner calls
+    remain strictly bounded.
+    """
+    record = {
+        "id": "evo-dec-divergent-001",
+        "decision_id": "evo-dec-divergent-001",
+        "target_type": "artifact",
+        "target_id": "art-divergent-001",
+        "target_version": "1.0",
+        "action_type": "mutation",
+        "status": "pending",
+        "decision_state": "approved",
+        "risk_level": "low",
+        "created_at": "2026-10-17T00:00:00Z",
+        "proposed_changes": {"summary": "Divergent status fixture"},
+        "approval_decision_id": "appr-divergent-001",
+    }
+    data = {
+        "evolution_decisions": {record["id"]: record},
+        "approval_decisions": {},
+        "postmortems": {},
+        "freeze_orders": {},
+        "all_rollbacks": {},
+    }
+    store = _EvolutionJournalTestStore(data)
+    app = _create_app_for_store(store)
+    client = _JournalTestClient(app, raise_server_exceptions=True)
+
+    # 1. Unfiltered request for mutation_review: renders status='approved'
+    store.list_evolution_decisions_call_count = 0
+    store.get_evolution_decision_by_id_call_count = 0
+    resp_mr = client.get(
+        f"/bff/management/evolution-journal?mutation_review={record['id']}",
+        headers=OPERATOR_HEADERS,
+    )
+    assert resp_mr.status_code == 200, resp_mr.text
+    body_mr = resp_mr.json()
+    items_mr = body_mr["data"]["items"]
+    assert len(items_mr) == 1
+    assert items_mr[0]["status"] == "approved"
+    assert items_mr[0]["entry_type"] == "mutation_review"
+    assert (items_mr[0].get("mutation_review") or {}).get("decision_state") == "approved"
+
+    # 2. Unfiltered request for decision: renders status='pending' (evolution_journal_status status FIRST)
+    resp_dec = client.get(
+        f"/bff/management/evolution-journal?decision={record['id']}",
+        headers=OPERATOR_HEADERS,
+    )
+    assert resp_dec.status_code == 200, resp_dec.text
+    body_dec = resp_dec.json()
+    items_dec = body_dec["data"]["items"]
+    assert len(items_dec) == 1
+    assert items_dec[0]["status"] == "pending"
+    assert items_dec[0]["entry_type"] == "evolution_decision"
+
+    # 3. Filter status=approved: selects mutation_review, omits evolution_decision
+    resp_appr = client.get(
+        "/bff/management/evolution-journal?status=approved",
+        headers=OPERATOR_HEADERS,
+    )
+    assert resp_appr.status_code == 200, resp_appr.text
+    items_appr = resp_appr.json()["data"]["items"]
+    matched_mr = [it for it in items_appr if it.get("source_id") == record["id"]]
+    assert len(matched_mr) == 1
+    assert matched_mr[0]["entry_type"] == "mutation_review"
+    assert matched_mr[0]["status"] == "approved"
+
+    # 4. Filter status=pending: selects evolution_decision, omits mutation_review
+    resp_pend = client.get(
+        "/bff/management/evolution-journal?status=pending",
+        headers=OPERATOR_HEADERS,
+    )
+    assert resp_pend.status_code == 200, resp_pend.text
+    items_pend = resp_pend.json()["data"]["items"]
+    matched_pend = [it for it in items_pend if it.get("source_id") == record["id"]]
+    assert len(matched_pend) == 1
+    assert matched_pend[0]["entry_type"] == "evolution_decision"
+    assert matched_pend[0]["status"] == "pending"
+
+    # 5. Full summary reflects distinct states for both entry types
+    resp_all = client.get(
+        "/bff/management/evolution-journal",
+        headers=OPERATOR_HEADERS,
+    )
+    assert resp_all.status_code == 200
+    summary = resp_all.json()["data"]["summary"]
+    assert summary["by_status"]["approved"] >= 1
+    assert summary["by_status"]["pending"] >= 1
+    assert summary["decision_count"] == 1
+    assert summary["mutation_review_count"] == 1
+
+    # Owner queries must remain bounded across calls: 0 per-row lookups
+    assert store.get_evolution_decision_by_id_call_count == 0
+
+
+def test_full_summary_by_status_consistent_across_pages_and_history_sizes() -> None:
+    """EVOLUTION-JOURNAL-FILTER-SEMANTICS-20261017: Summary by_status must be consistent
+    across pages and history sizes (N=30 decisions, exceeding default page_size=20),
+    correctly projecting off-page rows without full-history deep hydration.
+
+    Each raw decision has status='pending' and decision_state='approved':
+    - 30 evolution_decisions with status='pending'
+    - 30 mutation_reviews with status='approved'
+    """
+    n_decisions = 30
+    decisions = [
+        {
+            "id": f"evo-dec-page-{i:03d}",
+            "decision_id": f"evo-dec-page-{i:03d}",
+            "target_type": "artifact",
+            "target_id": f"art-page-{i:03d}",
+            "target_version": "v1.0.0",
+            "action_type": "mutation",
+            "status": "pending",
+            "decision_state": "approved",
+            "risk_level": "low",
+            "created_at": f"2026-06-{1 + (i % 25):02d}T00:00:00Z",
+            "updated_at": f"2026-06-{1 + (i % 25):02d}T00:00:00Z",
+            "occurred_at": f"2026-06-{1 + (i % 25):02d}T00:00:00Z",
+            "proposed_changes": {"summary": f"Summary for dec {i}"},
+            "approval_decision_id": f"appr-page-{i:03d}",
+            "risk_assessment": {"risk_summary": "low"},
+        }
+        for i in range(n_decisions)
+    ]
+    data = {
+        "evolution_decisions": {d["decision_id"]: d for d in decisions},
+        "approval_decisions": {},
+        "postmortems": {},
+        "freeze_orders": {},
+        "all_rollbacks": {},
+    }
+    store = _EvolutionJournalTestStore(data)
+    app = _create_app_for_store(store)
+    client = _JournalTestClient(app, raise_server_exceptions=True)
+
+    store.list_evolution_decisions_call_count = 0
+    store.get_evolution_decision_by_id_call_count = 0
+
+    # Unfiltered page 1: 20 items returned out of total (30*2 + 6 default fixtures = 66)
+    resp = client.get("/bff/management/evolution-journal", headers=OPERATOR_HEADERS)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    items = body["data"]["items"]
+    summary = body["data"]["summary"]
+
+    assert len(items) == 20
+    # Returned items reflect distinct entry-type statuses:
+    # evolution_decision has status='pending'; mutation_review has status='approved'
+    for it in items:
+        if it.get("entry_type") == "evolution_decision":
+            assert it["status"] == "pending"
+        elif it.get("entry_type") == "mutation_review":
+            assert it["status"] == "approved"
+
+    # Full summary across all 66 items reflects canonical states without full hydration
+    assert summary["by_status"]["approved"] == n_decisions
+    assert summary["by_status"]["pending"] == n_decisions
+    assert summary["decision_count"] == n_decisions
+    assert summary["mutation_review_count"] == n_decisions
+
+    # Filtering by approved retains all 30 mutation_review items
+    resp_appr = client.get(
+        "/bff/management/evolution-journal?status=approved",
+        headers=OPERATOR_HEADERS,
+    )
+    assert resp_appr.status_code == 200
+    appr_data = resp_appr.json()["data"]
+    assert appr_data["summary"]["total_items"] == n_decisions
+    assert appr_data["summary"]["by_status"]["approved"] == n_decisions
+    assert len(appr_data["items"]) == 20
+    for it in appr_data["items"]:
+        assert it.get("entry_type") == "mutation_review"
+        assert it["status"] == "approved"
+
+    # Page 2 pagination retains approved summary consistency
+    next_tok = resp_appr.json()["page_info"]["next_page_token"]
+    assert next_tok is not None
+    resp_appr_p2 = client.get(
+        f"/bff/management/evolution-journal?status=approved&page_token={next_tok}",
+        headers=OPERATOR_HEADERS,
+    )
+    assert resp_appr_p2.status_code == 200
+    appr_p2_data = resp_appr_p2.json()["data"]
+    assert len(appr_p2_data["items"]) == 10
+    assert appr_p2_data["summary"]["total_items"] == n_decisions
+    for it in appr_p2_data["items"]:
+        assert it.get("entry_type") == "mutation_review"
+        assert it["status"] == "approved"
+
+    # Filtering by pending yields all 30 evolution_decision items
+    resp_pend = client.get(
+        "/bff/management/evolution-journal?status=pending",
+        headers=OPERATOR_HEADERS,
+    )
+    assert resp_pend.status_code == 200
+    pend_data = resp_pend.json()["data"]
+    assert pend_data["summary"]["total_items"] == n_decisions
+    assert pend_data["summary"]["by_status"]["pending"] == n_decisions
+    for it in pend_data["items"]:
+        assert it.get("entry_type") == "evolution_decision"
+        assert it["status"] == "pending"
+
+    # Bounded owner reads: 0 per-row lookups across all queries
+    assert store.get_evolution_decision_by_id_call_count == 0
+
+
+def test_persona_lineage_filtering_through_linked_incident() -> None:
+    """EVOLUTION-JOURNAL-FILTER-SEMANTICS-20261017: Persona lineage filtering must
+    match mutation reviews and decisions through linked_incident_id using existing
+    _EVOLUTION_JOURNAL_REFERENCE_FIELD_CATEGORY without postmortem graph traversal.
+    """
+    persona_id = "persona-gamma"
+    runtime_id = "runtime-gamma-001"
+    runtime_binding_id = "binding-gamma-001"
+    incident_id = "inc-gamma-001"
+    postmortem_id = "pm-gamma-001"
+
+    data = {
+        "personas": {
+            persona_id: {
+                "id": persona_id,
+                "persona_id": persona_id,
+                "runtime_id": runtime_id,
+            }
+        },
+        "runtime_bindings": {
+            runtime_binding_id: {
+                "id": runtime_binding_id,
+                "runtime_id": runtime_id,
+                "persona_id": persona_id,
+            }
+        },
+        "incidents": {
+            incident_id: {
+                "id": incident_id,
+                "incident_id": incident_id,
+                "runtime_id": runtime_id,
+            }
+        },
+        "postmortems": {
+            postmortem_id: {
+                "id": postmortem_id,
+                "postmortem_id": postmortem_id,
+                "incident_id": incident_id,
+                "title": "Postmortem for inc-gamma-001",
+                "status": "published",
+                "created_at": "2026-07-01T00:00:00Z",
+            }
+        },
+        "evolution_decisions": {
+            "dec-linked-inc": {
+                "id": "dec-linked-inc",
+                "decision_id": "dec-linked-inc",
+                "target_type": "artifact",
+                "target_id": "art-unrelated-1",
+                "linked_incident_id": incident_id,
+                "status": "pending",
+                "decision_state": "approved",
+                "action_type": "mutation",
+                "risk_level": "low",
+                "proposed_changes": {"summary": "Linked via incident"},
+                "approval_decision_id": "appr-inc-1",
+                "created_at": "2026-07-02T00:00:00Z",
+            },
+            "dec-linked-pm": {
+                "id": "dec-linked-pm",
+                "decision_id": "dec-linked-pm",
+                "target_type": "artifact",
+                "target_id": "art-unrelated-2",
+                "linked_postmortem_id": postmortem_id,
+                "status": "pending",
+                "decision_state": "approved",
+                "action_type": "mutation",
+                "risk_level": "low",
+                "proposed_changes": {"summary": "Linked via postmortem"},
+                "approval_decision_id": "appr-pm-1",
+                "created_at": "2026-07-03T00:00:00Z",
+            },
+            "dec-unrelated": {
+                "id": "dec-unrelated",
+                "decision_id": "dec-unrelated",
+                "target_type": "artifact",
+                "target_id": "art-other",
+                "status": "pending",
+                "decision_state": "approved",
+                "action_type": "mutation",
+                "risk_level": "low",
+                "proposed_changes": {"summary": "Unrelated decision"},
+                "approval_decision_id": "appr-unrelated",
+                "created_at": "2026-07-04T00:00:00Z",
+            },
+        },
+        "approval_decisions": {},
+        "freeze_orders": {},
+        "all_rollbacks": {},
+    }
+    store = _EvolutionJournalTestStore(data)
+    app = _create_app_for_store(store)
+    client = _JournalTestClient(app, raise_server_exceptions=True)
+
+    store.list_evolution_decisions_call_count = 0
+    store.get_evolution_decision_by_id_call_count = 0
+
+    resp = client.get(
+        f"/bff/management/evolution-journal?persona={persona_id}",
+        headers=OPERATOR_HEADERS,
+    )
+    assert resp.status_code == 200, resp.text
+    items = resp.json()["data"]["items"]
+
+    matched_sources = {it["source_id"] for it in items}
+    # dec-linked-inc must match through linked_incident_id
+    assert "dec-linked-inc" in matched_sources
+    # dec-linked-pm has NO postmortem category in REFERENCE_FIELD_CATEGORY and must NOT match
+    assert "dec-linked-pm" not in matched_sources
+    # dec-unrelated must NOT match
+    assert "dec-unrelated" not in matched_sources
+
+    # Both evolution_decision and mutation_review items for dec-linked-inc are included
+    types_for_inc = {it["entry_type"] for it in items if it["source_id"] == "dec-linked-inc"}
+    assert "evolution_decision" in types_for_inc
+    assert "mutation_review" in types_for_inc
+
+    # Owner queries remain bounded
+    assert store.get_evolution_decision_by_id_call_count == 0
+
+
+def test_lightweight_callback_semantic_defaults_and_summary() -> None:
+    """EVOLUTION-JOURNAL-FILTER-SEMANTICS-20261017: Configured canonical projection
+    allows target_type/action_type/risk_level to be None and target_version must NOT
+    fallback to artifact_version. Off-page summaries must not depend on page hydration.
+    Preserve callback-absent old fallback separately.
+    """
+    record = {
+        "id": "evo-dec-none-defaults",
+        "decision_id": "evo-dec-none-defaults",
+        "target_id": "art-none-001",
+        "artifact_id": "art-none-001",
+        "artifact_version": "v9.9.9",
+        # target_type, target_version, action_type, risk_level, decision_state, status are all None
+        "approval_decision_id": "appr-none-001",
+        "created_at": "2026-10-17T00:00:00Z",
+    }
+    data = {
+        "evolution_decisions": {record["id"]: record},
+        "approval_decisions": {},
+        "postmortems": {},
+        "freeze_orders": {},
+        "all_rollbacks": {},
+    }
+    store = _EvolutionJournalTestStore(data)
+
+    # 1. Configured canonical projection callback
+    app_with_cb = _create_app_for_store(store)
+    client_with_cb = _JournalTestClient(app_with_cb, raise_server_exceptions=True)
+
+    resp = client_with_cb.get(
+        f"/bff/management/evolution-journal?mutation_review={record['id']}",
+        headers=OPERATOR_HEADERS,
+    )
+    assert resp.status_code == 200, resp.text
+    item = resp.json()["data"]["items"][0]
+    mr = item["mutation_review"]
+
+    # Canonical projection preserves None: target_version must NOT fallback to artifact_version
+    assert mr.get("target_type") is None
+    assert mr.get("target_version") is None
+    assert mr.get("action_type") is None
+    assert mr.get("risk_level") is None
+    assert item["target"].get("version") is None
+    assert item["status"] == "unknown"
+
+    # Off-page summary does not replace None with defaults
+    summary = resp.json()["data"]["summary"]
+    assert summary["by_risk_level"].get("low", 0) == 0
+
+    # Filtering by risk_level=low does NOT match this item
+    resp_filtered = client_with_cb.get(
+        f"/bff/management/evolution-journal?mutation_review={record['id']}&risk_level=low",
+        headers=OPERATOR_HEADERS,
+    )
+    assert resp_filtered.status_code == 200
+    assert len(resp_filtered.json()["data"]["items"]) == 0
+
+    # 2. Callback-absent fallback (mutation_review_projection is None)
+    app_no_cb = _create_app_for_store(store, mutation_review_projection=None)
+    client_no_cb = _JournalTestClient(app_no_cb, raise_server_exceptions=True)
+
+    resp_no_cb = client_no_cb.get(
+        f"/bff/management/evolution-journal?mutation_review={record['id']}",
+        headers=OPERATOR_HEADERS,
+    )
+    assert resp_no_cb.status_code == 200, resp_no_cb.text
+    item_no_cb = resp_no_cb.json()["data"]["items"][0]
+    mr_no_cb = item_no_cb["mutation_review"]
+
+    # Callback-absent old fallback preserves previous defaults
+    assert mr_no_cb.get("target_type") == "artifact"
+    assert mr_no_cb.get("target_version") == "v9.9.9"
+    assert mr_no_cb.get("action_type") == "mutation"
+    assert mr_no_cb.get("risk_level") == "low"
+    assert item_no_cb["status"] == "pending"
+

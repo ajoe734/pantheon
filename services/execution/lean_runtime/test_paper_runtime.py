@@ -2855,8 +2855,8 @@ class TestPaperRuntimeObservabilityEnvelope(unittest.TestCase):
             telemetry_emitter=emitter,
         )
         snap0 = service.snapshot()
-        self.assertIsNone(snap0["queue_lag_ms"])
-        self.assertIsNone(snap0["paper_state"]["queue_lag_ms"])
+        self.assertEqual(snap0["queue_lag_ms"], 0.0)
+        self.assertEqual(snap0["paper_state"]["queue_lag_ms"], 0.0)
 
         past_iso = datetime.now(timezone.utc).isoformat()
         time.sleep(0.005)
@@ -2871,11 +2871,96 @@ class TestPaperRuntimeObservabilityEnvelope(unittest.TestCase):
         )
         service._handle_order_event(event)
 
-        self.assertIsNotNone(service._observed_queue_lag_ms)
-        self.assertGreaterEqual(service._observed_queue_lag_ms, 0)
+        # Idle after the slow signal: the snapshot reports 0, not the last handled lag.
         snap1 = service.snapshot()
-        self.assertEqual(snap1["queue_lag_ms"], service._observed_queue_lag_ms)
-        self.assertEqual(snap1["paper_state"]["queue_lag_ms"], service._observed_queue_lag_ms)
+        self.assertEqual(snap1["queue_lag_ms"], 0.0)
+        self.assertEqual(snap1["paper_state"]["queue_lag_ms"], 0.0)
+
+    def test_queue_lag_reports_oldest_pending_wait_not_last_handled(self):
+        identity = self._identity()
+        store = InMemoryPendingSignalStore([])
+        service = PaperRuntimeService(
+            store=store,
+            identity=identity,
+            runtime_manager_client=_FakeRuntimeManagerClient([]),
+            telemetry_emitter=RuntimeTelemetryEmitter(identity, _FakeBindingResolver(self._binding())),
+        )
+        now = datetime.now(timezone.utc)
+        service._started_at_dt = now - timedelta(seconds=60)
+        store._pending = [
+            {"signal_id": "a", "enqueued_at": (now - timedelta(seconds=30)).isoformat()},
+            {"signal_id": "b", "enqueued_at": (now - timedelta(seconds=5)).isoformat()},
+        ]
+        lag = service.snapshot()["queue_lag_ms"]
+        self.assertGreater(lag, 29900)
+        self.assertLess(lag, 40000)
+        # Enqueued before runtime start: measured from the runtime start.
+        service._started_at_dt = now - timedelta(seconds=2)
+        lag = service.snapshot()["queue_lag_ms"]
+        self.assertGreater(lag, 1900)
+        self.assertLess(lag, 10000)
+        # Unreadable enqueue time stays None.
+        store._pending = [{"signal_id": "c"}]
+        self.assertIsNone(service.snapshot()["queue_lag_ms"])
+        store._pending = [{"signal_id": "c", "enqueued_at": "garbage"}]
+        self.assertIsNone(service.snapshot()["queue_lag_ms"])
+        # Depth unreadable stays None.
+        store.queue_depth = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+        self.assertIsNone(service.snapshot()["queue_lag_ms"])
+
+    def test_stores_expose_oldest_pending_enqueued_at(self):
+        from services.execution.lean_runtime.pending_signal_store import RedisPendingSignalStore
+
+        mem = InMemoryPendingSignalStore([])
+        self.assertIsNone(mem.oldest_pending_enqueued_at())
+        mem._pending = [{"signal_id": "a", "enqueued_at": "2026-01-01T00:00:00+00:00"}, {"signal_id": "b", "enqueued_at": "2026-01-02T00:00:00+00:00"}]
+        self.assertEqual(mem.oldest_pending_enqueued_at(), "2026-01-01T00:00:00+00:00")
+        mem._pending = [{"signal_id": "a"}]
+        self.assertIsNone(mem.oldest_pending_enqueued_at())
+
+        class _Client:
+            def __init__(self, head):
+                self.head = head
+
+            def lindex(self, key, index):
+                assert index == 0
+                return self.head
+
+        redis_store = RedisPendingSignalStore.__new__(RedisPendingSignalStore)
+        redis_store._queue_key = "q"
+        redis_store._client = _Client(None)
+        self.assertIsNone(redis_store.oldest_pending_enqueued_at())
+        redis_store._client = _Client(b'{"signal_id": "a", "enqueued_at": "2026-01-01T00:00:00+00:00"}')
+        self.assertEqual(redis_store.oldest_pending_enqueued_at(), "2026-01-01T00:00:00+00:00")
+        redis_store._client = _Client(b"not-json")
+        self.assertIsNone(redis_store.oldest_pending_enqueued_at())
+        redis_store._client = _Client(b'{"signal_id": "a"}')
+        self.assertIsNone(redis_store.oldest_pending_enqueued_at())
+
+    def test_queue_lag_measured_from_runtime_start_when_enqueued_before_start(self):
+        identity = self._identity()
+        emitter = RuntimeTelemetryEmitter(identity, _FakeBindingResolver(self._binding()))
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([]),
+            identity=identity,
+            runtime_manager_client=_FakeRuntimeManagerClient([]),
+            telemetry_emitter=emitter,
+        )
+        store = service._store
+        now = datetime.now(timezone.utc)
+
+        # Pending signal enqueued 19s before the runtime started: the wait for the worker is excluded.
+        service._started_at_dt = now
+        store._pending = [{"signal_id": "a", "enqueued_at": (now - timedelta(seconds=19)).isoformat()}]
+        lag = service.snapshot()["queue_lag_ms"]
+        self.assertIsNotNone(lag)
+        self.assertLess(lag, 5000)
+
+        # Pending signal enqueued 19s after the runtime started keeps its full wait.
+        service._started_at_dt = now - timedelta(seconds=38)
+        lag = service.snapshot()["queue_lag_ms"]
+        self.assertGreater(lag, 18900)
+        self.assertLess(lag, 25000)
 
     def test_queue_lag_degraded_when_missing_or_invalid_timestamp(self):
         identity = self._identity()
@@ -2896,10 +2981,9 @@ class TestPaperRuntimeObservabilityEnvelope(unittest.TestCase):
             metadata={"enqueued_at": "invalid-timestamp"},
         )
         service._handle_order_event(event)
-        self.assertIsNone(service._observed_queue_lag_ms)
         snap = service.snapshot()
-        self.assertIsNone(snap["queue_lag_ms"])
-        self.assertIsNone(snap["paper_state"]["queue_lag_ms"])
+        self.assertEqual(snap["queue_lag_ms"], 0.0)
+        self.assertEqual(snap["paper_state"]["queue_lag_ms"], 0.0)
 
         # Future timestamp anomaly: queue lag remains None / degraded
         future_iso = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
@@ -2913,10 +2997,9 @@ class TestPaperRuntimeObservabilityEnvelope(unittest.TestCase):
             metadata={"enqueued_at": future_iso},
         )
         service._handle_order_event(ev_future)
-        self.assertIsNone(service._observed_queue_lag_ms)
         snap_future = service.snapshot()
-        self.assertIsNone(snap_future["queue_lag_ms"])
-        self.assertIsNone(snap_future["paper_state"]["queue_lag_ms"])
+        self.assertEqual(snap_future["queue_lag_ms"], 0.0)
+        self.assertEqual(snap_future["paper_state"]["queue_lag_ms"], 0.0)
 
     def test_telemetry_emitter_records_delivery_lag(self):
         identity = replace(self._identity(), telemetry_url="http://telemetry.test")
@@ -2976,8 +3059,7 @@ class TestPaperRuntimeObservabilityEnvelope(unittest.TestCase):
             metadata={},
         )
         service._handle_order_event(ev_empty)
-        self.assertIsNone(service._observed_queue_lag_ms)
-        self.assertIsNone(service.snapshot()["queue_lag_ms"])
+        self.assertEqual(service.snapshot()["queue_lag_ms"], 0.0)
 
         # Generic non-causal timestamp or received_at only
         past_iso = datetime.now(timezone.utc).isoformat()
@@ -2991,8 +3073,7 @@ class TestPaperRuntimeObservabilityEnvelope(unittest.TestCase):
             metadata={"timestamp": past_iso, "correlation_envelope": {"received_at": past_iso}},
         )
         service._handle_order_event(ev_generic)
-        self.assertIsNone(service._observed_queue_lag_ms)
-        self.assertIsNone(service.snapshot()["queue_lag_ms"])
+        self.assertEqual(service.snapshot()["queue_lag_ms"], 0.0)
 
     def test_queue_lag_observed_with_causal_queue_receipt(self):
         identity = self._identity()
@@ -3015,9 +3096,7 @@ class TestPaperRuntimeObservabilityEnvelope(unittest.TestCase):
             metadata={"causal_queue_receipt": {"enqueued_at": past_iso}},
         )
         service._handle_order_event(ev_receipt)
-        self.assertIsNotNone(service._observed_queue_lag_ms)
-        self.assertGreaterEqual(service._observed_queue_lag_ms, 0)
-        self.assertEqual(service.snapshot()["queue_lag_ms"], service._observed_queue_lag_ms)
+        self.assertEqual(service.snapshot()["queue_lag_ms"], 0.0)
 
     def test_real_store_to_signal_consumer_to_paper_runtime_measured_heartbeat_and_snapshot(self):
         sig = {
@@ -3055,24 +3134,23 @@ class TestPaperRuntimeObservabilityEnvelope(unittest.TestCase):
                     max_batch_size=10,
                 )
 
-                # Before drain: metric remains None (not fabricated zero)
+                # Before drain: the pending signal's wait is reported live
+                time.sleep(0.005)
                 snap0 = service.snapshot()
-                self.assertIsNone(snap0["queue_lag_ms"])
-                self.assertIsNone(snap0["paper_state"]["queue_lag_ms"])
+                self.assertGreater(snap0["queue_lag_ms"], 0)
+                self.assertEqual(snap0["paper_state"]["queue_lag_ms"], snap0["queue_lag_ms"])
 
                 time.sleep(0.005)
                 snap1 = service.drain_once()
 
-                self.assertIsNotNone(service._observed_queue_lag_ms)
-                self.assertGreaterEqual(service._observed_queue_lag_ms, 0)
-                self.assertEqual(snap1["queue_lag_ms"], service._observed_queue_lag_ms)
-                self.assertEqual(snap1["paper_state"]["queue_lag_ms"], service._observed_queue_lag_ms)
+                self.assertEqual(snap1["queue_lag_ms"], 0.0)
+                self.assertEqual(snap1["paper_state"]["queue_lag_ms"], 0.0)
 
-                # Heartbeat telemetry reflects observed queue lag
+                # Heartbeat telemetry reports the current (idle) queue lag
                 heartbeat_events = [ev for ev in telemetry.events if ev["event_type"] == "heartbeat"]
                 self.assertTrue(len(heartbeat_events) >= 1)
                 heartbeat_meta = heartbeat_events[-1].get("metadata") or {}
-                self.assertEqual(heartbeat_meta.get("queue_lag_ms"), service._observed_queue_lag_ms)
+                self.assertEqual(heartbeat_meta.get("queue_lag_ms"), 0.0)
 
     def test_emitter_base_metadata_omits_unverified_or_conflicting_bridge(self):
         identity = self._identity()

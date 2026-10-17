@@ -1,0 +1,176 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "DEV-SIX-AREA-ACTUAL-DELIVERY-CHECKPOINT-20261017",
+  "parent_task": "DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002",
+  "follow_up_of": "DEV-SIX-AREA-SOURCE-ADOPTION-CHECKPOINT-20261011",
+  "title": "Refresh original six-area actual delivery checkpoint after accepted6ef",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "target_repo": "pantheon",
+  "base_sha": "6ef8507e5ed62ff355d951000f2780d14ccb04ce",
+  "checkpoint_timestamp": "2026-10-17T03:30:00Z",
+  "status": "in_progress",
+  "phase": "Original formal delivery evidence refresh only",
+  "evidence_role": "child_task_delivery_manifest",
+  "source_only": true,
+  "production_delta": 0,
+  "all_ac_pass": false,
+  "overall": "INCOMPLETE",
+  "all12_complete": false,
+  "parent_governance": {
+    "generation": 17,
+    "owner": "Human/Ops",
+    "reviewer": "Antigravity",
+    "contract": "Parent six ACs, 21 dependencies, 3 original artifact items unchanged; withdrawn 2-human/MFA/grant gates stay withdrawn"
+  },
+  "manifest_references": {
+    "parent_evidence_summary": "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json",
+    "source_delivery_ledger": "docs/deployment/evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/source-delivery-ledger.json",
+    "latest_closure_documentation": "docs/deployment/latest-dev-six-area-closure.md"
+  },
+  "product_pair": {
+    "BE": "6ef8507e5ed62ff355d951000f2780d14ccb04ce",
+    "FE": "281ceed31f39d8a248d949d16ec8b7e8f18132b3",
+    "FULL": 38991740527,
+    "Root": 38993144359,
+    "FE_gate": 38995134562,
+    "FE_deploy": 38996380209,
+    "candidate_id": "3f96e4f1e8a00556a8ec255c719890306cd845aa6e543505cde6537dec482290",
+    "official_outcome": "accepted; four official runs success",
+    "prior_pair": {
+      "BE": "df5241b07888d73ffa7d97861229bd744609fc4b",
+      "FE": "281ceed31f39d8a248d949d16ec8b7e8f18132b3"
+    },
+    "roundtrip_scope": "Exact prior artifact and same sealed final artifact return; 19 exact-artifact checks passed during roundtrip; seven protected owners preserved only DURING roundtrip."
+  },
+  "concise_actual_summaries": {
+    "qualification_summary": "FULL 38991740527 qualified isolated backend suites across 3 domains (human, research, runtime); zero teardown containers; TW official pull 40 snapshot closes of 2330.TW; not hosted same-causal all-12.",
+    "source60_summary": "60 sources ancestry-verified (54 Pantheon records in BE 6ef8507e5 plus 6 execute-plans records in FE 281ceed31) from sanitized export; distinguishes source inclusion from served proof and feature count (includes rework and supervisor promotion, not 60 new features); 3 current delivered fixes verified exact bytes in containers.",
+    "paper_chain_summary": "dev-paper-release-38993144359-1 natural paper 8-event chain (14 causal checks, 16 financial checks passed; cash 102,420.00, holding -1.0 2330.TW, 1 actual saved curve point; backend arithmetic only, not browser UI proof; not spliced with Research 1325).",
+    "research_ad64_summary": "Research ad64 executed under finite user consent (1 approval POST, 1 dispatch POST, runs 006/007, artifacts saved, Claude CLI response matched stage2 JSON; negative Sharpe/return is valid research; consent consumed; no rerun or strategy adoption; Research UI proof is in Research domain, not L4 Persona Teaching).",
+    "fe_gate_summary": "FE gate 38995134562 passed (49 expected, 11 skipped, 0 unexpected, 0 flaky; 3 focus pass; overall warn; delivery infrastructure in Area 2, not L8 business promotion proof; 31 original step outcomes summarized and referenced by digest).",
+    "publisher_summary": "Publisher restored active HTTP 204, restore_required false, correct lease 404 (delivery infrastructure in Area 4, not L10 telemetry proof).",
+    "agora_consent_summary": "Separate two-Persona-plus-one-synthesis consent asked once / pending no reply; POST 0 / provider 0; no inferred consent from silence."
+  },
+  "loop_domain_corrections": [
+    "L4 Persona Teaching: Research Workshop UI is Research domain, not L4 Persona Teaching proof.",
+    "L8 Promotion Deployment: FE gate/deploy are delivery infrastructure, not business L8 promotion proof.",
+    "L9 Capital Pool Execution: financial16 and 1 saved curve point are hosted backend/SQL arithmetic, not browser UI proof.",
+    "L10 Telemetry Reconciliation: 8-event chain is backend subset; Publisher restore is delivery infrastructure, not L10 proof.",
+    "L11 Evolution: UI46 includes READ of existing prior decision evo-sweep-inc-drift-a24770da155d, not new current-case decision.",
+    "L12 BFF Health Monitoring: F12 GET /bff/approvals proves read/auth only; health HTTP 200 does not prove incident pipeline.",
+    "Overall: All 12 loops remain INCOMPLETE; parent task DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 remains INCOMPLETE."
+  ],
+  "proof_refs": {
+    "FULL": {
+      "path": "/tmp/pantheon-assist-20261013/FULL38991740527-original-qualification-actual-schema-verified-readonly.json",
+      "raw_sha256": "a118250e0d22914e4d42319e094578f7de962b8756e76cc9055d3bc9538f0a80"
+    },
+    "release19": {
+      "path": "/tmp/pantheon-assist-20261013/Root38993144359-original-exact-artifact-roundtrip-and-original-ACK-verified-readonly.json",
+      "raw_sha256": "7e031496cfb63995bc2cad0deaa9510351c055251bcd16a7cdf6bf22d95f419f"
+    },
+    "saved_owner": {
+      "path": "/tmp/pantheon-assist-20261013/Root38993144359-completed-original-records-and-physical-owner-readonly.json",
+      "raw_sha256": "eb5ece2a3471d4d200b2b71d30cba80da0920552c2d7013e03bdb66d76083f17"
+    },
+    "UI46": {
+      "path": "/tmp/pantheon-assist-20261013/Root38993144359-completed-Research-and-original-Evolution-UI-readonly.json",
+      "raw_sha256": "9619c53aadbb6501df49e9f9db580db16d9f99555dc0b667bc47e3cafc95e820"
+    },
+    "F12": {
+      "path": "/tmp/pantheon-assist-20261013/Root38993144359-original-F12-genuine-session-readonly.json",
+      "raw_sha256": "8b235e0eda63a06b35d1e65b6cf5983d3e56a40fe95201141474468e56753222"
+    },
+    "finance16": {
+      "path": "/tmp/pantheon-assist-20261013/Root38993144359-final-paper-finance-independent-arithmetic-readonly.json",
+      "raw_sha256": "869bbb7a99416f88b97054596010de2c7ddbf5a2b3b9fe18df9ef71501f184a9"
+    },
+    "reconciliation": {
+      "path": "/tmp/pantheon-assist-20261013/Root38993144359-original-BFF-service-port-reconciliation-evaluation-readonly.json",
+      "raw_sha256": "cb78069ce8994cb2573972526676109e776e417a9dc67c5ec0c7d4e5872da6a0"
+    },
+    "Publisher": {
+      "path": "/tmp/pantheon-assist-20261013/Root38993144359-original-Publisher-restoration-and-correct-lease-receipt.json",
+      "raw_sha256": "852f2af520633c85f6e9e8caf72e6098c598c910cb534e1405eb3759519757f6"
+    },
+    "source_bytes": {
+      "path": "/tmp/pantheon-assist-20261013/Root38993144359-existing-Dockerfile-path-three-production-bytes-verified-readonly.json",
+      "raw_sha256": "8d6b1b0fb66cbdde67af8bc44173d3cc2570b15f8887bcde7447c27dd4269214"
+    },
+    "FEgate": {
+      "path": "/tmp/pantheon-assist-20261013/Root38993144359-formal-FEgate-original-qualification-readonly.json",
+      "raw_sha256": "34feca326895a6967302072d606ef760a0504f469330c047e4cdd42fc6c08822"
+    },
+    "Research_original_two_stages": {
+      "path": "/tmp/pantheon-assist-20261013/Research-existing-ad64-original-two-stage-results-and-checksums-verified-readonly-20261017.json",
+      "raw_sha256": "54510a9c6d19f536f972aa64719b84905d51f38c65c3fa39c007ffc2bbad0255"
+    },
+    "Research_actual_provider_matches_saved": {
+      "path": "/tmp/pantheon-assist-20261013/Research-existing-ad64-provider-response-equals-saved-synthesis-verified-readonly-20261017.json",
+      "raw_sha256": "32adaced3e0434bcdcdae0a20f087ddb089f74e44b1cd838a4bfcd405d58c981"
+    },
+    "eight_events": {
+      "path": "/tmp/pantheon-assist-20261013/Root38993144359-original-natural-eight-events-and-public-scope-independently-verified-readonly.json",
+      "raw_sha256": "8fa92b20a5af8117b920b258f1ce7a43727a0f19c9be82aeb3c4b579e5ef191c"
+    },
+    "ancestry60": {
+      "path": "/tmp/pantheon-assist-20261013/Source60-existing-delivery-ledger-sanitized-and-ancestry-audited-readonly-20261017.json",
+      "raw_sha256": "1d9b034e0a23ec3919a9896112663bb48a88fba91cf22bbbb07fa02e58f95d4d"
+    },
+    "old_DF_finance15true1false": {
+      "path": "/tmp/pantheon-assist-20261013/Root38976194960-final-paper-finance-independent-arithmetic-readonly.json",
+      "raw_sha256": "2ff0a1f72aa72712a16d73bb7a8cd3c30b684e11a0be517959bb00d1804fdc21"
+    },
+    "pipeline_repetition": {
+      "path": "/tmp/pantheon-assist-20261013/Root38993144359-existing-FE-controller-regression-repetition-source-audit-readonly.json",
+      "raw_sha256": "26e9385b4b0d1009373b25698175e1eed95c933de61ccf3ff5426277984f1cca"
+    },
+    "Workshop13": {
+      "path": "/tmp/pantheon-assist-20261013/Root38993144359-Workshop295-original-browser-existing-20261017T032104Z/execution-readonly-summary.json",
+      "raw_sha256": "ccb07c75f48fb34aade45e1dbb9aa864b045801e3deca437752e32a67169abe0"
+    }
+  },
+  "predecessor_delivery": {
+    "task": "DEV-SIX-AREA-SOURCE-ADOPTION-CHECKPOINT-20261011",
+    "pr": 6509,
+    "head_sha": "f2dfae636b5d8451be8182ccfaaca3f5bc4bd33c",
+    "merge_commit_sha": "ef4c0ad88b099170cdb2ae02683fcfa5b02013e4",
+    "status": "DONE",
+    "generation": 2,
+    "note": "Corrected from stale PR6508 / full f2dfae63640b claim; actual archived source adoption is PR #6509"
+  },
+  "verification": {
+    "test_runner": "runpy.run_path (standard library python3)",
+    "test_command": "python3 -B -c \"import runpy; m = runpy.run_path('services/control-plane/bff/tests/test_latest_dev_six_area_closure.py'); m['test_closure_doc_records_identities_and_non_real_boundary'](); m['test_evidence_declares_zero_production_delta']()\"",
+    "pytest_executed": false,
+    "results": [
+      {
+        "function": "test_closure_doc_records_identities_and_non_real_boundary",
+        "result": "PASS"
+      },
+      {
+        "function": "test_evidence_declares_zero_production_delta",
+        "result": "PASS"
+      }
+    ],
+    "known_coverage_limits": "Original test only validates predecessor Markdown identities/nonreal marker and older L12-source production_delta. Does not validate new 3 JSON facts, loop proof domains, evidence de-duplication, or current full-PR diff budget.",
+    "diff_budget": {
+      "command": "python3 scripts/git/diff_budget.py --base 6ef8507e5ed62ff355d951000f2780d14ccb04ce --head HEAD",
+      "net_production_lines": 0,
+      "net_test_lines": 0,
+      "evidence_addition_cap_enforced": true,
+      "evidence_files_within_cap": true,
+      "verdict": "pass"
+    },
+    "secret_scan": "pass (no raw OHLCV, tokens, or private credentials in diff)",
+    "historical_failures_preserved": [
+      "PR 6609 2518228: returned by Root/Human/Ops for factual metadata (predecessor PR #6509, formal PRs #6596-#6600, operational loops partial UI/financial proofs, markdown table repair)",
+      "PR 6609 cb6828: rejected by assigned reviewer for diff_budget evidence addition cap failure (> 400 lines added)",
+      "PR 6609 64720e5: returned by Root/Human/Ops for formatting-only line reduction, duplicate 60 arrays, loop domain accuracy, validation provenance",
+      "Step 110: python3 lacks pytest module",
+      "Step 126: alternative pytest entrypoint broken link",
+      "Steps 130, 173, 177: copied assertions via python3 -c with doublequotes had shell backtick substitution errors"
+    ]
+  }
+}

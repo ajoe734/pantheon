@@ -2209,3 +2209,53 @@ def test_resolve_bounded_source_refresh_active_symbols_empty_when_no_baseline_de
     assert proc.returncode == 0, proc.stderr
     assert active == ""
 
+
+def test_worker_health_namespace_wiring_in_compose() -> None:
+    """Validate dedicated worker-health-data volume and file path wiring across
+    the 10 worker services and operator-bff."""
+    compose = yaml.safe_load(COMPOSE_PATH.read_text(encoding="utf-8"))
+    services = compose["services"]
+
+    assert "worker-health-data" in compose["volumes"], "worker-health-data volume must be declared"
+
+    # operator-bff mounts read-only
+    bff = services["operator-bff"]
+    assert "worker-health-data:/data/health:ro" in bff.get("volumes", [])
+    # consultation-data must remain private
+    assert not any("consultation-data" in str(v) for v in bff.get("volumes", []))
+
+    worker_health_map = {
+        "paper-signal-producer": ("PAPER_PRODUCER_HEALTH_FILE", "paper-signal-producer-health.json"),
+        "consultation-svc": ("CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE", "workflow-health.json"),
+        "policy-learning-shadow-eval-scheduler": ("SHADOW_EVAL_SCHEDULER_HEALTH_FILE", "policy-learning-shadow-eval-scheduler-health.json"),
+        "deployment-outbox-consumer": ("DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE", "deployment-outbox-consumer-health.json"),
+        "reconciliation-drift-consumer": ("RECONCILIATION_DRIFT_CONSUMER_HEALTH_FILE", "reconciliation-drift-consumer-health.json"),
+        "reconciliation-drift-scheduler": ("RECONCILIATION_DRIFT_SCHEDULER_HEALTH_FILE", "reconciliation-drift-scheduler-health.json"),
+        "reconciliation-drift-incident-listener": ("RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE", "reconciliation-drift-incident-listener-health.json"),
+        "evolution-daily-sweep-scheduler": ("EVOLUTION_SCHEDULER_HEALTH_FILE", "evolution-scheduler-health.json"),
+        "evolution-dispatch-worker": ("EVOLUTION_DISPATCH_HEALTH_FILE", "evolution-dispatch-health.json"),
+        "evolution-threshold-sweep-producer": ("EVOCHAIN_THRESHOLD_SWEEP_HEALTH_FILE", "evolution-threshold-sweep-health.json"),
+    }
+
+    assert len(worker_health_map) == 10
+
+    for worker_name, (env_key, filename) in worker_health_map.items():
+        worker_svc = services[worker_name]
+        vols = worker_svc.get("volumes", [])
+        assert any("worker-health-data:/data/health" in str(v) and ":ro" not in str(v) for v in vols), (
+            f"{worker_name} must mount worker-health-data:/data/health as read-write"
+        )
+
+        expected_default = f"/data/health/{filename}"
+        worker_env = worker_svc.get("environment", {})
+        assert env_key in worker_env, f"{worker_name} missing env {env_key}"
+        assert expected_default in worker_env[env_key], (
+            f"{worker_name} env {env_key} expected to contain default {expected_default}, got {worker_env[env_key]}"
+        )
+
+        bff_env = bff.get("environment", {})
+        assert env_key in bff_env, f"operator-bff missing env {env_key}"
+        assert expected_default in bff_env[env_key], (
+            f"operator-bff env {env_key} expected to contain default {expected_default}, got {bff_env[env_key]}"
+        )
+

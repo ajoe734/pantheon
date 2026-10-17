@@ -1,0 +1,12 @@
+{
+  "task_id": "SMOKE-SIGNAL-RUNTIME-ID-20261017",
+  "change": "BindingRef gains optional runtime_id; build_smoke_signal emits it; _RuntimeScopedStore removed from test_devloop_wire",
+  "tests": {
+    "command": "python3 -m unittest discover -s services/execution/lean_runtime -t . -p 'test_*.py'",
+    "ran": 375,
+    "result": "only error is test_algorithm_smoke import (pytest not installed in this env, unrelated)",
+    "devloop_wire_fail_closed_log_count": 0,
+    "new_test_fails_on_base": true
+  },
+  "delivery": "source-only; no deployment"
+}

@@ -1,0 +1,56 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "DEV-ARTIFACT-PUBLIC-READBACK-SETTLING-20261016",
+  "parent_task": "DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002",
+  "title": "Repair original artifact public readback settling after actual restore timeout",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "target_repo": "pantheon",
+  "base_sha": "e4df2fd42ff9dc9044aea7b84978b7f41c642479",
+  "source_only": true,
+  "all_ac_pass": false,
+  "scope": {
+    "declared_artifacts": [
+      "scripts/dev_release_artifact_driver.py",
+      "scripts/test_dev_release_artifact_driver.py",
+      "docs/deployment/evidence/DEV-ARTIFACT-PUBLIC-READBACK-SETTLING-20261016/evidence.json"
+    ],
+    "changed_artifacts": [
+      "scripts/dev_release_artifact_driver.py",
+      "scripts/test_dev_release_artifact_driver.py",
+      "docs/deployment/evidence/DEV-ARTIFACT-PUBLIC-READBACK-SETTLING-20261016/evidence.json"
+    ],
+    "evidence_manifest": "docs/deployment/evidence/DEV-ARTIFACT-PUBLIC-READBACK-SETTLING-20261016/evidence.json"
+  },
+  "diff_budget": {
+    "net_production_budget": 30,
+    "production_lines_added": 13,
+    "production_lines_deleted": 4,
+    "net_production_lines": 9,
+    "verdict": "pass"
+  },
+  "root_cause_analysis": {
+    "investigation": "Actual Root 38962069349 baseline-restore failure (lines 6356-6358 of controller job 117181863260): HTTP.open at line 173 with timeout=10 failed at 21:16:07 with TimeoutError/exit 124 while lease was verified through 21:19:41.",
+    "controller_run": "38962069349",
+    "compensation": "Original compensation 14 checks (1bcf814a) and 4-whole ACK (22cc1bfb) verified baseline M/FE 1f9 and Publisher restored (2bfe0174).",
+    "upstream_evidence": "Original Caddy selected-window GET returned 0 rows and template has no access log; exact URL and upstream reason are not retained and not invented; genuine upstream cause remains unknown without hosted access log."
+  },
+  "implementation_summary": {
+    "scripts/dev_release_artifact_driver.py": "Updated request helper in _public to allow at most 3 same GET attempts under fresh barrier checks when transient transport timeouts (TimeoutError / urllib.error.URLError with TimeoutError reason) occur, providing bounded settling before declaring restore failed. Preserved original 10s per-attempt socket limit, no retry of auth POST, no mutation replay, immediate fail-fast on status/source/auth mismatch, and no secret diagnostic exposure.",
+    "scripts/test_dev_release_artifact_driver.py": "Added 7 targeted test cases exercising: (1) transient TimeoutError recovers on attempt 2 and verifies complete readback without repeating container mutations; (2) transient URLError(TimeoutError) recovers on attempt 2; (3) persistent timeout fails at 3-attempt bound without extra calls; (4) bad identity, status 500, or auth posture fails immediately on attempt 1 without retry; (5) login POST timeout is never retried; (6) lease loss between attempts cancels via barrier.check() before attempt 2; (7) main() reports exit code 124 and structured failure record with failure_kind: timeout without leaking secrets."
+  },
+  "test_execution": {
+    "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest scripts/test_dev_release_artifacts.py scripts/test_dev_candidate_receipt.py scripts/test_dev_artifact_compensation_evidence.py scripts/test_nonprod_dev_artifact_workflow.py scripts/test_dev_release_artifact_driver.py",
+    "exit_code": 0,
+    "collected": 685,
+    "passed": 684,
+    "skipped": 1,
+    "failed": 0,
+    "duration": "133.63s"
+  },
+  "explicit_unaccepted_gaps": {
+    "worker_boundary": "Worker is strictly SOURCEONLY with no VM, provider, Root, control, capital, or live operator execution permissions.",
+    "live_roundtrip": "Live VM execution of rollback drill followed by return to final sealed bytes was NOT performed; live roundtrip remains an unexecuted live coordinator obligation.",
+    "exact_pair_roundtrip_ui_all12": "Source-only verification proves bounded settling logic and fail-closed bounds; actual hosted deployment exact-pair roundtrip, UI verification, and all12 completion remain pending hosted live acceptance."
+  }
+}
