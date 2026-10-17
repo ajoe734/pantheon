@@ -74,6 +74,7 @@ class BindingRef:
     exchange: str | None = None
     country: str | None = None
     metadata: Mapping[str, Any] | None = None
+    runtime_id: str | None = None
 
 
 # A strategy turns a binding + wall-clock into zero or more signal payloads.
@@ -106,7 +107,7 @@ def build_smoke_signal(
         event_id=f"signal:{signal_id}",
         now=now_iso,
     )
-    return {
+    signal = {
         "version": SIGNAL_SCHEMA_VERSION,
         "signal_id": signal_id,
         "strategy_id": binding.strategy_id,
@@ -130,6 +131,9 @@ def build_smoke_signal(
             "is_real_capital": False,
         },
     }
+    if binding.runtime_id:
+        signal["runtime_id"] = binding.runtime_id
+    return signal
 
 
 class SmokeStrategy:
@@ -1018,7 +1022,7 @@ def _binding_dict_from_obj(binding: Any) -> dict[str, Any]:
         return binding
     return {
         "binding_id": getattr(binding, "binding_id", ""),
-        "runtime_id": getattr(binding, "runtime_id", "rt-default"),
+        "runtime_id": getattr(binding, "runtime_id", None) or "rt-default",
         "capital_pool_id": getattr(binding, "capital_pool_id", "pool-default"),
         "artifact_id": getattr(binding, "artifact_id", "art-default"),
         "artifact_version": getattr(binding, "artifact_version", "1.0.0"),
