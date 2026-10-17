@@ -780,7 +780,9 @@ class TestReplayAdmissionByEnvironment:
         identity = types.SimpleNamespace(
             mfa_verified=mfa, operator_id="op-1", claims=claims
         )
-        body = payload or {"approval_ref": "apr-1", "reason": "drain"}
+        body = (
+            {"approval_ref": "apr-1", "reason": "drain"} if payload is None else payload
+        )
         try:
             result = _run(
                 service.replay_downstream_health_dead_letters(identity=identity, payload=body)
@@ -789,25 +791,41 @@ class TestReplayAdmissionByEnvironment:
             return monitor, exc
         return monitor, result
 
+    @staticmethod
+    def _assert_denied(monitor, err, status, precondition):
+        from fastapi import HTTPException
+
+        assert isinstance(err, HTTPException), repr(err)
+        assert err.status_code == status
+        assert precondition in json.dumps(err.detail, default=str)
+        assert not monitor.calls
+
     def test_dev_matching_tenant_without_mfa_succeeds(self):
         monitor, result = self._call("dev", {"tenant_id": "tenant-a"}, False)
         assert result["data"]["approval_ref"] == "apr-1"
         assert len(monitor.calls) == 1 and monitor.calls[0]["actor_id"] == "op-1"
+        assert monitor.calls[0]["reason"] == "drain"
 
     def test_dev_wrong_or_missing_tenant_denied_even_with_mfa(self):
         for claims in ({"tenant_id": "tenant-b"}, {}):
             monitor, err = self._call("dev", claims, True)
-            assert isinstance(err, Exception) and not monitor.calls
+            self._assert_denied(monitor, err, 403, "tenant_scope")
 
     def test_non_dev_still_requires_mfa(self):
         monitor, err = self._call("prod", {"tenant_id": "tenant-a"}, False)
-        assert isinstance(err, Exception) and not monitor.calls
+        self._assert_denied(monitor, err, 403, "mfa_verified")
 
     def test_dev_missing_approval_and_invalid_channel_rejected(self):
         claims = {"tenant_id": "tenant-a"}
-        monitor, err = self._call("dev", claims, False, {"reason": "x"})
-        assert isinstance(err, Exception) and not monitor.calls
+        for body in (
+            {},
+            {"reason": "x"},
+            {"approval_ref": "a"},
+            {"approval_ref": " ", "reason": "x"},
+        ):
+            monitor, err = self._call("dev", claims, False, body)
+            self._assert_denied(monitor, err, 422, "approval_ref")
         monitor, err = self._call(
             "dev", claims, False, {"approval_ref": "a", "reason": "x", "channel": "bogus"}
         )
-        assert isinstance(err, Exception) and not monitor.calls
+        self._assert_denied(monitor, err, 422, "channel")
