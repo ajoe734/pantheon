@@ -1,0 +1,7 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-INCIDENT-AUTO-RESOLVE-ON-RETIRE-20261017-CI-RED-61CF490B3CD1",
+  "pr": 6633,
+  "root_cause": "Flaky scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_5_baseline_cancellation_real_signal_injection timed out after 10s (SIGINT subprocess under CI load) in 'Persona provisioning owner contracts'. PR #6633 only touches services/deployment/outbox_consumer_worker.py, its test and evidence; unrelated to the failing test.",
+  "resolution": "Reran failed job on run 39043429755 (attempt 2); run concluded success (1940+ passed).",
+  "follow_up": "test_d3_5 10s communicate timeout is load-sensitive; consider raising it in a separate task."
+}
