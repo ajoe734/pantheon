@@ -2288,13 +2288,57 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
             clear=True,
         ):
             self.assertEqual(ai_status.current_actor(), "Human/Ops")
-            for command in ("approve", "done", "handoff", "progress"):
+            for command in ("approve", "done", "progress"):
                 with self.subTest(command=command), self.assertRaisesRegex(
                     RuntimeError, "local Human/Ops cannot authorize"
                 ):
                     ai_status.validate_active_status_command_lease(
                         command, [self.task_id, "attempted role impersonation"]
                     )
+
+    def test_local_human_ops_handoff_validates_owner_and_reviewer_guards(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=True),
+            mock.patch.object(ai_status, "STATUS_ROOT", self.root),
+            mock.patch.object(ai_status, "STATUS_FILE", self.status_file),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "exact active worker lease or explicit local Human/Ops mode",
+            ):
+                ai_status.validate_active_status_command_lease(
+                    "handoff", [self.task_id, "Claude", "missing lease"]
+                )
+
+        with mock.patch.dict(
+            os.environ,
+            {ai_status.LOCAL_HUMAN_OPS_ENV: "1"},
+            clear=True,
+        ):
+            self.assertEqual(ai_status.current_actor(), "Human/Ops")
+            ai_status.validate_active_status_command_lease(
+                "handoff", [self.task_id, "Claude", "local human ops handoff"]
+            )
+            task = json.loads(self.status_file.read_text(encoding="utf-8"))["tasks"][0]
+            with self.assertRaisesRegex(
+                SystemExit,
+                r"Only the owner \(Codex\) can hand off LEASE-SYNC-001 for review",
+            ):
+                ai_status.prepare_external_mutation_preflight(
+                    "handoff",
+                    task,
+                    [self.task_id, "Claude", "foreign owner handoff attempt"],
+                )
+            human_task = dict(task, owner="Human/Ops", reviewer="Claude")
+            with self.assertRaisesRegex(
+                SystemExit,
+                r"LEASE-SYNC-001 handoff target must match the assigned reviewer \(Claude\)",
+            ):
+                ai_status.prepare_external_mutation_preflight(
+                    "handoff",
+                    human_task,
+                    [self.task_id, "Codex", "wrong reviewer target"],
+                )
 
     def test_local_human_ops_allows_explicit_board_maintenance_actions(self) -> None:
         with mock.patch.dict(
@@ -8815,6 +8859,58 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(binding["kind"], "artifact_contract")
         self.assertEqual(binding["task_id"], "REG-002")
         self.assertTrue(binding["contract_sha256"])
+
+    def test_local_human_ops_own_task_handoff_reaches_immutable_binding_and_denials(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "in_progress"
+        task["owner"] = "Codex"
+        task["reviewer"] = "Claude"
+        original_binding = deepcopy(task.get(ai_status.DELIVERY_BINDING_KEY))
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AI_NAME": "Human/Ops",
+                ai_status.LOCAL_HUMAN_OPS_ENV: "1",
+            },
+            clear=False,
+        ):
+            with self.assertRaises(SystemExit):
+                _command_handoff(
+                    self.state,
+                    ["REG-002", "Claude", "Foreign owner handoff must fail"],
+                )
+            self.assertEqual(task["status"], "in_progress")
+            self.assertEqual(task.get(ai_status.DELIVERY_BINDING_KEY), original_binding)
+
+            task["owner"] = "Human/Ops"
+            with self.assertRaises(SystemExit):
+                _command_handoff(
+                    self.state,
+                    ["REG-002", "Copilot", "Wrong reviewer target must fail"],
+                )
+            self.assertEqual(task["status"], "in_progress")
+            self.assertEqual(task.get(ai_status.DELIVERY_BINDING_KEY), original_binding)
+
+            _command_handoff(
+                self.state,
+                ["REG-002", "Claude", "Local Human/Ops handoff for genuine review"],
+            )
+
+        self.assertEqual(task["status"], "review")
+        binding = task[ai_status.DELIVERY_BINDING_KEY]
+        self.assertEqual(binding["kind"], "artifact_contract")
+        self.assertEqual(binding["task_id"], "REG-002")
+        self.assertTrue(binding["contract_sha256"])
+        self.assertTrue(
+            any(
+                h.get("task_id") == "REG-002"
+                and h.get("from") == "Human/Ops"
+                and h.get("to") == "Claude"
+                and h.get("status") == "pending"
+                for h in self.state.get("handoffs", [])
+            )
+        )
 
     def test_new_handoff_atomically_clears_prior_review_and_closeout_epoch(self) -> None:
         task = self.state["tasks"][0]

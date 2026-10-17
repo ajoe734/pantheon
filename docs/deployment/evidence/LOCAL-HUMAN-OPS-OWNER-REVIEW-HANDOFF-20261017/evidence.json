@@ -1,0 +1,72 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "LOCAL-HUMAN-OPS-OWNER-REVIEW-HANDOFF-20261017",
+  "title": "Allow local HumanOps to request genuine review of its own task without impersonating agents",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "development_tooling",
+  "delivery_state": "ready_for_independent_review",
+  "scope": {
+    "owned": [
+      "Allow handoff in LOCAL_HUMAN_OPS_ACTIONS in scripts/ai_status.py (+1 net production line)",
+      "Preserve lease security intent: approve/done/progress stay denied at lease layer",
+      "Add own-owner positive, foreign-owner negative, and wrong-reviewer target tests in scripts/test_ai_status.py"
+    ],
+    "not_changing": [
+      "Canonical owner and reviewer validation in prepare_external_mutation_preflight and command_handoff",
+      "Delivery binding resolution (resolve_handoff_delivery_binding) and CAS preflight verification",
+      "Supervisor scheduling, worker leases, or dispatch policies",
+      "Product runtime, frontend, live config, or deployment truth"
+    ],
+    "composes_with": [
+      "DEV-SIX-AREA-DOC-FACT-CORRECTION-20261017",
+      "scripts/human-ops-status.sh handoff workflow",
+      "Parent DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 independent review intake"
+    ]
+  },
+  "failure_reproduction": {
+    "case": "Actual failure receipt /tmp/pantheon-completion-parent-g17-original-independent-review-handoff-20261017.json: supported d0695d2c89a1fdcaac1eea56309532fda3fabf2e human-ops-status.sh handoff DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 Antigravity rejects with RuntimeError: local Human/Ops cannot authorize handoff; allowed actions are archive_collision_fence, archive_correct_review_file, archive_reconcile, artifact-contract, assign, dependency-contract, dependency-track, execution-resource, milestone, note, operator_accept, reconcile_merged_done, record_terminal_fact, reopen, resume_integration, retire_archive_collision, supersede, sync.",
+    "prior_outcome": "Local Human/Ops mode was unable to initiate review handoff for a canonically owned task because validate_active_status_command_lease rejected handoff before owner and reviewer preflight checks.",
+    "regression": "test_local_human_ops_handoff_validates_owner_and_reviewer_guards and test_local_human_ops_own_task_handoff_reaches_immutable_binding_and_denials prove that local Human/Ops can hand off its own task to the assigned reviewer while foreign-owner handoff, wrong-reviewer target, and lease-free execution remain rejected."
+  },
+  "implementation": {
+    "allowlist": "Added 'handoff' to LOCAL_HUMAN_OPS_ACTIONS in scripts/ai_status.py (+1 net line, within 4-line budget).",
+    "guards_preserved": "Existing prepare_external_mutation_preflight and command_handoff guards enforce canonical owner equality (task owner must match current actor Human/Ops), assigned reviewer equality (handoff target must match assigned reviewer), delivery binding resolution, and CAS checks.",
+    "role_boundaries": "approve, done, and progress remain strictly denied for local Human/Ops; non-local mutations require an exact active worker lease; no frozen binding or status changes on denial.",
+    "net_prod_lines": 1,
+    "net_prod_line_budget": 4
+  },
+  "verification": {
+    "passed": [
+      {
+        "command": "python3 -m unittest scripts.test_ai_status.StatusCommandLeaseValidationTests",
+        "result": "18 tests passed"
+      },
+      {
+        "command": "python3 -m unittest scripts.test_ai_status.ReviewApprovedWorkflowTests",
+        "result": "168 tests passed"
+      },
+      {
+        "command": "python3 -m unittest scripts.test_ai_status",
+        "result": "506 tests passed in 43.990s"
+      },
+      {
+        "command": "python3 -m py_compile scripts/ai_status.py scripts/test_ai_status.py",
+        "result": "passed"
+      },
+      {
+        "command": "git diff --check",
+        "result": "passed"
+      }
+    ],
+    "runner": {
+      "python": "3.12.3"
+    }
+  },
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Antigravity",
+    "note": "Verify that handoff is permitted in LOCAL_HUMAN_OPS_ACTIONS, role boundaries (approve/done/progress denial) are maintained, and own-owner positive and foreign-owner/wrong-reviewer negative checks pass."
+  }
+}
