@@ -345,3 +345,64 @@ def test_tick_budget_bounds_slow_downstream_and_progress_is_reported(tmp_path: P
     assert health_payload["last_progress_at"] is not None
     with mock.patch.dict("os.environ", env):
         assert listener.healthcheck() == 0
+
+
+def test_unchanged_incident_is_not_reposted_across_ticks_and_restart(tmp_path: Path) -> None:
+    listener = _load_listener_module()
+    state_path = tmp_path / "state.json"
+    incident = {**_incident_payload(), "updated_at": "2026-10-17T00:00:00Z"}
+    infra = {
+        "incident_id": "inc-infra-1",
+        "binding_id": "infra-subject-1",
+        "updated_at": "2026-10-17T00:00:00Z",
+    }
+    kwargs = {
+        "incidents_url": "http://incidents:8090",
+        "reconciliation_url": "http://reconciliation-drift-svc:8102",
+        "state_path": state_path,
+    }
+    ack = {"created": True, "evaluation_id": "rdeval-1"}
+    with mock.patch.object(
+        listener, "fetch_open_incidents", return_value=[incident, infra]
+    ), mock.patch.object(listener, "post_incident_trigger", return_value=ack) as post:
+        first = listener.run_tick(**kwargs)
+        assert post.call_count == 1
+        second = listener.run_tick(**kwargs)
+        assert post.call_count == 1  # second tick posts nothing
+        # restart: fresh state object reloads the persisted record
+        third = listener.run_tick(**kwargs)
+        assert post.call_count == 1
+        changed = {**incident, "updated_at": "2026-10-17T00:05:00Z"}
+        with mock.patch.object(
+            listener, "fetch_open_incidents", return_value=[changed, infra]
+        ):
+            fourth = listener.run_tick(**kwargs)
+            assert post.call_count == 2  # evidence change posts exactly once
+            listener.run_tick(**kwargs)
+            assert post.call_count == 2
+    assert second["unchanged_incident_count"] == 1
+    assert third["unchanged_incident_count"] == 1
+    # infrastructure acknowledgement still reported every tick, never posted
+    assert any(r.get("acknowledged") for r in second["results"])
+    assert first["triggered_incident_count"] == 2
+    assert fourth["triggered_incident_count"] == 2
+
+
+def test_delivered_record_drops_incidents_no_longer_open(tmp_path: Path) -> None:
+    listener = _load_listener_module()
+    state_path = tmp_path / "state.json"
+    incident = {**_incident_payload(), "updated_at": "t1"}
+    kwargs = {
+        "incidents_url": "http://i",
+        "reconciliation_url": "http://r",
+        "state_path": state_path,
+    }
+    with mock.patch.object(
+        listener, "post_incident_trigger", return_value={"created": True}
+    ):
+        with mock.patch.object(listener, "fetch_open_incidents", return_value=[incident]):
+            listener.run_tick(**kwargs)
+        assert json.loads(state_path.read_text())["delivered"]
+        with mock.patch.object(listener, "fetch_open_incidents", return_value=[]):
+            listener.run_tick(**kwargs)
+    assert json.loads(state_path.read_text())["delivered"] == {}

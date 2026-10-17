@@ -1,0 +1,12 @@
+{
+  "task_id": "INCIDENT-LISTENER-ACK-ACROSS-TICKS-20261017",
+  "change": "IncidentListenerState persists delivered {identity: evidence_version}; run_tick skips unchanged incidents, re-triggers new/changed ones, prunes ids no longer open (only after a successful fetch)",
+  "version_source": "incident updated_at, else sha256 of incident payload",
+  "unchanged_services": "svc consume endpoint and incidents service untouched",
+  "validation": {
+    "command": "pytest services/reconciliation-drift/tests/test_reconciliation_drift_incident_listener.py",
+    "head_result": "9 passed",
+    "base_result": "2 new tests fail, 7 pass"
+  },
+  "delivery": "hosted only via next FULL+Root; no deployment or hosted writes performed"
+}
