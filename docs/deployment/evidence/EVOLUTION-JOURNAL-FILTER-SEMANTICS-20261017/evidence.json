@@ -3,11 +3,11 @@
   "base_sha": "e4cbc0de2a2738818c375441dc8345eb2d6c8978",
   "change_class": "corrective",
   "net_prod_line_budget": 30,
-  "net_prod_lines_changed": 20,
-  "summary": "Preserve canonical Evolution Journal filtering, status projection, and Persona lineage before pagination. Ensure decision_state precedence and lightweight field normalization (proposed_changes summary, linked_incident_id, linked_postmortem_id) so filtering by status matches rendered row status and full summary counts reflect canonical states without deep hydration outside sliced pages.",
-  "root_cause": "Lightweight pre-filter projection in evolution/router.py duplicated canonical mutation_review_projection fields but preferred status before decision_state, causing approved items to be filtered out under ?status=approved and returned under ?status=pending. Full-summary mixed normalized returned rows and unnormalized off-page rows. Initial record also omitted linked_incident_id and linked_postmortem_id used by Persona lineage filtering.",
+  "net_prod_lines_changed": 19,
+  "summary": "Preserve canonical Evolution Journal filtering before pagination. Correct mutation_review lightweight pre-filter projection to match canonical GovernanceService semantics (decision_state precedence, allowing None for target_type/action_type/risk_level, no fallback to artifact_version for target_version, and summary default). Preserve distinct entry-type semantics where evolution_decision retains status-first precedence and mutation_review retains decision_state-first precedence. Preserve existing reference field category matching for linked_incident_id without postmortem graph traversal. Deep hydration remains strictly bounded to returned page items with 0 per-row store reads for off-page rows.",
+  "root_cause": "Lightweight pre-filter projection in evolution/router.py duplicated canonical mutation_review_projection fields but preferred status before decision_state, causing approved mutation review items to be filtered out under ?status=approved and returned under ?status=pending. Full-summary mixed normalized returned rows and unnormalized off-page rows. Initial record also omitted linked_incident_id used by Persona lineage filtering.",
   "solution": {
-    "router": "In services/control-plane/bff/evolution/router.py, apply canonical decision_state precedence to both decision and mutation review items in the pre-filter loop. Populate proposed_changes summary, linked_incident_id, and linked_postmortem_id in lightweight projection, and resolve postmortem_ids in Persona lineage matching so items linked via incident or postmortem are correctly matched before pagination."
+    "router": "In services/control-plane/bff/evolution/router.py, when mutation_review_projection is configured, project lightweight fields matching canonical GovernanceService.mutation_review_projection semantics (decision_state precedence, allowing None for target_type/action_type/risk_level, no fallback to artifact_version for target_version, and summary default). Preserve callback-absent fallback separately. Preserve evolution_journal_decision_item status-first behavior without override. Preserve existing _EVOLUTION_JOURNAL_REFERENCE_FIELD_CATEGORY matching for linked_incident_id without postmortem graph traversal."
   },
   "scope": [
     "services/control-plane/bff/evolution/router.py",
@@ -17,15 +17,15 @@
   ],
   "acceptance_criteria_verification": {
     "ac1": "Read actual final PR6626 source and reproduced contradictory approved/pending filtering on base with sanitized counterexample /tmp/pantheon-assist-20261013/Evolution-e4cbc-real-mounted-filter-regression-actual-tool-result-20261017.json (defect_reproduced changed from true on base to false on head).",
-    "ac2": "Preserved canonical GovernanceService.mutation_review_projection field semantics before slicing, including decision_state precedence and proposed_changes summary default.",
-    "ac3": "Preserved Persona lineage filtering through linked_incident_id and linked_postmortem_id. Deep authoritative hydration remains bounded strictly to returned page_items with 0 per-row store lookups for off-page rows.",
-    "ac4": "Added mounted base-fail/head-pass unit tests in test_bff_b3_evolution_journal.py covering divergent status/decision_state filtering, full summary consistency across history sizes, and Persona lineage through linked incident/postmortem references with assertions on bounded owner reads. Net production line change is +20 lines, within budget <= 30."
+    "ac2": "Preserved canonical GovernanceService.mutation_review_projection field semantics before slicing, including decision_state precedence, None defaults, target_version without fallback to artifact_version, and summary default, while preserving callback-absent fallback.",
+    "ac3": "Preserved distinct entry-type semantics (evolution_decision uses status-first; mutation_review uses decision_state-first) and existing Persona lineage matching through linked_incident_id without postmortem graph traversal. Deep authoritative hydration remains bounded strictly to returned page_items with 0 per-row store lookups for off-page rows.",
+    "ac4": "Added mounted base-fail/head-pass unit tests in test_bff_b3_evolution_journal.py covering divergent status/decision_state filtering, full summary consistency across pages/history sizes, Persona lineage through linked incident references, and lightweight callback semantic defaults with assertions on bounded owner reads. Net production line change is +19 lines, within budget <= 30."
   },
   "validation": [
     {
       "suite": "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py",
       "command": "PYTHONPATH=. python3 -m pytest services/control-plane/bff/tests/test_bff_b3_evolution_journal.py",
-      "result": "23 passed"
+      "result": "24 passed"
     },
     {
       "suite": "services/control-plane/bff/tests/test_mutation_review_projection_policy.py",

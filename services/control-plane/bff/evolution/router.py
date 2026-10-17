@@ -999,8 +999,6 @@ def create_evolution_router(
         for dec in decisions:
             dec_item = evolution_journal_decision_item(dec)
             if dec_item is not None:
-                if dec.get("decision_state"):
-                    dec_item["status"] = str(dec.get("decision_state")).strip().lower()
                 items.append(dec_item)
             # Mutation review item projection
             dec_id = _management_record_id(dec, "decision_id", "id", "evolution_decision_id")
@@ -1017,22 +1015,36 @@ def create_evolution_router(
                     "threshold_snapshots",
                 )
             ):
-                proposed_changes = dict(dec.get("proposed_changes") or {})
-                proposed_changes.setdefault("summary", dec.get("rationale") or dec.get("notes") or "")
-                proj = {
-                    "decision_id": dec_id,
-                    "target_type": dec.get("target_type") or "artifact",
-                    "target_id": dec.get("target_id") or dec.get("artifact_id"),
-                    "target_version": dec.get("target_version") or dec.get("artifact_version"),
-                    "action_type": dec.get("action_type") or "mutation",
-                    "decision_state": dec.get("decision_state") or dec.get("status") or "pending",
-                    "risk_level": dec.get("risk_level") or "low",
-                    "created_at": dec.get("created_at") or snapshot_at,
-                    "proposed_changes": proposed_changes,
-                    "approval_decision_id": dec.get("approval_decision_id"),
-                    "linked_incident_id": dec.get("linked_incident_id"),
-                    "linked_postmortem_id": dec.get("linked_postmortem_id"),
-                }
+                if mutation_review_projection is not None:
+                    proposed_changes = dict(dec.get("proposed_changes") or {})
+                    if "summary" not in proposed_changes:
+                        proposed_changes["summary"] = dec.get("rationale") or dec.get("notes") or ""
+                    proj = {
+                        "decision_id": dec_id,
+                        "target_type": dec.get("target_type"),
+                        "target_id": dec.get("target_id") or dec.get("artifact_id"),
+                        "target_version": dec.get("target_version"),
+                        "action_type": dec.get("action_type"),
+                        "decision_state": dec.get("decision_state") or dec.get("status"),
+                        "risk_level": dec.get("risk_level"),
+                        "created_at": dec.get("created_at") or snapshot_at,
+                        "proposed_changes": proposed_changes,
+                        "approval_decision_id": dec.get("approval_decision_id"),
+                        "linked_incident_id": dec.get("linked_incident_id"),
+                        "linked_postmortem_id": dec.get("linked_postmortem_id"),
+                    }
+                else:
+                    proj = {
+                        "decision_id": dec_id,
+                        "target_type": dec.get("target_type") or "artifact",
+                        "target_id": dec.get("target_id") or dec.get("artifact_id"),
+                        "target_version": dec.get("target_version") or dec.get("artifact_version"),
+                        "action_type": dec.get("action_type") or "mutation",
+                        "decision_state": dec.get("status") or dec.get("decision_state") or "pending",
+                        "risk_level": dec.get("risk_level") or "low",
+                        "created_at": dec.get("created_at") or snapshot_at,
+                        "proposed_changes": dec.get("proposed_changes") or {},
+                    }
                 for field in ("metadata", "provenance", "origin"):
                     if field in dec:
                         proj[field] = dec[field]
@@ -1041,7 +1053,7 @@ def create_evolution_router(
                     entry_type="mutation_review",
                     source_id=dec_id,
                     title=f"Mutation review: {dec_id}",
-                    summary=str(proposed_changes.get("summary") or dec.get("rationale") or ""),
+                    summary=str((proj.get("proposed_changes") or {}).get("summary") or dec.get("rationale") or ""),
                     status=str(proj.get("decision_state") or "unknown").lower(),
                     created_at=proj.get("created_at"),
                     updated_at=dec.get("updated_at"),
@@ -1052,7 +1064,6 @@ def create_evolution_router(
                         target_type=proj.get("target_type"),
                         target_id=proj.get("target_id"),
                         target_version=proj.get("target_version"),
-                        incident_id=dec.get("incident_ref") or dec.get("linked_incident_id"),
                     ),
                     route=f"/management/evolution-journal?mutation_review={dec_id}",
                     bff_detail_path=f"/api/v1/operator/mutation-review/{dec_id}",
@@ -1239,14 +1250,6 @@ def create_evolution_router(
                                 target_set.add(val)
                                 changed = True
 
-                postmortem_ids = {
-                    str(pm.get("postmortem_id") or pm.get("report_id") or pm.get("id") or "").strip().lower()
-                    for pm in postmortems
-                    if str(pm.get("incident_id") or "").strip().lower() in incident_ids
-                    or str(pm.get("runtime_id") or "").strip().lower() in runtime_ids
-                    or str(pm.get("artifact_id") or "").strip().lower() in artifact_ids
-                } - {""}
-
                 category_sets = {
                     "persona": persona_ids,
                     "runtime": runtime_ids,
@@ -1272,9 +1275,6 @@ def create_evolution_router(
                             val = str(record_obj.get(field) or "").strip().lower()
                             if val and val in category_sets.get(cat, set()):
                                 return True
-                        lpm = str(record_obj.get("linked_postmortem_id") or "").strip().lower()
-                        if lpm and lpm in postmortem_ids:
-                            return True
                     return False
 
                 filtered = [it for it in filtered if _journal_item_matches_persona_lineage(it)]
@@ -1325,7 +1325,6 @@ def create_evolution_router(
                     target_type=full_proj.get("target_type"),
                     target_id=full_proj.get("target_id"),
                     target_version=full_proj.get("target_version"),
-                    incident_id=full_proj.get("linked_incident_id") or raw_dec.get("incident_ref"),
                 )
                 if target_dict:
                     it["target"] = target_dict
