@@ -2743,6 +2743,13 @@ def _binding_retired_before(binding: Dict[str, Any] | None, observed_at: str) ->
     return observed is None or observed > retired_at
 
 
+def _binding_paused(binding: Dict[str, Any] | None) -> bool:
+    """True when runtime-manager reports the binding paused (an expected stop)."""
+    if not binding:
+        return False
+    return str(binding.get("status") or "").strip().lower() == "paused"
+
+
 def _is_retired_binding_rejection(detail: Any) -> bool:
     text = str(detail)
     return "is after RuntimeBinding" in text and "retired_at" in text
@@ -2951,6 +2958,7 @@ def _execute_scheduled_reconcile(
     lifecycle_terminal_failures: List[Dict[str, Any]] = []
     lifecycle_ineligible_binding_ids: List[str] = []
     retired_binding_ids: List[str] = []
+    paused_binding_ids: List[str] = []
     binding_lookup_failed = False
     dispatch_incidents = False if body.lifecycle_only else bool(body.dispatch_incidents)
     incident_candidates: List[tuple[Dict[str, Any], Dict[str, Any], List[str]]] = []
@@ -3021,6 +3029,10 @@ def _execute_scheduled_reconcile(
                 else:
                     if _binding_retired_before(authoritative, timestamp):
                         retired_binding_ids.append(binding_id)
+                        lifecycle_ineligible_binding_ids.append(binding_id)
+                        continue
+                    if _binding_paused(authoritative):
+                        paused_binding_ids.append(binding_id)
                         lifecycle_ineligible_binding_ids.append(binding_id)
                         continue
             else:
@@ -3165,7 +3177,7 @@ def _execute_scheduled_reconcile(
         tick_status = "failure"
     elif not created_evaluation_ids and skipped_binding_ids:
         tick_status = _worst_status(evaluation_statuses)
-    elif not created_evaluation_ids and retired_binding_ids:
+    elif not created_evaluation_ids and (retired_binding_ids or paused_binding_ids):
         tick_status = "ok"
     elif not created_evaluation_ids:
         tick_status = "degraded"
@@ -3188,6 +3200,7 @@ def _execute_scheduled_reconcile(
         "lifecycle_terminal_failures": lifecycle_terminal_failures,
         "lifecycle_ineligible_binding_ids": list(dict.fromkeys(lifecycle_ineligible_binding_ids)),
         "retired_binding_ids": retired_binding_ids,
+        "paused_binding_ids": paused_binding_ids,
         "incident_dispatch_enabled": dispatch_incidents,
         "telemetry_summaries_fetched": len(summaries),
         "triggered_at": timestamp,

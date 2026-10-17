@@ -3233,3 +3233,74 @@ def test_lower_sequence_never_consults_durable_order_and_higher_stays_visible() 
         reason, verify = _same_sequence_reason(svc, binding_id, summary, (False, None, {}), sequence=9)
         assert reason is None
         verify.assert_not_called()
+
+
+def _stale_heartbeat_summary() -> dict:
+    # Telemetry marks a summary degraded after 90 s without a heartbeat.
+    return _healthy_runtime_summary(
+        state="degraded",
+        last_heartbeat_at="2026-10-10T00:00:11Z",
+        heartbeat_age_seconds=600,
+    )
+
+
+def test_scheduled_tick_treats_paused_binding_as_expected_stopped() -> None:
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        summary = _stale_heartbeat_summary()
+        with (
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary]),
+            mock.patch.object(
+                svc,
+                "_authoritative_runtime_binding",
+                return_value={"binding_id": summary["binding_id"], "status": "paused"},
+            ),
+            mock.patch.object(svc, "_classify_drift_report_incident") as classify,
+        ):
+            payload = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": "tick-paused-001"},
+            ).json()
+
+        assert payload["status"] == "ok"
+        assert payload["paused_binding_ids"] == [summary["binding_id"]]
+        assert payload["retired_binding_ids"] == []
+        assert payload["drift_report_ids"] == []
+        assert payload["incident_ids"] == []
+        assert payload["evaluated_binding_count"] == 0
+        classify.assert_not_called()
+
+
+def test_scheduled_tick_keeps_drift_for_active_binding_with_stale_summary() -> None:
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        summary = _stale_heartbeat_summary()
+        with (
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary]),
+            mock.patch.object(
+                svc,
+                "_authoritative_runtime_binding",
+                return_value={"binding_id": summary["binding_id"], "status": "active"},
+            ),
+            mock.patch.object(
+                svc,
+                "_classify_drift_report_incident",
+                return_value={"incident_id": "inc-active-stale-001"},
+            ) as classify,
+        ):
+            payload = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": "tick-active-stale-001"},
+            ).json()
+
+        assert payload["paused_binding_ids"] == []
+        assert payload["evaluated_binding_count"] == 1
+        assert payload["drift_report_ids"]
+        assert payload["incident_ids"] == ["inc-active-stale-001"]
+        assert classify.call_count == 1

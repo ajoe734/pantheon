@@ -1,0 +1,6 @@
+{
+  "task_id": "RECON-SCHEDULER-PAUSED-EXPECTED-20261017",
+  "change": "scheduled reconcile treats runtime-manager status=paused as expected stopped (no drift report, no incident); reports paused_binding_ids",
+  "tests": "services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py: 51 passed; paused test fails on base",
+  "hosted_state_written": false
+}
