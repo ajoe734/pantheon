@@ -224,7 +224,7 @@ PR6093 = BFF-CLOSURE-REGRESSION-20261002 (`b6599f9fd`), PR6094 = DIRECT-BFF-OWNE
   - Plan ID: `ad64f196-eac9-40c3-940f-258cb3da1db7`, Workshop ID: `b06627a9-4711-4baa-be58-23fa9a5400bc`, principal: `pantheon-dev-operator-a /tenant-dev`.
   - 1 approval POST, 1 dispatch POST, runs `rrun-20261016-006` and `rrun-20261016-007`. Artifacts: `rart-8e15bee77f67` (SHA256 `aec72d69...`), `rart-d8c50a13303d` (SHA256 `f7461b15...`).
   - Model & Dataset: Persona 1325 strategy `aa060d53...`, dataset DSV602c80 2330.TWSE 40 bars computed to Oct 15.
-  - Results: return -0.1106 (-11.06%), Sharpe -0.734083, max drawdown 0.2846 (28.46%), final value 99889.395, 39 trades, net position -1.
+  - Results: return -0.001106 (-0.1106%), Sharpe -0.734083, max drawdown -0.002846 (0.2846%), final value 99889.395, 39 trades, net position -1.
   - Provider: Actual retained Gateway Claude CLI / claude-opus-4-8 response equals saved stage2 JSON; one logical synthesis.
   - Authority: Finite user consent CONSUMED; no further save/approve/dispatch/stage2/model/recompute/adoption/order/funds. Negative result is valid research, not strategy adoption.
   - Saved six equal, two Patterns equal, new list equals completed detail True, completed owner process recreated True.

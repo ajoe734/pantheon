@@ -1,0 +1,83 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "DEV-SIX-AREA-DOC-FACT-CORRECTION-20261017",
+  "parent_task": "DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002",
+  "corrective_for": "DEV-SIX-AREA-ACTUAL-DELIVERY-CHECKPOINT-20261017",
+  "title": "Correct three factual labels in the merged delivery checkpoint without changing product behavior",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "target_repo": "pantheon",
+  "base_sha": "9597c02cc94e900288559943c2bb598bf66fba05",
+  "source_only": true,
+  "production_delta": 0,
+  "prod_lines_modified": 0,
+  "parent_governance": {
+    "generation": 17,
+    "owner": "Human/Ops",
+    "reviewer": "Antigravity",
+    "contract": "Parent six ACs, 21 dependencies, 3 original artifact items unchanged; withdrawn 2-human/MFA/grant gates stay withdrawn; all12 remains false; overall remains INCOMPLETE"
+  },
+  "scoped_artifacts": [
+    "docs/deployment/latest-dev-six-area-closure.md",
+    "docs/deployment/evidence/DEV-SIX-AREA-ACTUAL-DELIVERY-CHECKPOINT-20261017/evidence.json",
+    "docs/deployment/evidence/DEV-SIX-AREA-DOC-FACT-CORRECTION-20261017/evidence.json"
+  ],
+  "corrections": {
+    "research_percentage_labels": {
+      "file": "docs/deployment/latest-dev-six-area-closure.md",
+      "line": 227,
+      "prior": "Results: return -0.1106 (-11.06%), Sharpe -0.734083, max drawdown 0.2846 (28.46%), final value 99889.395, 39 trades, net position -1.",
+      "corrected": "Results: return -0.001106 (-0.1106%), Sharpe -0.734083, max drawdown -0.002846 (0.2846%), final value 99889.395, 39 trades, net position -1.",
+      "producer_reference": {
+        "path": "/tmp/pantheon-assist-20261013/Research-existing-ad64-original-two-stage-results-and-checksums-verified-readonly-20261017.json",
+        "sha256": "54510a9c6d19f536f972aa64719b84905d51f38c65c3fa39c007ffc2bbad0255",
+        "total_return": -0.001106,
+        "max_drawdown": -0.002846,
+        "final_portfolio_value": 99889.395
+      }
+    },
+    "paper_chain_cash": {
+      "file": "docs/deployment/evidence/DEV-SIX-AREA-ACTUAL-DELIVERY-CHECKPOINT-20261017/evidence.json",
+      "field": "concise_actual_summaries.paper_chain_summary",
+      "prior": "cash 02,420.00",
+      "corrected": "cash 102,420.00",
+      "truth_source": "dev-paper-release-38993144359-1 natural paper chain actual cash 102420.00 (missed leading 1 repaired)"
+    },
+    "source60_ancestry_split": {
+      "file": "docs/deployment/evidence/DEV-SIX-AREA-ACTUAL-DELIVERY-CHECKPOINT-20261017/evidence.json",
+      "field": "concise_actual_summaries.source60_summary",
+      "prior": "60 sources ancestry-verified in BE 6ef8507e5 from sanitized export",
+      "corrected": "60 sources ancestry-verified (54 Pantheon records in BE 6ef8507e5 plus 6 execute-plans records in FE 281ceed31) from sanitized export",
+      "source_ledger": {
+        "path": "/tmp/pantheon-assist-20261013/Source60-existing-delivery-ledger-sanitized-and-ancestry-audited-readonly-20261017.json",
+        "sha256": "1d9b034e0a23ec3919a9896112663bb48a88fba91cf22bbbb07fa02e58f95d4d",
+        "counts": {
+          "pantheon": 54,
+          "execute-plans": 6
+        }
+      }
+    }
+  },
+  "verification": {
+    "test_runner": "runpy.run_path (standard library python3)",
+    "test_command": "python3 -B -c \"import runpy; m = runpy.run_path('services/control-plane/bff/tests/test_latest_dev_six_area_closure.py'); m['test_closure_doc_records_identities_and_non_real_boundary'](); m['test_evidence_declares_zero_production_delta']()\"",
+    "pytest_executed": false,
+    "results": [
+      {
+        "function": "test_closure_doc_records_identities_and_non_real_boundary",
+        "result": "PASS"
+      },
+      {
+        "function": "test_evidence_declares_zero_production_delta",
+        "result": "PASS"
+      }
+    ],
+    "known_coverage_limits": "Original test validates predecessor identities/nonreal boundary and old L12-source production_delta. Current 3 factual corrections verified via inline stdlib assertions.",
+    "diff_budget": {
+      "command": "python3 scripts/git/diff_budget.py --base 9597c02cc94e900288559943c2bb598bf66fba05 --head HEAD",
+      "net_production_lines": 0,
+      "net_test_lines": 0,
+      "verdict": "pass"
+    }
+  }
+}
