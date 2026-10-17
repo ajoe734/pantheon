@@ -2877,6 +2877,40 @@ class TestPaperRuntimeObservabilityEnvelope(unittest.TestCase):
         self.assertEqual(snap1["queue_lag_ms"], service._observed_queue_lag_ms)
         self.assertEqual(snap1["paper_state"]["queue_lag_ms"], service._observed_queue_lag_ms)
 
+    def test_queue_lag_measured_from_runtime_start_when_enqueued_before_start(self):
+        identity = self._identity()
+        emitter = RuntimeTelemetryEmitter(identity, _FakeBindingResolver(self._binding()))
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([]),
+            identity=identity,
+            runtime_manager_client=_FakeRuntimeManagerClient([]),
+            telemetry_emitter=emitter,
+        )
+        now = datetime.now(timezone.utc)
+
+        def _signal(enqueued_at):
+            return OrderEvent(
+                event_id=str(uuid.uuid4()),
+                event_type="signal_generation",
+                symbol="2330.TW",
+                quantity=100,
+                fill_price=0.0,
+                action="BUY",
+                metadata={"enqueued_at": enqueued_at.isoformat()},
+            )
+
+        # Signal enqueued 19s before the runtime started: the wait for the worker is excluded.
+        service._started_at_dt = now
+        service._handle_order_event(_signal(now - timedelta(seconds=19)))
+        self.assertIsNotNone(service._observed_queue_lag_ms)
+        self.assertLess(service._observed_queue_lag_ms, 5000)
+
+        # Signal enqueued 19s after the runtime started keeps enqueue-to-handling lag.
+        service._started_at_dt = now - timedelta(seconds=38)
+        service._handle_order_event(_signal(now - timedelta(seconds=19)))
+        self.assertGreater(service._observed_queue_lag_ms, 18900)
+        self.assertLess(service._observed_queue_lag_ms, 25000)
+
     def test_queue_lag_degraded_when_missing_or_invalid_timestamp(self):
         identity = self._identity()
         emitter = RuntimeTelemetryEmitter(identity, _FakeBindingResolver(self._binding()))
