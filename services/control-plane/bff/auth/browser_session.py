@@ -39,7 +39,7 @@ class DevBrowserSessionMiddleware:
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         path = scope.get("path", "")
-        browser_api = path.startswith("/bff/") or path.startswith("/api/v1/operator/")
+        browser_api = path.startswith("/bff/") or path.startswith("/api/v1/")
         if scope["type"] != "http" or not browser_api or not self.enabled():
             await self.app(scope, receive, send)
             return
