@@ -1431,6 +1431,8 @@ services:
       PERSONA_EVALUATOR_URL: http://persona-evaluator-agent:8105
       PERSONA_EVALUATOR_READ_TOKEN: ${PERSONA_EVALUATOR_READ_TOKEN:-persona-evaluator-read-internal}
       PANTHEON_CONSULTATION_API_URL: http://consultation-svc:8096
+      CONSULTATION_SERVICE_TOKEN: ${CONSULTATION_SERVICE_TOKEN:-pantheon-local-consultation-service}
+      CONSULTATION_SERVICE_ACTOR: operator-bff
       PANTHEON_SOURCE_INGEST_API_URL: http://source-ingest:8097
       PANTHEON_SEARCH_API_URL: http://search-svc:8098
       PANTHEON_TRAINING_SESSION_API_URL: http://training-session-svc:8099

@@ -1420,16 +1420,54 @@ class DomainConsultationPort:
             return ConsultationStore(str(data_dir))
         return None
 
-    def _consultation_client(self) -> Optional[ConsultationServiceClient]:
+    @staticmethod
+    def _handle_owner_error(exc: Exception, action: str = "consultation_operation") -> None:
+        from services.control_plane.bff.command_adapters.base import ActionUnavailableError
+        if isinstance(exc, ActionUnavailableError):
+            raise exc
+        if ConsultationClientError is not None and isinstance(exc, ConsultationClientError):
+            status = getattr(exc, "status_code", None)
+            code = status or 503
+            err_code = "DOWNSTREAM_AUTH_ERROR" if code in (401, 403) else ("RESOURCE_NOT_FOUND" if code == 404 else "DEPENDENCY_UNAVAILABLE")
+            raise ActionUnavailableError(
+                str(exc),
+                action_id=action,
+                entity_type="consultation",
+                error_code=err_code,
+                downstream_status=code,
+                retryable=bool(code >= 500),
+            ) from exc
+        raise ActionUnavailableError(
+            f"consultation owner unavailable: {exc}",
+            action_id=action,
+            entity_type="consultation",
+            error_code="DEPENDENCY_UNAVAILABLE",
+            downstream_status=503,
+            retryable=True,
+        ) from exc
+
+    def _consultation_client(self, payload: Optional[Any] = None) -> Optional[ConsultationServiceClient]:
         if self._client_instance is not None:
+            from services.control_plane.bff.core.owner_reads import authorization, selected_tenant, verified_caller_tenant
+            if authorization.get() or selected_tenant.get() or (isinstance(payload, dict) and (payload.get("tenant_id") or payload.get("tenant"))):
+                verified_caller_tenant(payload)
             return self._client_instance
         if ConsultationServiceClient is not None and ConsultationServiceClient.configured():
+            from services.control_plane.bff.core.owner_reads import verified_caller_tenant
             timeout = float(os.getenv("PANTHEON_CONSULTATION_API_TIMEOUT_SECONDS", "10"))
-            return ConsultationServiceClient(timeout_seconds=timeout)
+            machine_token = (os.getenv("CONSULTATION_SERVICE_TOKEN") or os.getenv("CONSULTATION_API_TOKEN") or "").strip()
+            service_actor = (os.getenv("CONSULTATION_SERVICE_ACTOR") or "operator-bff").strip()
+            trusted_tenant = verified_caller_tenant(payload)
+            return ConsultationServiceClient(
+                timeout_seconds=timeout,
+                token=machine_token,
+                service_actor=service_actor,
+                tenant_id=trusted_tenant,
+            )
         return None
 
     def dataset_source(self, dataset: str) -> str:
-        if self._consultation_client() is not None:
+        if self._client_instance is not None or (ConsultationServiceClient is not None and ConsultationServiceClient.configured()):
             return "service_client"
         if self._consultation_store() is not None:
             return "service_store"
@@ -1683,11 +1721,11 @@ class DomainConsultationPort:
                     request = client.get_request(request_id)
                 except Exception:
                     request = None
-        if request is None:
-            store = self._consultation_store()
-            if store is not None and request_id:
-                found = store.get_request(request_id)
-                request = _model_to_data(found) if found else None
+            elif request_id:
+                store = self._consultation_store()
+                if store is not None:
+                    found = store.get_request(request_id)
+                    request = _model_to_data(found) if found else None
 
         request_metadata = request.get("metadata") if isinstance((request or {}).get("metadata"), dict) else {}
         consult = request_metadata.get("consultation") if isinstance(request_metadata.get("consultation"), dict) else {}
@@ -1763,8 +1801,8 @@ class DomainConsultationPort:
                     for s in records
                     if str(s.get("session_id") or s.get("id") or "").strip()
                 }
-            except Exception:
-                pass
+            except Exception as exc:
+                self._handle_owner_error(exc, action="list_consultation_sessions")
 
         store = self._consultation_store()
         if store is not None:
@@ -1935,10 +1973,9 @@ class DomainConsultationPort:
                     if str(item.get("session_id") or item.get("request_id") or item.get("transcript_id")) == root_id:
                         record = self._project_service_transcript_record(item)
                         break
-            except Exception:
-                pass
-
-        if record is None:
+            except Exception as exc:
+                self._handle_owner_error(exc, action="get_consult_transcript")
+        else:
             store = self._consultation_store()
             if store is not None:
                 for item in store.list_transcripts():
@@ -2056,18 +2093,19 @@ class DomainConsultationPort:
         statuses: Optional[List[str]] = None,
         target_type: Optional[str] = None,
         consultation_type: Optional[str] = None,
+        **kwargs: Any,
     ) -> List[Dict[str, Any]]:
         raw_requests: List[Dict[str, Any]] = []
-        client = self._consultation_client()
+        client = self._consultation_client(kwargs)
         if client is not None:
             try:
                 raw_requests = [
                     self._project_service_request_record(r)
                     for r in client.list_requests()
                 ]
-            except Exception:
-                pass
-        if not raw_requests:
+            except Exception as exc:
+                self._handle_owner_error(exc, action="list_consult_requests")
+        else:
             store = self._consultation_store()
             if store is not None:
                 raw_requests = [
@@ -2100,19 +2138,20 @@ class DomainConsultationPort:
         )
         return [self._project_consult_request_summary(r) for r in requests]
 
-    def get_consult_request(self, request_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    def get_consult_request(self, request_id: Optional[str], **kwargs: Any) -> Optional[Dict[str, Any]]:
         if not request_id:
             return None
-        client = self._consultation_client()
+        client = self._consultation_client(kwargs)
         if client is not None:
             try:
                 req = client.get_request(request_id)
-                if req:
-                    return self._project_consult_request_detail(
-                        self._project_service_request_record(req)
-                    )
-            except Exception:
-                pass
+            except Exception as exc:
+                self._handle_owner_error(exc, action="get_consult_request")
+            if req:
+                return self._project_consult_request_detail(
+                    self._project_service_request_record(req)
+                )
+            return None
 
         store = self._consultation_store()
         if store is not None:
@@ -2135,9 +2174,20 @@ class DomainConsultationPort:
         consultation_type: str,
         actor_id: str,
         created_at: Optional[str] = None,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
+        payload_kwargs = {
+            "from_persona_id": from_persona_id,
+            "target_type": target_type,
+            "target_ref": target_ref,
+            "task": task,
+            "context_refs": context_refs,
+            "priority": priority,
+            "consultation_type": consultation_type,
+            **kwargs,
+        }
+        client = self._consultation_client(payload_kwargs)
         timestamp = created_at or _utc_now_rfc3339()
-        client = self._consultation_client()
         if client is not None:
             serialized_context_refs = [
                 f"{item['type']}:{item['id']}"
@@ -2154,33 +2204,36 @@ class DomainConsultationPort:
                 getattr(ConsultPriority, "NORMAL", "normal"),
             )
             priority_val = priority_enum.value if hasattr(priority_enum, "value") else str(priority_enum)
-            service_request = client.create_request(
-                {
-                    "request_type": req_type_val,
-                    "requested_by": {"actor_type": "operator", "actor_id": actor_id},
-                    "from_persona_id": from_persona_id,
-                    "target_type": target_type,
-                    "target_id": target_ref,
-                    "task": task,
-                    "consultation_type": consultation_type,
-                    "context_refs": serialized_context_refs,
-                    "priority": priority_val,
-                    "status": "draft",
-                    "linked_session_id": None,
-                    "request_to_session_status": "pending_session",
-                    "completed_at": None,
-                    "canceled_at": None,
-                    "session_handoff_note": "Request accepted; session creation is pending Persona Plane assignment.",
-                    "metadata": {
-                        "bff_context_refs": context_refs,
-                        "bff_priority": priority,
+            try:
+                service_request = client.create_request(
+                    {
+                        "request_type": req_type_val,
+                        "requested_by": {"actor_type": "operator", "actor_id": actor_id},
+                        "from_persona_id": from_persona_id,
+                        "target_type": target_type,
+                        "target_id": target_ref,
                         "task": task,
                         "consultation_type": consultation_type,
-                    },
-                    "trace_id": f"trace-cr-{uuid.uuid4().hex[:12]}",
-                    "created_at": timestamp,
-                }
-            )
+                        "context_refs": serialized_context_refs,
+                        "priority": priority_val,
+                        "status": "draft",
+                        "linked_session_id": None,
+                        "request_to_session_status": "pending_session",
+                        "completed_at": None,
+                        "canceled_at": None,
+                        "session_handoff_note": "Request accepted; session creation is pending Persona Plane assignment.",
+                        "metadata": {
+                            "bff_context_refs": context_refs,
+                            "bff_priority": priority,
+                            "task": task,
+                            "consultation_type": consultation_type,
+                        },
+                        "trace_id": f"trace-cr-{uuid.uuid4().hex[:12]}",
+                        "created_at": timestamp,
+                    }
+                )
+            except Exception as exc:
+                self._handle_owner_error(exc, action="create_consult_request")
             return self._project_consult_request_detail(
                 self._project_service_request_record(service_request)
             )
@@ -2253,8 +2306,9 @@ class DomainConsultationPort:
         *,
         actor_id: str,
         canceled_at: Optional[str] = None,
+        **kwargs: Any,
     ) -> Optional[Dict[str, Any]]:
-        client = self._consultation_client()
+        client = self._consultation_client(kwargs)
         if client is not None:
             try:
                 request = client.cancel_request(
@@ -2262,12 +2316,13 @@ class DomainConsultationPort:
                     actor_id=actor_id,
                     canceled_at=canceled_at or _utc_now_rfc3339(),
                 )
-                if request is not None:
-                    return self._project_consult_request_detail(
-                        self._project_service_request_record(request)
-                    )
-            except Exception:
-                return None
+            except Exception as exc:
+                self._handle_owner_error(exc, action="cancel_consult_request")
+            if request is not None:
+                return self._project_consult_request_detail(
+                    self._project_service_request_record(request)
+                )
+            return None
 
         store = self._consultation_store()
         if store is not None:
@@ -2305,18 +2360,19 @@ class DomainConsultationPort:
         self,
         *,
         statuses: Optional[List[str]] = None,
+        **kwargs: Any,
     ) -> List[Dict[str, Any]]:
         raw_memos: List[Dict[str, Any]] = []
-        client = self._consultation_client()
+        client = self._consultation_client(kwargs)
         if client is not None:
             try:
                 raw_memos = [
                     self._project_service_memo_record(memo)
                     for memo in client.list_memos()
                 ]
-            except Exception:
-                pass
-        if not raw_memos:
+            except Exception as exc:
+                self._handle_owner_error(exc, action="list_consult_memos")
+        else:
             store = self._consultation_store()
             if store is not None:
                 raw_memos = [
@@ -2341,19 +2397,20 @@ class DomainConsultationPort:
         )
         return [self._project_consult_memo_summary(memo) for memo in memos]
 
-    def get_consult_memo(self, memo_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    def get_consult_memo(self, memo_id: Optional[str], **kwargs: Any) -> Optional[Dict[str, Any]]:
         if not memo_id:
             return None
-        client = self._consultation_client()
+        client = self._consultation_client(kwargs)
         if client is not None:
             try:
                 memo = client.get_memo(memo_id)
-                if memo:
-                    return self._project_consult_memo_detail(
-                        self._project_service_memo_record(memo)
-                    )
-            except Exception:
-                pass
+            except Exception as exc:
+                self._handle_owner_error(exc, action="get_consult_memo")
+            if memo:
+                return self._project_consult_memo_detail(
+                    self._project_service_memo_record(memo)
+                )
+            return None
 
         store = self._consultation_store()
         if store is not None:

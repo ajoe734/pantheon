@@ -7,20 +7,36 @@ Validates:
 """
 from __future__ import annotations
 
+import base64
+from http.server import HTTPServer, BaseHTTPRequestHandler
 import json
 import os
 import shutil
+import socket
+import subprocess
 import sys
 import tempfile
+import threading
+import time
+import urllib.request
 import uuid
 from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
+import uvicorn
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import services.consultation.auth as consult_auth_mod
+from services.consultation.store import build_consultation_store
+from services.control_plane.bff.core.owner_reads import OwnerReadContextMiddleware
+from services.control_plane.bff.governance.router import create_governance_router
 from services.control_plane.bff.console_gap.workflows_hooks import create_workflows_hooks_router
+from services.control_plane.bff.auth import policy
+from services.control_plane.bff.auth.test_browser_session import (  # noqa: F401
+    BASE, CREDENTIALS, ORIGIN, app_factory, login,
+)
 from services.control_plane.bff.ports.operations_consultation import (
     CompositeOperationsConsultationPort,
     ConsultationReaderPort,
@@ -672,3 +688,459 @@ class TestCompositeAndInMemoryPorts:
         )
         assert isinstance(port, OperationsConsultationPort)
         assert port.dataset_source("consult_requests") == "service_store"
+
+
+# =====================================================================
+# 5. Consultation HTTP Owner Readback & Truthful Error Tests
+# =====================================================================
+
+class TestConsultationOwnerHttpReadback:
+    @pytest.fixture
+    def consultation_server(self, temp_consultation_dir, monkeypatch):
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        sock.close()
+
+        base_url = f"http://127.0.0.1:{port}"
+        service_token = "pantheon-local-consultation-service"
+        service_actor = "operator-bff"
+
+        # Client-side env for BFF to reach the consultation service
+        monkeypatch.setenv("PANTHEON_CONSULTATION_API_URL", base_url)
+        monkeypatch.setenv("CONSULTATION_SERVICE_TOKEN", service_token)
+        monkeypatch.setenv("CONSULTATION_SERVICE_ACTOR", service_actor)
+
+        # Isolated environment for the server subprocess
+        env = dict(os.environ)
+        env["CONSULTATION_DATA_DIR"] = temp_consultation_dir
+        env["CONSULTATION_AUTH_REQUIRED"] = "true"
+        env["CONSULTATION_SERVICE_TOKEN"] = service_token
+        env["CONSULTATION_SERVICE_ACTOR"] = service_actor
+        env["PORT"] = str(port)
+
+        cmd = [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "services.consultation.main:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--log-level",
+            "error",
+        ]
+        proc = subprocess.Popen(cmd, env=env)
+
+        deadline = time.time() + 10.0
+        started = False
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                raise RuntimeError(f"Consultation server exited prematurely with code {proc.returncode}")
+            try:
+                with urllib.request.urlopen(f"{base_url}/livez", timeout=0.2) as resp:
+                    if resp.status == 200:
+                        started = True
+                        break
+            except Exception:
+                time.sleep(0.05)
+        if not started:
+            proc.terminate()
+            proc.kill()
+            raise TimeoutError("Consultation server subprocess failed to start in 10s")
+
+        from services.consultation.client import ConsultationServiceClient
+
+        class _OwnerStoreAdapter:
+            def __init__(self, url: str, token: str, actor: str):
+                self._base_url = url
+                self._token = token
+                self._actor = actor
+
+            def put_request(self, req: Any) -> None:
+                client = ConsultationServiceClient(
+                    base_url=self._base_url,
+                    token=self._token,
+                    service_actor=self._actor,
+                    tenant_id=req.tenant_id,
+                )
+                payload = {
+                    "request_id": req.request_id,
+                    "request_type": req.request_type.value if hasattr(req.request_type, "value") else str(req.request_type),
+                    "requested_by": req.requested_by.model_dump() if hasattr(req.requested_by, "model_dump") else (req.requested_by if isinstance(req.requested_by, dict) else {"actor_type": "operator", "actor_id": "operator-dev"}),
+                    "from_persona_id": req.from_persona_id,
+                    "target_type": req.target_type,
+                    "target_id": req.target_id,
+                    "task": req.task,
+                    "consultation_type": req.consultation_type,
+                    "priority": req.priority.value if hasattr(req.priority, "value") else str(req.priority),
+                    "tenant_id": req.tenant_id,
+                    "trace_id": req.trace_id,
+                }
+                client.create_request(payload, tenant_id=req.tenant_id)
+
+            def get_request(self, request_id: str, tenant_id: Optional[str] = None) -> Optional[Any]:
+                client = ConsultationServiceClient(
+                    base_url=self._base_url,
+                    token=self._token,
+                    service_actor=self._actor,
+                    tenant_id=tenant_id,
+                )
+                return client.get_request(request_id, tenant_id=tenant_id)
+
+            def list_requests(self, tenant_id: Optional[str] = None) -> List[Any]:
+                client = ConsultationServiceClient(
+                    base_url=self._base_url,
+                    token=self._token,
+                    service_actor=self._actor,
+                    tenant_id=tenant_id,
+                )
+                return client.list_requests(tenant_id=tenant_id)
+
+        adapter = _OwnerStoreAdapter(base_url, service_token, service_actor)
+
+        yield {
+            "base_url": base_url,
+            "port": port,
+            "store": adapter,
+            "proc": proc,
+        }
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=2)
+
+    @staticmethod
+    def _unit_synthetic_jwt(tenant_id: str) -> str:
+        """Low-level unsigned helper for unit-only testing."""
+        body = base64.urlsafe_b64encode(
+            json.dumps({"tenant_id": tenant_id, "allowed_tenants": [tenant_id]}).encode()
+        ).decode().rstrip("=")
+        return f"header.{body}.signature"
+
+    @pytest.fixture
+    def bff_client(self, app_factory, consultation_server, monkeypatch):
+        monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_OPERATOR_ALLOWED_TENANTS", "tenant-dev,tenant-other,tenant-empty")
+        monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_ID", "test-viewer")
+        monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET", "test-viewer-password")
+        monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_VIEWER_TENANT_ID", "tenant-other")
+        monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_VIEWER_ALLOWED_TENANTS", "tenant-other")
+
+        from starlette.middleware import Middleware
+        bff_app = app_factory()
+        bff_app.user_middleware.append(Middleware(OwnerReadContextMiddleware))
+        bff_app.middleware_stack = bff_app.build_middleware_stack()
+        port_instance = DomainConsultationPort()
+        bff_app.include_router(
+            create_governance_router(
+                get_read_store=lambda: port_instance,
+                extract_identity=policy.extract_identity,
+                require_read_role=policy.require_read_role,
+                require_operator_role=policy.require_operator_role,
+                bff_error=policy.bff_error,
+            )
+        )
+        return TestClient(bff_app, base_url=BASE)
+
+    def test_unsigned_synthetic_jwt_rejected_by_strict_bff(self, consultation_server, bff_client):
+        token = self._unit_synthetic_jwt("tenant-dev")
+        resp = bff_client.get(
+            "/api/v1/consult/requests",
+            headers={"Authorization": f"Bearer {token}", "x-tenant-id": "tenant-dev"},
+        )
+        assert resp.status_code == 401
+
+    def test_http_owner_draft_list_and_detail_with_verified_tenant(self, consultation_server, bff_client):
+        # 1. Seed labelled DRAFT request into canonical owner store
+        req = ConsultRequest(
+            request_id="cr-test-draft-001",
+            request_type=ConsultRequestType.STRATEGY_REVIEW,
+            requested_by={"actor_type": "operator", "actor_id": "operator-dev"},
+            from_persona_id="persona-analyst",
+            target_type="strategy",
+            target_id="strat-alpha-01",
+            task="Perform draft strategy readback verification",
+            consultation_type="strategy_review",
+            priority=ConsultPriority.NORMAL,
+            status=ConsultRequestStatus.DRAFT,
+            tenant_id="tenant-dev",
+            created_at="2026-10-17T00:00:00Z",
+            trace_id="tr-test-draft-001",
+        )
+        consultation_server["store"].put_request(req)
+
+        # 2. Genuine dev-login authentication
+        login_res = bff_client.post("/bff/auth/dev-login", json=CREDENTIALS)
+        assert login_res.status_code == 200, login_res.text
+        token = login_res.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}", "x-tenant-id": "tenant-dev"}
+
+        # List through BFF reads the labelled DRAFT
+        resp = bff_client.get("/api/v1/consult/requests", headers=headers)
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert data["page_info"]["total"] == 1
+        assert len(data["data"]) == 1
+        assert data["data"][0]["request_id"] == "cr-test-draft-001"
+        assert data["data"][0]["status"] == "created"
+        assert data["meta"]["surfaces"]["consult_request_list"]["source"] == "service_client"
+
+        # Detail through BFF reads the labelled DRAFT
+        resp_detail = bff_client.get("/api/v1/consult/requests/cr-test-draft-001", headers=headers)
+        assert resp_detail.status_code == 200, resp_detail.text
+        detail = resp_detail.json()
+        assert detail["request_id"] == "cr-test-draft-001"
+        assert detail["status"] == "created"
+        assert detail["allowedActions"]["canCancel"] is True
+
+        # Also verify genuine cookie session authentication
+        login_cookie = login(bff_client)
+        assert login_cookie.status_code == 200
+        resp_cookie = bff_client.get("/api/v1/consult/requests", headers={"x-tenant-id": "tenant-dev"})
+        assert resp_cookie.status_code == 200
+        assert resp_cookie.json()["page_info"]["total"] == 1
+
+    def test_http_owner_overlapping_tenant_isolation_and_empty_list(self, consultation_server, bff_client, monkeypatch):
+        # Seed draft in tenant-dev
+        req_dev = ConsultRequest(
+            request_id="cr-tenant-dev-only",
+            request_type=ConsultRequestType.STRATEGY_REVIEW,
+            requested_by={"actor_type": "operator", "actor_id": "op-dev"},
+            from_persona_id="persona-dev",
+            target_type="strategy",
+            target_id="strat-dev",
+            task="Dev tenant request",
+            consultation_type="strategy_review",
+            priority=ConsultPriority.NORMAL,
+            status=ConsultRequestStatus.DRAFT,
+            tenant_id="tenant-dev",
+            created_at="2026-10-17T00:00:00Z",
+            trace_id="tr-tenant-dev",
+        )
+        consultation_server["store"].put_request(req_dev)
+
+        # Seed draft in tenant-other
+        req_other = ConsultRequest(
+            request_id="cr-tenant-other-only",
+            request_type=ConsultRequestType.STRATEGY_REVIEW,
+            requested_by={"actor_type": "operator", "actor_id": "op-other"},
+            from_persona_id="persona-other",
+            target_type="strategy",
+            target_id="strat-other",
+            task="Other tenant request",
+            consultation_type="strategy_review",
+            priority=ConsultPriority.NORMAL,
+            status=ConsultRequestStatus.DRAFT,
+            tenant_id="tenant-other",
+            created_at="2026-10-17T00:00:00Z",
+            trace_id="tr-tenant-other",
+        )
+        consultation_server["store"].put_request(req_other)
+
+        # Genuine authentication for both tenant scopes
+        res_dev = bff_client.post("/bff/auth/dev-login", json=CREDENTIALS)
+        assert res_dev.status_code == 200
+        token_dev = res_dev.json()["access_token"]
+        headers_dev = {"Authorization": f"Bearer {token_dev}", "x-tenant-id": "tenant-dev"}
+
+        res_other = bff_client.post("/bff/auth/dev-login", json={
+            "grant_type": "client_credentials",
+            "client_id": "test-viewer",
+            "client_secret": "test-viewer-password",
+        })
+        assert res_other.status_code == 200
+        token_other = res_other.json()["access_token"]
+        headers_other = {"Authorization": f"Bearer {token_other}", "x-tenant-id": "tenant-other"}
+
+        # Explicit synchronization and observed overlap
+        from services.consultation.client import ConsultationServiceClient
+        real_list_requests = ConsultationServiceClient.list_requests
+        overlap_observed = []
+        active_count = 0
+        active_lock = threading.Lock()
+        barrier = threading.Barrier(2)
+
+        def synchronized_list_requests(self, *args, **kwargs):
+            nonlocal active_count
+            with active_lock:
+                active_count += 1
+                overlap_observed.append(active_count)
+            try:
+                barrier.wait(timeout=5)
+            except threading.BrokenBarrierError:
+                pass
+            try:
+                return real_list_requests(self, *args, **kwargs)
+            finally:
+                with active_lock:
+                    active_count -= 1
+
+        monkeypatch.setattr(ConsultationServiceClient, "list_requests", synchronized_list_requests)
+
+        results = {}
+
+        def request_worker(name, headers):
+            resp = bff_client.get("/api/v1/consult/requests", headers=headers)
+            results[name] = resp
+
+        t1 = threading.Thread(target=request_worker, args=("dev", headers_dev))
+        t2 = threading.Thread(target=request_worker, args=("other", headers_other))
+        t1.start()
+        t2.start()
+        t1.join(timeout=10)
+        t2.join(timeout=10)
+
+        # Verify actual overlap was observed (both requests active simultaneously)
+        assert max(overlap_observed) >= 2
+
+        # Verify tenant-dev response contains ONLY tenant-dev items
+        resp_dev = results["dev"]
+        assert resp_dev.status_code == 200
+        dev_ids = [item["request_id"] for item in resp_dev.json()["data"]]
+        assert dev_ids == ["cr-tenant-dev-only"]
+
+        # Verify tenant-other response contains ONLY tenant-other items
+        resp_other = results["other"]
+        assert resp_other.status_code == 200
+        other_ids = [item["request_id"] for item in resp_other.json()["data"]]
+        assert other_ids == ["cr-tenant-other-only"]
+
+        # Detail isolation: tenant-dev cannot access tenant-other item (404)
+        assert bff_client.get("/api/v1/consult/requests/cr-tenant-other-only", headers=headers_dev).status_code == 404
+        assert bff_client.get("/api/v1/consult/requests/cr-tenant-dev-only", headers=headers_dev).status_code == 200
+
+        # Detail isolation: tenant-other cannot access tenant-dev item (404)
+        assert bff_client.get("/api/v1/consult/requests/cr-tenant-dev-only", headers=headers_other).status_code == 404
+        assert bff_client.get("/api/v1/consult/requests/cr-tenant-other-only", headers=headers_other).status_code == 200
+
+        # Genuinely empty list for third tenant with no records
+        headers_empty = {"Authorization": f"Bearer {token_dev}", "x-tenant-id": "tenant-empty"}
+        resp_empty = bff_client.get("/api/v1/consult/requests", headers=headers_empty)
+        assert resp_empty.status_code == 200
+        assert resp_empty.json()["page_info"]["total"] == 0
+        assert resp_empty.json()["data"] == []
+
+    def test_http_owner_genuine_missing_id_returns_404(self, consultation_server, bff_client):
+        res = bff_client.post("/bff/auth/dev-login", json=CREDENTIALS)
+        token = res.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}", "x-tenant-id": "tenant-dev"}
+        resp = bff_client.get("/api/v1/consult/requests/cr-does-not-exist", headers=headers)
+        assert resp.status_code == 404
+
+    def test_http_owner_wrong_machine_auth_visible_error(self, consultation_server, bff_client, monkeypatch):
+        # Set wrong machine token on BFF client side without modifying server authenticate
+        monkeypatch.setenv("CONSULTATION_SERVICE_TOKEN", "wrong-machine-token")
+
+        res = bff_client.post("/bff/auth/dev-login", json=CREDENTIALS)
+        token = res.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}", "x-tenant-id": "tenant-dev"}
+
+        resp_list = bff_client.get("/api/v1/consult/requests", headers=headers)
+        assert resp_list.status_code == 403
+        assert resp_list.json()["detail"]["error"]["code"] == "DOWNSTREAM_AUTH_ERROR"
+
+        resp_detail = bff_client.get("/api/v1/consult/requests/cr-test-01", headers=headers)
+        assert resp_detail.status_code == 403
+        assert resp_detail.json()["detail"]["error"]["code"] == "DOWNSTREAM_AUTH_ERROR"
+
+    def test_http_owner_missing_machine_auth_visible_error(self, consultation_server, bff_client, monkeypatch):
+        # Set missing machine token on BFF client side without modifying server authenticate
+        monkeypatch.setenv("CONSULTATION_SERVICE_TOKEN", "")
+
+        res = bff_client.post("/bff/auth/dev-login", json=CREDENTIALS)
+        token = res.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}", "x-tenant-id": "tenant-dev"}
+
+        resp_list = bff_client.get("/api/v1/consult/requests", headers=headers)
+        assert resp_list.status_code in (401, 403)
+        assert resp_list.json()["detail"]["error"]["code"] == "DOWNSTREAM_AUTH_ERROR"
+
+        resp_detail = bff_client.get("/api/v1/consult/requests/cr-test-01", headers=headers)
+        assert resp_detail.status_code in (401, 403)
+        assert resp_detail.json()["detail"]["error"]["code"] == "DOWNSTREAM_AUTH_ERROR"
+
+    def test_http_owner_foreign_and_body_tenant_negatives(self, consultation_server, bff_client):
+        res = bff_client.post("/bff/auth/dev-login", json=CREDENTIALS)
+        token = res.json()["access_token"]
+
+        # Foreign tenant in header
+        resp_foreign_header = bff_client.get(
+            "/api/v1/consult/requests",
+            headers={"Authorization": f"Bearer {token}", "x-tenant-id": "foreign-tenant"},
+        )
+        assert resp_foreign_header.status_code == 403
+
+        # Foreign tenant in body
+        port_instance = DomainConsultationPort()
+        from services.control_plane.bff.core.owner_reads import authorization, selected_tenant
+        auth_tok = authorization.set(f"Bearer {token}")
+        sel_tok = selected_tenant.set("tenant-dev")
+        try:
+            from services.control_plane.bff.command_adapters.base import ActionUnavailableError
+            with pytest.raises(ActionUnavailableError) as exc_info:
+                port_instance.create_consult_request(
+                    from_persona_id="p1",
+                    target_type="strategy",
+                    target_ref="s1",
+                    task="task",
+                    context_refs=[],
+                    priority="normal",
+                    consultation_type="strategy_review",
+                    actor_id="op-1",
+                    tenant_id="foreign-tenant",
+                )
+            assert exc_info.value.status_code == 403
+            assert exc_info.value.detail["error"]["code"] == "TENANT_MISMATCH"
+        finally:
+            selected_tenant.reset(sel_tok)
+            authorization.reset(auth_tok)
+
+    def test_http_owner_outage_visible_error_without_fallback(self, monkeypatch, bff_client):
+        # Point to unreachable port (outage)
+        monkeypatch.setenv("PANTHEON_CONSULTATION_API_URL", "http://127.0.0.1:1")
+
+        res = bff_client.post("/bff/auth/dev-login", json=CREDENTIALS)
+        token = res.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}", "x-tenant-id": "tenant-dev"}
+
+        resp_list = bff_client.get("/api/v1/consult/requests", headers=headers)
+        assert resp_list.status_code == 503
+        assert resp_list.json()["detail"]["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+
+        resp_detail = bff_client.get("/api/v1/consult/requests/cr-outage-01", headers=headers)
+        assert resp_detail.status_code == 503
+        assert resp_detail.json()["detail"]["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+
+    def test_http_owner_malformed_json_visible_error_without_fallback(self, monkeypatch, bff_client):
+        class MalformedHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b"MALFORMED_NON_JSON{{{")
+            def log_message(self, *args): pass
+
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        sock.close()
+
+        server = HTTPServer(("127.0.0.1", port), MalformedHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        monkeypatch.setenv("PANTHEON_CONSULTATION_API_URL", f"http://127.0.0.1:{port}")
+
+        res = bff_client.post("/bff/auth/dev-login", json=CREDENTIALS)
+        token = res.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}", "x-tenant-id": "tenant-dev"}
+
+        try:
+            resp_list = bff_client.get("/api/v1/consult/requests", headers=headers)
+            assert resp_list.status_code == 503
+            assert resp_list.json()["detail"]["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+        finally:
+            server.shutdown()
