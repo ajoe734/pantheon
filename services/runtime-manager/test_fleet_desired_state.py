@@ -389,5 +389,29 @@ class TestStability(unittest.TestCase):
             self.assertIn(status, FLEET_EXCLUDED_STATUSES)
 
 
+    def test_excluded_bindings_carry_pool_safe_mode_read_once_per_pool(self):
+        calls = []
+
+        def resolver(pool_id):
+            calls.append(pool_id)
+            return "paused" if pool_id == "pool-1" else "normal"
+
+        bindings = [
+            _b(binding_id="rb-1", status="paused"),
+            _b(binding_id="rb-2", status="paused"),
+            _b(binding_id="rb-3", status="paused", capital_pool_id="pool-2"),
+            _b(binding_id="rb-4", status="active"),
+        ]
+        state = build_fleet_desired_state(bindings, safe_mode_resolver=resolver)
+        modes = {e.binding_id: e.safe_mode for e in state.excluded}
+        self.assertEqual(modes, {"rb-1": "paused", "rb-2": "paused", "rb-3": "normal"})
+        self.assertEqual(sorted(calls), ["pool-1", "pool-2"])
+        self.assertEqual(state.excluded[0].to_dict()["safe_mode"], "paused")
+
+    def test_excluded_safe_mode_empty_without_resolver(self):
+        state = build_fleet_desired_state([_b(status="paused")])
+        self.assertEqual(state.excluded[0].safe_mode, "")
+
+
 if __name__ == "__main__":
     unittest.main()

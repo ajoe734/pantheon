@@ -1,0 +1,9 @@
+{
+  "task_id": "FLEET-RESUME-SAFE-MODE-GATE-20261017",
+  "summary": "Excluded bindings in /api/runtime-fleet/desired-state now carry the pool safe_mode (read once per pool via svc.get_safe_mode); the reconciler skips market_input paused->active resume when safe_mode is outside normal/normal_restored and logs once per (binding, safe_mode). Runtime-manager activation rules and kill-switch unchanged.",
+  "verification": {
+    "test_fleet_desired_state": "39 tests OK (unittest)",
+    "test_paper_fleet_reconciler": "new safe-mode tests pass; paused-pool test fails on base gate; 2 pre-existing errors from missing flask in this sandbox (unrelated)"
+  },
+  "hosted_state_touched": false
+}

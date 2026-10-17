@@ -825,7 +825,11 @@ def fleet_desired_state():
         bindings = svc.list_all()
 
     try:
-        desired = _build([b.to_dict() for b in bindings], stage_filter=stage)
+        desired = _build(
+            [b.to_dict() for b in bindings],
+            stage_filter=stage,
+            safe_mode_resolver=svc.get_safe_mode if include_excluded else None,
+        )
     except FleetDesiredStateQueryError as exc:
         return jsonify({"error": {"code": "INVALID_STAGE", "message": str(exc)}}), 400
     return jsonify(desired.to_dict(include_excluded=include_excluded)), 200
