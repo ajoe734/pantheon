@@ -1,0 +1,45 @@
+{
+  "task_id": "OPENCLAW-RESPONSES-ERROR-CAUSE-20261017",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "authority_domain": "product_runtime_gateway_failure_propagation",
+  "scope": "source-only adapter error message propagation repair; no VM/SSH/hosted/provider/business calls",
+  "base_inspection": {
+    "base_sha": "f1c17e7d070460b65aff1e849606b81714d4d268",
+    "original_failure_receipt": "/tmp/pantheon-assist-20261013/FULL39075590925-failed-original-report-boundary-readonly.json",
+    "original_failure_receipt_sha256": "6daf711cb6a1e17235848edd3ce025a954b6a2a4bf3c4abc515f1a403ae711d0",
+    "original_artifact_zip_sha256": "bde4d3451c7e4e483f8b4f83ef014011b41c711e25d46df3c2c1178e68752438",
+    "observed_diagnostic_loss": "consultation-svc dead-letter outcomes in service-error-lines.txt recorded response.failed detail truncated at 300 chars ending at '\"error\": {\"cod' because assistant_openclaw_provider.py serialized the full response/event JSON before slicing [:300]. Actual nested provider cause on the dead-lettered consultation item was lost at that truncation boundary; all test error codes/messages in unit tests are labelled synthetic fixtures and never reported as the actual lost provider cause."
+  },
+  "fix_summary": "Added private helper _format_failed_response_message(evt) in services/openclaw-gateway-adapter/assistant_openclaw_provider.py and wired it into the existing response.completed (nested_status == 'failed') and response.failed / top-level error branches. Extracts supplied structured error code/type and message (with safe bounded status/type fallback when error is absent or non-mapping) and appends bounded response_id within 300 chars without serializing unrelated raw response/output/prompt/credentials. Preserves OPENCLAW_RESPONSES_FAILED error_code and terminal failure semantics.",
+  "net_production_lines": {
+    "budget": 30,
+    "actual": 18,
+    "insertions": 20,
+    "deletions": 2,
+    "file": "services/openclaw-gateway-adapter/assistant_openclaw_provider.py"
+  },
+  "scoped_artifacts": [
+    "services/openclaw-gateway-adapter/assistant_openclaw_provider.py",
+    "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py",
+    "docs/deployment/evidence/OPENCLAW-RESPONSES-ERROR-CAUSE-20261017/evidence.json"
+  ],
+  "verification": {
+    "new_regression_tests": [
+      "TestErrorInjectionContract::test_response_failed_preserves_nested_error_cause_beyond_300_char_metadata",
+      "TestErrorInjectionContract::test_response_completed_status_failed_preserves_nested_error_cause_beyond_300_char_metadata",
+      "TestErrorInjectionContract::test_top_level_error_and_non_mapping_error_fallbacks_stay_bounded_and_safe"
+    ],
+    "base_f1c17e7_result": "3 failed (all 3 new regression tests fail against base f1c17e7d070460b65aff1e849606b81714d4d268)",
+    "head_result": "64 passed in services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py; 57 passed in services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py",
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py"
+    ]
+  },
+  "not_claimed": [
+    "underlying Human Consultation or provider failure resolved",
+    "hosted deployment or release qualification",
+    "live model or provider invocation"
+  ]
+}

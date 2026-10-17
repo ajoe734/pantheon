@@ -810,6 +810,149 @@ class TestErrorInjectionContract:
         assert events[0]["type"] == "error"
         assert events[0]["error_code"] == "OPENCLAW_RESPONSES_FAILED"
 
+    def test_response_failed_preserves_nested_error_cause_beyond_300_char_metadata(self):
+        """Real-shaped `response.failed` events place `id`/`object`/`created_at`/
+        `status`/`model`/`output`/`usage` ahead of `response.error`, so whole-event
+        `json.dumps(evt)[:300]` truncates at `\"error\": {\"cod` before the nested
+        code/message. All test codes/messages below are synthetic fixtures only."""
+        provider = _make_provider()
+        payload = {
+            "type": "response.failed",
+            "response": {
+                "id": "resp_cbd0c6ee-0025-4252-9180-d40f7af1e1a6",
+                "object": "response",
+                "created_at": 1792279710,
+                "status": "failed",
+                "model": "openclaw/structured-extraction",
+                "output": [],
+                "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+                "error": {
+                    "code": "synthetic_test_provider_code",
+                    "message": "Synthetic test provider failure message beyond 300-character raw JSON prefix",
+                },
+                "prompt": "synthetic_unrelated_raw_prompt_do_not_serialize",
+            },
+        }
+        assert json.dumps(payload)[:300].endswith('"error": {"cod')
+        assert "synthetic_test_provider_code" not in json.dumps(payload)[:300]
+        lines = [("data: " + json.dumps(payload) + "\n").encode("utf-8")]
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_RawLinesResponse(lines)):
+            events = list(provider.stream("hi", operator_id="op-1"))
+        assert [e for e in events if e["type"] == "done"] == []
+        assert len(events) == 1
+        assert events[0]["type"] == "error"
+        assert events[0]["error_code"] == "OPENCLAW_RESPONSES_FAILED"
+        msg = events[0]["message"]
+        assert len(msg) <= 300
+        assert "synthetic_test_provider_code" in msg
+        assert "Synthetic test provider failure message beyond 300-character raw JSON prefix" in msg
+        assert "resp_cbd0c6ee-0025-4252-9180-d40f7af1e1a6" in msg
+        assert "synthetic_unrelated_raw_prompt_do_not_serialize" not in msg
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_RawLinesResponse(lines)):
+            with pytest.raises(OpenClawProviderError) as exc_info:
+                provider.invoke("hi", operator_id="op-1")
+        assert exc_info.value.error_code == "OPENCLAW_RESPONSES_FAILED"
+        assert exc_info.value.status_code == 502
+        assert "synthetic_test_provider_code" in exc_info.value.message
+        assert "resp_cbd0c6ee-0025-4252-9180-d40f7af1e1a6" in exc_info.value.message
+
+    def test_response_completed_status_failed_preserves_nested_error_cause_beyond_300_char_metadata(self):
+        """`response.completed` with nested `status == "failed"` and preceding
+        metadata must likewise preserve the nested synthetic error code, message,
+        and response id without emitting `done` or unrelated raw output/prompt."""
+        provider = _make_provider()
+        payload = {
+            "type": "response.completed",
+            "response": {
+                "id": "resp_completed_failed_synthetic_01",
+                "object": "response",
+                "created_at": 1792279813,
+                "status": "failed",
+                "model": "openclaw/structured-extraction",
+                "output": [{"type": "message", "content": "synthetic_unrelated_raw_output_do_not_serialize"}],
+                "prompt": "synthetic_unrelated_raw_prompt_do_not_serialize",
+                "usage": {"input_tokens": 120, "output_tokens": 0, "total_tokens": 120},
+                "error": {
+                    "code": "synthetic_test_completed_failed_code",
+                    "message": "Synthetic test nested failure message on response.completed status=failed",
+                },
+            },
+        }
+        assert "synthetic_test_completed_failed_code" not in json.dumps(payload["response"])[:300]
+        lines = [
+            b'data: {"type":"response.output_text.delta","delta":"partial_text_must_not_succeed"}\n',
+            ("data: " + json.dumps(payload) + "\n").encode("utf-8"),
+        ]
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_RawLinesResponse(lines)):
+            events = list(provider.stream("hi", operator_id="op-1"))
+        assert [e for e in events if e["type"] == "done"] == []
+        terminal = [e for e in events if e["type"] == "error"]
+        assert len(terminal) == 1
+        assert terminal[0]["error_code"] == "OPENCLAW_RESPONSES_FAILED"
+        msg = terminal[0]["message"]
+        assert len(msg) <= 300
+        assert "synthetic_test_completed_failed_code" in msg
+        assert "Synthetic test nested failure message on response.completed status=failed" in msg
+        assert "resp_completed_failed_synthetic_01" in msg
+        assert "synthetic_unrelated_raw_output_do_not_serialize" not in msg
+        assert "synthetic_unrelated_raw_prompt_do_not_serialize" not in msg
+
+    def test_top_level_error_and_non_mapping_error_fallbacks_stay_bounded_and_safe(self):
+        provider = _make_provider()
+        top_level_payload = {
+            "type": "error",
+            "response_id": "resp_top_error_synthetic_01",
+            "prompt": "synthetic_unrelated_raw_prompt_do_not_serialize",
+            "error": {
+                "code": "synthetic_test_top_level_error_code",
+                "message": "Synthetic test top-level error message " + ("x" * 350),
+            },
+        }
+        lines = [("data: " + json.dumps(top_level_payload) + "\n").encode("utf-8")]
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_RawLinesResponse(lines)):
+            events = list(provider.stream("hi", operator_id="op-1"))
+        assert len(events) == 1
+        assert events[0]["type"] == "error"
+        assert events[0]["error_code"] == "OPENCLAW_RESPONSES_FAILED"
+        assert len(events[0]["message"]) <= 300
+        assert "synthetic_test_top_level_error_code" in events[0]["message"]
+        assert "Synthetic test top-level error message" in events[0]["message"]
+        assert "resp_top_error_synthetic_01" in events[0]["message"]
+        assert "synthetic_unrelated_raw_prompt_do_not_serialize" not in events[0]["message"]
+
+        for fallback_payload in (
+            {
+                "type": "response.failed",
+                "response": {
+                    "id": "resp_non_mapping_synthetic_01",
+                    "status": "failed",
+                    "output": [{"text": "synthetic_unrelated_raw_output_do_not_serialize"}],
+                    "error": ["non_mapping_error_entry"],
+                },
+            },
+            {
+                "type": "response.completed",
+                "response": {
+                    "id": "resp_absent_error_synthetic_02",
+                    "status": "failed",
+                    "prompt": "synthetic_unrelated_raw_prompt_do_not_serialize",
+                    "error": None,
+                },
+            },
+        ):
+            lines = [("data: " + json.dumps(fallback_payload) + "\n").encode("utf-8")]
+            with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_RawLinesResponse(lines)):
+                fallback_events = list(provider.stream("hi", operator_id="op-1"))
+            assert len(fallback_events) == 1
+            assert fallback_events[0]["type"] == "error"
+            assert fallback_events[0]["error_code"] == "OPENCLAW_RESPONSES_FAILED"
+            fmsg = fallback_events[0]["message"]
+            assert len(fmsg) <= 300
+            assert fallback_payload["response"]["id"] in fmsg
+            assert "status=failed" in fmsg
+            assert "synthetic_unrelated_raw_output_do_not_serialize" not in fmsg
+            assert "synthetic_unrelated_raw_prompt_do_not_serialize" not in fmsg
+
     def test_nested_response_status_incomplete_is_single_typed_error(self):
         provider = _make_provider()
         lines = [b'data: {"type":"response.completed","response":{"status":"incomplete"}}\n']
