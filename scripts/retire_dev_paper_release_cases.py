@@ -67,6 +67,14 @@ def classify_saga(saga: Mapping[str, Any] | None) -> str:
     if status == "completed":
         return SAGA_ACTIVE
     if status == "failed" and str(saga.get("current_step") or "") == "compensated":
+        compensation = saga.get("compensation")
+        command = (
+            str(compensation.get("command_type") or "")
+            if isinstance(compensation, Mapping)
+            else ""
+        )
+        if command == "mark_binding_failed_inactive":
+            return SAGA_NOT_RETIRABLE  # binding FAILED is terminal; cannot retire
         return SAGA_ACTIVE  # contained failure: binding paused, compensation done
     return SAGA_NOT_RETIRABLE
 

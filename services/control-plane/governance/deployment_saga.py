@@ -761,6 +761,16 @@ class DeploymentSagaStore:
                     f"{saga_id} cannot be retired from {status.value}; only completed "
                     "or failed-and-compensated sagas can retire"
                 )
+            if (
+                compensated_failure
+                and saga.compensation is not None
+                and CompensationCommand(saga.compensation.command_type)
+                == CompensationCommand.MARK_BINDING_FAILED_INACTIVE
+            ):
+                raise DeploymentSagaError(
+                    f"{saga_id} compensation marked the RuntimeBinding failed_inactive, "
+                    "which is terminal and cannot converge to retired"
+                )
             if not saga.binding_id:
                 raise DeploymentSagaError(f"{saga_id} has no RuntimeBinding to retire")
             record = self._append_outbox_event(

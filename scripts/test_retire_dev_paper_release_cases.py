@@ -39,12 +39,19 @@ class Owner:
         if saga_id not in self.ids:
             return None
         status = self.status[saga_id]
-        step = "compensated" if status == "failed_compensated" else "x"
-        return {
+        compensated = status in ("failed_compensated", "failed_binding_failed")
+        command = (
+            "mark_binding_failed_inactive" if status == "failed_binding_failed"
+            else "request_rollback"
+        )
+        out = {
             "saga_id": saga_id, "plan_id": self.ids[saga_id],
-            "status": "failed" if status == "failed_compensated" else status,
-            "current_step": step,
+            "status": "failed" if compensated else status,
+            "current_step": "compensated" if compensated else "x",
         }
+        if compensated:
+            out["compensation"] = {"command_type": command}
+        return out
 
     def post(self, owner, path, payload):
         assert path.endswith("/retire"), path
@@ -243,3 +250,16 @@ def test_compensated_outcome_retires_own_failed_compensated_case(monkeypatch):
     store, owner = _setup(monkeypatch, KEYS, statuses={KEYS[3]: "failed_compensated"})
     _run(store, owner, outcome="compensated", new_case_key=KEYS[3])
     assert owner.posts == ["saga-" + KEYS[3]]
+
+
+def test_failed_inactive_compensation_is_never_requested(monkeypatch):
+    store, owner = _setup(
+        monkeypatch, KEYS,
+        statuses={KEYS[0]: "failed_compensated", KEYS[1]: "failed_binding_failed"},
+    )
+    store.records[0].state = "failed"
+    store.records[1].state = "failed"
+    out = _run(store, owner, outcome="accepted", new_case_key=KEYS[3])
+    assert "saga-" + KEYS[1] not in owner.posts
+    assert "saga-" + KEYS[0] in owner.posts
+    assert KEYS[1] in out["skipped"]

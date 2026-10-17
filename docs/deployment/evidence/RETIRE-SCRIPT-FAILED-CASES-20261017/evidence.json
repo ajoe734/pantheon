@@ -1,10 +1,10 @@
 {
   "task_id": "RETIRE-SCRIPT-FAILED-CASES-20261017",
-  "change": "record_retirement accepts failed sagas at step compensated; retire script selects succeeded/failed/compensated/provisioning release cases classified by saga readback; served case still excluded; kill-switch untouched",
+  "change": "record_retirement accepts failed sagas at step compensated only when compensation did not mark the binding failed_inactive (FAILED is terminal in runtime_binding); mark_binding_failed_inactive is rejected with a clear error; classify_saga applies the same rule so step 13 never requests those; retire script selects succeeded/failed/compensated/provisioning release cases classified by saga readback; served case still excluded; kill-switch untouched",
   "tests": {
-    "services/control-plane/governance/test_deployment_saga.py": "13 passed (unittest)",
-    "scripts/test_retire_dev_paper_release_cases.py": "22 passed",
-    "services/deployment/test_outbox_consumer_worker.py -k Retirement": "8 passed"
+    "services/control-plane/governance/test_deployment_saga.py": "request_rollback compensated retires; mark_binding_failed_inactive compensated rejected",
+    "scripts/test_retire_dev_paper_release_cases.py": "failed_inactive compensation never posted",
+    "combined_run": "133 passed (test_deployment_saga, test_retire_dev_paper_release_cases, test_outbox_consumer_worker)"
   },
-  "hosted_effect": "none until the next FULL+Root deploy; no hosted writes performed"
+  "hosted_effect": "none until the next FULL+Root deploy; no hosted writes performed. Hosted failed-binding sagas (e.g. deployment-saga-plan-persona-paper-026ba42c2df57338fad0) remain unretirable by design."
 }

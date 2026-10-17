@@ -200,6 +200,29 @@ class TestDeploymentSagaRetirement(unittest.TestCase):
         store.finalize_retirement(saga_id)
         self.assertEqual(store.get(saga_id).status, SagaStatus.RETIRED)
 
+    def test_rollback_compensated_saga_records_request_rollback(self):
+        store = DeploymentSagaStore()
+        saga_id = self._completed(store)
+        decision = store.record_failure(saga_id, reason="boom")
+        self.assertEqual(decision.command_type, CompensationCommand.REQUEST_ROLLBACK)
+        store.finalize_compensation(saga_id, terminal_status=SagaStatus.FAILED)
+        store.record_retirement(saga_id, reason="paused binding retires")
+        self.assertEqual(store.get(saga_id).status, SagaStatus.RETIRING)
+
+    def test_failed_inactive_compensated_saga_cannot_retire(self):
+        store = DeploymentSagaStore()
+        saga_id = store.bootstrap_for_plan(build_plan(), trace_id="trace-001").saga.saga_id
+        store.record_binding_created(saga_id, binding_id="binding-001", runtime_id="runtime-001")
+        decision = store.record_failure(saga_id, reason="runtime load timed out")
+        self.assertEqual(decision.command_type, CompensationCommand.MARK_BINDING_FAILED_INACTIVE)
+        store.finalize_compensation(saga_id, terminal_status=SagaStatus.FAILED)
+        saga = store.get(saga_id)
+        self.assertEqual(saga.status, SagaStatus.FAILED)
+        self.assertEqual(saga.current_step, SagaStep.COMPENSATED)
+        with self.assertRaisesRegex(DeploymentSagaError, "failed_inactive"):
+            store.record_retirement(saga_id, reason="terminal binding")
+        self.assertEqual(store.get(saga_id).status, SagaStatus.FAILED)
+
     def test_failed_saga_without_binding_cannot_retire(self):
         store = DeploymentSagaStore()
         saga_id = store.bootstrap_for_plan(build_plan(), trace_id="trace-001").saga.saga_id
