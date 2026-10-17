@@ -24,6 +24,10 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from services.control_plane.bff.evolution.router import create_evolution_router
 from services.control_plane.bff.governance.service import GovernanceService
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.command_adapters.preconditions import (
+    _mutation_review_projection,
+    set_ops_console_precondition_resolvers,
+)
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b3-evolution:operator,reviewer"}
 
@@ -379,16 +383,13 @@ def _create_app_for_store(store: Any) -> FastAPI:
         return {"status": "available", "dataset": dataset, "snapshot_at": snapshot_at, "source": source}
 
     app.state.store = store
+    set_ops_console_precondition_resolvers(read_surface=lambda: app.state.store)
     router = create_evolution_router(
         read_surface=lambda: app.state.store,
         extract_identity=_extract_identity,
         require_read_role=_require_read,
         dataset_surface_status=_dataset_surface_status,
-        mutation_review_projection=lambda dec_id, identity=None, snapshot_at=None, **kw: (
-            GovernanceService(app.state.store).mutation_review_projection(
-                dec_id, identity=identity, snapshot_at=snapshot_at, **kw
-            )
-        ),
+        mutation_review_projection=_mutation_review_projection,
     )
     app.include_router(router)
     return app

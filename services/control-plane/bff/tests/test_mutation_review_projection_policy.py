@@ -261,3 +261,36 @@ def test_mutation_review_projection_reuses_provided_decision_without_store_get()
     )
     assert projection2 is not None
     assert store.get_evolution_decision_by_id_calls == 1
+
+
+def test_preconditions_mutation_review_projection_reuses_provided_decision() -> None:
+    from services.control_plane.bff.command_adapters.preconditions import _mutation_review_projection
+
+    store = _FakeReadStore(
+        evolution_decisions={"evo-dec-policy-001": _MEDIUM_REVIEWED_DECISION},
+        approval_decisions={"appr-policy-001": _APPROVAL_UNDER_REVIEW},
+    )
+    identity = _identity("admin")
+
+    # With decision provided, store lookup is bypassed
+    proj = _mutation_review_projection(
+        "evo-dec-policy-001",
+        identity=identity,
+        snapshot_at="2026-07-01T01:00:00Z",
+        decision=_MEDIUM_REVIEWED_DECISION,
+        read_surface=store,
+    )
+    assert proj is not None
+    assert proj["decision_id"] == "evo-dec-policy-001"
+    assert store.get_evolution_decision_by_id_calls == 0
+
+    # Without decision provided, store lookup is called
+    proj2 = _mutation_review_projection(
+        "evo-dec-policy-001",
+        identity=identity,
+        snapshot_at="2026-07-01T01:00:00Z",
+        read_surface=store,
+    )
+    assert proj2 is not None
+    assert store.get_evolution_decision_by_id_calls == 1
+

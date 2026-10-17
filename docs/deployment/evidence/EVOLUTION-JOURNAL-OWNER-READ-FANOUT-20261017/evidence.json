@@ -3,18 +3,18 @@
   "base_sha": "e45b0ff928be861bf7c1c996592820c49f99f20d",
   "change_class": "corrective",
   "net_prod_line_budget": 60,
-  "net_prod_lines_changed": 41,
-  "summary": "Bound Evolution Journal owner reads (/bff/management/evolution-journal) to requested rows by deferring deep mutation review projection hydration until after page slicing and passing already-read decisions directly into mutation_review_projection, eliminating per-row read amplification.",
+  "net_prod_lines_changed": 39,
+  "summary": "Bound Evolution Journal owner reads (/bff/management/evolution-journal) to requested rows by deferring deep mutation review projection hydration until after page slicing and passing already-read decisions directly through the production preconditions callback into GovernanceService, eliminating per-row read amplification.",
   "root_cause": "In evolution/router.py, bff_management_evolution_journal hydrated mutation reviews for all decisions upfront before filtering or pagination. mutation_review_projection called mutation_review_inputs which called ReadSurfacePorts.get_evolution_decision_by_id, re-reading the entire decision list from the owner for each row (1 + N owner queries). For N=77 proposals, this caused 78 remote calls and a 30s timeout on focused requests.",
   "solution": {
     "router": "In services/control-plane/bff/evolution/router.py, construct lightweight mutation review base items in the initial loop using already-read decision fields and defer deep mutation_review_projection hydration to sliced page_items.",
     "governance_service": "In services/control-plane/bff/governance/service.py, accept optional decision dict in mutation_review_inputs and mutation_review_projection to reuse existing request-local values without calling get_evolution_decision_by_id.",
-    "read_surface_ports": "In services/control-plane/bff/ports/read_surface_ports.py, add get_evolution_decision alias to ReadSurfacePorts for consistency with get_evolution_decision_by_id."
+    "preconditions": "In services/control-plane/bff/command_adapters/preconditions.py, accept optional decision dict in _mutation_review_projection and forward it to GovernanceService.mutation_review_projection without re-reading from store."
   },
   "scope": [
     "services/control-plane/bff/evolution/router.py",
     "services/control-plane/bff/governance/service.py",
-    "services/control-plane/bff/ports/read_surface_ports.py",
+    "services/control-plane/bff/command_adapters/preconditions.py",
     "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py",
     "services/control-plane/bff/tests/test_mutation_review_projection_policy.py",
     "docs/deployment/evidence/EVOLUTION-JOURNAL-OWNER-READ-FANOUT-20261017/evidence.json"
@@ -22,8 +22,8 @@
   "acceptance_criteria_verification": {
     "ac1": "Verified per-request read amplification where 77 decisions triggered 78 owner calls. Confirmed that narrow focused GET decision=evo-sweep-inc-drift-a24770da155d now executes exactly 1 list_evolution_decisions call and 0 per-row lookups.",
     "ac2": "Removed repeated full-owner enumeration and detail hydration outside returned page. Preserved all authoritative reads, sorting, pagination, and tenant/auth semantics without global caches, extra workers, or schema edits.",
-    "ac3": "Base-failing and head-passing counter tests cover focused originalID (test_focused_decision_read_amplification_bounded) and unfiltered default page across multiple history sizes N=10 and N=50 (test_unfiltered_default_page_read_amplification_bounded_across_history_sizes). Net production line change is +41 lines, within budget <= 60.",
-    "ac4": "All existing and new tests pass cleanly with 0 regressions. Verified test_bff_b3_evolution_journal.py (20 passed), test_mutation_review_projection_policy.py (7 passed), test_evolution_router.py (9 passed), test_governance_router.py (8 passed), and test_mgmt_ooda_004_bff_routes.py (6 passed)."
+    "ac3": "Base-failing and head-passing counter tests cover focused originalID (test_focused_decision_read_amplification_bounded) and unfiltered default page across multiple history sizes N=10 and N=50 (test_unfiltered_default_page_read_amplification_bounded_across_history_sizes). Net production line change is +39 lines across the 3 production files, well within budget <= 60.",
+    "ac4": "All existing and new tests pass cleanly with 0 regressions. Verified test_bff_b3_evolution_journal.py (20 passed), test_mutation_review_projection_policy.py (8 passed), test_evolution_router.py (9 passed), test_governance_router.py (8 passed), and test_mgmt_ooda_004_bff_routes.py (6 passed)."
   },
   "validation": [
     {
@@ -34,7 +34,7 @@
     {
       "suite": "services/control-plane/bff/tests/test_mutation_review_projection_policy.py",
       "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_mutation_review_projection_policy.py",
-      "result": "7 passed"
+      "result": "8 passed"
     },
     {
       "suite": "services/control-plane/bff/tests/test_evolution_router.py",
