@@ -147,21 +147,6 @@ def _make_identity(runtime_id: str) -> RuntimeIdentity:
 # Fixtures: 15 bindings
 # ---------------------------------------------------------------------------
 
-class _RuntimeScopedStore(InMemoryPendingSignalStore):
-    """Stamp the owning runtime_id the way identity-complete producers do.
-
-    PaperSignalProducer does not emit runtime_id, and the consumer fails closed
-    on signals without it, so the binding-scoped queue supplies it on enqueue.
-    """
-
-    def __init__(self, runtime_id: str) -> None:
-        super().__init__()
-        self._runtime_id = runtime_id
-
-    def enqueue(self, payload: dict[str, Any]) -> None:
-        super().enqueue({**payload, "runtime_id": self._runtime_id})
-
-
 def _build_fleet(n: int, outbox_dir: str) -> list[tuple[BindingRef, InMemoryPendingSignalStore, PaperRuntimeService, _FakeTelemetryEmitter]]:
     """Return one (binding_ref, store, service, telemetry) tuple per binding."""
     fleet = []
@@ -170,8 +155,8 @@ def _build_fleet(n: int, outbox_dir: str) -> list[tuple[BindingRef, InMemoryPend
         runtime_id = f"paper-runtime-wire-{i:03d}"
         strategy_id = f"strategy-devloop-{i:03d}"
 
-        ref = BindingRef(binding_id=binding_id, strategy_id=strategy_id, symbol="AAPL.US")
-        store = _RuntimeScopedStore(runtime_id)
+        ref = BindingRef(binding_id=binding_id, strategy_id=strategy_id, symbol="AAPL.US", runtime_id=runtime_id)
+        store = InMemoryPendingSignalStore()
         binding_dict = _make_binding(binding_id, runtime_id)
         identity = _make_identity(runtime_id)
         rm_client = _FakeRuntimeManagerClient(binding_dict)

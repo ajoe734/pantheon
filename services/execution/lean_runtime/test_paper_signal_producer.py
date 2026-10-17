@@ -46,6 +46,21 @@ class TestSmokeSignalContract(unittest.TestCase):
         self.assertTrue(validated["run_id"].startswith("run-rb-test-001-"))
 
 
+class TestSmokeSignalRuntimeId(unittest.TestCase):
+    def test_smoke_strategy_signal_carries_runtime_id_and_is_accepted(self) -> None:
+        binding = BindingRef(
+            binding_id="rb-rt-001", strategy_id="strategy-rt-001", runtime_id="paper-runtime-001"
+        )
+        store = InMemoryPendingSignalStore()
+        producer = PaperSignalProducer(store_for=lambda b: store, strategy=SmokeStrategy())
+        self.assertEqual(producer.produce(binding, _NOW), 1)
+        [sig] = store.get_pending()
+        self.assertEqual(sig["runtime_id"], "paper-runtime-001")
+        validated = SignalConsumer(store_client=MagicMock())._validate(sig)
+        self.assertIsNotNone(validated)
+        self.assertEqual(validated["runtime_id"], "paper-runtime-001")
+
+
 class TestPaperSignalProducer(unittest.TestCase):
     def test_producer_enqueues_per_binding(self) -> None:
         stores = {}
