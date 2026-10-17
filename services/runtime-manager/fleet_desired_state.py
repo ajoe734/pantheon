@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, FrozenSet, List, Mapping, Optional
+from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional
 
 # ---------------------------------------------------------------------------
 # Fleet scope constants
@@ -165,6 +165,9 @@ class ExcludedBinding:
     artifact_version: str = ""
     persona_capital_binding_id: str = ""
     effective_at: str = ""
+    # Kill-switch safe mode of capital_pool_id as read by the runtime-manager
+    # service; "" when not resolved (consumers keep their legacy behaviour).
+    safe_mode: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -180,6 +183,7 @@ class ExcludedBinding:
             "artifact_version": self.artifact_version,
             "persona_capital_binding_id": self.persona_capital_binding_id,
             "effective_at": self.effective_at,
+            "safe_mode": self.safe_mode,
         }
 
 
@@ -363,6 +367,7 @@ def build_fleet_desired_state(
     bindings: List[Dict[str, Any]],
     *,
     stage_filter: Optional[str] = None,
+    safe_mode_resolver: Optional[Callable[[str], str]] = None,
 ) -> FleetDesiredState:
     """Build the fleet desired state from a list of RuntimeBinding dicts.
 
@@ -378,6 +383,8 @@ def build_fleet_desired_state(
     bindings      : list of RuntimeBinding.to_dict() records
     stage_filter  : when set, only process bindings with this deployment_mode
                     ("paper" | "canary")
+    safe_mode_resolver : optional pool_id -> safe mode lookup; evaluated at most
+                    once per pool and only for excluded bindings
 
     Returns
     -------
@@ -391,6 +398,14 @@ def build_fleet_desired_state(
 
     desired: List[DesiredFleetBinding] = []
     excluded: List[ExcludedBinding] = []
+    safe_modes: Dict[str, str] = {}
+
+    def _safe_mode_for(pool_id: str) -> str:
+        if safe_mode_resolver is None or not pool_id:
+            return ""
+        if pool_id not in safe_modes:
+            safe_modes[pool_id] = str(safe_mode_resolver(pool_id) or "")
+        return safe_modes[pool_id]
 
     for b in bindings:
         stage = str(b.get("deployment_mode") or "")
@@ -435,6 +450,7 @@ def build_fleet_desired_state(
                     artifact_version=str(b.get("artifact_version") or ""),
                     persona_capital_binding_id=str(b.get("persona_capital_binding_id") or ""),
                     effective_at=str(b.get("effective_at") or ""),
+                    safe_mode=_safe_mode_for(str(b.get("capital_pool_id") or "")),
                 )
             )
 
