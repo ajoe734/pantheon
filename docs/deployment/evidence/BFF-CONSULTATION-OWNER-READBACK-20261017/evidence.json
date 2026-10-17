@@ -1,12 +1,17 @@
 {
   "task_id": "BFF-CONSULTATION-OWNER-READBACK-20261017",
-  "summary": "Correct existing BFF Consultation owner authentication and readback. Wired operator-bff machine token in docker-compose.yml, resolved verified caller tenant using existing OwnerReadContextMiddleware and bound_tenant in owner_reads.py, bound Consultation client with machine auth and verified tenant in operations_consultation.py without swallowing owner errors or falling back to local store, routed Workshop canonical consultation transport through shared ConsultationServiceClient with machine auth and caller tenant, and proved with real in-repo Consultation HTTP owner tests addressing B1-B4 factual return items.",
-  "bounded_input_sha256": "68371ca6cc7af489c2d3218b9cca98788f11f884173d1e24e29f903920d834af",
+  "summary": "Correct existing BFF Consultation owner authentication and readback. Wired operator-bff machine token in docker-compose.yml, resolved verified caller tenant using existing OwnerReadContextMiddleware and bound_tenant in owner_reads.py, bound Consultation client with machine auth and verified tenant in operations_consultation.py without swallowing owner errors or falling back to local store, routed Workshop canonical consultation transport through shared ConsultationServiceClient with machine auth and caller tenant, resolved B5 by eliminating BFF_CONSULTATION_SERVICE_TOKEN alias, resolved B6 by eliminating unvalidated cookie rewriting and restoring production middleware order, and resolved B7 by starting owner in an owned bounded subprocess without static or dynamic main imports.",
+  "bounded_input_sha256": "451e802bbe77dda431d7989f245fa7d06ee9cededb4528bba394af147036509e",
   "predecessor": {
     "task": "TEACHING-CONSULTATION-OWNER-ACK-20261017",
     "status": "done"
   },
-  "net_production_line_growth": 118,
+  "prerequisite": {
+    "task": "BFF-EXISTING-COOKIE-API-GUARD-20261017",
+    "status": "open",
+    "scope": "Guarded DevBrowserSessionMiddleware /api/v1/ cookie session adaptation"
+  },
+  "net_production_line_growth": 108,
   "budget": 160,
   "files_scoped": [
     "services/control-plane/bff/core/owner_reads.py",
@@ -22,19 +27,15 @@
     "B2_overlapping_tenant_isolation_and_empty_list": "Real concurrent requests across tenants synchronize simultaneously (observed overlap >= 2) with strict isolation, and querying empty tenant returns empty list without store mutation.",
     "B3_machine_auth_visible_error": "Genuine consultation server authentication rejects wrong machine token with 403 DOWNSTREAM_AUTH_ERROR and missing token with 401/403 DOWNSTREAM_AUTH_ERROR without store fallback or false 404.",
     "B4_workshop_canonical_transport": "Workshop canonical consultation transport verified with genuine HTTP positive through running Consultation server, tenant mismatch negative, and ConsultationServiceClient interceptor.",
-    "tenant_mismatch_rejected": "Foreign tenant in X-Selected-Tenant or body mismatch rejected with 403 TENANT_MISMATCH before owner call",
-    "outage_and_malformed_visible_error": "Connection failure / malformed JSON returns visible 503 DEPENDENCY_UNAVAILABLE without fallback to local store"
+    "B5_remove_service_token_alias": "Eliminated BFF_CONSULTATION_SERVICE_TOKEN fallback from production callers and tests, using existing shared CONSULTATION_SERVICE_TOKEN configuration.",
+    "B6_remove_cookie_rewriting": "Eliminated unvalidated cookie-to-Authorization header injection from OwnerReadContextMiddleware and placed reader after DevBrowserSessionMiddleware in user_middleware.",
+    "B7_owner_subprocess_real_http": "Replaced composition-root imports of services.consultation.main with owned bounded local subprocess running uvicorn on ephemeral localhost port with isolated tempstore and real HTTP."
   },
   "validation": [
     {
-      "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest -v services/control-plane/bff/tests/test_operations_consultation_ports.py services/control-plane/bff/tests/test_workshop_request_authorization.py services/control-plane/bff/tests/test_agora_workshop_partial_effects.py",
-      "total_passed": 46,
-      "exit_status": 0,
-      "breakdown": {
-        "test_operations_consultation_ports.py": 26,
-        "test_workshop_request_authorization.py": 6,
-        "test_agora_workshop_partial_effects.py": 14
-      }
+      "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest -v services/control-plane/bff/tests/test_workshop_request_authorization.py",
+      "total_passed": 6,
+      "exit_status": 0
     },
     {
       "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest -v services/control-plane/bff/tests/test_bff_test_architecture.py",

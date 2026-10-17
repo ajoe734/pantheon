@@ -13,10 +13,12 @@ import json
 import os
 import shutil
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
 import time
+import urllib.request
 import uuid
 from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock, patch
@@ -695,38 +697,121 @@ class TestCompositeAndInMemoryPorts:
 class TestConsultationOwnerHttpReadback:
     @pytest.fixture
     def consultation_server(self, temp_consultation_dir, monkeypatch):
-        import importlib
-        consult_main_mod = importlib.import_module("services.consultation.main")
-        consult_app = getattr(consult_main_mod, "app")
-        test_store = build_consultation_store(temp_consultation_dir)
-        monkeypatch.setattr(consult_main_mod, "store", test_store)
-        monkeypatch.setenv("CONSULTATION_AUTH_REQUIRED", "true")
-        monkeypatch.setenv("CONSULTATION_SERVICE_TOKEN", "pantheon-local-consultation-service")
-        monkeypatch.setenv("CONSULTATION_SERVICE_ACTOR", "operator-bff")
-        monkeypatch.setenv("CONSULTATION_DATA_DIR", temp_consultation_dir)
-
         sock = socket.socket()
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
         sock.close()
 
         base_url = f"http://127.0.0.1:{port}"
-        monkeypatch.setenv("PANTHEON_CONSULTATION_API_URL", base_url)
+        service_token = "pantheon-local-consultation-service"
+        service_actor = "operator-bff"
 
-        server = uvicorn.Server(uvicorn.Config(app=consult_app, host="127.0.0.1", port=port, log_level="error"))
-        thread = threading.Thread(target=server.run, daemon=True)
-        thread.start()
-        while not server.started:
-            time.sleep(0.01)
+        # Client-side env for BFF to reach the consultation service
+        monkeypatch.setenv("PANTHEON_CONSULTATION_API_URL", base_url)
+        monkeypatch.setenv("CONSULTATION_SERVICE_TOKEN", service_token)
+        monkeypatch.setenv("CONSULTATION_SERVICE_ACTOR", service_actor)
+
+        # Isolated environment for the server subprocess
+        env = dict(os.environ)
+        env["CONSULTATION_DATA_DIR"] = temp_consultation_dir
+        env["CONSULTATION_AUTH_REQUIRED"] = "true"
+        env["CONSULTATION_SERVICE_TOKEN"] = service_token
+        env["CONSULTATION_SERVICE_ACTOR"] = service_actor
+        env["PORT"] = str(port)
+
+        cmd = [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "services.consultation.main:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--log-level",
+            "error",
+        ]
+        proc = subprocess.Popen(cmd, env=env)
+
+        deadline = time.time() + 10.0
+        started = False
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                raise RuntimeError(f"Consultation server exited prematurely with code {proc.returncode}")
+            try:
+                with urllib.request.urlopen(f"{base_url}/livez", timeout=0.2) as resp:
+                    if resp.status == 200:
+                        started = True
+                        break
+            except Exception:
+                time.sleep(0.05)
+        if not started:
+            proc.terminate()
+            proc.kill()
+            raise TimeoutError("Consultation server subprocess failed to start in 10s")
+
+        from services.consultation.client import ConsultationServiceClient
+
+        class _OwnerStoreAdapter:
+            def __init__(self, url: str, token: str, actor: str):
+                self._base_url = url
+                self._token = token
+                self._actor = actor
+
+            def put_request(self, req: Any) -> None:
+                client = ConsultationServiceClient(
+                    base_url=self._base_url,
+                    token=self._token,
+                    service_actor=self._actor,
+                    tenant_id=req.tenant_id,
+                )
+                payload = {
+                    "request_id": req.request_id,
+                    "request_type": req.request_type.value if hasattr(req.request_type, "value") else str(req.request_type),
+                    "requested_by": req.requested_by.model_dump() if hasattr(req.requested_by, "model_dump") else (req.requested_by if isinstance(req.requested_by, dict) else {"actor_type": "operator", "actor_id": "operator-dev"}),
+                    "from_persona_id": req.from_persona_id,
+                    "target_type": req.target_type,
+                    "target_id": req.target_id,
+                    "task": req.task,
+                    "consultation_type": req.consultation_type,
+                    "priority": req.priority.value if hasattr(req.priority, "value") else str(req.priority),
+                    "tenant_id": req.tenant_id,
+                    "trace_id": req.trace_id,
+                }
+                client.create_request(payload, tenant_id=req.tenant_id)
+
+            def get_request(self, request_id: str, tenant_id: Optional[str] = None) -> Optional[Any]:
+                client = ConsultationServiceClient(
+                    base_url=self._base_url,
+                    token=self._token,
+                    service_actor=self._actor,
+                    tenant_id=tenant_id,
+                )
+                return client.get_request(request_id, tenant_id=tenant_id)
+
+            def list_requests(self, tenant_id: Optional[str] = None) -> List[Any]:
+                client = ConsultationServiceClient(
+                    base_url=self._base_url,
+                    token=self._token,
+                    service_actor=self._actor,
+                    tenant_id=tenant_id,
+                )
+                return client.list_requests(tenant_id=tenant_id)
+
+        adapter = _OwnerStoreAdapter(base_url, service_token, service_actor)
 
         yield {
             "base_url": base_url,
             "port": port,
-            "store": test_store,
-            "server": server,
+            "store": adapter,
+            "proc": proc,
         }
-        server.should_exit = True
-        thread.join(timeout=2)
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=2)
 
     @staticmethod
     def _unit_synthetic_jwt(tenant_id: str) -> str:
@@ -744,8 +829,10 @@ class TestConsultationOwnerHttpReadback:
         monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_VIEWER_TENANT_ID", "tenant-other")
         monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_VIEWER_ALLOWED_TENANTS", "tenant-other")
 
+        from starlette.middleware import Middleware
         bff_app = app_factory()
-        bff_app.add_middleware(OwnerReadContextMiddleware)
+        bff_app.user_middleware.append(Middleware(OwnerReadContextMiddleware))
+        bff_app.middleware_stack = bff_app.build_middleware_stack()
         port_instance = DomainConsultationPort()
         bff_app.include_router(
             create_governance_router(
@@ -816,7 +903,7 @@ class TestConsultationOwnerHttpReadback:
         assert resp_cookie.status_code == 200
         assert resp_cookie.json()["page_info"]["total"] == 1
 
-    def test_http_owner_overlapping_tenant_isolation_and_empty_list(self, consultation_server, bff_client):
+    def test_http_owner_overlapping_tenant_isolation_and_empty_list(self, consultation_server, bff_client, monkeypatch):
         # Seed draft in tenant-dev
         req_dev = ConsultRequest(
             request_id="cr-tenant-dev-only",
@@ -869,13 +956,14 @@ class TestConsultationOwnerHttpReadback:
         headers_other = {"Authorization": f"Bearer {token_other}", "x-tenant-id": "tenant-other"}
 
         # Explicit synchronization and observed overlap
-        real_list_requests = consultation_server["store"].list_requests
+        from services.consultation.client import ConsultationServiceClient
+        real_list_requests = ConsultationServiceClient.list_requests
         overlap_observed = []
         active_count = 0
         active_lock = threading.Lock()
         barrier = threading.Barrier(2)
 
-        def synchronized_list_requests(*args, **kwargs):
+        def synchronized_list_requests(self, *args, **kwargs):
             nonlocal active_count
             with active_lock:
                 active_count += 1
@@ -885,12 +973,12 @@ class TestConsultationOwnerHttpReadback:
             except threading.BrokenBarrierError:
                 pass
             try:
-                return real_list_requests(*args, **kwargs)
+                return real_list_requests(self, *args, **kwargs)
             finally:
                 with active_lock:
                     active_count -= 1
 
-        consultation_server["store"].list_requests = synchronized_list_requests
+        monkeypatch.setattr(ConsultationServiceClient, "list_requests", synchronized_list_requests)
 
         results = {}
 
@@ -904,9 +992,6 @@ class TestConsultationOwnerHttpReadback:
         t2.start()
         t1.join(timeout=10)
         t2.join(timeout=10)
-
-        # Restore original method
-        consultation_server["store"].list_requests = real_list_requests
 
         # Verify actual overlap was observed (both requests active simultaneously)
         assert max(overlap_observed) >= 2
@@ -947,7 +1032,7 @@ class TestConsultationOwnerHttpReadback:
 
     def test_http_owner_wrong_machine_auth_visible_error(self, consultation_server, bff_client, monkeypatch):
         # Set wrong machine token on BFF client side without modifying server authenticate
-        monkeypatch.setenv("BFF_CONSULTATION_SERVICE_TOKEN", "wrong-machine-token")
+        monkeypatch.setenv("CONSULTATION_SERVICE_TOKEN", "wrong-machine-token")
 
         res = bff_client.post("/bff/auth/dev-login", json=CREDENTIALS)
         token = res.json()["access_token"]
@@ -963,7 +1048,7 @@ class TestConsultationOwnerHttpReadback:
 
     def test_http_owner_missing_machine_auth_visible_error(self, consultation_server, bff_client, monkeypatch):
         # Set missing machine token on BFF client side without modifying server authenticate
-        monkeypatch.setenv("BFF_CONSULTATION_SERVICE_TOKEN", "")
+        monkeypatch.setenv("CONSULTATION_SERVICE_TOKEN", "")
 
         res = bff_client.post("/bff/auth/dev-login", json=CREDENTIALS)
         token = res.json()["access_token"]

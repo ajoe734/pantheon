@@ -1455,11 +1455,7 @@ class DomainConsultationPort:
         if ConsultationServiceClient is not None and ConsultationServiceClient.configured():
             from services.control_plane.bff.core.owner_reads import verified_caller_tenant
             timeout = float(os.getenv("PANTHEON_CONSULTATION_API_TIMEOUT_SECONDS", "10"))
-            machine_token = (
-                os.getenv("BFF_CONSULTATION_SERVICE_TOKEN")
-                if "BFF_CONSULTATION_SERVICE_TOKEN" in os.environ
-                else (os.getenv("CONSULTATION_SERVICE_TOKEN") or os.getenv("CONSULTATION_API_TOKEN") or "")
-            ).strip()
+            machine_token = (os.getenv("CONSULTATION_SERVICE_TOKEN") or os.getenv("CONSULTATION_API_TOKEN") or "").strip()
             service_actor = (os.getenv("CONSULTATION_SERVICE_ACTOR") or "operator-bff").strip()
             trusted_tenant = verified_caller_tenant(payload)
             return ConsultationServiceClient(

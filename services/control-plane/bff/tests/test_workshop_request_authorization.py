@@ -393,22 +393,17 @@ def test_research_plan_parallel_success_requests_do_not_exchange_credentials(app
 
 
 def test_workshop_canonical_consultation_transport_real_owner_and_bounded_negatives(app_factory, monkeypatch, tmp_path):
-    from services.consultation.main import app as consult_app
-    import services.consultation.main as consult_main_mod
     from services.consultation.store import build_consultation_store
     from services.consultation.models import ConsultPriority, ConsultRequest, ConsultRequestStatus, ConsultRequestType
+    import os
     import socket
-    import threading
+    import subprocess
+    import sys
     import time
-    import uvicorn
+    import urllib.request
 
     data_dir = str(tmp_path / "ws_consult_data")
-    test_store = build_consultation_store(data_dir)
-    monkeypatch.setattr(consult_main_mod, "store", test_store)
-    monkeypatch.setenv("CONSULTATION_AUTH_REQUIRED", "true")
-    monkeypatch.setenv("CONSULTATION_SERVICE_TOKEN", "pantheon-workshop-machine-token")
-    monkeypatch.setenv("CONSULTATION_SERVICE_ACTOR", "operator-bff")
-    monkeypatch.setenv("CONSULTATION_DATA_DIR", data_dir)
+    seed_store = build_consultation_store(data_dir)
 
     # Seed draft request in canonical consultation store
     req = ConsultRequest(
@@ -426,7 +421,7 @@ def test_workshop_canonical_consultation_transport_real_owner_and_bounded_negati
         created_at="2026-10-17T00:00:00Z",
         trace_id="tr-ws-001",
     )
-    test_store.put_request(req)
+    seed_store.put_request(req)
 
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
@@ -434,19 +429,60 @@ def test_workshop_canonical_consultation_transport_real_owner_and_bounded_negati
     sock.close()
 
     base_url = f"http://127.0.0.1:{port}"
-    monkeypatch.setenv("PANTHEON_CONSULTATION_API_URL", base_url)
+    service_token = "pantheon-workshop-machine-token"
+    service_actor = "operator-bff"
 
-    server = uvicorn.Server(uvicorn.Config(app=consult_app, host="127.0.0.1", port=port, log_level="error"))
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    while not server.started:
-        time.sleep(0.01)
+    monkeypatch.setenv("PANTHEON_CONSULTATION_API_URL", base_url)
+    monkeypatch.setenv("CONSULTATION_SERVICE_TOKEN", service_token)
+    monkeypatch.setenv("CONSULTATION_SERVICE_ACTOR", service_actor)
+
+    env = dict(os.environ)
+    env["CONSULTATION_DATA_DIR"] = data_dir
+    env["CONSULTATION_AUTH_REQUIRED"] = "true"
+    env["CONSULTATION_SERVICE_TOKEN"] = service_token
+    env["CONSULTATION_SERVICE_ACTOR"] = service_actor
+    env["PORT"] = str(port)
+
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "services.consultation.main:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--log-level",
+            "error",
+        ],
+        env=env,
+    )
+
+    deadline = time.time() + 10.0
+    started = False
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            raise RuntimeError(f"Consultation server exited prematurely with code {proc.returncode}")
+        try:
+            with urllib.request.urlopen(f"{base_url}/livez", timeout=0.2) as resp:
+                if resp.status == 200:
+                    started = True
+                    break
+        except Exception:
+            time.sleep(0.05)
+    if not started:
+        proc.terminate()
+        proc.kill()
+        raise TimeoutError("Consultation server subprocess failed to start in 10s")
 
     try:
         # Genuine dev login session using existing app_factory fixture
         bff_app = app_factory()
+        from starlette.middleware import Middleware
         from services.control_plane.bff.core.owner_reads import OwnerReadContextMiddleware, authorization, selected_tenant
-        bff_app.add_middleware(OwnerReadContextMiddleware)
+        bff_app.user_middleware.append(Middleware(OwnerReadContextMiddleware))
+        bff_app.middleware_stack = bff_app.build_middleware_stack()
 
         with TestClient(bff_app, base_url=BASE) as browser:
             login_res = browser.post("/bff/auth/dev-login", json=CREDENTIALS)
@@ -527,6 +563,10 @@ def test_workshop_canonical_consultation_transport_real_owner_and_bounded_negati
             authorization.reset(auth_tok)
 
     finally:
-        server.should_exit = True
-        thread.join(timeout=2)
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=2)
 

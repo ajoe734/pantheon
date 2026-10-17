@@ -37,8 +37,6 @@ class OwnerReadContextMiddleware:
                 session = cookie.get("pantheon_session")
                 if session and session.value:
                     caller_auth = f"Bearer {session.value}"
-                    scope = dict(scope)
-                    scope["headers"] = [*scope.get("headers", []), (b"authorization", caller_auth.encode("latin-1"))]
             except (UnicodeDecodeError, ValueError):
                 caller_auth = ""
         token = authorization.set(caller_auth or None)
