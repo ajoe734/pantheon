@@ -93,5 +93,30 @@
     "reviewer": "Antigravity2",
     "decision": "pending independent exact-head review",
     "owner": "Codex"
+  },
+  "followup_REGISTRY_REQUEST_BOOTSTRAP_REPAIR_20261015": {
+    "dated": "2026-10-15",
+    "base_source": "dev 25e25bc2e (task branch task/REGISTRY-REQUEST-BOOTSTRAP-REPAIR-20261015)",
+    "changes": [
+      "services/registry/service.py: ensure_builtin_strategy_artifacts moved from get_registry_service into the existing registry_lifespan before yield; the getter only constructs RegistryService(get_store()). Startup fails visibly on owner/bootstrap error or conflicting builtin.",
+      "22 business routes changed from async def to def so FastAPI runs their synchronous owner/store work in its existing threadpool; lifespan, exception handlers and /health stay async."
+    ],
+    "test_changes": [
+      "test_service.py / test_strategy_artifact.py: clients needing builtins now enter the TestClient context manager (lifespan); reset-store observations re-enter a fresh context and are not labelled OS-process restarts.",
+      "New: test_startup_failure_is_visible_and_requests_do_not_bootstrap; test_blocked_owner_call_does_not_block_event_loop (GET and strategy-spec POST via the mounted ASGI app, event-coordinated, finally-release). Local mutation check: making get_entry or register_strategy_spec async again fails the blocking regression."
+    ],
+    "commands": [
+      {
+        "cmd": "$PANTHEON_DEPENDENCY_PYTHON -m pytest -q services/registry services/foundation/tests/test_registry_owner_transaction.py",
+        "exit": 0,
+        "result": "260 passed, 51 skipped, 1 warning in 100.26s"
+      },
+      {
+        "cmd": "git diff --check",
+        "exit": 0
+      }
+    ],
+    "skips": "All 51 skips are optional real-Postgres tests (TEST_DATABASE_URL not set in this environment); they were not executed and are not counted as passed.",
+    "evidence_limits": "Local tests do not prove the original 503's exact DB wait, real hosted latency, successful approval, release acceptance or all twelve loops. The earlier 250ms in-process counter is mechanism evidence only. Hosted deployment, cross-restart proof, rollback roundtrip and L1-L12 remain Root-owned and incomplete."
   }
 }

@@ -1,0 +1,48 @@
+{
+  "task_id": "ALPHA-TEACHING-PRINCIPAL-WIRING-20261016",
+  "base_sha": "495e2b7f74513584f5a25b171f7a9cbeee43d270",
+  "change_class": "functional",
+  "work_class": "defect_fix",
+  "summary": "Connect resident Alpha Teaching caller to the issued Training worker principal and omit conflicting caller-declared actor id so the Training owner derives trusted subject training-session-preview-worker while preserving Alpha research provenance in context_refs and trace_id.",
+  "scope": [
+    "docker-compose.yml",
+    "scripts/issue_dev_paper_principals.py",
+    "services/research/alpha_replication/revalidation_worker.py",
+    "scripts/test_issue_dev_paper_principals.py",
+    "services/research/alpha_replication/test_revalidation_worker.py",
+    "docs/deployment/evidence/ALPHA-TEACHING-PRINCIPAL-WIRING-20261016/evidence.json"
+  ],
+  "defect_context": {
+    "reproduction_evidence": "/tmp/pantheon-assist-20261013/Source15-2330-original-Alpha-natural-worker-loop-and-queue-readonly.json",
+    "reproduction_sha256": "c8eee18a55198fcab11ed9a147f46648f9ac7bb15606156f03bda85f590da3fc",
+    "symptom": "On Source15 admission adm-603bc7ce2b19 and completed research run erun-alpha-88580c28ee139dce, Alpha revalidation worker failed at Teaching caller with HTTP 401 Unauthorized missing Bearer token because docker-compose.yml lacked TRAINING_SESSION_WORKER_TOKEN_FILE input and scripts/issue_dev_paper_principals.py CONSUMER_FILES omitted TRAINING_SESSION_WORKER_TOKEN for alpha-replication-worker. Furthermore, Alpha _invoke_persona_teaching declared actor_id=self._worker_id ('alpha-revalidation-worker'), which caused Training _trusted_actor_id to fail with HTTP 403 Forbidden because declared actor did not match verified token subject ('training-session-preview-worker').",
+    "resolution": "Distributed TRAINING_SESSION_WORKER_TOKEN to alpha-replication-worker in CONSUMER_FILES, bound TRAINING_SESSION_WORKER_TOKEN_FILE to /run/pantheon-principals/TRAINING_SESSION_WORKER_TOKEN in docker-compose.yml, and omitted declared actor_id from the Alpha create teaching payload so Training derives trusted actor training-session-preview-worker while retaining Alpha provenance in context_refs, run_id, and trace_id."
+  },
+  "acceptance_verification": {
+    "ac1_token_distribution_and_compose_input": "passed: Delivered already-issued TRAINING_SESSION_WORKER_TOKEN to Alpha through original issuer CONSUMER_FILES distribution, existing read-only volume dev-paper-alpha-replication-tokens:/run/pantheon-principals:ro, and standard TRAINING_SESSION_WORKER_TOKEN_FILE Compose input without minting new credentials or weakening roles.",
+    "ac2_training_principal_usage_and_omitted_caller_actor": "passed: Used verified Training principal at Alpha Teaching create and GET boundaries; omitted conflicting caller-declared actor so Training derives trusted subject training-session-preview-worker while retaining Alpha provenance in Research tasks, runs, trace_id, and context_refs.",
+    "ac3_focused_original_tests": "passed: scripts/test_issue_dev_paper_principals.py verifies consumer file distribution, claims, and Compose binding; services/research/alpha_replication/test_revalidation_worker.py verifies generated Alpha create payload accepted by real Training inbound authority with locally issued signed token, readback opened_by derivation, loop record recording, and negative contracts (mismatched actor 403, missing token 401, foreign tenant 403, token rotation).",
+    "ac4_source_only_delivery_boundaries": "pending_delivery: Changes restricted to 3 production files, 2 test files, and 1 evidence file on per-task branch task/ALPHA-TEACHING-PRINCIPAL-WIRING-20261016. Preserved source-vs-hosted boundaries; no queue tampering or manual task JSON editing."
+  },
+  "test_expectation_classification": {
+    "status": "no_test_expectations_changed",
+    "details": "All 41 issuer tests, 19 renewal tests, and 23 revalidation worker tests pass without weakening existing assertions. Added new unit and owner-contract tests in test_issue_dev_paper_principals.py and test_revalidation_worker.py."
+  },
+  "validation": [
+    {
+      "suite": "scripts/test_issue_dev_paper_principals.py",
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest scripts/test_issue_dev_paper_principals.py",
+      "result": "41 passed in 7.53s"
+    },
+    {
+      "suite": "scripts/test_dev_paper_principal_renewal.py",
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest scripts/test_dev_paper_principal_renewal.py",
+      "result": "19 passed in 5.24s"
+    },
+    {
+      "suite": "services/research/alpha_replication/test_revalidation_worker.py",
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest services/research/alpha_replication/test_revalidation_worker.py",
+      "result": "23 passed, 13 warnings in 5.98s"
+    }
+  ]
+}

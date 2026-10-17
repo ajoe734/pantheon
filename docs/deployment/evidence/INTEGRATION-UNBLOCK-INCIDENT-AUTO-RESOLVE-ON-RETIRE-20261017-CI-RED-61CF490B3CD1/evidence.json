@@ -1,0 +1,32 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-INCIDENT-AUTO-RESOLVE-ON-RETIRE-20261017-CI-RED-61CF490B3CD1",
+  "pr": 6633,
+  "reviewed_head": "69ee3c3f3af1bb3c97b8a68d0f3ac39c1e8f3bba",
+  "failing_check": {
+    "workflow": "Persona Owner Contract",
+    "job": "Persona provisioning owner contracts",
+    "run_id": 39043429755,
+    "attempt": 1,
+    "result": "1940 passed, 1 failed, 1 skipped",
+    "failed_test": "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_5_baseline_cancellation_real_signal_injection (Subtest 2: real SIGINT while bootstrap is active)",
+    "observed_symptom": "guard_proc.communicate(timeout=10) raised subprocess.TimeoutExpired. The captured guard stderr, before the timeout, was: run_with_dev_environment_lease.sh: interrupt trap: line 2: unexpected EOF while looking for matching `)'",
+    "log": "/tmp/pantheon-assist-20261013/PR6633-original-Persona-contract-run39043429755-log-failed.txt",
+    "log_sha256": "ee80c6e869490f54dd850436c8c2b24b4da70cf3b94109ab410245a1681cda8e"
+  },
+  "root_cause": "UNCONFIRMED. The failure was intermittent and its cause has not been diagnosed. CI load and an insufficient 10s timeout are NOT established: the original stderr shows a Bash parse error ('unexpected EOF while looking for matching )') in the interrupt trap before the timeout. PR #6633 touches only services/deployment/outbox_consumer_worker.py, its test and evidence, and does not touch the failing test or the guard script.",
+  "resolution": "The same original run 39043429755 was re-run (attempt 2) on the unchanged reviewed head 69ee3c3f and concluded success. The source guard and auto_integrator are unchanged. The attempt 1 failure is retained as evidence. This is not a fix of the underlying issue.",
+  "local_reproduction": {
+    "result": "3 of 3 bounded local runs of the original test passed (fixture-only, no production signals), using four byte-identical relevant files.",
+    "meaning": "The failure is not steadily reproducible locally. This does NOT show the bug is fixed or that there is no issue.",
+    "proof": "/tmp/pantheon-assist-20261013/PR6633-original-SIGINT-cancellation-bounded-three-local-reproductions-20261017.json",
+    "proof_sha256": "d1d33734c7fd5c8a8a6b2da2fe7c32a1422b83cacc6365c38422e4a68d56d396"
+  },
+  "attempt2_success_metadata": {
+    "path": "/tmp/pantheon-assist-20261013/PR6633-original-Persona-contract-attempt2-actual-success-first-failure-preserved-20261017.json",
+    "sha256": "b5a5620e41a42e61a96a98f3d38b26005117f0628dbb66d015da31bfbebf98ef"
+  },
+  "caveats": [
+    "On the same head, Branch CI 'delivery diagnostics' was SKIPPED, so Branch CI must not be cited as positive green evidence.",
+    "Whether the interrupt-trap parse error is a real intermittent defect is not determined here; no follow-up or timeout change is proposed by this evidence."
+  ]
+}

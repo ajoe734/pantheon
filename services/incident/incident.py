@@ -652,6 +652,8 @@ class IncidentStore:
         errors = validate_incident_case(updated)
         if errors:
             raise IncidentError(f"Evidence merge produces invalid IncidentCase: {errors}")
+        if updated.to_dict() == existing.to_dict():
+            return existing
         self._incidents[incident_id] = updated
         self._save(
             aggregate_type="incident",

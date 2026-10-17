@@ -1288,6 +1288,10 @@ def _normalize_payload_for_comparison(payload: Mapping[str, Any]) -> dict[str, A
         controller = metadata.get("controller_identity")
         if isinstance(controller, dict):
             controller.pop("sequence_no", None)
+            # Observer process/deployment identity is not source-data semantics;
+            # the stored authority keeps its frozen original provenance.
+            controller.pop("controller_id", None)
+            controller.pop("deployment", None)
             snapshot = controller.get("requirement_snapshot")
             if isinstance(snapshot, dict):
                 snapshot.pop("sequence", None)

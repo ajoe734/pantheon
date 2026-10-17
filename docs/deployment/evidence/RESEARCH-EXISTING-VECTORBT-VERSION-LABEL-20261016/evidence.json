@@ -1,0 +1,38 @@
+{
+  "task_id": "RESEARCH-EXISTING-VECTORBT-VERSION-LABEL-20261016",
+  "base_sha": "397c45e827ddfaaf55589a28e57e5ba961b8ee19",
+  "scoped_artifacts": [
+    "services/research/vectorbt/adapter/vectorbt_adapter.py",
+    "services/research/vectorbt/ACTIVATION_CRITERIA.md",
+    "docs/deployment/evidence/RESEARCH-EXISTING-VECTORBT-VERSION-LABEL-20261016/evidence.json"
+  ],
+  "problem": {
+    "observed": "Adapter constant VECTORBT_VERSION_PIN, the VectorbtBackend install docstring and the activation criteria selected-package line said 0.26.2, while the pinned and actually installed upstream package is 1.1.1.",
+    "root_cause": "Stale literal left by earlier packaging; the 0.26.2 label was inherited, not independently measured package identity."
+  },
+  "changes": {
+    "vectorbt_adapter.py": "VECTORBT_VERSION_PIN '0.26.2' -> '1.1.1'; install docstring 'vectorbt==0.26.2' -> 'vectorbt==1.1.1'.",
+    "ACTIVATION_CRITERIA.md": "Selected package 'vectorbt==0.26.2' -> 'vectorbt==1.1.1'."
+  },
+  "boundary_compliance": {
+    "changed_production_lines": 3,
+    "changed_production_line_budget": 4,
+    "net_line_growth": 0,
+    "python_execution_logic_changed": false,
+    "new_helpers_fields_dependencies_tests": 0,
+    "historical_receipts_rewritten": false
+  },
+  "validation": {
+    "image": "sha256:1b932a28c3cb655d5c111d3f5694b6a0d0ee8bcf656f4a3b068be0853690b9dc (existing test-research-image; no build, no install)",
+    "version_check": {
+      "command": "docker run --rm --network none -v <vectorbt dir>:/v:ro <immutable image id> python (importlib.metadata.version('vectorbt'), vbt.__version__, adapter.VECTORBT_VERSION_PIN)",
+      "output": "dist 1.1.1 vbt 1.1.1 pin 1.1.1 True",
+      "exit_code": 0
+    },
+    "emitted_metadata": "framework_version in artifact and registry metadata (vectorbt_adapter.py lines 565, 630) and result summaries (458, 462) all derive from VECTORBT_VERSION_PIN, which equals the imported distribution version.",
+    "adapter_tests_in_image": "docker run --rm --network none read-only mount, python -m unittest test_adapter: Ran 39 tests, OK (0 skipped)",
+    "adapter_tests_on_host": "python3 -m unittest test_adapter: Ran 39, OK (skipped=4, host lacks upstream vectorbt)",
+    "guards": "unavailable and simulation guards unchanged"
+  },
+  "limits": "Literal metadata correction only. No provider requests, no Research approval or execution, no VM access, no new numerical qualification. Old Teaching output 0.26.2 remains an inherited, qualified label. Independent exact-head review by Antigravity2 pending."
+}

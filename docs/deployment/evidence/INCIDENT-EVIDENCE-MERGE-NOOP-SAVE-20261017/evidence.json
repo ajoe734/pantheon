@@ -1,0 +1,14 @@
+{
+  "task_id": "INCIDENT-EVIDENCE-MERGE-NOOP-SAVE-20261017",
+  "summary": "merge_incident_evidence returns the existing incident without calling _save when the merged incident equals the stored one; changing merges persist as before. IDs, dedup rules and HTTP responses unchanged.",
+  "files_scoped": [
+    "services/incident/incident.py",
+    "services/incident/test_incident.py",
+    "docs/deployment/evidence/INCIDENT-EVIDENCE-MERGE-NOOP-SAVE-20261017/evidence.json"
+  ],
+  "verification": {
+    "command": "python3 -m unittest services.incident.test_incident",
+    "result": "81 tests OK",
+    "base_check": "test_merge_incident_evidence_skips_save_when_unchanged fails with the fix reverted"
+  }
+}

@@ -489,34 +489,7 @@ def build_session_router(
                 suggestion="Supply a UUID v4 in the Idempotency-Key request header",
             )
         expected_version = _parse_etag_lock_version(if_match, workshop_id)
-        current_version = int(session.get("lock_version", 1))
-        if expected_version != current_version:
-            from services.control_plane.bff.models import ErrorCode
-            current_etag = f'W/"workshop:{workshop_id}:v{current_version}"'
-            raise bff_error(
-                409,
-                ErrorCode.RESOURCE_CONFLICT,
-                "Concurrent modification: ETag mismatch",
-                f"If-Match {if_match!r} does not match current ETag {current_etag!r}",
-                details_extra={
-                    "current_etag": current_etag,
-                    "latest_href": f"/bff/agora/workshops/{workshop_id}",
-                },
-            )
-        if hasattr(store, "check_and_record_idempotency_key"):
-            idem_scope = (
-                f"{scope.user_id}:{scope.tenant_id}:{workshop_id}"
-                f":POST:/bff/agora/workshops/completeness"
-            )
-            if store.check_and_record_idempotency_key(idem_scope, idempotency_key):
-                from services.control_plane.bff.models import ErrorCode
-                raise bff_error(
-                    409,
-                    ErrorCode.IDEMPOTENCY_CONFLICT,
-                    "Duplicate Idempotency-Key",
-                    idempotency_key,
-                )
-        if not hasattr(store, "create_completeness_snapshot"):
+        if not hasattr(store, "create_completeness_snapshot_cas"):
             from services.control_plane.bff.models import ErrorCode
             raise bff_error(
                 501,
@@ -532,13 +505,16 @@ def build_session_router(
             or session.get("strategy_id")
             or workshop_id
         )
-        snapshot = store.create_completeness_snapshot({
+        now = utc_now()
+        snapshot_candidate = {
+            "snapshot_id": str(uuid.uuid4()),
             "workshop_id": workshop_id,
             "strategy_version_id": strategy_version_id,
             "state_map_json": body.state_map_json,
             "blocking_items_json": body.blocking_items_json,
             "next_question_json": body.next_question_json,
-        })
+            "created_at": now,
+        }
         events = store.list_events(workshop_id)
         latest = (
             store.get_latest_readiness_assessment(workshop_id)
@@ -549,18 +525,54 @@ def build_session_router(
         assessment = _build_readiness_assessment(
             session=session,
             events=events,
-            snapshot=snapshot,
-            assessed_at=utc_now(),
+            snapshot=snapshot_candidate,
+            assessed_at=now,
             assessment_version=next_assessment_version,
         )
-        stored_assessment = (
-            store.create_readiness_assessment(assessment)
-            if body.persist_readiness and hasattr(store, "create_readiness_assessment")
-            else assessment
+
+        idem_scope = (
+            f"{scope.user_id}:{scope.tenant_id}:{workshop_id}"
+            f":POST:/bff/agora/workshops/completeness"
         )
-        new_lock_version = store.update_session_lock_version(workshop_id)
+        snapshot, stored_assessment, new_lock_version, conflict = (
+            store.create_completeness_snapshot_cas(
+                workshop_id=workshop_id,
+                expected_lock_version=expected_version,
+                snapshot=snapshot_candidate,
+                readiness_assessment=assessment if body.persist_readiness else None,
+                idempotency_scope=idem_scope,
+                idempotency_key=idempotency_key,
+            )
+        )
+        if conflict == "not_found":
+            from services.control_plane.bff.models import ErrorCode
+            raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Workshop not found", workshop_id)
+        if conflict == "idempotency_conflict":
+            from services.control_plane.bff.models import ErrorCode
+            raise bff_error(
+                409,
+                ErrorCode.IDEMPOTENCY_CONFLICT,
+                "Duplicate Idempotency-Key",
+                idempotency_key,
+            )
+        if conflict == "version_conflict" or snapshot is None:
+            from services.control_plane.bff.models import ErrorCode
+            current_lock_version = new_lock_version if new_lock_version is not None else 1
+            current_etag = f'W/"workshop:{workshop_id}:v{current_lock_version}"'
+            raise bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "Concurrent modification: ETag mismatch",
+                f"If-Match {if_match!r} does not match current ETag {current_etag!r}",
+                details_extra={
+                    "current_etag": current_etag,
+                    "latest_href": f"/bff/agora/workshops/{workshop_id}",
+                },
+            )
+
         new_etag = f'W/"workshop:{workshop_id}:v{new_lock_version}"'
         response.headers["ETag"] = new_etag
+        effective_assessment = stored_assessment or assessment
         _ws_publish(
             workshop_id,
             "workshop.completeness.updated",
@@ -574,16 +586,16 @@ def build_session_router(
             workshop_id,
             "workshop.readiness.updated",
             {
-                "assessment_id": stored_assessment["assessment_id"],
-                "assessment_version": stored_assessment["assessment_version"],
-                "highest_ready_gate": stored_assessment.get("highest_ready_gate"),
+                "assessment_id": effective_assessment["assessment_id"],
+                "assessment_version": effective_assessment["assessment_version"],
+                "highest_ready_gate": effective_assessment.get("highest_ready_gate"),
             },
             utc_now_fn=utc_now,
         )
         return {
             "data": {
                 "snapshot": snapshot,
-                "readiness": stored_assessment,
+                "readiness": effective_assessment,
             },
             "meta": {
                 "snapshot_at": utc_now(),

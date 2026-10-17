@@ -1,0 +1,13 @@
+{
+  "task_id": "RECON-RETIRED-BINDING-INCIDENTS-20261015",
+  "base": "09eb4546b",
+  "tested_code_head": "d50f582b2",
+  "change": "Scheduled reconciliation reads RuntimeBinding from runtime-manager via the existing RuntimeManagerClient (auth resolved by services.runtime_auth.resolve_runtime_manager_auth defaults; no new env or compose settings). Bindings retired at/before the observation are skipped and reported in retired_binding_ids; incident rejections 'created_at is after RuntimeBinding retired_at' become terminal_rejected (not retried, not a tick failure). Lookups are bounded by the remaining tick budget and stop after the first failure. Incident validation and retire flow untouched.",
+  "tests": {
+    "command": "pytest services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py (fresh venv with services/reconciliation-drift/requirements.txt + pytest)",
+    "result": "52 passed, 0 failed",
+    "base_check": "with main.py restored to 09eb4546b, scheduler tests: 5 failed, 39 passed (the 5 new tests fail on base)"
+  },
+  "auth_note": "Original Recon container had no token/file env; RuntimeManagerClient uses the existing default resolution, observed GET 200 on active BID rb-88a73e88029b47fb9ec22dfc70bdbdeb; bare URL without Authorization returns 401.",
+  "hosted_verification": "not performed in worker; requires deploy"
+}

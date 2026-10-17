@@ -307,6 +307,7 @@ LOCAL_HUMAN_OPS_ACTIONS = frozenset(
         "archive_collision_fence",
         "record_terminal_fact",
         "operator_accept",
+        "handoff",
     }
 )
 DEV_BRIDGE_CONSUMED_KEY = "consumed_dev_bridge_packets"

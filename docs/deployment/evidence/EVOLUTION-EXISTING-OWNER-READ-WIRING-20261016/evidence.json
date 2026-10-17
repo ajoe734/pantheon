@@ -1,0 +1,31 @@
+{
+  "task_id": "EVOLUTION-EXISTING-OWNER-READ-WIRING-20261016",
+  "scope": "source wiring and regression test verification only; no hosted or VM acceptance claimed",
+  "summary": "Repaired original Evolution projection filters and authenticated owner read wiring without adding auth infrastructure or treating failures as empty data.",
+  "changes": [
+    "services/control-plane/bff/ports/persona_capital_runtime.py: EvolutionProjectionPort and PersonaCapitalRuntimeDomainPort explicitly accept action_type, risk_level, and status keyword arguments with real filtering; project raw decisions through DomainGovernancePort.project_evolution_decision to map decision_state to status while preserving extra fields (resolved_at); propagate unconfigured or failing reader exceptions as ActionUnavailableError instead of returning fake empty collections.",
+    "services/control-plane/bff/core/owner_reads.py: Implemented read_evolution_records and _evolution_http_get to verify caller JWT and bind caller tenant via bound_tenant before any owner network I/O; forward static EVOLUTION_AUTH_TOKEN Bearer header and caller verified X-Tenant-Id header to Evolution owner; reject foreign tenants with 403 ActionUnavailableError before I/O; propagate owner 401/403/503 errors as ActionUnavailableError.",
+    "docker-compose.yml: Distributed EVOLUTION_AUTH_TOKEN to operator-bff; aligned EVOLUTION_DEFAULT_TENANT_ID, EVOLUTION_AUTH_ALLOWED_TENANTS, and EVOLUTION_SCHEDULER_TENANT_ID across postmortems, evolution, and evolution-daily-sweep-scheduler using dev selector fallback ${...:-${PANTHEON_DEV_BFF_TENANT_ID:-pantheon-default}} while preserving explicit overrides and non-dev defaults.",
+    "scripts/test_current_l12_compose_wiring.py: Aligned TRAINING_SESSION_JWT_SECRET assertion with compose verifier chain; asserted operator-bff EVOLUTION_AUTH_TOKEN matches evolution; updated postmortems tenant assertion with dev selector fallback.",
+    "services/evolution/test_compose_activation.py: Updated EVOLUTION_SCHEDULER_TENANT_ID and EVOLUTION_AUTH_ALLOWED_TENANTS assertions to match the dev selector fallback.",
+    "services/control-plane/bff/tests/test_receipt_default_reads.py: Replaced fake EvolutionOwnerHandler with actual Evolution app (services.evolution.main.app), authenticate_tenant middleware, create_program_router, and isolated stores on tmp_path; verified default composition against actual owner auth and collection shape via TestClient transport convention; covered admission, populated reads with static token and tenant forwarding, route-level filters (action_type, risk_level, status), programs list, derived program runs, true empty collection, foreign tenant pre-I/O rejection, and owner 403/503 propagation.",
+    "services/control-plane/bff/tests/test_ranking_evolution_projection_ports.py: Added test_list_evolution_decisions_filters_and_projection (action_type, risk_level, status filters, decision_state mapping, no **kwargs sink) and test_evolution_readers_error_propagation (unconfigured and 403/503 error propagation)."
+  ],
+  "verification": {
+    "test_receipt_default_reads.py": "14 passed",
+    "test_ranking_evolution_projection_ports.py": "23 passed",
+    "test_current_l12_compose_wiring.py": "8 passed",
+    "test_compose_activation.py": "4 passed",
+    "combined_suite": "79 passed (including test_evolution_router.py and test_evolution_program_owner_contract.py)"
+  },
+  "acceptance_criteria": {
+    "ac1": "PASSED - Evolution projection aligned with route and owner fields; explicit action_type, risk_level, status filtering; real decision_state projection; unavailable or auth-denied raises ActionUnavailableError instead of fake empty list.",
+    "ac2": "PASSED - Verified caller identity and tenant admission before owner read; adapted Evolution read wiring to static token contract with EVOLUTION_AUTH_TOKEN in BFF; bound Evolution owner, producer, and scheduler to dev tenant using selectors; no new token issuer, JWT verifier, or alternate tenant fallback.",
+    "ac3": "PASSED - Tested default composition against ACTUAL owner auth (services.evolution.main.authenticate_tenant middleware) and collection shape using actual Evolution app, create_program_router, and isolated stores on tmp_path via TestClient transport convention; covered filters, true empty, unavailable, denied, and foreign tenant pre-I/O rejection; edits strictly limited to scoped artifacts; diff budget passes."
+  },
+  "not_claimed": [
+    "hosted accepted",
+    "FULL release gate",
+    "live VM cutover"
+  ]
+}

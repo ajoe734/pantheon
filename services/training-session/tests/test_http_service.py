@@ -640,6 +640,164 @@ def test_canonical_dataset_validation_and_fail_closed_and_evidence() -> None:
     assert complete.status_code == 409
     assert "evaluation governance gate is not passed" in complete.text
     assert persona_mutations == []
+    ready_async = client.get("/readyz")
+    assert ready_async.status_code == 200
+    assert ready_async.json()["dependencies"]["functional"]["status"] == "ok"
+    assert ready_async.json()["dependencies"]["functional"]["failure_count"] == 0
+
+    session_id_sync = client.post(
+        "/api/training/sessions",
+        json={
+            "persona_id": "persona-alpha",
+            "objective": "Test sync fail closed validation",
+            "created_at": "2026-04-28T22:30:00Z",
+        },
+    ).json()["session_id"]
+    seed_changed_supported_controls(module, session_id_sync)
+    sync_preview_resp = client.post(
+        f"/api/training/sessions/{session_id_sync}/preview",
+        json={"mode": "refresh"},
+    )
+    assert sync_preview_resp.status_code == 201, sync_preview_resp.text
+    sync_preview = sync_preview_resp.json()
+    assert sync_preview["validation_status"] == "failed"
+    assert sync_preview["evaluation_proof"]["status"] == "failed"
+    assert sync_preview["evaluation_proof"]["governance_gate_state"] == "failed"
+    complete_sync = client.post(f"/api/training/sessions/{session_id_sync}/complete")
+    assert complete_sync.status_code == 409
+    assert "evaluation governance gate is not passed" in complete_sync.text
+    assert persona_mutations == []
+    ready_sync = client.get("/readyz")
+    assert ready_sync.status_code == 200
+    assert ready_sync.json()["dependencies"]["functional"]["status"] == "ok"
+    assert ready_sync.json()["dependencies"]["functional"]["failure_count"] == 0
+
+    test_tenant_id = job["tenant_id"]
+    persisted_negative_record = {
+        "status": "failed",
+        "checked_at": "2026-10-15T20:03:12Z",
+        "actor_service": "training-session-preview-worker",
+        "detail": {
+            "evaluation_proof_ref": preview["evaluation_proof"]["proof_ref"],
+            "governance_gate_state": "failed",
+            "job_id": job["job_id"],
+            "session_id": session_id,
+        },
+    }
+    module.store.put_functional_result(
+        "preview_evaluation",
+        test_tenant_id,
+        persisted_negative_record,
+    )
+    records_before = module.store.list_functional_results()
+    ready_reconciled = client.get("/readyz")
+    assert ready_reconciled.status_code == 200
+    assert ready_reconciled.json()["dependencies"]["functional"]["status"] == "ok"
+    assert ready_reconciled.json()["dependencies"]["functional"]["failure_count"] == 0
+    # No-write case: health read must be read-only and preserve raw failure audit in store
+    records_after = module.store.list_functional_results()
+    assert records_after == records_before
+    persisted_raw = [
+        r for r in records_after
+        if r.get("operation") == "preview_evaluation" and r.get("tenant_id") == test_tenant_id
+    ][0]
+    assert persisted_raw["status"] == "failed"
+
+    # Missing authority: bare detail proof_ref / governance state with missing job or session degrades
+    module.store.put_functional_result(
+        "preview_evaluation",
+        test_tenant_id,
+        {
+            "status": "failed",
+            "checked_at": "2026-10-15T20:04:00Z",
+            "actor_service": "training-session-preview-worker",
+            "detail": {
+                "evaluation_proof_ref": "missing-original-proof",
+                "governance_gate_state": "failed",
+                "job_id": "missing-original-job",
+                "session_id": "missing-original-session",
+            },
+        },
+    )
+    ready_missing_auth = client.get("/readyz")
+    assert ready_missing_auth.status_code == 503
+    assert ready_missing_auth.json()["dependencies"]["functional"]["status"] == "degraded"
+    assert ready_missing_auth.json()["dependencies"]["functional"]["failure_count"] == 1
+
+    # Store error: storage backend lookup error remains honestly degraded
+    module.store.put_functional_result(
+        "preview_evaluation",
+        test_tenant_id,
+        persisted_negative_record,
+    )
+    original_get_preview_job = module.store.get_preview_job
+
+    def _exploding_get_preview_job(jid: str):
+        raise OSError("storage backend disk fault")
+
+    module.store.get_preview_job = _exploding_get_preview_job
+    try:
+        ready_store_error = client.get("/readyz")
+        assert ready_store_error.status_code == 503
+        assert ready_store_error.json()["dependencies"]["functional"]["status"] == "degraded"
+        assert ready_store_error.json()["dependencies"]["functional"]["failure_count"] == 1
+    finally:
+        module.store.get_preview_job = original_get_preview_job
+
+    # Valid persisted sync negative record: valid session and bundle owner authority recognized as ok
+    persisted_sync_negative = {
+        "status": "failed",
+        "checked_at": "2026-10-15T20:04:30Z",
+        "actor_service": "training-session",
+        "detail": {
+            "evaluation_proof_ref": sync_preview["evaluation_proof"]["proof_ref"],
+            "governance_gate_state": "failed",
+            "session_id": session_id_sync,
+        },
+    }
+    module.store.put_functional_result(
+        "preview_evaluation",
+        test_tenant_id,
+        persisted_sync_negative,
+    )
+    ready_sync_reconciled = client.get("/readyz")
+    assert ready_sync_reconciled.status_code == 200
+    assert ready_sync_reconciled.json()["dependencies"]["functional"]["status"] == "ok"
+    assert ready_sync_reconciled.json()["dependencies"]["functional"]["failure_count"] == 0
+
+    # Sync missing authority: non-existent session_id degrades to 503
+    module.store.put_functional_result(
+        "preview_evaluation",
+        test_tenant_id,
+        {
+            "status": "failed",
+            "checked_at": "2026-10-15T20:04:45Z",
+            "actor_service": "training-session",
+            "detail": {
+                "evaluation_proof_ref": "missing-sync-proof",
+                "governance_gate_state": "failed",
+                "session_id": "missing-sync-session",
+            },
+        },
+    )
+    ready_missing_sync = client.get("/readyz")
+    assert ready_missing_sync.status_code == 503
+    assert ready_missing_sync.json()["dependencies"]["functional"]["status"] == "degraded"
+    assert ready_missing_sync.json()["dependencies"]["functional"]["failure_count"] == 1
+
+    module.store.put_functional_result(
+        "preview_evaluation",
+        test_tenant_id,
+        {
+            "status": "failed",
+            "checked_at": "2026-10-15T20:05:00Z",
+            "actor_service": "training-session",
+            "detail": {
+                "session_id": session_id,
+                "error_code": "preview_evidence_unavailable",
+            },
+        },
+    )
     degraded = client.get("/readyz")
     assert degraded.status_code == 503
     assert degraded.json()["dependencies"]["functional"]["status"] == "degraded"
@@ -1020,3 +1178,289 @@ def test_terminal_session_recovery_claim_lease_fences_duplicate_claims_before_ex
     session2 = module.store.get_session(session_id2)
     assert session2["status"] == "active"
     assert session2.get("ended_at") is None
+
+
+# --- Canonical model-bound teaching sessions ---------------------------------
+
+# --- Persona/model fixture (mirrors a real provisioning readback) ---
+import copy as _fx_copy
+import json as _fx_json
+
+from services.registry.strategy_artifact import strategy_artifact_checksum as _fx_checksum
+
+_FX_PERSONA_ID = "persona-132519698e6199e80326"
+_FX_TENANT_ID = "tenant-dev"
+_FX_ARTIFACT_ID = "artifact-persona-paper-aa060d53ff712cbba704"
+_FX_STRATEGY_ID = "strategy-persona-aa060d53ff712cbba704"
+
+
+def _fx_momentum_artifact(
+    *, lookback: int = 2, threshold: float = 0.0, symbols: tuple[str, ...] = ("2330.TW",)
+) -> dict[str, Any]:
+    return {
+        "artifact_id": _FX_ARTIFACT_ID,
+        "strategy_id": _FX_STRATEGY_ID,
+        "version": "1.0.0",
+        "artifact_schema_version": "1.0",
+        "lineage": {
+            "source_run_ids": ["persona-provisioning-forward-artifact-aa060d53ff712cbba704"],
+            "parent_registry_ids": ["artifact-persona-paper-baseline-aa060d53ff712cbba704"],
+            "source_strategy_spec_id": "reg-strategy-spec-persona-aa060d53ff712cbba704",
+        },
+        "algorithm_ref": {
+            "path": "services/registry/strategy_artifact.py",
+            "commit": "1cfaf933fbcc119605a455ebea483d54d2521ebb",
+            "engine": "lean",
+            "entrypoint": "services.registry.strategy_artifact:evaluate_strategy_action",
+            "repository": "ajoe734/pantheon",
+            "signal_interface": "services.execution.lean_runtime.paper_signal_producer:Strategy",
+            "logic_interpreter": "services.registry.strategy_artifact:evaluate_strategy_action",
+            "signal_schema_version": "1.0",
+        },
+        "strategy_logic": {
+            "kind": "close_to_close_momentum",
+            "positive_action": "BUY",
+            "non_positive_action": "SELL",
+            "lookback_parameter": "lookback_bars",
+            "threshold_parameter": "momentum_threshold",
+        },
+        "parameters": {
+            "market": "TW",
+            "symbols": list(symbols),
+            "data_source": "source-ingest:paper/persona-bootstrap",
+            "bar_frequency": "1d",
+            "lookback_bars": lookback,
+            "quantity_type": "SHARES",
+            "order_quantity": 1,
+            "momentum_threshold": threshold,
+            "zero_momentum_action": "SELL",
+        },
+        "provenance_refs": ["task:LOOP-PROD-PER-001"],
+        "mutation_surface": {
+            "controls": [
+                {"parameter_key": "lookback_bars", "value_type": "integer", "current_value": lookback,
+                 "allowed_range": {"min": 2, "max": 60}, "step": 1},
+                {"parameter_key": "momentum_threshold", "value_type": "number", "current_value": threshold,
+                 "allowed_range": {"min": 0.0, "max": 0.05}, "step": 0.001},
+            ],
+            "immutable_parameters": [
+                "symbols", "bar_frequency", "data_source", "order_quantity",
+                "quantity_type", "zero_momentum_action", "market",
+            ],
+        },
+    }
+
+
+def _fx_runtime_binding(artifact: dict[str, Any] | None = None, *, tenant_id: str = _FX_TENANT_ID) -> dict[str, Any]:
+    artifact = _fx_copy.deepcopy(artifact or _fx_momentum_artifact())
+    payload = _fx_json.dumps(artifact, sort_keys=True, separators=(",", ":"))
+    checksum = _fx_checksum(artifact)
+    metadata = {
+        "version": artifact["version"],
+        "checksum": checksum,
+        "registry_id": artifact["artifact_id"],
+        "strategy_id": artifact["strategy_id"],
+        "artifact_type": "execution_bundle",
+        "artifact_state": "approved",
+        "runtime_action": "deploy_new_binding",
+        "promotion_state": "paper",
+        "deployment_stage": "paper",
+        "created_at": "2026-10-15T19:19:47Z",
+        "approved_at": "2026-10-15T19:19:48Z",
+        "lineage": _fx_copy.deepcopy(artifact["lineage"]),
+        "rollback": {
+            "action_type": "pause_then_replace",
+            "target_version": "0.0.1",
+            "target_registry_id": "artifact-persona-paper-baseline-aa060d53ff712cbba704",
+        },
+        "capital_pool_id": "pool-persona-paper-aa060d53ff712cbba704",
+        "gross_scale_pct": 100.0,
+        "capital_scale_pct": 0.0,
+        "deployment_plan_id": "plan-persona-paper-aa060d53ff712cbba704",
+        "sponsor_persona_id": _FX_PERSONA_ID,
+        "approval_decision_id": "apv-persona-paper-artifact-aa060d53ff712cbba704",
+    }
+    base = f"openclaw/registry/{artifact['strategy_id']}/{artifact['version']}"
+    return {
+        "status": "active",
+        "binding_id": "rb-ece1ab6cfcdc4c518c40874a97a58a66",
+        "runtime_id": "rt-a47d6729",
+        "artifact_id": artifact["artifact_id"],
+        "artifact_version": artifact["version"],
+        "execution_mode": "paper",
+        "metadata": {
+            "tenant_id": tenant_id,
+            "persona_id": _FX_PERSONA_ID,
+            "strategy_id": artifact["strategy_id"],
+            "artifact_checksum": checksum,
+            "object_store": {f"{base}/artifact.bin": payload, f"{base}/metadata.json": metadata},
+        },
+    }
+
+
+def _fx_persona_with_model(artifact: dict[str, Any] | None = None, *, tenant_id: str = _FX_TENANT_ID) -> dict[str, Any]:
+    return {
+        "persona_id": _FX_PERSONA_ID,
+        "tenant_id": tenant_id,
+        "metadata": {
+            "tenant_id": tenant_id,
+            "provisioning_authoritative_readback": {"runtime_binding": _fx_runtime_binding(artifact, tenant_id=tenant_id)},
+        },
+    }
+
+def _model_authority(*, tenant_id: str = "tenant-test", **artifact_kwargs) -> dict:
+    """Persona served by the (faked) owner readback; the service derives the model itself."""
+    return _fx_persona_with_model(_fx_momentum_artifact(**artifact_kwargs), tenant_id=tenant_id)
+
+
+def _create_model_session(module, client: TestClient, persona: dict | None, persona_id: str | None = None):
+    """Create through the service, serving ``persona`` from the owner readback it performs itself."""
+    env = {"TRAINING_SESSION_PERSONA_READBACK_URL_TEMPLATE": "http://persona:8002/api/personas/{persona_id}/training-target"}
+    requested: list[str] = []
+
+    def _owner_get(_transport, _method, url, **_kwargs):
+        requested.append(url)
+        if url.endswith("/training-target"):
+            # Real training-target shape: generation/controller state, no model metadata.
+            return {"persona_id": persona_id or _FX_PERSONA_ID, "generation": 1, "controller": {}}
+        return {"persona": persona}
+
+    with mock.patch.dict(os.environ, env), \
+            mock.patch.object(module, "_persona_authority_token", return_value="tok"), \
+            mock.patch.object(module, "_request_json_object", side_effect=_owner_get):
+        response = _post_create_model_session(client, persona_id)
+    assert requested and not requested[0].endswith("/training-target"), requested
+    return response
+
+
+def _post_create_model_session(client: TestClient, persona_id: str | None):
+    return client.post(
+        "/api/training/sessions",
+        json={
+            "persona_id": persona_id or _FX_PERSONA_ID,
+            "objective": "Teach the canonical momentum model",
+            "created_at": "2026-04-28T22:00:00Z",
+            # A caller-carried model is ignored: only the owner readback selects it.
+            "model_authority": {"artifact_id": "forged", "strategy_artifact": {"parameters": {"lookback_bars": 9}}},
+        },
+    )
+
+
+def test_model_bound_session_controls_come_from_artifact_mutation_surface() -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+    persona = _model_authority()
+    created = _create_model_session(module, client, persona)
+    assert created.status_code == 201, created.text
+    session_id = created.json()["session_id"]
+    frozen = created.json()["metadata"]["model_authority"]
+    assert frozen["artifact_id"] == _FX_ARTIFACT_ID
+    assert frozen["strategy_artifact"]["parameters"]["lookback_bars"] == 2
+
+    controls = client.get(f"/api/training/controls/{session_id}").json()["controls"]
+    assert [c["parameter_key"] for c in controls] == ["lookback_bars", "momentum_threshold"]
+    assert controls[0]["allowed_range"] == {"min": 2, "max": 60}
+    assert controls[0]["baseline_value"] == controls[0]["current_value"] == 2
+
+    rejected = client.patch(
+        f"/api/training/sessions/{session_id}/controls",
+        json={"patches": [{"parameter_key": "lookback_bars", "proposed_value": 61}]},
+    ).json()
+    assert rejected["status"] == "rejected"
+    sma_key = client.patch(
+        f"/api/training/sessions/{session_id}/controls",
+        json={"patches": [{"parameter_key": "short_window", "proposed_value": 7}]},
+    ).json()
+    assert sma_key["field_errors"][0]["reason"] == "unknown_parameter_key"
+
+
+def test_model_bound_create_rejects_tampered_or_foreign_owner_model() -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+    persona = _model_authority()
+
+    tampered = json.loads(json.dumps(persona))
+    store = tampered["metadata"]["provisioning_authoritative_readback"]["runtime_binding"]["metadata"]["object_store"]
+    artifact_key = next(key for key in store if key.endswith("artifact.bin"))
+    store[artifact_key] = store[artifact_key].replace('"order_quantity":1', '"order_quantity":9')
+    assert _create_model_session(module, client, tampered).status_code == 409
+
+    assert _create_model_session(module, client, persona, persona_id="persona-someone-else").status_code == 409
+    assert _create_model_session(module, client, _model_authority(tenant_id="tenant-other")).status_code == 409
+
+
+def test_persona_without_runtime_binding_or_readback_stays_unbound() -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+    plain = {"persona_id": _FX_PERSONA_ID, "tenant_id": "tenant-test", "metadata": {}}
+    created = _create_model_session(module, client, plain)
+    assert created.status_code == 201, created.text
+    assert "model_authority" not in (created.json().get("metadata") or {})
+    controls = client.get(f"/api/training/controls/{created.json()['session_id']}").json()["controls"]
+    assert "short_window" in {c["parameter_key"] for c in controls}
+
+
+def test_model_bound_preview_runs_real_backend_on_derived_candidate() -> None:
+    from services.research.vectorbt.adapter import vectorbt_adapter as adapter
+
+    module = _load_service_module()
+    seen: dict = {}
+
+    def real_workflow_on_tw_dataset(dataset, *, backend=None, config=None):
+        # The strict fixture dataset is crypto; swap in a TW daily dataset that
+        # holds the artifact symbol plus a second instrument, then run the REAL backend.
+        from datetime import date, timedelta
+
+        start = date(2024, 1, 1)
+        series = [100.0, 101.0, 100.5, 102.0, 101.0, 103.0, 102.0, 104.0] * 5
+        records = [
+            {"instrument": symbol, "date": (start + timedelta(days=i)).isoformat(),
+             "open": c, "high": c, "low": c, "close": c, "volume": 1000}
+            for symbol, offset in (("2330.TWSE", 0.0), ("2317.TWSE", 10.0))
+            for i, c in enumerate(series)
+            for c in (c + offset,)
+        ]
+        seen["config"] = config
+        return adapter.run_vectorbt_workflow(
+            {**dataset, "records": records}, backend=backend, config=config
+        )
+
+    module.run_vectorbt_workflow = real_workflow_on_tw_dataset
+    client = TestClient(module.app)
+    authority = _model_authority()
+    session_id = _create_model_session(module, client, authority).json()["session_id"]
+    authority = {"artifact_id": _FX_ARTIFACT_ID}
+    base_checksum = _fx_checksum(_fx_momentum_artifact())
+    patched = client.patch(
+        f"/api/training/sessions/{session_id}/controls",
+        json={"patches": [
+            {"parameter_key": "lookback_bars", "proposed_value": 5},
+            {"parameter_key": "momentum_threshold", "proposed_value": 0.01},
+        ]},
+    ).json()
+    assert patched["status"] == "accepted"
+
+    with mock.patch.dict(os.environ, {"PANTHEON_VECTORBT_BACKEND": "real"}):
+        queued = client.post(
+            f"/api/training/sessions/{session_id}/preview-jobs",
+            json={"mode": "refresh", "requested_by": "operator-1", "requested_at": "2026-07-15T12:00:00Z"},
+            headers={"Idempotency-Key": "model-preview-001"},
+        )
+        assert queued.status_code == 201, queued.text
+        run = client.post(f"/api/training/preview-jobs/{queued.json()['job_id']}/run", json={})
+    assert run.status_code == 200, run.text
+
+    candidate = seen["config"].strategy_artifact
+    assert candidate["strategy_logic"]["kind"] == "close_to_close_momentum"
+    assert candidate["parameters"]["lookback_bars"] == 5
+    assert candidate["parameters"]["momentum_threshold"] == 0.01
+    assert candidate["lineage"]["parent_registry_ids"] == [authority["artifact_id"]]
+
+    proof = run.json()["preview"]["evaluation_proof"]
+    model = proof["backend"]["model"]
+    assert proof["backend"]["run_id"].startswith("vbt-real-")
+    assert model["base_artifact_checksum"] == base_checksum
+    assert model["candidate_artifact_checksum"] != model["base_artifact_checksum"]
+    assert model["symbols"] == ["2330.TW"]
+    assert proof["candidate_binding"]["model"]
+    assert {c["parameter_key"] for c in proof["controls"]} == {"lookback_bars", "momentum_threshold"}

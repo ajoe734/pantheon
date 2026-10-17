@@ -1,0 +1,98 @@
+{
+  "task_id": "L12-WORKER-HEALTH-NAMESPACE-WIRING-20261015",
+  "change_class": "architecture_corrective",
+  "summary": "Connect 10 existing worker health files to the operator BFF with original health contracts. Repair namespace using one dedicated health-only shared named volume (worker-health-data), mounted RW on the 10 worker containers and RO on operator-bff at /data/health, retaining existing HEALTH_FILE env names and unique filenames. Align downstream_health_monitor.py with original lightweight worker/Docker contracts by calling existing validators (services.worker_health, services.background_worker_health, services.evolution.worker_health, services.deployment.outbox_consumer_worker) and original Consultation inline recipe, preserving missing/malformed/stale/failure reporting, functional unready reason extraction, and cadence/safety semantics without duplicate mappings.",
+  "worker_namespace_wiring": {
+    "volume_name": "worker-health-data",
+    "mount_path": "/data/health",
+    "operator_bff_mount": "worker-health-data:/data/health:ro",
+    "workers": [
+      {
+        "service": "paper-signal-producer",
+        "env_var": "PAPER_PRODUCER_HEALTH_FILE",
+        "default_path": "/data/health/paper-signal-producer-health.json",
+        "mount": "worker-health-data:/data/health"
+      },
+      {
+        "service": "consultation-svc",
+        "env_var": "CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE",
+        "default_path": "/data/health/workflow-health.json",
+        "mount": "worker-health-data:/data/health"
+      },
+      {
+        "service": "policy-learning-shadow-eval-scheduler",
+        "env_var": "SHADOW_EVAL_SCHEDULER_HEALTH_FILE",
+        "default_path": "/data/health/policy-learning-shadow-eval-scheduler-health.json",
+        "mount": "worker-health-data:/data/health"
+      },
+      {
+        "service": "deployment-outbox-consumer",
+        "env_var": "DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE",
+        "default_path": "/data/health/deployment-outbox-consumer-health.json",
+        "mount": "worker-health-data:/data/health"
+      },
+      {
+        "service": "reconciliation-drift-consumer",
+        "env_var": "RECONCILIATION_DRIFT_CONSUMER_HEALTH_FILE",
+        "default_path": "/data/health/reconciliation-drift-consumer-health.json",
+        "mount": "worker-health-data:/data/health"
+      },
+      {
+        "service": "reconciliation-drift-scheduler",
+        "env_var": "RECONCILIATION_DRIFT_SCHEDULER_HEALTH_FILE",
+        "default_path": "/data/health/reconciliation-drift-scheduler-health.json",
+        "mount": "worker-health-data:/data/health"
+      },
+      {
+        "service": "reconciliation-drift-incident-listener",
+        "env_var": "RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE",
+        "default_path": "/data/health/reconciliation-drift-incident-listener-health.json",
+        "mount": "worker-health-data:/data/health"
+      },
+      {
+        "service": "evolution-daily-sweep-scheduler",
+        "env_var": "EVOLUTION_SCHEDULER_HEALTH_FILE",
+        "default_path": "/data/health/evolution-scheduler-health.json",
+        "mount": "worker-health-data:/data/health"
+      },
+      {
+        "service": "evolution-dispatch-worker",
+        "env_var": "EVOLUTION_DISPATCH_HEALTH_FILE",
+        "default_path": "/data/health/evolution-dispatch-health.json",
+        "mount": "worker-health-data:/data/health"
+      },
+      {
+        "service": "evolution-threshold-sweep-producer",
+        "env_var": "EVOCHAIN_THRESHOLD_SWEEP_HEALTH_FILE",
+        "default_path": "/data/health/evolution-threshold-sweep-health.json",
+        "mount": "worker-health-data:/data/health"
+      }
+    ]
+  },
+  "validation": {
+    "test_deploy_nonprod_vm": {
+      "command": "python3 -m pytest -q scripts/test_deploy_nonprod_vm.py",
+      "result": "62 passed, 2 skipped (including test_worker_health_namespace_wiring_in_compose)"
+    },
+    "evolution_compose_activation": {
+      "command": "python3 -m pytest -q services/evolution/test_compose_activation.py",
+      "result": "3 passed"
+    },
+    "reconciliation_drift_compose_activation": {
+      "command": "python3 -m pytest -q services/reconciliation-drift/tests/test_reconciliation_drift_compose_activation.py",
+      "result": "3 passed"
+    },
+    "bff_downstream_health_monitor": {
+      "command": "python3 -m pytest -q services/control-plane/bff/test_bff_downstream_health_monitor.py",
+      "result": "41 passed (including 13 TestFileWorkerHealthProbes unit tests)"
+    },
+    "downstream_health_monitor": {
+      "command": "python3 -m pytest -q services/control-plane/bff/test_downstream_health_monitor.py",
+      "result": "33 passed"
+    },
+    "bff_v5_loop_sentinel_contract": {
+      "command": "python3 -m pytest -q services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py",
+      "result": "38 passed"
+    }
+  }
+}

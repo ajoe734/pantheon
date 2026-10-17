@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Mapping, Protocol, Sequence
 
-VECTORBT_VERSION_PIN = "0.26.2"
+VECTORBT_VERSION_PIN = "1.1.1"
 PRIMARY_BACKEND = "vectorbt_portfolio"
 STUB_BACKEND = "stub_backtest"
 REQUIRED_OHLCV_FIELDS = ("open", "high", "low", "close", "volume")
@@ -75,6 +75,9 @@ class BacktestConfig:
     version: str = "1.0.0"
     requested_by: str = "Claude"
     strategy_params: dict[str, Any] = field(default_factory=dict)
+    # Canonical (frozen) StrategyArtifact to evaluate through the Registry
+    # interpreter.  When unset the legacy unbound MA-crossover path runs.
+    strategy_artifact: dict[str, Any] | None = None
     init_cash: float = 100_000.0
     fees: float = 0.001
     storage_backend: str = "object_store"
@@ -319,6 +322,11 @@ class StubVectorbtBackend:
     """
 
     def run(self, dataset: PreparedVectorbtDataset, config: BacktestConfig) -> BacktestRunResult:
+        if config.strategy_artifact is not None:
+            raise VectorbtWorkflowError(
+                "Stub backend cannot evaluate a canonical strategy artifact; "
+                "use VectorbtBackend with PANTHEON_VECTORBT_BACKEND=real."
+            )
         short_window = config.strategy_params.get("short_window", 5)
         long_window = config.strategy_params.get("long_window", 20)
         run_id = f"vbt-stub-{uuid.uuid4().hex[:12]}"
@@ -355,7 +363,7 @@ class StubVectorbtBackend:
 class VectorbtBackend:
     """Real upstream backend using vbt.Portfolio.from_signals().
 
-    Requires: pip install vectorbt==0.26.2
+    Requires: pip install vectorbt==1.1.1
     Gated behind PANTHEON_VECTORBT_BACKEND=real environment variable.
     """
 
@@ -379,10 +387,36 @@ class VectorbtBackend:
 
         run_id = f"vbt-real-{uuid.uuid4().hex[:12]}"
         per_instrument: dict[str, dict[str, Any]] = {}
+        artifact_orders = (
+            _artifact_order_sizes(dataset, config.strategy_artifact)
+            if config.strategy_artifact is not None
+            else None
+        )
 
-        for inst in dataset.instruments:
+        for inst in artifact_orders if artifact_orders is not None else dataset.instruments:
             bars = dataset.ohlcv_by_instrument[inst]
             closes = pd.Series([b[3] for b in bars])
+            if artifact_orders is not None:
+                sizes = pd.Series(artifact_orders[inst], dtype="float64")
+                pf = vbt.Portfolio.from_orders(
+                    closes,
+                    size=sizes,
+                    size_type="amount",
+                    direction="both",
+                    init_cash=config.init_cash,
+                    fees=config.fees,
+                    freq="1D",
+                )
+                per_instrument[inst] = {
+                    "total_return": round(float(pf.total_return()), 6),
+                    "sharpe_ratio": round(float(pf.sharpe_ratio()), 6),
+                    "max_drawdown": round(float(pf.max_drawdown()), 6),
+                    "final_portfolio_value": round(float(pf.final_value()), 4),
+                    "trade_count": int(pf.orders.count()),
+                    "num_bars": len(bars),
+                    "net_position": float(pf.asset_flow().sum()),
+                }
+                continue
             short_ma = closes.rolling(short_window).mean()
             long_ma = closes.rolling(long_window).mean()
             entries = (short_ma > long_ma) & (short_ma.shift(1) <= long_ma.shift(1))
@@ -408,7 +442,7 @@ class VectorbtBackend:
         sharpes = [m["sharpe_ratio"] for m in per_instrument.values()]
         drawdowns = [m["max_drawdown"] for m in per_instrument.values()]
         aggregate: dict[str, Any] = {
-            "num_instruments": dataset.num_instruments,
+            "num_instruments": len(per_instrument),
             "mean_total_return": round(sum(returns) / len(returns), 6) if returns else 0.0,
             "mean_sharpe_ratio": round(sum(sharpes) / len(sharpes), 6) if sharpes else 0.0,
             "mean_max_drawdown": round(sum(drawdowns) / len(drawdowns), 6) if drawdowns else 0.0,
@@ -419,8 +453,67 @@ class VectorbtBackend:
             run_id=run_id,
             per_instrument_metrics=per_instrument,
             aggregate_metrics=aggregate,
-            notes=(f"vectorbt {VECTORBT_VERSION_PIN} MA-crossover backtest complete.",),
+            notes=(
+                (
+                    f"vectorbt {VECTORBT_VERSION_PIN} from_orders backtest of canonical "
+                    f"{config.strategy_artifact['strategy_logic']['kind']} complete.",
+                )
+                if config.strategy_artifact is not None
+                else (f"vectorbt {VECTORBT_VERSION_PIN} MA-crossover backtest complete.",)
+            ),
         )
+
+
+def _artifact_order_sizes(
+    dataset: PreparedVectorbtDataset, artifact: Mapping[str, Any]
+) -> dict[str, list[float]]:
+    """Signed per-bar order sizes from the Registry interpreter, artifact symbols only."""
+
+    from services.execution.shioaji_adapter import normalize_taiwan_symbol
+    from services.registry.strategy_artifact import (
+        StrategyArtifactValidationError,
+        evaluate_strategy_action,
+    )
+
+    parameters = artifact["parameters"]
+    if parameters.get("quantity_type") != "SHARES":
+        raise VectorbtWorkflowError("canonical backtests support quantity_type SHARES only")
+    quantity = float(parameters["order_quantity"])
+    lookback = int(parameters[artifact["strategy_logic"]["lookback_parameter"]])
+    wanted = {normalize_taiwan_symbol(symbol) for symbol in parameters["symbols"]}
+    selected: dict[str, str] = {}
+    for instrument in dataset.instruments:
+        try:
+            key = normalize_taiwan_symbol(instrument)
+        except ValueError:
+            continue
+        if key in wanted:
+            selected[instrument] = instrument
+    covered = set()
+    for instrument in selected:
+        covered.add(normalize_taiwan_symbol(instrument))
+    if covered != wanted:
+        raise VectorbtWorkflowError(
+            "dataset does not cover the strategy artifact symbols: "
+            + ", ".join(sorted(f"{s}:{v}" for s, v in wanted - covered))
+        )
+    sizes: dict[str, list[float]] = {}
+    for instrument in selected:
+        closes = [bar[3] for bar in dataset.ohlcv_by_instrument[instrument]]
+        orders = [float("nan")] * len(closes)
+        for index in range(lookback - 1, len(closes)):
+            try:
+                action = evaluate_strategy_action(artifact, closes[: index + 1])
+            except StrategyArtifactValidationError as exc:
+                raise VectorbtWorkflowError(f"strategy artifact evaluation failed: {exc}") from exc
+            if action == "BUY":
+                orders[index] = quantity
+            elif action == "SELL":
+                orders[index] = -quantity
+            else:
+                raise VectorbtWorkflowError(f"unsupported strategy action {action!r}")
+        sizes[instrument] = orders
+    return sizes
 
 
 def run_vectorbt_workflow(
@@ -443,6 +536,23 @@ def run_vectorbt_workflow(
     )
 
 
+def _artifact_identity(artifact: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Identity (never the model body) of the artifact a backtest actually evaluated."""
+
+    if artifact is None:
+        return None
+    from services.registry.strategy_artifact import strategy_artifact_checksum
+
+    return {
+        "artifact_id": artifact["artifact_id"],
+        "strategy_id": artifact["strategy_id"],
+        "version": artifact["version"],
+        "checksum": strategy_artifact_checksum(artifact),
+        "strategy_kind": artifact["strategy_logic"]["kind"],
+        "parameters": copy.deepcopy(artifact["parameters"]),
+    }
+
+
 def _build_artifact_bundle(
     dataset: PreparedVectorbtDataset,
     result: BacktestRunResult,
@@ -459,6 +569,7 @@ def _build_artifact_bundle(
         "backtest_config": {
             "version": config.version,
             "strategy_params": config.strategy_params,
+            "strategy_artifact": _artifact_identity(config.strategy_artifact),
             "init_cash": config.init_cash,
             "fees": config.fees,
             "requested_by": config.requested_by,
@@ -518,8 +629,13 @@ def _build_registry_entry(
             "framework": "vectorbt",
             "framework_version": VECTORBT_VERSION_PIN,
             "backtest_backend": result.backend,
-            "strategy": "ma_crossover",
+            "strategy": (
+                config.strategy_artifact["strategy_logic"]["kind"]
+                if config.strategy_artifact is not None
+                else "ma_crossover"
+            ),
             "strategy_params": config.strategy_params,
+            "strategy_artifact": _artifact_identity(config.strategy_artifact),
             "num_instruments": dataset.num_instruments,
             "total_bars": dataset.total_bars,
             "data_frequency": dataset.data_frequency,

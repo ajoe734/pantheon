@@ -305,13 +305,8 @@ def _decision_for_incident(
     *,
     tenant_id: str = DEFAULT_TENANT_ID,
 ) -> EvolutionDecision | None:
-    for decision in decision_store.list_all():
-        if (
-            decision.tenant_id == tenant_id
-            and decision.linked_incident_id == incident_id
-        ):
-            return decision
-    return None
+    matches = decision_store.find_by_linked_incident(incident_id, tenant_id=tenant_id)
+    return matches[0] if matches else None
 
 
 def _evidence_refs_for_incident(incident: IncidentCase) -> list[EvidenceRef]:

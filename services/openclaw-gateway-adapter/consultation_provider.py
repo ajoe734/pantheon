@@ -23,7 +23,9 @@ from pydantic import BaseModel, Field
 from assistant_openclaw_provider import (
     AssistantOpenClawProvider,
     OpenClawProviderError,
+    STRUCTURED_AGENT_ID,
 )
+from services.consultation.models import FindingSeverity
 from services.consultation.provider import (
     ContributionProviderError,
     QualifiedContribution,
@@ -258,7 +260,15 @@ def _prompt(payload: ConsultationContributionRequest) -> str:
                 "link": "durable evidence reference",
             }
         ],
-        "findings": [],
+        "findings": [
+            {
+                "severity": " | ".join(item.value for item in FindingSeverity),
+                "category": "non-empty finding category",
+                "claim": "non-empty finding claim",
+                "evidence_refs": ["evidence id"],
+                "recommendation": "non-empty finding recommendation",
+            }
+        ],
     }
     return (
         "You are producing an advisory Pantheon Consultation contribution. "
@@ -433,6 +443,7 @@ def create_app(
         try:
             result = provider.invoke(
                 _prompt(payload),
+                agent_id=STRUCTURED_AGENT_ID,
                 mode="user",
                 session_id="consult-"
                 + hashlib.sha256(stable_key.encode("utf-8")).hexdigest()[:32],

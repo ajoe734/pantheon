@@ -247,6 +247,31 @@
         "command": "git diff --check",
         "conclusion": "exit 0 during independent review.",
         "result": "pass"
+      },
+      {
+        "command": "$PANTHEON_DEPENDENCY_PYTHON -m unittest services.telemetry.test_l12_tel_001_durable_ingest",
+        "conclusion": "15 tests ran in 0.194s with one skip (RealNatsCrashRecoveryTest); all 14 local tests passed, proving canonical-write success with exhausted ACK failures, DLQ settlement failure safety, independent event processing, failed NAK receipt retention, and task liveness.",
+        "result": "pass"
+      },
+      {
+        "command": "$PANTHEON_DEPENDENCY_PYTHON -m unittest services.telemetry.test_ingest_shock_absorption",
+        "conclusion": "65 tests ran in 12.280s with 0 errors; all passed.",
+        "result": "pass"
+      },
+      {
+        "command": "$PANTHEON_DEPENDENCY_PYTHON -m unittest services.telemetry.test_main_routes",
+        "conclusion": "47 tests ran in 15.775s with 0 errors; all passed, including dead-task /readyz 503 error regression.",
+        "result": "pass"
+      },
+      {
+        "command": "pytest -q services/telemetry/test_ingest_shock_absorption.py services/telemetry/test_l12_tel_001_durable_ingest.py",
+        "conclusion": "83 passed, 1 skipped (RealNatsCrashRecoveryTest) across 84 tests run; exit 0.",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --check",
+        "conclusion": "exit 0.",
+        "result": "pass"
       }
     ],
     "validated_at": "2026-07-26T12:24:06Z",
@@ -296,7 +321,8 @@
     "failure_and_degraded_behavior": {
       "proof": [
         "An empty batch or a batch with zero durable receipts returns HTTP 400; a mixed batch returns HTTP 202 only when at least one receipt is durable and reports partially_accepted with both counts.",
-        "Missing bearer authority, forbidden tenant scope, payload and header mismatch, cross-tenant readback, unscoped legacy lineage, and unauthorized DLQ replay fail closed."
+        "Missing bearer authority, forbidden tenant scope, payload and header mismatch, cross-tenant readback, unscoped legacy lineage, and unauthorized DLQ replay fail closed.",
+        "Observed hosted boundary and source-local counter distinctions: Hosted evidence from Root38609110269 step 26 timed out at 18:20:26 with no_complete_paper_aggregate; samebinding first paperfill 18:13:00 and seven local stage7 checkpoints pre-cutoff; original selector/writer/BFF DSNs equal; original snapshot_after6500240 still 0 / newhigh 6500240; writer stats lastwrite 18:13:25, lastfail 18:14:50, DLQ 18:14:51, and nats: timeout with reportedrunning=true. This narrows failure to Telemetry write path but does not prove exact live task traceback. Local exact6fa original classes ACK counter proves task terminated with running=true, PG-success misrouted to DLQ, and totalfailed=0; failedNAK counter proves pending dropped 1->0. Synthetic broker fixtures and DLQ fsyncFalse fixtures are branch simulations of broker and DLQ persistence failure paths, and do not claim to be real hosted NATS, Postgres execution, or physical disk I/O fsync failure."
       ],
       "status": "pass"
     },
@@ -310,7 +336,8 @@
     "restart_and_recovery": {
       "proof": [
         "Against NATS JetStream 2.11 file storage, a child process fetched the accepted event and exited with code 23 before acknowledgement; a replacement durable consumer recovered the exact event and acknowledged it once.",
-        "After persisted runtime-summary store reload, all nine current tenant and runtime identities retained lifecycle correlation; cross-tenant and ambiguous unscoped reads remained isolated."
+        "After persisted runtime-summary store reload, all nine current tenant and runtime identities retained lifecycle correlation; cross-tenant and ambiguous unscoped reads remained isolated.",
+        "Canonical Postgres write success and broker ACK timeout are distinct outcomes: recoverable ACK/DLQ settlement failure preserves exact broker receipts in buffer pending for native idempotent redelivery without misrouting successful writes to DLQ or terminating the writer task; failed NAK retains receipts in memory; and writer stats and readiness truthfully reflect actual task liveness."
       ],
       "status": "pass"
     },

@@ -2409,3 +2409,33 @@ def test_execution_validates_approval_via_real_http_reader(monkeypatch, body_rol
         server.shutdown()
         thread.join(timeout=5)
         server.server_close()
+
+
+def test_daily_sweep_reports_existing_for_legacy_linked_id_in_tenant_scope_only():
+    from services.evolution.sweep import build_decision_from_incident, run_daily_sweep
+
+    payload = sweep_fixture()
+    ThresholdTelemetryIncidentConsumer(incident_store=evo_main.incident_store).consume(payload)
+    legacy = build_decision_from_incident(
+        evo_main.incident_store.get_incident(payload["incident_id"]),
+        sweep_id="legacy",
+    )
+    legacy.decision_id = "legacy-owner-decision-001"
+    evo_main.store.put(legacy)
+
+    result = run_daily_sweep(
+        incident_store=evo_main.incident_store,
+        decision_store=evo_main.store,
+        incident_ids=[payload["incident_id"]],
+    )
+    assert result.existing_decisions == 1
+    assert result.created_decisions == 0
+    assert result.items[0].decision_id == "legacy-owner-decision-001"
+
+    other_tenant = run_daily_sweep(
+        incident_store=evo_main.incident_store,
+        decision_store=evo_main.store,
+        incident_ids=[payload["incident_id"]],
+        tenant_id="other-tenant",
+    )
+    assert other_tenant.existing_decisions == 0

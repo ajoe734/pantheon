@@ -135,6 +135,48 @@ class WorkshopCanonicalOperations:
                     status_code=exc.status_code,
                     retryable=exc.status_code >= 500 or exc.status_code == 429,
                 ) from exc
+        if authority == "consultation_service":
+            from services.consultation.client import ConsultationClientError, ConsultationServiceClient
+            from services.control_plane.bff.core.owner_reads import authorization, selected_tenant
+            from services.control_plane.bff.command_adapters.base import ActionUnavailableError, bound_tenant
+            if not base_url:
+                raise CanonicalOperationError(
+                    authority,
+                    "canonical service URL is not configured",
+                    status_code=503,
+                    retryable=True,
+                )
+            auth_header = _request_authorization.get() or authorization.get()
+            caller_token = auth_header.removeprefix("Bearer ").strip() if auth_header else None
+            tenant = selected_tenant.get()
+            try:
+                trusted_tenant = bound_tenant(payload or {}, tenant_id=tenant, auth_token=caller_token)
+            except ActionUnavailableError as exc:
+                raise CanonicalOperationError(
+                    authority,
+                    str(exc),
+                    status_code=exc.status_code,
+                    retryable=False,
+                ) from exc
+            machine_token = (os.getenv("CONSULTATION_SERVICE_TOKEN") or os.getenv("CONSULTATION_API_TOKEN") or "").strip()
+            service_actor = (os.getenv("CONSULTATION_SERVICE_ACTOR") or "operator-bff").strip()
+            client = ConsultationServiceClient(
+                base_url=base_url,
+                timeout_seconds=self.timeout_seconds,
+                token=machine_token,
+                service_actor=service_actor,
+                tenant_id=trusted_tenant,
+            )
+            try:
+                return client._request_json(method, path, payload)
+            except ConsultationClientError as exc:
+                message = getattr(exc, "message", None) or str(exc)
+                raise CanonicalOperationError(
+                    authority,
+                    message,
+                    status_code=exc.status_code,
+                    retryable=(exc.status_code is not None and exc.status_code >= 500) or exc.status_code == 429,
+                ) from exc
         url = self._url(base_url, path, authority)
         body = None
         headers = {"Accept": "application/json"}

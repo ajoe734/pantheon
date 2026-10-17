@@ -1,16 +1,26 @@
 """Request-scoped owner reads; no cache or BFF copy of domain records."""
 from contextvars import ContextVar
 from http.cookies import SimpleCookie
-from typing import Optional
-
-from ..command_adapters.base import (
-    capital_url, deployment_url, evolution_url, http_request_json, get_base_url,
-)
-from ..governance import approval_owner
-
+import json
+import os
+from typing import Any, Optional
+import urllib.error
+import urllib.request
 
 authorization: ContextVar[Optional[str]] = ContextVar("owner_read_authorization", default=None)
 selected_tenant: ContextVar[Optional[str]] = ContextVar("owner_read_selected_tenant", default=None)
+
+from ..command_adapters.base import (
+    ActionUnavailableError,
+    bound_tenant,
+    capital_url,
+    deployment_url,
+    evolution_url,
+    get_base_url,
+    http_request_json,
+    record_downstream_outcome,
+)
+from ..governance import approval_owner
 
 
 class OwnerReadContextMiddleware:
@@ -38,6 +48,13 @@ class OwnerReadContextMiddleware:
             authorization.reset(token)
 
 
+def verified_caller_tenant(payload: Any = None, tenant_id: Optional[str] = None) -> str:
+    auth = authorization.get()
+    caller_token = auth.removeprefix("Bearer ").strip() if auth else None
+    tid = tenant_id or selected_tenant.get()
+    return bound_tenant(payload or {}, tenant_id=tid, auth_token=caller_token)
+
+
 def read_records(url_builder, path, key=None):
     auth = authorization.get()
     if not auth:
@@ -46,6 +63,77 @@ def read_records(url_builder, path, key=None):
     # No implicit selection: bound_tenant uses the verified primary/sole tenant or fails closed.
     tenant = selected_tenant.get()
     body = http_request_json(url_builder(path), auth_token=token, tenant_id=tenant)
+    records = body.get(key) if key and isinstance(body, dict) else body
+    if not isinstance(records, list) or any(not isinstance(r, dict) for r in records):
+        raise RuntimeError(f"Invalid owner collection for {path}")
+    return records
+
+
+def _evolution_http_get(url: str, service_token: str, tenant_id: str) -> Any:
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/json",
+            "X-Pantheon-Service": "control-plane-bff",
+            "Authorization": f"Bearer {service_token}",
+            "X-Tenant-Id": tenant_id,
+        },
+        method="GET",
+    )
+    timeout = int(os.getenv("PANTHEON_COMMAND_TIMEOUT_SECONDS", "30"))
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            status_code = int(resp.status)
+            body = json.loads(resp.read().decode("utf-8"))
+            record_downstream_outcome(url, ok=True, status_code=status_code)
+            return body
+    except urllib.error.HTTPError as exc:
+        record_downstream_outcome(url, ok=False, status_code=int(exc.code), detail=f"HTTP {exc.code}")
+        if exc.code == 403:
+            raise ActionUnavailableError(
+                f"Evolution owner access forbidden for tenant {tenant_id}",
+                downstream_status=403,
+            ) from exc
+        elif exc.code == 401:
+            raise ActionUnavailableError(
+                "Evolution owner authentication failed",
+                downstream_status=403,
+            ) from exc
+        else:
+            raise ActionUnavailableError(
+                f"Evolution owner request failed with status {exc.code}",
+                downstream_status=exc.code if exc.code in (403, 503) else 503,
+            ) from exc
+    except ActionUnavailableError:
+        raise
+    except Exception as exc:
+        record_downstream_outcome(url, ok=False, status_code=-1, detail=str(exc))
+        raise ActionUnavailableError(
+            f"Evolution owner unavailable: {exc}",
+            downstream_status=503,
+        ) from exc
+
+
+def read_evolution_records(url_builder, path, key=None):
+    auth = authorization.get()
+    if not auth:
+        raise RuntimeError("Owner reads require the caller's authorization")
+    caller_token = auth.removeprefix("Bearer ").strip()
+
+    # If the target service URL is unconfigured, fail fast with URL configuration error
+    url = url_builder(path)
+
+    tenant = selected_tenant.get()
+    caller_tenant = bound_tenant({}, tenant_id=tenant, auth_token=caller_token)
+
+    service_token = os.getenv("EVOLUTION_AUTH_TOKEN", "").strip()
+    if not service_token:
+        raise ActionUnavailableError(
+            "Evolution owner authentication is unconfigured (missing EVOLUTION_AUTH_TOKEN)",
+            downstream_status=503,
+        )
+
+    body = _evolution_http_get(url, service_token, caller_tenant)
     records = body.get(key) if key and isinstance(body, dict) else body
     if not isinstance(records, list) or any(not isinstance(r, dict) for r in records):
         raise RuntimeError(f"Invalid owner collection for {path}")
@@ -107,7 +195,7 @@ def create_owner_domain_ports(persona_store=None, ranking_store=None):
             containments_reader=lambda: read_records(capital_url, "/api/containments"),
         ),
         evolution_port=EvolutionProjectionPort(
-            evolution_programs_reader=lambda: read_records(evolution_url, "/api/evolution/programs", "items"),
-            evolution_decisions_reader=lambda: read_records(evolution_url, "/api/evolution/proposals"),
+            evolution_programs_reader=lambda: read_evolution_records(evolution_url, "/api/evolution/programs", "items"),
+            evolution_decisions_reader=lambda: read_evolution_records(evolution_url, "/api/evolution/proposals"),
         ),
     )

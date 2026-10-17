@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -435,6 +436,95 @@ class TestWorkshopStoreFactory:
         assert len(store.list_events(workshop_id)) == 1
         with pytest.raises(ValueError, match="different payload"):
             store.create_event({**event, "redacted_summary": "different"})
+
+    def test_postgres_create_completeness_snapshot_cas_atomic(self):
+        dsn = os.getenv("TEST_DATABASE_URL")
+        if not dsn:
+            pytest.skip("TEST_DATABASE_URL is not set")
+        from agora.strategy_workshop import PostgresWorkshopStore
+
+        store = PostgresWorkshopStore(dsn=dsn, schema=f"agora_ws_{uuid.uuid4().hex[:12]}")
+        workshop_id = f"ws-{uuid.uuid4().hex}"
+        store.create_session({
+            "workshop_id": workshop_id, "tenant_id": "tenant-a", "user_id": "user-a",
+        })
+
+        results = []
+        barrier = threading.Barrier(2)
+
+        def worker(key, hyp):
+            try:
+                barrier.wait(timeout=5)
+            except Exception:
+                pass
+            res = store.create_completeness_snapshot_cas(
+                workshop_id=workshop_id,
+                expected_lock_version=1,
+                snapshot={
+                    "workshop_id": workshop_id,
+                    "strategy_version_id": "v1",
+                    "state_map_json": {"hypothesis": hyp},
+                },
+                readiness_assessment={
+                    "strategy_id": "s1",
+                    "workshop_version_id": "wv1",
+                    "strategy_spec_registry_id": "reg1",
+                    "workshop_id": workshop_id,
+                },
+                idempotency_scope="scope-1",
+                idempotency_key=key,
+            )
+            results.append((key, res))
+
+        t1 = threading.Thread(target=worker, args=("key-pg-a", "hyp_a"))
+        t2 = threading.Thread(target=worker, args=("key-pg-b", "hyp_b"))
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        successes = [r for r in results if r[1][3] is None]
+        conflicts = [r for r in results if r[1][3] == "version_conflict"]
+        assert len(successes) == 1, f"Expected exactly 1 winner, got {results}"
+        assert len(conflicts) == 1, f"Expected exactly 1 loser, got {results}"
+        winner_key, (res_win, rat_win, ver_win, _) = successes[0]
+        loser_key, (res_los, rat_los, ver_los, _) = conflicts[0]
+        assert ver_win == 2
+        assert ver_los == 2
+        assert res_los is None
+        assert rat_los is None
+
+        # Verify only ONE snapshot and ONE readiness assessment exist in Postgres
+        with store._connect() as conn:
+            cur = conn.execute(f"SELECT count(*) FROM {store._cst} WHERE workshop_id = %s", (workshop_id,))
+            assert cur.fetchone()[0] == 1
+            cur = conn.execute(f"SELECT count(*) FROM {store._rat} WHERE workshop_id = %s", (workshop_id,))
+            assert cur.fetchone()[0] == 1
+            cur = conn.execute(f"SELECT lock_version FROM {store._st} WHERE workshop_id = %s", (workshop_id,))
+            assert cur.fetchone()[0] == 2
+            cur = conn.execute(f"SELECT count(*) FROM {store._ikt} WHERE idempotency_key = %s", (winner_key,))
+            assert cur.fetchone()[0] == 1
+            cur = conn.execute(f"SELECT count(*) FROM {store._ikt} WHERE idempotency_key = %s", (loser_key,))
+            assert cur.fetchone()[0] == 0
+
+        # Rollback on duplicate idempotency key
+        res3, rat3, ver3, conflict3 = store.create_completeness_snapshot_cas(
+            workshop_id=workshop_id,
+            expected_lock_version=2,
+            snapshot={"workshop_id": workshop_id},
+            idempotency_scope="scope-1",
+            idempotency_key=winner_key,
+        )
+        assert res3 is None
+        assert ver3 == 2
+        assert conflict3 == "idempotency_conflict"
+
+        # Verify lock_version did not bump and no second snapshot inserted
+        with store._connect() as conn:
+            cur = conn.execute(f"SELECT lock_version FROM {store._st} WHERE workshop_id = %s", (workshop_id,))
+            assert cur.fetchone()[0] == 2
+            cur = conn.execute(f"SELECT count(*) FROM {store._cst} WHERE workshop_id = %s", (workshop_id,))
+            assert cur.fetchone()[0] == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -1529,6 +1619,146 @@ class TestWorkshopConcurrencyContract:
             f"409 response must include latest_href; got details={details}"
         )
 
+    def test_completeness_concurrent_same_version_exactly_one_winner(self, monkeypatch):
+        """Two concurrent completeness writes with same ETag: exactly one 201, one 409."""
+        client = _workshop_client(monkeypatch)
+        create_resp = client.post(
+            "/bff/agora/workshops",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "idem-cc-comp-create-001",
+                "Content-Type": "application/json",
+            },
+            json={"initial_message": "Completeness concurrent test"},
+        )
+        assert create_resp.status_code == 201
+        workshop_id = create_resp.json()["data"]["workshop_id"]
+
+        get_resp = client.get(
+            f"/bff/agora/workshops/{workshop_id}",
+            headers={"Authorization": _OPERATOR_AUTH},
+        )
+        current_etag = get_resp.headers["etag"]
+
+        results = []
+        ws_store = client.app_instance.workshop_store
+        orig_list_events = ws_store.list_events
+        barrier = threading.Barrier(2)
+
+        def hooked_list_events(wid):
+            res = orig_list_events(wid)
+            if wid == workshop_id:
+                try:
+                    barrier.wait(timeout=5)
+                except Exception:
+                    pass
+            return res
+
+        ws_store.list_events = hooked_list_events
+
+        def worker(key, val):
+            resp = client.post(
+                f"/bff/agora/workshops/{workshop_id}/completeness",
+                headers={
+                    "Authorization": _OPERATOR_AUTH,
+                    "Idempotency-Key": key,
+                    "If-Match": current_etag,
+                    "Content-Type": "application/json",
+                },
+                json={"state_map_json": {"hypothesis": val}},
+            )
+            results.append(resp)
+
+        t1 = threading.Thread(target=worker, args=("idem-cc-comp-a", "confirmed_a"))
+        t2 = threading.Thread(target=worker, args=("idem-cc-comp-b", "confirmed_b"))
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+        ws_store.list_events = orig_list_events
+
+        statuses = [r.status_code for r in results]
+        assert sorted(statuses) == [201, 409], f"Expected exactly one 201 and one 409, got {statuses}"
+        # Verify losing snapshot is absent from store
+        assert len(ws_store._snapshots.get(workshop_id, [])) == 1
+
+        success_resp = next(r for r in results if r.status_code == 201)
+        conflict_resp = next(r for r in results if r.status_code == 409)
+
+        winner_etag = success_resp.headers["etag"]
+        conflict_body = conflict_resp.json()
+        details = conflict_body.get("details") or conflict_body.get("error", {}).get("details", {})
+        assert details.get("current_etag") == winner_etag
+        assert details.get("latest_href") == f"/bff/agora/workshops/{workshop_id}"
+
+        # Verify final lock_version incremented exactly once (from v1 to v2)
+        final_get = client.get(
+            f"/bff/agora/workshops/{workshop_id}",
+            headers={"Authorization": _OPERATOR_AUTH},
+        )
+        assert final_get.headers["etag"] == winner_etag
+        assert final_get.json()["data"]["lock_version"] == 2
+
+        # Verify loser can retry with winner's ETag and original idempotency key
+        winner_val = success_resp.json()["data"]["snapshot"]["state_map_json"]["hypothesis"]
+        loser_key = "idem-cc-comp-b" if winner_val == "confirmed_a" else "idem-cc-comp-a"
+        retry_resp = client.post(
+            f"/bff/agora/workshops/{workshop_id}/completeness",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": loser_key,
+                "If-Match": winner_etag,
+                "Content-Type": "application/json",
+            },
+            json={"state_map_json": {"hypothesis": "retried"}},
+        )
+        assert retry_resp.status_code == 201
+        assert retry_resp.headers["etag"] == f'W/"workshop:{workshop_id}:v3"'
+
+    def test_completeness_duplicate_idempotency_key_returns_409(self, monkeypatch):
+        client = _workshop_client(monkeypatch)
+        create_resp = client.post(
+            "/bff/agora/workshops",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "idem-cc-comp-dup-create",
+                "Content-Type": "application/json",
+            },
+            json={"initial_message": "Duplicate key test"},
+        )
+        workshop_id = create_resp.json()["data"]["workshop_id"]
+        etag = client.get(
+            f"/bff/agora/workshops/{workshop_id}",
+            headers={"Authorization": _OPERATOR_AUTH},
+        ).headers["etag"]
+
+        resp1 = client.post(
+            f"/bff/agora/workshops/{workshop_id}/completeness",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "shared-idem-key",
+                "If-Match": etag,
+                "Content-Type": "application/json",
+            },
+            json={"state_map_json": {}},
+        )
+        assert resp1.status_code == 201
+        new_etag = resp1.headers["etag"]
+
+        resp2 = client.post(
+            f"/bff/agora/workshops/{workshop_id}/completeness",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "shared-idem-key",
+                "If-Match": new_etag,
+                "Content-Type": "application/json",
+            },
+            json={"state_map_json": {}},
+        )
+        assert resp2.status_code == 409
+        err = resp2.json().get("error", {})
+        assert err.get("code") == "IDEMPOTENCY_CONFLICT"
+
 
 class TestWorkshopPrivacyContract:
     """Events from message/create paths must carry private_content_ref.
@@ -1828,6 +2058,97 @@ class TestMemoryWorkshopStoreConcurrencyHelpers:
         })
         assert ev is None
         assert ver is None
+
+    def test_completeness_snapshot_cas_success(self):
+        store = self._store()
+        store.create_session({"workshop_id": "ws-c-cas-1", "tenant_id": "t1", "user_id": "u1"})
+
+        snap, rat, ver, conflict = store.create_completeness_snapshot_cas(
+            workshop_id="ws-c-cas-1",
+            expected_lock_version=1,
+            snapshot={"workshop_id": "ws-c-cas-1", "strategy_version_id": "v1"},
+            readiness_assessment={
+                "strategy_id": "s1",
+                "workshop_version_id": "wv1",
+                "strategy_spec_registry_id": "reg1",
+                "workshop_id": "ws-c-cas-1",
+            },
+            idempotency_scope="scope-c",
+            idempotency_key="key-c-1",
+        )
+        assert snap is not None
+        assert rat is not None
+        assert ver == 2
+        assert conflict is None
+
+        session = store.get_session("ws-c-cas-1")
+        assert session["lock_version"] == 2
+
+    def test_completeness_snapshot_cas_conflict(self):
+        store = self._store()
+        store.create_session({"workshop_id": "ws-c-cas-2", "tenant_id": "t1", "user_id": "u1"})
+
+        # Stale version
+        snap, rat, ver, conflict = store.create_completeness_snapshot_cas(
+            workshop_id="ws-c-cas-2",
+            expected_lock_version=99,
+            snapshot={"workshop_id": "ws-c-cas-2"},
+            idempotency_scope="scope-c",
+            idempotency_key="key-c-2",
+        )
+        assert snap is None
+        assert rat is None
+        assert ver == 1
+        assert conflict == "version_conflict"
+        assert store.get_latest_completeness_snapshot("ws-c-cas-2") is None
+
+    def test_completeness_snapshot_cas_duplicate_idempotency_key(self):
+        store = self._store()
+        store.create_session({"workshop_id": "ws-c-cas-3", "tenant_id": "t1", "user_id": "u1"})
+
+        snap1, _, ver1, _ = store.create_completeness_snapshot_cas(
+            workshop_id="ws-c-cas-3",
+            expected_lock_version=1,
+            snapshot={"workshop_id": "ws-c-cas-3"},
+            idempotency_scope="scope-c",
+            idempotency_key="key-c-dup",
+        )
+        assert snap1 is not None
+        assert ver1 == 2
+
+        # Same key again on current version 2
+        snap2, _, ver2, conflict = store.create_completeness_snapshot_cas(
+            workshop_id="ws-c-cas-3",
+            expected_lock_version=2,
+            snapshot={"workshop_id": "ws-c-cas-3"},
+            idempotency_scope="scope-c",
+            idempotency_key="key-c-dup",
+        )
+        assert snap2 is None
+        assert ver2 == 2
+        assert conflict == "idempotency_conflict"
+        assert store.get_session("ws-c-cas-3")["lock_version"] == 2
+
+    def test_completeness_snapshot_cas_no_partial_effects_on_exception(self):
+        store = self._store()
+        store.create_session({"workshop_id": "ws-c-cas-4", "tenant_id": "t1", "user_id": "u1"})
+
+        # Invalid readiness assessment missing required keys
+        with pytest.raises(KeyError):
+            store.create_completeness_snapshot_cas(
+                workshop_id="ws-c-cas-4",
+                expected_lock_version=1,
+                snapshot={"workshop_id": "ws-c-cas-4"},
+                readiness_assessment={"missing_required_keys": True},
+                idempotency_scope="scope-c",
+                idempotency_key="key-c-fail",
+            )
+
+        # Verify no partial mutations: version unchanged, no key recorded, no snapshot/readiness saved
+        assert store.get_session("ws-c-cas-4")["lock_version"] == 1
+        assert store.get_latest_completeness_snapshot("ws-c-cas-4") is None
+        assert "scope-c:key-c-fail" not in store._idempotency_keys
+        assert not store._readiness.get("ws-c-cas-4")
 
 
 # --------------------------------------------------------------------------- #

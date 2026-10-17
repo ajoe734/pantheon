@@ -38,7 +38,20 @@ class Owner:
         saga_id = path.rsplit("/", 1)[1]
         if saga_id not in self.ids:
             return None
-        return {"saga_id": saga_id, "plan_id": self.ids[saga_id], "status": self.status[saga_id]}
+        status = self.status[saga_id]
+        compensated = status in ("failed_compensated", "failed_binding_failed")
+        command = (
+            "mark_binding_failed_inactive" if status == "failed_binding_failed"
+            else "request_rollback"
+        )
+        out = {
+            "saga_id": saga_id, "plan_id": self.ids[saga_id],
+            "status": "failed" if compensated else status,
+            "current_step": "compensated" if compensated else "x",
+        }
+        if compensated:
+            out["compensation"] = {"command_type": command}
+        return out
 
     def post(self, owner, path, payload):
         assert path.endswith("/retire"), path
@@ -137,7 +150,7 @@ def test_dry_run_is_read_only_and_lists_states(monkeypatch):
 def test_non_release_and_non_succeeded_cases_are_ignored(monkeypatch):
     store, owner = _setup(monkeypatch, KEYS)
     store.records.append(Rec("dev-paper-bootstrap-x", "2026-10-09"))
-    store.records.append(Rec("dev-paper-release-5-1", "2026-10-09", state="compensated"))
+    store.records.append(Rec("dev-paper-release-5-1", "2026-10-09", state="pending"))
     out = _run(store, owner, outcome="accepted", new_case_key=KEYS[3])
     assert out["observed_cases"] == 4
 
@@ -213,3 +226,40 @@ def test_dry_run_without_served_case_is_not_executable(monkeypatch):
     out = _run(store, owner, outcome="accepted", new_case_key="", dry_run=True)
     assert out["retire"] and out["executable"] is False and out["refusal"]
     assert owner.posts == []
+
+
+def test_compensated_failed_and_stuck_provisioning_cases_are_retired(monkeypatch):
+    store, owner = _setup(
+        monkeypatch, KEYS, statuses={KEYS[0]: "failed_compensated", KEYS[1]: "failed"}
+    )
+    store.records[0].state = "failed"
+    store.records[2].state = "provisioning"  # saga completed, case stuck
+    out = _run(store, owner, outcome="accepted", new_case_key=KEYS[3])
+    assert sorted(owner.posts) == sorted(["saga-" + KEYS[0], "saga-" + KEYS[2]])
+    assert out["skipped"] == [KEYS[1]]  # failed without finished compensation
+
+
+def test_served_case_is_never_selected_even_when_provisioning(monkeypatch):
+    store, owner = _setup(monkeypatch, KEYS)
+    store.records[3].state = "provisioning"
+    _run(store, owner, outcome="accepted", new_case_key=KEYS[3])
+    assert "saga-" + KEYS[3] not in owner.posts
+
+
+def test_compensated_outcome_retires_own_failed_compensated_case(monkeypatch):
+    store, owner = _setup(monkeypatch, KEYS, statuses={KEYS[3]: "failed_compensated"})
+    _run(store, owner, outcome="compensated", new_case_key=KEYS[3])
+    assert owner.posts == ["saga-" + KEYS[3]]
+
+
+def test_failed_inactive_compensation_is_never_requested(monkeypatch):
+    store, owner = _setup(
+        monkeypatch, KEYS,
+        statuses={KEYS[0]: "failed_compensated", KEYS[1]: "failed_binding_failed"},
+    )
+    store.records[0].state = "failed"
+    store.records[1].state = "failed"
+    out = _run(store, owner, outcome="accepted", new_case_key=KEYS[3])
+    assert "saga-" + KEYS[1] not in owner.posts
+    assert "saga-" + KEYS[0] in owner.posts
+    assert KEYS[1] in out["skipped"]

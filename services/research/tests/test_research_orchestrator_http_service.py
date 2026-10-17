@@ -19,11 +19,12 @@ def _load_service_module(
     max_active_runs: str = "8",
     production_adapters_enabled: str = "false",
     offline_gate: str = "false",
+    data_dir: str | None = None,
 ):
     with mock.patch.dict(
         "os.environ",
         {
-            "RESEARCH_ORCHESTRATOR_DATA_DIR": tempfile.mkdtemp(),
+            "RESEARCH_ORCHESTRATOR_DATA_DIR": data_dir or tempfile.mkdtemp(),
             "RESEARCH_ORCHESTRATOR_MAX_ACTIVE_RUNS": max_active_runs,
             "RESEARCH_ORCHESTRATOR_ENABLE_PRODUCTION_ADAPTERS": production_adapters_enabled,
             "PANTHEON_OFFLINE_GATE_ENABLED": offline_gate,
@@ -1041,3 +1042,459 @@ def test_execute_research_stage_durable_idempotency_replay() -> None:
     assert data1["receipt"]["receipt_id"] == data2["receipt"]["receipt_id"]
     assert data1["artifact_digest"] == data2["artifact_digest"]
     assert data1["receipt"]["completed_at"] == data2["receipt"]["completed_at"]
+
+
+# --- Saved canonical model authority consumed by the real backtest ------------
+
+# --- Persona/model fixture (mirrors a real provisioning readback) ---
+import copy as _fx_copy
+import json as _fx_json
+
+from services.registry.strategy_artifact import strategy_artifact_checksum as _fx_checksum
+
+_FX_PERSONA_ID = "persona-132519698e6199e80326"
+_FX_TENANT_ID = "tenant-dev"
+_FX_ARTIFACT_ID = "artifact-persona-paper-aa060d53ff712cbba704"
+_FX_STRATEGY_ID = "strategy-persona-aa060d53ff712cbba704"
+
+
+def _fx_momentum_artifact(
+    *, lookback: int = 2, threshold: float = 0.0, symbols: tuple[str, ...] = ("2330.TW",)
+) -> dict[str, Any]:
+    return {
+        "artifact_id": _FX_ARTIFACT_ID,
+        "strategy_id": _FX_STRATEGY_ID,
+        "version": "1.0.0",
+        "artifact_schema_version": "1.0",
+        "lineage": {
+            "source_run_ids": ["persona-provisioning-forward-artifact-aa060d53ff712cbba704"],
+            "parent_registry_ids": ["artifact-persona-paper-baseline-aa060d53ff712cbba704"],
+            "source_strategy_spec_id": "reg-strategy-spec-persona-aa060d53ff712cbba704",
+        },
+        "algorithm_ref": {
+            "path": "services/registry/strategy_artifact.py",
+            "commit": "1cfaf933fbcc119605a455ebea483d54d2521ebb",
+            "engine": "lean",
+            "entrypoint": "services.registry.strategy_artifact:evaluate_strategy_action",
+            "repository": "ajoe734/pantheon",
+            "signal_interface": "services.execution.lean_runtime.paper_signal_producer:Strategy",
+            "logic_interpreter": "services.registry.strategy_artifact:evaluate_strategy_action",
+            "signal_schema_version": "1.0",
+        },
+        "strategy_logic": {
+            "kind": "close_to_close_momentum",
+            "positive_action": "BUY",
+            "non_positive_action": "SELL",
+            "lookback_parameter": "lookback_bars",
+            "threshold_parameter": "momentum_threshold",
+        },
+        "parameters": {
+            "market": "TW",
+            "symbols": list(symbols),
+            "data_source": "source-ingest:paper/persona-bootstrap",
+            "bar_frequency": "1d",
+            "lookback_bars": lookback,
+            "quantity_type": "SHARES",
+            "order_quantity": 1,
+            "momentum_threshold": threshold,
+            "zero_momentum_action": "SELL",
+        },
+        "provenance_refs": ["task:LOOP-PROD-PER-001"],
+        "mutation_surface": {
+            "controls": [
+                {"parameter_key": "lookback_bars", "value_type": "integer", "current_value": lookback,
+                 "allowed_range": {"min": 2, "max": 60}, "step": 1},
+                {"parameter_key": "momentum_threshold", "value_type": "number", "current_value": threshold,
+                 "allowed_range": {"min": 0.0, "max": 0.05}, "step": 0.001},
+            ],
+            "immutable_parameters": [
+                "symbols", "bar_frequency", "data_source", "order_quantity",
+                "quantity_type", "zero_momentum_action", "market",
+            ],
+        },
+    }
+
+
+def _fx_runtime_binding(artifact: dict[str, Any] | None = None, *, tenant_id: str = _FX_TENANT_ID) -> dict[str, Any]:
+    artifact = _fx_copy.deepcopy(artifact or _fx_momentum_artifact())
+    payload = _fx_json.dumps(artifact, sort_keys=True, separators=(",", ":"))
+    checksum = _fx_checksum(artifact)
+    metadata = {
+        "version": artifact["version"],
+        "checksum": checksum,
+        "registry_id": artifact["artifact_id"],
+        "strategy_id": artifact["strategy_id"],
+        "artifact_type": "execution_bundle",
+        "artifact_state": "approved",
+        "runtime_action": "deploy_new_binding",
+        "promotion_state": "paper",
+        "deployment_stage": "paper",
+        "created_at": "2026-10-15T19:19:47Z",
+        "approved_at": "2026-10-15T19:19:48Z",
+        "lineage": _fx_copy.deepcopy(artifact["lineage"]),
+        "rollback": {
+            "action_type": "pause_then_replace",
+            "target_version": "0.0.1",
+            "target_registry_id": "artifact-persona-paper-baseline-aa060d53ff712cbba704",
+        },
+        "capital_pool_id": "pool-persona-paper-aa060d53ff712cbba704",
+        "gross_scale_pct": 100.0,
+        "capital_scale_pct": 0.0,
+        "deployment_plan_id": "plan-persona-paper-aa060d53ff712cbba704",
+        "sponsor_persona_id": _FX_PERSONA_ID,
+        "approval_decision_id": "apv-persona-paper-artifact-aa060d53ff712cbba704",
+    }
+    base = f"openclaw/registry/{artifact['strategy_id']}/{artifact['version']}"
+    return {
+        "status": "active",
+        "binding_id": "rb-ece1ab6cfcdc4c518c40874a97a58a66",
+        "runtime_id": "rt-a47d6729",
+        "artifact_id": artifact["artifact_id"],
+        "artifact_version": artifact["version"],
+        "execution_mode": "paper",
+        "metadata": {
+            "tenant_id": tenant_id,
+            "persona_id": _FX_PERSONA_ID,
+            "strategy_id": artifact["strategy_id"],
+            "artifact_checksum": checksum,
+            "object_store": {f"{base}/artifact.bin": payload, f"{base}/metadata.json": metadata},
+        },
+    }
+
+
+def _fx_persona_with_model(artifact: dict[str, Any] | None = None, *, tenant_id: str = _FX_TENANT_ID) -> dict[str, Any]:
+    return {
+        "persona_id": _FX_PERSONA_ID,
+        "tenant_id": tenant_id,
+        "metadata": {
+            "tenant_id": tenant_id,
+            "provisioning_authoritative_readback": {"runtime_binding": _fx_runtime_binding(artifact, tenant_id=tenant_id)},
+        },
+    }
+
+
+def _saved_model() -> dict:
+    """The model the BFF freezes into a saved plan from the owner Persona."""
+    artifact = _fx_momentum_artifact()
+    return {
+        "persona_id": _FX_PERSONA_ID, "tenant_id": _FX_TENANT_ID,
+        "artifact_id": artifact["artifact_id"], "strategy_id": artifact["strategy_id"],
+        "artifact_version": artifact["version"], "artifact_checksum": _fx_checksum(artifact),
+        "strategy_artifact_checksum": _fx_checksum(artifact), "execution_mode": "paper",
+        "strategy_kind": "close_to_close_momentum", "symbols": list(artifact["parameters"]["symbols"]),
+        "bar_frequency": "1d", "strategy_spec_registry_id": artifact["lineage"]["source_strategy_spec_id"],
+        "strategy_artifact": artifact,
+    }
+
+
+def _model_run(module, *, params=None, with_model=True, run_id="run-model-001"):
+    authority = _saved_model()
+    plan = {
+        "plan_id": "plan-model-1",
+        "strategy_id": authority["strategy_id"],
+        "stages": [{"stage_id": "s1", "stage_type": "prototype_backtest", "parameters": params or {}}],
+    }
+    if with_model:
+        plan["model_authority"] = authority
+    module.store.put_run({
+        "run_id": run_id, "status": "queued", "stage_id": "s1", "stage_type": "prototype_backtest",
+        "parameters": {"plan": plan, "stage": plan["stages"][0]},
+    })
+    return authority, plan
+
+
+def _tw_dataset() -> dict:
+    from datetime import date, timedelta
+
+    start = date(2024, 1, 1)
+    series = [100.0, 101.0, 100.5, 102.0, 101.0, 103.0, 102.0, 104.0] * 5
+    records = [
+        {"instrument": symbol, "date": (start + timedelta(days=i)).isoformat(),
+         "open": c + off, "high": c + off, "low": c + off, "close": c + off, "volume": 1000.0}
+        for symbol, off in (("2330.TWSE", 0.0), ("2317.TWSE", 10.0))
+        for i, c in enumerate(series)
+    ]
+    return {"dataset_id": "dataset:tw-model", "strategy_id": "strategy-persona-aa060d53ff712cbba704",
+            "source_dataset_refs": ["dataset:seed:tw"], "data_frequency": "daily", "records": records}
+
+
+def _execute_model_run(module, plan, *, run_id="run-model-001", params=None):
+    stage = {"stage_id": "s1", "stage_type": "prototype_backtest", "dataset": _tw_dataset()}
+    if params is not None:
+        stage["parameters"] = params
+    return TestClient(module.app).post("/stages/prototype_backtest/execute", json={
+        "stage": stage, "plan": {k: v for k, v in plan.items() if k != "model_authority"},
+        "run_id": run_id, "correlation_id": f"corr-{run_id}",
+    })
+
+
+@pytest.mark.skipif(
+    not all(importlib.util.find_spec(m) for m in ("vectorbt", "pandas", "numpy")), reason="real vectorbt is not installed"
+)
+def test_saved_model_is_evaluated_by_real_backend_with_derived_candidate(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.research.vectorbt.adapter import vectorbt_adapter
+
+    module = _load_service_module()
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "real")
+    authority, plan = _model_run(module, params={"lookback_bars": 5, "momentum_threshold": 0.01})
+    seen = {}
+    real_workflow = vectorbt_adapter.run_vectorbt_workflow
+
+    def spy(dataset, *, backend=None, config=None):
+        result = real_workflow(dataset, backend=backend, config=config)
+        seen.update(config=config, result=result)
+        return result
+
+    monkeypatch.setattr(vectorbt_adapter, "run_vectorbt_workflow", spy)
+    response = _execute_model_run(module, plan, params={"lookback_bars": 5, "momentum_threshold": 0.01})
+    assert response.status_code == 200, response.text
+    assert response.json()["provenance"] == "real"
+
+    candidate = seen["config"].strategy_artifact
+    assert candidate["parameters"]["lookback_bars"] == 5 and candidate["parameters"]["momentum_threshold"] == 0.01
+    result = seen["result"]
+    assert result.backtest_result.backend == "vectorbt_portfolio"
+    assert list(result.backtest_result.per_instrument_metrics) == ["2330.TWSE"]
+    provenance = result.artifact_bundle["model_authority"]
+    assert provenance["base_artifact_checksum"] == authority["strategy_artifact_checksum"]
+    assert provenance["evaluated_artifact_checksum"] != provenance["base_artifact_checksum"]
+    assert provenance["derived_candidate"] is True
+    assert result.registry_entry["metadata"]["strategy"] == "close_to_close_momentum"
+
+
+@pytest.mark.skipif(
+    not all(importlib.util.find_spec(m) for m in ("vectorbt", "pandas", "numpy")), reason="real vectorbt is not installed"
+)
+def test_saved_model_without_parameter_overrides_runs_the_base_artifact(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.research.vectorbt.adapter import vectorbt_adapter
+
+    module = _load_service_module()
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "real")
+    authority, plan = _model_run(module)
+    seen = {}
+    real_workflow = vectorbt_adapter.run_vectorbt_workflow
+    monkeypatch.setattr(
+        vectorbt_adapter, "run_vectorbt_workflow",
+        lambda dataset, *, backend=None, config=None: seen.setdefault("r", real_workflow(dataset, backend=backend, config=config)),
+    )
+    response = _execute_model_run(module, plan)
+    assert response.status_code == 200, response.text
+    provenance = seen["r"].artifact_bundle["model_authority"]
+    assert provenance["derived_candidate"] is False
+    assert provenance["evaluated_artifact_checksum"] == authority["strategy_artifact_checksum"]
+
+
+@pytest.mark.parametrize(
+    "params,expected",
+    [({"order_quantity": 9}, "immutable"), ({"short_window": 5, "long_window": 20}, "not parameters")],
+)
+def test_saved_model_rejects_ungoverned_or_sma_parameters(monkeypatch: pytest.MonkeyPatch, params, expected) -> None:
+    module = _load_service_module()
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "real")
+    _authority, plan = _model_run(module, params=params)
+    with mock.patch("services.research.vectorbt.adapter.vectorbt_adapter.VectorbtBackend.run") as run:
+        response = _execute_model_run(module, plan, params=params)
+    assert response.status_code == 400, response.text
+    assert expected in response.json()["detail"]
+    run.assert_not_called()
+
+
+def test_caller_cannot_supply_model_authority_outside_the_saved_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_service_module()
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "real")
+    _model_run(module, with_model=False)
+    stage = {"stage_id": "s1", "stage_type": "prototype_backtest", "dataset": _tw_dataset()}
+    response = TestClient(module.app).post("/stages/prototype_backtest/execute", json={
+        "stage": stage,
+        "plan": {"plan_id": "plan-model-1", "model_authority": _saved_model()},
+        "run_id": "run-model-001", "correlation_id": "corr-caller",
+    })
+    assert response.status_code == 400, response.text
+    assert "saved research run" in response.json()["detail"]
+
+
+def test_saved_model_is_never_run_by_the_stub_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_service_module()
+    monkeypatch.setenv("PANTHEON_VECTORBT_BACKEND", "stub")
+    _authority, plan = _model_run(module)
+    response = _execute_model_run(module, plan)
+    assert response.status_code == 400, response.text
+    assert "canonical strategy artifact" in response.json()["detail"]
+
+
+def _canceled_run(client: TestClient, key: str, title: str = "t", parameters: dict | None = None) -> dict:
+    task = client.post("/api/research-orchestrator/tasks", json={"title": title, "objective": "o"}).json()
+    params = parameters if parameters is not None else {
+        "stage": {"stage_id": "s1", "stage_type": "prototype_backtest"},
+        "plan": {"plan_id": f"plan-{title}", "stages": [{"stage_id": "s1"}]},
+    }
+    run = client.post(
+        f"/api/research-orchestrator/tasks/{task['task_id']}/runs",
+        json={
+            "idempotency_key": key,
+            "adapter": "vectorbt",
+            "parameters": params,
+        },
+    ).json()
+    client.post(f"/api/research-orchestrator/runs/{run['run_id']}/cancel", json={})
+    return run
+
+
+def test_run_retry_idempotency_is_scoped_to_parent_and_actor(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+
+    # Bounded local spies at existing dispatch entry points
+    stage_dispatch_spy = mock.MagicMock()
+    retrain_dispatch_spy = mock.MagicMock()
+    monkeypatch.setattr(module, "_progress_plan_stages", stage_dispatch_spy)
+    monkeypatch.setattr(module, "_trigger_retrain_execution", retrain_dispatch_spy)
+
+    # Parent A is stage-backed; Parent B is retrain-backed
+    parent_a = _canceled_run(client, "dispatch-a", "A")
+    parent_b = _canceled_run(
+        client,
+        "raw-shared",
+        "B",
+        parameters={"decision_id": "dec-1", "target_artifact_id": "art-1", "work_item_id": "wi-1"},
+    )
+    url = lambda r: f"/api/research-orchestrator/runs/{r['run_id']}/retry"
+
+    # Reset spies after setup so they only record retry operations
+    stage_dispatch_spy.reset_mock()
+    retrain_dispatch_spy.reset_mock()
+
+    # Initial persisted task generation is 1
+    assert client.get(f"/api/research-orchestrator/tasks/{parent_a['task_id']}").json()["generation"] == 1
+
+    # 1. raw key already used by an unrelated run's initial dispatch must not be returned
+    first = client.post(url(parent_a), json={"idempotency_key": "raw-shared", "actor_id": "alice"}).json()
+    assert first["run_id"] != parent_b["run_id"]
+    assert first["parent_run_id"] == parent_a["run_id"]
+    assert first["attempt_number"] == 2
+    assert stage_dispatch_spy.call_count == 1
+    assert retrain_dispatch_spy.call_count == 0
+
+    # 2. retry key colliding with another parent's retry key (parent_b retrain dispatch)
+    other = client.post(url(parent_b), json={"idempotency_key": "raw-shared", "actor_id": "alice"}).json()
+    assert other["run_id"] != first["run_id"]
+    assert other["parent_run_id"] == parent_b["run_id"]
+    assert other["attempt_number"] == 2
+    assert stage_dispatch_spy.call_count == 1
+    assert retrain_dispatch_spy.call_count == 1
+
+    # 3. different actor on same parent is a distinct retry
+    other_actor = client.post(url(parent_a), json={"idempotency_key": "raw-shared", "actor_id": "bob"}).json()
+    assert other_actor["run_id"] not in {first["run_id"], other["run_id"]}
+    assert other_actor["parent_run_id"] == parent_a["run_id"]
+    assert other_actor["attempt_number"] == 2
+    assert stage_dispatch_spy.call_count == 2
+    assert retrain_dispatch_spy.call_count == 1
+
+    # 4. exact same-scope replay returns the original child without side effects
+    task_a_before = client.get(f"/api/research-orchestrator/tasks/{parent_a['task_id']}").json()
+    gen = task_a_before["generation"]
+    assert isinstance(gen, int) and gen == 3  # advanced for alice (1->2) and bob (2->3)
+    events_count = len(module.store.get_run(parent_a["run_id"])["events"])
+    runs_count = len(module.store.list_runs())
+
+    replay = client.post(url(parent_a), json={"idempotency_key": "raw-shared", "actor_id": "alice"}).json()
+    assert replay["run_id"] == first["run_id"]
+    assert replay["attempt_number"] == first["attempt_number"] == 2
+    assert len(module.store.list_runs()) == runs_count
+    assert len(module.store.get_run(parent_a["run_id"])["events"]) == events_count
+    assert module.store.get_task(parent_a["task_id"])["generation"] == gen
+    # No duplicate dispatch on replay
+    assert stage_dispatch_spy.call_count == 2
+    assert retrain_dispatch_spy.call_count == 1
+
+    # 5. persisted readback/reload and replay against that loaded owner from disk persistence
+    reloaded_module = _load_service_module(data_dir=module.DATA_DIR)
+    reloaded_stage_spy = mock.MagicMock()
+    reloaded_retrain_spy = mock.MagicMock()
+    monkeypatch.setattr(reloaded_module, "_progress_plan_stages", reloaded_stage_spy)
+    monkeypatch.setattr(reloaded_module, "_trigger_retrain_execution", reloaded_retrain_spy)
+    reloaded_client = TestClient(reloaded_module.app)
+
+    # Replay retry against the loaded owner
+    reloaded_replay = reloaded_client.post(url(parent_a), json={"idempotency_key": "raw-shared", "actor_id": "alice"}).json()
+    assert reloaded_replay["run_id"] == first["run_id"]
+    assert reloaded_replay["attempt_number"] == 2
+    # Zero duplicate dispatches against reloaded owner
+    assert reloaded_stage_spy.call_count == 0
+    assert reloaded_retrain_spy.call_count == 0
+
+    # Invariants in persisted reloaded store
+    assert reloaded_module.store.get_run(first["run_id"])["run_id"] == first["run_id"]
+    alice_children = [
+        r for r in reloaded_module.store.list_runs()
+        if r.get("parent_run_id") == parent_a["run_id"] and r.get("created_by") == "alice"
+    ]
+    assert len(alice_children) == 1
+    assert alice_children[0]["attempt_number"] == 2
+    assert len(reloaded_module.store.get_run(parent_a["run_id"])["events"]) == events_count
+    persisted_task = reloaded_module.store.get_task(parent_a["task_id"])
+    assert persisted_task["generation"] == gen
+    assert isinstance(persisted_task["generation"], int)
+
+
+def test_run_retry_overlapping_same_scope_requests_create_one_child(monkeypatch: pytest.MonkeyPatch) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    module = _load_service_module()
+    client = TestClient(module.app)
+
+    # Bounded local spy at stage dispatch entry
+    dispatch_spy = mock.MagicMock()
+    monkeypatch.setattr(module, "_progress_plan_stages", dispatch_spy)
+
+    parent = _canceled_run(client, "d")
+    dispatch_spy.reset_mock()
+
+    parent_task_init = client.get(f"/api/research-orchestrator/tasks/{parent['task_id']}").json()
+    assert parent_task_init["generation"] == 1
+
+    url = f"/api/research-orchestrator/runs/{parent['run_id']}/retry"
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        results = list(pool.map(lambda _: client.post(url, json={"idempotency_key": "k", "actor_id": "alice"}).json(), range(6)))
+
+    # Invariant: exactly one child run ID returned across all concurrent responses
+    child_ids = {r["run_id"] for r in results}
+    assert len(child_ids) == 1
+    child_id = next(iter(child_ids))
+
+    # Invariant: child attempt invariant is preserved
+    assert all(r["attempt_number"] == 2 for r in results)
+
+    # Invariant: exactly one child in disk store with attempt #2
+    children = [r for r in module.store.list_runs() if r.get("parent_run_id") == parent["run_id"]]
+    assert len(children) == 1
+    assert children[0]["run_id"] == child_id
+    assert children[0]["attempt_number"] == 2
+
+    # Invariant: exactly one retry event on parent run
+    retried_events = [e for e in module.store.get_run(parent["run_id"])["events"] if e["event_type"] == "run_retried"]
+    assert len(retried_events) == 1
+
+    # Invariant: persisted generation field is incremented to 2 and is strictly an int
+    persisted_task = module.store.get_task(parent["task_id"])
+    assert persisted_task["generation"] == 2
+    assert isinstance(persisted_task["generation"], int)
+    task_res = client.get(f"/api/research-orchestrator/tasks/{parent['task_id']}").json()
+    assert task_res["generation"] == 2
+
+    # Invariant: exactly one dispatch across all 6 overlapping concurrent requests
+    assert dispatch_spy.call_count == 1
+
+    # Invariant across reload replay: replay against loaded owner produces no duplicate child/attempt/event/generation/dispatch
+    reloaded_module = _load_service_module(data_dir=module.DATA_DIR)
+    reloaded_dispatch_spy = mock.MagicMock()
+    monkeypatch.setattr(reloaded_module, "_progress_plan_stages", reloaded_dispatch_spy)
+    reloaded_client = TestClient(reloaded_module.app)
+
+    reloaded_res = reloaded_client.post(url, json={"idempotency_key": "k", "actor_id": "alice"}).json()
+    assert reloaded_res["run_id"] == child_id
+    assert reloaded_res["attempt_number"] == 2
+    assert reloaded_dispatch_spy.call_count == 0
+    assert reloaded_module.store.get_task(parent["task_id"])["generation"] == 2
+    assert len([r for r in reloaded_module.store.list_runs() if r.get("parent_run_id") == parent["run_id"]]) == 1

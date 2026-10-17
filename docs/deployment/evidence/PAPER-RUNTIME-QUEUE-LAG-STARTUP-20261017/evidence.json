@@ -1,0 +1,10 @@
+{
+  "task_id": "PAPER-RUNTIME-QUEUE-LAG-STARTUP-20261017",
+  "change": "paper_runtime _handle_order_event measures queue_lag_ms from max(enqueued_at, runtime start)",
+  "tests": {
+    "command": "python3 -m unittest services.execution.lean_runtime.test_paper_runtime -k queue_lag",
+    "result": "5 passed on fix; new test test_queue_lag_measured_from_runtime_start_when_enqueued_before_start fails on base (AssertionError: 19000.262 not less than 5000)"
+  },
+  "unchanged": ["reconciliation thresholds", "services/reconciliation-drift", "paper_fleet_reconciler"],
+  "delivery": "hosted only via next FULL+Root; no deployment dispatched"
+}

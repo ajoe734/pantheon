@@ -373,6 +373,25 @@ class PostgresJsonOwnerStore:
                 records.append(decoded)
         return records
 
+    def count(self, *, conn: Optional[Any] = None) -> int:
+        """Count the number of rows in this owner-store table without hydrating payloads."""
+        sql = (
+            f"SELECT COUNT(*) FROM {self.table} "
+            "WHERE jsonb_typeof("
+            "CASE "
+            "WHEN jsonb_typeof(payload) = 'string' THEN (payload #>> '{}')::jsonb "
+            "ELSE payload "
+            "END"
+            ") = 'object'"
+        )
+        with self._use_conn(conn) as conn:
+            cursor = conn.execute(sql)
+            row = self._fetch_one(cursor)
+        if row is None:
+            raise RuntimeError(f"Aggregate count query returned no rows for table {self.table_name}")
+        value = row[0] if isinstance(row, tuple) else row["count"]
+        return int(value)
+
     def lock_table(self, *, conn: Any) -> None:
         """Acquire this table's SHARE ROW EXCLUSIVE lock on its own, with no insert.
 

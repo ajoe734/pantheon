@@ -108,5 +108,66 @@
       "bash -n scripts/deploy_nonprod_vm.sh",
       "git diff --check"
     ]
+  },
+  "fe_owner_node_runtime_followup": {
+    "task_id": "DEV-FE-OWNER-NODE-RUNTIME-20261014",
+    "root_failure_reference": "Root38569825116 step 7 baseline restore and compensation failed exit 75: existing FE deploy-dev-vm.sh line 205 node: command not found (exit 127) under bare SSH without node on PATH.",
+    "change": "Added validate_fe_node_runtime to scripts/deploy_nonprod_vm.sh and forwarded explicit PANTHEON_DEV_FE_NODE_BIN_DIR via ssh_bash and nonprod-deploy.yml workflow steps; validates node executable and version match (^v22.) without discovery/fallback chains, prefixes PATH when calling FE owner restore-sealed, and fails closed before switch on missing or invalid runtime. Removed duplicated mock-node stubs and mirror test family; exercised real existing Node 22 JavaScript execution in callee and full-chain fixtures under bad initial SSH PATH with explicit input, verifying real execution and result.",
+    "source_commit": "this task branch (DEV-FE-OWNER-NODE-RUNTIME-20261014); see git history",
+    "historical_note": "Prior 138 passed, 2 skipped synthetic result with mock-node stub is retained as history, not corrective Node proof; the 83-line mirror test family was removed in favor of direct callee and full-chain fixture verification.",
+    "hosted_acceptance_status": "not run by this source task; final deployment and hosted acceptance belong to the existing parent.",
+    "distinction": {
+      "hermetic_transport": "PANTHEON_DEV_FE_NODE_BIN_DIR forwarded explicitly across ssh_bash and nonprod-deploy.yml without discovery/fallback",
+      "real_node_local_original_chain": "Callee and full-chain restore tests exercise real existing Node 22 runtime under simulated bare SSH PATH (exit 127 stub) and observe real JavaScript execution output (v22.23.2), rejecting missing/unsafe runtime before switch",
+      "hosted_guarded_restore": "Hosted release restoration and final acceptance remain owed to the existing parent deployment workflow"
+    },
+    "commands": [
+      {
+        "command": "pytest scripts/test_deploy_nonprod_vm.py scripts/test_deploy_nonprod_artifact_restore.py -q",
+        "result": "133 passed, 2 skipped"
+      },
+      "bash -n scripts/deploy_nonprod_vm.sh",
+      "git diff --check"
+    ]
+  },
+  "sealed_manual_event_handoff_followup": {
+    "task_id": "DEV-SEALED-MANUAL-EVENT-HANDOFF-20261014",
+    "root_failure_reference": "Root38569825116-original-manual-restore-retry1 (observed 16:20:42Z, exit 75): FE profile exit 2 -> BE exit 75 before sealed restore and CAS; FE deploy-dev-vm.sh operator-live profile required GITHUB_EVENT_NAME=workflow_dispatch, while BE caller scripts/deploy_nonprod_vm.sh line 4536 fe_event_name=${GITHUB_EVENT_NAME:-${PANTHEON_DEV_EVENT_NAME:-push}} invented 'push' when real manual context was absent, conflicting with FE profile admission and ssh_bash line 923 empty preservation.",
+    "change": "Updated fe_event_name assignment in scripts/deploy_nonprod_vm.sh to '${GITHUB_EVENT_NAME:-${PANTHEON_DEV_EVENT_NAME:-}}', forwarding genuinely absent/empty GitHub event context as empty for actual local manual sealed recovery instead of inventing push, while preserving explicit GitHub events and explicit PANTHEON_DEV_EVENT_NAME inputs. Extended callee and full-chain restore fixtures in scripts/test_deploy_nonprod_artifact_restore.py to record and assert the FE-owner event argument, verifying empty event under absent GitHub context with explicit manual delegation/run and real provisioned Node execution, as well as explicit workflow_dispatch preservation.",
+    "source_commit": "this task branch (DEV-SEALED-MANUAL-EVENT-HANDOFF-20261014); see git history",
+    "historical_note": "Prior 133 passed, 2 skipped result is retained as history; caller push default was removed and callee/full-chain fixtures were extended with honest event argument recording and assertion.",
+    "hosted_acceptance_status": "not run by this source task; final deployment and hosted acceptance require both FE profile and BE handoff deliveries before genuine guarded baseline recovery and freezing true final FE/BE.",
+    "distinction": {
+      "source_correction": "Caller fe_event_name default removed without manufacturing workflow_dispatch or falsifying GitHub execution origin/run/repository",
+      "callee_and_full_chain_fixture": "Verified empty event and explicit workflow_dispatch handoff with real provisioned Node 22 execution under isolated transport shim",
+      "hosted_manual_recovery": "Hosted deployment acceptance and manual sealed recovery remain to be verified after both FE and BE source deliveries are integrated"
+    },
+    "commands": [
+      {
+        "command": "pytest scripts/test_deploy_nonprod_vm.py scripts/test_deploy_nonprod_artifact_restore.py -q",
+        "result": "134 passed, 2 skipped"
+      },
+      "bash -n scripts/deploy_nonprod_vm.sh",
+      "git diff --check"
+    ]
+  },
+  "stdout_line_forwarding_followup": {
+    "task_id": "DEV-STDOUT-LINE-FORWARDING-20261014",
+    "root_failure_reference": "Root38627568661 step 19 failed 20:24:08Z at dev_remote_guarded_exec.py:143 (transport/contract/75): stdout line index > 65536 TransportError from Codex cf24df3552 aborting ordinary stdout forwarding when log lines exceed 64KiB.",
+    "change": "Updated OutputObserver in scripts/dev_remote_guarded_exec.py to forward ordinary stdout in bounded chunks with backpressure, without treating ordinary line length or unterminated logs as deployment failures; preserved candidate receipt size/format bounds and exact 65536-byte payload before LF semantics (>65536 payload and buffer bound instead of >=65536), rejecting oversized candidate receipts when payload exceeds 65536 bytes; added prefix attribute to CandidateReceiptObserver in scripts/dev_candidate_receipt.py; adjusted ordinary-long-output test and added candidate boundary tests in scripts/test_dev_remote_guarded_exec.py.",
+    "source_commit": "this task branch (DEV-STDOUT-LINE-FORWARDING-20261014); see git history",
+    "historical_note": "Prior ordinary x*70000 fatal assertion is corrected to verified forwarding; candidate receipt size bounds, exact 65536-byte boundary, and malformed receipt negative checks are retained.",
+    "hosted_acceptance_status": "not run by this source task; final deployment and hosted acceptance belong to the existing parent.",
+    "distinction": {
+      "source_local_repair": "Repaired OutputObserver ordinary line forwarding and candidate boundary in transport scripts; validated via pytest -q scripts/test_dev_remote_guarded_exec.py scripts/test_dev_candidate_receipt.py and git diff --check",
+      "hosted_release": "Hosted deployment and VM operations belong to the existing parent workflow; source worker does not touch the VM"
+    },
+    "commands": [
+      {
+        "command": "pytest -q scripts/test_dev_remote_guarded_exec.py scripts/test_dev_candidate_receipt.py",
+        "result": "162 passed"
+      },
+      "git diff --check"
+    ]
   }
 }

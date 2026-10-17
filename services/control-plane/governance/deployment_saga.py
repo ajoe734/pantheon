@@ -730,7 +730,7 @@ class DeploymentSagaStore:
         *,
         reason: str,
     ) -> OutboxRecord:
-        """Request retirement of a completed saga's RuntimeBinding.
+        """Request retirement of a completed or failed-and-compensated saga's RuntimeBinding.
 
         Never touches failure_reason or compensation; replay with the same
         reason returns the original retirement event.
@@ -752,9 +752,24 @@ class DeploymentSagaStore:
                     if record.event.event_id == existing.get("requested_event_id"):
                         return copy.deepcopy(record)
                 raise DeploymentSagaError(f"{saga_id} retirement event is missing")
-            if status != SagaStatus.COMPLETED:
+            compensated_failure = (
+                status == SagaStatus.FAILED
+                and SagaStep(saga.current_step) == SagaStep.COMPENSATED
+            )
+            if status != SagaStatus.COMPLETED and not compensated_failure:
                 raise DeploymentSagaError(
-                    f"{saga_id} cannot be retired from {status.value}; only completed sagas can retire"
+                    f"{saga_id} cannot be retired from {status.value}; only completed "
+                    "or failed-and-compensated sagas can retire"
+                )
+            if (
+                compensated_failure
+                and saga.compensation is not None
+                and CompensationCommand(saga.compensation.command_type)
+                == CompensationCommand.MARK_BINDING_FAILED_INACTIVE
+            ):
+                raise DeploymentSagaError(
+                    f"{saga_id} compensation marked the RuntimeBinding failed_inactive, "
+                    "which is terminal and cannot converge to retired"
                 )
             if not saga.binding_id:
                 raise DeploymentSagaError(f"{saga_id} has no RuntimeBinding to retire")

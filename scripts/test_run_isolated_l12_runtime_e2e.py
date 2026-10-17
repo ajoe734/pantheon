@@ -1060,3 +1060,51 @@ def test_every_declared_controller_writer_service_is_started_by_the_harness() ->
         "agora-interaction-worker",
     }
     assert stimulus <= set(harness.STIMULUS_COMPOSE_SERVICES)
+
+
+def test_runtime_evolution_fixture_uses_selected_tenant_against_real_evolution_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import importlib.util
+
+    from fastapi.testclient import TestClient
+
+    from services.evolution import main as evolution_main
+
+    root = Path(__file__).resolve().parents[1] / "tests" / "integration" / "l12"
+    monkeypatch.syspath_prepend(str(root))
+    monkeypatch.setenv("PANTHEON_L12_TENANT_ID", "tenant-dev")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", "issuer")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", "audience")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", "s" * 64)
+    spec = importlib.util.spec_from_file_location(
+        "l12_runtime_tenant_probe", root / "test_current_runtime_loops_deployed_e2e.py"
+    )
+    runtime = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, runtime)
+    spec.loader.exec_module(runtime)
+    chain = runtime.RuntimeChain.__new__(runtime.RuntimeChain)
+    runtime.RuntimeChain.__init__(chain, runtime.Settings.__new__(runtime.Settings))
+    assert chain.evolution_headers["X-Tenant-Id"] == runtime.TENANT_ID == "tenant-dev"
+    assert not hasattr(runtime, "EVOLUTION_TENANT_ID")
+
+    monkeypatch.setenv("EVOLUTION_AUTH_MODE", "token")
+    monkeypatch.setenv("EVOLUTION_AUTH_TOKEN", "pantheon-local-evolution-service")
+    monkeypatch.setenv("EVOLUTION_AUTH_ALLOWED_TENANTS", "tenant-dev")
+    client = TestClient(evolution_main.app)
+    path = "/api/evolution/sweep-status"
+    positive = client.get(path, headers=chain.evolution_headers)
+    assert positive.status_code == 200
+    payload = positive.json()
+    assert payload["scheduler_attach"]["route"] == "POST /api/evolution/daily-sweep"
+    assert "total_sweeps_run" in payload
+
+    foreign = {**chain.evolution_headers, "X-Tenant-Id": "pantheon-default"}
+    denied = client.get(path, headers=foreign)
+    assert denied.status_code == 403
+    assert denied.json()["detail"] == "authenticated caller is not authorized for this tenant"
+
+    proposals_resp = client.get("/api/evolution/proposals", headers=chain.evolution_headers)
+    assert proposals_resp.status_code == 200
+    assert all(item.get("tenant_id") == runtime.TENANT_ID for item in proposals_resp.json())
+

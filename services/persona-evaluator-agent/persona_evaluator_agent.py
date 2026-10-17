@@ -165,10 +165,14 @@ def collect_evidence(
     if not raw_items or not snapshot_id:
         raise Degraded("ranking evidence is empty")
     items = []
-    for raw in raw_items[:MAX_PERSONAS]:
+    for raw in raw_items:
+        if len(items) >= MAX_PERSONAS:  # bound applies to evidence-admitted rows
+            break
         refs = [str(r.get("refId") or r.get("ref_id") or r.get("id")) for r in raw.get("evidence_refs") or []
                 if isinstance(r, dict) and (r.get("refId") or r.get("ref_id") or r.get("id"))]
         if raw.get("source_confidence") == "unavailable" or raw.get("telemetry_resolution") == "missing" or not refs:
+            if raw.get("eligible") is False:  # explicit ineligible + missing evidence: skip only this row
+                continue
             raise Degraded(f"evidence unavailable for persona {raw['persona_id']}")
         items.append({
             "persona_id": str(raw["persona_id"]), "name": raw.get("name"), "state": raw.get("owner_lifecycle_state"),
@@ -176,6 +180,8 @@ def collect_evidence(
             "eligible": raw.get("eligible"), "exclusion_codes": raw.get("exclusion_codes"),
             "components": raw.get("components"), "evidence_ref_ids": refs[:10],
         })
+    if not items:
+        raise Degraded("no persona has admissible evidence")
     return items, snapshot
 
 

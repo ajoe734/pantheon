@@ -1,0 +1,15 @@
+{
+  "task_id": "PAPER-FLEET-OWNER-REJECTION-20261014",
+  "scope": "source-only; no live owner/VM/provider/data writes",
+  "change": "reconcile_once resume path only marks binding active, removes exclusion, appends desired (and thus starts a worker) when _transition_binding returns True",
+  "tests": {
+    "command": "python3 -m unittest services.paper_fleet_reconciler.test_paper_fleet_reconciler",
+    "result": "Ran 75, errors=2 (pre-existing, identical on base: missing flask / asyncpg modules in worker env), skipped=1, failures=0",
+    "new_tests": [
+      "test_owner_rejected_reactivation_does_not_plan_or_start_worker (fails on base, passes with fix)",
+      "test_remote_transition_denied_is_not_treated_as_reactivated (HTTP 409 returns False)"
+    ],
+    "limitations": "test_new_admitted_snapshot_resumes_paused_binding_once (accepted-True control) cannot run here: flask missing; services.runtime_manager.test_runtime_binding fails to import in this env"
+  },
+  "source_delivery": "pending real flow; no hosted/PASS claims; does not fix separate canonical-summary SQL500"
+}

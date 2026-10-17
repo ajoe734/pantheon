@@ -25,6 +25,15 @@ from services.background_worker_health import (
 from services.trade_journey.correlation_envelope import propagate_envelope
 from telemetry_client import fetch_runtime_summaries
 
+_RUNTIME_MANAGER_DIR = Path(__file__).resolve().parents[1] / "runtime-manager"
+if str(_RUNTIME_MANAGER_DIR) not in sys.path:
+    sys.path.insert(0, str(_RUNTIME_MANAGER_DIR))
+
+try:
+    from runtime_manager_client import RuntimeManagerClient  # type: ignore
+except ImportError:  # pragma: no cover - defensive fallback
+    RuntimeManagerClient = None  # type: ignore[assignment]
+
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +53,16 @@ SUMMARY_NUMERIC_FIELDS = (
 )
 CONSUMER_STATE_VERSION = 2
 _WORKER_NAME = "reconciliation-drift-consumer"
+COMPLETED_RETENTION = 2000
+_ACTIVE_SUMMARY_STATES = {"active", "running", "healthy"}
+
+
+class TransientDeliveryError(RuntimeError):
+    """Delivery failed for a reason that is expected to clear (DNS, timeout, deploy recreate)."""
+
+
+class SummaryNotEligible(ValueError):
+    """The summary has no lifecycle identity yet (no trace_id); not an invalid summary."""
 
 
 class ConsumerStateError(RuntimeError):
@@ -455,15 +474,16 @@ def post_events(service_url: str, events: list[dict[str, Any]]) -> dict[str, Any
             body = response.read().decode("utf-8")
             decoded = json.loads(body) if body else {}
             if isinstance(decoded, dict) and decoded.get("status") == "deferred":
-                raise RuntimeError("reconciliation-drift consume lease is active")
+                raise TransientDeliveryError("reconciliation-drift consume lease is active")
             return decoded
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"reconciliation-drift consume failed: {exc.code} {detail}") from exc
+        error_cls = TransientDeliveryError if exc.code in {502, 503, 504} else RuntimeError
+        raise error_cls(f"reconciliation-drift consume failed: {exc.code} {detail}") from exc
     except urllib.error.URLError as exc:
-        raise RuntimeError(f"reconciliation-drift service unavailable: {exc.reason}") from exc
+        raise TransientDeliveryError(f"reconciliation-drift service unavailable: {exc.reason}") from exc
     except OSError as exc:  # read timeouts/resets raise bare TimeoutError/OSError, not URLError
-        raise RuntimeError(f"reconciliation-drift service unavailable: {exc!r}") from exc
+        raise TransientDeliveryError(f"reconciliation-drift service unavailable: {exc!r}") from exc
 
 
 def runtime_summary_to_event(summary: dict[str, Any]) -> dict[str, Any]:
@@ -485,6 +505,8 @@ def runtime_summary_to_event(summary: dict[str, Any]) -> dict[str, Any]:
         "trace_id": str(summary.get("trace_id") or "").strip(),
     }
     missing = sorted(key for key, value in required.items() if not value)
+    if missing == ["trace_id"]:
+        raise SummaryNotEligible("runtime summary has no lifecycle identity: trace_id")
     if missing:
         raise ValueError("runtime summary missing authoritative identity: " + ", ".join(missing))
 
@@ -567,6 +589,7 @@ class ConsumerWorkerState:
         self.last_success_at: str | None = None
         self.last_failure_at: str | None = None
         self.last_failure_error: str | None = None
+        self.last_retired_purge: dict[str, Any] | None = None
         self.lease_owner: str | None = None
         self.lease_token: str | None = None
         self.lease_expires_at: str | None = None
@@ -638,6 +661,7 @@ class ConsumerWorkerState:
         self.last_success_at = payload.get("last_success_at")
         self.last_failure_at = payload.get("last_failure_at")
         self.last_failure_error = payload.get("last_failure_error")
+        self.last_retired_purge = payload.get("last_retired_purge")
         self.lease_owner = payload.get("lease_owner")
         self.lease_token = payload.get("lease_token")
         self.lease_expires_at = payload.get("lease_expires_at")
@@ -675,6 +699,7 @@ class ConsumerWorkerState:
             "last_success_at": self.last_success_at,
             "last_failure_at": self.last_failure_at,
             "last_failure_error": self.last_failure_error,
+            "last_retired_purge": self.last_retired_purge,
             "lease_owner": self.lease_owner,
             "lease_token": self.lease_token,
             "lease_expires_at": self.lease_expires_at,
@@ -850,7 +875,8 @@ class ConsumerWorkerState:
             self._held_lease_token = None
             self._held_lease_seconds = None
 
-    def enqueue(self, event: dict[str, Any], *, observed_at: str) -> bool:
+    @staticmethod
+    def event_key(event: dict[str, Any]) -> str:
         event_id = str(event["event_id"])
         envelope = event.get("correlation_envelope")
         tenant_id = str(
@@ -866,9 +892,11 @@ class ConsumerWorkerState:
             digest = hashlib.sha256(
                 f"{tenant_id}\0{event_id}".encode("utf-8")
             ).hexdigest()
-            key = f"tenant-event-{digest}"
-        else:
-            key = event_id
+            return f"tenant-event-{digest}"
+        return event_id
+
+    def enqueue(self, event: dict[str, Any], *, observed_at: str) -> bool:
+        key = self.event_key(event)
         if key in self.completed or key in self.pending or key in self.dead_letters:
             return False
         self.pending[key] = {
@@ -891,6 +919,25 @@ class ConsumerWorkerState:
             replayed += 1
         return replayed
 
+    def trim_completed(self, *, protected: Iterable[str] = ()) -> None:
+        """Keep the newest completions by completed_at; never evict protected keys."""
+        if len(self.completed) <= COMPLETED_RETENTION:
+            return
+        protected_keys = set(protected)
+        floor = datetime.min.replace(tzinfo=timezone.utc)
+        ordered = sorted(
+            self.completed.items(),
+            key=lambda item: _parse_timestamp(item[1].get("completed_at")) or floor,
+        )
+        excess = len(ordered) - COMPLETED_RETENTION
+        evict: set[str] = set()
+        for key, _ in ordered:
+            if len(evict) >= excess:
+                break
+            if key not in protected_keys:
+                evict.add(key)
+        self.completed = {k: v for k, v in ordered if k not in evict}
+
     def oldest_backlog_lag_seconds(self, *, now: datetime) -> float:
         timestamps = [
             parsed
@@ -900,6 +947,41 @@ class ConsumerWorkerState:
         if not timestamps:
             return 0.0
         return max(0.0, (now - min(timestamps)).total_seconds())
+
+
+def _binding_retired(binding: dict[str, Any] | None, observed_at: str | None) -> bool:
+    """Same rule as the scheduler: retired, and the event is not before retired_at."""
+    if not binding:
+        return False
+    retired_at = _parse_timestamp(binding.get("retired_at"))
+    if retired_at is None:
+        return str(binding.get("status") or "").strip().lower() == "retired"
+    observed = _parse_timestamp(observed_at)
+    return observed is None or observed > retired_at
+
+
+def _binding_status_retired(binding: dict[str, Any] | None) -> bool:
+    """Authoritative retirement status, independent of any event time (record cleanup)."""
+    return bool(binding) and str(binding.get("status") or "").strip().lower() == "retired"
+
+
+def _lookup_runtime_binding(binding_id: str, *, timeout_seconds: float = 5.0) -> dict[str, Any] | None:
+    """Read one RuntimeBinding from runtime-manager; None when it is not configured."""
+    if not os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip():
+        return None
+    if RuntimeManagerClient is None:
+        raise RuntimeError("runtime_manager_client is not importable")
+    try:
+        binding = RuntimeManagerClient(
+            require_remote=True, timeout_seconds=max(1, int(timeout_seconds))
+        ).get(binding_id)
+    except Exception as exc:  # noqa: BLE001 - lifecycle lookup is best-effort
+        raise RuntimeError(f"runtime-manager lookup failed: {exc}") from exc
+    return dict(binding) if isinstance(binding, dict) else None
+
+
+def _transient_backoff_seconds(cycles: int, base: float, cap: float) -> float:
+    return min(cap, base * (2 ** max(0, cycles - 1)))
 
 
 def run_runtime_summary_consumer_once(
@@ -915,6 +997,9 @@ def run_runtime_summary_consumer_once(
     tick_budget_seconds: float = 120.0,
     sleep_fn: Callable[[float], None] = time.sleep,
     now_fn: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+    transient_backoff_base_seconds: float = 30.0,
+    transient_backoff_cap_seconds: float = 900.0,
+    transient_max_age_seconds: float = 86400.0,
 ) -> dict[str, Any]:
     """Fetch real summaries, durably deliver them, and expose controller truth."""
     if max_attempts < 1:
@@ -956,6 +1041,49 @@ def run_runtime_summary_consumer_once(
             "lease_expires_at": state.lease_expires_at,
         }
     replayed_count = state.replay_dead_letters() if replay_dead_letters else 0
+    # Stop starting attempts once the budget is spent so a slow downstream cannot
+    # outlast the health max age; leftover events stay pending for the next tick.
+    tick_deadline = time.monotonic() + tick_budget_seconds
+    binding_cache: dict[str, dict[str, Any] | None] = {}
+    binding_lookup_failed = False
+
+    def lookup_binding(binding_id: str) -> tuple[dict[str, Any] | None, bool]:
+        """One runtime-manager read per binding per pass; (binding, usable)."""
+        nonlocal binding_lookup_failed
+        if binding_id in binding_cache:
+            return binding_cache[binding_id], True
+        if binding_lookup_failed or time.monotonic() >= tick_deadline:
+            return None, False
+        try:
+            binding = _lookup_runtime_binding(binding_id)
+        except RuntimeError:
+            binding_lookup_failed = True  # stop further lookups this pass; fail open
+            logger.warning("runtime-manager binding lookup failed", exc_info=True)
+            return None, False
+        binding_cache[binding_id] = binding
+        return binding, True
+
+    purged_retired: list[dict[str, Any]] = []
+    for bucket_name, bucket in (("dead_letter", state.dead_letters), ("pending", state.pending)):
+        for key, record in list(bucket.items()):
+            event = record.get("event") if isinstance(record, dict) else None
+            binding_id = str((event or {}).get("binding_id") or "").strip()
+            if not binding_id:
+                continue
+            binding, usable = lookup_binding(binding_id)
+            if usable and _binding_status_retired(binding):
+                del bucket[key]
+                purged_retired.append(
+                    {"binding_id": binding_id, "event_id": event.get("event_id"), "from": bucket_name}
+                )
+    if purged_retired:
+        state.last_retired_purge = {
+            "at": observed_at,
+            "count": len(purged_retired),
+            "binding_ids": sorted({item["binding_id"] for item in purged_retired}),
+        }
+        state.save()
+        logger.info("purged %d retired-binding record(s)", len(purged_retired))
     invalid_summaries: list[dict[str, Any]] = []
     source_error: str | None = None
     summaries: list[dict[str, Any]] = []
@@ -968,12 +1096,26 @@ def run_runtime_summary_consumer_once(
 
     enqueued_count = 0
     source_lags: list[float] = []
+    ineligible_summaries: list[dict[str, Any]] = []
+    current_keys: set[str] = set()
     for index, summary in enumerate(summaries):
         try:
             event = runtime_summary_to_event(summary)
+        except SummaryNotEligible as exc:
+            ineligible_summaries.append({"index": index, "reason": "missing_lifecycle_identity", "detail": str(exc)})
+            continue
         except ValueError as exc:
             invalid_summaries.append({"index": index, "detail": str(exc)})
             continue
+        summary_state = str(summary.get("state") or "").strip().lower()
+        if summary_state not in _ACTIVE_SUMMARY_STATES and event.get("binding_id"):
+            binding, usable = lookup_binding(event["binding_id"])
+            if usable and _binding_retired(binding, event.get("created_at")):
+                ineligible_summaries.append(
+                    {"index": index, "reason": "binding_retired", "binding_id": event["binding_id"]}
+                )
+                continue
+        current_keys.add(state.event_key(event))
         event_at = _parse_timestamp(event.get("created_at"))
         if event_at is not None:
             source_lags.append(max(0.0, (now - event_at).total_seconds()))
@@ -986,10 +1128,12 @@ def run_runtime_summary_consumer_once(
     drift_report_count = 0
     incident_case_count = 0
     terminal_incident_ids: list[str] = []
-    # Stop starting attempts once the budget is spent so a slow downstream cannot
-    # outlast the health max age; leftover events stay pending for the next tick.
-    tick_deadline = time.monotonic() + tick_budget_seconds
+    transient_failure_count = 0
     for key, record in list(state.pending.items()):
+        retry_at = _parse_timestamp(record.get("next_attempt_at"))
+        if retry_at is not None and retry_at > now:
+            continue
+        transient_error = False
         while int(record.get("attempt_count") or 0) < max_attempts:
             if time.monotonic() >= tick_deadline:
                 break
@@ -1002,6 +1146,7 @@ def run_runtime_summary_consumer_once(
             except RuntimeError as exc:
                 logger.warning("consume post failed after %.2fs", time.monotonic() - post_started)
                 record["last_error"] = str(exc)
+                transient_error = isinstance(exc, TransientDeliveryError)
                 if int(record["attempt_count"]) < max_attempts and retry_backoff_seconds > 0:
                     sleep_fn(retry_backoff_seconds)
                 continue
@@ -1024,6 +1169,23 @@ def run_runtime_summary_consumer_once(
             state.save()
             break
         if key in state.pending and int(record.get("attempt_count") or 0) >= max_attempts:
+            first_seen = _parse_timestamp(record.get("first_seen_at")) or now
+            if transient_error and (now - first_seen).total_seconds() < transient_max_age_seconds:
+                # Transient (DNS/timeout/deploy recreate): keep pending and retry on a later pass.
+                cycles = int(record.get("transient_cycles") or 0) + 1
+                record["transient_cycles"] = cycles
+                record["attempt_count"] = 0
+                record["next_attempt_at"] = (
+                    (now + timedelta(seconds=_transient_backoff_seconds(
+                        cycles, transient_backoff_base_seconds, transient_backoff_cap_seconds
+                    )))
+                    .replace(microsecond=0)
+                    .isoformat()
+                    .replace("+00:00", "Z")
+                )
+                transient_failure_count += 1
+                state.save()
+                continue
             state.dead_letters[key] = dict(record)
             del state.pending[key]
             delivery_errors.append(
@@ -1035,15 +1197,23 @@ def run_runtime_summary_consumer_once(
             )
             state.save()
 
-    if len(state.completed) > 2000:
-        state.completed = dict(list(state.completed.items())[-2000:])
+    state.trim_completed(protected=current_keys)
 
-    if delivered_count and not source_error and not invalid_summaries and not state.dead_letters:
+    new_failure = bool(
+        source_error or invalid_summaries or delivery_errors or transient_failure_count
+    )
+    nothing_to_deliver = bool(summaries) and not state.pending
+    if not new_failure and (delivered_count or nothing_to_deliver):
+        # Older dead letters stay listed (operator decision) but are not a new failure.
         state.last_success_at = observed_at
         state.last_failure_error = None
-    elif source_error or invalid_summaries or delivery_errors:
+    elif new_failure:
         state.last_failure_at = observed_at
-        state.last_failure_error = source_error or str(invalid_summaries[0] if invalid_summaries else delivery_errors[0])
+        state.last_failure_error = source_error or str(
+            invalid_summaries[0]
+            if invalid_summaries
+            else delivery_errors[0] if delivery_errors else f"{transient_failure_count} transient delivery failure(s)"
+        )
     state.save()
 
     if source_error:
@@ -1061,6 +1231,9 @@ def run_runtime_summary_consumer_once(
         "summary_count": len(summaries),
         "invalid_summary_count": len(invalid_summaries),
         "invalid_summaries": invalid_summaries,
+        "ineligible_summary_count": len(ineligible_summaries),
+        "ineligible_summaries": ineligible_summaries,
+        "transient_failure_count": transient_failure_count,
         "enqueued_event_count": enqueued_count,
         "delivered_event_count": delivered_count,
         "drift_report_count": drift_report_count,
@@ -1075,6 +1248,9 @@ def run_runtime_summary_consumer_once(
         "oldest_backlog_lag_seconds": state.oldest_backlog_lag_seconds(now=now),
         "max_source_lag_seconds": max(source_lags) if source_lags else None,
         "replayed_dead_letter_count": replayed_count,
+        "retired_purged_count": len(purged_retired),
+        "retired_purged_binding_ids": sorted({item["binding_id"] for item in purged_retired}),
+        "retired_purged": purged_retired,
         "source_error": source_error,
         "delivery_errors": delivery_errors,
         "last_success_at": state.last_success_at,

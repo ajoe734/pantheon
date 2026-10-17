@@ -1,0 +1,45 @@
+{
+  "task_id": "RESEARCH-PLAN-REQUEST-AUTH-20261016",
+  "title": "Reuse existing request authorization for Research plan model authority reads",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "authority_domain": "product_runtime",
+  "target_repo": "pantheon",
+  "branch": "task/RESEARCH-PLAN-REQUEST-AUTH-20261016",
+  "net_prod_line_budget": 10,
+  "net_prod_lines": 1,
+  "scoped_artifacts": [
+    "services/control-plane/bff/agora/research/routes/plans.py",
+    "services/control-plane/bff/tests/test_workshop_request_authorization.py",
+    "docs/deployment/evidence/RESEARCH-PLAN-REQUEST-AUTH-20261016/evidence.json"
+  ],
+  "acceptance_criteria": {
+    "ac_1_bind_caller_authorization_dependency": {
+      "status": "satisfied",
+      "detail": "Bound the original caller authorization to the existing WorkshopCanonicalOperations context in the Research plans route group using the already existing bind_workshop_authorization dependency as the Workshop session, versions, and execution route groups do (dependencies=[Depends(bind_workshop_authorization)] on build_plans_router). No second context, client, token setting, new auth helper, config, or public route was added. Real cookie and Bearer dev login with no MFA requirement and all normal role, tenant, and model authority checks are preserved."
+    },
+    "ac_2_extend_request_authorization_tests": {
+      "status": "satisfied",
+      "detail": "Extended only services/control-plane/bff/tests/test_workshop_request_authorization.py to exercise both ordinary and servant draft plan creation through actual FastAPI Research routes and the real WorkshopCanonicalOperations HTTP path with a simulated protected Registry. Obtained real dev session credentials via existing local test login fixture (cookie session and dev-login Bearer token). Proved the right caller credential reaches the authority, context is cleared after success and owner failure (503 StrategySpec authority unavailable), and overlapping different sessions do not exchange credentials under concurrency. Preserved anonymous denial (401) and foreign tenant rejection (403/409). Stubbed provider locally with a valid canonical draft so tests make no external provider request or live business write."
+    },
+    "ac_3_budget_and_workflow_compliance": {
+      "status": "satisfied",
+      "detail": "Strictly stayed within the three listed artifacts. Production change is exactly +1 net line (+3 additions, -2 deletions) in services/control-plane/bff/agora/research/routes/plans.py, well within the 10 net production lines budget. Clean task worktree on task/RESEARCH-PLAN-REQUEST-AUTH-20261016. No provider call, VM patch, new Workshop or product POST, or plan approval/execution was performed."
+    }
+  },
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_workshop_request_authorization.py",
+      "result": "5 passed, 3 warnings in 5.57s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_workshop_live_operations.py services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/tests/test_research_router.py",
+      "result": "104 passed, 4 skipped, 3 warnings in 81.41s"
+    }
+  ],
+  "not_claimed": [
+    "Root version release or hosted VM deployment",
+    "External provider transmission (consumed additional draft attempt reported as failure, not auto-retried)",
+    "Third draft plan creation, plan approval, or plan execution"
+  ]
+}

@@ -1760,6 +1760,94 @@ class TestRunPoll:
         consume.assert_called_once()
 
 
+class TestRetirementResolvesIncidents:
+    URL = "http://incidents:8090"
+
+    def _run(self, worker, saga_status="retiring"):
+        client = MagicMock()
+        client.get.side_effect = [
+            _runtime_binding(status="retired"),
+            _runtime_binding(status="retired"),
+        ]
+        saga = {**_binding_saga(), "status": saga_status, "binding_id": "rb-001"}
+        with patch.object(worker, "finalize_retirement"):
+            return worker.execute_retirement(
+                api_url="http://deployment:8095",
+                saga=saga,
+                client=client,
+                timeout_seconds=10.0,
+                incident_url=self.URL,
+            )
+
+    def _incidents(self):
+        return [
+            {"incident_id": "inc-drift-1", "binding_id": "rb-001", "status": "open"},
+            {
+                "incident_id": "inc-deployment-comp-s1",
+                "binding_id": "rb-001",
+                "status": "investigating",
+            },
+            {"incident_id": "inc-done", "binding_id": "rb-001", "status": "resolved"},
+            {"incident_id": "inc-other", "binding_id": "rb-999", "status": "open"},
+        ]
+
+    def test_resolves_drift_and_compensation_incidents_only(self, worker):
+        with (
+            patch.object(
+                worker, "list_open_incidents_for_binding", return_value=self._incidents()
+            ) as listing,
+            patch.object(worker, "resolve_incident") as resolve,
+        ):
+            note = self._run(worker)
+        listing.assert_called_once_with(
+            base_url=self.URL, binding_id="rb-001", timeout_seconds=10.0
+        )
+        resolved = [c.kwargs["incident_id"] for c in resolve.call_args_list]
+        assert resolved == ["inc-drift-1", "inc-deployment-comp-s1"]
+        assert "resolved 2 incident(s)" in note
+
+    def test_resolve_failure_raises_then_retry_converges(self, worker):
+        calls: list[str] = []
+        fail = {"on": True}
+
+        def resolve(*, base_url, incident_id, timeout_seconds):
+            if incident_id == "inc-drift-1" and fail["on"]:
+                raise OSError("boom")
+            calls.append(incident_id)
+
+        with (
+            patch.object(
+                worker, "list_open_incidents_for_binding", return_value=self._incidents()
+            ),
+            patch.object(worker, "resolve_incident", side_effect=resolve),
+        ):
+            with pytest.raises(RuntimeError, match="incident resolve failed"):
+                self._run(worker)
+            assert calls == ["inc-deployment-comp-s1"]
+            fail["on"] = False
+            # replay after the saga is already retired still resolves
+            self._run(worker, saga_status="retired")
+        assert "inc-drift-1" in calls
+
+    def test_no_incident_url_skips_resolution(self, worker):
+        client = MagicMock()
+        client.get.side_effect = [
+            _runtime_binding(status="retired"),
+            _runtime_binding(status="retired"),
+        ]
+        with (
+            patch.object(worker, "finalize_retirement"),
+            patch.object(worker, "list_open_incidents_for_binding") as listing,
+        ):
+            worker.execute_retirement(
+                api_url="http://d",
+                saga={**_binding_saga(), "status": "retired", "binding_id": "rb-001"},
+                client=client,
+                timeout_seconds=10.0,
+            )
+        listing.assert_not_called()
+
+
 class TestExecuteRetirement:
     def _saga(self, status: str = "retiring") -> dict[str, Any]:
         return {**_binding_saga(), "status": status, "binding_id": "rb-001"}
@@ -1778,6 +1866,17 @@ class TestExecuteRetirement:
         client = MagicMock()
         client.get.side_effect = [_runtime_binding(), _runtime_binding(status="retired")]
         _, finalize = self._run(worker, self._saga(), client)
+        client.transition.assert_called_once_with("rb-001", "retired")
+        finalize.assert_called_once()
+
+    def test_paused_binding_of_compensated_failed_saga_retires(self, worker):
+        client = MagicMock()
+        client.get.side_effect = [
+            _runtime_binding(status="paused"),
+            _runtime_binding(status="retired"),
+        ]
+        saga = {**self._saga(), "current_step": "retirement_requested"}
+        _, finalize = self._run(worker, saga, client)
         client.transition.assert_called_once_with("rb-001", "retired")
         finalize.assert_called_once()
 

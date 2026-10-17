@@ -38,6 +38,14 @@ use FastAPI's native synchronous-handler threadpool dispatch (``def`` handlers
 for synchronous route bodies) to ensure slow original ranking aggregation
 cannot block the persistent event loop or delay unrelated routes like
 ``/health`` and strict auth rejections (MGMT-RANKING-ORIGINAL-READ-ISOLATION-20261012).
+
+``/bff/management/evolution-journal`` (via native
+``evolution.router.create_evolution_router``) uses FastAPI's native
+synchronous-handler threadpool dispatch (``def`` handler for synchronous route
+body) to ensure slow original evolution decisions / postmortems / freeze orders /
+rollbacks aggregation cannot block the persistent event loop or delay unrelated
+routes like ``/health`` and strict auth rejections
+(BFF-EVOLUTION-JOURNAL-ORIGINAL-READ-ISOLATION-20261017).
 """
 from __future__ import annotations
 
@@ -598,3 +606,235 @@ def test_ranking_drilldown_and_recommendations_preserve_synchronous_dispatch_and
     assert "data" in rec_payload
 
 
+@contextmanager
+def _isolated_journal_client(
+    *,
+    jwt_secret: str = "test-journal-read-isolation-jwt-secret",
+    initial_decisions: list[dict] | None = None,
+):
+    """Mounts the production evolution router via create_evolution_router
+    with native OwnerReadContextMiddleware on a persistent TestClient, in strict
+    JWT authentication mode without MFA (BFF-EVOLUTION-JOURNAL-ORIGINAL-READ-ISOLATION-20261017).
+    """
+    from services.control_plane.bff.auth import policy as auth_policy
+    from services.control_plane.bff.core.owner_reads import OwnerReadContextMiddleware
+    from services.control_plane.bff.evolution.router import create_evolution_router
+    from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    decisions = initial_decisions if initial_decisions is not None else [
+        {
+            "decision_id": "dec-evo-isolation-001",
+            "id": "dec-evo-isolation-001",
+            "title": "Evolution isolation test decision",
+            "target_type": "strategy",
+            "target_id": "strat-evo-001",
+            "action_type": "mutation",
+            "status": "accepted",
+            "risk_level": "low",
+            "created_at": "2026-10-17T00:00:00Z",
+            "occurred_at": "2026-10-17T00:00:00Z",
+            "summary": "Synchronous read test summary",
+        }
+    ]
+    store = create_in_memory_read_surface_ports(
+        persona_capital_runtime_kwargs={"evolution_decisions": decisions},
+    )
+
+    app = FastAPI()
+    register_error_handlers(app)
+    app.add_middleware(OwnerReadContextMiddleware)
+    app.include_router(create_core_router({}))
+    app.include_router(
+        create_evolution_router(
+            read_surface=store,
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            require_operator_role=auth_policy.require_operator_role,
+            bff_error=auth_policy.bff_error,
+        )
+    )
+
+    token = encode_jwt_hs256(
+        {
+            "sub": "op-evolution-journal",
+            "roles": ["operator"],
+            "tenant_id": "pantheon-dev",
+            "exp": int(time.time()) + 3600,
+        },
+        secret=jwt_secret,
+    )
+    auth_headers = {
+        "Authorization": f"Bearer {token}",
+        "X-Tenant-Id": "pantheon-dev",
+    }
+
+    env_overrides = {
+        "PANTHEON_BFF_JWT_SECRET": jwt_secret,
+        "PANTHEON_BFF_AUTH_MODE": "strict",
+        "PANTHEON_BFF_MFA_REQUIRED": "false",
+    }
+    with patch.dict(os.environ, env_overrides):
+        prev_stub = os.environ.pop("PANTHEON_BFF_AUTH_STUB", None)
+        try:
+            with TestClient(app, raise_server_exceptions=False) as client:
+                yield client, store, auth_headers
+        finally:
+            if prev_stub is not None:
+                os.environ["PANTHEON_BFF_AUTH_STUB"] = prev_stub
+
+
+def test_health_and_auth_rejection_stay_responsive_while_evolution_journal_read_is_slow() -> None:
+    """A slow, synchronous evolution journal owner read must not block the
+    asyncio event loop or delay concurrent /health or unauthenticated/tampered
+    rejection requests (BFF-EVOLUTION-JOURNAL-ORIGINAL-READ-ISOLATION-20261017).
+
+    Uses native create_evolution_router with OwnerReadContextMiddleware and an
+    entered-read event barrier to guarantee the slow journal aggregation has
+    genuinely entered its worker thread before probing concurrent routes.
+    """
+    from services.control_plane.bff.core import owner_reads
+
+    entered_read = threading.Event()
+    release_read = threading.Event()
+    captured_context: dict[str, str | None] = {}
+
+    with _isolated_journal_client() as (client, store, auth_headers):
+        orig_list_decisions = store.list_evolution_decisions
+
+        def controlled_slow_decisions(*args, **kwargs):
+            captured_context["authorization"] = owner_reads.authorization.get()
+            captured_context["selected_tenant"] = owner_reads.selected_tenant.get()
+            entered_read.set()
+            if not release_read.wait(timeout=5.0):
+                raise TimeoutError("Test did not release slow journal read within timeout")
+            return orig_list_decisions(*args, **kwargs)
+
+        store.list_evolution_decisions = controlled_slow_decisions
+        try:
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                journal_future = pool.submit(
+                    client.get,
+                    "/bff/management/evolution-journal",
+                    headers=auth_headers,
+                    params={"action_type": "mutation"},
+                )
+                assert entered_read.wait(timeout=5.0), "Evolution journal read never entered execution"
+
+                # 1. Core /health must stay responsive (< 0.3s) while slow journal read is in flight
+                health_started = time.monotonic()
+                health_response = client.get("/health")
+                health_elapsed = time.monotonic() - health_started
+
+                # 2. Strict anonymous rejection (401) must stay responsive (< 0.3s)
+                anon_started = time.monotonic()
+                anon_response = client.get("/bff/management/evolution-journal")
+                anon_elapsed = time.monotonic() - anon_started
+
+                # 3. Strict tampered JWT rejection (401) must stay responsive (< 0.3s)
+                tampered_started = time.monotonic()
+                tampered_response = client.get(
+                    "/bff/management/evolution-journal",
+                    headers={"Authorization": "Bearer bad.jwt.token"},
+                )
+                tampered_elapsed = time.monotonic() - tampered_started
+
+                # Controlled release of the slow journal read
+                release_read.set()
+                journal_response = journal_future.result()
+        finally:
+            release_read.set()
+
+    assert health_response.status_code == 200
+    assert health_elapsed < 0.3, (
+        f"/health took {health_elapsed:.3f}s while slow journal aggregation was in flight; "
+        "event loop was blocked by synchronous journal read"
+    )
+
+    assert anon_response.status_code == 401
+    assert anon_elapsed < 0.3, (
+        f"anonymous auth rejection took {anon_elapsed:.3f}s; "
+        "auth rejection was delayed by slow journal read"
+    )
+
+    assert tampered_response.status_code == 401
+    assert tampered_elapsed < 0.3, (
+        f"tampered JWT auth rejection took {tampered_elapsed:.3f}s; "
+        "auth rejection was delayed by slow journal read"
+    )
+
+    assert journal_response.status_code == 200
+    journal_payload = journal_response.json()
+    assert "data" in journal_payload
+    assert "meta" in journal_payload
+    assert journal_payload["data"]["id"] == "management_evolution_journal"
+    assert journal_payload["page_info"]["total"] >= 1
+    assert any(
+        it.get("source_id") == "dec-evo-isolation-001" or it.get("id") == "dec-evo-isolation-001"
+        for it in journal_payload["data"]["items"]
+    )
+
+    # Caller context vars preserved across synchronous threadpool dispatch
+    assert captured_context.get("authorization") == auth_headers["Authorization"]
+    assert captured_context.get("selected_tenant") == "pantheon-dev"
+
+
+def test_evolution_journal_preserves_synchronous_dispatch_filters_and_errors() -> None:
+    """Evolution journal GET handler dispatches via synchronous threadpool,
+    preserving caller tenant context, filters, pagination, true validation/auth
+    errors, and without blocking concurrent /health requests.
+    """
+    entered_pm = threading.Event()
+    release_pm = threading.Event()
+
+    with _isolated_journal_client() as (client, store, auth_headers):
+        # 1. Validation error: invalid page_size (< 1)
+        val_resp = client.get(
+            "/bff/management/evolution-journal",
+            headers=auth_headers,
+            params={"page_size": 0},
+        )
+        assert val_resp.status_code == 422, val_resp.text
+
+        # 2. Filter matching no items returns empty items list, not 500 or degraded
+        empty_resp = client.get(
+            "/bff/management/evolution-journal",
+            headers=auth_headers,
+            params={"action_type": "nonexistent_action"},
+        )
+        assert empty_resp.status_code == 200, empty_resp.text
+        assert empty_resp.json()["data"]["items"] == []
+        assert empty_resp.json()["page_info"]["total"] == 0
+
+        # 3. Slow postmortems read also runs in threadpool without blocking concurrent /health
+        orig_list_pm = store.list_postmortems
+
+        def controlled_slow_postmortems(*args, **kwargs):
+            entered_pm.set()
+            if not release_pm.wait(timeout=5.0):
+                raise TimeoutError("Test did not release slow postmortem read within timeout")
+            return orig_list_pm(*args, **kwargs)
+
+        store.list_postmortems = controlled_slow_postmortems
+        try:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                journal_future = pool.submit(
+                    client.get,
+                    "/bff/management/evolution-journal",
+                    headers=auth_headers,
+                )
+                assert entered_pm.wait(timeout=5.0), "Postmortems read never entered execution"
+                health_started = time.monotonic()
+                health_resp = client.get("/health")
+                health_elapsed = time.monotonic() - health_started
+                release_pm.set()
+                journal_resp = journal_future.result()
+        finally:
+            release_pm.set()
+
+    assert health_resp.status_code == 200
+    assert health_elapsed < 0.3, f"/health took {health_elapsed:.3f}s during slow postmortems read"
+    assert journal_resp.status_code == 200
+    payload = journal_resp.json()
+    assert "data" in payload
+    assert payload["data"]["id"] == "management_evolution_journal"

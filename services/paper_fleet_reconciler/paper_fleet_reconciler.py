@@ -83,6 +83,10 @@ _DEFAULT_WORKER_SCRIPT = str(
 log = logging.getLogger(__name__)
 
 
+# Pool safe modes in which runtime-manager allows paused -> active; mirrors
+# runtime_manager.service._FORWARD_DEPLOY_ALLOWED_SAFE_MODES.
+_RESUME_ALLOWED_SAFE_MODES = frozenset({"normal", "normal_restored"})
+
 _LOOP_CONTROLLER_NAME = "paper-fleet-reconciler"
 _LOOP_DEFAULT_ID = "capital_pool_execution"
 _LOOP_DEFAULT_WRITE_INTERVAL_SECONDS = 30.0
@@ -731,6 +735,7 @@ class PaperFleetReconciler:
         self._lease_expires_at_ms = 0
 
         self._lock = threading.RLock()
+        self._safe_mode_skip_logged: set[tuple[str, str]] = set()
         self._workers: Dict[str, WorkerEntry] = {}
         self._monitoring_sessions: Dict[str, Dict[str, Any]] = {}
         self._used_ports: set[int] = set()
@@ -1058,6 +1063,18 @@ class PaperFleetReconciler:
                         # non-"market_input_" reason_code (operator_requested_pause).
                         pause_reason = str(session_adm.get("reason_code") or "") if isinstance(session_adm, dict) else ""
                         if isinstance(session_adm, dict) and pause_reason.startswith("market_input_"):
+                            pool_safe_mode = str(eb.get("safe_mode") or "")
+                            if pool_safe_mode and pool_safe_mode not in _RESUME_ALLOWED_SAFE_MODES:
+                                # runtime-manager would answer 409; do not ask.
+                                skip_key = (binding_id, pool_safe_mode)
+                                if skip_key not in self._safe_mode_skip_logged:
+                                    self._safe_mode_skip_logged.add(skip_key)
+                                    log.info(
+                                        "skipping resume of paused binding %s: pool safe_mode=%s blocks activation",
+                                        binding_id,
+                                        pool_safe_mode,
+                                    )
+                                continue
                             paused_snap_id = session_adm.get("source_snapshot_id")
                             paused_time_str = session_adm.get("source_event_time")
                             decision = self._check_market_admission(eb)
@@ -1086,13 +1103,13 @@ class PaperFleetReconciler:
                                         }
                                     }
                                     # paused -> active
-                                    self._transition_binding(binding_id, "active", metadata_patch=resume_patch)
-                                    eb["status"] = "active"
-                                    eb.setdefault("metadata", {})["session_admission"].update(resume_patch["session_admission"])
-                                    if binding_id in excluded_ids:
-                                        excluded_ids.remove(binding_id)
-                                    bindings.append(eb)
-                                    raw_excluded.remove(eb)
+                                    if self._transition_binding(binding_id, "active", metadata_patch=resume_patch):
+                                        eb["status"] = "active"
+                                        eb.setdefault("metadata", {})["session_admission"].update(resume_patch["session_admission"])
+                                        if binding_id in excluded_ids:
+                                            excluded_ids.remove(binding_id)
+                                        bindings.append(eb)
+                                        raw_excluded.remove(eb)
 
                 desired: Dict[str, Dict[str, Any]] = {
                     b["binding_id"]: b for b in bindings

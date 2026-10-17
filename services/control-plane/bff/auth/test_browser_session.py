@@ -52,6 +52,7 @@ def app_factory(tmp_path, monkeypatch):
 
         @app.api_route("/bff/test-business", methods=["GET", "POST"])
         @app.api_route("/api/v1/operator/commands/test-command", methods=["GET", "POST"])
+        @app.api_route("/api/v1/consult/test-cookie-business", methods=["GET", "POST"])
         def business(authorization: str | None = Header(default=None)):
             identity = deps.extract_identity(authorization)
             deps.require_read_role(identity)
@@ -83,6 +84,10 @@ def test_browser_login_reload_business_and_durable_logout(app_factory):
         assert business.json()["tenant_id"] == "tenant-dev"
         assert client.post("/bff/test-business", headers={"Origin": ORIGIN}).status_code == 200
         assert client.get("/api/v1/operator/commands/test-command").status_code == 200
+        consult = client.get("/api/v1/consult/test-cookie-business")
+        assert consult.status_code == 200
+        assert consult.json()["tenant_id"] == "tenant-dev"
+        assert client.post("/api/v1/consult/test-cookie-business", headers={"Origin": ORIGIN}).status_code == 200
 
     # A fresh application/client reads the persisted session using only cookie.
     with TestClient(app_factory(), base_url=BASE) as reloaded:
@@ -90,6 +95,7 @@ def test_browser_login_reload_business_and_durable_logout(app_factory):
         assert reloaded.get("/bff/me").status_code == 200
         assert reloaded.get("/bff/test-business").status_code == 200
         assert reloaded.get("/api/v1/operator/commands/test-command").status_code == 200
+        assert reloaded.get("/api/v1/consult/test-cookie-business").status_code == 200
         logout = reloaded.post("/bff/logout", headers={"Origin": ORIGIN}, json={})
         assert logout.status_code == 200, logout.text
         assert reloaded.cookies.get("pantheon_session") is None
@@ -98,6 +104,7 @@ def test_browser_login_reload_business_and_durable_logout(app_factory):
         assert restarted.get("/bff/me").status_code == 401
         assert restarted.get("/bff/test-business").status_code == 401
         assert restarted.get("/api/v1/operator/commands/test-command").status_code == 401
+        assert restarted.get("/api/v1/consult/test-cookie-business").status_code == 401
 
 
 @pytest.mark.parametrize("origin", [None, "null", "https://attacker.example", ORIGIN + ".attacker.example"])
@@ -110,6 +117,7 @@ def test_cookie_mutations_and_login_require_exact_origin(app_factory, origin):
         assert login(client).status_code == 200
         assert client.post("/bff/test-business", headers=headers).status_code == 403
         assert client.post("/api/v1/operator/commands/test-command", headers=headers).status_code == 403
+        assert client.post("/api/v1/consult/test-cookie-business", headers=headers).status_code == 403
         assert client.post("/bff/logout", headers=headers).status_code == 403
 
 
@@ -121,6 +129,7 @@ def test_invalid_credentials_and_authorization_precedence(app_factory):
         assert login(client).status_code == 200
         assert client.get("/bff/test-business", headers={"Authorization": "Bearer invalid"}).status_code == 401
         assert client.get("/api/v1/operator/commands/test-command", headers={"Authorization": "Bearer invalid"}).status_code == 401
+        assert client.get("/api/v1/consult/test-cookie-business", headers={"Authorization": "Bearer invalid"}).status_code == 401
         client.cookies.clear()
         client.cookies.set("pantheon_session", "invalid", domain="api.dev.mvl-cap.tw", path="/bff")
         denied = client.get("/bff/test-business", headers={"Origin": ORIGIN})
@@ -137,6 +146,7 @@ def test_cli_login_remains_bearer_and_does_not_require_origin(app_factory):
         assert "set-cookie" not in response.headers
         token = response.json()["access_token"]
         assert client.post("/bff/test-business", headers={"Authorization": f"Bearer {token}"}).status_code == 200
+        assert client.post("/api/v1/consult/test-cookie-business", headers={"Authorization": f"Bearer {token}"}).status_code == 200
 
 
 def test_production_does_not_enable_dev_cookie_adapter(app_factory, monkeypatch):
@@ -147,3 +157,4 @@ def test_production_does_not_enable_dev_cookie_adapter(app_factory, monkeypatch)
         assert login(client).status_code == 403
         assert client.get("/bff/test-business").status_code == 401
         assert client.get("/api/v1/operator/commands/test-command").status_code == 401
+        assert client.get("/api/v1/consult/test-cookie-business").status_code == 401

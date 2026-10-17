@@ -1,0 +1,87 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "RECON-PAPER-COMMITTED-RUN-20261013",
+  "title": "Reconcile a committed paper position from its own run instead of the latest in-flight summary",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "base_sha": "30983186a",
+  "change_class": "corrective",
+  "summary": "Fixes cross-run read-grain defect from Root 38470273444 in paper reconciliation where RuntimeSummary's latest-per-runtime projection caused an in-flight run (e.g. run146 order_submitted) to mask an earlier completed run (run127 position_snapshot). TelemetryIngestService now uses canonical batch PostgreSQL _event_reader to select a matching committed paper position_snapshot with its own numeric metrics, excluding already-reconciled snapshots, and reconciliation scheduler in main.py selects the paired snapshot identity and its own numeric metrics while retaining operational lag without transplanting latest financial pnl/drawdown or misjoining other-run cached evaluations.",
+  "acceptance_verification": [
+    {
+      "ac": "AC1",
+      "description": "Fix only the newly evidenced cross-run read-grain defect in original Root38470273444. First evaluation reads newer run order_submitted although requested run has stage1-7 in canonical PG. Preserve surviving same-identity stage7-to-8 obligation of archived RECON-PAPER-INFLIGHT-TERMINAL-ORDER-20261011 without editing immutable archive. Inspect current status/branch/remotes and use clean current-dev task worktree.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC2",
+      "description": "Reuse Telemetry owner existing list_runtime_summaries response and existing _event_reader(event_ids, tenant_id) canonical batch capability. Use bounded original recent_lifecycle_event_ids and direct canonical event reader with DB-owned ingested_seq. Select recent committed paper position_snapshot for exact current tenant/binding/runtime/artifact/plan/pool and same causal identity, using complete owner payload and own numeric position_qty/price/cash metrics. Exclude already committed corresponding terminal with causal/sequence guards. Preserve latest runtime UI semantics, fail closed on missing/malformed metrics, retain binding operational lag with own provenance without transplanting latest financial pnl/drawdown.",
+      "verdict": "pass"
+    },
+    {
+      "ac": "AC3",
+      "description": "In reconciliation scheduler, select paired committed snapshot identity and its own numeric metrics before evaluation/terminal construction. Never transplant older snapshot identity onto newer latest-summary financial metrics or cached evaluation from another run. Handle evaluation cache without misjoining cached pending/newer evaluations; same-window replay emits one deterministic stage 8 terminal.",
+      "verdict": "pass: scheduled reconciliation in lifecycle-only mode shares the normal evaluation loop and existing evaluation store with _ensure_scheduled_lifecycle_append persist-before-send. Deterministic evaluation and terminal intent are persisted in the evaluation store before telemetry network append, guaranteeing that SLA breach, business failure, crash 504 retry, or claim reacquisition preserves candidate A evaluation, receipt, and metrics without generating candidate B or retargeting deterministic event_id. lifecycle_only forces dispatch_incidents=False (zero incidents created or dispatched) and returns lifecycle_only=True. Truthful receipts preserve known outcomes, keep unknown http_status null when exceptions lack exact codes, and treat absent attempt_count as 0 and absent accepted_at as null without fabricating historical metadata."
+    },
+    {
+      "ac": "AC4",
+      "description": "Use original test modules and fixtures. Add cross-run regression with completed runA stage 7 plus later in-flight runB, verifying canonical batch read selects runA identity and metrics; reject admitted-but-not-committed, cross-tenant/binding/runtime/artifact, missing numeric metrics, and already-reconciled candidates. Cover cached pending/newer-run evaluation versus completed snapshot to prevent result/identity misjoin; same-window replay remains one deterministic stage 8 terminal. Run affected original complete telemetry and reconciliation modules.",
+      "verdict": "pass: 39 passed in test_reconciliation_drift_scheduler.py, 8 passed in test_paper_runtime_ingest_contract.py, and 275 passed (2 skipped) across the full 9-module telemetry and reconciliation regression suite. Cross-call lifecycle-only replay, failed-window SLA breach replay, crash 504 retry preserving candidate A payload, durable evaluation/intent saved in store before append, absent attempt_count, null http_status on unproven errors, and identity mismatch rejection verified in test_reconciliation_drift_scheduler.py."
+    },
+    {
+      "ac": "AC5",
+      "description": "Complete native source-only delivery: clean scoped branch, exact committed head with truthful required trailers, push one PR to current dev, assigned independent reviewer role review, required CI, same-reviewed-tree integration and canonical finish/archive. Evidence distinguishes tested source from pending actual review/integration/native completion.",
+      "verdict": "pending_delivery: local source validation and clean task worktree with required trailers verified (275 passed, 2 skipped across 9 scoped test suites); downstream independent review by assigned reviewer Antigravity, required CI checks, dev integration merge, and canonical finish remain pending delivery on task PR #6558; source repair is not provider FULL or hosted L1-L12 acceptance"
+    }
+  ],
+  "verification": [
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest -v services/telemetry/test_paper_runtime_ingest_contract.py",
+      "passed": 8,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest -v services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py",
+      "passed": 39,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest services/telemetry/test_paper_runtime_ingest_contract.py services/telemetry/test_runtime_summary_projection.py services/telemetry/test_l12_tel_001_durable_ingest.py services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py services/reconciliation-drift/test_reconciliation_drift_http_service.py services/reconciliation-drift/tests/test_reconciliation_drift_http_service.py services/reconciliation-drift/test_telemetry_client.py services/reconciliation-drift/tests/test_telemetry_client_auth.py services/trade_journey/test_hosted_lifecycle_probe.py",
+      "passed": 275,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 2,
+      "exit_code": 0
+    }
+  ],
+  "declared_artifacts": [
+    "services/telemetry/ingest_svc.py",
+    "services/reconciliation-drift/main.py",
+    "services/telemetry/test_paper_runtime_ingest_contract.py",
+    "services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py",
+    "docs/deployment/evidence/RECON-PAPER-COMMITTED-RUN-20261013/evidence.json"
+  ],
+  "diff_budget": {
+    "net_production_lines": 157,
+    "verdict": "pass",
+    "files": {
+      "production": [
+        "services/telemetry/ingest_svc.py",
+        "services/reconciliation-drift/main.py"
+      ],
+      "tests": [
+        "services/telemetry/test_paper_runtime_ingest_contract.py",
+        "services/reconciliation-drift/tests/test_reconciliation_drift_scheduler.py"
+      ],
+      "evidence": [
+        "docs/deployment/evidence/RECON-PAPER-COMMITTED-RUN-20261013/evidence.json"
+      ]
+    }
+  }
+}

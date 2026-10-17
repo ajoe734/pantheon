@@ -515,7 +515,8 @@ class TestAsyncBatchWriter(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(writer._total_retried, 0)
 
     async def test_delayed_requeue_overflow_routes_event_to_dlq(self):
-        buf = InMemoryBuffer(maxsize=1)
+        """Accepted backlog with delayable and critical events drains under pressure without starvation or DLQ overflow."""
+        buf = InMemoryBuffer(maxsize=10)
         dlq = DeadLetterQueue()
         written_ids = []
 
@@ -532,7 +533,7 @@ class TestAsyncBatchWriter(unittest.IsolatedAsyncioTestCase):
             dead_letter_queue=dlq,
             backpressure=ctrl,
             batch_size=1,
-            batch_interval=1.0,
+            batch_interval=0.1,
         )
 
         delayed_event = _make_event(
@@ -547,28 +548,85 @@ class TestAsyncBatchWriter(unittest.IsolatedAsyncioTestCase):
         )
 
         await buf.put(delayed_event)
-        await writer.start()
+        await buf.put(critical_event)
+        try:
+            await writer.start()
+            for _ in range(50):
+                if len(written_ids) >= 2:
+                    break
+                await asyncio.sleep(0.01)
 
-        # Wait until the writer has consumed the delayable event and is sleeping
-        for _ in range(50):
-            if buf.size() == 0:
-                break
-            await asyncio.sleep(0.01)
+            # Assert actual write and IDs while writer is running BEFORE stop
+            self.assertIn("critical-fill", written_ids)
+            self.assertIn("delayed-heartbeat", written_ids)
+            self.assertEqual(len(written_ids), 2)
+            dlq_entries = dlq.get_entries_as_dicts(tag_filter=TAG_BUFFER_OVERFLOW)
+            self.assertEqual(len(dlq_entries), 0)
+            self.assertEqual(writer._total_failed, 0)
+            self.assertEqual(writer._total_dlq, 0)
+            self.assertEqual(writer._total_written, 2)
+        finally:
+            await writer.stop(graceful=True)
+
+    async def test_held_batch_flushed_on_interval_without_starvation_under_high_pressure(self):
+        """A held batch is flushed when interval elapses under HIGH pressure rather than being starved."""
+        buf = InMemoryBuffer(maxsize=10)
+        dlq = DeadLetterQueue()
+        written_ids = []
+
+        async def write_fn(batch):
+            written_ids.extend(event["event_id"] for event in batch)
+            return WriteResult.ok(len(batch))
+
+        ctrl = BackpressureController(evaluation_interval=999.0)
+        ctrl._pressure_level = PressureLevel.HIGH
+
+        writer = AsyncBatchWriter(
+            buffer=buf,
+            write_fn=write_fn,
+            dead_letter_queue=dlq,
+            backpressure=ctrl,
+            batch_size=5,  # Larger than 1 so the batch is held
+            batch_interval=0.05,  # Short interval
+        )
+
+        critical_event = _make_event(
+            event_id="critical-initial",
+            event_type="order_filled",
+        )
+        delayed_event = _make_event(
+            event_id="delayed-subsequent",
+            event_type="heartbeat",
+        )
 
         await buf.put(critical_event)
-        await asyncio.sleep(0.3)
-        ctrl._pressure_level = PressureLevel.NORMAL
-        await asyncio.sleep(0.3)
-        await writer.stop(graceful=True)
+        try:
+            await writer.start()
 
-        self.assertIn("critical-fill", written_ids)
-        self.assertNotIn("delayed-heartbeat", written_ids)
+            # Wait briefly for critical_event to be picked into batch
+            for _ in range(50):
+                if buf.size() == 0:
+                    break
+                await asyncio.sleep(0.01)
 
-        dlq_entries = dlq.get_entries_as_dicts(tag_filter=TAG_BUFFER_OVERFLOW)
-        self.assertEqual(len(dlq_entries), 1)
-        self.assertEqual(dlq_entries[0]["event"]["event_id"], "delayed-heartbeat")
-        self.assertEqual(writer._total_failed, 1)
-        self.assertEqual(writer._total_dlq, 1)
+            await buf.put(delayed_event)
+
+            # Wait for held batch to flush on interval while writer is running
+            for _ in range(50):
+                if len(written_ids) >= 2:
+                    break
+                await asyncio.sleep(0.01)
+
+            # Assert actual write and IDs while writer is running BEFORE stop
+            self.assertIn("critical-initial", written_ids)
+            self.assertIn("delayed-subsequent", written_ids)
+            self.assertEqual(len(written_ids), 2)
+            self.assertEqual(len(dlq.get_entries_as_dicts()), 0)
+            self.assertEqual(writer._total_written, 2)
+            self.assertEqual(writer._total_failed, 0)
+            self.assertEqual(writer._total_dlq, 0)
+        finally:
+            await writer.stop(graceful=True)
 
     async def test_partition_routing(self):
         buf = InMemoryBuffer(maxsize=100)

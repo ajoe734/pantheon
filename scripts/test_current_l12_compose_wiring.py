@@ -86,7 +86,7 @@ def test_teaching_worker_and_agora_service_boundaries_are_exact() -> None:
         "/run/pantheon-principals/TRAINING_SESSION_WORKER_TOKEN"
     )
     assert teaching_api["TRAINING_SESSION_JWT_SECRET"] == (
-        "${TRAINING_SESSION_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}"
+        "${TRAINING_SESSION_JWT_SECRET:-${PANTHEON_BFF_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}}"
     )
     assert teaching_worker["TRAINING_SESSION_WORKER_SERVICE_ID"] == (
         "training-session-preview-worker"
@@ -177,11 +177,13 @@ def test_deployment_capital_and_evolution_use_component_contracts() -> None:
     assert _env("paper-signal-producer")["PAPER_SIGNAL_STRATEGY"] == (
         "${PAPER_SIGNAL_STRATEGY:-artifact}"
     )
+    bff = _env("operator-bff")
     postmortems = _env("postmortems")
     evolution = _env("evolution")
+    assert bff["EVOLUTION_AUTH_TOKEN"] == evolution["EVOLUTION_AUTH_TOKEN"]
     assert postmortems["EVOLUTION_AUTH_TOKEN"] == evolution["EVOLUTION_AUTH_TOKEN"]
     assert postmortems["EVOLUTION_DEFAULT_TENANT_ID"] == (
-        "${EVOLUTION_DEFAULT_TENANT_ID:-pantheon-default}"
+        "${EVOLUTION_DEFAULT_TENANT_ID:-${PANTHEON_DEV_BFF_TENANT_ID:-pantheon-default}}"
     )
 
 

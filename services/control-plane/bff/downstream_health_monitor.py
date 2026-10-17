@@ -40,6 +40,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
+import services.background_worker_health as _background_worker_health
+import services.evolution.worker_health as _evolution_worker_health
+import services.worker_health as _worker_health
 from services.service_token_file import configured_service_token
 
 log = logging.getLogger(__name__)
@@ -121,6 +124,29 @@ class DownstreamTarget:
         }
 
 
+# services/telemetry/telemetry_event.schema.json restricts component.component_kind
+# to this set.  Configured target kinds are descriptive labels (for example
+# "runtime-owner-api") that only the BFF understands, so events carry the schema
+# value and keep the configured label in metadata.configured_component_kind.
+_TELEMETRY_COMPONENT_KINDS = frozenset(
+    {"http_service", "queue", "database", "cache", "scheduler", "external_api"}
+)
+
+
+def telemetry_component_kind(configured_kind: str) -> str:
+    """Map a configured target kind to a telemetry-schema component_kind.
+
+    File-heartbeat workers are periodic background jobs and map to
+    ``scheduler``; every other kind is probed over HTTP and maps to
+    ``http_service`` unless it is already a schema value.
+    """
+    if configured_kind in _TELEMETRY_COMPONENT_KINDS:
+        return configured_kind
+    if configured_kind == "file_worker":
+        return "scheduler"
+    return "http_service"
+
+
 # The environment names provisioned on the operator-bff service.  Aliases are
 # grouped so a single configured service is probed exactly once.
 _DEFAULT_TARGET_SPECS: Sequence[tuple[str, Sequence[str]]] = (
@@ -150,16 +176,16 @@ _DEFAULT_TARGET_SPECS: Sequence[tuple[str, Sequence[str]]] = (
 )
 
 _DEFAULT_WORKER_SPECS: Sequence[tuple[str, tuple[str, str]]] = (
-    ("paper-signal-producer", ("PAPER_PRODUCER_HEALTH_FILE", "/tmp/paper-signal-producer-health.json")),
-    ("consultation-workflow-executor", ("CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE", "/data/consultation/workflow-health.json")),
-    ("shadow-eval-scheduler", ("SHADOW_EVAL_SCHEDULER_HEALTH_FILE", "/tmp/policy-learning-shadow-eval-scheduler-health.json")),
-    ("deployment-outbox-consumer", ("DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE", "/tmp/deployment-outbox-consumer-health.json")),
-    ("reconciliation-drift-consumer", ("RECONCILIATION_DRIFT_CONSUMER_HEALTH_FILE", "/tmp/reconciliation-drift-consumer-health.json")),
-    ("reconciliation-drift-scheduler", ("RECONCILIATION_DRIFT_SCHEDULER_HEALTH_FILE", "/tmp/reconciliation-drift-scheduler-health.json")),
-    ("reconciliation-drift-incident-listener", ("RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE", "/tmp/reconciliation-drift-incident-listener-health.json")),
-    ("evolution-scheduler", ("EVOLUTION_SCHEDULER_HEALTH_FILE", "/tmp/evolution-scheduler-health.json")),
-    ("evolution-dispatch", ("EVOLUTION_DISPATCH_HEALTH_FILE", "/tmp/evolution-dispatch-health.json")),
-    ("evolution-threshold-sweep", ("EVOCHAIN_THRESHOLD_SWEEP_HEALTH_FILE", "/tmp/evolution-threshold-sweep-health.json")),
+    ("paper-signal-producer", ("PAPER_PRODUCER_HEALTH_FILE", "/data/health/paper-signal-producer-health.json")),
+    ("consultation-workflow-executor", ("CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE", "/data/health/workflow-health.json")),
+    ("shadow-eval-scheduler", ("SHADOW_EVAL_SCHEDULER_HEALTH_FILE", "/data/health/policy-learning-shadow-eval-scheduler-health.json")),
+    ("deployment-outbox-consumer", ("DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE", "/data/health/deployment-outbox-consumer-health.json")),
+    ("reconciliation-drift-consumer", ("RECONCILIATION_DRIFT_CONSUMER_HEALTH_FILE", "/data/health/reconciliation-drift-consumer-health.json")),
+    ("reconciliation-drift-scheduler", ("RECONCILIATION_DRIFT_SCHEDULER_HEALTH_FILE", "/data/health/reconciliation-drift-scheduler-health.json")),
+    ("reconciliation-drift-incident-listener", ("RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE", "/data/health/reconciliation-drift-incident-listener-health.json")),
+    ("evolution-scheduler", ("EVOLUTION_SCHEDULER_HEALTH_FILE", "/data/health/evolution-scheduler-health.json")),
+    ("evolution-dispatch", ("EVOLUTION_DISPATCH_HEALTH_FILE", "/data/health/evolution-dispatch-health.json")),
+    ("evolution-threshold-sweep", ("EVOCHAIN_THRESHOLD_SWEEP_HEALTH_FILE", "/data/health/evolution-threshold-sweep-health.json")),
 )
 
 _DYNAMIC_URL_EXCLUSIONS = {
@@ -291,43 +317,212 @@ def _probe_http(url: str, timeout: float) -> tuple[bool, int, str]:
         return False, -1, f"unexpected: {exc}"
 
 
-def _probe_file_health(file_path: str, timeout: float) -> tuple[bool, int, str]:
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        val = float(raw)
+        return val if val > 0 else default
+    except ValueError:
+        return default
+
+
+def _probe_file_health(
+    file_path: str,
+    timeout: float = 0.0,
+    *,
+    target_name: Optional[str] = None,
+) -> tuple[bool, int, str]:
     """Return (ok, status_code, failure_reason) for a file-backed worker health document."""
+    resolved_target = target_name or ""
     p = Path(file_path)
     if not p.exists():
         return False, 404, f"worker health file missing: {file_path}"
     try:
-        mtime = p.stat().st_mtime
-        age_seconds = max(0.0, time.time() - mtime)
-        if age_seconds > 180.0:
-            return False, -1, f"worker health file stale (age={age_seconds:.1f}s)"
         with p.open("r", encoding="utf-8") as handle:
             payload = json.load(handle)
         if not isinstance(payload, dict):
             return False, 500, "worker health payload is not an object"
 
-        is_ready = payload.get("ready")
-        if is_ready is False:
-            reason = payload.get("reason") or payload.get("failure_reason") or payload.get("error_code") or payload.get("message") or "ready=false"
-            return False, 500, f"functional_unready: {reason}"
-        is_ok = payload.get("ok")
-        if is_ok is False:
-            reason = payload.get("reason") or payload.get("failure_reason") or payload.get("error_code") or payload.get("message") or "ok=false"
-            return False, 500, f"functional_not_ok: {reason}"
-        is_live = payload.get("live")
-        if is_live is False:
-            reason = payload.get("reason") or payload.get("failure_reason") or payload.get("error_code") or payload.get("message") or "live=false"
-            return False, 500, f"functional_not_live: {reason}"
-        status = str(payload.get("status") or "").strip().lower()
-        if status in {"degraded", "unhealthy", "failed", "down", "error", "unavailable"}:
+        # General boolean readiness guards with reason extraction
+        if payload.get("ready") is False:
             reason = (
                 payload.get("reason")
                 or payload.get("failure_reason")
                 or payload.get("error_code")
                 or payload.get("message")
-                or f"status={status}"
+                or "ready=false"
+            )
+            return False, 500, f"functional_unready: {reason}"
+        if payload.get("ok") is False:
+            reason = (
+                payload.get("reason")
+                or payload.get("failure_reason")
+                or payload.get("error_code")
+                or payload.get("message")
+                or "ok=false"
+            )
+            return False, 500, f"functional_not_ok: {reason}"
+        if payload.get("live") is False:
+            reason = (
+                payload.get("reason")
+                or payload.get("failure_reason")
+                or payload.get("error_code")
+                or payload.get("message")
+                or "live=false"
+            )
+            return False, 500, f"functional_not_live: {reason}"
+
+        status_str = str(payload.get("status") or "").strip().lower()
+        if status_str in {"degraded", "unhealthy", "failed", "down", "error", "unavailable"}:
+            reason = (
+                payload.get("reason")
+                or payload.get("failure_reason")
+                or payload.get("error_code")
+                or payload.get("message")
+                or f"status={status_str}"
             )
             return False, 500, f"functional_degraded: {reason}"
+
+        # Consultation workflow executor has its own inline recipe
+        if resolved_target in {"consultation-workflow-executor", "consultation-svc"}:
+            fh = payload.get("functional_health")
+            if not isinstance(fh, Mapping) or fh.get("ready") is not True:
+                return False, 500, "consultation-workflow-executor functional_health.ready is false"
+            try:
+                blocked = int(fh.get("blocked_count") or 0)
+                dead_letter = int(fh.get("dead_letter_count") or 0)
+            except (ValueError, TypeError):
+                return False, 500, "consultation-workflow-executor functional_health counts invalid"
+            if blocked != 0:
+                return False, 500, f"consultation-workflow-executor functional_degraded: blocked_count={blocked} (must be 0)"
+            if dead_letter != 0:
+                return False, 500, f"consultation-workflow-executor functional_degraded: dead_letter_count={dead_letter} (must be 0)"
+            age_seconds = max(0.0, time.time() - p.stat().st_mtime)
+            if age_seconds > 90.0:
+                return False, -1, f"consultation-workflow-executor health is stale: age_seconds={age_seconds:.1f} max_age_seconds=90.0"
+            return True, 200, ""
+
+        # Fundamental worker contract: status must be ok and ticks >= 1
+        status = payload.get("status")
+        ticks = payload.get("ticks")
+        if status != "ok":
+            return False, 500, f"worker health status is not ok: status={status!r}"
+        if not isinstance(ticks, (int, float)) or int(ticks) < 1:
+            return False, 500, f"worker health has unready ticks: ticks={ticks!r}"
+
+        # Delegate to existing lightweight worker validators for identity, safety, and cadence
+        if resolved_target == "paper-signal-producer":
+            interval = max(1, int(_env_float("PAPER_PRODUCER_INTERVAL_SECONDS", 60.0)))
+            max_age = max(60.0, float(interval * 3))
+            rc = _worker_health.healthcheck(
+                health_file=str(p),
+                interval_seconds=interval,
+                worker_name="paper-signal-producer",
+                expected={
+                    "execution_mode": "paper",
+                    "live_capital_enabled": False,
+                    "live_order_submission_enabled": False,
+                },
+            )
+        elif resolved_target in {"shadow-eval-scheduler", "policy-learning-shadow-eval-scheduler"}:
+            interval = max(1, int(_env_float("SHADOW_EVAL_SCHEDULER_INTERVAL_SECONDS", 3600.0)))
+            max_age = max(60.0, float(interval * 3))
+            rc = _worker_health.healthcheck(
+                health_file=str(p),
+                interval_seconds=interval,
+                worker_name="policy-learning-shadow-eval-scheduler",
+                expected={
+                    "production_training": "fail_closed",
+                },
+            )
+        elif resolved_target == "deployment-outbox-consumer":
+            interval = _env_float("DEPLOYMENT_OUTBOX_CONSUMER_INTERVAL_SECONDS", 10.0)
+            max_age_env = os.getenv("DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_MAX_AGE_SECONDS", "").strip()
+            max_age = float(max_age_env) if max_age_env else max(60.0, interval * 3)
+            cname = os.getenv("DEPLOYMENT_OUTBOX_CONSUMER_NAME", "deployment-outbox-consumer")
+            import services.deployment.outbox_consumer_worker as _deployment_outbox_worker
+            rc = _deployment_outbox_worker.healthcheck(
+                health_file=str(p),
+                interval_seconds=interval,
+                consumer_name=cname,
+                max_age_seconds=max_age,
+            )
+        elif resolved_target == "reconciliation-drift-consumer":
+            interval = _env_float("RECONCILIATION_DRIFT_CONSUMER_INTERVAL_SECONDS", 60.0)
+            max_age_env = os.getenv("RECONCILIATION_DRIFT_CONSUMER_HEALTH_MAX_AGE_SECONDS", "").strip()
+            max_age = float(max_age_env) if max_age_env else max(300.0, interval * 3)
+            rc = _background_worker_health.healthcheck(
+                health_file=str(p),
+                interval_seconds=interval,
+                worker_name="reconciliation-drift-consumer",
+                max_age_seconds=max_age,
+            )
+        elif resolved_target == "reconciliation-drift-scheduler":
+            interval = _env_float("RECONCILIATION_DRIFT_SCHEDULER_INTERVAL_SECONDS", 300.0)
+            max_age_env = os.getenv("RECONCILIATION_DRIFT_SCHEDULER_HEALTH_MAX_AGE_SECONDS", "").strip()
+            max_age = float(max_age_env) if max_age_env else max(300.0, interval * 3)
+            rc = _background_worker_health.healthcheck(
+                health_file=str(p),
+                interval_seconds=interval,
+                worker_name="reconciliation-drift-scheduler",
+                max_age_seconds=max_age,
+            )
+        elif resolved_target == "reconciliation-drift-incident-listener":
+            interval = _env_float("RECONCILIATION_DRIFT_INCIDENT_LISTENER_INTERVAL_SECONDS", 15.0)
+            max_age_env = os.getenv("RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_MAX_AGE_SECONDS", "").strip()
+            max_age = float(max_age_env) if max_age_env else max(300.0, interval * 3)
+            rc = _background_worker_health.healthcheck(
+                health_file=str(p),
+                interval_seconds=interval,
+                worker_name="reconciliation-drift-incident-listener",
+                max_age_seconds=max_age,
+            )
+        elif resolved_target in {"evolution-scheduler", "evolution-daily-sweep-scheduler"}:
+            interval = max(1, int(_env_float("EVOLUTION_SCHEDULER_INTERVAL_SECONDS", 86400.0)))
+            max_age = max(60.0, float(interval * 3))
+            rc = _evolution_worker_health.healthcheck(
+                health_file=str(p),
+                interval_seconds=interval,
+                worker_name="evolution-scheduler",
+            )
+        elif resolved_target in {"evolution-dispatch", "evolution-dispatch-worker"}:
+            interval = max(1, int(_env_float("EVOLUTION_DISPATCH_INTERVAL_SECONDS", 30.0)))
+            max_age = max(60.0, float(interval * 3))
+            rc = _evolution_worker_health.healthcheck(
+                health_file=str(p),
+                interval_seconds=interval,
+                worker_name="evolution-dispatch",
+            )
+        elif resolved_target in {"evolution-threshold-sweep", "evolution-threshold-sweep-producer"}:
+            interval = max(1, int(_env_float("EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS", 86400.0)))
+            max_age = max(60.0, float(interval * 3))
+            rc = _evolution_worker_health.healthcheck(
+                health_file=str(p),
+                interval_seconds=interval,
+                worker_name="evolution-threshold-sweep",
+            )
+        else:
+            max_age = 180.0
+            age_seconds = max(0.0, time.time() - p.stat().st_mtime)
+            if age_seconds > max_age:
+                return False, -1, f"worker health file stale (age={age_seconds:.1f}s, max_age={max_age:.1f}s)"
+            return True, 200, ""
+
+        if rc != 0:
+            age_seconds = max(0.0, time.time() - p.stat().st_mtime)
+            if age_seconds > max_age:
+                return False, -1, f"{resolved_target} health is stale: age_seconds={age_seconds:.1f} max_age_seconds={max_age:.1f}"
+            payload_reason = (
+                payload.get("reason")
+                or payload.get("failure_reason")
+                or payload.get("error_code")
+                or payload.get("message")
+            )
+            if payload_reason:
+                return False, 500, f"{resolved_target} functional failure: {payload_reason}"
+            return False, 500, f"{resolved_target} healthcheck failed"
 
         return True, 200, ""
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
@@ -2088,6 +2283,7 @@ class DownstreamHealthMonitor:
                 _probe_file_health,
                 file_path,
                 self._http_timeout,
+                target_name=name,
             )
         else:
             path = health_path or self._health_path
@@ -2189,7 +2385,7 @@ class DownstreamHealthMonitor:
             "producer": self._producer,
             "component": {
                 "service_name": result.target_name,
-                "component_kind": target.component_kind,
+                "component_kind": telemetry_component_kind(target.component_kind),
                 "endpoint": target.health_url,
             },
             "health_status": health_status,
@@ -2198,6 +2394,7 @@ class DownstreamHealthMonitor:
             "metadata": {
                 "controller": "bff-downstream-health-monitor",
                 "target_registry_source": target.source_env,
+                "configured_component_kind": target.component_kind,
             },
         }
         if incident_ref:

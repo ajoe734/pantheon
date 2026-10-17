@@ -33,8 +33,10 @@ class _FakeReadStore:
         self._incidents = dict(incidents or {})
         self._postmortems = dict(postmortems or {})
         self._dataset_sources = dict(dataset_sources or {})
+        self.get_evolution_decision_by_id_calls = 0
 
     def get_evolution_decision_by_id(self, decision_id: str) -> Optional[Dict[str, Any]]:
+        self.get_evolution_decision_by_id_calls += 1
         return self._decisions.get(decision_id)
 
     def get_approval_decision(self, decision_id: str) -> Optional[Dict[str, Any]]:
@@ -230,3 +232,65 @@ def test_role_policy_denies_reviewer_on_high_risk_approval() -> None:
     assert reviewer_only is not None and admin is not None
     assert reviewer_only["allowedActions"]["canApproveMutation"] is False
     assert admin["allowedActions"]["canApproveMutation"] is True
+
+
+def test_mutation_review_projection_reuses_provided_decision_without_store_get() -> None:
+    store = _FakeReadStore(
+        evolution_decisions={"evo-dec-policy-001": _MEDIUM_REVIEWED_DECISION},
+        approval_decisions={"appr-policy-001": _APPROVAL_UNDER_REVIEW},
+    )
+    service = _service(store)
+    identity = _identity("admin")
+
+    # When decision dict is provided explicitly, get_evolution_decision_by_id must not be called
+    projection = service.mutation_review_projection(
+        "evo-dec-policy-001",
+        identity=identity,
+        snapshot_at="2026-07-01T01:00:00Z",
+        decision=_MEDIUM_REVIEWED_DECISION,
+    )
+    assert projection is not None
+    assert projection["decision_id"] == "evo-dec-policy-001"
+    assert store.get_evolution_decision_by_id_calls == 0
+
+    # When decision dict is omitted, get_evolution_decision_by_id must be called
+    projection2 = service.mutation_review_projection(
+        "evo-dec-policy-001",
+        identity=identity,
+        snapshot_at="2026-07-01T01:00:00Z",
+    )
+    assert projection2 is not None
+    assert store.get_evolution_decision_by_id_calls == 1
+
+
+def test_preconditions_mutation_review_projection_reuses_provided_decision() -> None:
+    from services.control_plane.bff.command_adapters.preconditions import _mutation_review_projection
+
+    store = _FakeReadStore(
+        evolution_decisions={"evo-dec-policy-001": _MEDIUM_REVIEWED_DECISION},
+        approval_decisions={"appr-policy-001": _APPROVAL_UNDER_REVIEW},
+    )
+    identity = _identity("admin")
+
+    # With decision provided, store lookup is bypassed
+    proj = _mutation_review_projection(
+        "evo-dec-policy-001",
+        identity=identity,
+        snapshot_at="2026-07-01T01:00:00Z",
+        decision=_MEDIUM_REVIEWED_DECISION,
+        read_surface=store,
+    )
+    assert proj is not None
+    assert proj["decision_id"] == "evo-dec-policy-001"
+    assert store.get_evolution_decision_by_id_calls == 0
+
+    # Without decision provided, store lookup is called
+    proj2 = _mutation_review_projection(
+        "evo-dec-policy-001",
+        identity=identity,
+        snapshot_at="2026-07-01T01:00:00Z",
+        read_surface=store,
+    )
+    assert proj2 is not None
+    assert store.get_evolution_decision_by_id_calls == 1
+

@@ -32,7 +32,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Mapping, Optional
+from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional
 
 try:  # pragma: no cover - Linux production and CI provide fcntl.
     import fcntl
@@ -1080,6 +1080,11 @@ def validate_evolution_decision(decision: EvolutionDecision) -> List[str]:
     return decision.validate()
 
 
+def _target_type_value(decision: EvolutionDecision) -> str:
+    target_type = decision.target_type
+    return target_type.value if isinstance(target_type, EvolutionTargetType) else target_type
+
+
 class EvolutionDecisionStore:
     """EvolutionDecision store with authoritative JSON/Postgres persistence.
 
@@ -1133,6 +1138,8 @@ class EvolutionDecisionStore:
             else None
         )
         self._decisions: Dict[str, EvolutionDecision] = {}
+        # Stat signature of the durable JSON file that ``_decisions`` mirrors.
+        self._loaded_signature: tuple[int, int, int] | None = None
         self._memory_lock = threading.RLock()
         self._thread_lock = self._lock_for_path(self._storage_path)
         self._lock_path = (
@@ -1249,15 +1256,27 @@ class EvolutionDecisionStore:
             return self._copy_for_caller(decision) if decision is not None else None
 
     def list_all(self) -> List[EvolutionDecision]:
+        return self._select(lambda _decision: True)
+
+    def _select(
+        self, predicate: Callable[[EvolutionDecision], bool]
+    ) -> List[EvolutionDecision]:
+        """Return caller copies of only the decisions matching ``predicate``."""
         if self._postgres_store is not None:
-            return [
-                self._copy_for_caller(EvolutionDecision.from_dict(payload))
-                for payload in self._postgres_store.list_all()
-            ]
+            matched = []
+            for payload in self._postgres_store.list_all():
+                decision = EvolutionDecision.from_dict(payload)
+                if predicate(decision):
+                    matched.append(self._copy_for_caller(decision))
+            return matched
         with self._locked(exclusive=False):
             if self._storage_path is not None:
                 self._load_unlocked()
-            return [self._copy_for_caller(item) for item in self._decisions.values()]
+            return [
+                self._copy_for_caller(item)
+                for item in self._decisions.values()
+                if predicate(item)
+            ]
 
     def find_by_target(
         self,
@@ -1277,13 +1296,20 @@ class EvolutionDecisionStore:
             target_type.value if isinstance(target_type, EvolutionTargetType) else target_type
         )
         scope = normalize_tenant_id(tenant_id) if tenant_id is not None else None
-        return [
-            decision
-            for decision in self.list_all()
-            if decision.target_id == target_id
-            and decision.to_dict()["target_type"] == target_type_value
+        return self._select(
+            lambda decision: decision.target_id == target_id
+            and _target_type_value(decision) == target_type_value
             and (scope is None or decision.tenant_id == scope)
-        ]
+        )
+
+    def find_by_linked_incident(
+        self, incident_id: str, *, tenant_id: str | None = None
+    ) -> List[EvolutionDecision]:
+        scope = normalize_tenant_id(tenant_id) if tenant_id is not None else None
+        return self._select(
+            lambda decision: decision.linked_incident_id == incident_id
+            and (scope is None or decision.tenant_id == scope)
+        )
 
     def find_active_by_target(
         self,
@@ -1300,11 +1326,9 @@ class EvolutionDecisionStore:
         ]
 
     def find_by_postmortem(self, postmortem_id: str) -> List[EvolutionDecision]:
-        return [
-            decision
-            for decision in self.list_all()
-            if decision.linked_postmortem_id == postmortem_id
-        ]
+        return self._select(
+            lambda decision: decision.linked_postmortem_id == postmortem_id
+        )
 
     def _put_postgres(self, decision: EvolutionDecision) -> None:
         """Commit one decision under a cross-replica single-active fence."""
@@ -1404,7 +1428,7 @@ class EvolutionDecisionStore:
         """
         if not candidate.is_active():
             return
-        candidate_target_type = candidate.to_dict()["target_type"]
+        candidate_target_type = _target_type_value(candidate)
         for other in self._decisions.values():
             if other.decision_id == candidate.decision_id:
                 continue
@@ -1412,7 +1436,7 @@ class EvolutionDecisionStore:
                 continue
             if other.target_id != candidate.target_id:
                 continue
-            if other.to_dict()["target_type"] != candidate_target_type:
+            if _target_type_value(other) != candidate_target_type:
                 continue
             if other.is_active():
                 raise EvolutionDecisionError(
@@ -1470,6 +1494,14 @@ class EvolutionDecisionStore:
         finally:
             if temporary_path.exists():
                 temporary_path.unlink()
+        self._loaded_signature = self._file_signature()
+
+    def _file_signature(self) -> tuple[int, int, int] | None:
+        try:
+            stat = self._storage_path.stat()  # type: ignore[union-attr]
+        except OSError:
+            return None
+        return (stat.st_ino, stat.st_size, stat.st_mtime_ns)
 
     def _load(self) -> None:
         with self._locked(exclusive=False):
@@ -1478,10 +1510,18 @@ class EvolutionDecisionStore:
     def _load_unlocked(self) -> None:
         if not self._storage_path or not self._storage_path.exists():
             self._decisions = {}
+            self._loaded_signature = None
+            return
+        # Writers replace the file atomically while holding the exclusive lock,
+        # so under our lock an unchanged inode/size/mtime means the in-memory
+        # mirror is still the durable state.
+        signature = self._file_signature()
+        if signature is not None and signature == self._loaded_signature:
             return
         text = self._storage_path.read_text(encoding="utf-8")
         if not text.strip():
             self._decisions = {}
+            self._loaded_signature = signature
             return
         raw = json.loads(text)
         if not isinstance(raw, Mapping):
@@ -1498,6 +1538,7 @@ class EvolutionDecisionStore:
             setattr(decision, "_store_snapshot", self._fingerprint(decision))
             loaded[str(decision_id)] = decision
         self._decisions = loaded
+        self._loaded_signature = signature
 
 
 def to_audit_event(decision: EvolutionDecision, event_type: str) -> Dict[str, Any]:

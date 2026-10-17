@@ -19,6 +19,7 @@ Paper-only by construction:
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
 import uuid
 from datetime import datetime, timezone
@@ -29,8 +30,13 @@ from services.execution.lean_runtime.paper_signal_producer import (
     PaperSignalProducer,
     SmokeStrategy,
 )
-from services.execution.lean_runtime.paper_runtime import PaperRuntimeService
+from services.execution.lean_runtime.paper_runtime import (
+    PaperRuntimeService,
+    RuntimeBindingResolver,
+    RuntimeTelemetryEmitter,
+)
 from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
+from services.execution.lean_runtime.signal_consumer import _REBALANCE_TIMEOUT_BARS
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
 
 _N_BINDINGS = 15
@@ -54,9 +60,12 @@ class _FakeRuntimeManagerClient:
 class _FakeTelemetryEmitter:
     """Captures every emit() call for assertion."""
 
-    def __init__(self) -> None:
+    def __init__(self, real_emitter: RuntimeTelemetryEmitter) -> None:
         self.enabled = True
         self.events: list[dict[str, Any]] = []
+        # The lifecycle outbox only admits canonical payloads, so payload
+        # construction is delegated to the production emitter.
+        self._real_emitter = real_emitter
 
     def build_event(
         self,
@@ -67,18 +76,13 @@ class _FakeTelemetryEmitter:
         event_id: str | None = None,
         created_at: str | None = None,
     ) -> dict[str, Any]:
-        event_metrics = dict(metrics)
-        stamp_key = "pnl_as_of" if event_type == "pnl_snapshot" else "drawdown_as_of"
-        stamp = event_metrics.pop(stamp_key, None)
-        return {
-            "event_id": event_id,
-            "event_type": event_type,
-            "created_at": created_at,
-            "binding_id": (metadata or {}).get("runtime_binding_id"),
-            stamp_key: stamp,
-            "metrics": event_metrics,
-            "metadata": dict(metadata or {}),
-        }
+        return self._real_emitter.build_event(
+            event_type,
+            metrics,
+            metadata,
+            event_id=event_id,
+            created_at=created_at,
+        )
 
     def emit_payload(self, payload: dict[str, Any]) -> bool:
         self.events.append(json.loads(json.dumps(payload)))
@@ -143,7 +147,7 @@ def _make_identity(runtime_id: str) -> RuntimeIdentity:
 # Fixtures: 15 bindings
 # ---------------------------------------------------------------------------
 
-def _build_fleet(n: int) -> list[tuple[BindingRef, InMemoryPendingSignalStore, PaperRuntimeService, _FakeTelemetryEmitter]]:
+def _build_fleet(n: int, outbox_dir: str) -> list[tuple[BindingRef, InMemoryPendingSignalStore, PaperRuntimeService, _FakeTelemetryEmitter]]:
     """Return one (binding_ref, store, service, telemetry) tuple per binding."""
     fleet = []
     for i in range(1, n + 1):
@@ -151,18 +155,23 @@ def _build_fleet(n: int) -> list[tuple[BindingRef, InMemoryPendingSignalStore, P
         runtime_id = f"paper-runtime-wire-{i:03d}"
         strategy_id = f"strategy-devloop-{i:03d}"
 
-        ref = BindingRef(binding_id=binding_id, strategy_id=strategy_id, symbol="AAPL.US")
+        ref = BindingRef(binding_id=binding_id, strategy_id=strategy_id, symbol="AAPL.US", runtime_id=runtime_id)
         store = InMemoryPendingSignalStore()
-        telemetry = _FakeTelemetryEmitter()
         binding_dict = _make_binding(binding_id, runtime_id)
+        identity = _make_identity(runtime_id)
+        rm_client = _FakeRuntimeManagerClient(binding_dict)
+        telemetry = _FakeTelemetryEmitter(
+            RuntimeTelemetryEmitter(identity, RuntimeBindingResolver(rm_client, runtime_id))
+        )
 
         service = PaperRuntimeService(
             store=store,
-            identity=_make_identity(runtime_id),
-            runtime_manager_client=_FakeRuntimeManagerClient(binding_dict),
+            identity=identity,
+            runtime_manager_client=rm_client,
             telemetry_emitter=telemetry,
             poll_interval_seconds=3600,
             max_batch_size=50,
+            lifecycle_outbox_path=f"{outbox_dir}/{runtime_id}.lifecycle-outbox.json",
         )
         fleet.append((ref, store, service, telemetry))
     return fleet
@@ -175,6 +184,11 @@ def _build_fleet(n: int) -> list[tuple[BindingRef, InMemoryPendingSignalStore, P
 class TestDevloopWire(unittest.TestCase):
     """15 active paper bindings driven by PaperSignalProducer (no manual seed)."""
 
+    def _fleet(self):
+        outbox_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(outbox_dir.cleanup)
+        return _build_fleet(_N_BINDINGS, outbox_dir.name)
+
     def _run_wire(self) -> list[tuple[dict[str, Any], _FakeTelemetryEmitter]]:
         """
         1. Build 15 (BindingRef, store, service) triples.
@@ -182,7 +196,7 @@ class TestDevloopWire(unittest.TestCase):
         3. drain_once() on each service.
         4. Return (snapshot, telemetry) pairs.
         """
-        fleet = _build_fleet(_N_BINDINGS)
+        fleet = self._fleet()
 
         # ---- organic produce (no manual enqueue) ---
         refs = [ref for ref, *_ in fleet]
@@ -203,7 +217,10 @@ class TestDevloopWire(unittest.TestCase):
         # ---- drain each service once ---
         results = []
         for ref, store, service, telemetry in fleet:
-            snapshot = service.drain_once()
+            # Producer signals carry a run_id, so the consumer buffers them as a
+            # rebalance batch and executes the partial batch after the timeout bars.
+            for _ in range(_REBALANCE_TIMEOUT_BARS):
+                snapshot = service.drain_once()
             results.append((snapshot, telemetry))
         return results
 
@@ -245,7 +262,7 @@ class TestDevloopWire(unittest.TestCase):
 
     def test_no_cross_binding_signal_contamination(self) -> None:
         """Signals must stay isolated: each binding's store holds its own strategy_id."""
-        fleet = _build_fleet(_N_BINDINGS)
+        fleet = self._fleet()
         refs = [ref for ref, *_ in fleet]
         stores_by_id = {ref.binding_id: store for ref, store, *_ in fleet}
 
@@ -265,7 +282,7 @@ class TestDevloopWire(unittest.TestCase):
 
     def test_producer_tick_returns_all_15_counts(self) -> None:
         """PaperSignalProducer.tick() must report 1 enqueued signal for every binding."""
-        fleet = _build_fleet(_N_BINDINGS)
+        fleet = self._fleet()
         refs = [ref for ref, *_ in fleet]
         stores_by_id = {ref.binding_id: store for ref, store, *_ in fleet}
 
