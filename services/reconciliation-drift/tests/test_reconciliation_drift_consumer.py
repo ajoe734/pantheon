@@ -4,7 +4,7 @@ import importlib.util
 import json
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -479,3 +479,130 @@ def test_tick_budget_bounds_slow_downstream_and_drains_across_ticks(monkeypatch)
     assert len(ticks) >= 2  # backlog drained across ticks, not in one
     assert all(elapsed < 0.5 + 2 for elapsed, _ in ticks)  # budget plus one post
     assert not state.dead_letters
+
+
+def _run_once(consumer, state, at, **kwargs):
+    return consumer.run_runtime_summary_consumer_once(
+        service_url="http://reconciliation-drift-svc:8102",
+        telemetry_url="http://telemetry:8083",
+        state=state,
+        now_fn=lambda: at,
+        **kwargs,
+    )
+
+
+def test_traceless_paused_summary_is_ineligible_not_invalid() -> None:
+    consumer = _load_consumer_module()
+    paused = _runtime_summary()
+    paused.pop("trace_id")
+    paused["state"] = "paused"
+    with tempfile.TemporaryDirectory() as data_dir:
+        state = consumer.ConsumerWorkerState(Path(data_dir) / "state.json")
+        with mock.patch.object(consumer, "fetch_runtime_summaries", return_value=[paused]), mock.patch.object(
+            consumer, "post_events"
+        ) as post:
+            result = _run_once(consumer, state, datetime(2026, 10, 17, 1, 0, tzinfo=timezone.utc))
+    assert result["invalid_summary_count"] == 0
+    assert result["ineligible_summary_count"] == 1
+    assert result["status"] == "ok"
+    assert result["last_success_at"] == "2026-10-17T01:00:00Z"
+    post.assert_not_called()
+
+
+def test_retired_binding_summary_is_ineligible(monkeypatch) -> None:
+    consumer = _load_consumer_module()
+    retired = _runtime_summary()
+    retired["state"] = "retired"
+    monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", "http://runtime-manager")
+    with tempfile.TemporaryDirectory() as data_dir:
+        state = consumer.ConsumerWorkerState(Path(data_dir) / "state.json")
+        with mock.patch.object(consumer, "fetch_runtime_summaries", return_value=[retired]), mock.patch.object(
+            consumer, "_lookup_runtime_binding", return_value={"status": "retired"}
+        ), mock.patch.object(consumer, "post_events") as post:
+            result = _run_once(consumer, state, datetime(2026, 10, 17, 1, 0, tzinfo=timezone.utc))
+    assert result["invalid_summary_count"] == 0
+    assert result["ineligible_summaries"][0]["reason"] == "binding_retired"
+    assert result["status"] == "ok"
+    post.assert_not_called()
+
+
+def test_dns_failure_stays_pending_then_recovers_with_backoff() -> None:
+    consumer = _load_consumer_module()
+    err = consumer.TransientDeliveryError(
+        "reconciliation-drift service unavailable: [Errno -3] Temporary failure in name resolution"
+    )
+    with tempfile.TemporaryDirectory() as data_dir:
+        state = consumer.ConsumerWorkerState(Path(data_dir) / "state.json")
+        t0 = datetime(2026, 10, 17, 2, 13, tzinfo=timezone.utc)
+        with mock.patch.object(consumer, "fetch_runtime_summaries", return_value=[_runtime_summary()]), mock.patch.object(
+            consumer, "post_events", side_effect=err
+        ) as post:
+            first = _run_once(consumer, state, t0, max_attempts=3)
+            assert post.call_count == 3
+            assert first["dead_letter_count"] == 0
+            assert first["pending_count"] == 1
+            assert first["transient_failure_count"] == 1
+            assert first["last_success_at"] is None
+            # still inside the backoff window: no new attempt
+            _run_once(consumer, state, t0 + timedelta(seconds=5), max_attempts=3)
+            assert post.call_count == 3
+        with mock.patch.object(consumer, "fetch_runtime_summaries", return_value=[_runtime_summary()]), mock.patch.object(
+            consumer, "post_events", return_value={"drift_report_count": 0}
+        ):
+            healed = _run_once(consumer, state, t0 + timedelta(minutes=2), max_attempts=3)
+    assert healed["delivered_event_count"] == 1
+    assert healed["pending_count"] == 0
+    assert healed["dead_letter_count"] == 0
+    assert healed["last_success_at"] is not None
+
+
+def test_transient_failure_dead_letters_after_max_age() -> None:
+    consumer = _load_consumer_module()
+    err = consumer.TransientDeliveryError("timeout")
+    with tempfile.TemporaryDirectory() as data_dir:
+        state = consumer.ConsumerWorkerState(Path(data_dir) / "state.json")
+        t0 = datetime(2026, 10, 17, 2, 13, tzinfo=timezone.utc)
+        with mock.patch.object(consumer, "fetch_runtime_summaries", return_value=[_runtime_summary()]), mock.patch.object(
+            consumer, "post_events", side_effect=err
+        ):
+            _run_once(consumer, state, t0, max_attempts=1)
+            late = _run_once(consumer, state, t0 + timedelta(days=2), max_attempts=1)
+    assert late["dead_letter_count"] == 1
+
+
+def test_completed_trim_is_by_time_not_key_order_and_keeps_current_event() -> None:
+    consumer = _load_consumer_module()
+    with tempfile.TemporaryDirectory() as data_dir:
+        path = Path(data_dir) / "state.json"
+        state = consumer.ConsumerWorkerState(path)
+        assert state.acquire_lease(
+            worker_id="w", lease_seconds=60, now=datetime(2026, 10, 17, tzinfo=timezone.utc)
+        )
+        base = datetime(2026, 10, 1, tzinfo=timezone.utc)
+        for i in range(consumer.COMPLETED_RETENTION + 50):
+            stamp = (base + timedelta(seconds=i)).isoformat().replace("+00:00", "Z")
+            state.completed[f"k{i:05d}"] = {"completed_at": stamp}
+        current = consumer.ConsumerWorkerState.event_key({"event_id": "evt-real-001"})
+        state.completed[current] = {"completed_at": "2026-09-01T00:00:00Z"}  # oldest
+        state.save()
+        reloaded = consumer.ConsumerWorkerState(path)  # sorted keys on disk
+        reloaded.trim_completed(protected=[current])
+    assert len(reloaded.completed) == consumer.COMPLETED_RETENTION
+    assert current in reloaded.completed
+    assert "k00000" not in reloaded.completed  # oldest unprotected evicted
+    newest = f"k{consumer.COMPLETED_RETENTION + 49:05d}"
+    assert newest in reloaded.completed
+
+
+def test_last_success_recorded_with_old_dead_letters_present() -> None:
+    consumer = _load_consumer_module()
+    with tempfile.TemporaryDirectory() as data_dir:
+        state = consumer.ConsumerWorkerState(Path(data_dir) / "state.json")
+        state.dead_letters["old"] = {"event": {"event_id": "old"}, "first_seen_at": "2026-10-06T20:54:00Z"}
+        with mock.patch.object(consumer, "fetch_runtime_summaries", return_value=[_runtime_summary()]), mock.patch.object(
+            consumer, "post_events", return_value={"drift_report_count": 0}
+        ):
+            result = _run_once(consumer, state, datetime(2026, 10, 17, 3, 0, tzinfo=timezone.utc))
+    assert result["delivered_event_count"] == 1
+    assert result["last_success_at"] == "2026-10-17T03:00:00Z"
+    assert result["dead_letter_count"] == 1
