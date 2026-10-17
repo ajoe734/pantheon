@@ -9,9 +9,9 @@
   "change": "ResearchService.list_workshop_plans now maps each stored plan through the existing _project_plan_from_owner (same as get_plan). No store, helper, DTO, route or frontend change.",
   "tests": {
     "new_base_failing": "test_workshop_plan_list_matches_owner_completed_detail (fails on base: 'running' == 'completed'; passes with fix)",
-    "asserts": ["list == detail status/run_ids/stage statuses", "cancelled plan precedence unchanged", "owner run records unchanged after reads (no write)", "other tenant list excludes plan"],
+    "asserts": ["list == detail status/run_ids/stage statuses", "second plan is genuinely cancelled via the existing POST /cancel path; list == detail == cancelled", "owner run records unchanged after reads (no write)", "RAW stored plan (research_store.get_plan) for the dispatched and cancelled plans snapshotted before and asserted identical after list+detail GETs, while the projected response is completed (AC3 raw command-store unchanged)", "other tenant list excludes plan"],
     "results": {
-      "test_agora_research_run_projection.py + test_agora_research_candidate_governed.py": "34 passed, 0 skipped",
+      "test_agora_research_run_projection.py + test_agora_research_candidate_governed.py": "projection file 19 passed; with candidate_governed 29 passed, 5 failed (numpy/vectorbt missing in this venv, same 5 as the earlier batch; overlapping batches, not summed)",
       "broader batch (projection, candidate_governed, store_backend, write_authority, console_research_projection, research_router, workshop_request_authorization, agora_strategy_workshop)": "184 passed, 3 skipped, 5 failed; the 5 failures are all in candidate_governed and were caused by numpy/vectorbt missing from the venv; they fail identically on base and pass (34 passed) once services/research/vectorbt/requirements.txt is installed"
     }
   },
