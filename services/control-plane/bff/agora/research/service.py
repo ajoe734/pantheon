@@ -32,6 +32,24 @@ _OWNER_STATUS_TO_EXEC_STATUS: dict[str, str] = {
     "cancelled": "cancelled",
 }
 
+_EXEC_STATUS_PROGRESS: dict[str, tuple[str, int, str]] = {
+    "running": ("running", 0, "Run in progress"),
+    "succeeded": ("completed", 100, "Run completed"),
+    "failed": ("failed", 100, "Run failed"),
+    "cancelled": ("cancelled", 100, "Run cancelled"),
+}
+
+
+def _owner_progress(owner: dict, exec_status: str, updated_at: Any) -> Optional[dict]:
+    """DTO-only progress derived from the owner status; never persisted."""
+    if isinstance(owner.get("progress"), dict) and owner["progress"]:
+        return dict(owner["progress"])
+    mapped = _EXEC_STATUS_PROGRESS.get(exec_status)
+    if mapped is None:
+        return None
+    phase, percent, message = mapped
+    return {"phase": phase, "percent": percent, "message": message, "updated_at": updated_at}
+
 from .routes.common import (
     CandidateDiscussionRequest,
     CandidateMemberReviewRequest,
@@ -636,6 +654,9 @@ class AgoraResearchService:
                 "parent_run_id": owner.get("parent_run_id"),
                 "execution_status": _OWNER_STATUS_TO_EXEC_STATUS.get(status, status),
                 "outcome": outcome,
+                **({"progress": prog} if (prog := _owner_progress(
+                    owner, _OWNER_STATUS_TO_EXEC_STATUS.get(status, status),
+                    owner.get("updated_at") or owner.get("created_at"))) else {}),
                 "artifact_refs": owner.get("artifact_refs") or [],
                 "evidence_refs": owner.get("evidence_refs") or [],
                 "updated_at": owner.get("updated_at") or owner.get("created_at"),
@@ -869,6 +890,9 @@ class AgoraResearchService:
             "artifact_refs": owner_run.get("artifact_refs") or [],
             "evidence_refs": owner_run.get("evidence_refs") or [],
             "metrics": owner_run.get("metrics") or [],
+            **({"progress": prog} if (prog := _owner_progress(
+                owner_run, _OWNER_STATUS_TO_EXEC_STATUS.get(status, status),
+                owner_run.get("updated_at") or owner_run.get("created_at"))) else {}),
             "receipt": owner_run.get("receipt"),
             "correlation_id": owner_run.get("correlation_id"),
             "executor": owner_run.get("executor"),
