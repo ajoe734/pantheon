@@ -1,0 +1,24 @@
+{
+  "task_id": "TEACHING-CONSULTATION-OWNER-ACK-20261017",
+  "change_class": "corrective",
+  "summary": "Require real Consultation owner acknowledgement for Teaching handoff by replacing local fake fallback with canonical create -> submit -> same-ID GET readback verification.",
+  "incident_context": {
+    "symptom": "When Teaching evaluation required consultation handoff but Consultation service was unwired, unauthenticated, or unavailable, TrainingConsultationClient returned a locally fabricated submitted receipt instead of surfacing a real owner boundary error, masking missing integration and leaving orphan receipts.",
+    "root_cause": "TrainingConsultationClient generated synthetic receipt IDs locally and swallowed exceptions with an unconditional status='submitted' fallback when base_url was unset or when remote calls failed. Furthermore, docker-compose.yml did not wire PANTHEON_CONSULTATION_API_URL or CONSULTATION_SERVICE_TOKEN to training-session-svc.",
+    "resolution": "Removed local fake fallback and exception swallowing in TrainingConsultationClient. Reused canonical ConsultationServiceClient with tenant and service bearer authentication to create (DRAFT) -> submit (SUBMITTED) -> GET readback verify owner acknowledgement with exact same-ID match. Used add_unredirected_header to prevent cross-origin redirect credential leaks while keeping shared client generic and passing training-session actor at wrapper. Deterministically scoped request ID to sha256(tenant_id:session_id:eval_id) to prevent duplicate creation on retry. Wired PANTHEON_CONSULTATION_API_URL and CONSULTATION_SERVICE_TOKEN into training-session-svc in docker-compose.yml."
+  },
+  "acceptance_verification": {
+    "ac1_canonical_owner_ack_and_no_fake_receipt": "passed: TrainingConsultationClient executes canonical create_request -> submit_request -> get_request verification with exact same-ID match. Missing base_url, wrong request_id/tenant/target/eval_id, or owner failure raises ConsultationClientError fail-closed; no synthetic submitted receipt is returned.",
+    "ac2_protocol_reuse_and_scoped_request_id": "passed: Reused ConsultationServiceClient with per-call X-Pantheon-Tenant-Id, Bearer token, and X-Pantheon-Service-Actor headers using add_unredirected_header to prevent cross-origin redirect credential leaks. Generic client defaults service_actor to empty so other callers are not misattributed; Training wrapper explicitly supplies training-session machine actor. Wired existing docker-compose env variables without creating new auth framework or schemas. Request ID is deterministically scoped as creq-teach-{sha256(tenant:session:eval)[:12]}.",
+    "ac3_real_http_boundary_and_rejection_tests": "passed: Validated with in-process HTTP owner boundary running consultation service with auth required. Verified successful create/submit/readback flow and fail-closed rejections for wrong request_id, wrong tenant, wrong target, wrong eval_id, unacknowledged status, submit failure, absent wiring, missing auth token, invalid auth token, and remote error.",
+    "ac4_scoped_files_and_net_budget": "passed: Exactly 7 declared files modified/created. Production code net line growth is 69 lines (docker-compose: +5, consultation/client.py: +39, training-session/consultation_client.py: +25), safely within the 120-line ceiling."
+  },
+  "local_verification": {
+    "commands": [
+      "$PANTHEON_DEPENDENCY_PYTHON -m pytest -v services/consultation/test_request_idempotency.py",
+      "$PANTHEON_DEPENDENCY_PYTHON -m pytest -v services/training-session/tests/test_consultation_client.py",
+      "$PANTHEON_DEPENDENCY_PYTHON -m pytest -v services/training-session/tests/test_teaching_evaluation_readback.py"
+    ],
+    "result": "passed (32 tests passed across 3 test suites in 19.50s)"
+  }
+}

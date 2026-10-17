@@ -180,3 +180,115 @@ def test_consultation_client_submit_request_calls_canonical_endpoint() -> None:
         "POST",
         "/api/consult/requests/cr-workshop-001/submit",
     )
+
+
+def test_consultation_client_passes_tenant_and_auth_headers() -> None:
+    client = ConsultationServiceClient(
+        base_url="http://consultation-svc:8096",
+        token="test-machine-token",
+        service_actor="training-session",
+        tenant_id="tenant-default",
+    )
+    expected = {"request_id": "cr-workshop-001", "status": "submitted"}
+
+    with mock.patch.object(client, "_request_json", return_value=expected) as request_json:
+        assert client.submit_request("cr-workshop-001", tenant_id="tenant-custom") == expected
+
+    request_json.assert_called_once_with(
+        "POST",
+        "/api/consult/requests/cr-workshop-001/submit",
+        tenant_id="tenant-custom",
+    )
+
+
+def test_consultation_client_create_request_passes_payload_tenant() -> None:
+    client = ConsultationServiceClient(
+        base_url="http://consultation-svc:8096",
+        token="test-machine-token",
+        service_actor="training-session",
+    )
+    payload = _payload(tenant_id="tenant-payload")
+    expected = {"request_id": "cr-workshop-001", "status": "draft"}
+
+    with mock.patch.object(client, "_request_json", return_value=expected) as request_json:
+        assert client.create_request(payload) == expected
+
+    request_json.assert_called_once_with(
+        "POST",
+        "/api/consult/requests",
+        payload,
+        tenant_id="tenant-payload",
+    )
+
+
+def test_consultation_client_request_json_sets_exact_headers() -> None:
+    import urllib.request
+    client = ConsultationServiceClient(
+        base_url="http://127.0.0.1:8096",
+        token="machine-bearer-token",
+        service_actor="training-session",
+        tenant_id="tenant-alpha",
+    )
+    with mock.patch("urllib.request.urlopen") as mock_urlopen:
+        mock_resp = mock.MagicMock()
+        mock_resp.read.return_value = b'{"status": "ok"}'
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        result = client.get_request("cr-001", tenant_id="tenant-override")
+        assert result == {"status": "ok"}
+
+        req = mock_urlopen.call_args[0][0]
+        assert isinstance(req, urllib.request.Request)
+        assert req.get_header("Authorization") == "Bearer machine-bearer-token"
+        assert req.get_header("X-pantheon-tenant-id") == "tenant-override"
+        assert req.get_header("X-pantheon-service-actor") == "training-session"
+
+
+def test_consultation_client_default_service_actor_is_generic() -> None:
+    import os
+    import urllib.request
+    with mock.patch.dict(os.environ, {}, clear=True):
+        client = ConsultationServiceClient(
+            base_url="http://127.0.0.1:8096",
+            token="test-token",
+            tenant_id="tenant-alpha",
+        )
+        assert client._service_actor == ""
+
+        with mock.patch("urllib.request.urlopen") as mock_urlopen:
+            mock_resp = mock.MagicMock()
+            mock_resp.read.return_value = b'{"status": "ok"}'
+            mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+            client.get_request("cr-002")
+            req = mock_urlopen.call_args[0][0]
+            assert req.get_header("X-pantheon-service-actor") is None
+
+
+def test_consultation_client_unredirected_headers_not_forwarded_on_redirect() -> None:
+    import urllib.request
+    client = ConsultationServiceClient(
+        base_url="http://127.0.0.1:8096",
+        token="secret-token",
+        service_actor="training-session",
+        tenant_id="tenant-alpha",
+    )
+    with mock.patch("urllib.request.urlopen") as mock_urlopen:
+        mock_resp = mock.MagicMock()
+        mock_resp.read.return_value = b'{"status": "ok"}'
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        client.get_request("cr-003")
+        req = mock_urlopen.call_args[0][0]
+
+        handler = urllib.request.HTTPRedirectHandler()
+        redirected = handler.redirect_request(
+            req, None, 302, "Found", {}, "http://cross-origin.example.com/api"
+        )
+        assert redirected is not None
+        redirected_headers = dict(redirected.header_items())
+        assert "Authorization" not in redirected_headers
+        assert "X-pantheon-tenant-id" not in redirected_headers
+        assert "X-pantheon-service-actor" not in redirected_headers
+
+
