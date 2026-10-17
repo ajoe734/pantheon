@@ -2815,7 +2815,7 @@ class PaperRuntimeService:
                 }
             )
             d_lag = getattr(self._telemetry, "last_delivery_lag_ms", None)
-            lags = {"queue_lag_ms": self._observed_queue_lag_ms, "event_delivery_lag_ms": d_lag, "delivery_lag_ms": d_lag}
+            lags = {"queue_lag_ms": self._current_queue_lag_ms(), "event_delivery_lag_ms": d_lag, "delivery_lag_ms": d_lag}
             return {
                 **self._identity.to_health_payload(),
                 "status": (
@@ -3339,7 +3339,7 @@ class PaperRuntimeService:
         now = _iso_now()
         if self._last_heartbeat_at == now:
             return
-        q_lag, d_lag = self._observed_queue_lag_ms, getattr(self._telemetry, "last_delivery_lag_ms", None)
+        q_lag, d_lag = self._current_queue_lag_ms(), getattr(self._telemetry, "last_delivery_lag_ms", None)
         lags = {k: v for k, v in (("queue_lag_ms", q_lag), ("event_delivery_lag_ms", d_lag), ("delivery_lag_ms", d_lag)) if v is not None}
         hb_meta = {
             "runtime_package": "paper_execution_runtime",
@@ -3681,6 +3681,24 @@ class PaperRuntimeService:
     def _emit_deploy_completed(self) -> None:
         if self._telemetry.enabled:
             self._telemetry.emit_deploy_completed()
+
+    def _current_queue_lag_ms(self) -> float | None:
+        """0 when idle, else age of the oldest pending signal from max(enqueued_at, runtime start)."""
+        depth = self._safe_queue_depth()
+        if depth is None:
+            return None
+        if depth <= 0:
+            return 0.0
+        try:
+            raw_ts = self._store.oldest_pending_enqueued_at()
+        except Exception:  # noqa: BLE001
+            return None
+        enq_dt = _parse_iso_utc(raw_ts) if isinstance(raw_ts, str) else None
+        if enq_dt is None:
+            return None
+        wait_start = max(enq_dt, self._started_at_dt)
+        lag = (datetime.now(timezone.utc) - wait_start).total_seconds() * 1000.0
+        return round(lag, 3) if lag >= 0 else None
 
     def _safe_queue_depth(self) -> int | None:
         try:
