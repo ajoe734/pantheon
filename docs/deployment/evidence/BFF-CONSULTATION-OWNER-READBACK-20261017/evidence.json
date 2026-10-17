@@ -1,6 +1,6 @@
 {
   "task_id": "BFF-CONSULTATION-OWNER-READBACK-20261017",
-  "summary": "Correct existing BFF Consultation owner authentication and readback. Wired operator-bff machine token in docker-compose.yml, resolved verified caller tenant using existing OwnerReadContextMiddleware and bound_tenant in owner_reads.py, bound Consultation client with machine auth and verified tenant in operations_consultation.py without swallowing owner errors or falling back to local store, routed Workshop canonical consultation transport through shared ConsultationServiceClient with machine auth and caller tenant, resolved B5 by eliminating BFF_CONSULTATION_SERVICE_TOKEN alias, resolved B6 by eliminating unvalidated cookie rewriting and restoring production middleware order, and resolved B7 by starting owner in an owned bounded subprocess without static or dynamic main imports.",
+  "summary": "Correct existing BFF Consultation owner authentication and readback. Wired operator-bff machine token in docker-compose.yml, resolved verified caller tenant using existing OwnerReadContextMiddleware and bound_tenant in owner_reads.py, bound Consultation client with machine auth and verified tenant in operations_consultation.py without swallowing owner errors or falling back to local store, routed Workshop canonical consultation transport through shared ConsultationServiceClient with machine auth and caller tenant, resolved B5 by eliminating BFF_CONSULTATION_SERVICE_TOKEN alias, resolved B6 by eliminating unvalidated cookie rewriting and restoring production middleware order, and resolved B7 by starting owner in an owned bounded subprocess without static or dynamic main imports. Verified with merged prerequisite PR #6616 covering /api/v1/ cookie session adaptation.",
   "bounded_input_sha256": "451e802bbe77dda431d7989f245fa7d06ee9cededb4528bba394af147036509e",
   "predecessor": {
     "task": "TEACHING-CONSULTATION-OWNER-ACK-20261017",
@@ -8,7 +8,9 @@
   },
   "prerequisite": {
     "task": "BFF-EXISTING-COOKIE-API-GUARD-20261017",
-    "status": "open",
+    "status": "merged_into_dev",
+    "merge_commit": "b5ca0bbbfc3ba7cb76308277346afc690014af0c",
+    "pr": 6616,
     "scope": "Guarded DevBrowserSessionMiddleware /api/v1/ cookie session adaptation"
   },
   "net_production_line_growth": 108,
@@ -33,9 +35,14 @@
   },
   "validation": [
     {
-      "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest -v services/control-plane/bff/tests/test_workshop_request_authorization.py",
-      "total_passed": 6,
-      "exit_status": 0
+      "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest -v services/control-plane/bff/tests/test_operations_consultation_ports.py services/control-plane/bff/tests/test_workshop_request_authorization.py services/control-plane/bff/tests/test_agora_workshop_partial_effects.py",
+      "total_passed": 46,
+      "exit_status": 0,
+      "breakdown": {
+        "test_operations_consultation_ports.py": 26,
+        "test_workshop_request_authorization.py": 6,
+        "test_agora_workshop_partial_effects.py": 14
+      }
     },
     {
       "command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest -v services/control-plane/bff/tests/test_bff_test_architecture.py",
