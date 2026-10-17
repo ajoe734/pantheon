@@ -39,6 +39,9 @@ class ConsultationServiceClient:
         *,
         base_url: Optional[str] = None,
         timeout_seconds: Optional[float] = None,
+        token: Optional[str] = None,
+        service_actor: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> None:
         self._base_url = (base_url or self.resolve_base_url() or "").strip().rstrip("/")
         self._timeout_seconds = float(
@@ -46,6 +49,9 @@ class ConsultationServiceClient:
             if timeout_seconds is not None
             else os.getenv("PANTHEON_CONSULTATION_API_TIMEOUT_SECONDS", "10")
         )
+        self._token = token.strip() if token is not None else (os.getenv("CONSULTATION_SERVICE_TOKEN") or os.getenv("CONSULTATION_API_TOKEN") or "").strip()
+        self._service_actor = (service_actor or os.getenv("CONSULTATION_SERVICE_ACTOR") or os.getenv("PANTHEON_SERVICE_ACTOR") or "training-session").strip()
+        self._tenant_id = (tenant_id or os.getenv("PANTHEON_TENANT_ID") or "").strip()
 
     @classmethod
     def resolve_base_url(cls) -> Optional[str]:
@@ -68,6 +74,7 @@ class ConsultationServiceClient:
         target_type: Optional[str] = None,
         target_id: Optional[str] = None,
         status: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         query: Dict[str, str] = {}
         if target_type:
@@ -76,25 +83,32 @@ class ConsultationServiceClient:
             query["target_id"] = target_id
         if status:
             query["status"] = status
-        payload = self._request_json("GET", self._with_query("/api/consult/requests", query))
+        kwargs = {"tenant_id": tenant_id} if tenant_id is not None else {}
+        payload = self._request_json(
+            "GET", self._with_query("/api/consult/requests", query), **kwargs
+        )
         return list(payload or [])
 
-    def get_request(self, request_id: str) -> Optional[Dict[str, Any]]:
+    def get_request(self, request_id: str, *, tenant_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        kwargs = {"tenant_id": tenant_id} if tenant_id is not None else {}
         try:
-            return self._request_json("GET", f"/api/consult/requests/{request_id}")
+            return self._request_json("GET", f"/api/consult/requests/{request_id}", **kwargs)
         except ConsultationClientError as exc:
             if exc.status_code == 404:
                 return None
             raise
 
-    def create_request(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return self._request_json("POST", "/api/consult/requests", payload)
+    def create_request(self, payload: Dict[str, Any], *, tenant_id: Optional[str] = None) -> Dict[str, Any]:
+        target_tenant = tenant_id or (str(payload.get("tenant_id")) if payload.get("tenant_id") else None)
+        kwargs = {"tenant_id": target_tenant} if target_tenant is not None else {}
+        return self._request_json("POST", "/api/consult/requests", payload, **kwargs)
 
     def intake_policy_learning_candidate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         return self._request_json("POST", "/api/consult/intake/policy-learning-candidate", payload)
 
-    def submit_request(self, request_id: str) -> Dict[str, Any]:
-        return self._request_json("POST", f"/api/consult/requests/{request_id}/submit")
+    def submit_request(self, request_id: str, *, tenant_id: Optional[str] = None) -> Dict[str, Any]:
+        kwargs = {"tenant_id": tenant_id} if tenant_id is not None else {}
+        return self._request_json("POST", f"/api/consult/requests/{request_id}/submit", **kwargs)
 
     def cancel_request(
         self,
@@ -102,14 +116,14 @@ class ConsultationServiceClient:
         *,
         actor_id: str,
         canceled_at: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        payload: Dict[str, Any] = {
-            "actor_ref": {"actor_type": "operator", "actor_id": actor_id},
-        }
+        payload: Dict[str, Any] = {"actor_ref": {"actor_type": "operator", "actor_id": actor_id}}
         if canceled_at:
             payload["canceled_at"] = canceled_at
+        kwargs = {"tenant_id": tenant_id} if tenant_id is not None else {}
         try:
-            return self._request_json("POST", f"/api/consult/requests/{request_id}/cancel", payload)
+            return self._request_json("POST", f"/api/consult/requests/{request_id}/cancel", payload, **kwargs)
         except ConsultationClientError as exc:
             if exc.status_code == 404:
                 return None
@@ -185,6 +199,10 @@ class ConsultationServiceClient:
         method: str,
         path: str,
         payload: Optional[Dict[str, Any]] = None,
+        *,
+        tenant_id: Optional[str] = None,
+        token: Optional[str] = None,
+        service_actor: Optional[str] = None,
     ) -> Any:
         if not self._base_url:
             raise ConsultationClientError("consultation service URL is not configured")
@@ -193,6 +211,15 @@ class ConsultationServiceClient:
         if payload is not None:
             body = json.dumps(payload).encode("utf-8")
             headers["Content-Type"] = "application/json"
+        effective_tenant = tenant_id or self._tenant_id
+        if effective_tenant:
+            headers["X-Pantheon-Tenant-Id"] = effective_tenant
+        effective_token = token or self._token
+        if effective_token:
+            headers["Authorization"] = f"Bearer {effective_token}"
+        effective_actor = service_actor or self._service_actor
+        if effective_actor:
+            headers["X-Pantheon-Service-Actor"] = effective_actor
         request = urllib.request.Request(
             f"{self._base_url}/{path.lstrip('/')}",
             data=body,
