@@ -876,6 +876,10 @@
     "Workshop13": {
       "path": "/tmp/pantheon-assist-20261013/Root38993144359-Workshop295-original-browser-existing-20261017T032104Z/execution-readonly-summary.json",
       "raw_sha256": "ccb07c75f48fb34aade45e1dbb9aa864b045801e3deca437752e32a67169abe0"
+    },
+    "PR6609_supplement": {
+      "path": "/tmp/pantheon-assist-20261013/PR6609-original-canonical-PR-identities-and-scoped-UI-corrections-readonly.json",
+      "raw_sha256": "5cb8af8e62715d7fea3c9a046de58d51d04aa7a21feaab49131cce02426d1db7"
     }
   },
   "authoring_rules": [
@@ -897,11 +901,21 @@
     "Source60initiale82 test snapshottedownermock notrawcommandstore; cancelledfixturewasnotactuallycancelled; evidencefalse. ActualA2approvedthenRootnativeHumanOpsreopen84c594e2 returned same3AC3paths, nativeg2 head57ac genuinelyre-reviewed, currentmerge6ef. Do notrewriteoldapprovalasreviewerrejection.",
     "RootdidFULLd731 before checkingcompletedlist: genuine oldlist/detail mismatch52eca2a6 discoveredafterqualification. Withdrawnd731ROOTPOST0, neverrepeatoldcaller. This wasRoot orderingrework.",
     "Earlierobserver usedwrongserviceJWT, wrongAgoraURL, assumedallFULLreceiptsdict/flatFEZIP, UIreporterwrongkey and Source58CSV commas. All oldfailures preserved; notproductnewAPIs/platform requests.",
-    "Current supplementalbyteobserver firstSSHnonzero originalstderrnotretained; exactexceptionunknown. Secondassumed/app beforeDockerfile/read_exit1all. ActualDockerfiles WORKDIR/COPY /workspace; correctedallthreeSHA256/Gitblob bytes equal8d6b1b0f. Preservebothfailures; no productrepairwasneeded."
+    "Current supplementalbyteobserver firstSSHnonzero originalstderrnotretained; exactexceptionunknown. Secondassumed/app beforeDockerfile/read_exit1all. ActualDockerfiles WORKDIR/COPY /workspace; correctedallthreeSHA256/Gitblob bytes equal8d6b1b0f. Preservebothfailures; no productrepairwasneeded.",
+    "Initial child task PR #6609 head 251822806253758284bf151d0a9e9247bfdbd3a9 returned by Root/Human/Ops for factual corrections (predecessor PR #6509, formal PRs #6596-#6600, operational loops partial UI/financial proofs, markdown table repair); previous actual review state was Root factual return, not reviewer rejection; old history preserved; no fake acceptance or metadata SHA deployment claim."
   ],
   "verification": {
     "test_command": "$PANTHEON_DEPENDENCY_PYTHON -m pytest services/control-plane/bff/tests/test_latest_dev_six_area_closure.py",
     "verdict": "pass",
     "clean_worktree": true
+  },
+  "predecessor_delivery": {
+    "task": "DEV-SIX-AREA-SOURCE-ADOPTION-CHECKPOINT-20261011",
+    "pr": 6509,
+    "head_sha": "f2dfae636b5d8451be8182ccfaaca3f5bc4bd33c",
+    "merge_commit_sha": "ef4c0ad88b099170cdb2ae02683fcfa5b02013e4",
+    "status": "done",
+    "generation": 3,
+    "note": "Corrected from stale PR6508 / full f2dfae63640b claim; actual archived source adoption is PR #6509"
   }
 }

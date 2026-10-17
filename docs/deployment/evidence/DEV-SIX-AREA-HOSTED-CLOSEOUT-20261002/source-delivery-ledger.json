@@ -841,7 +841,9 @@
       "candidate_repo": "pantheon",
       "candidate_sha": "6ef8507e5ed62ff355d951000f2780d14ccb04ce",
       "git_ancestry_exit": 0,
-      "candidate_contains_source": true
+      "candidate_contains_source": true,
+      "pr": 6596,
+      "head": "1bd7e3ac41821967bc888a7e92636420f3eb83e9"
     },
     {
       "repo": "pantheon",
@@ -857,7 +859,9 @@
       "candidate_repo": "pantheon",
       "candidate_sha": "6ef8507e5ed62ff355d951000f2780d14ccb04ce",
       "git_ancestry_exit": 0,
-      "candidate_contains_source": true
+      "candidate_contains_source": true,
+      "pr": 6597,
+      "head": "31ca945a8ae6cd62aa7cc03380bb561c1e3c1b47"
     },
     {
       "repo": "pantheon",
@@ -872,7 +876,9 @@
       "candidate_repo": "pantheon",
       "candidate_sha": "6ef8507e5ed62ff355d951000f2780d14ccb04ce",
       "git_ancestry_exit": 0,
-      "candidate_contains_source": true
+      "candidate_contains_source": true,
+      "pr": 6598,
+      "head": "39f3a0ba967ae1345b37fb20f2330ab3a5c0ab4e"
     },
     {
       "repo": "pantheon",
@@ -887,7 +893,9 @@
       "candidate_repo": "pantheon",
       "candidate_sha": "6ef8507e5ed62ff355d951000f2780d14ccb04ce",
       "git_ancestry_exit": 0,
-      "candidate_contains_source": true
+      "candidate_contains_source": true,
+      "pr": 6599,
+      "head": "532236770a1883a61c29134e5ec06a8c9704872a"
     },
     {
       "repo": "pantheon",
@@ -902,7 +910,9 @@
       "candidate_repo": "pantheon",
       "candidate_sha": "6ef8507e5ed62ff355d951000f2780d14ccb04ce",
       "git_ancestry_exit": 0,
-      "candidate_contains_source": true
+      "candidate_contains_source": true,
+      "pr": 6600,
+      "head": "d8143307487eacd55a33810a7f245841be4fea11"
     },
     {
       "repo": "pantheon",
