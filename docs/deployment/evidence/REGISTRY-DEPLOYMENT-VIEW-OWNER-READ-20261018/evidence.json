@@ -2,8 +2,9 @@
   "task_id": "REGISTRY-DEPLOYMENT-VIEW-OWNER-READ-20261018",
   "owner": "Antigravity",
   "reviewer": "Antigravity2",
-  "generated_at": "2026-10-18T02:16:30Z",
+  "generated_at": "2026-10-18T03:05:30Z",
   "status": "verified",
+  "base_commit": "541a9a82a89460caedaea5e1bd54cd2318f4da6b",
   "audit_receipts_verified": [
     {
       "path": "/tmp/pantheon-assist-20261013/Root39073302399-current-Registry-deployment-view-vs-runtime-owner-GET-20261018.json",
@@ -14,6 +15,33 @@
       "sha256": "a4b5c046907a974d198f9e3bdb04f1dad4fde4bcb54f53b790a12cef83e4bf89"
     }
   ],
+  "inspected_files_sha256": {
+    "AI_COLLABORATION_GUIDE.md": "d271b32d8e66f7563c1c16c765137cb7ac51e171016e0de7798a0278693fb3cb",
+    ".orchestrator/worker-runtime/task-context/registry-deployment-view-owner-read-20261018.md": "cd2c8f7b45b61a2f1d88392603bcff24669bc3079bef3c8c9480cb89671027b6",
+    ".orchestrator/skills/worker-anchor-commit.md": "ccce3e08e4906d8e1d2fb51c0280bbdd0a7cac4162c2bafadd05a1e861364d79",
+    ".orchestrator/skills/task-closeout-finalization.md": "5842dbaacf85fa4fbbc10118905161c3290c6f5dbd27057cbdf52a0ae0394598",
+    "ai-status.json": "7bed382e7f2474aab58e7a196e28518c6b112cb6c5f14c0406fbd87301d83906",
+    "services/runtime-manager/main.py": "fe10608d94cb9967a2e8bf60f92f169d024b7f42fa03e6cc773cf8d0d0e2f614",
+    "services/runtime-manager/service.py": "52f994348ce7b0fd4a4bee9c90e4d7e537c1a99ef4b57273b446dfcd3a37f30f",
+    "services/runtime-manager/internal_api_routes.py": "7cd9f765dd7324cc75d4b2c622327dbcecb3c4577160d2e9d1af5b9503d120a1",
+    "services/deployment/models.py": "1b0e2efaff6535a12a19bfb44ba7882728f9c420cc35972a8646087dedfb38cf",
+    "services/deployment/service.py": "8b452ca853545990e3dae88a8ff86434ee36a27b2f1fefc00912e2d31b9fed71",
+    "services/frontend/adapter.py": "17ce783caf450aced20a5c92b29e242006a5368c439f428e1bbfe71714579bab",
+    "services/governance/approval_authority.py": "e2f3eb993753c1ef9857b4b896c51a24b4463700d28a17339b905810f548a64c",
+    "services/registry/test_first_release_contract.py": "39575827078b0920ead14d6b0238fd3dc9130b00902ae2be3507154fc20d4aeb"
+  },
+  "modified_files_sha256": {
+    "services/registry/service.py": "222379b8ae5055a208971df883d848291b3a9e7443e0cfe9c80ba08b95740f04",
+    "services/registry/split_api.py": "35c34562b43e7781e74f588599b84dd9a7928bebff7fd2d22be798d9096b66e9",
+    "services/registry/storage.py": "86a0e4bf1ca87a62c91b323dc6bfbad7c3f5a92c641dc8551f786d70650a9b69",
+    "services/registry/pg_store.py": "3c0ed7b8884a0ff38c225d1fe2a70dee43ed1574393518842c1fd400828e0650",
+    "services/registry/contract.md": "5c273be8f86646d07445cbd0ed5ab49c1c64f81409ca81f6a7db53d4c083dfd2",
+    "services/registry/first_release_contract.json": "783f17dd65f0bbe3b3eb35a102360835cf5cb90cffde5de690bdde75db3f09b1",
+    "services/registry/test_service.py": "53389fe0618702ca63ecd1081336f7152a15c004e85df8206682832930c0eaa9",
+    "services/registry/smoke_test.py": "e000c13fa27188937193fdd5de094821cb686113e26c0764e982ad8dac8ebb6f",
+    "services/registry/test_registry_auth_wiring.py": "b551e3f6d2f77b31fcaaa68d9741ee2deaedf1ebf185ed10667fe6177c25fd6e",
+    "docker-compose.yml": "824eb5670652eca6d72ab95c873888f4bd6a8a2066c3827592fdc5c72711743e"
+  },
   "retired_duplicate_resolvers": [
     "services/registry/storage.py::RegistryStore.resolve_deployment_view",
     "services/registry/pg_store.py::PostgresRegistryStore.resolve_deployment_view",
@@ -24,17 +52,31 @@
     "service_method": "services/registry/split_api.py::RegistryService.resolve_deployment_view",
     "runtime_binding_owner": "runtime-manager GET /api/runtime-bindings (PANTHEON_RUNTIME_MANAGER_URL)",
     "deployment_plan_owner": "deployment GET /api/deployment/plans/{plan_id} (PANTHEON_DEPLOYMENT_API_URL)",
-    "registry_artifact_join": "caller-visible approved RegistryEntry records in strategy_id family (including strategy_spec and execution_bundle)",
-    "fail_closed_posture": "HTTP 503 Service Unavailable via RegistryOwnerUnavailableError when configured runtime-manager or deployment owner endpoints are unreachable, unauthenticated (401/403), or return missing/rejected/mismatched DeploymentPlan"
+    "outbound_http_hardening": "_http_get_json enforces http/https scheme + netloc and uses urllib.request.build_opener(NoOwnerRedirect()) to refuse 301/302/303/307/308 redirects without forwarding Authorization or X-Tenant-Id headers",
+    "fail_closed_invariants": [
+      "Both bindings_reader and plan_reader (or PANTHEON_RUNTIME_MANAGER_URL and PANTHEON_DEPLOYMENT_API_URL) are required unconditionally; missing either or both raises RegistryOwnerUnavailableError (503)",
+      "runtime-manager payload must contain a JSON list under 'bindings' and every item must be a dict with valid status in {active, pending_pause, paused, retired, failed}; malformed payloads raise RegistryOwnerUnavailableError (503)",
+      "Every current binding matching strategy_id or any Registry entry of strategy_id must reference a caller-visible approved RegistryEntry with exact artifact_version, strategy_id, and tenant linkage; bindings to draft/candidate/retired/invisible/dangling entries raise RegistryOwnerUnavailableError (503)",
+      "Every current binding for strategy_id must carry non-empty plan_id and capital_pool_id, and resolve a canonical DeploymentPlan in status {approved, executing, executed} with matching plan_id, strategy_id, capital_pool_id, artifact_id, artifact_version, tenant_id,target_stage == deployment_mode, and binding_id (required when plan.status == 'executed')",
+      "Multiple current (active/pending_pause/paused) bindings for the same capital_pool_id (unless single_runtime_enforced is False) raise RegistryOwnerUnavailableError (503); across distinct valid pools, selection orders by newest transition timestamp first and status_rank only on exact timestamp ties"
+    ]
+  },
+  "base_vs_head_verification": {
+    "base_commit": "541a9a82a89460caedaea5e1bd54cd2318f4da6b",
+    "base_check": "On base commit 541a9a82a89460caedaea5e1bd54cd2318f4da6b, RegistryStore.resolve_deployment_view and PostgresRegistryStore.resolve_deployment_view exist as duplicate cache-only resolvers and RegistryService.resolve_deployment_view reads entry.deployment_summary without querying runtime-manager or deployment owner APIs (failing the duplicate-resolver absence and fail-closed owner-read tests).",
+    "head_check": "On HEAD, duplicate store resolvers and entry.deployment_summary cache reads in resolve_deployment_view are removed, and all 147 pytest tests and 43 smoke tests pass against local ThreadingHTTPServer owner fixtures."
   },
   "verification": {
-    "pytest_command": ".venv-pantheon/bin/python3 -m pytest -q services/registry/test_service.py services/registry/smoke_test.py services/registry/test_registry_auth_wiring.py services/registry/test_first_release_contract.py",
-    "pytest_result": "147 passed in 41.10s",
-    "smoke_script_command": ".venv-pantheon/bin/python3 services/registry/smoke_test.py",
-    "smoke_script_result": "42 passed, 0 failed, 42 total (ALL SMOKE TESTS PASSED)",
+    "pytest_command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 -m pytest -q services/registry/test_service.py services/registry/smoke_test.py services/registry/test_registry_auth_wiring.py services/registry/test_first_release_contract.py",
+    "pytest_exit_code": 0,
+    "pytest_result": "147 passed, 1 warning in 39.31s",
+    "smoke_script_command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 services/registry/smoke_test.py",
+    "smoke_script_exit_code": 0,
+    "smoke_script_result": "43 passed, 0 failed, 43 total (ALL SMOKE TESTS PASSED)",
     "compose_config_command": "docker compose config --quiet",
+    "compose_config_exit_code": 0,
     "static_grep_verified": true,
-    "net_prod_line_delta": 95,
+    "net_prod_line_delta": 107,
     "net_prod_line_budget": 180
   }
 }

@@ -74,15 +74,22 @@ class RegistryOwnerUnavailableError(RegistryError):
     """Raised when canonical runtime/deployment owner reads fail or disagree (maps to HTTP 503)."""
 
 
+from services.governance.approval_authority import NoOwnerRedirect
+
+
 def _http_get_json(url: str, *, tenant_id: Optional[str], authorization: Optional[str]) -> dict:
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise RegistryOwnerUnavailableError(f"Invalid canonical owner URL: {url}")
     headers = {"Accept": "application/json"}
     if tenant_id:
         headers["X-Tenant-Id"] = tenant_id
     if authorization:
         headers["Authorization"] = authorization
     req = urllib.request.Request(url, headers=headers, method="GET")
+    opener = urllib.request.build_opener(NoOwnerRedirect())
     try:
-        with urllib.request.urlopen(req, timeout=5.0) as resp:
+        with opener.open(req, timeout=5.0) as resp:
             body = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
         raise RegistryOwnerUnavailableError(f"Canonical owner GET failed for {url}: {exc}") from exc
@@ -644,12 +651,15 @@ class RegistryService:
         """Compose deployment-stage view from canonical RuntimeBinding + DeploymentPlan
         owners joined with caller-visible approved Registry artifacts of this strategy family.
         """
-        entries = [
-            v.entry for v in self.list_by_strategy(strategy_id)
-            if visible is None or visible(v.entry)
-        ]
+        all_entries = [v.entry for v in self.list_by_strategy(strategy_id)]
+        all_by_id = {e.registry_id: e for e in all_entries}
+        entries = [e for e in all_entries if visible is None or visible(e)]
         approved = [e for e in entries if e.artifact_state == ArtifactState.APPROVED]
         view = DeploymentView(strategy_id=strategy_id)
+        if approved:
+            latest = max(approved, key=lambda e: tuple(int(x) for x in e.version.split(".")))
+            view.latest_approved_registry_id = latest.registry_id
+            view.latest_approved_version = latest.version
 
         bindings_reader = runtime_bindings_reader or self.runtime_bindings_reader
         plan_reader = deployment_plan_reader or self.deployment_plan_reader
@@ -663,7 +673,7 @@ class RegistryService:
                     tenant_id=tid,
                     authorization=authorization,
                 )
-                items = data.get("bindings", [])
+                items = data.get("bindings")
                 if not isinstance(items, list):
                     raise RegistryOwnerUnavailableError("runtime-manager bindings payload is invalid")
                 return items
@@ -677,26 +687,10 @@ class RegistryService:
                     authorization=authorization,
                 )
 
-        if not approved:
-            if bindings_reader is not None:
-                bindings_reader(tenant_id)
-            return view
-
-        approved_by_ver = sorted(
-            approved,
-            key=lambda e: tuple(int(x) for x in e.version.split(".")),
-            reverse=True,
-        )
-        latest = approved_by_ver[0]
-        view.latest_approved_registry_id = latest.registry_id
-        view.latest_approved_version = latest.version
-
-        if bindings_reader is None:
-            if deployment_url:
-                raise RegistryOwnerUnavailableError(
-                    "PANTHEON_RUNTIME_MANAGER_URL is required when PANTHEON_DEPLOYMENT_API_URL is configured"
-                )
-            return view
+        if bindings_reader is None or plan_reader is None:
+            raise RegistryOwnerUnavailableError(
+                "Canonical runtime-manager and deployment owner readers must both be configured"
+            )
 
         try:
             raw_bindings = bindings_reader(tenant_id)
@@ -705,105 +699,127 @@ class RegistryService:
         except Exception as exc:
             raise RegistryOwnerUnavailableError(f"RuntimeBinding owner read failed: {exc}") from exc
         if isinstance(raw_bindings, dict):
-            raw_bindings = raw_bindings.get("bindings", [])
+            raw_bindings = raw_bindings.get("bindings")
         if not isinstance(raw_bindings, list):
             raise RegistryOwnerUnavailableError("RuntimeBinding owner read returned invalid bindings list")
 
-        approved_by_id = {e.registry_id: e for e in approved}
         status_rank = {"active": 2, "pending_pause": 1, "paused": 0}
-        candidates: list[tuple[tuple[int, str], dict, RegistryEntry]] = []
+        seen_pools: set[str] = set()
+        candidates: list[tuple[tuple[str, int], dict, dict, DeploymentStage, str, str]] = []
         for item in raw_bindings:
-            b = item.model_dump() if hasattr(item, "model_dump") else (dict(item) if isinstance(item, dict) else {})
-            status = str(b.get("status") or "").lower()
+            b = item.model_dump() if hasattr(item, "model_dump") else (dict(item) if isinstance(item, dict) else None)
+            if not isinstance(b, dict):
+                raise RegistryOwnerUnavailableError("Invalid RuntimeBinding record")
+            status = str(b.get("status") or "").strip().lower()
+            if status in {"retired", "failed"}:
+                continue
             if status not in status_rank or b.get("retired_at"):
-                continue
+                raise RegistryOwnerUnavailableError(f"Invalid current RuntimeBinding status={status!r}")
             meta = b.get("metadata") if isinstance(b.get("metadata"), dict) else {}
-            b_tenant = b.get("tenant_id") or meta.get("tenant_id")
+            b_tenant = str(b.get("tenant_id") or meta.get("tenant_id") or "").strip()
             if tenant_id and tenant_id != BUILTIN_TENANT and b_tenant != tenant_id:
-                continue
-            artifact_id = str(b.get("artifact_id") or b.get("registry_id") or "")
-            matched_entry = approved_by_id.get(artifact_id)
+                raise RegistryOwnerUnavailableError("RuntimeBinding tenant mismatch")
+            pool_id = str(b.get("capital_pool_id") or "").strip()
+            if not pool_id:
+                raise RegistryOwnerUnavailableError("Current RuntimeBinding is missing capital_pool_id")
+            if b.get("single_runtime_enforced") is not False:
+                if pool_id in seen_pools:
+                    raise RegistryOwnerUnavailableError(f"Multiple current RuntimeBindings in pool {pool_id!r}")
+                seen_pools.add(pool_id)
+
+            artifact_id = str(b.get("artifact_id") or b.get("registry_id") or "").strip()
+            b_ver = str(b.get("artifact_version") or b.get("version") or "").strip()
+            b_strategy = str(b.get("strategy_id") or meta.get("strategy_id") or "").strip()
+            if not artifact_id or not b_ver:
+                raise RegistryOwnerUnavailableError("Current RuntimeBinding is missing artifact_id or artifact_version")
+
+            matched_entry = all_by_id.get(artifact_id)
             if matched_entry is None:
+                if b_strategy == strategy_id or (not b_strategy and self.store.get(artifact_id) is None):
+                    raise RegistryOwnerUnavailableError(f"RuntimeBinding references unknown artifact {artifact_id!r}")
                 continue
-            if tenant_id is None and matched_entry.owner_tenant not in (None, BUILTIN_TENANT):
-                if b_tenant and b_tenant != matched_entry.owner_tenant:
-                    continue
-            b_ver = str(b.get("artifact_version") or b.get("version") or "")
-            if b_ver and b_ver != matched_entry.version:
-                continue
-            b_strategy = b.get("strategy_id") or meta.get("strategy_id")
             if b_strategy and b_strategy != strategy_id:
-                continue
-            ts = str(b.get("last_transition_at") or b.get("effective_at") or b.get("updated_at") or b.get("created_at") or "")
-            candidates.append(((status_rank[status], ts), b, matched_entry))
+                raise RegistryOwnerUnavailableError("RuntimeBinding strategy_id mismatch")
+            if matched_entry.owner_tenant not in (None, BUILTIN_TENANT) and b_tenant != matched_entry.owner_tenant:
+                raise RegistryOwnerUnavailableError("RuntimeBinding owner_tenant mismatch")
+            if (visible is not None and not visible(matched_entry)) or matched_entry.artifact_state != ArtifactState.APPROVED:
+                raise RegistryOwnerUnavailableError("RuntimeBinding references non-approved or invisible Registry entry")
+            if b_ver != matched_entry.version:
+                raise RegistryOwnerUnavailableError("RuntimeBinding artifact_version mismatch")
+
+            binding_id = str(b.get("binding_id") or b.get("runtime_binding_id") or "").strip()
+            plan_id = str(b.get("plan_id") or b.get("deployment_plan_id") or "").strip()
+            if not binding_id or not plan_id:
+                raise RegistryOwnerUnavailableError("Current RuntimeBinding is missing binding_id or plan_id")
+
+            effective_tenant = tenant_id or b_tenant or None
+            try:
+                raw_plan = plan_reader(plan_id, effective_tenant)
+            except RegistryOwnerUnavailableError:
+                raise
+            except Exception as exc:
+                raise RegistryOwnerUnavailableError(f"DeploymentPlan owner read failed for {plan_id!r}: {exc}") from exc
+            plan = raw_plan.model_dump() if hasattr(raw_plan, "model_dump") else (dict(raw_plan) if isinstance(raw_plan, dict) else None)
+            if not plan or str(plan.get("plan_id") or "").strip() != plan_id:
+                raise RegistryOwnerUnavailableError(f"Linked DeploymentPlan {plan_id!r} missing or plan_id mismatch")
+
+            plan_status = str(plan.get("status") or "").strip().lower()
+            if plan_status not in {"approved", "executing", "executed"}:
+                raise RegistryOwnerUnavailableError(f"Linked DeploymentPlan {plan_id!r} has status {plan_status!r}")
+            plan_meta = plan.get("metadata") if isinstance(plan.get("metadata"), dict) else {}
+            plan_tenant = str(plan.get("tenant_id") or plan_meta.get("tenant_id") or "").strip()
+            if effective_tenant and effective_tenant != BUILTIN_TENANT and plan_tenant != effective_tenant:
+                raise RegistryOwnerUnavailableError(f"Linked DeploymentPlan {plan_id!r} tenant mismatch")
+            if (
+                str(plan.get("strategy_id") or "").strip() != strategy_id
+                or str(plan.get("artifact_id") or "").strip() != matched_entry.registry_id
+                or str(plan.get("artifact_version") or "").strip() != matched_entry.version
+                or str(plan.get("capital_pool_id") or "").strip() != pool_id
+            ):
+                raise RegistryOwnerUnavailableError(f"Linked DeploymentPlan {plan_id!r} identity/pool mismatch")
+            lifecycle = plan_meta.get("runtime_lifecycle") if isinstance(plan_meta.get("runtime_lifecycle"), dict) else {}
+            plan_bindings = [plan.get("binding_id"), plan.get("runtime_binding_id"), lifecycle.get("binding_id")]
+            if any(v is not None and str(v).strip() != binding_id for v in plan_bindings):
+                raise RegistryOwnerUnavailableError(f"Linked DeploymentPlan {plan_id!r} binding_id mismatch")
+            if plan_status == "executed" and not any(plan_bindings):
+                raise RegistryOwnerUnavailableError(f"Executed DeploymentPlan {plan_id!r} missing binding_id")
+
+            mode = str(b.get("deployment_mode") or b.get("current_stage") or "").strip().lower()
+            target_stage = str(plan.get("target_stage") or "").strip().lower()
+            if target_stage not in {"paper", "canary", "live", "frozen"}:
+                raise RegistryOwnerUnavailableError(f"Invalid DeploymentPlan target_stage {target_stage!r}")
+            if mode == DeploymentStage.FROZEN.value or target_stage == DeploymentStage.FROZEN.value:
+                stage = DeploymentStage.FROZEN
+            else:
+                try:
+                    stage = DeploymentStage(mode)
+                except ValueError as exc:
+                    raise RegistryOwnerUnavailableError(f"Invalid RuntimeBinding deployment_mode {mode!r}") from exc
+                if stage == DeploymentStage.NONE or target_stage != stage.value:
+                    raise RegistryOwnerUnavailableError("RuntimeBinding mode disagrees with DeploymentPlan target_stage")
+
+            ts = str(
+                b.get("last_transition_at")
+                or meta.get("last_transition_at")
+                or meta.get("transitioned_at")
+                or meta.get("paused_at")
+                or b.get("updated_at")
+                or b.get("effective_at")
+                or b.get("created_at")
+                or plan.get("created_at")
+                or ""
+            )
+            candidates.append(((ts, status_rank[status]), b, plan, stage, binding_id, ts))
 
         if not candidates:
             return view
 
         candidates.sort(key=lambda item: item[0], reverse=True)
-        _, winning_binding, matched_entry = candidates[0]
-        binding_id = str(winning_binding.get("binding_id") or winning_binding.get("runtime_binding_id") or "").strip()
-        plan_id = str(winning_binding.get("plan_id") or winning_binding.get("deployment_plan_id") or "").strip()
-        if not binding_id or not plan_id:
-            raise RegistryOwnerUnavailableError("Active RuntimeBinding is missing binding_id or plan_id")
-        if plan_reader is None:
-            raise RegistryOwnerUnavailableError("DeploymentPlan owner reader is not configured")
-
-        meta = winning_binding.get("metadata") if isinstance(winning_binding.get("metadata"), dict) else {}
-        effective_tenant = tenant_id or winning_binding.get("tenant_id") or meta.get("tenant_id")
-        try:
-            raw_plan = plan_reader(plan_id, effective_tenant)
-        except RegistryOwnerUnavailableError:
-            raise
-        except Exception as exc:
-            raise RegistryOwnerUnavailableError(f"DeploymentPlan owner read failed for {plan_id!r}: {exc}") from exc
-        plan = raw_plan.model_dump() if hasattr(raw_plan, "model_dump") else (dict(raw_plan) if isinstance(raw_plan, dict) else None)
-        if not plan:
-            raise RegistryOwnerUnavailableError(f"Linked DeploymentPlan {plan_id!r} not found")
-
-        plan_status = str(plan.get("status") or "").lower()
-        if plan_status in {"rejected", "aborted", "failed", "cancelled", "rolled_back", "retired"}:
-            raise RegistryOwnerUnavailableError(f"Linked DeploymentPlan {plan_id!r} has non-deployable status {plan_status!r}")
-        if effective_tenant and effective_tenant != BUILTIN_TENANT and plan.get("tenant_id") not in (None, effective_tenant):
-            raise RegistryOwnerUnavailableError(f"Linked DeploymentPlan {plan_id!r} tenant mismatch")
-        if plan.get("strategy_id") and plan.get("strategy_id") != strategy_id:
-            raise RegistryOwnerUnavailableError(f"Linked DeploymentPlan {plan_id!r} strategy_id mismatch")
-        if plan.get("artifact_id") and plan.get("artifact_id") != matched_entry.registry_id:
-            raise RegistryOwnerUnavailableError(f"Linked DeploymentPlan {plan_id!r} artifact_id mismatch")
-        if plan.get("artifact_version") and plan.get("artifact_version") != matched_entry.version:
-            raise RegistryOwnerUnavailableError(f"Linked DeploymentPlan {plan_id!r} artifact_version mismatch")
-        if plan.get("runtime_binding_id") and plan.get("runtime_binding_id") != binding_id:
-            raise RegistryOwnerUnavailableError(f"Linked DeploymentPlan {plan_id!r} runtime_binding_id mismatch")
-
-        mode = str(winning_binding.get("deployment_mode") or winning_binding.get("current_stage") or "").lower()
-        target_stage = str(plan.get("target_stage") or "").lower()
-        if mode == DeploymentStage.FROZEN.value or target_stage == DeploymentStage.FROZEN.value:
-            stage = DeploymentStage.FROZEN
-        else:
-            try:
-                stage = DeploymentStage(mode)
-            except ValueError as exc:
-                raise RegistryOwnerUnavailableError(f"Invalid RuntimeBinding deployment_mode {mode!r}") from exc
-            if stage == DeploymentStage.NONE:
-                raise RegistryOwnerUnavailableError("Active RuntimeBinding cannot report deployment_mode='none'")
-            if target_stage in {"paper", "canary", "live"} and target_stage != stage.value:
-                raise RegistryOwnerUnavailableError(
-                    f"RuntimeBinding mode {stage.value!r} disagrees with DeploymentPlan target_stage {target_stage!r}"
-                )
-
+        _, _, winning_plan, stage, binding_id, ts = candidates[0]
         view.current_stage = stage
-        view.deployment_plan_id = str(plan.get("plan_id") or plan_id)
+        view.deployment_plan_id = str(winning_plan.get("plan_id"))
         view.runtime_binding_id = binding_id
-        view.last_transition_at = (
-            str(
-                winning_binding.get("last_transition_at")
-                or winning_binding.get("effective_at")
-                or winning_binding.get("updated_at")
-                or plan.get("created_at")
-                or ""
-            )
-            or None
-        )
+        view.last_transition_at = ts or None
         return view
 
     # -- Deployment summary projection (called by deployment service) -------

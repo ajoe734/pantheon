@@ -282,7 +282,16 @@ def test_empty_strategy():
     reset()
     store = RegistryStore()
     svc = RegistryService(store)
-    view = svc.resolve_deployment_view("nonexistent")
+    assert_raises(
+        RegistryOwnerUnavailableError,
+        lambda: svc.resolve_deployment_view("nonexistent"),
+        "missing owner configuration fails closed",
+    )
+    view = svc.resolve_deployment_view(
+        "nonexistent",
+        runtime_bindings_reader=lambda _tid: [],
+        deployment_plan_reader=lambda _pid, _tid: None,
+    )
     assert_eq(view.current_stage, DeploymentStage.NONE, "empty strategy has NONE stage")
 
 
@@ -320,6 +329,7 @@ def test_approved_with_deployment_summary():
         runtime_bindings_reader=lambda _tid: [
             {
                 "binding_id": "rb-001",
+                "capital_pool_id": "pool-unit",
                 "artifact_id": "reg-001",
                 "artifact_version": "1.0.0",
                 "deployment_mode": "canary",
@@ -332,12 +342,13 @@ def test_approved_with_deployment_summary():
         deployment_plan_reader=lambda pid, _tid: {
             "plan_id": pid,
             "strategy_id": "test-alpha",
+            "capital_pool_id": "pool-unit",
             "artifact_id": "reg-001",
             "artifact_version": "1.0.0",
             "target_stage": "canary",
             "status": "approved",
             "tenant_id": "tenant-unit",
-            "runtime_binding_id": "rb-001",
+            "binding_id": "rb-001",
         },
     )
     svc.register(_make_create_payload(), "reg-001", actor=_SMOKE_ACTOR)
@@ -471,6 +482,7 @@ def test_deployment_view_reports_actually_deployed_not_latest_approved():
         runtime_bindings_reader=lambda _tid: [
             {
                 "binding_id": "rb-live-1",
+                "capital_pool_id": "pool-live-1",
                 "artifact_id": "reg1",
                 "artifact_version": "1.0.0",
                 "deployment_mode": "live",
@@ -483,12 +495,13 @@ def test_deployment_view_reports_actually_deployed_not_latest_approved():
         deployment_plan_reader=lambda pid, _tid: {
             "plan_id": pid,
             "strategy_id": "strat",
+            "capital_pool_id": "pool-live-1",
             "artifact_id": "reg1",
             "artifact_version": "1.0.0",
             "target_stage": "live",
             "status": "approved",
             "tenant_id": "tenant-unit",
-            "runtime_binding_id": "rb-live-1",
+            "binding_id": "rb-live-1",
         },
     )
 

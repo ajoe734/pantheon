@@ -195,15 +195,18 @@ def test_deployment_view_fails_closed_503_when_owner_unreachable_or_unauthentica
 ):
     """REGISTRY-DEPLOYMENT-VIEW-OWNER-READ-20261018:
     - docker-compose.yml wires PANTHEON_RUNTIME_MANAGER_URL and PANTHEON_DEPLOYMENT_API_URL into registry.
-    - GET /api/registry/strategies/{strategy_id}/deployment-view fails closed with 503 when
-      configured runtime-manager or deployment owner endpoints are unreachable or unauthenticated
-      (401/403), never falling back to entry.deployment_summary or synthesizing current_stage='none'.
+    - GET /api/registry/strategies/{strategy_id}/deployment-view fails closed with 503 over real HTTP when:
+      * PANTHEON_RUNTIME_MANAGER_URL and/or PANTHEON_DEPLOYMENT_API_URL are unset;
+      * configured runtime-manager or deployment owner endpoints are unreachable;
+      * owner endpoints return 401, 403, 500, or malformed payloads ('{}' missing 'bindings' or non-JSON);
+      * owner endpoints return 301/302/307/308 redirects (refused via NoOwnerRedirect without forwarding Authorization/X-Tenant-Id).
+    - Immutable GET /api/registry/entries/{id} makes zero outbound owner callbacks.
     """
-    import io
+    from contextlib import contextmanager
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     import json
     from pathlib import Path
-    import urllib.error
-    import urllib.request
+    import threading
     from services.governance.test_approval_authority import (
         advance_registry_http,
         configure_registry_unit_auth,
@@ -220,6 +223,10 @@ def test_deployment_view_fails_closed_503_when_owner_unreachable_or_unauthentica
     monkeypatch.setenv("PANTHEON_REGISTRY_JWT_AUDIENCE", "")
     token = _jwt(roles=["operator"], tenant="tenant-a")
     headers = {"Authorization": f"Bearer {token}"}
+
+    # Anonymous/missing caller auth on deployment-view fails closed with 401
+    anon_dv = strict_client.get("/api/registry/strategies/auth-wiring-strat/deployment-view")
+    assert anon_dv.status_code == 401
 
     created = strict_client.post(
         "/api/registry/entries",
@@ -245,50 +252,75 @@ def test_deployment_view_fails_closed_503_when_owner_unreachable_or_unauthentica
     )
     assert put_resp.status_code == 200, put_resp.text
 
+    # 1. Missing both owner URLs -> 503 (never returns current_stage='none')
+    monkeypatch.delenv("PANTHEON_RUNTIME_MANAGER_URL", raising=False)
+    monkeypatch.delenv("PANTHEON_DEPLOYMENT_API_URL", raising=False)
+    resp_missing_both = strict_client.get(
+        "/api/registry/strategies/auth-wiring-strat/deployment-view",
+        headers=headers,
+    )
+    assert resp_missing_both.status_code == 503, resp_missing_both.text
+
+    # 2. Unreachable runtime-manager -> 503
     monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", "http://127.0.0.1:9")
     monkeypatch.setenv("PANTHEON_DEPLOYMENT_API_URL", "http://127.0.0.1:9")
-
-    # 1. Unreachable runtime-manager -> 503
     resp_unreachable = strict_client.get(
         "/api/registry/strategies/auth-wiring-strat/deployment-view",
         headers=headers,
     )
     assert resp_unreachable.status_code == 503, resp_unreachable.text
 
-    # 2. Unauthenticated runtime-manager (HTTP 401) -> 503
-    def _urlopen_runtime_401(req, timeout=5.0):
-        raise urllib.error.HTTPError(req.full_url, 401, "Unauthorized", hdrs=None, fp=io.BytesIO(b"{}"))
+    state = {"mode": "rm_401", "requests": [], "redirect_hits": 0}
 
-    monkeypatch.setattr(urllib.request, "urlopen", _urlopen_runtime_401)
-    resp_rm_401 = strict_client.get(
-        "/api/registry/strategies/auth-wiring-strat/deployment-view",
-        headers=headers,
-    )
-    assert resp_rm_401.status_code == 503, resp_rm_401.text
+    class _OwnerHandler(BaseHTTPRequestHandler):
+        def log_message(self, format, *args):
+            return
 
-    # 3. Authenticated runtime-manager returning active binding, but unauthenticated deployment (HTTP 403) -> 503
-    class _FakeResp:
-        def __init__(self, payload: dict):
-            self._bytes = json.dumps(payload).encode("utf-8")
-
-        def read(self) -> bytes:
-            return self._bytes
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
-    def _urlopen_deployment_403(req, timeout=5.0):
-        if req.full_url.endswith("/api/runtime-bindings"):
-            assert req.headers.get("X-tenant-id") == "tenant-a"
-            assert req.headers.get("Authorization") == f"Bearer {token}"
-            return _FakeResp(
+        def do_GET(self):
+            state["requests"].append(
                 {
+                    "path": self.path,
+                    "authorization": self.headers.get("Authorization"),
+                    "tenant": self.headers.get("X-Tenant-Id"),
+                }
+            )
+            if self.path == "/redirect-target":
+                state["redirect_hits"] += 1
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"bindings": []}')
+                return
+            mode = state["mode"]
+            if mode == "rm_401":
+                self.send_response(401)
+                self.end_headers()
+                self.wfile.write(b'{"detail": "unauthorized"}')
+                return
+            if mode == "rm_500":
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(b"internal error")
+                return
+            if mode == "rm_malformed_empty_dict":
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b"{}")
+                return
+            if mode == "rm_redirect":
+                self.send_response(302)
+                self.send_header("Location", f"{base_url}/redirect-target")
+                self.end_headers()
+                return
+            if self.path == "/api/runtime-bindings":
+                assert self.headers.get("Authorization") == f"Bearer {token}"
+                assert self.headers.get("X-Tenant-Id") == "tenant-a"
+                body = {
                     "bindings": [
                         {
                             "binding_id": "rb-auth-1",
+                            "capital_pool_id": "pool-auth-1",
                             "artifact_id": rid,
                             "artifact_version": "1.0.0",
                             "deployment_mode": "paper",
@@ -299,13 +331,55 @@ def test_deployment_view_fails_closed_503_when_owner_unreachable_or_unauthentica
                         }
                     ]
                 }
-            )
-        raise urllib.error.HTTPError(req.full_url, 403, "Forbidden", hdrs=None, fp=io.BytesIO(b"{}"))
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(body).encode("utf-8"))
+                return
+            if self.path == "/api/deployment/plans/plan-auth-1":
+                assert self.headers.get("Authorization") == f"Bearer {token}"
+                assert self.headers.get("X-Tenant-Id") == "tenant-a"
+                if mode == "dep_403":
+                    self.send_response(403)
+                    self.end_headers()
+                    self.wfile.write(b'{"detail": "forbidden"}')
+                    return
+                if mode == "dep_redirect":
+                    self.send_response(307)
+                    self.send_header("Location", f"{base_url}/redirect-target")
+                    self.end_headers()
+                    return
 
-    monkeypatch.setattr(urllib.request, "urlopen", _urlopen_deployment_403)
-    resp_dep_403 = strict_client.get(
-        "/api/registry/strategies/auth-wiring-strat/deployment-view",
-        headers=headers,
-    )
-    assert resp_dep_403.status_code == 503, resp_dep_403.text
+    @contextmanager
+    def _run_server():
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), _OwnerHandler)
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        try:
+            yield f"http://127.0.0.1:{srv.server_port}"
+        finally:
+            srv.shutdown()
+            srv.server_close()
+            t.join(timeout=2.0)
+
+    with _run_server() as base_url:
+        monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", base_url)
+        monkeypatch.setenv("PANTHEON_DEPLOYMENT_API_URL", base_url)
+
+        # 3. Immutable EntryGET makes zero outbound owner callbacks
+        state["requests"].clear()
+        entry_get = strict_client.get(f"/api/registry/entries/{rid}", headers=headers)
+        assert entry_get.status_code == 200, entry_get.text
+        assert state["requests"] == []
+
+        # 4. Runtime-manager 401 -> 503
+        for mode in ("rm_401", "rm_500", "rm_malformed_empty_dict", "rm_redirect", "dep_403", "dep_redirect"):
+            state["mode"] = mode
+            resp = strict_client.get(
+                "/api/registry/strategies/auth-wiring-strat/deployment-view",
+                headers=headers,
+            )
+            assert resp.status_code == 503, f"mode={mode} expected 503, got {resp.status_code}: {resp.text}"
+        assert state["redirect_hits"] == 0
+
 
