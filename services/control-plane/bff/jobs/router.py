@@ -75,6 +75,19 @@ def create_jobs_router(
                 exc.message,
             ) from exc
 
+    def _owner_job_meta(surface_key: str, job: Dict[str, Any], snapshot_at: str) -> Dict[str, Any]:
+        owner_source = str(job.get("source") or "").strip() if isinstance(job, dict) else ""
+        has_data = bool(job) and owner_source not in {"missing", "unavailable"}
+        surface: Optional[Dict[str, Any]] = None
+        if owner_source:
+            surface = dataset_surface_status(
+                "jobs", read_store=_resolve_read_store(), snapshot_at=snapshot_at,
+                source=owner_source, has_data=has_data,
+            )
+            if isinstance(surface, dict) and "source" not in surface:
+                surface = {**surface, "source": owner_source}
+        return read_surface_meta("jobs", surface_key, snapshot_at=snapshot_at, surface=surface, has_data=has_data)
+
     @router.get("/bff/jobs")
     async def list_jobs(
         status: Optional[str] = None,
@@ -113,8 +126,6 @@ def create_jobs_router(
         snapshot_at = utc_now()
         job = _lookup_job(job_id)
         if not job:
-            surface = dataset_surface_status("jobs", snapshot_at=snapshot_at)
-            raise_if_read_surface_unavailable(surface, label="Job")
             raise bff_error(
                 404, ErrorCode.RESOURCE_NOT_FOUND,
                 "Job not found",
@@ -122,7 +133,7 @@ def create_jobs_router(
             )
         return {
             "data": job,
-            "meta": read_surface_meta("jobs", "job_detail", snapshot_at=snapshot_at),
+            "meta": _owner_job_meta("job_detail", job, snapshot_at),
         }
 
     @router.get("/bff/jobs/{job_id}/logs")
@@ -156,7 +167,7 @@ def create_jobs_router(
             "status": job.get("status") if isinstance(job, dict) else "unknown",
             "logs": logs,
             "data": logs,
-            "meta": read_surface_meta("jobs", "job_logs", snapshot_at=snapshot_at),
+            "meta": _owner_job_meta("job_logs", job, snapshot_at),
         }
 
     @router.post("/bff/jobs/{job_id}/actions/{action_id}", status_code=202)
