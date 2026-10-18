@@ -991,7 +991,8 @@ def test_jobs_list_surface_metadata_healthy_rows_and_healthy_empty_with_legacy_d
     assert ports.dataset_source("jobs") == "missing"
     client = _build_jobs_list_client(ports)
 
-    # 1. Healthy rows across configured owners never become missing/unavailable
+    # 1. Healthy rows across multiple configured owners report composition-wide source 'bff_composed'
+    # (never missing/unavailable and never mislabeled as only the first paginated row's owner)
     resp = client.get("/bff/jobs?page_size=2", headers=OPERATOR_HEADERS)
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -1004,11 +1005,11 @@ def test_jobs_list_surface_metadata_healthy_rows_and_healthy_empty_with_legacy_d
     assert body["meta"]["total"] == 3
     assert body["meta"]["surfaces"]["job_list"] == {
         "status": "ok",
-        "source": "research_orchestrator",
+        "source": "bff_composed",
     }
     assert "degradation" not in body["meta"]
 
-    # 2. Second page via page_token preserves envelope and derives source from page items
+    # 2. Second page via page_token preserves envelope and consistent multi-owner composition source
     page2 = client.get("/bff/jobs?page_size=2&page_token=2", headers=OPERATOR_HEADERS)
     assert page2.status_code == 200, page2.text
     body2 = page2.json()
@@ -1016,11 +1017,11 @@ def test_jobs_list_surface_metadata_healthy_rows_and_healthy_empty_with_legacy_d
     assert body2["page_info"] == {"next_page_token": None, "total": 3}
     assert body2["meta"]["surfaces"]["job_list"] == {
         "status": "ok",
-        "source": "training_session",
+        "source": "bff_composed",
     }
     assert "degradation" not in body2["meta"]
 
-    # 3. Healthy empty result via status + job_type filter remains status=ok, never missing/unavailable
+    # 3. Healthy empty result via status + job_type filter (single owner) remains status=ok with that owner's source
     filtered_empty = client.get(
         "/bff/jobs?status=failed&job_type=research_orchestrator", headers=OPERATOR_HEADERS
     )
@@ -1034,7 +1035,7 @@ def test_jobs_list_surface_metadata_healthy_rows_and_healthy_empty_with_legacy_d
     assert fe_body["meta"]["surfaces"]["job_list"]["source"] == "research_orchestrator"
     assert "degradation" not in fe_body["meta"]
 
-    # 4. Healthy empty result when all configured owners return [] remains status=ok
+    # 4. Healthy empty result when all configured owners return [] remains status=ok with composition-wide source
     state["orchestrator"] = []
     state["trainer"] = []
     empty_resp = client.get("/bff/jobs", headers=OPERATOR_HEADERS)
@@ -1045,7 +1046,7 @@ def test_jobs_list_surface_metadata_healthy_rows_and_healthy_empty_with_legacy_d
     assert empty_body["meta"]["total"] == 0
     assert empty_body["meta"]["surfaces"]["job_list"] == {
         "status": "ok",
-        "source": "research_worker_gateway",
+        "source": "bff_composed",
     }
     assert "degradation" not in empty_body["meta"]
 
@@ -1085,7 +1086,8 @@ def test_jobs_list_surface_metadata_partial_failure_and_all_unavailable(monkeypa
     store = _JobsOnlyReadStore(JobReadPort(http_get=fake_get))
     client = _build_jobs_list_client(store)
 
-    # 1. Partial failure: total > 0 must NOT be inferred as full health ("ok")
+    # 1. Partial failure across multiple healthy owners: total > 0 must NOT be inferred as full health ("ok"),
+    # and source reflects multi-owner composition ("bff_composed") rather than an arbitrary first row owner
     partial_resp = client.get("/bff/jobs", headers=OPERATOR_HEADERS)
     assert partial_resp.status_code == 200, partial_resp.text
     partial_body = partial_resp.json()
@@ -1096,7 +1098,7 @@ def test_jobs_list_surface_metadata_partial_failure_and_all_unavailable(monkeypa
     assert partial_body["page_info"]["total"] == 2
     surface = partial_body["meta"]["surfaces"]["job_list"]
     assert surface["status"] == "degraded"
-    assert surface["source"] == "research_orchestrator"
+    assert surface["source"] == "bff_composed"
     assert surface["degraded_sources"] == {
         "research_worker_gateway": "unreachable",
         "source_ingestion": "unconfigured",
@@ -1147,6 +1149,30 @@ def test_jobs_list_surface_metadata_partial_failure_and_all_unavailable(monkeypa
         "policy_learning": "unconfigured",
     }
     assert "All job sources unavailable" in all_down_body["meta"]["degradation"]["reason"]
+
+    # 5. Missing same-call diagnostics keys fail closed to status=unavailable and source=unavailable
+    # without falling back to legacy dataset_source('jobs') or inferring health from fake rows
+    class _MissingDiagnosticsStore:
+        def list_jobs_bff(self, **_kwargs: Any) -> List[Dict[str, Any]]:
+            return [
+                {
+                    "job_id": "job-orchestrator-fake-row-001",
+                    "source": "research_orchestrator",
+                    "status": "running",
+                    "job_type": "research_orchestrator",
+                }
+            ]
+
+        def dataset_source(self, _dataset: str, **_kwargs: Any) -> str:
+            return "missing"
+
+    missing_diag_client = _build_jobs_list_client(_MissingDiagnosticsStore())
+    missing_diag_resp = missing_diag_client.get("/bff/jobs", headers=OPERATOR_HEADERS)
+    assert missing_diag_resp.status_code == 200, missing_diag_resp.text
+    missing_diag_body = missing_diag_resp.json()
+    assert missing_diag_body["meta"]["surfaces"]["job_list"]["status"] == "unavailable"
+    assert missing_diag_body["meta"]["surfaces"]["job_list"]["source"] == "unavailable"
+    assert "degradation" in missing_diag_body["meta"]
 
 
 def test_jobs_list_diagnostics_isolated_across_concurrent_requests(monkeypatch) -> None:

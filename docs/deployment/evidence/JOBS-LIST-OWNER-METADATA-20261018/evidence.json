@@ -18,12 +18,12 @@
   ],
   "production_line_budget": {
     "max_net_additions": 80,
-    "actual_net_additions": 69,
+    "actual_net_additions": 59,
     "files": {
       "services/control-plane/bff/jobs/router.py": {
-        "insertions": 54,
+        "insertions": 44,
         "deletions": 2,
-        "net": 52
+        "net": 42
       },
       "services/control-plane/bff/ports/job_read.py": {
         "insertions": 11,
@@ -38,22 +38,24 @@
     }
   },
   "summary": {
-    "problem": "GET /bff/jobs read canonical owner job rows via read_store.list_jobs_bff(...) and then derived meta.surfaces.job_list via dataset_surface_status('jobs') and read_surface_meta(...), where ReadSurfacePorts.dataset_source('jobs') returns 'missing' and read_store.get_degraded_sources() read shared mutable instance state.",
+    "problem": "In base 034e5a5f02dde88ceb96936f056304ff8c4afc97, GET /bff/jobs read canonical owner job rows via read_store.list_jobs_bff(...) and then built meta.surfaces.job_list via read_surface_meta('jobs', 'job_list', ...) without canonical owner results or diagnostics; the router never called read_store.get_degraded_sources() and ReadSurfacePorts has no such getter, so the observed old bug was legacy ReadSurfacePorts.dataset_source('jobs') == 'missing' (status='unavailable', source='missing'). Meanwhile, JobReadPort.get_degraded_sources() stored mutable last-call state on the port instance, which was a cross-request concurrency risk avoided by passing a per-call diagnostics dict.",
     "solution": [
       "JobReadPort.list_jobs_bff collects healthy_sources and degraded_sources in call-local variables and populates a caller-supplied per-request diagnostics dict with exact same-invocation healthy_sources and degraded_sources.",
       "ReadSurfacePorts.list_jobs_bff forwards status, job_type, diagnostics, and **kwargs to self.job_read.list_jobs_bff.",
-      "services/control-plane/bff/jobs/router.py passes a request-local diagnostics dict into read_store.list_jobs_bff(...) and computes meta.surfaces.job_list and meta.degradation via _owner_job_list_meta without TypeError fallback shims.",
-      "Healthy rows and healthy empty results (filtered or unfiltered) report status='ok' and a canonical owner source; partial failures preserve status='degraded', degraded_sources, and meta.degradation.reason even when total > 0; all applicable owners unavailable report status='unavailable', source='unavailable', degraded_sources, and meta.degradation.reason; concurrent list_jobs_bff calls do not leak diagnostics across requests."
+      "services/control-plane/bff/jobs/router.py passes a request-local diagnostics dict into read_store.list_jobs_bff(...) and computes meta.surfaces.job_list and meta.degradation via _owner_job_list_meta strictly from same-call diagnostics without row_sources/jobs compatibility fallbacks or TypeError fallback shims.",
+      "Single healthy owner resolves source to healthy_sources[0] and multi-owner composition resolves source to 'bff_composed' with status='ok' (or status='degraded' with degraded_sources and meta.degradation.reason when partial failures occur); missing or empty healthy_sources in same-call diagnostics fail closed to status='unavailable', source='unavailable', and has_data=False without falling back to legacy dataset_source('jobs') or inferring health from fake rows; concurrent list_jobs_bff calls do not leak diagnostics across requests."
     ]
   },
   "validation": {
     "commands": [
       ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_jobs_source_owner_contract.py services/control-plane/bff/tests/test_bff_test_architecture.py",
-      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py services/control-plane/bff/test_bff_consol_010_fixture_pack_c.py services/control-plane/bff/tests/test_receipt_research_routes.py services/control-plane/bff/tests/test_console_data_route_workflows_projection.py services/control-plane/bff/test_mgmt_load_002_shell_summary.py services/control-plane/bff/test_mgmt_load_005_read_concurrency.py"
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py services/control-plane/bff/test_bff_consol_010_fixture_pack_c.py services/control-plane/bff/tests/test_receipt_research_routes.py services/control-plane/bff/tests/test_console_data_route_workflows_projection.py services/control-plane/bff/test_mgmt_load_002_shell_summary.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_mgmt_load_005_read_concurrency.py"
     ],
     "results": {
       "test_jobs_source_owner_contract_and_architecture": "82 passed",
-      "jobs_regression_suites": "88 passed"
+      "jobs_regression_suites": "73 passed",
+      "jobs_read_concurrency": "14 passed"
     }
   }
 }

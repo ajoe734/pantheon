@@ -89,28 +89,19 @@ def create_jobs_router(
         return read_surface_meta("jobs", surface_key, snapshot_at=snapshot_at, surface=surface, has_data=has_data)
 
     def _owner_job_list_meta(
-        jobs: list[Dict[str, Any]],
         diagnostics: Dict[str, Any],
         snapshot_at: str,
         total: int,
     ) -> Dict[str, Any]:
-        row_sources = [
-            src
-            for j in jobs
-            if isinstance(j, dict)
-            for src in (str(j.get("source") or "").strip(),)
-            if src and src not in {"missing", "unavailable"}
+        healthy_sources = [
+            s for s in (diagnostics.get("healthy_sources") or []) if isinstance(s, str) and s.strip()
         ]
-        healthy_sources = list(diagnostics.get("healthy_sources") or [])
         degraded_sources = dict(diagnostics.get("degraded_sources") or {})
-        has_port_diag = "healthy_sources" in diagnostics or "degraded_sources" in diagnostics
-        owner_source: Optional[str] = (
-            row_sources[0]
-            if row_sources
-            else (healthy_sources[0] if healthy_sources else ("unavailable" if has_port_diag else None))
-        )
-        has_data: Optional[bool] = (
-            bool(healthy_sources or row_sources) if (has_port_diag or row_sources) else (True if jobs else None)
+        has_data = bool(healthy_sources)
+        owner_source = (
+            healthy_sources[0]
+            if len(healthy_sources) == 1
+            else ("bff_composed" if healthy_sources else "unavailable")
         )
         diag_text = ", ".join(f"{k}={v}" for k, v in degraded_sources.items())
         degraded_msg = f"Partial job source degradation ({diag_text})." if diag_text else None
@@ -120,7 +111,7 @@ def create_jobs_router(
             source=owner_source, has_data=has_data, missing_message=unavail_msg,
         )
         if isinstance(surface, dict):
-            if owner_source:
+            if "source" not in surface:
                 surface = {**surface, "source": owner_source}
             if degraded_sources:
                 surface = {**surface, "degraded_sources": degraded_sources}
@@ -150,10 +141,9 @@ def create_jobs_router(
         read_store = _resolve_read_store()
         snapshot_at = utc_now()
         diagnostics: Dict[str, Any] = {}
-        raw_jobs = list(
+        jobs = list(
             read_store.list_jobs_bff(status=status, job_type=job_type, diagnostics=diagnostics) or []
         )
-        jobs = raw_jobs
         if status:
             jobs = [j for j in jobs if j.get("status") == status]
         if job_type:
@@ -164,7 +154,7 @@ def create_jobs_router(
             "items": page_items,
             "data": page_items,
             "page_info": {"next_page_token": next_page_token, "total": total},
-            "meta": _owner_job_list_meta(page_items or jobs or raw_jobs, diagnostics, snapshot_at, total),
+            "meta": _owner_job_list_meta(diagnostics, snapshot_at, total),
         }
 
     @router.get("/bff/jobs/{job_id}")
