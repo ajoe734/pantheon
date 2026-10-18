@@ -138,10 +138,9 @@ def test_job_read_port_unreachable_source_raises_for_get(monkeypatch) -> None:
 class _JobsOnlyReadStore:
     """Minimal canonical-store double: delegates strictly to a real JobReadPort.
 
-    Mirrors the pattern in tests/test_overlay_retirement.py's
-    ``FakeCanonicalReadStore`` (``dataset_source`` -> a non-"missing" label so
-    unrelated read-surface-unavailable machinery does not interfere with this
-    Jobs-only contract test).
+    Mirrors ``ReadSurfacePorts.dataset_source`` where ``"jobs"`` is not a legacy
+    canonical-store dataset and therefore returns ``"missing"`` unless surface
+    metadata is derived from the canonical owner job result.
     """
 
     def __init__(self, job_read: JobReadPort) -> None:
@@ -157,15 +156,42 @@ class _JobsOnlyReadStore:
         return self._job_read.get_job_logs_bff(job_id)
 
     def dataset_source(self, dataset: str, **kwargs: Any) -> str:
-        return "canonical_store"
+        return "missing"
 
+
+import functools
 
 from services.control_plane.bff.core.app_factory import build_bff_app
 from services.control_plane.bff.auth import policy as auth_policy
+from services.control_plane.bff.personas import service as persona_service
+
+
+def _bind_read_surface_helpers(store: _JobsOnlyReadStore):
+    dataset_surface_status = functools.partial(
+        persona_service._dataset_surface_status, read_store=store
+    )
+
+    def _read_surface_meta(dataset: str, surface_key: str, **kwargs: Any) -> Dict[str, Any]:
+        if kwargs.get("surface") is None:
+            kwargs["surface"] = dataset_surface_status(
+                dataset,
+                snapshot_at=kwargs.get("snapshot_at"),
+                has_data=kwargs.get("has_data"),
+            )
+        return persona_service._read_surface_meta(dataset, surface_key, **kwargs)
+
+    return (
+        _read_surface_meta,
+        dataset_surface_status,
+        persona_service._raise_if_read_surface_unavailable,
+    )
 
 
 def _fresh_client() -> TestClient:
     store = _JobsOnlyReadStore(JobReadPort(http_get=lambda url: (True, None)))
+    read_surface_meta, dataset_surface_status, raise_if_read_surface_unavailable = (
+        _bind_read_surface_helpers(store)
+    )
     app = build_bff_app()
     app.include_router(
         create_jobs_router(
@@ -175,9 +201,9 @@ def _fresh_client() -> TestClient:
             bff_error=auth_policy.bff_error,
             utc_now=lambda: "2026-09-13T00:00:00Z",
             page_slice=lambda items, token=None, size=20: (list(items[:size]), None),
-            read_surface_meta=lambda name, kind, **kw: {"surface": name, **kw},
-            dataset_surface_status=lambda *a, **kw: {"status": "available"},
-            raise_if_read_surface_unavailable=lambda *a, **kw: None,
+            read_surface_meta=read_surface_meta,
+            dataset_surface_status=dataset_surface_status,
+            raise_if_read_surface_unavailable=raise_if_read_surface_unavailable,
             reject_body_idempotency_key=lambda b: None,
             resolve_final_idempotency_key=lambda k1, k2: k1 or k2 or "",
             submit_job_action=lambda *a, **kw: {},
@@ -491,6 +517,12 @@ def _setup_synthetic_training_owner(monkeypatch):
 
     port = create_job_read_port()
     store = _JobsOnlyReadStore(port)
+    assert store.dataset_source("jobs") == "missing"
+    monkeypatch.setattr(
+        persona_service,
+        "_composed_persona_service",
+        type("_ComposedPersonaService", (), {"get_read_store": staticmethod(lambda: store)})(),
+    )
     app = build_bff_app()
     app.add_middleware(OwnerReadContextMiddleware)
     app.include_router(
@@ -501,9 +533,9 @@ def _setup_synthetic_training_owner(monkeypatch):
             bff_error=auth_policy.bff_error,
             utc_now=lambda: "2026-10-18T12:00:00Z",
             page_slice=lambda items, token=None, size=20: (list(items[:size]), None),
-            read_surface_meta=lambda name, kind, **kw: {"surface": name, **kw},
-            dataset_surface_status=lambda *a, **kw: {"status": "available"},
-            raise_if_read_surface_unavailable=lambda *a, **kw: None,
+            read_surface_meta=persona_service._read_surface_meta,
+            dataset_surface_status=persona_service._dataset_surface_status,
+            raise_if_read_surface_unavailable=persona_service._raise_if_read_surface_unavailable,
             reject_body_idempotency_key=lambda b: None,
             resolve_final_idempotency_key=lambda k1, k2: k1 or k2 or "",
             submit_job_action=lambda *a, **kw: {},
@@ -529,23 +561,38 @@ def test_default_job_read_port_forwards_caller_auth_and_verified_tenant_for_list
     assert calls[-1]["service"] == "control-plane-bff"
 
     # 2. Detail read forwards caller Authorization and verified tenant (200 instead of bare-GET 400->503)
+    # and derives meta.surfaces.job_detail from the canonical owner result (never missing/unavailable)
     detail_resp = client.get("/bff/jobs/job-trainer-pvjob-dev-001", headers=headers_dev)
     assert detail_resp.status_code == 200, detail_resp.text
-    detail_data = detail_resp.json()["data"]
+    detail_payload = detail_resp.json()
+    detail_data = detail_payload["data"]
     assert detail_data["job_id"] == "job-trainer-pvjob-dev-001"
     assert detail_data["native_id"] == "pvjob-dev-001"
     assert detail_data["source"] == "training_session"
+    detail_meta = detail_payload["meta"]
+    assert detail_meta["surfaces"]["job_detail"] == {
+        "status": "ok",
+        "source": "training_session",
+    }
+    assert "degradation" not in detail_meta
     assert calls[-1]["path"] == "/api/training/preview-jobs/pvjob-dev-001"
     assert calls[-1]["authorization"] == f"Bearer {token_dev}"
     assert calls[-1]["tenant_id"] == "tenant-dev"
 
     # 3. Logs route and direct port get_job_logs_bff forward caller Authorization and verified tenant
+    # and derive meta.surfaces.job_logs from the canonical owner result (never missing/unavailable)
     logs_resp = client.get("/bff/jobs/job-trainer-pvjob-dev-001/logs", headers=headers_dev)
     assert logs_resp.status_code == 200, logs_resp.text
     logs_payload = logs_resp.json()
     assert logs_payload["job_id"] == "job-trainer-pvjob-dev-001"
     assert len(logs_payload["logs"]) == 2
     assert logs_payload["logs"][0]["message"] == "preview evaluation started"
+    logs_meta = logs_payload["meta"]
+    assert logs_meta["surfaces"]["job_logs"] == {
+        "status": "ok",
+        "source": "training_session",
+    }
+    assert "degradation" not in logs_meta
     assert calls[-1]["path"] == "/api/training/preview-jobs/pvjob-dev-001"
     assert calls[-1]["authorization"] == f"Bearer {token_dev}"
     assert calls[-1]["tenant_id"] == "tenant-dev"
@@ -675,10 +722,12 @@ def test_default_job_read_port_preserves_404_missing_and_503_unavailable_visibil
 
     missing_logs_resp = client.get("/bff/jobs/job-trainer-pvjob-nonexistent/logs", headers=headers_dev)
     assert missing_logs_resp.status_code == 404
+    assert missing_logs_resp.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
 
     # 2. Another tenant's job ID queried under caller's own tenant returns 404 from owner
     other_tenant_job_resp = client.get("/bff/jobs/job-trainer-pvjob-b-002", headers=headers_dev)
     assert other_tenant_job_resp.status_code == 404
+    assert other_tenant_job_resp.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
 
     # 3. Genuine owner unavailability surfaces as 503 for detail/logs and degraded for list
     owner_state["mode"] = "503"
@@ -694,4 +743,108 @@ def test_default_job_read_port_preserves_404_missing_and_503_unavailable_visibil
     assert unavail_list.status_code == 200
     assert unavail_list.json()["items"] == []
     assert port.get_degraded_sources().get("training_session") == "unreachable"
+
+
+@pytest.mark.parametrize(
+    "prefix,native_id,detail_path,expected_source,record",
+    [
+        (
+            "job-worker-",
+            "wjob-20260913-001",
+            "/api/research-worker-gateway/jobs/wjob-20260913-001",
+            "research_worker_gateway",
+            {"status": "running", "job_id": "wjob-20260913-001", "logs": [{"message": "worker running"}]},
+        ),
+        (
+            "job-orchestrator-",
+            "rrun-20260913-001",
+            "/api/research-orchestrator/runs/rrun-20260913-001",
+            "research_orchestrator",
+            {"status": "running", "run_id": "rrun-20260913-001", "logs": [{"message": "orchestrator running"}]},
+        ),
+        (
+            "job-trainer-",
+            "pvjob-abc123",
+            "/api/training/preview-jobs/pvjob-abc123",
+            "training_session",
+            {"status": "pending", "job_id": "pvjob-abc123", "logs": [{"message": "trainer pending"}]},
+        ),
+        (
+            "job-ingest-",
+            "ingest-abc123",
+            "/api/source-ingest/jobs/ingest-abc123",
+            "source_ingestion",
+            {"status": "completed", "ingest_run_id": "ingest-abc123", "logs": [{"message": "ingest completed"}]},
+        ),
+        (
+            "job-policy-",
+            "plj-20260913-001",
+            "/api/policy-learning/jobs/plj-20260913-001",
+            "policy_learning",
+            {"status": "queued", "job_id": "plj-20260913-001", "logs": [{"message": "policy queued"}]},
+        ),
+        (
+            "job-openclaw-",
+            "wf-abc123",
+            "/api/openclaw-adapter/workflows/jobs/wf-abc123",
+            "openclaw_gateway_adapter",
+            {"status": "running", "job_id": "wf-abc123", "logs": [{"message": "openclaw running"}]},
+        ),
+    ],
+)
+def test_job_detail_and_logs_surface_metadata_derived_from_canonical_owner_across_all_sources(
+    monkeypatch, prefix, native_id, detail_path, expected_source, record
+) -> None:
+    env_var = _ENV_VAR_BY_PREFIX[prefix]
+    monkeypatch.setenv(env_var, "http://fake-source.local")
+    fake_get, _ = _fake_http_get_factory({detail_path: record})
+    store = _JobsOnlyReadStore(JobReadPort(http_get=fake_get))
+    assert store.dataset_source("jobs") == "missing"
+    read_surface_meta, dataset_surface_status, raise_if_read_surface_unavailable = (
+        _bind_read_surface_helpers(store)
+    )
+    app = build_bff_app()
+    app.include_router(
+        create_jobs_router(
+            read_surface=lambda: store,
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            bff_error=auth_policy.bff_error,
+            utc_now=lambda: "2026-10-18T12:00:00Z",
+            page_slice=lambda items, token=None, size=20: (list(items[:size]), None),
+            read_surface_meta=read_surface_meta,
+            dataset_surface_status=dataset_surface_status,
+            raise_if_read_surface_unavailable=raise_if_read_surface_unavailable,
+            reject_body_idempotency_key=lambda b: None,
+            resolve_final_idempotency_key=lambda k1, k2: k1 or k2 or "",
+            submit_job_action=lambda *a, **kw: {},
+        )
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+
+    job_id = f"{prefix}{native_id}"
+    detail_resp = client.get(f"/bff/jobs/{job_id}", headers=OPERATOR_HEADERS)
+    assert detail_resp.status_code == 200, detail_resp.text
+    detail_payload = detail_resp.json()
+    assert detail_payload["data"]["job_id"] == job_id
+    assert detail_payload["data"]["source"] == expected_source
+    assert detail_payload["meta"]["surfaces"]["job_detail"] == {
+        "status": "ok",
+        "source": expected_source,
+    }
+    assert "degradation" not in detail_payload["meta"]
+
+    logs_resp = client.get(f"/bff/jobs/{job_id}/logs", headers=OPERATOR_HEADERS)
+    assert logs_resp.status_code == 200, logs_resp.text
+    logs_payload = logs_resp.json()
+    assert logs_payload["job_id"] == job_id
+    assert logs_payload["meta"]["surfaces"]["job_logs"] == {
+        "status": "ok",
+        "source": expected_source,
+    }
+    assert "degradation" not in logs_payload["meta"]
+
+    missing_resp = client.get(f"/bff/jobs/{prefix}nonexistent-id", headers=OPERATOR_HEADERS)
+    assert missing_resp.status_code == 404
+    assert missing_resp.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
 
