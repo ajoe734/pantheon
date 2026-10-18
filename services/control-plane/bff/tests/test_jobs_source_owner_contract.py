@@ -553,12 +553,31 @@ def test_default_job_read_port_forwards_caller_auth_and_verified_tenant_for_list
     # 1. List jobs forwards caller Authorization and verified primary tenant
     list_resp = client.get("/bff/jobs", headers=headers_dev)
     assert list_resp.status_code == 200, list_resp.text
-    items = list_resp.json()["items"]
+    list_payload = list_resp.json()
+    items = list_payload["items"]
     assert [item["job_id"] for item in items] == ["job-trainer-pvjob-dev-001"]
+    assert list_payload["meta"]["surfaces"]["job_list"]["source"] == "training_session"
+    assert list_payload["meta"]["surfaces"]["job_list"]["status"] == "degraded"
+    assert list_payload["meta"]["surfaces"]["job_list"]["degraded_sources"] == {
+        "research_worker_gateway": "unconfigured",
+        "research_orchestrator": "unconfigured",
+        "source_ingestion": "unconfigured",
+        "policy_learning": "unconfigured",
+    }
     assert calls[-1]["path"] == "/api/training/preview-jobs"
     assert calls[-1]["authorization"] == f"Bearer {token_dev}"
     assert calls[-1]["tenant_id"] == "tenant-dev"
     assert calls[-1]["service"] == "control-plane-bff"
+
+    filtered_list_resp = client.get("/bff/jobs?job_type=training_session", headers=headers_dev)
+    assert filtered_list_resp.status_code == 200, filtered_list_resp.text
+    filtered_list_payload = filtered_list_resp.json()
+    assert [item["job_id"] for item in filtered_list_payload["items"]] == ["job-trainer-pvjob-dev-001"]
+    assert filtered_list_payload["meta"]["surfaces"]["job_list"] == {
+        "status": "ok",
+        "source": "training_session",
+    }
+    assert "degradation" not in filtered_list_payload["meta"]
 
     # 2. Detail read forwards caller Authorization and verified tenant (200 instead of bare-GET 400->503)
     # and derives meta.surfaces.job_detail from the canonical owner result (never missing/unavailable)
@@ -741,8 +760,13 @@ def test_default_job_read_port_preserves_404_missing_and_503_unavailable_visibil
 
     unavail_list = client.get("/bff/jobs", headers=headers_dev)
     assert unavail_list.status_code == 200
-    assert unavail_list.json()["items"] == []
+    unavail_payload = unavail_list.json()
+    assert unavail_payload["items"] == []
     assert port.get_degraded_sources().get("training_session") == "unreachable"
+    assert unavail_payload["meta"]["surfaces"]["job_list"]["status"] == "unavailable"
+    assert unavail_payload["meta"]["surfaces"]["job_list"]["source"] == "unavailable"
+    assert unavail_payload["meta"]["surfaces"]["job_list"]["degraded_sources"]["training_session"] == "unreachable"
+    assert "training_session=unreachable" in unavail_payload["meta"]["degradation"]["reason"]
 
 
 @pytest.mark.parametrize(
@@ -853,11 +877,14 @@ def test_job_detail_and_logs_do_not_swallow_helper_type_error_into_legacy_fallba
     monkeypatch.setenv("PANTHEON_TRAINING_SESSION_API_URL", "http://fake-source.local")
     fake_get, _ = _fake_http_get_factory(
         {
+            "/api/training/preview-jobs": [
+                {"status": "running", "job_id": "pvjob-abc123"},
+            ],
             "/api/training/preview-jobs/pvjob-abc123": {
                 "status": "running",
                 "job_id": "pvjob-abc123",
                 "logs": [{"message": "running"}],
-            }
+            },
         }
     )
     store = _JobsOnlyReadStore(JobReadPort(http_get=fake_get))
@@ -890,9 +917,288 @@ def test_job_detail_and_logs_do_not_swallow_helper_type_error_into_legacy_fallba
             )
         )
         client = TestClient(app, raise_server_exceptions=False)
+        list_resp = client.get("/bff/jobs?job_type=training_session", headers=OPERATOR_HEADERS)
+        assert list_resp.status_code == 500
         detail_resp = client.get("/bff/jobs/job-trainer-pvjob-abc123", headers=OPERATOR_HEADERS)
         assert detail_resp.status_code == 500
         logs_resp = client.get("/bff/jobs/job-trainer-pvjob-abc123/logs", headers=OPERATOR_HEADERS)
         assert logs_resp.status_code == 500
+
+
+# --------------------------------------------------------------------------- #
+# (g) GET /bff/jobs list metadata derived from same-call canonical owner read
+# --------------------------------------------------------------------------- #
+
+import threading
+from services.control_plane.bff.ports.read_surface_ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.research.routes.common import _default_page_slice
+
+
+def _configure_all_listable_job_sources(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_RESEARCH_WORKER_GATEWAY_API_URL", "http://worker.local")
+    monkeypatch.setenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", "http://orchestrator.local")
+    monkeypatch.setenv("PANTHEON_TRAINING_SESSION_API_URL", "http://trainer.local")
+    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_API_URL", "http://ingest.local")
+    monkeypatch.setenv("PANTHEON_POLICY_LEARNING_API_URL", "http://policy.local")
+
+
+def _build_jobs_list_client(store: Any) -> TestClient:
+    read_surface_meta, dataset_surface_status, raise_if_read_surface_unavailable = (
+        _bind_read_surface_helpers(store)
+    )
+    app = build_bff_app()
+    app.include_router(
+        create_jobs_router(
+            read_surface=lambda: store,
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            bff_error=auth_policy.bff_error,
+            utc_now=lambda: "2026-10-18T12:00:00Z",
+            page_slice=_default_page_slice,
+            read_surface_meta=read_surface_meta,
+            dataset_surface_status=dataset_surface_status,
+            raise_if_read_surface_unavailable=raise_if_read_surface_unavailable,
+            reject_body_idempotency_key=lambda b: None,
+            resolve_final_idempotency_key=lambda k1, k2: k1 or k2 or "",
+            submit_job_action=lambda *a, **kw: {},
+        )
+    )
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def test_jobs_list_surface_metadata_healthy_rows_and_healthy_empty_with_legacy_dataset_missing(
+    monkeypatch,
+) -> None:
+    _configure_all_listable_job_sources(monkeypatch)
+    state: Dict[str, Any] = {
+        "orchestrator": [
+            {"run_id": "rrun-20261018-002", "status": "running", "created_at": "2026-10-18T11:00:00Z"},
+            {"run_id": "rrun-20261018-001", "status": "completed", "created_at": "2026-10-18T10:00:00Z"},
+        ],
+        "trainer": [
+            {"job_id": "pvjob-20261018-001", "status": "completed", "created_at": "2026-10-18T09:00:00Z"},
+        ],
+    }
+
+    def fake_get(url: str) -> Tuple[bool, Any]:
+        if url.endswith("/api/research-orchestrator/runs"):
+            return True, {"items": list(state["orchestrator"])}
+        if url.endswith("/api/training/preview-jobs"):
+            return True, {"items": list(state["trainer"])}
+        return True, {"items": []}
+
+    ports = create_in_memory_read_surface_ports(job_read=JobReadPort(http_get=fake_get))
+    assert ports.dataset_source("jobs") == "missing"
+    client = _build_jobs_list_client(ports)
+
+    # 1. Healthy rows across configured owners never become missing/unavailable
+    resp = client.get("/bff/jobs?page_size=2", headers=OPERATOR_HEADERS)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert [j["job_id"] for j in body["items"]] == [
+        "job-orchestrator-rrun-20261018-002",
+        "job-orchestrator-rrun-20261018-001",
+    ]
+    assert body["data"] == body["items"]
+    assert body["page_info"] == {"next_page_token": "2", "total": 3}
+    assert body["meta"]["total"] == 3
+    assert body["meta"]["surfaces"]["job_list"] == {
+        "status": "ok",
+        "source": "research_orchestrator",
+    }
+    assert "degradation" not in body["meta"]
+
+    # 2. Second page via page_token preserves envelope and derives source from page items
+    page2 = client.get("/bff/jobs?page_size=2&page_token=2", headers=OPERATOR_HEADERS)
+    assert page2.status_code == 200, page2.text
+    body2 = page2.json()
+    assert [j["job_id"] for j in body2["items"]] == ["job-trainer-pvjob-20261018-001"]
+    assert body2["page_info"] == {"next_page_token": None, "total": 3}
+    assert body2["meta"]["surfaces"]["job_list"] == {
+        "status": "ok",
+        "source": "training_session",
+    }
+    assert "degradation" not in body2["meta"]
+
+    # 3. Healthy empty result via status + job_type filter remains status=ok, never missing/unavailable
+    filtered_empty = client.get(
+        "/bff/jobs?status=failed&job_type=research_orchestrator", headers=OPERATOR_HEADERS
+    )
+    assert filtered_empty.status_code == 200, filtered_empty.text
+    fe_body = filtered_empty.json()
+    assert fe_body["items"] == []
+    assert fe_body["data"] == []
+    assert fe_body["page_info"] == {"next_page_token": None, "total": 0}
+    assert fe_body["meta"]["total"] == 0
+    assert fe_body["meta"]["surfaces"]["job_list"]["status"] == "ok"
+    assert fe_body["meta"]["surfaces"]["job_list"]["source"] == "research_orchestrator"
+    assert "degradation" not in fe_body["meta"]
+
+    # 4. Healthy empty result when all configured owners return [] remains status=ok
+    state["orchestrator"] = []
+    state["trainer"] = []
+    empty_resp = client.get("/bff/jobs", headers=OPERATOR_HEADERS)
+    assert empty_resp.status_code == 200, empty_resp.text
+    empty_body = empty_resp.json()
+    assert empty_body["items"] == []
+    assert empty_body["page_info"] == {"next_page_token": None, "total": 0}
+    assert empty_body["meta"]["total"] == 0
+    assert empty_body["meta"]["surfaces"]["job_list"] == {
+        "status": "ok",
+        "source": "research_worker_gateway",
+    }
+    assert "degradation" not in empty_body["meta"]
+
+
+def test_jobs_list_surface_metadata_partial_failure_and_all_unavailable(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", "http://orchestrator.local")
+    monkeypatch.setenv("PANTHEON_RESEARCH_WORKER_GATEWAY_API_URL", "http://worker.local")
+    monkeypatch.setenv("PANTHEON_TRAINING_SESSION_API_URL", "http://trainer.local")
+    monkeypatch.delenv("PANTHEON_SOURCE_INGEST_API_URL", raising=False)
+    monkeypatch.delenv("PANTHEON_SOURCE_INGEST_URL", raising=False)
+    monkeypatch.delenv("SOURCE_INGEST_URL", raising=False)
+    monkeypatch.delenv("PANTHEON_POLICY_LEARNING_API_URL", raising=False)
+
+    mode = {"orchestrator_ok": True, "trainer_ok": True}
+
+    def fake_get(url: str) -> Tuple[bool, Any]:
+        if url.endswith("/api/research-worker-gateway/jobs"):
+            return False, None
+        if url.endswith("/api/research-orchestrator/runs"):
+            if not mode["orchestrator_ok"]:
+                return False, None
+            return True, {
+                "items": [
+                    {"run_id": "rrun-20261018-010", "status": "running", "created_at": "2026-10-18T12:00:00Z"}
+                ]
+            }
+        if url.endswith("/api/training/preview-jobs"):
+            if not mode["trainer_ok"]:
+                return False, None
+            return True, {
+                "items": [
+                    {"job_id": "pvjob-20261018-010", "status": "completed", "created_at": "2026-10-18T11:00:00Z"}
+                ]
+            }
+        return False, None
+
+    store = _JobsOnlyReadStore(JobReadPort(http_get=fake_get))
+    client = _build_jobs_list_client(store)
+
+    # 1. Partial failure: total > 0 must NOT be inferred as full health ("ok")
+    partial_resp = client.get("/bff/jobs", headers=OPERATOR_HEADERS)
+    assert partial_resp.status_code == 200, partial_resp.text
+    partial_body = partial_resp.json()
+    assert [j["job_id"] for j in partial_body["items"]] == [
+        "job-orchestrator-rrun-20261018-010",
+        "job-trainer-pvjob-20261018-010",
+    ]
+    assert partial_body["page_info"]["total"] == 2
+    surface = partial_body["meta"]["surfaces"]["job_list"]
+    assert surface["status"] == "degraded"
+    assert surface["source"] == "research_orchestrator"
+    assert surface["degraded_sources"] == {
+        "research_worker_gateway": "unreachable",
+        "source_ingestion": "unconfigured",
+        "policy_learning": "unconfigured",
+    }
+    assert "research_worker_gateway=unreachable" in partial_body["meta"]["degradation"]["reason"]
+    assert "policy_learning=unconfigured" in partial_body["meta"]["degradation"]["reason"]
+
+    # 2. Filtering to a healthy job_type scopes applicable owners to that owner -> status=ok
+    healthy_type_resp = client.get("/bff/jobs?job_type=research_orchestrator", headers=OPERATOR_HEADERS)
+    assert healthy_type_resp.status_code == 200, healthy_type_resp.text
+    healthy_type_body = healthy_type_resp.json()
+    assert [j["job_id"] for j in healthy_type_body["items"]] == ["job-orchestrator-rrun-20261018-010"]
+    assert healthy_type_body["meta"]["surfaces"]["job_list"] == {
+        "status": "ok",
+        "source": "research_orchestrator",
+    }
+    assert "degradation" not in healthy_type_body["meta"]
+
+    # 3. Filtering to an unreachable job_type -> all applicable owners unavailable
+    unavail_type_resp = client.get("/bff/jobs?job_type=research_worker_gateway", headers=OPERATOR_HEADERS)
+    assert unavail_type_resp.status_code == 200, unavail_type_resp.text
+    unavail_type_body = unavail_type_resp.json()
+    assert unavail_type_body["items"] == []
+    assert unavail_type_body["meta"]["surfaces"]["job_list"]["status"] == "unavailable"
+    assert unavail_type_body["meta"]["surfaces"]["job_list"]["source"] == "unavailable"
+    assert unavail_type_body["meta"]["surfaces"]["job_list"]["degraded_sources"] == {
+        "research_worker_gateway": "unreachable",
+    }
+    assert "research_worker_gateway=unreachable" in unavail_type_body["meta"]["degradation"]["reason"]
+
+    # 4. All applicable owners unavailable across unfiltered list -> status=unavailable, never healthy
+    mode["orchestrator_ok"] = False
+    mode["trainer_ok"] = False
+    all_down_resp = client.get("/bff/jobs", headers=OPERATOR_HEADERS)
+    assert all_down_resp.status_code == 200, all_down_resp.text
+    all_down_body = all_down_resp.json()
+    assert all_down_body["items"] == []
+    assert all_down_body["page_info"] == {"next_page_token": None, "total": 0}
+    all_down_surface = all_down_body["meta"]["surfaces"]["job_list"]
+    assert all_down_surface["status"] == "unavailable"
+    assert all_down_surface["source"] == "unavailable"
+    assert all_down_surface["degraded_sources"] == {
+        "research_worker_gateway": "unreachable",
+        "research_orchestrator": "unreachable",
+        "training_session": "unreachable",
+        "source_ingestion": "unconfigured",
+        "policy_learning": "unconfigured",
+    }
+    assert "All job sources unavailable" in all_down_body["meta"]["degradation"]["reason"]
+
+
+def test_jobs_list_diagnostics_isolated_across_concurrent_requests(monkeypatch) -> None:
+    _configure_all_listable_job_sources(monkeypatch)
+    barrier = threading.Barrier(2, timeout=5.0)
+
+    def interleaved_http_get(url: str) -> Tuple[bool, Any]:
+        if url.endswith("/api/training/preview-jobs"):
+            barrier.wait()
+            return True, {
+                "items": [
+                    {"job_id": "pvjob-iso-001", "status": "running", "created_at": "2026-10-18T12:00:00Z"}
+                ]
+            }
+        if url.endswith("/api/research-worker-gateway/jobs"):
+            barrier.wait()
+            return False, None
+        return True, {"items": []}
+
+    ports = create_in_memory_read_surface_ports(job_read=JobReadPort(http_get=interleaved_http_get))
+    client = _build_jobs_list_client(ports)
+
+    def call_healthy() -> Dict[str, Any]:
+        r = client.get("/bff/jobs?job_type=training_session", headers=OPERATOR_HEADERS)
+        assert r.status_code == 200
+        return r.json()
+
+    def call_unavailable() -> Dict[str, Any]:
+        r = client.get("/bff/jobs?job_type=research_worker_gateway", headers=OPERATOR_HEADERS)
+        assert r.status_code == 200
+        return r.json()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        fut_ok = pool.submit(call_healthy)
+        fut_unavail = pool.submit(call_unavailable)
+        res_ok = fut_ok.result()
+        res_unavail = fut_unavail.result()
+
+    assert [j["job_id"] for j in res_ok["items"]] == ["job-trainer-pvjob-iso-001"]
+    assert res_ok["meta"]["surfaces"]["job_list"] == {
+        "status": "ok",
+        "source": "training_session",
+    }
+    assert "degradation" not in res_ok["meta"]
+
+    assert res_unavail["items"] == []
+    assert res_unavail["meta"]["surfaces"]["job_list"]["status"] == "unavailable"
+    assert res_unavail["meta"]["surfaces"]["job_list"]["source"] == "unavailable"
+    assert res_unavail["meta"]["surfaces"]["job_list"]["degraded_sources"] == {
+        "research_worker_gateway": "unreachable",
+    }
+    assert "research_worker_gateway=unreachable" in res_unavail["meta"]["degradation"]["reason"]
+
 
 

@@ -88,6 +88,54 @@ def create_jobs_router(
                 surface = {**surface, "source": owner_source}
         return read_surface_meta("jobs", surface_key, snapshot_at=snapshot_at, surface=surface, has_data=has_data)
 
+    def _owner_job_list_meta(
+        jobs: list[Dict[str, Any]],
+        diagnostics: Dict[str, Any],
+        snapshot_at: str,
+        total: int,
+    ) -> Dict[str, Any]:
+        row_sources = [
+            src
+            for j in jobs
+            if isinstance(j, dict)
+            for src in (str(j.get("source") or "").strip(),)
+            if src and src not in {"missing", "unavailable"}
+        ]
+        healthy_sources = list(diagnostics.get("healthy_sources") or [])
+        degraded_sources = dict(diagnostics.get("degraded_sources") or {})
+        has_port_diag = "healthy_sources" in diagnostics or "degraded_sources" in diagnostics
+        owner_source: Optional[str] = (
+            row_sources[0]
+            if row_sources
+            else (healthy_sources[0] if healthy_sources else ("unavailable" if has_port_diag else None))
+        )
+        has_data: Optional[bool] = (
+            bool(healthy_sources or row_sources) if (has_port_diag or row_sources) else (True if jobs else None)
+        )
+        diag_text = ", ".join(f"{k}={v}" for k, v in degraded_sources.items())
+        degraded_msg = f"Partial job source degradation ({diag_text})." if diag_text else None
+        unavail_msg = f"All job sources unavailable ({diag_text})." if diag_text else None
+        surface = dataset_surface_status(
+            "jobs", read_store=_resolve_read_store(), snapshot_at=snapshot_at,
+            source=owner_source, has_data=has_data, missing_message=unavail_msg,
+        )
+        if isinstance(surface, dict):
+            if owner_source:
+                surface = {**surface, "source": owner_source}
+            if degraded_sources:
+                surface = {**surface, "degraded_sources": degraded_sources}
+                if has_data:
+                    surface["status"] = "degraded"
+                    if degraded_msg:
+                        surface["message"] = degraded_msg
+                elif unavail_msg:
+                    surface["message"] = unavail_msg
+        return read_surface_meta(
+            "jobs", "job_list", snapshot_at=snapshot_at, total=total,
+            surface=surface, has_data=has_data,
+            degraded_reason=degraded_msg, unavailable_reason=unavail_msg,
+        )
+
     @router.get("/bff/jobs")
     async def list_jobs(
         status: Optional[str] = None,
@@ -101,7 +149,11 @@ def create_jobs_router(
         require_read_role(identity)
         read_store = _resolve_read_store()
         snapshot_at = utc_now()
-        jobs = list(read_store.list_jobs_bff(status=status, job_type=job_type) or [])
+        diagnostics: Dict[str, Any] = {}
+        raw_jobs = list(
+            read_store.list_jobs_bff(status=status, job_type=job_type, diagnostics=diagnostics) or []
+        )
+        jobs = raw_jobs
         if status:
             jobs = [j for j in jobs if j.get("status") == status]
         if job_type:
@@ -112,7 +164,7 @@ def create_jobs_router(
             "items": page_items,
             "data": page_items,
             "page_info": {"next_page_token": next_page_token, "total": total},
-            "meta": read_surface_meta("jobs", "job_list", snapshot_at=snapshot_at, total=total),
+            "meta": _owner_job_list_meta(page_items or jobs or raw_jobs, diagnostics, snapshot_at, total),
         }
 
     @router.get("/bff/jobs/{job_id}")

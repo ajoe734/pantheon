@@ -241,9 +241,11 @@ class JobReadPort:
         *,
         status: Optional[str] = None,
         job_type: Optional[str] = None,
+        diagnostics: Optional[Dict[str, Any]] = None,
         **_kwargs: Any,
     ) -> List[Dict[str, Any]]:
-        self._degraded_sources = {}
+        degraded_sources: Dict[str, str] = {}
+        healthy_sources: List[str] = []
         jobs: List[Dict[str, Any]] = []
         for spec in self.sources:
             if not spec.supports_list or spec.list_path is None:
@@ -252,17 +254,23 @@ class JobReadPort:
                 continue
             base = _base_url(spec)
             if not base:
-                self._degraded_sources[spec.name] = "unconfigured"
+                degraded_sources[spec.name] = "unconfigured"
                 continue
             ok, payload = self.http_get(f"{base}{spec.list_path}")
             if not ok:
-                self._degraded_sources[spec.name] = "unreachable"
+                degraded_sources[spec.name] = "unreachable"
                 continue
+            healthy_sources.append(spec.name)
             for record in _extract_list(payload):
                 native_id = str(record.get(spec.native_id_field) or record.get("id") or "").strip()
                 if not native_id:
                     continue
                 jobs.append(_project_job(spec, native_id, record))
+        self._degraded_sources = dict(degraded_sources)
+        if isinstance(diagnostics, dict):
+            diagnostics.clear()
+            diagnostics["healthy_sources"] = healthy_sources
+            diagnostics["degraded_sources"] = dict(degraded_sources)
         if status:
             jobs = [j for j in jobs if j.get("status") == status]
         jobs.sort(key=lambda j: str(j.get("created_at") or ""), reverse=True)
