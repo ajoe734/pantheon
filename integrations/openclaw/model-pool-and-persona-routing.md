@@ -33,8 +33,8 @@ Current model slots:
 
 | Slot | Model ref | Runtime | Auth |
 |---|---|---|---|
-| Codex Sol | `openai/gpt-5.6-sol` | `openclaw` | Product main-profile OpenAI/Codex OAuth (`agents/main/agent/auth-profiles.json` on `openclaw-data`) |
-| Codex 5.5 | `openai/gpt-5.5` | `openclaw` | Product main-profile OpenAI/Codex OAuth (`agents/main/agent/auth-profiles.json` on `openclaw-data`) |
+| Codex Sol | `openai/gpt-5.6-sol` | `openclaw` | Product main-profile OpenAI/Codex OAuth (native main-agent auth-profile store on `openclaw-data`) |
+| Codex 5.5 | `openai/gpt-5.5` | `openclaw` | Product main-profile OpenAI/Codex OAuth (native main-agent auth-profile store on `openclaw-data`) |
 | Claude Opus | `anthropic/claude-opus-4-8` | `openclaw` | `ANTHROPIC_API_KEY` + `models.providers.anthropic.headers["anthropic-workspace-id"]` |
 | Claude Sonnet | `anthropic/claude-sonnet-4-6` | `claude-cli` | persisted Claude CLI login or explicit product `CLAUDE_CODE_OAUTH_TOKEN` |
 | Gemini Pro | `google/gemini-3.1-pro-preview` | `google-gemini-cli` | Gemini CLI OAuth profile |
@@ -48,8 +48,8 @@ app-server harness, which unconditionally rejects `structured-extraction`
 
 Both `openai/gpt-5.6-sol` and `openai/gpt-5.5` therefore use
 `agentRuntime.id = "openclaw"`. OpenClaw's embedded HTTP/OAuth runtime resolves
-the product main-profile OpenAI/Codex OAuth credentials stored on the persistent
-`openclaw-data` volume (`/home/node/.openclaw/agents/main/agent/auth-profiles.json`),
+the product main-profile OpenAI/Codex OAuth credentials stored in the native
+main-agent auth-profile store on `openclaw-data`,
 which `structured-extraction` and other agents inherit natively without spawning
 `codex` app-server, while keeping `tools.deny = ["*"]` and `tools.exec.security = "deny"`
 enforced. Do not mount, symlink, or import developer-worker `.codex` CLI homes
@@ -157,7 +157,7 @@ that account's allowance, separated by actual runtime and credential bucket:
   CLI subscription / explicit product `CLAUDE_CODE_OAUTH_TOKEN` Agent SDK credit
   and rate limit (post-2026-06-15 billing; see `governance.md §9`).
 - `openai/gpt-5.6-sol` and `openai/gpt-5.5` (`openclaw` runtime) share the
-  product main-profile OpenAI/Codex OAuth (`agents/main/agent/auth-profiles.json`)
+  product main-profile OpenAI/Codex OAuth (native main-agent auth-profile store on `openclaw-data`)
   subscription quota.
 - `google/gemini-3.1-pro-preview` (`google-gemini-cli` runtime) draws from the
   Gemini CLI OAuth profile quota.
