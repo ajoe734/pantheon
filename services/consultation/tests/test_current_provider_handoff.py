@@ -23,7 +23,9 @@ import uvicorn
 from services.consultation import main as consultation_main
 from services.consultation.provider import (
     ContributionBlocked,
+    ContributionProviderError,
     HttpContributionProvider,
+    QualifiedContribution,
 )
 from services.consultation.store import ConsultationStore
 from services.consultation.workflow_executor import (
@@ -46,7 +48,10 @@ from assistant_openclaw_provider import (  # noqa: E402
 )
 from consultation_provider import (  # noqa: E402
     CONSULTATION_CONTRIBUTION_PATH,
+    ConsultationContributionRequest,
     QUALIFIED_CONTRIBUTION_SCHEMA,
+    REQUIRED_OUTPUT,
+    _qualified_response,
     app as integrated_adapter_app,
     create_app,
 )
@@ -919,4 +924,134 @@ def test_consultation_provider_surfaces_restricted_agent_and_gateway_failures(
     assert health["functional_health"]["ready"] is False
     assert health["functional_health"]["blocked_count"] == 1
     assert "blocked item(s)" in health["last_failure_reason"]
+
+
+def test_empty_findings_succeed_and_publish_memo_with_evidence(
+    current_stack: CurrentStack,
+) -> None:
+    request_id = "empty-findings-valid"
+    request = current_stack.create_request(request_id)
+    config = current_stack.config()
+    provider_client = _http_provider(config)
+
+    assert "minItems" not in QUALIFIED_CONTRIBUTION_SCHEMA["properties"]["findings"]
+    assert QUALIFIED_CONTRIBUTION_SCHEMA["properties"]["evidence"]["minItems"] == 1
+
+    # Empty evidence=[] still fails closed under minItems=1.
+    no_evidence = _default_contribution(TENANT, request_id)
+    no_evidence["evidence"] = []
+    current_stack.provider.contribution_override = no_evidence
+    with pytest.raises(ContributionBlocked, match="evidence"):
+        provider_client.obtain(tenant_id=TENANT, request=request)
+    assert len(current_stack.provider.calls) == 1
+
+    # Valid empty findings=[] with non-empty evidence succeeds end-to-end.
+    current_stack.provider.contribution_override = None
+    current_stack.provider.findings_override = []
+    result = run_tick(config=config, state=WorkflowStateStore(config.state_path))
+    assert result["completed"] == 1
+    assert len(current_stack.provider.calls) == 2
+
+    memos = _request_json(
+        current_stack.api_url + f"/api/consult/memos?request_id={request_id}"
+    )
+    handoffs = _request_json(
+        current_stack.api_url + f"/api/consult/handoffs?request_id={request_id}"
+    )
+    assert len(memos) == 1
+    assert memos[0]["status"] == "published"
+    assert memos[0]["findings"] == []
+    assert len(handoffs) == 1
+    assert handoffs[0]["status"] == "acknowledged"
+
+
+def test_ai_only_attribution_and_agent_id_enforcement(
+    current_stack: CurrentStack,
+) -> None:
+    request_id = "ai-attribution-and-agent-id"
+    request = current_stack.create_request(request_id)
+    config = current_stack.config()
+    provider_client = _http_provider(config)
+
+    assert QUALIFIED_CONTRIBUTION_SCHEMA["properties"]["participant_type"]["enum"] == [
+        "committee",
+        "persona",
+    ]
+
+    # Shared domain model still permits genuine human_reviewer -> author_type='human'.
+    shared_human = _default_contribution(TENANT, request_id)
+    shared_human["participant_type"] = "human_reviewer"
+    domain_qualified = QualifiedContribution.from_payload(
+        shared_human,
+        expected_tenant_id=TENANT,
+        expected_request_id=request_id,
+    )
+    assert domain_qualified.participant_type == "human_reviewer"
+    assert domain_qualified.author_type == "human"
+
+    # OpenClaw AI boundary rejects participant_type='human_reviewer' via schema.
+    current_stack.provider.contribution_override = shared_human
+    with pytest.raises(ContributionBlocked, match="participant_type") as exc_schema:
+        provider_client.obtain(tenant_id=TENANT, request=request)
+    assert exc_schema.value.retryable is False
+    assert len(current_stack.provider.calls) == 1
+
+    # _qualified_response also rejects missing/wrong agent_id and human attribution directly.
+    envelope = ConsultationContributionRequest(
+        tenant_id=TENANT,
+        request_id=request_id,
+        request=request,
+        required_output=REQUIRED_OUTPUT,
+    )
+    valid_structured = _default_contribution(TENANT, request_id)
+    with pytest.raises(
+        ContributionProviderError,
+        match="OpenClaw consultation output must come from structured-extraction",
+    ):
+        _qualified_response(
+            SimpleNamespace(
+                status="completed",
+                output={"structured_data": valid_structured},
+            ),
+            envelope,
+        )
+    with pytest.raises(
+        ContributionProviderError,
+        match="OpenClaw consultation output must come from structured-extraction",
+    ):
+        _qualified_response(
+            SimpleNamespace(
+                status="completed",
+                output={"agent_id": "main", "structured_data": valid_structured},
+            ),
+            envelope,
+        )
+    with pytest.raises(
+        ContributionProviderError,
+        match="OpenClaw consultation attribution must be committee or persona, not human",
+    ):
+        _qualified_response(
+            SimpleNamespace(
+                status="completed",
+                output={
+                    "agent_id": STRUCTURED_AGENT_ID,
+                    "structured_data": shared_human,
+                },
+            ),
+            envelope,
+        )
+    with pytest.raises(
+        ContributionProviderError,
+        match="OpenClaw consultation attribution must be committee or persona, not human",
+    ):
+        _qualified_response(
+            SimpleNamespace(
+                status="completed",
+                output={
+                    "agent_id": STRUCTURED_AGENT_ID,
+                    "structured_data": dict(valid_structured, author_type="human"),
+                },
+            ),
+            envelope,
+        )
 

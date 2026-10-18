@@ -28,7 +28,7 @@
     "production_file": "services/openclaw-gateway-adapter/consultation_provider.py",
     "test_file": "services/consultation/tests/test_current_provider_handoff.py",
     "removed_paths": [
-      "generic conversation provider.invoke(...) call from ConsultationOpenClawService.contribute",
+      "generic conversation provider.invoke(...) call from create_app inner contribute route handler",
       "duplicate _provider_text text-extraction helper",
       "duplicate json.loads response parsing in _qualified_response"
     ],
@@ -40,31 +40,37 @@
       "agent_id": "structured-extraction",
       "allowed_tools": [],
       "execution_authority": "none",
-      "consultation_advisory_only": true
+      "consultation_advisory_only": true,
+      "allowed_participant_types": [
+        "committee",
+        "persona"
+      ],
+      "allowed_author_types": [
+        "committee",
+        "persona"
+      ],
+      "findings_min_items": 0,
+      "evidence_min_items": 1
     },
     "production_line_budget": {
-      "added_lines": 115,
+      "added_lines": 122,
       "deleted_lines": 81,
-      "net_line_increase": 34,
+      "net_line_increase": 41,
       "max_net_line_increase_budget": 80
     }
   },
   "local_validation": {
     "commands": [
       {
-        "command": ".venv-pantheon/bin/python -m pytest -v services/consultation/tests/test_current_provider_handoff.py -k \"mismatch or surfaces_restricted\"",
-        "passed": 2,
+        "command": ".venv-pantheon/bin/python -m pytest -v services/consultation/tests/test_current_provider_handoff.py",
+        "passed": 15,
         "failed": 0
       },
       {
-        "command": ".venv-pantheon/bin/python -m pytest -v services/consultation/tests/test_current_provider_handoff.py -k \"non_json or rejects_tool\"",
+        "command": ".venv-pantheon/bin/python -m pytest -v services/consultation/tests/test_current_provider_handoff.py -k \"empty_findings or ai_only_attribution\"",
         "passed": 2,
-        "failed": 0
-      },
-      {
-        "command": ".venv-pantheon/bin/python -m pytest -v services/consultation/tests/test_current_provider_handoff.py -k \"not (mismatch or surfaces_restricted or non_json or rejects_tool)\"",
-        "passed": 9,
-        "failed": 0
+        "failed": 0,
+        "deselected": 13
       },
       {
         "command": ".venv-pantheon/bin/python -m pytest -v services/consultation/test_workflow_executor.py services/consultation/test_models.py services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py",
@@ -72,7 +78,7 @@
         "failed": 0
       }
     ],
-    "test_current_provider_handoff_total_passed": 13,
+    "test_current_provider_handoff_total_passed": 15,
     "scope_note": "Injected local HTTP/SSE /v1/responses results in test_current_provider_handoff.py are local proof only and do not constitute hosted provider truth. Root separately re-pins BE/FE and runs matching FULL after source delivery; 43AC, all12, and TOTALreview remain incomplete until matching hosted FULL passes."
   }
 }

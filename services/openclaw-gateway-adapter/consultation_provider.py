@@ -261,7 +261,7 @@ QUALIFIED_CONTRIBUTION_SCHEMA: dict[str, Any] = {
         "request_id": {"type": "string", "minLength": 1},
         "participant_type": {
             "type": "string",
-            "enum": ["committee", "human_reviewer", "persona"],
+            "enum": ["committee", "persona"],
         },
         "participant_ref": {"type": "string", "minLength": 1},
         "summary": {"type": "string", "minLength": 1},
@@ -294,7 +294,6 @@ QUALIFIED_CONTRIBUTION_SCHEMA: dict[str, Any] = {
         },
         "findings": {
             "type": "array",
-            "minItems": 1,
             "items": {
                 "type": "object",
                 "required": [
@@ -357,7 +356,7 @@ def _qualified_response(
     output = getattr(result, "output", None)
     if not isinstance(output, Mapping):
         raise ContributionProviderError("OpenClaw provider output must be an object")
-    if str(output.get("agent_id") or STRUCTURED_AGENT_ID) != STRUCTURED_AGENT_ID:
+    if output.get("agent_id") != STRUCTURED_AGENT_ID:
         raise ContributionProviderError(
             "OpenClaw consultation output must come from structured-extraction"
         )
@@ -371,6 +370,14 @@ def _qualified_response(
         expected_tenant_id=payload.tenant_id,
         expected_request_id=payload.request_id,
     )
+    if (
+        str(structured.get("author_type") or "").strip().lower() == "human"
+        or contribution.participant_type not in ("committee", "persona")
+        or contribution.author_type not in ("committee", "persona")
+    ):
+        raise ContributionProviderError(
+            "OpenClaw consultation attribution must be committee or persona, not human"
+        )
     return {
         "status": "completed",
         "contribution": contribution.to_dict(),
