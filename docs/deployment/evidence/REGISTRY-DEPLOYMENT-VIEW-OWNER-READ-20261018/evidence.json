@@ -2,7 +2,7 @@
   "task_id": "REGISTRY-DEPLOYMENT-VIEW-OWNER-READ-20261018",
   "owner": "Antigravity",
   "reviewer": "Antigravity2",
-  "generated_at": "2026-10-18T03:44:30Z",
+  "generated_at": "2026-10-18T04:17:30Z",
   "status": "verified",
   "base_commit": "541a9a82a89460caedaea5e1bd54cd2318f4da6b",
   "audit_receipts_verified": [
@@ -17,11 +17,31 @@
     {
       "path": "/tmp/pantheon-assist-20261013/Registry-known3176-contract-defects-HumanOps-native-reopen-20261018.py",
       "sha256": "fbc15726087f7fad740892c0a99fab0825c786b053db99737b2f1cc3b9b125c0"
+    },
+    {
+      "path": "/tmp/pantheon-assist-20261013/Registry-new-WIP-original-three-defects-corrected-and-valid-controls-independent-proof-20261018.json",
+      "sha256": "4b5b05f6eb9f5d24c4599d0461360b71a9b0286cae5cace4b9140964715d44f2"
+    },
+    {
+      "path": "/tmp/pantheon-assist-20261013/Registry-new-WIP-original-eight-retained-after-paused-frozen-fix-independent-proof-20261018.json",
+      "sha256": "9474d44e941c24dc7c6d2f6688539fa219fcbf9f02a4760186682239912fe3b8"
+    },
+    {
+      "path": "/tmp/pantheon-assist-20261013/Registry-708-native-148-tests-and-actual-dynamic-base-behavior-proof-20261018.json",
+      "sha256": "691939f7c27031fce95b0cb13357014b5c582d6be66c952155047a2f96b4905c"
+    },
+    {
+      "path": "/tmp/pantheon-assist-20261013/Registry-PR6642-a8fd-exact-published-semantic-fix-and-frozen-evidence-readonly-20261018.json",
+      "sha256": "a33ea58359cf2a3cf15a1b71815f930ded80fa2fde4a9ae4ee5e158734f3eb1c"
+    },
+    {
+      "path": "/tmp/pantheon-assist-20261013/Registry-a8fd-original-evidence-factual-scope-HumanOps-native-reopen-20261018.json",
+      "sha256": "4a835ee3bbea80b17959c014aa7f96827e9313dcfb92b8b46d9097563d9b6744"
     }
   ],
   "inspected_files_sha256": {
     "AI_COLLABORATION_GUIDE.md": "d271b32d8e66f7563c1c16c765137cb7ac51e171016e0de7798a0278693fb3cb",
-    ".orchestrator/worker-runtime/task-context/registry-deployment-view-owner-read-20261018.md": "1075bd152fc5fc3d544bd04eadf2ecda80db6ed7842625fa067d2e4c707319a6",
+    ".orchestrator/worker-runtime/task-context/registry-deployment-view-owner-read-20261018.md": "b6966d63aad0858523b08a8712433a01e4f373ab08b9d2851aec4100b5151506",
     ".orchestrator/skills/worker-anchor-commit.md": "ccce3e08e4906d8e1d2fb51c0280bbdd0a7cac4162c2bafadd05a1e861364d79",
     ".orchestrator/skills/task-closeout-finalization.md": "5842dbaacf85fa4fbbc10118905161c3290c6f5dbd27057cbdf52a0ae0394598",
     "ai-status.json": "7bed382e7f2474aab58e7a196e28518c6b112cb6c5f14c0406fbd87301d83906",
@@ -51,9 +71,9 @@
     "services/registry/pg_store.py": "3c0ed7b8884a0ff38c225d1fe2a70dee43ed1574393518842c1fd400828e0650",
     "services/registry/contract.md": "5c273be8f86646d07445cbd0ed5ab49c1c64f81409ca81f6a7db53d4c083dfd2",
     "services/registry/first_release_contract.json": "783f17dd65f0bbe3b3eb35a102360835cf5cb90cffde5de690bdde75db3f09b1",
-    "services/registry/test_service.py": "8afaf082c5063b44e5b2dd8d312807e2a234d47d0bc454849d61feb0c43fb145",
+    "services/registry/test_service.py": "0481f09b83d1143f3a6c3b268dea23462b8b1d91159a9ebd0bb368366adb0dc7",
     "services/registry/smoke_test.py": "b4c4d33fe18be73afbbd00056df60c61d85c1b25e4b9541d2a3a9878984605c9",
-    "services/registry/test_registry_auth_wiring.py": "854af1def1fe9f25da3052d11d0b5eeb9cdbec1ae66485315d57ba48c958839b",
+    "services/registry/test_registry_auth_wiring.py": "e864fd6e1691d8a486fa295e09c5cd8cc102d7051b7fa69223328c6d1ba4ef71",
     "docker-compose.yml": "824eb5670652eca6d72ab95c873888f4bd6a8a2066c3827592fdc5c72711743e"
   },
   "retired_duplicate_resolvers": [
@@ -77,13 +97,111 @@
   },
   "base_vs_head_verification": {
     "base_commit": "541a9a82a89460caedaea5e1bd54cd2318f4da6b",
-    "base_check": "Executed behavioral probe against base commit 541a9a82a89460caedaea5e1bd54cd2318f4da6b: RegistryStore.resolve_deployment_view and PostgresRegistryStore.resolve_deployment_view exist on base, GET /api/registry/strategies/strat-probe/deployment-view without owner URLs returns HTTP 200 with {'current_stage': 'none', 'deployment_plan_id': None, 'runtime_binding_id': None} (failing fail-closed 503), and with canonical runtime-manager + deployment owner apps serving active paper binding rb-probe-1 and plan plan-probe-1 still returns HTTP 200 with {'current_stage': 'none', 'deployment_plan_id': None, 'runtime_binding_id': None} from entry.deployment_summary cache instead of owner truth.",
-    "head_check": "Executed identical behavioral probe against HEAD: duplicate store resolvers are absent, GET /api/registry/strategies/strat-probe/deployment-view without owner URLs fails closed with HTTP 503, and with canonical runtime-manager Flask app (RuntimeBindingStore(path=None)) + deployment FastAPI app (DeploymentPlanStore(storage_path=None)) over loopback HTTP returns HTTP 200 with {'current_stage': 'paper', 'deployment_plan_id': 'plan-probe-1', 'runtime_binding_id': 'rb-probe-1', 'capital_pool_id': 'pool-probe', 'artifact_version': '1.0.0'}."
+    "raw_receipt_path": "/tmp/pantheon-assist-20261013/Registry-708-native-148-tests-and-actual-dynamic-base-behavior-proof-20261018.json",
+    "raw_receipt_sha256": "691939f7c27031fce95b0cb13357014b5c582d6be66c952155047a2f96b4905c",
+    "collector_command": "Export base 541a9a82a89460caedaea5e1bd54cd2318f4da6b via git archive into a temporary directory and run the identical TestClient behavioral probe with REGISTRY_STORE_BACKEND=memory against both base and HEAD (see Registry-708-native-148-tests-and-actual-dynamic-base-behavior-proof-20261018.json step 179; step 176 without REGISTRY_STORE_BACKEND was an excluded setup error, not product baseline failure).",
+    "collector_exit_code": 0,
+    "collector_note": "Collector process exit 0 means the comparison harness executed cleanly; baseline fails the target contract behaviorally because base returns HTTP 200 current_stage='none' both when owner URLs are unset and when canonical owners serve an active paper binding.",
+    "observed_base_541a9a82a": {
+      "has_storage_dup": true,
+      "has_pg_dup": true,
+      "no_owners_status": 200,
+      "no_owners_body": {
+        "strategy_id": "strat-probe",
+        "current_stage": "none",
+        "latest_approved_registry_id": "reg-strat-probe-1.0.0-5bcaeb8f",
+        "latest_approved_version": "1.0.0",
+        "deployment_plan_id": null,
+        "runtime_binding_id": null,
+        "last_transition_at": null
+      },
+      "with_owners_status": 200,
+      "with_owners_body": {
+        "strategy_id": "strat-probe",
+        "current_stage": "none",
+        "latest_approved_registry_id": "reg-strat-probe-1.0.0-5bcaeb8f",
+        "latest_approved_version": "1.0.0",
+        "deployment_plan_id": null,
+        "runtime_binding_id": null,
+        "last_transition_at": null
+      }
+    },
+    "observed_head": {
+      "has_storage_dup": false,
+      "has_pg_dup": false,
+      "no_owners_status": 503,
+      "no_owners_body": {
+        "detail": "Canonical runtime-manager and deployment owner readers must both be configured"
+      },
+      "with_owners_status": 200,
+      "with_owners_body": {
+        "strategy_id": "strat-probe",
+        "current_stage": "paper",
+        "latest_approved_registry_id": "reg-strat-probe-1.0.0-a17e1253",
+        "latest_approved_version": "1.0.0",
+        "deployment_plan_id": "plan-probe-1",
+        "runtime_binding_id": "rb-probe-1",
+        "last_transition_at": "2026-10-18T00:00:00Z"
+      },
+      "joined_owner_fixture_identity": {
+        "note": "The Registry DeploymentView facade DTO returns only the 7 fields in with_owners_body above; capital_pool_id and deployed artifact_version are verified during owner join against RuntimeBinding rb-probe-1 and DeploymentPlan plan-probe-1.",
+        "runtime_binding_id": "rb-probe-1",
+        "deployment_plan_id": "plan-probe-1",
+        "capital_pool_id": "pool-probe",
+        "deployed_artifact_version": "1.0.0",
+        "deployment_mode": "paper",
+        "target_stage": "paper"
+      }
+    }
+  },
+  "ac4_startup_isolation_and_read_only_invariance": {
+    "startup_isolation": {
+      "helper": "services/registry/test_service.py::_get_real_owner_apps",
+      "mechanism": "Allocates a scoped tempfile.TemporaryDirectory(prefix='pantheon-registry-owner-boot-') and sets DEPLOYMENT_DATA_DIR, PANTHEON_GOVERNANCE_DATA_DIR, CAPITAL_DATA_DIR, PANTHEON_RUNTIME_DATA_DIR, PANTHEON_RUNTIME_BINDING_STORE_PATH, PANTHEON_CAPITAL_POOL_STORE_PATH, and PANTHEON_PERSONA_BINDING_STORE_PATH inside that temporary root BEFORE importing services/runtime-manager/main.py or services.deployment.service.",
+      "verified_assertions": [
+        "Path(dep_svc.DATA_DIR).resolve() == boot_root / 'governance'",
+        "Path(dep_svc.PLAN_STORE_PATH).resolve() == boot_root / 'governance' / 'deployment_plans.json'",
+        "Path(dep_svc.SAGA_STORE_PATH).resolve() == boot_root / 'governance' / 'deployment_sagas.json'",
+        "Path(dep_svc.OUTBOX_LEASE_STORE_PATH).resolve() == boot_root / 'governance' / 'deployment_outbox_leases.json'",
+        "Path(dep_svc.RUNTIME_BINDING_STORE_PATH).resolve() == boot_root / 'runtime-manager' / 'bindings.json'",
+        "Path(rm_main._STORE_PATH_ENV).resolve() == boot_root / 'runtime-manager' / 'bindings.json'",
+        "'/tmp/pantheon/governance' not in str(dep_svc.DATA_DIR)",
+        "'/tmp/pantheon/runtime-manager' not in str(rm_main._STORE_PATH_ENV)"
+      ]
+    },
+    "read_only_owner_and_registry_invariance": {
+      "helper": "services/registry/test_service.py::_snapshot_owner_and_registry_state and _local_owner_server",
+      "mechanism": "Fixtures (RuntimeBindingStore(path=None), DeploymentPlanStore(storage_path=None), and DeploymentSagaStore(storage_path=None) with a bootstrapped saga + outbox record + inbox receipt) are seeded once at server startup before baseline snapshot (seed_count == 1). _Handler.do_GET never reseeds or overwrites any store during measured GET calls.",
+      "measured_calls": [
+        "GET /api/registry/entries/{id} -> 200 with zero outbound owner requests",
+        "GET /api/registry/strategies/{strategy_id}/deployment-view -> 200 with GET-only outbound owner requests [('GET', '/api/runtime-bindings'), ('GET', '/api/deployment/plans/{plan_id}')]",
+        "Repeated GET /api/registry/strategies/{strategy_id}/deployment-view -> 200 with seed_count remaining 1"
+      ],
+      "observed_probe_result": {
+        "startup_isolation_verified": true,
+        "startup_paths_use_scoped_tempdir": true,
+        "seed_count_before": 1,
+        "seed_count_after": 1,
+        "snapshot_counts": {
+          "registry_entries": 1,
+          "registry_command_receipts": 2,
+          "registry_creation_receipts": 1,
+          "runtime_bindings": 1,
+          "deployment_plans": 1,
+          "deployment_sagas": 1,
+          "deployment_outbox_records": 1,
+          "deployment_inbox_receipts": 1
+        },
+        "snapshot_before_sha256": "2dbc71c113ea2a7655c3f18580ffb36dfcdc3723ac899ec4cc0ddb1bedf6822b",
+        "snapshot_after_sha256": "2dbc71c113ea2a7655c3f18580ffb36dfcdc3723ac899ec4cc0ddb1bedf6822b",
+        "snapshots_equal": true
+      }
+    }
   },
   "verification": {
     "pytest_command": "/tmp/pantheon-worker-worktrees/pantheon/registry-deployment-view-owner-read-20261018/.venv-pantheon/bin/python3 -m pytest -q services/registry/test_service.py services/registry/smoke_test.py services/registry/test_registry_auth_wiring.py services/registry/test_first_release_contract.py",
     "pytest_exit_code": 0,
-    "pytest_result": "148 passed, 1 warning in 48.25s",
+    "pytest_result": "148 passed, 1 warning in 51.52s",
     "smoke_script_command": "/tmp/pantheon-worker-worktrees/pantheon/registry-deployment-view-owner-read-20261018/.venv-pantheon/bin/python3 services/registry/smoke_test.py",
     "smoke_script_exit_code": 0,
     "smoke_script_result": "48 passed, 0 failed, 48 total (ALL SMOKE TESTS PASSED)",

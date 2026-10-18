@@ -211,10 +211,12 @@ def test_deployment_view_fails_closed_503_when_owner_unreachable_or_unauthentica
         advance_registry_http,
         configure_registry_unit_auth,
     )
+    from .storage import get_store
     from .test_service import (
         _coerce_deployment_plan,
         _coerce_runtime_binding,
         _get_real_owner_apps,
+        _snapshot_owner_and_registry_state,
     )
 
     compose_text = (Path(__file__).resolve().parents[2] / "docker-compose.yml").read_text(encoding="utf-8")
@@ -244,7 +246,11 @@ def test_deployment_view_fails_closed_503_when_owner_unreachable_or_unauthentica
         r = advance_registry_http(
             strict_client,
             f"/api/registry/entries/{rid}/advance",
-            json={"target_state": target, "expected_artifact_state": expected},
+            json={
+                "target_state": target,
+                "expected_artifact_state": expected,
+                "command_key": f"cmd-auth-advance-{rid}-{target}",
+            },
             headers=headers,
         )
         assert r.status_code == 200, r.text
@@ -276,12 +282,14 @@ def test_deployment_view_fails_closed_503_when_owner_unreachable_or_unauthentica
     assert resp_unreachable.status_code == 503, resp_unreachable.text
 
     mods = _get_real_owner_apps()
+    assert mods["startup_isolation"]["verified"] is True
     rm_main = mods["rm_main"]
     dep_svc = mods["dep_svc"]
     RuntimeBinding = mods["RuntimeBinding"]
     RuntimeBindingStore = mods["RuntimeBindingStore"]
     DeploymentPlan = mods["DeploymentPlan"]
     DeploymentPlanStore = mods["DeploymentPlanStore"]
+    DeploymentSagaStore = mods["DeploymentSagaStore"]
 
     rm_store = RuntimeBindingStore(path=None)
     rm_store.create(
@@ -302,23 +310,30 @@ def test_deployment_view_fails_closed_503_when_owner_unreachable_or_unauthentica
         single_runtime_enforced=True,
     )
     plan_store = DeploymentPlanStore(storage_path=None)
-    plan_store.put(
-        _coerce_deployment_plan(
-            DeploymentPlan,
-            "plan-auth-1",
-            {
-                "plan_id": "plan-auth-1",
-                "strategy_id": "auth-wiring-strat",
-                "capital_pool_id": "pool-auth-1",
-                "artifact_id": rid,
-                "artifact_version": "1.0.0",
-                "target_stage": "paper",
-                "status": "approved",
-                "tenant_id": "tenant-a",
-                "binding_id": "rb-auth-1",
-            },
-        )
+    seeded_plan = _coerce_deployment_plan(
+        DeploymentPlan,
+        "plan-auth-1",
+        {
+            "plan_id": "plan-auth-1",
+            "strategy_id": "auth-wiring-strat",
+            "capital_pool_id": "pool-auth-1",
+            "artifact_id": rid,
+            "artifact_version": "1.0.0",
+            "target_stage": "paper",
+            "status": "approved",
+            "tenant_id": "tenant-a",
+            "binding_id": "rb-auth-1",
+        },
     )
+    plan_store.put(seeded_plan)
+    saga_store = DeploymentSagaStore(storage_path=None)
+    boot = saga_store.bootstrap_for_plan(
+        seeded_plan,
+        trace_id="trace-plan-auth-1",
+        saga_id="saga-plan-auth-1",
+        metadata=dict(seeded_plan.metadata or {}),
+    )
+    saga_store.consume_event("runtime-manager", boot.outbox_event.event)
 
     class _InMemoryRuntimeService:
         def __init__(self, store):
@@ -339,9 +354,15 @@ def test_deployment_view_fails_closed_503_when_owner_unreachable_or_unauthentica
     prev_rm_svc = rm_main._svc
     prev_dep_store = dep_svc.store
     prev_planner_store = dep_svc.planner_service.plan_store
+    prev_saga_store = dep_svc.saga_store
+    prev_orch_saga_store = dep_svc.orchestration_service.saga_store
+    prev_proj_saga_store = dep_svc.projection_service.saga_store
     rm_main._svc = _InMemoryRuntimeService(rm_store)
     dep_svc.store = plan_store
     dep_svc.planner_service.plan_store = plan_store
+    dep_svc.saga_store = saga_store
+    dep_svc.orchestration_service.saga_store = saga_store
+    dep_svc.projection_service.saga_store = saga_store
 
     rm_client = rm_main.app.test_client()
     dep_client = TestClient(dep_svc.app)
@@ -357,6 +378,7 @@ def test_deployment_view_fails_closed_503_when_owner_unreachable_or_unauthentica
             req_tenant = self.headers.get("X-Tenant-Id")
             state["requests"].append(
                 {
+                    "method": "GET",
                     "path": self.path,
                     "authorization": req_auth,
                     "tenant": req_tenant,
@@ -435,6 +457,9 @@ def test_deployment_view_fails_closed_503_when_owner_unreachable_or_unauthentica
             rm_main._svc = prev_rm_svc
             dep_svc.store = prev_dep_store
             dep_svc.planner_service.plan_store = prev_planner_store
+            dep_svc.saga_store = prev_saga_store
+            dep_svc.orchestration_service.saga_store = prev_orch_saga_store
+            dep_svc.projection_service.saga_store = prev_proj_saga_store
 
     monkeypatch.setenv("PANTHEON_RUNTIME_AUTH_MODE", "strict")
     monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", _JWT_SECRET)
@@ -449,11 +474,25 @@ def test_deployment_view_fails_closed_503_when_owner_unreachable_or_unauthentica
         monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", base_url)
         monkeypatch.setenv("PANTHEON_DEPLOYMENT_API_URL", base_url)
 
+        baseline_snapshot = _snapshot_owner_and_registry_state(
+            get_store(), rm_store, plan_store, saga_store
+        )
+        assert rid in baseline_snapshot["registry_entries"]
+        assert len(baseline_snapshot["registry_command_receipts"]) >= 2
+        assert len(baseline_snapshot["runtime_bindings"]) == 1
+        assert len(baseline_snapshot["deployment_plans"]) == 1
+        assert len(baseline_snapshot["deployment_sagas"]) == 1
+        assert len(baseline_snapshot["deployment_outbox_records"]) == 1
+        assert len(baseline_snapshot["deployment_inbox_receipts"]) == 1
+
         # 3. Immutable EntryGET makes zero outbound owner callbacks
         state["requests"].clear()
         entry_get = strict_client.get(f"/api/registry/entries/{rid}", headers=headers)
         assert entry_get.status_code == 200, entry_get.text
         assert state["requests"] == []
+        assert _snapshot_owner_and_registry_state(
+            get_store(), rm_store, plan_store, saga_store
+        ) == baseline_snapshot
 
         # Baseline real-app strict JWT + tenant success
         ok_resp = strict_client.get(
@@ -462,6 +501,9 @@ def test_deployment_view_fails_closed_503_when_owner_unreachable_or_unauthentica
         )
         assert ok_resp.status_code == 200, ok_resp.text
         assert ok_resp.json()["current_stage"] == "paper"
+        assert _snapshot_owner_and_registry_state(
+            get_store(), rm_store, plan_store, saga_store
+        ) == baseline_snapshot
 
         # 4a. Real runtime-manager 401 (bad JWT signature) -> Registry 503
         monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", "wrong-rm-secret")
@@ -520,6 +562,10 @@ def test_deployment_view_fails_closed_503_when_owner_unreachable_or_unauthentica
             )
             assert resp.status_code == 503, f"mode={mode} expected 503, got {resp.status_code}: {resp.text}"
         assert state["redirect_hits"] == 0
+        assert _snapshot_owner_and_registry_state(
+            get_store(), rm_store, plan_store, saga_store
+        ) == baseline_snapshot
+
 
 
 

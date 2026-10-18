@@ -2116,43 +2116,137 @@ def test_metadata_and_advance_command_keys_do_not_share_a_receipt_namespace(stri
     assert final_entry["artifact_state"] == "candidate"
 
 
+import atexit
 from contextlib import contextmanager
+import copy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
 import json
 import os
 from pathlib import Path
 import sys
+import tempfile
 import threading
+
+from .storage import get_store
 
 _REAL_OWNER_MODS: dict[str, object] = {}
 
 
 def _get_real_owner_apps():
     if not _REAL_OWNER_MODS:
-        rm_dir = str(Path(__file__).resolve().parents[1] / "runtime-manager")
-        if rm_dir not in sys.path:
-            sys.path.insert(0, rm_dir)
-        spec = importlib.util.spec_from_file_location(
-            "pantheon_runtime_manager_main_real",
-            Path(rm_dir) / "main.py",
-        )
-        assert spec is not None and spec.loader is not None
-        rm_main = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(rm_main)
-        from services.deployment import service as dep_svc
-        from services.runtime_manager.runtime_binding import RuntimeBinding, RuntimeBindingStore
-        from deployment_plan import DeploymentPlan, DeploymentPlanStore
+        boot_tmpdir = tempfile.TemporaryDirectory(prefix="pantheon-registry-owner-boot-")
+        atexit.register(boot_tmpdir.cleanup)
+        boot_root = Path(boot_tmpdir.name).resolve()
+        gov_dir = boot_root / "governance"
+        rm_data_dir = boot_root / "runtime-manager"
+        cap_dir = boot_root / "capital"
+        rm_store_path = rm_data_dir / "bindings.json"
+        cap_pool_path = cap_dir / "capital_pools.json"
+        persona_binding_path = cap_dir / "persona_capital_bindings.json"
+
+        boot_env = {
+            "DEPLOYMENT_DATA_DIR": str(gov_dir),
+            "PANTHEON_GOVERNANCE_DATA_DIR": str(gov_dir),
+            "CAPITAL_DATA_DIR": str(cap_dir),
+            "PANTHEON_RUNTIME_DATA_DIR": str(rm_data_dir),
+            "PANTHEON_RUNTIME_BINDING_STORE_PATH": str(rm_store_path),
+            "PANTHEON_CAPITAL_POOL_STORE_PATH": str(cap_pool_path),
+            "PANTHEON_PERSONA_BINDING_STORE_PATH": str(persona_binding_path),
+        }
+        saved_boot_env = {k: os.environ.get(k) for k in boot_env}
+        for k, v in boot_env.items():
+            os.environ[k] = v
+        try:
+            rm_dir = str(Path(__file__).resolve().parents[1] / "runtime-manager")
+            if rm_dir not in sys.path:
+                sys.path.insert(0, rm_dir)
+            spec = importlib.util.spec_from_file_location(
+                "pantheon_runtime_manager_main_real",
+                Path(rm_dir) / "main.py",
+            )
+            assert spec is not None and spec.loader is not None
+            rm_main = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(rm_main)
+            from services.deployment import service as dep_svc
+            from services.deployment.outbox_lease import DeploymentOutboxLeaseStore
+            from services.runtime_manager.runtime_binding import RuntimeBinding, RuntimeBindingStore
+            from deployment_plan import DeploymentPlan, DeploymentPlanStore
+            from deployment_saga import DeploymentSagaStore
+        finally:
+            for k, v in saved_boot_env.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+        assert Path(dep_svc.DATA_DIR).resolve() == gov_dir
+        assert Path(dep_svc.PLAN_STORE_PATH).resolve() == gov_dir / "deployment_plans.json"
+        assert Path(dep_svc.SAGA_STORE_PATH).resolve() == gov_dir / "deployment_sagas.json"
+        assert Path(dep_svc.OUTBOX_LEASE_STORE_PATH).resolve() == gov_dir / "deployment_outbox_leases.json"
+        assert Path(dep_svc.RUNTIME_BINDING_STORE_PATH).resolve() == rm_store_path
+        assert Path(dep_svc.CAPITAL_POOL_STORE_PATH).resolve() == cap_pool_path
+        assert Path(dep_svc.PERSONA_BINDING_STORE_PATH).resolve() == persona_binding_path
+        assert Path(rm_main._STORE_PATH_ENV).resolve() == rm_store_path
+        assert "/tmp/pantheon/governance" not in str(dep_svc.DATA_DIR)
+        assert "/tmp/pantheon/runtime-manager" not in str(rm_main._STORE_PATH_ENV)
+
+        startup_isolation = {
+            "verified": True,
+            "boot_root": str(boot_root),
+            "deployment_data_dir": str(Path(dep_svc.DATA_DIR).resolve()),
+            "plan_store_path": str(Path(dep_svc.PLAN_STORE_PATH).resolve()),
+            "saga_store_path": str(Path(dep_svc.SAGA_STORE_PATH).resolve()),
+            "outbox_lease_store_path": str(Path(dep_svc.OUTBOX_LEASE_STORE_PATH).resolve()),
+            "runtime_binding_store_path": str(Path(rm_main._STORE_PATH_ENV).resolve()),
+            "capital_pool_store_path": str(Path(dep_svc.CAPITAL_POOL_STORE_PATH).resolve()),
+            "persona_binding_store_path": str(Path(dep_svc.PERSONA_BINDING_STORE_PATH).resolve()),
+        }
 
         _REAL_OWNER_MODS.update(
+            _boot_tmpdir=boot_tmpdir,
+            startup_isolation=startup_isolation,
             rm_main=rm_main,
             dep_svc=dep_svc,
             RuntimeBinding=RuntimeBinding,
             RuntimeBindingStore=RuntimeBindingStore,
             DeploymentPlan=DeploymentPlan,
             DeploymentPlanStore=DeploymentPlanStore,
+            DeploymentSagaStore=DeploymentSagaStore,
+            DeploymentOutboxLeaseStore=DeploymentOutboxLeaseStore,
         )
     return _REAL_OWNER_MODS
+
+
+def _snapshot_owner_and_registry_state(reg_store, rm_store, plan_store, saga_store) -> dict:
+    return {
+        "registry_entries": {
+            rid: entry.to_dict()
+            for rid, entry in sorted(reg_store._entries.items())
+        },
+        "registry_command_receipts": copy.deepcopy(dict(sorted(reg_store._command_receipts.items()))),
+        "registry_creation_receipts": copy.deepcopy(dict(sorted(reg_store._creation_receipts.items()))),
+        "runtime_bindings": [
+            b.to_dict()
+            for b in sorted(rm_store.list_all(), key=lambda item: item.binding_id)
+        ],
+        "deployment_plans": [
+            p.to_dict()
+            for p in sorted(plan_store.list_all(), key=lambda item: item.plan_id)
+        ],
+        "deployment_sagas": [
+            s.to_dict()
+            for s in sorted(saga_store.list_all(), key=lambda item: item.saga_id)
+        ],
+        "deployment_outbox_records": [
+            r.to_dict()
+            for r in saga_store.outbox_records()
+        ],
+        "deployment_inbox_receipts": [
+            r.to_dict()
+            for r in saga_store.inbox_receipts()
+        ],
+    }
 
 
 def _coerce_runtime_binding(RuntimeBinding, raw: dict):
@@ -2201,9 +2295,11 @@ def _local_owner_server(*, bindings: list[dict], plans: dict[str, dict], filter_
     RuntimeBindingStore = mods["RuntimeBindingStore"]
     DeploymentPlan = mods["DeploymentPlan"]
     DeploymentPlanStore = mods["DeploymentPlanStore"]
+    DeploymentSagaStore = mods["DeploymentSagaStore"]
 
     rm_store = RuntimeBindingStore(path=None)
     plan_store = DeploymentPlanStore(storage_path=None)
+    saga_store = DeploymentSagaStore(storage_path=None)
 
     class _InMemoryRuntimeService:
         def __init__(self, store):
@@ -2224,9 +2320,15 @@ def _local_owner_server(*, bindings: list[dict], plans: dict[str, dict], filter_
     prev_rm_svc = rm_main._svc
     prev_dep_store = dep_svc.store
     prev_planner_store = dep_svc.planner_service.plan_store
+    prev_saga_store = dep_svc.saga_store
+    prev_orch_saga_store = dep_svc.orchestration_service.saga_store
+    prev_proj_saga_store = dep_svc.projection_service.saga_store
     rm_main._svc = _InMemoryRuntimeService(rm_store)
     dep_svc.store = plan_store
     dep_svc.planner_service.plan_store = plan_store
+    dep_svc.saga_store = saga_store
+    dep_svc.orchestration_service.saga_store = saga_store
+    dep_svc.projection_service.saga_store = saga_store
 
     env_keys = (
         "PANTHEON_RUNTIME_AUTH_MODE",
@@ -2254,17 +2356,27 @@ def _local_owner_server(*, bindings: list[dict], plans: dict[str, dict], filter_
     rm_client = rm_main.app.test_client()
     dep_client = TestClient(dep_svc.app)
 
-    state = {
-        "bindings": list(bindings),
-        "plans": dict(plans),
-        "filter_by_tenant": filter_by_tenant,
-        "requests": [],
-        "rm_store": rm_store,
-        "plan_store": plan_store,
-        "use_raw_rm_store": False,
-    }
+    class _OwnerFixtureState(dict):
+        def __setitem__(self, key, value):
+            super().__setitem__(key, value)
+            if key in ("bindings", "plans") and self.get("_ready"):
+                _seed_stores()
 
-    def _sync_stores():
+    state = _OwnerFixtureState(
+        bindings=list(bindings),
+        plans=dict(plans),
+        filter_by_tenant=filter_by_tenant,
+        requests=[],
+        rm_store=rm_store,
+        plan_store=plan_store,
+        saga_store=saga_store,
+        startup_isolation=mods["startup_isolation"],
+        use_raw_rm_store=False,
+        seed_count=0,
+        _ready=False,
+    )
+
+    def _seed_stores():
         if not state.get("use_raw_rm_store"):
             rm_store._bindings = {
                 b.binding_id: b
@@ -2274,6 +2386,30 @@ def _local_owner_server(*, bindings: list[dict], plans: dict[str, dict], filter_
             pid: _coerce_deployment_plan(DeploymentPlan, pid, p_raw)
             for pid, p_raw in state["plans"].items()
         }
+        dict.__setitem__(state, "seed_count", int(state.get("seed_count", 0)) + 1)
+
+    _seed_stores()
+    seeded_plans = plan_store.list_all()
+    if seeded_plans:
+        first_plan = seeded_plans[0]
+        boot = saga_store.bootstrap_for_plan(
+            first_plan,
+            trace_id=f"trace-{first_plan.plan_id}",
+            saga_id=f"saga-{first_plan.plan_id}",
+            metadata=dict(first_plan.metadata or {}),
+        )
+        saga_store.consume_event("runtime-manager", boot.outbox_event.event)
+    dict.__setitem__(state, "_ready", True)
+    dict.__setitem__(
+        state,
+        "snapshot",
+        lambda reg_store=None: _snapshot_owner_and_registry_state(
+            reg_store or get_store(),
+            rm_store,
+            plan_store,
+            saga_store,
+        ),
+    )
 
     class _Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):
@@ -2284,12 +2420,12 @@ def _local_owner_server(*, bindings: list[dict], plans: dict[str, dict], filter_
             req_tenant = self.headers.get("X-Tenant-Id")
             state["requests"].append(
                 {
+                    "method": "GET",
                     "path": self.path,
                     "authorization": req_auth,
                     "tenant": req_tenant,
                 }
             )
-            _sync_stores()
             fwd_headers = {}
             if req_auth is not None:
                 fwd_headers["Authorization"] = req_auth
@@ -2325,6 +2461,9 @@ def _local_owner_server(*, bindings: list[dict], plans: dict[str, dict], filter_
         rm_main._svc = prev_rm_svc
         dep_svc.store = prev_dep_store
         dep_svc.planner_service.plan_store = prev_planner_store
+        dep_svc.saga_store = prev_saga_store
+        dep_svc.orchestration_service.saga_store = prev_orch_saga_store
+        dep_svc.projection_service.saga_store = prev_proj_saga_store
         for k, v in saved_env.items():
             if v is None:
                 os.environ.pop(k, None)
@@ -2404,7 +2543,11 @@ def test_deployment_view_composes_from_runtime_binding_and_deployment_plan_Acros
         r = advance_registry_http(
             strict_client,
             f"/api/registry/entries/{bundle_rid}/advance",
-            json={"target_state": target, "expected_artifact_state": expected},
+            json={
+                "target_state": target,
+                "expected_artifact_state": expected,
+                "command_key": f"cmd-advance-{bundle_rid}-{target}",
+            },
             headers=_bearer(token_a),
         )
         assert r.status_code == 200, r.text
@@ -2510,11 +2653,25 @@ def test_deployment_view_composes_from_runtime_binding_and_deployment_plan_Acros
         ],
         plans={plan_id: dict(plan_a)},
     ) as (base_url, state):
+        assert state["startup_isolation"]["verified"] is True
+        assert state["seed_count"] == 1
         monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", base_url)
         monkeypatch.setenv("PANTHEON_DEPLOYMENT_API_URL", base_url)
         # Process-global tenant env vars must never override the verified caller tenant
         monkeypatch.setenv("PANTHEON_DEFAULT_TENANT", "tenant-other")
         monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-other")
+
+        baseline_snapshot = state["snapshot"]()
+        assert {spec_id_v1, bundle_rid, spec_id_v2, draft_rid}.issubset(
+            baseline_snapshot["registry_entries"]
+        )
+        assert len(baseline_snapshot["registry_command_receipts"]) >= 2
+        assert len(baseline_snapshot["registry_creation_receipts"]) >= 2
+        assert len(baseline_snapshot["runtime_bindings"]) == 3
+        assert len(baseline_snapshot["deployment_plans"]) == 1
+        assert len(baseline_snapshot["deployment_sagas"]) == 1
+        assert len(baseline_snapshot["deployment_outbox_records"]) == 1
+        assert len(baseline_snapshot["deployment_inbox_receipts"]) == 1
 
         # Foreign caller X-Tenant-Id header conflicting with verified JWT tenant is rejected (403)
         foreign_hdr_resp = strict_client.get(
@@ -2522,12 +2679,16 @@ def test_deployment_view_composes_from_runtime_binding_and_deployment_plan_Acros
             headers={**_bearer(token_a), "X-Tenant-Id": "tenant-b"},
         )
         assert foreign_hdr_resp.status_code == 403, foreign_hdr_resp.text
+        assert state["requests"] == []
+        assert state["snapshot"]() == baseline_snapshot
 
-        # Immutable EntryGET makes zero outbound owner calls
+        # Immutable EntryGET makes zero outbound owner calls and leaves all stores/receipts unchanged
         state["requests"].clear()
         entry_read = strict_client.get(f"/api/registry/entries/{bundle_rid}", headers=_bearer(token_a))
         assert entry_read.status_code == 200, entry_read.text
         assert state["requests"] == []
+        assert state["seed_count"] == 1
+        assert state["snapshot"]() == baseline_snapshot
 
         # Tenant A sees composed paper deployment from execution_bundle 1.0.0 and latest approved 2.0.0 (ignoring stale cache on v2)
         entries_before = strict_client.get(
@@ -2547,15 +2708,27 @@ def test_deployment_view_composes_from_runtime_binding_and_deployment_plan_Acros
             "runtime_binding_id": binding_id,
             "last_transition_at": "2026-10-17T22:27:53Z",
         }
-        assert [r["path"] for r in state["requests"]] == [
-            "/api/runtime-bindings",
-            f"/api/deployment/plans/{plan_id}",
+        assert [(r["method"], r["path"]) for r in state["requests"]] == [
+            ("GET", "/api/runtime-bindings"),
+            ("GET", f"/api/deployment/plans/{plan_id}"),
         ]
         assert all(r["authorization"] == f"Bearer {token_a}" and r["tenant"] == "tenant-a" for r in state["requests"])
+        assert state["seed_count"] == 1
+        assert state["snapshot"]() == baseline_snapshot
         entries_after = strict_client.get(
             f"/api/registry/strategies/{strategy_id}/entries", headers=_bearer(token_a)
         ).json()
         assert entries_after == entries_before
+
+        # Repeated read-only deployment-view call without reseeding preserves identical owner/registry rows and receipts
+        resp_a_repeat = strict_client.get(
+            f"/api/registry/strategies/{strategy_id}/deployment-view",
+            headers=_bearer(token_a),
+        )
+        assert resp_a_repeat.status_code == 200, resp_a_repeat.text
+        assert resp_a_repeat.json() == resp_a.json()
+        assert state["seed_count"] == 1
+        assert state["snapshot"]() == baseline_snapshot
 
         # Tenant B never sees Tenant A's approved artifacts or active binding
         resp_b = strict_client.get(
@@ -2572,6 +2745,8 @@ def test_deployment_view_composes_from_runtime_binding_and_deployment_plan_Acros
             "runtime_binding_id": None,
             "last_transition_at": None,
         }
+        assert state["seed_count"] == 1
+        assert state["snapshot"]() == baseline_snapshot
 
         # If a broken owner leaks a foreign-tenant binding to Tenant B, fail closed with 503
         state["filter_by_tenant"] = False
@@ -2580,6 +2755,8 @@ def test_deployment_view_composes_from_runtime_binding_and_deployment_plan_Acros
             headers=_bearer(token_b),
         )
         assert resp_b_leaked.status_code == 503, resp_b_leaked.text
+        assert state["seed_count"] == 1
+        assert state["snapshot"]() == baseline_snapshot
         state["filter_by_tenant"] = True
 
         # Operational status='paused' with deployment_mode='paper' and target_stage='paper' stays 'paper' (not 'frozen')
@@ -2722,7 +2899,7 @@ def test_deployment_view_composes_from_runtime_binding_and_deployment_plan_Acros
             {**active_binding_a, "status": "retired", "retired_at": "2026-10-18T01:00:00Z"},
             rollback_binding,
         ]
-        state["plans"]["plan-rollback-v1"] = rollback_plan
+        state["plans"] = {**state["plans"], "plan-rollback-v1": rollback_plan}
         resp_rollback = strict_client.get(
             f"/api/registry/strategies/{strategy_id}/deployment-view",
             headers=_bearer(token_a),
