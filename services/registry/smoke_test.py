@@ -12,6 +12,7 @@ import os
 # Ensure repo-root imports work when this file is executed directly.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+from services.governance.test_approval_authority import advance_registry_unit
 from services.registry.models import (
     ALLOWED_ARTIFACT_TRANSITIONS,
     ArtifactState,
@@ -22,7 +23,7 @@ from services.registry.models import (
     StorageBackend,
     StorageRef,
 )
-from services.registry.split_api import RegistryError, RegistryService
+from services.registry.split_api import RegistryError, RegistryOwnerUnavailableError, RegistryService
 from services.registry.storage import RegistryStore, reset_store, get_store
 
 # ---------------------------------------------------------------------------
@@ -31,6 +32,7 @@ from services.registry.storage import RegistryStore, reset_store, get_store
 
 _passed = 0
 _failed = 0
+_SMOKE_ACTOR = {"id": "unit-operator", "tenant": "tenant-unit"}
 
 
 def _make_create_payload(
@@ -95,8 +97,8 @@ def test_draft_to_candidate():
     reset()
     store = RegistryStore()
     svc = RegistryService(store)
-    svc.register(_make_create_payload(), "reg-001")
-    advanced = svc.advance_artifact_state("reg-001", ArtifactState.CANDIDATE)
+    svc.register(_make_create_payload(), "reg-001", actor=_SMOKE_ACTOR)
+    advanced = advance_registry_unit(svc, "reg-001", ArtifactState.CANDIDATE)
     assert_eq(advanced.entry.artifact_state, ArtifactState.CANDIDATE, "draft->candidate")
 
 
@@ -104,9 +106,15 @@ def test_candidate_to_approved():
     reset()
     store = RegistryStore()
     svc = RegistryService(store)
-    svc.register(_make_create_payload(), "reg-001")
-    svc.advance_artifact_state("reg-001", ArtifactState.CANDIDATE)
-    advanced = svc.advance_artifact_state("reg-001", ArtifactState.APPROVED, approver="risk-committee")
+    svc.register(_make_create_payload(), "reg-001", actor=_SMOKE_ACTOR)
+    advance_registry_unit(svc, "reg-001", ArtifactState.CANDIDATE)
+    advanced = advance_registry_unit(
+        svc,
+        "reg-001",
+        ArtifactState.APPROVED,
+        approver="risk-committee",
+        approval_decision_id="decision-reg-001",
+    )
     assert_eq(advanced.entry.artifact_state, ArtifactState.APPROVED, "candidate->approved")
     assert_eq(advanced.entry.approver, "risk-committee", "approver set")
     assert_is_not_none(advanced.entry.approved_at, "approved_at set")
@@ -126,11 +134,12 @@ def test_approval_requires_lineage():
             checksum="sha256:abc123",
         ),
         "reg-001",
+        actor=_SMOKE_ACTOR,
     )
-    svc.advance_artifact_state("reg-001", ArtifactState.CANDIDATE)
+    advance_registry_unit(svc, "reg-001", ArtifactState.CANDIDATE)
     assert_raises(
         RegistryError,
-        lambda: svc.advance_artifact_state("reg-001", ArtifactState.APPROVED),
+        lambda: advance_registry_unit(svc, "reg-001", ArtifactState.APPROVED),
         "candidate without lineage cannot be approved",
     )
 
@@ -139,10 +148,10 @@ def test_approved_to_retired():
     reset()
     store = RegistryStore()
     svc = RegistryService(store)
-    svc.register(_make_create_payload(), "reg-001")
-    svc.advance_artifact_state("reg-001", ArtifactState.CANDIDATE)
-    svc.advance_artifact_state("reg-001", ArtifactState.APPROVED)
-    advanced = svc.advance_artifact_state("reg-001", ArtifactState.RETIRED)
+    svc.register(_make_create_payload(), "reg-001", actor=_SMOKE_ACTOR)
+    advance_registry_unit(svc, "reg-001", ArtifactState.CANDIDATE)
+    advance_registry_unit(svc, "reg-001", ArtifactState.APPROVED)
+    advanced = advance_registry_unit(svc, "reg-001", ArtifactState.RETIRED)
     assert_eq(advanced.entry.artifact_state, ArtifactState.RETIRED, "approved->retired")
 
 
@@ -150,8 +159,8 @@ def test_draft_to_retired():
     reset()
     store = RegistryStore()
     svc = RegistryService(store)
-    svc.register(_make_create_payload(), "reg-001")
-    advanced = svc.advance_artifact_state("reg-001", ArtifactState.RETIRED)
+    svc.register(_make_create_payload(), "reg-001", actor=_SMOKE_ACTOR)
+    advanced = advance_registry_unit(svc, "reg-001", ArtifactState.RETIRED)
     assert_eq(advanced.entry.artifact_state, ArtifactState.RETIRED, "draft->retired")
 
 
@@ -159,9 +168,9 @@ def test_candidate_to_retired():
     reset()
     store = RegistryStore()
     svc = RegistryService(store)
-    svc.register(_make_create_payload(), "reg-001")
-    svc.advance_artifact_state("reg-001", ArtifactState.CANDIDATE)
-    advanced = svc.advance_artifact_state("reg-001", ArtifactState.RETIRED)
+    svc.register(_make_create_payload(), "reg-001", actor=_SMOKE_ACTOR)
+    advance_registry_unit(svc, "reg-001", ArtifactState.CANDIDATE)
+    advanced = advance_registry_unit(svc, "reg-001", ArtifactState.RETIRED)
     assert_eq(advanced.entry.artifact_state, ArtifactState.RETIRED, "candidate->retired")
 
 
@@ -169,10 +178,10 @@ def test_forbidden_draft_to_approved():
     reset()
     store = RegistryStore()
     svc = RegistryService(store)
-    svc.register(_make_create_payload(), "reg-001")
+    svc.register(_make_create_payload(), "reg-001", actor=_SMOKE_ACTOR)
     assert_raises(
         RegistryError,
-        lambda: svc.advance_artifact_state("reg-001", ArtifactState.APPROVED),
+        lambda: advance_registry_unit(svc, "reg-001", ArtifactState.APPROVED),
         "draft->approved forbidden",
     )
 
@@ -181,11 +190,11 @@ def test_forbidden_retired_to_draft():
     reset()
     store = RegistryStore()
     svc = RegistryService(store)
-    svc.register(_make_create_payload(), "reg-001")
-    svc.advance_artifact_state("reg-001", ArtifactState.RETIRED)
+    svc.register(_make_create_payload(), "reg-001", actor=_SMOKE_ACTOR)
+    advance_registry_unit(svc, "reg-001", ArtifactState.RETIRED)
     assert_raises(
         RegistryError,
-        lambda: svc.advance_artifact_state("reg-001", ArtifactState.DRAFT),
+        lambda: advance_registry_unit(svc, "reg-001", ArtifactState.DRAFT),
         "retired->draft forbidden",
     )
 
@@ -194,9 +203,9 @@ def test_approved_does_not_change_deployment_stage():
     reset()
     store = RegistryStore()
     svc = RegistryService(store)
-    svc.register(_make_create_payload(), "reg-001")
-    svc.advance_artifact_state("reg-001", ArtifactState.CANDIDATE)
-    approved = svc.advance_artifact_state("reg-001", ArtifactState.APPROVED)
+    svc.register(_make_create_payload(), "reg-001", actor=_SMOKE_ACTOR)
+    advance_registry_unit(svc, "reg-001", ArtifactState.CANDIDATE)
+    approved = advance_registry_unit(svc, "reg-001", ArtifactState.APPROVED)
     assert_eq(approved.deployment_stage, DeploymentStage.NONE, "approved does not set deployment_stage")
 
 
@@ -266,7 +275,7 @@ def test_deployment_summary_update():
 
 
 # ---------------------------------------------------------------------------
-# Tests: Deployment view
+# Tests: Deployment view (owner-composed)
 # ---------------------------------------------------------------------------
 
 def test_empty_strategy():
@@ -281,34 +290,65 @@ def test_approved_without_deployment_summary():
     reset()
     store = RegistryStore()
     svc = RegistryService(store)
-    svc.register(_make_create_payload(), "reg-001")
-    svc.advance_artifact_state("reg-001", ArtifactState.CANDIDATE)
-    svc.advance_artifact_state("reg-001", ArtifactState.APPROVED)
+    svc.register(_make_create_payload(), "reg-001", actor=_SMOKE_ACTOR)
+    advance_registry_unit(svc, "reg-001", ArtifactState.CANDIDATE)
+    advance_registry_unit(svc, "reg-001", ArtifactState.APPROVED)
+    # Even if non-authoritative deployment_summary is set on the entry, resolve_deployment_view
+    # must never read it and must report NONE when no canonical RuntimeBinding is active.
+    svc.update_deployment_summary(
+        "reg-001",
+        current_stage=DeploymentStage.PAPER,
+        deployment_plan_id="cached-plan",
+        runtime_binding_id="cached-rb",
+    )
 
-    view = svc.resolve_deployment_view("test-alpha")
-    assert_eq(view.current_stage, DeploymentStage.NONE, "no deployment_summary → NONE")
+    view = svc.resolve_deployment_view(
+        "test-alpha",
+        tenant_id="tenant-unit",
+        runtime_bindings_reader=lambda _tid: [],
+        deployment_plan_reader=lambda _pid, _tid: None,
+    )
+    assert_eq(view.current_stage, DeploymentStage.NONE, "no active RuntimeBinding → NONE")
     assert_eq(view.latest_approved_registry_id, "reg-001", "latest_approved_registry_id set")
 
 
 def test_approved_with_deployment_summary():
     reset()
     store = RegistryStore()
-    svc = RegistryService(store)
-    svc.register(_make_create_payload(), "reg-001")
-    svc.advance_artifact_state("reg-001", ArtifactState.CANDIDATE)
-    svc.advance_artifact_state("reg-001", ArtifactState.APPROVED)
-
-    svc.update_deployment_summary(
-        "reg-001",
-        current_stage=DeploymentStage.CANARY,
-        deployment_plan_id="plan-001",
-        runtime_binding_id="rb-001",
+    svc = RegistryService(
+        store,
+        runtime_bindings_reader=lambda _tid: [
+            {
+                "binding_id": "rb-001",
+                "artifact_id": "reg-001",
+                "artifact_version": "1.0.0",
+                "deployment_mode": "canary",
+                "plan_id": "plan-001",
+                "status": "active",
+                "effective_at": "2026-10-18T00:00:00Z",
+                "metadata": {"tenant_id": "tenant-unit", "strategy_id": "test-alpha"},
+            }
+        ],
+        deployment_plan_reader=lambda pid, _tid: {
+            "plan_id": pid,
+            "strategy_id": "test-alpha",
+            "artifact_id": "reg-001",
+            "artifact_version": "1.0.0",
+            "target_stage": "canary",
+            "status": "approved",
+            "tenant_id": "tenant-unit",
+            "runtime_binding_id": "rb-001",
+        },
     )
+    svc.register(_make_create_payload(), "reg-001", actor=_SMOKE_ACTOR)
+    advance_registry_unit(svc, "reg-001", ArtifactState.CANDIDATE)
+    advance_registry_unit(svc, "reg-001", ArtifactState.APPROVED)
 
-    view = svc.resolve_deployment_view("test-alpha")
-    assert_eq(view.current_stage, DeploymentStage.CANARY, "stage is canary")
+    view = svc.resolve_deployment_view("test-alpha", tenant_id="tenant-unit")
+    assert_eq(view.current_stage, DeploymentStage.CANARY, "stage is canary from owner binding+plan")
     assert_eq(view.deployment_plan_id, "plan-001", "plan_id is plan-001")
     assert_eq(view.runtime_binding_id, "rb-001", "runtime_binding_id is rb-001")
+    assert_eq(view.last_transition_at, "2026-10-18T00:00:00Z", "last_transition_at from owner binding")
 
 
 # ---------------------------------------------------------------------------
@@ -323,9 +363,9 @@ def test_split_semantics_approved_has_no_stage():
     reset()
     store = RegistryStore()
     svc = RegistryService(store)
-    view = svc.register(_make_create_payload(), "reg-001")
-    svc.advance_artifact_state("reg-001", ArtifactState.CANDIDATE)
-    approved = svc.advance_artifact_state("reg-001", ArtifactState.APPROVED, approver="test")
+    svc.register(_make_create_payload(), "reg-001", actor=_SMOKE_ACTOR)
+    advance_registry_unit(svc, "reg-001", ArtifactState.CANDIDATE)
+    approved = advance_registry_unit(svc, "reg-001", ArtifactState.APPROVED, approver="test")
     assert_eq(approved.entry.artifact_state, ArtifactState.APPROVED, "artifact_state is approved")
     assert_eq(approved.deployment_stage, DeploymentStage.NONE, "deployment_stage still none")
 
@@ -338,9 +378,9 @@ def test_deployment_stage_updated_independently():
     reset()
     store = RegistryStore()
     svc = RegistryService(store)
-    svc.register(_make_create_payload(), "reg-001")
-    svc.advance_artifact_state("reg-001", ArtifactState.CANDIDATE)
-    svc.advance_artifact_state("reg-001", ArtifactState.APPROVED)
+    svc.register(_make_create_payload(), "reg-001", actor=_SMOKE_ACTOR)
+    advance_registry_unit(svc, "reg-001", ArtifactState.CANDIDATE)
+    advance_registry_unit(svc, "reg-001", ArtifactState.APPROVED)
 
     # Update deployment_stage to paper (simulating deployment service)
     svc.update_deployment_summary("reg-001", current_stage=DeploymentStage.PAPER, deployment_plan_id="plan-001")
@@ -417,14 +457,40 @@ def test_register_rejects_retired_state():
 def test_deployment_view_reports_actually_deployed_not_latest_approved():
     """
     resolve_deployment_view() must return the deployment stage of the actually deployed
-    entry, not blindly the latest approved entry's deployment_summary.
+    entry from canonical RuntimeBinding + DeploymentPlan owners, while reporting the
+    newest approved Registry version in latest_approved_*.
 
-    Scenario: 1.0.0 is live; 2.0.0 is approved but not yet deployed.
-    Expected: current_stage=live from 1.0.0, latest_approved_version=2.0.0.
+    Scenario: 1.0.0 (reg1) has an active live RuntimeBinding + DeploymentPlan;
+    2.0.0 (reg2) is approved in Registry but not yet deployed.
+    Expected: current_stage=live from 1.0.0 owner binding/plan, latest_approved_version=2.0.0.
     """
     reset()
     store = RegistryStore()
-    svc = RegistryService(store)
+    svc = RegistryService(
+        store,
+        runtime_bindings_reader=lambda _tid: [
+            {
+                "binding_id": "rb-live-1",
+                "artifact_id": "reg1",
+                "artifact_version": "1.0.0",
+                "deployment_mode": "live",
+                "plan_id": "plan1",
+                "status": "active",
+                "effective_at": "2026-10-18T01:00:00Z",
+                "metadata": {"tenant_id": "tenant-unit", "strategy_id": "strat"},
+            }
+        ],
+        deployment_plan_reader=lambda pid, _tid: {
+            "plan_id": pid,
+            "strategy_id": "strat",
+            "artifact_id": "reg1",
+            "artifact_version": "1.0.0",
+            "target_stage": "live",
+            "status": "approved",
+            "tenant_id": "tenant-unit",
+            "runtime_binding_id": "rb-live-1",
+        },
+    )
 
     mk = lambda v: RegistryEntryCreate(
         artifact_type="model_artifact",
@@ -435,22 +501,22 @@ def test_deployment_view_reports_actually_deployed_not_latest_approved():
         checksum="c",
     )
 
-    # Register and approve 1.0.0, then deploy it to live
-    svc.register(mk("1.0.0"), "reg1")
-    svc.advance_artifact_state("reg1", ArtifactState.CANDIDATE)
-    svc.advance_artifact_state("reg1", ArtifactState.APPROVED)
-    svc.update_deployment_summary("reg1", current_stage=DeploymentStage.LIVE, deployment_plan_id="plan1")
+    # Register and approve 1.0.0
+    svc.register(mk("1.0.0"), "reg1", actor=_SMOKE_ACTOR)
+    advance_registry_unit(svc, "reg1", ArtifactState.CANDIDATE)
+    advance_registry_unit(svc, "reg1", ArtifactState.APPROVED)
 
     # Register and approve 2.0.0 but do NOT deploy it
-    svc.register(mk("2.0.0"), "reg2")
-    svc.advance_artifact_state("reg2", ArtifactState.CANDIDATE)
-    svc.advance_artifact_state("reg2", ArtifactState.APPROVED)
+    svc.register(mk("2.0.0"), "reg2", actor=_SMOKE_ACTOR)
+    advance_registry_unit(svc, "reg2", ArtifactState.CANDIDATE)
+    advance_registry_unit(svc, "reg2", ArtifactState.APPROVED)
 
-    view = svc.resolve_deployment_view("strat")
+    view = svc.resolve_deployment_view("strat", tenant_id="tenant-unit")
     assert_eq(view.latest_approved_version, "2.0.0", "latest_approved_version should be the newest approved")
     assert_eq(view.latest_approved_registry_id, "reg2", "latest_approved_registry_id should be reg2")
-    assert_eq(view.current_stage, DeploymentStage.LIVE, "current_stage must reflect the actually deployed entry (1.0.0 live)")
-    assert_eq(view.deployment_plan_id, "plan1", "deployment_plan_id from the actually deployed entry")
+    assert_eq(view.current_stage, DeploymentStage.LIVE, "current_stage must reflect the active RuntimeBinding (1.0.0 live)")
+    assert_eq(view.deployment_plan_id, "plan1", "deployment_plan_id from the linked DeploymentPlan")
+    assert_eq(view.runtime_binding_id, "rb-live-1", "runtime_binding_id from the active RuntimeBinding")
 
 
 # ---------------------------------------------------------------------------

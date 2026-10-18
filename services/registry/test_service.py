@@ -291,30 +291,61 @@ class TestDeploymentView:
         svc.register(_make_create_payload(), "reg-001", actor={"id": "unit-operator", "tenant": "tenant-unit"})
         advance_registry_unit(svc, "reg-001", ArtifactState.CANDIDATE)
         advance_registry_unit(svc, "reg-001", ArtifactState.APPROVED)
+        # Cached deployment_summary on RegistryEntry is non-authoritative and never read by resolve_deployment_view.
+        svc.update_deployment_summary(
+            "reg-001",
+            current_stage=DeploymentStage.CANARY,
+            deployment_plan_id="cached-plan",
+            runtime_binding_id="cached-rb",
+        )
 
-        view = svc.resolve_deployment_view("test-alpha")
+        view = svc.resolve_deployment_view(
+            "test-alpha",
+            tenant_id="tenant-unit",
+            runtime_bindings_reader=lambda _tid: [],
+            deployment_plan_reader=lambda _pid, _tid: None,
+        )
         assert view.current_stage == DeploymentStage.NONE
         assert view.latest_approved_registry_id == "reg-001"
+        assert view.deployment_plan_id is None
+        assert view.runtime_binding_id is None
 
     def test_approved_with_deployment_summary(self):
         store = RegistryStore()
-        svc = RegistryService(store)
+        svc = RegistryService(
+            store,
+            runtime_bindings_reader=lambda _tid: [
+                {
+                    "binding_id": "rb-001",
+                    "artifact_id": "reg-001",
+                    "artifact_version": "1.0.0",
+                    "deployment_mode": "canary",
+                    "plan_id": "plan-001",
+                    "status": "active",
+                    "effective_at": "2026-10-18T00:00:00Z",
+                    "metadata": {"tenant_id": "tenant-unit", "strategy_id": "test-alpha"},
+                }
+            ],
+            deployment_plan_reader=lambda pid, _tid: {
+                "plan_id": pid,
+                "strategy_id": "test-alpha",
+                "artifact_id": "reg-001",
+                "artifact_version": "1.0.0",
+                "target_stage": "canary",
+                "status": "approved",
+                "tenant_id": "tenant-unit",
+                "runtime_binding_id": "rb-001",
+            },
+        )
         svc.register(_make_create_payload(), "reg-001", actor={"id": "unit-operator", "tenant": "tenant-unit"})
         advance_registry_unit(svc, "reg-001", ArtifactState.CANDIDATE)
         advance_registry_unit(svc, "reg-001", ArtifactState.APPROVED)
 
-        # Simulate deployment service updating the projection
-        svc.update_deployment_summary(
-            "reg-001",
-            current_stage=DeploymentStage.CANARY,
-            deployment_plan_id="plan-001",
-            runtime_binding_id="rb-001",
-        )
-
-        view = svc.resolve_deployment_view("test-alpha")
+        view = svc.resolve_deployment_view("test-alpha", tenant_id="tenant-unit")
         assert view.current_stage == DeploymentStage.CANARY
         assert view.deployment_plan_id == "plan-001"
         assert view.runtime_binding_id == "rb-001"
+        assert view.last_transition_at == "2026-10-18T00:00:00Z"
 
     def test_deployment_stage_requires_approved_artifact(self):
         store = RegistryStore()
@@ -729,7 +760,9 @@ class TestFastAPIEndpoints:
         resp = self.client.get("/api/registry/strategies/empty-test/latest-approved")
         assert resp.status_code == 404
 
-    def test_deployment_view(self):
+    def test_deployment_view(self, monkeypatch):
+        from . import split_api as split_api_mod
+
         # Create and approve
         create_resp = self.client.post("/api/registry/entries", json={
             "artifact_type": "model_artifact",
@@ -749,14 +782,39 @@ class TestFastAPIEndpoints:
             json={"target_state": "approved", "expected_artifact_state": "candidate"},
         )
 
-        # Update deployment summary (simulating deployment service)
-        self.client.put(
-            f"/api/registry/entries/{rid}/deployment-summary",
-            json={
-                "current_stage": "paper",
-                "deployment_plan_id": "plan-001",
-            },
-        )
+        monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", "http://runtime-manager:8081")
+        monkeypatch.setenv("PANTHEON_DEPLOYMENT_API_URL", "http://deployment:8095")
+
+        def _fake_http_get_json(url: str, *, tenant_id=None, authorization=None):
+            if url.endswith("/api/runtime-bindings"):
+                return {
+                    "bindings": [
+                        {
+                            "binding_id": "rb-001",
+                            "artifact_id": rid,
+                            "artifact_version": "1.0.0",
+                            "deployment_mode": "paper",
+                            "plan_id": "plan-001",
+                            "status": "active",
+                            "effective_at": "2026-10-18T00:00:00Z",
+                            "metadata": {"tenant_id": tenant_id, "strategy_id": "dv-test"},
+                        }
+                    ]
+                }
+            if url.endswith("/api/deployment/plans/plan-001"):
+                return {
+                    "plan_id": "plan-001",
+                    "strategy_id": "dv-test",
+                    "artifact_id": rid,
+                    "artifact_version": "1.0.0",
+                    "target_stage": "paper",
+                    "status": "approved",
+                    "tenant_id": tenant_id,
+                    "runtime_binding_id": "rb-001",
+                }
+            raise AssertionError(f"Unexpected owner URL: {url}")
+
+        monkeypatch.setattr(split_api_mod, "_http_get_json", _fake_http_get_json)
 
         # Check deployment view
         resp = self.client.get("/api/registry/strategies/dv-test/deployment-view")
@@ -764,6 +822,7 @@ class TestFastAPIEndpoints:
         data = resp.json()
         assert data["current_stage"] == "paper"
         assert data["deployment_plan_id"] == "plan-001"
+        assert data["runtime_binding_id"] == "rb-001"
         assert data["latest_approved_registry_id"] == rid
 
     def test_deployment_view_empty(self):
@@ -2044,3 +2103,201 @@ def test_metadata_and_advance_command_keys_do_not_share_a_receipt_namespace(stri
     final_entry = final.json()["entry"]
     assert final_entry["metadata"] == {"note": "v1"}
     assert final_entry["artifact_state"] == "candidate"
+
+
+def test_deployment_view_composes_from_runtime_binding_and_deployment_plan_Across_family_artifacts(
+    strict_client, monkeypatch
+):
+    """REGISTRY-DEPLOYMENT-VIEW-OWNER-READ-20261018:
+    - When a strategy family has an approved execution_bundle (1.0.0) bound in RuntimeBinding +
+      DeploymentPlan and also an approved strategy_spec (including a newer 2.0.0 revision),
+      deployment-view reports current_stage/deployment_plan_id/runtime_binding_id/last_transition_at
+      from the canonical owners (with entry.deployment_summary=None) while keeping
+      latest_approved_registry_id and latest_approved_version on the newest approved entry.
+    - Cross-tenant bindings, retired/superseded bindings, and other-strategy bindings never leak.
+    - Missing or rejected DeploymentPlan fails closed with 503.
+    """
+    from . import split_api as split_api_mod
+
+    strategy_id = "strategy-persona-99a8bc642bfcb4df0c5f"
+    spec_id_v1 = "reg-strategy-spec-persona-99a8bc642bfcb4df0c5f"
+    spec_id_v2 = "reg-strategy-spec-persona-99a8bc642bfcb4df0c5f-v2"
+    bundle_id = "artifact-persona-paper-99a8bc642bfcb4df0c5f"
+    plan_id = "plan-persona-paper-99a8bc642bfcb4df0c5f"
+    binding_id = "rb-87d5f907703249ca874df9dfd2ab96ef"
+
+    token_a = _jwt(subject="persona-op", tenant="tenant-a")
+    token_b = _jwt(subject="other-tenant-op", tenant="tenant-b")
+
+    # 1. Register + approve strategy_spec v1.0.0 and execution_bundle v1.0.0 in tenant-a
+    spec_v1 = strict_client.post(
+        "/api/registry/strategy-specs",
+        json={
+            "registry_id": spec_id_v1,
+            "strategy_id": strategy_id,
+            "version": "1.0.0",
+            "source_seed_id": "source-seed-001",
+            "strategy_spec": _minimal_strategy_spec(strategy_id),
+        },
+        headers=_bearer(token_a),
+    )
+    assert spec_v1.status_code == 200, spec_v1.text
+    for target, expected in (("candidate", "draft"), ("approved", "candidate")):
+        r = advance_registry_http(
+            strict_client,
+            f"/api/registry/strategy-specs/{spec_id_v1}/advance",
+            json={"target_state": target, "expected_artifact_state": expected},
+            headers=_bearer(token_a),
+        )
+        assert r.status_code == 200, r.text
+
+    bundle = strict_client.post(
+        "/api/registry/entries",
+        json={
+            "artifact_type": "execution_bundle",
+            "strategy_id": strategy_id,
+            "version": "1.0.0",
+            "storage_ref": {"backend": "inline", "path": f"inline://execution-bundles/{bundle_id}"},
+            "checksum": "sha256:bundle-100",
+            "lineage": {"parent_registry_ids": [spec_id_v1], "source_strategy_spec_id": spec_id_v1},
+        },
+        headers=_bearer(token_a),
+    )
+    assert bundle.status_code == 200, bundle.text
+    bundle_rid = bundle.json()["entry"]["registry_id"]
+    for target, expected in (("candidate", "draft"), ("approved", "candidate")):
+        r = advance_registry_http(
+            strict_client,
+            f"/api/registry/entries/{bundle_rid}/advance",
+            json={"target_state": target, "expected_artifact_state": expected},
+            headers=_bearer(token_a),
+        )
+        assert r.status_code == 200, r.text
+    assert r.json()["entry"]["deployment_summary"] is None
+
+    # Register + approve newer strategy_spec 2.0.0 (not yet deployed)
+    spec_v2_payload = _minimal_strategy_spec(strategy_id)
+    spec_v2_payload["title"] = "Distilled momentum hypothesis v2"
+    spec_v2 = strict_client.post(
+        "/api/registry/strategy-specs",
+        json={
+            "registry_id": spec_id_v2,
+            "strategy_id": strategy_id,
+            "version": "2.0.0",
+            "source_seed_id": "source-seed-001",
+            "lineage": {"parent_registry_ids": [spec_id_v1], "source_run_ids": ["source-seed-001"]},
+            "base_checksum": spec_v1.json()["entry"]["checksum"],
+            "strategy_spec": spec_v2_payload,
+        },
+        headers=_bearer(token_a),
+    )
+    assert spec_v2.status_code == 200, spec_v2.text
+    for target, expected in (("candidate", "draft"), ("approved", "candidate")):
+        r = advance_registry_http(
+            strict_client,
+            f"/api/registry/strategy-specs/{spec_id_v2}/advance",
+            json={"target_state": target, "expected_artifact_state": expected},
+            headers=_bearer(token_a),
+        )
+        assert r.status_code == 200, r.text
+
+    monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", "http://runtime-manager:8081")
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_API_URL", "http://deployment:8095")
+
+    plan_status_holder = {"status": "approved"}
+
+    def _owner_http_get(url: str, *, tenant_id=None, authorization=None):
+        if url.endswith("/api/runtime-bindings"):
+            return {
+                "bindings": [
+                    # Retired binding for same strategy (must be ignored)
+                    {
+                        "binding_id": "rb-retired-old",
+                        "artifact_id": bundle_rid,
+                        "artifact_version": "1.0.0",
+                        "deployment_mode": "live",
+                        "plan_id": "plan-retired",
+                        "status": "retired",
+                        "retired_at": "2026-10-17T20:00:00Z",
+                        "effective_at": "2026-10-17T23:59:59Z",
+                        "metadata": {"tenant_id": "tenant-a", "strategy_id": strategy_id},
+                    },
+                    # Active binding for another strategy family (must be ignored)
+                    {
+                        "binding_id": "rb-other-strategy",
+                        "artifact_id": "other-artifact",
+                        "artifact_version": "1.0.0",
+                        "deployment_mode": "canary",
+                        "plan_id": "plan-other",
+                        "status": "active",
+                        "effective_at": "2026-10-17T23:59:59Z",
+                        "metadata": {"tenant_id": "tenant-a", "strategy_id": "other-strategy"},
+                    },
+                    # Canonical active binding for execution_bundle v1.0.0 in tenant-a
+                    {
+                        "binding_id": binding_id,
+                        "artifact_id": bundle_rid,
+                        "artifact_version": "1.0.0",
+                        "deployment_mode": "paper",
+                        "plan_id": plan_id,
+                        "status": "active",
+                        "effective_at": "2026-10-17T22:27:53Z",
+                        "metadata": {"tenant_id": "tenant-a", "strategy_id": strategy_id},
+                    },
+                ]
+            }
+        if url.endswith(f"/api/deployment/plans/{plan_id}"):
+            return {
+                "plan_id": plan_id,
+                "strategy_id": strategy_id,
+                "artifact_id": bundle_rid,
+                "artifact_version": "1.0.0",
+                "target_stage": "paper",
+                "status": plan_status_holder["status"],
+                "tenant_id": "tenant-a",
+                "runtime_binding_id": binding_id,
+            }
+        raise AssertionError(f"Unexpected owner GET: {url}")
+
+    monkeypatch.setattr(split_api_mod, "_http_get_json", _owner_http_get)
+
+    # Tenant A sees composed paper deployment from execution_bundle 1.0.0 and latest approved 2.0.0
+    resp_a = strict_client.get(
+        f"/api/registry/strategies/{strategy_id}/deployment-view",
+        headers=_bearer(token_a),
+    )
+    assert resp_a.status_code == 200, resp_a.text
+    body_a = resp_a.json()
+    assert body_a == {
+        "strategy_id": strategy_id,
+        "latest_approved_registry_id": spec_id_v2,
+        "latest_approved_version": "2.0.0",
+        "current_stage": "paper",
+        "deployment_plan_id": plan_id,
+        "runtime_binding_id": binding_id,
+        "last_transition_at": "2026-10-17T22:27:53Z",
+    }
+
+    # Tenant B never sees Tenant A's approved artifacts or active binding
+    resp_b = strict_client.get(
+        f"/api/registry/strategies/{strategy_id}/deployment-view",
+        headers=_bearer(token_b),
+    )
+    assert resp_b.status_code == 200, resp_b.text
+    assert resp_b.json() == {
+        "strategy_id": strategy_id,
+        "latest_approved_registry_id": None,
+        "latest_approved_version": None,
+        "current_stage": "none",
+        "deployment_plan_id": None,
+        "runtime_binding_id": None,
+        "last_transition_at": None,
+    }
+
+    # Rejected linked DeploymentPlan fails closed with 503
+    plan_status_holder["status"] = "rejected"
+    resp_rejected = strict_client.get(
+        f"/api/registry/strategies/{strategy_id}/deployment-view",
+        headers=_bearer(token_a),
+    )
+    assert resp_rejected.status_code == 503, resp_rejected.text

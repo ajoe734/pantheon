@@ -188,3 +188,124 @@ def test_permissive_mode_still_accepts_structured_token_without_full_jwt_claims(
     client = TestClient(app, headers={"Authorization": "Bearer test-operator:operator"})
     resp = client.post("/api/registry/entries", json=_ENTRY_PAYLOAD)
     assert resp.status_code == 200, resp.text
+
+
+def test_deployment_view_fails_closed_503_when_owner_unreachable_or_unauthenticated(
+    strict_client, monkeypatch
+):
+    """REGISTRY-DEPLOYMENT-VIEW-OWNER-READ-20261018:
+    - docker-compose.yml wires PANTHEON_RUNTIME_MANAGER_URL and PANTHEON_DEPLOYMENT_API_URL into registry.
+    - GET /api/registry/strategies/{strategy_id}/deployment-view fails closed with 503 when
+      configured runtime-manager or deployment owner endpoints are unreachable or unauthenticated
+      (401/403), never falling back to entry.deployment_summary or synthesizing current_stage='none'.
+    """
+    import io
+    import json
+    from pathlib import Path
+    import urllib.error
+    import urllib.request
+    from services.governance.test_approval_authority import (
+        advance_registry_http,
+        configure_registry_unit_auth,
+    )
+
+    compose_text = (Path(__file__).resolve().parents[2] / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "PANTHEON_RUNTIME_MANAGER_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-http://runtime-manager:8081}" in compose_text
+    assert "PANTHEON_DEPLOYMENT_API_URL: ${PANTHEON_DEPLOYMENT_API_URL:-http://deployment:8095}" in compose_text
+
+    configure_registry_unit_auth(monkeypatch)
+    monkeypatch.setenv("PANTHEON_REGISTRY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_REGISTRY_JWT_SECRET", _JWT_SECRET)
+    monkeypatch.setenv("PANTHEON_REGISTRY_JWT_ISSUER", "")
+    monkeypatch.setenv("PANTHEON_REGISTRY_JWT_AUDIENCE", "")
+    token = _jwt(roles=["operator"], tenant="tenant-a")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    created = strict_client.post(
+        "/api/registry/entries",
+        json={**_ENTRY_PAYLOAD, "lineage": {"source_run_ids": ["run-auth-1"]}},
+        headers=headers,
+    )
+    assert created.status_code == 200, created.text
+    rid = created.json()["entry"]["registry_id"]
+    for target, expected in (("candidate", "draft"), ("approved", "candidate")):
+        r = advance_registry_http(
+            strict_client,
+            f"/api/registry/entries/{rid}/advance",
+            json={"target_state": target, "expected_artifact_state": expected},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+
+    # Populate cached deployment_summary to prove 503 never falls back to cached stage
+    put_resp = strict_client.put(
+        f"/api/registry/entries/{rid}/deployment-summary",
+        json={"current_stage": "paper", "deployment_plan_id": "cached-plan", "runtime_binding_id": "cached-rb"},
+        headers=headers,
+    )
+    assert put_resp.status_code == 200, put_resp.text
+
+    monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", "http://127.0.0.1:9")
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_API_URL", "http://127.0.0.1:9")
+
+    # 1. Unreachable runtime-manager -> 503
+    resp_unreachable = strict_client.get(
+        "/api/registry/strategies/auth-wiring-strat/deployment-view",
+        headers=headers,
+    )
+    assert resp_unreachable.status_code == 503, resp_unreachable.text
+
+    # 2. Unauthenticated runtime-manager (HTTP 401) -> 503
+    def _urlopen_runtime_401(req, timeout=5.0):
+        raise urllib.error.HTTPError(req.full_url, 401, "Unauthorized", hdrs=None, fp=io.BytesIO(b"{}"))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _urlopen_runtime_401)
+    resp_rm_401 = strict_client.get(
+        "/api/registry/strategies/auth-wiring-strat/deployment-view",
+        headers=headers,
+    )
+    assert resp_rm_401.status_code == 503, resp_rm_401.text
+
+    # 3. Authenticated runtime-manager returning active binding, but unauthenticated deployment (HTTP 403) -> 503
+    class _FakeResp:
+        def __init__(self, payload: dict):
+            self._bytes = json.dumps(payload).encode("utf-8")
+
+        def read(self) -> bytes:
+            return self._bytes
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def _urlopen_deployment_403(req, timeout=5.0):
+        if req.full_url.endswith("/api/runtime-bindings"):
+            assert req.headers.get("X-tenant-id") == "tenant-a"
+            assert req.headers.get("Authorization") == f"Bearer {token}"
+            return _FakeResp(
+                {
+                    "bindings": [
+                        {
+                            "binding_id": "rb-auth-1",
+                            "artifact_id": rid,
+                            "artifact_version": "1.0.0",
+                            "deployment_mode": "paper",
+                            "plan_id": "plan-auth-1",
+                            "status": "active",
+                            "effective_at": "2026-10-18T00:00:00Z",
+                            "metadata": {"tenant_id": "tenant-a", "strategy_id": "auth-wiring-strat"},
+                        }
+                    ]
+                }
+            )
+        raise urllib.error.HTTPError(req.full_url, 403, "Forbidden", hdrs=None, fp=io.BytesIO(b"{}"))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _urlopen_deployment_403)
+    resp_dep_403 = strict_client.get(
+        "/api/registry/strategies/auth-wiring-strat/deployment-view",
+        headers=headers,
+    )
+    assert resp_dep_403.status_code == 503, resp_dep_403.text
+

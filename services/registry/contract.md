@@ -231,10 +231,10 @@ The storage backend is still open, but the logical operations are not.
 | `list_by_strategy(strategy_id)` | enumerate versions within a strategy family |
 | `advance_artifact_state(registry_id, target_state, approval_decision_id?, command_key?, expected_artifact_state?, expected_version?, expected_updated_at?)` | transition an entry through governed artifact-state checks and retain the canonical decision link when approving; `command_key` makes an identical retry an idempotent replay of the original committed transition instead of re-running it (see below) |
 | `update_metadata(registry_id, expected_metadata, new_metadata, command_key?)` | allowed operator metadata update with CAS: fails with a conflict when `expected_metadata` no longer matches the durable entry; `command_key` makes an identical retry an idempotent no-op replay |
-| `resolve_latest_approved(strategy_id)` | return the newest approved entry for a strategy |
-| `resolve_deployment_view(strategy_id)` | return the derived deployment-stage view from deployment/runtime objects |
+| `resolve_latest_approved(strategy_id)` | return the newest caller-visible approved entry for a strategy |
+| `resolve_deployment_view(strategy_id)` | compose `latest_approved_*` from caller-visible approved Registry entries and `current_stage` / `deployment_plan_id` / `runtime_binding_id` / `last_transition_at` from canonical tenant-bound `RuntimeBinding` (`GET /api/runtime-bindings`) plus its linked `DeploymentPlan` (`GET /api/deployment/plans/{plan_id}`) |
 
-`resolve_deployment_view()` is a composed read path, not a registry-only write authority.
+`resolve_deployment_view()` (`GET /api/registry/strategies/{strategy_id}/deployment-view`) is an owner-composed read path, not a registry-only write authority or `entry.deployment_summary` cache reader: it joins caller-visible `approved` Registry artifacts in the strategy family with the tenant's non-terminal `RuntimeBinding` and linked `DeploymentPlan`, and fails closed (`503`) if configured `runtime-manager` or `deployment` owner reads are unreachable, unauthenticated, or missing/inconsistent rather than falling back to `entry.deployment_summary` or synthesizing `current_stage="none"`.
 
 `update_metadata()` mutates only the operator-facing `metadata` record kind — it can never fabricate
 or upgrade a validated StrategySpec or `artifact_state`. It is the `PATCH /api/registry/entries/{registry_id}/metadata`

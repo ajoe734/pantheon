@@ -1,0 +1,40 @@
+{
+  "task_id": "REGISTRY-DEPLOYMENT-VIEW-OWNER-READ-20261018",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "generated_at": "2026-10-18T02:16:30Z",
+  "status": "verified",
+  "audit_receipts_verified": [
+    {
+      "path": "/tmp/pantheon-assist-20261013/Root39073302399-current-Registry-deployment-view-vs-runtime-owner-GET-20261018.json",
+      "sha256": "211b95c6ec7fad5be8d298aa3caac8859800220d56f980b8aefafcd68453e466"
+    },
+    {
+      "path": "/tmp/pantheon-assist-20261013/Registry-deployment-view-existing-owner-contract-and-cache-root-cause-audit-20261018.json",
+      "sha256": "a4b5c046907a974d198f9e3bdb04f1dad4fde4bcb54f53b790a12cef83e4bf89"
+    }
+  ],
+  "retired_duplicate_resolvers": [
+    "services/registry/storage.py::RegistryStore.resolve_deployment_view",
+    "services/registry/pg_store.py::PostgresRegistryStore.resolve_deployment_view",
+    "services/registry/split_api.py::RegistryService.resolve_deployment_view (entry.deployment_summary cache reader)"
+  ],
+  "canonical_owner_composition": {
+    "facade_route": "GET /api/registry/strategies/{strategy_id}/deployment-view",
+    "service_method": "services/registry/split_api.py::RegistryService.resolve_deployment_view",
+    "runtime_binding_owner": "runtime-manager GET /api/runtime-bindings (PANTHEON_RUNTIME_MANAGER_URL)",
+    "deployment_plan_owner": "deployment GET /api/deployment/plans/{plan_id} (PANTHEON_DEPLOYMENT_API_URL)",
+    "registry_artifact_join": "caller-visible approved RegistryEntry records in strategy_id family (including strategy_spec and execution_bundle)",
+    "fail_closed_posture": "HTTP 503 Service Unavailable via RegistryOwnerUnavailableError when configured runtime-manager or deployment owner endpoints are unreachable, unauthenticated (401/403), or return missing/rejected/mismatched DeploymentPlan"
+  },
+  "verification": {
+    "pytest_command": ".venv-pantheon/bin/python3 -m pytest -q services/registry/test_service.py services/registry/smoke_test.py services/registry/test_registry_auth_wiring.py services/registry/test_first_release_contract.py",
+    "pytest_result": "147 passed in 41.10s",
+    "smoke_script_command": ".venv-pantheon/bin/python3 services/registry/smoke_test.py",
+    "smoke_script_result": "42 passed, 0 failed, 42 total (ALL SMOKE TESTS PASSED)",
+    "compose_config_command": "docker compose config --quiet",
+    "static_grep_verified": true,
+    "net_prod_line_delta": 95,
+    "net_prod_line_budget": 180
+  }
+}

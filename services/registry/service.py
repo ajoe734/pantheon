@@ -42,7 +42,13 @@ from .models import (
     StorageBackend,
     StorageRef,
 )
-from .split_api import RegistryConflictError, RegistryError, RegistryNotFoundError, RegistryService
+from .split_api import (
+    RegistryConflictError,
+    RegistryError,
+    RegistryNotFoundError,
+    RegistryOwnerUnavailableError,
+    RegistryService,
+)
 from .storage import get_store
 from .strategy_artifact import (
     build_strategy_artifact_registry_payload,
@@ -1347,11 +1353,18 @@ def latest_approved(strategy_id: str, authorization: Optional[str] = Header(defa
 )
 def deployment_view(strategy_id: str, authorization: Optional[str] = Header(default=None)):
     """Return the derived deployment-stage view for a strategy, scoped to the
-    caller's verified tenant (reviewer finding 1)."""
+    caller's verified tenant and composed from canonical RuntimeBinding and
+    DeploymentPlan owners (failing closed with 503 if owners are unavailable)."""
     ctx = _authenticate_registry_read(authorization)
-    return get_registry_service().resolve_deployment_view(
-        strategy_id, visible=lambda entry: _can_read_entry(ctx, entry),
-    )
+    try:
+        return get_registry_service().resolve_deployment_view(
+            strategy_id,
+            visible=lambda entry: _can_read_entry(ctx, entry),
+            tenant_id=_caller_tenant(ctx),
+            authorization=authorization,
+        )
+    except RegistryOwnerUnavailableError as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
 
 # -- Internal: deployment summary projection ------------------------------
