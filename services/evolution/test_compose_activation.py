@@ -178,6 +178,12 @@ def test_dispatch_worker_is_enabled_by_default_in_root_compose() -> None:
     assert api["environment"]["EVOLUTION_AUTH_ALLOWED_TENANTS"] == (
         "${EVOLUTION_AUTH_ALLOWED_TENANTS:-${PANTHEON_DEV_BFF_TENANT_ID:-pantheon-default}}"
     )
+    assert api["environment"]["PANTHEON_TENANT_ID"] == (
+        "${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}"
+    )
+    assert api["environment"]["PANTHEON_TELEMETRY_SERVICE_TOKEN"] == (
+        "${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}"
+    )
     assert worker["depends_on"]["evolution"]["condition"] == "service_healthy"
     assert worker["healthcheck"]["test"] == [
         "CMD",
@@ -186,3 +192,27 @@ def test_dispatch_worker_is_enabled_by_default_in_root_compose() -> None:
         "services.evolution.dispatch_worker",
         "healthcheck",
     ]
+
+
+def test_evolution_and_threshold_sweep_producer_wire_existing_telemetry_auth_and_tenant() -> None:
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    telemetry_env = compose["services"]["telemetry"]["environment"]
+    api_env = compose["services"]["evolution"]["environment"]
+    producer_env = compose["services"]["evolution-threshold-sweep-producer"]["environment"]
+
+    expected_token = "${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}"
+    expected_tenant = "${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}"
+    expected_default_tenant = (
+        "${EVOLUTION_DEFAULT_TENANT_ID:-${PANTHEON_DEV_BFF_TENANT_ID:-pantheon-default}}"
+    )
+
+    assert telemetry_env["PANTHEON_TELEMETRY_SERVICE_TOKEN"] == expected_token
+    assert api_env["PANTHEON_TELEMETRY_SERVICE_TOKEN"] == expected_token
+    assert producer_env["PANTHEON_TELEMETRY_SERVICE_TOKEN"] == expected_token
+    assert api_env["PANTHEON_TENANT_ID"] == expected_tenant
+    assert producer_env["PANTHEON_TENANT_ID"] == expected_tenant
+    assert api_env["EVOLUTION_DEFAULT_TENANT_ID"] == expected_default_tenant
+    assert producer_env["EVOLUTION_DEFAULT_TENANT_ID"] == expected_default_tenant
+    assert api_env["PANTHEON_TELEMETRY_SERVICE_TOKEN"] != api_env["EVOLUTION_AUTH_TOKEN"]
+    assert "EVOLUTION_AUTH_TOKEN" not in producer_env
+

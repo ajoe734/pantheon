@@ -2182,6 +2182,8 @@ services:
       EVOLUTION_AUTH_TOKEN: ${EVOLUTION_AUTH_TOKEN:-pantheon-local-evolution-service}
       EVOLUTION_AUTH_ALLOWED_TENANTS: ${EVOLUTION_AUTH_ALLOWED_TENANTS:-${PANTHEON_DEV_BFF_TENANT_ID:-pantheon-default}}
       EVOLUTION_DEFAULT_TENANT_ID: ${EVOLUTION_DEFAULT_TENANT_ID:-${PANTHEON_DEV_BFF_TENANT_ID:-pantheon-default}}
+      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
+      PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}
       INCIDENT_STORE_BACKEND: ${INCIDENT_STORE_BACKEND:-json}
       POSTMORTEM_STORE_BACKEND: ${POSTMORTEM_STORE_BACKEND:-json}
     volumes:
@@ -2285,6 +2287,9 @@ services:
     environment:
       EVOCHAIN_TELEMETRY_API_URL: http://telemetry:8083
       EVOCHAIN_INCIDENTS_API_URL: http://incidents:8090
+      PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}
+      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
+      EVOLUTION_DEFAULT_TENANT_ID: ${EVOLUTION_DEFAULT_TENANT_ID:-${PANTHEON_DEV_BFF_TENANT_ID:-pantheon-default}}
       EVOCHAIN_THRESHOLD_SWEEP_CONFIG_PATH: /workspace/services/evolution/config/threshold_sweep_thresholds.json
       EVOCHAIN_THRESHOLD_SWEEP_BASELINES_PATH: /workspace/services/evolution/config/threshold_sweep_baselines.json
       EVOCHAIN_THRESHOLD_SWEEP_STATE_PATH: /data/evolution/threshold_sweep_state.json
