@@ -2439,3 +2439,263 @@ def test_daily_sweep_reports_existing_for_legacy_linked_id_in_tenant_scope_only(
         tenant_id="other-tenant",
     )
     assert other_tenant.existing_decisions == 0
+
+
+# ---------------------------------------------------------------------------
+# EVOLUTION-TELEMETRY-AUTH-WIRING-20261018: GET /api/evolution/input-coverage
+# against real strict Flask Telemetry HTTP authority boundary
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def strict_telemetry_coverage_server(monkeypatch):
+    """Host the real Flask services.telemetry.main.app under strict auth over HTTP."""
+    import asyncio
+    import threading
+    from wsgiref.simple_server import WSGIRequestHandler, make_server
+
+    import services.telemetry.main as telemetry_main
+    from services.runtime_auth_inbound import AuthContext
+    from services.telemetry.ingest_svc import TelemetryIngestService
+    from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+
+    monkeypatch.setenv("PANTHEON_TELEMETRY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_TELEMETRY_SERVICE_TOKEN", "telemetry-strict-service-token")
+    monkeypatch.setenv("PANTHEON_TELEMETRY_SERVICE_TENANTS", "tenant-dev,tenant-alpha")
+    monkeypatch.delenv("TELEMETRY_DB_DSN", raising=False)
+
+    def _pinned_server_service_context(authorization: str):
+        if not authorization.startswith("Bearer "):
+            return None
+        presented = authorization.split(None, 1)[1].strip()
+        if presented != "telemetry-strict-service-token":
+            return None
+        return AuthContext(
+            actor_id="telemetry-service",
+            roles=frozenset({"service"}),
+            claims={"allowed_tenants": ["tenant-dev", "tenant-alpha"]},
+            token_kind="service",
+        )
+
+    monkeypatch.setattr("services.telemetry.auth._service_context", _pinned_server_service_context)
+
+    loop = asyncio.new_event_loop()
+    loop_thread = threading.Thread(
+        target=lambda: (asyncio.set_event_loop(loop), loop.run_forever()),
+        daemon=True,
+    )
+    loop_thread.start()
+
+    summary_store = RuntimeSummaryProjectionStore(
+        path=None,
+        heartbeat_stale_after_seconds=10_000_000_000,
+    )
+    ingest_svc = TelemetryIngestService(runtime_summary_store=summary_store)
+    asyncio.run_coroutine_threadsafe(ingest_svc.start(), loop).result(timeout=5)
+
+    old_loop = telemetry_main._loop
+    old_svc = telemetry_main._svc
+    telemetry_main._loop = loop
+    telemetry_main._svc = ingest_svc
+
+    requests_seen: list[dict] = []
+
+    def _recording_app(environ, start_response):
+        requests_seen.append(
+            {
+                "method": environ.get("REQUEST_METHOD"),
+                "path": environ.get("PATH_INFO"),
+                "authorization": environ.get("HTTP_AUTHORIZATION"),
+                "tenant_id": environ.get("HTTP_X_TENANT_ID"),
+            }
+        )
+        return telemetry_main.app(environ, start_response)
+
+    class _QuietHandler(WSGIRequestHandler):
+        def log_message(self, *args):
+            pass
+
+    server = make_server("127.0.0.1", 0, _recording_app, handler_class=_QuietHandler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+
+    try:
+        yield {
+            "url": f"http://127.0.0.1:{server.server_port}",
+            "summary_store": summary_store,
+            "requests": requests_seen,
+        }
+    finally:
+        server.shutdown()
+        server_thread.join(timeout=5)
+        server.server_close()
+        asyncio.run_coroutine_threadsafe(ingest_svc.stop(graceful=True), loop).result(timeout=5)
+        telemetry_main._loop = old_loop
+        telemetry_main._svc = old_svc
+        if loop.is_running():
+            loop.call_soon_threadsafe(loop.stop)
+
+
+def test_input_coverage_api_preserves_authenticated_request_tenant_over_strict_telemetry_http(
+    monkeypatch, strict_telemetry_coverage_server
+):
+    """GET /api/evolution/input-coverage forwards PANTHEON_TELEMETRY_SERVICE_TOKEN
+    and the actual authenticated request tenant (not the process default or the
+    Evolution inbound token) to strict Telemetry GET /api/telemetry/runtime-summaries."""
+    observed_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    summary_store = strict_telemetry_coverage_server["summary_store"]
+    identity = {
+        "tenant_id": "tenant-alpha",
+        "runtime_id": "runtime-cov-alpha",
+        "binding_id": "rb-cov-alpha",
+        "deployment_stage": "paper",
+        "capital_pool_id": "pool-cov-alpha",
+        "artifact_id": "artifact-tw-session-momentum-v1",
+        "artifact_version": "1.0.0",
+        "plan_id": "plan-cov-alpha",
+        "persona_capital_binding_id": "pcb-cov-alpha",
+    }
+    summary_store.project_event(
+        {
+            **identity,
+            "event_id": "evt-cov-alpha-hb",
+            "event_type": "heartbeat",
+            "created_at": observed_iso,
+            "metadata": {"connectivity_status": "connected"},
+            "metrics": {"heartbeat": 1},
+        }
+    )
+    summary_store.project_event(
+        {
+            **identity,
+            "event_id": "evt-cov-alpha-dd",
+            "event_type": "drawdown_snapshot",
+            "created_at": observed_iso,
+            "metrics": {"drawdown_pct": 0.02},
+        }
+    )
+
+    monkeypatch.setattr(evo_main, "TELEMETRY_API_URL", strict_telemetry_coverage_server["url"])
+    monkeypatch.setenv("EVOLUTION_AUTH_MODE", "token")
+    monkeypatch.setenv("EVOLUTION_AUTH_TOKEN", "evolution-inbound-only-token")
+    monkeypatch.setenv("EVOLUTION_AUTH_ALLOWED_TENANTS", "tenant-dev,tenant-alpha")
+    monkeypatch.setenv("EVOLUTION_DEFAULT_TENANT_ID", "tenant-dev")
+    monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-dev")
+    monkeypatch.setenv("PANTHEON_TELEMETRY_SERVICE_TOKEN", "telemetry-strict-service-token")
+
+    response = client.get(
+        "/api/evolution/input-coverage",
+        headers={
+            "Authorization": "Bearer evolution-inbound-only-token",
+            "X-Tenant-Id": "tenant-alpha",
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["coverage_complete"] is True
+    assert payload["monitored_artifacts"] == 1
+    assert payload["complete_artifacts"] == 1
+    assert payload["incomplete_artifacts"] == 0
+    assert strict_telemetry_coverage_server["requests"] == [
+        {
+            "method": "GET",
+            "path": "/api/telemetry/runtime-summaries",
+            "authorization": "Bearer telemetry-strict-service-token",
+            "tenant_id": "tenant-alpha",
+        }
+    ]
+
+
+def test_input_coverage_api_fails_closed_503_on_strict_telemetry_auth_and_tenant_errors(
+    monkeypatch, strict_telemetry_coverage_server
+):
+    """GET /api/evolution/input-coverage returns 503 (never 200 or empty complete
+    coverage) when local Telemetry credentials or request tenant are missing, or
+    when strict Telemetry rejects omitted/invalid bearer (401) or missing/foreign
+    tenant (400/403)."""
+    import urllib.request
+
+    monkeypatch.setattr(evo_main, "TELEMETRY_API_URL", strict_telemetry_coverage_server["url"])
+    monkeypatch.setenv("EVOLUTION_AUTH_MODE", "token")
+    monkeypatch.setenv("EVOLUTION_AUTH_TOKEN", "evolution-inbound-only-token")
+    monkeypatch.setenv(
+        "EVOLUTION_AUTH_ALLOWED_TENANTS",
+        "tenant-dev,tenant-alpha,tenant-foreign",
+    )
+    monkeypatch.setenv("EVOLUTION_DEFAULT_TENANT_ID", "tenant-dev")
+    monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-dev")
+    auth_headers = {
+        "Authorization": "Bearer evolution-inbound-only-token",
+        "X-Tenant-Id": "tenant-dev",
+    }
+
+    # 1. Missing local PANTHEON_TELEMETRY_SERVICE_TOKEN -> fails closed without HTTP request.
+    monkeypatch.delenv("PANTHEON_TELEMETRY_SERVICE_TOKEN", raising=False)
+    strict_telemetry_coverage_server["requests"].clear()
+    missing_token = client.get("/api/evolution/input-coverage", headers=auth_headers)
+    assert missing_token.status_code == 503
+    assert "telemetry runtime summaries are unavailable" in missing_token.json()["detail"]
+    assert strict_telemetry_coverage_server["requests"] == []
+
+    # 2. Missing request tenant in disabled mode does not substitute process default.
+    monkeypatch.setenv("EVOLUTION_AUTH_MODE", "disabled")
+    monkeypatch.setenv("PANTHEON_TELEMETRY_SERVICE_TOKEN", "telemetry-strict-service-token")
+    strict_telemetry_coverage_server["requests"].clear()
+    missing_req_tenant = client.get("/api/evolution/input-coverage")
+    assert missing_req_tenant.status_code == 503
+    assert "telemetry runtime summaries are unavailable" in missing_req_tenant.json()["detail"]
+    assert strict_telemetry_coverage_server["requests"] == []
+
+    # 3. Invalid Telemetry service token (or Evolution inbound token reuse) -> Telemetry 401 -> 503.
+    monkeypatch.setenv("EVOLUTION_AUTH_MODE", "token")
+    monkeypatch.setenv("PANTHEON_TELEMETRY_SERVICE_TOKEN", "evolution-inbound-only-token")
+    strict_telemetry_coverage_server["requests"].clear()
+    invalid_token = client.get("/api/evolution/input-coverage", headers=auth_headers)
+    assert invalid_token.status_code == 503
+    assert "HTTP Error 401: UNAUTHORIZED" in invalid_token.json()["detail"]
+    assert len(strict_telemetry_coverage_server["requests"]) == 1
+
+    # 4. Foreign tenant not authorized in PANTHEON_TELEMETRY_SERVICE_TENANTS -> Telemetry 403 -> 503.
+    monkeypatch.setenv("PANTHEON_TELEMETRY_SERVICE_TOKEN", "telemetry-strict-service-token")
+    strict_telemetry_coverage_server["requests"].clear()
+    foreign_tenant = client.get(
+        "/api/evolution/input-coverage",
+        headers={
+            "Authorization": "Bearer evolution-inbound-only-token",
+            "X-Tenant-Id": "tenant-foreign",
+        },
+    )
+    assert foreign_tenant.status_code == 503
+    assert "HTTP Error 403: FORBIDDEN" in foreign_tenant.json()["detail"]
+    assert strict_telemetry_coverage_server["requests"] == [
+        {
+            "method": "GET",
+            "path": "/api/telemetry/runtime-summaries",
+            "authorization": "Bearer telemetry-strict-service-token",
+            "tenant_id": "tenant-foreign",
+        }
+    ]
+
+    # 5. Pre-fix bare request (omitted bearer -> 401; omitted X-Tenant-Id -> 400) -> 503.
+    real_urlopen = urllib.request.urlopen
+
+    def _strip_auth(req, *args, **kwargs):
+        req.headers.pop("Authorization", None)
+        req.unredirected_hdrs.pop("Authorization", None)
+        return real_urlopen(req, *args, **kwargs)
+
+    monkeypatch.setattr("services.evolution.threshold_sweep_worker.urllib.request.urlopen", _strip_auth)
+    omitted_bearer = client.get("/api/evolution/input-coverage", headers=auth_headers)
+    assert omitted_bearer.status_code == 503
+    assert "HTTP Error 401: UNAUTHORIZED" in omitted_bearer.json()["detail"]
+
+    def _strip_tenant(req, *args, **kwargs):
+        req.headers.pop("X-tenant-id", None)
+        req.headers.pop("X-Tenant-Id", None)
+        return real_urlopen(req, *args, **kwargs)
+
+    monkeypatch.setattr("services.evolution.threshold_sweep_worker.urllib.request.urlopen", _strip_tenant)
+    omitted_tenant = client.get("/api/evolution/input-coverage", headers=auth_headers)
+    assert omitted_tenant.status_code == 503
+    assert "HTTP Error 400: BAD REQUEST" in omitted_tenant.json()["detail"]
+
