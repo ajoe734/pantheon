@@ -21,6 +21,12 @@ POOL_SCRIPT = Path(__file__).with_name("openclaw-configure-shared-model-pool.sh"
 API_KEY_SOURCE_ENV = "PANTHEON_OPENCLAW_ANTHROPIC_API_KEY"
 WORKSPACE_SOURCE_ENV = "PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID"
 TOKEN_SOURCE_ENV = "PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN"
+ANTHROPIC_WORKSPACE_BATCH: list[dict[str, object]] = [
+    {
+        "path": "models.providers.anthropic.headers.anthropic-workspace-id",
+        "value": "${ANTHROPIC_WORKSPACE_ID}",
+    }
+]
 STRUCTURED_AGENT = {
     "id": "structured-extraction",
     "tools": {"deny": ["*"], "exec": {"security": "deny", "ask": "always"}},
@@ -54,7 +60,7 @@ def render_batch(environ: dict[str, str] | None = None) -> list[dict[str, object
     source = POOL_SCRIPT.read_text(encoding="utf-8")
     batch = (
         _script_batch(source, "MODEL_POOL_BATCH")
-        + _script_batch(source, "ANTHROPIC_WORKSPACE_BATCH")
+        + ANTHROPIC_WORKSPACE_BATCH
         + _script_batch(source, "CLAUDE_TOOLSEARCH_BATCH")
     )
     if str(env.get(TOKEN_SOURCE_ENV) or "").strip():

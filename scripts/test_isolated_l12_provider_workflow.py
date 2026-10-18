@@ -83,14 +83,31 @@ def test_gateway_bootstrap_is_opt_in_and_fail_closed() -> None:
     ) in COMPOSE_TEXT
     assert "ANTHROPIC_API_KEY: ${PANTHEON_OPENCLAW_ANTHROPIC_API_KEY:-}" in COMPOSE_TEXT
     assert "ANTHROPIC_WORKSPACE_ID: ${PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID:-}" in COMPOSE_TEXT
-    assert (
-        "CODEX_HOME: "
-        "${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}"
-    ) in COMPOSE_TEXT
+    assert "CODEX_HOME:" not in COMPOSE_TEXT
     start = COMPOSE_TEXT.index('if [ -n \\"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\\" ]')
     startup = COMPOSE_TEXT[start : COMPOSE_TEXT.index("exec node dist/index.js gateway", start)]
     assert '[ -n \\"$$ANTHROPIC_API_KEY\\" ] && [ -n \\"$$ANTHROPIC_WORKSPACE_ID\\" ] || exit 1' in startup
     assert "|| exit 1; fi" in startup
+
+
+def test_formal_dev_deploy_and_rollback_steps_bind_anthropic_credentials() -> None:
+    matched_steps = 0
+    for job_name in ("deploy-dev", "coordinate-dev-release"):
+        for step in WORKFLOW["jobs"][job_name]["steps"]:
+            env = step.get("env") or {}
+            if "DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN" not in env:
+                continue
+            matched_steps += 1
+            assert env.get("DEV_OPENCLAW_ANTHROPIC_API_KEY") == (
+                "${{ secrets.DEV_OPENCLAW_ANTHROPIC_API_KEY }}"
+            )
+            assert env.get("DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID") == (
+                "${{ vars.DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID }}"
+            )
+            assert env.get("DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN") == (
+                "${{ secrets.DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN }}"
+            )
+    assert matched_steps == 7
 
 
 def test_payload_fetch_does_not_add_checkout_action_or_leak_token() -> None:

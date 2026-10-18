@@ -325,7 +325,7 @@ def test_structured_extraction_routes_to_dedicated_agent_and_model_override(monk
     assert result.output["structured_data"] == {"ok": True}
     assert result.output["agent_id"] == "structured-extraction"
     assert result.output["transport"] == "responses_http"
-    assert result.output.get("active_model") == model
+    assert "active_model" not in result.output
     assert len(captured) == 1
     assert captured[0]["body"]["model"] == "openclaw/structured-extraction"
     assert captured[0]["headers"]["x-openclaw-agent-id"] == "structured-extraction"

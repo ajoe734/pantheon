@@ -21,10 +21,6 @@ MODEL_POOL_BATCH='[
   {"path":"agents.defaults.models[\"google/gemini-3.1-pro-preview\"]","value":{"alias":"gemini","agentRuntime":{"id":"google-gemini-cli"}}}
 ]'
 
-ANTHROPIC_WORKSPACE_BATCH='[
-  {"path":"models.providers.anthropic.headers.anthropic-workspace-id","value":"${ANTHROPIC_WORKSPACE_ID}"}
-]'
-
 # OpenClaw 2026.7.1 clears ambient Claude credentials before spawning its CLI.
 # Bind only the explicitly provisioned product token, using an unresolved env
 # reference on disk. Do not disable clearEnv or copy a native CLI login. The
@@ -57,10 +53,34 @@ openclaw() {
 
 openclaw config set --batch-json "$MODEL_POOL_BATCH"
 openclaw config set --batch-json "$CLAUDE_TOOLSEARCH_BATCH" >/dev/null
-if compose exec -T -u node openclaw-gateway node -e \
-  'process.exit(process.env.ANTHROPIC_WORKSPACE_ID?.trim() ? 0 : 1)'; then
-  openclaw config set --batch-json "$ANTHROPIC_WORKSPACE_BATCH" >/dev/null
-fi
+# Persist the non-secret Anthropic workspace header as a literal value (never
+# an unresolved env-var reference) so the shared openclaw-data volume remains
+# valid if rolled back to an incumbent compose definition that does not export
+# ANTHROPIC_WORKSPACE_ID. When the env var is absent, preserve any existing
+# persisted literal header untouched.
+compose exec -T -u node openclaw-gateway node -e '
+  const { execFileSync } = require("child_process");
+  const ws = process.env.ANTHROPIC_WORKSPACE_ID?.trim();
+  if (!ws) process.exit(0);
+  const env = { ...process.env };
+  delete env.ANTHROPIC_WORKSPACE_ID;
+  execFileSync(
+    process.execPath,
+    [
+      "dist/index.js",
+      "config",
+      "set",
+      "--batch-json",
+      JSON.stringify([
+        {
+          path: "models.providers.anthropic.headers.anthropic-workspace-id",
+          value: ws,
+        },
+      ]),
+    ],
+    { env, stdio: ["ignore", "ignore", "inherit"] },
+  );
+'
 if compose exec -T -u node openclaw-gateway node -e \
   'process.exit(process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim() ? 0 : 1)'; then
   # The argv contains only the literal reference, never the credential value.

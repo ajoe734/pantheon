@@ -1276,8 +1276,6 @@ class AssistantOpenClawProvider:
             "agent_id": effective_agent_id,
             "transport": "responses_http",
         }
-        if "active_model" in result.output:
-            output["active_model"] = result.output["active_model"]
         if "usage" in result.output:
             output["usage"] = result.output["usage"]
         if "response_id" in result.output:

@@ -94,14 +94,9 @@ def test_claude_token_and_workspace_bindings_are_narrow_and_reference_only() -> 
             "value": "${CLAUDE_CODE_OAUTH_TOKEN}",
         },
     ]
-    ws_match = re.search(r"ANTHROPIC_WORKSPACE_BATCH='(\[.*?\])'", source, re.DOTALL)
-    assert ws_match is not None
-    assert json.loads(ws_match.group(1)) == [
-        {
-            "path": "models.providers.anthropic.headers.anthropic-workspace-id",
-            "value": "${ANTHROPIC_WORKSPACE_ID}",
-        },
-    ]
+    assert "${ANTHROPIC_WORKSPACE_ID}" not in source
+    assert 'path: "models.providers.anthropic.headers.anthropic-workspace-id"' in source
+    assert "delete env.ANTHROPIC_WORKSPACE_ID;" in source
     assert "OPENCLAW_LIVE_CLI_BACKEND_PRESERVE_ENV" not in source
     assert '"clearEnv"' not in source
     assert "auth-profiles.json" not in source
@@ -142,7 +137,7 @@ with open(os.environ["TEST_DOCKER_LOG"], "a") as stream:
 if "-e" in args:
     expr = args[args.index("-e") + 1]
     if "ANTHROPIC_WORKSPACE_ID" in expr:
-        sys.exit(0 if os.environ.get("TEST_WORKSPACE_PRESENT") == "1" else 1)
+        sys.exit(0)
     sys.exit(0 if os.environ["TEST_TOKEN_PRESENT"] == "1" else 1)
 if "dist/index.js" not in args:
     sys.exit(0)
