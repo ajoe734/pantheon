@@ -80,19 +80,13 @@ def create_jobs_router(
         has_data = bool(job) and owner_source not in {"missing", "unavailable"}
         surface: Optional[Dict[str, Any]] = None
         if owner_source:
-            try:
-                surface = dataset_surface_status(
-                    "jobs", read_store=_resolve_read_store(), snapshot_at=snapshot_at,
-                    source=owner_source, has_data=has_data,
-                )
-            except TypeError:
-                surface = dataset_surface_status("jobs", snapshot_at=snapshot_at)
+            surface = dataset_surface_status(
+                "jobs", read_store=_resolve_read_store(), snapshot_at=snapshot_at,
+                source=owner_source, has_data=has_data,
+            )
             if isinstance(surface, dict) and "source" not in surface:
                 surface = {**surface, "source": owner_source}
-        try:
-            return read_surface_meta("jobs", surface_key, snapshot_at=snapshot_at, surface=surface, has_data=has_data)
-        except TypeError:
-            return read_surface_meta("jobs", surface_key, snapshot_at=snapshot_at)
+        return read_surface_meta("jobs", surface_key, snapshot_at=snapshot_at, surface=surface, has_data=has_data)
 
     @router.get("/bff/jobs")
     async def list_jobs(

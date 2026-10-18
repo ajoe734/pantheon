@@ -18,33 +18,44 @@
   ],
   "production_line_budget": {
     "file": "services/control-plane/bff/jobs/router.py",
-    "insertions": 21,
+    "insertions": 15,
     "deletions": 4,
-    "net_lines": 17,
+    "net_lines": 11,
     "max_net_lines_budget": 40,
     "within_budget": true
   },
   "summary": {
     "problem": "GET /bff/jobs/{job_id} and GET /bff/jobs/{job_id}/logs resolved job detail/logs through JobReadPort (setting job['source'] to the canonical owner, e.g. 'training_session'), but computed response metadata via read_surface_meta('jobs', 'job_detail' | 'job_logs', snapshot_at=snapshot_at) without passing the owner surface, falling back to ReadSurfacePorts.dataset_source('jobs') == 'missing' and reporting meta.surfaces.job_detail/job_logs as {'status': 'unavailable', 'source': 'missing'} with degradation. Additionally, get_job's 'if not job:' branch checked dataset_surface_status('jobs') and called raise_if_read_surface_unavailable, turning genuine owner 404 responses into 503 when dataset_source('jobs') was 'missing'.",
-    "solution": "Added _owner_job_meta inside create_jobs_router in services/control-plane/bff/jobs/router.py to derive surface status and source from the canonical owner job returned by _lookup_job(job_id) via existing dataset_surface_status and read_surface_meta interfaces, and removed the legacy 'jobs' dataset availability check from the 'if not job:' branch of get_job since _lookup_job(job_id) already maps JobSourceUnavailableError to HTTP 503."
+    "solution": "Added _owner_job_meta inside create_jobs_router in services/control-plane/bff/jobs/router.py to derive surface status and source from the canonical owner job returned by _lookup_job(job_id) by calling existing dataset_surface_status and read_surface_meta interfaces directly (with surface, has_data, read_store, and source, and with no TypeError compatibility fallback shims that could mask internal helper errors or restore legacy unavailable metadata), and removed the legacy 'jobs' dataset availability check from the 'if not job:' branch of get_job since _lookup_job(job_id) already maps JobSourceUnavailableError to HTTP 503."
   },
   "validation": {
     "interpreter": ".venv-pantheon/bin/python3",
     "commands": [
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_jobs_source_owner_contract.py services/control-plane/bff/tests/test_overlay_retirement.py",
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_jobs_source_owner_contract.py",
         "exit_code": 0,
-        "result": "64 passed, 1 skipped"
+        "result": "40 passed"
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py services/control-plane/bff/test_bff_consol_010_fixture_pack_c.py",
         "exit_code": 0,
         "result": "65 passed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_receipt_research_routes.py services/control-plane/bff/tests/test_console_data_route_workflows_projection.py services/control-plane/bff/test_mgmt_load_002_shell_summary.py",
+        "exit_code": 0,
+        "result": "8 passed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+        "exit_code": 0,
+        "result": "39 passed"
       }
     ],
     "verified_invariants": [
       "GET /bff/jobs/{job_id} returns HTTP 200 with meta.surfaces.job_detail == {'status': 'ok', 'source': <canonical_owner>} and no meta.degradation when the canonical owner returns a job, even when store.dataset_source('jobs') == 'missing'.",
       "GET /bff/jobs/{job_id}/logs returns HTTP 200 with meta.surfaces.job_logs == {'status': 'ok', 'source': <canonical_owner>} and no meta.degradation when the canonical owner returns a job, even when store.dataset_source('jobs') == 'missing'.",
+      "_owner_job_meta calls dataset_surface_status and read_surface_meta directly with current keyword parameters and without TypeError compatibility fallbacks that could mask helper errors or restore legacy unavailable metadata.",
       "Missing job from canonical owner or unrecognized job_id prefix returns HTTP 404 (RESOURCE_NOT_FOUND), never 503, even when store.dataset_source('jobs') == 'missing'.",
       "Unavailable canonical owner raises JobSourceUnavailableError and returns HTTP 503 (DEPENDENCY_UNAVAILABLE).",
       "Request-scoped caller Authorization and verified X-Tenant-Id forwarding, tenant isolation, and all six canonical job source projections remain intact."

@@ -848,3 +848,51 @@ def test_job_detail_and_logs_surface_metadata_derived_from_canonical_owner_acros
     assert missing_resp.status_code == 404
     assert missing_resp.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
 
+
+def test_job_detail_and_logs_do_not_swallow_helper_type_error_into_legacy_fallback(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_TRAINING_SESSION_API_URL", "http://fake-source.local")
+    fake_get, _ = _fake_http_get_factory(
+        {
+            "/api/training/preview-jobs/pvjob-abc123": {
+                "status": "running",
+                "job_id": "pvjob-abc123",
+                "logs": [{"message": "running"}],
+            }
+        }
+    )
+    store = _JobsOnlyReadStore(JobReadPort(http_get=fake_get))
+
+    def broken_dataset_surface_status(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+        raise TypeError("internal dataset_surface_status TypeError must not fall back")
+
+    def broken_read_surface_meta(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+        raise TypeError("internal read_surface_meta TypeError must not fall back")
+
+    for ds_fn, meta_fn in (
+        (broken_dataset_surface_status, persona_service._read_surface_meta),
+        (persona_service._dataset_surface_status, broken_read_surface_meta),
+    ):
+        app = build_bff_app()
+        app.include_router(
+            create_jobs_router(
+                read_surface=lambda: store,
+                extract_identity=auth_policy.extract_identity,
+                require_read_role=auth_policy.require_read_role,
+                bff_error=auth_policy.bff_error,
+                utc_now=lambda: "2026-10-18T12:00:00Z",
+                page_slice=lambda items, token=None, size=20: (list(items[:size]), None),
+                read_surface_meta=meta_fn,
+                dataset_surface_status=ds_fn,
+                raise_if_read_surface_unavailable=persona_service._raise_if_read_surface_unavailable,
+                reject_body_idempotency_key=lambda b: None,
+                resolve_final_idempotency_key=lambda k1, k2: k1 or k2 or "",
+                submit_job_action=lambda *a, **kw: {},
+            )
+        )
+        client = TestClient(app, raise_server_exceptions=False)
+        detail_resp = client.get("/bff/jobs/job-trainer-pvjob-abc123", headers=OPERATOR_HEADERS)
+        assert detail_resp.status_code == 500
+        logs_resp = client.get("/bff/jobs/job-trainer-pvjob-abc123/logs", headers=OPERATOR_HEADERS)
+        assert logs_resp.status_code == 500
+
+
