@@ -1,0 +1,88 @@
+{
+  "task_id": "EVOLUTION-TELEMETRY-AUTH-WIRING-20261018",
+  "change_class": "corrective",
+  "source_only": true,
+  "base_branch": "origin/dev",
+  "base_commit": "b55560659c2a1c6c0453b4b190356048c8a92ece",
+  "summary": "Wire tenant-bound Telemetry service authentication (Authorization: Bearer <PANTHEON_TELEMETRY_SERVICE_TOKEN> and X-Tenant-Id) into Evolution's GET /api/telemetry/runtime-summaries and POST /api/telemetry/ingest transport and docker-compose service definitions, with fail-closed validation and strict Telemetry HTTP authority boundary regression coverage.",
+  "inspected_receipts": [
+    {
+      "path": "/tmp/pantheon-assist-20261013/L11-decision-execute-controlled-attempt-receipt-20261018T000908Z.json",
+      "sha256": "56c431814c528ad8bb069a6fa2fd0db05098c607ce41147a1f6892fd7d69509e",
+      "observed_blocker": "GET /api/evolution/input-coverage returned 503 with detail 'Input coverage cannot be assessed because telemetry runtime summaries are unavailable: HTTP Error 401: UNAUTHORIZED' while strict Telemetry required Bearer token and X-Tenant-Id."
+    },
+    {
+      "path": "/tmp/pantheon-assist-20261013/Evolution-Telemetry-auth-gap-diagnostic-receipt-20261018T001055Z.json",
+      "sha256": "cb82b918c3f0dc2d396299eef636c6dcb994352f2c982381808206d4948dcfda",
+      "observed_blocker": "default_fetch_summaries and default_admit_telemetry_event in services/evolution/threshold_sweep_worker.py sent bare urllib requests without Authorization or X-Tenant-Id, and evolution / evolution-threshold-sweep-producer in docker-compose.yml lacked PANTHEON_TELEMETRY_SERVICE_TOKEN and tenant wiring."
+    },
+    {
+      "path": "/tmp/pantheon-assist-20261013/Evolution-Telemetry-auth-wiring-native-task-spec-20261018.json",
+      "sha256": "c64f8a0a1aa50d127319b827fa48f6e1f79e288be0b1e23df535d5e1099ff24f"
+    }
+  ],
+  "scope_and_budget": {
+    "allowed_artifact_paths": [
+      "services/evolution/threshold_sweep_worker.py",
+      "services/evolution/main.py",
+      "docker-compose.yml",
+      "services/evolution/test_threshold_sweep_worker.py",
+      "services/evolution/test_evolution_service.py",
+      "services/evolution/test_compose_activation.py",
+      "docs/deployment/evidence/EVOLUTION-TELEMETRY-AUTH-WIRING-20261018/evidence.json"
+    ],
+    "production_diff_numstat": {
+      "docker-compose.yml": {
+        "added": 5,
+        "deleted": 0,
+        "net": 5
+      },
+      "services/evolution/main.py": {
+        "added": 3,
+        "deleted": 2,
+        "net": 1
+      },
+      "services/evolution/threshold_sweep_worker.py": {
+        "added": 35,
+        "deleted": 4,
+        "net": 31
+      },
+      "total_added": 43,
+      "total_deleted": 6,
+      "net_production_lines": 37,
+      "net_prod_line_budget": 60,
+      "within_budget": true
+    }
+  },
+  "acceptance_verification": {
+    "ac1_evolution_telemetry_transport_auth_and_tenant_binding": "passed: default_fetch_summaries and default_admit_telemetry_event build headers via _telemetry_headers, sending Authorization: Bearer <PANTHEON_TELEMETRY_SERVICE_TOKEN> and X-Tenant-Id: <tenant_id>. GET /api/evolution/input-coverage forwards the authenticated request tenant explicitly without falling back to the process default; scheduled producer resolves EVOCHAIN_THRESHOLD_SWEEP_TENANT_ID -> PANTHEON_TENANT_ID -> EVOLUTION_DEFAULT_TENANT_ID. Missing or blank token or tenant fails closed locally with ValueError before any HTTP call; Telemetry 401/403/5xx responses fail closed as 503 on input-coverage and as non-admitted diagnostic errors in run_tick.",
+    "ac2_compose_wiring": "passed: docker-compose.yml wires PANTHEON_TELEMETRY_SERVICE_TOKEN and PANTHEON_TENANT_ID into both evolution and evolution-threshold-sweep-producer (plus EVOLUTION_DEFAULT_TENANT_ID on the producer), matching telemetry's PANTHEON_TELEMETRY_SERVICE_TOKEN contract and keeping EVOLUTION_AUTH_TOKEN separate from Telemetry outbound credentials and Incidents outbound requests.",
+    "ac3_regression_tests_against_strict_telemetry_http_boundary": "passed: added compose contract assertions in services/evolution/test_compose_activation.py, strict Telemetry HTTP server regressions for default_fetch_summaries / default_admit_telemetry_event / run_tick in services/evolution/test_threshold_sweep_worker.py, and strict Telemetry HTTP server regressions for GET /api/evolution/input-coverage in services/evolution/test_evolution_service.py.",
+    "ac4_evidence_and_source_only_discipline": "passed: no VM, SSH, live runtime, or provider calls were executed; no real secret values are recorded; local verification results are recorded below without claiming hosted L11, Journal, loops, or provider certification."
+  },
+  "local_verification": {
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/evolution/test_compose_activation.py scripts/test_current_l12_compose_wiring.py",
+        "exit_code": 0,
+        "summary": "13 passed in 4.67s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/evolution/test_threshold_sweep_worker.py",
+        "exit_code": 0,
+        "summary": "88 passed, 3 warnings in 28.01s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/evolution/test_evolution_service.py",
+        "exit_code": 0,
+        "summary": "126 passed, 1 warning in 44.66s"
+      }
+    ],
+    "overall_result": "passed (227 passed, 0 failed)"
+  },
+  "boundary_and_truthfulness": {
+    "secrets_redacted": true,
+    "hosted_certification_claimed": false,
+    "note": "This evidence certifies source-only wiring and local HTTP/unit regression tests against the real Telemetry WSGI app under strict auth mode. Hosted L11 decision execute, Journal, twelve-loop, and provider acceptance require separate hosted deployment and runtime verification."
+  }
+}
