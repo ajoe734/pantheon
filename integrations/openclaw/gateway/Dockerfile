@@ -34,8 +34,9 @@ RUN npm install -g \
 # on the volume (CLAUDE_CONFIG_DIR=/home/node/.openclaw/claude-cli), so the login
 # survives container recreate. Dangling at build time; resolves once the volume
 # mounts at runtime.
-RUN rm -rf /home/node/.claude \
+RUN rm -rf /home/node/.claude /home/node/.codex \
     && ln -s /home/node/.openclaw/claude-cli /home/node/.claude \
-    && chown -h node:node /home/node/.claude
+    && ln -s /home/pantheon-assistant/.codex /home/node/.codex \
+    && chown -h node:node /home/node/.claude /home/node/.codex
 # Restore the upstream runtime user; entrypoint/cmd/workdir are inherited.
 USER node

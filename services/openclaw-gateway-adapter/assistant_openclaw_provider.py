@@ -1234,12 +1234,20 @@ class AssistantOpenClawProvider:
             "no code fence, that satisfies this JSON schema:\n"
             + json.dumps(extraction_schema, ensure_ascii=False)
         )
+        effective_agent_id = str(agent_id or STRUCTURED_AGENT_ID).strip()
+        if effective_agent_id != STRUCTURED_AGENT_ID:
+            raise OpenClawProviderError(
+                "Structured extraction is restricted to its dedicated agent; "
+                "persona/tool routing requires the admitted invoke endpoint.",
+                status_code=422,
+                error_code="OPENCLAW_STRUCTURED_AGENT_NOT_ALLOWED",
+            )
         # One-shot and stateless: a stable `user` key would reuse one warm CLI
         # session per caller, accumulating history until context_overflow.
         result = self._invoke_via_http(
             f"{instruction}\n\n{prompt}",
             model=model,
-            agent_id=agent_id,
+            agent_id=effective_agent_id,
             session_id=session_id or f"structured-{uuid.uuid4().hex}",
             mode=mode,
             messages=messages,
@@ -1265,9 +1273,11 @@ class AssistantOpenClawProvider:
 
         output: Dict[str, Any] = {
             "structured_data": parsed_arguments,
-            "agent_id": str(agent_id or self._agent_id).strip(),
+            "agent_id": effective_agent_id,
             "transport": "responses_http",
         }
+        if "active_model" in result.output:
+            output["active_model"] = result.output["active_model"]
         if "usage" in result.output:
             output["usage"] = result.output["usage"]
         if "response_id" in result.output:

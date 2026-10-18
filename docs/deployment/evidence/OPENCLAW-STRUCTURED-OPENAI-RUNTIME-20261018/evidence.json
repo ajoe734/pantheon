@@ -1,0 +1,96 @@
+{
+  "task_id": "OPENCLAW-STRUCTURED-OPENAI-RUNTIME-20261018",
+  "status": "verified_local_contract_and_pinned_gateway_repro",
+  "pinned_openclaw_image": {
+    "repository": "ghcr.io/openclaw/openclaw",
+    "tag": "2026.7.1",
+    "image_id": "sha256:f435502b113f873768b64cd7f5f2a63f44d0a236ae3a5647ff42716652c74c31"
+  },
+  "root_cause_and_fix": {
+    "openai_fallback_structured_denial": {
+      "pre_fix": "scripts/openclaw-configure-shared-model-pool.sh registered openai/gpt-5.6-sol and openai/gpt-5.5 with agentRuntime.id='codex'. In OpenClaw 2026.7.1, agentRuntime.id='codex' selects the Codex app-server harness, which unconditionally rejects structured-extraction (tools.deny=['*'], tools.exec={'security':'deny','ask':'always'}) with 'Codex app-server local execution is not available when tools.exec.mode=deny'.",
+      "post_fix": "openai/gpt-5.6-sol and openai/gpt-5.5 now use agentRuntime.id='openclaw', and openclaw-gateway binds CODEX_HOME=/home/pantheon-assistant/.codex plus /home/node/.codex -> /home/pantheon-assistant/.codex so OpenClaw's embedded HTTP/OAuth runtime resolves existing product Codex OAuth credentials without spawning codex app-server while preserving tools.deny=['*'] and tools.exec={'security':'deny','ask':'always'}."
+    },
+    "anthropic_primary_api_and_workspace_binding": {
+      "pre_fix": "scripts/openclaw-configure-shared-model-pool.sh registered anthropic/claude-opus-4-8 with agentRuntime.id='claude-cli' (subscription CLI backend) and scripts/openclaw_isolated_model_bootstrap.py required only PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN without binding ANTHROPIC_API_KEY or anthropic-workspace-id.",
+      "post_fix": "anthropic/claude-opus-4-8 now uses agentRuntime.id='openclaw', ANTHROPIC_WORKSPACE_BATCH binds models.providers.anthropic.headers.anthropic-workspace-id to the unresolved '${ANTHROPIC_WORKSPACE_ID}' env reference, docker-compose.yml passes PANTHEON_OPENCLAW_ANTHROPIC_API_KEY -> ANTHROPIC_API_KEY and PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID -> ANTHROPIC_WORKSPACE_ID into openclaw-gateway, and .github/workflows/nonprod-deploy.yml isolated-l12-provider-qualification passes secrets.DEV_OPENCLAW_ANTHROPIC_API_KEY and vars.DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID."
+    },
+    "adapter_structured_routing": {
+      "change": "services/openclaw-gateway-adapter/assistant_openclaw_provider.py defaults invoke_structured agent_id to STRUCTURED_AGENT_ID ('structured-extraction'), rejects non-structured agent_id with 422 OPENCLAW_STRUCTURED_AGENT_NOT_ALLOWED, omits X-OpenClaw-Model when model is None so the Gateway executes primary anthropic/claude-opus-4-8 with automatic fallback to ['openai/gpt-5.6-sol', 'openai/gpt-5.5'], and forwards X-OpenClaw-Model plus output.active_model when an explicit model is requested."
+    }
+  },
+  "pinned_gateway_2026_7_1_reproduction": {
+    "method": "Local ghcr.io/openclaw/openclaw:2026.7.1 gateway container against a local deterministic synthetic HTTP server (no external LLM calls or live credentials).",
+    "pre_fix_codex_runtime_under_structured_extraction": {
+      "agent_id": "structured-extraction",
+      "model": "openai/gpt-5.6-sol",
+      "agent_runtime_id": "codex",
+      "http_error_code": "OPENCLAW_RESPONSES_FAILED",
+      "gateway_log_error": "Codex app-server local execution is not available when tools.exec.mode=deny",
+      "reproduced": true
+    },
+    "post_fix_openclaw_runtime_under_structured_extraction": {
+      "primary_anthropic_claude_opus_4_8": {
+        "status": "completed",
+        "transport": "responses_http",
+        "agent_id": "structured-extraction",
+        "structured_data": {
+          "ok": true
+        },
+        "upstream_model": "claude-opus-4-8",
+        "upstream_workspace_header": "wrkspc_018oMz2BRKkweHbBE9MsJ1u9",
+        "advertised_tools": []
+      },
+      "fallback_openai_gpt_5_6_sol": {
+        "status": "completed",
+        "transport": "responses_http",
+        "agent_id": "structured-extraction",
+        "active_model": "openai/gpt-5.6-sol",
+        "structured_data": {
+          "ok": true
+        },
+        "upstream_model": "gpt-5.6-sol",
+        "advertised_tools": []
+      },
+      "fallback_openai_gpt_5_5": {
+        "status": "completed",
+        "transport": "responses_http",
+        "agent_id": "structured-extraction",
+        "active_model": "openai/gpt-5.5",
+        "structured_data": {
+          "ok": true
+        },
+        "upstream_model": "gpt-5.5",
+        "advertised_tools": []
+      },
+      "automatic_primary_to_fallback_failover": {
+        "primary_upstream_status": 503,
+        "failover_target_model": "gpt-5.6-sol",
+        "status": "completed",
+        "transport": "responses_http",
+        "agent_id": "structured-extraction",
+        "structured_data": {
+          "ok": true
+        },
+        "advertised_tools": []
+      }
+    }
+  },
+  "validation": {
+    "docker_compose_config": {
+      "command": "docker compose -f docker-compose.yml config --quiet",
+      "exit_code": 0
+    },
+    "pytest_suites": {
+      "command": "uvx --with-requirements services/openclaw-gateway-adapter/requirements.txt --with pyyaml pytest -q scripts/test_openclaw_shared_model_pool_contract.py scripts/test_openclaw_isolated_model_bootstrap.py scripts/test_isolated_l12_provider_workflow.py services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py",
+      "passed": 248,
+      "failed": 0,
+      "exit_code": 0
+    }
+  },
+  "credential_and_environment_boundary": {
+    "ci_isolated_qualification_primary": "Uses GitHub dev environment secret DEV_OPENCLAW_ANTHROPIC_API_KEY and variable DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID=wrkspc_018oMz2BRKkweHbBE9MsJ1u9 via PANTHEON_OPENCLAW_ANTHROPIC_API_KEY and PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID.",
+    "openai_fallback_auth_boundary": "No OpenAI CI secret is claimed created; OpenAI fallback models (openai/gpt-5.6-sol, openai/gpt-5.5) use existing VM-mounted product assistant OAuth credentials under /srv/pantheon-assistant/.codex (/home/pantheon-assistant/.codex in openclaw-gateway).",
+    "live_external_calls_performed_by_worker": false
+  }
+}

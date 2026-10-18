@@ -22,8 +22,8 @@ def _has_valid_failover_contract(batch: list[dict[str, object]]) -> bool:
     primary = values.get("agents.defaults.model.primary")
     fallbacks = values.get("agents.defaults.model.fallbacks")
     registered = {
-        path.removeprefix('agents.defaults.models["').removesuffix('"]')
-        for path in values
+        path.removeprefix('agents.defaults.models["').removesuffix('"]'): value
+        for path, value in values.items()
         if path.startswith('agents.defaults.models["')
     }
     return (
@@ -31,6 +31,11 @@ def _has_valid_failover_contract(batch: list[dict[str, object]]) -> bool:
         and fallbacks == ["openai/gpt-5.6-sol", "openai/gpt-5.5"]
         and primary not in fallbacks
         and all(model in registered for model in fallbacks)
+        and all(
+            isinstance(registered.get(model), dict)
+            and registered[model].get("agentRuntime") == {"id": "openclaw"}
+            for model in (primary, *fallbacks)
+        )
     )
 
 
@@ -69,8 +74,16 @@ def test_failover_contract_rejects_missing_self_or_unregistered_fallbacks() -> N
     ]
     assert not _has_valid_failover_contract(unregistered)
 
+    codex_runtime = [dict(item) for item in batch]
+    next(
+        item
+        for item in codex_runtime
+        if item["path"] == 'agents.defaults.models["openai/gpt-5.6-sol"]'
+    )["value"] = {"alias": "codex-sol", "agentRuntime": {"id": "codex"}}
+    assert not _has_valid_failover_contract(codex_runtime)
 
-def test_claude_token_binding_is_narrow_and_reference_only() -> None:
+
+def test_claude_token_and_workspace_bindings_are_narrow_and_reference_only() -> None:
     source = CONFIGURE_SCRIPT.read_text(encoding="utf-8")
     match = re.search(r"CLAUDE_TOKEN_BATCH='(\[.*?\])'", source, re.DOTALL)
     assert match is not None
@@ -79,6 +92,14 @@ def test_claude_token_binding_is_narrow_and_reference_only() -> None:
         {
             "path": 'agents.defaults.cliBackends["claude-cli"].env.CLAUDE_CODE_OAUTH_TOKEN',
             "value": "${CLAUDE_CODE_OAUTH_TOKEN}",
+        },
+    ]
+    ws_match = re.search(r"ANTHROPIC_WORKSPACE_BATCH='(\[.*?\])'", source, re.DOTALL)
+    assert ws_match is not None
+    assert json.loads(ws_match.group(1)) == [
+        {
+            "path": "models.providers.anthropic.headers.anthropic-workspace-id",
+            "value": "${ANTHROPIC_WORKSPACE_ID}",
         },
     ]
     assert "OPENCLAW_LIVE_CLI_BACKEND_PRESERVE_ENV" not in source
@@ -105,8 +126,8 @@ def test_toolsearch_override_matches_adapter_admission_and_keeps_defaults() -> N
 
 
 def _run_model_pool_script(
-    tmp_path, *, token_present: bool, reject_binding: bool = False,
-    agents=None, get_fail: bool = False, raw_state=None,
+    tmp_path, *, token_present: bool, workspace_present: bool = False,
+    reject_binding: bool = False, agents=None, get_fail: bool = False, raw_state=None,
 ):
     state = tmp_path / "agents-state.json"
     state.write_text(raw_state if raw_state is not None else json.dumps(agents) if agents is not None else "")
@@ -119,6 +140,9 @@ args = sys.argv[1:]
 with open(os.environ["TEST_DOCKER_LOG"], "a") as stream:
     stream.write(json.dumps(args) + "\n")
 if "-e" in args:
+    expr = args[args.index("-e") + 1]
+    if "ANTHROPIC_WORKSPACE_ID" in expr:
+        sys.exit(0 if os.environ.get("TEST_WORKSPACE_PRESENT") == "1" else 1)
     sys.exit(0 if os.environ["TEST_TOKEN_PRESENT"] == "1" else 1)
 if "dist/index.js" not in args:
     sys.exit(0)
@@ -135,10 +159,13 @@ elif cli[:2] == ["config", "set"]:
 elif cli[:2] == ["config", "get"]:
     path = cli[2]
     if path == "agents.defaults.models":
-        print(json.dumps({name: {} for name in [
-            "openai/gpt-5.6-sol", "openai/gpt-5.5",
-            "anthropic/claude-opus-4-8", "anthropic/claude-sonnet-4-6",
-            "google/gemini-3.1-pro-preview"]}))
+        print(json.dumps({
+            "openai/gpt-5.6-sol": {"agentRuntime": {"id": "openclaw"}},
+            "openai/gpt-5.5": {"agentRuntime": {"id": "openclaw"}},
+            "anthropic/claude-opus-4-8": {"agentRuntime": {"id": "openclaw"}},
+            "anthropic/claude-sonnet-4-6": {"agentRuntime": {"id": "claude-cli"}},
+            "google/gemini-3.1-pro-preview": {"agentRuntime": {"id": "google-gemini-cli"}},
+        }))
     elif path in ("agents", "agents.list"):
         if os.environ["TEST_AGENTS_GET_FAIL"] == "1":
             sys.exit(44)
@@ -164,15 +191,18 @@ elif cli[:2] == ["config", "get"]:
             "PATH": f"{tmp_path}:{os.environ['PATH']}",
             "TEST_DOCKER_LOG": str(command_log),
             "TEST_TOKEN_PRESENT": "1" if token_present else "0",
+            "TEST_WORKSPACE_PRESENT": "1" if workspace_present else "0",
             "TEST_REJECT_BINDING": "1" if reject_binding else "0",
             "TEST_STATE": str(state),
             "TEST_AGENTS_GET_FAIL": "1" if get_fail else "0",
             "CLAUDE_CODE_OAUTH_TOKEN": "test-secret-never-in-argv-or-output",
+            "ANTHROPIC_WORKSPACE_ID": "test-workspace-never-in-argv-or-output",
         },
         capture_output=True, text=True, timeout=10, check=False,
     )
     raw_log = command_log.read_text(encoding="utf-8")
     assert "test-secret-never-in-argv-or-output" not in raw_log + result.stdout + result.stderr
+    assert "test-workspace-never-in-argv-or-output" not in raw_log + result.stdout + result.stderr
     calls = [json.loads(line) for line in raw_log.splitlines()]
     final_state = state.read_text()
     try:
@@ -183,12 +213,13 @@ elif cli[:2] == ["config", "get"]:
 
 
 def test_optional_claude_token_binds_before_validate_and_restart(tmp_path) -> None:
-    result, calls = _run_model_pool_script(tmp_path, token_present=True)
+    result, calls = _run_model_pool_script(tmp_path, token_present=True, workspace_present=True)
     assert result.returncode == 0, result.stderr
-    binding = next(i for i, args in enumerate(calls) if any("cliBackends" in arg for arg in args))
+    ws_binding = next(i for i, args in enumerate(calls) if any("anthropic-workspace-id" in arg for arg in args))
+    binding = next(i for i, args in enumerate(calls) if any("CLAUDE_CODE_OAUTH_TOKEN" in arg for arg in args))
     validation = next(i for i, args in enumerate(calls) if args[-2:] == ["config", "validate"])
     restart = next(i for i, args in enumerate(calls) if "restart" in args)
-    assert binding < validation < restart
+    assert ws_binding < binding < validation < restart
 
 
 def test_missing_token_preserves_native_cli_login_path(tmp_path) -> None:

@@ -41,13 +41,22 @@ def test_original_driver_owns_lease_with_environment_secrets() -> None:
     assert "--provision-services --stimulus-gate" in run
     assert "dev_environment_lease.py" not in yaml.safe_dump(JOB)  # no outer lease
     env = RUN_STEP["env"]
+    assert env["PANTHEON_OPENCLAW_ANTHROPIC_API_KEY"] == (
+        "${{ secrets.DEV_OPENCLAW_ANTHROPIC_API_KEY }}"
+    )
+    assert env["PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID"] == (
+        "${{ vars.DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID }}"
+    )
     assert env["PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN"] == (
         "${{ secrets.DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN }}"
     )
     assert env["PANTHEON_ENVIRONMENT_LEASE_TOKEN"] == "${{ secrets.COORDINATION_REPO_TOKEN }}"
     assert "secrets." not in yaml.safe_dump({k: v for k, v in JOB.items() if k != "steps"})
-    # The credential never appears in argv: only the credential-free batch is exported.
-    assert not re.search(r"\$\{?PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN", run)
+    # Credentials never appear in argv: only the credential-free batch is exported.
+    assert not re.search(
+        r"\$\{?PANTHEON_OPENCLAW_(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY|ANTHROPIC_WORKSPACE_ID)",
+        run,
+    )
 
 
 def test_bootstrap_runs_before_gate_and_project_is_unique_and_real_provider() -> None:
@@ -72,9 +81,15 @@ def test_gateway_bootstrap_is_opt_in_and_fail_closed() -> None:
         "PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH: "
         "${PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH:-}"
     ) in COMPOSE_TEXT
+    assert "ANTHROPIC_API_KEY: ${PANTHEON_OPENCLAW_ANTHROPIC_API_KEY:-}" in COMPOSE_TEXT
+    assert "ANTHROPIC_WORKSPACE_ID: ${PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID:-}" in COMPOSE_TEXT
+    assert (
+        "CODEX_HOME: "
+        "${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}"
+    ) in COMPOSE_TEXT
     start = COMPOSE_TEXT.index('if [ -n \\"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\\" ]')
     startup = COMPOSE_TEXT[start : COMPOSE_TEXT.index("exec node dist/index.js gateway", start)]
-    assert '[ -n \\"$$CLAUDE_CODE_OAUTH_TOKEN\\" ] || exit 1' in startup
+    assert '[ -n \\"$$ANTHROPIC_API_KEY\\" ] && [ -n \\"$$ANTHROPIC_WORKSPACE_ID\\" ] || exit 1' in startup
     assert "|| exit 1; fi" in startup
 
 

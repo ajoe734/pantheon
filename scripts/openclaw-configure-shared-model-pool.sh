@@ -14,11 +14,15 @@ MODEL_POOL_BATCH='[
   {"path":"gateway.http.endpoints.responses.enabled","value":true},
   {"path":"agents.defaults.model.primary","value":"anthropic/claude-opus-4-8"},
   {"path":"agents.defaults.model.fallbacks","value":["openai/gpt-5.6-sol","openai/gpt-5.5"]},
-  {"path":"agents.defaults.models[\"openai/gpt-5.6-sol\"]","value":{"alias":"codex-sol","agentRuntime":{"id":"codex"}}},
-  {"path":"agents.defaults.models[\"openai/gpt-5.5\"]","value":{"alias":"codex-5.5","agentRuntime":{"id":"codex"}}},
-  {"path":"agents.defaults.models[\"anthropic/claude-opus-4-8\"]","value":{"alias":"opus","agentRuntime":{"id":"claude-cli"}}},
+  {"path":"agents.defaults.models[\"openai/gpt-5.6-sol\"]","value":{"alias":"codex-sol","agentRuntime":{"id":"openclaw"}}},
+  {"path":"agents.defaults.models[\"openai/gpt-5.5\"]","value":{"alias":"codex-5.5","agentRuntime":{"id":"openclaw"}}},
+  {"path":"agents.defaults.models[\"anthropic/claude-opus-4-8\"]","value":{"alias":"opus","agentRuntime":{"id":"openclaw"}}},
   {"path":"agents.defaults.models[\"anthropic/claude-sonnet-4-6\"]","value":{"alias":"sonnet","agentRuntime":{"id":"claude-cli"}}},
   {"path":"agents.defaults.models[\"google/gemini-3.1-pro-preview\"]","value":{"alias":"gemini","agentRuntime":{"id":"google-gemini-cli"}}}
+]'
+
+ANTHROPIC_WORKSPACE_BATCH='[
+  {"path":"models.providers.anthropic.headers.anthropic-workspace-id","value":"${ANTHROPIC_WORKSPACE_ID}"}
 ]'
 
 # OpenClaw 2026.7.1 clears ambient Claude credentials before spawning its CLI.
@@ -53,6 +57,10 @@ openclaw() {
 
 openclaw config set --batch-json "$MODEL_POOL_BATCH"
 openclaw config set --batch-json "$CLAUDE_TOOLSEARCH_BATCH" >/dev/null
+if compose exec -T -u node openclaw-gateway node -e \
+  'process.exit(process.env.ANTHROPIC_WORKSPACE_ID?.trim() ? 0 : 1)'; then
+  openclaw config set --batch-json "$ANTHROPIC_WORKSPACE_BATCH" >/dev/null
+fi
 if compose exec -T -u node openclaw-gateway node -e \
   'process.exit(process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim() ? 0 : 1)'; then
   # The argv contains only the literal reference, never the credential value.
@@ -102,6 +110,12 @@ for model_ref in \
   anthropic/claude-sonnet-4-6 \
   google/gemini-3.1-pro-preview; do
   jq -e --arg model_ref "$model_ref" 'has($model_ref)' <<<"$configured" >/dev/null
+done
+for model_ref in \
+  openai/gpt-5.6-sol \
+  openai/gpt-5.5 \
+  anthropic/claude-opus-4-8; do
+  jq -e --arg model_ref "$model_ref" '.[$model_ref].agentRuntime.id == "openclaw"' <<<"$configured" >/dev/null
 done
 
 openclaw --version
