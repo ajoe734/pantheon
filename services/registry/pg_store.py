@@ -27,7 +27,6 @@ from services.foundation.postgres_json_store import PostgresJsonOwnerStore
 from .models import (
     DeploymentStage,
     DeploymentSummary,
-    DeploymentView,
     RegistryEntry,
     RegistryEntryCreate,
     utc_now_iso,
@@ -811,40 +810,6 @@ class PostgresRegistryStore:
 
         approved.sort(key=lambda e: _parse_ver(e.version), reverse=True)
         return approved[0]
-
-    def resolve_deployment_view(self, strategy_id: str) -> DeploymentView:
-        entries = self.list_by_strategy(strategy_id)
-        approved = [e for e in entries if e.artifact_state.value == "approved"]
-        view = DeploymentView(strategy_id=strategy_id)
-        if not approved:
-            return view
-
-        def _parse_ver(v: str) -> tuple[int, ...]:
-            return tuple(int(x) for x in v.split("."))
-
-        approved_by_ver = sorted(approved, key=lambda e: _parse_ver(e.version), reverse=True)
-        latest = approved_by_ver[0]
-        view.latest_approved_registry_id = latest.registry_id
-        view.latest_approved_version = latest.version
-
-        deployed_candidates = [
-            e for e in approved
-            if e.deployment_summary is not None
-            and e.deployment_summary.current_stage is not None
-            and e.deployment_summary.current_stage != DeploymentStage.NONE
-        ]
-        if deployed_candidates:
-            deployed = max(
-                deployed_candidates,
-                key=lambda e: e.deployment_summary.last_transition_at or "",
-            )
-            ds = deployed.deployment_summary
-            view.current_stage = ds.current_stage
-            view.deployment_plan_id = ds.deployment_plan_id
-            view.runtime_binding_id = ds.runtime_binding_id
-            view.last_transition_at = ds.last_transition_at
-
-        return view
 
 
 def _registry_backend() -> str:

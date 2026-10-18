@@ -282,7 +282,13 @@ class TestDeploymentView:
     def test_empty_strategy(self):
         store = RegistryStore()
         svc = RegistryService(store)
-        view = svc.resolve_deployment_view("nonexistent")
+        with pytest.raises(RegistryError):
+            svc.resolve_deployment_view("nonexistent")
+        view = svc.resolve_deployment_view(
+            "nonexistent",
+            runtime_bindings_reader=lambda _tid: [],
+            deployment_plan_reader=lambda _pid, _tid: None,
+        )
         assert view.current_stage == DeploymentStage.NONE
 
     def test_approved_without_deployment_summary(self):
@@ -291,30 +297,63 @@ class TestDeploymentView:
         svc.register(_make_create_payload(), "reg-001", actor={"id": "unit-operator", "tenant": "tenant-unit"})
         advance_registry_unit(svc, "reg-001", ArtifactState.CANDIDATE)
         advance_registry_unit(svc, "reg-001", ArtifactState.APPROVED)
+        # Cached deployment_summary on RegistryEntry is non-authoritative and never read by resolve_deployment_view.
+        svc.update_deployment_summary(
+            "reg-001",
+            current_stage=DeploymentStage.CANARY,
+            deployment_plan_id="cached-plan",
+            runtime_binding_id="cached-rb",
+        )
 
-        view = svc.resolve_deployment_view("test-alpha")
+        view = svc.resolve_deployment_view(
+            "test-alpha",
+            tenant_id="tenant-unit",
+            runtime_bindings_reader=lambda _tid: [],
+            deployment_plan_reader=lambda _pid, _tid: None,
+        )
         assert view.current_stage == DeploymentStage.NONE
         assert view.latest_approved_registry_id == "reg-001"
+        assert view.deployment_plan_id is None
+        assert view.runtime_binding_id is None
 
     def test_approved_with_deployment_summary(self):
         store = RegistryStore()
-        svc = RegistryService(store)
+        svc = RegistryService(
+            store,
+            runtime_bindings_reader=lambda _tid: [
+                {
+                    "binding_id": "rb-001",
+                    "capital_pool_id": "pool-unit",
+                    "artifact_id": "reg-001",
+                    "artifact_version": "1.0.0",
+                    "deployment_mode": "canary",
+                    "plan_id": "plan-001",
+                    "status": "active",
+                    "effective_at": "2026-10-18T00:00:00Z",
+                    "metadata": {"tenant_id": "tenant-unit", "strategy_id": "test-alpha"},
+                }
+            ],
+            deployment_plan_reader=lambda pid, _tid: {
+                "plan_id": pid,
+                "strategy_id": "test-alpha",
+                "capital_pool_id": "pool-unit",
+                "artifact_id": "reg-001",
+                "artifact_version": "1.0.0",
+                "target_stage": "canary",
+                "status": "approved",
+                "tenant_id": "tenant-unit",
+                "binding_id": "rb-001",
+            },
+        )
         svc.register(_make_create_payload(), "reg-001", actor={"id": "unit-operator", "tenant": "tenant-unit"})
         advance_registry_unit(svc, "reg-001", ArtifactState.CANDIDATE)
         advance_registry_unit(svc, "reg-001", ArtifactState.APPROVED)
 
-        # Simulate deployment service updating the projection
-        svc.update_deployment_summary(
-            "reg-001",
-            current_stage=DeploymentStage.CANARY,
-            deployment_plan_id="plan-001",
-            runtime_binding_id="rb-001",
-        )
-
-        view = svc.resolve_deployment_view("test-alpha")
+        view = svc.resolve_deployment_view("test-alpha", tenant_id="tenant-unit")
         assert view.current_stage == DeploymentStage.CANARY
         assert view.deployment_plan_id == "plan-001"
         assert view.runtime_binding_id == "rb-001"
+        assert view.last_transition_at == "2026-10-18T00:00:00Z"
 
     def test_deployment_stage_requires_approved_artifact(self):
         store = RegistryStore()
@@ -729,7 +768,7 @@ class TestFastAPIEndpoints:
         resp = self.client.get("/api/registry/strategies/empty-test/latest-approved")
         assert resp.status_code == 404
 
-    def test_deployment_view(self):
+    def test_deployment_view(self, monkeypatch):
         # Create and approve
         create_resp = self.client.post("/api/registry/entries", json={
             "artifact_type": "model_artifact",
@@ -740,6 +779,7 @@ class TestFastAPIEndpoints:
             "lineage": {"source_run_ids": ["run-001"]},
         })
         rid = create_resp.json()["entry"]["registry_id"]
+        owner_tenant = create_resp.json()["entry"]["owner_tenant"]
         advance_registry_http(
             self.client, f"/api/registry/entries/{rid}/advance",
             json={"target_state": "candidate", "expected_artifact_state": "draft"},
@@ -749,28 +789,58 @@ class TestFastAPIEndpoints:
             json={"target_state": "approved", "expected_artifact_state": "candidate"},
         )
 
-        # Update deployment summary (simulating deployment service)
-        self.client.put(
-            f"/api/registry/entries/{rid}/deployment-summary",
-            json={
-                "current_stage": "paper",
-                "deployment_plan_id": "plan-001",
+        with _local_owner_server(
+            bindings=[
+                {
+                    "binding_id": "rb-001",
+                    "capital_pool_id": "pool-001",
+                    "artifact_id": rid,
+                    "artifact_version": "1.0.0",
+                    "deployment_mode": "paper",
+                    "plan_id": "plan-001",
+                    "status": "active",
+                    "effective_at": "2026-10-18T00:00:00Z",
+                    "metadata": {"tenant_id": owner_tenant, "strategy_id": "dv-test"},
+                }
+            ],
+            plans={
+                "plan-001": {
+                    "plan_id": "plan-001",
+                    "strategy_id": "dv-test",
+                    "capital_pool_id": "pool-001",
+                    "artifact_id": rid,
+                    "artifact_version": "1.0.0",
+                    "target_stage": "paper",
+                    "status": "approved",
+                    "tenant_id": owner_tenant,
+                    "binding_id": "rb-001",
+                }
             },
-        )
+        ) as (base_url, _state):
+            monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", base_url)
+            monkeypatch.setenv("PANTHEON_DEPLOYMENT_API_URL", base_url)
 
-        # Check deployment view
-        resp = self.client.get("/api/registry/strategies/dv-test/deployment-view")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["current_stage"] == "paper"
-        assert data["deployment_plan_id"] == "plan-001"
-        assert data["latest_approved_registry_id"] == rid
+            resp = self.client.get("/api/registry/strategies/dv-test/deployment-view")
+            assert resp.status_code == 200, resp.text
+            data = resp.json()
+            assert data["current_stage"] == "paper"
+            assert data["deployment_plan_id"] == "plan-001"
+            assert data["runtime_binding_id"] == "rb-001"
+            assert data["latest_approved_registry_id"] == rid
 
-    def test_deployment_view_empty(self):
-        resp = self.client.get("/api/registry/strategies/nonexistent/deployment-view")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["current_stage"] == "none"
+    def test_deployment_view_empty(self, monkeypatch):
+        monkeypatch.delenv("PANTHEON_RUNTIME_MANAGER_URL", raising=False)
+        monkeypatch.delenv("PANTHEON_DEPLOYMENT_API_URL", raising=False)
+        missing_resp = self.client.get("/api/registry/strategies/nonexistent/deployment-view")
+        assert missing_resp.status_code == 503
+
+        with _local_owner_server(bindings=[], plans={}) as (base_url, _state):
+            monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", base_url)
+            monkeypatch.setenv("PANTHEON_DEPLOYMENT_API_URL", base_url)
+            resp = self.client.get("/api/registry/strategies/nonexistent/deployment-view")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["current_stage"] == "none"
 
     def test_api_reset_store_isolation(self):
         self.client.post("/api/registry/entries", json={
@@ -2044,3 +2114,896 @@ def test_metadata_and_advance_command_keys_do_not_share_a_receipt_namespace(stri
     final_entry = final.json()["entry"]
     assert final_entry["metadata"] == {"note": "v1"}
     assert final_entry["artifact_state"] == "candidate"
+
+
+import atexit
+from contextlib import contextmanager
+import copy
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import importlib.util
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+import threading
+
+from .storage import get_store
+
+_REAL_OWNER_MODS: dict[str, object] = {}
+
+
+def _get_real_owner_apps():
+    if not _REAL_OWNER_MODS:
+        boot_tmpdir = tempfile.TemporaryDirectory(prefix="pantheon-registry-owner-boot-")
+        atexit.register(boot_tmpdir.cleanup)
+        boot_root = Path(boot_tmpdir.name).resolve()
+        gov_dir = boot_root / "governance"
+        rm_data_dir = boot_root / "runtime-manager"
+        cap_dir = boot_root / "capital"
+        rm_store_path = rm_data_dir / "bindings.json"
+        cap_pool_path = cap_dir / "capital_pools.json"
+        persona_binding_path = cap_dir / "persona_capital_bindings.json"
+
+        boot_env = {
+            "DEPLOYMENT_DATA_DIR": str(gov_dir),
+            "PANTHEON_GOVERNANCE_DATA_DIR": str(gov_dir),
+            "CAPITAL_DATA_DIR": str(cap_dir),
+            "PANTHEON_RUNTIME_DATA_DIR": str(rm_data_dir),
+            "PANTHEON_RUNTIME_BINDING_STORE_PATH": str(rm_store_path),
+            "PANTHEON_CAPITAL_POOL_STORE_PATH": str(cap_pool_path),
+            "PANTHEON_PERSONA_BINDING_STORE_PATH": str(persona_binding_path),
+        }
+        saved_boot_env = {k: os.environ.get(k) for k in boot_env}
+        for k, v in boot_env.items():
+            os.environ[k] = v
+        try:
+            rm_dir = str(Path(__file__).resolve().parents[1] / "runtime-manager")
+            if rm_dir not in sys.path:
+                sys.path.insert(0, rm_dir)
+            spec = importlib.util.spec_from_file_location(
+                "pantheon_runtime_manager_main_real",
+                Path(rm_dir) / "main.py",
+            )
+            assert spec is not None and spec.loader is not None
+            rm_main = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(rm_main)
+            from services.deployment import service as dep_svc
+            from services.deployment.outbox_lease import DeploymentOutboxLeaseStore
+            from services.runtime_manager.runtime_binding import RuntimeBinding, RuntimeBindingStore
+            from deployment_plan import DeploymentPlan, DeploymentPlanStore
+            from deployment_saga import DeploymentSagaStore
+        finally:
+            for k, v in saved_boot_env.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+        assert Path(dep_svc.DATA_DIR).resolve() == gov_dir
+        assert Path(dep_svc.PLAN_STORE_PATH).resolve() == gov_dir / "deployment_plans.json"
+        assert Path(dep_svc.SAGA_STORE_PATH).resolve() == gov_dir / "deployment_sagas.json"
+        assert Path(dep_svc.OUTBOX_LEASE_STORE_PATH).resolve() == gov_dir / "deployment_outbox_leases.json"
+        assert Path(dep_svc.RUNTIME_BINDING_STORE_PATH).resolve() == rm_store_path
+        assert Path(dep_svc.CAPITAL_POOL_STORE_PATH).resolve() == cap_pool_path
+        assert Path(dep_svc.PERSONA_BINDING_STORE_PATH).resolve() == persona_binding_path
+        assert Path(rm_main._STORE_PATH_ENV).resolve() == rm_store_path
+        assert "/tmp/pantheon/governance" not in str(dep_svc.DATA_DIR)
+        assert "/tmp/pantheon/runtime-manager" not in str(rm_main._STORE_PATH_ENV)
+
+        startup_isolation = {
+            "verified": True,
+            "boot_root": str(boot_root),
+            "deployment_data_dir": str(Path(dep_svc.DATA_DIR).resolve()),
+            "plan_store_path": str(Path(dep_svc.PLAN_STORE_PATH).resolve()),
+            "saga_store_path": str(Path(dep_svc.SAGA_STORE_PATH).resolve()),
+            "outbox_lease_store_path": str(Path(dep_svc.OUTBOX_LEASE_STORE_PATH).resolve()),
+            "runtime_binding_store_path": str(Path(rm_main._STORE_PATH_ENV).resolve()),
+            "capital_pool_store_path": str(Path(dep_svc.CAPITAL_POOL_STORE_PATH).resolve()),
+            "persona_binding_store_path": str(Path(dep_svc.PERSONA_BINDING_STORE_PATH).resolve()),
+        }
+
+        _REAL_OWNER_MODS.update(
+            _boot_tmpdir=boot_tmpdir,
+            startup_isolation=startup_isolation,
+            rm_main=rm_main,
+            dep_svc=dep_svc,
+            RuntimeBinding=RuntimeBinding,
+            RuntimeBindingStore=RuntimeBindingStore,
+            DeploymentPlan=DeploymentPlan,
+            DeploymentPlanStore=DeploymentPlanStore,
+            DeploymentSagaStore=DeploymentSagaStore,
+            DeploymentOutboxLeaseStore=DeploymentOutboxLeaseStore,
+        )
+    return _REAL_OWNER_MODS
+
+
+def _snapshot_owner_and_registry_state(reg_store, rm_store, plan_store, saga_store) -> dict:
+    return {
+        "registry_entries": {
+            rid: entry.to_dict()
+            for rid, entry in sorted(reg_store._entries.items())
+        },
+        "registry_command_receipts": copy.deepcopy(dict(sorted(reg_store._command_receipts.items()))),
+        "registry_creation_receipts": copy.deepcopy(dict(sorted(reg_store._creation_receipts.items()))),
+        "runtime_bindings": [
+            b.to_dict()
+            for b in sorted(rm_store.list_all(), key=lambda item: item.binding_id)
+        ],
+        "deployment_plans": [
+            p.to_dict()
+            for p in sorted(plan_store.list_all(), key=lambda item: item.plan_id)
+        ],
+        "deployment_sagas": [
+            s.to_dict()
+            for s in sorted(saga_store.list_all(), key=lambda item: item.saga_id)
+        ],
+        "deployment_outbox_records": [
+            r.to_dict()
+            for r in saga_store.outbox_records()
+        ],
+        "deployment_inbox_receipts": [
+            r.to_dict()
+            for r in saga_store.inbox_receipts()
+        ],
+    }
+
+
+def _coerce_runtime_binding(RuntimeBinding, raw: dict):
+    if isinstance(raw, RuntimeBinding):
+        return raw
+    data = dict(raw)
+    meta = dict(data.get("metadata") or {})
+    if "tenant_id" in data and "tenant_id" not in meta and data["tenant_id"] is not None:
+        meta["tenant_id"] = data["tenant_id"]
+    if "strategy_id" in data and "strategy_id" not in meta and data["strategy_id"] is not None:
+        meta["strategy_id"] = data["strategy_id"]
+    data["metadata"] = meta
+    data.setdefault("runtime_id", f"rt-{data.get('binding_id', 'unit')}")
+    data.setdefault("persona_capital_binding_id", "pcb-unit-001")
+    data.setdefault("effective_at", "2026-10-18T00:00:00Z")
+    return RuntimeBinding.from_dict(data)
+
+
+def _coerce_deployment_plan(DeploymentPlan, pid: str, raw: dict):
+    if isinstance(raw, DeploymentPlan):
+        return raw
+    data = dict(raw)
+    meta = dict(data.get("metadata") or {})
+    if "tenant_id" in data:
+        if data["tenant_id"] is not None:
+            meta["tenant_id"] = data["tenant_id"]
+        else:
+            meta.pop("tenant_id", None)
+    data["metadata"] = meta
+    data.setdefault("plan_id", pid)
+    data.setdefault("approval_decision_id", f"decision-{pid}")
+    data.setdefault("artifact_type", "execution_bundle")
+    data.setdefault("current_stage", "none")
+    data.setdefault("transition_type", "activate")
+    data.setdefault("runtime_action", "deploy_new_binding")
+    data.setdefault("created_at", "2026-10-18T00:00:00Z")
+    return DeploymentPlan.from_dict(data)
+
+
+@contextmanager
+def _local_owner_server(*, bindings: list[dict], plans: dict[str, dict], filter_by_tenant: bool = True):
+    mods = _get_real_owner_apps()
+    rm_main = mods["rm_main"]
+    dep_svc = mods["dep_svc"]
+    RuntimeBinding = mods["RuntimeBinding"]
+    RuntimeBindingStore = mods["RuntimeBindingStore"]
+    DeploymentPlan = mods["DeploymentPlan"]
+    DeploymentPlanStore = mods["DeploymentPlanStore"]
+    DeploymentSagaStore = mods["DeploymentSagaStore"]
+
+    rm_store = RuntimeBindingStore(path=None)
+    plan_store = DeploymentPlanStore(storage_path=None)
+    saga_store = DeploymentSagaStore(storage_path=None)
+
+    class _InMemoryRuntimeService:
+        def __init__(self, store):
+            self._store = store
+
+        def list_all(self):
+            return self._store.list_all()
+
+        def list_by_pool(self, pool_id: str):
+            return self._store.find_by_pool(pool_id)
+
+        def list_by_plan(self, plan_id: str):
+            return self._store.find_by_plan(plan_id)
+
+        def get(self, binding_id: str):
+            return self._store.get(binding_id)
+
+    prev_rm_svc = rm_main._svc
+    prev_dep_store = dep_svc.store
+    prev_planner_store = dep_svc.planner_service.plan_store
+    prev_saga_store = dep_svc.saga_store
+    prev_orch_saga_store = dep_svc.orchestration_service.saga_store
+    prev_proj_saga_store = dep_svc.projection_service.saga_store
+    rm_main._svc = _InMemoryRuntimeService(rm_store)
+    dep_svc.store = plan_store
+    dep_svc.planner_service.plan_store = plan_store
+    dep_svc.saga_store = saga_store
+    dep_svc.orchestration_service.saga_store = saga_store
+    dep_svc.projection_service.saga_store = saga_store
+
+    env_keys = (
+        "PANTHEON_RUNTIME_AUTH_MODE",
+        "PANTHEON_RUNTIME_JWT_SECRET",
+        "PANTHEON_RUNTIME_JWT_ISSUER",
+        "PANTHEON_RUNTIME_JWT_AUDIENCE",
+        "PANTHEON_DEPLOYMENT_AUTH_MODE",
+        "PANTHEON_DEPLOYMENT_JWT_SECRET",
+        "PANTHEON_DEPLOYMENT_JWT_ISSUER",
+        "PANTHEON_DEPLOYMENT_JWT_AUDIENCE",
+    )
+    saved_env = {k: os.environ.get(k) for k in env_keys}
+    reg_secret = os.environ.get("PANTHEON_REGISTRY_JWT_SECRET", _JWT_SECRET)
+    reg_issuer = os.environ.get("PANTHEON_REGISTRY_JWT_ISSUER", "")
+    reg_audience = os.environ.get("PANTHEON_REGISTRY_JWT_AUDIENCE", "")
+    os.environ["PANTHEON_RUNTIME_AUTH_MODE"] = "strict"
+    os.environ["PANTHEON_RUNTIME_JWT_SECRET"] = reg_secret
+    os.environ["PANTHEON_RUNTIME_JWT_ISSUER"] = reg_issuer
+    os.environ["PANTHEON_RUNTIME_JWT_AUDIENCE"] = reg_audience
+    os.environ["PANTHEON_DEPLOYMENT_AUTH_MODE"] = "strict"
+    os.environ["PANTHEON_DEPLOYMENT_JWT_SECRET"] = reg_secret
+    os.environ["PANTHEON_DEPLOYMENT_JWT_ISSUER"] = reg_issuer
+    os.environ["PANTHEON_DEPLOYMENT_JWT_AUDIENCE"] = reg_audience
+
+    rm_client = rm_main.app.test_client()
+    dep_client = TestClient(dep_svc.app)
+
+    class _OwnerFixtureState(dict):
+        def __setitem__(self, key, value):
+            super().__setitem__(key, value)
+            if key in ("bindings", "plans") and self.get("_ready"):
+                _seed_stores()
+
+    state = _OwnerFixtureState(
+        bindings=list(bindings),
+        plans=dict(plans),
+        filter_by_tenant=filter_by_tenant,
+        requests=[],
+        rm_store=rm_store,
+        plan_store=plan_store,
+        saga_store=saga_store,
+        startup_isolation=mods["startup_isolation"],
+        use_raw_rm_store=False,
+        seed_count=0,
+        _ready=False,
+    )
+
+    def _seed_stores():
+        if not state.get("use_raw_rm_store"):
+            rm_store._bindings = {
+                b.binding_id: b
+                for b in (_coerce_runtime_binding(RuntimeBinding, item) for item in state["bindings"])
+            }
+        plan_store._plans = {
+            pid: _coerce_deployment_plan(DeploymentPlan, pid, p_raw)
+            for pid, p_raw in state["plans"].items()
+        }
+        dict.__setitem__(state, "seed_count", int(state.get("seed_count", 0)) + 1)
+
+    _seed_stores()
+    seeded_plans = plan_store.list_all()
+    if seeded_plans:
+        first_plan = seeded_plans[0]
+        boot = saga_store.bootstrap_for_plan(
+            first_plan,
+            trace_id=f"trace-{first_plan.plan_id}",
+            saga_id=f"saga-{first_plan.plan_id}",
+            metadata=dict(first_plan.metadata or {}),
+        )
+        saga_store.consume_event("runtime-manager", boot.outbox_event.event)
+    dict.__setitem__(state, "_ready", True)
+    dict.__setitem__(
+        state,
+        "snapshot",
+        lambda reg_store=None: _snapshot_owner_and_registry_state(
+            reg_store or get_store(),
+            rm_store,
+            plan_store,
+            saga_store,
+        ),
+    )
+
+    class _Handler(BaseHTTPRequestHandler):
+        def log_message(self, format, *args):
+            return
+
+        def do_GET(self):
+            req_auth = self.headers.get("Authorization")
+            req_tenant = self.headers.get("X-Tenant-Id")
+            state["requests"].append(
+                {
+                    "method": "GET",
+                    "path": self.path,
+                    "authorization": req_auth,
+                    "tenant": req_tenant,
+                }
+            )
+            fwd_headers = {}
+            if req_auth is not None:
+                fwd_headers["Authorization"] = req_auth
+            if req_tenant is not None and state["filter_by_tenant"]:
+                fwd_headers["X-Tenant-Id"] = req_tenant
+
+            if self.path.startswith("/api/runtime-bindings"):
+                resp = rm_client.get(self.path, headers=fwd_headers)
+                self.send_response(resp.status_code)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(resp.get_data())
+                return
+            if self.path.startswith("/api/deployment/"):
+                resp = dep_client.get(self.path, headers=fwd_headers)
+                self.send_response(resp.status_code)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(resp.content)
+                return
+            self.send_response(404)
+            self.end_headers()
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        yield f"http://127.0.0.1:{srv.server_port}", state
+    finally:
+        srv.shutdown()
+        srv.server_close()
+        t.join(timeout=2.0)
+        rm_main._svc = prev_rm_svc
+        dep_svc.store = prev_dep_store
+        dep_svc.planner_service.plan_store = prev_planner_store
+        dep_svc.saga_store = prev_saga_store
+        dep_svc.orchestration_service.saga_store = prev_orch_saga_store
+        dep_svc.projection_service.saga_store = prev_proj_saga_store
+        for k, v in saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def test_deployment_view_composes_from_runtime_binding_and_deployment_plan_Across_family_artifacts(
+    strict_client, monkeypatch
+):
+    """REGISTRY-DEPLOYMENT-VIEW-OWNER-READ-20261018:
+    - Composes current_stage, deployment_plan_id, runtime_binding_id, and last_transition_at
+      from canonical RuntimeBinding (GET /api/runtime-bindings) + DeploymentPlan
+      (GET /api/deployment/plans/{plan_id}) over real HTTP against the actual runtime-manager
+      and deployment service apps while keeping latest_approved_* on the newest caller-visible
+      approved Registry revision.
+    - Ignores absent, stale, or conflicting entry.deployment_summary cache values.
+    - Supports retirement -> none, rollback/reactivation binding + plan readback,
+      paused/pending_pause states, legal paused + active bindings in the same
+      single-runtime-enforced pool, and newest-transition ordering across distinct valid pools.
+    - Fails closed with 503 on contradictory multiple active bindings in the same pool,
+      missing/rejected/mismatched DeploymentPlan (plan_id, capital_pool_id, binding_id,
+      artifact_id, artifact_version, strategy_id, tenant_id, target_stage != deployment_mode
+      including paper vs frozen), or current RuntimeBinding mismatched on version/strategy/tenant/non-approved state.
+    - Immutable EntryGET makes zero outbound owner callbacks, and repeated read-only calls leave
+      Registry and owner state unchanged.
+    """
+    strategy_id = "strategy-persona-99a8bc642bfcb4df0c5f"
+    spec_id_v1 = "reg-strategy-spec-persona-99a8bc642bfcb4df0c5f"
+    spec_id_v2 = "reg-strategy-spec-persona-99a8bc642bfcb4df0c5f-v2"
+    bundle_id = "artifact-persona-paper-99a8bc642bfcb4df0c5f"
+    plan_id = "plan-persona-paper-99a8bc642bfcb4df0c5f"
+    binding_id = "rb-87d5f907703249ca874df9dfd2ab96ef"
+    pool_a = "pool-persona-a"
+    pool_b = "pool-persona-b"
+
+    token_a = _jwt(subject="persona-op", tenant="tenant-a")
+    token_b = _jwt(subject="other-tenant-op", tenant="tenant-b")
+
+    # 1. Register + approve strategy_spec v1.0.0 and execution_bundle v1.0.0 in tenant-a
+    spec_v1 = strict_client.post(
+        "/api/registry/strategy-specs",
+        json={
+            "registry_id": spec_id_v1,
+            "strategy_id": strategy_id,
+            "version": "1.0.0",
+            "source_seed_id": "source-seed-001",
+            "strategy_spec": _minimal_strategy_spec(strategy_id),
+        },
+        headers=_bearer(token_a),
+    )
+    assert spec_v1.status_code == 200, spec_v1.text
+    for target, expected in (("candidate", "draft"), ("approved", "candidate")):
+        r = advance_registry_http(
+            strict_client,
+            f"/api/registry/strategy-specs/{spec_id_v1}/advance",
+            json={"target_state": target, "expected_artifact_state": expected},
+            headers=_bearer(token_a),
+        )
+        assert r.status_code == 200, r.text
+
+    bundle = strict_client.post(
+        "/api/registry/entries",
+        json={
+            "artifact_type": "execution_bundle",
+            "strategy_id": strategy_id,
+            "version": "1.0.0",
+            "storage_ref": {"backend": "inline", "path": f"inline://execution-bundles/{bundle_id}"},
+            "checksum": "sha256:bundle-100",
+            "lineage": {"parent_registry_ids": [spec_id_v1], "source_strategy_spec_id": spec_id_v1},
+        },
+        headers=_bearer(token_a),
+    )
+    assert bundle.status_code == 200, bundle.text
+    bundle_rid = bundle.json()["entry"]["registry_id"]
+    for target, expected in (("candidate", "draft"), ("approved", "candidate")):
+        r = advance_registry_http(
+            strict_client,
+            f"/api/registry/entries/{bundle_rid}/advance",
+            json={
+                "target_state": target,
+                "expected_artifact_state": expected,
+                "command_key": f"cmd-advance-{bundle_rid}-{target}",
+            },
+            headers=_bearer(token_a),
+        )
+        assert r.status_code == 200, r.text
+    assert r.json()["entry"]["deployment_summary"] is None
+
+    # Register + approve newer strategy_spec 2.0.0 (not yet deployed) and seed conflicting deployment_summary cache
+    spec_v2_payload = _minimal_strategy_spec(strategy_id)
+    spec_v2_payload["title"] = "Distilled momentum hypothesis v2"
+    spec_v2 = strict_client.post(
+        "/api/registry/strategy-specs",
+        json={
+            "registry_id": spec_id_v2,
+            "strategy_id": strategy_id,
+            "version": "2.0.0",
+            "source_seed_id": "source-seed-001",
+            "lineage": {"parent_registry_ids": [spec_id_v1], "source_run_ids": ["source-seed-001"]},
+            "base_checksum": spec_v1.json()["entry"]["checksum"],
+            "strategy_spec": spec_v2_payload,
+        },
+        headers=_bearer(token_a),
+    )
+    assert spec_v2.status_code == 200, spec_v2.text
+    for target, expected in (("candidate", "draft"), ("approved", "candidate")):
+        r = advance_registry_http(
+            strict_client,
+            f"/api/registry/strategy-specs/{spec_id_v2}/advance",
+            json={"target_state": target, "expected_artifact_state": expected},
+            headers=_bearer(token_a),
+        )
+        assert r.status_code == 200, r.text
+    stale_cache = strict_client.put(
+        f"/api/registry/entries/{spec_id_v2}/deployment-summary",
+        json={"current_stage": "live", "deployment_plan_id": "stale-cached-plan", "runtime_binding_id": "stale-cached-rb"},
+        headers=_bearer(token_a),
+    )
+    assert stale_cache.status_code == 200, stale_cache.text
+
+    # Also register a draft entry for the same strategy to test non-approved binding rejection
+    draft_resp = strict_client.post(
+        "/api/registry/entries",
+        json={
+            "artifact_type": "model_artifact",
+            "strategy_id": strategy_id,
+            "version": "3.0.0",
+            "storage_ref": {"backend": "object_store", "path": "s3://bucket/draft-300.bin"},
+            "checksum": "sha256:draft-300",
+            "lineage": {"source_run_ids": ["run-300"]},
+        },
+        headers=_bearer(token_a),
+    )
+    assert draft_resp.status_code == 200, draft_resp.text
+    draft_rid = draft_resp.json()["entry"]["registry_id"]
+
+    active_binding_a = {
+        "binding_id": binding_id,
+        "capital_pool_id": pool_a,
+        "artifact_id": bundle_rid,
+        "artifact_version": "1.0.0",
+        "deployment_mode": "paper",
+        "plan_id": plan_id,
+        "status": "active",
+        "effective_at": "2026-10-17T22:27:53Z",
+        "metadata": {"tenant_id": "tenant-a", "strategy_id": strategy_id},
+    }
+    plan_a = {
+        "plan_id": plan_id,
+        "strategy_id": strategy_id,
+        "capital_pool_id": pool_a,
+        "artifact_id": bundle_rid,
+        "artifact_version": "1.0.0",
+        "target_stage": "paper",
+        "status": "approved",
+        "tenant_id": "tenant-a",
+        "binding_id": None,
+    }
+
+    with _local_owner_server(
+        bindings=[
+            {
+                "binding_id": "rb-retired-old",
+                "capital_pool_id": pool_a,
+                "artifact_id": bundle_rid,
+                "artifact_version": "1.0.0",
+                "deployment_mode": "live",
+                "plan_id": "plan-retired",
+                "status": "retired",
+                "retired_at": "2026-10-17T20:00:00Z",
+                "effective_at": "2026-10-17T19:00:00Z",
+                "metadata": {"tenant_id": "tenant-a", "strategy_id": strategy_id},
+            },
+            {
+                "binding_id": "rb-other-strategy",
+                "capital_pool_id": "pool-other",
+                "artifact_id": "other-artifact",
+                "artifact_version": "1.0.0",
+                "deployment_mode": "canary",
+                "plan_id": "plan-other",
+                "status": "active",
+                "effective_at": "2026-10-17T23:59:59Z",
+                "metadata": {"tenant_id": "tenant-a", "strategy_id": "other-strategy"},
+            },
+            dict(active_binding_a),
+        ],
+        plans={plan_id: dict(plan_a)},
+    ) as (base_url, state):
+        assert state["startup_isolation"]["verified"] is True
+        assert state["seed_count"] == 1
+        monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", base_url)
+        monkeypatch.setenv("PANTHEON_DEPLOYMENT_API_URL", base_url)
+        # Process-global tenant env vars must never override the verified caller tenant
+        monkeypatch.setenv("PANTHEON_DEFAULT_TENANT", "tenant-other")
+        monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-other")
+
+        baseline_snapshot = state["snapshot"]()
+        assert {spec_id_v1, bundle_rid, spec_id_v2, draft_rid}.issubset(
+            baseline_snapshot["registry_entries"]
+        )
+        assert len(baseline_snapshot["registry_command_receipts"]) >= 2
+        assert len(baseline_snapshot["registry_creation_receipts"]) >= 2
+        assert len(baseline_snapshot["runtime_bindings"]) == 3
+        assert len(baseline_snapshot["deployment_plans"]) == 1
+        assert len(baseline_snapshot["deployment_sagas"]) == 1
+        assert len(baseline_snapshot["deployment_outbox_records"]) == 1
+        assert len(baseline_snapshot["deployment_inbox_receipts"]) == 1
+
+        # Foreign caller X-Tenant-Id header conflicting with verified JWT tenant is rejected (403)
+        foreign_hdr_resp = strict_client.get(
+            f"/api/registry/strategies/{strategy_id}/deployment-view",
+            headers={**_bearer(token_a), "X-Tenant-Id": "tenant-b"},
+        )
+        assert foreign_hdr_resp.status_code == 403, foreign_hdr_resp.text
+        assert state["requests"] == []
+        assert state["snapshot"]() == baseline_snapshot
+
+        # Immutable EntryGET makes zero outbound owner calls and leaves all stores/receipts unchanged
+        state["requests"].clear()
+        entry_read = strict_client.get(f"/api/registry/entries/{bundle_rid}", headers=_bearer(token_a))
+        assert entry_read.status_code == 200, entry_read.text
+        assert state["requests"] == []
+        assert state["seed_count"] == 1
+        assert state["snapshot"]() == baseline_snapshot
+
+        # Tenant A sees composed paper deployment from execution_bundle 1.0.0 and latest approved 2.0.0 (ignoring stale cache on v2)
+        entries_before = strict_client.get(
+            f"/api/registry/strategies/{strategy_id}/entries", headers=_bearer(token_a)
+        ).json()
+        resp_a = strict_client.get(
+            f"/api/registry/strategies/{strategy_id}/deployment-view",
+            headers=_bearer(token_a),
+        )
+        assert resp_a.status_code == 200, resp_a.text
+        assert resp_a.json() == {
+            "strategy_id": strategy_id,
+            "latest_approved_registry_id": spec_id_v2,
+            "latest_approved_version": "2.0.0",
+            "current_stage": "paper",
+            "deployment_plan_id": plan_id,
+            "runtime_binding_id": binding_id,
+            "last_transition_at": "2026-10-17T22:27:53Z",
+        }
+        assert [(r["method"], r["path"]) for r in state["requests"]] == [
+            ("GET", "/api/runtime-bindings"),
+            ("GET", f"/api/deployment/plans/{plan_id}"),
+        ]
+        assert all(r["authorization"] == f"Bearer {token_a}" and r["tenant"] == "tenant-a" for r in state["requests"])
+        assert state["seed_count"] == 1
+        assert state["snapshot"]() == baseline_snapshot
+        entries_after = strict_client.get(
+            f"/api/registry/strategies/{strategy_id}/entries", headers=_bearer(token_a)
+        ).json()
+        assert entries_after == entries_before
+
+        # Repeated read-only deployment-view call without reseeding preserves identical owner/registry rows and receipts
+        resp_a_repeat = strict_client.get(
+            f"/api/registry/strategies/{strategy_id}/deployment-view",
+            headers=_bearer(token_a),
+        )
+        assert resp_a_repeat.status_code == 200, resp_a_repeat.text
+        assert resp_a_repeat.json() == resp_a.json()
+        assert state["seed_count"] == 1
+        assert state["snapshot"]() == baseline_snapshot
+
+        # Tenant B never sees Tenant A's approved artifacts or active binding
+        resp_b = strict_client.get(
+            f"/api/registry/strategies/{strategy_id}/deployment-view",
+            headers=_bearer(token_b),
+        )
+        assert resp_b.status_code == 200, resp_b.text
+        assert resp_b.json() == {
+            "strategy_id": strategy_id,
+            "latest_approved_registry_id": None,
+            "latest_approved_version": None,
+            "current_stage": "none",
+            "deployment_plan_id": None,
+            "runtime_binding_id": None,
+            "last_transition_at": None,
+        }
+        assert state["seed_count"] == 1
+        assert state["snapshot"]() == baseline_snapshot
+
+        # If a broken owner leaks a foreign-tenant binding to Tenant B, fail closed with 503
+        state["filter_by_tenant"] = False
+        resp_b_leaked = strict_client.get(
+            f"/api/registry/strategies/{strategy_id}/deployment-view",
+            headers=_bearer(token_b),
+        )
+        assert resp_b_leaked.status_code == 503, resp_b_leaked.text
+        assert state["seed_count"] == 1
+        assert state["snapshot"]() == baseline_snapshot
+        state["filter_by_tenant"] = True
+
+        # Operational status='paused' with deployment_mode='paper' and target_stage='paper' stays 'paper' (not 'frozen')
+        state["bindings"] = [
+            {
+                **active_binding_a,
+                "status": "paused",
+                "metadata": {
+                    "tenant_id": "tenant-a",
+                    "strategy_id": strategy_id,
+                    "paused_at": "2026-10-18T00:30:00Z",
+                },
+            }
+        ]
+        resp_paused_paper = strict_client.get(
+            f"/api/registry/strategies/{strategy_id}/deployment-view",
+            headers=_bearer(token_a),
+        )
+        assert resp_paused_paper.status_code == 200, resp_paused_paper.text
+        assert resp_paused_paper.json()["current_stage"] == "paper"
+        assert resp_paused_paper.json()["runtime_binding_id"] == binding_id
+        assert resp_paused_paper.json()["last_transition_at"] == "2026-10-18T00:30:00Z"
+
+        # Canonical RuntimeBindingStore(path=None) allows a paused binding and one active binding in the SAME pool
+        mods = _get_real_owner_apps()
+        RuntimeBinding = mods["RuntimeBinding"]
+        rm_store = state["rm_store"]
+        rm_store._bindings.clear()
+        state["use_raw_rm_store"] = True
+        rm_store.create(
+            _coerce_runtime_binding(
+                RuntimeBinding,
+                {
+                    **active_binding_a,
+                    "binding_id": "synthetic-legal-paused-binding",
+                    "plan_id": plan_id,
+                    "status": "active",
+                    "effective_at": "2026-10-18T00:00:00Z",
+                    "metadata": {
+                        "tenant_id": "tenant-a",
+                        "strategy_id": strategy_id,
+                        "last_transition_at": "2026-10-18T00:05:00Z",
+                    },
+                },
+            ),
+            single_runtime_enforced=True,
+        )
+        rm_store.transition_status("synthetic-legal-paused-binding", "pending_pause")
+        rm_store.transition_status("synthetic-legal-paused-binding", "paused")
+        rm_store.create(
+            _coerce_runtime_binding(
+                RuntimeBinding,
+                {
+                    "binding_id": "synthetic-legal-active-binding",
+                    "capital_pool_id": pool_a,
+                    "artifact_id": spec_id_v2,
+                    "artifact_version": "2.0.0",
+                    "deployment_mode": "canary",
+                    "plan_id": "plan-same-pool-active",
+                    "status": "active",
+                    "effective_at": "2026-10-18T00:10:00Z",
+                    "metadata": {
+                        "tenant_id": "tenant-a",
+                        "strategy_id": strategy_id,
+                        "last_transition_at": "2026-10-18T00:10:00Z",
+                    },
+                },
+            ),
+            single_runtime_enforced=True,
+        )
+        state["plans"] = {
+            plan_id: dict(plan_a, binding_id="synthetic-legal-paused-binding"),
+            "plan-same-pool-active": {
+                "plan_id": "plan-same-pool-active",
+                "strategy_id": strategy_id,
+                "capital_pool_id": pool_a,
+                "artifact_id": spec_id_v2,
+                "artifact_version": "2.0.0",
+                "target_stage": "canary",
+                "status": "executed",
+                "tenant_id": "tenant-a",
+                "binding_id": "synthetic-legal-active-binding",
+            },
+        }
+        resp_legal_same_pool = strict_client.get(
+            f"/api/registry/strategies/{strategy_id}/deployment-view",
+            headers=_bearer(token_a),
+        )
+        assert resp_legal_same_pool.status_code == 200, resp_legal_same_pool.text
+        assert resp_legal_same_pool.json() == {
+            "strategy_id": strategy_id,
+            "latest_approved_registry_id": spec_id_v2,
+            "latest_approved_version": "2.0.0",
+            "current_stage": "canary",
+            "deployment_plan_id": "plan-same-pool-active",
+            "runtime_binding_id": "synthetic-legal-active-binding",
+            "last_transition_at": "2026-10-18T00:10:00Z",
+        }
+        state["use_raw_rm_store"] = False
+
+        # Retirement -> current_stage='none', then rollback/reactivation binding + plan -> canary
+        state["bindings"] = [
+            {
+                **active_binding_a,
+                "status": "retired",
+                "retired_at": "2026-10-18T01:00:00Z",
+            }
+        ]
+        state["plans"] = {plan_id: dict(plan_a)}
+        resp_retired = strict_client.get(
+            f"/api/registry/strategies/{strategy_id}/deployment-view",
+            headers=_bearer(token_a),
+        )
+        assert resp_retired.status_code == 200, resp_retired.text
+        assert resp_retired.json()["current_stage"] == "none"
+        assert resp_retired.json()["deployment_plan_id"] is None
+        assert resp_retired.json()["runtime_binding_id"] is None
+
+        rollback_binding = {
+            "binding_id": "rb-rollback-v1",
+            "capital_pool_id": pool_a,
+            "artifact_id": bundle_rid,
+            "artifact_version": "1.0.0",
+            "deployment_mode": "canary",
+            "plan_id": "plan-rollback-v1",
+            "status": "active",
+            "rollback_parent": binding_id,
+            "rollback_action_type": "replace",
+            "effective_at": "2026-10-18T01:30:00Z",
+            "metadata": {"tenant_id": "tenant-a", "strategy_id": strategy_id},
+        }
+        rollback_plan = {
+            **plan_a,
+            "plan_id": "plan-rollback-v1",
+            "target_stage": "canary",
+            "status": "executed",
+            "binding_id": "rb-rollback-v1",
+        }
+        state["bindings"] = [
+            {**active_binding_a, "status": "retired", "retired_at": "2026-10-18T01:00:00Z"},
+            rollback_binding,
+        ]
+        state["plans"] = {**state["plans"], "plan-rollback-v1": rollback_plan}
+        resp_rollback = strict_client.get(
+            f"/api/registry/strategies/{strategy_id}/deployment-view",
+            headers=_bearer(token_a),
+        )
+        assert resp_rollback.status_code == 200, resp_rollback.text
+        assert resp_rollback.json() == {
+            "strategy_id": strategy_id,
+            "latest_approved_registry_id": spec_id_v2,
+            "latest_approved_version": "2.0.0",
+            "current_stage": "canary",
+            "deployment_plan_id": "plan-rollback-v1",
+            "runtime_binding_id": "rb-rollback-v1",
+            "last_transition_at": "2026-10-18T01:30:00Z",
+        }
+
+        # Separate valid pools: newer paused/pending_pause transition in pool-b wins over older active binding in pool-a
+        paused_pool_b_binding = {
+            "binding_id": "rb-pool-b-paused",
+            "capital_pool_id": pool_b,
+            "artifact_id": spec_id_v2,
+            "artifact_version": "2.0.0",
+            "deployment_mode": "frozen",
+            "plan_id": "plan-pool-b",
+            "status": "paused",
+            "effective_at": "2026-10-18T01:00:00Z",
+            "metadata": {
+                "tenant_id": "tenant-a",
+                "strategy_id": strategy_id,
+                "last_transition_at": "2026-10-18T02:00:00Z",
+            },
+        }
+        plan_pool_b = {
+            "plan_id": "plan-pool-b",
+            "strategy_id": strategy_id,
+            "capital_pool_id": pool_b,
+            "artifact_id": spec_id_v2,
+            "artifact_version": "2.0.0",
+            "target_stage": "frozen",
+            "status": "executed",
+            "tenant_id": "tenant-a",
+            "binding_id": "rb-pool-b-paused",
+        }
+        state["bindings"] = [dict(active_binding_a), paused_pool_b_binding]
+        state["plans"] = {plan_id: dict(plan_a), "plan-pool-b": plan_pool_b}
+        resp_multi_pool = strict_client.get(
+            f"/api/registry/strategies/{strategy_id}/deployment-view",
+            headers=_bearer(token_a),
+        )
+        assert resp_multi_pool.status_code == 200, resp_multi_pool.text
+        assert resp_multi_pool.json() == {
+            "strategy_id": strategy_id,
+            "latest_approved_registry_id": spec_id_v2,
+            "latest_approved_version": "2.0.0",
+            "current_stage": "frozen",
+            "deployment_plan_id": "plan-pool-b",
+            "runtime_binding_id": "rb-pool-b-paused",
+            "last_transition_at": "2026-10-18T02:00:00Z",
+        }
+
+        # Contradictory multiple ACTIVE bindings in the SAME single-runtime-enforced pool -> 503
+        state["bindings"] = [
+            dict(active_binding_a),
+            {**paused_pool_b_binding, "status": "active", "capital_pool_id": pool_a},
+        ]
+        resp_same_pool_conflict = strict_client.get(
+            f"/api/registry/strategies/{strategy_id}/deployment-view",
+            headers=_bearer(token_a),
+        )
+        assert resp_same_pool_conflict.status_code == 503, resp_same_pool_conflict.text
+
+        # Exact binding/entry/plan mismatch cases must all fail closed with 503 (never skip to 'none')
+        mismatch_cases = [
+            # (f) binding artifact_version mismatch against Registry entry
+            ([dict(active_binding_a, artifact_version="9.9.9")], {plan_id: dict(plan_a)}),
+            # (f) binding strategy_id mismatch for entry of this strategy
+            ([dict(active_binding_a, metadata={"tenant_id": "tenant-a", "strategy_id": "wrong-strat"})], {plan_id: dict(plan_a)}),
+            # (f) binding pointing to non-approved (draft) entry of this strategy
+            ([dict(active_binding_a, artifact_id=draft_rid, artifact_version="3.0.0")], {plan_id: dict(plan_a)}),
+            # (c) DeploymentPlan plan_id mismatch
+            ([dict(active_binding_a)], {plan_id: dict(plan_a, plan_id="wrong-plan-id")}),
+            # (d) DeploymentPlan capital_pool_id mismatch
+            ([dict(active_binding_a)], {plan_id: dict(plan_a, capital_pool_id="wrong-pool")}),
+            # (e) canonical DeploymentPlan.binding_id mismatch
+            ([dict(active_binding_a)], {plan_id: dict(plan_a, binding_id="rb-wrong-binding")}),
+            # (e) executed DeploymentPlan missing binding_id
+            ([dict(active_binding_a)], {plan_id: dict(plan_a, status="executed", binding_id=None)}),
+            # Stage mismatch: binding deployment_mode='paper' vs plan target_stage='frozen'
+            ([dict(active_binding_a, deployment_mode="paper")], {plan_id: dict(plan_a, target_stage="frozen")}),
+            # Stage mismatch: binding deployment_mode='frozen' vs plan target_stage='paper'
+            ([dict(active_binding_a, deployment_mode="frozen")], {plan_id: dict(plan_a, target_stage="paper")}),
+            # Rejected DeploymentPlan
+            ([dict(active_binding_a)], {plan_id: dict(plan_a, status="rejected")}),
+            # DeploymentPlan missing authoritative tenant_id (owner returns 409)
+            ([dict(active_binding_a)], {plan_id: dict(plan_a, tenant_id=None)}),
+            # Missing DeploymentPlan (owner returns 404)
+            ([dict(active_binding_a)], {}),
+        ]
+        for bad_bindings, bad_plans in mismatch_cases:
+            state["bindings"] = bad_bindings
+            state["plans"] = bad_plans
+            resp_bad = strict_client.get(
+                f"/api/registry/strategies/{strategy_id}/deployment-view",
+                headers=_bearer(token_a),
+            )
+            assert resp_bad.status_code == 503, f"Expected 503 for {bad_bindings} / {bad_plans}, got {resp_bad.status_code}: {resp_bad.text}"
+
+
