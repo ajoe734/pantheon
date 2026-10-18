@@ -1,0 +1,66 @@
+{
+  "task_id": "BFF-JOB-OWNER-READ-CONTEXT-20261018",
+  "title": "修復既有 Job owner 讀取遺漏呼叫者與租戶上下文",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "status": "ready_for_review",
+  "root_cause": {
+    "reproduction_input_ref": "/tmp/pantheon-job-owner-read-context-input-20261018.json",
+    "observed_failure": {
+      "probe_target": "http://127.0.0.1:8000/bff/jobs/job-trainer-c9e1de9ce09f4c46",
+      "create_http_status": 200,
+      "create_job_id": "job-trainer-c9e1de9ce09f4c46",
+      "read_http_status": 503,
+      "read_error_code": "DEPENDENCY_UNAVAILABLE",
+      "read_error_message": "Job source owners unreachable or returned invalid payloads: training-session (http://training-session:8096/api/training/preview-jobs/c9e1de9ce09f4c46)"
+    },
+    "explanation": "services/control-plane/bff/ports/job_read.py::_default_http_get previously constructed a bare urllib.request.Request with only Accept: application/json and did not read the request-scoped caller context populated by OwnerReadContextMiddleware (authorization / selected_tenant) or forward Authorization, X-Tenant-Id, and X-Pantheon-Service via command_adapters.base.http_request_json_with_headers. Upstream owner services such as training-session enforce inbound_authority checks requiring X-Tenant-Id, X-Pantheon-Service: control-plane-bff, and caller Authorization on /api/training/preview-jobs and /api/training/preview-jobs/{job_id}, returning HTTP 400 (TENANT_REQUIRED) to bare requests and causing BFF job reads to fail with HTTP 503 (DEPENDENCY_UNAVAILABLE)."
+  },
+  "scoped_changes": {
+    "files": [
+      "services/control-plane/bff/ports/job_read.py",
+      "services/control-plane/bff/tests/test_jobs_source_owner_contract.py",
+      "docs/deployment/evidence/BFF-JOB-OWNER-READ-CONTEXT-20261018/evidence.json"
+    ],
+    "production_diff_budget": {
+      "file": "services/control-plane/bff/ports/job_read.py",
+      "added_lines": 29,
+      "deleted_lines": 8,
+      "net_lines": 21,
+      "max_net_lines": 80,
+      "within_budget": true
+    },
+    "summary": [
+      "Reused core.owner_reads (authorization, selected_tenant) and command_adapters.base (bound_tenant, http_request_json_with_headers, ActionUnavailableError) inside JobReadPort._default_http_get.",
+      "Deleted the duplicate bare Accept-only urllib.request.Request construction in _default_http_get while preserving the 6-source _JOB_SOURCES catalog, HttpGetFn callback contract, and single JobReadPort reader.",
+      "Propagated ActionUnavailableError from bound_tenant so cross-tenant reads fail closed with HTTP 403 TENANT_MISMATCH before any upstream network I/O, while preserving (True, None) on HTTP 404 and (False, None) on non-404 HTTPError/URLError/TimeoutError.",
+      "Added synthetic local HTTP owner contract tests in services/control-plane/bff/tests/test_jobs_source_owner_contract.py covering list_jobs_bff, get_job_bff, and get_job_logs_bff header forwarding, sequential/concurrent statelessness, 401/403 zero-IO fail-closed behavior, and 404/503 status preservation."
+    ]
+  },
+  "acceptance_criteria_verification": {
+    "ac1_single_owner_read_header_source": {
+      "status": "passed",
+      "details": "_default_http_get in services/control-plane/bff/ports/job_read.py reads authorization.get() and selected_tenant.get(), verifies tenant binding via bound_tenant({}, tenant_id=selected_tenant.get(), auth_token=caller_token), and delegates transport to http_request_json_with_headers."
+    },
+    "ac2_job_read_regression_and_tenant_boundary": {
+      "status": "passed",
+      "details": "Verified via TestDefaultHttpGetOwnerReadContext in services/control-plane/bff/tests/test_jobs_source_owner_contract.py that /bff/jobs, /bff/jobs/{job_id}, and /bff/jobs/{job_id}/logs forward Authorization, X-Tenant-Id, and X-Pantheon-Service, remain isolated across sequential and concurrent callers, reject missing/invalid auth (401) and foreign tenant (403 TENANT_MISMATCH) with zero owner HTTP requests, and preserve 404 and 503 responses."
+    },
+    "ac3_scope_and_line_budget": {
+      "status": "passed",
+      "details": "Only the 3 declared artifact paths are modified; net production diff in services/control-plane/bff/ports/job_read.py is +21 lines (<= 80 lines); no hosted/VM/SSH/provider calls were executed."
+    }
+  },
+  "validation_commands": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_jobs_source_owner_contract.py",
+      "exit_code": 0,
+      "output_summary": "33 passed, 3 warnings in 10.16s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_jobs_source_owner_contract.py services/control-plane/bff/tests/test_research_jobs_action_receipts.py services/control-plane/bff/tests/test_telemetry_owner_read_wiring.py services/control-plane/bff/tests/test_overlay_retirement.py",
+      "exit_code": 0,
+      "output_summary": "91 passed, 1 skipped, 6 warnings in 32.16s"
+    }
+  ]
+}
