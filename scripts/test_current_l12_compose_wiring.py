@@ -348,3 +348,26 @@ def test_benchmark_and_static_fallback_opt_in_are_preserved() -> None:
     lean_live = exec_compose["services"]["pantheon-lean-live"]
     assert lean_live.get("profiles") == ["live"]
 
+
+def test_distillation_seed_store_wiring_shares_canonical_file_and_volume(monkeypatch) -> None:
+    from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
+
+    expected_seed_path = "/data/source-ingest/distill_seeds.jsonl"
+    expected_mount = "source-ingest-data:/data/source-ingest"
+
+    for service_name in (
+        "operator-bff",
+        "strategy-distillation-worker",
+        "alpha-replication-worker",
+    ):
+        service = SERVICES[service_name]
+        env = _env(service_name)
+        assert env["STRATEGY_SEED_STORE_PATH"] == expected_seed_path
+        assert env["STRATEGY_SPEC_SEED_STORE_PATH"] == expected_seed_path
+        assert expected_mount in service["volumes"]
+
+    bff_env = _env("operator-bff")
+    assert "SOURCE_INGEST_CONTROLLER_TOKEN_FILE" not in bff_env
+    monkeypatch.setenv("STRATEGY_SEED_STORE_PATH", bff_env["STRATEGY_SEED_STORE_PATH"])
+    assert StrategySpecSeedStore().path == Path(expected_seed_path)
+

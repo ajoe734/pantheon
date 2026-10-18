@@ -693,3 +693,56 @@ def test_strategy_seed_review_commands_reject_read_role() -> None:
         )
         assert command.status_code == 403, command.text
         assert _error(command.json())["details"]["precondition_failed"] == "role_check"
+
+
+def test_distillation_seed_store_shared_path_exposes_draft_seed_without_mutation(
+    monkeypatch, tmp_path: Path
+) -> None:
+    canonical_seed_id = "seed-1d23a6d2fbc149f4"
+    distill_seed_path = tmp_path / "source-ingest" / "distill_seeds.jsonl"
+    unmounted_default_path = tmp_path / "unmounted" / "data" / "strategy_seed_store" / "seeds.jsonl"
+
+    # Distillation controller writes canonical draft seed via STRATEGY_SPEC_SEED_STORE_PATH.
+    monkeypatch.setenv("STRATEGY_SPEC_SEED_STORE_PATH", str(distill_seed_path))
+    distill_store = StrategySpecSeedStore(
+        path=Path(os.environ["STRATEGY_SPEC_SEED_STORE_PATH"])
+    )
+    original_seed = _seed(canonical_seed_id, status=StrategySpecSeedStatus.DRAFT)
+    distill_store.save(original_seed)
+
+    read_store = create_in_memory_read_surface_ports()
+    client = TestClient(_build_app(read_store))
+
+    # Before wiring STRATEGY_SEED_STORE_PATH to the shared volume path, BFF misses the seed (404).
+    monkeypatch.setenv("STRATEGY_SEED_STORE_PATH", str(unmounted_default_path))
+    missing_resp = client.get(
+        f"/bff/management/strategy-seeds/{canonical_seed_id}",
+        headers=REVIEWER_HEADERS,
+    )
+    assert missing_resp.status_code == 404, missing_resp.text
+    assert not unmounted_default_path.exists()
+
+    # With compose wiring (STRATEGY_SEED_STORE_PATH == STRATEGY_SPEC_SEED_STORE_PATH on source-ingest-data),
+    # BFF reads the exact draft seed without mutating status, identity, or lineage.
+    monkeypatch.setenv("STRATEGY_SEED_STORE_PATH", str(distill_seed_path))
+    detail_resp = client.get(
+        f"/bff/management/strategy-seeds/{canonical_seed_id}",
+        headers=REVIEWER_HEADERS,
+    )
+    assert detail_resp.status_code == 200, detail_resp.text
+    card = detail_resp.json()["data"]
+    assert card["seed_id"] == canonical_seed_id
+    assert card["status"] == "draft"
+    assert card["source"]["source_id"] == original_seed.source_id
+    assert card["source"]["evidence_bundle_id"] == original_seed.evidence_bundle_id
+    assert card["lineage_refs"]["source_ids"] == list(original_seed.source_ids)
+    assert card["lineage_refs"]["evidence_item_ids"] == list(original_seed.evidence_item_ids)
+    assert card["lineage_refs"]["citation_refs"] == list(original_seed.citation_refs)
+
+    persisted_after_get = StrategySpecSeedStore(path=distill_seed_path).get(canonical_seed_id)
+    assert persisted_after_get is not None
+    assert persisted_after_get.seed_id == canonical_seed_id
+    assert persisted_after_get.status == StrategySpecSeedStatus.DRAFT
+    assert persisted_after_get.lineage == original_seed.lineage
+
+

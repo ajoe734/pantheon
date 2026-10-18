@@ -340,6 +340,7 @@ services:
       DISTILLATION_CONTROLLER_ALIVE_PATH: /data/source-ingest/distill_controller_alive
       DISTILLATION_CONTROLLER_HEALTH_MAX_AGE_SECONDS: ${DISTILLATION_CONTROLLER_HEALTH_MAX_AGE_SECONDS:-300}
       DISTILLATION_JOB_QUEUE_PATH: /data/source-ingest/distill_job_queue.jsonl
+      STRATEGY_SEED_STORE_PATH: /data/source-ingest/distill_seeds.jsonl
       STRATEGY_SPEC_SEED_STORE_PATH: /data/source-ingest/distill_seeds.jsonl
       SOURCE_INGEST_EVIDENCE_STORE_PATH: /data/source-ingest/source_evidence.jsonl
       SOURCE_INGEST_EVIDENCE_BACKEND: ${SOURCE_INGEST_EVIDENCE_BACKEND:-postgres}
@@ -391,6 +392,7 @@ services:
       ALPHA_REPLICATION_CONTROLLER_MAX_TICKS: ${ALPHA_REPLICATION_CONTROLLER_MAX_TICKS:-0}
       ALPHA_REPLICATION_DATA_DIR: /data/research-orchestrator/alpha-replication
       ALPHA_REPLICATION_CONTROLLER_STATE_PATH: /data/research-orchestrator/alpha-replication/controller_state.json
+      STRATEGY_SEED_STORE_PATH: /data/source-ingest/distill_seeds.jsonl
       STRATEGY_SPEC_SEED_STORE_PATH: /data/source-ingest/distill_seeds.jsonl
       PANTHEON_REGISTRY_URL: http://registry:8087
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
@@ -1436,6 +1438,8 @@ services:
       CONSULTATION_SERVICE_TOKEN: ${CONSULTATION_SERVICE_TOKEN:-pantheon-local-consultation-service}
       CONSULTATION_SERVICE_ACTOR: operator-bff
       PANTHEON_SOURCE_INGEST_API_URL: http://source-ingest:8097
+      STRATEGY_SEED_STORE_PATH: /data/source-ingest/distill_seeds.jsonl
+      STRATEGY_SPEC_SEED_STORE_PATH: /data/source-ingest/distill_seeds.jsonl
       PANTHEON_SEARCH_API_URL: http://search-svc:8098
       PANTHEON_TRAINING_SESSION_API_URL: http://training-session-svc:8099
       PANTHEON_POLICY_LEARNING_API_URL: http://policy-learning-svc:8100
@@ -1487,6 +1491,7 @@ services:
       - runtime-data:/data/runtime:ro
       - incident-data:/data/incidents:ro
       - worker-health-data:/data/health:ro
+      - source-ingest-data:/data/source-ingest
     depends_on:
       registry:
         condition: service_healthy
