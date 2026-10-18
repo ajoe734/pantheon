@@ -1,0 +1,78 @@
+{
+  "task_id": "CONSULTATION-EXISTING-STRUCTURED-CONTRACT-20261018",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "base_sha": "70151bd404cb5d8bbba4b3039dc54823ada53909",
+  "sanitized_root_input": {
+    "path": "/tmp/pantheon-consultation-structured-contract-input-20261018.json",
+    "workflow_run_id": 39146961010,
+    "artifact_id": 12144207140,
+    "artifact_sha256": "6c6db594f7ee794071d2028c9df9f81ae07e7da6f1320155a8192ebaa4c2fdc9",
+    "first_failed_boundary": "human / consultation.supervised_executor_published_memo",
+    "request_id": "cr-l12-hl-bafe314bcd",
+    "status": "dead_letter",
+    "terminal_detail": "OpenClaw consultation response must be JSON-only",
+    "fact_limit": "The Consultation route did not retain the raw rejected assistant text. Do not invent the raw model answer; do not claim quota or markdown as observed fact for run 39146961010."
+  },
+  "source_objects_at_base": {
+    "services/openclaw-gateway-adapter/consultation_provider.py": {
+      "git_blob_sha1": "22e4b7687f8f8c71904db674fa02d9b5075ee359",
+      "sha256": "d13e5a2c12fba4373d133ce8b52546ab10fe61da9abdc72969826853b339d8c0"
+    },
+    "services/openclaw-gateway-adapter/assistant_openclaw_provider.py": {
+      "git_blob_sha1": "50c29de91fc29f8906c66783b1096f0fc005b4fb",
+      "sha256": "99312b7c84fa14cde037572196b0fbd39b82c1a163da0f3c12d16a2a4c7e6969"
+    }
+  },
+  "contract_repair": {
+    "production_file": "services/openclaw-gateway-adapter/consultation_provider.py",
+    "test_file": "services/consultation/tests/test_current_provider_handoff.py",
+    "removed_paths": [
+      "generic conversation provider.invoke(...) call from ConsultationOpenClawService.contribute",
+      "duplicate _provider_text text-extraction helper",
+      "duplicate json.loads response parsing in _qualified_response"
+    ],
+    "reused_contract": {
+      "provider_method": "AssistantOpenClawProvider.invoke_structured",
+      "schema_symbol": "QUALIFIED_CONTRIBUTION_SCHEMA",
+      "structured_output_key": "result.output[\"structured_data\"]",
+      "qualification_model": "QualifiedContribution.from_payload",
+      "agent_id": "structured-extraction",
+      "allowed_tools": [],
+      "execution_authority": "none",
+      "consultation_advisory_only": true
+    },
+    "production_line_budget": {
+      "added_lines": 115,
+      "deleted_lines": 81,
+      "net_line_increase": 34,
+      "max_net_line_increase_budget": 80
+    }
+  },
+  "local_validation": {
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -v services/consultation/tests/test_current_provider_handoff.py -k \"mismatch or surfaces_restricted\"",
+        "passed": 2,
+        "failed": 0
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -v services/consultation/tests/test_current_provider_handoff.py -k \"non_json or rejects_tool\"",
+        "passed": 2,
+        "failed": 0
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -v services/consultation/tests/test_current_provider_handoff.py -k \"not (mismatch or surfaces_restricted or non_json or rejects_tool)\"",
+        "passed": 9,
+        "failed": 0
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -v services/consultation/test_workflow_executor.py services/consultation/test_models.py services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py",
+        "passed": 77,
+        "failed": 0
+      }
+    ],
+    "test_current_provider_handoff_total_passed": 13,
+    "scope_note": "Injected local HTTP/SSE /v1/responses results in test_current_provider_handoff.py are local proof only and do not constitute hosted provider truth. Root separately re-pins BE/FE and runs matching FULL after source delivery; 43AC, all12, and TOTALreview remain incomplete until matching hosted FULL passes."
+  }
+}
