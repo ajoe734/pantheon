@@ -74,10 +74,9 @@ class RegistryOwnerUnavailableError(RegistryError):
     """Raised when canonical runtime/deployment owner reads fail or disagree (maps to HTTP 503)."""
 
 
-from services.governance.approval_authority import NoOwnerRedirect
-
-
 def _http_get_json(url: str, *, tenant_id: Optional[str], authorization: Optional[str]) -> dict:
+    from services.governance.approval_authority import NoOwnerRedirect
+
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise RegistryOwnerUnavailableError(f"Invalid canonical owner URL: {url}")
