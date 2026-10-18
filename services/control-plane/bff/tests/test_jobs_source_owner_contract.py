@@ -325,3 +325,373 @@ def test_registry_experiment_and_job_adapters_registered_ahead_of_evolution() ->
     order = [type(a).__name__ for a in _DEFAULT_ADAPTERS]
     assert order.index("ExperimentCommandAdapter") < order.index("EvolutionCommandAdapter")
     assert order.index("JobCommandAdapter") < order.index("EvolutionCommandAdapter")
+
+
+# --------------------------------------------------------------------------- #
+# (f) Default JobReadPort HTTP GET forwards request-scoped caller auth/tenant
+# --------------------------------------------------------------------------- #
+
+import concurrent.futures
+import io
+import json
+import urllib.error
+import urllib.request
+from urllib.parse import urlsplit
+
+from services.control_plane.bff.core.owner_reads import (
+    OwnerReadContextMiddleware,
+    authorization as owner_read_authorization,
+    selected_tenant as owner_read_selected_tenant,
+)
+from services.control_plane.bff.ports.job_read import create_job_read_port
+from services.runtime_auth_inbound import encode_jwt_hs256
+
+_TEST_JWT_SECRET = "bff-job-owner-read-context-test-secret-20261018"
+_TEST_JWT_ISSUER = "pantheon-bff-job-tests"
+_TEST_JWT_AUDIENCE = "pantheon-bff-operators"
+
+
+def _make_jwt(
+    *,
+    sub: str = "op-trainer-1",
+    roles: Tuple[str, ...] = ("operator",),
+    tenant_id: Optional[str] = "tenant-dev",
+    allowed_tenants: Optional[Tuple[str, ...]] = None,
+    secret: str = _TEST_JWT_SECRET,
+) -> str:
+    claims: Dict[str, Any] = {
+        "sub": sub,
+        "roles": list(roles),
+        "exp": 4102444800,
+        "iss": _TEST_JWT_ISSUER,
+        "aud": _TEST_JWT_AUDIENCE,
+    }
+    if tenant_id is not None:
+        claims["tenant_id"] = tenant_id
+    if allowed_tenants is not None:
+        claims["allowed_tenants"] = list(allowed_tenants)
+    return encode_jwt_hs256(claims, secret=secret)
+
+
+class _SyntheticHttpResponse:
+    def __init__(self, status: int, payload: Any) -> None:
+        self.status = status
+        self.headers: Dict[str, str] = {"Content-Type": "application/json"}
+        raw = b"" if payload is None else json.dumps(payload).encode("utf-8")
+        self._buf = io.BytesIO(raw)
+
+    def read(self) -> bytes:
+        return self._buf.read()
+
+    def __enter__(self) -> "_SyntheticHttpResponse":
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        return None
+
+
+def _setup_synthetic_training_owner(monkeypatch):
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "false")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", _TEST_JWT_SECRET)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", _TEST_JWT_ISSUER)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", _TEST_JWT_AUDIENCE)
+
+    monkeypatch.setenv("PANTHEON_TRAINING_SESSION_API_URL", "http://training-session.local")
+    for env_name in (
+        "PANTHEON_RESEARCH_WORKER_GATEWAY_API_URL",
+        "PANTHEON_RESEARCH_ORCHESTRATOR_API_URL",
+        "PANTHEON_SOURCE_INGEST_API_URL",
+        "PANTHEON_SOURCE_INGEST_URL",
+        "SOURCE_INGEST_URL",
+        "PANTHEON_POLICY_LEARNING_API_URL",
+        "PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL",
+        "PANTHEON_OPENCLAW_ADAPTER_URL",
+        "OPENCLAW_GATEWAY_ADAPTER_URL",
+    ):
+        monkeypatch.delenv(env_name, raising=False)
+
+    jobs_by_id: Dict[str, Dict[str, Any]] = {
+        "pvjob-dev-001": {
+            "job_id": "pvjob-dev-001",
+            "tenant_id": "tenant-dev",
+            "status": "completed",
+            "created_at": "2026-10-18T10:00:00Z",
+            "logs": [
+                {"ts": "2026-10-18T10:00:01Z", "level": "INFO", "message": "preview evaluation started"},
+                {"ts": "2026-10-18T10:00:05Z", "level": "INFO", "message": "preview evaluation completed"},
+            ],
+        },
+        "pvjob-b-002": {
+            "job_id": "pvjob-b-002",
+            "tenant_id": "tenant-b",
+            "status": "running",
+            "created_at": "2026-10-18T11:00:00Z",
+            "logs": [
+                {"ts": "2026-10-18T11:00:01Z", "level": "INFO", "message": "tenant-b preview running"},
+            ],
+        },
+    }
+    recorded_calls: List[Dict[str, str]] = []
+    owner_state = {"mode": "ok"}
+
+    def _urlopen(req: urllib.request.Request, timeout: float = 2.0):
+        url = req.full_url
+        headers = {k.lower(): v for k, v in req.header_items()}
+        auth_header = headers.get("authorization", "")
+        tenant_header = headers.get("x-tenant-id", "")
+        service_header = headers.get("x-pantheon-service", "")
+        recorded_calls.append(
+            {
+                "url": url,
+                "path": urlsplit(url).path,
+                "authorization": auth_header,
+                "tenant_id": tenant_header,
+                "service": service_header,
+            }
+        )
+        if owner_state["mode"] == "503":
+            raise urllib.error.HTTPError(
+                url,
+                503,
+                "Service Unavailable",
+                {},
+                io.BytesIO(b'{"error":{"code":"DEPENDENCY_UNAVAILABLE"}}'),
+            )
+        # Reproduce Training Session inbound_authority contract: bare GET without
+        # X-Tenant-Id, X-Pantheon-Service, or Bearer token fails with HTTP 400/401.
+        if not tenant_header or service_header != "control-plane-bff" or not auth_header.startswith("Bearer "):
+            raise urllib.error.HTTPError(
+                url,
+                400,
+                "Bad Request",
+                {},
+                io.BytesIO(b'{"error":{"code":"TENANT_REQUIRED","message":"X-Tenant-Id and caller auth required"}}'),
+            )
+        path = urlsplit(url).path
+        if path == "/api/training/preview-jobs":
+            items = [dict(j) for j in jobs_by_id.values() if j["tenant_id"] == tenant_header]
+            return _SyntheticHttpResponse(200, items)
+        prefix = "/api/training/preview-jobs/"
+        if path.startswith(prefix):
+            native_id = path[len(prefix):]
+            record = jobs_by_id.get(native_id)
+            if not record or record["tenant_id"] != tenant_header:
+                raise urllib.error.HTTPError(
+                    url,
+                    404,
+                    "Not Found",
+                    {},
+                    io.BytesIO(b'{"detail":"preview job not found"}'),
+                )
+            return _SyntheticHttpResponse(200, dict(record))
+        raise urllib.error.HTTPError(url, 404, "Not Found", {}, io.BytesIO(b"{}"))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+
+    port = create_job_read_port()
+    store = _JobsOnlyReadStore(port)
+    app = build_bff_app()
+    app.add_middleware(OwnerReadContextMiddleware)
+    app.include_router(
+        create_jobs_router(
+            read_surface=lambda: store,
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            bff_error=auth_policy.bff_error,
+            utc_now=lambda: "2026-10-18T12:00:00Z",
+            page_slice=lambda items, token=None, size=20: (list(items[:size]), None),
+            read_surface_meta=lambda name, kind, **kw: {"surface": name, **kw},
+            dataset_surface_status=lambda *a, **kw: {"status": "available"},
+            raise_if_read_surface_unavailable=lambda *a, **kw: None,
+            reject_body_idempotency_key=lambda b: None,
+            resolve_final_idempotency_key=lambda k1, k2: k1 or k2 or "",
+            submit_job_action=lambda *a, **kw: {},
+        )
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+    return client, port, recorded_calls, owner_state
+
+
+def test_default_job_read_port_forwards_caller_auth_and_verified_tenant_for_list_detail_and_logs(monkeypatch) -> None:
+    client, port, calls, _ = _setup_synthetic_training_owner(monkeypatch)
+    token_dev = _make_jwt(sub="op-dev-1", tenant_id="tenant-dev")
+    headers_dev = {"Authorization": f"Bearer {token_dev}"}
+
+    # 1. List jobs forwards caller Authorization and verified primary tenant
+    list_resp = client.get("/bff/jobs", headers=headers_dev)
+    assert list_resp.status_code == 200, list_resp.text
+    items = list_resp.json()["items"]
+    assert [item["job_id"] for item in items] == ["job-trainer-pvjob-dev-001"]
+    assert calls[-1]["path"] == "/api/training/preview-jobs"
+    assert calls[-1]["authorization"] == f"Bearer {token_dev}"
+    assert calls[-1]["tenant_id"] == "tenant-dev"
+    assert calls[-1]["service"] == "control-plane-bff"
+
+    # 2. Detail read forwards caller Authorization and verified tenant (200 instead of bare-GET 400->503)
+    detail_resp = client.get("/bff/jobs/job-trainer-pvjob-dev-001", headers=headers_dev)
+    assert detail_resp.status_code == 200, detail_resp.text
+    detail_data = detail_resp.json()["data"]
+    assert detail_data["job_id"] == "job-trainer-pvjob-dev-001"
+    assert detail_data["native_id"] == "pvjob-dev-001"
+    assert detail_data["source"] == "training_session"
+    assert calls[-1]["path"] == "/api/training/preview-jobs/pvjob-dev-001"
+    assert calls[-1]["authorization"] == f"Bearer {token_dev}"
+    assert calls[-1]["tenant_id"] == "tenant-dev"
+
+    # 3. Logs route and direct port get_job_logs_bff forward caller Authorization and verified tenant
+    logs_resp = client.get("/bff/jobs/job-trainer-pvjob-dev-001/logs", headers=headers_dev)
+    assert logs_resp.status_code == 200, logs_resp.text
+    logs_payload = logs_resp.json()
+    assert logs_payload["job_id"] == "job-trainer-pvjob-dev-001"
+    assert len(logs_payload["logs"]) == 2
+    assert logs_payload["logs"][0]["message"] == "preview evaluation started"
+    assert calls[-1]["path"] == "/api/training/preview-jobs/pvjob-dev-001"
+    assert calls[-1]["authorization"] == f"Bearer {token_dev}"
+    assert calls[-1]["tenant_id"] == "tenant-dev"
+
+    auth_tok = owner_read_authorization.set(f"Bearer {token_dev}")
+    tenant_tok = owner_read_selected_tenant.set("tenant-dev")
+    try:
+        direct_logs = port.get_job_logs_bff("job-trainer-pvjob-dev-001")
+        assert len(direct_logs) == 2
+    finally:
+        owner_read_selected_tenant.reset(tenant_tok)
+        owner_read_authorization.reset(auth_tok)
+
+
+def test_default_job_read_port_stateless_across_sequential_and_concurrent_callers(monkeypatch) -> None:
+    client, _port, calls, _ = _setup_synthetic_training_owner(monkeypatch)
+    token_multi = _make_jwt(
+        sub="op-multi",
+        tenant_id="tenant-dev",
+        allowed_tenants=("tenant-dev", "tenant-b"),
+    )
+    token_b_only = _make_jwt(
+        sub="op-b-only",
+        tenant_id="tenant-b",
+        allowed_tenants=("tenant-b",),
+    )
+
+    # Sequential switching between default tenant and allowed X-Tenant-Id
+    r_dev = client.get("/bff/jobs", headers={"Authorization": f"Bearer {token_multi}"})
+    assert r_dev.status_code == 200
+    assert [j["job_id"] for j in r_dev.json()["items"]] == ["job-trainer-pvjob-dev-001"]
+
+    r_b = client.get(
+        "/bff/jobs",
+        headers={"Authorization": f"Bearer {token_multi}", "X-Tenant-Id": "tenant-b"},
+    )
+    assert r_b.status_code == 200
+    assert [j["job_id"] for j in r_b.json()["items"]] == ["job-trainer-pvjob-b-002"]
+
+    # Subsequent call without X-Tenant-Id does not retain tenant-b
+    r_dev_again = client.get("/bff/jobs/job-trainer-pvjob-dev-001", headers={"Authorization": f"Bearer {token_multi}"})
+    assert r_dev_again.status_code == 200
+    assert r_dev_again.json()["data"]["job_id"] == "job-trainer-pvjob-dev-001"
+    assert owner_read_authorization.get() is None
+    assert owner_read_selected_tenant.get() is None
+
+    # Concurrent callers never bleed auth or tenant context across requests
+    def _exercise_caller(index: int) -> Tuple[str, int, str]:
+        if index % 2 == 0:
+            resp = client.get(
+                "/bff/jobs/job-trainer-pvjob-dev-001",
+                headers={"Authorization": f"Bearer {token_multi}", "X-Tenant-Id": "tenant-dev"},
+            )
+            return ("tenant-dev", resp.status_code, resp.json().get("data", {}).get("job_id", ""))
+        resp = client.get(
+            "/bff/jobs/job-trainer-pvjob-b-002",
+            headers={"Authorization": f"Bearer {token_b_only}", "X-Tenant-Id": "tenant-b"},
+        )
+        return ("tenant-b", resp.status_code, resp.json().get("data", {}).get("job_id", ""))
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(_exercise_caller, range(12)))
+
+    for expected_tenant, status_code, returned_job_id in results:
+        assert status_code == 200
+        if expected_tenant == "tenant-dev":
+            assert returned_job_id == "job-trainer-pvjob-dev-001"
+        else:
+            assert returned_job_id == "job-trainer-pvjob-b-002"
+
+    for call in calls:
+        if call["tenant_id"] == "tenant-b" and call["path"].endswith("pvjob-b-002"):
+            assert call["authorization"] == f"Bearer {token_b_only}"
+        if call["tenant_id"] == "tenant-dev":
+            assert call["authorization"] == f"Bearer {token_multi}"
+
+
+def test_default_job_read_port_rejects_missing_or_invalid_auth_and_foreign_tenant_without_owner_io(monkeypatch) -> None:
+    client, port, calls, _ = _setup_synthetic_training_owner(monkeypatch)
+    token_dev = _make_jwt(sub="op-dev-only", tenant_id="tenant-dev", allowed_tenants=("tenant-dev",))
+    token_wrong_sig = _make_jwt(sub="op-forged", tenant_id="tenant-dev", secret="wrong-signing-secret-0000")
+    token_no_tenant = _make_jwt(sub="op-no-tenant", tenant_id=None, allowed_tenants=None)
+
+    # 1. Missing auth -> 401
+    for path in ("/bff/jobs", "/bff/jobs/job-trainer-pvjob-dev-001", "/bff/jobs/job-trainer-pvjob-dev-001/logs"):
+        assert client.get(path).status_code == 401
+
+    # 2. Invalid JWT signature -> 401
+    bad_headers = {"Authorization": f"Bearer {token_wrong_sig}", "X-Tenant-Id": "tenant-dev"}
+    for path in ("/bff/jobs", "/bff/jobs/job-trainer-pvjob-dev-001", "/bff/jobs/job-trainer-pvjob-dev-001/logs"):
+        assert client.get(path, headers=bad_headers).status_code == 401
+
+    # 3. Token without tenant authority -> 403 TENANT_MISMATCH (no invented default tenant)
+    no_tenant_headers = {"Authorization": f"Bearer {token_no_tenant}"}
+    for path in ("/bff/jobs", "/bff/jobs/job-trainer-pvjob-dev-001", "/bff/jobs/job-trainer-pvjob-dev-001/logs"):
+        resp = client.get(path, headers=no_tenant_headers)
+        assert resp.status_code == 403
+        assert resp.json()["error"]["code"] in {"TENANT_MISMATCH", "FORBIDDEN"}
+
+    # 4. Foreign tenant header -> 403 TENANT_MISMATCH before any network call
+    foreign_headers = {"Authorization": f"Bearer {token_dev}", "X-Tenant-Id": "tenant-b"}
+    for path in ("/bff/jobs", "/bff/jobs/job-trainer-pvjob-dev-001", "/bff/jobs/job-trainer-pvjob-dev-001/logs"):
+        resp = client.get(path, headers=foreign_headers)
+        assert resp.status_code == 403
+        assert resp.json()["error"]["code"] in {"TENANT_MISMATCH", "FORBIDDEN"}
+
+    # 5. Direct port invocation without caller authorization context fails closed
+    assert owner_read_authorization.get() is None
+    assert port.list_jobs_bff() == []
+    assert port.get_degraded_sources().get("training_session") == "unreachable"
+    with pytest.raises(JobSourceUnavailableError):
+        port.get_job_bff("job-trainer-pvjob-dev-001")
+
+    # Zero network packets sent to the synthetic owner across all rejected cases
+    assert calls == []
+
+
+def test_default_job_read_port_preserves_404_missing_and_503_unavailable_visibility(monkeypatch) -> None:
+    client, port, _calls, owner_state = _setup_synthetic_training_owner(monkeypatch)
+    token_dev = _make_jwt(sub="op-dev-1", tenant_id="tenant-dev")
+    headers_dev = {"Authorization": f"Bearer {token_dev}"}
+
+    # 1. Missing native job returns 404
+    missing_resp = client.get("/bff/jobs/job-trainer-pvjob-nonexistent", headers=headers_dev)
+    assert missing_resp.status_code == 404
+    assert missing_resp.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
+
+    missing_logs_resp = client.get("/bff/jobs/job-trainer-pvjob-nonexistent/logs", headers=headers_dev)
+    assert missing_logs_resp.status_code == 404
+
+    # 2. Another tenant's job ID queried under caller's own tenant returns 404 from owner
+    other_tenant_job_resp = client.get("/bff/jobs/job-trainer-pvjob-b-002", headers=headers_dev)
+    assert other_tenant_job_resp.status_code == 404
+
+    # 3. Genuine owner unavailability surfaces as 503 for detail/logs and degraded for list
+    owner_state["mode"] = "503"
+    unavail_detail = client.get("/bff/jobs/job-trainer-pvjob-dev-001", headers=headers_dev)
+    assert unavail_detail.status_code == 503
+    assert unavail_detail.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+
+    unavail_logs = client.get("/bff/jobs/job-trainer-pvjob-dev-001/logs", headers=headers_dev)
+    assert unavail_logs.status_code == 503
+    assert unavail_logs.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+
+    unavail_list = client.get("/bff/jobs", headers=headers_dev)
+    assert unavail_list.status_code == 200
+    assert unavail_list.json()["items"] == []
+    assert port.get_degraded_sources().get("training_session") == "unreachable"
+
