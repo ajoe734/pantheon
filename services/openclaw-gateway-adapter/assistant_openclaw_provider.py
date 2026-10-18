@@ -523,6 +523,24 @@ def _sanitize_failure_reason(reason: Any, message: Any = None) -> str:
     return f"SHA256_{digest}"
 
 
+def _format_failed_response_message(evt: Dict[str, Any]) -> str:
+    resp = evt.get("response") if isinstance(evt.get("response"), dict) else {}
+    err = resp.get("error") if resp.get("error") is not None else evt.get("error")
+    err_map = err if isinstance(err, dict) else {}
+    code_raw = err_map.get("code") or err_map.get("type") or resp.get("code") or evt.get("code")
+    code = str(code_raw).strip() if isinstance(code_raw, (str, int)) and not isinstance(code_raw, bool) else ""
+    msg_raw = err_map.get("message") or (err if isinstance(err, str) else None) or resp.get("message") or evt.get("message") or resp.get("reason") or evt.get("reason")
+    msg = msg_raw.strip() if isinstance(msg_raw, str) else ""
+    detail = f"{code}: {msg}" if code and msg else (code or msg)
+    if not detail:
+        status = str(resp.get("status") or "").strip()
+        etype = str(evt.get("type") or "response.failed").strip()
+        detail = f"{etype} (status={status})" if status else etype
+    resp_id = resp.get("id") or evt.get("response_id")
+    suffix = f" (response_id={resp_id.strip()[:64]})" if isinstance(resp_id, str) and resp_id.strip() else ""
+    return f"{detail[: 300 - len(suffix)]}{suffix}"
+
+
 @dataclass(frozen=True)
 class OpenClawProviderResult:
     provider: str
@@ -1828,7 +1846,7 @@ class AssistantOpenClawProvider:
                         return [{
                             "type": "error",
                             "error_code": "OPENCLAW_RESPONSES_FAILED",
-                            "message": json.dumps(nested_response)[:300],
+                            "message": _format_failed_response_message(evt),
                         }], "return"
                     # The real pinned OpenClaw Gateway (v2026.7.1) emits
                     # response.completed with status="incomplete" as the
@@ -1884,7 +1902,7 @@ class AssistantOpenClawProvider:
                 return [{
                     "type": "error",
                     "error_code": "OPENCLAW_RESPONSES_FAILED",
-                    "message": json.dumps(evt)[:300],
+                    "message": _format_failed_response_message(evt),
                 }], "return"
             return [], None
 
