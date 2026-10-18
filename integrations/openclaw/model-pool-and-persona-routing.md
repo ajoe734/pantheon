@@ -15,30 +15,68 @@ Think OS processes:
   specific account.
 - **Personas = many lightweight identities (user processes).** A persona does
   **not** own or install a model. It just **references** a model ref from the
-  pool via its OpenClaw agent config (`model.primary`, and an `agentRuntime` for
-  CLI-backed models). Many personas → the same model. It is a **many-to-few**
-  mapping, never one-pin-per-persona.
+  pool via its OpenClaw agent config (`model.primary`; the shared pool entry
+  declares `agentRuntime`). Many personas → the same model. It is a
+  **many-to-few** mapping, never one-pin-per-persona.
 
 The idempotent route declaration lives in
 `scripts/openclaw-configure-shared-model-pool.sh` and is applied after every
-root dev deploy. Native provider login remains in the persistent OpenClaw volume;
-an explicitly provisioned product Claude setup-token may instead come from the
-gateway environment, as described below.
+root dev deploy (with isolated CI qualification mirrored in
+`scripts/openclaw_isolated_model_bootstrap.py`). Default routing sets
+`agents.defaults.model.primary = "anthropic/claude-opus-4-8"` with ordered
+fallbacks `["openai/gpt-5.6-sol", "openai/gpt-5.5"]`. Native provider login
+remains in the persistent OpenClaw volume; Anthropic API/workspace bindings and
+an optional product Claude setup-token come from the gateway environment, as
+described below.
 
 Current model slots:
 
 | Slot | Model ref | Runtime | Auth |
 |---|---|---|---|
-| Codex Sol | `openai/gpt-5.6-sol` | `codex` | OpenAI/Codex OAuth profile |
-| Codex 5.5 | `openai/gpt-5.5` | `codex` | OpenAI/Codex OAuth profile |
-| Claude Opus | `anthropic/claude-opus-4-8` | `claude-cli` | persisted Claude CLI login |
-| Claude Sonnet | `anthropic/claude-sonnet-4-6` | `claude-cli` | persisted Claude CLI login |
+| Codex Sol | `openai/gpt-5.6-sol` | `openclaw` | Product main-profile OpenAI/Codex OAuth (`agents/main/agent/auth-profiles.json` on `openclaw-data`) |
+| Codex 5.5 | `openai/gpt-5.5` | `openclaw` | Product main-profile OpenAI/Codex OAuth (`agents/main/agent/auth-profiles.json` on `openclaw-data`) |
+| Claude Opus | `anthropic/claude-opus-4-8` | `openclaw` | `ANTHROPIC_API_KEY` + `models.providers.anthropic.headers["anthropic-workspace-id"]` |
+| Claude Sonnet | `anthropic/claude-sonnet-4-6` | `claude-cli` | persisted Claude CLI login or explicit product `CLAUDE_CODE_OAUTH_TOKEN` |
 | Gemini Pro | `google/gemini-3.1-pro-preview` | `google-gemini-cli` | Gemini CLI OAuth profile |
 
-### Explicit product Claude token
+### Native main-profile OpenAI OAuth and `structured-extraction` pure inference
+
+In OpenClaw **2026.7.1**, `agentRuntime.id = "codex"` selects the local Codex
+app-server harness, which unconditionally rejects `structured-extraction`
+(`tools.deny = ["*"]`, `tools.exec = { security: "deny", ask: "always" }`) with
+`Codex app-server local execution is not available when tools.exec.mode=deny`.
+
+Both `openai/gpt-5.6-sol` and `openai/gpt-5.5` therefore use
+`agentRuntime.id = "openclaw"`. OpenClaw's embedded HTTP/OAuth runtime resolves
+the product main-profile OpenAI/Codex OAuth credentials stored on the persistent
+`openclaw-data` volume (`/home/node/.openclaw/agents/main/agent/auth-profiles.json`),
+which `structured-extraction` and other agents inherit natively without spawning
+`codex` app-server, while keeping `tools.deny = ["*"]` and `tools.exec.security = "deny"`
+enforced. Do not mount, symlink, or import developer-worker `.codex` CLI homes
+or set `CODEX_HOME` on the product gateway.
+
+### Primary Anthropic API and workspace routing (`anthropic/claude-opus-4-8`)
+
+`anthropic/claude-opus-4-8` runs on `agentRuntime.id = "openclaw"` using
+`ANTHROPIC_API_KEY` (Compose `PANTHEON_OPENCLAW_ANTHROPIC_API_KEY`) and the
+workspace header `models.providers.anthropic.headers["anthropic-workspace-id"]`
+(Compose `PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID`).
+
+On the persistent `openclaw-data` volume,
+`scripts/openclaw-configure-shared-model-pool.sh` writes the non-secret
+workspace ID as a literal value (removing `ANTHROPIC_WORKSPACE_ID` from the
+`config set` subprocess environment so `restoreEnvVarRefs` never persists an
+unresolved `${ANTHROPIC_WORKSPACE_ID}` reference on disk) and leaves any
+existing persisted header untouched when the env var is absent, preserving
+rollback compatibility with older Compose definitions. Isolated CI qualification
+(`scripts/openclaw_isolated_model_bootstrap.py`) binds
+`${ANTHROPIC_WORKSPACE_ID}` in its ephemeral container config.
+
+### Explicit product Claude CLI token (`anthropic/claude-sonnet-4-6`)
 
 The optional Compose input `PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN` becomes
-`CLAUDE_CODE_OAUTH_TOKEN` inside the product gateway. OpenClaw **2026.7.1** clears
+`CLAUDE_CODE_OAUTH_TOKEN` inside the product gateway for the `claude-cli`
+backend (`anthropic/claude-sonnet-4-6`). OpenClaw **2026.7.1** clears
 that ambient variable before starting its Claude CLI child. Therefore a direct
 `claude auth status` or `claude -p` success does not establish gateway readiness.
 
@@ -79,44 +117,65 @@ The provider auth + runtime are already configured (kernel layer). A persona
 }
 ```
 
-For CLI-backed models (Claude), the runtime is set on the model entry, not
-re-declared per persona:
+The runtime (`openclaw` for embedded API/OAuth inference, or a CLI backend id)
+and default failover order are set on the shared model pool, not re-declared per
+persona:
 
 ```json5
-{ agents: { defaults: { models: {
-  "openai/gpt-5.6-sol": { agentRuntime: { id: "codex" } },
-  "openai/gpt-5.5": { agentRuntime: { id: "codex" } },
-  "anthropic/claude-opus-4-8": { agentRuntime: { id: "claude-cli" } },
-  "anthropic/claude-sonnet-4-6": { agentRuntime: { id: "claude-cli" } },
-  "google/gemini-3.1-pro-preview": {
-    agentRuntime: { id: "google-gemini-cli" },
+{ agents: { defaults: {
+  model: {
+    primary: "anthropic/claude-opus-4-8",
+    fallbacks: ["openai/gpt-5.6-sol", "openai/gpt-5.5"],
   },
-} } } }
+  models: {
+    "openai/gpt-5.6-sol": { alias: "codex-sol", agentRuntime: { id: "openclaw" } },
+    "openai/gpt-5.5": { alias: "codex-5.5", agentRuntime: { id: "openclaw" } },
+    "anthropic/claude-opus-4-8": { alias: "opus", agentRuntime: { id: "openclaw" } },
+    "anthropic/claude-sonnet-4-6": { alias: "sonnet", agentRuntime: { id: "claude-cli" } },
+    "google/gemini-3.1-pro-preview": {
+      alias: "gemini",
+      agentRuntime: { id: "google-gemini-cli" },
+    },
+  },
+} } }
 ```
 
-`persona-bear` and `persona-judge` above both ride the **same** Claude
-subscription and the **same** claude-cli runtime — they multiplex over one pool
-entry.
+`persona-bear` and `persona-judge` above both ride the **same** Anthropic
+API/workspace pool entry and the **same** `openclaw` runtime — they multiplex
+over one pool entry (while personas targeting `anthropic/claude-sonnet-4-6`
+multiplex over the `claude-cli` runtime).
 
 ## The real bottleneck: shared quota, not persona count
 
 Because the pool is shared, every persona on a given auth profile draws from
-that account's allowance:
+that account's allowance, separated by actual runtime and credential bucket:
 
-- All `anthropic/*` personas share the Claude subscription's Agent SDK credit and
-  rate limit (post-2026-06-15 billing; see `governance.md §9`).
-- All `openai/*` personas share the ChatGPT/Codex subscription's quota.
+- `anthropic/claude-opus-4-8` (`openclaw` runtime) draws from the bound
+  `ANTHROPIC_API_KEY` and `anthropic-workspace-id` API rate limit and spend
+  quota.
+- `anthropic/claude-sonnet-4-6` (`claude-cli` runtime) draws from the Claude
+  CLI subscription / explicit product `CLAUDE_CODE_OAUTH_TOKEN` Agent SDK credit
+  and rate limit (post-2026-06-15 billing; see `governance.md §9`).
+- `openai/gpt-5.6-sol` and `openai/gpt-5.5` (`openclaw` runtime) share the
+  product main-profile OpenAI/Codex OAuth (`agents/main/agent/auth-profiles.json`)
+  subscription quota.
+- `google/gemini-3.1-pro-preview` (`google-gemini-cli` runtime) draws from the
+  Gemini CLI OAuth profile quota.
 
-A multi-persona debate with ten Claude personas is ten user-processes contending
-for **one** kernel resource. The concurrency/throughput ceiling is the model
-account's quota, **not** the number of personas.
+A multi-persona debate with ten personas targeting the same pool slot is ten
+user-processes contending for **one** kernel resource. The
+concurrency/throughput ceiling is that model account's or workspace's quota,
+**not** the number of personas.
 
 **To scale concurrency, grow the auth pool, not the persona count.** OpenClaw
-2026.7.1 supports multiple named Codex logins with `--profile-id`, explicit
-selection with `/model ...@<profileId>`, and ordered rotation. The two Claude
-model slots intentionally reuse one Claude CLI login; separate Claude accounts
-require separate direct Anthropic profiles or isolated CLI homes. Do not copy a
-Claude token into repo config to simulate an extra account.
+2026.7.1 supports multiple named OpenAI/Codex OAuth logins in the native agent
+auth store with `--profile-id`, explicit selection with `/model ...@<profileId>`,
+and ordered rotation. On the Anthropic side, `anthropic/claude-opus-4-8` uses
+the direct Anthropic API + workspace credential on the `openclaw` runtime,
+whereas `anthropic/claude-sonnet-4-6` uses the `claude-cli` login/token;
+separate CLI accounts require separate direct Anthropic profiles or isolated CLI
+homes. Do not copy developer-worker credentials or a Claude/Codex token into
+repo config to simulate an extra account.
 
 ## See also
 - `integrations/openclaw/governance.md §9` — provider auth setup (Codex

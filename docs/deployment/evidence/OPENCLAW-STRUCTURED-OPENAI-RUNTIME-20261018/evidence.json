@@ -17,6 +17,9 @@
     },
     "adapter_structured_routing": {
       "change": "services/openclaw-gateway-adapter/assistant_openclaw_provider.py defaults invoke_structured agent_id to STRUCTURED_AGENT_ID ('structured-extraction'), rejects non-structured agent_id with 422 OPENCLAW_STRUCTURED_AGENT_NOT_ALLOWED, omits X-OpenClaw-Model when model is None so the Gateway executes primary anthropic/claude-opus-4-8 with automatic fallback to ['openai/gpt-5.6-sol', 'openai/gpt-5.5'], forwards X-OpenClaw-Model when an explicit model override is requested, and does not propagate output['active_model'] because OpenClaw /v1/responses returns 'openclaw/<agentId>' in response.model rather than the resolved provider/model slot."
+    },
+    "guide_reconciliation": {
+      "change": "integrations/openclaw/model-pool-and-persona-routing.md documents the native main-profile OpenAI/Codex OAuth routing on agentRuntime.id='openclaw' for openai/gpt-5.6-sol and openai/gpt-5.5, primary anthropic/claude-opus-4-8 API + workspace header routing on agentRuntime.id='openclaw' with literal workspace persistence for rollback safety, and the quota distinction between Anthropic API/workspace (claude-opus-4-8), Claude CLI subscription/token (claude-sonnet-4-6), and main-profile OpenAI/Codex OAuth without worker credential import."
     }
   },
   "pinned_gateway_2026_7_1_reproduction": {
