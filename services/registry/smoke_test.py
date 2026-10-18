@@ -532,6 +532,106 @@ def test_deployment_view_reports_actually_deployed_not_latest_approved():
     assert_eq(view.runtime_binding_id, "rb-live-1", "runtime_binding_id from the active RuntimeBinding")
 
 
+def test_deployment_view_same_pool_paused_and_stage_equality():
+    """
+    Verify:
+    - Legal paused + active bindings in the same pool succeed and select the active binding.
+    - Two active bindings in the same pool fail closed with RegistryOwnerUnavailableError.
+    - Operational status='paused' with deployment_mode='paper' and target_stage='paper' resolves PAPER.
+    - Mismatched paper/frozen or frozen/paper fail closed with RegistryOwnerUnavailableError.
+    """
+    reset()
+    store = RegistryStore()
+    svc = RegistryService(store)
+    svc.register(_make_create_payload(strategy_id="strat-eq", version="1.0.0"), "reg-eq-1", actor=_SMOKE_ACTOR)
+    advance_registry_unit(svc, "reg-eq-1", ArtifactState.CANDIDATE)
+    advance_registry_unit(svc, "reg-eq-1", ArtifactState.APPROVED)
+
+    plans = {
+        "plan-paused": {
+            "plan_id": "plan-paused",
+            "strategy_id": "strat-eq",
+            "capital_pool_id": "pool-same",
+            "artifact_id": "reg-eq-1",
+            "artifact_version": "1.0.0",
+            "target_stage": "paper",
+            "status": "executed",
+            "tenant_id": "tenant-unit",
+            "binding_id": "rb-paused",
+        },
+        "plan-active": {
+            "plan_id": "plan-active",
+            "strategy_id": "strat-eq",
+            "capital_pool_id": "pool-same",
+            "artifact_id": "reg-eq-1",
+            "artifact_version": "1.0.0",
+            "target_stage": "canary",
+            "status": "executed",
+            "tenant_id": "tenant-unit",
+            "binding_id": "rb-active",
+        },
+    }
+    paused_b = {
+        "binding_id": "rb-paused",
+        "capital_pool_id": "pool-same",
+        "artifact_id": "reg-eq-1",
+        "artifact_version": "1.0.0",
+        "deployment_mode": "paper",
+        "plan_id": "plan-paused",
+        "status": "paused",
+        "effective_at": "2026-10-18T00:05:00Z",
+        "metadata": {"tenant_id": "tenant-unit", "strategy_id": "strat-eq"},
+    }
+    active_b = {
+        "binding_id": "rb-active",
+        "capital_pool_id": "pool-same",
+        "artifact_id": "reg-eq-1",
+        "artifact_version": "1.0.0",
+        "deployment_mode": "canary",
+        "plan_id": "plan-active",
+        "status": "active",
+        "effective_at": "2026-10-18T00:10:00Z",
+        "metadata": {"tenant_id": "tenant-unit", "strategy_id": "strat-eq"},
+    }
+    view_same_pool = svc.resolve_deployment_view(
+        "strat-eq",
+        tenant_id="tenant-unit",
+        runtime_bindings_reader=lambda _tid: [paused_b, active_b],
+        deployment_plan_reader=lambda pid, _tid: plans.get(pid),
+    )
+    assert_eq(view_same_pool.current_stage, DeploymentStage.CANARY, "same-pool paused+active selects active")
+    assert_eq(view_same_pool.runtime_binding_id, "rb-active", "same-pool paused+active binding_id")
+
+    view_paused_paper = svc.resolve_deployment_view(
+        "strat-eq",
+        tenant_id="tenant-unit",
+        runtime_bindings_reader=lambda _tid: [paused_b],
+        deployment_plan_reader=lambda pid, _tid: plans.get(pid),
+    )
+    assert_eq(view_paused_paper.current_stage, DeploymentStage.PAPER, "paused paper stays paper")
+
+    assert_raises(
+        RegistryOwnerUnavailableError,
+        lambda: svc.resolve_deployment_view(
+            "strat-eq",
+            tenant_id="tenant-unit",
+            runtime_bindings_reader=lambda _tid: [{**paused_b, "status": "active"}, active_b],
+            deployment_plan_reader=lambda pid, _tid: plans.get(pid),
+        ),
+        "two active bindings in same pool fail closed",
+    )
+    assert_raises(
+        RegistryOwnerUnavailableError,
+        lambda: svc.resolve_deployment_view(
+            "strat-eq",
+            tenant_id="tenant-unit",
+            runtime_bindings_reader=lambda _tid: [paused_b],
+            deployment_plan_reader=lambda pid, _tid: {**plans[pid], "target_stage": "frozen"},
+        ),
+        "paper binding vs frozen plan fails closed",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -562,6 +662,7 @@ TESTS = [
     test_register_rejects_approved_state,
     test_register_rejects_retired_state,
     test_deployment_view_reports_actually_deployed_not_latest_approved,
+    test_deployment_view_same_pool_paused_and_stage_equality,
 ]
 
 

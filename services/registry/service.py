@@ -1351,16 +1351,26 @@ def latest_approved(strategy_id: str, authorization: Optional[str] = Header(defa
     "/api/registry/strategies/{strategy_id}/deployment-view",
     response_model=DeploymentView,
 )
-def deployment_view(strategy_id: str, authorization: Optional[str] = Header(default=None)):
+def deployment_view(
+    strategy_id: str,
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+):
     """Return the derived deployment-stage view for a strategy, scoped to the
     caller's verified tenant and composed from canonical RuntimeBinding and
     DeploymentPlan owners (failing closed with 503 if owners are unavailable)."""
     ctx = _authenticate_registry_read(authorization)
+    caller_tenant = _caller_tenant(ctx)
+    if x_tenant_id is not None and x_tenant_id.strip() != (caller_tenant or ""):
+        raise HTTPException(
+            status_code=403,
+            detail="X-Tenant-Id header does not match verified caller tenant.",
+        )
     try:
         return get_registry_service().resolve_deployment_view(
             strategy_id,
             visible=lambda entry: _can_read_entry(ctx, entry),
-            tenant_id=_caller_tenant(ctx),
+            tenant_id=caller_tenant,
             authorization=authorization,
         )
     except RegistryOwnerUnavailableError as e:

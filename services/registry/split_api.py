@@ -704,8 +704,8 @@ class RegistryService:
             raise RegistryOwnerUnavailableError("RuntimeBinding owner read returned invalid bindings list")
 
         status_rank = {"active": 2, "pending_pause": 1, "paused": 0}
-        seen_pools: set[str] = set()
-        candidates: list[tuple[tuple[str, int], dict, dict, DeploymentStage, str, str]] = []
+        active_pools: set[str] = set()
+        pool_best: dict[str, tuple[tuple[int, str], tuple[str, int], dict, DeploymentStage, str, str]] = {}
         for item in raw_bindings:
             b = item.model_dump() if hasattr(item, "model_dump") else (dict(item) if isinstance(item, dict) else None)
             if not isinstance(b, dict):
@@ -722,10 +722,10 @@ class RegistryService:
             pool_id = str(b.get("capital_pool_id") or "").strip()
             if not pool_id:
                 raise RegistryOwnerUnavailableError("Current RuntimeBinding is missing capital_pool_id")
-            if b.get("single_runtime_enforced") is not False:
-                if pool_id in seen_pools:
-                    raise RegistryOwnerUnavailableError(f"Multiple current RuntimeBindings in pool {pool_id!r}")
-                seen_pools.add(pool_id)
+            if status == "active":
+                if pool_id in active_pools:
+                    raise RegistryOwnerUnavailableError(f"Multiple active RuntimeBindings in pool {pool_id!r}")
+                active_pools.add(pool_id)
 
             artifact_id = str(b.get("artifact_id") or b.get("registry_id") or "").strip()
             b_ver = str(b.get("artifact_version") or b.get("version") or "").strip()
@@ -786,17 +786,12 @@ class RegistryService:
 
             mode = str(b.get("deployment_mode") or b.get("current_stage") or "").strip().lower()
             target_stage = str(plan.get("target_stage") or "").strip().lower()
-            if target_stage not in {"paper", "canary", "live", "frozen"}:
-                raise RegistryOwnerUnavailableError(f"Invalid DeploymentPlan target_stage {target_stage!r}")
-            if mode == DeploymentStage.FROZEN.value or target_stage == DeploymentStage.FROZEN.value:
-                stage = DeploymentStage.FROZEN
-            else:
-                try:
-                    stage = DeploymentStage(mode)
-                except ValueError as exc:
-                    raise RegistryOwnerUnavailableError(f"Invalid RuntimeBinding deployment_mode {mode!r}") from exc
-                if stage == DeploymentStage.NONE or target_stage != stage.value:
-                    raise RegistryOwnerUnavailableError("RuntimeBinding mode disagrees with DeploymentPlan target_stage")
+            try:
+                stage = DeploymentStage(mode)
+            except ValueError as exc:
+                raise RegistryOwnerUnavailableError(f"Invalid RuntimeBinding deployment_mode {mode!r}") from exc
+            if stage == DeploymentStage.NONE or target_stage != stage.value:
+                raise RegistryOwnerUnavailableError("RuntimeBinding mode disagrees with DeploymentPlan target_stage")
 
             ts = str(
                 b.get("last_transition_at")
@@ -809,13 +804,15 @@ class RegistryService:
                 or plan.get("created_at")
                 or ""
             )
-            candidates.append(((ts, status_rank[status]), b, plan, stage, binding_id, ts))
+            pool_key = (status_rank[status], ts)
+            prev = pool_best.get(pool_id)
+            if prev is None or pool_key >= prev[0]:
+                pool_best[pool_id] = (pool_key, (ts, status_rank[status]), plan, stage, binding_id, ts)
 
-        if not candidates:
+        if not pool_best:
             return view
 
-        candidates.sort(key=lambda item: item[0], reverse=True)
-        _, _, winning_plan, stage, binding_id, ts = candidates[0]
+        _, _, winning_plan, stage, binding_id, ts = max(pool_best.values(), key=lambda item: item[1])
         view.current_stage = stage
         view.deployment_plan_id = str(winning_plan.get("plan_id"))
         view.runtime_binding_id = binding_id

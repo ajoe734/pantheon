@@ -2118,56 +2118,197 @@ def test_metadata_and_advance_command_keys_do_not_share_a_receipt_namespace(stri
 
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import importlib.util
 import json
+import os
+from pathlib import Path
+import sys
 import threading
+
+_REAL_OWNER_MODS: dict[str, object] = {}
+
+
+def _get_real_owner_apps():
+    if not _REAL_OWNER_MODS:
+        rm_dir = str(Path(__file__).resolve().parents[1] / "runtime-manager")
+        if rm_dir not in sys.path:
+            sys.path.insert(0, rm_dir)
+        spec = importlib.util.spec_from_file_location(
+            "pantheon_runtime_manager_main_real",
+            Path(rm_dir) / "main.py",
+        )
+        assert spec is not None and spec.loader is not None
+        rm_main = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(rm_main)
+        from services.deployment import service as dep_svc
+        from services.runtime_manager.runtime_binding import RuntimeBinding, RuntimeBindingStore
+        from deployment_plan import DeploymentPlan, DeploymentPlanStore
+
+        _REAL_OWNER_MODS.update(
+            rm_main=rm_main,
+            dep_svc=dep_svc,
+            RuntimeBinding=RuntimeBinding,
+            RuntimeBindingStore=RuntimeBindingStore,
+            DeploymentPlan=DeploymentPlan,
+            DeploymentPlanStore=DeploymentPlanStore,
+        )
+    return _REAL_OWNER_MODS
+
+
+def _coerce_runtime_binding(RuntimeBinding, raw: dict):
+    if isinstance(raw, RuntimeBinding):
+        return raw
+    data = dict(raw)
+    meta = dict(data.get("metadata") or {})
+    if "tenant_id" in data and "tenant_id" not in meta and data["tenant_id"] is not None:
+        meta["tenant_id"] = data["tenant_id"]
+    if "strategy_id" in data and "strategy_id" not in meta and data["strategy_id"] is not None:
+        meta["strategy_id"] = data["strategy_id"]
+    data["metadata"] = meta
+    data.setdefault("runtime_id", f"rt-{data.get('binding_id', 'unit')}")
+    data.setdefault("persona_capital_binding_id", "pcb-unit-001")
+    data.setdefault("effective_at", "2026-10-18T00:00:00Z")
+    return RuntimeBinding.from_dict(data)
+
+
+def _coerce_deployment_plan(DeploymentPlan, pid: str, raw: dict):
+    if isinstance(raw, DeploymentPlan):
+        return raw
+    data = dict(raw)
+    meta = dict(data.get("metadata") or {})
+    if "tenant_id" in data:
+        if data["tenant_id"] is not None:
+            meta["tenant_id"] = data["tenant_id"]
+        else:
+            meta.pop("tenant_id", None)
+    data["metadata"] = meta
+    data.setdefault("plan_id", pid)
+    data.setdefault("approval_decision_id", f"decision-{pid}")
+    data.setdefault("artifact_type", "execution_bundle")
+    data.setdefault("current_stage", "none")
+    data.setdefault("transition_type", "activate")
+    data.setdefault("runtime_action", "deploy_new_binding")
+    data.setdefault("created_at", "2026-10-18T00:00:00Z")
+    return DeploymentPlan.from_dict(data)
 
 
 @contextmanager
 def _local_owner_server(*, bindings: list[dict], plans: dict[str, dict], filter_by_tenant: bool = True):
+    mods = _get_real_owner_apps()
+    rm_main = mods["rm_main"]
+    dep_svc = mods["dep_svc"]
+    RuntimeBinding = mods["RuntimeBinding"]
+    RuntimeBindingStore = mods["RuntimeBindingStore"]
+    DeploymentPlan = mods["DeploymentPlan"]
+    DeploymentPlanStore = mods["DeploymentPlanStore"]
+
+    rm_store = RuntimeBindingStore(path=None)
+    plan_store = DeploymentPlanStore(storage_path=None)
+
+    class _InMemoryRuntimeService:
+        def __init__(self, store):
+            self._store = store
+
+        def list_all(self):
+            return self._store.list_all()
+
+        def list_by_pool(self, pool_id: str):
+            return self._store.find_by_pool(pool_id)
+
+        def list_by_plan(self, plan_id: str):
+            return self._store.find_by_plan(plan_id)
+
+        def get(self, binding_id: str):
+            return self._store.get(binding_id)
+
+    prev_rm_svc = rm_main._svc
+    prev_dep_store = dep_svc.store
+    prev_planner_store = dep_svc.planner_service.plan_store
+    rm_main._svc = _InMemoryRuntimeService(rm_store)
+    dep_svc.store = plan_store
+    dep_svc.planner_service.plan_store = plan_store
+
+    env_keys = (
+        "PANTHEON_RUNTIME_AUTH_MODE",
+        "PANTHEON_RUNTIME_JWT_SECRET",
+        "PANTHEON_RUNTIME_JWT_ISSUER",
+        "PANTHEON_RUNTIME_JWT_AUDIENCE",
+        "PANTHEON_DEPLOYMENT_AUTH_MODE",
+        "PANTHEON_DEPLOYMENT_JWT_SECRET",
+        "PANTHEON_DEPLOYMENT_JWT_ISSUER",
+        "PANTHEON_DEPLOYMENT_JWT_AUDIENCE",
+    )
+    saved_env = {k: os.environ.get(k) for k in env_keys}
+    reg_secret = os.environ.get("PANTHEON_REGISTRY_JWT_SECRET", _JWT_SECRET)
+    reg_issuer = os.environ.get("PANTHEON_REGISTRY_JWT_ISSUER", "")
+    reg_audience = os.environ.get("PANTHEON_REGISTRY_JWT_AUDIENCE", "")
+    os.environ["PANTHEON_RUNTIME_AUTH_MODE"] = "strict"
+    os.environ["PANTHEON_RUNTIME_JWT_SECRET"] = reg_secret
+    os.environ["PANTHEON_RUNTIME_JWT_ISSUER"] = reg_issuer
+    os.environ["PANTHEON_RUNTIME_JWT_AUDIENCE"] = reg_audience
+    os.environ["PANTHEON_DEPLOYMENT_AUTH_MODE"] = "strict"
+    os.environ["PANTHEON_DEPLOYMENT_JWT_SECRET"] = reg_secret
+    os.environ["PANTHEON_DEPLOYMENT_JWT_ISSUER"] = reg_issuer
+    os.environ["PANTHEON_DEPLOYMENT_JWT_AUDIENCE"] = reg_audience
+
+    rm_client = rm_main.app.test_client()
+    dep_client = TestClient(dep_svc.app)
+
     state = {
         "bindings": list(bindings),
         "plans": dict(plans),
         "filter_by_tenant": filter_by_tenant,
         "requests": [],
+        "rm_store": rm_store,
+        "plan_store": plan_store,
+        "use_raw_rm_store": False,
     }
+
+    def _sync_stores():
+        if not state.get("use_raw_rm_store"):
+            rm_store._bindings = {
+                b.binding_id: b
+                for b in (_coerce_runtime_binding(RuntimeBinding, item) for item in state["bindings"])
+            }
+        plan_store._plans = {
+            pid: _coerce_deployment_plan(DeploymentPlan, pid, p_raw)
+            for pid, p_raw in state["plans"].items()
+        }
 
     class _Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):
             return
 
         def do_GET(self):
+            req_auth = self.headers.get("Authorization")
             req_tenant = self.headers.get("X-Tenant-Id")
             state["requests"].append(
                 {
                     "path": self.path,
-                    "authorization": self.headers.get("Authorization"),
+                    "authorization": req_auth,
                     "tenant": req_tenant,
                 }
             )
-            if self.path == "/api/runtime-bindings":
-                items = list(state["bindings"])
-                if state["filter_by_tenant"] and req_tenant:
-                    items = [
-                        b for b in items
-                        if (b.get("tenant_id") or (b.get("metadata") or {}).get("tenant_id")) == req_tenant
-                    ]
-                self.send_response(200)
+            _sync_stores()
+            fwd_headers = {}
+            if req_auth is not None:
+                fwd_headers["Authorization"] = req_auth
+            if req_tenant is not None and state["filter_by_tenant"]:
+                fwd_headers["X-Tenant-Id"] = req_tenant
+
+            if self.path.startswith("/api/runtime-bindings"):
+                resp = rm_client.get(self.path, headers=fwd_headers)
+                self.send_response(resp.status_code)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(json.dumps({"bindings": items, "count": len(items)}).encode("utf-8"))
+                self.wfile.write(resp.get_data())
                 return
-            if self.path.startswith("/api/deployment/plans/"):
-                pid = self.path.rsplit("/", 1)[-1]
-                plan = state["plans"].get(pid)
-                if plan is None:
-                    self.send_response(404)
-                    self.end_headers()
-                    self.wfile.write(b'{"detail": "not found"}')
-                    return
-                self.send_response(200)
+            if self.path.startswith("/api/deployment/"):
+                resp = dep_client.get(self.path, headers=fwd_headers)
+                self.send_response(resp.status_code)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(json.dumps(plan).encode("utf-8"))
+                self.wfile.write(resp.content)
                 return
             self.send_response(404)
             self.end_headers()
@@ -2181,6 +2322,14 @@ def _local_owner_server(*, bindings: list[dict], plans: dict[str, dict], filter_
         srv.shutdown()
         srv.server_close()
         t.join(timeout=2.0)
+        rm_main._svc = prev_rm_svc
+        dep_svc.store = prev_dep_store
+        dep_svc.planner_service.plan_store = prev_planner_store
+        for k, v in saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
 
 def test_deployment_view_composes_from_runtime_binding_and_deployment_plan_Across_family_artifacts(
@@ -2189,14 +2338,17 @@ def test_deployment_view_composes_from_runtime_binding_and_deployment_plan_Acros
     """REGISTRY-DEPLOYMENT-VIEW-OWNER-READ-20261018:
     - Composes current_stage, deployment_plan_id, runtime_binding_id, and last_transition_at
       from canonical RuntimeBinding (GET /api/runtime-bindings) + DeploymentPlan
-      (GET /api/deployment/plans/{plan_id}) over real HTTP while keeping latest_approved_*
-      on the newest caller-visible approved Registry revision.
+      (GET /api/deployment/plans/{plan_id}) over real HTTP against the actual runtime-manager
+      and deployment service apps while keeping latest_approved_* on the newest caller-visible
+      approved Registry revision.
     - Ignores absent, stale, or conflicting entry.deployment_summary cache values.
     - Supports retirement -> none, rollback/reactivation binding + plan readback,
-      paused/pending_pause states, and newest-transition ordering across distinct valid pools.
-    - Fails closed with 503 on contradictory same-pool current bindings, missing/rejected/mismatched
-      DeploymentPlan (plan_id, capital_pool_id, binding_id, artifact_id, artifact_version, strategy_id,
-      tenant_id), or current RuntimeBinding mismatched on version/strategy/tenant/non-approved state.
+      paused/pending_pause states, legal paused + active bindings in the same
+      single-runtime-enforced pool, and newest-transition ordering across distinct valid pools.
+    - Fails closed with 503 on contradictory multiple active bindings in the same pool,
+      missing/rejected/mismatched DeploymentPlan (plan_id, capital_pool_id, binding_id,
+      artifact_id, artifact_version, strategy_id, tenant_id, target_stage != deployment_mode
+      including paper vs frozen), or current RuntimeBinding mismatched on version/strategy/tenant/non-approved state.
     - Immutable EntryGET makes zero outbound owner callbacks, and repeated read-only calls leave
       Registry and owner state unchanged.
     """
@@ -2360,6 +2512,16 @@ def test_deployment_view_composes_from_runtime_binding_and_deployment_plan_Acros
     ) as (base_url, state):
         monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", base_url)
         monkeypatch.setenv("PANTHEON_DEPLOYMENT_API_URL", base_url)
+        # Process-global tenant env vars must never override the verified caller tenant
+        monkeypatch.setenv("PANTHEON_DEFAULT_TENANT", "tenant-other")
+        monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-other")
+
+        # Foreign caller X-Tenant-Id header conflicting with verified JWT tenant is rejected (403)
+        foreign_hdr_resp = strict_client.get(
+            f"/api/registry/strategies/{strategy_id}/deployment-view",
+            headers={**_bearer(token_a), "X-Tenant-Id": "tenant-b"},
+        )
+        assert foreign_hdr_resp.status_code == 403, foreign_hdr_resp.text
 
         # Immutable EntryGET makes zero outbound owner calls
         state["requests"].clear()
@@ -2420,6 +2582,104 @@ def test_deployment_view_composes_from_runtime_binding_and_deployment_plan_Acros
         assert resp_b_leaked.status_code == 503, resp_b_leaked.text
         state["filter_by_tenant"] = True
 
+        # Operational status='paused' with deployment_mode='paper' and target_stage='paper' stays 'paper' (not 'frozen')
+        state["bindings"] = [
+            {
+                **active_binding_a,
+                "status": "paused",
+                "metadata": {
+                    "tenant_id": "tenant-a",
+                    "strategy_id": strategy_id,
+                    "paused_at": "2026-10-18T00:30:00Z",
+                },
+            }
+        ]
+        resp_paused_paper = strict_client.get(
+            f"/api/registry/strategies/{strategy_id}/deployment-view",
+            headers=_bearer(token_a),
+        )
+        assert resp_paused_paper.status_code == 200, resp_paused_paper.text
+        assert resp_paused_paper.json()["current_stage"] == "paper"
+        assert resp_paused_paper.json()["runtime_binding_id"] == binding_id
+        assert resp_paused_paper.json()["last_transition_at"] == "2026-10-18T00:30:00Z"
+
+        # Canonical RuntimeBindingStore(path=None) allows a paused binding and one active binding in the SAME pool
+        mods = _get_real_owner_apps()
+        RuntimeBinding = mods["RuntimeBinding"]
+        rm_store = state["rm_store"]
+        rm_store._bindings.clear()
+        state["use_raw_rm_store"] = True
+        rm_store.create(
+            _coerce_runtime_binding(
+                RuntimeBinding,
+                {
+                    **active_binding_a,
+                    "binding_id": "synthetic-legal-paused-binding",
+                    "plan_id": plan_id,
+                    "status": "active",
+                    "effective_at": "2026-10-18T00:00:00Z",
+                    "metadata": {
+                        "tenant_id": "tenant-a",
+                        "strategy_id": strategy_id,
+                        "last_transition_at": "2026-10-18T00:05:00Z",
+                    },
+                },
+            ),
+            single_runtime_enforced=True,
+        )
+        rm_store.transition_status("synthetic-legal-paused-binding", "pending_pause")
+        rm_store.transition_status("synthetic-legal-paused-binding", "paused")
+        rm_store.create(
+            _coerce_runtime_binding(
+                RuntimeBinding,
+                {
+                    "binding_id": "synthetic-legal-active-binding",
+                    "capital_pool_id": pool_a,
+                    "artifact_id": spec_id_v2,
+                    "artifact_version": "2.0.0",
+                    "deployment_mode": "canary",
+                    "plan_id": "plan-same-pool-active",
+                    "status": "active",
+                    "effective_at": "2026-10-18T00:10:00Z",
+                    "metadata": {
+                        "tenant_id": "tenant-a",
+                        "strategy_id": strategy_id,
+                        "last_transition_at": "2026-10-18T00:10:00Z",
+                    },
+                },
+            ),
+            single_runtime_enforced=True,
+        )
+        state["plans"] = {
+            plan_id: dict(plan_a, binding_id="synthetic-legal-paused-binding"),
+            "plan-same-pool-active": {
+                "plan_id": "plan-same-pool-active",
+                "strategy_id": strategy_id,
+                "capital_pool_id": pool_a,
+                "artifact_id": spec_id_v2,
+                "artifact_version": "2.0.0",
+                "target_stage": "canary",
+                "status": "executed",
+                "tenant_id": "tenant-a",
+                "binding_id": "synthetic-legal-active-binding",
+            },
+        }
+        resp_legal_same_pool = strict_client.get(
+            f"/api/registry/strategies/{strategy_id}/deployment-view",
+            headers=_bearer(token_a),
+        )
+        assert resp_legal_same_pool.status_code == 200, resp_legal_same_pool.text
+        assert resp_legal_same_pool.json() == {
+            "strategy_id": strategy_id,
+            "latest_approved_registry_id": spec_id_v2,
+            "latest_approved_version": "2.0.0",
+            "current_stage": "canary",
+            "deployment_plan_id": "plan-same-pool-active",
+            "runtime_binding_id": "synthetic-legal-active-binding",
+            "last_transition_at": "2026-10-18T00:10:00Z",
+        }
+        state["use_raw_rm_store"] = False
+
         # Retirement -> current_stage='none', then rollback/reactivation binding + plan -> canary
         state["bindings"] = [
             {
@@ -2428,6 +2688,7 @@ def test_deployment_view_composes_from_runtime_binding_and_deployment_plan_Acros
                 "retired_at": "2026-10-18T01:00:00Z",
             }
         ]
+        state["plans"] = {plan_id: dict(plan_a)}
         resp_retired = strict_client.get(
             f"/api/registry/strategies/{strategy_id}/deployment-view",
             headers=_bearer(token_a),
@@ -2521,10 +2782,10 @@ def test_deployment_view_composes_from_runtime_binding_and_deployment_plan_Acros
             "last_transition_at": "2026-10-18T02:00:00Z",
         }
 
-        # Contradictory multiple current bindings in the SAME single-runtime-enforced pool -> 503
+        # Contradictory multiple ACTIVE bindings in the SAME single-runtime-enforced pool -> 503
         state["bindings"] = [
             dict(active_binding_a),
-            {**paused_pool_b_binding, "capital_pool_id": pool_a},
+            {**paused_pool_b_binding, "status": "active", "capital_pool_id": pool_a},
         ]
         resp_same_pool_conflict = strict_client.get(
             f"/api/registry/strategies/{strategy_id}/deployment-view",
@@ -2548,9 +2809,15 @@ def test_deployment_view_composes_from_runtime_binding_and_deployment_plan_Acros
             ([dict(active_binding_a)], {plan_id: dict(plan_a, binding_id="rb-wrong-binding")}),
             # (e) executed DeploymentPlan missing binding_id
             ([dict(active_binding_a)], {plan_id: dict(plan_a, status="executed", binding_id=None)}),
+            # Stage mismatch: binding deployment_mode='paper' vs plan target_stage='frozen'
+            ([dict(active_binding_a, deployment_mode="paper")], {plan_id: dict(plan_a, target_stage="frozen")}),
+            # Stage mismatch: binding deployment_mode='frozen' vs plan target_stage='paper'
+            ([dict(active_binding_a, deployment_mode="frozen")], {plan_id: dict(plan_a, target_stage="paper")}),
             # Rejected DeploymentPlan
             ([dict(active_binding_a)], {plan_id: dict(plan_a, status="rejected")}),
-            # Missing DeploymentPlan (404)
+            # DeploymentPlan missing authoritative tenant_id (owner returns 409)
+            ([dict(active_binding_a)], {plan_id: dict(plan_a, tenant_id=None)}),
+            # Missing DeploymentPlan (owner returns 404)
             ([dict(active_binding_a)], {}),
         ]
         for bad_bindings, bad_plans in mismatch_cases:
@@ -2561,4 +2828,5 @@ def test_deployment_view_composes_from_runtime_binding_and_deployment_plan_Acros
                 headers=_bearer(token_a),
             )
             assert resp_bad.status_code == 503, f"Expected 503 for {bad_bindings} / {bad_plans}, got {resp_bad.status_code}: {resp_bad.text}"
+
 
