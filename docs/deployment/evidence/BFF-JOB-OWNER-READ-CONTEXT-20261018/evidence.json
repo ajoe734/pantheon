@@ -6,13 +6,19 @@
   "status": "ready_for_review",
   "root_cause": {
     "reproduction_input_ref": "/tmp/pantheon-job-owner-read-context-input-20261018.json",
-    "observed_failure": {
-      "probe_target": "http://127.0.0.1:8000/bff/jobs/job-trainer-c9e1de9ce09f4c46",
-      "create_http_status": 200,
-      "create_job_id": "job-trainer-c9e1de9ce09f4c46",
-      "read_http_status": 503,
-      "read_error_code": "DEPENDENCY_UNAVAILABLE",
-      "read_error_message": "Job source owners unreachable or returned invalid payloads: training-session (http://training-session:8096/api/training/preview-jobs/c9e1de9ce09f4c46)"
+    "reproduction_attributed_to": "Root (read-only existing-product reproduction from /tmp/pantheon-job-owner-read-context-input-20261018.json; observed_at 2026-10-18T15:53:24.712109+00:00; state SANITIZED_TECHNICAL_SOURCE_INPUT_NOT_HOSTED_ACCEPTANCE; business_mutations=0, provider_calls=0, live_config_mutations=0)",
+    "product_reproduction": {
+      "public_job_detail": "/bff/jobs/job-trainer-<original-saved-preview-job>",
+      "public_status": 503,
+      "public_error": "DEPENDENCY_UNAVAILABLE: Job source training_session is unavailable",
+      "correlation_id": "1e40185b-b140-46e3-91d0-e628e6cbd815",
+      "same_original_preview_route_status": 200,
+      "underlying_owner_without_auth_and_tenant": 400,
+      "same_underlying_owner_using_existing_http_request_json_with_headers_and_original_verified_operator_JWT_and_tenant": 200,
+      "matching_BFF_log": "job source GET http://training-session-svc:8099/api/training/preview-jobs/<same-original-job> failed: HTTP 400",
+      "served_BFF": "4aacd76ca2425c3e12dff005668ffc8fa48dc17f",
+      "current_dev_at_diagnosis": "553eab227487c3a5d1d77e6603f9517d2625c246",
+      "job_read_file_sha256_identical_in_root_4aac_and_553": "273c3328e330371def563a5378a25b3ef96f37f87f2fa2c4365eab6d66245e7b"
     },
     "explanation": "services/control-plane/bff/ports/job_read.py::_default_http_get previously constructed a bare urllib.request.Request with only Accept: application/json and did not read the request-scoped caller context populated by OwnerReadContextMiddleware (authorization / selected_tenant) or forward Authorization, X-Tenant-Id, and X-Pantheon-Service via command_adapters.base.http_request_json_with_headers. Upstream owner services such as training-session enforce inbound_authority checks requiring X-Tenant-Id, X-Pantheon-Service: control-plane-bff, and caller Authorization on /api/training/preview-jobs and /api/training/preview-jobs/{job_id}, returning HTTP 400 (TENANT_REQUIRED) to bare requests and causing BFF job reads to fail with HTTP 503 (DEPENDENCY_UNAVAILABLE)."
   },
