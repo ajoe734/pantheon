@@ -962,6 +962,9 @@ jobs:
           DEV_BFF_DEFAULT_ROLE: ${{ vars.DEV_BFF_DEFAULT_ROLE || 'viewer' }}
           DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}
           DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${{ vars.DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED || 'true' }}
+          DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN }}
+          DEV_OPENCLAW_ANTHROPIC_API_KEY: ${{ secrets.DEV_OPENCLAW_ANTHROPIC_API_KEY }}
+          DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID: ${{ vars.DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID }}
           BOOTSTRAP_PREDECESSOR_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}
           BOOTSTRAP_PREDECESSOR_FRONTEND_SHA: ${{ steps.rollback_baseline.outputs.frontend_sha }}
           CROSS_REPO_RELEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
@@ -1250,6 +1253,8 @@ jobs:
           # value leaves the container on its persisted interactive-login
           # session, which is the prior (refresh-dependent) behavior.
           DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN }}
+          DEV_OPENCLAW_ANTHROPIC_API_KEY: ${{ secrets.DEV_OPENCLAW_ANTHROPIC_API_KEY }}
+          DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID: ${{ vars.DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID }}
           DEV_MANAGEMENT_AI_STORE_BACKEND: ${{ vars.DEV_MANAGEMENT_AI_STORE_BACKEND || 'postgres' }}
           DEV_MANAGEMENT_AI_STORE_SCHEMA: ${{ vars.DEV_MANAGEMENT_AI_STORE_SCHEMA || 'management_ai' }}
           DEV_MANAGEMENT_AI_DB_USER: ${{ vars.DEV_MANAGEMENT_AI_DB_USER || 'pantheon_management_ai' }}
@@ -1829,6 +1834,8 @@ jobs:
           DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}
           DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${{ vars.DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED || 'true' }}
           DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN }}
+          DEV_OPENCLAW_ANTHROPIC_API_KEY: ${{ secrets.DEV_OPENCLAW_ANTHROPIC_API_KEY }}
+          DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID: ${{ vars.DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID }}
           DEV_MANAGEMENT_AI_STORE_BACKEND: ${{ vars.DEV_MANAGEMENT_AI_STORE_BACKEND || 'postgres' }}
           DEV_MANAGEMENT_AI_STORE_SCHEMA: ${{ vars.DEV_MANAGEMENT_AI_STORE_SCHEMA || 'management_ai' }}
           DEV_MANAGEMENT_AI_DB_USER: ${{ vars.DEV_MANAGEMENT_AI_DB_USER || 'pantheon_management_ai' }}
@@ -2579,6 +2586,9 @@ jobs:
           DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
           DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET: ${{ secrets['DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET'] }}
           DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}
+          DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN }}
+          DEV_OPENCLAW_ANTHROPIC_API_KEY: ${{ secrets.DEV_OPENCLAW_ANTHROPIC_API_KEY }}
+          DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID: ${{ vars.DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -2674,6 +2684,9 @@ jobs:
           DEV_BFF_DEFAULT_ROLE: ${{ vars.DEV_BFF_DEFAULT_ROLE || 'viewer' }}
           DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}
           DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${{ vars.DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED || 'true' }}
+          DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN }}
+          DEV_OPENCLAW_ANTHROPIC_API_KEY: ${{ secrets.DEV_OPENCLAW_ANTHROPIC_API_KEY }}
+          DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID: ${{ vars.DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID }}
           DEV_MANAGEMENT_AI_STORE_BACKEND: ${{ vars.DEV_MANAGEMENT_AI_STORE_BACKEND || 'postgres' }}
           DEV_MANAGEMENT_AI_STORE_SCHEMA: ${{ vars.DEV_MANAGEMENT_AI_STORE_SCHEMA || 'management_ai' }}
           DEV_MANAGEMENT_AI_DB_USER: ${{ vars.DEV_MANAGEMENT_AI_DB_USER || 'pantheon_management_ai' }}
@@ -2779,6 +2792,9 @@ jobs:
           DEV_BFF_DEFAULT_ROLE: ${{ vars.DEV_BFF_DEFAULT_ROLE || 'viewer' }}
           DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}
           DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${{ vars.DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED || 'true' }}
+          DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN }}
+          DEV_OPENCLAW_ANTHROPIC_API_KEY: ${{ secrets.DEV_OPENCLAW_ANTHROPIC_API_KEY }}
+          DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID: ${{ vars.DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID }}
           DEV_MANAGEMENT_AI_STORE_BACKEND: ${{ vars.DEV_MANAGEMENT_AI_STORE_BACKEND || 'postgres' }}
           DEV_MANAGEMENT_AI_STORE_SCHEMA: ${{ vars.DEV_MANAGEMENT_AI_STORE_SCHEMA || 'management_ai' }}
           DEV_MANAGEMENT_AI_DB_USER: ${{ vars.DEV_MANAGEMENT_AI_DB_USER || 'pantheon_management_ai' }}
@@ -2904,6 +2920,9 @@ jobs:
           DEV_BFF_DEFAULT_ROLE: ${{ vars.DEV_BFF_DEFAULT_ROLE || 'viewer' }}
           DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}
           DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${{ vars.DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED || 'true' }}
+          DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN }}
+          DEV_OPENCLAW_ANTHROPIC_API_KEY: ${{ secrets.DEV_OPENCLAW_ANTHROPIC_API_KEY }}
+          DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID: ${{ vars.DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID }}
           DEV_MANAGEMENT_AI_STORE_BACKEND: ${{ vars.DEV_MANAGEMENT_AI_STORE_BACKEND || 'postgres' }}
           DEV_MANAGEMENT_AI_STORE_SCHEMA: ${{ vars.DEV_MANAGEMENT_AI_STORE_SCHEMA || 'management_ai' }}
           DEV_MANAGEMENT_AI_DB_USER: ${{ vars.DEV_MANAGEMENT_AI_DB_USER || 'pantheon_management_ai' }}
@@ -3083,10 +3102,12 @@ jobs:
 
       # The driver itself owns the shared qualification lease and teardown, so
       # no outer lease is taken here. The provider credential reaches only the
-      # gateway container environment; the rendered batch holds an unresolved
-      # ${CLAUDE_CODE_OAUTH_TOKEN} reference and no credential value.
+      # gateway container environment; the rendered batch holds unresolved
+      # ${ANTHROPIC_WORKSPACE_ID} / ${CLAUDE_CODE_OAUTH_TOKEN} references and no credential value.
       - name: Run original isolated L1-L12 stimulus gate
         env:
+          PANTHEON_OPENCLAW_ANTHROPIC_API_KEY: ${{ secrets.DEV_OPENCLAW_ANTHROPIC_API_KEY }}
+          PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID: ${{ vars.DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID }}
           PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN }}
           PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}

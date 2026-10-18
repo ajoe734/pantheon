@@ -297,6 +297,52 @@ def test_nondefault_agent_model_routing_is_identical_across_transports(monkeypat
     assert all(headers["x-openclaw-agent-id"] == kwargs["agent_id"] for headers in captured)
 
 
+@pytest.mark.parametrize("model", [None, "openai/gpt-5.6-sol", "openai/gpt-5.5"])
+def test_structured_extraction_routes_to_dedicated_agent_and_model_override(monkeypatch, model):
+    provider = _make_provider()
+    captured = []
+
+    def fake_urlopen(req, timeout=None, deadline=None):
+        captured.append({
+            "body": json.loads(req.data.decode("utf-8")),
+            "headers": {k.lower(): v for k, v in req.header_items()},
+        })
+        return _FakeSSEResponse(_answer_events('{"ok":true}'))
+
+    monkeypatch.setattr("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen)
+    result = provider.invoke_structured(
+        "extract",
+        extraction_schema={
+            "type": "object",
+            "properties": {"ok": {"type": "boolean"}},
+            "required": ["ok"],
+            "additionalProperties": False,
+        },
+        model=model,
+        operator_id="op-1",
+    )
+    assert result.status == "completed"
+    assert result.output["structured_data"] == {"ok": True}
+    assert result.output["agent_id"] == "structured-extraction"
+    assert result.output["transport"] == "responses_http"
+    assert "active_model" not in result.output
+    assert len(captured) == 1
+    assert captured[0]["body"]["model"] == "openclaw/structured-extraction"
+    assert captured[0]["headers"]["x-openclaw-agent-id"] == "structured-extraction"
+    assert captured[0]["headers"].get("x-openclaw-model") == model
+
+    with pytest.raises(OpenClawProviderError) as exc_info:
+        provider.invoke_structured(
+            "extract",
+            extraction_schema={"type": "object"},
+            agent_id="main",
+            operator_id="op-1",
+        )
+    assert exc_info.value.error_code == "OPENCLAW_STRUCTURED_AGENT_NOT_ALLOWED"
+    assert exc_info.value.status_code == 422
+    assert len(captured) == 1
+
+
 class TestNormalInvokeContract:
     def test_short_prompt_invoke_succeeds_over_http_only(self):
         provider = _make_provider()
