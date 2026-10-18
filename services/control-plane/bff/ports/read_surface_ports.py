@@ -1263,13 +1263,22 @@ class ReadSurfacePorts:
         """
         return self.job_read.get_job_bff(job_id)
 
-    def list_jobs_bff(self, **kwargs: Any) -> List[Dict[str, Any]]:
+    def list_jobs_bff(
+        self,
+        *,
+        status: Optional[str] = None,
+        job_type: Optional[str] = None,
+        diagnostics: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> List[Dict[str, Any]]:
         """Typed Job read composition across the six qualified sources.
 
         ``ResearchTicket`` records are never returned here; see
         ``get_job_bff`` docstring.
         """
-        return self.job_read.list_jobs_bff(**kwargs)
+        return self.job_read.list_jobs_bff(
+            status=status, job_type=job_type, diagnostics=diagnostics, **kwargs
+        )
 
     def get_job_logs_bff(self, job_id: str) -> List[Dict[str, Any]]:
         return self.job_read.get_job_logs_bff(job_id)
