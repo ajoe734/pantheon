@@ -338,6 +338,111 @@ jobs:
         run: |
           python3 -m pytest -q services/reconciliation-drift
 
+      # Unconditional: these service suites were green locally but no workflow
+      # ran them. Each directory runs alone so one service's conftest cannot
+      # mask another's failures. No known-failures list, deselect or skip.
+      - name: Install service test dependencies
+        timeout-minutes: 5
+        run: |
+          python3 -m pip install -r services/broker/requirements.txt
+          python3 -m pip install -r services/evaluation/requirements.txt
+          python3 -m pip install -r services/feedback/requirements.txt
+          python3 -m pip install -r services/lineage-read/requirements.txt
+          python3 -m pip install -r services/loop-control/requirements.txt
+          python3 -m pip install -r services/memory/requirements.txt
+          python3 -m pip install -r services/optimizer-svc/requirements.txt
+          python3 -m pip install -r services/research-worker-gateway/requirements.txt
+
+      - name: Run broker service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/broker
+
+      - name: Run channels service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/channels
+
+      - name: Run data-plane service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/data-plane
+
+      - name: Run evaluation service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/evaluation
+
+      - name: Run feedback service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/feedback
+
+      - name: Run foundation service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/foundation
+
+      - name: Run frontend service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/frontend
+
+      - name: Run incident service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/incident
+
+      - name: Run knowledge service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/knowledge
+
+      - name: Run learning service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/learning
+
+      - name: Run lineage-read service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/lineage-read
+
+      - name: Run loop-control service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/loop-control
+
+      - name: Run memory service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/memory
+
+      - name: Run monitor-agent service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/monitor-agent
+
+      - name: Run optimizer-svc service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/optimizer-svc
+
+      - name: Run rankings service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/rankings
+
+      - name: Run research-worker-gateway service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/research-worker-gateway
+
+      - name: Run runtime_manager service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/runtime_manager
+
       # Run the existing real boundary cases even for a workflow-only change.
       # unittest normally treats skipped tests as success; these are required.
       - name: Verify real worker sandbox boundaries
