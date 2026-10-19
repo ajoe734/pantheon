@@ -1,0 +1,11 @@
+{
+  "task_id": "TELEMETRY-EVENT-READER-POOLED-20261019",
+  "scope": "source-only; no hosted proof",
+  "change": "build_postgres_event_reader owns one bounded asyncpg pool (min 1, max 4) on a private loop thread; failures report ExceptionClass: message",
+  "benchmark": {
+    "workload": "200 sequential batched event reads (500 ids, tenant + event_type filter) against local postgres:16 in docker",
+    "before": {"calls": 200, "failures": 0, "mean_ms": 26.26, "p50_ms": 25.71, "p95_ms": 31.47, "max_ms": 37.59},
+    "after": {"calls": 200, "failures": 0, "mean_ms": 6.9, "p50_ms": 6.31, "p95_ms": 9.33, "max_ms": 25.65}
+  },
+  "tests": "pytest services/telemetry/test_main_routes.py services/telemetry/test_l12_tel_001_durable_ingest.py: 65 passed, 1 skipped; new reuse/timeout test fails on base"
+}
