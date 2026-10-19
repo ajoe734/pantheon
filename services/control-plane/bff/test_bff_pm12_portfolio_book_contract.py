@@ -244,6 +244,7 @@ def _portfolio_store(
     store.list_deployment_plans = lambda *args, **kwargs: deployment_plans
     store.list_runtime_bindings = lambda *args, **kwargs: runtime_bindings
     store.get_telemetry_summary = lambda runtime_id: telemetry_records.get(runtime_id)
+    store.list_telemetry_summaries = lambda: list(telemetry_records.values())
     store.get_paper_live_drift_report = lambda runtime_id: (drift_reports or {}).get(runtime_id)
     store.list_strategy_specs = lambda **_: list(strategy_specs or [])
 
@@ -1673,3 +1674,62 @@ def test_portfolio_book_is_registered_in_openapi() -> None:
     assert "get" in schema["paths"]["/bff/management/risk-radar"]
     assert "/bff/management/incident-timeline" in schema["paths"]
     assert "get" in schema["paths"]["/bff/management/incident-timeline"]
+
+
+def test_portfolio_projections_use_one_owner_snapshot_with_identical_results() -> None:
+    """A remote collection is read once even when many runtimes use it."""
+    from copy import deepcopy
+    from types import SimpleNamespace
+    from services.control_plane.bff.pm12.service import (
+        _pm12_portfolio_book_response,
+        _pm12_portfolio_book_pools_response,
+        _pm12_portfolio_book_exposure_response,
+        _pm12_portfolio_book_holdings_response,
+    )
+
+    runtimes = [{"runtime_id": f"runtime-{i}", "capital_pool_id": "pool-a"} for i in range(40)]
+    summaries = [
+        {"runtime_id": f"runtime-{i}", "pnl": i, "collected_at": "2026-10-19T00:00:00Z"}
+        for i in range(38)
+    ]
+    # Retain existing first-match and id-alias behavior, unrelated rows and
+    # genuinely missing telemetry. None of these may change during batching.
+    summaries += [
+        {"id": "runtime-38", "pnl": 38},
+        {"runtime_id": "runtime-0", "pnl": 999},
+        {"runtime_id": "unrelated", "pnl": 1000},
+    ]
+    original = deepcopy(summaries)
+    common = dict(
+        list_capital_pools=lambda **_kw: [{"pool_id": "pool-a", "status": "active", "risk_budget": 100}],
+        list_bindings=lambda **_kw: [],
+        list_deployment_plans=lambda **_kw: [],
+        list_runtime_bindings=lambda **_kw: deepcopy(runtimes),
+        dataset_source=lambda _dataset: "service",
+    )
+    def find(rows, runtime_id):
+        return next((deepcopy(s) for s in rows if s.get("runtime_id") == runtime_id or s.get("id") == runtime_id), None)
+
+    # Existing get-only read surface provides an independent lookup contract.
+    get_only = SimpleNamespace(**common, get_telemetry_summary=lambda runtime_id: find(summaries, runtime_id))
+    for project in (
+        _pm12_portfolio_book_response,
+        _pm12_portfolio_book_pools_response,
+        _pm12_portfolio_book_exposure_response,
+        _pm12_portfolio_book_holdings_response,
+    ):
+        collection_calls = []
+        def read_collection():
+            collection_calls.append("read")
+            return deepcopy(summaries)
+        bulk = SimpleNamespace(
+            **common,
+            list_telemetry_summaries=read_collection,
+            # This is how the real TelemetryPort getter reloads its collection.
+            get_telemetry_summary=lambda runtime_id: find(read_collection(), runtime_id),
+        )
+        expected = project(get_only, utc_now_fn=lambda: "2026-10-19T01:00:00Z")
+        actual = project(bulk, utc_now_fn=lambda: "2026-10-19T01:00:00Z")
+        assert actual == expected
+        assert len(collection_calls) == 1, project.__name__
+        assert summaries == original

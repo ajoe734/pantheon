@@ -1,0 +1,25 @@
+{
+  "task_id": "DEV-MGMT-PORTFOLIO-SNAPSHOT-20261019",
+  "parent_task": "DEV-MGMT-USABILITY-DIRECT-20261019",
+  "related_auth_repair_pr": 6660,
+  "status": "local_validation_passed_pending_independent_review",
+  "actual_failure": {
+    "backend": "0eace2eab875c208a68916be630b01dd9e969602",
+    "formal_release_run": 39266905540,
+    "version_completed_at": "2026-10-19T14:34:23.766723139Z",
+    "portfolio_completed_at": "2026-10-19T14:36:32.975411651Z",
+    "queued_logout_completed_at": "2026-10-19T14:36:33.210228422Z",
+    "version_to_portfolio_seconds": 129.209,
+    "telemetry_collection_gets_in_request_window": 89,
+    "access_log": "/tmp/pantheon-portfolio-owner-request-series.log",
+    "failed_probe_proof": "/tmp/pantheon-candidate-portfolio-auth-blocking-20261019.json"
+  },
+  "source_cause": "PM12 iterated runtimes and called get_telemetry_summary per runtime; production TelemetryPort reloads the full owner collection on each getter call.",
+  "source_fix": "One request-local bulk telemetry snapshot/index serves root, pools, exposure and holdings. Preserve runtime order, first matching summary by runtime_id or id, missing telemetry and existing get-only read surfaces. No global cache, extra service or evaluator/held-agent change. Source posture checks retain their existing behavior and may perform one additional bounded collection read; this does not claim exactly one HTTP request overall.",
+  "validation": {
+    "baseline": "New regression with40runtimes failed on unmodified0eace:40 collection reads instead of1 (1failed3.68s).",
+    "corrected": "51 existing and new portfolio contract tests passed25.27s. Four projection outputs match the independent existing get-only lookup contract, including duplicate-first-match, id alias, unrelated rows and missing telemetry. Source input remains unchanged.",
+    "diff_check": "passed"
+  },
+  "hosted_acceptance": "Pending exact-head review/merge, combined delivery with PR6660, official qualification/root pair and parent real UI/data/logout/AI-persistence verification. Actual hosted latency improvement has not yet been measured. Sole coordinator retains current release and rollback."
+}
