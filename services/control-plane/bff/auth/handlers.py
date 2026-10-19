@@ -153,6 +153,15 @@ def _issue_token(profile: Mapping[str, Any], deps: AuthDependencies) -> Dict[str
         "tenant_id": profile["tenant_id"],
         "allowed_tenants": profile["allowed_tenants"],
     }
+    preferred_username = _first(
+        profile.get("preferred_username"),
+        profile.get("client_id") if profile.get("identity") == "test_admin" else None,
+    )
+    display_name = _first(profile.get("name"), preferred_username)
+    if preferred_username:
+        claims["preferred_username"] = preferred_username
+    if display_name:
+        claims["name"] = display_name
     # A client id/secret exchange proves one credential, not a second factor.
     # Only a genuine IdP-authenticated MFA session may carry MFA claims.
     token = encode_jwt_hs256(claims, secret=secret)
@@ -216,7 +225,13 @@ def _user(identity: Any, deps: AuthDependencies) -> Dict[str, Any]:
     return {
         "id": identity.operator_id,
         "operator_id": identity.operator_id,
-        "display_name": _first(claims.get("name"), claims.get("preferred_username"), claims.get("email"), identity.operator_id),
+        "display_name": _first(
+            claims.get("name"),
+            claims.get("preferred_username"),
+            claims.get("email"),
+            claims.get("client_id") if claims.get("identity") == "test_admin" else None,
+            identity.operator_id,
+        ),
         "roles": list(identity.roles),
         "capabilities": caps,
         "mfa_verified": bool(identity.mfa_verified),

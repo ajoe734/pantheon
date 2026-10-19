@@ -288,9 +288,10 @@ class CapitalPoolPort:
         self,
         *,
         status: Optional[str] = None,
+        risk_policy_ref: Optional[str] = None,
         include_market_persona_defaults: bool = False,
     ) -> List[Dict[str, Any]]:
-        """List capital pools with optional status filtering.
+        """List capital pools with optional status and risk_policy_ref filtering.
 
         ``include_market_persona_defaults`` is accepted for compatibility with
         composite caller interfaces that layer market defaults separately.
@@ -299,6 +300,13 @@ class CapitalPoolPort:
         items = [_deep_copy(p) for p in raw if self._pool_id(p)]
         if status:
             items = [p for p in items if str(p.get("status") or "") == status]
+        expected_policy = str(risk_policy_ref or "").strip()
+        if expected_policy:
+            items = [
+                p
+                for p in items
+                if str(p.get("risk_policy_ref") or p.get("risk_policy_id") or "").strip() == expected_policy
+            ]
         return items
 
     def get_capital_pool(self, pool_id: Optional[str]) -> Optional[Dict[str, Any]]:

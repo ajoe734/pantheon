@@ -35,6 +35,7 @@ class CredentialMountContract:
     container_path: str
     expected_suffix: str
     container_target: str
+    credential_file: str = ""
 
 
 @dataclass(frozen=True)
@@ -102,6 +103,7 @@ class AssistantCredentialMounts:
                 ).strip(),
                 expected_suffix="/.codex",
                 container_target="codex_home",
+                credential_file="auth.json",
             ),
             CredentialMountContract(
                 provider="claude",
@@ -115,6 +117,7 @@ class AssistantCredentialMounts:
                 ).strip(),
                 expected_suffix="/.claude",
                 container_target="claude_config",
+                credential_file=".credentials.json",
             ),
         )
 
@@ -165,8 +168,9 @@ class AssistantCredentialMounts:
 
         # The host path is validated as policy, but the running container can
         # only prove readability through the mounted container target path.
+        container_dir = os.path.normpath(contract.container_path)
         try:
-            mount_stat = self._stat(os.path.normpath(contract.container_path))
+            mount_stat = self._stat(container_dir)
         except FileNotFoundError:
             return self._metadata(contract, False, "missing_host_mount", "not_checked")
         except PermissionError:
@@ -177,13 +181,31 @@ class AssistantCredentialMounts:
         if not stat.S_ISDIR(mount_stat.st_mode):
             return self._metadata(contract, False, "host_mount_not_directory", "not_checked")
 
+        credential_stat: os.stat_result | None = None
+        if contract.credential_file:
+            credential_path = os.path.join(container_dir, contract.credential_file)
+            try:
+                credential_stat = self._stat(credential_path)
+            except FileNotFoundError:
+                return self._metadata(contract, False, "missing_credentials", "not_checked")
+            except PermissionError:
+                return self._metadata(contract, False, "credentials_unreadable", "not_checked")
+            except OSError:
+                return self._metadata(contract, False, "credentials_unavailable", "not_checked")
+            if not stat.S_ISREG(credential_stat.st_mode):
+                return self._metadata(contract, False, "missing_credentials", "not_checked")
+
         if self._expected_uid is None:
             return self._metadata(contract, False, "owner_unverified", "unverified")
 
-        if mount_stat.st_uid != self._expected_uid:
+        if mount_stat.st_uid != self._expected_uid or (
+            credential_stat is not None and credential_stat.st_uid != self._expected_uid
+        ):
             return self._metadata(contract, False, "wrong_owner", "mismatch")
 
-        if mount_stat.st_mode & 0o077:
+        if (mount_stat.st_mode & 0o077) or (
+            credential_stat is not None and (credential_stat.st_mode & 0o077)
+        ):
             return self._metadata(contract, False, "permissions_too_open", "matched")
 
         return self._metadata(contract, True, "ready", "matched")
