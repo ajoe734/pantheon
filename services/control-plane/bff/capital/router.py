@@ -590,9 +590,11 @@ def create_capital_router(
         } for row in rows]
         return _readback_response(flow, meta={"snapshot_at": utc_now(), "total": len(flow), "policy": "read_only_capital_flow"}, items=flow)
 
+    # Owner reads are synchronous I/O. FastAPI runs these read-only handlers
+    # in its worker pool while preserving request ContextVars for authorization.
     # 18. Portfolio book root.
     @router.get("/bff/management/portfolio-book")
-    async def bff_management_portfolio_book(
+    def bff_management_portfolio_book(
         request: Request,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -603,7 +605,7 @@ def create_capital_router(
 
     # 19. Portfolio pool cards.
     @router.get("/bff/management/portfolio-book/pools")
-    async def bff_management_portfolio_book_pools(
+    def bff_management_portfolio_book_pools(
         request: Request,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -614,7 +616,7 @@ def create_capital_router(
 
     # 20. Portfolio exposure projection.
     @router.get("/bff/management/portfolio-book/exposure")
-    async def bff_management_portfolio_book_exposure(
+    def bff_management_portfolio_book_exposure(
         request: Request,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -625,7 +627,7 @@ def create_capital_router(
 
     # 21. Portfolio holdings are the allocation rows with a durable pool identity.
     @router.get("/bff/management/portfolio-book/holdings")
-    async def bff_management_portfolio_book_holdings(
+    def bff_management_portfolio_book_holdings(
         request: Request,
         capital_pool_id: Optional[str] = None,
         authorization: Optional[str] = Header(default=None),
@@ -639,7 +641,7 @@ def create_capital_router(
 
     # 22. Positions reuse allocation facts but retain the capital risk boundary.
     @router.get("/bff/management/portfolio-book/positions")
-    async def bff_management_portfolio_book_positions(
+    def bff_management_portfolio_book_positions(
         capital_pool_id: Optional[str] = None, authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
         _require_read(authorization)
