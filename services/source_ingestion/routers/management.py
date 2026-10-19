@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Body, Header, HTTPException, Request
 
-from services.runtime_auth_inbound import AuthContext, AuthError, validate_request_auth
+from services.runtime_auth_inbound import AuthContext, validate_request_auth
 
 from ..api_models import SourceCommandRequestBody
 from ..connector_definitions import get_connector_definition, list_connector_definitions
@@ -40,18 +40,9 @@ def _utc_now() -> str:
 
 
 def _require_seed_caller(request: Request, *, required_roles: tuple[str, ...] = (*_READ_ROLES, "reviewer", "view_only", "approver")) -> tuple[AuthContext, str]:
-    raw_auth, requested = request.headers.get("Authorization"), (request.headers.get("X-Tenant-Id") or "").strip()
-    try:
-        auth = validate_request_auth(authorization=raw_auth, mfa_header=request.headers.get("X-MFA-Token"), required_roles=required_roles, allow_shared_secret=True)
-    except AuthError as exc:
-        raise HTTPException(status_code=exc.status_code, detail={"error": {"code": exc.code, "message": exc.message}}) from exc
-    if auth.token_kind == "jwt":
-        return auth, _source_read_tenant(raw_auth, requested, required_roles=required_roles)
-    parts = [p.strip() for p in (raw_auth or "").removeprefix("Bearer ").strip().split(":")]
-    tok_tenant = parts[2] if auth.token_kind == "structured" and len(parts) >= 3 and parts[2].lower() != "mfa" else ""
-    tenant = requested or tok_tenant or str(os.getenv("SOURCE_INGEST_DEFAULT_TENANT_ID") or os.getenv("PANTHEON_TENANT_ID") or "").strip()
-    if (tok_tenant and requested and tok_tenant != requested) or not tenant or tenant == "*":
-        raise HTTPException(status_code=403, detail={"error": {"code": "TENANT_SCOPE_DENIED", "message": "An explicitly admitted tenant is required"}})
+    raw_auth, requested = request.headers.get("Authorization"), (request.headers.get("X-Tenant-Id") or "").strip() or None
+    tenant = _source_read_tenant(raw_auth, requested, required_roles=required_roles)
+    auth = validate_request_auth(authorization=raw_auth, required_roles=required_roles, env={**os.environ, "PANTHEON_RUNTIME_AUTH_MODE": "strict"})
     return auth, tenant
 
 

@@ -45,7 +45,7 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
         _owner_tenant.set(tenant_header.strip() if tenant_header and tenant_header.strip() else None)
 
     def _strategy_seed_owner_error(exc: SourceManagementClientError) -> HTTPException:
-        if exc.status_code == 404 or exc.error_code in {"seed_not_found", "merge_target_not_found"}:
+        if exc.error_code in {"seed_not_found", "merge_target_not_found"}:
             return ctx.bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "StrategySpecSeed not found", exc.message, precondition_failed="seed_id")
         if exc.status_code in {401, 403}:
             code = ErrorCode.AUTH_REQUIRED if exc.status_code == 401 else ErrorCode.FORBIDDEN

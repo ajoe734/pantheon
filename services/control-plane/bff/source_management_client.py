@@ -350,8 +350,8 @@ class SourceManagementClient:
         encoded = urllib.parse.quote(seed_id, safe="")
         try:
             resp = self._seed_request("GET", f"/api/source-ingest/management/strategy-seeds/{encoded}")
-        except (StrategySpecSeedReviewError, SourceManagementClientError) as exc:
-            if getattr(exc, "code", "") == "seed_not_found" or getattr(exc, "status_code", 0) == 404:
+        except StrategySpecSeedReviewError as exc:
+            if exc.code == "seed_not_found":
                 return None
             raise
         raw = resp.get("seed")

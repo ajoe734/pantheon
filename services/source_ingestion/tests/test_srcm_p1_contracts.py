@@ -579,8 +579,10 @@ def test_source_ingest_management_strategy_seed_routes_enforce_tenant_auth_and_p
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import time
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
+    from services.runtime_auth_inbound import encode_jwt_hs256
     from services.source_ingestion.connectors.base import SourceRecord, SourceRecordStatus, SourceType
     from services.source_ingestion.routers.management import create_management_router
     from services.source_ingestion.runtime import SourceIngestionRuntime
@@ -590,9 +592,11 @@ def test_source_ingest_management_strategy_seed_routes_enforce_tenant_auth_and_p
     )
 
     seed_path = tmp_path / "distill_seeds.jsonl"
+    jwt_secret = "source-seed-owner-test-secret"
     monkeypatch.setenv("SOURCE_INGEST_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("STRATEGY_SPEC_SEED_STORE_PATH", str(seed_path))
     monkeypatch.setenv("STRATEGY_SEED_STORE_PATH", str(seed_path))
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", jwt_secret)
     monkeypatch.setenv("PANTHEON_RUNTIME_AUTH_MODE", "permissive")
 
     runtime1 = SourceIngestionRuntime()
@@ -647,8 +651,25 @@ def test_source_ingest_management_strategy_seed_routes_enforce_tenant_auth_and_p
     app1 = FastAPI()
     app1.include_router(create_management_router(runtime1))
     client1 = TestClient(app1)
-    op_headers = {"Authorization": "Bearer op-dev-1:operator:tenant-dev", "X-Tenant-Id": "tenant-dev"}
-    viewer_headers = {"Authorization": "Bearer viewer-dev-1:viewer:tenant-dev", "X-Tenant-Id": "tenant-dev"}
+    op_token = encode_jwt_hs256(
+        {"sub": "op-dev-1", "roles": ["operator"], "tenant_id": "tenant-dev", "exp": int(time.time()) + 600},
+        secret=jwt_secret,
+    )
+    viewer_token = encode_jwt_hs256(
+        {"sub": "viewer-dev-1", "roles": ["viewer"], "tenant_id": "tenant-dev", "exp": int(time.time()) + 600},
+        secret=jwt_secret,
+    )
+    op_headers = {"Authorization": f"Bearer {op_token}", "X-Tenant-Id": "tenant-dev"}
+    viewer_headers = {"Authorization": f"Bearer {viewer_token}", "X-Tenant-Id": "tenant-dev"}
+
+    # 0. Strict _source_read_tenant rejects non-JWT structured tokens even when PANTHEON_RUNTIME_AUTH_MODE=permissive
+    structured_headers = {"Authorization": "Bearer op-dev-1:operator:tenant-dev", "X-Tenant-Id": "tenant-dev"}
+    assert client1.get("/api/source-ingest/management/strategy-seeds", headers=structured_headers).status_code == 401
+    assert client1.post(
+        f"/api/source-ingest/management/strategy-seeds/{primary_id}/review",
+        json={"decision": "accept", "reason": "structured token attempt"},
+        headers={**structured_headers, "X-Idempotency-Key": "struct-rev-1"},
+    ).status_code == 401
 
     # 1. List filters strictly by resolved caller tenant (including SourceRecord metadata.tenant_id lookup)
     listed = client1.get("/api/source-ingest/management/strategy-seeds", headers=op_headers)
@@ -661,7 +682,7 @@ def test_source_ingest_management_strategy_seed_routes_enforce_tenant_auth_and_p
     assert client1.get("/api/source-ingest/management/strategy-seeds/seed-unowned-003", headers=op_headers).status_code == 404
     mismatch = client1.get(
         f"/api/source-ingest/management/strategy-seeds/{primary_id}",
-        headers={"Authorization": "Bearer op-dev-1:operator:tenant-dev", "X-Tenant-Id": "tenant-other"},
+        headers={"Authorization": f"Bearer {op_token}", "X-Tenant-Id": "tenant-other"},
     )
     assert mismatch.status_code == 403
 

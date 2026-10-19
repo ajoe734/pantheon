@@ -700,23 +700,27 @@ def test_strategy_seed_owner_boundary_read_review_merge_replication_and_persona_
     monkeypatch,
 ) -> None:
     import io
+    import time
     import urllib.error
     import urllib.parse
     import urllib.request
 
     from services.control_plane.bff.core.owner_reads import authorization as _owner_auth, selected_tenant as _owner_tenant
     from services.control_plane.bff.personas.service import _load_strategy_seed_match_candidates
+    from services.runtime_auth_inbound import encode_jwt_hs256
     from services.source_ingestion.connectors.base import SourceRecord, SourceRecordStatus, SourceType
     from services.source_ingestion.routers.management import create_management_router
     from services.source_ingestion.runtime import SourceIngestionRuntime
 
     owner_dir = tmp_path / "source-ingest"
     owner_dir.mkdir(parents=True, exist_ok=True)
+    jwt_secret = "seed-owner-boundary-jwt-secret"
     monkeypatch.setenv("SOURCE_INGEST_DATA_DIR", str(owner_dir))
     monkeypatch.delenv("STRATEGY_SEED_STORE_PATH", raising=False)
     monkeypatch.delenv("STRATEGY_SPEC_SEED_STORE_PATH", raising=False)
     monkeypatch.setenv("PANTHEON_SOURCE_INGEST_API_URL", "http://source-ingest.test")
-    monkeypatch.setenv("PANTHEON_RUNTIME_AUTH_MODE", "permissive")
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", jwt_secret)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", jwt_secret)
     monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-dev")
 
     runtime1 = SourceIngestionRuntime()
@@ -772,7 +776,6 @@ def test_strategy_seed_owner_boundary_read_review_merge_replication_and_persona_
 
         def __enter__(self):
             return self
-
         def __exit__(self, exc_type, exc, tb) -> None:
             self.close()
 
@@ -800,8 +803,16 @@ def test_strategy_seed_owner_boundary_read_review_merge_replication_and_persona_
 
     read_store = create_in_memory_read_surface_ports()
     bff_client = TestClient(_build_app(read_store))
-    op_headers = {"Authorization": "Bearer seed-review-op:operator:tenant-dev", "X-Tenant-Id": "tenant-dev"}
-    rev_headers = {"Authorization": "Bearer seed-reviewer:reviewer:tenant-dev", "X-Tenant-Id": "tenant-dev"}
+    op_jwt = encode_jwt_hs256(
+        {"sub": "seed-review-op", "roles": ["operator"], "tenant_id": "tenant-dev", "exp": int(time.time()) + 600},
+        secret=jwt_secret,
+    )
+    rev_jwt = encode_jwt_hs256(
+        {"sub": "seed-reviewer", "roles": ["reviewer"], "tenant_id": "tenant-dev", "exp": int(time.time()) + 600},
+        secret=jwt_secret,
+    )
+    op_headers = {"Authorization": f"Bearer {op_jwt}", "X-Tenant-Id": "tenant-dev"}
+    rev_headers = {"Authorization": f"Bearer {rev_jwt}", "X-Tenant-Id": "tenant-dev"}
 
     # 1. List and detail routes read from source-ingest owner and filter by tenant
     list_resp = bff_client.get("/bff/management/strategy-seeds", headers=rev_headers)
@@ -904,23 +915,35 @@ def test_strategy_seed_owner_boundary_read_review_merge_replication_and_persona_
 def test_strategy_seed_owner_boundary_unconfigured_or_unreachable_fails_closed_503(
     monkeypatch,
 ) -> None:
+    import io
+    import time
+    import urllib.error
     import urllib.request
+    import pytest
 
     from services.control_plane.bff.core.owner_reads import authorization as _owner_auth, selected_tenant as _owner_tenant
     from services.control_plane.bff.personas.service import _load_strategy_seed_match_candidates
+    from services.control_plane.bff.source_management_client import SourceManagementClient, SourceManagementClientError
+    from services.runtime_auth_inbound import encode_jwt_hs256
 
+    jwt_secret = "seed-owner-unreach-jwt-secret"
     monkeypatch.delenv("STRATEGY_SEED_STORE_PATH", raising=False)
     monkeypatch.delenv("STRATEGY_SPEC_SEED_STORE_PATH", raising=False)
     monkeypatch.delenv("PANTHEON_SOURCE_INGEST_API_URL", raising=False)
     monkeypatch.delenv("PANTHEON_SOURCE_INGEST_URL", raising=False)
     monkeypatch.delenv("SOURCE_INGEST_SERVICE_URL", raising=False)
     monkeypatch.delenv("SOURCE_INGEST_URL", raising=False)
-    monkeypatch.setenv("PANTHEON_RUNTIME_AUTH_MODE", "permissive")
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", jwt_secret)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", jwt_secret)
     monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-dev")
 
     read_store = create_in_memory_read_surface_ports()
     bff_client = TestClient(_build_app(read_store))
-    op_headers = {"Authorization": "Bearer seed-review-op:operator:tenant-dev", "X-Tenant-Id": "tenant-dev"}
+    op_jwt = encode_jwt_hs256(
+        {"sub": "seed-review-op", "roles": ["operator"], "tenant_id": "tenant-dev", "exp": int(time.time()) + 600},
+        secret=jwt_secret,
+    )
+    op_headers = {"Authorization": f"Bearer {op_jwt}", "X-Tenant-Id": "tenant-dev"}
 
     # Unconfigured owner URL -> 503 DEPENDENCY_UNAVAILABLE (not 200 empty or 404)
     unconf_list = bff_client.get("/bff/management/strategy-seeds", headers=op_headers)
@@ -970,4 +993,29 @@ def test_strategy_seed_owner_boundary_unconfigured_or_unreachable_fails_closed_5
     persona_seeds, surface = _load_strategy_seed_match_candidates(snapshot_at="2026-10-18T00:00:00Z")
     assert persona_seeds == []
     assert surface["status"] == "unavailable"
+
+    # Untyped owner HTTP 404 (missing owner endpoint) -> SourceManagementClient.get raises (not None) and BFF fails closed 503
+    def _missing_endpoint_urlopen(req, timeout=5.0):
+        raise urllib.error.HTTPError(
+            req.full_url,
+            404,
+            "Not Found",
+            {"Content-Type": "application/json"},
+            io.BytesIO(b'{"detail":"Not Found"}'),
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _missing_endpoint_urlopen)
+    with pytest.raises(SourceManagementClientError) as exc_info:
+        SourceManagementClient().get("seed-1d23a6d2fbc149f4")
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.error_code == "HTTP_404"
+
+    owner_404_detail = bff_client.get("/bff/management/strategy-seeds/seed-1d23a6d2fbc149f4", headers=op_headers)
+    assert owner_404_detail.status_code == 503, owner_404_detail.text
+    owner_404_err = _error(owner_404_detail.json())
+    assert owner_404_err["code"] == ErrorCode.DEPENDENCY_UNAVAILABLE
+    assert owner_404_err["details"]["owner"] == "source-ingest"
+    assert owner_404_err["details"]["upstream_error_code"] == "HTTP_404"
+    assert owner_404_err["details"]["upstream_status"] == 404
+
 
