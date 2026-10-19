@@ -20,15 +20,17 @@
       "source_owner": "services/control-plane/bff/read_store.py::ReadSurfaceStore",
       "production_callers": [
         "scripts/audit_management_bff_list_responses.py",
+        "services/consultation/e2e_fixtures.py",
         "services/control-plane/bff/agora/interaction/persona_client.py",
         "services/control-plane/bff/main.py",
         "services/control-plane/bff/smoke_test_incident.py",
         "services/control-plane/persona/integration_smoke.py"
       ],
-      "production_caller_count": 5,
+      "production_caller_count": 6,
       "internal_call_site_count": 0,
       "test_callers": [
         "integrations/openclaw/test_dev_gates.py",
+        "services/consultation/test_evidence_redaction.py",
         "services/control-plane/bff/smoke_test.py",
         "services/control-plane/bff/test_agora_journal_merge_patch.py",
         "services/control-plane/bff/test_ask_001_sessions_contract.py",
@@ -189,7 +191,7 @@
         "tests/e2e/test_human_management_frontend_persona_ooda_100.py",
         "tests/e2e/test_persona_ooda_15_cycle_autonomy.py"
       ],
-      "test_caller_count": 160,
+      "test_caller_count": 161,
       "matrix_item": "ACG-02-004",
       "target_disposition": "VERIFY",
       "target_owner": "CanonicalSnapshotAdapter delegate",

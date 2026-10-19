@@ -6,7 +6,6 @@
     {"path": "services/consultation/test_evidence_redaction.py::test_ask_007_publish_redacts_persona_internal_evidence_before_review_queue", "removed_routes": ["POST /bff/agora/ask/sessions", "POST /bff/agora/committee/sessions...", "memo publish"], "action": "deleted (whole file, single test)", "reason": "removed flow only; BFF evidence redaction remains covered by services/control-plane/bff/tests/test_evidence_redaction_fail_closed.py"},
     {"path": "services/consultation/e2e_fixtures.py", "removed_routes": ["ask/sessions", "committee/sessions..."], "action": "deleted", "reason": "only importer was the two deleted tests"}
   ],
-  "bookkeeping": "services/control-plane/bff/tests/read_store_migration_inventory.json: dropped the two deleted files and decremented counts",
   "not_affected": [
     "tests/e2e/test_human_management_frontend_browser_ooda_100.py and ..._persona_ooda_100.py import tests.e2e.ooda_e2e_fixtures, not services/consultation/e2e_fixtures, and call no removed route; untouched. They need a Postgres DSN (ValueError: Postgres DSN is required) and could not be run here: starting Postgres via docker was not permitted.",
     "services/control-plane/bff/test_bff_dry_run_rbac_contract.py defines its own stub routes; test_bff_consol_017 phantom-id 404 and test_normalized_route_uniqueness pass unchanged"
