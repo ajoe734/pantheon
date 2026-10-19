@@ -1,0 +1,14 @@
+{
+  "task_id": "CI-GREEN-SERVICE-SUITES-20261019",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "change": ".github/workflows/branch-ci.yml: Smoke acceptance gains one dependency-install step and eighteen per-directory pytest steps",
+  "directories": ["broker","channels","data-plane","evaluation","feedback","foundation","frontend","incident","knowledge","learning","lineage-read","loop-control","memory","monitor-agent","optimizer-svc","rankings","research-worker-gateway","runtime_manager"],
+  "verification": {
+    "environment": "fresh python3 venv with root requirements.txt plus the eight services/*/requirements.txt files, mirroring the CI install step",
+    "command": "python -m pytest -q services/<dir> (each alone)",
+    "result": "all eighteen pass; only pre-existing skips (foundation 11, incident 5, loop-control 8, memory 1); no deselect, skip or known-failures list added",
+    "workflow_contract": "python3 -m unittest scripts.test_branch_ci_gate_selection: 13 tests OK"
+  },
+  "reviewer_decision": "pending"
+}
