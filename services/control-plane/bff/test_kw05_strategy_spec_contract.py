@@ -581,7 +581,13 @@ def test_kw05_and_strategies_service_registry_http_owner_read_contract(monkeypat
         assert versions_resp.status_code == 200, versions_resp.text
         assert versions_resp.json()["versions"][0]["spec_version_id"] == registry_id
 
-        # 2. Missing entry -> 404
+        # 2. Missing entry (200 []) or missing version selector -> 404
+        missing_ver_resp = client.get(
+            f"/api/v1/knowledge/strategy-specs/{strategy_id}?version=nonexistent-ver",
+            headers=headers,
+        )
+        assert missing_ver_resp.status_code == 404, missing_ver_resp.text
+
         monkeypatch.setattr(adapter_base, "http_request_json", lambda *a, **k: [])
         missing_resp = client.get(
             f"/api/v1/knowledge/strategy-specs/{strategy_id}",
@@ -597,9 +603,19 @@ def test_kw05_and_strategies_service_registry_http_owner_read_contract(monkeypat
         )
         assert forbidden_resp.status_code == 403, forbidden_resp.text
 
-        # 4. Unavailable Registry -> 503
+        # 4. Unavailable Registry (503 or untyped 404 route error) -> 503
+        def raise_404(*a, **k):
+            raise urllib.error.HTTPError("http://registry.internal", 404, "Not Found", hdrs=None, fp=None)
+
         def raise_503(*a, **k):
             raise urllib.error.HTTPError("http://registry.internal", 503, "Unavailable", hdrs=None, fp=None)
+
+        monkeypatch.setattr(adapter_base, "http_request_json", raise_404)
+        http_404_resp = client.get(
+            f"/api/v1/knowledge/strategy-specs/{strategy_id}",
+            headers=headers,
+        )
+        assert http_404_resp.status_code == 503, http_404_resp.text
 
         monkeypatch.setattr(adapter_base, "http_request_json", raise_503)
         unavail_resp = client.get(
@@ -609,8 +625,15 @@ def test_kw05_and_strategies_service_registry_http_owner_read_contract(monkeypat
         assert unavail_resp.status_code == 503, unavail_resp.text
 
     # 5. StrategiesService read methods propagate owner reads, 404, 403, and 503
+    #    even when strategy_write_owner is injected (matching production app_factory).
+    class _PoisonedLocalWriteOwner:
+        def get_strategy(self, sid: str):
+            return {"strategy_id": sid, "title": "Poisoned Local Writer Fallback"}
+
+    port._strategy_specs[strategy_id] = {"strategy_id": strategy_id, "title": "Poisoned Local Cache"}
     svc = StrategiesService(
         read_surface=read_ports,
+        strategy_write_owner=lambda: _PoisonedLocalWriteOwner(),
         bff_error=auth_policy.bff_error,
         utc_now=utc_now,
     )
@@ -640,10 +663,42 @@ def test_kw05_and_strategies_service_registry_http_owner_read_contract(monkeypat
             svc.get_strategy(strategy_id)
         assert svc_403_exc.value.status_code == 403
 
+        monkeypatch.setattr(adapter_base, "http_request_json", raise_404)
+        with pytest.raises(HTTPException) as svc_404_exc:
+            svc.get_strategy(strategy_id)
+        assert svc_404_exc.value.status_code == 503
+
         monkeypatch.setattr(adapter_base, "http_request_json", raise_503)
         with pytest.raises(HTTPException) as svc_503_exc:
             svc.get_strategy(strategy_id)
         assert svc_503_exc.value.status_code == 503
+
+        # Missing Registry URL or caller authorization with injected strategy_write_owner
+        # must fail closed with 503 DEPENDENCY_UNAVAILABLE (never local fallback or None/[]).
+        monkeypatch.delenv("PANTHEON_REGISTRY_API_URL", raising=False)
+        monkeypatch.delenv("PANTHEON_REGISTRY_URL", raising=False)
+        for fn in (
+            lambda: svc.get_strategy(strategy_id),
+            lambda: svc.get_strategy_spec_detail(strategy_id),
+            lambda: svc.list_strategy_spec_versions(strategy_id),
+        ):
+            with pytest.raises(HTTPException) as missing_cfg_exc:
+                fn()
+            assert missing_cfg_exc.value.status_code == 503
+
+        monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry.internal")
+        tok_no_auth = owner_reads.authorization.set(None)
+        try:
+            for fn in (
+                lambda: svc.get_strategy(strategy_id),
+                lambda: svc.get_strategy_spec_detail(strategy_id),
+                lambda: svc.list_strategy_spec_versions(strategy_id),
+            ):
+                with pytest.raises(HTTPException) as missing_auth_exc:
+                    fn()
+                assert missing_auth_exc.value.status_code == 503
+        finally:
+            owner_reads.authorization.reset(tok_no_auth)
     finally:
         owner_reads.authorization.reset(tok_auth)
         owner_reads.selected_tenant.reset(tok_tenant)

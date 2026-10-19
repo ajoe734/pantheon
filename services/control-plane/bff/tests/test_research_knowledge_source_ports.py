@@ -1039,17 +1039,28 @@ def test_strategy_spec_owner_read_missing_forbidden_and_unavailable(monkeypatch)
     tok_auth = owner_reads.authorization.set("Bearer workshop-user:operator:tenant-dev")
     tok_tenant = owner_reads.selected_tenant.set("tenant-dev")
     try:
-        # 2. Empty list or 404 returns None / []
+        # 2. Empty list (200 []) or missing version selector returns None / []; untyped HTTP 404 raises 503
         monkeypatch.setattr(adapter_base, "http_request_json", lambda *a, **k: [])
         assert port.get_strategy_spec_detail(sid) is None
         assert port.get_strategy_spec(sid) is None
         assert port.list_strategy_spec_versions(sid) == []
 
+        monkeypatch.setattr(
+            adapter_base,
+            "http_request_json",
+            lambda *a, **k: [_original_workshop_registry_entry("tenant-dev")],
+        )
+        assert port.get_strategy_spec_detail(sid, version_selector="missing-version") is None
+
         def raise_404(*a, **k):
             raise urllib.error.HTTPError("http://registry.internal", 404, "Not Found", hdrs=None, fp=None)
 
         monkeypatch.setattr(adapter_base, "http_request_json", raise_404)
-        assert port.get_strategy_spec_detail(sid) is None
+        with pytest.raises(HTTPException) as http_404_exc:
+            port.get_strategy_spec_detail(sid)
+        assert http_404_exc.value.status_code == 503
+        assert http_404_exc.value.detail["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+        assert http_404_exc.value.detail["error"]["reason"] == "strategy_registry_http_404"
 
         # 3. Foreign tenant payload or HTTP 403 raises 403 FORBIDDEN
         monkeypatch.setattr(

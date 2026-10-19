@@ -1694,8 +1694,6 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             url = registry_url(f"/api/registry/strategies/{urllib.parse.quote(sid, safe='')}/strategy-specs")
             raw_entries = http_request_json(url, auth_token=auth.removeprefix("Bearer ").strip(), tenant_id=caller_tenant)
         except urllib.error.HTTPError as exc:
-            if exc.code == 404:
-                return None
             if exc.code in (401, 403):
                 raise self._strategy_owner_error(403, "FORBIDDEN", "Strategy reference is outside the caller tenant audience", "strategy_audience_mismatch") from exc
             raise self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Canonical strategy registry readback is unavailable", f"strategy_registry_http_{exc.code}") from exc

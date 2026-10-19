@@ -763,7 +763,19 @@ def test_original_workshop_daily_context_resolve_uses_registry_http_owner(monkey
         assert forbidden_resp.status_code == 403, forbidden_resp.text
         assert forbidden_resp.json()["error"]["code"] == "FORBIDDEN"
 
-        # 5. Registry owner unavailable -> 503 DEPENDENCY_UNAVAILABLE
+        # 5. Registry owner unavailable (503 or untyped 404 route error) -> 503 DEPENDENCY_UNAVAILABLE
+        def raise_404(*a, **k):
+            raise urllib.error.HTTPError("http://registry.internal", 404, "Not Found", hdrs=None, fp=None)
+
+        monkeypatch.setattr(adapter_base, "http_request_json", raise_404)
+        http_404_resp = c.post(
+            "/bff/agora/interactions/context:resolve",
+            headers={**headers_base, "Idempotency-Key": "orig-ws-http-404"},
+            json=daily_payload,
+        )
+        assert http_404_resp.status_code == 503, http_404_resp.text
+        assert http_404_resp.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+
         def raise_503(*a, **k):
             raise urllib.error.HTTPError("http://registry.internal", 503, "Unavailable", hdrs=None, fp=None)
 
