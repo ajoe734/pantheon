@@ -1,0 +1,7 @@
+{
+  "task_id": "PROMOTE-PIPELINE-RETIRE-20261019",
+  "deleted": ["services/deployment/promote_pipeline.py", "services/deployment/test_promote_pipeline.py"],
+  "caller_search": "git grep promote_pipeline|PromotePipeline on dev excluding historical docs/evidence: only HISTORICAL_EVIDENCE_INVENTORY.json (history, unchanged) references it",
+  "services_deployment_tests": "218 passed, 1 error (test_l12_dep_001_dispatcher::test_approved_paper_command_reaches_terminal_plan_and_binding) in a fresh venv WITHOUT GOV_APPROVAL_TEST_DSN; Postgres could not be started (docker run denied). AC4 not fully verified.",
+  "unchanged": "Deployment saga and outbox consumer code untouched"
+}
