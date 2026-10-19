@@ -1,0 +1,21 @@
+{
+  "task_id": "DEV-MGMT-PORTFOLIO-AUTH-20261019",
+  "parent_task": "DEV-MGMT-USABILITY-DIRECT-20261019",
+  "status": "local_validation_passed_pending_independent_review",
+  "problem": "Actual candidate portfolio read blocked the BFF event loop and queued logout; read eventually200 after approximately129s does not meet product usability.",
+  "reproduction": {
+    "backend": "0eace2eab875c208a68916be630b01dd9e969602",
+    "formal_run": 39266905540,
+    "proof": "/tmp/pantheon-candidate-portfolio-auth-blocking-20261019.json",
+    "version_200_at": "2026-10-19T14:34:23.766723139Z",
+    "portfolio_200_at": "2026-10-19T14:36:32.975411651Z",
+    "logout_200_at": "2026-10-19T14:36:33.210228422Z"
+  },
+  "change": "Five synchronous portfolio read handlers use standard FastAPI sync execution, moving blocking owner reads to its worker pool with ContextVars. Read guards, filters and response assembly remain intact. No generic dispatcher/framework, fake readiness or trading writes.",
+  "validation": {
+    "baseline": "New root-route held-owner regression failed on unmodified0eace async handler:1failed6.85s.",
+    "fixed_concurrency": "All5portfolio route scenarios passed2.74s; readiness/me/logout complete while owner held; request authorization and tenant ContextVar observed in owner worker.",
+    "contracts": "88 passed in40.29s: auth facade, PM12 portfolio contracts, real JWT/browser session, tenant policy and logout/revocation. git diff --check passed."
+  },
+  "remaining": "Separate proven latency defect:89 identical telemetry collection reads during the129s portfolio request. Root will fix request-scoped batch assembly separately before parent hosted acceptance; offload alone is not complete product delivery."
+}
