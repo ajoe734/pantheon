@@ -1,0 +1,188 @@
+{
+  "task_id": "OPENCLAW-ISOLATED-NATIVE-OPENAI-AUTH-20261019",
+  "title": "Wire isolated qualification product OpenAI native fallback auth on OpenClaw 2026.7.1",
+  "pinned_openclaw_runtime": {
+    "version": "2026.7.1",
+    "base_image": "ghcr.io/openclaw/openclaw:2026.7.1",
+    "derived_image": "pantheon-openclaw-gateway:2026.7.1",
+    "image_digest": "sha256:f435502b113f873768b64cd7f5f2a63f44d0a236ae3a5647ff42716652c74c31"
+  },
+  "historical_failure_audit": {
+    "audit_bundle": "/tmp/FULL39196940218-official-failure-audit.zip",
+    "workflow_run_id": "39196940218",
+    "compose_project": "l12q39196940218x1",
+    "primary_failure": "401 {\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"Invalid bearer token\"}} on anthropic/claude-opus-4-8",
+    "fallback_failure": "FailoverError: No API key found for provider \"openai\". Auth store: /home/node/.openclaw/agents/structured-extraction/agent/openclaw-agent.sqlite (agentDir: /home/node/.openclaw/agents/structured-extraction/agent). Configure auth for this agent (openclaw agents add <id>) or copy auth-profiles.json from the main agentDir.",
+    "root_cause": "Isolated qualification creates a fresh task-scoped openclaw-data volume (l12q<run_id>x<attempt>_openclaw-data) and applies PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH before gateway startup. While primary anthropic/claude-opus-4-8 and fallbacks [\"openai/gpt-5.6-sol\", \"openai/gpt-5.5\"] on agentRuntime.id=\"openclaw\" were registered alongside agents [\"main\", \"structured-extraction\"], no non-secret OpenAI native provider or auth-profile SecretRef was wired into the isolated startup chain."
+  },
+  "empirical_openclaw_2026_7_1_schema": {
+    "inspected_modules": [
+      "/app/dist/store-B_x9NtzH.js",
+      "/app/dist/model-auth-DFake27b.js",
+      "/app/dist/runtime-BDc36uJ2.js",
+      "/app/dist/zod-schema.agent-runtime-D5N12_xI.js",
+      "/app/dist/types.secrets-Zq0531N_.js"
+    ],
+    "agent_inheritance_behavior": "loadAuthProfileStoreForAgent(/home/node/.openclaw/agents/structured-extraction/agent) automatically inherits /home/node/.openclaw/agents/main/agent/openclaw-agent.sqlite when structured-extraction has no local profile store.",
+    "supported_non_secret_modes": {
+      "oauth_bearer_token_mode": {
+        "host_env": "PANTHEON_OPENCLAW_OPENAI_OAUTH_TOKEN",
+        "container_env": "OPENCLAW_OPENAI_OAUTH_TOKEN",
+        "auth_profile_config": {
+          "path": "auth.profiles.openai:default",
+          "value": {
+            "provider": "openai",
+            "mode": "token"
+          }
+        },
+        "provider_config": {
+          "path": "models.providers.openai",
+          "value": {
+            "baseUrl": "https://chatgpt.com/backend-api/codex",
+            "api": "openai-chatgpt-responses",
+            "auth": "token",
+            "apiKey": {
+              "source": "env",
+              "provider": "default",
+              "id": "OPENCLAW_OPENAI_OAUTH_TOKEN"
+            },
+            "models": []
+          }
+        },
+        "main_agent_sqlite_secret_ref": {
+          "type": "token",
+          "provider": "openai",
+          "tokenRef": {
+            "source": "env",
+            "provider": "default",
+            "id": "OPENCLAW_OPENAI_OAUTH_TOKEN"
+          }
+        }
+      },
+      "api_key_mode": {
+        "host_env": "PANTHEON_OPENCLAW_OPENAI_API_KEY",
+        "container_env": "OPENAI_API_KEY",
+        "auth_profile_config": {
+          "path": "auth.profiles.openai:default",
+          "value": {
+            "provider": "openai",
+            "mode": "api_key"
+          }
+        },
+        "provider_config": {
+          "path": "models.providers.openai",
+          "value": {
+            "baseUrl": "https://api.openai.com/v1",
+            "api": "openai-responses",
+            "auth": "api-key",
+            "apiKey": {
+              "source": "env",
+              "provider": "default",
+              "id": "OPENAI_API_KEY"
+            },
+            "models": []
+          }
+        },
+        "main_agent_sqlite_secret_ref": {
+          "type": "api_key",
+          "provider": "openai",
+          "keyRef": {
+            "source": "env",
+            "provider": "default",
+            "id": "OPENAI_API_KEY"
+          }
+        }
+      }
+    },
+    "empirical_container_verification": {
+      "oauth_token_mode": {
+        "authMain": {
+          "mode": "token",
+          "source": "profile:openai:default",
+          "profileId": "openai:default",
+          "matched": true
+        },
+        "authStruct": {
+          "mode": "token",
+          "source": "profile:openai:default",
+          "profileId": "openai:default",
+          "matched": true
+        },
+        "mSol": {
+          "id": "gpt-5.6-sol",
+          "api": "openai-chatgpt-responses",
+          "baseUrl": "https://chatgpt.com/backend-api/codex"
+        },
+        "m55": {
+          "id": "gpt-5.5",
+          "api": "openai-chatgpt-responses",
+          "baseUrl": "https://chatgpt.com/backend-api/codex"
+        },
+        "secretInConfig": false,
+        "secretInSqlite": false
+      },
+      "api_key_mode": {
+        "authMain": {
+          "mode": "api-key",
+          "source": "profile:openai:default",
+          "profileId": "openai:default",
+          "matched": true
+        },
+        "authStruct": {
+          "mode": "api-key",
+          "source": "profile:openai:default",
+          "profileId": "openai:default",
+          "matched": true
+        },
+        "mSol": {
+          "id": "gpt-5.6-sol",
+          "api": "openai-responses",
+          "baseUrl": "https://api.openai.com/v1"
+        },
+        "m55": {
+          "id": "gpt-5.5",
+          "api": "openai-responses",
+          "baseUrl": "https://api.openai.com/v1"
+        },
+        "secretInConfig": false,
+        "secretInSqlite": false
+      },
+      "fail_closed_checks": {
+        "missing_container_env_exits_nonzero": true,
+        "existing_oauth_profile_overwrite_refused": true,
+        "placeholder_or_refresh_token_rejected": true
+      }
+    }
+  },
+  "invariants_preserved": {
+    "primary_model": "anthropic/claude-opus-4-8",
+    "fallback_order": [
+      "openai/gpt-5.6-sol",
+      "openai/gpt-5.5"
+    ],
+    "structured_extraction_agent": {
+      "id": "structured-extraction",
+      "tools": {
+        "deny": [
+          "*"
+        ],
+        "exec": {
+          "security": "deny",
+          "ask": "always"
+        }
+      }
+    },
+    "no_vm_openclaw_data_read_or_copy": true,
+    "no_developer_worker_login_reuse": true,
+    "no_single_use_refresh_token_duplication": true,
+    "isolated_teardown_command": "docker compose down --volumes --remove-orphans"
+  },
+  "validation": {
+    "unit_tests": [
+      "scripts/test_openclaw_isolated_model_bootstrap.py",
+      "scripts/test_isolated_l12_provider_workflow.py",
+      "scripts/test_run_isolated_l12_runtime_e2e.py"
+    ],
+    "compose_config_validation": "docker compose -f docker-compose.yml config --quiet"
+  }
+}
