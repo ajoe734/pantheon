@@ -728,11 +728,13 @@ def test_bff_strategies_and_kw05_list_against_real_registry_app(monkeypatch) -> 
     monkeypatch.setattr(reg_service, "get_registry_service", lambda: remote_reg_svc)
     monkeypatch.setattr(reg_service, "get_store", lambda: remote_store)
 
-    class _PoisonedLocalStore:
-        def list_all_entries(self):
-            raise AssertionError("BFF must not read process-local services.registry.storage.get_store()")
+    local_store_calls: list[str] = []
 
-    monkeypatch.setattr(reg_storage, "get_store", lambda: _PoisonedLocalStore())
+    def _poisoned_get_store():
+        local_store_calls.append("get_store")
+        raise BaseException("BFF must not read process-local services.registry.storage.get_store()")
+
+    monkeypatch.setattr(reg_storage, "get_store", _poisoned_get_store)
 
     reg_client = TestClient(reg_service.app)
 
@@ -853,16 +855,25 @@ def test_bff_strategies_and_kw05_list_against_real_registry_app(monkeypatch) -> 
     with TestClient(app, raise_server_exceptions=False) as client:
         # 1. GET /bff/strategies and GET /api/v1/knowledge/strategy-specs return canonical tenant-dev strategy
         http_paths.clear()
-        bff_list = client.get("/bff/strategies", headers=dev_headers)
+        bff_list = client.get("/bff/strategies?page_size=1", headers=dev_headers)
         assert bff_list.status_code == 200, bff_list.text
         bff_payload = bff_list.json()
         assert bff_payload["page_info"]["total"] == 1
         assert bff_payload["items"][0]["id"] == strategy_id
         assert bff_payload["items"][0]["name"] == "Original Workshop Strategy Spec v2"
         assert bff_payload["items"][0]["state"] == "candidate"
+        assert bff_payload["items"][0]["risk"] == "medium"
         assert bff_payload["items"][0]["personaIds"] == [persona_id]
-        # Zero per-row detail fanout: only /api/registry/strategy-specs was called
+        # Zero per-row detail fanout and zero local store reads even when risk_raw is absent
         assert http_paths == ["/api/registry/strategy-specs"]
+        assert local_store_calls == []
+
+        bff_detail = client.get(f"/bff/strategies/{strategy_id}", headers=dev_headers)
+        assert bff_detail.status_code == 200, bff_detail.text
+        assert bff_detail.json()["data"]["id"] == strategy_id
+        assert bff_detail.json()["data"]["name"] == "Original Workshop Strategy Spec v2"
+        assert bff_detail.json()["data"]["risk"] == "medium"
+        assert local_store_calls == []
 
         kw05_list = client.get("/api/v1/knowledge/strategy-specs", headers=dev_headers)
         assert kw05_list.status_code == 200, kw05_list.text
@@ -890,7 +901,10 @@ def test_bff_strategies_and_kw05_list_against_real_registry_app(monkeypatch) -> 
         assert empty_kw05.status_code == 200, empty_kw05.text
         assert empty_kw05.json()["items"] == []
 
-        # 4. Foreign tenant or unavailable/malformed Registry fails closed on /bff/strategies and /api/v1/knowledge/strategy-specs
+        # 4. Anonymous / bad authorization / foreign tenant / unavailable / malformed Registry fail closed
+        assert client.get("/bff/strategies").status_code == 401
+        assert client.get("/bff/strategies", headers={"Authorization": "Bearer op-2:unknown_role:tenant-dev"}).status_code == 403
+
         monkeypatch.setattr(
             adapter_base,
             "http_request_json",
@@ -907,4 +921,6 @@ def test_bff_strategies_and_kw05_list_against_real_registry_app(monkeypatch) -> 
         monkeypatch.delenv("PANTHEON_REGISTRY_URL", raising=False)
         assert client.get("/bff/strategies", headers=dev_headers).status_code == 503
         assert client.get("/api/v1/knowledge/strategy-specs", headers=dev_headers).status_code == 503
+        assert local_store_calls == []
+
 

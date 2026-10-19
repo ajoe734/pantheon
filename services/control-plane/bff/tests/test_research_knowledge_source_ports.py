@@ -1113,11 +1113,13 @@ def test_list_strategy_specs_reads_canonical_registry_http_owner_and_ignores_loc
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
     monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry.internal")
 
-    class _PoisonedLocalStore:
-        def list_all_entries(self):
-            raise AssertionError("list_strategy_specs must never read process-local services.registry.storage.get_store()")
+    local_store_calls: list[str] = []
 
-    monkeypatch.setattr(reg_storage, "get_store", lambda: _PoisonedLocalStore())
+    def _poisoned_get_store():
+        local_store_calls.append("get_store")
+        raise BaseException("list_strategy_specs must never read process-local services.registry.storage.get_store()")
+
+    monkeypatch.setattr(reg_storage, "get_store", _poisoned_get_store)
 
     v1 = _original_workshop_registry_entry("tenant-dev")
     v2 = json.loads(json.dumps(v1))

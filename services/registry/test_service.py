@@ -3110,5 +3110,28 @@ def test_list_all_strategy_spec_entries_tenant_scoped_and_artifact_state_filter(
     resp_unauth = strict_client.get("/api/registry/strategy-specs")
     assert resp_unauth.status_code == 401, resp_unauth.text
 
+    # Auth and X-Tenant-Id validation must execute BEFORE get_registry_service()/store reads on both routes
+    import services.registry.service as reg_service_mod
+
+    orig_get_svc = reg_service_mod.get_registry_service
+    owner_calls: list[str] = []
+
+    def _forbidden_get_svc():
+        owner_calls.append("get_registry_service")
+        raise AssertionError("get_registry_service() must not be invoked before auth and X-Tenant-Id validation")
+
+    reg_service_mod.get_registry_service = _forbidden_get_svc
+    try:
+        for path in ("/api/registry/strategy-specs", "/api/registry/strategies/strat-list-a1/strategy-specs"):
+            assert strict_client.get(path).status_code == 401
+            assert strict_client.get(path, headers={"Authorization": "Bearer malformed-not-a-jwt"}).status_code == 401
+            assert strict_client.get(path, headers={**_bearer(token_a), "X-Tenant-Id": "tenant-b"}).status_code == 403
+            assert strict_client.get(path, headers={**_bearer(token_a), "X-Tenant-Id": "__builtin__"}).status_code == 403
+            assert strict_client.get(path, headers={**_bearer(token_a), "X-Tenant-Id": "   "}).status_code == 403
+            assert strict_client.get(path, headers={**_bearer(token_admin), "X-Tenant-Id": "tenant-b"}).status_code == 403
+        assert owner_calls == []
+    finally:
+        reg_service_mod.get_registry_service = orig_get_svc
+
 
 

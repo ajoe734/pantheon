@@ -1491,7 +1491,7 @@ def get_strategy_spec_entry(registry_id: str, authorization: Optional[str] = Hea
 
 
 def _filter_strategy_spec_views(
-    views: list[RegistryEntryView],
+    strategy_id: Optional[str],
     authorization: Optional[str],
     x_tenant_id: Optional[str],
     artifact_state: Optional[ArtifactState],
@@ -1506,6 +1506,8 @@ def _filter_strategy_spec_views(
         or (caller_tenant is None and "admin" not in ctx.roles)
     ):
         raise HTTPException(status_code=403, detail="X-Tenant-Id header does not match verified caller tenant.")
+    svc = get_registry_service()
+    views = svc.list_all_entries() if strategy_id is None else svc.list_by_strategy(strategy_id)
     return [
         view for view in views
         if view.entry.artifact_type == ArtifactType.STRATEGY_SPEC
@@ -1521,7 +1523,7 @@ def list_all_strategy_spec_entries(
     authorization: Optional[str] = Header(default=None),
     x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
 ):
-    return _filter_strategy_spec_views(get_registry_service().list_all_entries(), authorization, x_tenant_id, artifact_state)
+    return _filter_strategy_spec_views(None, authorization, x_tenant_id, artifact_state)
 
 
 @app.get("/api/registry/strategies/{strategy_id}/strategy-specs", response_model=list[RegistryEntryView])
@@ -1531,7 +1533,7 @@ def list_strategy_spec_entries(
     authorization: Optional[str] = Header(default=None),
     x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
 ):
-    return _filter_strategy_spec_views(get_registry_service().list_by_strategy(strategy_id), authorization, x_tenant_id, artifact_state)
+    return _filter_strategy_spec_views(strategy_id, authorization, x_tenant_id, artifact_state)
 
 
 @app.post(
