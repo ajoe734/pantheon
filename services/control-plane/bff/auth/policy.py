@@ -395,7 +395,7 @@ def dev_login_identity_registry() -> Dict[str, Dict[str, Any]]:
         if tenant_id not in allowed_tenants:
             allowed_tenants = [tenant_id] + list(allowed_tenants)
 
-        registry[name] = {
+        profile_entry: Dict[str, Any] = {
             "identity": name,
             "client_id": client_id,
             "client_secret": client_secret,
@@ -404,6 +404,10 @@ def dev_login_identity_registry() -> Dict[str, Dict[str, Any]]:
             "tenant_id": tenant_id,
             "allowed_tenants": allowed_tenants,
         }
+        if name == "test_admin":
+            profile_entry["preferred_username"] = client_id
+            profile_entry["name"] = client_id
+        registry[name] = profile_entry
     return registry
 
 

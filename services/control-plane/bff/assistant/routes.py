@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+import inspect
 import os
 from contextlib import contextmanager
+from contextvars import copy_context
 from typing import Any, Callable, Dict, Iterator, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Body, Header, HTTPException
@@ -478,7 +481,13 @@ def create_assistant_router(
         identity = extract_identity(authorization)
         require_read_role(identity)
         if provider_list is not None:
-            listed = provider_list(auth_probe)
+            if inspect.iscoroutinefunction(provider_list):
+                listed = await provider_list(auth_probe)
+            else:
+                ctx = copy_context()
+                listed = await asyncio.to_thread(ctx.run, provider_list, auth_probe)
+                if inspect.isawaitable(listed):
+                    listed = await listed
             if isinstance(listed, dict) and isinstance(listed.get("data"), list):
                 return listed
             if isinstance(listed, list):
@@ -493,7 +502,14 @@ def create_assistant_router(
                 "OpenClaw adapter provider readiness is not configured for this BFF.",
                 field="openclaw_adapter",
             )
-        return {"status": "ok", "data": [provider_readiness()]}
+        if inspect.iscoroutinefunction(provider_readiness):
+            readiness = await provider_readiness()
+        else:
+            ctx = copy_context()
+            readiness = await asyncio.to_thread(ctx.run, provider_readiness)
+            if inspect.isawaitable(readiness):
+                readiness = await readiness
+        return {"status": "ok", "data": [readiness]}
 
     @router.post("/providers", status_code=201)
     async def register_assistant_provider(

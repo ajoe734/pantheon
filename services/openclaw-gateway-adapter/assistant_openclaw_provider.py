@@ -851,7 +851,11 @@ class AssistantOpenClawProvider:
     ) -> List[str]:
         if requested_model:
             return [requested_model]
-        primary = os.getenv("OPENCLAW_PRIMARY_MODEL", "").strip() or DEFAULT_PRIMARY_MODEL
+        primary = (
+            os.getenv("OPENCLAW_MANAGEMENT_PRIMARY_MODEL", "").strip()
+            or os.getenv("OPENCLAW_PRIMARY_MODEL", "").strip()
+            or DEFAULT_PRIMARY_MODEL
+        )
         return [primary]
 
     def _resolve_effective_model(
@@ -930,11 +934,15 @@ class AssistantOpenClawProvider:
 
             cand_started = time.monotonic()
             try:
+                # One-shot and stateless: do not pin readiness probes onto a
+                # shared `user` session key, which would queue repeated probes
+                # behind prior warm-session turns or accumulate probe history.
                 result = self._invoke_via_http(
                     _READINESS_PROMPT,
                     model=candidate,
                     mode="user",
-                    operator_id="management-ai-readiness",
+                    operator_id=None,
+                    session_id=None,
                     timeout_seconds=cand_timeout,
                 )
                 answer = self._result_text(result)
@@ -1183,7 +1191,7 @@ class AssistantOpenClawProvider:
             )
 
         selected_model = self._resolve_effective_model(model, selected_agent_id)
-        primary_configured = os.getenv("OPENCLAW_PRIMARY_MODEL", "").strip() or DEFAULT_PRIMARY_MODEL
+        primary_configured = self._resolve_model_candidates()[0]
 
         result = self._invoke_via_http(
             prompt,
@@ -1895,6 +1903,8 @@ class AssistantOpenClawProvider:
                     "elapsed_ms": int((time.monotonic() - started_at) * 1000),
                     "transport": "responses_http",
                 }
+                if model:
+                    done_event["active_model"] = model
                 if function_calls:
                     done_event["function_calls"] = function_calls
                 # Missing usage is unknown, not zero — only include the key

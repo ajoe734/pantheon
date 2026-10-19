@@ -803,6 +803,56 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertEqual([c["model"] for c in calls],
                          ["fixture/explicit", "anthropic/claude-opus-4-8"])
 
+    def test_management_primary_model_env_routes_main_agent_without_overriding_held_agents_and_readiness_stays_stateless(self) -> None:
+        calls = []
+
+        def fake_urlopen(req, timeout=None, deadline=None):
+            body = json.loads(req.data.decode("utf-8"))
+            headers = {k.lower(): v for k, v in req.header_items()}
+            calls.append(
+                {
+                    "agent_id": headers.get("x-openclaw-agent-id"),
+                    "model_header": headers.get("x-openclaw-model"),
+                    "body": body,
+                }
+            )
+            return _FakeSSEResponse(_answer_events("PANTHEON_PROVIDER_READY"))
+
+        provider = self._make_provider()
+        with patch.dict(os.environ, {"OPENCLAW_PRIMARY_MODEL": "openai/gpt-5.6-sol"}, clear=False):
+            with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
+                readiness_info = provider.readiness(auth_probe=True)
+                invoke_res = provider.invoke("Summarize portfolio", mode="user", operator_id="op-1")
+                stream_events = list(provider.stream("Stream portfolio", operator_id="op-1", session_user="sess-1"))
+                persona_res = provider.invoke(
+                    "Return opinion",
+                    agent_id="persona-opinion-a",
+                    mode="user",
+                    operator_id="op-1",
+                )
+
+        self.assertTrue(readiness_info["ready"])
+        self.assertEqual(readiness_info["active_model"], "openai/gpt-5.6-sol")
+        self.assertEqual(calls[0]["agent_id"], "main")
+        self.assertEqual(calls[0]["model_header"], "openai/gpt-5.6-sol")
+        self.assertNotIn("user", calls[0]["body"])
+
+        self.assertEqual(invoke_res.output["active_model"], "openai/gpt-5.6-sol")
+        self.assertEqual(calls[1]["agent_id"], "main")
+        self.assertEqual(calls[1]["model_header"], "openai/gpt-5.6-sol")
+
+        done_events = [e for e in stream_events if e["type"] == "done"]
+        self.assertEqual(len(done_events), 1)
+        self.assertEqual(done_events[0]["active_model"], "openai/gpt-5.6-sol")
+        self.assertEqual(calls[2]["agent_id"], "main")
+        self.assertEqual(calls[2]["model_header"], "openai/gpt-5.6-sol")
+
+        self.assertEqual(persona_res.output["agent_id"], "persona-opinion-a")
+        self.assertNotIn("active_model", persona_res.output)
+        self.assertEqual(calls[3]["agent_id"], "persona-opinion-a")
+        self.assertIsNone(calls[3]["model_header"])
+        self.assertEqual(calls[3]["body"]["model"], "openclaw/persona-opinion-a")
+
     def test_invoke_never_spawns_a_subprocess(self) -> None:
         """Ordinary invoke() must go through HTTP only — no CLI subprocess.
 

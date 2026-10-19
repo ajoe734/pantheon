@@ -280,3 +280,108 @@ def test_lifespan_schedules_first_probe_without_blocking_startup() -> None:
 
     elapsed = asyncio.run(scenario())
     assert elapsed < 0.05
+
+
+def test_assistant_providers_and_usage_summary_offload_sync_probes_with_contextvars(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import contextvars
+    from services.control_plane.bff.assistant import management_service
+    from services.control_plane.bff.assistant.routes import create_assistant_router
+
+    req_ctx: contextvars.ContextVar[str] = contextvars.ContextVar("test_req_ctx", default="unset")
+    observed_ctx: list[str] = []
+
+    def slow_provider_list(auth_probe: bool = False) -> dict[str, Any]:
+        observed_ctx.append(f"providers:{req_ctx.get()}:{auth_probe}")
+        time.sleep(0.25)
+        return {"status": "ok", "data": [{"provider": "openclaw", "ready": True}]}
+
+    def slow_usage_summary(*, auth_probe: bool = False, limit: int = 50, window_hours: int = 24) -> dict[str, Any]:
+        observed_ctx.append(f"usage:{req_ctx.get()}:{auth_probe}:{limit}:{window_hours}")
+        time.sleep(0.25)
+        return {"status": "ok", "data": {"providers": []}}
+
+    monkeypatch.setattr(management_service, "_extract_identity", lambda _auth, **_kw: object())
+    monkeypatch.setattr(management_service, "_require_read_role", lambda _id: None)
+    monkeypatch.setattr(management_service, "_assistant_provider_usage_summary", slow_usage_summary)
+
+    cache = ProviderReadinessCache(lambda: {"ready": True, "status": "ready"})
+    auth_service = AuthFacadeService(
+        local_readiness=_local_ready,
+        provider_readiness_cache=cache,
+        handlers={
+            "bff_me": lambda **_kwargs: {
+                "data": {
+                    "currentUser": {"id": "pantheon-dev-admin-test", "display_name": "admintest"},
+                    "session": {"authenticated": True},
+                }
+            }
+        },
+    )
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def _set_ctx(request, call_next):
+        tok = req_ctx.set(request.headers.get("x-test-ctx", "default-ctx"))
+        try:
+            return await call_next(request)
+        finally:
+            req_ctx.reset(tok)
+
+    app.include_router(create_auth_router(service=auth_service))
+    app.include_router(
+        create_assistant_router(
+            build_context_pack=lambda *_a, **_kw: None,
+            extract_identity=lambda _auth, **_kw: object(),
+            require_read_role=lambda _id: None,
+            provider_list=slow_provider_list,
+            provider_readiness=lambda: {"ready": True},
+        )
+    )
+    app.get("/bff/assistant/providers/usage-summary")(
+        management_service.bff_assistant_provider_usage_summary
+    )
+
+    async def scenario() -> tuple[float, float, int, int, int, int]:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://bff.test") as client:
+            slow_providers = asyncio.create_task(
+                client.get("/bff/assistant/providers?auth_probe=true", headers={"x-test-ctx": "ctx-p"})
+            )
+            slow_usage = asyncio.create_task(
+                client.get(
+                    "/bff/assistant/providers/usage-summary?auth_probe=true&limit=25&window_hours=12",
+                    headers={"x-test-ctx": "ctx-u"},
+                )
+            )
+            await asyncio.sleep(0.02)
+
+            t0 = time.perf_counter()
+            readiness_resp = await asyncio.wait_for(client.get("/bff/auth/readiness"), timeout=0.08)
+            readiness_elapsed = time.perf_counter() - t0
+
+            t1 = time.perf_counter()
+            me_resp = await asyncio.wait_for(client.get("/bff/me"), timeout=0.08)
+            me_elapsed = time.perf_counter() - t1
+
+            p_resp, u_resp = await asyncio.gather(slow_providers, slow_usage)
+            return (
+                readiness_elapsed,
+                me_elapsed,
+                readiness_resp.status_code,
+                me_resp.status_code,
+                p_resp.status_code,
+                u_resp.status_code,
+            )
+
+    r_elapsed, m_elapsed, r_code, m_code, p_code, u_code = asyncio.run(scenario())
+    assert r_code == 200
+    assert m_code == 200
+    assert p_code == 200
+    assert u_code == 200
+    assert r_elapsed < 0.08
+    assert m_elapsed < 0.08
+    assert "providers:ctx-p:True" in observed_ctx
+    assert "usage:ctx-u:True:25:12" in observed_ctx
+

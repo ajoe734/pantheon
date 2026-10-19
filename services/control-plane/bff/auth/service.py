@@ -10,6 +10,7 @@ import asyncio
 import inspect
 import threading
 import time
+from contextvars import copy_context
 from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Mapping, MutableMapping, Optional
@@ -96,7 +97,8 @@ class ProviderReadinessCache:
         if inspect.iscoroutinefunction(self._probe):
             raw = await self._probe()
         else:
-            raw = await asyncio.to_thread(self._probe)
+            ctx = copy_context()
+            raw = await asyncio.to_thread(ctx.run, self._probe)
             raw = await _resolve(raw)
         if not isinstance(raw, Mapping):
             raise TypeError("provider readiness probe must return a mapping")

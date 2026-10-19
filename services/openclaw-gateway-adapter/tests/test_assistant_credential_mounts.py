@@ -76,11 +76,40 @@ def test_missing_mount_reports_sanitized_degraded_status() -> None:
     assert missing not in repr(metadata)
 
 
+def _populate_credentials(codex_home: Path, claude_home: Path) -> tuple[Path, Path]:
+    codex_home.mkdir(parents=True, exist_ok=True, mode=0o700)
+    claude_home.mkdir(parents=True, exist_ok=True, mode=0o700)
+    codex_auth = codex_home / "auth.json"
+    claude_creds = claude_home / ".credentials.json"
+    codex_auth.write_text("{}", encoding="utf-8")
+    claude_creds.write_text("{}", encoding="utf-8")
+    codex_auth.chmod(0o600)
+    claude_creds.chmod(0o600)
+    return codex_auth, claude_creds
+
+
+def _container_stat_func(codex_home: Path, claude_home: Path):
+    codex_auth = codex_home / "auth.json"
+    claude_creds = claude_home / ".credentials.json"
+
+    def _stat(path: str) -> os.stat_result:
+        if path == "/home/pantheon-assistant/.codex":
+            return codex_home.stat()
+        if path == "/home/pantheon-assistant/.codex/auth.json" and codex_auth.exists():
+            return codex_auth.stat()
+        if path == "/home/pantheon-assistant/.claude":
+            return claude_home.stat()
+        if path == "/home/pantheon-assistant/.claude/.credentials.json" and claude_creds.exists():
+            return claude_creds.stat()
+        raise FileNotFoundError(path)
+
+    return _stat
+
+
 def test_mount_stat_uses_container_target_after_host_policy_passes(tmp_path: Path) -> None:
     codex_home = tmp_path / "container" / ".codex"
     claude_home = tmp_path / "container" / ".claude"
-    codex_home.mkdir(parents=True, mode=0o700)
-    claude_home.mkdir(parents=True, mode=0o700)
+    codex_auth, claude_creds = _populate_credentials(codex_home, claude_home)
 
     seen: list[str] = []
 
@@ -88,8 +117,12 @@ def test_mount_stat_uses_container_target_after_host_policy_passes(tmp_path: Pat
         seen.append(path)
         if path == "/home/pantheon-assistant/.codex":
             return codex_home.stat()
+        if path == "/home/pantheon-assistant/.codex/auth.json":
+            return codex_auth.stat()
         if path == "/home/pantheon-assistant/.claude":
             return claude_home.stat()
+        if path == "/home/pantheon-assistant/.claude/.credentials.json":
+            return claude_creds.stat()
         raise FileNotFoundError(path)
 
     mounts = AssistantCredentialMounts(_env(), stat_func=stat_container, expected_uid=os.getuid())
@@ -97,14 +130,57 @@ def test_mount_stat_uses_container_target_after_host_policy_passes(tmp_path: Pat
     metadata = mounts.get_readiness_metadata()
 
     assert metadata["ready"] is True
-    assert seen == ["/home/pantheon-assistant/.codex", "/home/pantheon-assistant/.claude"]
+    assert seen == [
+        "/home/pantheon-assistant/.codex",
+        "/home/pantheon-assistant/.codex/auth.json",
+        "/home/pantheon-assistant/.claude",
+        "/home/pantheon-assistant/.claude/.credentials.json",
+    ]
+
+
+def test_empty_mounts_without_auth_files_report_missing_credentials_regardless_of_dir_owner(
+    tmp_path: Path,
+) -> None:
+    codex_home = tmp_path / ".codex"
+    claude_home = tmp_path / ".claude"
+    codex_home.mkdir(mode=0o700)
+    claude_home.mkdir(mode=0o700)
+
+    # Even if the empty directory is owned by the expected service user, missing
+    # auth files must never be reported as ready.
+    matched_owner_mounts = AssistantCredentialMounts(
+        _env(),
+        stat_func=_container_stat_func(codex_home, claude_home),
+        expected_uid=os.getuid(),
+    )
+    matched_meta = matched_owner_mounts.get_readiness_metadata()
+    assert matched_meta["ready"] is False
+    assert matched_meta["status"] == "degraded"
+    assert matched_meta["mounts"]["codex"]["ready"] is False
+    assert matched_meta["mounts"]["codex"]["status"] == "missing_credentials"
+    assert matched_meta["mounts"]["codex"]["owner_check"] == "not_checked"
+    assert matched_meta["mounts"]["claude"]["ready"] is False
+    assert matched_meta["mounts"]["claude"]["status"] == "missing_credentials"
+    assert matched_meta["mounts"]["claude"]["owner_check"] == "not_checked"
+
+    # When an empty directory is owned by root (e.g. auto-created Docker mount)
+    # and auth files do not exist, report missing_credentials rather than
+    # misleadingly claiming wrong_owner on an empty directory.
+    mismatched_owner_mounts = AssistantCredentialMounts(
+        _env(),
+        stat_func=_container_stat_func(codex_home, claude_home),
+        expected_uid=os.getuid() + 1,
+    )
+    mismatched_meta = mismatched_owner_mounts.get_readiness_metadata()
+    assert mismatched_meta["ready"] is False
+    assert mismatched_meta["mounts"]["codex"]["status"] == "missing_credentials"
+    assert mismatched_meta["mounts"]["claude"]["status"] == "missing_credentials"
 
 
 def test_metadata_never_exposes_provider_session_file_paths(tmp_path: Path) -> None:
     codex_home = tmp_path / ".codex"
     claude_home = tmp_path / ".claude"
-    codex_home.mkdir(mode=0o700)
-    claude_home.mkdir(mode=0o700)
+    _populate_credentials(codex_home, claude_home)
 
     mounts = AssistantCredentialMounts(
         _env(
@@ -113,7 +189,7 @@ def test_metadata_never_exposes_provider_session_file_paths(tmp_path: Path) -> N
             PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR="/srv/pantheon-assistant/.claude",
             PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR="/home/pantheon-assistant/.claude",
         ),
-        stat_func=lambda path: codex_home.stat() if path.endswith(".codex") else claude_home.stat(),
+        stat_func=_container_stat_func(codex_home, claude_home),
         expected_uid=os.getuid(),
     )
 
@@ -128,13 +204,13 @@ def test_metadata_never_exposes_provider_session_file_paths(tmp_path: Path) -> N
     assert "/srv/pantheon-assistant/.claude" not in rendered
     assert "/home/pantheon-assistant/.claude" not in rendered
     assert "auth.json" not in rendered
+    assert ".credentials.json" not in rendered
 
 
 def test_wrong_owner_reports_sanitized_mismatch(tmp_path: Path) -> None:
     codex_home = tmp_path / ".codex"
     claude_home = tmp_path / ".claude"
-    codex_home.mkdir(mode=0o700)
-    claude_home.mkdir(mode=0o700)
+    _populate_credentials(codex_home, claude_home)
 
     wrong_uid = os.getuid() + 1
     mounts = AssistantCredentialMounts(
@@ -142,7 +218,7 @@ def test_wrong_owner_reports_sanitized_mismatch(tmp_path: Path) -> None:
             PANTHEON_ASSISTANT_CODEX_HOST_HOME="/srv/pantheon-assistant/.codex",
             PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR="/srv/pantheon-assistant/.claude",
         ),
-        stat_func=lambda path: codex_home.stat() if path.endswith(".codex") else claude_home.stat(),
+        stat_func=_container_stat_func(codex_home, claude_home),
         expected_uid=wrong_uid,
     )
 
@@ -157,12 +233,11 @@ def test_wrong_owner_reports_sanitized_mismatch(tmp_path: Path) -> None:
 def test_valid_mounts_return_ready_without_raw_paths(tmp_path: Path) -> None:
     codex_home = tmp_path / ".codex"
     claude_home = tmp_path / ".claude"
-    codex_home.mkdir(mode=0o700)
-    claude_home.mkdir(mode=0o700)
+    _populate_credentials(codex_home, claude_home)
 
     mounts = AssistantCredentialMounts(
         _env(PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE="ro"),
-        stat_func=lambda path: codex_home.stat() if path.endswith(".codex") else claude_home.stat(),
+        stat_func=_container_stat_func(codex_home, claude_home),
         expected_uid=os.getuid(),
     )
 
@@ -180,12 +255,11 @@ def test_valid_mounts_return_ready_without_raw_paths(tmp_path: Path) -> None:
 def test_mount_mode_reporting_rw(tmp_path: Path) -> None:
     codex_home = tmp_path / ".codex"
     claude_home = tmp_path / ".claude"
-    codex_home.mkdir(mode=0o700)
-    claude_home.mkdir(mode=0o700)
+    _populate_credentials(codex_home, claude_home)
 
     mounts = AssistantCredentialMounts(
         _env(PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE="rw"),
-        stat_func=lambda path: codex_home.stat() if path.endswith(".codex") else claude_home.stat(),
+        stat_func=_container_stat_func(codex_home, claude_home),
         expected_uid=os.getuid(),
     )
 
