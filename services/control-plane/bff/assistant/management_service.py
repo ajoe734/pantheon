@@ -2769,7 +2769,9 @@ def _project_operator_runtime_state_row_impl(
     binding: Dict[str, Any],
     *,
     telemetry_summary_record: Optional[Dict[str, Any]] = None,
+    telemetry_observation: Optional[Dict[str, Any]] = None,
     monitoring_session_record: Optional[Dict[str, Any]] = None,
+    monitoring_observation: Optional[Dict[str, Any]] = None,
     prefetched: bool = False,
 ) -> Dict[str, Any]:
     runtime_id = str(binding.get("runtime_id") or binding.get("id") or "")
@@ -2778,9 +2780,16 @@ def _project_operator_runtime_state_row_impl(
         or binding.get("binding_id")
         or binding.get("id")
     )
-    telemetry_observation: Optional[Dict[str, Any]] = None
     if prefetched:
         raw_telemetry_summary = telemetry_summary_record
+        if telemetry_observation is None and hasattr(
+            _management_ai_context_service, "_build_context_telemetry_summary_result"
+        ):
+            _, telemetry_observation = (
+                _management_ai_context_service._build_context_telemetry_summary_result(
+                    runtime_id, raw_telemetry_summary
+                )
+            )
     else:
         raw_telemetry_summary, telemetry_observation = (
             _management_ai_context_service.get_context_telemetry_summary(runtime_id)
@@ -2788,9 +2797,16 @@ def _project_operator_runtime_state_row_impl(
     telemetry_summary = _project_runtime_state_telemetry_summary(
         raw_telemetry_summary
     )
-    monitoring_observation: Optional[Dict[str, Any]] = None
     if prefetched:
         raw_monitoring_session = monitoring_session_record
+        if monitoring_observation is None and hasattr(
+            _management_ai_context_service, "_build_context_monitoring_session_result"
+        ):
+            _, monitoring_observation = (
+                _management_ai_context_service._build_context_monitoring_session_result(
+                    runtime_id, raw_monitoring_session
+                )
+            )
     else:
         raw_monitoring_session, monitoring_observation = (
             _management_ai_context_service.get_context_monitoring_session(
@@ -2876,7 +2892,13 @@ def reset_project_operator_runtime_state_row() -> None:
     _PROJECT_OPERATOR_RUNTIME_STATE_ROW_FN = _project_operator_runtime_state_row_impl
 
 def _project_operator_runtime_state_row(binding: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
-    return get_project_operator_runtime_state_row()(binding, **kwargs)
+    fn = get_project_operator_runtime_state_row()
+    if kwargs and fn is not _project_operator_runtime_state_row_impl:
+        try:
+            return fn(binding, **kwargs)
+        except TypeError:
+            return fn(binding)
+    return fn(binding, **kwargs)
 
 
 _MANAGEMENT_TELEMETRY_ROLLUP_FN: Optional[Callable[..., Dict[str, Any]]] = None
@@ -4160,22 +4182,66 @@ def _mgmt_nl_add_record_entities(
 def _mgmt_nl_scoped_runtime_rows(
     runtime_bindings: List[Dict[str, Any]],
     entities: Set[Tuple[str, str]],
+    telemetry_by_runtime_id: Optional[Dict[str, Tuple[Optional[Dict[str, Any]], Dict[str, Any]]]] = None,
 ) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
+    runtime_ids: List[str] = []
     for binding in runtime_bindings:
+        runtime_id = str(binding.get("runtime_id") or binding.get("id") or binding.get("binding_id") or "").strip()
+        if runtime_id:
+            runtime_ids.append(runtime_id)
+    missing_runtime_ids = [
+        rid for rid in runtime_ids if telemetry_by_runtime_id is None or rid not in telemetry_by_runtime_id
+    ]
+    fetched_telemetry: Dict[str, Tuple[Optional[Dict[str, Any]], Dict[str, Any]]] = {}
+    if missing_runtime_ids:
+        batch_telemetry_fn = getattr(
+            _management_ai_context_service, "get_context_telemetry_summaries_for_runtimes", None
+        )
+        if callable(batch_telemetry_fn):
+            fetched_telemetry = batch_telemetry_fn(missing_runtime_ids)
+        else:
+            for rid in dict.fromkeys(missing_runtime_ids):
+                fetched_telemetry[rid] = _management_ai_context_service.get_context_telemetry_summary(rid)
+        if telemetry_by_runtime_id is not None:
+            telemetry_by_runtime_id.update(fetched_telemetry)
+    effective_telemetry = telemetry_by_runtime_id if telemetry_by_runtime_id is not None else fetched_telemetry
+    batch_monitoring_fn = getattr(
+        _management_ai_context_service, "get_context_monitoring_sessions_for_bindings", None
+    )
+    monitoring_by_index = (
+        batch_monitoring_fn(runtime_bindings) if callable(batch_monitoring_fn) else {}
+    )
+    for idx, binding in enumerate(runtime_bindings):
         runtime_id = str(binding.get("runtime_id") or binding.get("id") or binding.get("binding_id") or "").strip()
         binding_id = str(binding.get("binding_id") or binding.get("runtime_binding_id") or binding.get("id") or "").strip()
         _mgmt_nl_add_entity(entities, "runtime", runtime_id)
         _mgmt_nl_add_entity(entities, "runtime_binding", binding_id)
         if binding.get("capital_pool_id"):
             _mgmt_nl_add_entity(entities, "capital_pool", binding.get("capital_pool_id"))
-        rows.append(_project_operator_runtime_state_row(binding))
+        telemetry_summary, telemetry_obs = effective_telemetry.get(runtime_id, (None, None))
+        monitoring_session, monitoring_obs = monitoring_by_index.get(idx, (None, None))
+        rows.append(
+            _project_operator_runtime_state_row(
+                binding,
+                telemetry_summary_record=telemetry_summary,
+                monitoring_session_record=monitoring_session,
+                telemetry_observation=telemetry_obs,
+                monitoring_observation=monitoring_obs,
+                prefetched=True,
+            )
+        )
     return rows
 def _mgmt_nl_trading_pulse_snippet(
     runtime_bindings: List[Dict[str, Any]],
     entities: Set[Tuple[str, str]],
+    telemetry_by_runtime_id: Optional[Dict[str, Tuple[Optional[Dict[str, Any]], Dict[str, Any]]]] = None,
 ) -> Dict[str, Any]:
-    runtime_rows = _mgmt_nl_scoped_runtime_rows(runtime_bindings, entities)
+    runtime_rows = _mgmt_nl_scoped_runtime_rows(
+        runtime_bindings,
+        entities,
+        telemetry_by_runtime_id=telemetry_by_runtime_id,
+    )
     telemetry_rows = [
         row.get("telemetry_summary")
         for row in runtime_rows
@@ -4314,6 +4380,48 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
     def _tenant_record_filter(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         return _mgmt_nl_filter_tenant_records(records, tenant_id)
 
+    _cached_runtime_bindings: Optional[Tuple[List[Dict[str, Any]], Dict[str, Any]]] = None
+    _cached_unfiltered_telemetry: Dict[str, Tuple[Optional[Dict[str, Any]], Dict[str, Any]]] = {}
+    _cached_trading_pulse_snippet: Optional[Dict[str, Any]] = None
+
+    def _get_runtime_bindings() -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        nonlocal _cached_runtime_bindings
+        if _cached_runtime_bindings is None:
+            _cached_runtime_bindings = _management_ai_context_service.get_context_runtime_bindings(
+                record_filter=_tenant_record_filter
+            )
+        return _cached_runtime_bindings
+
+    def _get_unfiltered_telemetry(
+        runtime_bindings: List[Dict[str, Any]],
+    ) -> List[Tuple[Optional[Dict[str, Any]], Dict[str, Any]]]:
+        ordered_ids: List[str] = [
+            str(r.get("runtime_id") or r.get("id") or r.get("binding_id") or "")
+            for r in runtime_bindings
+            if r.get("runtime_id") or r.get("id") or r.get("binding_id")
+        ]
+        missing_ids = [rid for rid in ordered_ids if rid not in _cached_unfiltered_telemetry]
+        if missing_ids:
+            batch_fn = getattr(
+                _management_ai_context_service, "get_context_telemetry_summaries_for_runtimes", None
+            )
+            if callable(batch_fn):
+                _cached_unfiltered_telemetry.update(batch_fn(missing_ids))
+            else:
+                for rid in dict.fromkeys(missing_ids):
+                    _cached_unfiltered_telemetry[rid] = (
+                        _management_ai_context_service.get_context_telemetry_summary(rid)
+                    )
+        return [_cached_unfiltered_telemetry[rid] for rid in ordered_ids]
+
+    def _get_trading_pulse_snippet(runtime_bindings: List[Dict[str, Any]]) -> Dict[str, Any]:
+        nonlocal _cached_trading_pulse_snippet
+        if _cached_trading_pulse_snippet is None:
+            _cached_trading_pulse_snippet = _mgmt_nl_trading_pulse_snippet(
+                runtime_bindings, evidence_entities, _cached_unfiltered_telemetry
+            )
+        return _cached_trading_pulse_snippet
+
     if use_all or focus == "cockpit":
         try:
             alerts_payload = _build_operator_alerts_payload(snapshot_at)
@@ -4331,10 +4439,8 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                 list(anomalies_payload.get("items") or []),
                 tenant_id,
             )
-            runtime_bindings, runtime_bindings_obs = _management_ai_context_service.get_context_runtime_bindings(
-                record_filter=_tenant_record_filter
-            )
-            trading_pulse = _mgmt_nl_trading_pulse_snippet(runtime_bindings, evidence_entities)
+            runtime_bindings, runtime_bindings_obs = _get_runtime_bindings()
+            trading_pulse = _get_trading_pulse_snippet(runtime_bindings)
             _mgmt_nl_add_record_entities(evidence_entities, alerts, "alert", "alert_id", "id")
             _mgmt_nl_add_record_entities(evidence_entities, inbox_items, "human_inbox", "id", "item_id")
             _mgmt_nl_add_record_entities(evidence_entities, anomalies, "incident", "id")
@@ -4376,10 +4482,8 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
 
     if use_all or focus == "trading_pulse":
         try:
-            runtime_bindings, runtime_bindings_obs = _management_ai_context_service.get_context_runtime_bindings(
-                record_filter=_tenant_record_filter
-            )
-            pulse_data = _mgmt_nl_trading_pulse_snippet(runtime_bindings, evidence_entities)
+            runtime_bindings, runtime_bindings_obs = _get_runtime_bindings()
+            pulse_data = _get_trading_pulse_snippet(runtime_bindings)
             evidence_source_types.update({"runtime", "runtime_binding", "telemetry", "paper_live_drift"})
             snippets["trading_pulse"] = {
                 "summary": pulse_data.get("summary"),
@@ -4401,19 +4505,11 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
             pools, pools_obs = _management_ai_context_service.get_context_capital_pools(
                 record_filter=_tenant_record_filter
             )
-            runtime_bindings, runtime_bindings_obs = _management_ai_context_service.get_context_runtime_bindings(
-                record_filter=_tenant_record_filter
-            )
+            runtime_bindings, runtime_bindings_obs = _get_runtime_bindings()
             _mgmt_nl_add_record_entities(evidence_entities, pools, "capital_pool", "pool_id", "id")
             _mgmt_nl_add_record_entities(evidence_entities, runtime_bindings, "runtime", "runtime_id", "id", "binding_id")
             evidence_source_types.update({"capital_pool", "runtime", "runtime_binding", "telemetry"})
-            telemetry_results = [
-                _management_ai_context_service.get_context_telemetry_summary(
-                    str(r.get("runtime_id") or r.get("id") or r.get("binding_id") or "")
-                )
-                for r in runtime_bindings
-                if r.get("runtime_id") or r.get("id") or r.get("binding_id")
-            ]
+            telemetry_results = _get_unfiltered_telemetry(runtime_bindings)
             telemetry_values = [t for t, _obs in telemetry_results if t is not None]
             telemetry_observations = [obs for _t, obs in telemetry_results]
             portfolio_rollup = _management_telemetry_rollup(telemetry_values)
@@ -4453,25 +4549,19 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
             personas, personas_obs = _management_ai_context_service.get_context_personas(
                 lambda: _list_persona_records(tenant_id), record_filter=_tenant_record_filter
             )
-            runtime_bindings, runtime_bindings_obs = _management_ai_context_service.get_context_runtime_bindings(
-                record_filter=_tenant_record_filter
-            )
+            runtime_bindings, runtime_bindings_obs = _get_runtime_bindings()
             incidents, incidents_obs = _management_ai_context_service.get_context_incidents(
                 record_filter=_tenant_record_filter
             )
             evolution_decisions, evolution_decisions_obs = _management_ai_context_service.get_context_evolution_decisions(
                 record_filter=_tenant_record_filter
             )
-            # Telemetry is read exactly once per tenant-scoped runtime
-            # binding, through the same typed owner-observation query used by
-            # the portfolio_book surface, and that single result is shared by
-            # both the per-persona snippet items below and the surface-level
-            # owner_observations aggregate. A second independent read of the
-            # same runtime could observe a different outcome than the first
-            # (e.g. a flaky provider that fails once and recovers), which
-            # would let the snippet and the surface silently disagree about
-            # the same runtime's telemetry.
-            telemetry_by_runtime_id: Dict[str, Tuple[Optional[Dict[str, Any]], Dict[str, Any]]] = {}
+            # Telemetry is read once in batch for all tenant-scoped runtime
+            # bindings (or derived from the request-scoped batch read already
+            # performed within this _mgmt_nl_collect_context call), and that
+            # single result is shared by both the per-persona snippet items
+            # below and the surface-level owner_observations aggregate.
+            fleet_runtime_ids: List[str] = []
             for runtime_binding in runtime_bindings:
                 fleet_runtime_id = str(
                     runtime_binding.get("runtime_id")
@@ -4479,11 +4569,24 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                     or runtime_binding.get("binding_id")
                     or ""
                 )
-                if not fleet_runtime_id or fleet_runtime_id in telemetry_by_runtime_id:
-                    continue
-                telemetry_by_runtime_id[fleet_runtime_id] = _management_ai_context_service.get_context_telemetry_summary(
-                    fleet_runtime_id, record_filter=_tenant_record_filter
+                if fleet_runtime_id and fleet_runtime_id not in fleet_runtime_ids:
+                    fleet_runtime_ids.append(fleet_runtime_id)
+            batch_telemetry_fn = getattr(
+                _management_ai_context_service, "get_context_telemetry_summaries_for_runtimes", None
+            )
+            if callable(batch_telemetry_fn):
+                telemetry_by_runtime_id = batch_telemetry_fn(
+                    fleet_runtime_ids,
+                    record_filter=_tenant_record_filter,
+                    prefetched_by_runtime_id=_cached_unfiltered_telemetry or None,
                 )
+            else:
+                telemetry_by_runtime_id = {
+                    rid: _management_ai_context_service.get_context_telemetry_summary(
+                        rid, record_filter=_tenant_record_filter
+                    )
+                    for rid in fleet_runtime_ids
+                }
             telemetry_observations = [obs for _summary, obs in telemetry_by_runtime_id.values()]
             # Project every persona independently: a raise from one persona's
             # bindings/telemetry/teaching-session owner must not discard the

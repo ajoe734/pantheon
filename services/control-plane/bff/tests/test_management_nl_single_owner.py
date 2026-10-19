@@ -275,3 +275,117 @@ def test_stream_cross_tenant_requests_do_not_share_a_replay(tmp_path, monkeypatc
     finally:
         set_management_nl_read_store(original_store)
         clear_management_nl_sse_buffer("ask")
+
+
+def test_ask_and_stream_transports_bound_telemetry_owner_reads_for_multi_runtime_context(
+    tmp_path, monkeypatch
+) -> None:
+    original_store = get_management_nl_read_store()
+    fake = FakeProviderClient()
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        client = _seeded_client(tmp_path, monkeypatch)
+        store = get_management_nl_read_store()
+
+        base_bindings = store.list_runtime_bindings()
+        extra_alpha_bindings = [
+            {
+                "binding_id": "rb-alpha-2",
+                "runtime_id": "rt-alpha-2",
+                "tenant_id": "tenant-alpha",
+                "capital_pool_id": "pool-alpha",
+                "deployment_stage": "paper",
+                "status": "running",
+            },
+            {
+                "binding_id": "rb-alpha-3",
+                "runtime_id": "rt-alpha-3",
+                "tenant_id": "tenant-alpha",
+                "capital_pool_id": "pool-alpha",
+                "deployment_stage": "paper",
+                "status": "running",
+            },
+        ]
+        base_telemetry = {
+            str(row.get("runtime_id") or row.get("id")): dict(row)
+            for row in store.list_telemetry_summaries()
+            if isinstance(row, dict) and (row.get("runtime_id") or row.get("id"))
+        }
+        for rid, pnl in (("rt-alpha-2", 4.0), ("rt-alpha-3", 6.0)):
+            base_telemetry[rid] = {
+                "runtime_id": rid,
+                "tenant_id": "tenant-alpha",
+                "pnl": pnl,
+                "fill_rate": 0.85,
+                "total_trades": 5,
+                "metrics": {"pnl": pnl, "fill_rate": 0.85, "total_trades": 5},
+                "collected_at": "2026-06-02T00:00:00Z",
+            }
+
+        counts = {"list_telemetry_summaries": 0, "trading_pulse_snippet": 0}
+
+        def counted_list_telemetry_summaries():
+            counts["list_telemetry_summaries"] += 1
+            return list(base_telemetry.values())
+
+        orig_trading_pulse_snippet = bff_main._mgmt_nl_trading_pulse_snippet
+
+        def counted_trading_pulse_snippet(*args, **kwargs):
+            counts["trading_pulse_snippet"] += 1
+            return orig_trading_pulse_snippet(*args, **kwargs)
+
+        monkeypatch.setattr(store, "list_telemetry_summaries", counted_list_telemetry_summaries)
+        monkeypatch.setattr(
+            store, "list_runtime_bindings", lambda: list(base_bindings) + list(extra_alpha_bindings)
+        )
+        monkeypatch.setattr(bff_main, "_mgmt_nl_trading_pulse_snippet", counted_trading_pulse_snippet)
+        monkeypatch.setattr(
+            bff_main,
+            "_build_operator_alerts_payload",
+            lambda _snapshot_at: {"alerts": [], "meta": {"surfaces": {}}},
+        )
+        monkeypatch.setattr(
+            bff_main,
+            "_human_inbox_payload",
+            lambda *args, **kwargs: {"items": [], "meta": {"surfaces": {}}},
+        )
+        monkeypatch.setattr(
+            bff_main,
+            "_build_management_anomalies_payload",
+            lambda _snapshot_at: {"items": [], "meta": {"surfaces": {}}},
+        )
+
+        ask_resp = client.post(
+            "/bff/management/nl/ask",
+            json={
+                "question": "Summarize all surfaces with bounded reads",
+                "focus": "all",
+                "sessionId": "bounded-owner-read-ask",
+            },
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "bounded-owner-read-ask-key"},
+        )
+        assert ask_resp.status_code == 202, ask_resp.text
+        assert counts["list_telemetry_summaries"] == 1
+        assert counts["trading_pulse_snippet"] == 1
+
+        counts["list_telemetry_summaries"] = 0
+        counts["trading_pulse_snippet"] = 0
+
+        stream_resp = client.post(
+            "/bff/management/nl/ask/stream",
+            json={
+                "question": "Stream all surfaces with bounded reads",
+                "focus": "all",
+                "sessionId": "bounded-owner-read-stream",
+            },
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "bounded-owner-read-stream-key"},
+        )
+        assert stream_resp.status_code == 200, stream_resp.text
+        assert counts["list_telemetry_summaries"] == 1
+        assert counts["trading_pulse_snippet"] == 1
+    finally:
+        set_management_nl_read_store(original_store)
+        clear_management_nl_sse_buffer("ask")
+

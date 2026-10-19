@@ -1,0 +1,63 @@
+{
+  "task_id": "DEV-MGMT-NL-CONTEXT-OWNER-READ-20261019",
+  "title": "Bound repeated owner reads in Management NL context collection",
+  "worker": "Antigravity2",
+  "reviewer": "Claude",
+  "branch": "task/DEV-MGMT-NL-CONTEXT-OWNER-READ-20261019",
+  "status": "ready_for_review",
+  "recorded_at": "2026-10-19T23:19:00Z",
+  "changed_files": [
+    "services/control-plane/bff/assistant/management_service.py",
+    "services/control-plane/bff/management_read_models/service.py",
+    "services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
+    "services/control-plane/bff/tests/test_management_nl_single_owner.py",
+    "docs/deployment/evidence/DEV-MGMT-NL-CONTEXT-OWNER-READ-20261019/evidence.json"
+  ],
+  "summary": {
+    "defect": "Management NL context collection (_mgmt_nl_collect_context) repeatedly scanned the full Telemetry owner collection (list_telemetry_summaries) per runtime binding across cockpit, trading_pulse, portfolio, and persona_fleet surfaces, and computed _mgmt_nl_trading_pulse_snippet twice when focus in ('all', '').",
+    "resolution": [
+      "Added ManagementService.get_context_telemetry_summaries_for_runtimes and ManagementService.get_context_monitoring_sessions_for_bindings in services/control-plane/bff/management_read_models/service.py to read list_telemetry_summaries and list_paper_runtime_monitoring_sessions at most once per batch (or derive tenant-filtered observations from a request-scoped batch read without additional store calls) while preserving per-runtime missing->degraded and owner-error->unavailable fail-closed semantics.",
+      "Updated _project_operator_runtime_state_row_impl and _mgmt_nl_scoped_runtime_rows in services/control-plane/bff/assistant/management_service.py to batch-prefetch telemetry summaries and monitoring sessions with their owner observations.",
+      "Updated _mgmt_nl_collect_context in services/control-plane/bff/assistant/management_service.py to reuse request-scoped tenant-filtered runtime bindings, request-scoped batch telemetry summaries, and the computed trading_pulse snippet across cockpit, trading_pulse, portfolio, and persona_fleet within a single request."
+    ]
+  },
+  "acceptance_criteria_verification": [
+    {
+      "criterion": "_mgmt_nl_collect_context and its helper paths do not call list_telemetry_summaries repeatedly per runtime binding during a single Management NL context collection request.",
+      "verified": true,
+      "test": "services/control-plane/bff/tests/test_management_nl_assistant_provider.py::test_mgmt_nl_collect_context_all_bounds_telemetry_owner_reads_and_reuses_trading_pulse_snippet"
+    },
+    {
+      "criterion": "When focus includes both cockpit and trading_pulse, _mgmt_nl_trading_pulse_snippet is not computed twice for identical tenant-scoped runtime bindings within the same request.",
+      "verified": true,
+      "test": "services/control-plane/bff/tests/test_management_nl_assistant_provider.py::test_mgmt_nl_collect_context_all_bounds_telemetry_owner_reads_and_reuses_trading_pulse_snippet"
+    },
+    {
+      "criterion": "Missing telemetry for an individual runtime still marks that runtime observation degraded, and owner exceptions still mark the observation unavailable.",
+      "verified": true,
+      "test": "services/control-plane/bff/tests/test_management_nl_assistant_provider.py::test_mgmt_nl_collect_context_preserves_fail_closed_unavailable_when_telemetry_owner_raises"
+    },
+    {
+      "criterion": "Both POST /bff/management/nl/ask and POST /bff/management/nl/ask/stream benefit from the bounded context read path.",
+      "verified": true,
+      "test": "services/control-plane/bff/tests/test_management_nl_single_owner.py::test_ask_and_stream_transports_bound_telemetry_owner_reads_for_multi_runtime_context"
+    },
+    {
+      "criterion": "Targeted tests cover multi-runtime context collection and assert bounded owner read counts plus preserved observation statuses and tenant scoping.",
+      "verified": true,
+      "test": "services/control-plane/bff/tests/test_management_nl_assistant_provider.py and services/control-plane/bff/tests/test_management_nl_single_owner.py"
+    }
+  ],
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_management_nl_assistant_provider.py services/control-plane/bff/tests/test_management_nl_single_owner.py",
+      "exit_code": 0,
+      "summary": "78 passed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/management_read_models/test_management_service_context_observations.py services/control-plane/bff/tests/test_bff_management_cockpit.py services/control-plane/bff/management_read_models/test_persona_fleet_read_failures.py services/control-plane/bff/test_runtime_state_trades.py services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py services/control-plane/bff/tests/test_main_composition_seam_extraction_006.py",
+      "exit_code": 0,
+      "summary": "96 passed"
+    }
+  ]
+}

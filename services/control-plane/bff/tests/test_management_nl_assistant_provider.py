@@ -3422,3 +3422,181 @@ def test_mgmt_nl_finalize_provider_turn_appends_assistant_turn_and_idempotency(t
     # completion (via command_reservation) is the sole persistence path, and
     # this call passed no reservation, so there is nothing further to assert
     # here beyond the assistant turn being appended exactly once.
+
+
+def test_mgmt_nl_collect_context_all_bounds_telemetry_owner_reads_and_reuses_trading_pulse_snippet(
+    tmp_path, monkeypatch
+) -> None:
+    original_store = get_management_nl_read_store()
+    try:
+        _clear_provider_env(monkeypatch)
+        _seeded_client(tmp_path, monkeypatch)
+        store = get_management_nl_read_store()
+
+        base_bindings = store.list_runtime_bindings()
+        extra_alpha_bindings = [
+            {
+                "binding_id": "rb-alpha-2",
+                "runtime_id": "rt-alpha-2",
+                "tenant_id": "tenant-alpha",
+                "capital_pool_id": "pool-alpha",
+                "deployment_stage": "paper",
+                "status": "running",
+            },
+            {
+                "binding_id": "rb-alpha-missing",
+                "runtime_id": "rt-alpha-missing",
+                "tenant_id": "tenant-alpha",
+                "capital_pool_id": "pool-alpha",
+                "deployment_stage": "paper",
+                "status": "running",
+            },
+        ]
+        base_telemetry = {
+            str(row.get("runtime_id") or row.get("id")): dict(row)
+            for row in store.list_telemetry_summaries()
+            if isinstance(row, dict) and (row.get("runtime_id") or row.get("id"))
+        }
+        base_telemetry["rt-alpha-2"] = {
+            "runtime_id": "rt-alpha-2",
+            "tenant_id": "tenant-alpha",
+            "pnl": 5.5,
+            "fill_rate": 0.9,
+            "total_trades": 6,
+            "metrics": {"pnl": 5.5, "fill_rate": 0.9, "total_trades": 6},
+            "collected_at": "2026-06-02T00:00:00Z",
+        }
+        base_telemetry["rt-alpha"] = {
+            **base_telemetry["rt-alpha"],
+            "tenant_id": "tenant-alpha",
+        }
+        base_telemetry["rt-beta"] = {
+            **base_telemetry["rt-beta"],
+            "tenant_id": "tenant-beta",
+        }
+
+        counts = {
+            "list_telemetry_summaries": 0,
+            "get_telemetry_summary": 0,
+            "list_runtime_bindings": 0,
+            "trading_pulse_snippet": 0,
+        }
+
+        def counted_list_telemetry_summaries() -> list[dict[str, Any]]:
+            counts["list_telemetry_summaries"] += 1
+            return list(base_telemetry.values())
+
+        def counted_get_telemetry_summary(runtime_id: str) -> dict[str, Any] | None:
+            counts["get_telemetry_summary"] += 1
+            return base_telemetry.get(runtime_id)
+
+        def counted_list_runtime_bindings() -> list[dict[str, Any]]:
+            counts["list_runtime_bindings"] += 1
+            return list(base_bindings) + list(extra_alpha_bindings)
+
+        orig_trading_pulse_snippet = bff_main._mgmt_nl_trading_pulse_snippet
+
+        def counted_trading_pulse_snippet(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            counts["trading_pulse_snippet"] += 1
+            return orig_trading_pulse_snippet(*args, **kwargs)
+
+        monkeypatch.setattr(store, "list_telemetry_summaries", counted_list_telemetry_summaries)
+        monkeypatch.setattr(store, "get_telemetry_summary", counted_get_telemetry_summary)
+        monkeypatch.setattr(store, "list_runtime_bindings", counted_list_runtime_bindings)
+        monkeypatch.setattr(store, "list_paper_runtime_monitoring_sessions", lambda **_kwargs: [])
+        monkeypatch.setattr(store, "get_rollbacks", lambda _runtime_id: [])
+        monkeypatch.setattr(bff_main, "_mgmt_nl_trading_pulse_snippet", counted_trading_pulse_snippet)
+        monkeypatch.setattr(
+            bff_main,
+            "_build_operator_alerts_payload",
+            lambda _snapshot_at: {"alerts": [], "meta": {"surfaces": {}}},
+        )
+        monkeypatch.setattr(
+            bff_main,
+            "_human_inbox_payload",
+            lambda *args, **kwargs: {"items": [], "meta": {"surfaces": {}}},
+        )
+        monkeypatch.setattr(
+            bff_main,
+            "_build_management_anomalies_payload",
+            lambda _snapshot_at: {"items": [], "meta": {"surfaces": {}}},
+        )
+
+        context = bff_main._mgmt_nl_collect_context(
+            "all", "2026-06-02T00:05:00Z", tenant_id="tenant-alpha"
+        )
+
+        assert counts["list_telemetry_summaries"] == 1
+        assert counts["get_telemetry_summary"] == 0
+        assert counts["list_runtime_bindings"] == 1
+        assert counts["trading_pulse_snippet"] == 1
+
+        assert (
+            context["snippets"]["cockpit"]["trading_pulse_summary"]
+            == context["snippets"]["trading_pulse"]["summary"]
+        )
+        assert context["snippets"]["portfolio"]["runtime_count"] == 3
+        assert context["snippets"]["portfolio"]["total_pnl"] == 8.0
+
+        # Missing telemetry on rt-alpha-missing must keep degraded status across surfaces
+        assert context["surfaces"]["management_cockpit"]["status"] == "degraded"
+        assert context["surfaces"]["management_trading_pulse"]["status"] == "degraded"
+        assert context["surfaces"]["portfolio_book"]["status"] == "degraded"
+        portfolio_obs = context["surfaces"]["portfolio_book"]["owner_observations"]
+        missing_obs = [
+            obs
+            for obs in portfolio_obs
+            if obs.get("subject_type") == "telemetry" and obs.get("subject_id") == "rt-alpha-missing"
+        ]
+        assert len(missing_obs) == 1
+        assert missing_obs[0]["status"] == "degraded"
+    finally:
+        set_management_nl_read_store(original_store)
+        bff_main._sse_buffers["ask"].clear()
+
+
+def test_mgmt_nl_collect_context_preserves_fail_closed_unavailable_when_telemetry_owner_raises(
+    tmp_path, monkeypatch
+) -> None:
+    original_store = get_management_nl_read_store()
+    try:
+        _clear_provider_env(monkeypatch)
+        _seeded_client(tmp_path, monkeypatch)
+        store = get_management_nl_read_store()
+
+        calls = {"list_telemetry_summaries": 0}
+
+        def failing_list_telemetry_summaries() -> dict[str, Any]:
+            calls["list_telemetry_summaries"] += 1
+            raise RuntimeError("telemetry owner down")
+
+        monkeypatch.setattr(store, "list_telemetry_summaries", failing_list_telemetry_summaries)
+        monkeypatch.setattr(
+            bff_main,
+            "_build_operator_alerts_payload",
+            lambda _snapshot_at: {"alerts": [], "meta": {"surfaces": {}}},
+        )
+        monkeypatch.setattr(
+            bff_main,
+            "_human_inbox_payload",
+            lambda *args, **kwargs: {"items": [], "meta": {"surfaces": {}}},
+        )
+        monkeypatch.setattr(
+            bff_main,
+            "_build_management_anomalies_payload",
+            lambda _snapshot_at: {"items": [], "meta": {"surfaces": {}}},
+        )
+
+        context = bff_main._mgmt_nl_collect_context(
+            "all", "2026-06-02T00:05:00Z", tenant_id="tenant-alpha"
+        )
+
+        assert calls["list_telemetry_summaries"] == 1
+        assert context["surfaces"]["management_cockpit"]["status"] == "unavailable"
+        assert context["surfaces"]["management_trading_pulse"]["status"] == "unavailable"
+        assert context["surfaces"]["portfolio_book"]["status"] == "unavailable"
+        assert context["surfaces"]["persona_fleet"]["status"] == "unavailable"
+    finally:
+        set_management_nl_read_store(original_store)
+        bff_main._sse_buffers["ask"].clear()
+
