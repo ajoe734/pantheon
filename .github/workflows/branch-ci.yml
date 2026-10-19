@@ -573,3 +573,106 @@ jobs:
           else
             echo "no smoke gate configured; skipping"
           fi
+
+  # Parallel to Smoke so the added suites cannot push Smoke past its 30-minute
+  # budget. Each directory runs alone (no repo-wide conftest masking). No
+  # known-failures list, deselect or skip. gov_approval_test backs
+  # services/deployment (GOV_APPROVAL_TEST_DSN, same pattern as
+  # persona-owner-contract.yml); consultation gets its own database.
+  service-suites:
+    name: Service suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs:
+      - trailers
+      - generated-files
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: gov_approval_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        timeout-minutes: 10
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt
+          python3 -m pip install -r services/incidents/requirements.txt
+          python3 -m pip install -r services/postmortems/requirements.txt
+          python3 -m pip install -r services/policy-learning/requirements.txt
+          python3 -m pip install -r services/promotion/requirements.txt
+          python3 -m pip install -r services/deployment/requirements.txt
+          python3 -m pip install -r services/consultation/requirements.txt
+          python3 -m pip install -r services/search/requirements.txt
+          # training-session pins vectorbt 1.1.1 for its real-backend preview test.
+          python3 -m pip install -r services/training-session/requirements.txt
+          # search tests import qdrant_client; take the pin from its own lock.
+          python3 -m pip install "$(grep -E '^qdrant-client==' services/search/requirements.lock)"
+
+      - name: Create consultation database
+        run: |
+          psql -h 127.0.0.1 -U postgres -c 'CREATE DATABASE consultation_test'
+
+      - name: Run incidents service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/incidents
+
+      - name: Run postmortems service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/postmortems
+
+      - name: Run control_plane service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/control_plane
+
+      - name: Run policy-learning service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/policy-learning
+
+      - name: Run training-session service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/training-session
+
+      - name: Run promotion service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/promotion
+
+      - name: Run deployment service tests
+        timeout-minutes: 10
+        env:
+          GOV_APPROVAL_TEST_DSN: postgresql://postgres@127.0.0.1:5432/gov_approval_test
+        run: |
+          python3 -m pytest -q services/deployment
+
+      - name: Run consultation service tests
+        timeout-minutes: 10
+        env:
+          CONSULTATION_STORE_DSN: postgresql://postgres@127.0.0.1:5432/consultation_test
+        run: |
+          python3 -m pytest -q services/consultation
+
+      - name: Run search service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/search
