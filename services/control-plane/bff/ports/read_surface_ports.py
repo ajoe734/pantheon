@@ -347,6 +347,7 @@ class ReadSurfacePorts:
         return self.persona_capital_runtime.list_operational_personas()
 
     def list_capital_pools(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        """Forward capital pool queries (including status and risk_policy_ref) to the domain port."""
         return self.persona_capital_runtime.list_capital_pools(**kwargs)
 
     def get_capital_pool(self, pool_id: Optional[str]) -> Optional[Dict[str, Any]]:

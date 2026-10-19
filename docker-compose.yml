@@ -859,6 +859,7 @@ services:
       # provider degrades with OPENCLAW_GATEWAY_TOKEN_not_set even when the CLI is baked.
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-pantheon-local-token}
       OPENCLAW_AGENT_ID: ${OPENCLAW_AGENT_ID:-main}
+      OPENCLAW_PRIMARY_MODEL: ${OPENCLAW_PRIMARY_MODEL:-openai/gpt-5.6-sol}
       # Agent ensure/reconcile runs in this authenticated adapter container but
       # must mutate the exact gateway-owned state and workspace volume.
       PANTHEON_OPENCLAW_GATEWAY_STATE_DIR: /home/node/.openclaw

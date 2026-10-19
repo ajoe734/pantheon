@@ -280,3 +280,116 @@ def test_lifespan_schedules_first_probe_without_blocking_startup() -> None:
 
     elapsed = asyncio.run(scenario())
     assert elapsed < 0.05
+
+
+@pytest.mark.parametrize("usage_handler_async", [True, False])
+def test_assistant_providers_and_usage_summary_offload_sync_probes_with_contextvars(
+    monkeypatch: pytest.MonkeyPatch,
+    usage_handler_async: bool,
+) -> None:
+    import contextvars
+    import threading
+    from services.control_plane.bff.assistant import management_service
+    from services.control_plane.bff.assistant.routes import create_assistant_router
+
+    req_ctx: contextvars.ContextVar[str] = contextvars.ContextVar("test_req_ctx", default="unset")
+    observed_ctx: list[str] = []
+    release = threading.Event()
+    started = {name: threading.Event() for name in ("providers", "usage")}
+
+    def slow_provider_list(auth_probe: bool = False) -> dict[str, Any]:
+        observed_ctx.append(f"providers:{req_ctx.get()}:{auth_probe}")
+        started["providers"].set()
+        assert release.wait(5), "provider callback was not released while auth ran"
+        return {"status": "ok", "data": [{"provider": "openclaw", "ready": True}]}
+
+    def slow_usage_summary(*, auth_probe: bool = False, limit: int = 50, window_hours: int = 24) -> dict[str, Any]:
+        observed_ctx.append(f"usage:{req_ctx.get()}:{auth_probe}:{limit}:{window_hours}")
+        started["usage"].set()
+        assert release.wait(5), "usage callback was not released while auth ran"
+        return {"status": "ok", "data": {"providers": []}}
+
+    monkeypatch.setattr(management_service, "_extract_identity", lambda _auth, **_kw: object())
+    monkeypatch.setattr(management_service, "_require_read_role", lambda _id: None)
+    monkeypatch.setattr(management_service, "_assistant_provider_usage_summary", slow_usage_summary)
+
+    cache = ProviderReadinessCache(lambda: {"ready": True, "status": "ready"})
+    auth_service = AuthFacadeService(
+        local_readiness=_local_ready,
+        provider_readiness_cache=cache,
+        handlers={
+            "bff_logout": lambda **_kwargs: {"status": "ok"},
+            "bff_me": lambda **_kwargs: {
+                "data": {
+                    "currentUser": {"id": "pantheon-dev-admin-test", "display_name": "admintest"},
+                    "session": {"authenticated": True},
+                }
+            }
+        },
+    )
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def _set_ctx(request, call_next):
+        tok = req_ctx.set(request.headers.get("x-test-ctx", "default-ctx"))
+        try:
+            return await call_next(request)
+        finally:
+            req_ctx.reset(tok)
+
+    app.include_router(create_auth_router(service=auth_service))
+    app.include_router(
+        create_assistant_router(
+            build_context_pack=lambda *_a, **_kw: None,
+            extract_identity=lambda _auth, **_kw: object(),
+            require_read_role=lambda _id: None,
+            provider_list=slow_provider_list,
+            provider_readiness=lambda: {"ready": True},
+        )
+    )
+    # Cover both supported composition paths: the async owner endpoint and
+    # the standalone router's synchronous handler fallback.
+    app.include_router(create_assistant_management_router({
+        "bff_assistant_provider_usage_summary": (
+            management_service.bff_assistant_provider_usage_summary
+            if usage_handler_async else slow_usage_summary
+        ),
+    }))
+
+    async def scenario() -> None:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://bff.test") as client:
+            slow_providers = asyncio.create_task(
+                client.get("/bff/assistant/providers?auth_probe=true", headers={"x-test-ctx": "ctx-p"})
+            )
+            slow_usage = asyncio.create_task(
+                client.get(
+                    "/bff/assistant/providers/usage-summary?auth_probe=true&limit=25&window_hours=12",
+                    headers={"x-test-ctx": "ctx-u"},
+                )
+            )
+            try:
+                # Events prove both external callbacks are still held, so an
+                # accidentally synchronous implementation cannot pass after its
+                # slow work finishes. Deadlines only bound a hung test.
+                for event in started.values():
+                    assert await asyncio.to_thread(event.wait, 5)
+                readiness_resp, me_resp, logout_resp = await asyncio.wait_for(
+                    asyncio.gather(
+                        client.get("/bff/auth/readiness"),
+                        client.get("/bff/me"),
+                        client.post("/bff/logout", json={}),
+                    ),
+                    timeout=5,
+                )
+                assert all(r.status_code == 200 for r in (readiness_resp, me_resp, logout_resp))
+                assert not slow_providers.done()
+                assert not slow_usage.done()
+            finally:
+                release.set()
+                results = await asyncio.gather(slow_providers, slow_usage)
+            assert all(r.status_code == 200 for r in results)
+
+    asyncio.run(scenario())
+    assert "providers:ctx-p:True" in observed_ctx
+    assert "usage:ctx-u:True:25:12" in observed_ctx
