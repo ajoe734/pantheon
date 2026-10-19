@@ -1044,6 +1044,13 @@ def test_infrastructure_health_incident_resolves_through_status_route():
     assert resolved.json()["status"] == "resolved"
     assert resolved.json()["resolved_at"] == "2026-07-27T19:45:00Z"
 
+    owner = client.get("/api/incidents/infra-bff-resolve-001")
+    assert owner.status_code == 200, owner.text
+    refs = owner.json()["telemetry_event_ids"]
+    assert "infra-event-resolve-open" in refs
+    assert "infra-event-resolve-ok" in refs
+    assert refs.count("infra-event-resolve-ok") == 1
+
 
 # ---------------------------------------------------------------------------
 # GET /api/incidents — list

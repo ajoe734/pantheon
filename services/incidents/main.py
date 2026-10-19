@@ -964,6 +964,10 @@ def update_status(
             incident_id,
             body.status,
             resolved_at=body.resolved_at or previous.resolved_at,
+            telemetry_event_ids=[
+                *([body.source_event_id] if body.source_event_id else []),
+                *body.telemetry_event_ids,
+            ],
             expected_snapshot=previous.to_dict(),
         )
     except IncidentError as exc:
