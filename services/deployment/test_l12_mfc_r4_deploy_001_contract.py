@@ -16,6 +16,10 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
+from services.governance.test_approval_authority import (
+    SnapshotApprovalReader,
+    approval_snapshot,
+)
 from services.promotion.main import create_app as create_promotion_app
 from services.registry.strategy_artifact import (
     BUILTIN_STRATEGY_ARTIFACT_PATHS,
@@ -58,6 +62,19 @@ def _sample_approval_payload(artifact, approval_id="apv-l12-deploy-001"):
         "conditions": [],
         "expires_at": "2027-08-13T12:00:00Z",
     }
+
+
+def _approval_reader(mock_responses, approval_id):
+    """Scoped Governance owner read for the mocked approval (no network)."""
+    payload = mock_responses[f"http://gov-svc/api/governance/approvals/{approval_id}"]
+    registry = next(
+        value
+        for url, value in mock_responses.items()
+        if "/api/registry/strategy-artifacts/" in url
+    )
+    return SnapshotApprovalReader(
+        approval_snapshot(candidate_digest=registry["entry"]["checksum"], **payload)
+    )
 
 
 def _sample_registry_payload(registration, approval_id="apv-l12-deploy-001"):
@@ -274,6 +291,9 @@ def test_verify_deploy_authorities_end_to_end_identity_exactness():
         governance_base_url="http://gov-svc",
         capital_base_url="http://cap-svc",
         fetch_json=fake_fetch_json,
+            registry_fetch_json=fake_fetch_json,
+            capital_fetch_json=fake_fetch_json,
+            approval_reader=_approval_reader(mock_responses, apv_id),
     )
 
     assert report["status"] == "passed"
@@ -346,4 +366,7 @@ def test_verify_deploy_authorities_fails_on_unapproved_or_mismatched_approval():
             governance_base_url="http://gov-svc",
             capital_base_url="http://cap-svc",
             fetch_json=fake_fetch_json,
+            registry_fetch_json=fake_fetch_json,
+            capital_fetch_json=fake_fetch_json,
+            approval_reader=_approval_reader(mock_responses, apv_id),
         )
