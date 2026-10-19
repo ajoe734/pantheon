@@ -1,0 +1,18 @@
+{
+  "task_id": "SERVICE-TEST-IMPORT-PATHS-PC-20261019",
+  "postmortems": {
+    "cause": "services.incident.reference_validation builds RuntimeManagerClient at import; client requires PANTHEON_RUNTIME_MANAGER_URL",
+    "production_provides": "docker-compose.yml postmortems service environment: PANTHEON_RUNTIME_MANAGER_URL=http://runtime-manager:8081",
+    "fix": "services/postmortems/conftest.py setdefault of the same env var",
+    "result": "54 passed run alone from repo root, no extra env"
+  },
+  "control_plane": {
+    "cause": "test inserted nonexistent services/execution/runtime-manager into sys.path and imported top-level kill_switch_controller / runtime_binding",
+    "production_provides": "services/control-plane/internal/internal_api.py imports services.runtime_manager (KillSwitchController) as primary path",
+    "fix": "test imports services.runtime_manager.kill_switch_controller / runtime_binding; sys.path edit removed",
+    "result": "11 passed run alone from repo root"
+  },
+  "assertions_removed": 0,
+  "tests_skipped": 0,
+  "production_blocked": false
+}
