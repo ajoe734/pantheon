@@ -719,29 +719,46 @@ def build_postgres_event_reader(
 ) -> tuple[Callable[..., Any], Callable[..., list[dict[str, Any]]]]:
     """Build durable, tenant-scoped, and fetch-bounded event and binding readers querying canonical PostgreSQL."""
     if not str(table).isidentifier(): raise ValueError(f"invalid table name: {table}")
-    import asyncpg, concurrent.futures, json as _json, time
+    import asyncpg, concurrent.futures, json as _json, threading, time
+
+    # asyncpg pools are bound to one event loop, while callers arrive from sync threads and from
+    # inside running loops. A single private loop thread owns one bounded pool; every read hops there.
+    state: dict[str, Any] = {"loop": None, "pool": None, "pool_lock": None}
+    start_lock = threading.Lock()
+
+    def _ensure_loop() -> asyncio.AbstractEventLoop:
+        with start_lock:
+            if state["loop"] is None:
+                loop = asyncio.new_event_loop()
+                state["pool_lock"] = None
+                threading.Thread(target=loop.run_forever, name="telemetry-event-reader", daemon=True).start()
+                state["loop"] = loop
+            return state["loop"]
+
+    async def _get_pool(deadline: float) -> Any:
+        if state["pool"] is not None: return state["pool"]
+        if state["pool_lock"] is None: state["pool_lock"] = asyncio.Lock()
+        async with state["pool_lock"]:
+            if state["pool"] is None:
+                state["pool"] = await asyncpg.create_pool(dsn, min_size=1, max_size=4, timeout=min(deadline, 5.0))
+            return state["pool"]
 
     async def _fetch(sql: str, *args: Any, deadline: float = 5.0) -> list[dict[str, Any]]:
         t0 = time.monotonic()
-        conn = await asyncpg.connect(dsn, timeout=min(deadline, 5.0))
-        try:
+        pool = await _get_pool(deadline)
+        async with pool.acquire(timeout=max(0.01, deadline - (time.monotonic() - t0))) as conn:
             records = await conn.fetch(sql, *args, timeout=max(0.01, deadline - (time.monotonic() - t0)))
-            return [dict({k: v for k, v in (_json.loads(r["payload"]) if isinstance(r["payload"], str) else dict(r["payload"])).items() if k != "ingested_seq"}, **({"ingested_seq": int(r["ingested_seq"])} if "ingested_seq" in r and r["ingested_seq"] is not None else {}), **({"event_id": str(r["event_id"])} if "event_id" in r and r["event_id"] is not None else {})) for r in records]
-        finally:
-            try: await conn.close(timeout=min(1.0, max(0.1, deadline - (time.monotonic() - t0))))
-            except Exception: conn.terminate()
+        return [dict({k: v for k, v in (_json.loads(r["payload"]) if isinstance(r["payload"], str) else dict(r["payload"])).items() if k != "ingested_seq"}, **({"ingested_seq": int(r["ingested_seq"])} if "ingested_seq" in r and r["ingested_seq"] is not None else {}), **({"event_id": str(r["event_id"])} if "event_id" in r and r["event_id"] is not None else {})) for r in records]
 
     def _sync(sql: str, *args: Any, timeout: float = 5.0) -> list[dict[str, Any]]:
-        try: loop = asyncio.get_running_loop()
-        except RuntimeError: loop = None
         try:
-            if loop and loop.is_running():
-                pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-                try: return pool.submit(lambda: asyncio.run(_fetch(sql, *args, deadline=timeout))).result(timeout=timeout)
-                finally: pool.shutdown(wait=False, cancel_futures=True)
-            return asyncio.run(_fetch(sql, *args, deadline=timeout))
+            fut = asyncio.run_coroutine_threadsafe(asyncio.wait_for(_fetch(sql, *args, deadline=timeout), timeout), _ensure_loop())
+            try: return fut.result(timeout=timeout + 0.5)
+            except concurrent.futures.TimeoutError:
+                fut.cancel()
+                raise TimeoutError(f"event read exceeded {timeout:.1f}s deadline") from None
         except Exception as exc:
-            raise RuntimeError(f"PostgreSQL lineage store unavailable: {exc}") from exc
+            raise RuntimeError(f"PostgreSQL lineage store unavailable: {type(exc).__name__}: {exc}") from exc
 
     def _fetch_event(eid: Any, tenant_id: Optional[str] = None, event_types: Optional[Any] = None) -> Any:
         if isinstance(eid, (list, tuple)):
