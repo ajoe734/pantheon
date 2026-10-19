@@ -2140,6 +2140,28 @@ def _routed_strategies_for_persona(persona_id: str) -> int:
     return len(items)
 
 
+def _routed_strategy_counts_by_persona() -> Dict[str, int]:
+    items = _get_active_read_store().list_strategy_specs() or []
+    counts: Dict[str, int] = {}
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        raw_ids = item.get("persona_ids") or item.get("personaIds")
+        if not raw_ids and isinstance(item.get("versions"), list) and item["versions"]:
+            first_ver = item["versions"][0]
+            if isinstance(first_ver, Mapping):
+                raw_ids = first_ver.get("persona_ids") or first_ver.get("personaIds")
+        if not isinstance(raw_ids, list):
+            continue
+        seen_personas = set()
+        for raw_pid in raw_ids:
+            pid = str(raw_pid or "").strip()
+            if pid and pid not in seen_personas:
+                seen_personas.add(pid)
+                counts[pid] = counts.get(pid, 0) + 1
+    return counts
+
+
 # --- _list_persona_records ---
 def _list_persona_records(
     tenant_id: Optional[str] = None,
@@ -3661,6 +3683,7 @@ async def _persona_provisioning_reconciler_loop() -> None:
 
 # --- _project_persona_list_records ---
 def _project_persona_list_records(raw_personas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    routed_counts = _routed_strategy_counts_by_persona() if raw_personas else {}
     items = []
     for raw in raw_personas:
         persona_id = str(raw.get("persona_id") or raw.get("id") or "")
@@ -3668,7 +3691,7 @@ def _project_persona_list_records(raw_personas: List[Dict[str, Any]]) -> List[Di
             _project_persona_dto(
                 raw,
                 overlay=None,
-                routed_strategies=_routed_strategies_for_persona(persona_id),
+                routed_strategies=int(routed_counts.get(persona_id, 0)),
                 evaluate_provisioning=False,
             )
         )
@@ -5970,10 +5993,15 @@ def _project_persona_league_row(
     include_route_policy: bool = True,
     include_health: bool = True,
     include_allowed_actions: bool = True,
+    routed_strategies: Optional[int] = None,
 ) -> Dict[str, Any]:
     persona_id = str(raw.get("persona_id") or raw.get("id") or "")
     metadata = dict(raw.get("metadata") or {}) if isinstance(raw.get("metadata"), dict) else {}
-    routed = _routed_strategies_for_persona(persona_id)
+    routed = (
+        _routed_strategies_for_persona(persona_id)
+        if routed_strategies is None
+        else int(routed_strategies)
+    )
     route_policy = _pm12_persona_route_summary(persona_id) if include_route_policy else None
     capabilities = _pm12_persona_capability_summary(persona_id)
     bindings = _pm12_persona_binding_summary(
@@ -6088,6 +6116,7 @@ def _pm12_persona_league_rows(
     include_route_policy: bool = True,
     include_health: bool = True,
     include_allowed_actions: bool = True,
+    routed_strategy_counts: Optional[Mapping[str, int]] = None,
 ) -> List[Dict[str, Any]]:
     raw_records = _list_persona_records(tenant_id)
     try:
@@ -6179,6 +6208,9 @@ def _pm12_persona_league_rows(
             if runtime_identity:
                 runtimes_by_identity.setdefault(runtime_identity, []).append(runtime)
 
+    if routed_strategy_counts is None:
+        routed_strategy_counts = _routed_strategy_counts_by_persona() if raw_records else {}
+
     enriched_rows: List[Dict[str, Any]] = []
     for raw in raw_records:
         persona_id = str(raw.get("persona_id") or raw.get("id") or "").strip()
@@ -6192,6 +6224,7 @@ def _pm12_persona_league_rows(
             include_route_policy=include_route_policy,
             include_health=include_health,
             include_allowed_actions=include_allowed_actions,
+            routed_strategies=int(routed_strategy_counts.get(persona_id, 0)),
         )
         persona_id = str(projected.get("persona_id") or projected.get("id") or "").strip()
         runtime_candidates: Dict[str, Dict[str, Any]] = {}
@@ -7671,6 +7704,7 @@ def _project_persona_fleet_list_row(
     context_persona: Dict[str, Any],
     snapshot_at: str,
     evolution_decisions: Optional[Sequence[Dict[str, Any]]] = None,
+    routed_strategies: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
     persona_id = _persona_id(persona)
     if not persona_id:
@@ -7866,7 +7900,11 @@ def _project_persona_fleet_list_row(
         or context_metadata.get("league_rank")
     )
     league_score = _as_float(league_entry.get("league_score") or context_metadata.get("league_score"), score)
-    routed = _routed_strategies_for_persona(persona_id)
+    routed = (
+        _routed_strategies_for_persona(persona_id)
+        if routed_strategies is None
+        else int(routed_strategies)
+    )
     drill_target = runtime_id or persona_id
     data_source_status = (
         context_metadata.get("data_source_status")
@@ -8116,10 +8154,16 @@ def _persona_fleet_slim_list_payload(
                 telemetry_cache[runtime_id] = telemetry
     except Exception:
         telemetry_cache = {}
+    league_rows = _pm12_persona_league_rows(
+        state=None,
+        archetype=None,
+        q="",
+        tenant_id=tenant_id,
+    )
     paper_rankings = {
         str(item.get("persona_id") or item.get("id") or "").strip(): item
         for item in _pm12_quarterly_ranking_items(
-            _pm12_persona_league_rows(state=None, archetype=None, q="", tenant_id=tenant_id),
+            league_rows,
             quarter_window=quarter_window,
             telemetry_cache=telemetry_cache,
         )
@@ -8129,6 +8173,17 @@ def _persona_fleet_slim_list_payload(
     personas = list(directory.records_by_id.values())
     canonical_total = len(directory.records_by_id)
     catalog_default_total = len(directory.catalog_defaults_by_id)
+    routed_strategy_counts = (
+        {
+            str(row.get("persona_id") or row.get("id") or "").strip(): int(
+                row.get("routed_strategy_count") or 0
+            )
+            for row in league_rows
+            if str(row.get("persona_id") or row.get("id") or "").strip()
+        }
+        if league_rows
+        else (_routed_strategy_counts_by_persona() if personas else {})
+    )
     league = _get_active_read_store().list_persona_league(include_market_persona_defaults=True)
     bindings = _get_active_read_store().list_bindings(include_market_persona_defaults=True)
     runtimes = _get_active_read_store().list_runtime_bindings(include_market_persona_defaults=True)
@@ -8291,6 +8346,7 @@ def _persona_fleet_slim_list_payload(
             context_persona=context_persona,
             snapshot_at=snapshot_at,
             evolution_decisions=evolution_decisions,
+            routed_strategies=int(routed_strategy_counts.get(persona_id, 0)),
         )
         if row is not None:
             if row.get("capital_mode") == "paper":
@@ -13101,10 +13157,15 @@ def _build_persona_health_items_impl(
     incidents_list = list(read_store.list_incidents() or [])
     all_decisions = list(read_store.list_evolution_decisions() or [])
     all_telemetry = list(read_store.list_telemetry_summaries() or [])
+    personas_list = list(
+        read_store.list_personas(
+            include_market_persona_defaults=include_market_persona_defaults,
+        )
+        or []
+    )
+    routed_strategy_counts = _routed_strategy_counts_by_persona() if personas_list else {}
     items: List[Dict[str, Any]] = []
-    for persona in read_store.list_personas(
-        include_market_persona_defaults=include_market_persona_defaults,
-    ):
+    for persona in personas_list:
         persona_id = _persona_id(persona)
         if not persona_id:
             continue
@@ -13215,7 +13276,7 @@ def _build_persona_health_items_impl(
             risk_flags=risk_flags,
         )
         score = _as_float(league_entry.get("league_score") or context_metadata.get("league_score"), 75.0)
-        routed = _routed_strategies_for_persona(persona_id)
+        routed = int(routed_strategy_counts.get(persona_id, 0))
         open_findings = len(risk_flags) + int(metrics.get("violation_count") or 0)
         drill_target = runtime_id or persona_id
         governance_required = bool(

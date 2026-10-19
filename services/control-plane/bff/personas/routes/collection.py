@@ -62,7 +62,7 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
     _resolve_final_idempotency_key = ctx.resolve_final_idempotency_key
 
     @router.get("/api/v1/personas")
-    async def list_personas(
+    def list_personas(
         lifecycle_state: Optional[str] = None,
         mandate: Optional[str] = None,
         strategy_family: Optional[str] = None,
@@ -90,7 +90,7 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.get("/bff/management/persona-intent")
-    async def bff_management_persona_intent(
+    def bff_management_persona_intent(
         source_type: Optional[str] = None,
         persona_id: Optional[str] = None,
         status: Optional[str] = None,
@@ -403,7 +403,7 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.get("/bff/management/persona-fleet")
-    async def bff_management_persona_fleet(
+    def bff_management_persona_fleet(
         state: Optional[str] = None,
         health: Optional[str] = None,
         deployment_stage: Optional[str] = None,
