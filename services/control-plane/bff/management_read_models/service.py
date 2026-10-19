@@ -2096,32 +2096,6 @@ class ManagementService:
             record_filter=record_filter,
         )
 
-    @classmethod
-    def _can_batch_list_store_method(
-        cls,
-        store: Any,
-        list_method_name: str,
-        item_method_name: str,
-    ) -> bool:
-        if store is None or not callable(getattr(store, list_method_name, None)):
-            return False
-        store_dict = getattr(store, "__dict__", None)
-        if isinstance(store_dict, dict):
-            mock_children = store_dict.get("_mock_children")
-            if isinstance(mock_children, dict):
-                if item_method_name in mock_children and list_method_name not in mock_children:
-                    return False
-            if item_method_name in store_dict and list_method_name not in store_dict:
-                return False
-        if not isinstance(store_dict, dict) or list_method_name not in store_dict:
-            if list_method_name == "list_telemetry_summaries":
-                subport = getattr(store, "lifecycle_telemetry_governance", None)
-                if subport is not None and not cls._can_batch_list_store_method(
-                    subport, list_method_name, item_method_name
-                ):
-                    return False
-        return True
-
     def _build_context_telemetry_summary_result(
         self,
         runtime_id: str,
@@ -2241,15 +2215,12 @@ class ManagementService:
 
         if remaining_runtime_ids:
             store = self._resolve_store()
-            if (
-                store is not None
-                and hasattr(store, "get_telemetry_summary")
-                and self._can_batch_list_store_method(
-                    store, "list_telemetry_summaries", "get_telemetry_summary"
-                )
-            ):
+            list_summaries_fn = (
+                getattr(store, "list_telemetry_summaries", None) if store is not None else None
+            )
+            if callable(list_summaries_fn):
                 try:
-                    raw_summaries = store.list_telemetry_summaries()
+                    raw_summaries = list_summaries_fn()
                 except Exception as exc:
                     for runtime_id in remaining_runtime_ids:
                         observation_owner = owner or runtime_id or "management_ai_context"
@@ -2480,17 +2451,14 @@ class ManagementService:
 
         store = self._resolve_store()
         results: Dict[Tuple[str, str], Tuple[Optional[Dict[str, Any]], Dict[str, Any]]] = {}
-        if (
-            store is not None
-            and hasattr(store, "get_paper_runtime_monitoring_session")
-            and self._can_batch_list_store_method(
-                store,
-                "list_paper_runtime_monitoring_sessions",
-                "get_paper_runtime_monitoring_session",
-            )
-        ):
+        list_sessions_fn = (
+            getattr(store, "list_paper_runtime_monitoring_sessions", None)
+            if store is not None
+            else None
+        )
+        if callable(list_sessions_fn):
             try:
-                raw_sessions = store.list_paper_runtime_monitoring_sessions()
+                raw_sessions = list_sessions_fn()
             except Exception as exc:
                 for runtime_id, binding_id in ordered_keys:
                     observation_owner = owner or runtime_id or "management_ai_context"
@@ -2511,9 +2479,17 @@ class ManagementService:
                             ),
                         )
             else:
+                if isinstance(raw_sessions, Mapping):
+                    session_items: Sequence[Any] = list(raw_sessions.values())
+                elif isinstance(raw_sessions, Sequence) and not isinstance(
+                    raw_sessions, (str, bytes, bytearray)
+                ):
+                    session_items = raw_sessions
+                else:
+                    session_items = list(raw_sessions or [])
                 sessions = [
                     dict(item)
-                    for item in (raw_sessions or [])
+                    for item in session_items
                     if isinstance(item, Mapping)
                 ]
                 for runtime_id, binding_id in ordered_keys:

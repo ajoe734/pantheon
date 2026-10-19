@@ -324,11 +324,38 @@ def test_ask_and_stream_transports_bound_telemetry_owner_reads_for_multi_runtime
                 "collected_at": "2026-06-02T00:00:00Z",
             }
 
-        counts = {"list_telemetry_summaries": 0, "trading_pulse_snippet": 0}
+        counts = {
+            "list_telemetry_summaries": 0,
+            "list_paper_runtime_monitoring_sessions": 0,
+            "trading_pulse_snippet": 0,
+        }
 
         def counted_list_telemetry_summaries():
             counts["list_telemetry_summaries"] += 1
             return list(base_telemetry.values())
+
+        def counted_list_monitoring_sessions():
+            counts["list_paper_runtime_monitoring_sessions"] += 1
+            return [
+                {
+                    "session_id": "mon-alpha-1",
+                    "runtime_id": "rt-alpha",
+                    "binding_id": "rb-alpha",
+                    "status": "running",
+                    "active": True,
+                    "started_at": "2026-06-01T23:00:00Z",
+                    "drift_detected": False,
+                },
+                {
+                    "session_id": "mon-alpha-2",
+                    "runtime_id": "rt-alpha-2",
+                    "binding_id": "rb-alpha-2",
+                    "status": "running",
+                    "active": True,
+                    "started_at": "2026-06-01T23:30:00Z",
+                    "drift_detected": False,
+                },
+            ]
 
         orig_trading_pulse_snippet = bff_main._mgmt_nl_trading_pulse_snippet
 
@@ -337,6 +364,11 @@ def test_ask_and_stream_transports_bound_telemetry_owner_reads_for_multi_runtime
             return orig_trading_pulse_snippet(*args, **kwargs)
 
         monkeypatch.setattr(store, "list_telemetry_summaries", counted_list_telemetry_summaries)
+        monkeypatch.setattr(
+            store,
+            "list_paper_runtime_monitoring_sessions",
+            counted_list_monitoring_sessions,
+        )
         monkeypatch.setattr(
             store, "list_runtime_bindings", lambda: list(base_bindings) + list(extra_alpha_bindings)
         )
@@ -368,9 +400,11 @@ def test_ask_and_stream_transports_bound_telemetry_owner_reads_for_multi_runtime
         )
         assert ask_resp.status_code == 202, ask_resp.text
         assert counts["list_telemetry_summaries"] == 1
+        assert counts["list_paper_runtime_monitoring_sessions"] == 1
         assert counts["trading_pulse_snippet"] == 1
 
         counts["list_telemetry_summaries"] = 0
+        counts["list_paper_runtime_monitoring_sessions"] = 0
         counts["trading_pulse_snippet"] = 0
 
         stream_resp = client.post(
@@ -384,6 +418,7 @@ def test_ask_and_stream_transports_bound_telemetry_owner_reads_for_multi_runtime
         )
         assert stream_resp.status_code == 200, stream_resp.text
         assert counts["list_telemetry_summaries"] == 1
+        assert counts["list_paper_runtime_monitoring_sessions"] == 1
         assert counts["trading_pulse_snippet"] == 1
     finally:
         set_management_nl_read_store(original_store)

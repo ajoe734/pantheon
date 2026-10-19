@@ -2892,13 +2892,7 @@ def reset_project_operator_runtime_state_row() -> None:
     _PROJECT_OPERATOR_RUNTIME_STATE_ROW_FN = _project_operator_runtime_state_row_impl
 
 def _project_operator_runtime_state_row(binding: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
-    fn = get_project_operator_runtime_state_row()
-    if kwargs and fn is not _project_operator_runtime_state_row_impl:
-        try:
-            return fn(binding, **kwargs)
-        except TypeError:
-            return fn(binding)
-    return fn(binding, **kwargs)
+    return get_project_operator_runtime_state_row()(binding, **kwargs)
 
 
 _MANAGEMENT_TELEMETRY_ROLLUP_FN: Optional[Callable[..., Dict[str, Any]]] = None
@@ -4209,18 +4203,39 @@ def _mgmt_nl_scoped_runtime_rows(
     batch_monitoring_fn = getattr(
         _management_ai_context_service, "get_context_monitoring_sessions_for_bindings", None
     )
-    monitoring_by_index = (
+    monitoring_by_key = (
         batch_monitoring_fn(runtime_bindings) if callable(batch_monitoring_fn) else {}
     )
-    for idx, binding in enumerate(runtime_bindings):
+    for binding in runtime_bindings:
         runtime_id = str(binding.get("runtime_id") or binding.get("id") or binding.get("binding_id") or "").strip()
         binding_id = str(binding.get("binding_id") or binding.get("runtime_binding_id") or binding.get("id") or "").strip()
+        row_runtime_id = str(binding.get("runtime_id") or binding.get("id") or "")
+        row_binding_id = str(
+            binding.get("runtime_binding_id")
+            or binding.get("binding_id")
+            or binding.get("id")
+            or ""
+        )
         _mgmt_nl_add_entity(entities, "runtime", runtime_id)
         _mgmt_nl_add_entity(entities, "runtime_binding", binding_id)
         if binding.get("capital_pool_id"):
             _mgmt_nl_add_entity(entities, "capital_pool", binding.get("capital_pool_id"))
-        telemetry_summary, telemetry_obs = effective_telemetry.get(runtime_id, (None, None))
-        monitoring_session, monitoring_obs = monitoring_by_index.get(idx, (None, None))
+        telemetry_summary, telemetry_obs = effective_telemetry.get(
+            runtime_id, effective_telemetry.get(row_runtime_id, (None, None))
+        )
+        monitoring_key = (row_runtime_id, row_binding_id)
+        if monitoring_key in monitoring_by_key:
+            monitoring_session, monitoring_obs = monitoring_by_key[monitoring_key]
+        elif (runtime_id, binding_id) in monitoring_by_key:
+            monitoring_session, monitoring_obs = monitoring_by_key[(runtime_id, binding_id)]
+        elif not callable(batch_monitoring_fn):
+            monitoring_session, monitoring_obs = (
+                _management_ai_context_service.get_context_monitoring_session(
+                    row_runtime_id, row_binding_id
+                )
+            )
+        else:
+            monitoring_session, monitoring_obs = (None, None)
         rows.append(
             _project_operator_runtime_state_row(
                 binding,
