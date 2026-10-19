@@ -654,6 +654,52 @@ SERVICE_ERROR_LINE = re.compile(
     r"|\"failed\":\s*[1-9]"
     r"|\"outcome\":\s*\"(?:blocked|dead_letter)\""
 )
+OPENCLAW_SECRET_ENV_NAMES: tuple[str, ...] = (
+    "PANTHEON_OPENCLAW_ANTHROPIC_API_KEY",
+    "PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN",
+    "PANTHEON_OPENCLAW_OPENAI_OAUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "OPENCLAW_OPENAI_OAUTH_TOKEN",
+)
+
+
+def _redact_openclaw_secrets(text: str, compose_env: Mapping[str, str]) -> str:
+    """Redact any OpenClaw provider credential value present in ``compose_env``."""
+    redacted = text
+    for env_name in OPENCLAW_SECRET_ENV_NAMES:
+        secret = str(compose_env.get(env_name) or "").strip()
+        if secret:
+            redacted = redacted.replace(secret, f"[REDACTED:{env_name}]")
+    return redacted
+
+
+def _openclaw_isolated_auth_posture(
+    compose_env: Mapping[str, str],
+) -> dict[str, Any]:
+    """Summarize non-secret OpenClaw isolated provider auth wiring."""
+    batch_raw = str(
+        compose_env.get("PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH") or ""
+    ).strip()
+    return {
+        "isolated_model_batch_configured": bool(batch_raw),
+        "anthropic_api_key_present": bool(
+            str(compose_env.get("PANTHEON_OPENCLAW_ANTHROPIC_API_KEY") or "").strip()
+        ),
+        "anthropic_workspace_present": bool(
+            str(
+                compose_env.get("PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID") or ""
+            ).strip()
+        ),
+        "claude_code_oauth_token_present": bool(
+            str(
+                compose_env.get("PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN") or ""
+            ).strip()
+        ),
+        "openai_oauth_token_present": bool(
+            str(compose_env.get("PANTHEON_OPENCLAW_OPENAI_OAUTH_TOKEN") or "").strip()
+        ),
+    }
 
 
 def _capture_failure_diagnostics(
@@ -674,7 +720,11 @@ def _capture_failure_diagnostics(
             env=dict(compose_env),
         )
         (out_dir / name).write_text(
-            f"# exit={proc.returncode}\n{proc.stdout}\n{proc.stderr}", encoding="utf-8"
+            _redact_openclaw_secrets(
+                f"# exit={proc.returncode}\n{proc.stdout}\n{proc.stderr}",
+                compose_env,
+            ),
+            encoding="utf-8",
         )
         return proc
 
@@ -710,7 +760,11 @@ def _capture_failure_diagnostics(
             check=False,
             env=dict(compose_env),
         )
-        hits = [line for line in proc.stdout.splitlines() if SERVICE_ERROR_LINE.search(line)]
+        hits = [
+            _redact_openclaw_secrets(line, compose_env)
+            for line in proc.stdout.splitlines()
+            if SERVICE_ERROR_LINE.search(line)
+        ]
         error_sections.append(f"## {service}: {len(hits)} error-signal line(s)")
         error_sections.extend(hits[-SERVICE_ERROR_LINES_PER_SERVICE:])
     (out_dir / "service-error-lines.txt").write_text(
@@ -1094,6 +1148,7 @@ def _augment_report(
     tw_official_pull: Mapping[str, Any] | None = None,
     preclean: Mapping[str, Any] | None,
     teardown: Mapping[str, Any] | None,
+    openclaw_isolated_auth: Mapping[str, Any] | None = None,
 ) -> None:
     report = json.loads(report_path.read_text(encoding="utf-8"))
     if not isinstance(report, dict):
@@ -1103,6 +1158,7 @@ def _augment_report(
         "database_migration": dict(database_migration or {}),
         "tw_official_pull": dict(tw_official_pull or {}),
         "isolated_safe_controls": dict(ISOLATED_SAFE_CONTROLS),
+        "openclaw_isolated_auth": dict(openclaw_isolated_auth or {}),
         "preclean": dict(preclean or {}),
         "teardown": dict(teardown or {}),
     }
@@ -1574,6 +1630,9 @@ def main(argv: list[str] | None = None) -> int:
                     tw_official_pull=tw_official_pull,
                     preclean=preclean,
                     teardown=teardown,
+                    openclaw_isolated_auth=_openclaw_isolated_auth_posture(
+                        compose_env
+                    ),
                 )
             except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
                 print(

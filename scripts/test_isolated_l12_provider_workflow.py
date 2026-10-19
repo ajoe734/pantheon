@@ -50,11 +50,15 @@ def test_original_driver_owns_lease_with_environment_secrets() -> None:
     assert env["PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN"] == (
         "${{ secrets.DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN }}"
     )
+    assert env["PANTHEON_OPENCLAW_OPENAI_OAUTH_TOKEN"] == (
+        "${{ secrets.DEV_OPENCLAW_OPENAI_OAUTH_TOKEN }}"
+    )
+    assert "PANTHEON_OPENCLAW_OPENAI_API_KEY" not in env
     assert env["PANTHEON_ENVIRONMENT_LEASE_TOKEN"] == "${{ secrets.COORDINATION_REPO_TOKEN }}"
     assert "secrets." not in yaml.safe_dump({k: v for k, v in JOB.items() if k != "steps"})
     # Credentials never appear in argv: only the credential-free batch is exported.
     assert not re.search(
-        r"\$\{?PANTHEON_OPENCLAW_(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY|ANTHROPIC_WORKSPACE_ID)",
+        r"\$\{?PANTHEON_OPENCLAW_(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY|ANTHROPIC_WORKSPACE_ID|OPENAI_OAUTH_TOKEN)",
         run,
     )
 
@@ -83,10 +87,18 @@ def test_gateway_bootstrap_is_opt_in_and_fail_closed() -> None:
     ) in COMPOSE_TEXT
     assert "ANTHROPIC_API_KEY: ${PANTHEON_OPENCLAW_ANTHROPIC_API_KEY:-}" in COMPOSE_TEXT
     assert "ANTHROPIC_WORKSPACE_ID: ${PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID:-}" in COMPOSE_TEXT
+    assert "OPENCLAW_OPENAI_OAUTH_TOKEN: ${PANTHEON_OPENCLAW_OPENAI_OAUTH_TOKEN:-}" in COMPOSE_TEXT
+    assert "OPENAI_API_KEY" not in COMPOSE_TEXT
     assert "CODEX_HOME:" not in COMPOSE_TEXT
     start = COMPOSE_TEXT.index('if [ -n \\"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\\" ]')
     startup = COMPOSE_TEXT[start : COMPOSE_TEXT.index("exec node dist/index.js gateway", start)]
-    assert '[ -n \\"$$ANTHROPIC_API_KEY\\" ] && [ -n \\"$$ANTHROPIC_WORKSPACE_ID\\" ] || exit 1' in startup
+    assert (
+        '[ -n \\"$$ANTHROPIC_API_KEY\\" ] && [ -n \\"$$ANTHROPIC_WORKSPACE_ID\\" ] '
+        '&& [ -n \\"$$OPENCLAW_OPENAI_OAUTH_TOKEN\\" ] || exit 1'
+    ) in startup
+    assert "loadAuthProfileStoreForSecretsRuntime" not in startup
+    assert "saveAuthProfileStore" not in startup
+    assert 'config set --batch-json \\"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\\"' in startup
     assert "|| exit 1; fi" in startup
 
 
@@ -210,3 +222,46 @@ def test_preflight_verifies_runner_disk_and_memory_without_broad_deletion() -> N
     assert "df -h" in run and "free -m" in run
     assert "avail_kb" in run and "avail_mem_kb" in run
     assert "rm -rf" not in run
+
+
+def test_harness_redacts_openclaw_secrets_and_records_non_secret_auth_posture_and_teardown(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import json
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    import run_isolated_l12_runtime_e2e as harness  # noqa: E402
+
+    compose_env = {
+        "PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH": '[{"path":"models.providers.openai"}]',
+        "PANTHEON_OPENCLAW_ANTHROPIC_API_KEY": "sk-ant-secret-sentinel-value",
+        "PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID": "wrkspc_non_secret_id",
+        "PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN": "claude-oauth-secret-sentinel",
+        "PANTHEON_OPENCLAW_OPENAI_OAUTH_TOKEN": "openai-oauth-secret-sentinel",
+    }
+    posture = harness._openclaw_isolated_auth_posture(compose_env)
+    assert posture == {
+        "isolated_model_batch_configured": True,
+        "anthropic_api_key_present": True,
+        "anthropic_workspace_present": True,
+        "claude_code_oauth_token_present": True,
+        "openai_oauth_token_present": True,
+    }
+    assert "sentinel" not in json.dumps(posture)
+
+    row = json.dumps({"Service": "openclaw-gateway", "State": "running", "Health": "unhealthy"})
+    err = "ERROR gateway failed with openai-oauth-secret-sentinel and sk-ant-secret-sentinel-value"
+    monkeypatch.setattr(
+        harness.subprocess,
+        "run",
+        lambda cmd, **_kw: type("P", (), {"returncode": 0, "stdout": row if "ps" in cmd else err, "stderr": ""})(),
+    )
+    diag_dir = tmp_path / "diagnostics"
+    harness._capture_failure_diagnostics("l12q", ["docker-compose.yml"], compose_env, diag_dir)
+    for name in ("compose-ps.txt", "logs-openclaw-gateway.txt", "service-error-lines.txt"):
+        content = (diag_dir / name).read_text(encoding="utf-8")
+        assert "openai-oauth-secret-sentinel" not in content
+        assert "sk-ant-secret-sentinel-value" not in content
+    assert "[REDACTED:PANTHEON_OPENCLAW_OPENAI_OAUTH_TOKEN]" in (diag_dir / "service-error-lines.txt").read_text(encoding="utf-8")
+
