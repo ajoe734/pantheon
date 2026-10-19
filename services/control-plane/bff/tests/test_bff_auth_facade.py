@@ -393,3 +393,87 @@ def test_assistant_providers_and_usage_summary_offload_sync_probes_with_contextv
     asyncio.run(scenario())
     assert "providers:ctx-p:True" in observed_ctx
     assert "usage:ctx-u:True:25:12" in observed_ctx
+
+
+@pytest.mark.parametrize(
+    "portfolio_path",
+    [
+        "/bff/management/portfolio-book",
+        "/bff/management/portfolio-book/pools",
+        "/bff/management/portfolio-book/exposure",
+        "/bff/management/portfolio-book/holdings",
+        "/bff/management/portfolio-book/positions",
+    ],
+    ids=["root", "pools", "exposure", "holdings", "positions"],
+)
+def test_portfolio_owner_reads_allow_auth_and_logout_while_pending(
+    portfolio_path: str,
+) -> None:
+    import contextvars
+    import threading
+    from services.control_plane.bff.capital.router import create_capital_router
+
+    tenant = contextvars.ContextVar("portfolio_test_tenant", default="missing")
+    entered = threading.Event()
+    release = threading.Event()
+    observed: list[tuple[str, str]] = []
+
+    class SlowOwner:
+        def list_capital_pools(self, **_kwargs: Any) -> list[dict[str, Any]]:
+            observed.append(("owner", tenant.get()))
+            entered.set()
+            assert release.wait(5), "owner was not released while auth ran"
+            return []
+
+    def require_read(identity: str) -> None:
+        assert identity == "Bearer portfolio-operator"
+        observed.append(("authorization", tenant.get()))
+
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def tenant_scope(request, call_next):
+        token = tenant.set(request.headers.get("x-test-tenant", "auth-context"))
+        try:
+            return await call_next(request)
+        finally:
+            tenant.reset(token)
+
+    app.include_router(create_capital_router(
+        read_surface=SlowOwner(),
+        extract_identity=lambda authorization: authorization,
+        require_read_role=require_read,
+    ))
+    app.include_router(create_auth_router(service=AuthFacadeService(
+        local_readiness=_local_ready,
+        provider_readiness_cache=ProviderReadinessCache(),
+        handlers={
+            "bff_me": lambda **_kw: {"data": {"session": {"authenticated": True}}},
+            "bff_logout": lambda **_kw: {"status": "ok"},
+        },
+    )))
+
+    async def scenario() -> None:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://bff.test"
+        ) as client:
+            portfolio = asyncio.create_task(client.get(
+                portfolio_path,
+                headers={"Authorization": "Bearer portfolio-operator", "X-Test-Tenant": "tenant-a"},
+            ))
+            try:
+                assert await asyncio.to_thread(entered.wait, 5)
+                responses = await asyncio.wait_for(asyncio.gather(
+                    client.get("/bff/auth/readiness"),
+                    client.get("/bff/me"),
+                    client.post("/bff/logout", json={}),
+                ), timeout=5)
+                assert all(r.status_code == 200 for r in responses)
+                assert not portfolio.done(), "owner read finished before auth could run"
+            finally:
+                release.set()
+                result = await portfolio
+            assert result.status_code == 200
+
+    asyncio.run(scenario())
+    assert observed == [("authorization", "tenant-a"), ("owner", "tenant-a")]
