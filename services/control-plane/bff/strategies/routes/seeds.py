@@ -22,9 +22,13 @@ from services.source_ingestion.strategy_seed_store import (
 from .common import StrategyRouteContext
 
 try:
+    from services.control_plane.bff.core.owner_reads import authorization as _owner_auth, selected_tenant as _owner_tenant
     from services.control_plane.bff.models import ErrorCode, OperatorIdentity
+    from services.control_plane.bff.source_management_client import SourceManagementClientError
 except (ImportError, ValueError):
+    from ..core.owner_reads import authorization as _owner_auth, selected_tenant as _owner_tenant  # type: ignore
     from models import ErrorCode, OperatorIdentity
+    from ..source_management_client import SourceManagementClientError  # type: ignore
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +38,23 @@ _SEED_KINDS_NEGATIVE = frozenset({"negative", "negative_memory"})
 
 def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
     router = APIRouter()
+
+    def _bind_caller(auth_header: Optional[str], tenant_header: Optional[str] = None) -> None:
+        if auth_header:
+            _owner_auth.set(auth_header)
+        _owner_tenant.set(tenant_header.strip() if tenant_header and tenant_header.strip() else None)
+
+    def _strategy_seed_owner_error(exc: SourceManagementClientError) -> HTTPException:
+        if exc.error_code in {"seed_not_found", "merge_target_not_found"}:
+            return ctx.bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "StrategySpecSeed not found", exc.message, precondition_failed="seed_id")
+        if exc.status_code in {401, 403}:
+            code = ErrorCode.AUTH_REQUIRED if exc.status_code == 401 else ErrorCode.FORBIDDEN
+            return ctx.bff_error(exc.status_code, code, exc.message, exc.error_code)
+        return ctx.bff_error(
+            503, ErrorCode.DEPENDENCY_UNAVAILABLE, "StrategySpecSeed owner is unavailable", exc.message,
+            precondition_failed="source_ingest",
+            details_extra={"owner": "source-ingest", "upstream_error_code": exc.error_code, "upstream_status": exc.status_code},
+        )
 
     def _require_strategy_seed_submit_role(identity: OperatorIdentity) -> None:
         if {"operator", "admin"}.intersection(identity.roles):
@@ -87,6 +108,8 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
                 operator_id=identity.operator_id,
                 resolved_key=resolved_key,
             )
+        except SourceManagementClientError as exc:
+            raise _strategy_seed_owner_error(exc) from exc
         except StrategySeedReplicationBridgeError as exc:
             raise _strategy_seed_replication_error(exc) from exc
 
@@ -489,9 +512,13 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
         tenant_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         snapshot_at = ctx.utc_now()
+        try:
+            raw_seeds = ctx.service.list_seeds() if ctx.service else []
+        except SourceManagementClientError as exc:
+            raise _strategy_seed_owner_error(exc) from exc
         seeds = [
             seed
-            for seed in (ctx.service.list_seeds() if ctx.service else [])
+            for seed in raw_seeds
             if _strategy_seed_matches_filters(
                 seed,
                 status=status,
@@ -545,7 +572,10 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
         tenant_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         snapshot_at = ctx.utc_now()
-        seed = ctx.service.get_seed(seed_id) if ctx.service else None
+        try:
+            seed = ctx.service.get_seed(seed_id) if ctx.service else None
+        except SourceManagementClientError as exc:
+            raise _strategy_seed_owner_error(exc) from exc
         if seed is None:
             raise ctx.bff_error(
                 404,
@@ -691,6 +721,8 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
                 resolved_key=resolved_key,
                 result_builder=result_builder,
             )
+        except SourceManagementClientError as exc:
+            raise _strategy_seed_owner_error(exc) from exc
         except (StrategySpecSeedReviewError, StrategySpecSeedStoreError) as exc:
             raise _strategy_seed_review_error(exc) from exc
 
@@ -739,6 +771,8 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
                 resolved_key=resolved_key,
                 result_builder=result_builder,
             )
+        except SourceManagementClientError as exc:
+            raise _strategy_seed_owner_error(exc) from exc
         except (StrategySpecSeedReviewError, StrategySpecSeedStoreError) as exc:
             raise _strategy_seed_review_error(exc) from exc
 
@@ -752,8 +786,10 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
         page_token: Optional[str] = None,
         page_size: int = Query(default=50, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ):
         """BFF: governed StrategySpecSeed review inbox read model."""
+        _bind_caller(authorization, x_tenant_id)
         identity = ctx.extract_identity(authorization)
         ctx.require_read_role(identity)
         return _strategy_seed_list_response(
@@ -771,8 +807,10 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
     async def bff_get_strategy_seed_card(
         seed_id: str,
         authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ):
         """BFF: governed StrategySpecSeed review card."""
+        _bind_caller(authorization, x_tenant_id)
         identity = ctx.extract_identity(authorization)
         ctx.require_read_role(identity)
         return _strategy_seed_detail_response(
@@ -785,10 +823,12 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
         seed_id: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         """BFF: apply a governed StrategySpecSeed review decision."""
+        _bind_caller(authorization, x_tenant_id)
         identity = ctx.extract_identity(authorization)
         _require_strategy_seed_review_role(identity)
         ctx.reject_body_idempotency_key(payload)
@@ -805,10 +845,12 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
         seed_id: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         """BFF: merge a StrategySpecSeed candidate into another seed candidate."""
+        _bind_caller(authorization, x_tenant_id)
         identity = ctx.extract_identity(authorization)
         _require_strategy_seed_review_role(identity)
         ctx.reject_body_idempotency_key(payload)
@@ -825,10 +867,12 @@ def build_seeds_router(ctx: StrategyRouteContext) -> APIRouter:
         seed_id: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         """BFF: submit a promoted StrategySpecSeed to research replication."""
+        _bind_caller(authorization, x_tenant_id)
         identity = ctx.extract_identity(authorization)
         _require_strategy_seed_submit_role(identity)
         ctx.reject_body_idempotency_key(payload)
