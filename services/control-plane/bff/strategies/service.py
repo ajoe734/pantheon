@@ -167,10 +167,10 @@ class StrategiesService:
 
     def get_strategy(self, strategy_id: str) -> Optional[Dict[str, Any]]:
         read_store = self._get_read_store_port()
-        for attr in ("get_strategy_spec", "get_strategy"):
-            getter = getattr(read_store, attr, None)
-            if callable(getter) and (res := self._invoke_read_owner(getter, strategy_id)):
-                return res
+        if callable(getter := getattr(read_store, "get_strategy_spec", None)) and (res := self._invoke_read_owner(getter, strategy_id)):
+            return res
+        if callable(getter := getattr(read_store, "get_strategy", None)) and (res := self._invoke_read_owner(getter, strategy_id)):
+            return res
         return None
 
     def ensure_strategy_exists(self, strategy_id: str) -> None:
