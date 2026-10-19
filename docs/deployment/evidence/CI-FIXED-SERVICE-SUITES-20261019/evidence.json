@@ -9,7 +9,7 @@
   "postgres": {
     "service": "postgres:16-alpine, trust auth, POSTGRES_DB gov_approval_test",
     "deployment": "GOV_APPROVAL_TEST_DSN=postgresql://postgres@127.0.0.1:5432/gov_approval_test",
-    "consultation": "CONSULTATION_STORE_DSN=postgresql://postgres@127.0.0.1:5432/consultation_test (database created by a psql step)"
+    "consultation": "DATABASE_URL=postgresql://postgres@127.0.0.1:5432/consultation_test (database and rankings.rankings table created by setup step; the BFF import in the e2e tests needs it)"
   },
   "dependencies": "Each service requirements.txt, root requirements.txt, and qdrant-client pinned from services/search/requirements.lock; training-session requirements install vectorbt==1.1.1.",
   "local_verification": {
@@ -27,5 +27,7 @@
     },
     "workflow_contract": "python3 -m unittest scripts.test_branch_ci_gate_selection: 13 OK"
   },
-  "pending": "deployment and consultation pass only in the PR CI run, which has the Postgres service."
+  "pending": "deployment and consultation pass only in the PR CI run, which has the Postgres service.",
+  "incidents_isolation_fix": "services/incidents/test_main_routes.py re-wires the module performance subscriber after clear_performance_subscribers(); without it five replay-suite tests failed on a clean INCIDENTS_DATA_DIR (CI) while stale /tmp/pantheon/incidents state masked it locally. Verified 92 passed with a fresh INCIDENTS_DATA_DIR.",
+  "ci_run_observed": "Run on 8fa48809c: incidents, postmortems, control_plane, policy-learning, training-session, promotion, deployment (219 passed) green; consultation needed DATABASE_URL plus the rankings table, added in the next commit."
 }

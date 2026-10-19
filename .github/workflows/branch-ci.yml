@@ -627,6 +627,11 @@ jobs:
       - name: Create consultation database
         run: |
           psql -h 127.0.0.1 -U postgres -c 'CREATE DATABASE consultation_test'
+          # The consultation e2e tests import the BFF, whose read-only rankings
+          # reader (RANKING_STORE_DSN or DATABASE_URL) never bootstraps its table.
+          # Let the rankings owner store create it, as the rankings service does.
+          DATABASE_URL=postgresql://postgres@127.0.0.1:5432/consultation_test \
+            python3 -c "from services.foundation.postgres_json_store import PostgresJsonOwnerStore as S; import os; S(dsn=os.environ['DATABASE_URL'], table='rankings.rankings', owner_service='rankings-svc')"
 
       - name: Run incidents service tests
         timeout-minutes: 10
@@ -668,7 +673,7 @@ jobs:
       - name: Run consultation service tests
         timeout-minutes: 10
         env:
-          CONSULTATION_STORE_DSN: postgresql://postgres@127.0.0.1:5432/consultation_test
+          DATABASE_URL: postgresql://postgres@127.0.0.1:5432/consultation_test
         run: |
           python3 -m pytest -q services/consultation
 
