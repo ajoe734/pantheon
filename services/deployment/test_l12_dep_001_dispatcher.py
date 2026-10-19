@@ -310,6 +310,7 @@ def test_approved_paper_command_reaches_terminal_plan_and_binding(
         environment.setenv("DEPLOYMENT_GOVERNANCE_SERVICE_TOKEN", owners["governance_token"])
         environment.setenv("RUNTIME_MANAGER_GOVERNANCE_SERVICE_TOKEN", owners["governance_token"])
         environment.setenv("RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN", owners["registry_token"])
+        environment.setenv("RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN", "synthetic-capital-read-principal")
         environment.setenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL", owners["governance_url"])
         environment.setenv("PANTHEON_REGISTRY_API_URL", owners["registry_url"])
         environment.setenv("PANTHEON_CAPITAL_API_URL", "http://capital.test")
@@ -351,6 +352,7 @@ def test_approved_paper_command_reaches_terminal_plan_and_binding(
                     "capital_pool_id": "pool-l12-dep",
                     "sponsor_persona_id": "persona-l12-dep",
                     "target_stage": "paper",
+                    "metadata": {"symbol": "2330.TW"},
                     "rollback": {
                         "target_artifact_id": "artifact-rollback",
                         "target_version": "0.9.0",
@@ -452,7 +454,10 @@ def test_approved_paper_command_reaches_terminal_plan_and_binding(
                 raise AssertionError('Owner approval/Registry read escaped its scoped transport: '+url)
 
             def _authority_report(*, saga, plan):
-                with patch.object(worker, '_fetch_authority_json', side_effect=_authority_fetch):
+                with (
+                    patch.object(worker, '_fetch_authority_json', side_effect=_authority_fetch),
+                    patch.object(runtime_authority, '_fetch_json', side_effect=_runtime_read),
+                ):
                     return worker.verify_binding_deploy_authorities(
                         saga=saga or plan, plan=plan, persona_capital_binding_id='pcb-l12-dep',
                         persona_capital_binding_status='active', allowed_deployment_scope='paper',
@@ -548,6 +553,7 @@ def test_approved_paper_command_reaches_terminal_plan_and_binding(
                         )
                     ),
                 ),
+                patch.object(runtime_authority, "_fetch_json", side_effect=_runtime_read),
                 patch.object(worker, "RuntimeManagerClient", return_value=runtime_client),
                 patch.object(worker.urllib.request, "urlopen", side_effect=_unexpected_urlopen),
             ):
