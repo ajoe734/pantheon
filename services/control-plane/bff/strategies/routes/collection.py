@@ -28,16 +28,17 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         identity = ctx.extract_identity(authorization)
         ctx.require_read_role(identity)
         snapshot_at = ctx.utc_now()
-        summaries = ctx.service.list_strategy_summaries() if ctx.service else ctx.list_strategy_summaries_records()
+        summaries = ctx.service._invoke_read_owner(ctx.service.list_strategy_summaries) if ctx.service else ctx.list_strategy_summaries_records()
+        if not isinstance(summaries, list):
+            raise ctx.bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Invalid strategy list payload", "strategy_store_unavailable")
         if persona_id:
-            summaries = [
-                s for s in summaries
-                if persona_id in (s.get("persona_ids") or [])
-            ]
+            summaries = [s for s in summaries if isinstance(s, dict) and persona_id in (s.get("persona_ids") or [])]
         items = []
         for summary in summaries:
-            strategy_id = str(summary.get("strategy_id") or "")
-            detail = ctx.service.get_strategy_spec_detail(strategy_id, version_selector="current") if ctx.service else None
+            strategy_id = str(summary.get("strategy_id") or summary.get("id") or "").strip() if isinstance(summary, dict) else ""
+            if not strategy_id:
+                raise ctx.bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Invalid strategy summary entry", "strategy_store_unavailable")
+            detail = summary if "current_spec_version_id" in summary else (ctx.service.get_strategy_spec_detail(strategy_id, version_selector="current") if ctx.service else None)
             items.append(ctx.project_strategy_dto(summary, detail=detail))
         if state:
             items = [s for s in items if s.get("state") == state]

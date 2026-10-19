@@ -1,0 +1,101 @@
+{
+  "task_id": "BFF-STRATEGY-LIST-EXISTING-REGISTRY-OWNER-20261019",
+  "title": "Bind BFF strategy list and StrategySpec list to the existing Registry HTTP StrategySpec owner without new store or fallback",
+  "status": "ready_for_review",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "scope_compliance": {
+    "declared_files_only": [
+      "services/control-plane/bff/ports/research_knowledge_source.py",
+      "services/control-plane/bff/strategies/routes/collection.py",
+      "services/registry/service.py",
+      "services/registry/split_api.py",
+      "services/registry/test_service.py",
+      "services/control-plane/bff/tests/test_research_knowledge_source_ports.py",
+      "services/control-plane/bff/test_kw05_strategy_spec_contract.py",
+      "docs/deployment/evidence/BFF-STRATEGY-LIST-EXISTING-REGISTRY-OWNER-20261019/evidence.json"
+    ],
+    "production_line_diff": {
+      "services/control-plane/bff/ports/research_knowledge_source.py": {
+        "added": 57,
+        "deleted": 93,
+        "net": -36
+      },
+      "services/control-plane/bff/strategies/routes/collection.py": {
+        "added": 8,
+        "deleted": 7,
+        "net": 1
+      },
+      "services/registry/service.py": {
+        "added": 37,
+        "deleted": 14,
+        "net": 23
+      },
+      "services/registry/split_api.py": {
+        "added": 3,
+        "deleted": 0,
+        "net": 3
+      },
+      "net_production_lines": -9,
+      "net_production_line_budget_max": 80
+    },
+    "evidence_manifest_line_budget_max": 400
+  },
+  "architecture_summary": {
+    "canonical_owner": "Registry StrategySpec HTTP owner (/api/registry/strategy-specs and /api/registry/strategies/{strategy_id}/strategy-specs)",
+    "changes": [
+      {
+        "file": "services/registry/split_api.py",
+        "summary": "Added RegistryService.list_all_entries() projecting store.list_all_entries() into RegistryEntryView objects."
+      },
+      {
+        "file": "services/registry/service.py",
+        "summary": "Added tenant-scoped GET /api/registry/strategy-specs and shared _filter_strategy_spec_views enforcing _authenticate_registry_read, _can_read, and X-Tenant-Id caller-tenant alignment."
+      },
+      {
+        "file": "services/control-plane/bff/ports/research_knowledge_source.py",
+        "summary": "Removed process-local services.registry.storage.get_store() import and try/except Exception: pass fallback from list_strategy_specs(); bound list_strategy_specs() and _resolve_canonical_strategy_spec() to _fetch_canonical_strategy_specs() over HTTP with deterministic semver+timestamp version ordering and fail-closed 403/503 error mapping."
+      },
+      {
+        "file": "services/control-plane/bff/strategies/routes/collection.py",
+        "summary": "Validated canonical list payload shape in GET /bff/strategies and projected strategy DTOs directly from canonical summary/current-version fields without per-row detail HTTP fanout."
+      }
+    ]
+  },
+  "validation": {
+    "test_suites": [
+      {
+        "file": "services/control-plane/bff/test_kw05_strategy_spec_contract.py",
+        "result": "5 passed in 6.51s"
+      },
+      {
+        "file": "services/control-plane/bff/tests/test_research_knowledge_source_ports.py",
+        "result": "37 passed in 11.12s"
+      },
+      {
+        "file": "services/registry/test_service.py",
+        "result": "93 passed in 30.20s"
+      }
+    ],
+    "total_passed": 135,
+    "total_failed": 0
+  },
+  "acceptance_criteria_verification": {
+    "1_canonical_registry_list_readback": {
+      "status": "verified",
+      "details": "GET /bff/strategies, GET /api/v1/knowledge/strategy-specs, and DefaultResearchKnowledgeSourcePort.list_strategy_specs() read canonical StrategySpec entries from the Registry HTTP owner (GET /api/registry/strategy-specs) using caller authorization and verified caller tenant."
+    },
+    "2_deterministic_version_projection_and_no_local_fallback": {
+      "status": "verified",
+      "details": "Removed in-process services.registry.storage.get_store() and except Exception: pass from list_strategy_specs(). Canonical current_spec_version_id, current_spec_version, version_count, lifecycle_state, title, persona_ids, and last_modified_at are projected from Registry entries ordered deterministically across multiple versions of the same strategy_id."
+    },
+    "3_empty_and_fail_closed_semantics": {
+      "status": "verified",
+      "details": "Legitimate empty tenant Registry returns 200 with items: [] and total: 0; foreign-tenant entries or 401/403 owner responses fail closed with 403 FORBIDDEN; unavailable Registry, unconfigured Registry URL, missing caller authorization, or malformed Registry payloads fail closed with 503 DEPENDENCY_UNAVAILABLE."
+    },
+    "4_focused_unit_and_integration_tests": {
+      "status": "verified",
+      "details": "Added focused tests in services/registry/test_service.py, services/control-plane/bff/tests/test_research_knowledge_source_ports.py, and services/control-plane/bff/test_kw05_strategy_spec_contract.py."
+    }
+  }
+}

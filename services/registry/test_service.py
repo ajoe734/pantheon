@@ -3007,3 +3007,108 @@ def test_deployment_view_composes_from_runtime_binding_and_deployment_plan_Acros
             assert resp_bad.status_code == 503, f"Expected 503 for {bad_bindings} / {bad_plans}, got {resp_bad.status_code}: {resp_bad.text}"
 
 
+def test_list_all_strategy_spec_entries_tenant_scoped_and_artifact_state_filter(strict_client):
+    token_a = _jwt(subject="op-a", tenant="tenant-a")
+    token_b = _jwt(subject="op-b", tenant="tenant-b")
+    token_admin = _jwt(subject="svc-bff", tenant="tenant-a", roles=["admin"])
+
+    r_a1_v1 = strict_client.post(
+        "/api/registry/strategy-specs",
+        json={
+            "registry_id": "reg-spec-a1-v1",
+            "strategy_id": "strat-list-a1",
+            "version": "1.0.0",
+            "source_seed_id": "seed-a1",
+            "strategy_spec": _minimal_strategy_spec("strat-list-a1"),
+        },
+        headers=_bearer(token_a),
+    )
+    assert r_a1_v1.status_code == 200, r_a1_v1.text
+    for target, expected in (("candidate", "draft"), ("approved", "candidate")):
+        adv = advance_registry_http(
+            strict_client,
+            "/api/registry/strategy-specs/reg-spec-a1-v1/advance",
+            json={"target_state": target, "expected_artifact_state": expected},
+            headers=_bearer(token_a),
+        )
+        assert adv.status_code == 200, adv.text
+
+    spec_v2 = _minimal_strategy_spec("strat-list-a1")
+    spec_v2["title"] = "Strat List A1 v2"
+    r_a1_v2 = strict_client.post(
+        "/api/registry/strategy-specs",
+        json={
+            "registry_id": "reg-spec-a1-v2",
+            "strategy_id": "strat-list-a1",
+            "version": "1.1.0",
+            "artifact_state": "candidate",
+            "lineage": {"parent_registry_ids": ["reg-spec-a1-v1"], "source_strategy_spec_id": "reg-spec-a1-v1"},
+            "strategy_spec": spec_v2,
+        },
+        headers=_bearer(token_a),
+    )
+    assert r_a1_v2.status_code == 200, r_a1_v2.text
+
+    r_b1 = strict_client.post(
+        "/api/registry/strategy-specs",
+        json={
+            "registry_id": "reg-spec-b1-v1",
+            "strategy_id": "strat-list-b1",
+            "version": "1.0.0",
+            "source_seed_id": "seed-b1",
+            "strategy_spec": _minimal_strategy_spec("strat-list-b1"),
+        },
+        headers=_bearer(token_b),
+    )
+    assert r_b1.status_code == 200, r_b1.text
+
+    r_bundle = strict_client.post(
+        "/api/registry/entries",
+        json={
+            "artifact_type": "execution_bundle",
+            "strategy_id": "strat-list-a1",
+            "version": "1.0.0",
+            "storage_ref": {"backend": "inline", "path": "inline://bundles/b1"},
+            "checksum": "sha256:bundle-list-a1",
+            "lineage": {"parent_registry_ids": ["reg-spec-a1-v1"], "source_strategy_spec_id": "reg-spec-a1-v1"},
+        },
+        headers=_bearer(token_a),
+    )
+    assert r_bundle.status_code == 200, r_bundle.text
+
+    resp_a = strict_client.get(
+        "/api/registry/strategy-specs",
+        headers={**_bearer(token_a), "X-Tenant-Id": "tenant-a"},
+    )
+    assert resp_a.status_code == 200, resp_a.text
+    ids_a = {item["entry"]["registry_id"] for item in resp_a.json()}
+    assert {"reg-spec-a1-v1", "reg-spec-a1-v2"}.issubset(ids_a)
+    assert "reg-spec-b1-v1" not in ids_a
+    assert all(item["entry"]["artifact_type"] == "strategy_spec" for item in resp_a.json())
+
+    resp_approved = strict_client.get(
+        "/api/registry/strategy-specs?artifact_state=approved",
+        headers=_bearer(token_a),
+    )
+    assert resp_approved.status_code == 200, resp_approved.text
+    approved_ids = {item["entry"]["registry_id"] for item in resp_approved.json()}
+    assert "reg-spec-a1-v1" in approved_ids
+    assert "reg-spec-a1-v2" not in approved_ids
+
+    resp_mismatch = strict_client.get(
+        "/api/registry/strategy-specs",
+        headers={**_bearer(token_a), "X-Tenant-Id": "tenant-b"},
+    )
+    assert resp_mismatch.status_code == 403, resp_mismatch.text
+
+    resp_admin_mismatch = strict_client.get(
+        "/api/registry/strategies/strat-list-a1/strategy-specs",
+        headers={**_bearer(token_admin), "X-Tenant-Id": "tenant-b"},
+    )
+    assert resp_admin_mismatch.status_code == 403, resp_admin_mismatch.text
+
+    resp_unauth = strict_client.get("/api/registry/strategy-specs")
+    assert resp_unauth.status_code == 401, resp_unauth.text
+
+
+
