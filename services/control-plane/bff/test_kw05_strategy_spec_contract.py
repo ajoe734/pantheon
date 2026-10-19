@@ -494,3 +494,211 @@ def test_kw05_compare_rejects_missing_duplicate_and_noncomparable_versions() -> 
         payload = noncomparable_response.json()
         assert payload["error"]["code"] == "OPERATION_NOT_ALLOWED"
         assert payload["error"]["details"]["precondition_failed"] == "lifecycle_state"
+
+
+def test_kw05_and_strategies_service_registry_http_owner_read_contract(monkeypatch) -> None:
+    import urllib.error
+    import pytest
+    from fastapi import HTTPException
+    from services.control_plane.bff.command_adapters import base as adapter_base
+    from services.control_plane.bff.core import owner_reads
+    from services.control_plane.bff.core.owner_reads import OwnerReadContextMiddleware
+    from services.control_plane.bff.ports import ReadSurfacePorts
+    from services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort
+    from services.control_plane.bff.strategies.service import StrategiesService
+
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "1")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry.internal")
+
+    strategy_id = "strategy-persona-aa060d53ff712cbba704"
+    registry_id = "reg-strategy-spec-persona-aa060d53ff712cbba704"
+    tenant_id = "tenant-dev"
+
+    def make_entry(owner_tenant: str = tenant_id) -> dict:
+        return {
+            "registry_id": registry_id,
+            "artifact_type": "strategy_spec",
+            "artifact_state": "approved",
+            "version": "1.0.0",
+            "strategy_id": strategy_id,
+            "owner_tenant": owner_tenant,
+            "lineage": {
+                "source_strategy_spec_id": strategy_id,
+                "parent_registry_ids": ["reg-strategy-spec-persona-baseline-aa060d53ff712cbba704"],
+            },
+            "evaluation_summary": {"risk_level": "medium"},
+            "metadata": {
+                "title": "Original Workshop Strategy Spec",
+                "persona_id": "persona-132519698e6199e80326",
+                "strategy_spec": {
+                    "strategy_id": strategy_id,
+                    "spec_version": "1.0",
+                    "lifecycle_state": "candidate",
+                    "title": "Original Workshop Strategy Spec",
+                    "hypothesis": "Cross-session orderflow imbalance mean-reverts.",
+                    "objective": "Capture intraday reversion with bounded drawdown.",
+                    "market_scope": {"symbols": ["BTCUSDT"], "frequency": "1h"},
+                    "execution_profile": {"signal_schema_version": "1.0", "execution_mode_hint": "paper"},
+                    "evaluation_plan": {"metrics": ["sharpe_ratio"]},
+                    "governance": {"approval_required": True},
+                    "metadata": {"tenant_id": owner_tenant, "persona_id": "persona-132519698e6199e80326"},
+                },
+            },
+            "created_at": "2026-10-18T10:00:00Z",
+            "updated_at": "2026-10-18T12:00:00Z",
+            "last_actor": {"actor_id": "op-workshop"},
+        }
+
+    port = DefaultResearchKnowledgeSourcePort()
+    assert port._strategy_specs == {}
+    read_ports = ReadSurfacePorts(research_knowledge_source=port)
+    app = _build_test_app(read_ports)
+    app.add_middleware(OwnerReadContextMiddleware)
+
+    tenant_token = f"Bearer op-2:operator:{tenant_id}"
+    headers = {"Authorization": tenant_token, "X-Tenant-Id": tenant_id}
+    with TestClient(app, raise_server_exceptions=False) as client:
+        monkeypatch.setattr(adapter_base, "http_request_json", lambda *a, **k: [make_entry(tenant_id)])
+
+        # 1. Detail by registry_id selector and default current selector
+        by_reg_resp = client.get(
+            f"/api/v1/knowledge/strategy-specs/{strategy_id}?version={registry_id}",
+            headers=headers,
+        )
+        assert by_reg_resp.status_code == 200, by_reg_resp.text
+        detail = by_reg_resp.json()
+        assert detail["strategy_id"] == strategy_id
+        assert detail["spec_version_id"] == registry_id
+        assert detail["spec_version"] == "1.0.0"
+        assert detail["lifecycle_state"] == "approved"
+        assert detail["parent_spec_version_id"] == "reg-strategy-spec-persona-baseline-aa060d53ff712cbba704"
+
+        versions_resp = client.get(
+            f"/api/v1/knowledge/strategy-specs/{strategy_id}/versions",
+            headers=headers,
+        )
+        assert versions_resp.status_code == 200, versions_resp.text
+        assert versions_resp.json()["versions"][0]["spec_version_id"] == registry_id
+
+        # 2. Missing entry (200 []) or missing version selector -> 404
+        missing_ver_resp = client.get(
+            f"/api/v1/knowledge/strategy-specs/{strategy_id}?version=nonexistent-ver",
+            headers=headers,
+        )
+        assert missing_ver_resp.status_code == 404, missing_ver_resp.text
+
+        monkeypatch.setattr(adapter_base, "http_request_json", lambda *a, **k: [])
+        missing_resp = client.get(
+            f"/api/v1/knowledge/strategy-specs/{strategy_id}",
+            headers=headers,
+        )
+        assert missing_resp.status_code == 404, missing_resp.text
+
+        # 3. Foreign tenant -> 403
+        monkeypatch.setattr(adapter_base, "http_request_json", lambda *a, **k: [make_entry("tenant-other")])
+        forbidden_resp = client.get(
+            f"/api/v1/knowledge/strategy-specs/{strategy_id}",
+            headers=headers,
+        )
+        assert forbidden_resp.status_code == 403, forbidden_resp.text
+
+        # 4. Unavailable Registry (503 or untyped 404 route error) -> 503
+        def raise_404(*a, **k):
+            raise urllib.error.HTTPError("http://registry.internal", 404, "Not Found", hdrs=None, fp=None)
+
+        def raise_503(*a, **k):
+            raise urllib.error.HTTPError("http://registry.internal", 503, "Unavailable", hdrs=None, fp=None)
+
+        monkeypatch.setattr(adapter_base, "http_request_json", raise_404)
+        http_404_resp = client.get(
+            f"/api/v1/knowledge/strategy-specs/{strategy_id}",
+            headers=headers,
+        )
+        assert http_404_resp.status_code == 503, http_404_resp.text
+
+        monkeypatch.setattr(adapter_base, "http_request_json", raise_503)
+        unavail_resp = client.get(
+            f"/api/v1/knowledge/strategy-specs/{strategy_id}",
+            headers=headers,
+        )
+        assert unavail_resp.status_code == 503, unavail_resp.text
+
+    # 5. StrategiesService read methods propagate owner reads, 404, 403, and 503
+    #    even when strategy_write_owner is injected (matching production app_factory).
+    class _PoisonedLocalWriteOwner:
+        def get_strategy(self, sid: str):
+            return {"strategy_id": sid, "title": "Poisoned Local Writer Fallback"}
+
+    port._strategy_specs[strategy_id] = {"strategy_id": strategy_id, "title": "Poisoned Local Cache"}
+    svc = StrategiesService(
+        read_surface=read_ports,
+        strategy_write_owner=lambda: _PoisonedLocalWriteOwner(),
+        bff_error=auth_policy.bff_error,
+        utc_now=utc_now,
+    )
+    tok_auth = owner_reads.authorization.set(tenant_token)
+    tok_tenant = owner_reads.selected_tenant.set(tenant_id)
+    try:
+        monkeypatch.setattr(adapter_base, "http_request_json", lambda *a, **k: [make_entry(tenant_id)])
+        spec_detail = svc.get_strategy_spec_detail(strategy_id, version_selector=registry_id)
+        assert spec_detail is not None
+        assert spec_detail["spec_version_id"] == registry_id
+        assert spec_detail["strategy_spec_registry_id"] == registry_id
+        assert spec_detail["spec_version"] == "1.0.0"
+
+        strat = svc.get_strategy(strategy_id)
+        assert strat is not None
+        assert strat["strategy_id"] == strategy_id
+        assert strat["strategy_spec_registry_id"] == registry_id
+
+        monkeypatch.setattr(adapter_base, "http_request_json", lambda *a, **k: [])
+        assert svc.get_strategy(strategy_id) is None
+        with pytest.raises(HTTPException) as not_found_exc:
+            svc.ensure_strategy_exists(strategy_id)
+        assert not_found_exc.value.status_code == 404
+
+        monkeypatch.setattr(adapter_base, "http_request_json", lambda *a, **k: [make_entry("tenant-other")])
+        with pytest.raises(HTTPException) as svc_403_exc:
+            svc.get_strategy(strategy_id)
+        assert svc_403_exc.value.status_code == 403
+
+        monkeypatch.setattr(adapter_base, "http_request_json", raise_404)
+        with pytest.raises(HTTPException) as svc_404_exc:
+            svc.get_strategy(strategy_id)
+        assert svc_404_exc.value.status_code == 503
+
+        monkeypatch.setattr(adapter_base, "http_request_json", raise_503)
+        with pytest.raises(HTTPException) as svc_503_exc:
+            svc.get_strategy(strategy_id)
+        assert svc_503_exc.value.status_code == 503
+
+        # Missing Registry URL or caller authorization with injected strategy_write_owner
+        # must fail closed with 503 DEPENDENCY_UNAVAILABLE (never local fallback or None/[]).
+        monkeypatch.delenv("PANTHEON_REGISTRY_API_URL", raising=False)
+        monkeypatch.delenv("PANTHEON_REGISTRY_URL", raising=False)
+        for fn in (
+            lambda: svc.get_strategy(strategy_id),
+            lambda: svc.get_strategy_spec_detail(strategy_id),
+            lambda: svc.list_strategy_spec_versions(strategy_id),
+        ):
+            with pytest.raises(HTTPException) as missing_cfg_exc:
+                fn()
+            assert missing_cfg_exc.value.status_code == 503
+
+        monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry.internal")
+        tok_no_auth = owner_reads.authorization.set(None)
+        try:
+            for fn in (
+                lambda: svc.get_strategy(strategy_id),
+                lambda: svc.get_strategy_spec_detail(strategy_id),
+                lambda: svc.list_strategy_spec_versions(strategy_id),
+            ):
+                with pytest.raises(HTTPException) as missing_auth_exc:
+                    fn()
+                assert missing_auth_exc.value.status_code == 503
+        finally:
+            owner_reads.authorization.reset(tok_no_auth)
+    finally:
+        owner_reads.authorization.reset(tok_auth)
+        owner_reads.selected_tenant.reset(tok_tenant)
