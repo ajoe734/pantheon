@@ -210,6 +210,10 @@ class TestHeartbeatLossReplay:
 class TestPnLDriftReplay:
     def _build_drift_report_from_fixture(self) -> dict:
         import importlib.util
+        # consumer.py imports telemetry_client as a top-level module; conftest
+        # restores sys.path after each test.
+        if str(_DRIFT_SERVICE_DIR) not in sys.path:
+            sys.path.insert(0, str(_DRIFT_SERVICE_DIR))
         spec = importlib.util.spec_from_file_location(
             "_recon_consumer", _DRIFT_SERVICE_DIR / "consumer.py"
         )
@@ -270,6 +274,10 @@ class TestPnLDriftReplay:
 class TestRecoveryReplay:
     def _try_build_drift_report(self) -> dict | None:
         import importlib.util
+        # consumer.py imports telemetry_client as a top-level module; conftest
+        # restores sys.path after each test.
+        if str(_DRIFT_SERVICE_DIR) not in sys.path:
+            sys.path.insert(0, str(_DRIFT_SERVICE_DIR))
         spec = importlib.util.spec_from_file_location(
             "_recon_consumer_recovery", _DRIFT_SERVICE_DIR / "consumer.py"
         )
