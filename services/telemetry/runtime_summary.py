@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 
+RUNTIME_RETIRED_EVENT_TYPE = "runtime_retired"
+
 _LIFECYCLE_IDENTITY_EVENT_TYPES = frozenset(
     {
         "signal_generation",
@@ -379,6 +381,8 @@ class RuntimeSummaryProjectionStore:
                     "trace_id", "correlation_envelope", "last_lifecycle_identity",
                     "recent_lifecycle_event_ids",
                     "runtime_package",
+                    "retired", "retired_at", "retired_event_id",
+                    "retired_binding_id",
                 ]
                 for key in keys_to_clear:
                     current.pop(key, None)
@@ -522,6 +526,21 @@ class RuntimeSummaryProjectionStore:
                 current.setdefault("state", "active")
             elif event_type == "deploy_completed":
                 current["state"] = "active"
+            elif event_type == RUNTIME_RETIRED_EVENT_TYPE:
+                # Owner-attributed retirement: sticky for this binding
+                # generation regardless of arrival order against heartbeats.
+                current["retired"] = True
+                current["retired_at"] = (
+                    str(metadata.get("retired_at") or "").strip() or event_time
+                )
+                current["retired_event_id"] = event.get("event_id")
+                current["retired_binding_id"] = binding_id
+
+            if (
+                current.get("retired") is True
+                and str(current.get("retired_binding_id") or "") == binding_id
+            ):
+                current["state"] = "retired"
 
             metric_map = {
                 "pnl": ("pnl",),
@@ -798,6 +817,7 @@ class RuntimeSummaryProjectionStore:
         *,
         tenant_id: Optional[str] = None,
         now: Optional[datetime] = None,
+        include_retired: bool = False,
     ) -> list[dict[str, Any]]:
         with self._lock:
             return [
@@ -809,9 +829,12 @@ class RuntimeSummaryProjectionStore:
                         str(item.get("runtime_id") or ""),
                     ),
                 )
-                if tenant_id is None
-                or str(summary.get("tenant_id") or "").strip()
-                == str(tenant_id).strip()
+                if (include_retired or summary.get("retired") is not True)
+                and (
+                    tenant_id is None
+                    or str(summary.get("tenant_id") or "").strip()
+                    == str(tenant_id).strip()
+                )
             ]
 
     def _health_summary(self, summary: dict[str, Any]) -> dict[str, str]:
@@ -852,7 +875,7 @@ class RuntimeSummaryProjectionStore:
     ) -> dict[str, Any]:
         projected = json.loads(json.dumps(summary))
         heartbeat_at = _parse_rfc3339(projected.get("last_heartbeat_at"))
-        if heartbeat_at is None:
+        if heartbeat_at is None or projected.get("retired") is True:
             return projected
 
         reference = now or datetime.now(timezone.utc)

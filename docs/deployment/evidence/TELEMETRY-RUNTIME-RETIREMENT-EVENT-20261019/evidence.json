@@ -1,0 +1,15 @@
+{
+  "task_id": "TELEMETRY-RUNTIME-RETIREMENT-EVENT-20261019",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "scope": "source-only; no deployment dispatched",
+  "event_type": "runtime_retired",
+  "emitter": "services/runtime_manager/retirement_telemetry.py (store observer, event_id = uuid5(binding_id|retired_at))",
+  "projection": "services/telemetry/runtime_summary.py (sticky retired per binding; list(include_retired=False) default)",
+  "route": "GET /api/telemetry/runtime-summaries[?include_retired=true]",
+  "verification": {
+    "command": "pytest services/runtime_manager services/telemetry (tel-venv, ignoring yaml-dependent test_loop_prod_tel_002_substrate)",
+    "result": "483 passed before stub fix; 6 failures in test_lineage_write_path/test_paper_telemetry_packet are pre-existing on base (verified by stash run); touched telemetry tests 96 passed"
+  },
+  "downstream": "runtime-manager lookups in reconciliation-drift and scheduler intentionally retained as defence"
+}

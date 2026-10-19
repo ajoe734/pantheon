@@ -37,6 +37,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Mapping, Optional
 
+from services.runtime_manager.retirement_telemetry import (
+    HttpTelemetrySender,
+    RetirementTelemetryEmitter,
+)
 from services.runtime_manager.runtime_binding import (
     RuntimeBinding,
     RuntimeBindingError,
@@ -718,8 +722,18 @@ class RuntimeManagerService:
         store_path: Optional[Path] = None,
         single_runtime_enforced: bool = True,
         ks_store_path: Optional[Path] = None,
+        retirement_telemetry_sender: Optional[Any] = None,
     ) -> None:
         self._store = RuntimeBindingStore(path=store_path)
+        # Binding owner emits one owner-attributed retirement event per
+        # retired binding; sender defaults to the env-configured telemetry URL.
+        self._store.add_retirement_observer(
+            RetirementTelemetryEmitter(
+                retirement_telemetry_sender
+                if retirement_telemetry_sender is not None
+                else HttpTelemetrySender.from_env()
+            )
+        )
         self._single_runtime_enforced = single_runtime_enforced
         self._kill_switch = KillSwitchController()
         # Serialize forward mutations and emergency containment through one

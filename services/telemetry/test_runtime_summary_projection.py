@@ -911,6 +911,64 @@ class RuntimeSummaryProjectionStoreTest(unittest.TestCase):
         self.assertEqual(stale_summary["health_summary"]["telemetry"], "degraded")
         self.assertEqual(stale_summary["health_summary"]["bridge"], "not_applicable")
 
+    def _retired_event(self, created_at="2026-05-01T00:30:00Z"):
+        event = _event("runtime_retired", created_at=created_at)
+        event["event_id"] = "evt-paper-retired"
+        event["metadata"]["retired_at"] = created_at
+        return event
+
+    def test_retirement_marks_summary_retired_and_excludes_by_default(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        store.project_event(_event())
+        summary = store.project_event(self._retired_event())
+
+        self.assertTrue(summary["retired"])
+        self.assertEqual(summary["state"], "retired")
+        self.assertEqual(summary["retired_at"], "2026-05-01T00:30:00Z")
+        self.assertEqual(store.list(), [])
+        listed = store.list(include_retired=True)
+        self.assertEqual([item["runtime_id"] for item in listed], ["rt-paper-001"])
+        self.assertEqual(listed[0]["state"], "retired")
+
+    def test_retirement_stays_retired_whichever_side_of_last_heartbeat(self):
+        for order in ("before", "after"):
+            with self.subTest(order=order):
+                store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+                beat = _event(created_at="2026-05-01T00:40:00Z")
+                if order == "before":
+                    store.project_event(self._retired_event())
+                    store.project_event(beat)
+                else:
+                    store.project_event(beat)
+                    store.project_event(self._retired_event("2026-05-01T00:50:00Z"))
+                self.assertEqual(store.list(), [])
+                summary = store.get("rt-paper-001")
+                self.assertTrue(summary["retired"])
+                self.assertEqual(summary["state"], "retired")
+
+    def test_retirement_replay_is_idempotent(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        first = store.project_event(self._retired_event())
+        second = store.project_event(self._retired_event())
+        self.assertEqual(first["retired_at"], second["retired_at"])
+        self.assertEqual(len(store.list(include_retired=True)), 1)
+
+    def test_newer_binding_on_same_runtime_is_not_retired(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        old = _event(created_at="2026-05-01T00:05:00Z")
+        old["metadata"]["runtime_binding_effective_at"] = "2026-05-01T00:00:00Z"
+        store.project_event(old)
+        store.project_event(self._retired_event("2026-05-01T00:10:00Z"))
+
+        new = _event("heartbeat", created_at="2026-05-01T00:11:00Z")
+        new.update({"event_id": "evt-new", "binding_id": "rtb-paper-002"})
+        new["metadata"]["runtime_binding_effective_at"] = "2026-05-01T00:10:00Z"
+        summary = store.project_event(new)
+
+        self.assertEqual(summary["binding_id"], "rtb-paper-002")
+        self.assertFalse(summary.get("retired", False))
+        self.assertEqual(len(store.list()), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -1035,13 +1093,32 @@ class TestRuntimeSummaryViewerAccess(unittest.TestCase):
             "metrics": {"heartbeat": 1},
             "metadata": {"tenant_id": "tenant-dev"},
         })
+        store.project_event({
+            "event_id": "evt-seed-retired-1",
+            "event_type": "runtime_retired",
+            "created_at": "2026-05-01T00:00:00Z",
+            "deployment_stage": "paper",
+            "environment": "paper",
+            "binding_id": "rtb-seed-retired",
+            "runtime_id": "rt-seed-retired",
+            "capital_pool_id": "pool-seed-2",
+            "artifact_id": "artifact-seed-1",
+            "artifact_version": "1.0.0",
+            "plan_id": "plan-seed-1",
+            "persona_capital_binding_id": "pcb-seed-1",
+            "tenant_id": "tenant-dev",
+            "metrics": {"action": "runtime_retired"},
+            "metadata": {"tenant_id": "tenant-dev"},
+        })
 
         if telemetry_main._svc is None:
             class _DummyTelemetrySvc:
                 def __init__(self, s):
                     self._runtime_summary_store = s
-                def list_runtime_summaries(self, tenant_id=None):
-                    return self._runtime_summary_store.list(tenant_id=tenant_id)
+                def list_runtime_summaries(self, tenant_id=None, include_retired=False):
+                    return self._runtime_summary_store.list(
+                        tenant_id=tenant_id, include_retired=include_retired
+                    )
                 def get_runtime_summary(self, runtime_id, tenant_id=None):
                     return self._runtime_summary_store.get(runtime_id, tenant_id=tenant_id)
                 def stats(self):
@@ -1097,6 +1174,21 @@ class TestRuntimeSummaryViewerAccess(unittest.TestCase):
         res_item = self.client.get("/api/telemetry/runtime-summaries/rt-seed-1", headers=headers)
         self.assertEqual(res_item.status_code, 200)
         self.assertEqual(res_item.get_json()["runtime_id"], "rt-seed-1")
+
+    def test_runtime_summaries_route_excludes_retired_unless_requested(self):
+        token = self._token(roles=["viewer"], tenant_id="tenant-dev", allowed_tenants=["tenant-dev"])
+        headers = {"Authorization": f"Bearer {token}", "X-Tenant-Id": "tenant-dev"}
+
+        default = self.client.get("/api/telemetry/runtime-summaries", headers=headers)
+        ids = {item["runtime_id"] for item in default.get_json()["summaries"]}
+        self.assertIn("rt-seed-1", ids)
+        self.assertNotIn("rt-seed-retired", ids)
+
+        explicit = self.client.get(
+            "/api/telemetry/runtime-summaries?include_retired=true", headers=headers
+        )
+        ids = {item["runtime_id"] for item in explicit.get_json()["summaries"]}
+        self.assertIn("rt-seed-retired", ids)
 
     def test_evaluator_viewer_token_reads_runtime_summaries_succeeds(self):
         token = self._token(

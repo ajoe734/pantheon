@@ -1160,7 +1160,12 @@ def stats():
 def runtime_summaries():
     """Return telemetry-owned runtime status summaries for BFF read paths."""
     svc = _get_service()
-    summaries = svc.list_runtime_summaries(tenant_id=request_tenant_id())
+    include_retired = request.args.get("include_retired", "").strip().lower() in {
+        "1", "true", "yes",
+    }
+    summaries = svc.list_runtime_summaries(
+        tenant_id=request_tenant_id(), include_retired=include_retired
+    )
     return jsonify({"summaries": summaries, "count": len(summaries)}), 200
 
 
