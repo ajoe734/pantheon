@@ -1,0 +1,70 @@
+{
+  "task_id": "DEV-MGMT-TEST-ADMIN-20261019",
+  "title": "Provide full-management dev test account with real browser session",
+  "scope": "source wiring for dedicated dev-only test_admin (pantheon-dev-admin-test) BFF dev-login identity across policy, docker-compose, deploy_nonprod_vm.sh, and nonprod-deploy.yml; hosted deployment and browser verification pending operator secret approval/provisioning",
+  "artifacts": [
+    "services/control-plane/bff/auth/policy.py",
+    "docker-compose.yml",
+    "scripts/deploy_nonprod_vm.sh",
+    ".github/workflows/nonprod-deploy.yml",
+    "docs/deployment/evidence/DEV-MGMT-TEST-ADMIN-20261019/evidence.json"
+  ],
+  "test_admin_profile_contract": {
+    "identity_name": "test_admin",
+    "default_client_id": "pantheon-dev-admin-test",
+    "subject": "dev-login:admin-test",
+    "roles": [
+      "admin",
+      "operator",
+      "approver",
+      "reviewer",
+      "governance_reviewer",
+      "risk_owner"
+    ],
+    "allowed_tenants_default": [
+      "tenant-dev",
+      "pantheon-dev",
+      "pantheon-local"
+    ],
+    "cookie_session": {
+      "http_only": true,
+      "secure": true,
+      "same_site": "lax",
+      "path": "/",
+      "access_cookie_name": "pantheon_access_token",
+      "refresh_cookie_name": "pantheon_refresh_token"
+    },
+    "security_invariants": {
+      "fail_closed_when_secret_unset": true,
+      "strict_auth_preserved": true,
+      "mfa_verified_never_faked": true,
+      "cross_tenant_rejected_403": true,
+      "two_man_approval_rule_preserved": true,
+      "existing_identities_unchanged": [
+        "viewer",
+        "operator",
+        "approver",
+        "risk_owner",
+        "operator_a",
+        "operator_b"
+      ]
+    }
+  },
+  "verification": {
+    "pytest_auth_and_deploy_contracts": "145 passed (services/control-plane/bff/auth/, test_bff_session_auth_me_contract.py, test_bff_oidc_staging_env_contract.py, test_dev_login_pantheon_local_tenant_contract.py, test_assistant_dev_compose_flags.py, test_deploy_nonprod_env_parity.py, test_deploy_nonprod_bff_strict_auth_default_contract.py)",
+    "test_admin_runtime_session_verification": "passed (POST /bff/auth/dev-login with pantheon-dev-admin-test -> 200 OK with HttpOnly; Secure; SameSite=lax; Path=/ cookies; GET /bff/me -> roles=['admin', 'operator', 'approver', 'reviewer', 'governance_reviewer', 'risk_owner'], allowed_tenants=['tenant-dev', 'pantheon-dev', 'pantheon-local'], tenant switch across tenant-dev/pantheon-dev/pantheon-local -> 200 OK, cross-tenant tenant-other -> 403 Forbidden; POST /bff/logout -> 200 OK and revoked session -> 401 on subsequent /bff/me)",
+    "deploy_script_syntax": "bash -n scripts/deploy_nonprod_vm.sh exited 0",
+    "compose_config": "docker compose -f docker-compose.yml config --quiet exited 0"
+  },
+  "hosted_status": {
+    "state": "pending_operator_secret_provisioning",
+    "required_github_secret": "DEV_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_SECRET",
+    "optional_github_var": "DEV_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_ID (defaults to pantheon-dev-admin-test)",
+    "note": "Per task safety rules, no GitHub Actions secrets were generated or uploaded without operator approval in chatbox. Once DEV_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_SECRET is provisioned, Nonprod Deploy can deploy the candidate and verify hosted /login, reload persistence, /bff/me, and /bff/logout."
+  },
+  "not_claimed": [
+    "hosted_secret_provisioned",
+    "hosted_nonprod_deploy_completed",
+    "hosted_browser_e2e_completed"
+  ]
+}
