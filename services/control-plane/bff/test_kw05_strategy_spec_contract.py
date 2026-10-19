@@ -634,6 +634,7 @@ def test_kw05_and_strategies_service_registry_http_owner_read_contract(monkeypat
     svc = StrategiesService(
         read_surface=read_ports,
         strategy_write_owner=lambda: _PoisonedLocalWriteOwner(),
+        list_strategy_summaries=port.list_strategy_specs,
         bff_error=auth_policy.bff_error,
         utc_now=utc_now,
     )
@@ -681,6 +682,7 @@ def test_kw05_and_strategies_service_registry_http_owner_read_contract(monkeypat
             lambda: svc.get_strategy(strategy_id),
             lambda: svc.get_strategy_spec_detail(strategy_id),
             lambda: svc.list_strategy_spec_versions(strategy_id),
+            lambda: svc.list_strategy_summaries(),
         ):
             with pytest.raises(HTTPException) as missing_cfg_exc:
                 fn()
@@ -693,6 +695,7 @@ def test_kw05_and_strategies_service_registry_http_owner_read_contract(monkeypat
                 lambda: svc.get_strategy(strategy_id),
                 lambda: svc.get_strategy_spec_detail(strategy_id),
                 lambda: svc.list_strategy_spec_versions(strategy_id),
+                lambda: svc.list_strategy_summaries(),
             ):
                 with pytest.raises(HTTPException) as missing_auth_exc:
                     fn()
@@ -702,3 +705,222 @@ def test_kw05_and_strategies_service_registry_http_owner_read_contract(monkeypat
     finally:
         owner_reads.authorization.reset(tok_auth)
         owner_reads.selected_tenant.reset(tok_tenant)
+
+
+def test_bff_strategies_and_kw05_list_against_real_registry_app(monkeypatch) -> None:
+    import urllib.error
+    from urllib.parse import urlparse
+    from services.control_plane.bff.command_adapters import base as adapter_base
+    from services.control_plane.bff.core.owner_reads import OwnerReadContextMiddleware
+    from services.control_plane.bff.ports import ReadSurfacePorts
+    from services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort
+    from services.control_plane.bff.strategies.router import create_strategies_router
+    from services.registry import service as reg_service
+    from services.registry import storage as reg_storage
+
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "1")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry.internal")
+    monkeypatch.setenv("PANTHEON_REGISTRY_AUTH_MODE", "permissive")
+
+    remote_store = reg_storage.RegistryStore()
+    remote_reg_svc = reg_service.RegistryService(store=remote_store)
+    monkeypatch.setattr(reg_service, "get_registry_service", lambda: remote_reg_svc)
+    monkeypatch.setattr(reg_service, "get_store", lambda: remote_store)
+
+    local_store_calls: list[str] = []
+
+    def _poisoned_get_store():
+        local_store_calls.append("get_store")
+        raise BaseException("BFF must not read process-local services.registry.storage.get_store()")
+
+    monkeypatch.setattr(reg_storage, "get_store", _poisoned_get_store)
+
+    reg_client = TestClient(reg_service.app)
+
+    strategy_id = "strategy-persona-aa060d53ff712cbba704"
+    reg_v1 = "reg-strategy-spec-persona-aa060d53ff712cbba704"
+    reg_v2 = "reg-strategy-spec-persona-aa060d53ff712cbba704-v2"
+    persona_id = "persona-132519698e6199e80326"
+
+    spec_v1 = {
+        "strategy_id": strategy_id,
+        "spec_version": "1.0",
+        "title": "Original Workshop Strategy Spec",
+        "hypothesis": "Cross-session orderflow imbalance mean-reverts.",
+        "objective": "Capture intraday reversion with bounded drawdown.",
+        "market_scope": {"symbols": ["BTCUSDT"], "frequency": "1h"},
+        "data_dependencies": [{"ref": "seed-workshop-1", "kind": "note"}],
+        "execution_profile": {
+            "signal_schema_version": "research-signal-v1",
+            "quantity_type": "PERCENT_PORTFOLIO",
+            "execution_mode_hint": "paper",
+        },
+        "evaluation_plan": {"metrics": ["sharpe_ratio"], "candidate_gate": "schema-valid"},
+        "governance": {"approval_required": True, "risk_profile": "research"},
+        "provenance": {
+            "source_kind": "workflow",
+            "created_at": "2026-10-18T10:00:00Z",
+            "source_refs": ["seed-workshop-1"],
+            "created_by": "op-workshop",
+        },
+    }
+    r1 = reg_client.post(
+        "/api/registry/strategy-specs",
+        json={
+            "registry_id": reg_v1,
+            "strategy_id": strategy_id,
+            "version": "1.0.0",
+            "source_seed_id": "seed-workshop-1",
+            "metadata": {"tenant_id": "tenant-dev", "persona_id": persona_id, "title": "Original Workshop Strategy Spec"},
+            "strategy_spec": spec_v1,
+        },
+        headers={"Authorization": "Bearer svc-bff:admin,service"},
+    )
+    assert r1.status_code == 200, r1.text
+    remote_store._entries[reg_v1].owner_tenant = "tenant-dev"
+
+    spec_v2 = json.loads(json.dumps(spec_v1))
+    spec_v2["title"] = "Original Workshop Strategy Spec v2"
+    r2 = reg_client.post(
+        "/api/registry/strategy-specs",
+        json={
+            "registry_id": reg_v2,
+            "strategy_id": strategy_id,
+            "version": "1.1.0",
+            "artifact_state": "candidate",
+            "lineage": {"parent_registry_ids": [reg_v1], "source_strategy_spec_id": reg_v1},
+            "metadata": {"tenant_id": "tenant-dev", "persona_id": persona_id, "title": "Original Workshop Strategy Spec v2"},
+            "strategy_spec": spec_v2,
+        },
+        headers={"Authorization": "Bearer svc-bff:admin,service"},
+    )
+    assert r2.status_code == 200, r2.text
+    remote_store._entries[reg_v2].owner_tenant = "tenant-dev"
+
+    spec_other = json.loads(json.dumps(spec_v1))
+    spec_other["strategy_id"] = "strategy-other-tenant"
+    r_other = reg_client.post(
+        "/api/registry/strategy-specs",
+        json={
+            "registry_id": "reg-strategy-spec-other-tenant",
+            "strategy_id": "strategy-other-tenant",
+            "version": "1.0.0",
+            "source_seed_id": "seed-other",
+            "metadata": {"tenant_id": "tenant-other"},
+            "strategy_spec": spec_other,
+        },
+        headers={"Authorization": "Bearer svc-bff:admin,service"},
+    )
+    assert r_other.status_code == 200, r_other.text
+    remote_store._entries["reg-strategy-spec-other-tenant"].owner_tenant = "tenant-other"
+
+    http_paths: list[str] = []
+
+    def bridge_http_request_json(url: str, *, method: str = "GET", payload=None, auth_token=None, tenant_id=None, **kwargs):
+        parsed = urlparse(url)
+        path = parsed.path + (f"?{parsed.query}" if parsed.query else "")
+        http_paths.append(path)
+        hdrs = {}
+        if auth_token:
+            hdrs["Authorization"] = "Bearer svc-bff:admin,service"
+        if tenant_id:
+            hdrs["X-Tenant-Id"] = tenant_id
+        resp = reg_client.request(method, path, json=payload, headers=hdrs)
+        if resp.status_code >= 400:
+            raise urllib.error.HTTPError(url, resp.status_code, resp.text, hdrs=None, fp=None)
+        return resp.json()
+
+    monkeypatch.setattr(adapter_base, "http_request_json", bridge_http_request_json)
+
+    port = DefaultResearchKnowledgeSourcePort()
+    read_ports = ReadSurfacePorts(research_knowledge_source=port)
+    app = _build_test_app(read_ports)
+    app.include_router(
+        create_strategies_router(
+            read_surface=read_ports,
+            list_strategy_summaries=port.list_strategy_specs,
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            require_operator_role=auth_policy.require_operator_role,
+            bff_error=auth_policy.bff_error,
+            utc_now=utc_now,
+        )
+    )
+    app.add_middleware(OwnerReadContextMiddleware)
+
+    dev_headers = {"Authorization": "Bearer op-2:operator:tenant-dev", "X-Tenant-Id": "tenant-dev"}
+    empty_headers = {"Authorization": "Bearer op-2:operator:tenant-empty", "X-Tenant-Id": "tenant-empty"}
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        # 1. GET /bff/strategies and GET /api/v1/knowledge/strategy-specs return canonical tenant-dev strategy
+        http_paths.clear()
+        bff_list = client.get("/bff/strategies?page_size=1", headers=dev_headers)
+        assert bff_list.status_code == 200, bff_list.text
+        bff_payload = bff_list.json()
+        assert bff_payload["page_info"]["total"] == 1
+        assert bff_payload["items"][0]["id"] == strategy_id
+        assert bff_payload["items"][0]["name"] == "Original Workshop Strategy Spec v2"
+        assert bff_payload["items"][0]["state"] == "candidate"
+        assert bff_payload["items"][0]["risk"] == "medium"
+        assert bff_payload["items"][0]["personaIds"] == [persona_id]
+        # Zero per-row detail fanout and zero local store reads even when risk_raw is absent
+        assert http_paths == ["/api/registry/strategy-specs"]
+        assert local_store_calls == []
+
+        bff_detail = client.get(f"/bff/strategies/{strategy_id}", headers=dev_headers)
+        assert bff_detail.status_code == 200, bff_detail.text
+        assert bff_detail.json()["data"]["id"] == strategy_id
+        assert bff_detail.json()["data"]["name"] == "Original Workshop Strategy Spec v2"
+        assert bff_detail.json()["data"]["risk"] == "medium"
+        assert local_store_calls == []
+
+        kw05_list = client.get("/api/v1/knowledge/strategy-specs", headers=dev_headers)
+        assert kw05_list.status_code == 200, kw05_list.text
+        kw05_items = kw05_list.json()["items"]
+        assert len(kw05_items) == 1
+        assert kw05_items[0]["strategy_id"] == strategy_id
+        assert kw05_items[0]["current_spec_version_id"] == reg_v2
+        assert kw05_items[0]["current_spec_version"] == "1.1.0"
+        assert kw05_items[0]["version_count"] == 2
+        assert kw05_items[0]["lifecycle_state"] == "candidate"
+
+        # 2. Filters on GET /bff/strategies and GET /api/v1/knowledge/strategy-specs
+        assert client.get(f"/bff/strategies?persona_id={persona_id}", headers=dev_headers).json()["page_info"]["total"] == 1
+        assert client.get("/bff/strategies?persona_id=persona-none", headers=dev_headers).json()["page_info"]["total"] == 0
+        assert client.get("/bff/strategies?state=candidate", headers=dev_headers).json()["page_info"]["total"] == 1
+        assert client.get("/bff/strategies?state=approved", headers=dev_headers).json()["page_info"]["total"] == 0
+
+        # 3. Legitimate empty tenant returns 200 [] / total=0
+        empty_bff = client.get("/bff/strategies", headers=empty_headers)
+        assert empty_bff.status_code == 200, empty_bff.text
+        assert empty_bff.json()["items"] == []
+        assert empty_bff.json()["page_info"]["total"] == 0
+
+        empty_kw05 = client.get("/api/v1/knowledge/strategy-specs", headers=empty_headers)
+        assert empty_kw05.status_code == 200, empty_kw05.text
+        assert empty_kw05.json()["items"] == []
+
+        # 4. Anonymous / bad authorization / foreign tenant / unavailable / malformed Registry fail closed
+        assert client.get("/bff/strategies").status_code == 401
+        assert client.get("/bff/strategies", headers={"Authorization": "Bearer op-2:unknown_role:tenant-dev"}).status_code == 403
+
+        monkeypatch.setattr(
+            adapter_base,
+            "http_request_json",
+            lambda *a, **k: [{"registry_id": "reg-foreign", "artifact_type": "strategy_spec", "strategy_id": "s-1", "version": "1.0.0", "owner_tenant": "tenant-foreign"}],
+        )
+        assert client.get("/bff/strategies", headers=dev_headers).status_code == 403
+        assert client.get("/api/v1/knowledge/strategy-specs", headers=dev_headers).status_code == 403
+
+        monkeypatch.setattr(adapter_base, "http_request_json", lambda *a, **k: {"malformed": True})
+        assert client.get("/bff/strategies", headers=dev_headers).status_code == 503
+        assert client.get("/api/v1/knowledge/strategy-specs", headers=dev_headers).status_code == 503
+
+        monkeypatch.delenv("PANTHEON_REGISTRY_API_URL", raising=False)
+        monkeypatch.delenv("PANTHEON_REGISTRY_URL", raising=False)
+        assert client.get("/bff/strategies", headers=dev_headers).status_code == 503
+        assert client.get("/api/v1/knowledge/strategy-specs", headers=dev_headers).status_code == 503
+        assert local_store_calls == []
+
+

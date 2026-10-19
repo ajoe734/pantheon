@@ -348,6 +348,9 @@ class RegistryService:
         entries = self.store.list_by_strategy(strategy_id)
         return [self._to_view(e) for e in entries]
 
+    def list_all_entries(self) -> list[RegistryEntryView]:
+        return [self._to_view(e) for e in self.store.list_all_entries()]
+
     def get_creation_receipt(self, registry_id: str) -> Optional[RegistryEntryView]:
         """Return the entry exactly as it was at its first successful
         creation (reviewer finding 5), if the store recorded one.
