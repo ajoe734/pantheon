@@ -182,6 +182,8 @@ services:
       SOURCE_INGEST_LATEST_MARKET_SNAPSHOT_PATH: /data/source-ingest/latest_market_snapshots.jsonl
       # Shared queue with strategy-distillation-worker for normalized SourceRecord commits.
       DISTILLATION_JOB_QUEUE_PATH: /data/source-ingest/distill_job_queue.jsonl
+      STRATEGY_SPEC_SEED_STORE_PATH: /data/source-ingest/distill_seeds.jsonl
+      STRATEGY_SEED_STORE_PATH: /data/source-ingest/distill_seeds.jsonl
       SOURCE_INGEST_MAX_RECORDS: ${SOURCE_INGEST_MAX_RECORDS:-100}
       # Bounded deployment refresh resolves active symbols from RuntimeBinding store.
       SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS: ${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}

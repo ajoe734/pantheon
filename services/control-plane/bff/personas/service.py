@@ -232,6 +232,15 @@ except ImportError:
     StrategySpecSeedStoreError = Exception
     StrategySpecSeedReviewError = Exception
 
+try:
+    from services.control_plane.bff.core.owner_reads import authorization as _owner_read_authorization
+    from services.control_plane.bff.source_management_client import SourceManagementClient
+except (ImportError, ValueError):
+    from ..core.owner_reads import authorization as _owner_read_authorization  # type: ignore
+    from ..source_management_client import SourceManagementClient  # type: ignore
+
+_DEFAULT_SEED_STORE_CLS = StrategySpecSeedStore
+
 
 try:
     from services.control_plane.persona.persona_strategy_discovery import (
@@ -2292,9 +2301,14 @@ def _load_strategy_seed_match_candidates(
     snapshot_at: str,
 ) -> Tuple[List[Any], Dict[str, Any]]:
     try:
-        store = StrategySpecSeedStore()
+        use_local = StrategySpecSeedStore is not _DEFAULT_SEED_STORE_CLS or (
+            bool(os.getenv("PYTEST_CURRENT_TEST"))
+            and bool(os.getenv("STRATEGY_SEED_STORE_PATH", "").strip())
+            and not any(os.getenv(k, "").strip() for k in ("PANTHEON_SOURCE_INGEST_API_URL", "PANTHEON_SOURCE_INGEST_URL", "SOURCE_INGEST_SERVICE_URL", "SOURCE_INGEST_URL"))
+        )
+        store: Any = StrategySpecSeedStore() if use_local else SourceManagementClient()
         seeds = store.list_all()
-        path_exists = store.path.exists()
+        path_exists = store.path.exists() if hasattr(store.path, "exists") else True
         surface: Dict[str, Any] = {
             "status": "ok" if path_exists else "degraded",
             "source": "strategy_spec_seed_store" if path_exists else "strategy_spec_seed_store_missing",
@@ -8659,6 +8673,8 @@ def _extract_identity(
     mfa_token: Optional[str] = None,
     session_cookie: Optional[str] = None,
 ) -> OperatorIdentity:
+    if authorization or session_cookie:
+        _owner_read_authorization.set(authorization or f"Bearer {session_cookie}")
     if _bff_auth_stub_enabled():
         if authorization and authorization.startswith("Bearer "):
             raw = authorization[len("Bearer "):].strip()

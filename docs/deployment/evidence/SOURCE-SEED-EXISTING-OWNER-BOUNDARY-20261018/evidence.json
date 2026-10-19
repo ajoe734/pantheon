@@ -1,0 +1,66 @@
+{
+  "task_id": "SOURCE-SEED-EXISTING-OWNER-BOUNDARY-20261018",
+  "title": "Route BFF StrategySpecSeed reads and review/replication writes through existing source-ingest management owner boundary",
+  "generated_at": "2026-10-19T00:39:00Z",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "root_cause": {
+    "seed_id": "seed-1d23a6d2fbc149f4",
+    "symptom": "GET /bff/management/strategy-seeds and GET /bff/management/strategy-seeds/seed-1d23a6d2fbc149f4 returned empty/404 in operator-bff even though source-ingest persisted the seed in /data/source-ingest/distill_seeds.jsonl.",
+    "cause": "source-ingest wrote distilled seeds to /data/source-ingest/distill_seeds.jsonl while operator-bff instantiated a local StrategySpecSeedStore reading its own container filesystem (/tmp/pantheon-strategy-seeds/strategy_spec_seeds.jsonl) with no shared StrategySpecSeed owner route on source-ingest."
+  },
+  "owner_boundary": {
+    "durable_owner_service": "source-ingest",
+    "durable_store_path": "/data/source-ingest/distill_seeds.jsonl",
+    "compose_env_alignment": {
+      "STRATEGY_SPEC_SEED_STORE_PATH": "/data/source-ingest/distill_seeds.jsonl",
+      "STRATEGY_SEED_STORE_PATH": "/data/source-ingest/distill_seeds.jsonl"
+    },
+    "management_routes": [
+      "GET /api/source-ingest/management/strategy-seeds",
+      "GET /api/source-ingest/management/strategy-seeds/{seed_id}",
+      "POST /api/source-ingest/management/strategy-seeds/{seed_id}/review",
+      "POST /api/source-ingest/management/strategy-seeds/{seed_id}/merge",
+      "POST /api/source-ingest/management/strategy-seeds/{seed_id}/replication-submission"
+    ],
+    "bff_consumers_routed_via_source_management_client": [
+      "services/control-plane/bff/strategies/service.py::StrategiesService",
+      "services/control-plane/bff/strategies/routes/seeds.py::build_seeds_router",
+      "services/source_ingestion/replication_bridge.py::StrategySeedReplicationBridge (via StrategiesService.seed_store)",
+      "services/control-plane/bff/personas/service.py::_load_strategy_seed_match_candidates"
+    ]
+  },
+  "tenant_and_actor_isolation": {
+    "caller_forwarding": "SourceManagementClient forwards caller Authorization Bearer token, bound X-Tenant-Id, and X-Idempotency-Key from BFF request context.",
+    "owner_verification": "source-ingest management strategy-seed routes validate caller JWT/structured auth and required roles (_READ_ROLES for GET, _WRITE_ROLES for POST) and resolve caller tenant via _source_read_tenant.",
+    "seed_tenant_resolution": "Checks seed metadata/lineage tenant_id first, then falls back to runtime.evidence_repository tenant-scoped lookup across seed.source_id/source_ids, evidence_bundle_id, and evidence_item_ids (covering seeds like seed-1d23a6d2fbc149f4 whose tenant_id='tenant-dev' is stored on SourceRecord metadata).",
+    "verified_actor_attribution": "Review, conversion, merge, and replication-submission mutations record verified auth.actor_id as reviewer_id/submitted_by rather than trusting body-supplied actor fields."
+  },
+  "failure_classification": {
+    "missing_or_cross_tenant_seed": "404 RESOURCE_NOT_FOUND",
+    "role_or_tenant_mismatch": "401 AUTH_REQUIRED / 403 FORBIDDEN",
+    "idempotency_or_state_conflict": "409 IDEMPOTENCY_CONFLICT / OPERATION_NOT_ALLOWED",
+    "owner_unconfigured_or_unreachable": "503 DEPENDENCY_UNAVAILABLE (details.owner='source-ingest')",
+    "persona_discovery_remote_store": "Reports surface.status='ok' with remote management URI when reachable and surface.status='unavailable' on owner error without calling Path.exists() on remote URI strings."
+  },
+  "production_line_budget": {
+    "net_prod_line_budget": 320,
+    "gross_prod_additions": 297,
+    "gross_prod_deletions": 16,
+    "net_prod_additions": 281,
+    "files": {
+      "docker-compose.yml": "+2/-0",
+      "services/source_ingestion/runtime.py": "+11/-0",
+      "services/source_ingestion/routers/management.py": "+113/-1",
+      "services/control-plane/bff/source_management_client.py": "+88/-6",
+      "services/control-plane/bff/strategies/service.py": "+19/-5",
+      "services/control-plane/bff/strategies/routes/seeds.py": "+46/-2",
+      "services/control-plane/bff/personas/service.py": "+18/-2"
+    }
+  },
+  "verification": {
+    "command": ".venv-pantheon/bin/python3 -m pytest services/source_ingestion/test_compose_activation.py scripts/test_current_l12_compose_wiring.py services/source_ingestion/tests/test_srcm_p1_contracts.py services/control-plane/bff/test_datastrat_seed_review_bff.py services/control-plane/bff/test_datastrat_seed_replication_bff.py services/control-plane/bff/test_datastrat_persona_strategy_discovery_bff.py services/control-plane/bff/test_management_data_sources_v2.py -q",
+    "result": "68 passed in 29.93s",
+    "test_compose_activation_unchanged": true
+  }
+}

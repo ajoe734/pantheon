@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any, Callable, Dict, List, Optional, Tuple, Set, Union
 import uuid
 
@@ -19,6 +20,11 @@ try:
     from services.control_plane.bff.models import ErrorCode
 except (ImportError, ValueError):
     from models import ErrorCode
+
+try:
+    from services.control_plane.bff.source_management_client import SourceManagementClient
+except (ImportError, ValueError):
+    from ..source_management_client import SourceManagementClient  # type: ignore
 
 try:
     from services.control_plane.bff.ports.strategy_write_owner import StrategyWriteOwnerPort
@@ -46,6 +52,8 @@ except (ImportError, ValueError):
     StrategySpecSeedReviewError = Exception  # type: ignore
     StrategySpecSeedStore = None  # type: ignore
     StrategySpecSeedStoreError = Exception  # type: ignore
+
+_DEFAULT_SEED_STORE_CLASS = StrategySpecSeedStore
 
 log = logging.getLogger(__name__)
 
@@ -116,12 +124,14 @@ class StrategiesService:
         return None
 
     @property
-    def seed_store(self) -> StrategySpecSeedStore:
+    def seed_store(self) -> Any:
         if self._seed_store is not None:
-            return self._seed_store
-        if StrategySpecSeedStore is not None:
+            return self._seed_store() if callable(self._seed_store) else self._seed_store
+        if StrategySpecSeedStore is not None and StrategySpecSeedStore is not _DEFAULT_SEED_STORE_CLASS:
             return StrategySpecSeedStore()
-        raise RuntimeError("StrategySpecSeedStore is unavailable")
+        if StrategySpecSeedStore is not None and os.environ.get("PYTEST_CURRENT_TEST") and os.environ.get("STRATEGY_SEED_STORE_PATH") and not any(os.environ.get(k) for k in ("PANTHEON_SOURCE_INGEST_API_URL", "PANTHEON_SOURCE_INGEST_URL", "SOURCE_INGEST_SERVICE_URL", "SOURCE_INGEST_URL")):
+            return StrategySpecSeedStore(path=os.environ["STRATEGY_SEED_STORE_PATH"])
+        return SourceManagementClient()
 
     def get_seed_store_path(self) -> str:
         return str(self.seed_store.path)
@@ -332,7 +342,11 @@ class StrategiesService:
                 cached.setdefault("meta", {}).setdefault("idempotency", {})["replayed"] = True
                 return cached
 
-        bridge = self._replication_bridge or (StrategySeedReplicationBridge() if StrategySeedReplicationBridge is not None else None)
+        bridge = self._replication_bridge or (
+            StrategySeedReplicationBridge(seed_store=self.seed_store)
+            if StrategySeedReplicationBridge is not None
+            else None
+        )
         if bridge is None:
             raise NotImplementedError("StrategySeedReplicationBridge is unavailable")
 

@@ -12,13 +12,28 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+
+from services.source_ingestion.strategy_seed_builder import StrategySpecSeed
+from services.source_ingestion.strategy_seed_store import SeedReviewDecision, StrategySpecSeedReviewError
+try:
+    from services.control_plane.bff.command_adapters.base import ActionUnavailableError, bound_tenant
+    from services.control_plane.bff.core.owner_reads import authorization, selected_tenant
+except (ImportError, ValueError):
+    from .command_adapters.base import ActionUnavailableError, bound_tenant  # type: ignore
+    from .core.owner_reads import authorization, selected_tenant  # type: ignore
+
+_SEED_REVIEW_ERROR_CODES = frozenset({
+    "seed_not_found", "merge_target_not_found", "idempotency_conflict",
+    "terminal_seed_status", "invalid_status_transition", "invalid_merge_target",
+    "invalid_review_action", "missing_review_reason", "missing_reviewer_id",
+})
 
 
 _SOURCE_INGEST_URL_ENVS = (
     "PANTHEON_SOURCE_INGEST_API_URL",
     "PANTHEON_SOURCE_INGEST_URL",
-    "SOURCE_INGEST_URL",
+    "SOURCE_INGEST_SERVICE_URL", "SOURCE_INGEST_URL",
 )
 
 _SOURCE_INGEST_SERVICE_TOKEN_ENVS = (
@@ -108,6 +123,10 @@ class SourceManagementClient:
     def configured(self) -> bool:
         return bool(self._base_url)
 
+    @property
+    def path(self) -> str:
+        return f"{self._base_url}/api/source-ingest/management/strategy-seeds" if self._base_url else "source-ingest://management/strategy-seeds"
+
     def _get_headers(
         self,
         *,
@@ -140,6 +159,7 @@ class SourceManagementClient:
         params: Optional[Dict[str, Any]] = None,
         idempotency_key: Optional[str] = None,
         require_auth: bool = False,
+        headers_override: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         if not self._base_url:
             raise SourceManagementClientError(
@@ -153,7 +173,7 @@ class SourceManagementClient:
             if query:
                 url = f"{url}?{query}"
 
-        headers = self._get_headers(idempotency_key=idempotency_key, require_auth=require_auth)
+        headers = headers_override or self._get_headers(idempotency_key=idempotency_key, require_auth=require_auth)
         data = json.dumps(body).encode("utf-8") if body is not None else None
 
         req = urllib.request.Request(
@@ -173,10 +193,11 @@ class SourceManagementClient:
             except Exception:
                 pass
             payload = _safe_json(body_text)
-            detail = payload.get("detail") or body_text or str(exc)
+            detail = payload.get("detail") or payload.get("error") or body_text or str(exc)
             if isinstance(detail, dict):
-                error_message = detail.get("message") or str(detail)
-                error_code = detail.get("code") or f"HTTP_{exc.code}"
+                inner = detail.get("error") if isinstance(detail.get("error"), dict) else detail
+                error_message = inner.get("message") or str(detail)
+                error_code = inner.get("code") or f"HTTP_{exc.code}"
             else:
                 error_message = str(detail)
                 error_code = f"HTTP_{exc.code}"
@@ -295,3 +316,64 @@ class SourceManagementClient:
             idempotency_key=idempotency_key,
             require_auth=True,
         )
+
+    def _seed_headers(self, *, idempotency_key: Optional[str] = None) -> Dict[str, str]:
+        raw_auth = str(authorization.get() or "").strip()
+        token = raw_auth.removeprefix("Bearer ").strip() if raw_auth.startswith("Bearer ") else raw_auth
+        if not token:
+            raise SourceManagementClientError("Caller authorization token is required for strategy seed access", status_code=401, error_code="AUTH_REQUIRED")
+        try:
+            tenant_id = bound_tenant({}, tenant_id=selected_tenant.get(), auth_token=token)
+        except ActionUnavailableError as exc:
+            raise SourceManagementClientError(exc.message, status_code=exc.downstream_status, error_code=exc.error_code) from exc
+        headers = {"Accept": "application/json", "Content-Type": "application/json", "Authorization": f"Bearer {token}", "X-Tenant-Id": tenant_id}
+        if idempotency_key:
+            headers["X-Idempotency-Key"] = idempotency_key
+        return headers
+
+    def _seed_request(self, method: str, path: str, *, body: Optional[Dict[str, Any]] = None, idempotency_key: Optional[str] = None) -> Dict[str, Any]:
+        headers = self._seed_headers(idempotency_key=idempotency_key)
+        try:
+            return self._http_request(method, path, body=body, headers_override=headers)
+        except SourceManagementClientError as exc:
+            if exc.error_code in _SEED_REVIEW_ERROR_CODES:
+                raise StrategySpecSeedReviewError(exc.error_code, exc.message) from exc
+            if exc.status_code >= 500:
+                raise SourceManagementClientError(exc.message, status_code=503, error_code=exc.error_code, payload=exc.payload) from exc
+            raise
+
+    def list_all(self) -> List[StrategySpecSeed]:
+        resp = self._seed_request("GET", "/api/source-ingest/management/strategy-seeds")
+        return [StrategySpecSeed.from_dict(item) for item in (resp.get("items") or []) if isinstance(item, Mapping)]
+
+    def get(self, seed_id: str) -> Optional[StrategySpecSeed]:
+        encoded = urllib.parse.quote(seed_id, safe="")
+        try:
+            resp = self._seed_request("GET", f"/api/source-ingest/management/strategy-seeds/{encoded}")
+        except (StrategySpecSeedReviewError, SourceManagementClientError) as exc:
+            if getattr(exc, "code", "") == "seed_not_found" or getattr(exc, "status_code", 0) == 404:
+                return None
+            raise
+        raw = resp.get("seed")
+        return StrategySpecSeed.from_dict(raw) if isinstance(raw, Mapping) else None
+
+    def record_review_decision(self, seed_id: str, *, decision: Any, reviewer_id: str, reason: str = "", target_refs: Sequence[Mapping[str, Any]] = (), created_at: Any = None, idempotency_key: Optional[str] = None, request_hash: Optional[str] = None) -> Tuple[StrategySpecSeed, SeedReviewDecision]:
+        encoded = urllib.parse.quote(seed_id, safe="")
+        act = decision.value if hasattr(decision, "value") else str(decision)
+        ts = created_at.isoformat() if hasattr(created_at, "isoformat") else (str(created_at) if created_at else None)
+        resp = self._seed_request("POST", f"/api/source-ingest/management/strategy-seeds/{encoded}/review", body={"decision": act, "reviewer_id": reviewer_id, "reason": reason, "target_refs": [dict(r) for r in target_refs], "created_at": ts, "idempotency_key": idempotency_key, "request_hash": request_hash}, idempotency_key=idempotency_key)
+        dec = resp["decision"]
+        return StrategySpecSeed.from_dict(resp["seed"]), SeedReviewDecision.from_dict(dec, idempotent_replay=bool(dec.get("idempotent_replay", False)))
+
+    def merge_seed(self, seed_id: str, *, target_seed_id: str, reviewer_id: str, reason: str = "", created_at: Any = None, idempotency_key: Optional[str] = None, request_hash: Optional[str] = None, target_refs: Sequence[Mapping[str, Any]] = (),) -> Tuple[StrategySpecSeed, SeedReviewDecision]:
+        encoded = urllib.parse.quote(seed_id, safe="")
+        ts = created_at.isoformat() if hasattr(created_at, "isoformat") else (str(created_at) if created_at else None)
+        resp = self._seed_request("POST", f"/api/source-ingest/management/strategy-seeds/{encoded}/merge", body={"target_seed_id": target_seed_id, "reviewer_id": reviewer_id, "reason": reason, "created_at": ts, "idempotency_key": idempotency_key, "request_hash": request_hash, "target_refs": [dict(r) for r in target_refs]}, idempotency_key=idempotency_key)
+        dec = resp["decision"]
+        return StrategySpecSeed.from_dict(resp["seed"]), SeedReviewDecision.from_dict(dec, idempotent_replay=bool(dec.get("idempotent_replay", False)))
+
+    def record_replication_submission(self, seed_id: str, *, replication_ref: str, experiment_task_id: str, strategy_id: str, strategy_spec_version: str, submitted_by: str, submitted_at: str, idempotency_key: str, research_task_ref: Optional[str] = None) -> StrategySpecSeed:
+        encoded = urllib.parse.quote(seed_id, safe="")
+        resp = self._seed_request("POST", f"/api/source-ingest/management/strategy-seeds/{encoded}/replication-submission", body={"replication_ref": replication_ref, "experiment_task_id": experiment_task_id, "strategy_id": strategy_id, "strategy_spec_version": strategy_spec_version, "submitted_by": submitted_by, "submitted_at": submitted_at, "idempotency_key": idempotency_key, "research_task_ref": research_task_ref}, idempotency_key=idempotency_key)
+        return StrategySpecSeed.from_dict(resp["seed"])
+

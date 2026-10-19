@@ -6,11 +6,15 @@ observations, and canaries.
 
 from __future__ import annotations
 
+import os
 import uuid
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Body, Header, HTTPException, Request
+
+from services.runtime_auth_inbound import AuthContext, AuthError, validate_request_auth
 
 from ..api_models import SourceCommandRequestBody
 from ..connector_definitions import get_connector_definition, list_connector_definitions
@@ -23,6 +27,9 @@ from ..source_management_store import (
     SourceManagementContractError,
     StaleRevisionError,
 )
+from ..strategy_seed_builder import StrategySpecSeed
+from ..strategy_seed_store import StrategySpecSeedReviewError, StrategySpecSeedStoreError
+from .ingest_operations import _SOURCE_INGEST_READ_ROLES as _READ_ROLES, _SOURCE_INGEST_WRITE_ROLES as _WRITE_ROLES, _source_read_tenant
 
 if TYPE_CHECKING:
     from ..runtime import SourceIngestionRuntime
@@ -30,6 +37,50 @@ if TYPE_CHECKING:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _require_seed_caller(request: Request, *, required_roles: tuple[str, ...] = (*_READ_ROLES, "reviewer", "view_only", "approver")) -> tuple[AuthContext, str]:
+    raw_auth, requested = request.headers.get("Authorization"), (request.headers.get("X-Tenant-Id") or "").strip()
+    try:
+        auth = validate_request_auth(authorization=raw_auth, mfa_header=request.headers.get("X-MFA-Token"), required_roles=required_roles, allow_shared_secret=True)
+    except AuthError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"error": {"code": exc.code, "message": exc.message}}) from exc
+    if auth.token_kind == "jwt":
+        return auth, _source_read_tenant(raw_auth, requested, required_roles=required_roles)
+    parts = [p.strip() for p in (raw_auth or "").removeprefix("Bearer ").strip().split(":")]
+    tok_tenant = parts[2] if auth.token_kind == "structured" and len(parts) >= 3 and parts[2].lower() != "mfa" else ""
+    tenant = requested or tok_tenant or str(os.getenv("SOURCE_INGEST_DEFAULT_TENANT_ID") or os.getenv("PANTHEON_TENANT_ID") or "").strip()
+    if (tok_tenant and requested and tok_tenant != requested) or not tenant or tenant == "*":
+        raise HTTPException(status_code=403, detail={"error": {"code": "TENANT_SCOPE_DENIED", "message": "An explicitly admitted tenant is required"}})
+    return auth, tenant
+
+
+def _seed_belongs_to_tenant(runtime: SourceIngestionRuntime, seed: StrategySpecSeed, tenant_id: str) -> bool:
+    meta_tenant = str(
+        (seed.metadata.get("tenant_id") or seed.metadata.get("tenant") if isinstance(seed.metadata, Mapping) else "")
+        or (seed.lineage.get("tenant_id") or seed.lineage.get("tenant") if isinstance(seed.lineage, Mapping) else "") or ""
+    ).strip()
+    if meta_tenant:
+        return meta_tenant == tenant_id
+    repo = runtime.evidence_repository
+    return (
+        any(sid and repo.get_source_record(sid, tenant_id=tenant_id) is not None for sid in dict.fromkeys([seed.source_id, *seed.source_ids]))
+        or bool(seed.evidence_bundle_id and repo.get_bundle(seed.evidence_bundle_id, tenant_id=tenant_id) is not None)
+        or any(eid and repo.get_evidence_item(eid, tenant_id=tenant_id) is not None for eid in seed.evidence_item_ids)
+    )
+
+
+def _require_tenant_seed(runtime: SourceIngestionRuntime, seed_id: str, tenant_id: str, *, error_code: str = "seed_not_found") -> StrategySpecSeed:
+    seed = runtime.strategy_seed_store.get(seed_id)
+    if seed is None or not _seed_belongs_to_tenant(runtime, seed, tenant_id):
+        raise StrategySpecSeedReviewError(error_code, f"StrategySpecSeed not found: {seed_id}")
+    return seed
+
+
+def _raise_seed_store_http_error(exc: Exception) -> HTTPException:
+    code = getattr(exc, "code", "") or "seed_store_error"
+    status = 404 if code in {"seed_not_found", "merge_target_not_found"} else (409 if code in {"idempotency_conflict", "terminal_seed_status", "invalid_status_transition", "invalid_merge_target"} else 422)
+    return HTTPException(status_code=status, detail={"error": {"code": code, "message": str(exc)}})
 
 
 def create_management_router(runtime: SourceIngestionRuntime) -> APIRouter:
@@ -180,5 +231,66 @@ def create_management_router(runtime: SourceIngestionRuntime) -> APIRouter:
             "receipts": [rcp.to_dict() for rcp in receipts],
             "count": len(receipts),
         }
+
+    @router.get("/api/source-ingest/management/strategy-seeds")
+    def list_management_strategy_seeds(request: Request) -> dict[str, Any]:
+        _, tenant_id = _require_seed_caller(request)
+        store = runtime.strategy_seed_store
+        items = [s.to_dict() for s in store.list_all() if _seed_belongs_to_tenant(runtime, s, tenant_id)]
+        return {"items": items, "count": len(items), "store_path": str(store.path)}
+
+    @router.get("/api/source-ingest/management/strategy-seeds/{seed_id}")
+    def get_management_strategy_seed(seed_id: str, request: Request) -> dict[str, Any]:
+        _, tenant_id = _require_seed_caller(request)
+        try:
+            seed = _require_tenant_seed(runtime, seed_id, tenant_id)
+        except (StrategySpecSeedReviewError, StrategySpecSeedStoreError) as exc:
+            raise _raise_seed_store_http_error(exc) from exc
+        return {"seed": seed.to_dict(), "store_path": str(runtime.strategy_seed_store.path)}
+
+    @router.post("/api/source-ingest/management/strategy-seeds/{seed_id}/review")
+    def review_management_strategy_seed(seed_id: str, request: Request, payload: dict[str, Any] = Body(default_factory=dict), x_idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key")) -> dict[str, Any]:
+        auth, tenant_id = _require_seed_caller(request, required_roles=_WRITE_ROLES)
+        try:
+            _require_tenant_seed(runtime, seed_id, tenant_id)
+            updated, decision = runtime.strategy_seed_store.record_review_decision(
+                seed_id, decision=str(payload.get("decision") or payload.get("action") or ""), reviewer_id=auth.actor_id, reason=str(payload.get("reason") or ""),
+                target_refs=list(payload.get("target_refs") or ()), created_at=payload.get("created_at"),
+                idempotency_key=str(x_idempotency_key or payload.get("idempotency_key") or "").strip() or None, request_hash=str(payload.get("request_hash") or "").strip() or None,
+            )
+        except (StrategySpecSeedReviewError, StrategySpecSeedStoreError) as exc:
+            raise _raise_seed_store_http_error(exc) from exc
+        return {"seed": updated.to_dict(), "decision": {**decision.to_dict(), "idempotent_replay": decision.idempotent_replay}}
+
+    @router.post("/api/source-ingest/management/strategy-seeds/{seed_id}/merge")
+    def merge_management_strategy_seed(seed_id: str, request: Request, payload: dict[str, Any] = Body(default_factory=dict), x_idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key")) -> dict[str, Any]:
+        auth, tenant_id = _require_seed_caller(request, required_roles=_WRITE_ROLES)
+        target_seed_id = str(payload.get("target_seed_id") or "").strip()
+        try:
+            _require_tenant_seed(runtime, seed_id, tenant_id)
+            if target_seed_id and target_seed_id != seed_id:
+                _require_tenant_seed(runtime, target_seed_id, tenant_id, error_code="merge_target_not_found")
+            updated, decision = runtime.strategy_seed_store.merge_seed(
+                seed_id, target_seed_id=target_seed_id, reviewer_id=auth.actor_id, reason=str(payload.get("reason") or ""), created_at=payload.get("created_at"),
+                idempotency_key=str(x_idempotency_key or payload.get("idempotency_key") or "").strip() or None, request_hash=str(payload.get("request_hash") or "").strip() or None, target_refs=list(payload.get("target_refs") or ()),
+            )
+        except (StrategySpecSeedReviewError, StrategySpecSeedStoreError) as exc:
+            raise _raise_seed_store_http_error(exc) from exc
+        return {"seed": updated.to_dict(), "decision": {**decision.to_dict(), "idempotent_replay": decision.idempotent_replay}}
+
+    @router.post("/api/source-ingest/management/strategy-seeds/{seed_id}/replication-submission")
+    def record_management_strategy_seed_replication(seed_id: str, request: Request, payload: dict[str, Any] = Body(default_factory=dict), x_idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key")) -> dict[str, Any]:
+        auth, tenant_id = _require_seed_caller(request, required_roles=_WRITE_ROLES)
+        try:
+            _require_tenant_seed(runtime, seed_id, tenant_id)
+            updated = runtime.strategy_seed_store.record_replication_submission(
+                seed_id, replication_ref=str(payload.get("replication_ref") or ""), experiment_task_id=str(payload.get("experiment_task_id") or ""),
+                strategy_id=str(payload.get("strategy_id") or ""), strategy_spec_version=str(payload.get("strategy_spec_version") or "1.0.0"),
+                submitted_by=auth.actor_id, submitted_at=str(payload.get("submitted_at") or _utc_now()),
+                idempotency_key=str(x_idempotency_key or payload.get("idempotency_key") or ""), research_task_ref=str(payload.get("research_task_ref") or "").strip() or None,
+            )
+        except (StrategySpecSeedReviewError, StrategySpecSeedStoreError) as exc:
+            raise _raise_seed_store_http_error(exc) from exc
+        return {"seed": updated.to_dict()}
 
     return router

@@ -573,3 +573,169 @@ def test_allowed_actions_lifecycle_state_machine_matrix() -> None:
     assert actions_build_disabled["canCanary"] is False
     assert actions_build_disabled["canEnable"] is False
     assert "definition_disabled_by_build" in actions_build_disabled["blockedReasons"]
+
+
+def test_source_ingest_management_strategy_seed_routes_enforce_tenant_auth_and_persist(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from services.source_ingestion.connectors.base import SourceRecord, SourceRecordStatus, SourceType
+    from services.source_ingestion.routers.management import create_management_router
+    from services.source_ingestion.runtime import SourceIngestionRuntime
+    from services.source_ingestion.strategy_seed_builder import (
+        StrategySpecSeed,
+        StrategySpecSeedStatus,
+    )
+
+    seed_path = tmp_path / "distill_seeds.jsonl"
+    monkeypatch.setenv("SOURCE_INGEST_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("STRATEGY_SPEC_SEED_STORE_PATH", str(seed_path))
+    monkeypatch.setenv("STRATEGY_SEED_STORE_PATH", str(seed_path))
+    monkeypatch.setenv("PANTHEON_RUNTIME_AUTH_MODE", "permissive")
+
+    runtime1 = SourceIngestionRuntime()
+    assert runtime1.strategy_seed_store.path == seed_path
+
+    runtime1.evidence_repository.add_source_record(
+        SourceRecord(
+            source_id="src-finmind-twse-seed-001",
+            connector_id="conn-finmind-twse",
+            source_type=SourceType.MARKET,
+            title="TWSE Institutional Flow Source",
+            content_ref="https://api.finmindtrade.com/api/v4/data",
+            status=SourceRecordStatus.NORMALIZED,
+            created_at="2026-10-18T00:00:00Z",
+            metadata={"tenant_id": "tenant-dev"},
+        )
+    )
+
+    def _make_seed(seed_id: str, *, source_id: str = "src-finmind-twse-seed-001", metadata: dict | None = None) -> StrategySpecSeed:
+        return StrategySpecSeed(
+            seed_id=seed_id,
+            source_id=source_id,
+            evidence_bundle_id="evb-finmind-twse-001",
+            hypothesis=f"Hypothesis for {seed_id} on TWSE flow.",
+            asset_class=["equity"],
+            market_scope=["TWSE"],
+            holding_period="swing",
+            required_data=["ohlcv", "institutional_flow"],
+            backend_hint="qlib",
+            feature_hints=["momentum"],
+            label_hints=["forward_return_5d"],
+            risk_notes=["liquidity guard"],
+            confidence=0.84,
+            status=StrategySpecSeedStatus.DRAFT,
+            source_ids=[source_id],
+            evidence_item_ids=["evi-finmind-001"],
+            citation_refs=["cite:finmind-001"],
+            trace_refs=["trace:finmind-001"],
+            created_at="2026-10-18T00:00:00Z",
+            metadata=metadata or {"strategy_family": "momentum", "execution_route": "none"},
+        )
+
+    primary_id = "seed-1d23a6d2fbc149f4"
+    dup_id = "seed-merge-dup-002"
+    runtime1.strategy_seed_store.save(_make_seed(primary_id))
+    runtime1.strategy_seed_store.save(_make_seed(dup_id))
+    runtime1.strategy_seed_store.save(_make_seed("seed-unowned-003", source_id="src-missing-owner"))
+    runtime1.strategy_seed_store.save(
+        _make_seed("seed-other-tenant-004", metadata={"tenant_id": "tenant-other", "strategy_family": "momentum"})
+    )
+
+    app1 = FastAPI()
+    app1.include_router(create_management_router(runtime1))
+    client1 = TestClient(app1)
+    op_headers = {"Authorization": "Bearer op-dev-1:operator:tenant-dev", "X-Tenant-Id": "tenant-dev"}
+    viewer_headers = {"Authorization": "Bearer viewer-dev-1:viewer:tenant-dev", "X-Tenant-Id": "tenant-dev"}
+
+    # 1. List filters strictly by resolved caller tenant (including SourceRecord metadata.tenant_id lookup)
+    listed = client1.get("/api/source-ingest/management/strategy-seeds", headers=op_headers)
+    assert listed.status_code == 200, listed.text
+    listed_ids = [item["seed_id"] for item in listed.json()["items"]]
+    assert listed_ids == [primary_id, dup_id]
+
+    # 2. Cross-tenant & unowned seeds fail closed; mismatched X-Tenant-Id fails closed with 403
+    assert client1.get("/api/source-ingest/management/strategy-seeds/seed-other-tenant-004", headers=op_headers).status_code == 404
+    assert client1.get("/api/source-ingest/management/strategy-seeds/seed-unowned-003", headers=op_headers).status_code == 404
+    mismatch = client1.get(
+        f"/api/source-ingest/management/strategy-seeds/{primary_id}",
+        headers={"Authorization": "Bearer op-dev-1:operator:tenant-dev", "X-Tenant-Id": "tenant-other"},
+    )
+    assert mismatch.status_code == 403
+
+    # 3. Viewer can read but cannot review, merge, or record replication
+    assert client1.get(f"/api/source-ingest/management/strategy-seeds/{primary_id}", headers=viewer_headers).status_code == 200
+    assert client1.post(
+        f"/api/source-ingest/management/strategy-seeds/{primary_id}/review",
+        json={"decision": "accept", "reason": "viewer attempt"},
+        headers={**viewer_headers, "X-Idempotency-Key": "view-rev-1"},
+    ).status_code == 403
+
+    # 4. Review & convert use verified actor_id (ignoring spoofed reviewer_id) and support idempotent replay
+    accepted = client1.post(
+        f"/api/source-ingest/management/strategy-seeds/{primary_id}/review",
+        json={"decision": "accept", "reviewer_id": "spoofed-reviewer", "reason": "Valid institutional signal", "request_hash": "hash-acc-1"},
+        headers={**op_headers, "X-Idempotency-Key": "idemp-acc-1"},
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["seed"]["status"] == "accepted"
+    assert accepted.json()["decision"]["reviewer_id"] == "op-dev-1"
+    assert accepted.json()["decision"]["idempotent_replay"] is False
+
+    replayed = client1.post(
+        f"/api/source-ingest/management/strategy-seeds/{primary_id}/review",
+        json={"decision": "accept", "reviewer_id": "spoofed-reviewer", "reason": "Valid institutional signal", "request_hash": "hash-acc-1"},
+        headers={**op_headers, "X-Idempotency-Key": "idemp-acc-1"},
+    )
+    assert replayed.status_code == 200, replayed.text
+    assert replayed.json()["decision"]["idempotent_replay"] is True
+
+    # 5. Merge checks target tenant ownership and records verified actor_id
+    merged = client1.post(
+        f"/api/source-ingest/management/strategy-seeds/{dup_id}/merge",
+        json={"target_seed_id": primary_id, "reviewer_id": "spoofed-merger", "reason": "Duplicate flow hypothesis", "request_hash": "hash-mrg-1"},
+        headers={**op_headers, "X-Idempotency-Key": "idemp-mrg-1"},
+    )
+    assert merged.status_code == 200, merged.text
+    assert merged.json()["seed"]["status"] == "merged"
+    assert merged.json()["decision"]["reviewer_id"] == "op-dev-1"
+
+    # 6. Promote and record replication submission writeback
+    promoted = client1.post(
+        f"/api/source-ingest/management/strategy-seeds/{primary_id}/review",
+        json={"decision": "convert_to_spec_seed", "reason": "Promote to StrategySpec"},
+        headers={**op_headers, "X-Idempotency-Key": "idemp-prom-1"},
+    )
+    assert promoted.status_code == 200, promoted.text
+    assert promoted.json()["seed"]["status"] == "promoted_to_strategy_spec"
+
+    rep = client1.post(
+        f"/api/source-ingest/management/strategy-seeds/{primary_id}/replication-submission",
+        json={
+            "replication_ref": "seedrep-primary-001",
+            "experiment_task_id": "exptask-primary-001",
+            "strategy_id": "strat-primary-001",
+            "strategy_spec_version": "1.0.0",
+            "submitted_by": "spoofed-submitter",
+            "submitted_at": "2026-10-18T01:00:00Z",
+            "research_task_ref": "rt-primary-001",
+        },
+        headers={**op_headers, "X-Idempotency-Key": "idemp-rep-1"},
+    )
+    assert rep.status_code == 200, rep.text
+    assert rep.json()["seed"]["lineage"]["submitted_by"] == "op-dev-1"
+    assert rep.json()["seed"]["lineage"]["replication_submissions"][0]["submitted_by"] == "op-dev-1"
+
+    # 7. Fresh runtime reading the same path observes all durable mutations
+    runtime2 = SourceIngestionRuntime()
+    reloaded = runtime2.strategy_seed_store.get(primary_id)
+    assert reloaded is not None
+    assert reloaded.status == StrategySpecSeedStatus.PROMOTED_TO_STRATEGY_SPEC
+    assert reloaded.lineage["replication_ref"] == "seedrep-primary-001"
+    reloaded_dup = runtime2.strategy_seed_store.get(dup_id)
+    assert reloaded_dup is not None
+    assert reloaded_dup.status == StrategySpecSeedStatus.MERGED
+
+
