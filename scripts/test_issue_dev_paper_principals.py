@@ -335,3 +335,14 @@ def test_alpha_replication_worker_receives_training_principal_and_compose_mounts
     assert "dev-paper-alpha-replication-tokens" in compose["volumes"]
 
 
+
+
+def test_persona_evaluator_bff_reader_has_viewer_and_registry_read_only():
+    variable = "PERSONA_EVALUATOR_BFF_TOKEN"
+    claims = verify(issue_environment(configured(), now=NOW)[variable])
+    assert claims["sub"] == claims["service"] == "pantheon-dev-persona-evaluator-bff-reader"
+    assert claims["roles"] == ["viewer", "registry-reader"]
+    assert claims["tenant_id"] == "tenant-dev" and claims["allowed_tenants"] == ["tenant-dev"]
+    assert claims["scope"] == "pantheon:dev-owner-read"
+    assert 0 < claims["exp"] - claims["iat"] <= TTL_SECONDS
+    assert not {"admin", "operator", "registry-writer", "capital", "runtime", "automated_gate"}.intersection(claims["roles"])

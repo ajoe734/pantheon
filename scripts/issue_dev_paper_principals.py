@@ -38,7 +38,7 @@ READERS = {
     "CAPITAL_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-capital-approval-reader", "approval_reader"),
     "EVOLUTION_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-evolution-approval-reader", "approval_reader"),
     "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-alpha-replication-registry-reader", "registry-reader"),
-    "PERSONA_EVALUATOR_BFF_TOKEN": ("pantheon-dev-persona-evaluator-bff-reader", "viewer"),
+    "PERSONA_EVALUATOR_BFF_TOKEN": ("pantheon-dev-persona-evaluator-bff-reader", ("viewer", "registry-reader")),
     "TRAINING_SESSION_SOURCE_READ_TOKEN": ("pantheon-dev-training-session-source-reader", "source_ingest_reader"),
     "AGORA_PROJECTOR_SERVICE_JWT": ("pantheon-dev-agora-projector-reader", "source_ingest_reader"),
     # Preview worker -> Training API only: training-service role, no owner/decide roles.
