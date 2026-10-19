@@ -7,8 +7,6 @@ legacy decorators with these named routers.
 from __future__ import annotations
 
 import asyncio
-from contextvars import copy_context
-from functools import partial
 import inspect
 import json
 import os
@@ -293,8 +291,7 @@ async def _dispatch(
                 kwargs[name_] = _coerce_request_value(raw, annotation)
 
         if name == "bff_assistant_provider_usage_summary" and not inspect.iscoroutinefunction(handler):
-            ctx = copy_context()
-            value = await asyncio.to_thread(ctx.run, partial(handler, **kwargs))
+            value = await asyncio.to_thread(handler, **kwargs)
         else:
             value = handler(**kwargs)
     if inspect.isawaitable(value):

@@ -1,7 +1,7 @@
 {
   "task_id": "DEV-MGMT-USABILITY-REPAIR-20261019",
   "title": "Repair Management portfolio reads and login session responsiveness",
-  "status": "source_repaired_pending_review_and_serial_release",
+  "status": "superseded_by_direct_takeover",
   "source_fixes": [
     {
       "id": "test_admin_display_name",
@@ -10,7 +10,7 @@
         "services/control-plane/bff/auth/handlers.py",
         "services/control-plane/bff/test_bff_session_auth_me_contract.py"
       ],
-      "summary": "Include preferred_username and name claims from the configured test_admin client_id (admintest) on /bff/auth/login and /bff/auth/dev-login so /bff/me exposes display_name=admintest while preserving stable audit subject sub=pantheon-dev-admin-test and all 6 roles."
+      "summary": "Include preferred_username and name claims from the configured test_admin client_id (admintest) on /bff/auth/dev-login so /bff/me exposes display_name=admintest while preserving stable audit subject sub=pantheon-dev-admin-test and all 6 roles."
     },
     {
       "id": "capital_pool_port_risk_policy_ref_filter",
@@ -30,7 +30,7 @@
         "services/control-plane/bff/auth/service.py",
         "services/control-plane/bff/tests/test_bff_auth_facade.py"
       ],
-      "summary": "Offload synchronous urllib provider list, provider readiness, and provider usage-summary calls via asyncio.to_thread(copy_context().run, ...) so simultaneous /bff/auth/readiness, /bff/me, and /bff/auth/logout remain responsive (<80ms) while providers?auth_probe=true or providers/usage-summary?auth_probe=true runs."
+      "summary": "Offload synchronous urllib provider list, provider readiness, and provider usage-summary calls via asyncio.to_thread (which preserves ContextVars) so simultaneous /bff/auth/readiness, /bff/me, and /bff/logout complete while slow provider callbacks remain pending while providers?auth_probe=true or providers/usage-summary?auth_probe=true runs."
     },
     {
       "id": "management_openclaw_primary_model_routing_and_stateless_readiness",
@@ -40,7 +40,7 @@
         "services/openclaw-gateway-adapter/test_compose_activation.py",
         "services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py"
       ],
-      "summary": "Configure OPENCLAW_PRIMARY_MODEL=openai/gpt-5.6-sol for Management AI (agent_id=main) in openclaw-gateway-adapter without changing global/held agents (agents.defaults.model.primary=anthropic/claude-opus-4-8, persona-opinion-*, or structured-extraction), surface active_model on stream done events, and keep readiness(auth_probe=True) stateless (operator_id=None, session_id=None) so repeated probes do not collide on a shared warm Gateway session lane."
+      "summary": "Configure OPENCLAW_PRIMARY_MODEL=openai/gpt-5.6-sol for Management AI (agent_id=main) in openclaw-gateway-adapter without changing global/held agents (agents.defaults.model.primary=anthropic/claude-opus-4-8, persona-opinion-*, or structured-extraction), separately surface requested_model and the Gateway-reported active_model when provided, and keep readiness(auth_probe=True) stateless (operator_id=None, session_id=None) so repeated probes do not collide on a shared warm Gateway session lane."
     },
     {
       "id": "truthful_optional_credential_mounts_absent",
@@ -54,5 +54,6 @@
   "deploy_components_required_after_merge": [
     "bff",
     "openclaw-gateway-adapter"
-  ]
+  ],
+  "superseded_by": "DEV-MGMT-USABILITY-DIRECT-20261019"
 }

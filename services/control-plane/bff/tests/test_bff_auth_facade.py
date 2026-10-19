@@ -282,24 +282,31 @@ def test_lifespan_schedules_first_probe_without_blocking_startup() -> None:
     assert elapsed < 0.05
 
 
+@pytest.mark.parametrize("usage_handler_async", [True, False])
 def test_assistant_providers_and_usage_summary_offload_sync_probes_with_contextvars(
     monkeypatch: pytest.MonkeyPatch,
+    usage_handler_async: bool,
 ) -> None:
     import contextvars
+    import threading
     from services.control_plane.bff.assistant import management_service
     from services.control_plane.bff.assistant.routes import create_assistant_router
 
     req_ctx: contextvars.ContextVar[str] = contextvars.ContextVar("test_req_ctx", default="unset")
     observed_ctx: list[str] = []
+    release = threading.Event()
+    started = {name: threading.Event() for name in ("providers", "usage")}
 
     def slow_provider_list(auth_probe: bool = False) -> dict[str, Any]:
         observed_ctx.append(f"providers:{req_ctx.get()}:{auth_probe}")
-        time.sleep(0.25)
+        started["providers"].set()
+        assert release.wait(5), "provider callback was not released while auth ran"
         return {"status": "ok", "data": [{"provider": "openclaw", "ready": True}]}
 
     def slow_usage_summary(*, auth_probe: bool = False, limit: int = 50, window_hours: int = 24) -> dict[str, Any]:
         observed_ctx.append(f"usage:{req_ctx.get()}:{auth_probe}:{limit}:{window_hours}")
-        time.sleep(0.25)
+        started["usage"].set()
+        assert release.wait(5), "usage callback was not released while auth ran"
         return {"status": "ok", "data": {"providers": []}}
 
     monkeypatch.setattr(management_service, "_extract_identity", lambda _auth, **_kw: object())
@@ -311,6 +318,7 @@ def test_assistant_providers_and_usage_summary_offload_sync_probes_with_contextv
         local_readiness=_local_ready,
         provider_readiness_cache=cache,
         handlers={
+            "bff_logout": lambda **_kwargs: {"status": "ok"},
             "bff_me": lambda **_kwargs: {
                 "data": {
                     "currentUser": {"id": "pantheon-dev-admin-test", "display_name": "admintest"},
@@ -339,11 +347,16 @@ def test_assistant_providers_and_usage_summary_offload_sync_probes_with_contextv
             provider_readiness=lambda: {"ready": True},
         )
     )
-    app.get("/bff/assistant/providers/usage-summary")(
-        management_service.bff_assistant_provider_usage_summary
-    )
+    # Cover both supported composition paths: the async owner endpoint and
+    # the standalone router's synchronous handler fallback.
+    app.include_router(create_assistant_management_router({
+        "bff_assistant_provider_usage_summary": (
+            management_service.bff_assistant_provider_usage_summary
+            if usage_handler_async else slow_usage_summary
+        ),
+    }))
 
-    async def scenario() -> tuple[float, float, int, int, int, int]:
+    async def scenario() -> None:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://bff.test") as client:
             slow_providers = asyncio.create_task(
@@ -355,33 +368,29 @@ def test_assistant_providers_and_usage_summary_offload_sync_probes_with_contextv
                     headers={"x-test-ctx": "ctx-u"},
                 )
             )
-            await asyncio.sleep(0.02)
+            try:
+                # Events prove both external callbacks are still held, so an
+                # accidentally synchronous implementation cannot pass after its
+                # slow work finishes. Deadlines only bound a hung test.
+                for event in started.values():
+                    assert await asyncio.to_thread(event.wait, 5)
+                readiness_resp, me_resp, logout_resp = await asyncio.wait_for(
+                    asyncio.gather(
+                        client.get("/bff/auth/readiness"),
+                        client.get("/bff/me"),
+                        client.post("/bff/logout", json={}),
+                    ),
+                    timeout=5,
+                )
+                assert all(r.status_code == 200 for r in (readiness_resp, me_resp, logout_resp))
+                assert not slow_providers.done()
+                assert not slow_usage.done()
+            finally:
+                release.set()
+                results = await asyncio.gather(slow_providers, slow_usage)
+            assert all(r.status_code == 200 for r in results)
 
-            t0 = time.perf_counter()
-            readiness_resp = await asyncio.wait_for(client.get("/bff/auth/readiness"), timeout=0.08)
-            readiness_elapsed = time.perf_counter() - t0
-
-            t1 = time.perf_counter()
-            me_resp = await asyncio.wait_for(client.get("/bff/me"), timeout=0.08)
-            me_elapsed = time.perf_counter() - t1
-
-            p_resp, u_resp = await asyncio.gather(slow_providers, slow_usage)
-            return (
-                readiness_elapsed,
-                me_elapsed,
-                readiness_resp.status_code,
-                me_resp.status_code,
-                p_resp.status_code,
-                u_resp.status_code,
-            )
-
-    r_elapsed, m_elapsed, r_code, m_code, p_code, u_code = asyncio.run(scenario())
-    assert r_code == 200
-    assert m_code == 200
-    assert p_code == 200
-    assert u_code == 200
-    assert r_elapsed < 0.08
-    assert m_elapsed < 0.08
+    asyncio.run(scenario())
     assert "providers:ctx-p:True" in observed_ctx
     assert "usage:ctx-u:True:25:12" in observed_ctx
 

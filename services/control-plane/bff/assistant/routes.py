@@ -4,7 +4,6 @@ import asyncio
 import inspect
 import os
 from contextlib import contextmanager
-from contextvars import copy_context
 from typing import Any, Callable, Dict, Iterator, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Body, Header, HTTPException
@@ -484,8 +483,7 @@ def create_assistant_router(
             if inspect.iscoroutinefunction(provider_list):
                 listed = await provider_list(auth_probe)
             else:
-                ctx = copy_context()
-                listed = await asyncio.to_thread(ctx.run, provider_list, auth_probe)
+                listed = await asyncio.to_thread(provider_list, auth_probe)
                 if inspect.isawaitable(listed):
                     listed = await listed
             if isinstance(listed, dict) and isinstance(listed.get("data"), list):
@@ -505,8 +503,7 @@ def create_assistant_router(
         if inspect.iscoroutinefunction(provider_readiness):
             readiness = await provider_readiness()
         else:
-            ctx = copy_context()
-            readiness = await asyncio.to_thread(ctx.run, provider_readiness)
+            readiness = await asyncio.to_thread(provider_readiness)
             if inspect.isawaitable(readiness):
                 readiness = await readiness
         return {"status": "ok", "data": [readiness]}

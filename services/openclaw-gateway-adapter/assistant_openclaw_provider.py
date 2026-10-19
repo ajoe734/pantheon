@@ -852,8 +852,7 @@ class AssistantOpenClawProvider:
         if requested_model:
             return [requested_model]
         primary = (
-            os.getenv("OPENCLAW_MANAGEMENT_PRIMARY_MODEL", "").strip()
-            or os.getenv("OPENCLAW_PRIMARY_MODEL", "").strip()
+            os.getenv("OPENCLAW_PRIMARY_MODEL", "").strip()
             or DEFAULT_PRIMARY_MODEL
         )
         return [primary]
@@ -975,7 +974,8 @@ class AssistantOpenClawProvider:
                     "deadline_seconds": answer_timeout,
                     "duration_ms": total_dur,
                     "reply_bytes": len(answer.encode("utf-8")),
-                    "active_model": candidate,
+                    "requested_model": candidate,
+                    **({"active_model": result.output["active_model"]} if result.output.get("active_model") else {}),
                     "primary_model": primary,
                 }
                 if is_fallback and primary_unavailable:
@@ -989,7 +989,8 @@ class AssistantOpenClawProvider:
                     "status": "ready",
                     "auth": "account_session",
                     "auth_status": "ready",
-                    "active_model": candidate,
+                    "requested_model": candidate,
+                    **({"active_model": result.output["active_model"]} if result.output.get("active_model") else {}),
                     "primary_model": primary,
                     **(
                         {
@@ -1123,8 +1124,9 @@ class AssistantOpenClawProvider:
             agent_id=selected_agent_id,
         )
         output["transport"] = "responses_http"
-        if model:
-            output["active_model"] = model
+        for field in ("requested_model", "active_model"):
+            if done.get(field):
+                output[field] = done[field]
         if function_calls:
             output["function_calls"] = function_calls
         # Missing usage is unknown, not zero — only set the key when upstream
@@ -1191,8 +1193,6 @@ class AssistantOpenClawProvider:
             )
 
         selected_model = self._resolve_effective_model(model, selected_agent_id)
-        primary_configured = self._resolve_model_candidates()[0]
-
         result = self._invoke_via_http(
             prompt,
             model=selected_model,
@@ -1209,9 +1209,6 @@ class AssistantOpenClawProvider:
         )
         if selected_model:
             self._active_model = selected_model
-            if selected_model != primary_configured:
-                result.output["fallback_used"] = True
-                result.output["primary_model"] = primary_configured
         return result
 
     def invoke_structured(
@@ -1904,7 +1901,13 @@ class AssistantOpenClawProvider:
                     "transport": "responses_http",
                 }
                 if model:
-                    done_event["active_model"] = model
+                    done_event["requested_model"] = model
+                # Gateway-reported model may itself be an agent alias. Preserve
+                # that evidence without treating the request override as proof.
+                if isinstance(nested_response, dict):
+                    reported_model = nested_response.get("model")
+                    if isinstance(reported_model, str) and reported_model.strip():
+                        done_event["active_model"] = reported_model.strip()
                 if function_calls:
                     done_event["function_calls"] = function_calls
                 # Missing usage is unknown, not zero — only include the key

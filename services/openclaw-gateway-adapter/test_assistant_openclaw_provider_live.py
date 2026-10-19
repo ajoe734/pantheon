@@ -474,7 +474,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
             info = provider.readiness(auth_probe=True)
 
         self.assertTrue(info["ready"])
-        self.assertEqual(info["active_model"], "anthropic/claude-opus-4-8")
+        self.assertEqual(info["requested_model"], "anthropic/claude-opus-4-8")
         self.assertGreater(
             calls[0]["timeout"],
             1.5,
@@ -798,7 +798,8 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         }, calls)
         provider = self._make_provider()
         with patch("assistant_openclaw_provider._urlopen_with_deadline", fake):
-            provider.invoke("explicit", model="fixture/explicit")
+            explicit = provider.invoke("explicit", model="fixture/explicit")
+            self.assertNotIn("fallback_used", explicit.output)
             provider.invoke("ordinary")
         self.assertEqual([c["model"] for c in calls],
                          ["fixture/explicit", "anthropic/claude-opus-4-8"])
@@ -832,18 +833,21 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
                 )
 
         self.assertTrue(readiness_info["ready"])
-        self.assertEqual(readiness_info["active_model"], "openai/gpt-5.6-sol")
+        self.assertEqual(readiness_info["requested_model"], "openai/gpt-5.6-sol")
         self.assertEqual(calls[0]["agent_id"], "main")
         self.assertEqual(calls[0]["model_header"], "openai/gpt-5.6-sol")
         self.assertNotIn("user", calls[0]["body"])
 
-        self.assertEqual(invoke_res.output["active_model"], "openai/gpt-5.6-sol")
+        self.assertEqual(invoke_res.output["requested_model"], "openai/gpt-5.6-sol")
         self.assertEqual(calls[1]["agent_id"], "main")
         self.assertEqual(calls[1]["model_header"], "openai/gpt-5.6-sol")
 
         done_events = [e for e in stream_events if e["type"] == "done"]
         self.assertEqual(len(done_events), 1)
-        self.assertEqual(done_events[0]["active_model"], "openai/gpt-5.6-sol")
+        self.assertEqual(done_events[0]["requested_model"], "openai/gpt-5.6-sol")
+        self.assertNotIn("active_model", done_events[0])
+        self.assertNotIn("active_model", invoke_res.output)
+        self.assertNotIn("active_model", readiness_info)
         self.assertEqual(calls[2]["agent_id"], "main")
         self.assertEqual(calls[2]["model_header"], "openai/gpt-5.6-sol")
 
@@ -852,6 +856,18 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertEqual(calls[3]["agent_id"], "persona-opinion-a")
         self.assertIsNone(calls[3]["model_header"])
         self.assertEqual(calls[3]["body"]["model"], "openclaw/persona-opinion-a")
+
+    def test_model_metadata_preserves_reported_model_separately_from_request(self) -> None:
+        events = _answer_events("answer")
+        events[-1]["response"]["model"] = "fixture/reported-upstream"
+        provider = self._make_provider()
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", lambda *_a, **_kw: _FakeSSEResponse(events)):
+            result = provider.invoke("question", model="fixture/requested")
+            done = list(provider.stream("question", model="fixture/requested"))[-1]
+        for metadata in (result.output, done):
+            self.assertEqual(metadata["requested_model"], "fixture/requested")
+            self.assertEqual(metadata["active_model"], "fixture/reported-upstream")
+            self.assertNotIn("fallback_used", metadata)
 
     def test_invoke_never_spawns_a_subprocess(self) -> None:
         """Ordinary invoke() must go through HTTP only — no CLI subprocess.

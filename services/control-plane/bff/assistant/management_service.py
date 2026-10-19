@@ -28,8 +28,7 @@ from datetime import datetime, timedelta, timezone
 import logging
 import os
 import sys
-from contextvars import ContextVar, copy_context
-from functools import partial
+from contextvars import ContextVar
 import inspect
 import re
 import time
@@ -6805,6 +6804,7 @@ async def _bff_management_nl_ask_stream_impl(
             )
             duration_ms = max(0, int((time.monotonic() - provider_started) * 1000))
             active_model = str((final_event or {}).get("active_model") or "").strip()
+            requested_model = str((final_event or {}).get("requested_model") or "").strip()
             _management_ai_record_event(
                 {
                     "event_type": "management_ai.provider.completed",
@@ -6820,6 +6820,7 @@ async def _bff_management_nl_ask_stream_impl(
                     "duration_ms": duration_ms,
                     "output_summary": {
                         "model": active_model or "openclaw/main",
+                        **({"requested_model": requested_model} if requested_model else {}),
                         "transport": "responses_http",
                         "output_bytes": len(answer.encode("utf-8")),
                     },
@@ -6831,6 +6832,7 @@ async def _bff_management_nl_ask_stream_impl(
                 "status": "completed",
                 "transport": "responses_http",
                 **({"active_model": active_model} if active_model else {}),
+                **({"requested_model": requested_model} if requested_model else {}),
             }
             _management_ai_append_turn(
                 turn_id=f"{message_id}-assistant",
@@ -6949,15 +6951,11 @@ async def bff_assistant_provider_usage_summary(
     """Return provider/model usage history plus provider-reported quota snapshots."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
-    ctx = copy_context()
     return await asyncio.to_thread(
-        ctx.run,
-        partial(
-            _assistant_provider_usage_summary,
-            auth_probe=auth_probe,
-            limit=limit,
-            window_hours=window_hours,
-        ),
+        _assistant_provider_usage_summary,
+        auth_probe=auth_probe,
+        limit=limit,
+        window_hours=window_hours,
     )
 async def bff_management_ai_conversations(
     limit: int = Query(default=50, ge=1, le=200),
