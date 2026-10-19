@@ -50,27 +50,40 @@
         "services/openclaw-gateway-adapter/tests/test_assistant_credential_mounts.py"
       ],
       "summary": "Verify the expected provider auth file (auth.json for codex, .credentials.json for claude) exists as a regular file inside the mount before reporting ready or wrong_owner, so empty mount directories truthfully report status=missing_credentials and owner_check=not_checked regardless of directory ownership."
+    },
+    {
+      "id": "persona_fleet_threadpool_offload_and_truthful_batched_strategy_spec_counts",
+      "files": [
+        "services/control-plane/bff/personas/routes/collection.py",
+        "services/control-plane/bff/personas/service.py",
+        "services/control-plane/bff/ports/research_knowledge_source.py",
+        "services/control-plane/bff/tests/test_bff_auth_facade.py"
+      ],
+      "summary": "Run synchronous persona collection/fleet/intent route handlers on FastAPI's worker threadpool instead of blocking the main asyncio event loop, replace per-persona N+1 list_strategy_specs(persona_id=...) reads with a single batched _routed_strategy_counts_by_persona() read reused across league ranking and fleet row projection while preserving paper ranking snapshot capture before broader catalog-default persona reads and truthful error propagation (no exception-swallowing fallback to 0/{}), and replace repeated json.loads(json.dumps(...)) deep-copies and non-current version bundle normalization in DefaultResearchKnowledgeSourcePort.list_strategy_specs with copy.deepcopy and _kw05_select_current_version_candidate."
     }
   ],
   "verification": {
-    "concurrency": "Threading events hold both provider callbacks while readiness, me and logout complete. No hardware latency SLO. ContextVars preserved.",
+    "concurrency": "Threading events hold both provider callbacks and persona-fleet strategy_specs owner read while /bff/auth/readiness, /bff/me, /bff/logout, and /bff/management/portfolio-book complete concurrently. ContextVars preserved.",
+    "ac3_truthful_errors_and_ranking_snapshot_order": "Removed error-swallowing try/except blocks in _routed_strategies_for_persona and _routed_strategy_counts_by_persona; verified 503 error propagation when list_strategy_specs fails and verified paper ranking snapshot reads precede broader include_market_persona_defaults=True reads (persona_read_include_defaults[:3] == [False, False, True]).",
+    "six_module_baseline_comparison": {
+      "command": "/tmp/civenv/bin/pytest -q -p no:cacheprovider services/control-plane/bff/tests/test_bff_auth_facade.py services/control-plane/bff/tests/test_bff_b3_persona_fleet.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py services/control-plane/bff/test_kw05_strategy_spec_contract.py services/control-plane/bff/test_bff_session_auth_me_contract.py services/control-plane/bff/tests/test_persona_router.py",
+      "baseline_9580fe875": "19 failed, 154 passed, 3 warnings in 103.52s (/tmp/pantheon-assist-20261013/Baseline9580-same-six-module-order-as-native-g6-20261019.json)",
+      "current_branch": "19 failed, 155 passed, 3 warnings in 98.72s",
+      "delta": "+1 passed (test_persona_fleet_owner_reads_allow_auth_and_portfolio_while_pending_and_batch_strategy_specs), 0 new failures; identical 19 pre-existing failures in test_bff_b3_persona_fleet.py (9) and test_persona_router.py (10) explicitly disclosed."
+    },
     "negative_control": "Same normal test environment with asyncio.to_thread replaced by inline blocking: 1 failed in 6.40s (expected failure), proving blocking cannot pass the regression. Temporary plugin is not product source.",
     "model": "requested_model is selected override; active_model is only Gateway-reported response.model, possibly an agent alias; absent report stays unknown. Explicit requests are not fallback.",
     "hosted": "Pending exact-head review, merge, official root deployment and browser/AI persistence verification.",
     "local_validation": {
-      "result": "182 passed, 4 skipped",
-      "duration_seconds": 78.43,
-      "log": "/tmp/pantheon-mgmt-direct-validation.log",
-      "scope": "auth facade, real JWT/browser session/revocation/tenant policy, capital pool filtering, OpenClaw invoke/stream/readiness, Compose and credential mounts",
-      "followup": "After final test composition expansion: both async owner and sync fallback concurrency scenarios passed (2 passed in 1.65s). Counts overlap; not summed."
-    },
-    "delivery_metadata_cleanup": "Combined successor Task-ID; removed only extra blank EOF lines in two test files. Production source blobs unchanged. Existing focused test results remain applicable; final diff whitespace and JSON checked."
+      "result": "143 passed, 3 warnings in 68.78s in focused 5-module suite; 155 passed / 19 pre-existing failed in 98.72s in 6-module baseline comparison",
+      "scope": "auth facade + persona-fleet concurrency/batching/AC3 regression, research knowledge source ports, kw05 strategy_spec contract, session auth me contract, and persona capital runtime ports"
+    }
   },
   "deploy_components_required_after_merge": [
     "bff",
     "openclaw-gateway-adapter"
   ],
-  "predecessor_pr": 6655,
+  "predecessor_pr": 6656,
   "delivery_branch": "task/DEV-MGMT-USABILITY-DIRECT-20261019",
-  "delivery_note": "Successor delivery contains one coherent Task-ID commit. Original Antigravity2 source commit 6fb4e9c2139f657fd7ff346c846bde19cfa2b188 and Root correction f9f8a5ad73603265144351c80406a9a8143d33b9 remain recoverable from retained predecessor PR6655/history and the pre-repair backup reference; production source bytes are unchanged."
+  "delivery_note": "Continued from preserved partial source (/tmp/pantheon-assist-20261013/Management-existing-g6-preserved-partial-for-AC3-correction-20261019.patch) on top of current dev (ec09f48db7c77d1034ff395a894fdf0d2aaefc7e), removing AC3 error-swallowing catches, restoring paper-ranking snapshot ordering before broader fleet reads, and fixing unit test tenant claims/command store setup."
 }

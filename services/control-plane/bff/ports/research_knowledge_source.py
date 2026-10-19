@@ -8,6 +8,7 @@ monkey patches, experiment overlays, and fixture-pack loading.
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import json
@@ -1313,17 +1314,17 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         bundle = raw if isinstance(raw, dict) else {}
         return {
             "evidence_refs": [
-                json.loads(json.dumps(item))
+                copy.deepcopy(item)
                 for item in bundle.get("evidence_refs") or []
                 if isinstance(item, dict)
             ],
             "memory_anchors": [
-                json.loads(json.dumps(item))
+                copy.deepcopy(item)
                 for item in bundle.get("memory_anchors") or []
                 if isinstance(item, dict)
             ],
             "insight_citations": [
-                json.loads(json.dumps(item))
+                copy.deepcopy(item)
                 for item in bundle.get("insight_citations") or []
                 if isinstance(item, dict)
             ],
@@ -1339,16 +1340,147 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         }
 
     @classmethod
+    def _kw05_version_sort_key(
+        cls,
+        *,
+        spec_version: Any,
+        created_at: Any,
+        spec_version_id: Any,
+    ) -> Tuple[Tuple[int, ...], datetime, str]:
+        return (
+            tuple(int(p) for p in str(spec_version or "").lstrip("v").split(".") if p.isdigit()),
+            _naive_utc(_parse_rfc3339(created_at)),
+            str(spec_version_id or ""),
+        )
+
+    @classmethod
     def _kw05_sort_versions(cls, versions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         return sorted(
             versions,
-            key=lambda version: (
-                tuple(int(p) for p in str(version.get("spec_version") or "").lstrip("v").split(".") if p.isdigit()),
-                _naive_utc(_parse_rfc3339(version.get("created_at"))),
-                str(version.get("spec_version_id") or ""),
+            key=lambda version: cls._kw05_version_sort_key(
+                spec_version=version.get("spec_version"),
+                created_at=version.get("created_at"),
+                spec_version_id=version.get("spec_version_id"),
             ),
             reverse=True,
         )
+
+    @classmethod
+    def _kw05_normalize_version_candidate(
+        cls,
+        strategy_spec: Dict[str, Any],
+        raw_version: Dict[str, Any],
+        *,
+        strategy_id: str,
+        index: int,
+        candidate_count: int,
+        include_detail_bundles: bool = True,
+    ) -> Dict[str, Any]:
+        provenance = (
+            raw_version.get("provenance")
+            if isinstance(raw_version.get("provenance"), dict)
+            else {}
+        )
+        spec_version_id = str(
+            raw_version.get("spec_version_id")
+            or (
+                strategy_spec.get("current_spec_version_id")
+                if index == 1 and candidate_count == 1
+                else ""
+            )
+            or raw_version.get("id")
+            or strategy_id
+        ).strip()
+        spec_version = str(
+            raw_version.get("spec_version")
+            or (
+                strategy_spec.get("current_spec_version")
+                if index == 1 and candidate_count == 1
+                else ""
+            )
+            or f"v{index}"
+        ).strip()
+        title = (
+            raw_version.get("title")
+            or raw_version.get("name")
+            or strategy_spec.get("title")
+            or strategy_spec.get("name")
+        )
+        version: Dict[str, Any] = {
+            "object_ref": {
+                "type": "StrategySpec",
+                "id": spec_version_id,
+            },
+            "strategy_id": strategy_id,
+            "spec_version_id": spec_version_id,
+            "spec_version": spec_version,
+            "parent_spec_version_id": raw_version.get("parent_spec_version_id"),
+            "derived_from_source_refs": list(
+                raw_version.get("derived_from_source_refs")
+                or provenance.get("source_refs")
+                or []
+            ),
+            "lifecycle_state": cls._kw05_lifecycle_state(
+                raw_version.get("lifecycle_state")
+                or raw_version.get("status")
+                or strategy_spec.get("lifecycle_state")
+                or strategy_spec.get("status")
+            ),
+            "title": title,
+            "hypothesis": raw_version.get("hypothesis") or strategy_spec.get("hypothesis"),
+            "objective": raw_version.get("objective") or strategy_spec.get("objective"),
+            "market_scope": copy.deepcopy(
+                raw_version.get("market_scope") or strategy_spec.get("market_scope") or {}
+            ),
+            "execution_profile": copy.deepcopy(
+                raw_version.get("execution_profile")
+                or strategy_spec.get("execution_profile")
+                or {}
+            ),
+            "governance": copy.deepcopy(
+                raw_version.get("governance") or strategy_spec.get("governance") or {}
+            ),
+            "source_kind": (
+                raw_version.get("source_kind")
+                or provenance.get("source_kind")
+                or strategy_spec.get("source_kind")
+            ),
+            "persona_ids": list(raw_version.get("persona_ids") or strategy_spec.get("persona_ids") or []),
+            "created_at": (
+                raw_version.get("created_at")
+                or provenance.get("created_at")
+                or strategy_spec.get("created_at")
+                or strategy_spec.get("updated_at")
+            ),
+            "created_by": raw_version.get("created_by") or provenance.get("created_by"),
+            "last_modified_at": (
+                raw_version.get("updated_at")
+                or raw_version.get("last_modified_at")
+                or strategy_spec.get("updated_at")
+                or raw_version.get("created_at")
+                or provenance.get("created_at")
+            ),
+        }
+        if include_detail_bundles:
+            version["evaluation_plan"] = copy.deepcopy(
+                raw_version.get("evaluation_plan")
+                or strategy_spec.get("evaluation_plan")
+                or {}
+            )
+            version["citation_bundle"] = cls._kw05_normalize_citation_bundle(
+                raw_version.get("citation_bundle") or strategy_spec.get("citation_bundle")
+            )
+        risk_val = raw_version.get("risk") or strategy_spec.get("risk")
+        if risk_val:
+            version["risk"] = risk_val
+            if isinstance(version.get("governance"), dict) and "risk_level" not in version["governance"]:
+                version["governance"]["risk_level"] = risk_val
+        for extra_key in ("strategy_spec_registry_id", "tenant_id", "semantic_version"):
+            extra_val = raw_version.get(extra_key) or strategy_spec.get(extra_key)
+            if extra_val:
+                version[extra_key] = str(extra_val)
+        version["allowedActions"] = cls._kw05_allowed_actions(version)
+        return version
 
     @classmethod
     def _kw05_versions(cls, strategy_spec: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1358,7 +1490,43 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
 
         raw_versions = strategy_spec.get("versions")
         candidates = raw_versions if isinstance(raw_versions, list) and raw_versions else [strategy_spec]
+        candidate_count = len(candidates)
         versions: List[Dict[str, Any]] = []
+        for index, raw_version in enumerate(candidates, start=1):
+            if not isinstance(raw_version, dict):
+                continue
+            versions.append(
+                cls._kw05_normalize_version_candidate(
+                    strategy_spec,
+                    raw_version,
+                    strategy_id=strategy_id,
+                    index=index,
+                    candidate_count=candidate_count,
+                    include_detail_bundles=True,
+                )
+            )
+
+        return cls._kw05_sort_versions(versions)
+
+    @classmethod
+    def _kw05_select_current_version_candidate(
+        cls,
+        strategy_spec: Dict[str, Any],
+    ) -> Optional[Tuple[str, int, Dict[str, Any], int, int]]:
+        strategy_id = str(strategy_spec.get("strategy_id") or strategy_spec.get("id") or "").strip()
+        if not strategy_id:
+            return None
+
+        raw_versions = strategy_spec.get("versions")
+        candidates = raw_versions if isinstance(raw_versions, list) and raw_versions else [strategy_spec]
+        candidate_count = len(candidates)
+        if candidate_count == 1:
+            only = candidates[0]
+            if not isinstance(only, dict):
+                return None
+            return strategy_id, 1, only, 1, 1
+
+        ranked: List[Tuple[Tuple[Tuple[int, ...], datetime, str], str, int, Dict[str, Any]]] = []
         for index, raw_version in enumerate(candidates, start=1):
             if not isinstance(raw_version, dict):
                 continue
@@ -1369,109 +1537,39 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             )
             spec_version_id = str(
                 raw_version.get("spec_version_id")
-                or (
-                    strategy_spec.get("current_spec_version_id")
-                    if index == 1 and len(candidates) == 1
-                    else ""
-                )
                 or raw_version.get("id")
                 or strategy_id
             ).strip()
-            spec_version = str(
-                raw_version.get("spec_version")
-                or (
-                    strategy_spec.get("current_spec_version")
-                    if index == 1 and len(candidates) == 1
-                    else ""
-                )
-                or f"v{index}"
-            ).strip()
-            title = (
-                raw_version.get("title")
-                or raw_version.get("name")
-                or strategy_spec.get("title")
-                or strategy_spec.get("name")
+            spec_version = str(raw_version.get("spec_version") or f"v{index}").strip()
+            created_at = (
+                raw_version.get("created_at")
+                or provenance.get("created_at")
+                or strategy_spec.get("created_at")
+                or strategy_spec.get("updated_at")
             )
-            version = {
-                "object_ref": {
-                    "type": "StrategySpec",
-                    "id": spec_version_id,
-                },
-                "strategy_id": strategy_id,
-                "spec_version_id": spec_version_id,
-                "spec_version": spec_version,
-                "parent_spec_version_id": raw_version.get("parent_spec_version_id"),
-                "derived_from_source_refs": list(
-                    raw_version.get("derived_from_source_refs")
-                    or provenance.get("source_refs")
-                    or []
-                ),
-                "lifecycle_state": cls._kw05_lifecycle_state(
-                    raw_version.get("lifecycle_state")
-                    or raw_version.get("status")
-                    or strategy_spec.get("lifecycle_state")
-                    or strategy_spec.get("status")
-                ),
-                "title": title,
-                "hypothesis": raw_version.get("hypothesis") or strategy_spec.get("hypothesis"),
-                "objective": raw_version.get("objective") or strategy_spec.get("objective"),
-                "market_scope": json.loads(
-                    json.dumps(raw_version.get("market_scope") or strategy_spec.get("market_scope") or {})
-                ),
-                "execution_profile": json.loads(
-                    json.dumps(
-                        raw_version.get("execution_profile")
-                        or strategy_spec.get("execution_profile")
-                        or {}
-                    )
-                ),
-                "evaluation_plan": json.loads(
-                    json.dumps(
-                        raw_version.get("evaluation_plan")
-                        or strategy_spec.get("evaluation_plan")
-                        or {}
-                    )
-                ),
-                "governance": json.loads(
-                    json.dumps(raw_version.get("governance") or strategy_spec.get("governance") or {})
-                ),
-                "citation_bundle": cls._kw05_normalize_citation_bundle(
-                    raw_version.get("citation_bundle") or strategy_spec.get("citation_bundle")
-                ),
-                "source_kind": (
-                    raw_version.get("source_kind")
-                    or provenance.get("source_kind")
-                    or strategy_spec.get("source_kind")
-                ),
-                "persona_ids": list(raw_version.get("persona_ids") or strategy_spec.get("persona_ids") or []),
-                "created_at": (
-                    raw_version.get("created_at")
-                    or provenance.get("created_at")
-                    or strategy_spec.get("created_at")
-                    or strategy_spec.get("updated_at")
-                ),
-                "created_by": raw_version.get("created_by") or provenance.get("created_by"),
-                "last_modified_at": (
-                    raw_version.get("updated_at")
-                    or raw_version.get("last_modified_at")
-                    or strategy_spec.get("updated_at")
-                    or raw_version.get("created_at")
-                    or provenance.get("created_at")
-                ),
-            }
-            risk_val = raw_version.get("risk") or strategy_spec.get("risk")
-            if risk_val:
-                version["risk"] = risk_val
-                if isinstance(version.get("governance"), dict) and "risk_level" not in version["governance"]:
-                    version["governance"]["risk_level"] = risk_val
-            for extra_key in ("strategy_spec_registry_id", "tenant_id", "semantic_version"):
-                extra_val = raw_version.get(extra_key) or strategy_spec.get(extra_key)
-                if extra_val:
-                    version[extra_key] = str(extra_val)
-            version["allowedActions"] = cls._kw05_allowed_actions(version)
-            versions.append(version)
-
-        return cls._kw05_sort_versions(versions)
+            ranked.append(
+                (
+                    cls._kw05_version_sort_key(
+                        spec_version=spec_version,
+                        created_at=created_at,
+                        spec_version_id=spec_version_id,
+                    ),
+                    spec_version_id,
+                    index,
+                    raw_version,
+                )
+            )
+        if not ranked:
+            return None
+        ranked.sort(key=lambda entry: entry[0], reverse=True)
+        version_count = len(ranked)
+        current_spec_version_id = str(strategy_spec.get("current_spec_version_id") or "").strip()
+        if current_spec_version_id:
+            for _sort_key, spec_version_id, index, raw_version in ranked:
+                if spec_version_id == current_spec_version_id:
+                    return strategy_id, index, raw_version, candidate_count, version_count
+        _, _, best_index, best_raw = ranked[0]
+        return strategy_id, best_index, best_raw, candidate_count, version_count
 
     @classmethod
     def _kw05_current_version(
@@ -1562,14 +1660,32 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         for strategy_spec in source_specs:
             if not isinstance(strategy_spec, dict):
                 continue
-            versions = self._kw05_versions(strategy_spec)
-            current_version = self._kw05_current_version(strategy_spec, versions)
-            if current_version is None:
+            selected = self._kw05_select_current_version_candidate(strategy_spec)
+            if selected is None:
                 continue
-
-            current_lifecycle_state = str(current_version.get("lifecycle_state") or "")
-            current_source_kind = str(current_version.get("source_kind") or "")
-            persona_list = [str(value) for value in (current_version.get("persona_ids") or []) if str(value).strip()]
+            strategy_id, selected_index, raw_current, candidate_count, version_count = selected
+            provenance = (
+                raw_current.get("provenance")
+                if isinstance(raw_current.get("provenance"), dict)
+                else {}
+            )
+            current_lifecycle_state = str(
+                self._kw05_lifecycle_state(
+                    raw_current.get("lifecycle_state")
+                    or raw_current.get("status")
+                    or strategy_spec.get("lifecycle_state")
+                    or strategy_spec.get("status")
+                )
+                or ""
+            )
+            current_source_kind = str(
+                raw_current.get("source_kind")
+                or provenance.get("source_kind")
+                or strategy_spec.get("source_kind")
+                or ""
+            )
+            raw_persona_ids = raw_current.get("persona_ids") or strategy_spec.get("persona_ids") or []
+            persona_list = [str(value) for value in raw_persona_ids if str(value).strip()]
             persona_ids = set(persona_list)
 
             if lifecycle_state and lifecycle_state != "all" and current_lifecycle_state != lifecycle_state:
@@ -1581,10 +1697,17 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             if persona_id and str(persona_id) not in persona_ids:
                 continue
 
-            strategy_id = str(current_version.get("strategy_id") or "")
+            current_version = self._kw05_normalize_version_candidate(
+                strategy_spec,
+                raw_current,
+                strategy_id=strategy_id,
+                index=selected_index,
+                candidate_count=candidate_count,
+                include_detail_bundles=False,
+            )
             items.append(
                 {
-                    "object_ref": json.loads(json.dumps(current_version.get("object_ref") or {})),
+                    "object_ref": dict(current_version.get("object_ref") or {}),
                     "strategy_id": strategy_id,
                     "current_spec_version_id": current_version.get("spec_version_id"),
                     "current_spec_version": current_version.get("spec_version"),
@@ -1592,7 +1715,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                     "lifecycle_state": current_lifecycle_state,
                     "source_kind": current_source_kind,
                     "hypothesis_excerpt": self._kw05_hypothesis_excerpt(current_version.get("hypothesis")),
-                    "version_count": len(versions),
+                    "version_count": version_count,
                     "last_modified_at": current_version.get("last_modified_at"),
                     "route_href": self._kw05_strategy_route_href(strategy_id),
                     "persona_ids": persona_list,
