@@ -443,6 +443,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         self._notes: Dict[str, Any] = dict(research_notes_store or {})
         self._insights: Dict[str, Any] = dict(insight_cards_store or {})
         self._strategy_specs: Dict[str, Any] = dict(strategy_specs_store or {})
+        self._has_injected_strategy_specs: bool = bool(strategy_specs_store)
         self._tickets: Dict[str, Any] = dict(research_tickets_store or {})
         self._analyses: Dict[str, Any] = dict(research_analyses_store or {})
         if research_experiments_store:
@@ -538,11 +539,14 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             return "missing"
         if dataset == "research_experiments":
             return "typed_store" if self._get_research_write_owner() is not None else "missing"
-        if dataset in ("research_notes", "insight_cards", "strategy_specs", "research_tickets", "research_analyses", "research_artifacts"):
+        if dataset == "strategy_specs":
+            if self._has_injected_strategy_specs:
+                return "typed_store"
+            return "service_client" if (os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL")) else "missing"
+        if dataset in ("research_notes", "insight_cards", "research_tickets", "research_analyses", "research_artifacts"):
             store_map = {
                 "research_notes": self._notes,
                 "insight_cards": self._insights,
-                "strategy_specs": self._strategy_specs,
                 "research_tickets": self._tickets,
                 "research_analyses": self._analyses,
                 "research_artifacts": self._artifacts,
@@ -663,7 +667,10 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             insight = self.get_insight_card(ref) or {}
             return insight.get("summary")
         if entity == "strategy_spec":
-            spec = self.get_strategy_spec(ref) or {}
+            try:
+                spec = self.get_strategy_spec(ref) or {}
+            except Exception:
+                spec = {}
             return spec.get("title") or spec.get("name")
         if entity == "experiment":
             try:
@@ -1093,7 +1100,10 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 "route_href": None,
             }
         if normalized_scope == "strategy":
-            strategy_spec = self.get_strategy_spec(ref) or {}
+            try:
+                strategy_spec = self.get_strategy_spec(ref) or {}
+            except Exception:
+                strategy_spec = {}
             title = strategy_spec.get("title") or strategy_spec.get("name")
             display = f"{title} — Strategy Spec" if title else None
             return {
@@ -1453,6 +1463,10 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 version["risk"] = risk_val
                 if isinstance(version.get("governance"), dict) and "risk_level" not in version["governance"]:
                     version["governance"]["risk_level"] = risk_val
+            for extra_key in ("strategy_spec_registry_id", "tenant_id", "semantic_version"):
+                extra_val = raw_version.get(extra_key) or strategy_spec.get(extra_key)
+                if extra_val:
+                    version[extra_key] = str(extra_val)
             version["allowedActions"] = cls._kw05_allowed_actions(version)
             versions.append(version)
 
@@ -1487,6 +1501,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             if normalized in {
                 str(version.get("spec_version_id") or ""),
                 str(version.get("spec_version") or ""),
+                str(version.get("strategy_spec_registry_id") or ""),
+                str(version.get("semantic_version") or ""),
             }:
                 return version
         return None
@@ -1536,22 +1552,6 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         include_retired: bool = False,
         include_fixture_pack: bool = False,
     ) -> List[Dict[str, Any]]:
-        try:
-            from services.registry.storage import get_store
-            from services.registry.models import ArtifactType
-            reg_store = get_store()
-            if hasattr(reg_store, "list_all"):
-                for entry in reg_store.list_all():
-                    if getattr(entry, "artifact_type", None) in (
-                        ArtifactType.STRATEGY_SPEC,
-                        ArtifactType.STRATEGY_SPEC.value,
-                        "strategy_spec",
-                    ):
-                        sid = getattr(entry, "strategy_id", None)
-                        if sid:
-                            self._resolve_canonical_strategy_spec(sid)
-        except Exception:
-            pass
         items: List[Dict[str, Any]] = []
         for strategy_spec in self._strategy_specs.values():
             if not isinstance(strategy_spec, dict):
@@ -1658,78 +1658,109 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         return items
 
     def get_strategy_spec(self, strategy_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        detail = self.get_strategy_spec_detail(strategy_id, version_selector="current")
-        if not detail:
+        d = self.get_strategy_spec_detail(strategy_id, version_selector="current")
+        if not d:
             return None
         return {
-            "strategy_id": detail.get("strategy_id"),
-            "title": detail.get("title"),
-            "name": detail.get("title"),
-            "spec_version_id": detail.get("spec_version_id"),
-            "spec_version": detail.get("spec_version"),
-            "lifecycle_state": detail.get("lifecycle_state"),
+            "strategy_id": d.get("strategy_id"), "tenant_id": d.get("tenant_id"),
+            "title": d.get("title"), "name": d.get("title"),
+            "spec_version_id": d.get("spec_version_id"),
+            "strategy_spec_registry_id": d.get("strategy_spec_registry_id") or d.get("spec_version_id"),
+            "spec_version": d.get("spec_version"), "lifecycle_state": d.get("lifecycle_state"),
+            "risk": d.get("risk"), "last_modified_at": d.get("last_modified_at"),
         }
+
+    @staticmethod
+    def _strategy_owner_error(status: int, code: str, message: str, reason: str) -> Any:
+        from fastapi import HTTPException
+        return HTTPException(status_code=status, detail={"error": {"code": code, "message": message, "reason": reason, "status_code": status}})
 
     def _resolve_canonical_strategy_spec(self, strategy_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not strategy_id:
             return None
         sid = str(strategy_id).strip()
+        if self._has_injected_strategy_specs and not (os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL")):
+            cached = self._strategy_specs.get(sid)
+            return cached if isinstance(cached, dict) else None
+        import urllib.error, urllib.parse
+        from services.control_plane.bff.command_adapters.base import ActionUnavailableError, http_request_json, registry_url
+        from services.control_plane.bff.core.owner_reads import authorization, selected_tenant, verified_caller_tenant
 
-        reg_spec: Optional[Dict[str, Any]] = None
+        auth = authorization.get()
+        if not auth:
+            raise self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Canonical strategy registry readback requires caller authorization", "strategy_store_unavailable")
         try:
-            from services.registry.storage import get_store
-            from services.registry.models import ArtifactType
-            reg_store = get_store()
-            if hasattr(reg_store, "list_by_strategy"):
-                raw_entries = reg_store.list_by_strategy(sid)
-                strategy_spec_entries = [
-                    e for e in raw_entries
-                    if getattr(e, "artifact_type", None) in (
-                        ArtifactType.STRATEGY_SPEC,
-                        ArtifactType.STRATEGY_SPEC.value,
-                        "strategy_spec",
-                    )
-                ]
-                if strategy_spec_entries:
-                    latest_entry = strategy_spec_entries[-1]
-                    meta = dict(latest_entry.metadata) if isinstance(latest_entry.metadata, dict) else latest_entry.to_dict()
-                    if "versions" in meta and meta["versions"]:
-                        reg_spec = dict(meta)
-                    else:
-                        name = meta.get("title") or meta.get("name") or sid
-                        risk = meta.get("risk") or "medium"
-                        state = meta.get("lifecycle_state") or meta.get("status") or meta.get("state") or (
-                            latest_entry.artifact_state.value if hasattr(latest_entry.artifact_state, "value") else str(latest_entry.artifact_state)
-                        ) or "draft"
-                        ver_id = meta.get("spec_version_id") or meta.get("version") or getattr(latest_entry, "version", "v1")
-                        reg_spec = {
-                            "strategy_id": sid,
-                            "versions": [
-                                {
-                                    "spec_version_id": ver_id,
-                                    "spec_version": ver_id,
-                                    "title": name,
-                                    "name": name,
-                                    "risk": risk,
-                                    "lifecycle_state": state,
-                                    "persona_ids": meta.get("personaIds") or meta.get("persona_ids") or [],
-                                    "governance": {"risk_level": risk},
-                                }
-                            ],
-                            "current_version_id": ver_id,
-                        }
-        except Exception:
-            pass
+            caller_tenant = verified_caller_tenant(tenant_id=selected_tenant.get())
+            url = registry_url(f"/api/registry/strategies/{urllib.parse.quote(sid, safe='')}/strategy-specs")
+            raw_entries = http_request_json(url, auth_token=auth.removeprefix("Bearer ").strip(), tenant_id=caller_tenant)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return None
+            if exc.code in (401, 403):
+                raise self._strategy_owner_error(403, "FORBIDDEN", "Strategy reference is outside the caller tenant audience", "strategy_audience_mismatch") from exc
+            raise self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Canonical strategy registry readback is unavailable", f"strategy_registry_http_{exc.code}") from exc
+        except ActionUnavailableError as exc:
+            if exc.status_code == 403:
+                raise self._strategy_owner_error(403, "FORBIDDEN", str(exc.detail), "strategy_audience_mismatch") from exc
+            raise self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", str(exc.detail), "strategy_store_unavailable") from exc
+        except Exception as exc:
+            raise self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Canonical strategy registry readback is unavailable", str(exc) or "strategy_store_unavailable") from exc
 
-        if reg_spec is not None:
-            self._strategy_specs[sid] = reg_spec
-            return reg_spec
+        if not isinstance(raw_entries, list):
+            raise self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Invalid strategy registry payload", "strategy_store_unavailable")
+        if not raw_entries:
+            return None
 
-        cached = self._strategy_specs.get(sid)
-        if isinstance(cached, dict):
-            return cached
+        versions: List[Dict[str, Any]] = []
+        for item in raw_entries:
+            entry = item.get("entry") if isinstance(item, dict) and isinstance(item.get("entry"), dict) else item
+            if not isinstance(entry, dict) or entry.get("artifact_type") not in (None, "strategy_spec"):
+                continue
+            meta = entry.get("metadata") if isinstance(entry.get("metadata"), dict) else {}
+            inner = meta.get("strategy_spec") if isinstance(meta.get("strategy_spec"), dict) else {}
+            inner_meta = inner.get("metadata") if isinstance(inner.get("metadata"), dict) else {}
+            entry_tenant = str(entry.get("owner_tenant") or meta.get("tenant_id") or inner_meta.get("tenant_id") or "").strip()
+            if entry_tenant and entry_tenant not in {caller_tenant, "*"}:
+                raise self._strategy_owner_error(403, "FORBIDDEN", "Strategy reference is outside the caller tenant audience", "strategy_audience_mismatch")
+            entry_sid = str(entry.get("strategy_id") or inner.get("strategy_id") or sid).strip()
+            if entry_sid != sid:
+                continue
+            reg_id = str(entry.get("registry_id") or meta.get("spec_version_id") or "").strip()
+            semver = str(entry.get("version") or inner.get("spec_version") or meta.get("spec_version") or meta.get("version") or "1.0.0").strip()
+            spec_ver_id = reg_id or semver
+            lineage = entry.get("lineage") if isinstance(entry.get("lineage"), dict) else {}
+            parents = lineage.get("parent_registry_ids") if isinstance(lineage.get("parent_registry_ids"), list) else []
+            parent_id = (parents[0] if parents else None) or lineage.get("source_strategy_spec_id") or inner.get("parent_spec_version_id") or meta.get("parent_spec_version_id")
+            eval_summary = entry.get("evaluation_summary") if isinstance(entry.get("evaluation_summary"), dict) else {}
+            prov = inner.get("provenance") if isinstance(inner.get("provenance"), dict) else (meta.get("provenance") if isinstance(meta.get("provenance"), dict) else {})
+            persona_ids = list(inner.get("persona_ids") or meta.get("personaIds") or meta.get("persona_ids") or ([meta["persona_id"]] if meta.get("persona_id") else ([inner_meta["persona_id"]] if inner_meta.get("persona_id") else [])))
+            state = entry.get("artifact_state") or inner.get("lifecycle_state") or meta.get("lifecycle_state") or meta.get("state") or meta.get("status") or "draft"
+            title = inner.get("title") or meta.get("title") or meta.get("name") or sid
+            risk = meta.get("risk") or inner.get("risk") or eval_summary.get("risk_level") or (inner.get("governance") or {}).get("risk_level") or (meta.get("governance") or {}).get("risk_level")
+            ver_dict: Dict[str, Any] = {
+                **inner, "strategy_id": entry_sid, "tenant_id": entry_tenant or caller_tenant,
+                "strategy_spec_registry_id": reg_id or spec_ver_id, "spec_version_id": spec_ver_id,
+                "spec_version": semver, "semantic_version": str(inner.get("spec_version") or semver),
+                "parent_spec_version_id": parent_id, "lifecycle_state": state, "title": title, "name": title,
+                "persona_ids": persona_ids, "provenance": prov,
+                "created_at": entry.get("created_at") or prov.get("created_at"),
+                "updated_at": entry.get("updated_at") or entry.get("created_at"),
+                "created_by": prov.get("created_by") or meta.get("requested_by") or (entry.get("last_actor") or {}).get("actor_id"),
+            }
+            if risk:
+                ver_dict["risk"] = risk
+            versions.append(ver_dict)
 
-        return None
+        if not versions:
+            return None
+        latest = versions[-1]
+        return {
+            "strategy_id": sid, "tenant_id": latest.get("tenant_id"),
+            "title": latest.get("title"), "name": latest.get("name"),
+            "lifecycle_state": latest.get("lifecycle_state"), "risk": latest.get("risk"),
+            "current_spec_version_id": latest.get("spec_version_id"),
+            "current_spec_version": latest.get("spec_version"), "versions": versions,
+        }
 
     def get_strategy_spec_detail(
         self,

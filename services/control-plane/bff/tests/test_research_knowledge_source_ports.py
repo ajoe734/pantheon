@@ -909,3 +909,183 @@ def test_source_and_search_ops_with_http_client():
     assert health["source"] == "service_client"
     assert health["source_count"] == 1
 
+
+def _original_workshop_registry_entry(owner_tenant: str = "tenant-dev") -> dict:
+    return {
+        "registry_id": "reg-strategy-spec-persona-aa060d53ff712cbba704",
+        "artifact_type": "strategy_spec",
+        "artifact_state": "approved",
+        "version": "1.0.0",
+        "strategy_id": "strategy-persona-aa060d53ff712cbba704",
+        "owner_tenant": owner_tenant,
+        "lineage": {
+            "source_strategy_spec_id": "strategy-persona-aa060d53ff712cbba704",
+            "parent_registry_ids": ["reg-strategy-spec-persona-baseline-aa060d53ff712cbba704"],
+            "source_research_job_id": "job-persona-aa060d53ff712cbba704",
+        },
+        "evaluation_summary": {"risk_level": "medium", "sharpe": 1.42},
+        "metadata": {
+            "title": "Original Workshop Strategy Spec",
+            "persona_id": "persona-132519698e6199e80326",
+            "strategy_spec": {
+                "strategy_id": "strategy-persona-aa060d53ff712cbba704",
+                "spec_version": "1.0",
+                "lifecycle_state": "candidate",
+                "title": "Original Workshop Strategy Spec",
+                "hypothesis": "Cross-session orderflow imbalance mean-reverts.",
+                "objective": "Capture intraday reversion with bounded drawdown.",
+                "market_scope": {"symbols": ["BTCUSDT"], "frequency": "1h"},
+                "execution_profile": {"signal_schema_version": "1.0", "execution_mode_hint": "paper"},
+                "evaluation_plan": {"metrics": ["sharpe_ratio"]},
+                "governance": {"approval_required": True},
+                "metadata": {"tenant_id": owner_tenant, "persona_id": "persona-132519698e6199e80326"},
+            },
+        },
+        "created_at": "2026-10-18T10:00:00Z",
+        "updated_at": "2026-10-18T12:00:00Z",
+        "last_actor": {"actor_id": "op-workshop"},
+    }
+
+
+def test_original_workshop_strategy_spec_owner_read_preserves_registry_id_and_semver(monkeypatch):
+    from services.control_plane.bff.command_adapters import base as adapter_base
+    from services.control_plane.bff.core import owner_reads
+
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry.internal")
+
+    calls: list[dict] = []
+
+    def fake_http_request_json(url: str, *, method: str = "GET", payload=None, auth_token=None, tenant_id=None, **kwargs):
+        calls.append({"url": url, "method": method, "auth_token": auth_token, "tenant_id": tenant_id})
+        return [_original_workshop_registry_entry("tenant-dev")]
+
+    monkeypatch.setattr(adapter_base, "http_request_json", fake_http_request_json)
+
+    port = DefaultResearchKnowledgeSourcePort()
+    assert port._strategy_specs == {}
+    # Mutating _strategy_specs on an uninjected port must never act as a production fallback
+    port._strategy_specs["strategy-persona-aa060d53ff712cbba704"] = {"strategy_id": "poisoned-local-cache"}
+
+    tok_auth = owner_reads.authorization.set("Bearer workshop-user:operator:tenant-dev")
+    tok_tenant = owner_reads.selected_tenant.set("tenant-dev")
+    try:
+        sid = "strategy-persona-aa060d53ff712cbba704"
+        reg_id = "reg-strategy-spec-persona-aa060d53ff712cbba704"
+
+        by_reg_id = port.get_strategy_spec_detail(sid, version_selector=reg_id)
+        assert by_reg_id is not None
+        assert by_reg_id["strategy_id"] == sid
+        assert by_reg_id["tenant_id"] == "tenant-dev"
+        assert by_reg_id["spec_version_id"] == reg_id
+        assert by_reg_id["strategy_spec_registry_id"] == reg_id
+        assert by_reg_id["spec_version"] == "1.0.0"
+        assert by_reg_id["semantic_version"] == "1.0"
+        assert by_reg_id["lifecycle_state"] == "approved"
+        assert by_reg_id["parent_spec_version_id"] == "reg-strategy-spec-persona-baseline-aa060d53ff712cbba704"
+        assert by_reg_id["persona_ids"] == ["persona-132519698e6199e80326"]
+
+        assert port.get_strategy_spec_detail(sid, version_selector="1.0.0")["spec_version_id"] == reg_id
+        assert port.get_strategy_spec_detail(sid, version_selector="1.0")["spec_version_id"] == reg_id
+        assert port.get_strategy_spec_detail(sid, version_selector="current")["spec_version_id"] == reg_id
+        assert port.get_strategy_spec_detail(sid, version_selector="nonexistent-version") is None
+
+        summary = port.get_strategy_spec(sid)
+        assert summary is not None
+        assert summary["strategy_id"] == sid
+        assert summary["tenant_id"] == "tenant-dev"
+        assert summary["spec_version_id"] == reg_id
+        assert summary["strategy_spec_registry_id"] == reg_id
+        assert summary["spec_version"] == "1.0.0"
+
+        versions = port.list_strategy_spec_versions(sid)
+        assert len(versions) == 1
+        assert versions[0]["spec_version_id"] == reg_id
+        assert versions[0]["spec_version"] == "1.0.0"
+        assert versions[0]["parent_spec_version_id"] == "reg-strategy-spec-persona-baseline-aa060d53ff712cbba704"
+
+        assert calls[0] == {
+            "url": f"http://registry.internal/api/registry/strategies/{sid}/strategy-specs",
+            "method": "GET",
+            "auth_token": "workshop-user:operator:tenant-dev",
+            "tenant_id": "tenant-dev",
+        }
+        assert port._strategy_specs["strategy-persona-aa060d53ff712cbba704"] == {"strategy_id": "poisoned-local-cache"}
+    finally:
+        owner_reads.authorization.reset(tok_auth)
+        owner_reads.selected_tenant.reset(tok_tenant)
+
+
+def test_strategy_spec_owner_read_missing_forbidden_and_unavailable(monkeypatch):
+    import urllib.error
+    from fastapi import HTTPException
+    from services.control_plane.bff.command_adapters import base as adapter_base
+    from services.control_plane.bff.core import owner_reads
+
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry.internal")
+
+    port = DefaultResearchKnowledgeSourcePort()
+    sid = "strategy-persona-aa060d53ff712cbba704"
+
+    # 1. Missing caller authorization fails closed with 503
+    with pytest.raises(HTTPException) as unauth_exc:
+        port.get_strategy_spec_detail(sid)
+    assert unauth_exc.value.status_code == 503
+    assert unauth_exc.value.detail["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+
+    tok_auth = owner_reads.authorization.set("Bearer workshop-user:operator:tenant-dev")
+    tok_tenant = owner_reads.selected_tenant.set("tenant-dev")
+    try:
+        # 2. Empty list or 404 returns None / []
+        monkeypatch.setattr(adapter_base, "http_request_json", lambda *a, **k: [])
+        assert port.get_strategy_spec_detail(sid) is None
+        assert port.get_strategy_spec(sid) is None
+        assert port.list_strategy_spec_versions(sid) == []
+
+        def raise_404(*a, **k):
+            raise urllib.error.HTTPError("http://registry.internal", 404, "Not Found", hdrs=None, fp=None)
+
+        monkeypatch.setattr(adapter_base, "http_request_json", raise_404)
+        assert port.get_strategy_spec_detail(sid) is None
+
+        # 3. Foreign tenant payload or HTTP 403 raises 403 FORBIDDEN
+        monkeypatch.setattr(
+            adapter_base,
+            "http_request_json",
+            lambda *a, **k: [_original_workshop_registry_entry("tenant-other")],
+        )
+        with pytest.raises(HTTPException) as forbidden_exc:
+            port.get_strategy_spec_detail(sid)
+        assert forbidden_exc.value.status_code == 403
+        assert forbidden_exc.value.detail["error"]["code"] == "FORBIDDEN"
+
+        def raise_403(*a, **k):
+            raise urllib.error.HTTPError("http://registry.internal", 403, "Forbidden", hdrs=None, fp=None)
+
+        monkeypatch.setattr(adapter_base, "http_request_json", raise_403)
+        with pytest.raises(HTTPException) as http_403_exc:
+            port.get_strategy_spec_detail(sid)
+        assert http_403_exc.value.status_code == 403
+
+        # 4. Registry 503 or unconfigured URL raises 503 DEPENDENCY_UNAVAILABLE
+        def raise_503(*a, **k):
+            raise urllib.error.HTTPError("http://registry.internal", 503, "Unavailable", hdrs=None, fp=None)
+
+        monkeypatch.setattr(adapter_base, "http_request_json", raise_503)
+        with pytest.raises(HTTPException) as http_503_exc:
+            port.get_strategy_spec_detail(sid)
+        assert http_503_exc.value.status_code == 503
+        assert http_503_exc.value.detail["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+
+        monkeypatch.delenv("PANTHEON_REGISTRY_API_URL", raising=False)
+        monkeypatch.delenv("PANTHEON_REGISTRY_URL", raising=False)
+        with pytest.raises(HTTPException) as unconf_exc:
+            port.get_strategy_spec_detail(sid)
+        assert unconf_exc.value.status_code == 503
+    finally:
+        owner_reads.authorization.reset(tok_auth)
+        owner_reads.selected_tenant.reset(tok_tenant)
+

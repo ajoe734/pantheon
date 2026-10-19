@@ -141,34 +141,50 @@ class StrategiesService:
             return self._list_strategy_summaries()
         raise NotImplementedError("list_strategy_summaries dependency was not supplied")
 
+    def _use_local_write_owner_fallback(self, read_store: Any) -> bool:
+        from services.control_plane.bff.core.owner_reads import authorization
+        rks = getattr(read_store, "research_knowledge_source", read_store)
+        return bool((self._strategy_write_owner is not None or self._get_strategy_write_owner is not None) and not getattr(rks, "_has_injected_strategy_specs", False) and not (os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL") or authorization.get()))
+
+    def _invoke_read_owner(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        try:
+            return fn(*args, **kwargs)
+        except HTTPException as exc:
+            if isinstance(exc.detail, dict) and "error" in exc.detail:
+                raise
+            status = 403 if exc.status_code in (401, 403) else (exc.status_code if exc.status_code >= 500 else 503)
+            code = ErrorCode.FORBIDDEN if status == 403 else ErrorCode.DEPENDENCY_UNAVAILABLE
+            if self._bff_error:
+                raise self._bff_error(status, code, str(exc.detail), str(exc.detail)) from exc
+            raise
+        except Exception as exc:
+            status = 403 if getattr(exc, "status_code", None) in (401, 403) else 503
+            code = ErrorCode.FORBIDDEN if status == 403 else ErrorCode.DEPENDENCY_UNAVAILABLE
+            msg = str(getattr(exc, "detail", None) or exc or "Canonical strategy read owner unavailable")
+            if self._bff_error:
+                raise self._bff_error(status, code, msg, msg) from exc
+            raise HTTPException(status_code=status, detail=msg) from exc
+
     def get_strategy_spec_detail(self, strategy_id: str, version_selector: str = "current") -> Optional[Dict[str, Any]]:
         read_store = self._get_read_store_port()
+        if self._use_local_write_owner_fallback(read_store):
+            return None
         getter = getattr(read_store, "get_strategy_spec_detail", None)
-        if callable(getter):
-            try:
-                return getter(strategy_id, version_selector=version_selector)
-            except Exception:
-                pass
-        return None
+        return self._invoke_read_owner(getter, strategy_id, version_selector=version_selector) if callable(getter) else None
 
     def get_strategy(self, strategy_id: str) -> Optional[Dict[str, Any]]:
         read_store = self._get_read_store_port()
-        getter = getattr(read_store, "get_strategy_spec", None)
-        if callable(getter):
-            try:
-                res = getter(strategy_id)
-                if res:
-                    return res
-            except Exception:
-                pass
-        getter = getattr(read_store, "get_strategy", None)
-        if callable(getter):
-            try:
-                res = getter(strategy_id)
-                if res:
-                    return res
-            except Exception:
-                pass
+        if self._use_local_write_owner_fallback(read_store):
+            rks = getattr(read_store, "research_knowledge_source", None)
+            local = rks._strategy_specs.get(strategy_id) if rks is not None and isinstance(getattr(rks, "_strategy_specs", None), dict) else None
+            if isinstance(local, dict):
+                return local
+            writer = self._get_write_owner_port()
+            return writer.get_strategy(strategy_id) if writer and hasattr(writer, "get_strategy") else None
+        for attr in ("get_strategy_spec", "get_strategy"):
+            getter = getattr(read_store, attr, None)
+            if callable(getter) and (res := self._invoke_read_owner(getter, strategy_id)):
+                return res
         return None
 
     def ensure_strategy_exists(self, strategy_id: str) -> None:
@@ -186,9 +202,11 @@ class StrategiesService:
 
     def list_strategy_spec_versions(self, strategy_id: str) -> List[Dict[str, Any]]:
         read_store = self._get_read_store_port()
+        if self._use_local_write_owner_fallback(read_store):
+            return []
         getter = getattr(read_store, "list_strategy_spec_versions", None)
         if callable(getter):
-            return getter(strategy_id) or []
+            return self._invoke_read_owner(getter, strategy_id) or []
         return []
 
     def list_research_experiments(self, strategy_id: Optional[str] = None) -> List[Dict[str, Any]]:

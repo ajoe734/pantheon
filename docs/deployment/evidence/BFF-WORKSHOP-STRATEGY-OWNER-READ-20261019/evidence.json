@@ -1,0 +1,60 @@
+{
+  "task_id": "BFF-WORKSHOP-STRATEGY-OWNER-READ-20261019",
+  "title": "Repair original Workshop Registry owner reads",
+  "status": "verified",
+  "verified_at": "2026-10-19T02:26:00Z",
+  "canonical_context_identity": {
+    "workshop_id": "b06627a9-4711-4baa-be58-23fa9a5400bc",
+    "strategy_id": "strategy-persona-aa060d53ff712cbba704",
+    "registry_id": "reg-strategy-spec-persona-aa060d53ff712cbba704",
+    "tenant_id": "tenant-dev",
+    "persona_id": "persona-132519698e6199e80326"
+  },
+  "owner_read_contract": {
+    "authority_endpoint": "GET /api/registry/strategies/{strategy_id}/strategy-specs",
+    "request_context": [
+      "services.control_plane.bff.core.owner_reads.authorization",
+      "services.control_plane.bff.core.owner_reads.selected_tenant",
+      "services.control_plane.bff.core.owner_reads.verified_caller_tenant"
+    ],
+    "transport_helpers": [
+      "services.control_plane.bff.command_adapters.base.registry_url",
+      "services.control_plane.bff.command_adapters.base.http_request_json"
+    ],
+    "removed_fallbacks": [
+      "in_process_registry_storage_get_store",
+      "shared_in_memory_strategy_specs_cache_and_fallback"
+    ],
+    "preserved_identities": [
+      "strategy_id",
+      "tenant_id",
+      "spec_version_id",
+      "strategy_spec_registry_id",
+      "spec_version",
+      "semantic_version",
+      "parent_spec_version_id"
+    ],
+    "error_mapping": {
+      "missing_entry": "None / 404 (or 409 strategy_not_found in agora context:resolve)",
+      "foreign_tenant_or_forbidden": "403 FORBIDDEN (strategy_audience_mismatch)",
+      "owner_unavailable_or_unconfigured": "503 DEPENDENCY_UNAVAILABLE (strategy_store_unavailable)"
+    }
+  },
+  "changed_files": [
+    "services/control-plane/bff/ports/research_knowledge_source.py",
+    "services/control-plane/bff/strategies/service.py",
+    "services/control-plane/bff/tests/test_research_knowledge_source_ports.py",
+    "services/control-plane/bff/tests/test_agora_persona_interactions.py",
+    "services/control-plane/bff/test_kw05_strategy_spec_contract.py",
+    "docs/deployment/evidence/BFF-WORKSHOP-STRATEGY-OWNER-READ-20261019/evidence.json"
+  ],
+  "validation": {
+    "test_commands": [
+      "pytest services/control-plane/bff/tests/test_research_knowledge_source_ports.py -q",
+      "pytest services/control-plane/bff/tests/test_agora_persona_interactions.py -q",
+      "pytest services/control-plane/bff/test_kw05_strategy_spec_contract.py -q"
+    ],
+    "net_prod_line_budget": 120,
+    "net_prod_line_delta": 49
+  }
+}
