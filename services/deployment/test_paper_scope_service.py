@@ -8,6 +8,7 @@ from __future__ import annotations
 import copy
 import json
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -53,6 +54,11 @@ def test_scoped_paper_zero_capital_plan_is_created_in_dev(client, monkeypatch):
 def test_dev_tenant_reaches_real_outbox_claim_and_runtime_plan_read(client, monkeypatch):
     """Wrong-tenant workers stay isolated; matching workers see the exact event."""
     from services.deployment.outbox_consumer_worker import _deployment_headers
+    # The root conftest resets sys.path per test module; the runtime-manager
+    # authority module is imported by bare name, as the worker does.
+    monkeypatch.syspath_prepend(
+        str(Path(__file__).resolve().parents[1] / "runtime-manager")
+    )
     from deploy_authority import _deployment_request_headers
     from services.governance.test_approval_authority import approval_snapshot
 
