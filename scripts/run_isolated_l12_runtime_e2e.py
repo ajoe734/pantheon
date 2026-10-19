@@ -658,11 +658,9 @@ OPENCLAW_SECRET_ENV_NAMES: tuple[str, ...] = (
     "PANTHEON_OPENCLAW_ANTHROPIC_API_KEY",
     "PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN",
     "PANTHEON_OPENCLAW_OPENAI_OAUTH_TOKEN",
-    "PANTHEON_OPENCLAW_OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
     "CLAUDE_CODE_OAUTH_TOKEN",
     "OPENCLAW_OPENAI_OAUTH_TOKEN",
-    "OPENAI_API_KEY",
 )
 
 
@@ -683,15 +681,6 @@ def _openclaw_isolated_auth_posture(
     batch_raw = str(
         compose_env.get("PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH") or ""
     ).strip()
-    oauth_present = bool(
-        str(compose_env.get("PANTHEON_OPENCLAW_OPENAI_OAUTH_TOKEN") or "").strip()
-    )
-    api_key_present = bool(
-        str(compose_env.get("PANTHEON_OPENCLAW_OPENAI_API_KEY") or "").strip()
-    )
-    openai_mode = (
-        "token" if oauth_present else ("api_key" if api_key_present else "none")
-    )
     return {
         "isolated_model_batch_configured": bool(batch_raw),
         "anthropic_api_key_present": bool(
@@ -707,9 +696,9 @@ def _openclaw_isolated_auth_posture(
                 compose_env.get("PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN") or ""
             ).strip()
         ),
-        "openai_native_auth_mode": openai_mode,
-        "openai_oauth_token_present": oauth_present,
-        "openai_api_key_present": api_key_present,
+        "openai_oauth_token_present": bool(
+            str(compose_env.get("PANTHEON_OPENCLAW_OPENAI_OAUTH_TOKEN") or "").strip()
+        ),
     }
 
 

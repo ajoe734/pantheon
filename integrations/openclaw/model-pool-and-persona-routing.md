@@ -77,8 +77,7 @@ rollback compatibility with older Compose definitions. Isolated CI qualification
 On the persistent dev/prod `openclaw-data` volume, `openai/gpt-5.6-sol` and
 `openai/gpt-5.5` (`agentRuntime.id = "openclaw"`) authenticate via the native
 `main` agent auth-profile store
-(`/home/node/.openclaw/agents/main/agent/openclaw-agent.sqlite`) populated by
-`openclaw models auth login --provider openai-codex`, which
+(`/home/node/.openclaw/agents/main/agent/openclaw-agent.sqlite`), which
 `structured-extraction` inherits automatically when its own agent store has no
 override.
 
@@ -86,43 +85,32 @@ In isolated FULL qualification (`isolated-l12-provider-qualification` in
 `.github/workflows/nonprod-deploy.yml`), the task-scoped Compose project
 (`l12q${GITHUB_RUN_ID}x${GITHUB_RUN_ATTEMPT}`) mounts a fresh empty
 `openclaw-data` volume and never mounts or reads the host VM `openclaw-data`
-volume or developer-worker `.codex` homes. Empirically verified against pinned
-OpenClaw `2026.7.1` (`ghcr.io/openclaw/openclaw:2026.7.1`,
+volume or developer-worker `.codex` homes. Verified against pinned OpenClaw
+`2026.7.1` (`ghcr.io/openclaw/openclaw:2026.7.1`,
 `sha256:f435502b113f873768b64cd7f5f2a63f44d0a236ae3a5647ff42716652c74c31`),
 OpenClaw's embedded `openclaw` runtime resolves native OpenAI fallback auth for
-both `main` and `structured-extraction` without persisting raw secrets on disk
-through two non-secret `SecretRef` paths:
+both `main` and `structured-extraction` directly from the provider `SecretRef`
+without `auth.profiles` or SQLite store writes:
 
 1. **Product ChatGPT/Codex OAuth bearer access token
    (`PANTHEON_OPENCLAW_OPENAI_OAUTH_TOKEN` -> container
    `OPENCLAW_OPENAI_OAUTH_TOKEN`)**:
-   - `scripts/openclaw_isolated_model_bootstrap.py` emits non-secret batch
-     entries `auth.profiles.openai:default = {"provider": "openai", "mode": "token"}`
-     and `models.providers.openai = {"baseUrl": "https://chatgpt.com/backend-api/codex", "api": "openai-chatgpt-responses", "auth": "token", "apiKey": {"source": "env", "provider": "default", "id": "OPENCLAW_OPENAI_OAUTH_TOKEN"}, "models": []}`.
-   - When `PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH` is active, `openclaw-gateway`
-     seeds only the non-secret `tokenRef`
-     (`{type: "token", provider: "openai", tokenRef: {source: "env", provider: "default", id: "OPENCLAW_OPENAI_OAUTH_TOKEN"}}`)
-     in `/home/node/.openclaw/agents/main/agent/openclaw-agent.sqlite` before
-     `config set --batch-json` and `gateway` startup.
-   - `structured-extraction` inherits `openai:default` from `main` via
-     `loadAuthProfileStoreForAgent` and resolves `openai/gpt-5.6-sol` and
-     `openai/gpt-5.5` on `https://chatgpt.com/backend-api/codex`
-     (`openai-chatgpt-responses`) with `mode: "token"`.
-2. **Approved OpenAI API key (`PANTHEON_OPENCLAW_OPENAI_API_KEY` -> container
-   `OPENAI_API_KEY`)**:
-   - Emits `auth.profiles.openai:default = {"provider": "openai", "mode": "api_key"}`
-     and `models.providers.openai = {"baseUrl": "https://api.openai.com/v1", "api": "openai-responses", "auth": "api-key", "apiKey": {"source": "env", "provider": "default", "id": "OPENAI_API_KEY"}, "models": []}`,
-     seeding the non-secret `keyRef` in `main` so both `main` and
-     `structured-extraction` resolve `mode: "api-key"` on
-     `https://api.openai.com/v1` (`openai-responses`).
-3. **Rotation and single-use `refresh_token` safety**:
-   - Never duplicate a single-use OAuth `refresh_token` across concurrent
-     refreshing endpoints (`refresh_token_reused`), never read or copy developer
-     worker `.codex` homes, and never overwrite an existing `type: "oauth"`
-     profile on a persistent volume with a static seed.
-   - `scripts/openclaw_isolated_model_bootstrap.py` rejects placeholders,
-     whitespace-corrupted values, raw JSON auth stores, and `refresh_token`
-     payloads fail-closed before container startup.
+   - `.github/workflows/nonprod-deploy.yml` binds GitHub `dev` environment
+     secret `DEV_OPENCLAW_OPENAI_OAUTH_TOKEN` into
+     `PANTHEON_OPENCLAW_OPENAI_OAUTH_TOKEN`, and `docker-compose.yml` passes it
+     into `openclaw-gateway` as `OPENCLAW_OPENAI_OAUTH_TOKEN` (preserving the
+     absence of `OPENAI_API_KEY` per `integrations/openclaw/governance.md` §9).
+   - `scripts/openclaw_isolated_model_bootstrap.py` requires
+     `PANTHEON_OPENCLAW_OPENAI_OAUTH_TOKEN` alongside
+     `PANTHEON_OPENCLAW_ANTHROPIC_API_KEY` and
+     `PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID` and emits the non-secret
+     `models.providers.openai` entry
+     `{"baseUrl": "https://chatgpt.com/backend-api/codex", "api": "openai-chatgpt-responses", "auth": "token", "apiKey": {"source": "env", "provider": "default", "id": "OPENCLAW_OPENAI_OAUTH_TOKEN"}, "models": []}`.
+2. **Access-only and teardown invariants**:
+   - Only the product access token is passed via the non-secret provider
+     `SecretRef`; single-use OAuth `refresh_token` material and raw JSON auth
+     stores are refused fail-closed, and isolated qualification teardown removes
+     all task-scoped containers and volumes (`docker compose down --volumes --remove-orphans`).
 
 ### Explicit product Claude CLI token (`anthropic/claude-sonnet-4-6`)
 

@@ -799,7 +799,6 @@ services:
       ANTHROPIC_API_KEY: ${PANTHEON_OPENCLAW_ANTHROPIC_API_KEY:-}
       ANTHROPIC_WORKSPACE_ID: ${PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID:-}
       OPENCLAW_OPENAI_OAUTH_TOKEN: ${PANTHEON_OPENCLAW_OPENAI_OAUTH_TOKEN:-}
-      OPENAI_API_KEY: ${PANTHEON_OPENCLAW_OPENAI_API_KEY:-}
       PANTHEON_ASSISTANT_CODEX_HOST_HOME: ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}
       PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME: ${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}
       PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR: ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}
@@ -821,7 +820,7 @@ services:
         # Keep the token in the container environment rather than interpolating
         # it into the shell command. The opt-in isolated batch is applied here,
         # before the gateway serves, and fails closed without the credential.
-        "node dist/index.js config set gateway.http.endpoints.responses.enabled true --json >/dev/null && if [ -n \"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\" ]; then [ -n \"$$ANTHROPIC_API_KEY\" ] && [ -n \"$$ANTHROPIC_WORKSPACE_ID\" ] || exit 1; node --input-type=module -e 'import { loadAuthProfileStoreForSecretsRuntime, saveAuthProfileStore } from \"./dist/store-B_x9NtzH.js\"; const batch = process.env.PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH || \"\"; const oauth = (process.env.OPENCLAW_OPENAI_OAUTH_TOKEN || \"\").trim(); const apiKey = (process.env.OPENAI_API_KEY || \"\").trim(); if (batch.includes(\"OPENCLAW_OPENAI_OAUTH_TOKEN\") && !oauth) process.exit(1); if (batch.includes(\"OPENAI_API_KEY\") && !apiKey) process.exit(1); const cred = oauth ? { type: \"token\", provider: \"openai\", tokenRef: { source: \"env\", provider: \"default\", id: \"OPENCLAW_OPENAI_OAUTH_TOKEN\" } } : apiKey ? { type: \"api_key\", provider: \"openai\", keyRef: { source: \"env\", provider: \"default\", id: \"OPENAI_API_KEY\" } } : null; if (cred) { const dir = \"/home/node/.openclaw/agents/main/agent\"; const store = loadAuthProfileStoreForSecretsRuntime(dir); if (store.profiles[\"openai:default\"] && store.profiles[\"openai:default\"].type === \"oauth\") process.exit(1); store.profiles[\"openai:default\"] = cred; saveAuthProfileStore(store, dir); }' || exit 1; node dist/index.js config set --batch-json \"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\" >/dev/null || exit 1; fi && exec node dist/index.js gateway --allow-unconfigured --port 18789 --auth token --token \"$$OPENCLAW_GATEWAY_TOKEN\"",
+        "node dist/index.js config set gateway.http.endpoints.responses.enabled true --json >/dev/null && if [ -n \"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\" ]; then [ -n \"$$ANTHROPIC_API_KEY\" ] && [ -n \"$$ANTHROPIC_WORKSPACE_ID\" ] && [ -n \"$$OPENCLAW_OPENAI_OAUTH_TOKEN\" ] || exit 1; node dist/index.js config set --batch-json \"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\" >/dev/null || exit 1; fi && exec node dist/index.js gateway --allow-unconfigured --port 18789 --auth token --token \"$$OPENCLAW_GATEWAY_TOKEN\"",
       ]
     volumes:
       - openclaw-data:/home/node/.openclaw

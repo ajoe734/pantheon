@@ -9,150 +9,89 @@
   },
   "historical_failure_audit": {
     "audit_bundle": "/tmp/FULL39196940218-official-failure-audit.zip",
+    "audit_bundle_sha256": "e47ab42943761deeb0c8b227125cc564ea4bca2231f9889b818b208f88e86e6b",
     "workflow_run_id": "39196940218",
     "compose_project": "l12q39196940218x1",
-    "primary_failure": "401 {\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"Invalid bearer token\"}} on anthropic/claude-opus-4-8",
-    "fallback_failure": "FailoverError: No API key found for provider \"openai\". Auth store: /home/node/.openclaw/agents/structured-extraction/agent/openclaw-agent.sqlite (agentDir: /home/node/.openclaw/agents/structured-extraction/agent). Configure auth for this agent (openclaw agents add <id>) or copy auth-profiles.json from the main agentDir.",
-    "root_cause": "Isolated qualification creates a fresh task-scoped openclaw-data volume (l12q<run_id>x<attempt>_openclaw-data) and applies PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH before gateway startup. While primary anthropic/claude-opus-4-8 and fallbacks [\"openai/gpt-5.6-sol\", \"openai/gpt-5.5\"] on agentRuntime.id=\"openclaw\" were registered alongside agents [\"main\", \"structured-extraction\"], no non-secret OpenAI native provider or auth-profile SecretRef was wired into the isolated startup chain."
+    "primary_failure": "Anthropic API credit balance too low on primary anthropic/claude-opus-4-8",
+    "fallback_failure": "FailoverError: No API key found for provider \"openai\". Auth store: /home/node/.openclaw/agents/structured-extraction/agent/openclaw-agent.sqlite (agentDir: /home/node/.openclaw/agents/structured-extraction/agent).",
+    "root_cause": "Isolated qualification creates a fresh task-scoped openclaw-data volume (l12q<run_id>x<attempt>_openclaw-data) and applies PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH before gateway startup. While primary anthropic/claude-opus-4-8 and fallbacks [\"openai/gpt-5.6-sol\", \"openai/gpt-5.5\"] on agentRuntime.id=\"openclaw\" were registered alongside agents [\"main\", \"structured-extraction\"], no non-secret OpenAI native provider SecretRef input was wired into the isolated CI workflow, Compose environment, or bootstrap batch."
   },
   "empirical_openclaw_2026_7_1_schema": {
     "inspected_modules": [
-      "/app/dist/store-B_x9NtzH.js",
-      "/app/dist/model-auth-DFake27b.js",
-      "/app/dist/runtime-BDc36uJ2.js",
-      "/app/dist/zod-schema.agent-runtime-D5N12_xI.js",
-      "/app/dist/types.secrets-Zq0531N_.js"
+      "/app/dist/model-auth-CzMrRKLG.js",
+      "/app/dist/runtime-model-auth.runtime-CSAVJlp2.js",
+      "/app/dist/openai-chatgpt-catalog-zqXGrYBP.js",
+      "/app/dist/openai-chatgpt-provider-B4XRdGld.js"
     ],
-    "agent_inheritance_behavior": "loadAuthProfileStoreForAgent(/home/node/.openclaw/agents/structured-extraction/agent) automatically inherits /home/node/.openclaw/agents/main/agent/openclaw-agent.sqlite when structured-extraction has no local profile store.",
-    "supported_non_secret_modes": {
-      "oauth_bearer_token_mode": {
-        "host_env": "PANTHEON_OPENCLAW_OPENAI_OAUTH_TOKEN",
-        "container_env": "OPENCLAW_OPENAI_OAUTH_TOKEN",
-        "auth_profile_config": {
-          "path": "auth.profiles.openai:default",
-          "value": {
-            "provider": "openai",
-            "mode": "token"
-          }
-        },
-        "provider_config": {
-          "path": "models.providers.openai",
-          "value": {
-            "baseUrl": "https://chatgpt.com/backend-api/codex",
-            "api": "openai-chatgpt-responses",
-            "auth": "token",
-            "apiKey": {
-              "source": "env",
-              "provider": "default",
-              "id": "OPENCLAW_OPENAI_OAUTH_TOKEN"
-            },
-            "models": []
-          }
-        },
-        "main_agent_sqlite_secret_ref": {
-          "type": "token",
-          "provider": "openai",
-          "tokenRef": {
+    "oauth_bearer_token_provider_secret_ref": {
+      "github_dev_secret": "DEV_OPENCLAW_OPENAI_OAUTH_TOKEN",
+      "host_env": "PANTHEON_OPENCLAW_OPENAI_OAUTH_TOKEN",
+      "container_env": "OPENCLAW_OPENAI_OAUTH_TOKEN",
+      "provider_config": {
+        "path": "models.providers.openai",
+        "value": {
+          "baseUrl": "https://chatgpt.com/backend-api/codex",
+          "api": "openai-chatgpt-responses",
+          "auth": "token",
+          "apiKey": {
             "source": "env",
             "provider": "default",
             "id": "OPENCLAW_OPENAI_OAUTH_TOKEN"
-          }
+          },
+          "models": []
         }
       },
-      "api_key_mode": {
-        "host_env": "PANTHEON_OPENCLAW_OPENAI_API_KEY",
-        "container_env": "OPENAI_API_KEY",
-        "auth_profile_config": {
-          "path": "auth.profiles.openai:default",
-          "value": {
-            "provider": "openai",
-            "mode": "api_key"
-          }
-        },
-        "provider_config": {
-          "path": "models.providers.openai",
-          "value": {
-            "baseUrl": "https://api.openai.com/v1",
-            "api": "openai-responses",
-            "auth": "api-key",
-            "apiKey": {
-              "source": "env",
-              "provider": "default",
-              "id": "OPENAI_API_KEY"
-            },
-            "models": []
-          }
-        },
-        "main_agent_sqlite_secret_ref": {
-          "type": "api_key",
-          "provider": "openai",
-          "keyRef": {
-            "source": "env",
-            "provider": "default",
-            "id": "OPENAI_API_KEY"
-          }
-        }
-      }
+      "auth_profiles_declaration_needed": false,
+      "sqlite_profile_store_import_needed": false,
+      "openai_api_key_compose_env_present": false
     },
     "empirical_container_verification": {
-      "oauth_token_mode": {
-        "authMain": {
-          "mode": "token",
-          "source": "profile:openai:default",
-          "profileId": "openai:default",
-          "matched": true
-        },
-        "authStruct": {
-          "mode": "token",
-          "source": "profile:openai:default",
-          "profileId": "openai:default",
-          "matched": true
-        },
-        "mSol": {
-          "id": "gpt-5.6-sol",
-          "api": "openai-chatgpt-responses",
-          "baseUrl": "https://chatgpt.com/backend-api/codex"
-        },
-        "m55": {
-          "id": "gpt-5.5",
-          "api": "openai-chatgpt-responses",
-          "baseUrl": "https://chatgpt.com/backend-api/codex"
-        },
-        "secretInConfig": false,
-        "secretInSqlite": false
+      "main_agent_resolution": {
+        "source": "env: OPENCLAW_OPENAI_OAUTH_TOKEN (models.json secretref)",
+        "matched": true
       },
-      "api_key_mode": {
-        "authMain": {
-          "mode": "api-key",
-          "source": "profile:openai:default",
-          "profileId": "openai:default",
-          "matched": true
-        },
-        "authStruct": {
-          "mode": "api-key",
-          "source": "profile:openai:default",
-          "profileId": "openai:default",
-          "matched": true
-        },
-        "mSol": {
-          "id": "gpt-5.6-sol",
-          "api": "openai-responses",
-          "baseUrl": "https://api.openai.com/v1"
-        },
-        "m55": {
-          "id": "gpt-5.5",
-          "api": "openai-responses",
-          "baseUrl": "https://api.openai.com/v1"
-        },
-        "secretInConfig": false,
-        "secretInSqlite": false
+      "structured_extraction_agent_resolution": {
+        "source": "env: OPENCLAW_OPENAI_OAUTH_TOKEN (models.json secretref)",
+        "matched": true
       },
-      "fail_closed_checks": {
-        "missing_container_env_exits_nonzero": true,
-        "existing_oauth_profile_overwrite_refused": true,
-        "placeholder_or_refresh_token_rejected": true
-      }
+      "config_set_batch_json_exit": 0,
+      "config_validate_exit": 0,
+      "secret_in_config": false
     }
+  },
+  "root_native_access_only_inference_probe": {
+    "evidence_path": "/tmp/pantheon-assist-20261013/native-access-only-provider-actual-probe-20261019.json",
+    "finished_at": "2026-10-19T05:43:30.335Z",
+    "model": "openai/gpt-5.6-sol",
+    "api": "openai-chatgpt-responses",
+    "session_id": "3f881469-64b8-4423-a8f1-0a39f827751f",
+    "config_exit": 0,
+    "validation_exit": 0,
+    "agent_exit": 0,
+    "reply": "{\"ok\":true}",
+    "stop_reason": "stop",
+    "tool_call_count": 0,
+    "usage": {
+      "input": 7642,
+      "output": 9,
+      "total": 7651
+    },
+    "product_config_writes": 0,
+    "business_mutations": 0,
+    "temporary_state_removed": true,
+    "actual_native_auth_success": true,
+    "prior_zero_model_call_attempt_note": "Prior attempt at 2026-10-19T05:40:15.843Z failed CLI flag parsing (--batch instead of --batch-json) with agent_invocations=0 before any provider call."
+  },
+  "ci_secret_provisioning_receipt": {
+    "evidence_path": "/tmp/pantheon-assist-20261013/native-openai-dev-CI-access-token-binding-20261019.json",
+    "repository": "ajoe734/pantheon",
+    "environment": "dev",
+    "secret_name": "DEV_OPENCLAW_OPENAI_OAUTH_TOKEN",
+    "updated_at": "2026-10-19T05:49:55Z",
+    "access_only": true,
+    "refresh_exported": false,
+    "secret_values_printed_or_saved": false,
+    "status": "configured_metadata_verified"
   },
   "invariants_preserved": {
     "primary_model": "anthropic/claude-opus-4-8",
@@ -172,6 +111,7 @@
         }
       }
     },
+    "openai_api_key_absent_in_compose": true,
     "no_vm_openclaw_data_read_or_copy": true,
     "no_developer_worker_login_reuse": true,
     "no_single_use_refresh_token_duplication": true,
@@ -181,6 +121,7 @@
     "unit_tests": [
       "scripts/test_openclaw_isolated_model_bootstrap.py",
       "scripts/test_isolated_l12_provider_workflow.py",
+      "scripts/test_openclaw_shared_model_pool_contract.py",
       "scripts/test_run_isolated_l12_runtime_e2e.py"
     ],
     "compose_config_validation": "docker compose -f docker-compose.yml config --quiet"

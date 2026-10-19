@@ -3104,14 +3104,13 @@ jobs:
       # no outer lease is taken here. The provider credential reaches only the
       # gateway container environment; the rendered batch holds unresolved
       # ${ANTHROPIC_WORKSPACE_ID} / ${CLAUDE_CODE_OAUTH_TOKEN} and SecretRef
-      # env pointers (OPENCLAW_OPENAI_OAUTH_TOKEN / OPENAI_API_KEY) with no credential value.
+      # env pointer (OPENCLAW_OPENAI_OAUTH_TOKEN) with no credential value.
       - name: Run original isolated L1-L12 stimulus gate
         env:
           PANTHEON_OPENCLAW_ANTHROPIC_API_KEY: ${{ secrets.DEV_OPENCLAW_ANTHROPIC_API_KEY }}
           PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID: ${{ vars.DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID }}
           PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN }}
           PANTHEON_OPENCLAW_OPENAI_OAUTH_TOKEN: ${{ secrets.DEV_OPENCLAW_OPENAI_OAUTH_TOKEN }}
-          PANTHEON_OPENCLAW_OPENAI_API_KEY: ${{ secrets.DEV_OPENCLAW_OPENAI_API_KEY }}
           PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
