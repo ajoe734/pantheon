@@ -373,6 +373,34 @@ class PostgresJsonOwnerStore:
                 records.append(decoded)
         return records
 
+    def list_by_field(
+        self,
+        field: str,
+        value: str,
+        *,
+        conn: Optional[Any] = None,
+    ) -> List[Dict[str, Any]]:
+        """List decoded payloads whose top-level ``field`` equals ``value``.
+
+        The filter runs in the database so callers do not hydrate the table.
+        """
+        sql = (
+            f"SELECT payload FROM {self.table} WHERE "
+            "(CASE WHEN jsonb_typeof(payload) = 'string' "
+            "THEN (payload #>> '{}')::jsonb ELSE payload END) ->> %s = %s "
+            "ORDER BY updated_at ASC"
+        )
+        with self._use_conn(conn) as conn:
+            cursor = conn.execute(sql, (field, value))
+            rows = cursor.fetchall()
+        records: List[Dict[str, Any]] = []
+        for row in rows:
+            payload = row[0] if isinstance(row, tuple) else row.get("payload")
+            decoded = self._decode_payload(payload)
+            if decoded is not None:
+                records.append(decoded)
+        return records
+
     def count(self, *, conn: Optional[Any] = None) -> int:
         """Count the number of rows in this owner-store table without hydrating payloads."""
         sql = (

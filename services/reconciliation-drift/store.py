@@ -295,6 +295,51 @@ class ReconciliationDriftStore:
         ]
         return candidates[0] if len(candidates) == 1 else None
 
+    def _record_exists(
+        self,
+        path: Path,
+        record_id: str,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> bool:
+        records = self._read_map(path)
+        storage_id = self._storage_record_id(
+            record_id,
+            {"tenant_id": tenant_id} if tenant_id else {},
+        )
+        for key in {storage_id, record_id}:
+            if self._record_matches_tenant(records.get(key), tenant_id) is not None:
+                return True
+        return False
+
+    def evaluation_exists(
+        self, evaluation_id: str, tenant_id: Optional[str] = None
+    ) -> bool:
+        return self._record_exists(
+            self.evaluations_path, evaluation_id, tenant_id=tenant_id
+        )
+
+    def list_evaluations_for_binding(self, binding_id: str) -> List[Dict[str, Any]]:
+        return [
+            record
+            for record in self._list_records(self.evaluations_path)
+            if str(record.get("binding_id") or "") == binding_id
+        ]
+
+    def drift_report_exists(
+        self, report_id: str, tenant_id: Optional[str] = None
+    ) -> bool:
+        return self._record_exists(
+            self.drift_reports_path, report_id, tenant_id=tenant_id
+        )
+
+    def reconciliation_record_exists(
+        self, record_id: str, tenant_id: Optional[str] = None
+    ) -> bool:
+        return self._record_exists(
+            self.reconciliation_records_path, record_id, tenant_id=tenant_id
+        )
+
     def list_evaluations(self) -> List[Dict[str, Any]]:
         return self._list_records(self.evaluations_path)
 
@@ -777,6 +822,24 @@ class PostgresReconciliationDriftStore(ReconciliationDriftStore):
                 tenant_id,
             )
         return None
+
+    def evaluation_exists(
+        self, evaluation_id: str, tenant_id: Optional[str] = None
+    ) -> bool:
+        return self.get_evaluation(evaluation_id, tenant_id) is not None
+
+    def list_evaluations_for_binding(self, binding_id: str) -> List[Dict[str, Any]]:
+        return self._evaluation_records.list_by_field("binding_id", binding_id)
+
+    def drift_report_exists(
+        self, report_id: str, tenant_id: Optional[str] = None
+    ) -> bool:
+        return self.get_drift_report(report_id, tenant_id) is not None
+
+    def reconciliation_record_exists(
+        self, record_id: str, tenant_id: Optional[str] = None
+    ) -> bool:
+        return self.get_reconciliation_record(record_id, tenant_id) is not None
 
     def list_evaluations(self) -> List[Dict[str, Any]]:
         return self._evaluation_records.list_all()

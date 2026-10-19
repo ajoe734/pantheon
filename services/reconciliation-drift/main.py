@@ -239,7 +239,53 @@ def _record_worker_state(
     )
 
 
-def _next_id(prefix: str, timestamp: str, existing: set[str]) -> str:
+class _KeyedIds:
+    """Set-like id view backed by keyed store reads instead of a table scan."""
+
+    def __init__(self, exists: Any, count: Any) -> None:
+        self._exists = exists
+        self._count = count
+        self._added: set[str] = set()
+
+    def __contains__(self, item: object) -> bool:
+        return item in self._added or bool(self._exists(str(item)))
+
+    def __len__(self) -> int:
+        return int(self._count()) + len(self._added)
+
+    def __bool__(self) -> bool:
+        return True
+
+    def add(self, item: str) -> None:
+        self._added.add(item)
+
+
+def _tenant_arg() -> Optional[str]:
+    return _current_tenant_id() or None
+
+
+def _evaluation_ids() -> _KeyedIds:
+    return _KeyedIds(
+        lambda item: store.evaluation_exists(item, _tenant_arg()),
+        store.count_evaluations,
+    )
+
+
+def _drift_report_ids() -> _KeyedIds:
+    return _KeyedIds(
+        lambda item: store.drift_report_exists(item, _tenant_arg()),
+        store.count_drift_reports,
+    )
+
+
+def _reconciliation_record_ids() -> _KeyedIds:
+    return _KeyedIds(
+        lambda item: store.reconciliation_record_exists(item, _tenant_arg()),
+        store.count_reconciliation_records,
+    )
+
+
+def _next_id(prefix: str, timestamp: str, existing: Any) -> str:
     date_prefix = timestamp[:10].replace("-", "")
     index = len(existing) + 1
     candidate = f"{prefix}-{date_prefix}-{index:03d}"
@@ -904,7 +950,7 @@ def create_evaluation(body: EvaluationBody) -> Dict[str, Any]:
     evaluation_id = body.evaluation_id or _next_id(
         "rdeval",
         timestamp,
-        {str(item.get("evaluation_id") or "") for item in store.list_evaluations()},
+        _evaluation_ids(),
     )
     observed = _observed_metrics(body.telemetry_events)
     drift_checks = _drift_checks(body.baseline_metrics, observed, body.thresholds)
@@ -976,10 +1022,7 @@ def consume_telemetry_events(body: TelemetryEventConsumeBody) -> Dict[str, Any]:
     if body.event:
         events.insert(0, body.event)
 
-    existing_report_ids = {
-        str(item.get("drift_report_id") or "")
-        for item in _tenant_scoped(store.list_drift_reports())
-    }
+    existing_report_ids = _drift_report_ids()
     drift_reports: List[Dict[str, Any]] = []
     incident_cases: List[Dict[str, Any]] = []
     ignored_event_ids: List[str] = []
@@ -1121,7 +1164,7 @@ def create_paper_reconciliation_record(body: PaperRunReconciliationBody) -> Dict
     record_id = body.record_id or _next_id(
         "recon",
         timestamp,
-        {str(item.get("record_id") or "") for item in store.list_reconciliation_records()},
+        _reconciliation_record_ids(),
     )
     observed = _observed_metrics(body.telemetry_events)
     drift_checks = _drift_checks(body.baseline_metrics, observed, body.thresholds)
@@ -1257,7 +1300,7 @@ def create_canary_reconciliation_record(body: CanaryRunReconciliationBody) -> Di
     record_id = body.record_id or _next_id(
         "recon",
         timestamp,
-        {str(item.get("record_id") or "") for item in store.list_reconciliation_records()},
+        _reconciliation_record_ids(),
     )
     observed = _observed_metrics(body.telemetry_events)
     drift_checks = _drift_checks(body.baseline_metrics, observed, body.thresholds)
@@ -1394,7 +1437,7 @@ def create_live_reconciliation_record(body: LiveRunReconciliationBody) -> Dict[s
     record_id = body.record_id or _next_id(
         "recon",
         timestamp,
-        {str(item.get("record_id") or "") for item in store.list_reconciliation_records()},
+        _reconciliation_record_ids(),
     )
     observed = _observed_metrics(body.telemetry_events)
     drift_checks = _drift_checks(body.baseline_metrics, observed, body.thresholds)
@@ -1994,7 +2037,7 @@ def _latest_accepted_lifecycle_append(
     source = (
         evaluations
         if evaluations is not None
-        else _tenant_scoped(store.list_evaluations())
+        else _tenant_scoped(store.list_evaluations_for_binding(binding_id))
     )
     for evaluation in source:
         if str(evaluation.get("binding_id") or "") != binding_id:
@@ -2939,11 +2982,7 @@ def _execute_scheduled_reconcile(
             empty_result["lifecycle_only"] = True
         return empty_result
 
-    existing_evaluations = _tenant_scoped(store.list_evaluations())
-    existing_evaluation_ids = {
-        str(item.get("evaluation_id") or "")
-        for item in existing_evaluations
-    }
+    existing_evaluation_ids = _evaluation_ids()
 
     created_evaluation_ids: List[str] = []
     skipped_binding_ids: List[str] = []
@@ -3123,7 +3162,6 @@ def _execute_scheduled_reconcile(
             telemetry_url=telemetry_url,
             timestamp=timestamp,
             timeout_seconds=dispatch_timeout(),
-            evaluations=existing_evaluations,
         )
         record_lifecycle_append(binding_id, lifecycle_state)
         if dispatch_incidents:
