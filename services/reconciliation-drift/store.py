@@ -829,7 +829,22 @@ class PostgresReconciliationDriftStore(ReconciliationDriftStore):
         return self.get_evaluation(evaluation_id, tenant_id) is not None
 
     def list_evaluations_for_binding(self, binding_id: str) -> List[Dict[str, Any]]:
-        return self._evaluation_records.list_by_field("binding_id", binding_id)
+        owner = self._evaluation_records
+        sql = (
+            f"SELECT payload FROM {owner.table} WHERE "
+            "(CASE WHEN jsonb_typeof(payload) = 'string' "
+            "THEN (payload #>> '{}')::jsonb ELSE payload END) ->> 'binding_id' = %s "
+            "ORDER BY updated_at ASC"
+        )
+        with owner._use_conn(None) as conn:
+            rows = conn.execute(sql, (binding_id,)).fetchall()
+        records: List[Dict[str, Any]] = []
+        for row in rows:
+            payload = row[0] if isinstance(row, tuple) else row.get("payload")
+            decoded = owner._decode_payload(payload)
+            if decoded is not None:
+                records.append(decoded)
+        return records
 
     def drift_report_exists(
         self, report_id: str, tenant_id: Optional[str] = None
