@@ -287,6 +287,14 @@ class OpenClawOpsClient:
             query["state"] = state
         return self._request("GET", "/api/openclaw-adapter/lifecycle/sessions", query=query)
 
+    # OpenClaw gateway adapter exposes runtime tool policy/effective-tool
+    # inspection and assistant skill session authorization only; it does not
+    # implement product catalog Tools or Skills metadata CRUD.
+    SUPPORTED_CATALOG_METADATA_MUTATIONS: tuple[str, ...] = ()
+
+    def supports_catalog_metadata_mutation(self, operation: str) -> bool:
+        return str(operation or "").strip() in self.SUPPORTED_CATALOG_METADATA_MUTATIONS
+
     def get_tool_policy(self) -> Dict[str, Any]:
         return self._request("GET", "/api/openclaw-adapter/tools/policy")
 

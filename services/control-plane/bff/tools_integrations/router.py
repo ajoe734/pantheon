@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from services.control_plane.bff.command_adapters.retired import reject_retired_command
 from fastapi import APIRouter, Body, Header, HTTPException, Query
@@ -81,14 +81,17 @@ def _default_extract_identity(authorization: Optional[str] = None) -> Any:
         )
 
     class Identity:
-        def __init__(self, op_id: str, roles: Set[str]) -> None:
+        def __init__(self, op_id: str, roles: Set[str], tenant_id: Optional[str] = None) -> None:
             self.operator_id = op_id
             self.id = op_id
             self.roles = roles
+            self.tenant_id = tenant_id
+            self.claims = {"tenant_id": tenant_id} if tenant_id else {}
 
     if ":" in token:
-        parts = token.split(":", 1)
-        return Identity(parts[0], {r.strip() for r in parts[1].split(",") if r.strip()})
+        parts = token.split(":", 2)
+        tid = parts[2].strip() if len(parts) > 2 and parts[2].strip() else None
+        return Identity(parts[0], {r.strip() for r in parts[1].split(",") if r.strip()}, tid)
     return Identity(token, {"operator", "viewer", "reviewer", "approver", "admin"})
 
 
@@ -130,12 +133,25 @@ def _default_read_surface_meta(
     *,
     snapshot_at: str,
     total: Optional[int] = None,
+    read_store: Optional[Any] = None,
     **_: Any,
 ) -> Dict[str, Any]:
+    if read_store is not None and callable(getattr(read_store, "dataset_source", None)):
+        source = str(read_store.dataset_source(dataset))
+    elif read_store is not None:
+        source = "service_store"
+    else:
+        source = "missing" if dataset in {"tools", "skills"} else "ok"
+    status = "unavailable" if source == "missing" else "ok"
     meta: Dict[str, Any] = {
         "snapshot_at": snapshot_at,
         "surfaces": {
-            surface_key: {"status": "ok", "source": "ok", "dataset": dataset, "snapshot_at": snapshot_at}
+            surface_key: {
+                "status": status,
+                "source": source,
+                "dataset": dataset,
+                "snapshot_at": snapshot_at,
+            }
         },
     }
     if total is not None:
@@ -208,6 +224,11 @@ def create_integrations_router(
     )
     _require_mcp_write = require_mcp_tool_write_role or (
         resolved_service.require_mcp_tool_write_role if resolved_service else _default_require_operator_role
+    )
+    _read_meta = read_surface_meta or (
+        lambda dataset, surface_key, **kw: _default_read_surface_meta(
+            dataset, surface_key, read_store=resolved_service.read_store, **kw
+        )
     )
 
     # ========================================================================
@@ -561,18 +582,14 @@ def create_integrations_router(
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ) -> Dict[str, Any]:
         identity = _extract(authorization)
-        _require_read(identity)
+        _require_operator(identity)
         reject_body_idempotency_key(payload, bff_error_fn=_err)
         resolved_key = resolve_final_idempotency_key(
             idempotency_key, x_idempotency_key, bff_error_fn=_err
         )
-        request_hash = stable_json_hash({"route": "POST /bff/tools", "payload": payload})
-        cached = resolved_service.tools_bff_idempotency_check(resolved_key, request_hash)
-        if cached is not None:
-            return cached
-
         name = str(payload.get("name") or "").strip()
         if not name:
             raise _err(
@@ -582,30 +599,21 @@ def create_integrations_router(
                 "Tool name must be a non-empty string",
                 precondition_failed="name",
             )
-        snapshot_at = _now()
-        clean_date = snapshot_at[:10].replace("-", "")
-        tool_id = f"tool-{clean_date}-{uuid.uuid4().hex[:8]}"
-        op_id = getattr(identity, "operator_id", None) or getattr(identity, "id", "operator-1")
-        result = {
-            "id": tool_id,
-            "tool_id": tool_id,
-            "name": name,
-            "status": "draft",
-            "tool_class": payload.get("tool_class") or "generic",
-            "description": payload.get("description") or "",
-            "input_schema": payload.get("input_schema") or {},
-            "output_schema": payload.get("output_schema") or {},
-            "mcp_sourced": False,
-            "created_at": snapshot_at,
-            "updated_at": snapshot_at,
-            "created_by": op_id,
-        }
-        resolved_service.tool_registry[tool_id] = result
-        resolved_service.tools_bff_idempotency[resolved_key] = {
-            "request_hash": request_hash,
-            "result": result,
-        }
-        return result
+        return resolved_service.mutate_catalog_record(
+            kind="tool",
+            operation="create_tool",
+            payload={
+                **payload,
+                "name": name,
+                "tool_class": payload.get("tool_class") or "generic",
+                "description": payload.get("description") or "",
+                "input_schema": payload.get("input_schema") or {},
+                "output_schema": payload.get("output_schema") or {},
+            },
+            identity=identity,
+            resolved_key=resolved_key,
+            x_tenant_id=x_tenant_id,
+        )
 
     @router.get("/bff/tools/{tool_id}")
     async def bff_get_tool(
@@ -657,9 +665,10 @@ def create_integrations_router(
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ) -> Dict[str, Any]:
         identity = _extract(authorization)
-        _require_read(identity)
+        _require_operator(identity)
         clean_id = str(tool_id or "").strip()
         if not clean_id:
             raise _err(
@@ -673,21 +682,6 @@ def create_integrations_router(
         resolved_key = resolve_final_idempotency_key(
             idempotency_key, x_idempotency_key, bff_error_fn=_err
         )
-        request_hash = stable_json_hash(
-            {"route": "PATCH /bff/tools/{tool_id}", "id": clean_id, "payload": payload}
-        )
-        cached = resolved_service.tools_bff_idempotency_check(resolved_key, request_hash)
-        if cached is not None:
-            return cached
-        record = resolved_service.tool_registry.get(clean_id)
-        if record is None:
-            raise _err(
-                404,
-                ErrorCode.RESOURCE_NOT_FOUND,
-                "Tool not found",
-                f"tool_id={clean_id!r} is not registered",
-                precondition_failed="tool_id",
-            )
         allowed_patches = {
             "name",
             "description",
@@ -696,15 +690,16 @@ def create_integrations_router(
             "output_schema",
             "tool_class",
         }
-        for field in allowed_patches:
-            if field in payload:
-                record[field] = payload[field]
-        record["updated_at"] = _now()
-        resolved_service.tools_bff_idempotency[resolved_key] = {
-            "request_hash": request_hash,
-            "result": record,
-        }
-        return record
+        patch_fields = {k: payload[k] for k in allowed_patches if k in payload}
+        return resolved_service.mutate_catalog_record(
+            kind="tool",
+            operation="update_tool",
+            payload=patch_fields,
+            identity=identity,
+            resolved_key=resolved_key,
+            entity_id=clean_id,
+            x_tenant_id=x_tenant_id,
+        )
 
     @router.post("/bff/tools/{tool_id}/actions/{action_id}", status_code=202)
     async def bff_tool_action(
@@ -879,6 +874,7 @@ def create_integrations_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ) -> Any:
         identity = _extract(authorization)
         _require_operator(identity)
@@ -886,12 +882,6 @@ def create_integrations_router(
         resolved_key = resolve_final_idempotency_key(
             idempotency_key, x_idempotency_key, bff_error_fn=_err
         )
-        request_hash = stable_json_hash({"route": "POST /bff/skills", "payload": payload})
-        dry_run = _is_dry_run(x_dry_run, payload)
-        if not dry_run:
-            cached = resolved_service.skills_bff_idempotency_check(resolved_key, request_hash)
-            if cached is not None:
-                return cached
         name = str(payload.get("name") or "").strip()
         if not name:
             raise _err(
@@ -901,36 +891,44 @@ def create_integrations_router(
                 "Skill name must be a non-empty string",
                 precondition_failed="name",
             )
-        snapshot_at = _now()
-        clean_date = snapshot_at[:10].replace("-", "")
-        skill_id = f"skill-{clean_date}-{uuid.uuid4().hex[:8]}"
-        op_id = getattr(identity, "operator_id", None) or getattr(identity, "id", "operator-1")
-        result = {
-            "id": skill_id,
-            "skill_id": skill_id,
-            "name": name,
-            "status": "draft",
-            "description": payload.get("description") or "",
-            "sandbox_enabled": bool(payload.get("sandbox_enabled", True)),
-            "input_schema": payload.get("input_schema") or {},
-            "output_schema": payload.get("output_schema") or {},
-            "created_at": snapshot_at,
-            "updated_at": snapshot_at,
-            "created_by": op_id,
-        }
-        if dry_run:
+        if _is_dry_run(x_dry_run, payload):
+            snapshot_at = _now()
+            clean_date = snapshot_at[:10].replace("-", "")
+            skill_id = f"skill-{clean_date}-{uuid.uuid4().hex[:8]}"
+            op_id = resolved_service.identity_operator_id(identity)
             return dry_run_success_response(
-                result,
+                {
+                    "id": skill_id,
+                    "skill_id": skill_id,
+                    "name": name,
+                    "status": "draft",
+                    "description": payload.get("description") or "",
+                    "sandbox_enabled": bool(payload.get("sandbox_enabled", True)),
+                    "input_schema": payload.get("input_schema") or {},
+                    "output_schema": payload.get("output_schema") or {},
+                    "created_at": snapshot_at,
+                    "updated_at": snapshot_at,
+                    "created_by": op_id,
+                },
                 snapshot_at=snapshot_at,
                 idempotency_key=resolved_key,
                 evidence_kind="skill.create",
             )
-        resolved_service.skill_registry[skill_id] = result
-        resolved_service.skills_bff_idempotency[resolved_key] = {
-            "request_hash": request_hash,
-            "result": result,
-        }
-        return result
+        return resolved_service.mutate_catalog_record(
+            kind="skill",
+            operation="create_skill",
+            payload={
+                **payload,
+                "name": name,
+                "description": payload.get("description") or "",
+                "sandbox_enabled": bool(payload.get("sandbox_enabled", True)),
+                "input_schema": payload.get("input_schema") or {},
+                "output_schema": payload.get("output_schema") or {},
+            },
+            identity=identity,
+            resolved_key=resolved_key,
+            x_tenant_id=x_tenant_id,
+        )
 
     @router.get("/bff/skills/{skill_id}")
     async def bff_get_skill(
@@ -968,6 +966,7 @@ def create_integrations_router(
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ) -> Dict[str, Any]:
         identity = _extract(authorization)
         _require_operator(identity)
@@ -984,21 +983,6 @@ def create_integrations_router(
         resolved_key = resolve_final_idempotency_key(
             idempotency_key, x_idempotency_key, bff_error_fn=_err
         )
-        request_hash = stable_json_hash(
-            {"route": "PATCH /bff/skills/{skill_id}", "id": clean_id, "payload": payload}
-        )
-        cached = resolved_service.skills_bff_idempotency_check(resolved_key, request_hash)
-        if cached is not None:
-            return cached
-        record = resolved_service.skill_registry.get(clean_id)
-        if record is None:
-            raise _err(
-                404,
-                ErrorCode.RESOURCE_NOT_FOUND,
-                "Skill not found",
-                f"skill_id={clean_id!r} is not registered",
-                precondition_failed="skill_id",
-            )
         allowed_patches = {
             "name",
             "description",
@@ -1007,15 +991,16 @@ def create_integrations_router(
             "input_schema",
             "output_schema",
         }
-        for field in allowed_patches:
-            if field in payload:
-                record[field] = payload[field]
-        record["updated_at"] = _now()
-        resolved_service.skills_bff_idempotency[resolved_key] = {
-            "request_hash": request_hash,
-            "result": record,
-        }
-        return record
+        patch_fields = {k: payload[k] for k in allowed_patches if k in payload}
+        return resolved_service.mutate_catalog_record(
+            kind="skill",
+            operation="update_skill",
+            payload=patch_fields,
+            identity=identity,
+            resolved_key=resolved_key,
+            entity_id=clean_id,
+            x_tenant_id=x_tenant_id,
+        )
 
     @router.post("/bff/skills/{skill_id}/actions/{action_id}", status_code=202)
     async def bff_skill_action(
@@ -1038,6 +1023,7 @@ def create_integrations_router(
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ) -> Dict[str, Any]:
         identity = _extract(authorization)
         _require_read(identity)
@@ -1054,15 +1040,18 @@ def create_integrations_router(
                 "skill_id path parameter must be a non-empty string",
                 precondition_failed="skill_id",
             )
+        tenant_id = resolved_service.identity_tenant_id(identity, x_tenant_id=x_tenant_id)
         request_hash = stable_json_hash(
             {"route": "POST /bff/skills/{id}/sandbox-eval", "id": clean_id, "payload": payload}
         )
-        cached = resolved_service.skills_bff_idempotency_check(resolved_key, request_hash)
+        cached = resolved_service.skills_bff_idempotency_check(
+            resolved_key, request_hash, identity=identity, tenant_id=tenant_id
+        )
         if cached is not None:
             return cached
         snapshot_at = _now()
         job_id = f"sandbox-eval-{clean_id}-{uuid.uuid4().hex[:10]}"
-        op_id = getattr(identity, "operator_id", None) or getattr(identity, "id", "operator-1")
+        op_id = resolved_service.identity_operator_id(identity)
         roles = list(getattr(identity, "roles", []) or [])
         audit_record = {
             "operator_id": op_id,
@@ -1086,7 +1075,10 @@ def create_integrations_router(
                 "next_poll_after_ms": 500,
             },
         }
-        resolved_service.skills_bff_idempotency[resolved_key] = {
+        scope_key = resolved_service.idempotency_scope_key(
+            resolved_key, identity, tenant_id=tenant_id
+        )
+        resolved_service.skills_bff_idempotency[scope_key] = {
             "request_hash": request_hash,
             "result": result,
         }
