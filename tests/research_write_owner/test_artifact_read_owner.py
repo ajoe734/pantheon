@@ -23,8 +23,8 @@ from services.research.store import ResearchOrchestratorStore
 _SECRET = "s3cret-owner-test-key-0123456789abcdef"
 
 
-def _jwt(tenant: str) -> str:
-    return _hs256(tenant, _SECRET)
+def _jwt(tenant: str, role: str = "operator") -> str:
+    return _hs256(tenant, _SECRET, role)
 
 
 @pytest.fixture(autouse=True)
@@ -33,10 +33,10 @@ def _owner_verifier(monkeypatch):
     monkeypatch.setenv("PANTHEON_RESEARCH_JWT_SECRET", _SECRET)
 
 
-def _hs256(tenant: str, secret: str) -> str:
+def _hs256(tenant: str, secret: str, role: str = "operator") -> str:
     seg = lambda b: base64.urlsafe_b64encode(b).decode().rstrip("=")
     head = seg(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
-    body = seg(json.dumps({"sub": "u1", "roles": ["operator"], "tenant_id": tenant}).encode())
+    body = seg(json.dumps({"sub": "u1", "roles": [role], "tenant_id": tenant}).encode())
     sig = seg(hmac.new(secret.encode(), f"{head}.{body}".encode(), hashlib.sha256).digest())
     return f"Bearer {head}.{body}.{sig}"
 
@@ -248,3 +248,13 @@ def test_saved_outputs_are_not_comparable():
     resp = _bff(_StubOwner([_ROW, {**_ROW, "artifact_id": "rart-2"}])).get(
         "/api/v1/research/artifacts/compare?artifact_ids=rart-1,rart-2", headers=_AUTH)
     assert resp.status_code in (400, 409, 422) and "rart-1" in resp.text
+
+
+def test_owner_admits_authenticated_viewer_reads_and_rejects_unknown_role(owner):
+    hdr = {"Authorization": _jwt("t-a", "viewer"), "X-Tenant-Id": "t-a"}
+    lst = owner.get("/api/research/artifacts", headers=hdr)
+    assert lst.status_code == 200 and [r["artifact_id"] for r in lst.json()] == ["rart-1"]
+    assert owner.get("/api/research/artifacts/rart-1", headers=hdr).status_code == 200
+    assert owner.get("/api/research/artifacts/rart-b", headers=hdr).status_code == 404
+    bad = {"Authorization": _jwt("t-a", "nobody"), "X-Tenant-Id": "t-a"}
+    assert owner.get("/api/research/artifacts", headers=bad).status_code == 403

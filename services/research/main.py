@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger("research-orchestrator")
 
-from services.deployment.auth import AuthError, TenantBoundaryError, authenticate_tenant
+from services.deployment.auth import AUTHENTICATED_SERVICE_ROLES, AuthError, TenantBoundaryError, authenticate_tenant
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 from services.registry.split_api import RegistryService
@@ -3006,6 +3006,12 @@ def _visible_saved_artifacts(tenant_id: str) -> List[Dict[str, Any]]:
     return rows
 
 
+# Artifact reads keep the existing BFF read-role contract (viewer included); service defaults stay admitted.
+_ARTIFACT_READ_ROLES = tuple(dict.fromkeys(
+    ("viewer", "view_only", "operator", "approver", "admin", "reviewer", *AUTHENTICATED_SERVICE_ROLES)
+))
+
+
 def _authenticated_artifact_tenant(
     authorization: Optional[str] = Header(default=None),
     x_tenant_id: Optional[str] = Header(default=None),
@@ -3014,6 +3020,7 @@ def _authenticated_artifact_tenant(
     try:
         return authenticate_tenant(
             authorization=authorization, tenant_id=x_tenant_id, service_prefix="RESEARCH",
+            required_roles=_ARTIFACT_READ_ROLES,
         ).tenant_id
     except AuthError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
