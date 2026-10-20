@@ -1,0 +1,10 @@
+{
+  "task_id": "RETIRE-SCRIPT-BOUNDED-EVIDENCE-20261020",
+  "change": "scripts/retire_dev_paper_release_cases.py: budget measured from process start; main() runs _build_runtime + store.list_all + cases in a worker thread under a watchdog that prints complete evidence JSON and exits 0 at budget + 5s margin (os._exit when a worker is abandoned); store.list_all also bounded inside execute; per-case reserve = max(20s floor, slowest observed); overrunning case pending, rest not_attempted_deadline, pre-case stalls reported with deadline_stage; evidence adds duration_seconds, budget_seconds, case_reserve_floor_seconds, deadline_reached",
+  "counterexample_fixed": "blocked _build_runtime and blocked store.list_all each previously emitted no JSON before outer termination",
+  "regression_tests": "test_real_process_prints_evidence_and_exits_zero_within_budget[build|list|case] run the real script in a subprocess and assert actual stdout JSON, exit 0 and wall time; test_blocked_list_all_in_execute_is_bounded; all 4 fail on the previous head",
+  "unchanged": ["nonprod-deploy.yml", "coordinator", "BFF service"],
+  "tests": "scripts/test_retire_dev_paper_release_cases.py: 35 passed; 2 test_build_runtime_* tests need fastapi, absent in the worker env (pre-existing, unrelated)",
+  "limits": "local executable counterexample; not proof of the exact hosted timeout cause",
+  "deployment": "none (source-only)"
+}

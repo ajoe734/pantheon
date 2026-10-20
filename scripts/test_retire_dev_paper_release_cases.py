@@ -60,7 +60,7 @@ def _store(states=None):
 def _run(store, coord, **kw):
     kw.setdefault("dry_run", False)
     return retire.execute(
-        store=store, retire_case=coord, run_id="9", timeout_seconds=30, **kw
+        store=store, retire_case=coord, run_id="9", timeout_seconds=120, **kw
     )
 
 
@@ -153,6 +153,114 @@ def test_deadline_bounds_work():
     assert coord.calls == []
 
 
+class Clock:
+    def __init__(self, now=0.0):
+        self.now = now
+
+    def __call__(self):
+        return self.now
+
+
+def _fake_call(clock, durations):
+    """call_with_timeout fake: each call takes durations[i] fake seconds."""
+    it = iter(durations)
+
+    def call(fn, timeout):
+        if getattr(fn, "__name__", "") == "list_all":
+            return True, fn(), None
+        took = next(it)
+        if took > timeout:
+            clock.now += timeout
+            return False, None, None
+        clock.now += took
+        return True, fn(), None
+
+    return call
+
+
+def _bounded(clock, durations, coord, *, timeout=100, started_at=None, outcome="accepted"):
+    return retire.execute(
+        store=_store(), retire_case=coord, run_id="9", dry_run=False,
+        outcome=outcome, new_case_key=KEYS[3], timeout_seconds=timeout,
+        monotonic=clock, started_at=started_at,
+        call_with_timeout=_fake_call(clock, durations),
+    )
+
+
+def test_slow_case_overrunning_budget_still_yields_evidence():
+    clock, coord = Clock(), Coordinator()
+    out = _bounded(clock, [10, 500], coord)
+    assert out["results"] == {
+        KEYS[0]: "retired", KEYS[1]: "pending", KEYS[2]: "not_attempted_deadline"
+    }
+    assert out["deadline_reached"] is True and out["status"] == "partial"
+    assert clock.now <= 100
+    assert out["budget_seconds"] == 100
+    assert out["duration_seconds"][KEYS[0]] == 10
+    assert out["duration_seconds"][KEYS[1]] == 90
+
+
+def test_deadline_between_cases_leaves_rest_unattempted():
+    clock, coord = Clock(), Coordinator()
+    out = _bounded(clock, [85], coord, timeout=100)
+    assert out["results"][KEYS[0]] == "retired"
+    assert out["results"][KEYS[1]] == "not_attempted_deadline"
+    assert out["results"][KEYS[2]] == "not_attempted_deadline"
+    assert coord.calls == ["p-1"]
+
+
+def test_reserve_follows_slowest_observed_case():
+    clock, coord = Clock(), Coordinator()
+    out = _bounded(clock, [60], coord, timeout=100)
+    assert out["results"][KEYS[1]] == "not_attempted_deadline"
+    assert out["duration_seconds"] == {KEYS[0]: 60}
+
+
+def test_budget_counts_from_process_start():
+    clock, coord = Clock(95), Coordinator()
+    out = _bounded(clock, [1], coord, timeout=100, started_at=0.0)
+    assert coord.calls == []
+    assert set(out["results"].values()) == {"not_attempted_deadline"}
+
+
+def test_normal_completion_records_durations():
+    clock, coord = Clock(), Coordinator()
+    out = _bounded(clock, [2, 3, 4], coord)
+    assert out["status"] == "retired" and out["deadline_reached"] is False
+    assert out["duration_seconds"] == {KEYS[0]: 2, KEYS[1]: 3, KEYS[2]: 4}
+
+
+def test_real_thread_overrun_returns_before_case_finishes():
+    import time as _t
+
+    finished, _, _ = retire._call_with_timeout(lambda: _t.sleep(5), 0.1)
+    assert finished is False
+    finished, value, exc = retire._call_with_timeout(lambda: 7, 1)
+    assert (finished, value, exc) == (True, 7, None)
+
+
+def test_main_exits_zero_with_evidence_on_deadline(monkeypatch, capsys):
+    # The runtime build blocks, so the stage at the deadline is deterministic.
+    import threading
+
+    release = threading.Event()
+
+    def blocked_build():
+        release.wait(30)
+        return _store(), Coordinator()
+
+    monkeypatch.setattr(retire, "_build_runtime", blocked_build)
+    monkeypatch.setattr(retire, "_PROCESS_START", retire.time.monotonic() - 1000)
+    try:
+        rc = retire.main(["--outcome", "accepted", "--new-case-key", KEYS[3],
+                          "--timeout-seconds", "10"])
+    finally:
+        release.set()
+    out = capsys.readouterr().out
+    assert rc == 0 and '"deadline_reached": true' in out
+    assert '"deadline_stage": "build_runtime"' in out
+
+
 def test_unknown_outcome_is_rejected():
     with pytest.raises(retire.RetireError):
         retire.plan_retirement([], outcome="bogus", new_case_key="x")
@@ -218,3 +326,69 @@ def test_build_runtime_composes_persona_service_via_app_factory(monkeypatch):
     assert callable(retire_case) and store is not None
     # the write owner the coordinator needs to archive the final Persona resolves
     assert service._get_active_write_owner() is not None
+
+
+_PROC = """
+import importlib.util, json, sys, threading, time
+spec = importlib.util.spec_from_file_location("retire", {path!r})
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+mod.WATCHDOG_MARGIN_SECONDS = 0.3
+mode = {mode!r}
+class Rec:
+    def __init__(s, k, i):
+        s.idempotency_key, s.created_at, s.state = k, "2026-10-%02d" % i, "succeeded"
+        s.tenant_id, s.persona_id = "t", "p-%d" % i
+class Store:
+    def list_all(s):
+        if mode == "list":
+            time.sleep(30)
+        return [Rec(k, i + 1) for i, k in enumerate({keys!r})]
+def retire_case(t, p, *, reason):
+    time.sleep(30)
+def build():
+    if mode == "build":
+        time.sleep(30)
+    return Store(), retire_case
+mod._build_runtime = build
+mod.CASE_RESERVE_FLOOR_SECONDS = 0.0
+mod._exit_process(mod.main(["--outcome", "accepted", "--new-case-key", {keys!r}[3],
+                            "--timeout-seconds", "0.5"]))
+"""
+
+
+@pytest.mark.parametrize("mode", ["build", "list", "case"])
+def test_real_process_prints_evidence_and_exits_zero_within_budget(mode):
+    import json
+    import subprocess
+    import sys
+    import time as _t
+
+    code = _PROC.format(path=retire.__file__, mode=mode, keys=KEYS)
+    began = _t.monotonic()
+    proc = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True,
+                          text=True, timeout=20)
+    elapsed = _t.monotonic() - began
+    assert proc.returncode == 0, proc.stderr
+    assert elapsed < 10  # blocked work sleeps 30s; budget 0.5s + margin 0.3s
+    out = json.loads(proc.stdout)
+    assert out["deadline_reached"] is True and out["status"] == "partial"
+    if mode == "case":
+        assert out["results"][KEYS[0]] == "pending"
+        assert out["results"][KEYS[1]] == "not_attempted_deadline"
+    else:
+        assert out["deadline_stage"] == ("build_runtime" if mode == "build" else "list_cases")
+
+
+def test_blocked_list_all_in_execute_is_bounded():
+    import time as _t
+
+    class Blocked:
+        def list_all(self):
+            _t.sleep(5)
+
+    began = _t.monotonic()
+    out = retire.execute(store=Blocked(), retire_case=Coordinator(), outcome="accepted",
+                         new_case_key=KEYS[3], run_id="r", dry_run=False,
+                         timeout_seconds=0.2)
+    assert _t.monotonic() - began < 2
+    assert out["deadline_reached"] is True and out["deadline_stage"] == "list_cases"
