@@ -3731,3 +3731,78 @@ def test_mgmt_nl_collect_context_preserves_fail_closed_unavailable_when_telemetr
         set_management_nl_read_store(original_store)
         bff_main._sse_buffers["ask"].clear()
 
+
+
+def test_management_nl_large_fleet_context_stays_within_provider_bound(tmp_path, monkeypatch) -> None:
+    original_store = get_management_nl_read_store()
+    fake = FakeProviderClient()
+    provider_bound_chars = 200_000
+    persona_count, runtime_count = 20, 40
+    blob = {"candles": ["x" * 40] * 10}
+    runtimes = [
+        {"runtime_id": f"rt-{i}", "status": "running", "tenant_id": "tenant-alpha", "detail": blob}
+        for i in range(runtime_count)
+    ]
+    ok_obs = [
+        {"subject_type": "telemetry", "subject_id": f"rt-{i}", "status": "ok", "owner": "telemetry",
+         "source_kind": "live", "contributing_observations": [{"subject_id": f"rt-{i}", "blob": blob}]}
+        for i in range(runtime_count)
+    ]
+    bad_obs = {"subject_type": "bindings", "subject_id": "persona-7", "status": "unavailable",
+               "owner": "runtime_manager", "source_kind": "unavailable", "degradation_reason": "owner down"}
+    items = [
+        {
+            "id": f"persona-{i}", "persona_id": f"persona-{i}", "persona": {"name": f"P{i}", "traits": blob},
+            "health": {"status": "healthy"}, "bindings": [],
+            "runtimeBindings": runtimes, "runtime_bindings": runtimes,
+            "telemetrySummary": {"runtime_count": runtime_count}, "telemetry_summary": {"runtime_count": runtime_count},
+            "owner_observations": ok_obs,
+        }
+        for i in range(persona_count)
+    ]
+    snippets = {"persona_fleet": {"total": persona_count, "summary": {"total_personas": 500}, "items": items}}
+    surfaces = {"persona_fleet": {"status": "unavailable", "source": "bff_composed", "owner_observations": [*ok_obs, bad_obs]}}
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "codex_cli")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        client = _seeded_client(tmp_path, monkeypatch)
+        monkeypatch.setattr(
+            bff_main, "_mgmt_nl_collect_context",
+            lambda focus, now, tenant_id=None: {"snippets": snippets, "surfaces": surfaces},
+        )
+        resp = client.post(
+            "/bff/management/nl/ask",
+            json={"question": "hello", "focus": "persona_fleet"},
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "ctx-bound-large-fleet"},
+        )
+        assert resp.status_code == 202, resp.text
+        assert resp.json()["data"]["provider_status"]["status"] == "completed"
+        assert len(fake.calls) == 1
+        pack = fake.calls[0]["context_pack"]
+        assert len(json.dumps(snippets)) > provider_bound_chars // 2  # fixture is realistically large
+        assert len(json.dumps(pack)) < provider_bound_chars
+        assert pack["bff_reads"]["context"]["mirrors"] == "backend"
+        assert "management_nl" in pack["bff_reads"]["context"]["source_keys"]
+        data = pack["backend"]["management_nl"]["data"]
+        fleet = data["summary_context"]["persona_fleet"]
+        assert fleet["summary"]["total_personas"] == 500
+        assert len(fleet["items"]) == persona_count
+        scope = fleet["population_scope"]
+        assert scope["partial"] is True
+        assert scope["total_population"] == 500
+        assert scope["returned_sample_count"] == persona_count
+        assert scope["omitted_count"] == 500 - persona_count
+        assert "healthy_personas" in scope["sample_scoped_summary_fields"]
+        assert scope["whole_population_health_counts"] == "unavailable"
+        assert fleet["items"][0]["runtime_bindings"][0]["runtime_id"] == "rt-0"
+        assert "runtimeBindings" not in fleet["items"][0]
+        observations = data["surfaces"]["persona_fleet"]["owner_observations"]
+        assert data["surfaces"]["persona_fleet"]["status"] == "unavailable"
+        assert any(o["status"] == "unavailable" and o["degradation_reason"] == "owner down" for o in observations)
+        grouped = [o for o in observations if o.get("count")]
+        assert grouped and grouped[0]["count"] == runtime_count
+    finally:
+        set_management_nl_read_store(original_store)
+        bff_main._sse_buffers["ask"].clear()
