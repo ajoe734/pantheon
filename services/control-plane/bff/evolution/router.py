@@ -267,7 +267,7 @@ def _register_evolution_programs_routes(
         return program
 
     @router.get("/bff/evolution-programs")
-    async def list_evolution_programs(
+    def list_evolution_programs(
         status: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),

@@ -433,7 +433,7 @@ def create_control_loops_router(
 
     # 20-22: loop-run and Sentinel detail read models.
     @router.get("/bff/v5/loop-runs")
-    async def bff_list_loop_runs(
+    def bff_list_loop_runs(
         status: Optional[str] = None,
         tenant_id: Optional[str] = None,
         environment: Optional[str] = None,
@@ -442,7 +442,7 @@ def create_control_loops_router(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         identity = _read_identity(authorization)
-        return await resolved_service.list_loop_runs(
+        return resolved_service.list_loop_runs(
             identity,
             status=status,
             tenant_id=tenant_id,
@@ -452,14 +452,14 @@ def create_control_loops_router(
         )
 
     @router.get("/bff/v5/loop-runs/{loop_run_id}")
-    async def bff_get_loop_run(
+    def bff_get_loop_run(
         loop_run_id: str,
         tenant_id: Optional[str] = None,
         environment: Optional[str] = None,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         identity = _read_identity(authorization)
-        return await resolved_service.get_loop_run(
+        return resolved_service.get_loop_run(
             str(loop_run_id or "").strip(),
             identity,
             tenant_id=tenant_id,

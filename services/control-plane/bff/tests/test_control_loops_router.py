@@ -827,47 +827,39 @@ def test_all_loop_truth_callers_share_stage_scope_authorization() -> None:
         )
 
     # 3. list_loop_runs (~line 679)
-    runs = asyncio.run(
+    runs = service.list_loop_runs(
+        identity,
+        status=None,
+        tenant_id="tenant-dev",
+        environment="paper",
+        page_token=None,
+        page_size=10,
+    )
+    assert len(runs["items"]) == 1
+    with pytest.raises(Exception):
         service.list_loop_runs(
             identity,
             status=None,
             tenant_id="tenant-dev",
-            environment="paper",
+            environment="live",
             page_token=None,
             page_size=10,
         )
-    )
-    assert len(runs["items"]) == 1
-    with pytest.raises(Exception):
-        asyncio.run(
-            service.list_loop_runs(
-                identity,
-                status=None,
-                tenant_id="tenant-dev",
-                environment="live",
-                page_token=None,
-                page_size=10,
-            )
-        )
 
     # 4. get_loop_run (~line 761)
-    run = asyncio.run(
+    run = service.get_loop_run(
+        "loop-run-dev",
+        identity,
+        tenant_id="tenant-dev",
+        environment="paper",
+    )
+    assert run["data"]["environment"] == "paper"
+    with pytest.raises(Exception):
         service.get_loop_run(
             "loop-run-dev",
             identity,
             tenant_id="tenant-dev",
-            environment="paper",
-        )
-    )
-    assert run["data"]["environment"] == "paper"
-    with pytest.raises(Exception):
-        asyncio.run(
-            service.get_loop_run(
-                "loop-run-dev",
-                identity,
-                tenant_id="tenant-dev",
-                environment="live",
-            )
+            environment="live",
         )
 
 

@@ -17,7 +17,7 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
     router = APIRouter()
 
     @router.get("/bff/strategies")
-    async def bff_list_strategies(
+    def bff_list_strategies(
         state: Optional[str] = None,
         persona_id: Optional[str] = None,
         page_token: Optional[str] = None,

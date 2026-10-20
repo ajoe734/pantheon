@@ -323,7 +323,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.get("/bff/personas/{persona_id}")
-    async def bff_get_persona(
+    def bff_get_persona(
         persona_id: str,
         authorization: Optional[str] = Header(default=None),
     ):
@@ -363,12 +363,10 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
                 "Persona not found",
                 f"Persona {persona_id} does not exist",
             )
-        dto = await asyncio.to_thread(
-            lambda: _project_persona_dto(
-                raw,
-                overlay=None,
-                routed_strategies=_routed_strategies_for_persona(persona_id),
-            )
+        dto = _project_persona_dto(
+            raw,
+            overlay=None,
+            routed_strategies=_routed_strategies_for_persona(persona_id),
         )
         containment = _service.get_persona_containment(persona_id)
         if containment:
@@ -426,7 +424,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.get("/bff/personas/{persona_id}/route-policy")
-    async def bff_get_persona_route_policy(
+    def bff_get_persona_route_policy(
         persona_id: str,
         authorization: Optional[str] = Header(default=None),
     ):

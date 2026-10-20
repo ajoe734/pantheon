@@ -713,7 +713,7 @@ class ControlLoopsService:
         provider = getattr(self.read_store, "trade_journey_projection_reader", None)
         return provider() if callable(provider) else None
 
-    async def list_loop_runs(
+    def list_loop_runs(
         self,
         identity: Any,
         *,
@@ -784,7 +784,7 @@ class ControlLoopsService:
             surface=self._loop_run_surface(available),
         )
 
-    async def get_loop_run(
+    def get_loop_run(
         self,
         loop_run_id: str,
         identity: Any,

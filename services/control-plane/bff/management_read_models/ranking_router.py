@@ -131,7 +131,7 @@ def create_ranking_formulas_router(
             )
 
     @router.get("/bff/ranking-formulas")
-    async def bff_list_ranking_formulas(
+    def bff_list_ranking_formulas(
         status: Optional[str] = None,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:

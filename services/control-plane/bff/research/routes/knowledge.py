@@ -53,7 +53,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_list_notes(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_list_notes(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
         try:
             page_size = int(ctx.query(request, "page_size", "20") or 20)
@@ -71,7 +71,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_get_note(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_get_note(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
         identifier = str(request.path_params.get("note_id") or "")
         try:
@@ -79,7 +79,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_list_evidence(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_list_evidence(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         identity = ctx.identity(request)
         try:
             page_size = int(ctx.query(request, "page_size", "20") or 20)
@@ -99,7 +99,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_get_evidence(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_get_evidence(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         identity = ctx.identity(request)
         identifier = str(request.path_params.get("ref_id") or "")
         try:
@@ -107,7 +107,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_list_insights(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_list_insights(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
         try:
             page_size = int(ctx.query(request, "page_size", "20") or 20)
@@ -129,7 +129,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_get_insight(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_get_insight(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
         identifier = str(request.path_params.get("insight_id") or "")
         try:
@@ -137,7 +137,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_list_strategy_specs(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_list_strategy_specs(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
         try:
             page_size = int(ctx.query(request, "page_size", "20") or 20)
@@ -155,7 +155,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_strategy_versions(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_strategy_versions(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
         strategy_id = str(request.path_params.get("strategy_id") or "")
         try:
@@ -163,7 +163,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_strategy_compare(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_strategy_compare(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
         strategy_id = str(request.path_params.get("strategy_id") or "")
         try:
@@ -177,7 +177,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_get_strategy_spec(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_get_strategy_spec(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
         strategy_id = str(request.path_params.get("strategy_id") or "")
         try:
@@ -188,7 +188,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_list_memory(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_list_memory(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
         try:
             page_number = int(ctx.query(request, "page", "1") or 1)
@@ -208,7 +208,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_get_memory(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_get_memory(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
         identifier = str(request.path_params.get("entry_id") or "")
         try:
@@ -216,7 +216,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_synthesis_conflict_logs(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_synthesis_conflict_logs(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
         raw_flag = os.getenv("PANTHEON_SYNTHESIS_CONFLICT_LOG_VIEW_ENABLED")
         if raw_flag is not None and raw_flag.strip().lower() in {"0", "false", "no", "off", "disabled"}:
@@ -245,7 +245,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_synthesis_conflict_log(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_synthesis_conflict_log(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
         raw_flag = os.getenv("PANTHEON_SYNTHESIS_CONFLICT_LOG_VIEW_ENABLED")
         if raw_flag is not None and raw_flag.strip().lower() in {"0", "false", "no", "off", "disabled"}:

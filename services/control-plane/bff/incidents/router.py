@@ -689,7 +689,7 @@ def create_incident_router(
     # Route 11: GET /bff/incidents
     # -------------------------------------------------------------------------
     @router.get("/bff/incidents")
-    async def bff_list_incidents(
+    def bff_list_incidents(
         status: Optional[str] = None,
         severity: Optional[str] = None,
         affected_pool_id: Optional[str] = None,
@@ -1015,7 +1015,7 @@ def create_incident_router(
     # Route 18: GET /bff/audit
     # -------------------------------------------------------------------------
     @router.get("/bff/audit")
-    async def bff_list_audit(
+    def bff_list_audit(
         actor: Optional[str] = None,
         action_type: Optional[str] = None,
         target_type: Optional[str] = None,

@@ -7,6 +7,7 @@ Institutional Memory, Conflict Logs, and Search away from HTTP route handlers.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import inspect
 import json
@@ -2797,72 +2798,81 @@ class ResearchRouterService:
         effective_page_size = int(limit or page_size or 20)
         effective_page_size = max(1, min(effective_page_size, 100))
         if self.cross_entity_search_fn is not None:
-            result = self.cross_entity_search_fn(
+            search_fn = self.cross_entity_search_fn
+            search_kwargs = dict(
                 query=query,
                 types=requested_types,
                 page_size=effective_page_size,
                 page_token=page_token,
                 identity=identity,
             )
-            result = await result if inspect.isawaitable(result) else result
+            if inspect.iscoroutinefunction(search_fn):
+                result = await search_fn(**search_kwargs)
+            else:
+                result = await asyncio.to_thread(search_fn, **search_kwargs)
+                result = await result if inspect.isawaitable(result) else result
             if isinstance(result, dict):
                 return result
             records = list(result or [])
         else:
-            records = []
-            def _matches(value: Any) -> bool:
-                return not needle or needle in str(value or "").lower()
+            def _collect_port_records() -> List[Dict[str, Any]]:
+                records = []
+                def _matches(value: Any) -> bool:
+                    return not needle or needle in str(value or "").lower()
 
-            port = self._port()
-            if not requested_types or "strategy" in requested_types:
-                strategy_reader = getattr(port, "list_strategies", None) or getattr(port, "list_strategy_summaries", None)
-                if callable(strategy_reader):
-                    for raw in strategy_reader() or []:
-                        item_id = str(raw.get("strategy_id") or raw.get("id") or "")
-                        name_value = raw.get("title") or raw.get("name") or item_id
-                        if _matches(item_id) or _matches(name_value):
-                            records.append({
-                                "id": item_id,
-                                "type": "strategy",
-                                "name": str(name_value),
-                                "state": raw.get("lifecycle_state") or raw.get("status"),
-                                "owner": raw.get("owner") or "pantheon-bff",
-                                "risk": "medium",
-                                "updatedAt": raw.get("updated_at") or raw.get("last_modified_at") or snap,
-                            })
-            if not requested_types or "persona" in requested_types:
-                persona_reader = getattr(port, "list_personas", None)
-                if callable(persona_reader):
-                    for raw in persona_reader() or []:
-                        item_id = str(raw.get("persona_id") or raw.get("id") or "")
-                        name_value = raw.get("name") or item_id
-                        if _matches(item_id) or _matches(name_value):
-                            metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
-                            records.append({
-                                "id": item_id,
-                                "type": "persona",
-                                "name": str(name_value),
-                                "state": raw.get("lifecycle_state") or raw.get("status"),
-                                "owner": metadata.get("owner") or raw.get("owner") or "pantheon-bff",
-                                "risk": metadata.get("risk_level") or "medium",
-                                "updatedAt": raw.get("updated_at") or raw.get("created_at") or snap,
-                            })
-            if not requested_types or "capital_pool" in requested_types or "capitalpool" in requested_types:
-                pool_reader = getattr(port, "list_capital_pools", None)
-                if callable(pool_reader):
-                    for raw in pool_reader() or []:
-                        item_id = str(raw.get("pool_id") or raw.get("id") or "")
-                        name_value = raw.get("name") or item_id
-                        if _matches(item_id) or _matches(name_value):
-                            records.append({
-                                "id": item_id,
-                                "type": "capital_pool",
-                                "name": str(name_value),
-                                "state": raw.get("status"),
-                                "owner": raw.get("owner") or "pantheon-bff",
-                                "risk": raw.get("risk_level") or "medium",
-                                "updatedAt": raw.get("updated_at") or raw.get("created_at") or snap,
-                            })
+                port = self._port()
+                if not requested_types or "strategy" in requested_types:
+                    strategy_reader = getattr(port, "list_strategies", None) or getattr(port, "list_strategy_summaries", None)
+                    if callable(strategy_reader):
+                        for raw in strategy_reader() or []:
+                            item_id = str(raw.get("strategy_id") or raw.get("id") or "")
+                            name_value = raw.get("title") or raw.get("name") or item_id
+                            if _matches(item_id) or _matches(name_value):
+                                records.append({
+                                    "id": item_id,
+                                    "type": "strategy",
+                                    "name": str(name_value),
+                                    "state": raw.get("lifecycle_state") or raw.get("status"),
+                                    "owner": raw.get("owner") or "pantheon-bff",
+                                    "risk": "medium",
+                                    "updatedAt": raw.get("updated_at") or raw.get("last_modified_at") or snap,
+                                })
+                if not requested_types or "persona" in requested_types:
+                    persona_reader = getattr(port, "list_personas", None)
+                    if callable(persona_reader):
+                        for raw in persona_reader() or []:
+                            item_id = str(raw.get("persona_id") or raw.get("id") or "")
+                            name_value = raw.get("name") or item_id
+                            if _matches(item_id) or _matches(name_value):
+                                metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+                                records.append({
+                                    "id": item_id,
+                                    "type": "persona",
+                                    "name": str(name_value),
+                                    "state": raw.get("lifecycle_state") or raw.get("status"),
+                                    "owner": metadata.get("owner") or raw.get("owner") or "pantheon-bff",
+                                    "risk": metadata.get("risk_level") or "medium",
+                                    "updatedAt": raw.get("updated_at") or raw.get("created_at") or snap,
+                                })
+                if not requested_types or "capital_pool" in requested_types or "capitalpool" in requested_types:
+                    pool_reader = getattr(port, "list_capital_pools", None)
+                    if callable(pool_reader):
+                        for raw in pool_reader() or []:
+                            item_id = str(raw.get("pool_id") or raw.get("id") or "")
+                            name_value = raw.get("name") or item_id
+                            if _matches(item_id) or _matches(name_value):
+                                records.append({
+                                    "id": item_id,
+                                    "type": "capital_pool",
+                                    "name": str(name_value),
+                                    "state": raw.get("status"),
+                                    "owner": raw.get("owner") or "pantheon-bff",
+                                    "risk": raw.get("risk_level") or "medium",
+                                    "updatedAt": raw.get("updated_at") or raw.get("created_at") or snap,
+                                })
+                return records
+
+            records = await asyncio.to_thread(_collect_port_records)
         items, next_token = self.page_slice(records, page_token, effective_page_size)
         meta = self.snapshot_meta(snap)
         meta["surfaces"] = {

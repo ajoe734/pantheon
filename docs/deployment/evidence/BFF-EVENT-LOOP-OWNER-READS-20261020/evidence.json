@@ -1,0 +1,311 @@
+{
+  "task_id": "BFF-EVENT-LOOP-OWNER-READS-20261020",
+  "converted_to_sync_def_threadpool": [
+    {
+      "file": "services/control-plane/bff/control_loops/router.py",
+      "line": 436,
+      "handler": "bff_list_loop_runs"
+    },
+    {
+      "file": "services/control-plane/bff/control_loops/router.py",
+      "line": 455,
+      "handler": "bff_get_loop_run"
+    },
+    {
+      "file": "services/control-plane/bff/control_loops/service.py",
+      "line": 716,
+      "handler": "list_loop_runs"
+    },
+    {
+      "file": "services/control-plane/bff/control_loops/service.py",
+      "line": 787,
+      "handler": "get_loop_run"
+    },
+    {
+      "file": "services/control-plane/bff/deployment/router.py",
+      "line": 427,
+      "handler": "bff_list_deployments"
+    },
+    {
+      "file": "services/control-plane/bff/evolution/router.py",
+      "line": 270,
+      "handler": "list_evolution_programs"
+    },
+    {
+      "file": "services/control-plane/bff/incidents/router.py",
+      "line": 692,
+      "handler": "bff_list_incidents"
+    },
+    {
+      "file": "services/control-plane/bff/incidents/router.py",
+      "line": 1018,
+      "handler": "bff_list_audit"
+    },
+    {
+      "file": "services/control-plane/bff/jobs/router.py",
+      "line": 131,
+      "handler": "list_jobs"
+    },
+    {
+      "file": "services/control-plane/bff/management_read_models/ranking_router.py",
+      "line": 134,
+      "handler": "bff_list_ranking_formulas"
+    },
+    {
+      "file": "services/control-plane/bff/management_read_models/router.py",
+      "line": 1550,
+      "handler": "bff_management_shell_summary"
+    },
+    {
+      "file": "services/control-plane/bff/management_read_models/router.py",
+      "line": 1626,
+      "handler": "bff_management_trading_pulse"
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/collection.py",
+      "line": 145,
+      "handler": "bff_list_personas"
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "line": 326,
+      "handler": "bff_get_persona"
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "line": 427,
+      "handler": "bff_get_persona_route_policy"
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/ranking.py",
+      "line": 107,
+      "handler": "bff_management_promotion_reviews"
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/ranking.py",
+      "line": 136,
+      "handler": "bff_management_promotion_review_detail"
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/ranking.py",
+      "line": 162,
+      "handler": "bff_management_persona_league"
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/ranking.py",
+      "line": 193,
+      "handler": "bff_management_persona_league_rankings"
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/ranking.py",
+      "line": 242,
+      "handler": "bff_management_persona_league_movers"
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/ranking.py",
+      "line": 272,
+      "handler": "bff_management_persona_league_tiers"
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/ranking.py",
+      "line": 317,
+      "handler": "bff_management_persona_league_heatmap"
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/ranking.py",
+      "line": 342,
+      "handler": "bff_management_quarterly_ranking_formula"
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/ranking.py",
+      "line": 568,
+      "handler": "bff_persona_league"
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/ranking.py",
+      "line": 588,
+      "handler": "bff_persona_league_detail"
+    },
+    {
+      "file": "services/control-plane/bff/research/routes/artifacts.py",
+      "line": 47,
+      "handler": "_list_artifacts"
+    },
+    {
+      "file": "services/control-plane/bff/research/routes/artifacts.py",
+      "line": 72,
+      "handler": "_get_artifact"
+    },
+    {
+      "file": "services/control-plane/bff/research/routes/artifacts.py",
+      "line": 81,
+      "handler": "list_research_artifacts"
+    },
+    {
+      "file": "services/control-plane/bff/research/routes/artifacts.py",
+      "line": 96,
+      "handler": "compare_research_artifacts"
+    },
+    {
+      "file": "services/control-plane/bff/research/routes/artifacts.py",
+      "line": 108,
+      "handler": "get_research_artifact"
+    },
+    {
+      "file": "services/control-plane/bff/research/routes/artifacts.py",
+      "line": 115,
+      "handler": "bff_list_research_artifacts"
+    },
+    {
+      "file": "services/control-plane/bff/research/routes/artifacts.py",
+      "line": 129,
+      "handler": "bff_get_research_artifact"
+    },
+    {
+      "file": "services/control-plane/bff/research/routes/experiments.py",
+      "line": 179,
+      "handler": "list_research_experiments"
+    },
+    {
+      "file": "services/control-plane/bff/research/routes/knowledge.py",
+      "line": 56,
+      "handler": "endpoint_list_notes"
+    },
+    {
+      "file": "services/control-plane/bff/research/routes/knowledge.py",
+      "line": 74,
+      "handler": "endpoint_get_note"
+    },
+    {
+      "file": "services/control-plane/bff/research/routes/knowledge.py",
+      "line": 82,
+      "handler": "endpoint_list_evidence"
+    },
+    {
+      "file": "services/control-plane/bff/research/routes/knowledge.py",
+      "line": 102,
+      "handler": "endpoint_get_evidence"
+    },
+    {
+      "file": "services/control-plane/bff/research/routes/knowledge.py",
+      "line": 110,
+      "handler": "endpoint_list_insights"
+    },
+    {
+      "file": "services/control-plane/bff/research/routes/knowledge.py",
+      "line": 132,
+      "handler": "endpoint_get_insight"
+    },
+    {
+      "file": "services/control-plane/bff/research/routes/knowledge.py",
+      "line": 140,
+      "handler": "endpoint_list_strategy_specs"
+    },
+    {
+      "file": "services/control-plane/bff/research/routes/knowledge.py",
+      "line": 158,
+      "handler": "endpoint_strategy_versions"
+    },
+    {
+      "file": "services/control-plane/bff/research/routes/knowledge.py",
+      "line": 166,
+      "handler": "endpoint_strategy_compare"
+    },
+    {
+      "file": "services/control-plane/bff/research/routes/knowledge.py",
+      "line": 180,
+      "handler": "endpoint_get_strategy_spec"
+    },
+    {
+      "file": "services/control-plane/bff/research/routes/knowledge.py",
+      "line": 191,
+      "handler": "endpoint_list_memory"
+    },
+    {
+      "file": "services/control-plane/bff/research/routes/knowledge.py",
+      "line": 211,
+      "handler": "endpoint_get_memory"
+    },
+    {
+      "file": "services/control-plane/bff/research/routes/knowledge.py",
+      "line": 219,
+      "handler": "endpoint_synthesis_conflict_logs"
+    },
+    {
+      "file": "services/control-plane/bff/research/routes/knowledge.py",
+      "line": 248,
+      "handler": "endpoint_synthesis_conflict_log"
+    },
+    {
+      "file": "services/control-plane/bff/runtime/router.py",
+      "line": 1108,
+      "handler": "bff_list_runtimes"
+    },
+    {
+      "file": "services/control-plane/bff/runtime/router.py",
+      "line": 1201,
+      "handler": "bff_v5_execution_persona_health"
+    },
+    {
+      "file": "services/control-plane/bff/strategies/routes/collection.py",
+      "line": 20,
+      "handler": "bff_list_strategies"
+    },
+    {
+      "file": "services/control-plane/bff/tools_integrations/router.py",
+      "line": 535,
+      "handler": "bff_list_tools"
+    },
+    {
+      "file": "services/control-plane/bff/tools_integrations/router.py",
+      "line": 855,
+      "handler": "bff_list_skills"
+    },
+    {
+      "file": "services/control-plane/bff/tools_integrations/router.py",
+      "line": 1100,
+      "handler": "bff_list_mcp_servers_facade"
+    }
+  ],
+  "offloaded_via_to_thread": [
+    {
+      "file": "services/control-plane/bff/personas/routes/lifecycle.py",
+      "handler": "bff_ppl_alloc_009_paper_eligibility_proof",
+      "change": "_pm12_persona_league_rows via asyncio.to_thread"
+    },
+    {
+      "file": "services/control-plane/bff/management_read_models/router.py",
+      "handler": "bff_management_cockpit",
+      "change": "fallback composer via asyncio.to_thread (run_management_read path already threaded)"
+    },
+    {
+      "file": "services/control-plane/bff/research/service.py",
+      "handler": "search_knowledge (/bff/search)",
+      "change": "sync cross_entity_search_fn and port reads via asyncio.to_thread"
+    }
+  ],
+  "already_offloaded_unchanged": [
+    "/bff/alerts (run_management_read)",
+    "/bff/approvals (_forward run_in_threadpool)",
+    "/bff/assistant/providers/usage-summary",
+    "/bff/assistant/providers",
+    "/bff/v5/loop-health (genuinely async store)",
+    "/bff/agora/capabilities",
+    "/bff/agora/journal",
+    "/bff/evolution-journal"
+  ],
+  "persona_fleet": "PaperReconcilerUnavailableError mapped to existing 503 DEPENDENCY_UNAVAILABLE envelope (personas/routes/collection.py); test in tests/test_owner_unavailable_503_consistency.py",
+  "concurrency_latency_seconds": {
+    "before_base_e72ae033b": {
+      "/bff/me": 5.01,
+      "/bff/auth/readiness": 5.02
+    },
+    "after": {
+      "/bff/me": 0.01,
+      "/bff/auth/readiness": 0.014
+    },
+    "test": "tests/test_event_loop_owner_reads_guard.py::test_me_and_readiness_stay_responsive_while_persona_league_blocks (persona-league held 5s in stubbed owner read)"
+  },
+  "guard_notes": "test_converted_management_handlers_are_threadpool_sync fails on base (async handlers) and passes now; test_owner_transports_are_never_called_on_the_event_loop patches urllib/psycopg/http_request_json/_evolution_http_get and passes (it does not fail on base because stub stores do not reach those transports; the static handler check and concurrency test carry the base-fail proof).",
+  "regression_comparison": "Full bff test suite run in shards on base vs delivery head: failure sets identical (pre-existing env/order failures); only differences were order/timing flakes that pass in isolation. test_control_loops_router updated for service.list_loop_runs/get_loop_run becoming sync."
+}
