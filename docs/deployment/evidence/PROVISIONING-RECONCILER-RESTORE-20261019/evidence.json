@@ -3,7 +3,7 @@
   "scope": "source-only; no deployment dispatched, no hosted ledger touched",
   "changes": [
     "core/lifespan.py: lifespan starts _persona_provisioning_reconciler_loop unless PANTHEON_PERSONA_PROVISIONING_RECONCILER_ENABLED is false/0/no/off, and cancels it on shutdown",
-    "personas/service.py: readback hands a retired RuntimeBinding to retire_persona_provisioning_case (no compensation, no saga failure); a market_input_* paused binding keeps the case provisioning; other pauses still fail"
+    "personas/service.py: readback hands a retired RuntimeBinding to retire_persona_provisioning_case (no compensation, no saga failure); a market_input_* paused binding keeps the case provisioning without triggering provisioning_timeout and records provisioning_waiting_reason=<reason_code> on persona/authoritative readback metadata; operator pauses and non-progress cases still fail on timeout"
   ],
   "stale_tests_fixed": {
     "file": "services/control-plane/bff/tests/test_persona_provisioning_reconcile.py",
@@ -14,5 +14,5 @@
     ],
     "assertions_weakened": false
   },
-  "tests": "test_persona_provisioning_readback.py, tests/test_persona_provisioning_reconcile.py (includes lifespan tests), test_persona_provisioning_coordinator.py passed; 5 new tests fail on base"
+  "tests": "test_persona_provisioning_readback.py (market_input_* pause older than timeout stays provisioning with provisioning_waiting_reason, operator pause/no-progress older than timeout fails, retired binding hands to retire_case), tests/test_persona_provisioning_reconcile.py (includes lifespan tests), test_persona_provisioning_coordinator.py passed; 6 new/updated tests fail on base"
 }

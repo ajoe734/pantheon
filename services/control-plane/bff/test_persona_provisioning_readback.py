@@ -1213,27 +1213,74 @@ def _paused_binding(reason_code: str) -> dict[str, Any]:
 
 def test_market_input_pause_keeps_provisioning_without_compensation(
     harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A market_input_* pause is transient: the case keeps provisioning."""
+    """A market_input_* pause is transient even past the provisioning timeout."""
+    compensation_calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        personas_service,
+        "_reconcile_persona_provisioning_compensation",
+        lambda meta: compensation_calls.append(dict(meta)) or {"status": "completed"},
+    )
 
+    raw = _raw_persona(provisioning_readback_started_at=_now(-601))
     state, raw = _evaluate(
+        raw=raw,
         bindings={RUNTIME_BINDING_ID: _paused_binding("market_input_stale")},
         cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
     )
 
     assert state == "provisioning"
+    assert raw["metadata"]["provisioning_waiting_reason"] == "market_input_stale"
+    assert (
+        personas_service._persona_provisioning_authoritative_meta(raw)[
+            "provisioning_waiting_reason"
+        ]
+        == "market_input_stale"
+    )
     assert "provisioning_failure_reason" not in raw["metadata"]
+    assert "provisioning_compensation" not in raw["metadata"]
+    assert compensation_calls == []
     assert harness.provisioning_store.released == []
 
 
-def test_operator_pause_is_still_a_provisioning_failure(harness: _Harness) -> None:
-    state, raw = _evaluate(
+def test_operator_pause_or_no_progress_past_timeout_still_fails(
+    harness: _Harness,
+) -> None:
+    paused_raw = _raw_persona(
+        provisioning_readback_started_at=_now(-601),
+        provisioning_waiting_reason="market_input_stale",
+    )
+    state, paused_raw = _evaluate(
+        raw=paused_raw,
         bindings={RUNTIME_BINDING_ID: _paused_binding("operator_pause")},
         cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
     )
 
     assert state == "provisioning_failed"
-    assert "runtime_binding_failed_or_mismatched" in raw["metadata"][
+    assert paused_raw["metadata"]["provisioning_waiting_reason"] is None
+    assert "runtime_binding_failed_or_mismatched" in paused_raw["metadata"][
+        "provisioning_failure_reason"
+    ]
+    assert "provisioning_timeout" in paused_raw["metadata"][
+        "provisioning_failure_reason"
+    ]
+
+    harness.provisioning_store.state = "provisioning"
+    harness.provisioning_store.error = None
+    no_progress_raw = _raw_persona(
+        provisioning_readback_started_at=_now(-601),
+        provisioning_waiting_reason="market_input_stale",
+    )
+    state, no_progress_raw = _evaluate(
+        raw=no_progress_raw,
+        bindings={},
+        cron_registrations=set(),
+    )
+
+    assert state == "provisioning_failed"
+    assert no_progress_raw["metadata"]["provisioning_waiting_reason"] is None
+    assert "provisioning_timeout" in no_progress_raw["metadata"][
         "provisioning_failure_reason"
     ]
 
