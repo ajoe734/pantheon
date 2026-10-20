@@ -413,6 +413,21 @@ def test_postgres_bootstrap_enforces_tenant_scoped_uniqueness() -> None:
     assert "UNIQUE (tenant_id, persona_id)" in create_table
 
 
+def test_memory_store_retired_is_terminal_and_never_reopened_by_acquire() -> None:
+    store = MemoryPersonaProvisioningStore()
+    _reserve(store)
+    first = store.acquire(TENANT, IDEMPOTENCY_KEY, lease_owner="retirer", lease_seconds=60)
+    assert first is not None
+    first.state = "retired"
+    first.current_step = "retired"
+    store.release(first, lease_owner="retirer")
+
+    again = store.acquire(TENANT, IDEMPOTENCY_KEY, lease_owner="other", lease_seconds=60)
+    assert again is not None
+    assert again.state == "retired"
+    assert again.current_step == "retired"
+
+
 def test_postgres_lease_sql_is_atomic_and_checkpoint_is_expiry_guarded() -> None:
     connect = _RecordingConnect()
     store = PostgresPersonaProvisioningStore(
@@ -430,6 +445,7 @@ def test_postgres_lease_sql_is_atomic_and_checkpoint_is_expiry_guarded() -> None
     assert acquired is not None
     acquire_sql, acquire_params = connect.executions[-1]
     assert "attempt_count=attempt_count+1" in acquire_sql
+    assert "('succeeded','failed','compensated','retired')" in acquire_sql
     assert "lease_owner IS NULL OR lease_owner=%s OR lease_expires_at <= now()" in acquire_sql
     assert acquire_params == (
         "worker-postgres",

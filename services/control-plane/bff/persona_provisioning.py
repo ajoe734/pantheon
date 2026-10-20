@@ -16,7 +16,7 @@ from threading import RLock
 from typing import Any, Callable, Mapping, Optional, Protocol
 
 
-TERMINAL_STATES = frozenset({"succeeded", "failed", "compensated"})
+TERMINAL_STATES = frozenset({"succeeded", "failed", "compensated", "retired"})
 
 
 def utc_now() -> str:
@@ -516,7 +516,7 @@ class PostgresPersonaProvisioningStore:
                     SET lease_owner=%s,
                         lease_expires_at=now() + (%s * interval '1 second'),
                         attempt_count=attempt_count+1,
-                        state=CASE WHEN state IN ('succeeded','failed','compensated')
+                        state=CASE WHEN state IN ('succeeded','failed','compensated','retired')
                                    THEN state ELSE 'provisioning' END,
                         updated_at=now()
                     WHERE tenant_id=%s AND idempotency_key=%s

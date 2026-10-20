@@ -1337,6 +1337,113 @@ def _reconcile_persona_provisioning_compensation(
     }
 
 
+# --- _persona_provisioning_ledger_retired ---
+def _persona_provisioning_ledger_retired(metadata: Mapping[str, Any]) -> bool:
+    """True when the durable ledger says the whole release case is retired."""
+
+    tenant_id = str(metadata.get("tenant_id") or "").strip()
+    idempotency_key = str(metadata.get("provisioning_idempotency_key") or "").strip()
+    if not tenant_id or not idempotency_key:
+        return False
+    try:
+        record = _persona_provisioning_store().get(tenant_id, idempotency_key)
+    except Exception as exc:
+        log.warning("Failed to read Persona provisioning ledger for retirement: %s", exc)
+        return False
+    return record is not None and record.state == "retired"
+
+
+# --- _archive_persona_required ---
+def _archive_persona_required(persona_id: str) -> Optional[Dict[str, Any]]:
+    """Archive the Persona through its write owner and read the status back."""
+
+    writer = _get_active_write_owner()
+    updater = getattr(writer, "update_persona", None) if writer else None
+    getter = getattr(writer, "get_persona", None) if writer else None
+    if not callable(updater) or not callable(getter):
+        raise RuntimeError(
+            f"Persona write owner unavailable for archive of {persona_id!r}; "
+            "no fallback writer is permitted."
+        )
+    current = getter(persona_id)
+    if current is None:
+        return None
+    if current.get("status") != "archived":
+        updater(
+            persona_id,
+            status="archived",
+            metadata={"lifecycle_state": "retired"},
+        )
+        current = getter(persona_id)
+    return current
+
+
+# --- _runtime_bindings_for_case ---
+def _runtime_bindings_for_case(plan_id: str, pool_id: str) -> List[Dict[str, Any]]:
+    """Read RuntimeBindings back by plan and by pool (deduplicated)."""
+
+    client = _runtime_manager_client()
+    found: Dict[str, Dict[str, Any]] = {}
+    for binding in [*client.list_by_plan(plan_id), *client.list_by_pool(pool_id)]:
+        key = str(binding.get("binding_id") or binding.get("id") or "")
+        found[key] = binding
+    return list(found.values())
+
+
+# --- retire_persona_provisioning_case ---
+def retire_persona_provisioning_case(
+    tenant_id: str,
+    persona_id: str,
+    *,
+    reason: str = "dev paper release case retired",
+) -> Optional[Dict[str, Any]]:
+    """Retire a whole release case through its provisioning coordinator.
+
+    In-process entrypoint for the BFF-hosted retire script.  Returns the
+    retirement summary, or ``None`` when no ledger exists for the Persona.
+    A case that does not converge stays ``pending`` (evidence only).
+    """
+
+    store = _persona_provisioning_store()
+    record = store.get_by_persona(tenant_id, persona_id)
+    if record is None:
+        return None
+    coordinator = PersonaProvisioningCoordinator(
+        store=store,
+        transport=_PersonaOwnerHttpTransport(tenant_id=tenant_id),
+        schedule_registrar=_register_persona_cron_required,
+        lease_owner=f"persona-retire:{uuid.uuid4().hex}",
+        lease_seconds=max(
+            30,
+            int(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
+        ),
+        actor_id=PERSONA_OWNER_SERVICE_ACTOR_ID,
+        governance_actor_id=os.getenv(
+            "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID", "pantheon-dev-paper-provisioner"
+        ),
+        schedule_remover=_remove_persona_cron_required,
+        runtime_binding_reader=_runtime_bindings_for_case,
+        persona_archiver=_archive_persona_required,
+    )
+    try:
+        retired = coordinator.retire_case(record, reason=reason)
+    except Exception as exc:  # noqa: BLE001 - retirement is evidence, never fatal
+        log.warning("Persona case retirement failed for %s: %s", persona_id, exc)
+        return {
+            "persona_id": persona_id,
+            "state": record.state,
+            "retirement": {
+                "status": "pending",
+                "pending_reason": str(exc) or exc.__class__.__name__,
+            },
+        }
+    return {
+        "persona_id": persona_id,
+        "state": retired.state,
+        "retirement": deepcopy(retired.references.get("retirement") or {}),
+    }
+
+
 # --- _evaluate_persona_provisioning_status ---
 def _evaluate_persona_provisioning_status(
     persona_id: str,
@@ -1357,6 +1464,10 @@ def _evaluate_persona_provisioning_status(
     )
     metadata = raw.get("metadata") or {}
     current_state = raw.get("lifecycle_state") or raw.get("state")
+    if current_state in ("provisioning", "provisioning_failed", "paper_running") and (
+        _persona_provisioning_ledger_retired(metadata)
+    ):
+        return "retired"
     if current_state == "provisioning_failed":
         terminal_updates: Dict[str, Any] = {}
         try:
@@ -3948,6 +4059,8 @@ def _persona_record_for_provisioning(
     )
     if succeeded_with_readback:
         lifecycle_state = "paper_running"
+    elif record.state == "retired":
+        lifecycle_state = "retired"
     elif record.state in {"failed", "compensated"}:
         lifecycle_state = "provisioning_failed"
     else:
@@ -11000,6 +11113,7 @@ def _persona_provisioning_metadata(
         "paper_runtime_state": (
             "running"
             if lifecycle_state == "paper_running"
+            else "retired" if lifecycle_state == "retired"
             else "failed" if lifecycle_state == "provisioning_failed" else "provisioning"
         ),
         "live_capital_enabled": False,

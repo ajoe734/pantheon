@@ -1,0 +1,17 @@
+{
+  "task_id": "PROVISIONING-CASE-RETIRE-20261019",
+  "scope": "source-only; no deployment dispatched, no hosted case retired",
+  "changes": [
+    "persona_provisioning.py: retired added to TERMINAL_STATES and the Postgres acquire CASE",
+    "persona_provisioning_coordinator.py: PersonaProvisioningCoordinator.retire_case (cron, compensation, saga, RuntimeBindings, PCB revoked, pool archived, persona archived, ledger retired); every step GET-first with authoritative readback; unconfirmed step stays pending under references.retirement and replays",
+    "ports/persona_write_owner.py: update_persona forwards status",
+    "personas/service.py: retired projection, _evaluate short-circuit, retire_persona_provisioning_case in-process entrypoint"
+  ],
+  "unchanged": ["capital pool kill-switch safe mode", "registry strategy artifacts and approvals", "downstream defence patches #6617 #6622 #6627 #6628 #6630 #6633"],
+  "tests": {
+    "passed": "test_persona_provisioning_coordinator.py, test_persona_provisioning_store.py, test_persona_provisioning_readback.py, tests/test_persona_create_owner_contract.py, tests/test_persona_lifecycle_forward.py (350 passed)",
+    "preexisting_failures": "tests/test_persona_provisioning_reconcile.py: 8 failures identical on dev base (_schedule_receipt() unexpected keyword 'deadline'); unrelated",
+    "new_tests": ["succeeded", "stuck at schedule_registered", "failed-and-compensated", "failed_inactive", "replay after mid-way failure", "unconfirmed step never retired", "retired projection", "store retired terminal"]
+  },
+  "follow_up": "Root step 13 (scripts/retire_dev_paper_release_cases.py) must call retire_persona_provisioning_case; separate task"
+}

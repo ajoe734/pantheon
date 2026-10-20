@@ -27,6 +27,7 @@ from services.registry.strategy_artifact import (
 from .persona_provisioning import (
     TERMINAL_STATES,
     PersonaProvisioningStore,
+    ProvisioningLeaseLost,
     ProvisioningRecord,
     utc_now,
 )
@@ -73,6 +74,14 @@ class OwnerTransport(Protocol):
 
 
 ScheduleRegistrar = Callable[[str, str, str], Mapping[str, Any]]
+# persona_id -> owner receipt proving zero first-evaluation cron jobs remain.
+ScheduleRemover = Callable[[str], Mapping[str, Any]]
+# (plan_id, capital_pool_id) -> RuntimeBindings read back by plan and by pool.
+RuntimeBindingReader = Callable[[str, str], "list[Mapping[str, Any]]"]
+# persona_id -> authoritative Persona readback after archiving (None if absent).
+PersonaArchiver = Callable[[str], "Mapping[str, Any] | None"]
+
+_RETIRED_BINDING_STATUSES = frozenset({"retired", "failed", "failed_inactive"})
 
 
 class PersonaProvisioningCoordinationError(RuntimeError):
@@ -206,6 +215,9 @@ class PersonaProvisioningCoordinator:
         lease_seconds: int = 60,
         actor_id: str = "pantheon-persona-provisioner",
         governance_actor_id: str | None = None,
+        schedule_remover: ScheduleRemover | None = None,
+        runtime_binding_reader: RuntimeBindingReader | None = None,
+        persona_archiver: PersonaArchiver | None = None,
     ) -> None:
         """``governance_actor_id`` is the verified subject of the separately
         issued Governance approval principal.  Strict Governance requires a
@@ -228,6 +240,9 @@ class PersonaProvisioningCoordinator:
         self.store = store
         self.transport = transport
         self.schedule_registrar = schedule_registrar
+        self.schedule_remover = schedule_remover
+        self.runtime_binding_reader = runtime_binding_reader
+        self.persona_archiver = persona_archiver
         self.lease_owner = lease_owner
         self.lease_seconds = lease_seconds
         self.actor_id = actor_id
@@ -546,6 +561,283 @@ class PersonaProvisioningCoordinator:
         if not self._needs_compensation_reconciliation(existing):
             return existing
         return self._resume_failure_compensation(existing)
+
+    def retire_case(
+        self,
+        record: ProvisioningRecord,
+        *,
+        reason: str = "dev paper release case retired",
+    ) -> ProvisioningRecord:
+        """Retire the whole case this coordinator created; symmetric to create.
+
+        Every step is GET-first and idempotent, uses the owning service's
+        existing API, and counts only once an authoritative readback proves
+        it.  A step that cannot be proven leaves retirement ``pending`` under
+        ``references.retirement`` (the ledger state is not changed) so a
+        replay continues from it; ``pending`` never raises.  Only when all
+        steps are proven does the ledger become the terminal ``retired``
+        state.  The capital pool kill-switch safe mode and Registry strategy
+        artifacts/approvals are deliberately left untouched.
+        """
+
+        existing = self.store.get(record.tenant_id, record.idempotency_key)
+        if existing is None:
+            raise PersonaProvisioningCoordinationError(
+                "Persona provisioning must be reserved before retirement"
+            )
+        if existing.state == "retired":
+            return existing
+        active = self.store.acquire(
+            record.tenant_id,
+            record.idempotency_key,
+            lease_owner=self.lease_owner,
+            lease_seconds=self.lease_seconds,
+        )
+        if active is None:
+            raise PersonaProvisioningCoordinationError(
+                "Persona provisioning record is leased by another coordinator"
+            )
+        ids = deterministic_provisioning_ids(active)
+        prior = active.references.get("retirement")
+        retirement: dict[str, Any] = dict(prior) if isinstance(prior, Mapping) else {}
+        retirement.setdefault("reason", reason)
+        retirement.setdefault("started_at", utc_now())
+        retirement["status"] = "pending"
+        retirement.pop("pending_step", None)
+        retirement.pop("pending_reason", None)
+        retirement["attempts"] = int(retirement.get("attempts") or 0) + 1
+        active.references["retirement"] = retirement
+        active.current_step = "retirement_started"
+        active = self._checkpoint(active)
+
+        steps: list[tuple[str, Callable[[ProvisioningRecord], tuple[ProvisioningRecord, Any]]]] = [
+            ("first_evaluation_schedule", lambda r: (r, self._retire_schedule(r))),
+            ("compensation", lambda r: self._retire_compensation(r, ids)),
+            ("deployment_saga", lambda r: (r, self._retire_saga(r, ids))),
+            ("runtime_bindings", lambda r: (r, self._retire_runtime_bindings(r, ids))),
+            ("persona_capital_binding", lambda r: (r, self._retire_pcb(r, ids))),
+            ("capital_pool", lambda r: (r, self._retire_pool(r, ids))),
+            ("persona", lambda r: (r, self._retire_persona(r))),
+        ]
+        for name, run in steps:
+            try:
+                active, receipt = run(active)
+            except ProvisioningLeaseLost:
+                raise
+            except Exception as exc:  # noqa: BLE001 - unproven step stays pending
+                retirement = dict(active.references["retirement"])
+                retirement["status"] = "pending"
+                retirement["pending_step"] = name
+                retirement["pending_reason"] = str(exc) or exc.__class__.__name__
+                retirement["pending_at"] = utc_now()
+                active.references["retirement"] = retirement
+                active.current_step = f"retirement_{name}_pending"
+                active = self._checkpoint(active)
+                return self.store.release(
+                    active,
+                    lease_owner=self.lease_owner,
+                    lease_seconds=self.lease_seconds,
+                )
+            retirement = dict(active.references["retirement"])
+            retirement[name] = {"receipt": deepcopy(receipt), "confirmed_at": utc_now()}
+            active.references["retirement"] = retirement
+            active.current_step = f"retirement_{name}_confirmed"
+            active = self._checkpoint(active)
+
+        retirement = dict(active.references["retirement"])
+        retirement["status"] = "retired"
+        retirement.pop("pending_step", None)
+        retirement.pop("pending_reason", None)
+        retirement["retired_at"] = utc_now()
+        active.references["retirement"] = retirement
+        active.state = "retired"
+        active.current_step = "retired"
+        active = self._checkpoint(active)
+        return self.store.release(
+            active,
+            lease_owner=self.lease_owner,
+            lease_seconds=self.lease_seconds,
+        )
+
+    def _retire_schedule(self, record: ProvisioningRecord) -> Mapping[str, Any]:
+        if self.schedule_remover is None:
+            raise PersonaProvisioningCoordinationError(
+                "first-evaluation schedule remover is not configured"
+            )
+        receipt = _mapping(
+            self.schedule_remover(record.persona_id),
+            label="first-evaluation schedule remover",
+        )
+        if receipt.get("registered") is not False:
+            raise PersonaProvisioningCoordinationError(
+                "first-evaluation schedule removal lacks zero-owner readback"
+            )
+        return receipt
+
+    def _retire_compensation(
+        self,
+        record: ProvisioningRecord,
+        ids: ProvisioningIds,
+    ) -> tuple[ProvisioningRecord, Any]:
+        """Finish an unfinished failure compensation before retiring."""
+
+        if not self._needs_compensation_reconciliation(record):
+            return record, {"status": "not_required"}
+        failed_step = str((record.error or {}).get("failed_step") or "unknown")
+        compensated = self._compensate_failure(record, ids, failed_step=failed_step)
+        if (compensated.compensation or {}).get("status") != "completed":
+            reason = (compensated.compensation or {}).get("terminal_reason") or (
+                "failure compensation is not complete"
+            )
+            raise PersonaProvisioningCoordinationError(str(reason))
+        return compensated, {"status": "completed", "state": compensated.state}
+
+    def _retire_saga(self, record: ProvisioningRecord, ids: ProvisioningIds) -> Mapping[str, Any]:
+        saga_path = f"/api/deployment/sagas/{_path_id(ids.deployment_saga_id)}"
+        reason = str(record.references["retirement"]["reason"])
+
+        def read() -> dict[str, Any] | None:
+            saga = self._owner_get("deployment", saga_path)
+            if saga is not None and (
+                saga.get("saga_id") != ids.deployment_saga_id
+                or saga.get("plan_id") != ids.deployment_plan_id
+            ):
+                raise PersonaProvisioningCoordinationError(
+                    "deployment retirement readback has the wrong saga identity"
+                )
+            return saga
+
+        def post(action: str, body: Mapping[str, Any]) -> None:
+            try:
+                self.transport.post("deployment", f"{saga_path}/{action}", dict(body))
+            except Exception:  # noqa: BLE001 - response loss reconciled by GET
+                pass
+
+        saga = read()
+        if saga is None:
+            return {"status": "no_saga"}
+        status = str(saga.get("status") or "")
+        step = str(saga.get("current_step") or "")
+        if status in {"awaiting_binding", "awaiting_runtime_load"}:
+            post("failure", {"reason": f"{reason}: retired before runtime was active"})
+            saga = read()
+            raise PersonaProvisioningCoordinationError(
+                "deployment saga failure requested; waiting for compensation "
+                f"(status={(saga or {}).get('status')!r})"
+            )
+        if status in {"compensating", "retiring"}:
+            raise PersonaProvisioningCoordinationError(
+                f"deployment saga is {status}; retirement stays pending"
+            )
+        if status == "aborted":
+            return {"status": "terminal", "saga_status": status}
+        if status == "failed":
+            command = str((saga.get("compensation") or {}).get("command_type") or "")
+            if command == "mark_binding_failed_inactive":
+                return {"status": "terminal", "saga_status": status, "command_type": command}
+            if step != "compensated":
+                raise PersonaProvisioningCoordinationError(
+                    f"deployment saga failed at {step!r} and is not yet compensated"
+                )
+        if status in {"completed", "failed"}:
+            post("retire", {"reason": reason})
+            saga = read()
+            status = str((saga or {}).get("status") or "")
+        if status == "retired":
+            return {"status": "retired", "saga_status": status}
+        raise PersonaProvisioningCoordinationError(
+            f"deployment saga retirement is not confirmed (status={status!r})"
+        )
+
+    def _retire_runtime_bindings(
+        self,
+        record: ProvisioningRecord,
+        ids: ProvisioningIds,
+    ) -> Mapping[str, Any]:
+        if self.runtime_binding_reader is None:
+            raise PersonaProvisioningCoordinationError(
+                "RuntimeBinding reader is not configured"
+            )
+        bindings = self.runtime_binding_reader(ids.deployment_plan_id, ids.capital_pool_id)
+        observed: dict[str, str] = {}
+        for binding in bindings or []:
+            binding_id = str(binding.get("binding_id") or binding.get("id") or "")
+            observed[binding_id] = str(binding.get("status") or "")
+        live = {k: v for k, v in observed.items() if v not in _RETIRED_BINDING_STATUSES}
+        if live:
+            raise PersonaProvisioningCoordinationError(
+                f"RuntimeBindings are not retired: {sorted(live.items())}"
+            )
+        return {"bindings": observed}
+
+    def _retire_pcb(self, record: ProvisioningRecord, ids: ProvisioningIds) -> Mapping[str, Any]:
+        path = f"/api/bindings/{_path_id(ids.persona_capital_binding_id)}"
+        binding = self._owner_get("capital", path)
+        if binding is None:
+            return {"status": "absent"}
+        self._validate_binding_identity(binding, record, ids)
+        if binding.get("status") not in {"revoked", "expired"}:
+            try:
+                self.transport.patch(
+                    "capital",
+                    f"{path}/status",
+                    {
+                        "actor_id": self.actor_id,
+                        "actor_role": "persona.admin",
+                        "status": "revoked",
+                    },
+                )
+            except Exception:  # noqa: BLE001 - response loss reconciled by GET
+                pass
+            binding = self._owner_get("capital", path)
+            if binding is None or binding.get("status") not in {"revoked", "expired"}:
+                raise PersonaProvisioningCoordinationError(
+                    "persona capital binding revoke has no authoritative readback"
+                )
+            self._validate_binding_identity(binding, record, ids)
+        return {"status": binding.get("status"), "binding_id": ids.persona_capital_binding_id}
+
+    def _retire_pool(self, record: ProvisioningRecord, ids: ProvisioningIds) -> Mapping[str, Any]:
+        # Only the pool status is written; kill-switch safe mode is left as is.
+        path = f"/api/capital-pools/{_path_id(ids.capital_pool_id)}"
+        pool = self._owner_get("capital", path)
+        if pool is None:
+            return {"status": "absent"}
+        if pool.get("pool_id") not in {None, ids.capital_pool_id}:
+            raise PersonaProvisioningCoordinationError(
+                "capital pool readback has the wrong identity"
+            )
+        if pool.get("status") != "archived":
+            try:
+                self.transport.patch(
+                    "capital",
+                    f"{path}/status",
+                    {
+                        "actor_id": self.actor_id,
+                        "actor_role": "capital.admin",
+                        "status": "archived",
+                    },
+                )
+            except Exception:  # noqa: BLE001 - response loss reconciled by GET
+                pass
+            pool = self._owner_get("capital", path)
+            if pool is None or pool.get("status") != "archived":
+                raise PersonaProvisioningCoordinationError(
+                    "capital pool archive has no authoritative readback"
+                )
+        return {"status": "archived", "pool_id": ids.capital_pool_id}
+
+    def _retire_persona(self, record: ProvisioningRecord) -> Mapping[str, Any]:
+        if self.persona_archiver is None:
+            raise PersonaProvisioningCoordinationError("Persona archiver is not configured")
+        persona = self.persona_archiver(record.persona_id)
+        if persona is None:
+            return {"status": "absent"}
+        if persona.get("status") != "archived":
+            raise PersonaProvisioningCoordinationError(
+                "persona archive has no authoritative readback"
+            )
+        return {"status": "archived", "persona_id": record.persona_id}
 
     def transition_legacy_persona_market(
         self,
