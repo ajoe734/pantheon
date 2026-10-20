@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
@@ -37,6 +38,12 @@ _OPTIONAL_COPY_FIELDS = (
     "lag",
     "dlq_count",
 )
+
+
+# Keep in sync with evidence_refs.maxItems in loop-controller-record.schema.json.
+MAX_EVIDENCE_REFS = 1000
+DEFAULT_EVIDENCE_REFS_PER_CLASS = 50
+EVIDENCE_REFS_PER_CLASS_ENV = "LOOP_CONTROL_EVIDENCE_REFS_PER_CLASS"
 
 
 class ControllerLeaseConflict(ValueError):
@@ -104,13 +111,53 @@ def _newer_value(existing: Any, incoming: Any) -> Any:
     return incoming
 
 
+def _ref_class(ref: str) -> str:
+    """Scheme plus the stable path prefix before the per-tick/per-run id."""
+
+    head, sep, rest = ref.partition("://")
+    if not sep:
+        head, rest = "", ref
+    if "/" in rest:
+        return f"{head}{sep}{rest.rsplit('/', 1)[0]}"
+    if sep:
+        return ref
+    if ":" in rest:
+        return rest.split(":", 1)[0]
+    return ref
+
+
+def _per_class_limit() -> int:
+    try:
+        value = int(os.environ.get(EVIDENCE_REFS_PER_CLASS_ENV, ""))
+    except ValueError:
+        return DEFAULT_EVIDENCE_REFS_PER_CLASS
+    return max(1, value)
+
+
 def _dedupe_refs(existing: Any, incoming: Any) -> List[str]:
-    merged: List[str] = []
-    for raw in [*_json_list(existing), *_json_list(incoming)]:
+    """Linear merge keeping the newest refs per class, oldest-first."""
+
+    seen: Dict[str, None] = {}
+    for raw in (*_json_list(existing), *_json_list(incoming)):
         clean = str(raw or "").strip()
-        if clean and clean not in merged:
-            merged.append(clean)
-    return merged
+        if not clean:
+            continue
+        seen.pop(clean, None)  # a repeated ref is re-observed: move to newest
+        seen[clean] = None
+
+    limit = _per_class_limit()
+    counts: Dict[str, int] = {}
+    kept: List[str] = []
+    for ref in reversed(seen):
+        cls = _ref_class(ref)
+        if counts.get(cls, 0) >= limit:
+            continue
+        counts[cls] = counts.get(cls, 0) + 1
+        kept.append(ref)
+        if len(kept) >= MAX_EVIDENCE_REFS:
+            break
+    kept.reverse()
+    return kept
 
 
 class LoopControllerStore:
