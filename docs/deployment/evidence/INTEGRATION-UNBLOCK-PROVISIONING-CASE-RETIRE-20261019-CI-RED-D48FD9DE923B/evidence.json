@@ -1,0 +1,7 @@
+{
+  "task": "INTEGRATION-UNBLOCK-PROVISIONING-CASE-RETIRE-20261019-CI-RED-D48FD9DE923B",
+  "pr": 6675,
+  "root_cause": "Import smoke services-openclaw-gateway-adapter-Dockerfile failed at Dockerfile:42 'npm install -g @openai/codex @anthropic-ai/claude-code' with npm ECONNRESET (transient network error on GitHub runner); not a code defect.",
+  "resolution": "Re-ran failed jobs of run 39345208483 (gh run rerun --failed); import smoke now passes. No code change required.",
+  "remaining": "Pantheon canonical review gate requires review-proof tag from reviewer (Antigravity2); Persona owner contract and Smoke acceptance were still pending at check time."
+}

@@ -1304,3 +1304,6 @@ def test_consume_threshold_route_unacknowledged_publish_retryable_across_restart
         assert len(received_events) == 1
     finally:
         clear_performance_subscribers()
+        # Restore the module's own receiver so later tests that publish through
+        # the canonical transport see a subscriber regardless of test order.
+        main_mod._wire_canonical_performance_subscriber()
