@@ -80,6 +80,7 @@
     "dlq_count": { "type": ["integer", "null"], "minimum": 0 },
     "evidence_refs": {
       "type": "array",
+      "maxItems": 1000,
       "items": { "type": "string" }
     },
     "truth_level": {
