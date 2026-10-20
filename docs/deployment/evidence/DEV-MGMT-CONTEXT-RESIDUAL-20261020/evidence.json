@@ -1,0 +1,10 @@
+{
+  "task_id": "DEV-MGMT-CONTEXT-RESIDUAL-20261020",
+  "change": "Management provider projection only (_mgmt_nl_build_context_pack path). (1) Surface-level singular owner_observation (management_cockpit, management_trading_pulse) had its merged contributing_observations passed through unprojected; it now keeps the merged status/owner/degradation_reason, a contributing_count, every non-ok contributor individually, and ok contributors as counted groups with subject ids. (2) persona_fleet rows repeated across personas (bindings, capital_pools, runtime_bindings, sessions, active_incidents, telemetry_summary.summaries/latest, evolution.decisions/latest_decision, training.latest_session) are stored once in persona_fleet.shared_rows; items keep {shared_row_list, count, row_indexes} or {shared_row_table, shared_row}. Counts, ids, tenant and status stay recoverable; nothing is sliced. 200000 bound, 20-persona/40-runtime selection, collector, personas/service.py, routing and owner-read batching are unchanged.",
+  "regression": "test_management_nl_residual_repeated_rows_and_merged_observations_stay_within_bound: shared 40 runtimes x 20 personas with wide rows, 120 telemetry/monitoring/rollback observations on cockpit and trading_pulse; pack was 294764 chars before the fix (fails the <200000 assertion) and is below 200000 after; injected provider returns a completed saved reply; unavailable owner truth, tenant ids and counts asserted. Existing large_fleet test updated for the shared-row shape.",
+  "tests": {
+    "bff tests: provider + single_owner + assistant_context_pack": "85 passed"
+  },
+  "limitation": "Real hosted contributor sizes were not available to the worker; fixture shapes derive from the collector code. Root owns actual hosted acceptance.",
+  "no_provider_or_hosted_calls": true
+}
