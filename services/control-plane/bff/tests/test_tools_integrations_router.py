@@ -103,7 +103,7 @@ class FakeOpenClawClient:
 
 
 class FakeReadStore:
-    """Mock read store for testing fixtures and projections."""
+    """Mock read store for testing fixtures and owner-backed catalog mutations."""
 
     def __init__(self) -> None:
         self._data = {
@@ -121,11 +121,108 @@ class FakeReadStore:
             ],
         }
 
+    def dataset_source(self, dataset: str) -> str:
+        return "service_store" if dataset in self._data else "missing"
+
+    def supports_catalog_metadata_mutation(self, operation: str) -> bool:
+        return operation in {"create_tool", "update_tool", "create_skill", "update_skill"}
+
     def list_tools(self) -> List[Dict[str, Any]]:
         return list(self._data["tools"])
 
     def list_skills(self) -> List[Dict[str, Any]]:
         return list(self._data["skills"])
+
+    def create_tool(
+        self,
+        *,
+        payload: Dict[str, Any],
+        operator_id: str,
+        tenant_id: str,
+        idempotency_key: str,
+        snapshot_at: str,
+    ) -> Dict[str, Any]:
+        tool_id = f"tool-owner-{len(self._data['tools']) + 1}"
+        record = {
+            "id": tool_id,
+            "tool_id": tool_id,
+            "name": payload["name"],
+            "status": "draft",
+            "tool_class": payload.get("tool_class") or "generic",
+            "description": payload.get("description") or "",
+            "input_schema": payload.get("input_schema") or {},
+            "output_schema": payload.get("output_schema") or {},
+            "mcp_sourced": False,
+            "created_at": snapshot_at,
+            "updated_at": snapshot_at,
+            "created_by": operator_id,
+            "tenant_id": tenant_id,
+        }
+        self._data["tools"].append(record)
+        return dict(record)
+
+    def update_tool(
+        self,
+        *,
+        tool_id: str,
+        payload: Dict[str, Any],
+        operator_id: str,
+        tenant_id: str,
+        idempotency_key: str,
+        snapshot_at: str,
+    ) -> Optional[Dict[str, Any]]:
+        for record in self._data["tools"]:
+            if record.get("tool_id") == tool_id or record.get("id") == tool_id:
+                record.update(payload)
+                record["updated_at"] = snapshot_at
+                record["updated_by"] = operator_id
+                return dict(record)
+        return None
+
+    def create_skill(
+        self,
+        *,
+        payload: Dict[str, Any],
+        operator_id: str,
+        tenant_id: str,
+        idempotency_key: str,
+        snapshot_at: str,
+    ) -> Dict[str, Any]:
+        skill_id = f"skill-owner-{len(self._data['skills']) + 1}"
+        record = {
+            "id": skill_id,
+            "skill_id": skill_id,
+            "name": payload["name"],
+            "status": "draft",
+            "description": payload.get("description") or "",
+            "sandbox_enabled": bool(payload.get("sandbox_enabled", True)),
+            "input_schema": payload.get("input_schema") or {},
+            "output_schema": payload.get("output_schema") or {},
+            "created_at": snapshot_at,
+            "updated_at": snapshot_at,
+            "created_by": operator_id,
+            "tenant_id": tenant_id,
+        }
+        self._data["skills"].append(record)
+        return dict(record)
+
+    def update_skill(
+        self,
+        *,
+        skill_id: str,
+        payload: Dict[str, Any],
+        operator_id: str,
+        tenant_id: str,
+        idempotency_key: str,
+        snapshot_at: str,
+    ) -> Optional[Dict[str, Any]]:
+        for record in self._data["skills"]:
+            if record.get("skill_id") == skill_id or record.get("id") == skill_id:
+                record.update(payload)
+                record["updated_at"] = snapshot_at
+                record["updated_by"] = operator_id
+                return dict(record)
+        return None
 
     def list_mcp_servers(self) -> List[Dict[str, Any]]:
         return list(self._data["mcp_servers"])
@@ -174,10 +271,12 @@ def client(test_app: FastAPI) -> TestClient:
 
 def _extract_identity(authorization: Optional[str]) -> Any:
     class Identity:
-        def __init__(self, op_id: str, roles: List[str]) -> None:
+        def __init__(self, op_id: str, roles: List[str], tenant_id: Optional[str] = None) -> None:
             self.operator_id = op_id
             self.id = op_id
             self.roles = roles
+            self.tenant_id = tenant_id
+            self.claims = {"tenant_id": tenant_id} if tenant_id else {}
 
     if not authorization or not authorization.startswith("Bearer "):
         raise default_bff_error(
@@ -195,8 +294,9 @@ def _extract_identity(authorization: Optional[str]) -> Any:
             reason="Token is absent or not a Bearer token",
         )
     if ":" in token:
-        parts = token.split(":", 1)
-        return Identity(parts[0], [r.strip() for r in parts[1].split(",")])
+        parts = token.split(":", 2)
+        tid = parts[2].strip() if len(parts) > 2 and parts[2].strip() else None
+        return Identity(parts[0], [r.strip() for r in parts[1].split(",")], tid)
     return Identity(token, ["operator", "viewer", "admin"])
 
 
@@ -964,4 +1064,235 @@ def test_dependency_injected_dry_run_resolver_and_context():
         assert resp2.json()["meta"]["dryRun"] is True
     finally:
         custom_dry_run_ctx.reset(token)
+
+
+def test_sanitized_counterexample_unconfigured_owner_fails_closed_and_viewer_denied():
+    submissions: List[Any] = []
+    unconfigured_service = IntegrationsService(
+        read_store=None,
+        submit_command_fn=lambda *args, **kwargs: submissions.append((args, kwargs)),
+    )
+    app = FastAPI()
+    app.include_router(create_integrations_router(service=unconfigured_service))
+    unconfigured_client = TestClient(app)
+
+    # Exact sanitized counterexample: viewer on POST /bff/tools is rejected with 403 FORBIDDEN
+    viewer_create = unconfigured_client.post(
+        "/bff/tools",
+        json={"name": "t1"},
+        headers={"Authorization": "Bearer viewer:viewer", "Idempotency-Key": "k1"},
+    )
+    assert viewer_create.status_code == 403
+    assert viewer_create.json()["detail"]["error"]["code"] == "FORBIDDEN"
+
+    # Viewer on PATCH /bff/tools/{id} and PATCH /bff/skills/{id} is also rejected with 403
+    viewer_patch_tool = unconfigured_client.patch(
+        "/bff/tools/tool-1",
+        json={"description": "viewer edit"},
+        headers={"Authorization": "Bearer viewer:viewer", "Idempotency-Key": "k1-patch"},
+    )
+    assert viewer_patch_tool.status_code == 403
+    viewer_patch_skill = unconfigured_client.patch(
+        "/bff/skills/skill-1",
+        json={"description": "viewer edit"},
+        headers={"Authorization": "Bearer viewer:viewer", "Idempotency-Key": "k1-sk-patch"},
+    )
+    assert viewer_patch_skill.status_code == 403
+
+    # Operator on POST/PATCH /bff/tools and /bff/skills without an owner fails closed with 503
+    for method, path, payload, key, expected_precondition in [
+        ("POST", "/bff/tools", {"name": "t1"}, "k-op-tool-create", "tool_catalog_owner_unavailable"),
+        ("PATCH", "/bff/tools/tool-1", {"description": "d1"}, "k-op-tool-patch", "tool_catalog_owner_unavailable"),
+        ("POST", "/bff/skills", {"name": "s1"}, "k-op-skill-create", "skill_catalog_owner_unavailable"),
+        ("PATCH", "/bff/skills/skill-1", {"description": "d1"}, "k-op-skill-patch", "skill_catalog_owner_unavailable"),
+    ]:
+        resp = unconfigured_client.request(
+            method,
+            path,
+            json=payload,
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": key},
+        )
+        assert resp.status_code == 503, f"{method} {path} returned {resp.status_code}: {resp.text}"
+        err = resp.json()["detail"]["error"]
+        assert err["code"] == "DEPENDENCY_UNAVAILABLE"
+        assert err["precondition_failed"] == expected_precondition
+
+    # Unconfigured GET /bff/tools and GET /bff/skills report unavailable/missing and never return memory-only writes
+    tools_list = unconfigured_client.get("/bff/tools", headers=OPERATOR_HEADERS)
+    assert tools_list.status_code == 200
+    assert tools_list.json()["data"] == []
+    assert tools_list.json()["meta"]["surfaces"]["tool_list"]["status"] == "unavailable"
+    assert tools_list.json()["meta"]["surfaces"]["tool_list"]["source"] == "missing"
+
+    skills_list = unconfigured_client.get("/bff/skills", headers=OPERATOR_HEADERS)
+    assert skills_list.status_code == 200
+    assert skills_list.json()["data"] == []
+    assert skills_list.json()["meta"]["surfaces"]["skill_list"]["status"] == "unavailable"
+    assert skills_list.json()["meta"]["surfaces"]["skill_list"]["source"] == "missing"
+
+    assert len(submissions) == 0
+    assert unconfigured_service.tool_registry == {}
+    assert unconfigured_service.skill_registry == {}
+
+
+def test_owner_backed_catalog_writes_and_fresh_instance_readback():
+    shared_store = FakeReadStore()
+    service_writer = IntegrationsService(read_store=shared_store)
+    writer_app = FastAPI()
+    writer_app.include_router(create_integrations_router(service=service_writer))
+    writer_client = TestClient(writer_app)
+
+    tool_resp = writer_client.post(
+        "/bff/tools",
+        json={"name": "Owner Durable Tool", "tool_class": "research"},
+        headers={**OPERATOR_HEADERS, "Idempotency-Key": "idem-owner-tool-1"},
+    )
+    assert tool_resp.status_code == 201
+    tool_id = tool_resp.json()["tool_id"]
+
+    patch_tool_resp = writer_client.patch(
+        f"/bff/tools/{tool_id}",
+        json={"description": "Confirmed in owner store", "status": "active"},
+        headers={**OPERATOR_HEADERS, "Idempotency-Key": "idem-owner-tool-patch-1"},
+    )
+    assert patch_tool_resp.status_code == 200
+    assert patch_tool_resp.json()["description"] == "Confirmed in owner store"
+
+    skill_resp = writer_client.post(
+        "/bff/skills",
+        json={"name": "Owner Durable Skill", "description": "Initial"},
+        headers={**OPERATOR_HEADERS, "Idempotency-Key": "idem-owner-skill-1"},
+    )
+    assert skill_resp.status_code == 201
+    skill_id = skill_resp.json()["skill_id"]
+
+    patch_skill_resp = writer_client.patch(
+        f"/bff/skills/{skill_id}",
+        json={"description": "Updated in owner store", "status": "active"},
+        headers={**OPERATOR_HEADERS, "Idempotency-Key": "idem-owner-skill-patch-1"},
+    )
+    assert patch_skill_resp.status_code == 200
+    assert patch_skill_resp.json()["description"] == "Updated in owner store"
+
+    # BFF process-local registries were NOT used to manufacture write acknowledgement
+    assert service_writer.tool_registry == {}
+    assert service_writer.skill_registry == {}
+
+    # Fresh IntegrationsService instance (new process / zero local memory) reads back both records
+    fresh_service = IntegrationsService(read_store=shared_store)
+    reader_app = FastAPI()
+    reader_app.include_router(create_integrations_router(service=fresh_service))
+    reader_client = TestClient(reader_app)
+
+    fresh_tool = reader_client.get(f"/bff/tools/{tool_id}", headers=VIEWER_HEADERS)
+    assert fresh_tool.status_code == 200
+    assert fresh_tool.json()["name"] == "Owner Durable Tool"
+    assert fresh_tool.json()["description"] == "Confirmed in owner store"
+
+    fresh_skill = reader_client.get(f"/bff/skills/{skill_id}", headers=VIEWER_HEADERS)
+    assert fresh_skill.status_code == 200
+    assert fresh_skill.json()["name"] == "Owner Durable Skill"
+    assert fresh_skill.json()["description"] == "Updated in owner store"
+
+    # Missing target IDs on PATCH return 404 from owner
+    missing_tool = writer_client.patch(
+        "/bff/tools/non-existent-tool",
+        json={"description": "x"},
+        headers={**OPERATOR_HEADERS, "Idempotency-Key": "idem-missing-tool"},
+    )
+    assert missing_tool.status_code == 404
+    missing_skill = writer_client.patch(
+        "/bff/skills/non-existent-skill",
+        json={"description": "x"},
+        headers={**OPERATOR_HEADERS, "Idempotency-Key": "idem-missing-skill"},
+    )
+    assert missing_skill.status_code == 404
+
+
+def test_unconfirmed_owner_readback_fails_closed_503():
+    class UnconfirmedOwnerStore(FakeReadStore):
+        def create_tool(self, **kwargs: Any) -> Dict[str, Any]:
+            return {"id": "unpersisted-tool", "tool_id": "unpersisted-tool", "name": "Ghost"}
+
+        def create_skill(self, **kwargs: Any) -> Dict[str, Any]:
+            return {"id": "unpersisted-skill", "skill_id": "unpersisted-skill", "name": "Ghost"}
+
+        def update_tool(self, **kwargs: Any) -> Dict[str, Any]:
+            return {"id": "tool-fixture-1", "tool_id": "tool-fixture-1"}
+
+    app = FastAPI()
+    app.include_router(
+        create_integrations_router(service=IntegrationsService(read_store=UnconfirmedOwnerStore()))
+    )
+    unconfirmed_client = TestClient(app)
+
+    t_resp = unconfirmed_client.post(
+        "/bff/tools",
+        json={"name": "Ghost"},
+        headers={**OPERATOR_HEADERS, "Idempotency-Key": "idem-ghost-t"},
+    )
+    assert t_resp.status_code == 503
+    assert t_resp.json()["detail"]["error"]["precondition_failed"] == "tool_readback_unconfirmed"
+
+    tp_resp = unconfirmed_client.patch(
+        "/bff/tools/tool-fixture-1",
+        json={"description": "Never persisted"},
+        headers={**OPERATOR_HEADERS, "Idempotency-Key": "idem-ghost-tp"},
+    )
+    assert tp_resp.status_code == 503
+    assert tp_resp.json()["detail"]["error"]["precondition_failed"] == "tool_readback_unconfirmed"
+
+    s_resp = unconfirmed_client.post(
+        "/bff/skills",
+        json={"name": "Ghost Skill"},
+        headers={**OPERATOR_HEADERS, "Idempotency-Key": "idem-ghost-s"},
+    )
+    assert s_resp.status_code == 503
+    assert s_resp.json()["detail"]["error"]["precondition_failed"] == "skill_readback_unconfirmed"
+
+
+def test_tools_and_skills_idempotency_scoped_by_tenant_and_operator(client: TestClient):
+    op_a_tenant_1 = {"Authorization": "Bearer op-a:operator:tenant-1", "Idempotency-Key": "shared-idem-key"}
+    op_b_tenant_1 = {"Authorization": "Bearer op-b:operator:tenant-1", "Idempotency-Key": "shared-idem-key"}
+    op_a_tenant_2 = {"Authorization": "Bearer op-a:operator:tenant-2", "Idempotency-Key": "shared-idem-key"}
+    viewer_tenant_1 = {"Authorization": "Bearer viewer-a:viewer:tenant-1", "Idempotency-Key": "shared-idem-key"}
+
+    r1 = client.post("/bff/tools", json={"name": "Tenant 1 Op A Tool"}, headers=op_a_tenant_1)
+    assert r1.status_code == 201
+    tool_a1_id = r1.json()["tool_id"]
+
+    # Viewer cannot replay Operator A's idempotency key
+    r_viewer = client.post("/bff/tools", json={"name": "Tenant 1 Op A Tool"}, headers=viewer_tenant_1)
+    assert r_viewer.status_code == 403
+
+    # Different operator in same tenant with same Idempotency-Key gets an isolated execution, not a borrowed replay or 409
+    r2 = client.post("/bff/tools", json={"name": "Tenant 1 Op B Tool"}, headers=op_b_tenant_1)
+    assert r2.status_code == 201
+    assert r2.json()["tool_id"] != tool_a1_id
+    assert r2.json()["name"] == "Tenant 1 Op B Tool"
+
+    # Same operator in different tenant with same Idempotency-Key is isolated by tenant_id
+    r3 = client.post("/bff/tools", json={"name": "Tenant 2 Op A Tool"}, headers=op_a_tenant_2)
+    assert r3.status_code == 201
+    assert r3.json()["tool_id"] != tool_a1_id
+
+    # Same operator + same tenant + same key + same payload replays the confirmed record
+    r1_replay = client.post("/bff/tools", json={"name": "Tenant 1 Op A Tool"}, headers=op_a_tenant_1)
+    assert r1_replay.status_code == 201
+    assert r1_replay.json()["tool_id"] == tool_a1_id
+
+    # Same operator + same tenant + same key + different payload raises 409 IDEMPOTENCY_CONFLICT
+    r1_conflict = client.post("/bff/tools", json={"name": "Mutated Payload"}, headers=op_a_tenant_1)
+    assert r1_conflict.status_code == 409
+    assert r1_conflict.json()["detail"]["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+
+    # Mismatched X-Tenant-Id header against token tenant claim is rejected with 403 FORBIDDEN
+    r_mismatch = client.post(
+        "/bff/tools",
+        json={"name": "Cross Tenant Attempt"},
+        headers={**op_a_tenant_1, "X-Tenant-Id": "tenant-2", "Idempotency-Key": "cross-tenant-key"},
+    )
+    assert r_mismatch.status_code == 403
+    assert r_mismatch.json()["detail"]["error"]["precondition_failed"] == "tenant_scope"
+
 

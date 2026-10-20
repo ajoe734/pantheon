@@ -1056,14 +1056,14 @@ class IntegrationsService:
     def merged_tool_records(self) -> List[Dict[str, Any]]:
         return self.merge_registry_records(
             self.tool_fixture_records(),
-            [dict(record) for record in self.tool_registry.values()],
+            [],
             ("tool_id", "id"),
         )
 
     def merged_skill_records(self) -> List[Dict[str, Any]]:
         return self.merge_registry_records(
             self.skill_fixture_records(),
-            [dict(record) for record in self.skill_registry.values()],
+            [],
             ("skill_id", "id"),
         )
 
@@ -1094,10 +1094,59 @@ class IntegrationsService:
             None,
         )
 
-    def tools_bff_idempotency_check(
-        self, resolved_key: str, request_hash: str
+    def identity_operator_id(self, identity: Any) -> str:
+        return str(getattr(identity, "operator_id", None) or getattr(identity, "id", None) or "operator-1").strip() or "operator-1"
+
+    def identity_tenant_id(self, identity: Any, *, x_tenant_id: Optional[str] = None) -> str:
+        requested = str(x_tenant_id or "").strip()
+        if not requested:
+            try:
+                from services.control_plane.bff.core.owner_reads import selected_tenant
+                requested = str(selected_tenant.get() or "").strip()
+            except Exception:
+                requested = ""
+        allowed: List[str] = []
+        direct_tid = str(getattr(identity, "tenant_id", None) or "").strip()
+        if direct_tid:
+            allowed.append(direct_tid)
+        claims = getattr(identity, "claims", None)
+        if isinstance(claims, dict):
+            for key in ("tenant_id", "tenantId", "tid", "org_id"):
+                val = str(claims.get(key) or "").strip()
+                if val and val not in allowed:
+                    allowed.append(val)
+            tenant_obj = claims.get("tenant")
+            if isinstance(tenant_obj, dict) and str(tenant_obj.get("id") or "").strip():
+                allowed.append(str(tenant_obj.get("id")).strip())
+            for list_key in ("tenant_ids", "tenantIds"):
+                for item in (claims.get(list_key) or ()) if isinstance(claims.get(list_key), (list, tuple, set)) else ():
+                    if str(item or "").strip() and str(item).strip() not in allowed:
+                        allowed.append(str(item).strip())
+        if requested:
+            if allowed and requested not in allowed:
+                raise self.bff_error(
+                    403,
+                    ErrorCode.FORBIDDEN,
+                    "Tenant scope mismatch",
+                    f"Caller is not authorized for tenant {requested!r}",
+                    precondition_failed="tenant_scope",
+                )
+            return requested
+        return allowed[0] if allowed else "default"
+
+    def idempotency_scope_key(
+        self, resolved_key: str, identity: Optional[Any] = None, *, tenant_id: Optional[str] = None
+    ) -> str:
+        if identity is None and not tenant_id:
+            return resolved_key
+        resolved_tenant = tenant_id or self.identity_tenant_id(identity)
+        operator_id = self.identity_operator_id(identity) if identity is not None else "operator-1"
+        return f"{resolved_tenant}:{operator_id}:{resolved_key}"
+
+    def _check_scoped_idempotency(
+        self, store: Dict[str, Dict[str, Any]], scope_key: str, resolved_key: str, request_hash: str
     ) -> Optional[Dict[str, Any]]:
-        existing = self.tools_bff_idempotency.get(resolved_key)
+        existing = store.get(scope_key)
         if existing is None:
             return None
         if existing.get("request_hash") != request_hash:
@@ -1107,26 +1156,145 @@ class IntegrationsService:
                 "Idempotency key was already used with a different payload",
                 f"Key {resolved_key!r} is bound to a different request hash",
                 precondition_failed="idempotency_conflict",
-                suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
             )
         return existing.get("result")
 
-    def skills_bff_idempotency_check(
-        self, resolved_key: str, request_hash: str
+    def tools_bff_idempotency_check(
+        self,
+        resolved_key: str,
+        request_hash: str,
+        *,
+        identity: Optional[Any] = None,
+        tenant_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        existing = self.skills_bff_idempotency.get(resolved_key)
-        if existing is None:
+        scope_key = self.idempotency_scope_key(resolved_key, identity, tenant_id=tenant_id)
+        cached = self._check_scoped_idempotency(self.tools_bff_idempotency, scope_key, resolved_key, request_hash)
+        if cached is None:
             return None
-        if existing.get("request_hash") != request_hash:
+        record_id = str(cached.get("tool_id") or cached.get("id") or "").strip()
+        readback = self.find_record_by_id(self.merged_tool_records(), record_id, ("tool_id", "id")) if record_id else None
+        if readback is None:
             raise self.bff_error(
-                409,
-                ErrorCode.IDEMPOTENCY_CONFLICT,
-                "Idempotency key was already used with a different payload",
-                f"Key {resolved_key!r} is bound to a different request hash",
-                precondition_failed="idempotency_conflict",
-                suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Tool catalog readback is unavailable",
+                "Replayed tool record is not present in the authoritative catalog owner",
+                precondition_failed="tool_readback_unconfirmed",
             )
-        return existing.get("result")
+        return readback
+
+    def skills_bff_idempotency_check(
+        self,
+        resolved_key: str,
+        request_hash: str,
+        *,
+        identity: Optional[Any] = None,
+        tenant_id: Optional[str] = None,
+        require_readback: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        scope_key = self.idempotency_scope_key(resolved_key, identity, tenant_id=tenant_id)
+        cached = self._check_scoped_idempotency(self.skills_bff_idempotency, scope_key, resolved_key, request_hash)
+        if cached is None or not require_readback:
+            return cached
+        record_id = str(cached.get("skill_id") or cached.get("id") or "").strip()
+        readback = self.find_record_by_id(self.merged_skill_records(), record_id, ("skill_id", "id")) if record_id else None
+        if readback is None:
+            raise self.bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Skill catalog readback is unavailable",
+                "Replayed skill record is not present in the authoritative catalog owner",
+                precondition_failed="skill_readback_unconfirmed",
+            )
+        return readback
+
+    def _resolve_catalog_mutation_owner(self, *, kind: str, operation: str) -> Any:
+        for candidate in (self._read_store, self._openclaw_client):
+            if candidate is None:
+                continue
+            supports_fn = getattr(candidate, "supports_catalog_metadata_mutation", None)
+            if callable(supports_fn) and not supports_fn(operation):
+                continue
+            if callable(getattr(candidate, operation, None)):
+                return candidate
+        label = "Tools" if kind == "tool" else "Skills"
+        raise self.bff_error(
+            503,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            f"{label} catalog write owner is unavailable",
+            f"Configured product owner does not support {operation}; BFF process-local registry acknowledgement is disabled",
+            precondition_failed=f"{kind}_catalog_owner_unavailable",
+        )
+
+    def mutate_catalog_record(
+        self,
+        *,
+        kind: str,
+        operation: str,
+        payload: Dict[str, Any],
+        identity: Any,
+        resolved_key: str,
+        entity_id: Optional[str] = None,
+        x_tenant_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        is_tool = kind == "tool"
+        id_field = "tool_id" if is_tool else "skill_id"
+        id_keys = ("tool_id", "id") if is_tool else ("skill_id", "id")
+        label = "Tool" if is_tool else "Skill"
+        tenant_id = self.identity_tenant_id(identity, x_tenant_id=x_tenant_id)
+        op_id = self.identity_operator_id(identity)
+        scope_key = self.idempotency_scope_key(resolved_key, identity, tenant_id=tenant_id)
+        route_sig = f"POST /bff/{kind}s" if entity_id is None else f"PATCH /bff/{kind}s/{{{id_field}}}"
+        hash_body: Dict[str, Any] = {"route": route_sig, "payload": payload}
+        if entity_id is not None:
+            hash_body["id"] = entity_id
+        request_hash = stable_json_hash(hash_body)
+        cached = (
+            self.tools_bff_idempotency_check(resolved_key, request_hash, identity=identity, tenant_id=tenant_id)
+            if is_tool
+            else self.skills_bff_idempotency_check(
+                resolved_key, request_hash, identity=identity, tenant_id=tenant_id, require_readback=True
+            )
+        )
+        if cached is not None:
+            return cached
+        owner = self._resolve_catalog_mutation_owner(kind=kind, operation=operation)
+        call_kwargs: Dict[str, Any] = {
+            "payload": dict(payload),
+            "operator_id": op_id,
+            "tenant_id": tenant_id,
+            "idempotency_key": resolved_key,
+            "snapshot_at": self.utc_now(),
+        }
+        if entity_id is not None:
+            call_kwargs[id_field] = entity_id
+        try:
+            owner_record = getattr(owner, operation)(**call_kwargs)
+        except OpenClawOpsClientError as exc:
+            raise self.openclaw_client_error(exc) from exc
+        if entity_id is not None and owner_record is None:
+            raise self.bff_error(
+                404, ErrorCode.RESOURCE_NOT_FOUND, f"{label} not found", f"{id_field}={entity_id!r} is not registered", precondition_failed=id_field
+            )
+        record_id = str(
+            entity_id
+            or (owner_record.get(id_field) if isinstance(owner_record, dict) else "")
+            or (owner_record.get("id") if isinstance(owner_record, dict) else "")
+            or ""
+        ).strip()
+        records = self.merged_tool_records() if is_tool else self.merged_skill_records()
+        readback = self.find_record_by_id(records, record_id, id_keys) if record_id else None
+        if readback is None or (entity_id is not None and any(readback.get(k) != v for k, v in payload.items())):
+            raise self.bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                f"{label} catalog readback confirmation failed",
+                "Owner mutation was not confirmed by subsequent catalog readback",
+                precondition_failed=f"{kind}_readback_unconfirmed",
+            )
+        idem_store = self.tools_bff_idempotency if is_tool else self.skills_bff_idempotency
+        idem_store[scope_key] = {"request_hash": request_hash, "result": readback}
+        return readback
 
     def mcp_server_bff_idempotency_check(
         self, resolved_key: str, request_hash: str
