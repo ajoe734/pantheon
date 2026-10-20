@@ -5082,6 +5082,78 @@ def _mgmt_nl_provider_fleet_item(item: Any) -> Any:
         else:
             projected[key] = value
     return projected
+_MGMT_NL_SHARED_ROW_PATHS: Tuple[Tuple[str, ...], ...] = (
+    ("bindings",), ("capital_pools",), ("runtime_bindings",), ("sessions",), ("active_incidents",),
+    ("telemetry_summary", "summaries"), ("telemetry_summary", "latest"),
+    ("evolution", "decisions"), ("evolution", "latest_decision"),
+    ("training", "latest_session"),
+)
+def _mgmt_nl_dedupe_shared_fleet_rows(items: List[Any]) -> Dict[str, List[Any]]:
+    """Move rows repeated across (or within) persona_fleet items into one
+    fleet-level `shared_rows` table. A list whose rows are all shared becomes
+    `{"shared_row_list", "count", "row_indexes"}`; a single shared row becomes
+    `{"shared_row": index}`; a mixed list keeps its unshared rows inline and
+    refers to shared ones as `{"shared_row": index}`. Counts and every row's
+    content (ids, tenant, status) remain recoverable, nothing is sliced."""
+
+    def slots(item: Any, path: Tuple[str, ...]) -> Tuple[Any, Optional[str], Any]:
+        parent: Any = item
+        for step in path[:-1]:
+            parent = parent.get(step) if isinstance(parent, dict) else None
+        if not isinstance(parent, dict):
+            return None, None, None
+        return parent, path[-1], parent.get(path[-1])
+
+    def row_key(row: Dict[str, Any]) -> str:
+        return json.dumps(row, sort_keys=True, default=str)
+
+    def rows(value: Any) -> List[Dict[str, Any]]:
+        if isinstance(value, list):
+            return [row for row in value if isinstance(row, dict)]
+        return [value] if isinstance(value, dict) else []
+
+    counts: Dict[Tuple[str, ...], Dict[str, int]] = {}
+    for item in items:
+        for path in _MGMT_NL_SHARED_ROW_PATHS:
+            _parent, _leaf, value = slots(item, path)
+            for row in rows(value):
+                bucket = counts.setdefault(path, {})
+                key = row_key(row)
+                bucket[key] = bucket.get(key, 0) + 1
+    shared: Dict[str, List[Any]] = {}
+    shared_index: Dict[Tuple[Tuple[str, ...], str], int] = {}
+
+    def index_of(path: Tuple[str, ...], row: Dict[str, Any]) -> Optional[int]:
+        key = row_key(row)
+        if counts[path][key] < 2:
+            return None
+        idx = shared_index.get((path, key))
+        if idx is None:
+            table = shared.setdefault(".".join(path), [])
+            idx = shared_index[(path, key)] = len(table)
+            table.append(row)
+        return idx
+
+    for item in items:
+        for path in _MGMT_NL_SHARED_ROW_PATHS:
+            parent, leaf, value = slots(item, path)
+            name = ".".join(path)
+            if isinstance(value, dict):
+                idx = index_of(path, value)
+                if idx is not None:
+                    parent[leaf] = {"shared_row_table": name, "shared_row": idx}
+            elif isinstance(value, list) and value:
+                indexes = [index_of(path, row) if isinstance(row, dict) else None for row in value]
+                if all(idx is not None for idx in indexes):
+                    parent[leaf] = {"shared_row_list": name, "count": len(value), "row_indexes": indexes}
+                elif any(idx is not None for idx in indexes):
+                    parent[leaf] = [
+                        {"shared_row_table": name, "shared_row": idx} if idx is not None else row
+                        for row, idx in zip(value, indexes)
+                    ]
+    return shared
+
+
 def _mgmt_nl_provider_summary_context(snippets: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(snippets, dict):
         return snippets
@@ -5092,9 +5164,12 @@ def _mgmt_nl_provider_summary_context(snippets: Dict[str, Any]) -> Dict[str, Any
         returned = len(fleet["items"])
         total_population = summary.get("total_personas")
         partial = isinstance(total_population, int) and total_population > returned
+        projected_items = [_mgmt_nl_provider_fleet_item(item) for item in fleet["items"]]
+        shared_rows = _mgmt_nl_dedupe_shared_fleet_rows(projected_items)
         projected["persona_fleet"] = {
             **fleet,
-            "items": [_mgmt_nl_provider_fleet_item(item) for item in fleet["items"]],
+            "items": projected_items,
+            **({"shared_rows": shared_rows} if shared_rows else {}),
             # `total` is the returned sample size; the authoritative population
             # is summary.total_personas. Health/bound counts in `summary` are
             # computed over the returned sample only, never the whole population.
@@ -5112,35 +5187,56 @@ def _mgmt_nl_provider_summary_context(snippets: Dict[str, Any]) -> Dict[str, Any
         }
     return projected
 def _mgmt_nl_provider_owner_observations(observations: Any) -> Any:
-    """Keep every non-ok observation individually (scalar fields plus a
-    contributing count); collapse repeated ok observations into counted
-    groups that keep their subject ids."""
+    """Group repeated per-subject observations (ok and non-ok alike) by
+    (subject_type, source_kind, status, degradation_reason, source_version).
+    Each group keeps status, reason, source_kind, a count, and every distinct
+    owner and subject id; null/empty fields are dropped. A singleton keeps its
+    own non-empty scalar fields. Per-subject timestamps/correlation ids of a
+    multi-subject group are named in `omitted_per_subject_fields`."""
     if not isinstance(observations, list):
         return observations
     kept: List[Any] = []
-    groups: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
+    groups: Dict[Tuple[str, ...], List[Dict[str, Any]]] = {}
     for obs in observations:
         if not isinstance(obs, dict):
             kept.append(obs)
             continue
-        contributing = obs.get("contributing_observations") or []
-        if str(obs.get("status") or "") != "ok":
-            view = _mgmt_nl_scalar_view(obs)
+        key = tuple(
+            str(obs.get(f) or "")
+            for f in ("subject_type", "source_kind", "status", "degradation_reason", "source_version")
+        )
+        groups.setdefault(key, []).append(obs)
+    per_subject = ("observed_at", "freshness_seconds", "correlation_id")
+    for key, members in groups.items():
+        if len(members) == 1:
+            view = {k: v for k, v in _mgmt_nl_scalar_view(members[0]).items() if v not in (None, "", [], {})}
             view.pop("omitted_nested_fields", None)
-            view["contributing_count"] = len(contributing)
-            view["contributing_observations"] = _mgmt_nl_scalar_views(contributing)
+            contributing = members[0].get("contributing_observations") or []
+            if contributing:
+                view["contributing_count"] = len(contributing)
+                view["contributing_observations"] = _mgmt_nl_provider_owner_observations(contributing)
             kept.append(view)
             continue
-        key = tuple(str(obs.get(f) or "") for f in ("subject_type", "owner", "source_kind", "status"))
-        group = groups.setdefault(key, {
-            "subject_type": key[0], "owner": key[1], "source_kind": key[2], "status": key[3],
-            "count": 0, "subject_ids": [],
-        })
-        group["count"] += 1
-        subject_id = str(obs.get("subject_id") or "")
-        if subject_id and subject_id not in group["subject_ids"]:
-            group["subject_ids"].append(subject_id)
-    return [*kept, *groups.values()]
+        group: Dict[str, Any] = {
+            "subject_type": key[0], "source_kind": key[1], "status": key[2],
+            "count": len(members),
+        }
+        if key[3]:
+            group["degradation_reason"] = key[3]
+        if key[4]:
+            group["source_version"] = key[4]
+        owners = list(dict.fromkeys(str(m["owner"]) for m in members if m.get("owner")))
+        if owners:
+            group["owners"] = owners
+        group["subject_ids"] = list(dict.fromkeys(str(m["subject_id"]) for m in members if m.get("subject_id")))
+        omitted = [f for f in per_subject if any(m.get(f) not in (None, "") for m in members)]
+        if omitted:
+            group["omitted_per_subject_fields"] = omitted
+        nested = sum(len(m.get("contributing_observations") or []) for m in members)
+        if nested:
+            group["contributing_count"] = nested
+        kept.append(group)
+    return kept
 def _mgmt_nl_provider_surfaces(surfaces: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(surfaces, dict):
         return surfaces
@@ -5148,6 +5244,14 @@ def _mgmt_nl_provider_surfaces(surfaces: Dict[str, Any]) -> Dict[str, Any]:
     for name, surface in surfaces.items():
         if isinstance(surface, dict) and isinstance(surface.get("owner_observations"), list):
             surface = {**surface, "owner_observations": _mgmt_nl_provider_owner_observations(surface["owner_observations"])}
+        merged = surface.get("owner_observation") if isinstance(surface, dict) else None
+        if isinstance(merged, dict) and isinstance(merged.get("contributing_observations"), list):
+            contributing = merged["contributing_observations"]
+            view = _mgmt_nl_scalar_view(merged)
+            view.pop("omitted_nested_fields", None)
+            view["contributing_count"] = len(contributing)
+            view["contributing_observations"] = _mgmt_nl_provider_owner_observations(contributing)
+            surface = {**surface, "owner_observation": view}
         projected[name] = surface
     return projected
 def _mgmt_nl_build_context_pack(
