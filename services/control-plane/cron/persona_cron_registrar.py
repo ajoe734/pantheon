@@ -825,6 +825,7 @@ class PersonaCronRegistrar:
         persona_capital_binding_id: str | None = None,
         timeout_seconds: float | None = None,
         deadline: float | None = None,
+        jobs: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any] | None:
         """Authoritatively verify one exact first-evaluation cron record.
 
@@ -841,17 +842,11 @@ class PersonaCronRegistrar:
         if deadline is not None and time.monotonic() >= deadline:
             return None
 
-        resolved_runtime = runtime
-        if resolved_runtime is None and not self._dry_run:
-            resolved_runtime = self._get_runtime(timeout_seconds=timeout_seconds)
-        if resolved_runtime is None:
-            return None
-
-        jobs = self._list_jobs(
-            resolved_runtime,
-            deadline=deadline,
-            timeout_seconds=timeout_seconds,
-        )
+        if jobs is None:
+            resolved_runtime = runtime or (None if self._dry_run else self._get_runtime(timeout_seconds=timeout_seconds))
+            if resolved_runtime is None:
+                return None
+            jobs = self._list_jobs(resolved_runtime, deadline=deadline, timeout_seconds=timeout_seconds)
         if self._ambiguous_first_evaluation_name_jobs(jobs, clean_persona_id):
             return None
         candidates = self._matching_first_evaluation_jobs(jobs, clean_persona_id)
@@ -932,6 +927,8 @@ class PersonaCronRegistrar:
                 "first-evaluation owner rows have missing or duplicate gateway ids; "
                 "refusing ambiguous removal"
             )
+        if not owner_ids:
+            return {"registered": False, "removed_ids": []}
 
         mutation_errors: list[str] = []
         for job_id in owner_ids:
@@ -1237,7 +1234,7 @@ class PersonaCronRegistrar:
             except Exception as exc:  # noqa: BLE001
                 mutation_errors.append(f"cron.remove {duplicate_id}: {exc}")
 
-        if len(ordered_jobs) > 1 or not self._is_exact_first_evaluation_job(
+        if len(ordered_jobs) == 1 and self._is_exact_first_evaluation_job(
             canonical,
             persona_id=persona_id,
             runtime_id=runtime_id,
@@ -1245,6 +1242,8 @@ class PersonaCronRegistrar:
             capital_pool_id=capital_pool_id,
             persona_capital_binding_id=persona_capital_binding_id,
         ):
+            return True, None
+        if True:
             canonical_id = str(canonical.get("id") or "").strip()
             if not canonical_id:
                 mutation_errors.append("canonical owner row has no gateway id")
