@@ -11,5 +11,11 @@
     "command": "pytest services/runtime_manager services/telemetry (tel-venv, ignoring yaml-dependent test_loop_prod_tel_002_substrate)",
     "result": "483 passed before stub fix; 6 failures in test_lineage_write_path/test_paper_telemetry_packet are pre-existing on base (verified by stash run); touched telemetry tests 96 passed"
   },
-  "downstream": "runtime-manager lookups in reconciliation-drift and scheduler intentionally retained as defence"
+  "downstream": "runtime-manager lookups in reconciliation-drift and scheduler intentionally retained as defence",
+  "rework_20261019": {
+    "wiring": "docker-compose.yml runtime-manager: PANTHEON_TELEMETRY_API_URL, PANTHEON_TELEMETRY_SERVICE_TOKEN, PANTHEON_TELEMETRY_TENANT_ID (defaults to deployment tenant chain)",
+    "tenant": "event carries tenant_id; sender sends X-Tenant-Id; proven through real telemetry auth path (service token + SERVICE_TENANTS); wrong tenant -> 403 TENANT_FORBIDDEN, not acked",
+    "durability": "ack recorded in binding metadata retirement_telemetry_event_id/acked_at; RetirementTelemetryEmitter.sweep() re-emits unacked retired bindings (batch 25) at startup and every PANTHEON_RETIREMENT_TELEMETRY_SWEEP_SECONDS (300)",
+    "verification": "pytest services/telemetry/test_runtime_summary_projection.py services/runtime_manager/test_runtime_binding.py services/telemetry/test_main_routes.py: 162 passed; services/runtime-manager/test_runtime_manager.py not runnable in this venv (pydantic missing)"
+  }
 }

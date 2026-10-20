@@ -18,8 +18,12 @@ import logging
 import os
 import urllib.error
 import urllib.request
+import time
 import uuid
-from typing import Any, Callable, Dict, Optional
+from datetime import datetime, timezone
+import contextlib
+import threading
+from typing import Any, Callable, ContextManager, Dict, List, Optional
 
 from services.runtime_manager.runtime_binding import RuntimeBinding
 
@@ -36,11 +40,11 @@ def retirement_event_id(binding_id: str, retired_at: str) -> str:
     return str(uuid.uuid5(_EVENT_ID_NAMESPACE, f"{binding_id}|{retired_at}"))
 
 
-def build_retirement_event(binding: RuntimeBinding) -> Dict[str, Any]:
+def build_retirement_event(binding: RuntimeBinding, tenant_id: str = "") -> Dict[str, Any]:
     """Build the schema-valid retirement event for a retired binding."""
     if not binding.retired_at:
         raise ValueError("retired binding must carry retired_at")
-    return {
+    event = {
         "event_id": retirement_event_id(binding.binding_id, binding.retired_at),
         "event_type": RUNTIME_RETIRED_EVENT_TYPE,
         # created_at == retired_at: ingest rejects events after retired_at.
@@ -67,6 +71,11 @@ def build_retirement_event(binding: RuntimeBinding) -> Dict[str, Any]:
             "authority_source": "runtime_binding",
         },
     }
+    if tenant_id:
+        # Telemetry binds the event to the authenticated request tenant and
+        # rejects a payload tenant that disagrees with it.
+        event["tenant_id"] = tenant_id
+    return event
 
 
 class HttpTelemetrySender:
@@ -87,11 +96,20 @@ class HttpTelemetrySender:
         ).strip()
         if not url:
             return None
+        tenant_id = (
+            os.getenv("PANTHEON_TELEMETRY_TENANT_ID")
+            or os.getenv("PANTHEON_DEPLOYMENT_TENANT_ID")
+            or "default"
+        ).strip()
         return cls(
             url,
             token=os.getenv("PANTHEON_TELEMETRY_SERVICE_TOKEN", ""),
-            tenant_id=os.getenv("PANTHEON_TELEMETRY_TENANT_ID", "default"),
+            tenant_id=tenant_id,
         )
+
+    @property
+    def tenant_id(self) -> str:
+        return self._tenant_id
 
     def __call__(self, event: Dict[str, Any]) -> bool:
         headers = {
@@ -114,23 +132,111 @@ class HttpTelemetrySender:
             return False
 
 
-class RetirementTelemetryEmitter:
-    """Store observer: emit one retirement event per retired binding."""
+ACK_EVENT_ID_KEY = "retirement_telemetry_event_id"
+ACK_AT_KEY = "retirement_telemetry_acked_at"
+SWEEP_BATCH_LIMIT = 25
 
-    def __init__(self, sender: Optional[Sender]) -> None:
+
+class RetirementTelemetryEmitter:
+    """Store observer: emit one retirement event per retired binding.
+
+    A telemetry acknowledgement is recorded on the binding metadata
+    (``retirement_telemetry_event_id`` / ``retirement_telemetry_acked_at``).
+    ``sweep`` re-emits retired bindings that lack an acknowledgement for their
+    current event id; the idempotent event id makes replays safe.
+    """
+
+    def __init__(
+        self,
+        sender: Optional[Sender],
+        store: Any = None,
+        lock: Optional[ContextManager[Any]] = None,
+        tenant_id: Optional[str] = None,
+    ) -> None:
         self._sender = sender
+        self._store = store
+        self._lock = lock if lock is not None else contextlib.nullcontext()
+        self._tenant_id = (
+            tenant_id
+            if tenant_id is not None
+            else str(getattr(sender, "tenant_id", "") or "")
+        )
 
     def __call__(self, binding: RuntimeBinding) -> None:
+        self.emit(binding)
+
+    def emit(self, binding: RuntimeBinding) -> bool:
         if self._sender is None:
-            return
+            return False
         try:
-            event = build_retirement_event(binding)
+            event = build_retirement_event(binding, self._tenant_id)
             if not self._sender(event):
                 logger.warning(
                     "runtime retirement telemetry not accepted binding_id=%s",
                     binding.binding_id,
                 )
+                return False
+            self._record_ack(binding, event["event_id"])
+            return True
         except Exception:  # noqa: BLE001 - never undo a committed retirement
             logger.exception(
                 "runtime retirement telemetry failed binding_id=%s", binding.binding_id
             )
+            return False
+
+    def _record_ack(self, binding: RuntimeBinding, event_id: str) -> None:
+        if self._store is None:
+            return
+        with self._lock:
+            self._store.patch_metadata(
+                binding.binding_id,
+                {ACK_EVENT_ID_KEY: event_id, ACK_AT_KEY: _utc_now()},
+            )
+
+    def pending(self) -> List[RuntimeBinding]:
+        """Retired bindings whose current retirement event is unacknowledged."""
+        if self._store is None:
+            return []
+        out: List[RuntimeBinding] = []
+        for binding in self._store.list_all():
+            if binding.status != "retired" or not binding.retired_at:
+                continue
+            expected = retirement_event_id(binding.binding_id, binding.retired_at)
+            meta = binding.metadata or {}
+            if meta.get(ACK_EVENT_ID_KEY) == expected and meta.get(ACK_AT_KEY):
+                continue
+            out.append(binding)
+        return out
+
+    def sweep(self, limit: int = SWEEP_BATCH_LIMIT) -> int:
+        """Re-emit up to ``limit`` unacknowledged retirements; return acked count."""
+        if self._sender is None:
+            return 0
+        acked = 0
+        for binding in self.pending()[: max(0, limit)]:
+            if self.emit(binding):
+                acked += 1
+        return acked
+
+    def start_background_sweep(self, interval_seconds: float = 300.0) -> Optional[threading.Thread]:
+        """Sweep once at startup, then periodically, on a daemon thread."""
+        if self._sender is None or self._store is None:
+            return None
+
+        def _run() -> None:
+            while True:
+                try:
+                    self.sweep()
+                except Exception:  # noqa: BLE001
+                    logger.exception("runtime retirement telemetry sweep failed")
+                time.sleep(interval_seconds)
+
+        thread = threading.Thread(
+            target=_run, name="retirement-telemetry-sweep", daemon=True
+        )
+        thread.start()
+        return thread
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
