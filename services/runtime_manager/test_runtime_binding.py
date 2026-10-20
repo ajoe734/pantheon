@@ -716,6 +716,20 @@ class TestRetirementTelemetryEmission:
             == build_retirement_event(retired)["event_id"]
         )
 
+    def test_event_target_is_schema_valid_and_prefers_binding_tenant(self) -> None:
+        from services.runtime_manager.retirement_telemetry import build_retirement_event
+
+        retired = _base(
+            status="retired",
+            retired_at="2026-05-16T01:00:00Z",
+            metadata={"tenant_id": "tenant-b"},
+        )
+        event = build_retirement_event(retired, "tenant-a")
+        assert event["tenant_id"] == "tenant-b"
+        assert set(event["target"]) == {"strategy_id", "artifact_version", "promotion_state"}
+        assert event["target"]["promotion_state"] == "retired"
+        assert build_retirement_event(_base(status="retired", retired_at="2026-05-16T01:00:00Z"), "tenant-a")["tenant_id"] == "tenant-a"
+
     def test_cutover_emits_for_retired_source_only(self) -> None:
         sent: list = []
         svc = self._service(sent)

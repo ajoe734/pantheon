@@ -1249,18 +1249,17 @@ class TestRetirementEventDeliveryThroughRealAuth(unittest.TestCase):
         self.store = RuntimeSummaryProjectionStore()
         outer = self
 
-        class _Svc:
-            _runtime_summary_store = outer.store
+        from services.telemetry.ingest_svc import TelemetryIngestService
 
-            async def ingest(self, event):
-                outer.store.project_event(event)
-                return True
-
-            def list_runtime_summaries(self, tenant_id=None, include_retired=False):
-                return outer.store.list(tenant_id=tenant_id, include_retired=include_retired)
+        schema_path = Path(telemetry_main.__file__).parent / "telemetry_event.schema.json"
+        _Svc = TelemetryIngestService(
+            schema_path=str(schema_path),
+            buffer_backend="memory",
+            runtime_summary_store=self.store,
+        )
 
         self._saved_svc = telemetry_main._svc
-        telemetry_main._svc = _Svc()
+        telemetry_main._svc = _Svc
         self.addCleanup(setattr, telemetry_main, "_svc", self._saved_svc)
         run_async = patch.object(
             telemetry_main, "_run_async", lambda coro: __import__("asyncio").run(coro)

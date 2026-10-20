@@ -59,7 +59,11 @@ def build_retirement_event(binding: RuntimeBinding, tenant_id: str = "") -> Dict
         "artifact_version": binding.artifact_version,
         "plan_id": binding.plan_id,
         "persona_capital_binding_id": binding.persona_capital_binding_id,
-        "target": {"runtime_id": binding.runtime_id},
+        "target": {
+            "strategy_id": binding.artifact_id,
+            "artifact_version": binding.artifact_version,
+            "promotion_state": "retired",
+        },
         "metrics": {"action": RUNTIME_RETIRED_EVENT_TYPE},
         "metadata": {
             "retired_at": binding.retired_at,
@@ -71,10 +75,13 @@ def build_retirement_event(binding: RuntimeBinding, tenant_id: str = "") -> Dict
             "authority_source": "runtime_binding",
         },
     }
-    if tenant_id:
-        # Telemetry binds the event to the authenticated request tenant and
-        # rejects a payload tenant that disagrees with it.
-        event["tenant_id"] = tenant_id
+    # Prefer the binding's own tenant; fall back to the sender's tenant.
+    # Telemetry binds the event to the authenticated request tenant and
+    # rejects a payload tenant that disagrees with it.
+    binding_tenant = str((binding.metadata or {}).get("tenant_id") or "").strip()
+    event_tenant = binding_tenant or tenant_id
+    if event_tenant:
+        event["tenant_id"] = event_tenant
     return event
 
 
