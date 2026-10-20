@@ -2297,6 +2297,45 @@ def test_retire_case_failed_and_compensated_saga_is_retired_not_failed_inactive(
     assert owners.pcb_status == "revoked"
 
 
+def _failed_uncompensated_case():
+    store, record = _record_and_store()
+    _seed_state(store, record, state="failed", current_step="schedule_registration_failed",
+                error={"failed_step": "schedule_registration", "terminal_reason": "boom"},
+                compensation={"status": "failed",
+                              "terminal_reason": "deployment compensation did not reach "
+                                                 "a recognized authoritative state"})
+    return store, record
+
+
+def test_retire_case_failed_case_with_already_retired_saga_converges_without_posts() -> None:
+    store, record = _failed_uncompensated_case()
+    owners = RetireOwners(
+        record,
+        saga={"status": "retired", "current_step": "retired"},
+        pcb_status="suspended",
+    )
+    done = _retire_coordinator(store, owners).retire_case(record)
+    assert done.state == "retired"
+    assert done.current_step == "retired"
+    assert owners.pcb_status == "revoked"
+    assert owners.pool_status == "archived"
+    assert owners.persona_status == "archived"
+    assert not any(c[0] == "POST" for c in owners.calls)
+
+
+def test_retire_case_failed_case_with_retiring_saga_stays_pending_without_posts() -> None:
+    store, record = _failed_uncompensated_case()
+    owners = RetireOwners(
+        record,
+        saga={"status": "retiring", "current_step": "retirement_requested"},
+        pcb_status="suspended",
+    )
+    pending = _retire_coordinator(store, owners).retire_case(record)
+    assert pending.state != "retired"
+    assert pending.references["retirement"]["status"] == "pending"
+    assert not any(c[0] == "POST" for c in owners.calls)
+
+
 def test_retire_case_failed_inactive_saga_is_terminal_and_never_retire_posted() -> None:
     store, record = _record_and_store()
     _seed_state(store, record, state="compensated", compensation={"status": "completed"})
