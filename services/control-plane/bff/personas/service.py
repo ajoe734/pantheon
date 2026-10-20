@@ -1685,12 +1685,19 @@ def _evaluate_persona_provisioning_status(
                     if str(value.get("state") or value.get("status") or "").lower() == "paused"
                 ]
                 retired_bindings = [
-                    v for v in authoritative_bindings
-                    if str(v.get("state") or v.get("status") or "").lower() == "retired"
+                    value
+                    for value in authoritative_bindings
+                    if str(value.get("state") or value.get("status") or "").lower() == "retired"
                 ]
                 if retired_bindings and not paused_bindings:
+                    # Retirement already reached the RuntimeBinding: the case
+                    # is over, so hand it to retire_case instead of letting the
+                    # provisioning timeout compensate it.
                     binding_retired = True
                 elif paused_bindings:
+                    # A market-input pause (market_input_*) means the market
+                    # data gate has not opened yet; provisioning keeps waiting.
+                    # A pause for any other reason is a failed binding.
                     if len(paused_bindings) == 1:
                         paused_metadata = paused_bindings[0].get("metadata")
                         session_admission = (
@@ -1729,7 +1736,9 @@ def _evaluate_persona_provisioning_status(
 
     if binding_retired:
         retire_persona_provisioning_case(
-            tenant_id, persona_id, reason="runtime binding retired during provisioning readback",
+            tenant_id,
+            persona_id,
+            reason="runtime binding retired during provisioning readback",
         )
         return "retired"
 
@@ -1891,11 +1900,37 @@ def _evaluate_persona_provisioning_status(
 
     # A timed-out attempt is terminal even if stale evidence happens to appear
     # later; recovery must be an explicit retry that acquires the durable lease.
+    # Measure from the later of provisioning_readback_started_at and the
+    # authoritative RuntimeBinding's session_admission.resumed_at so a long
+    # market_input_* pause does not immediately time out on the first readback
+    # after resume before the restarted worker sends its first heartbeat.
     is_timeout = False
     readback_started_at = metadata.get("provisioning_readback_started_at")
     if readback_started_at and not waiting_reason:
         try:
             started_at_dt = _parse_rfc3339(readback_started_at)
+            if (
+                started_at_dt is not None
+                and binding_ok
+                and isinstance(binding, Mapping)
+            ):
+                binding_meta = binding.get("metadata")
+                session_admission = (
+                    binding_meta.get("session_admission")
+                    if isinstance(binding_meta, Mapping)
+                    else None
+                )
+                resumed_at_dt = (
+                    _parse_rfc3339(session_admission.get("resumed_at"))
+                    if isinstance(session_admission, Mapping)
+                    else None
+                )
+                if (
+                    resumed_at_dt is not None
+                    and resumed_at_dt.tzinfo is not None
+                    and resumed_at_dt > started_at_dt
+                ):
+                    started_at_dt = resumed_at_dt
             timeout_seconds = max(
                 1,
                 int(os.getenv("PANTHEON_PERSONA_PROVISIONING_TIMEOUT_SECONDS", "600")),

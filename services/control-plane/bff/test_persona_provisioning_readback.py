@@ -1244,6 +1244,92 @@ def test_market_input_pause_keeps_provisioning_without_compensation(
     assert harness.provisioning_store.released == []
 
 
+def test_resumed_after_long_market_input_pause_keeps_provisioning_before_first_heartbeat(
+    harness: _Harness,
+) -> None:
+    """Resuming after a long market_input_* pause resets the timeout clock to resumed_at."""
+    harness.read_store.sessions = [_worker_session(last_heartbeat_at=None)]
+    raw = _raw_persona(
+        provisioning_readback_started_at=_now(-1200),
+        provisioning_waiting_reason="market_input_stale",
+    )
+    resumed_binding = _runtime_binding(
+        metadata={
+            "persona_id": PERSONA_ID,
+            "tenant_id": "tenant-alpha",
+            "session_admission": {
+                "reason_code": "market_input_stale",
+                "source_snapshot_id": "mss-dev-paper-001",
+                "resume_snapshot_id": "mss-dev-paper-002",
+                "resumed_at": _now(-10),
+            },
+        },
+    )
+
+    state, raw = _evaluate(
+        raw=raw,
+        bindings={RUNTIME_BINDING_ID: resumed_binding},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+
+    assert state == "provisioning"
+    assert raw["metadata"]["provisioning_waiting_reason"] is None
+    assert "provisioning_failure_reason" not in raw["metadata"]
+    assert harness.provisioning_store.released == []
+
+
+def test_resumed_longer_ago_than_timeout_with_no_progress_fails(
+    harness: _Harness,
+) -> None:
+    """Timeout still triggers when resumed_at is older than the timeout window or predates readback_started_at."""
+    harness.read_store.sessions = [_worker_session(last_heartbeat_at=None)]
+    stale_resumed_binding = _runtime_binding(
+        metadata={
+            "persona_id": PERSONA_ID,
+            "tenant_id": "tenant-alpha",
+            "session_admission": {
+                "reason_code": "market_input_stale",
+                "resumed_at": _now(-601),
+            },
+        },
+    )
+    raw = _raw_persona(
+        provisioning_readback_started_at=_now(-1200),
+        provisioning_waiting_reason="market_input_stale",
+    )
+    state, raw = _evaluate(
+        raw=raw,
+        bindings={RUNTIME_BINDING_ID: stale_resumed_binding},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+
+    assert state == "provisioning_failed"
+    assert raw["metadata"]["provisioning_waiting_reason"] is None
+    assert "provisioning_timeout" in raw["metadata"]["provisioning_failure_reason"]
+
+    harness.provisioning_store.state = "provisioning"
+    harness.provisioning_store.error = None
+    older_resumed_binding = _runtime_binding(
+        metadata={
+            "persona_id": PERSONA_ID,
+            "tenant_id": "tenant-alpha",
+            "session_admission": {
+                "reason_code": "market_input_stale",
+                "resumed_at": _now(-1200),
+            },
+        },
+    )
+    fresh_readback_raw = _raw_persona(provisioning_readback_started_at=_now(-10))
+    state, fresh_readback_raw = _evaluate(
+        raw=fresh_readback_raw,
+        bindings={RUNTIME_BINDING_ID: older_resumed_binding},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+
+    assert state == "provisioning"
+    assert "provisioning_failure_reason" not in fresh_readback_raw["metadata"]
+
+
 def test_operator_pause_or_no_progress_past_timeout_still_fails(
     harness: _Harness,
 ) -> None:
