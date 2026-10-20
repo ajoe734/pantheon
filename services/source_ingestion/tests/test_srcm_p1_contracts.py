@@ -357,6 +357,22 @@ def test_source_desired_state_rejects_inline_secrets() -> None:
         )
 
 
+def test_assert_no_raw_secrets_allows_secret_scope_and_rejects_exact_keys() -> None:
+    assert_no_raw_secrets(
+        {
+            "secret_scope": "runtime_read_only",
+            "connector_config": {
+                "public": {"market": "TW"},
+                "secret_ref_id": "vault://pantheon/dev/twse",
+                "secret_scope": "runtime_read_only",
+            },
+        }
+    )
+    for bad_key in ("api_key", "password", "token", "secret", "secret_key", "secret_value"):
+        with pytest.raises(SourceManagementContractError, match=f"Raw secret material detected at connector_config.public.{bad_key}"):
+            assert_no_raw_secrets({"connector_config": {"public": {bad_key: "inline-raw-secret"}}})
+
+
 def test_source_observed_state_schema_and_invariants() -> None:
     schema = load_schema("docs/contracts/source_observed_state.schema.json")
     validator = Draft7Validator(schema)

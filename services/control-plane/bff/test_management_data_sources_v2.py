@@ -486,15 +486,111 @@ def test_create_data_source_starts_configured_disabled(bff_client: TestClient, f
 
 
 def test_create_data_source_rejects_raw_secrets(bff_client: TestClient) -> None:
-    body = {
-        "definitionId": "srcdef-twse-stock-day-all",
-        "sourceInstanceId": "src-twse-secret",
-        "reason": "Creating with bad secret",
-        "connectorConfig": {"public": {"api_key": "raw-inline-secret-token"}},
+    for secret_field, secret_val in (
+        ("api_key", "raw-inline-secret-token"),
+        ("password", "inline-password-123"),
+        ("token", "inline-bearer-token-xyz"),
+        ("secret_value", "inline-secret-value-abc"),
+    ):
+        body = {
+            "definitionId": "srcdef-twse-stock-day-all",
+            "sourceInstanceId": f"src-twse-{secret_field}",
+            "reason": "Creating with bad secret",
+            "connectorConfig": {"public": {secret_field: secret_val}},
+        }
+        response = bff_client.post("/bff/management/data-sources", json=body, headers=OPERATOR_HEADERS)
+        assert response.status_code == 400, response.text
+        err = response.json()["error"]
+        assert err["code"] == "VALIDATION_FAILED"
+        assert err["details"]["reason"] == "raw_secret_forbidden"
+        assert f"Raw secret material detected at connector_config.public.{secret_field}" in err["message"]
+
+
+def test_create_data_source_accepts_execute_plans_wizard_payload_with_secret_scope(
+    bff_client: TestClient,
+    fake_client: FakeSourceManagementClient,
+) -> None:
+    from services.control_plane.bff.console_gap import datasources as bff_datasources
+    from services.source_ingestion import source_management_models as owner_models
+
+    assert bff_datasources.assert_no_raw_secrets is owner_models.assert_no_raw_secrets
+
+    fake_client.definitions["tw-twse-tpex-official-market"] = _mock_connector_definition(
+        "tw-twse-tpex-official-market",
+        "TWSE/TPEx",
+    )
+    wizard_payload = {
+        "source_instance_id": "ds-twse-tpex-m2abc123",
+        "definition_id": "tw-twse-tpex-official-market",
+        "connector_id": "ds-twse-tpex-m2abc123",
+        "provider": "TWSE/TPEx",
+        "source_class": "market_daily",
+        "datasets": ["tw_price_daily"],
+        "markets": ["TW"],
+        "license_scope": "official_reference",
+        "secret_scope": "runtime_read_only",
+        "allowed_use": ["research_data", "backtest_data", "monitoring"],
+        "retention_policy_ref": "source-retention://standard-1y",
+        "deletion_policy_ref": "source-deletion://standard",
+        "freshness_sla_seconds": 86400,
+        "sensitivity": "public",
+        "connector_config": {
+            "public": {},
+            "secret_ref_id": None,
+            "secret_scope": "runtime_read_only",
+        },
+        "schedule": {
+            "enabled": False,
+            "cadence": "0 19 * * 1-5",
+            "timezone": "Asia/Taipei",
+            "jitter_seconds": 120,
+        },
+        "universe_policy_ref": "active_universe_scheduling_policy.v1",
+        "limits": {
+            "max_records": 100,
+            "max_bytes": 10485760,
+            "timeout_seconds": 15,
+        },
+        "reason": "Operator created new configured_disabled data source via wizard",
+        "trace_id": "corr-wizard-twse-20261020",
     }
-    response = bff_client.post("/bff/management/data-sources", json=body, headers=OPERATOR_HEADERS)
-    assert response.status_code == 400
-    assert "Raw secret material detected" in response.text or "raw_secret" in response.text
+
+    response = bff_client.post("/bff/management/data-sources", json=wizard_payload, headers=OPERATOR_HEADERS)
+    assert response.status_code == 202, response.text
+    receipt = response.json()["data"]["receipt"]
+    assert receipt["command_type"] == "create"
+    assert receipt["source_instance_id"] == "ds-twse-tpex-m2abc123"
+    assert receipt["status"] == "succeeded"
+
+    forwarded_params = fake_client.recorded_commands[-1]["payload"]["parameters"]
+    assert forwarded_params["secret_scope"] == "runtime_read_only"
+    assert forwarded_params["connector_config"]["secret_scope"] == "runtime_read_only"
+
+
+def test_response_redaction_remains_strict_for_secret_like_keys() -> None:
+    from services.control_plane.bff.console_gap.datasources import redact_sensitive_values
+
+    raw_response = {
+        "api_key": "raw-key-123",
+        "password": "raw-password-123",
+        "token": "raw-token-123",
+        "secret_value": "raw-secret-val",
+        "custom_secret_header": "raw-custom-secret",
+        "secret_ref_id": "vault://pantheon/dev/finmind#token",
+        "env_token": "env://FINMIND_TOKEN",
+        "ref_secret": "ref://secret-store/item",
+        "empty_secret": "",
+    }
+    redacted = redact_sensitive_values(raw_response)
+    assert redacted["api_key"] == "[REDACTED]"
+    assert redacted["password"] == "[REDACTED]"
+    assert redacted["token"] == "[REDACTED]"
+    assert redacted["secret_value"] == "[REDACTED]"
+    assert redacted["custom_secret_header"] == "[REDACTED]"
+    assert redacted["secret_ref_id"] == "vault://pantheon/dev/finmind#token"
+    assert redacted["env_token"] == "env://FINMIND_TOKEN"
+    assert redacted["ref_secret"] == "ref://secret-store/item"
+    assert redacted["empty_secret"] == ""
 
 
 def test_validate_command(bff_client: TestClient, fake_client: FakeSourceManagementClient) -> None:
