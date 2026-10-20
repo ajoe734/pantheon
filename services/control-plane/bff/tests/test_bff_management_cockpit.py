@@ -102,7 +102,7 @@ class _MockContextHost:
 mock_context_host = _MockContextHost()
 
 
-def _seeded_client(td: str) -> TestClient:
+def _seeded_client(td: str, service_cls: type = ManagementService) -> TestClient:
     store = create_in_memory_read_surface_ports()
     store.list_incidents = lambda **kwargs: [
         {
@@ -233,7 +233,8 @@ def _seeded_client(td: str) -> TestClient:
     }.get(dataset, "missing")
 
     app = FastAPI()
-    app.include_router(create_management_router(get_read_store=lambda: store))
+    service = service_cls(get_read_store=lambda: store)
+    app.include_router(create_management_router(get_read_store=lambda: store, service=service))
     return TestClient(app)
 
 
@@ -432,17 +433,16 @@ def test_cockpit_surface_owner_observation_preserves_provenance_fields(
 
 
 
-def test_cockpit_computes_operator_health_once_and_keeps_operator_home(monkeypatch) -> None:
+def test_cockpit_computes_operator_health_once_and_keeps_operator_home() -> None:
     calls = []
-    original = ManagementService.get_operator_health_status
 
-    def _spy(self, *args, **kwargs):
-        calls.append(1)
-        return original(self, *args, **kwargs)
+    class _SpyService(ManagementService):
+        def get_operator_health_status(self, *args, **kwargs):
+            calls.append(1)
+            return super().get_operator_health_status(*args, **kwargs)
 
-    monkeypatch.setattr(ManagementService, "get_operator_health_status", _spy)
     with tempfile.TemporaryDirectory() as td:
-        response = _seeded_client(td).get("/bff/management/cockpit", headers=OPERATOR_HEADERS)
+        response = _seeded_client(td, _SpyService).get("/bff/management/cockpit", headers=OPERATOR_HEADERS)
     assert response.status_code == 200, response.text
     data = response.json()["data"]
     assert len(calls) >= 1
@@ -451,13 +451,13 @@ def test_cockpit_computes_operator_health_once_and_keeps_operator_home(monkeypat
     assert data["runtime_health"]["groups"]
 
 
-def test_cockpit_contributor_exception_degrades_only_that_section(monkeypatch) -> None:
-    def _boom(self, *args, **kwargs):
-        raise RuntimeError("secret-token-abc")
+def test_cockpit_contributor_exception_degrades_only_that_section() -> None:
+    class _BoomService(ManagementService):
+        def get_management_anomalies(self, *args, **kwargs):
+            raise RuntimeError("secret-token-abc")
 
-    monkeypatch.setattr(ManagementService, "get_management_anomalies", _boom)
     with tempfile.TemporaryDirectory() as td:
-        response = _seeded_client(td).get("/bff/management/cockpit", headers=OPERATOR_HEADERS)
+        response = _seeded_client(td, _BoomService).get("/bff/management/cockpit", headers=OPERATOR_HEADERS)
     assert response.status_code == 200, response.text
     payload = response.json()
     assert "secret-token-abc" not in response.text
