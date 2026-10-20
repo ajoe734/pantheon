@@ -46,7 +46,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 
 def utc_now() -> str:
@@ -285,6 +285,7 @@ class RuntimeBindingStore:
 
     def __init__(self, path: Optional[Path] = None) -> None:
         self._bindings: Dict[str, RuntimeBinding] = {}
+        self._retirement_observers: List[Callable[[RuntimeBinding], None]] = []
         self._path = path
         self._backup_path = self._backup_for(path) if path else None
         if path and path.exists():
@@ -424,7 +425,20 @@ class RuntimeBindingStore:
         except Exception:
             self._bindings[binding_id] = binding
             raise
+        if updated.status == RuntimeBindingStatus.RETIRED.value:
+            self._notify_retired(updated)
         return updated
+
+    def add_retirement_observer(self, observer: Callable[[RuntimeBinding], None]) -> None:
+        """Register a callback run after a binding is persisted as retired."""
+        self._retirement_observers.append(observer)
+
+    def _notify_retired(self, binding: RuntimeBinding) -> None:
+        for observer in list(self._retirement_observers):
+            try:
+                observer(binding)
+            except Exception:  # noqa: BLE001 - observers must not undo a retirement
+                pass
 
     def patch_metadata(
         self,
@@ -532,6 +546,7 @@ class RuntimeBindingStore:
         except Exception:
             self._bindings = previous
             raise
+        self._notify_retired(retired_source)
         return retired_source, replacement
 
     # ---- Single-runtime guard ----
