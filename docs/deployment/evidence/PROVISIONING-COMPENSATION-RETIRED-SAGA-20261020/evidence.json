@@ -1,0 +1,13 @@
+{
+  "task_id": "PROVISIONING-COMPENSATION-RETIRED-SAGA-20261020",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "scope": "source-only",
+  "change": "_request_deployment_compensation returns retired sagas as complete and retiring sagas as pending without posting /failure",
+  "tests": {
+    "command": "pytest services/control-plane/bff/test_persona_provisioning_coordinator.py services/control-plane/bff/test_persona_provisioning_readback.py services/control-plane/bff/tests/test_persona_provisioning_reconcile.py",
+    "result": "118 passed",
+    "new_tests_fail_on_base": true
+  },
+  "hosted_followup": "Reconciler should converge the 5 failed cases (persona-1892f1f1627728797829, persona-e86c50a787a659fb51f5, persona-922730fe9d6ae8a3f5ac, persona-f10a7bde4eea7c6ee79e, persona-3e782372a1dfdaf6f5ba) after deploy; not performed here."
+}

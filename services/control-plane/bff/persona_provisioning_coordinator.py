@@ -2848,6 +2848,13 @@ class PersonaProvisioningCoordinator:
 
         validate_identity(saga)
         status = str(saga.get("status") or "")
+        # Deployment only retires completed or failed+compensated sagas, so a
+        # retired saga proves the Deployment side is already torn down; a
+        # retiring one is still in flight. Neither accepts /failure.
+        if status == "retired":
+            return saga, True
+        if status == "retiring":
+            return saga, False
         mutation_error: Exception | None = None
         if status not in {"compensating", "failed", "aborted"}:
             try:
