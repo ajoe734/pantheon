@@ -677,3 +677,76 @@ class TestRuntimeBindingMetadataPatch:
         patched = store.patch_metadata("rtb-patch-001", {"baz": 42})
         assert patched.status == "active"
         assert patched.metadata == {"foo": "bar", "baz": 42}
+
+
+# ---------------------------------------------------------------------------
+# Retirement telemetry emission (binding owner -> telemetry)
+# ---------------------------------------------------------------------------
+
+class TestRetirementTelemetryEmission:
+
+    def _service(self, sent: list):
+        from services.runtime_manager.service import RuntimeManagerService
+
+        def sender(event: Dict[str, Any]) -> bool:
+            sent.append(event)
+            return True
+
+        return RuntimeManagerService(retirement_telemetry_sender=sender)
+
+    def test_retire_emits_one_owner_attributed_event(self) -> None:
+        sent: list = []
+        svc = self._service(sent)
+        svc.store.create(_base())
+        retired = svc.retire("rtb-aaa000000001", retired_at="2026-05-16T01:00:00Z")
+        assert len(sent) == 1
+        event = sent[0]
+        assert event["event_type"] == "runtime_retired"
+        assert event["binding_id"] == retired.binding_id
+        assert event["runtime_id"] == "rt-lean-001"
+        assert event["created_at"] == "2026-05-16T01:00:00Z"
+        assert event["authority_refs"]["write_owner"] == "runtime_manager"
+
+    def test_event_id_is_deterministic_for_replay(self) -> None:
+        from services.runtime_manager.retirement_telemetry import build_retirement_event
+
+        retired = _base(status="retired", retired_at="2026-05-16T01:00:00Z")
+        assert (
+            build_retirement_event(retired)["event_id"]
+            == build_retirement_event(retired)["event_id"]
+        )
+
+    def test_event_target_is_schema_valid_and_prefers_binding_tenant(self) -> None:
+        from services.runtime_manager.retirement_telemetry import build_retirement_event
+
+        retired = _base(
+            status="retired",
+            retired_at="2026-05-16T01:00:00Z",
+            metadata={"tenant_id": "tenant-b"},
+        )
+        event = build_retirement_event(retired, "tenant-a")
+        assert event["tenant_id"] == "tenant-b"
+        assert set(event["target"]) == {"strategy_id", "artifact_version", "promotion_state"}
+        assert event["target"]["promotion_state"] == "retired"
+        assert build_retirement_event(_base(status="retired", retired_at="2026-05-16T01:00:00Z"), "tenant-a")["tenant_id"] == "tenant-a"
+
+    def test_cutover_emits_for_retired_source_only(self) -> None:
+        sent: list = []
+        svc = self._service(sent)
+        svc.store.create(_base())
+        svc.store.cutover(
+            "rtb-aaa000000001",
+            _base(binding_id="rtb-aaa000000002", runtime_id="rt-lean-002"),
+            retired_at="2026-05-16T02:00:00Z",
+        )
+        assert [e["binding_id"] for e in sent] == ["rtb-aaa000000001"]
+
+    def test_delivery_failure_does_not_undo_retirement(self) -> None:
+        from services.runtime_manager.service import RuntimeManagerService
+
+        def boom(event: Dict[str, Any]) -> bool:
+            raise RuntimeError("telemetry down")
+
+        svc = RuntimeManagerService(retirement_telemetry_sender=boom)
+        svc.store.create(_base())
+        assert svc.retire("rtb-aaa000000001").status == "retired"

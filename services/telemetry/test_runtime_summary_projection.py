@@ -911,6 +911,64 @@ class RuntimeSummaryProjectionStoreTest(unittest.TestCase):
         self.assertEqual(stale_summary["health_summary"]["telemetry"], "degraded")
         self.assertEqual(stale_summary["health_summary"]["bridge"], "not_applicable")
 
+    def _retired_event(self, created_at="2026-05-01T00:30:00Z"):
+        event = _event("runtime_retired", created_at=created_at)
+        event["event_id"] = "evt-paper-retired"
+        event["metadata"]["retired_at"] = created_at
+        return event
+
+    def test_retirement_marks_summary_retired_and_excludes_by_default(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        store.project_event(_event())
+        summary = store.project_event(self._retired_event())
+
+        self.assertTrue(summary["retired"])
+        self.assertEqual(summary["state"], "retired")
+        self.assertEqual(summary["retired_at"], "2026-05-01T00:30:00Z")
+        self.assertEqual(store.list(), [])
+        listed = store.list(include_retired=True)
+        self.assertEqual([item["runtime_id"] for item in listed], ["rt-paper-001"])
+        self.assertEqual(listed[0]["state"], "retired")
+
+    def test_retirement_stays_retired_whichever_side_of_last_heartbeat(self):
+        for order in ("before", "after"):
+            with self.subTest(order=order):
+                store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+                beat = _event(created_at="2026-05-01T00:40:00Z")
+                if order == "before":
+                    store.project_event(self._retired_event())
+                    store.project_event(beat)
+                else:
+                    store.project_event(beat)
+                    store.project_event(self._retired_event("2026-05-01T00:50:00Z"))
+                self.assertEqual(store.list(), [])
+                summary = store.get("rt-paper-001")
+                self.assertTrue(summary["retired"])
+                self.assertEqual(summary["state"], "retired")
+
+    def test_retirement_replay_is_idempotent(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        first = store.project_event(self._retired_event())
+        second = store.project_event(self._retired_event())
+        self.assertEqual(first["retired_at"], second["retired_at"])
+        self.assertEqual(len(store.list(include_retired=True)), 1)
+
+    def test_newer_binding_on_same_runtime_is_not_retired(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        old = _event(created_at="2026-05-01T00:05:00Z")
+        old["metadata"]["runtime_binding_effective_at"] = "2026-05-01T00:00:00Z"
+        store.project_event(old)
+        store.project_event(self._retired_event("2026-05-01T00:10:00Z"))
+
+        new = _event("heartbeat", created_at="2026-05-01T00:11:00Z")
+        new.update({"event_id": "evt-new", "binding_id": "rtb-paper-002"})
+        new["metadata"]["runtime_binding_effective_at"] = "2026-05-01T00:10:00Z"
+        summary = store.project_event(new)
+
+        self.assertEqual(summary["binding_id"], "rtb-paper-002")
+        self.assertFalse(summary.get("retired", False))
+        self.assertEqual(len(store.list()), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -1035,13 +1093,32 @@ class TestRuntimeSummaryViewerAccess(unittest.TestCase):
             "metrics": {"heartbeat": 1},
             "metadata": {"tenant_id": "tenant-dev"},
         })
+        store.project_event({
+            "event_id": "evt-seed-retired-1",
+            "event_type": "runtime_retired",
+            "created_at": "2026-05-01T00:00:00Z",
+            "deployment_stage": "paper",
+            "environment": "paper",
+            "binding_id": "rtb-seed-retired",
+            "runtime_id": "rt-seed-retired",
+            "capital_pool_id": "pool-seed-2",
+            "artifact_id": "artifact-seed-1",
+            "artifact_version": "1.0.0",
+            "plan_id": "plan-seed-1",
+            "persona_capital_binding_id": "pcb-seed-1",
+            "tenant_id": "tenant-dev",
+            "metrics": {"action": "runtime_retired"},
+            "metadata": {"tenant_id": "tenant-dev"},
+        })
 
         if telemetry_main._svc is None:
             class _DummyTelemetrySvc:
                 def __init__(self, s):
                     self._runtime_summary_store = s
-                def list_runtime_summaries(self, tenant_id=None):
-                    return self._runtime_summary_store.list(tenant_id=tenant_id)
+                def list_runtime_summaries(self, tenant_id=None, include_retired=False):
+                    return self._runtime_summary_store.list(
+                        tenant_id=tenant_id, include_retired=include_retired
+                    )
                 def get_runtime_summary(self, runtime_id, tenant_id=None):
                     return self._runtime_summary_store.get(runtime_id, tenant_id=tenant_id)
                 def stats(self):
@@ -1098,6 +1175,21 @@ class TestRuntimeSummaryViewerAccess(unittest.TestCase):
         self.assertEqual(res_item.status_code, 200)
         self.assertEqual(res_item.get_json()["runtime_id"], "rt-seed-1")
 
+    def test_runtime_summaries_route_excludes_retired_unless_requested(self):
+        token = self._token(roles=["viewer"], tenant_id="tenant-dev", allowed_tenants=["tenant-dev"])
+        headers = {"Authorization": f"Bearer {token}", "X-Tenant-Id": "tenant-dev"}
+
+        default = self.client.get("/api/telemetry/runtime-summaries", headers=headers)
+        ids = {item["runtime_id"] for item in default.get_json()["summaries"]}
+        self.assertIn("rt-seed-1", ids)
+        self.assertNotIn("rt-seed-retired", ids)
+
+        explicit = self.client.get(
+            "/api/telemetry/runtime-summaries?include_retired=true", headers=headers
+        )
+        ids = {item["runtime_id"] for item in explicit.get_json()["summaries"]}
+        self.assertIn("rt-seed-retired", ids)
+
     def test_evaluator_viewer_token_reads_runtime_summaries_succeeds(self):
         token = self._token(
             roles=["viewer"],
@@ -1141,3 +1233,169 @@ class TestRuntimeSummaryViewerAccess(unittest.TestCase):
         self.assertEqual(res_ingest.status_code, 403)
         self.assertEqual(res_ingest.get_json()["error"]["code"], "AUTH_FORBIDDEN")
 
+
+
+class TestRetirementEventDeliveryThroughRealAuth(unittest.TestCase):
+    """runtime-manager emitter -> telemetry ingest route (real auth path)."""
+
+    TOKEN = "telemetry-service-secret"
+
+    def setUp(self):
+        import os
+        from unittest.mock import patch
+
+        import services.telemetry.main as telemetry_main
+
+        self.store = RuntimeSummaryProjectionStore()
+        outer = self
+
+        from services.telemetry.ingest_svc import TelemetryIngestService
+
+        schema_path = Path(telemetry_main.__file__).parent / "telemetry_event.schema.json"
+        _Svc = TelemetryIngestService(
+            schema_path=str(schema_path),
+            buffer_backend="memory",
+            runtime_summary_store=self.store,
+        )
+
+        self._saved_svc = telemetry_main._svc
+        telemetry_main._svc = _Svc
+        self.addCleanup(setattr, telemetry_main, "_svc", self._saved_svc)
+        run_async = patch.object(
+            telemetry_main, "_run_async", lambda coro: __import__("asyncio").run(coro)
+        )
+        run_async.start()
+        self.addCleanup(run_async.stop)
+        env = patch.dict(
+            os.environ,
+            {
+                "PANTHEON_TELEMETRY_SERVICE_TOKEN": self.TOKEN,
+                "PANTHEON_TELEMETRY_SERVICE_TENANTS": "tenant-dev",
+                "PANTHEON_TELEMETRY_AUTH_MODE": "strict",
+            },
+        )
+        env.start()
+        self.addCleanup(env.stop)
+        self.client = telemetry_main.app.test_client()
+
+    def _sender(self, tenant_id, fail_times=0):
+        from services.runtime_manager.retirement_telemetry import HttpTelemetrySender
+
+        outer = self
+        state = {"calls": 0, "statuses": []}
+
+        class _Sender(HttpTelemetrySender):
+            def __call__(self, event):
+                state["calls"] += 1
+                if state["calls"] <= fail_times:
+                    return False  # simulated lost delivery (service restarting)
+                resp = outer.client.post(
+                    "/api/telemetry/ingest",
+                    json=event,
+                    headers={
+                        "Authorization": f"Bearer {self._token}",
+                        "X-Tenant-Id": self._tenant_id,
+                    },
+                )
+                state["statuses"].append(resp.status_code)
+                return resp.status_code in {200, 202}
+
+        sender = _Sender("http://telemetry", token=self.TOKEN, tenant_id=tenant_id)
+        return sender, state
+
+    def _service(self, sender, tmp):
+        from services.runtime_manager.service import RuntimeManagerService
+
+        return RuntimeManagerService(
+            store_path=Path(tmp) / "bindings.json",
+            retirement_telemetry_sender=sender,
+        )
+
+    def _binding(self, binding_id="rtb-aaa000000001", runtime_id="rt-lean-001", **kw):
+        from services.runtime_manager.test_runtime_binding import _base
+
+        return _base(binding_id=binding_id, runtime_id=runtime_id, **kw)
+
+    def _retired_ids(self, tenant="tenant-dev"):
+        return {
+            s["runtime_id"]
+            for s in self.store.list(tenant_id=tenant, include_retired=True)
+            if s.get("status") == "retired" or s.get("retired")
+        }
+
+    def test_retirement_lands_in_binding_tenant_and_is_acked(self):
+        sender, state = self._sender("tenant-dev")
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._service(sender, tmp)
+            svc.store.create(self._binding())
+            svc.retire("rtb-aaa000000001", retired_at="2026-05-16T01:00:00Z")
+            meta = svc.store.get("rtb-aaa000000001").metadata
+        self.assertEqual(state["statuses"], [202])
+        self.assertTrue(meta["retirement_telemetry_acked_at"])
+        ids = {s["runtime_id"] for s in self.store.list(tenant_id="tenant-dev")}
+        self.assertNotIn("rt-lean-001", ids)
+        explicit = {
+            s["runtime_id"]
+            for s in self.store.list(tenant_id="tenant-dev", include_retired=True)
+        }
+        self.assertIn("rt-lean-001", explicit)
+
+    def test_wrong_tenant_is_rejected_and_not_acked(self):
+        sender, state = self._sender("tenant-other")
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._service(sender, tmp)
+            svc.store.create(self._binding())
+            svc.retire("rtb-aaa000000001", retired_at="2026-05-16T01:00:00Z")
+            meta = svc.store.get("rtb-aaa000000001").metadata
+        self.assertEqual(state["statuses"], [403])
+        self.assertNotIn("retirement_telemetry_acked_at", meta)
+        self.assertEqual(self.store.list(tenant_id="tenant-other", include_retired=True), [])
+
+    def test_lost_delivery_is_recovered_by_sweep(self):
+        sender, state = self._sender("tenant-dev", fail_times=1)
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._service(sender, tmp)
+            svc.store.create(self._binding())
+            svc.retire("rtb-aaa000000001", retired_at="2026-05-16T01:00:00Z")
+            self.assertNotIn(
+                "retirement_telemetry_acked_at",
+                svc.store.get("rtb-aaa000000001").metadata,
+            )
+            self.assertEqual(svc.store.list_all()[0].status, "retired")
+            self.assertEqual(svc._retirement_emitter.sweep(), 1)
+            self.assertEqual(svc._retirement_emitter.sweep(), 0)  # acked: no resend
+        self.assertEqual(state["calls"], 2)
+        self.assertEqual(state["statuses"], [202])
+
+    def test_startup_backfill_of_already_retired_binding(self):
+        sender, state = self._sender("tenant-dev")
+        with tempfile.TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "bindings.json"
+            from services.runtime_manager.runtime_binding import RuntimeBindingStore
+
+            legacy = RuntimeBindingStore(path=store_path)  # no observer: pre-emitter era
+            legacy.create(self._binding())
+            legacy.retire("rtb-aaa000000001", retired_at="2026-05-16T01:00:00Z")
+            self.assertEqual(state["calls"], 0)
+
+            svc = self._service(sender, tmp)  # restart with persisted retired binding
+            self.assertEqual(len(svc._retirement_emitter.pending()), 1)
+            self.assertEqual(svc._retirement_emitter.sweep(), 1)
+            self.assertEqual(svc._retirement_emitter.pending(), [])
+        self.assertEqual(state["statuses"], [202])
+        self.assertEqual(self._retired_ids(), {"rt-lean-001"})
+
+    def test_sweep_is_bounded(self):
+        sender, state = self._sender("tenant-dev")
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._service(None, tmp)
+            for i in range(3):
+                svc.store.create(
+                    self._binding(f"rtb-aaa00000000{i + 1}", f"rt-lean-00{i + 1}")
+                )
+                svc.retire(f"rtb-aaa00000000{i + 1}", retired_at="2026-05-16T01:00:00Z")
+            from services.runtime_manager.retirement_telemetry import RetirementTelemetryEmitter
+
+            emitter = RetirementTelemetryEmitter(sender, store=svc.store)
+            self.assertEqual(emitter.sweep(limit=2), 2)
+            self.assertEqual(emitter.sweep(limit=2), 1)
