@@ -1516,6 +1516,33 @@ def execute_retirement(
     return note
 
 
+def _retired_binding_compensation_note(
+    *, client: RuntimeManagerClient, saga: Mapping[str, Any], binding: Mapping[str, Any]
+) -> str | None:
+    """Return a finalize note when the saga binding is already retired.
+
+    A retired binding has nothing left to contain or roll back.  A retired
+    source that has a rollback child is the normal rollback lineage and keeps
+    flowing through the rollback recovery/verification path.
+    """
+    if binding.get("status") != "retired":
+        return None
+    binding_id = str(saga.get("binding_id") or "")
+    if _binding_identity_error(
+        saga=saga, binding=binding, expected_binding_id=binding_id
+    ):
+        return None
+    if any(
+        candidate.get("rollback_parent") == binding_id
+        for candidate in client.list_by_pool(str(saga.get("capital_pool_id") or ""))
+    ):
+        return None
+    return (
+        f"RuntimeBinding {binding_id} already retired; "
+        "no containment or rollback required"
+    )
+
+
 def execute_compensation(
     *,
     api_url: str,
@@ -1547,7 +1574,10 @@ def execute_compensation(
             target = client.get(binding_id) if binding_id else bindings[0]
             if not isinstance(target, Mapping):
                 raise RuntimeError("abort compensation found a binding identity but no record")
-            note = _contain_and_raise_incident(
+            retired_note = _retired_binding_compensation_note(
+                client=client, saga=saga, binding=target
+            )
+            note = retired_note or _contain_and_raise_incident(
                 client=client,
                 saga=saga,
                 binding=target,
@@ -1593,6 +1623,22 @@ def execute_compensation(
                 raise RuntimeError(f"failed-binding identity mismatch: {identity_error}")
             if binding.get("status") in {"active", "pending_pause", "paused"}:
                 client.transition(binding_id, "failed")
+            elif binding.get("status") == "retired":
+                retired_note = _retired_binding_compensation_note(
+                    client=client, saga=saga, binding=binding
+                )
+                if retired_note is None:
+                    raise RuntimeError(
+                        "mark_binding_failed_inactive cannot converge status='retired'"
+                    )
+                finalize_compensation(
+                    api_url=api_url,
+                    saga_id=str(saga.get("saga_id") or ""),
+                    note=retired_note,
+                    terminal_status=terminal_status,
+                    timeout_seconds=timeout_seconds,
+                )
+                return terminal_status, expected_plan_status
             elif binding.get("status") != "failed":
                 raise RuntimeError(
                     f"mark_binding_failed_inactive cannot converge status={binding.get('status')!r}"
@@ -1610,7 +1656,9 @@ def execute_compensation(
         )
         if identity_error:
             raise RuntimeError(f"rollback source identity mismatch: {identity_error}")
-        note = _execute_rollback_compensation(
+        note = _retired_binding_compensation_note(
+            client=client, saga=saga, binding=binding
+        ) or _execute_rollback_compensation(
             api_url=api_url,
             client=client,
             saga=saga,
@@ -1632,7 +1680,9 @@ def execute_compensation(
         )
         if identity_error:
             raise RuntimeError(f"safe-mode source identity mismatch: {identity_error}")
-        note = _contain_and_raise_incident(
+        note = _retired_binding_compensation_note(
+            client=client, saga=saga, binding=binding
+        ) or _contain_and_raise_incident(
             client=client,
             saga=saga,
             binding=binding,
@@ -1760,6 +1810,10 @@ def verify_terminal_compensation_side_effects(
             raise RuntimeError(
                 "terminal abort replay found a binding identity but no authoritative record"
             )
+        if _retired_binding_compensation_note(
+            client=client, saga=saga, binding=target
+        ):
+            return expected_plan_status
         _verify_containment_readback(
             client=client,
             saga=saga,
@@ -1787,6 +1841,10 @@ def verify_terminal_compensation_side_effects(
             raise RuntimeError(
                 f"terminal failed-binding identity mismatch: {identity_error}"
             )
+        if _retired_binding_compensation_note(
+            client=client, saga=saga, binding=binding
+        ):
+            return expected_plan_status
         if binding.get("status") != "failed":
             raise RuntimeError(
                 "terminal failed-binding replay expected status='failed', got "
@@ -1809,6 +1867,10 @@ def verify_terminal_compensation_side_effects(
             raise RuntimeError(
                 f"terminal rollback source identity mismatch: {identity_error}"
             )
+        if _retired_binding_compensation_note(
+            client=client, saga=saga, binding=binding
+        ):
+            return expected_plan_status
         rollback = plan.get("rollback")
         children: list[Mapping[str, Any]] = []
         if isinstance(rollback, Mapping):
@@ -1888,6 +1950,10 @@ def verify_terminal_compensation_side_effects(
             raise RuntimeError(
                 "terminal safe-mode replay requires the source RuntimeBinding"
             )
+        if _retired_binding_compensation_note(
+            client=client, saga=saga, binding=binding
+        ):
+            return expected_plan_status
         _verify_containment_readback(
             client=client,
             saga=saga,
