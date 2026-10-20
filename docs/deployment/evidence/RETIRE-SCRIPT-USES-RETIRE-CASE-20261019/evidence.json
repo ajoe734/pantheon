@@ -6,10 +6,12 @@
     "selects reserved, provisioning, succeeded, failed, compensated cases; retired cases reported as already_retired",
     "served case refused unless it exists as a succeeded case; accepted retires all others, compensated only this run's case",
     "image without retire_persona_provisioning_case -> status retire_case_unavailable, no fallback",
-    "evidence schema_version and keys (status, retire, already_retired, results, errors, case_states, refusal) unchanged; workflow steps untouched, continue-on-error kept"
+    "evidence schema_version and keys (status, retire, already_retired, results, errors, case_states, refusal) unchanged; workflow steps untouched, continue-on-error kept",
+    "_build_runtime imports the existing services.control_plane.bff.main so app_factory (sole bind) composes PersonaService/write owner before retire_case; fails loudly if not composed. No new endpoint/store/writer"
   ],
   "tests": {
-    "passed": "scripts/test_retire_dev_paper_release_cases.py (25 passed)",
-    "base_behaviour": "new tests call execute(retire_case=...) and the unavailable path, which do not exist on base"
+    "passed": "scripts/test_retire_dev_paper_release_cases.py (26 passed)",
+    "base_behaviour": "new tests call execute(retire_case=...) and the unavailable path, which do not exist on base",
+    "reopen_coverage": "test_build_runtime_composes_persona_service_via_app_factory exercises the real _build_runtime and _get_active_write_owner; fails on f459f583 (composed service None)"
   }
 }
