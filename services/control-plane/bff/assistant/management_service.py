@@ -5088,9 +5088,27 @@ def _mgmt_nl_provider_summary_context(snippets: Dict[str, Any]) -> Dict[str, Any
     projected = dict(snippets)
     fleet = snippets.get("persona_fleet")
     if isinstance(fleet, dict) and isinstance(fleet.get("items"), list):
+        summary = fleet.get("summary") if isinstance(fleet.get("summary"), dict) else {}
+        returned = len(fleet["items"])
+        total_population = summary.get("total_personas")
+        partial = isinstance(total_population, int) and total_population > returned
         projected["persona_fleet"] = {
             **fleet,
             "items": [_mgmt_nl_provider_fleet_item(item) for item in fleet["items"]],
+            # `total` is the returned sample size; the authoritative population
+            # is summary.total_personas. Health/bound counts in `summary` are
+            # computed over the returned sample only, never the whole population.
+            "population_scope": {
+                "total_population": total_population,
+                "returned_sample_count": returned,
+                "omitted_count": (total_population - returned) if partial else 0,
+                "partial": partial,
+                "sample_scoped_summary_fields": [
+                    "critical_personas", "degraded_personas", "healthy_personas",
+                    "bound_personas", "runtime_bound_personas",
+                ],
+                "whole_population_health_counts": "unavailable" if partial else "equals_sample",
+            },
         }
     return projected
 def _mgmt_nl_provider_owner_observations(observations: Any) -> Any:

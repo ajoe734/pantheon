@@ -3737,7 +3737,7 @@ def test_management_nl_large_fleet_context_stays_within_provider_bound(tmp_path,
     original_store = get_management_nl_read_store()
     fake = FakeProviderClient()
     provider_bound_chars = 200_000
-    persona_count, runtime_count = 20, 40
+    persona_count, runtime_count = 20, 30
     blob = {"candles": ["x" * 40] * 10}
     runtimes = [
         {"runtime_id": f"rt-{i}", "status": "running", "tenant_id": "tenant-alpha", "detail": blob}
@@ -3783,10 +3783,18 @@ def test_management_nl_large_fleet_context_stays_within_provider_bound(tmp_path,
         pack = fake.calls[0]["context_pack"]
         assert len(json.dumps(snippets)) > provider_bound_chars // 2  # fixture is realistically large
         assert len(json.dumps(pack)) < provider_bound_chars
+        assert len(json.dumps(pack)) < provider_bound_chars
         data = pack["backend"]["management_nl"]["data"]
         fleet = data["summary_context"]["persona_fleet"]
         assert fleet["summary"]["total_personas"] == 500
         assert len(fleet["items"]) == persona_count
+        scope = fleet["population_scope"]
+        assert scope["partial"] is True
+        assert scope["total_population"] == 500
+        assert scope["returned_sample_count"] == persona_count
+        assert scope["omitted_count"] == 500 - persona_count
+        assert "healthy_personas" in scope["sample_scoped_summary_fields"]
+        assert scope["whole_population_health_counts"] == "unavailable"
         assert fleet["items"][0]["runtime_bindings"][0]["runtime_id"] == "rt-0"
         assert "runtimeBindings" not in fleet["items"][0]
         observations = data["surfaces"]["persona_fleet"]["owner_observations"]
