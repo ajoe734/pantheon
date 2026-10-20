@@ -1,0 +1,26 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "TASK-PR-REQUIRED-CHECKS-SERVICE-SUITES-20261020",
+  "summary": "Declare Service suites as the fourth required task PR check for dev; master still requires three.",
+  "implementation": {
+    "files_modified": [
+      ".github/workflows/branch-ci.yml",
+      ".orchestrator/config.example.json",
+      ".orchestrator/config.json",
+      ".orchestrator/release-state.json",
+      "docs/operations/auto-integrator.md",
+      "scripts/git/test_auto_integrator.py",
+      "scripts/test_provision_live_supervisor_config.py"
+    ],
+    "unchanged_by_design": [
+      "scripts/git/publish_promote.py",
+      "docs/conventions/GIT_WORKFLOW.md"
+    ]
+  },
+  "verification": {
+    "command": "pytest scripts/test_provision_live_supervisor_config.py scripts/test_check_config_drift.py .orchestrator/test_common.py scripts/git/test_auto_integrator.py",
+    "result": "428 passed; 3 failures in .orchestrator/test_common.py are pre-existing and environmental (cryptography module missing in the verification venv), identical on base",
+    "note": "scripts/git/test_auto_integrator.py default fixtures gained a Service suites SUCCESS rollup entry because tests read the shipped config"
+  },
+  "deployment": "none; development tooling only. Live config picks this up via normal runtime promotion."
+}
