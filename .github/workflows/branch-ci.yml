@@ -634,36 +634,43 @@ jobs:
             python3 -c "from services.foundation.postgres_json_store import PostgresJsonOwnerStore as S; import os; S(dsn=os.environ['DATABASE_URL'], table='rankings.rankings', owner_service='rankings-svc')"
 
       - name: Run incidents service tests
+        if: ${{ !cancelled() }}
         timeout-minutes: 10
         run: |
           python3 -m pytest -q services/incidents
 
       - name: Run postmortems service tests
+        if: ${{ !cancelled() }}
         timeout-minutes: 10
         run: |
           python3 -m pytest -q services/postmortems
 
       - name: Run control_plane service tests
+        if: ${{ !cancelled() }}
         timeout-minutes: 10
         run: |
           python3 -m pytest -q services/control_plane
 
       - name: Run policy-learning service tests
+        if: ${{ !cancelled() }}
         timeout-minutes: 10
         run: |
           python3 -m pytest -q services/policy-learning
 
       - name: Run training-session service tests
+        if: ${{ !cancelled() }}
         timeout-minutes: 10
         run: |
           python3 -m pytest -q services/training-session
 
       - name: Run promotion service tests
+        if: ${{ !cancelled() }}
         timeout-minutes: 10
         run: |
           python3 -m pytest -q services/promotion
 
       - name: Run deployment service tests
+        if: ${{ !cancelled() }}
         timeout-minutes: 10
         env:
           GOV_APPROVAL_TEST_DSN: postgresql://postgres@127.0.0.1:5432/gov_approval_test
@@ -671,6 +678,7 @@ jobs:
           python3 -m pytest -q services/deployment
 
       - name: Run consultation service tests
+        if: ${{ !cancelled() }}
         timeout-minutes: 10
         env:
           DATABASE_URL: postgresql://postgres@127.0.0.1:5432/consultation_test
@@ -678,6 +686,7 @@ jobs:
           python3 -m pytest -q services/consultation
 
       - name: Run search service tests
+        if: ${{ !cancelled() }}
         timeout-minutes: 10
         run: |
           python3 -m pytest -q services/search
