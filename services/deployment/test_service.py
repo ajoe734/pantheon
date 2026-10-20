@@ -1432,3 +1432,81 @@ def test_deployment_owner_jwt_key_selection_http_matrix(client, monkeypatch):
     assert exc_mfa.value.code == "MFA_REQUIRED"
     assert exc_mfa.value.status_code == 401
 
+
+
+def _expire_seeded_approval(governance_dir: Path) -> None:
+    path = governance_dir / "approval_decisions.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["approval-001"]["expires_at"] = "2020-01-01T00:00:00Z"
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _dead_letter(test_client, event_id: str) -> None:
+    failure = test_client.post(
+        f"/api/deployment/outbox/{event_id}/failure",
+        json={
+            "consumer_name": "deployment-outbox-consumer",
+            "reason": "delivery failed",
+            "retryable": True,
+            "max_attempts": 1,
+            "retry_delay_seconds": 0,
+        },
+    )
+    assert failure.status_code == 200 and failure.json()["status"] == "dead_lettered"
+
+
+def _dead_lettered_compensation_event(test_client, plan_id: str) -> tuple[str, str]:
+    assert test_client.post("/api/deployment/plans", json=_plan_payload(plan_id=plan_id)).status_code == 201
+    dispatch = test_client.post(f"/api/deployment/plans/{plan_id}/dispatch", json={"trace_id": f"trace-{plan_id}"})
+    assert dispatch.status_code == 200, dispatch.text
+    saga_id = dispatch.json()["deployment_saga"]["saga"]["saga_id"]
+    failure = test_client.post(
+        f"/api/deployment/sagas/{saga_id}/failure",
+        json={"reason": "dispatch failed", "failed_step": "binding_requested"},
+    )
+    assert failure.status_code == 200, failure.text
+    records = test_client.get("/api/deployment/outbox").json()
+    event_id = next(
+        r["event"]["event_id"]
+        for r in records
+        if r["event"]["aggregate_id"] == saga_id
+        and r["event"]["event_type"] == "deployment.compensation.requested"
+    )
+    _dead_letter(test_client, event_id)
+    return saga_id, event_id
+
+
+def test_compensation_replay_does_not_need_unexpired_forward_approval(client):
+    test_client, governance_dir = client
+    _, event_id = _dead_lettered_compensation_event(test_client, "plan-comp-replay-001")
+    _expire_seeded_approval(governance_dir)
+    replayed = test_client.post(f"/api/deployment/outbox/{event_id}/replay", json={"reason": "recover"})
+    assert replayed.status_code == 200, replayed.text
+    assert replayed.json()["replayed"] is True
+    assert replayed.json()["event"]["status"] == "pending"
+
+
+def test_forward_replay_still_denied_when_approval_expired(client):
+    test_client, governance_dir = client
+    assert test_client.post("/api/deployment/plans", json=_plan_payload(plan_id="plan-fwd-replay-001")).status_code == 201
+    dispatch = test_client.post("/api/deployment/plans/plan-fwd-replay-001/dispatch", json={"trace_id": "t-fwd"})
+    event_id = dispatch.json()["deployment_saga"]["outbox_event"]["event"]["event_id"]
+    _dead_letter(test_client, event_id)
+    _expire_seeded_approval(governance_dir)
+    denied = test_client.post(f"/api/deployment/outbox/{event_id}/replay", json={"reason": "retry"})
+    assert denied.status_code == 400
+    assert "expired" in denied.json()["detail"]
+
+
+def test_compensation_replay_denied_on_plan_tenant_mismatch(client):
+    test_client, governance_dir = client
+    _, event_id = _dead_lettered_compensation_event(test_client, "plan-comp-replay-002")
+    _expire_seeded_approval(governance_dir)
+    module = sys.modules["services.deployment.service"]
+    plan = module.planner_service.plan_store.get("plan-comp-replay-002")
+    plan.metadata = {**(plan.metadata or {}), "tenant_id": "tenant-other"}
+    module.planner_service.plan_store.put(plan)
+    denied = test_client.post(f"/api/deployment/outbox/{event_id}/replay", json={"reason": "recover"})
+    assert denied.status_code in {400, 403, 404}
+    dlq = test_client.get("/api/deployment/outbox", params={"status": "dead_lettered"})
+    assert [r["event"]["event_id"] for r in dlq.json()] == [event_id]

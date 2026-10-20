@@ -1,0 +1,15 @@
+{
+  "task_id": "DEPLOYMENT-COMPENSATION-REPLAY-AUTH-20261020",
+  "change": "DeploymentOrchestrationService.replay_outbox_event skips the forward Registry/Governance approval re-admission only for a canonical persisted deployment.compensation.requested event whose type, owner, aggregate, saga compensation command, plan/approval/artifact identity and saga-vs-plan tenant all match; all other events still require current forward authority",
+  "tests": {
+    "command": "pytest services/deployment/test_service.py services/deployment/test_paper_scope_service.py -q",
+    "result": "44 passed",
+    "new_tests": [
+      "test_compensation_replay_does_not_need_unexpired_forward_approval",
+      "test_forward_replay_still_denied_when_approval_expired",
+      "test_compensation_replay_denied_on_plan_tenant_mismatch"
+    ]
+  },
+  "hosted_state_changed": false,
+  "operator_follow_up": "after release, replay dead-lettered compensation event for saga deployment-saga-plan-persona-paper-cca13099865ef7fbe630 via the existing outbox replay endpoint"
+}
