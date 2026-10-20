@@ -1,0 +1,119 @@
+{
+  "task_id": "PERSONA-PROVISIONING-FAILED-TERMINAL-20261020",
+  "recorded_at": "2026-10-20T19:54:00Z",
+  "hosted_incident_baseline_2026_10_20": {
+    "observed_at_window_utc": "2026-10-20T18:40:00Z/2026-10-20T18:51:00Z",
+    "bff_commit": "77bb7b33f",
+    "reconcile_interval_seconds": 5,
+    "fleet_summary": {
+      "total_personas": 92,
+      "retired": 83,
+      "draft": 4,
+      "paper_running": 2,
+      "provisioning": 0,
+      "provisioning_failed": 3
+    },
+    "churning_provisioning_failed_persona_ids": [
+      "persona-d57f6d76254c20418a9e",
+      "persona-42a98f84de33e2f56b0b",
+      "persona-070a7b24589fb129f052"
+    ],
+    "adapter_cron_rpc_rate": {
+      "endpoint": "POST /api/openclaw-adapter/gateway/cron",
+      "caller": "pantheon-operator-bff-1",
+      "count_in_10_minutes": 56,
+      "rate_per_minute": 5.6
+    },
+    "adapter_cpu": {
+      "container": "pantheon-dev-openclaw-adapter",
+      "cgroup_cpu_utilization": "~100% (~1.0 core)",
+      "uvicorn_process_cpu_pct": 0.4,
+      "openclaw_cli_child_cpu_seconds_per_rpc": 9.0
+    }
+  },
+  "local_per_pass_metrics_before_and_after": {
+    "provisioning_failed_with_cleanup_completed": {
+      "before_per_pass": {
+        "cron_rpcs": 2,
+        "cron_rpc_methods": ["cron.list", "cron.list"],
+        "persona_record_writes_when_ledger_present": 1
+      },
+      "before_across_10_passes": {
+        "cron_rpcs": 20,
+        "persona_record_writes_when_ledger_present": 10
+      },
+      "after_per_pass": {
+        "cron_rpcs": 0,
+        "cron_rpc_methods": [],
+        "persona_record_writes": 0
+      },
+      "after_across_10_passes": {
+        "cron_rpcs": 0,
+        "persona_record_writes": 0
+      }
+    },
+    "provisioning_failed_cleanup_error_backoff": {
+      "before_per_pass_during_outage": {
+        "cron_rpcs": 1,
+        "persona_record_writes": 1,
+        "backoff_applied": false
+      },
+      "after_per_pass_within_backoff_window": {
+        "cron_rpcs": 0,
+        "persona_record_writes": 0,
+        "backoff_applied": true,
+        "backoff_schedule_seconds": "min(300.0, 10.0 * (2 ** (failures - 1)))"
+      }
+    },
+    "provisioning_with_matching_schedule": {
+      "before_per_pass": {
+        "cron_rpcs": 3,
+        "cron_rpc_methods": ["cron.list", "cron.list", "cron.list"],
+        "register_persona_cron_required_calls": 1
+      },
+      "after_per_pass": {
+        "cron_rpcs": 1,
+        "cron_rpc_methods": ["cron.list"],
+        "register_persona_cron_required_calls": 0
+      }
+    }
+  },
+  "net_prod_line_budget": {
+    "budget_max_net_lines": 40,
+    "actual_net_lines": 34,
+    "files": {
+      "services/control-plane/bff/personas/service.py": {
+        "insertions": 96,
+        "deletions": 60,
+        "net": 36
+      },
+      "services/control-plane/cron/persona_cron_registrar.py": {
+        "insertions": 13,
+        "deletions": 15,
+        "net": -2
+      }
+    }
+  },
+  "validation": {
+    "base_commit_failure_proof": {
+      "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_persona_provisioning_terminal_cleanup.py -q",
+      "base_commit": "0e5a7f6c9a590bb616a183b41df3fd84fb5cf456",
+      "result_on_base": "3 failed (all 3 regression tests fail on base commit)",
+      "result_with_fix": "3 passed"
+    },
+    "regression_suites": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_persona_provisioning_terminal_cleanup.py services/control-plane/bff/tests/test_persona_provisioning_reconcile.py services/control-plane/bff/test_persona_provisioning_reconcile_orphan_skip.py services/control-plane/bff/test_loop_prod_per_001_provisioning.py services/control-plane/bff/tests/test_persona_create_owner_contract.py -q",
+        "result": "69 passed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_persona_provisioning_readback.py services/control-plane/cron/test_persona_cron_registrar.py -q",
+        "result": "127 passed, 20 subtests passed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py -q",
+        "result": "39 passed"
+      }
+    ]
+  }
+}
