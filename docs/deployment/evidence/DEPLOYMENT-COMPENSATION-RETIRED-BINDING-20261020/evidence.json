@@ -1,0 +1,11 @@
+{
+  "task_id": "DEPLOYMENT-COMPENSATION-RETIRED-BINDING-20261020",
+  "change": "execute_compensation and verify_terminal_compensation_side_effects treat an identity-matching retired RuntimeBinding (with no rollback child) as already compensated: finalize failed/compensated with no containment, rollback or incident",
+  "tests": {
+    "command": "GOV_APPROVAL_TEST_DSN=<postgres gov_approval_test> pytest services/deployment -q",
+    "result": "223 passed",
+    "new_tests_fail_on_base": true
+  },
+  "hosted_state_changed": false,
+  "operator_follow_up": "replay the two dead-lettered deployment.compensation.requested events (sagas plan-persona-paper-cca13099865ef7fbe630 and plan-persona-paper-5881b3bd909e9917a7c4) via the existing outbox replay endpoint"
+}
