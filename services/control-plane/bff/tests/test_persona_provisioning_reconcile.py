@@ -190,6 +190,10 @@ def _provisioning_read_surface_double():
         personas if dataset == "personas" else {}
     )
     store.list_authoritative_paper_runtime_monitoring_sessions = lambda: []
+    # Strategy-spec reads go to the Registry owner over HTTP (caller auth
+    # required); this harness has no Registry, so the owner read is empty.
+    store.list_strategy_specs = lambda **_kw: []
+    store.get_strategy_spec_detail = lambda *_a, **_kw: None
     return store
 
 
@@ -201,11 +205,15 @@ def mock_external_services(monkeypatch: pytest.MonkeyPatch):
     _state.mutation_port_updates.clear()
     monkeypatch.setattr(_persona_service_module, "_PERSONA_PROVISIONING_STORE", MemoryPersonaProvisioningStore())
     monkeypatch.setattr(_persona_service_module, "_PersonaOwnerHttpTransport", lambda *args, **kwargs: transport)
-    monkeypatch.setattr(_persona_service_module, "_register_persona_cron_required", _schedule_receipt)
+    monkeypatch.setattr(_persona_service_module, "_register_persona_cron_required",
+        lambda persona_id, pool_id, binding_id, **_kwargs: _schedule_receipt(
+            persona_id, pool_id, binding_id
+        ),
+    )
     monkeypatch.setattr(
         _persona_service_module,
         "_remove_persona_cron_required",
-        lambda persona_id: {
+        lambda persona_id, **_kwargs: {
             "persona_id": persona_id,
             "registered": False,
             "removed_ids": [],
@@ -435,7 +443,7 @@ def test_reconcile_refuses_to_advance_without_executable_runtime_binding_owner()
             json={"name": "Trader Missing Binding Owner"},
             headers={**HEADERS, "Idempotency-Key": "create-missing-binding-owner"},
         )
-        assert resp.status_code == 201
+        assert resp.status_code == 201, resp.text
         persona_id = resp.json()["data"]["id"]
 
         reconcile_resp = client.post(
@@ -501,7 +509,7 @@ def test_reconcile_drives_terminal_success_when_all_owners_present() -> None:
             json={"name": "Trader Terminal Success"},
             headers={**HEADERS, "Idempotency-Key": "create-trader-terminal-success"},
         )
-        assert resp.status_code == 201
+        assert resp.status_code == 201, resp.text
         data = resp.json()["data"]
         persona_id = data["id"]
 

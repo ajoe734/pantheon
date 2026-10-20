@@ -1610,6 +1610,7 @@ def _evaluate_persona_provisioning_status(
     binding: Optional[Dict[str, Any]] = None
     binding_ok = False
     binding_failed = False
+    binding_retired = False
     # Populated when the (sole) RuntimeBinding for this plan is paused with a
     # recorded market-admission pause reason, so the terminal_reason built
     # below can name the underlying cause instead of only the generic
@@ -1682,12 +1683,21 @@ def _evaluate_persona_provisioning_status(
                     for value in authoritative_bindings
                     if str(value.get("state") or value.get("status") or "").lower() == "paused"
                 ]
-                if paused_bindings:
-                    # A paused binding for this plan is a failed/mismatched
-                    # binding from provisioning's point of view; when exactly
-                    # one is paused, surface why (e.g. market_input_stale)
-                    # instead of only the generic marker below.
-                    binding_failed = True
+                retired_bindings = [
+                    value
+                    for value in authoritative_bindings
+                    if str(value.get("state") or value.get("status") or "").lower() == "retired"
+                ]
+                if retired_bindings and not paused_bindings:
+                    # Retirement already reached the RuntimeBinding: the case
+                    # is over, so hand it to retire_case instead of letting the
+                    # provisioning timeout compensate it.
+                    binding_retired = True
+                elif paused_bindings:
+                    # A market-input pause (market_input_*) means the market
+                    # data gate has not opened yet; provisioning keeps waiting.
+                    # A pause for any other reason is a failed binding.
+                    transient_pause = False
                     if len(paused_bindings) == 1:
                         paused_metadata = paused_bindings[0].get("metadata")
                         session_admission = (
@@ -1697,6 +1707,11 @@ def _evaluate_persona_provisioning_status(
                         )
                         if isinstance(session_admission, dict) and session_admission.get("reason_code"):
                             binding_pause_admission = session_admission
+                            transient_pause = str(
+                                session_admission["reason_code"]
+                            ).startswith("market_input_")
+                    if not transient_pause:
+                        binding_failed = True
                 elif binding_id and any(
                     str(value.get("binding_id") or value.get("id") or "") == binding_id
                     for value in (all_bindings or {}).values()
@@ -1718,6 +1733,14 @@ def _evaluate_persona_provisioning_status(
                 exc,
             )
             _append_persona_reconcile_diagnostic(diagnostics, "runtime_manager")
+
+    if binding_retired:
+        retire_persona_provisioning_case(
+            tenant_id,
+            persona_id,
+            reason="runtime binding retired during provisioning readback",
+        )
+        return "retired"
 
     # Require exactly one fresh, active worker joined on the complete identity.
     monitoring_sessions: List[Dict[str, Any]] = []

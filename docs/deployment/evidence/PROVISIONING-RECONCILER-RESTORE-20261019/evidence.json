@@ -1,0 +1,18 @@
+{
+  "task_id": "PROVISIONING-RECONCILER-RESTORE-20261019",
+  "scope": "source-only; no deployment dispatched, no hosted ledger touched",
+  "changes": [
+    "core/lifespan.py: lifespan starts _persona_provisioning_reconciler_loop unless PANTHEON_PERSONA_PROVISIONING_RECONCILER_ENABLED is false/0/no/off, and cancels it on shutdown",
+    "personas/service.py: readback hands a retired RuntimeBinding to retire_persona_provisioning_case (no compensation, no saga failure); a market_input_* paused binding keeps the case provisioning; other pauses still fail"
+  ],
+  "stale_tests_fixed": {
+    "file": "services/control-plane/bff/tests/test_persona_provisioning_reconcile.py",
+    "classification": "stale test doubles, not production regressions",
+    "causes": [
+      "_register_persona_cron_required / _remove_persona_cron_required fakes lacked the deadline/runtime kwargs added by PERSONA-CRON-DEADLINE-CONTRACT-20261013 (create returned 502)",
+      "read-surface double had no Registry owner read after BFF-WORKSHOP-STRATEGY-OWNER-READ-20261019 (reconcile returned 503, KeyError 'data')"
+    ],
+    "assertions_weakened": false
+  },
+  "tests": "test_persona_provisioning_readback.py, tests/test_bff_lifespan_background_work.py, tests/test_persona_provisioning_reconcile.py, test_persona_provisioning_coordinator.py: 116 passed; 5 new tests fail on base"
+}
