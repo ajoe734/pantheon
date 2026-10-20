@@ -2096,32 +2096,15 @@ class ManagementService:
             record_filter=record_filter,
         )
 
-    def get_context_telemetry_summary(
-        self, runtime_id: str, *, owner: Optional[str] = None,
+    def _build_context_telemetry_summary_result(
+        self,
+        runtime_id: str,
+        summary: Optional[Dict[str, Any]],
+        *,
+        owner: Optional[str] = None,
         record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
     ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
         observation_owner = owner or runtime_id or "management_ai_context"
-        store = self._resolve_store()
-        if store is None or not hasattr(store, "get_telemetry_summary") or not runtime_id:
-            return None, self._context_observation(
-                subject_type="telemetry",
-                subject_id=runtime_id or "telemetry",
-                status="unavailable",
-                owner=observation_owner,
-                source_kind="unavailable",
-                degradation_reason="telemetry read surface is unavailable or unconfigured.",
-            )
-        try:
-            summary = store.get_telemetry_summary(runtime_id)
-        except Exception as exc:
-            return None, self._context_observation(
-                subject_type="telemetry",
-                subject_id=runtime_id,
-                status="unavailable",
-                owner=observation_owner,
-                source_kind="unavailable",
-                degradation_reason=f"telemetry read failed: {exc}",
-            )
         if summary is not None and record_filter is not None:
             scoped = record_filter([summary])
             summary = scoped[0] if scoped else None
@@ -2158,6 +2141,133 @@ class ManagementService:
             owner=observation_owner,
             source_kind="live",
         )
+
+    def get_context_telemetry_summary(
+        self, runtime_id: str, *, owner: Optional[str] = None,
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+    ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+        observation_owner = owner or runtime_id or "management_ai_context"
+        store = self._resolve_store()
+        if store is None or not hasattr(store, "get_telemetry_summary") or not runtime_id:
+            return None, self._context_observation(
+                subject_type="telemetry",
+                subject_id=runtime_id or "telemetry",
+                status="unavailable",
+                owner=observation_owner,
+                source_kind="unavailable",
+                degradation_reason="telemetry read surface is unavailable or unconfigured.",
+            )
+        try:
+            summary = store.get_telemetry_summary(runtime_id)
+        except Exception as exc:
+            return None, self._context_observation(
+                subject_type="telemetry",
+                subject_id=runtime_id,
+                status="unavailable",
+                owner=observation_owner,
+                source_kind="unavailable",
+                degradation_reason=f"telemetry read failed: {exc}",
+            )
+        return self._build_context_telemetry_summary_result(
+            runtime_id,
+            summary,
+            owner=owner,
+            record_filter=record_filter,
+        )
+
+    def get_context_telemetry_summaries_for_runtimes(
+        self,
+        runtime_ids: Sequence[str],
+        *,
+        owner: Optional[str] = None,
+        record_filter: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+        prefetched_by_runtime_id: Optional[Dict[str, Tuple[Optional[Dict[str, Any]], Dict[str, Any]]]] = None,
+    ) -> Dict[str, Tuple[Optional[Dict[str, Any]], Dict[str, Any]]]:
+        ordered_runtime_ids: List[str] = []
+        seen_runtime_ids: Set[str] = set()
+        for raw_id in runtime_ids:
+            clean_id = str(raw_id or "").strip()
+            if clean_id and clean_id not in seen_runtime_ids:
+                seen_runtime_ids.add(clean_id)
+                ordered_runtime_ids.append(clean_id)
+        if not ordered_runtime_ids:
+            return {}
+
+        results: Dict[str, Tuple[Optional[Dict[str, Any]], Dict[str, Any]]] = {}
+        remaining_runtime_ids: List[str] = []
+        for runtime_id in ordered_runtime_ids:
+            if prefetched_by_runtime_id is not None and runtime_id in prefetched_by_runtime_id:
+                raw_summary, raw_obs = prefetched_by_runtime_id[runtime_id]
+                if raw_summary is None:
+                    obs_copy = dict(raw_obs)
+                    if owner:
+                        obs_copy["owner"] = owner
+                    results[runtime_id] = (None, obs_copy)
+                else:
+                    results[runtime_id] = self._build_context_telemetry_summary_result(
+                        runtime_id,
+                        raw_summary,
+                        owner=owner,
+                        record_filter=record_filter,
+                    )
+            else:
+                remaining_runtime_ids.append(runtime_id)
+
+        if remaining_runtime_ids:
+            store = self._resolve_store()
+            list_summaries_fn = (
+                getattr(store, "list_telemetry_summaries", None) if store is not None else None
+            )
+            if callable(list_summaries_fn):
+                try:
+                    raw_summaries = list_summaries_fn()
+                except Exception as exc:
+                    for runtime_id in remaining_runtime_ids:
+                        observation_owner = owner or runtime_id or "management_ai_context"
+                        results[runtime_id] = (
+                            None,
+                            self._context_observation(
+                                subject_type="telemetry",
+                                subject_id=runtime_id,
+                                status="unavailable",
+                                owner=observation_owner,
+                                source_kind="unavailable",
+                                degradation_reason=f"telemetry read failed: {exc}",
+                            ),
+                        )
+                else:
+                    if isinstance(raw_summaries, Mapping):
+                        summary_items: Sequence[Any] = list(raw_summaries.values())
+                    elif isinstance(raw_summaries, Sequence) and not isinstance(
+                        raw_summaries, (str, bytes, bytearray)
+                    ):
+                        summary_items = raw_summaries
+                    else:
+                        summary_items = list(raw_summaries or [])
+                    by_runtime_id: Dict[str, Dict[str, Any]] = {}
+                    for item in summary_items:
+                        if not isinstance(item, dict):
+                            continue
+                        for candidate_key in ("runtime_id", "id", "runtimeId"):
+                            candidate_id = str(item.get(candidate_key) or "").strip()
+                            if candidate_id and candidate_id not in by_runtime_id:
+                                by_runtime_id[candidate_id] = item
+                    for runtime_id in remaining_runtime_ids:
+                        results[runtime_id] = self._build_context_telemetry_summary_result(
+                            runtime_id,
+                            by_runtime_id.get(runtime_id),
+                            owner=owner,
+                            record_filter=record_filter,
+                        )
+            else:
+                for runtime_id in remaining_runtime_ids:
+                    results[runtime_id] = self.get_context_telemetry_summary(
+                        runtime_id,
+                        owner=owner,
+                        record_filter=record_filter,
+                    )
+
+        return {runtime_id: results[runtime_id] for runtime_id in ordered_runtime_ids}
 
     def get_context_bindings_for_persona(
         self,
@@ -2253,6 +2363,36 @@ class ManagementService:
             record_filter=record_filter,
         )
 
+    def _build_context_monitoring_session_result(
+        self,
+        runtime_id: str,
+        session: Optional[Dict[str, Any]],
+        *,
+        owner: Optional[str] = None,
+    ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+        observation_owner = owner or runtime_id or "management_ai_context"
+        provenance_records = self._record_provenance([session]) if isinstance(session, dict) else []
+        provenance = provenance_records[0] if provenance_records else None
+        if provenance is not None:
+            return session, self._context_observation(
+                subject_type="paper_runtime_monitoring",
+                subject_id=runtime_id,
+                status=str(provenance.get("status") or "ok"),
+                owner=str(provenance.get("owner") or observation_owner),
+                source_kind=str(provenance.get("source_kind") or "live"),
+                source_version=provenance.get("source_version"),
+                observed_at=provenance.get("observed_at"),
+                degradation_reason=provenance.get("degradation_reason"),
+                correlation_id=provenance.get("correlation_id"),
+            )
+        return session, self._context_observation(
+            subject_type="paper_runtime_monitoring",
+            subject_id=runtime_id,
+            status="ok",
+            owner=observation_owner,
+            source_kind="live",
+        )
+
     def get_context_monitoring_session(
         self, runtime_id: str, binding_id: str, *, owner: Optional[str] = None
     ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
@@ -2280,27 +2420,112 @@ class ManagementService:
                 source_kind="unavailable",
                 degradation_reason=f"paper runtime monitoring read failed: {exc}",
             )
-        provenance_records = self._record_provenance([session]) if isinstance(session, dict) else []
-        provenance = provenance_records[0] if provenance_records else None
-        if provenance is not None:
-            return session, self._context_observation(
-                subject_type="paper_runtime_monitoring",
-                subject_id=runtime_id,
-                status=str(provenance.get("status") or "ok"),
-                owner=str(provenance.get("owner") or observation_owner),
-                source_kind=str(provenance.get("source_kind") or "live"),
-                source_version=provenance.get("source_version"),
-                observed_at=provenance.get("observed_at"),
-                degradation_reason=provenance.get("degradation_reason"),
-                correlation_id=provenance.get("correlation_id"),
-            )
-        return session, self._context_observation(
-            subject_type="paper_runtime_monitoring",
-            subject_id=runtime_id,
-            status="ok",
-            owner=observation_owner,
-            source_kind="live",
+        return self._build_context_monitoring_session_result(
+            runtime_id, session, owner=owner
         )
+
+    def get_context_monitoring_sessions_for_bindings(
+        self,
+        runtime_bindings: Sequence[Dict[str, Any]],
+        *,
+        owner: Optional[str] = None,
+    ) -> Dict[Tuple[str, str], Tuple[Optional[Dict[str, Any]], Dict[str, Any]]]:
+        ordered_keys: List[Tuple[str, str]] = []
+        seen_keys: Set[Tuple[str, str]] = set()
+        for binding in runtime_bindings:
+            if not isinstance(binding, dict):
+                continue
+            runtime_id = str(binding.get("runtime_id") or binding.get("id") or "")
+            binding_id = str(
+                binding.get("runtime_binding_id")
+                or binding.get("binding_id")
+                or binding.get("id")
+                or ""
+            )
+            key = (runtime_id, binding_id)
+            if key not in seen_keys:
+                seen_keys.add(key)
+                ordered_keys.append(key)
+        if not ordered_keys:
+            return {}
+
+        store = self._resolve_store()
+        results: Dict[Tuple[str, str], Tuple[Optional[Dict[str, Any]], Dict[str, Any]]] = {}
+        list_sessions_fn = (
+            getattr(store, "list_paper_runtime_monitoring_sessions", None)
+            if store is not None
+            else None
+        )
+        if callable(list_sessions_fn):
+            try:
+                raw_sessions = list_sessions_fn()
+            except Exception as exc:
+                for runtime_id, binding_id in ordered_keys:
+                    observation_owner = owner or runtime_id or "management_ai_context"
+                    if not runtime_id:
+                        results[(runtime_id, binding_id)] = self.get_context_monitoring_session(
+                            runtime_id, binding_id, owner=owner
+                        )
+                    else:
+                        results[(runtime_id, binding_id)] = (
+                            None,
+                            self._context_observation(
+                                subject_type="paper_runtime_monitoring",
+                                subject_id=runtime_id,
+                                status="unavailable",
+                                owner=observation_owner,
+                                source_kind="unavailable",
+                                degradation_reason=f"paper runtime monitoring read failed: {exc}",
+                            ),
+                        )
+            else:
+                if isinstance(raw_sessions, Mapping):
+                    session_items: Sequence[Any] = list(raw_sessions.values())
+                elif isinstance(raw_sessions, Sequence) and not isinstance(
+                    raw_sessions, (str, bytes, bytearray)
+                ):
+                    session_items = raw_sessions
+                else:
+                    session_items = list(raw_sessions or [])
+                sessions = [
+                    dict(item)
+                    for item in session_items
+                    if isinstance(item, Mapping)
+                ]
+                for runtime_id, binding_id in ordered_keys:
+                    if not runtime_id:
+                        results[(runtime_id, binding_id)] = self.get_context_monitoring_session(
+                            runtime_id, binding_id, owner=owner
+                        )
+                        continue
+                    runtime_id_str = runtime_id.strip()
+                    binding_id_str = binding_id.strip()
+                    matched_session: Optional[Dict[str, Any]] = None
+                    for session in sessions:
+                        s_runtime_id = str(session.get("runtime_id") or "").strip()
+                        s_binding_id = str(
+                            session.get("binding_id")
+                            or session.get("runtime_binding_id")
+                            or ""
+                        ).strip()
+                        if binding_id_str and s_binding_id == binding_id_str:
+                            matched_session = session
+                            break
+                        if runtime_id_str and s_runtime_id == runtime_id_str:
+                            matched_session = session
+                            break
+                    results[(runtime_id, binding_id)] = (
+                        self._build_context_monitoring_session_result(
+                            runtime_id, matched_session, owner=owner
+                        )
+                    )
+        else:
+            for runtime_id, binding_id in ordered_keys:
+                results[(runtime_id, binding_id)] = self.get_context_monitoring_session(
+                    runtime_id, binding_id, owner=owner
+                )
+
+        return results
 
     def get_context_rollbacks(
         self, runtime_id: str, *, owner: Optional[str] = None
