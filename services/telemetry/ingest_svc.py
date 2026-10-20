@@ -2153,10 +2153,13 @@ class TelemetryIngestService:
         self,
         *,
         tenant_id: Optional[str] = None,
+        include_retired: bool = False,
     ) -> list[dict[str, Any]]:
         if self._runtime_summary_store is None:
             return []
-        summaries = self._runtime_summary_store.list(tenant_id=tenant_id)
+        summaries = self._runtime_summary_store.list(
+            tenant_id=tenant_id, include_retired=include_retired
+        )
         return self._enrich_with_committed_position_snapshots(summaries, tenant_id=tenant_id)
 
     def get_accepted_event(

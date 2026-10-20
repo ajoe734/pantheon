@@ -974,6 +974,11 @@ services:
       # to the governance service from this path.
       PANTHEON_DEPLOYMENT_API_URL: http://deployment:8095
       PANTHEON_DEPLOYMENT_SERVICE_TOKEN: ${PANTHEON_DEPLOYMENT_SERVICE_TOKEN:-runtime-manager:service}
+      # Retirement telemetry: same service-token pattern as other producers.
+      # The tenant must be one telemetry's service token is scoped to.
+      PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
+      PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}
+      PANTHEON_TELEMETRY_TENANT_ID: ${PANTHEON_TELEMETRY_TENANT_ID:-${PANTHEON_DEPLOYMENT_TENANT_ID:-${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-${PANTHEON_DEV_BFF_TENANT_ID:-default}}}}}
       # Chain tenant default through PANTHEON_TENANT_ID/PANTHEON_BFF_TENANT_ID for dev tenant match.
       PANTHEON_DEPLOYMENT_TENANT_ID: ${PANTHEON_DEPLOYMENT_TENANT_ID:-${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-${PANTHEON_DEV_BFF_TENANT_ID:-default}}}}
       PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082

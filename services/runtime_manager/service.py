@@ -37,6 +37,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Mapping, Optional
 
+from services.runtime_manager.retirement_telemetry import (
+    HttpTelemetrySender,
+    RetirementTelemetryEmitter,
+)
 from services.runtime_manager.runtime_binding import (
     RuntimeBinding,
     RuntimeBindingError,
@@ -718,15 +722,30 @@ class RuntimeManagerService:
         store_path: Optional[Path] = None,
         single_runtime_enforced: bool = True,
         ks_store_path: Optional[Path] = None,
+        retirement_telemetry_sender: Optional[Any] = None,
     ) -> None:
         self._store = RuntimeBindingStore(path=store_path)
-        self._single_runtime_enforced = single_runtime_enforced
-        self._kill_switch = KillSwitchController()
+        # Binding owner emits one owner-attributed retirement event per
+        # retired binding; sender defaults to the env-configured telemetry URL.
         # Serialize forward mutations and emergency containment through one
         # control boundary.  The lock is re-entrant because kill-switch and
         # rollback paths legitimately call deploy() as an internal sub-step.
         self._control_lock = threading.RLock()
         self._replace_lock = threading.RLock()
+        _env_sender = (
+            HttpTelemetrySender.from_env()
+            if retirement_telemetry_sender is None
+            else None
+        )
+        _sender = retirement_telemetry_sender or _env_sender
+        self._retirement_emitter = RetirementTelemetryEmitter(
+            _sender,
+            store=self._store,
+            lock=self._control_lock,
+        )
+        self._store.add_retirement_observer(self._retirement_emitter)
+        self._single_runtime_enforced = single_runtime_enforced
+        self._kill_switch = KillSwitchController()
         self._foundation_idempotency: Dict[str, Dict[str, Any]] = {}
         self._foundation_recovery_audit: List[Dict[str, Any]] = []
         # Derive kill-switch store path alongside the binding store when not supplied.
@@ -734,6 +753,17 @@ class RuntimeManagerService:
             ks_store_path = store_path.parent / "kill_switch.json"
         self._ks_store_path = ks_store_path
         self._load_ks_state()
+        if _env_sender is not None:
+            # Production wiring only: backfill retirements telemetry never
+            # acknowledged (lost during restarts, or retired before this
+            # emitter existed), then keep a bounded periodic sweep.
+            self.start_retirement_telemetry_sweep(
+                float(os.getenv("PANTHEON_RETIREMENT_TELEMETRY_SWEEP_SECONDS", "300"))
+            )
+
+    def start_retirement_telemetry_sweep(self, interval_seconds: float = 300.0) -> Any:
+        """Backfill unacknowledged retirements now, then on a bounded cadence."""
+        return self._retirement_emitter.start_background_sweep(interval_seconds)
 
     @property
     def store(self) -> RuntimeBindingStore:

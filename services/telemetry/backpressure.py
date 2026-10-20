@@ -46,6 +46,7 @@ CRITICAL_EVENT_TYPES = frozenset({
     "position_snapshot",
     "deploy_started",
     "deploy_completed",
+    "runtime_retired",
     "rollback_started",
     "rollback_completed",
     "pause_triggered",
