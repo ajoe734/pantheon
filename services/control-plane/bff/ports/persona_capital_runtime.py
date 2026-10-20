@@ -38,6 +38,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Tuple
 from starlette.exceptions import HTTPException
 
 from services.control_plane.bff.command_adapters.base import ActionUnavailableError
+from services.control_plane.bff.core.owner_reads import cached_owner_call, request_read_cache, selected_tenant
 from services.control_plane.bff.ports.lifecycle_telemetry_governance import DomainGovernancePort
 
 
@@ -109,6 +110,28 @@ class PersonaMutationPort(Protocol):
     ) -> Optional[Dict[str, Any]]: ...
 
 
+def _cached_port_records(
+    key: str,
+    port: Any,
+    store: Any,
+    attr: str,
+    provider: Optional[Callable[[], List[Dict[str, Any]]]],
+) -> Tuple[str, List[Dict[str, Any]]]:
+    def _load() -> Tuple[str, List[Dict[str, Any]]]:
+        if store is not None and callable(getattr(store, attr, None)):
+            try:
+                return "store", list(getattr(store, attr)() or [])
+            except Exception as exc:
+                return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
+        if provider is not None:
+            try:
+                return "service", [dict(r) for r in (provider() or [])]
+            except Exception as exc:
+                return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
+        return "missing", []
+    return cached_owner_call((key, id(port), selected_tenant.get()), _load)
+
+
 # ---------------------------------------------------------------------------
 # Persona Fleet Port (ACG-02-011)
 # ---------------------------------------------------------------------------
@@ -131,19 +154,7 @@ class PersonaFleetPort:
         self._records_provider = records_provider
 
     def _get_raw_records(self) -> Tuple[str, List[Dict[str, Any]]]:
-        if self._store is not None:
-            try:
-                if hasattr(self._store, "list_personas") and callable(self._store.list_personas):
-                    return "store", list(self._store.list_personas() or [])
-            except Exception as exc:
-                return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
-        if self._records_provider is not None:
-            try:
-                records = self._records_provider()
-                return "service", [dict(r) for r in (records or [])]
-            except Exception as exc:
-                return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
-        return "missing", []
+        return _cached_port_records("pcr_personas", self, self._store, "list_personas", self._records_provider)
 
     def get_surface_status(self) -> Dict[str, Any]:
         source, records = self._get_raw_records()
@@ -198,15 +209,24 @@ class PersonaFleetPort:
         clean_id = str(persona_id or "").strip()
         if not clean_id:
             return None
+        cache = request_read_cache.get()
+        if cache is not None and ("pcr_personas", id(self), selected_tenant.get()) in cache:
+            for record in self._get_raw_records()[1]:
+                if self._persona_id(record) == clean_id:
+                    return _deep_copy(record)
+            return None
         if self._store is not None and hasattr(self._store, "get_persona"):
             try:
-                found = self._store.get_persona(clean_id)
+                found = cached_owner_call(
+                    ("pcr_get_persona", id(self), clean_id, selected_tenant.get()),
+                    lambda: self._store.get_persona(clean_id),
+                )
                 return _deep_copy(found) if found is not None else None
             except Exception:
                 pass
-        for persona in self.list_personas():
-            if self._persona_id(persona) == clean_id:
-                return persona
+        for record in self._get_raw_records()[1]:
+            if self._persona_id(record) == clean_id:
+                return _deep_copy(record)
         return None
 
     def list_operational_personas(self) -> List[Dict[str, Any]]:
@@ -232,32 +252,10 @@ class CapitalPoolPort:
         self._bindings_provider = bindings_provider
 
     def _get_raw_pools(self) -> Tuple[str, List[Dict[str, Any]]]:
-        if self._store is not None:
-            try:
-                if hasattr(self._store, "list_capital_pools") and callable(self._store.list_capital_pools):
-                    return "store", list(self._store.list_capital_pools() or [])
-            except Exception as exc:
-                return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
-        if self._pools_provider is not None:
-            try:
-                return "service", [dict(r) for r in (self._pools_provider() or [])]
-            except Exception as exc:
-                return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
-        return "missing", []
+        return _cached_port_records("pcr_pools", self, self._store, "list_capital_pools", self._pools_provider)
 
     def _get_raw_bindings(self) -> Tuple[str, List[Dict[str, Any]]]:
-        if self._store is not None:
-            try:
-                if hasattr(self._store, "list_bindings") and callable(self._store.list_bindings):
-                    return "store", list(self._store.list_bindings() or [])
-            except Exception as exc:
-                return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
-        if self._bindings_provider is not None:
-            try:
-                return "service", [dict(r) for r in (self._bindings_provider() or [])]
-            except Exception as exc:
-                return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
-        return "missing", []
+        return _cached_port_records("pcr_bindings", self, self._store, "list_bindings", self._bindings_provider)
 
     def get_surface_status(self) -> Dict[str, Any]:
         pool_source, pools = self._get_raw_pools()
@@ -313,9 +311,9 @@ class CapitalPoolPort:
         clean_id = str(pool_id or "").strip()
         if not clean_id:
             return None
-        for pool in self.list_capital_pools():
+        for pool in self._get_raw_pools()[1]:
             if self._pool_id(pool) == clean_id:
-                return pool
+                return _deep_copy(pool)
         return None
 
     def list_bindings(
@@ -381,18 +379,7 @@ class DeploymentPlanPort:
         self._plans_provider = plans_provider
 
     def _get_raw_plans(self) -> Tuple[str, List[Dict[str, Any]]]:
-        if self._store is not None:
-            try:
-                if hasattr(self._store, "list_deployment_plans") and callable(self._store.list_deployment_plans):
-                    return "store", list(self._store.list_deployment_plans() or [])
-            except Exception as exc:
-                return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
-        if self._plans_provider is not None:
-            try:
-                return "service", [dict(r) for r in (self._plans_provider() or [])]
-            except Exception as exc:
-                return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
-        return "missing", []
+        return _cached_port_records("pcr_plans", self, self._store, "list_deployment_plans", self._plans_provider)
 
     def get_surface_status(self) -> Dict[str, Any]:
         source, records = self._get_raw_plans()
@@ -457,18 +444,7 @@ class RuntimePort:
         self._runtime_bindings_provider = runtime_bindings_provider
 
     def _get_raw_bindings(self) -> Tuple[str, List[Dict[str, Any]]]:
-        if self._store is not None:
-            try:
-                if hasattr(self._store, "list_runtime_bindings") and callable(self._store.list_runtime_bindings):
-                    return "store", list(self._store.list_runtime_bindings() or [])
-            except Exception as exc:
-                return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
-        if self._runtime_bindings_provider is not None:
-            try:
-                return "service", [dict(r) for r in (self._runtime_bindings_provider() or [])]
-            except Exception as exc:
-                return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
-        return "missing", []
+        return _cached_port_records("pcr_runtime_bindings", self, self._store, "list_runtime_bindings", self._runtime_bindings_provider)
 
     def get_surface_status(self) -> Dict[str, Any]:
         source, records = self._get_raw_bindings()
@@ -584,7 +560,7 @@ class RankingProjectionPort:
         if reader is None:
             return "missing", []
         try:
-            records = reader()
+            records = cached_owner_call(("pcr_reader", id(reader), selected_tenant.get()), reader)
             return "service", [dict(r) for r in (records or [])]
         except Exception as exc:
             return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])
@@ -815,7 +791,7 @@ class EvolutionProjectionPort:
         if reader is None:
             return "missing", []
         try:
-            records = reader()
+            records = cached_owner_call(("pcr_reader", id(reader), selected_tenant.get()), reader)
             return "service", [dict(r) for r in (records or [])]
         except Exception as exc:
             return ("missing", []) if _is_unconfigured(exc) else ("unavailable", [])

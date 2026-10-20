@@ -111,6 +111,10 @@ class MockOwnerServer:
                 elif self.path.startswith("/api/source-ingest/evidence/items"):
                     res = [e for e in outer.evidence_items if tenant is None or e.get("tenant_id") == tenant]
                     self.send_json(200, {"items": res})
+                elif self.path.startswith("/api/telemetry/"):
+                    self.send_json(200, {"summaries": [], "items": []})
+                elif self.path.startswith("/api/registry/strategy-specs"):
+                    self.send_json(200, [])
                 else:
                     self.send_json(404, {"error": "not found"})
 
@@ -150,9 +154,12 @@ def setup_test_env(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture
-def mock_owner():
+def mock_owner(monkeypatch: pytest.MonkeyPatch):
     server = MockOwnerServer()
     server.start()
+    owner_url = f"http://127.0.0.1:{server.port}"
+    monkeypatch.setenv("PANTHEON_TELEMETRY_API_URL", owner_url)
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", owner_url)
     yield server
     server.stop()
 
