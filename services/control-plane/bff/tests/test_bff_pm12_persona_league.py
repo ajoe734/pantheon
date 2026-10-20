@@ -504,6 +504,14 @@ def _compile_pm12_namespace(store):
 
 _ACTIVE_PM12_NS = {}
 
+
+@pytest.fixture(autouse=True)
+def _reset_current_persona_service():
+    prev = personas_service._current_persona_service.get()
+    yield
+    personas_service._current_persona_service.set(prev)
+
+
 def _fresh_client(td: str, *, fallback: bool = True, store: Optional[_Pm12LeagueTestStore] = None) -> TestClient:
     global _ACTIVE_PM12_NS
     if store is None:

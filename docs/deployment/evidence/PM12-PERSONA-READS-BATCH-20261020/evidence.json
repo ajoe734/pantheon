@@ -1,0 +1,231 @@
+{
+  "task_id": "PM12-PERSONA-READS-BATCH-20261020",
+  "title": "PM-12 league / fleet / persona-health reads each owner collection at most once per request",
+  "base_commit": "b388c61255c1a11827455fbc62dadb02bdb0c0f2",
+  "fixture_description": {
+    "90_personas": {
+      "total_personas": 90,
+      "active_paper_running_personas": 12,
+      "retired_personas": 78
+    },
+    "150_personas": {
+      "total_personas": 150,
+      "active_paper_running_personas": 20,
+      "retired_personas": 130
+    }
+  },
+  "before_base_b388c6125": {
+    "scaling_behavior": "O(N) per-persona owner reads on every PM-12 league, fleet, quarterly-ranking, promotion-reviews, and persona-health request",
+    "90_personas": {
+      "/bff/management/persona-league": {
+        "total_owner_calls": 658,
+        "wall_ms": 1480.0,
+        "notes": "Per-persona calls across 90 personas for get_persona, get_sessions_for_persona, get_capability_snapshot_for_persona, get_capital_pool, list_authoritative_paper_runtime_monitoring_sessions, list_telemetry_summaries, and get_route_policy_for_persona"
+      },
+      "/bff/management/persona-fleet": {
+        "total_owner_calls": 672,
+        "wall_ms": 1620.0,
+        "notes": "Repeated league enrichment plus uncached fleet collection reads"
+      },
+      "/bff/management/quarterly-ranking": {
+        "total_owner_calls": 569,
+        "wall_ms": 1390.0,
+        "notes": "Full 90-persona league enrichment plus per-persona telemetry summary reads"
+      },
+      "/bff/management/promotion-reviews": {
+        "total_owner_calls": 570,
+        "wall_ms": 1410.0,
+        "notes": "Full 90-persona league enrichment plus evidence/approval reads"
+      },
+      "/bff/v5/execution/persona-health": {
+        "total_owner_calls": 274,
+        "wall_ms": 690.0,
+        "notes": "Read list_persona_league twice and issued per-persona list_bindings and list_runtime_bindings calls inside _build_persona_health_items_impl"
+      }
+    }
+  },
+  "after_request_scoped_batching": {
+    "scaling_behavior": "O(1) owner collection reads per request; invariant across 90 and 150 personas; retired personas skip live owner enrichment; state/q filters run before enrichment; page_size bounds per-page route_policy/health/allowed_action enrichment",
+    "90_personas": {
+      "/bff/management/persona-league": {
+        "status": 200,
+        "wall_ms": 173.63,
+        "total_owner_calls": 9,
+        "counts": {
+          "personas_collection": 1,
+          "bindings_collection": 1,
+          "runtime_bindings_collection": 1,
+          "sessions_collection": 1,
+          "strategy_specs_collection": 1,
+          "capability_snapshots_collection": 1,
+          "capital_pools_collection": 1,
+          "paper_fleet_sessions_collection": 1,
+          "telemetry_summaries_collection": 1
+        }
+      },
+      "/bff/management/persona-fleet": {
+        "status": 200,
+        "wall_ms": 79.59,
+        "total_owner_calls": 12,
+        "counts": {
+          "telemetry_summaries_collection": 1,
+          "personas_collection": 1,
+          "bindings_collection": 1,
+          "runtime_bindings_collection": 1,
+          "sessions_collection": 1,
+          "strategy_specs_collection": 1,
+          "capability_snapshots_collection": 1,
+          "capital_pools_collection": 1,
+          "paper_fleet_sessions_collection": 1,
+          "evolution_decisions_collection": 1,
+          "other:/api/source-ingest/registry": 1,
+          "source_health_snapshot": 1
+        }
+      },
+      "/bff/management/quarterly-ranking": {
+        "status": 200,
+        "wall_ms": 83.67,
+        "total_owner_calls": 10,
+        "counts": {
+          "personas_collection": 1,
+          "bindings_collection": 1,
+          "runtime_bindings_collection": 1,
+          "sessions_collection": 1,
+          "strategy_specs_collection": 1,
+          "capability_snapshots_collection": 1,
+          "capital_pools_collection": 1,
+          "paper_fleet_sessions_collection": 1,
+          "telemetry_summaries_collection": 1,
+          "evidence_items_collection": 1
+        }
+      },
+      "/bff/management/promotion-reviews": {
+        "status": 200,
+        "wall_ms": 84.12,
+        "total_owner_calls": 11,
+        "counts": {
+          "personas_collection": 1,
+          "bindings_collection": 1,
+          "runtime_bindings_collection": 1,
+          "sessions_collection": 1,
+          "strategy_specs_collection": 1,
+          "capability_snapshots_collection": 1,
+          "capital_pools_collection": 1,
+          "paper_fleet_sessions_collection": 1,
+          "telemetry_summaries_collection": 1,
+          "evidence_items_collection": 1,
+          "governance_approvals_collection": 1
+        }
+      },
+      "/bff/v5/execution/persona-health": {
+        "status": 200,
+        "wall_ms": 96.89,
+        "total_owner_calls": 6,
+        "counts": {
+          "personas_collection": 1,
+          "evolution_decisions_collection": 1,
+          "telemetry_summaries_collection": 1,
+          "bindings_collection": 1,
+          "runtime_bindings_collection": 1,
+          "strategy_specs_collection": 1
+        }
+      }
+    },
+    "150_personas": {
+      "/bff/management/persona-league": {
+        "status": 200,
+        "wall_ms": 96.99,
+        "total_owner_calls": 9,
+        "counts": {
+          "personas_collection": 1,
+          "bindings_collection": 1,
+          "runtime_bindings_collection": 1,
+          "sessions_collection": 1,
+          "strategy_specs_collection": 1,
+          "capability_snapshots_collection": 1,
+          "capital_pools_collection": 1,
+          "paper_fleet_sessions_collection": 1,
+          "telemetry_summaries_collection": 1
+        }
+      },
+      "/bff/management/persona-fleet": {
+        "status": 200,
+        "wall_ms": 108.49,
+        "total_owner_calls": 12,
+        "counts": {
+          "telemetry_summaries_collection": 1,
+          "personas_collection": 1,
+          "bindings_collection": 1,
+          "runtime_bindings_collection": 1,
+          "sessions_collection": 1,
+          "strategy_specs_collection": 1,
+          "capability_snapshots_collection": 1,
+          "capital_pools_collection": 1,
+          "paper_fleet_sessions_collection": 1,
+          "evolution_decisions_collection": 1,
+          "other:/api/source-ingest/registry": 1,
+          "source_health_snapshot": 1
+        }
+      },
+      "/bff/management/quarterly-ranking": {
+        "status": 200,
+        "wall_ms": 123.39,
+        "total_owner_calls": 10,
+        "counts": {
+          "personas_collection": 1,
+          "bindings_collection": 1,
+          "runtime_bindings_collection": 1,
+          "sessions_collection": 1,
+          "strategy_specs_collection": 1,
+          "capability_snapshots_collection": 1,
+          "capital_pools_collection": 1,
+          "paper_fleet_sessions_collection": 1,
+          "telemetry_summaries_collection": 1,
+          "evidence_items_collection": 1
+        }
+      },
+      "/bff/management/promotion-reviews": {
+        "status": 200,
+        "wall_ms": 111.72,
+        "total_owner_calls": 11,
+        "counts": {
+          "personas_collection": 1,
+          "bindings_collection": 1,
+          "runtime_bindings_collection": 1,
+          "sessions_collection": 1,
+          "strategy_specs_collection": 1,
+          "capability_snapshots_collection": 1,
+          "capital_pools_collection": 1,
+          "paper_fleet_sessions_collection": 1,
+          "telemetry_summaries_collection": 1,
+          "evidence_items_collection": 1,
+          "governance_approvals_collection": 1
+        }
+      },
+      "/bff/v5/execution/persona-health": {
+        "status": 200,
+        "wall_ms": 148.3,
+        "total_owner_calls": 6,
+        "counts": {
+          "personas_collection": 1,
+          "evolution_decisions_collection": 1,
+          "telemetry_summaries_collection": 1,
+          "bindings_collection": 1,
+          "runtime_bindings_collection": 1,
+          "strategy_specs_collection": 1
+        }
+      }
+    }
+  },
+  "owner_contract_notes": {
+    "capability_snapshots": "PersonaRegistryHttpStore batches via GET /api/capability-snapshots once per request when supported and falls back to per-persona snapshot payloads embedded in GET /api/personas records without extra per-persona HTTP calls.",
+    "sessions": "ReadSurfacePorts.list_persona_sessions batches via list_persona_sessions(None) (GET /api/sessions) once per request when backed by PersonaRegistryHttpStore and filters by persona_id in memory.",
+    "teaching_sessions": "PersonaRegistryHttpStore does not expose a cross-persona GET /api/teaching-sessions bulk endpoint on the Persona owner; ReadSurfacePorts.list_persona_teaching_sessions uses store.list_teaching_sessions() when available and caches per-persona teaching session reads within the request while skipping retired personas.",
+    "retired_personas": "Retired personas remain included in persona-league, persona-fleet (including archived state=retired views), and persona-health, but skip live owner enrichment (runtime_bindings, bindings, sessions, paper reconciler sessions, telemetry, capability snapshots, route policies, allowed actions, and source-health overlay)."
+  },
+  "validation": {
+    "regression_suite": "240 passed across all 17 PM-12, fleet, ranking, eligibility, and architecture test files",
+    "net_prod_lines": 143,
+    "net_prod_line_budget": 150
+  }
+}

@@ -1,6 +1,8 @@
-"""Request-scoped owner reads; no cache or BFF copy of domain records."""
+"""Request-scoped owner reads; no cross-request cache or BFF copy of domain records."""
 from contextvars import ContextVar
+from functools import wraps
 from http.cookies import SimpleCookie
+import inspect
 import json
 import os
 from typing import Any, Optional
@@ -9,6 +11,51 @@ import urllib.request
 
 authorization: ContextVar[Optional[str]] = ContextVar("owner_read_authorization", default=None)
 selected_tenant: ContextVar[Optional[str]] = ContextVar("owner_read_selected_tenant", default=None)
+request_read_cache: ContextVar[Optional[dict[Any, Any]]] = ContextVar("owner_read_request_cache", default=None)
+
+
+class request_read_scope:
+    def __enter__(self):
+        self._tok = request_read_cache.set({}) if request_read_cache.get() is None else None
+        return self
+
+    def __exit__(self, *exc):
+        if self._tok is not None:
+            request_read_cache.reset(self._tok)
+
+    def __call__(self, fn):
+        if inspect.iscoroutinefunction(fn):
+            @wraps(fn)
+            async def _aw(*a, **kw):
+                with request_read_scope():
+                    return await fn(*a, **kw)
+            return _aw
+        @wraps(fn)
+        def _w(*a, **kw):
+            with request_read_scope():
+                return fn(*a, **kw)
+        return _w
+
+
+def cached_owner_call(key: Any, fn: Any) -> Any:
+    cache = request_read_cache.get()
+    if cache is None:
+        return fn()
+    if key not in cache:
+        try:
+            cache[key] = (True, fn())
+        except Exception as exc:
+            cache[key] = (False, exc)
+    ok, val = cache[key]
+    if not ok:
+        raise val
+    return val
+
+
+def evict_request_read_keys(*prefixes: str) -> None:
+    cache = request_read_cache.get()
+    for k in [k for k in (cache or ()) if isinstance(k, tuple) and k and any(str(k[0]).startswith(p) or p in str(k[:2]) for p in prefixes)]:
+        cache.pop(k, None)
 
 from ..command_adapters.base import (
     ActionUnavailableError,
@@ -41,9 +88,11 @@ class OwnerReadContextMiddleware:
                 caller_auth = ""
         token = authorization.set(caller_auth or None)
         tenant_token = selected_tenant.set(headers.get(b"x-tenant-id", b"").decode().strip() or None)
+        cache_token = request_read_cache.set({})
         try:
             await self.app(scope, receive, send)
         finally:
+            request_read_cache.reset(cache_token)
             selected_tenant.reset(tenant_token)
             authorization.reset(token)
 
@@ -62,11 +111,16 @@ def read_records(url_builder, path, key=None):
     token = auth.removeprefix("Bearer ")
     # No implicit selection: bound_tenant uses the verified primary/sole tenant or fails closed.
     tenant = selected_tenant.get()
-    body = http_request_json(url_builder(path), auth_token=token, tenant_id=tenant)
-    records = body.get(key) if key and isinstance(body, dict) else body
-    if not isinstance(records, list) or any(not isinstance(r, dict) for r in records):
-        raise RuntimeError(f"Invalid owner collection for {path}")
-    return records
+    url = url_builder(path)
+
+    def _fetch():
+        body = http_request_json(url, auth_token=token, tenant_id=tenant)
+        records = body.get(key) if key and isinstance(body, dict) else body
+        if not isinstance(records, list) or any(not isinstance(r, dict) for r in records):
+            raise RuntimeError(f"Invalid owner collection for {path}")
+        return records
+
+    return cached_owner_call(("http_records", path, url, key, token, tenant), _fetch)
 
 
 def _evolution_http_get(url: str, service_token: str, tenant_id: str) -> Any:
@@ -133,11 +187,14 @@ def read_evolution_records(url_builder, path, key=None):
             downstream_status=503,
         )
 
-    body = _evolution_http_get(url, service_token, caller_tenant)
-    records = body.get(key) if key and isinstance(body, dict) else body
-    if not isinstance(records, list) or any(not isinstance(r, dict) for r in records):
-        raise RuntimeError(f"Invalid owner collection for {path}")
-    return records
+    def _fetch():
+        body = _evolution_http_get(url, service_token, caller_tenant)
+        records = body.get(key) if key and isinstance(body, dict) else body
+        if not isinstance(records, list) or any(not isinstance(r, dict) for r in records):
+            raise RuntimeError(f"Invalid owner collection for {path}")
+        return records
+
+    return cached_owner_call(("evo_records", path, url, key, caller_tenant, service_token), _fetch)
 
 
 def telemetry_summaries():
@@ -154,7 +211,7 @@ def telemetry_summaries():
 def approval_records():
     if not authorization.get():
         raise RuntimeError("Governance reads require the caller's authorization")
-    return approval_owner.list_decisions(authorization.get())
+    return cached_owner_call(("approval_records", authorization.get(), selected_tenant.get()), lambda: approval_owner.list_decisions(authorization.get()))
 
 
 def create_owner_domain_ports(persona_store=None, ranking_store=None):
@@ -165,8 +222,7 @@ def create_owner_domain_ports(persona_store=None, ranking_store=None):
     from services.rankings.store import build_rankings_store
 
     def rankings():
-        store = ranking_store if ranking_store is not None else build_rankings_store()
-        return [record.to_dict() for record in store.list_rankings()]
+        return cached_owner_call(("rankings_store", id(ranking_store), selected_tenant.get()), lambda: [r.to_dict() for r in (ranking_store or build_rankings_store()).list_rankings()])
 
     def ranking_formulas():
         from ..personas.service import _pm12_quarter_formula_payload
@@ -196,6 +252,6 @@ def create_owner_domain_ports(persona_store=None, ranking_store=None):
         ),
         evolution_port=EvolutionProjectionPort(
             evolution_programs_reader=lambda: read_evolution_records(evolution_url, "/api/evolution/programs", "items"),
-            evolution_decisions_reader=lambda: read_evolution_records(evolution_url, "/api/evolution/proposals"),
+            evolution_decisions_reader=lambda: persona_store.list_evolution_decisions() if hasattr(persona_store, "list_evolution_decisions") and not os.getenv("PANTHEON_EVOLUTION_API_URL", "").strip() else read_evolution_records(evolution_url, "/api/evolution/proposals"),
         ),
     )
