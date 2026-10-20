@@ -311,7 +311,13 @@ class DomainIncidentPort:
                 q.append(("status", st_parts[0].lower()))
             p = dict(q)
             try:
-                incidents = [r for r in self._http_json(f"/api/incidents{('?' + urllib.parse.urlencode(p)) if p else ''}") if isinstance(r, dict)]
+                path = f"/api/incidents{('?' + urllib.parse.urlencode(p)) if p else ''}"
+                # Request-scoped only: a Cockpit pass lists incidents several times.
+                fetched = cached_owner_call(
+                    ("incidents_list", id(self), self._incidents_api_url, path, selected_tenant.get()),
+                    lambda: self._http_json(path),
+                )
+                incidents = [r for r in fetched if isinstance(r, dict)]
             except Exception:
                 return []
         if status:

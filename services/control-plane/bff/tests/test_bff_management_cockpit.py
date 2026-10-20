@@ -102,7 +102,7 @@ class _MockContextHost:
 mock_context_host = _MockContextHost()
 
 
-def _seeded_client(td: str) -> TestClient:
+def _seeded_client(td: str, service_cls: type = ManagementService) -> TestClient:
     store = create_in_memory_read_surface_ports()
     store.list_incidents = lambda **kwargs: [
         {
@@ -233,7 +233,8 @@ def _seeded_client(td: str) -> TestClient:
     }.get(dataset, "missing")
 
     app = FastAPI()
-    app.include_router(create_management_router(get_read_store=lambda: store))
+    service = service_cls(get_read_store=lambda: store)
+    app.include_router(create_management_router(get_read_store=lambda: store, service=service))
     return TestClient(app)
 
 
@@ -430,3 +431,109 @@ def test_cockpit_surface_owner_observation_preserves_provenance_fields(
     )
     assert observation[field] == value
 
+
+
+def test_cockpit_computes_operator_health_once_and_keeps_operator_home() -> None:
+    calls = []
+
+    class _SpyService(ManagementService):
+        def get_operator_health_status(self, *args, **kwargs):
+            calls.append(1)
+            return super().get_operator_health_status(*args, **kwargs)
+
+    with tempfile.TemporaryDirectory() as td:
+        response = _seeded_client(td, _SpyService).get("/bff/management/cockpit", headers=OPERATOR_HEADERS)
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert len(calls) >= 1
+    assert len(calls) == 1
+    assert data["operator_home"]["meta"]["surfaces"]["operator_home"]
+    assert data["runtime_health"]["groups"]
+
+
+def test_cockpit_contributor_exception_degrades_only_that_section() -> None:
+    class _BoomService(ManagementService):
+        def get_management_anomalies(self, *args, **kwargs):
+            raise RuntimeError("secret-token-abc")
+
+    with tempfile.TemporaryDirectory() as td:
+        response = _seeded_client(td, _BoomService).get("/bff/management/cockpit", headers=OPERATOR_HEADERS)
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert "secret-token-abc" not in response.text
+    surfaces = payload["meta"]["surfaces"]
+    assert surfaces["management_anomalies"]["status"] == "unavailable"
+    assert surfaces["management_anomalies"]["reason"] == "section_error"
+    assert payload["data"]["alerts"]["summary"]["total_active"] >= 1
+    assert payload["data"]["trading_pulse"]["summary"]["runtime_count"] == 1
+    assert surfaces["management_cockpit"].get("reason") != "read_timeout"
+
+
+@pytest.mark.parametrize(
+    "exc_name,reason",
+    [
+        ("ManagementReadTimeout", "read_timeout"),
+        ("ManagementReadSaturated", "read_capacity_saturated"),
+        ("RuntimeError", "read_error"),
+    ],
+)
+def test_cockpit_failure_reason_is_not_always_timeout(exc_name, reason) -> None:
+    from services.control_plane.bff.personas.routes import common
+
+    exc_type = getattr(common, exc_name, RuntimeError)
+
+    async def _failing_read(*_args, **_kwargs):
+        raise exc_type()
+
+    app = FastAPI()
+    app.include_router(
+        create_management_router(
+            get_read_store=lambda: create_in_memory_read_surface_ports(),
+            run_management_read=_failing_read,
+        )
+    )
+    response = TestClient(app).get("/bff/management/cockpit", headers=OPERATOR_HEADERS)
+    assert response.status_code == 200, response.text
+    assert response.json()["meta"]["surfaces"]["management_cockpit"]["reason"] == reason
+
+
+def test_incident_owner_list_is_fetched_once_per_request_and_not_across_requests() -> None:
+    import json as _json
+    from services.control_plane.bff.core.owner_reads import request_read_scope, selected_tenant
+    from services.control_plane.bff.ports.lifecycle_telemetry_governance import DomainIncidentPort
+
+    fetched = []
+
+    class _Resp:
+        def __init__(self, body):
+            self._b = _json.dumps(body).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return self._b
+
+    def _opener(req, timeout=None):
+        fetched.append(req.full_url)
+        return _Resp([{"incident_id": "inc-retired", "status": "closed"}, {"incident_id": "inc-active", "status": "open"}])
+
+    port = DomainIncidentPort(incidents_api_url="http://incidents.test", opener=_opener)
+    with request_read_scope():
+        tok = selected_tenant.set("tenant-a")
+        try:
+            for _ in range(5):
+                assert len(port.list_incidents()) == 2
+            assert [i["incident_id"] for i in port.list_incidents(status="open")] == ["inc-active"]
+            assert len(fetched) == 2  # unfiltered once, status=open once
+            selected_tenant.set("tenant-b")
+            port.list_incidents()
+            assert len(fetched) == 3
+        finally:
+            selected_tenant.reset(tok)
+    with request_read_scope():
+        port.list_incidents()
+    assert len(fetched) == 4

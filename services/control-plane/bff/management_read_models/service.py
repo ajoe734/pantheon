@@ -2946,9 +2946,14 @@ class ManagementService:
     # -----------------------------------------------------------------------
     # 3. Operator Home
     # -----------------------------------------------------------------------
-    def get_operator_home(self, snapshot_at: Optional[str] = None) -> Dict[str, Any]:
+    def get_operator_home(
+        self,
+        snapshot_at: Optional[str] = None,
+        health_payload: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         snap = snapshot_at or self._utc_now()
-        health_payload = self.get_operator_health_status(snapshot_at=snap)
+        if health_payload is None:
+            health_payload = self.get_operator_health_status(snapshot_at=snap)
         groups_by_id = {g["group_id"]: g for g in health_payload.get("groups", [])}
 
         incident_grp = groups_by_id.get("incident", {})
@@ -4242,13 +4247,29 @@ class ManagementService:
         human_inbox: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         snap = snapshot_at or self._utc_now()
-        operator_home = self.get_operator_home(snapshot_at=snap)
-        runtime_health = self.get_operator_health_status(snapshot_at=snap)
-        trading_pulse = self.get_trading_pulse(snapshot_at=snap)
+
+        def _section(name: str, surface_key: str, fn: Any) -> Dict[str, Any]:
+            # One failing contributor must not blank the healthy sections.
+            try:
+                return fn()
+            except Exception as exc:
+                log.warning("bff.cockpit section %s unavailable: %s", name, type(exc).__name__)
+                return {"meta": {"surfaces": {surface_key: {
+                    "status": "unavailable", "source": "error", "reason": "section_error",
+                }}}}
+
+        # Health is computed once; operator_home reuses it instead of recomputing.
+        runtime_health = _section("runtime_health", "health_status", lambda: self.get_operator_health_status(snapshot_at=snap))
+        operator_home = _section(
+            "operator_home", "operator_home",
+            lambda: self.get_operator_home(snapshot_at=snap, health_payload=runtime_health)
+            if "groups" in runtime_health else self.get_operator_home(snapshot_at=snap),
+        )
+        trading_pulse = _section("trading_pulse", "management_trading_pulse", lambda: self.get_trading_pulse(snapshot_at=snap))
         if human_inbox is None:
-            human_inbox = self.get_human_inbox()
-        alerts_payload = self.get_operator_alerts(snapshot_at=snap)
-        anomalies_payload = self.get_management_anomalies(snapshot_at=snap)
+            human_inbox = _section("human_inbox", "human_inbox", self.get_human_inbox)
+        alerts_payload = _section("alerts", "alerts", lambda: self.get_operator_alerts(snapshot_at=snap))
+        anomalies_payload = _section("anomalies", "management_anomalies", lambda: self.get_management_anomalies(snapshot_at=snap))
 
         alerts = {
             "items": alerts_payload.get("alerts", []),
