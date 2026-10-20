@@ -3813,7 +3813,7 @@ def test_management_nl_residual_repeated_rows_and_merged_observations_stay_withi
     original_store = get_management_nl_read_store()
     fake = FakeProviderClient()
     provider_bound_chars = 200_000
-    persona_count, runtime_count = 20, 40
+    persona_count, runtime_count = 20, 84
 
     def wide(prefix: str, i: int) -> dict:
         return {f"{prefix}_field_{n}": f"{prefix}-{i}-value-{n}-" + "v" * 24 for n in range(12)}
@@ -3827,16 +3827,26 @@ def test_management_nl_residual_repeated_rows_and_merged_observations_stay_withi
         for i in range(runtime_count)
     ]
     decisions = [{"decision_id": f"dec-{i}", "status": "pending", **wide("dec", i)} for i in range(10)]
-    ok_obs = [
-        {"subject_type": kind, "subject_id": f"rt-{i}", "status": "ok", "owner": "telemetry",
-         "source_kind": "live", "contributing_observations": [{"subject_id": f"rt-{i}", **wide("co", i)}]}
-        for i in range(runtime_count) for kind in ("telemetry", "monitoring", "rollback")
-    ]
-    bad_obs = {"subject_type": "telemetry", "subject_id": "rt-9", "status": "unavailable", "owner": "telemetry",
-               "source_kind": "unavailable", "degradation_reason": "telemetry owner down"}
+    reason = {"telemetry": "telemetry summary not found for this runtime.", "rollback": "rollback owner unavailable."}
+
+    def real_obs(kind: str, i: int) -> dict:
+        # Real ManagementService shape: owner defaults to the runtime id, so it
+        # is unique per runtime; telemetry is degraded and rollback unavailable.
+        status = {"telemetry": "degraded", "rollback": "unavailable"}.get(kind, "ok")
+        return {
+            "subject_type": kind, "subject_id": f"rt-{i}", "status": status, "owner": f"rt-{i}",
+            "source_kind": "live" if status == "ok" else "unavailable", "source_version": None,
+            "observed_at": f"2026-10-20T10:00:{i % 60:02d}Z", "freshness_seconds": None,
+            "correlation_id": f"corr-{kind}-{i}", "degradation_reason": reason.get(kind),
+            "contributing_observations": [],
+        }
+
+    ok_obs = [real_obs(kind, i) for i in range(runtime_count) for kind in ("telemetry", "monitoring", "rollback")]
+    bad_obs = {"subject_type": "bindings", "subject_id": "persona-7", "status": "unavailable", "owner": "runtime_manager",
+               "source_kind": "unavailable", "degradation_reason": "binding owner down", "contributing_observations": []}
     merged_obs = {
-        "status": "unavailable", "owner": "telemetry", "source_kind": "unavailable",
-        "degradation_reason": "telemetry owner down", "contributing_observations": [*ok_obs, bad_obs],
+        "status": "unavailable", "owner": "rt-0", "source_kind": "unavailable",
+        "degradation_reason": "; ".join(reason.values()), "contributing_observations": [*ok_obs, bad_obs],
     }
     items = [
         {
@@ -3893,11 +3903,22 @@ def test_management_nl_residual_repeated_rows_and_merged_observations_stay_withi
         for name in ("management_cockpit", "management_trading_pulse"):
             merged = data["surfaces"][name]["owner_observation"]
             assert merged["status"] == "unavailable"
-            assert merged["degradation_reason"] == "telemetry owner down"
+            assert "telemetry summary not found" in merged["degradation_reason"]
             assert merged["contributing_count"] == len(ok_obs) + 1
             contributing = merged["contributing_observations"]
-            assert any(o["status"] == "unavailable" and o["subject_id"] == "rt-9" for o in contributing)
-            assert sum(o.get("count", 0) for o in contributing) == len(ok_obs)
+            by_key = {(o["subject_type"], o["status"]): o for o in contributing}
+            for kind, status in (("telemetry", "degraded"), ("rollback", "unavailable"), ("monitoring", "ok")):
+                group = by_key[(kind, status)]
+                assert group["count"] == runtime_count
+                assert group["subject_ids"] == [f"rt-{i}" for i in range(runtime_count)]
+                assert group["owners"] == group["subject_ids"]
+            assert by_key[("telemetry", "degraded")]["degradation_reason"] == reason["telemetry"]
+            assert by_key[("rollback", "unavailable")]["source_kind"] == "unavailable"
+            assert by_key[("bindings", "unavailable")]["subject_id"] == "persona-7"
+            assert sum(o.get("count", 1) for o in contributing) == len(ok_obs) + 1
+        pf = data["surfaces"]["persona_fleet"]["owner_observations"]
+        assert sum(o.get("count", 1) for o in pf) == len(ok_obs) + 1
+        assert any(o["subject_type"] == "bindings" and o["degradation_reason"] == "binding owner down" for o in pf)
     finally:
         set_management_nl_read_store(original_store)
         bff_main._sse_buffers["ask"].clear()

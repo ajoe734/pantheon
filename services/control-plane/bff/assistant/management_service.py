@@ -5187,35 +5187,56 @@ def _mgmt_nl_provider_summary_context(snippets: Dict[str, Any]) -> Dict[str, Any
         }
     return projected
 def _mgmt_nl_provider_owner_observations(observations: Any) -> Any:
-    """Keep every non-ok observation individually (scalar fields plus a
-    contributing count); collapse repeated ok observations into counted
-    groups that keep their subject ids."""
+    """Group repeated per-subject observations (ok and non-ok alike) by
+    (subject_type, source_kind, status, degradation_reason, source_version).
+    Each group keeps status, reason, source_kind, a count, and every distinct
+    owner and subject id; null/empty fields are dropped. A singleton keeps its
+    own non-empty scalar fields. Per-subject timestamps/correlation ids of a
+    multi-subject group are named in `omitted_per_subject_fields`."""
     if not isinstance(observations, list):
         return observations
     kept: List[Any] = []
-    groups: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
+    groups: Dict[Tuple[str, ...], List[Dict[str, Any]]] = {}
     for obs in observations:
         if not isinstance(obs, dict):
             kept.append(obs)
             continue
-        contributing = obs.get("contributing_observations") or []
-        if str(obs.get("status") or "") != "ok":
-            view = _mgmt_nl_scalar_view(obs)
+        key = tuple(
+            str(obs.get(f) or "")
+            for f in ("subject_type", "source_kind", "status", "degradation_reason", "source_version")
+        )
+        groups.setdefault(key, []).append(obs)
+    per_subject = ("observed_at", "freshness_seconds", "correlation_id")
+    for key, members in groups.items():
+        if len(members) == 1:
+            view = {k: v for k, v in _mgmt_nl_scalar_view(members[0]).items() if v not in (None, "", [], {})}
             view.pop("omitted_nested_fields", None)
-            view["contributing_count"] = len(contributing)
-            view["contributing_observations"] = _mgmt_nl_scalar_views(contributing)
+            contributing = members[0].get("contributing_observations") or []
+            if contributing:
+                view["contributing_count"] = len(contributing)
+                view["contributing_observations"] = _mgmt_nl_provider_owner_observations(contributing)
             kept.append(view)
             continue
-        key = tuple(str(obs.get(f) or "") for f in ("subject_type", "owner", "source_kind", "status"))
-        group = groups.setdefault(key, {
-            "subject_type": key[0], "owner": key[1], "source_kind": key[2], "status": key[3],
-            "count": 0, "subject_ids": [],
-        })
-        group["count"] += 1
-        subject_id = str(obs.get("subject_id") or "")
-        if subject_id and subject_id not in group["subject_ids"]:
-            group["subject_ids"].append(subject_id)
-    return [*kept, *groups.values()]
+        group: Dict[str, Any] = {
+            "subject_type": key[0], "source_kind": key[1], "status": key[2],
+            "count": len(members),
+        }
+        if key[3]:
+            group["degradation_reason"] = key[3]
+        if key[4]:
+            group["source_version"] = key[4]
+        owners = list(dict.fromkeys(str(m["owner"]) for m in members if m.get("owner")))
+        if owners:
+            group["owners"] = owners
+        group["subject_ids"] = list(dict.fromkeys(str(m["subject_id"]) for m in members if m.get("subject_id")))
+        omitted = [f for f in per_subject if any(m.get(f) not in (None, "") for m in members)]
+        if omitted:
+            group["omitted_per_subject_fields"] = omitted
+        nested = sum(len(m.get("contributing_observations") or []) for m in members)
+        if nested:
+            group["contributing_count"] = nested
+        kept.append(group)
+    return kept
 def _mgmt_nl_provider_surfaces(surfaces: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(surfaces, dict):
         return surfaces
