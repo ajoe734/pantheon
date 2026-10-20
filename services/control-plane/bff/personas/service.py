@@ -1610,6 +1610,8 @@ def _evaluate_persona_provisioning_status(
     binding: Optional[Dict[str, Any]] = None
     binding_ok = False
     binding_failed = False
+    binding_retired = False
+    waiting_reason = ""
     # Populated when the (sole) RuntimeBinding for this plan is paused with a
     # recorded market-admission pause reason, so the terminal_reason built
     # below can name the underlying cause instead of only the generic
@@ -1682,12 +1684,20 @@ def _evaluate_persona_provisioning_status(
                     for value in authoritative_bindings
                     if str(value.get("state") or value.get("status") or "").lower() == "paused"
                 ]
-                if paused_bindings:
-                    # A paused binding for this plan is a failed/mismatched
-                    # binding from provisioning's point of view; when exactly
-                    # one is paused, surface why (e.g. market_input_stale)
-                    # instead of only the generic marker below.
-                    binding_failed = True
+                retired_bindings = [
+                    value
+                    for value in authoritative_bindings
+                    if str(value.get("state") or value.get("status") or "").lower() == "retired"
+                ]
+                if retired_bindings and not paused_bindings:
+                    # Retirement already reached the RuntimeBinding: the case
+                    # is over, so hand it to retire_case instead of letting the
+                    # provisioning timeout compensate it.
+                    binding_retired = True
+                elif paused_bindings:
+                    # A market-input pause (market_input_*) means the market
+                    # data gate has not opened yet; provisioning keeps waiting.
+                    # A pause for any other reason is a failed binding.
                     if len(paused_bindings) == 1:
                         paused_metadata = paused_bindings[0].get("metadata")
                         session_admission = (
@@ -1697,6 +1707,11 @@ def _evaluate_persona_provisioning_status(
                         )
                         if isinstance(session_admission, dict) and session_admission.get("reason_code"):
                             binding_pause_admission = session_admission
+                            reason_code = str(session_admission["reason_code"]).strip()
+                            if reason_code.startswith("market_input_"):
+                                waiting_reason = reason_code
+                    if not waiting_reason:
+                        binding_failed = True
                 elif binding_id and any(
                     str(value.get("binding_id") or value.get("id") or "") == binding_id
                     for value in (all_bindings or {}).values()
@@ -1718,6 +1733,14 @@ def _evaluate_persona_provisioning_status(
                 exc,
             )
             _append_persona_reconcile_diagnostic(diagnostics, "runtime_manager")
+
+    if binding_retired:
+        retire_persona_provisioning_case(
+            tenant_id,
+            persona_id,
+            reason="runtime binding retired during provisioning readback",
+        )
+        return "retired"
 
     # Require exactly one fresh, active worker joined on the complete identity.
     monitoring_sessions: List[Dict[str, Any]] = []
@@ -1877,11 +1900,37 @@ def _evaluate_persona_provisioning_status(
 
     # A timed-out attempt is terminal even if stale evidence happens to appear
     # later; recovery must be an explicit retry that acquires the durable lease.
+    # Measure from the later of provisioning_readback_started_at and the
+    # authoritative RuntimeBinding's session_admission.resumed_at so a long
+    # market_input_* pause does not immediately time out on the first readback
+    # after resume before the restarted worker sends its first heartbeat.
     is_timeout = False
     readback_started_at = metadata.get("provisioning_readback_started_at")
-    if readback_started_at:
+    if readback_started_at and not waiting_reason:
         try:
             started_at_dt = _parse_rfc3339(readback_started_at)
+            if (
+                started_at_dt is not None
+                and binding_ok
+                and isinstance(binding, Mapping)
+            ):
+                binding_meta = binding.get("metadata")
+                session_admission = (
+                    binding_meta.get("session_admission")
+                    if isinstance(binding_meta, Mapping)
+                    else None
+                )
+                resumed_at_dt = (
+                    _parse_rfc3339(session_admission.get("resumed_at"))
+                    if isinstance(session_admission, Mapping)
+                    else None
+                )
+                if (
+                    resumed_at_dt is not None
+                    and resumed_at_dt.tzinfo is not None
+                    and resumed_at_dt > started_at_dt
+                ):
+                    started_at_dt = resumed_at_dt
             timeout_seconds = max(
                 1,
                 int(os.getenv("PANTHEON_PERSONA_PROVISIONING_TIMEOUT_SECONDS", "600")),
@@ -1945,6 +1994,11 @@ def _evaluate_persona_provisioning_status(
     elif new_state == "paper_running":
         metadata_updates["paper_runtime_state"] = "running"
         metadata_updates.pop("provisioning_failure_reason", None)
+    if new_state == "provisioning" and waiting_reason:
+        if metadata.get("provisioning_waiting_reason") != waiting_reason:
+            metadata_updates["provisioning_waiting_reason"] = waiting_reason
+    elif metadata.get("provisioning_waiting_reason") is not None:
+        metadata_updates["provisioning_waiting_reason"] = None
 
     # The durable ledger is the release barrier for terminal Persona state.
     # If its lease is busy or storage is unavailable, leave the Persona in
@@ -4380,6 +4434,8 @@ def _persona_provisioning_authoritative_meta(raw: Mapping[str, Any]) -> Dict[str
         "available": bool(readback),
         "observed_at": readback.get("observed_at"),
     }
+    if metadata.get("provisioning_waiting_reason"):
+        result["provisioning_waiting_reason"] = metadata["provisioning_waiting_reason"]
     if runtime_binding:
         result["runtime_binding"] = {
             "runtime_binding_id": (
