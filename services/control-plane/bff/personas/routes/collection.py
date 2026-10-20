@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Body, Header, Query
 
 from services.control_plane.bff.models import ErrorCode
+from services.control_plane.bff.ports.read_surface_ports import PaperReconcilerUnavailableError
 from ..service import (
     PersonaProvisioningCoordinationError,
     ProvisioningConflict,
@@ -141,7 +142,7 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.get("/bff/personas")
-    async def bff_list_personas(
+    def bff_list_personas(
         state: Optional[str] = None,
         archetype: Optional[str] = None,
         page_token: Optional[str] = None,
@@ -167,7 +168,7 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
         filtered_total = len(raw_personas)
         catalog_default_total = len(directory.catalog_defaults_by_id)
         page_raw, next_page_token = _page_slice(raw_personas, page_token, page_size)
-        page_items = await asyncio.to_thread(_project_persona_list_records, page_raw)
+        page_items = _project_persona_list_records(page_raw)
         return {
             "data": page_items,
             "items": page_items,
@@ -417,16 +418,24 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
         _require_read_role(identity)
         tenant_payload = _bff_me_tenant_payload(identity, requested_tenant=None)
         tenant_id = str(tenant_payload.get("id") or "tenant-default")
-        return _persona_fleet_slim_list_payload(
-            tenant_id=tenant_id,
-            snapshot_at=utc_now(),
-            state=state,
-            health=health,
-            deployment_stage=deployment_stage,
-            market_scope=market_scope,
-            q=q,
-            page_token=page_token,
-            page_size=page_size,
-        )
+        try:
+            return _persona_fleet_slim_list_payload(
+                tenant_id=tenant_id,
+                snapshot_at=utc_now(),
+                state=state,
+                health=health,
+                deployment_stage=deployment_stage,
+                market_scope=market_scope,
+                q=q,
+                page_token=page_token,
+                page_size=page_size,
+            )
+        except PaperReconcilerUnavailableError as exc:
+            raise _bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Paper fleet reconciler unavailable",
+                str(exc),
+            ) from exc
 
     return router

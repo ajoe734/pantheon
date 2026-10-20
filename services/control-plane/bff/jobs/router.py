@@ -128,7 +128,7 @@ def create_jobs_router(
         )
 
     @router.get("/bff/jobs")
-    async def list_jobs(
+    def list_jobs(
         status: Optional[str] = None,
         job_type: Optional[str] = None,
         page_token: Optional[str] = None,

@@ -1105,7 +1105,7 @@ def create_runtime_router(
         return {"data": data, "meta": meta}
 
     @router.get("/bff/runtimes")
-    async def bff_list_runtimes(
+    def bff_list_runtimes(
         status: Optional[str] = None,
         deployment_stage: Optional[str] = None,
         page_token: Optional[str] = None,
@@ -1198,7 +1198,7 @@ def create_runtime_router(
 
 
     @router.get("/bff/v5/execution/persona-health")
-    async def bff_v5_execution_persona_health(
+    def bff_v5_execution_persona_health(
         authorization: Optional[str] = Header(default=None),
     ):
         """BFF BFF-B2-006: v5 execution persona-health list."""

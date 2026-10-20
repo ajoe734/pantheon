@@ -305,7 +305,9 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
                 status_code=502,
             ) from exc
 
-        refreshed_rows = _pm12_persona_league_rows(q=persona_id, tenant_id=caller_tenant)
+        refreshed_rows = await asyncio.to_thread(
+            _pm12_persona_league_rows, q=persona_id, tenant_id=caller_tenant
+        )
         refreshed_matches = [
             _pm12_persona_league_ranking_item(row)
             for row in refreshed_rows
