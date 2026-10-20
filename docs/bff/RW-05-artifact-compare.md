@@ -433,8 +433,13 @@ Added by BFF-RESEARCH-ARTIFACT-OWNER-READ-20261020. With no injected fixture
 dict, `DefaultResearchKnowledgeSourcePort` reads the existing Research owner
 (`GET /api/research/artifacts`, `GET /api/research/artifacts/{id}`; one
 request per list/detail, caller `Authorization` + verified `X-Tenant-Id`
-forwarded, owner filters by artifact → run → task tenant and fails closed on
-unknown ownership; cross-tenant detail is a 404).
+forwarded). The owner endpoints authenticate the bearer through the shared
+service verifier (`services.deployment.auth.authenticate_tenant`, prefix
+`RESEARCH`): no/invalid bearer → 401, missing `X-Tenant-Id` → 400, tenant not in
+a verified token's tenant claims → 403. `X-Tenant-Id` alone is never identity.
+The owner then filters by artifact → run → task tenant; outputs whose tenant
+cannot be resolved are never visible to any caller (no orphan view), and
+cross-tenant detail is a 404.
 
 A saved run output is **not** a sealed/versioned RW-05 record. Differences
 from the versioned DTO, all explicit rather than invented:

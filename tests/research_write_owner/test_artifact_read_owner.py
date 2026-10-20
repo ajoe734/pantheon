@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
 
 import pytest
@@ -18,9 +20,25 @@ from services.research import main as research_main
 from services.research.store import ResearchOrchestratorStore
 
 
+_SECRET = "s3cret-owner-test-key-0123456789abcdef"
+
+
 def _jwt(tenant: str) -> str:
-    seg = lambda d: base64.urlsafe_b64encode(json.dumps(d).encode()).decode().rstrip("=")
-    return f"Bearer {seg({'alg': 'none'})}.{seg({'tenant_id': tenant, 'sub': 'u1'})}.sig"
+    return _hs256(tenant, _SECRET)
+
+
+@pytest.fixture(autouse=True)
+def _owner_verifier(monkeypatch):
+    """The owner verifies the BFF-forwarded caller bearer with the shared service verifier (no anonymous path)."""
+    monkeypatch.setenv("PANTHEON_RESEARCH_JWT_SECRET", _SECRET)
+
+
+def _hs256(tenant: str, secret: str) -> str:
+    seg = lambda b: base64.urlsafe_b64encode(b).decode().rstrip("=")
+    head = seg(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
+    body = seg(json.dumps({"sub": "u1", "roles": ["operator"], "tenant_id": tenant}).encode())
+    sig = seg(hmac.new(secret.encode(), f"{head}.{body}".encode(), hashlib.sha256).digest())
+    return f"Bearer {head}.{body}.{sig}"
 
 
 @pytest.fixture()
@@ -45,19 +63,43 @@ def owner(tmp_path, monkeypatch):
     return TestClient(research_main.app)
 
 
+def _h(tenant):
+    return {"Authorization": _jwt(tenant), "X-Tenant-Id": tenant}
+
+
 def test_owner_lists_only_caller_tenant_and_omits_payload(owner):
-    rows = owner.get("/api/research/artifacts", headers={"X-Tenant-Id": "t-a"}).json()
+    rows = owner.get("/api/research/artifacts", headers=_h("t-a")).json()
     assert [r["artifact_id"] for r in rows] == ["rart-1"]
     assert rows[0]["run"]["receipt_id"] == "rcpt-1" and rows[0]["tenant_id"] == "t-a"
     assert "payload" not in rows[0]
-    assert owner.get("/api/research/artifacts", headers={"X-Tenant-Id": "t-zzz"}).json() == []
+    assert owner.get("/api/research/artifacts", headers=_h("t-zzz")).json() == []
 
 
 def test_owner_detail_denies_cross_tenant_and_missing(owner):
-    assert owner.get("/api/research/artifacts/rart-1", headers={"X-Tenant-Id": "t-a"}).json()["run"]["run_id"] == "rrun-1"
-    assert owner.get("/api/research/artifacts/rart-1", headers={"X-Tenant-Id": "t-b"}).status_code == 404
-    assert owner.get("/api/research/artifacts/rart-b", headers={"X-Tenant-Id": "t-a"}).status_code == 404
-    assert owner.get("/api/research/artifacts/nope", headers={"X-Tenant-Id": "t-a"}).status_code == 404
+    assert owner.get("/api/research/artifacts/rart-1", headers=_h("t-a")).json()["run"]["run_id"] == "rrun-1"
+    assert owner.get("/api/research/artifacts/rart-1", headers=_h("t-b")).status_code == 404
+    assert owner.get("/api/research/artifacts/rart-b", headers=_h("t-a")).status_code == 404
+    assert owner.get("/api/research/artifacts/nope", headers=_h("t-a")).status_code == 404
+
+
+def test_owner_denies_anonymous_and_tenantless_reads(owner):
+    for path in ("/api/research/artifacts", "/api/research/artifacts/rart-1", "/api/research/artifacts/rart-orphan"):
+        assert owner.get(path).status_code == 401
+        assert owner.get(path, headers={"X-Tenant-Id": "t-a"}).status_code == 401  # header alone is not identity
+        assert owner.get(path, headers={"Authorization": _jwt("t-a")}).status_code == 400  # no tenant: never orphan view
+    # authenticated caller still cannot see unresolved-tenant output
+    assert owner.get("/api/research/artifacts/rart-orphan", headers=_h("t-a")).status_code == 404
+    assert all(r["artifact_id"] != "rart-orphan" for r in owner.get("/api/research/artifacts", headers=_h("t-a")).json())
+
+
+def test_owner_denies_signed_token_tenant_claim_mismatch(owner):
+    tok = _jwt("t-a")
+    ok = owner.get("/api/research/artifacts", headers={"Authorization": tok, "X-Tenant-Id": "t-a"})
+    assert ok.status_code == 200 and [r["artifact_id"] for r in ok.json()] == ["rart-1"]
+    bad = owner.get("/api/research/artifacts", headers={"Authorization": tok, "X-Tenant-Id": "t-b"})
+    assert bad.status_code == 403
+    forged = _hs256("t-a", "wrong-key-wrong-key-wrong-key-0000")
+    assert owner.get("/api/research/artifacts", headers={"Authorization": forged, "X-Tenant-Id": "t-a"}).status_code == 401
 
 
 class _CountingOwner:
