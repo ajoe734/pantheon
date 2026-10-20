@@ -15,6 +15,7 @@ except ImportError:  # pragma: no cover
             raise RuntimeError("Source action policy is unavailable")
 
 from services.control_plane.bff.source_management_client import SourceManagementClient, SourceManagementClientError
+from services.source_ingestion.source_management_models import assert_no_raw_secrets
 from .contracts import (
     ActionCommandRequest,
     ChangeScheduleRequest,
@@ -62,20 +63,6 @@ def redact_sensitive_values(obj: Any) -> Any:
     elif isinstance(obj, tuple):
         return tuple(redact_sensitive_values(item) for item in obj)
     return obj
-
-
-def assert_no_raw_secrets(payload: Mapping[str, Any], path: str = "") -> None:
-    """Check that no inline secret values are present."""
-    for k, v in payload.items():
-        curr_path = f"{path}.{k}" if path else str(k)
-        lower_k = str(k).lower()
-        if any(kw in lower_k for kw in _SECRET_KEYWORDS):
-            if isinstance(v, str) and not (v.startswith("env://") or v.startswith("vault://") or v.startswith("ref://") or v == ""):
-                raise ValueError(
-                    f"Raw secret material detected at {curr_path}: inline secrets are strictly forbidden; use secret_ref_id"
-                )
-        if isinstance(v, Mapping):
-            assert_no_raw_secrets(v, curr_path)
 
 
 def _default_require_operator_role(identity: Any) -> None:

@@ -1,0 +1,18 @@
+{
+  "task_id": "PROVISIONING-RECONCILER-RESTORE-20261019",
+  "scope": "source-only; no deployment dispatched, no hosted ledger touched",
+  "changes": [
+    "core/lifespan.py: lifespan starts _persona_provisioning_reconciler_loop unless PANTHEON_PERSONA_PROVISIONING_RECONCILER_ENABLED is false/0/no/off, and cancels it on shutdown",
+    "personas/service.py: readback hands a retired RuntimeBinding to retire_persona_provisioning_case (no compensation, no saga failure); a market_input_* paused binding keeps the case provisioning without triggering provisioning_timeout and records provisioning_waiting_reason=<reason_code> on persona/authoritative readback metadata; timeout clock measures from the later of provisioning_readback_started_at and the authoritative RuntimeBinding's metadata.session_admission.resumed_at (ignoring a resumed_at older than provisioning_readback_started_at); operator pauses and non-progress cases still fail on timeout"
+  ],
+  "stale_tests_fixed": {
+    "file": "services/control-plane/bff/tests/test_persona_provisioning_reconcile.py",
+    "classification": "stale test doubles, not production regressions",
+    "causes": [
+      "_register_persona_cron_required / _remove_persona_cron_required fakes lacked the deadline/runtime kwargs added by PERSONA-CRON-DEADLINE-CONTRACT-20261013 (create returned 502)",
+      "read-surface double had no Registry owner read after BFF-WORKSHOP-STRATEGY-OWNER-READ-20261019 (reconcile returned 503, KeyError 'data')"
+    ],
+    "assertions_weakened": false
+  },
+  "tests": "test_persona_provisioning_readback.py (market_input_* pause older than timeout stays provisioning with provisioning_waiting_reason, resumed 10s ago after long wait stays provisioning before first heartbeat, resumed older than timeout with no progress fails with provisioning_timeout, operator pause/no-progress older than timeout fails, retired binding hands to retire_case), tests/test_persona_provisioning_reconcile.py (includes lifespan tests), test_persona_provisioning_coordinator.py passed; 8 new/updated tests fail on base"
+}

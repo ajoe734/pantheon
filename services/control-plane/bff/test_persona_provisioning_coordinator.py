@@ -2090,3 +2090,331 @@ def test_transition_legacy_persona_rejects_pool_currency_mismatching_target_mark
         coordinator.transition_legacy_persona_market(result, market="TW")
 
     assert ("registry", f"/api/registry/strategy-artifacts/{ids.strategy_artifact_id}-rev1") not in transport.objects
+
+
+# --- case retirement (PROVISIONING-CASE-RETIRE-20261019) ---
+
+
+class RetireOwners:
+    """Owner routes exercised by ``retire_case`` with real readback semantics."""
+
+    def __init__(self, record: ProvisioningRecord, *, saga: dict[str, Any] | None,
+                 pcb_status: str | None = "active", pool_status: str | None = "active",
+                 binding_status: str = "retired") -> None:
+        ids = deterministic_provisioning_ids(record)
+        self.ids = ids
+        self.record = record
+        self.saga = saga
+        self.pcb_status = pcb_status
+        self.pool_status = pool_status
+        self.binding_status = binding_status
+        self.persona_status = "active"
+        self.cron_registered = True
+        self.fail_once: set[str] = set()
+        self.calls: list[tuple[str, str, str]] = []
+        self.safe_mode_writes = 0
+        if saga is not None:
+            saga.setdefault("saga_id", ids.deployment_saga_id)
+            saga.setdefault("plan_id", ids.deployment_plan_id)
+
+    def _path(self, suffix: str) -> str:
+        return suffix
+
+    def get(self, owner: str, path: str):
+        saga_path = f"/api/deployment/sagas/{self.ids.deployment_saga_id}"
+        if path == saga_path:
+            return deepcopy(self.saga)
+        if path == f"/api/bindings/{self.ids.persona_capital_binding_id}":
+            if self.pcb_status is None:
+                return None
+            return {
+                "binding_id": self.ids.persona_capital_binding_id,
+                "persona_id": self.record.persona_id,
+                "capital_pool_id": self.ids.capital_pool_id,
+                "role": "paper_owner",
+                "allowed_deployment_scope": "paper",
+                "status": self.pcb_status,
+            }
+        if path == f"/api/capital-pools/{self.ids.capital_pool_id}":
+            if self.pool_status is None:
+                return None
+            return {"pool_id": self.ids.capital_pool_id, "status": self.pool_status}
+        raise AssertionError(f"unexpected GET {owner} {path}")
+
+    def post(self, owner: str, path: str, payload: Mapping[str, Any]):
+        self.calls.append(("POST", owner, path))
+        if path.endswith("/failure"):
+            self.saga["status"] = "compensating"
+            self.saga["current_step"] = "compensation_requested"
+        elif path.endswith("/retire"):
+            self.saga["status"] = "retiring"
+            self.saga["current_step"] = "retirement_requested"
+        else:
+            raise AssertionError(path)
+        return {}
+
+    def patch(self, owner: str, path: str, payload: Mapping[str, Any]):
+        self.calls.append(("PATCH", owner, path))
+        if path in self.fail_once:
+            self.fail_once.remove(path)
+            raise ConnectionError(f"owner rejected {path}")
+        if "safe-mode" in path:
+            self.safe_mode_writes += 1
+        if path.startswith("/api/bindings/"):
+            assert payload["status"] == "revoked"
+            self.pcb_status = "revoked"
+        elif path.startswith("/api/capital-pools/"):
+            assert payload["status"] == "archived"
+            assert payload["actor_role"] == "capital.admin"
+            self.pool_status = "archived"
+        else:
+            raise AssertionError(path)
+        return {}
+
+    # injected single-owner collaborators
+    def remove_cron(self, persona_id: str):
+        assert persona_id == self.record.persona_id
+        if "cron" in self.fail_once:
+            self.fail_once.remove("cron")
+            raise RuntimeError("cron owner unavailable")
+        self.cron_registered = False
+        return {"registered": False}
+
+    def bindings(self, plan_id: str, pool_id: str):
+        assert (plan_id, pool_id) == (self.ids.deployment_plan_id, self.ids.capital_pool_id)
+        return [{"binding_id": "rb-1", "status": self.binding_status}]
+
+    def archive(self, persona_id: str):
+        self.persona_status = "archived"
+        return {"persona_id": persona_id, "status": self.persona_status}
+
+
+def _retire_coordinator(store, owners: RetireOwners, lease: str = "retire-worker"):
+    return PersonaProvisioningCoordinator(
+        store=store,
+        transport=owners,
+        schedule_registrar=lambda *_a: {},
+        lease_owner=lease,
+        schedule_remover=owners.remove_cron,
+        runtime_binding_reader=owners.bindings,
+        persona_archiver=owners.archive,
+    )
+
+
+def _seed_state(store, record, *, state, current_step="x", error=None, compensation=None):
+    active = store.acquire(record.tenant_id, record.idempotency_key,
+                           lease_owner="seed", lease_seconds=60)
+    active.state = state
+    active.current_step = current_step
+    active.error = error
+    active.compensation = compensation
+    active = store.checkpoint(active, lease_owner="seed", lease_seconds=60)
+    return store.release(active, lease_owner="seed", lease_seconds=60)
+
+
+def test_retire_case_succeeded_case_retires_every_owner_and_marks_ledger_retired() -> None:
+    store, record = _record_and_store()
+    _seed_state(store, record, state="succeeded")
+    owners = RetireOwners(record, saga={"status": "completed", "current_step": "runtime_active"})
+    coordinator = _retire_coordinator(store, owners)
+
+    first = coordinator.retire_case(record, reason="release r1")
+    # Saga retire is asynchronous: first pass proves the request, stays pending.
+    assert first.state == "succeeded"
+    assert first.references["retirement"]["status"] == "pending"
+    assert first.references["retirement"]["pending_step"] == "deployment_saga"
+    assert owners.cron_registered is False
+    assert owners.pcb_status == "active" and owners.pool_status == "active"
+
+    owners.saga["status"] = "retired"
+    done = coordinator.retire_case(record, reason="other reason ignored on replay")
+
+    assert done.state == "retired"
+    assert done.current_step == "retired"
+    assert done.references["retirement"]["reason"] == "release r1"
+    assert owners.pcb_status == "revoked"
+    assert owners.pool_status == "archived"
+    assert owners.persona_status == "archived"
+    assert owners.safe_mode_writes == 0
+    assert all("registry" != c[1] and "governance" != c[1] for c in owners.calls)
+    for step in ("first_evaluation_schedule", "deployment_saga", "runtime_bindings",
+                 "persona_capital_binding", "capital_pool", "persona"):
+        assert step in done.references["retirement"]
+
+    # retired is terminal: acquire never reopens it and replay is a no-op.
+    calls = list(owners.calls)
+    again = coordinator.retire_case(record)
+    assert again.state == "retired"
+    assert owners.calls == calls
+    reacquired = store.acquire(record.tenant_id, record.idempotency_key,
+                               lease_owner="x", lease_seconds=5)
+    assert reacquired.state == "retired"
+
+
+def test_retire_case_provisioning_stuck_at_schedule_registered_without_saga_runtime() -> None:
+    store, record = _record_and_store()
+    _seed_state(store, record, state="provisioning", current_step="schedule_registered_readback")
+    owners = RetireOwners(record, saga={"status": "awaiting_runtime_load",
+                                        "current_step": "runtime_load_requested"})
+    owners.binding_status = "pending"
+    coordinator = _retire_coordinator(store, owners)
+
+    first = coordinator.retire_case(record)
+    assert first.state == "provisioning"
+    assert ("POST", "deployment",
+            f"/api/deployment/sagas/{owners.ids.deployment_saga_id}/failure") in owners.calls
+    assert first.references["retirement"]["pending_step"] == "deployment_saga"
+
+    # Compensation finishes (saga failed + compensated) and the binding is failed.
+    owners.saga.update(status="failed", current_step="compensated",
+                       compensation={"command_type": "abort_plan"})
+    owners.binding_status = "failed"
+    coordinator.retire_case(record)
+    assert owners.saga["status"] == "retiring"  # /retire requested once compensated
+    owners.saga["status"] = "retired"
+    done = coordinator.retire_case(record)
+
+    assert done.state == "retired"
+
+
+def test_retire_case_failed_and_compensated_saga_is_retired_not_failed_inactive() -> None:
+    store, record = _record_and_store()
+    _seed_state(store, record, state="compensated",
+                error={"failed_step": "schedule_registration"},
+                compensation={"status": "completed"})
+    owners = RetireOwners(
+        record,
+        saga={"status": "failed", "current_step": "compensated",
+              "compensation": {"command_type": "request_rollback"}},
+        pcb_status="suspended",
+    )
+    coordinator = _retire_coordinator(store, owners)
+    coordinator.retire_case(record)
+    assert owners.saga["status"] == "retiring"
+    owners.saga["status"] = "retired"
+    done = coordinator.retire_case(record)
+    assert done.state == "retired"
+    assert owners.pcb_status == "revoked"
+
+
+def _failed_uncompensated_case():
+    store, record = _record_and_store()
+    _seed_state(store, record, state="failed", current_step="schedule_registration_failed",
+                error={"failed_step": "schedule_registration", "terminal_reason": "boom"},
+                compensation={"status": "failed",
+                              "terminal_reason": "deployment compensation did not reach "
+                                                 "a recognized authoritative state"})
+    return store, record
+
+
+def test_retire_case_failed_case_with_already_retired_saga_converges_without_posts() -> None:
+    store, record = _failed_uncompensated_case()
+    owners = RetireOwners(
+        record,
+        saga={"status": "retired", "current_step": "retired"},
+        pcb_status="suspended",
+    )
+    done = _retire_coordinator(store, owners).retire_case(record)
+    assert done.state == "retired"
+    assert done.current_step == "retired"
+    assert owners.pcb_status == "revoked"
+    assert owners.pool_status == "archived"
+    assert owners.persona_status == "archived"
+    assert not any(c[0] == "POST" for c in owners.calls)
+
+
+def test_retire_case_failed_case_with_retiring_saga_stays_pending_without_posts() -> None:
+    store, record = _failed_uncompensated_case()
+    owners = RetireOwners(
+        record,
+        saga={"status": "retiring", "current_step": "retirement_requested"},
+        pcb_status="suspended",
+    )
+    pending = _retire_coordinator(store, owners).retire_case(record)
+    assert pending.state != "retired"
+    assert pending.references["retirement"]["status"] == "pending"
+    assert not any(c[0] == "POST" for c in owners.calls)
+
+
+def test_retire_case_failed_inactive_saga_is_terminal_and_never_retire_posted() -> None:
+    store, record = _record_and_store()
+    _seed_state(store, record, state="compensated", compensation={"status": "completed"})
+    owners = RetireOwners(
+        record,
+        saga={"status": "failed", "current_step": "compensated",
+              "compensation": {"command_type": "mark_binding_failed_inactive"}},
+        binding_status="failed_inactive",
+    )
+    done = _retire_coordinator(store, owners).retire_case(record)
+    assert done.state == "retired"
+    assert not any(c[2].endswith("/retire") for c in owners.calls)
+
+
+def test_retire_case_replay_after_midway_failure_continues_from_failed_step() -> None:
+    store, record = _record_and_store()
+    _seed_state(store, record, state="succeeded")
+    owners = RetireOwners(record, saga={"status": "retired", "current_step": "retired"})
+    pool_path = f"/api/capital-pools/{owners.ids.capital_pool_id}/status"
+    owners.fail_once.add(pool_path)
+    coordinator = _retire_coordinator(store, owners)
+
+    first = coordinator.retire_case(record)
+    assert first.state == "succeeded"
+    assert first.references["retirement"]["pending_step"] == "capital_pool"
+    assert owners.pcb_status == "revoked"  # earlier step stays done
+    assert owners.persona_status == "active"  # later step not attempted
+
+    done = coordinator.retire_case(record)
+    assert done.state == "retired"
+    assert owners.pool_status == "archived" and owners.persona_status == "archived"
+    pcb_patches = [c for c in owners.calls if c[0] == "PATCH" and "/api/bindings/" in c[2]]
+    assert len(pcb_patches) == 1  # not re-revoked on replay
+
+
+def test_retire_case_unconfirmed_step_never_marks_retired() -> None:
+    store, record = _record_and_store()
+    _seed_state(store, record, state="succeeded")
+    owners = RetireOwners(record, saga=None, binding_status="active")
+    pending = _retire_coordinator(store, owners).retire_case(record)
+    assert pending.state == "succeeded"
+    assert pending.references["retirement"]["pending_step"] == "runtime_bindings"
+    assert owners.pool_status == "active"
+
+    owners.fail_once.add("cron")
+    pending = _retire_coordinator(store, owners).retire_case(record)
+    assert pending.references["retirement"]["pending_step"] == "first_evaluation_schedule"
+
+
+def test_retired_ledger_projects_as_retired_not_paper_running(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from services.control_plane.bff.personas import service as personas_service
+    from services.control_plane.bff.tests.conftest import make_composed_persona_service
+
+    monkeypatch.setattr(
+        personas_service,
+        "_composed_persona_service",
+        make_composed_persona_service(
+            read_store=SimpleNamespace(get_persona=lambda _id: None, list_personas=lambda **_k: []),
+            write_owner=SimpleNamespace(),
+        ),
+    )
+
+    store, record = _record_and_store()
+    record.state = "retired"
+    record.references = {
+        "runtime_binding_id": "rb-1",
+        "runtime_id": "rt-1",
+        "authoritative_readback": {"status": "paper_running"},
+    }
+    record.result = {"paper_running": True, "status": "paper_running"}
+    persona, metadata = personas_service._persona_record_for_provisioning(
+        record,
+        payload={"name": "Trader A"},
+        owner="operator-a",
+        existing={"persona_id": "persona-a", "name": "Trader A",
+                  "metadata": {"tenant_id": "tenant-a"}, "lifecycle_state": "research_only"},
+    )
+    assert persona["lifecycle_state"] == "retired"
+    assert metadata["provisioning_state"] == "retired"
+    assert metadata["paper_runtime_state"] == "retired"

@@ -1,0 +1,103 @@
+{
+  "task_id": "OPENCLAW-STRUCTURED-OPENAI-RUNTIME-20261018",
+  "status": "verified_local_contract_and_pinned_gateway_repro",
+  "pinned_openclaw_image": {
+    "repository": "ghcr.io/openclaw/openclaw",
+    "tag": "2026.7.1",
+    "image_id": "sha256:f435502b113f873768b64cd7f5f2a63f44d0a236ae3a5647ff42716652c74c31"
+  },
+  "root_cause_and_fix": {
+    "openai_fallback_structured_denial": {
+      "pre_fix": "scripts/openclaw-configure-shared-model-pool.sh registered openai/gpt-5.6-sol and openai/gpt-5.5 with agentRuntime.id='codex'. In OpenClaw 2026.7.1, agentRuntime.id='codex' selects the Codex app-server harness, which unconditionally rejects structured-extraction (tools.deny=['*'], tools.exec={'security':'deny','ask':'always'}) with 'Codex app-server local execution is not available when tools.exec.mode=deny'.",
+      "post_fix": "openai/gpt-5.6-sol and openai/gpt-5.5 now use agentRuntime.id='openclaw' so OpenClaw's embedded HTTP/OAuth runtime resolves the product main-profile OpenAI/Codex OAuth credentials stored in the native main-agent auth-profile store on openclaw-data without spawning codex app-server and without importing or symlinking worker/delegated .codex CLI homes, while preserving tools.deny=['*'] and tools.exec={'security':'deny','ask':'always'}."
+    },
+    "anthropic_primary_api_and_workspace_binding": {
+      "pre_fix": "scripts/openclaw-configure-shared-model-pool.sh registered anthropic/claude-opus-4-8 with agentRuntime.id='claude-cli' (subscription CLI backend), and neither scripts/openclaw_isolated_model_bootstrap.py nor the formal dev deploy/rollback workflow jobs bound ANTHROPIC_API_KEY and anthropic-workspace-id.",
+      "post_fix": "anthropic/claude-opus-4-8 now uses agentRuntime.id='openclaw'. On the persistent openclaw-data volume, scripts/openclaw-configure-shared-model-pool.sh persists the non-secret literal ANTHROPIC_WORKSPACE_ID value into models.providers.anthropic.headers['anthropic-workspace-id'] (deleting ANTHROPIC_WORKSPACE_ID from the config set subprocess env so restoreEnvVarRefs never writes an unresolved '${ANTHROPIC_WORKSPACE_ID}' reference on disk), preserving rollback compatibility with incumbent 4aacd76ca2425c3e12dff005668ffc8fa48dc17f. In isolated CI qualification, scripts/openclaw_isolated_model_bootstrap.py applies ANTHROPIC_WORKSPACE_BATCH with '${ANTHROPIC_WORKSPACE_ID}'. docker-compose.yml passes PANTHEON_OPENCLAW_ANTHROPIC_API_KEY -> ANTHROPIC_API_KEY and PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID -> ANTHROPIC_WORKSPACE_ID into openclaw-gateway, and .github/workflows/nonprod-deploy.yml binds DEV_OPENCLAW_ANTHROPIC_API_KEY, DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID, and DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN across deploy-dev, coordinate-dev-release, and isolated-l12-provider-qualification."
+    },
+    "adapter_structured_routing": {
+      "change": "services/openclaw-gateway-adapter/assistant_openclaw_provider.py defaults invoke_structured agent_id to STRUCTURED_AGENT_ID ('structured-extraction'), rejects non-structured agent_id with 422 OPENCLAW_STRUCTURED_AGENT_NOT_ALLOWED, omits X-OpenClaw-Model when model is None so the Gateway executes primary anthropic/claude-opus-4-8 with automatic fallback to ['openai/gpt-5.6-sol', 'openai/gpt-5.5'], forwards X-OpenClaw-Model when an explicit model override is requested, and does not propagate output['active_model'] because OpenClaw /v1/responses returns 'openclaw/<agentId>' in response.model rather than the resolved provider/model slot."
+    },
+    "guide_reconciliation": {
+      "change": "integrations/openclaw/model-pool-and-persona-routing.md documents the native main-profile OpenAI/Codex OAuth routing on agentRuntime.id='openclaw' for openai/gpt-5.6-sol and openai/gpt-5.5, primary anthropic/claude-opus-4-8 API + workspace header routing on agentRuntime.id='openclaw' with literal workspace persistence for rollback safety, and the quota distinction between Anthropic API/workspace (claude-opus-4-8), Claude CLI subscription/token (claude-sonnet-4-6), and main-profile OpenAI/Codex OAuth without worker credential import."
+    }
+  },
+  "pinned_gateway_2026_7_1_reproduction": {
+    "method": "Local ghcr.io/openclaw/openclaw:2026.7.1 gateway container against a local deterministic synthetic HTTP stub with synthetic main-profile auth-profiles.json on a disposable Docker volume. Scope boundary: this reproduces container config, agentRuntime dispatch, tool denial, header forwarding, primary-to-fallback failover, and OLD4aac rollback config validity locally; it is not live external provider/OAuth acceptance, hosted FULL deployment, or 12-loop closure.",
+    "pre_fix_codex_runtime_under_structured_extraction": {
+      "agent_id": "structured-extraction",
+      "model": "openai/gpt-5.6-sol",
+      "agent_runtime_id": "codex",
+      "http_error_code": "OPENCLAW_RESPONSES_FAILED",
+      "gateway_log_error": "Codex app-server local execution is not available when tools.exec.mode=deny",
+      "reproduced": true
+    },
+    "post_fix_openclaw_runtime_under_structured_extraction": {
+      "primary_anthropic_claude_opus_4_8": {
+        "status": "completed",
+        "transport": "responses_http",
+        "agent_id": "structured-extraction",
+        "structured_data": {
+          "ok": true
+        },
+        "upstream_model": "claude-opus-4-8",
+        "upstream_workspace_header": "wrkspc_018oMz2BRKkweHbBE9MsJ1u9",
+        "advertised_tools": []
+      },
+      "fallback_openai_gpt_5_6_sol": {
+        "status": "completed",
+        "transport": "responses_http",
+        "agent_id": "structured-extraction",
+        "structured_data": {
+          "ok": true
+        },
+        "upstream_model": "gpt-5.6-sol",
+        "advertised_tools": []
+      },
+      "fallback_openai_gpt_5_5": {
+        "status": "completed",
+        "transport": "responses_http",
+        "agent_id": "structured-extraction",
+        "structured_data": {
+          "ok": true
+        },
+        "upstream_model": "gpt-5.5",
+        "advertised_tools": []
+      },
+      "automatic_primary_to_fallback_failover": {
+        "primary_upstream_status": 503,
+        "failover_target_model": "gpt-5.6-sol",
+        "status": "completed",
+        "transport": "responses_http",
+        "agent_id": "structured-extraction",
+        "structured_data": {
+          "ok": true
+        },
+        "advertised_tools": []
+      },
+      "old_4aac_rollback_compatibility": {
+        "persisted_header_on_openclaw_data": "wrkspc_018oMz2BRKkweHbBE9MsJ1u9",
+        "contains_unresolved_env_ref": false,
+        "config_validate_without_anthropic_workspace_id_env": "Config valid: ~/.openclaw/openclaw.json",
+        "missing_env_var_warnings": 0
+      }
+    }
+  },
+  "validation": {
+    "docker_compose_config": {
+      "command": "docker compose -f docker-compose.yml config --quiet",
+      "exit_code": 0
+    },
+    "pytest_suites": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_openclaw_shared_model_pool_contract.py scripts/test_openclaw_isolated_model_bootstrap.py scripts/test_isolated_l12_provider_workflow.py services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py",
+      "passed": 148,
+      "failed": 0,
+      "exit_code": 0
+    }
+  },
+  "credential_and_environment_boundary": {
+    "anthropic_primary_and_workspace_binding": "Uses GitHub dev environment secret DEV_OPENCLAW_ANTHROPIC_API_KEY and variable DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID=wrkspc_018oMz2BRKkweHbBE9MsJ1u9 via PANTHEON_OPENCLAW_ANTHROPIC_API_KEY and PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID in deploy-dev, coordinate-dev-release, and isolated-l12-provider-qualification.",
+    "openai_fallback_auth_boundary": "No OpenAI CI secret is claimed created; OpenAI fallback models (openai/gpt-5.6-sol, openai/gpt-5.5) use the product OpenClaw native main-agent auth-profile store on openclaw-data without mounting or symlinking worker/delegated .codex CLI homes.",
+    "live_external_calls_performed_by_worker": false
+  }
+}

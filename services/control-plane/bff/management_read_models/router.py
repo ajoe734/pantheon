@@ -27,6 +27,7 @@ And preserves create_management_read_models_router for the 5 composed Management
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import logging
@@ -1546,7 +1547,7 @@ def create_management_router(
     # 1. Shell Summary
     # -----------------------------------------------------------------------
     @router.get("/bff/management/shell-summary")
-    async def bff_management_shell_summary(
+    def bff_management_shell_summary(
         authorization: Optional[str] = Header(default=None),
         pantheon_session: Optional[str] = Cookie(default=None),
         x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
@@ -1616,13 +1617,13 @@ def create_management_router(
                 )
             except Exception:
                 return svc.get_management_cockpit_degraded_payload(snapshot_at=snap)
-        return cockpit_composer(snapshot_at=snap)
+        return await asyncio.to_thread(cockpit_composer, snapshot_at=snap)
 
     # -----------------------------------------------------------------------
     # 4. Trading Pulse
     # -----------------------------------------------------------------------
     @router.get("/bff/management/trading-pulse")
-    async def bff_management_trading_pulse(
+    def bff_management_trading_pulse(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """BFF-B3-004: Management Trading Pulse card aggregate."""

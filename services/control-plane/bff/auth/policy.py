@@ -63,6 +63,17 @@ _DEV_LOGIN_IDENTITY_DEFS = {
     "risk_owner": {"roles": ("risk_owner",), "subject_suffix": "risk-owner"},
     "operator_a": {"roles": ("operator",), "subject_suffix": "operator-a"},
     "operator_b": {"roles": ("operator",), "subject_suffix": "operator-b"},
+    "test_admin": {
+        "roles": (
+            "admin",
+            "operator",
+            "approver",
+            "reviewer",
+            "governance_reviewer",
+            "risk_owner",
+        ),
+        "subject_suffix": "admin-test",
+    },
 }
 
 _ROLE_CAPABILITY_MAP = {
@@ -359,6 +370,8 @@ def dev_login_identity_registry() -> Dict[str, Dict[str, Any]]:
         env_prefix = f"PANTHEON_BFF_DEV_LOGIN_{name.upper()}"
         client_id = os.getenv(f"{env_prefix}_CLIENT_ID", "").strip()
         client_secret = os.getenv(f"{env_prefix}_CLIENT_SECRET", "").strip()
+        if not client_id and client_secret and name == "test_admin":
+            client_id = "pantheon-dev-admin-test"
         if not (client_id and client_secret) and name == "operator":
             client_id = first_nonblank(
                 os.getenv("PANTHEON_BFF_DEV_LOGIN_CLIENT_ID"),
@@ -382,7 +395,7 @@ def dev_login_identity_registry() -> Dict[str, Dict[str, Any]]:
         if tenant_id not in allowed_tenants:
             allowed_tenants = [tenant_id] + list(allowed_tenants)
 
-        registry[name] = {
+        profile_entry: Dict[str, Any] = {
             "identity": name,
             "client_id": client_id,
             "client_secret": client_secret,
@@ -391,6 +404,10 @@ def dev_login_identity_registry() -> Dict[str, Dict[str, Any]]:
             "tenant_id": tenant_id,
             "allowed_tenants": allowed_tenants,
         }
+        if name == "test_admin":
+            profile_entry["preferred_username"] = client_id
+            profile_entry["name"] = client_id
+        registry[name] = profile_entry
     return registry
 
 

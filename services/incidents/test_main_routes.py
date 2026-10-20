@@ -20,7 +20,6 @@ import pytest
 
 # Allow import of parent package and bff services
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "services" / "control-plane" / "bff"))
 
 from fastapi.testclient import TestClient
 
@@ -540,14 +539,9 @@ def test_consume_threshold_suggestion_failure_surfaces_503_and_retry_delivers_wi
     3. On retry/replay after downstream recovery, suggestion is persisted and read-model event emitted.
     4. Further replays do NOT create duplicate suggestions or events.
     """
-    bff_dir = str(Path(__file__).resolve().parents[2] / "services" / "control-plane" / "bff")
-    if bff_dir in sys.path:
-        sys.path.remove(bff_dir)
-    sys.path.insert(0, bff_dir)
-
     from services.incidents.main import attach_incident_suggestion_consumer
-    from agora.performance.consumer import EvaluationTelemetryConsumer
-    from agora.performance.store import PerformanceSuggestionStore
+    from services.control_plane.bff.agora.performance.consumer import EvaluationTelemetryConsumer
+    from services.control_plane.bff.agora.performance.store import PerformanceSuggestionStore
 
     perf_db_path = str(tmp_path / "perf_suggestions.sqlite3")
     perf_store = PerformanceSuggestionStore(path=perf_db_path)
@@ -614,17 +608,12 @@ def test_consume_threshold_suggestion_failure_surfaces_503_and_retry_delivers_wi
 
 def test_threshold_consumer_unit_retry_pending_downstream_work(tmp_path):
     """Unit test for ThresholdTelemetryIncidentConsumer retry_pending_downstream_work()."""
-    bff_dir = str(Path(__file__).resolve().parents[2] / "services" / "control-plane" / "bff")
-    if bff_dir in sys.path:
-        sys.path.remove(bff_dir)
-    sys.path.insert(0, bff_dir)
-
     from services.incidents.consumer import (
         IncidentConsumerRetryableError,
         ThresholdTelemetryIncidentConsumer,
     )
-    from agora.performance.consumer import EvaluationTelemetryConsumer
-    from agora.performance.store import PerformanceSuggestionStore
+    from services.control_plane.bff.agora.performance.consumer import EvaluationTelemetryConsumer
+    from services.control_plane.bff.agora.performance.store import PerformanceSuggestionStore
 
     perf_db_path = str(tmp_path / "perf_suggestions_unit.sqlite3")
     perf_store = PerformanceSuggestionStore(path=perf_db_path)
@@ -682,14 +671,9 @@ def test_threshold_consumer_unit_retry_pending_downstream_work(tmp_path):
 
 def test_consume_threshold_publisher_outage_recovery_and_no_duplicates(tmp_path):
     """Test publisher failure propagates (HTTP 503), recovery succeeds, and replay produces 0 duplicate events."""
-    bff_dir = str(Path(__file__).resolve().parents[2] / "services" / "control-plane" / "bff")
-    if bff_dir in sys.path:
-        sys.path.remove(bff_dir)
-    sys.path.insert(0, bff_dir)
-
     from services.incidents.main import attach_incident_suggestion_consumer
-    from agora.performance.consumer import EvaluationTelemetryConsumer
-    from agora.performance.store import PerformanceSuggestionStore
+    from services.control_plane.bff.agora.performance.consumer import EvaluationTelemetryConsumer
+    from services.control_plane.bff.agora.performance.store import PerformanceSuggestionStore
 
     perf_db_path = str(tmp_path / "perf_suggestions_pub.sqlite3")
     perf_store = PerformanceSuggestionStore(path=perf_db_path)
@@ -741,18 +725,13 @@ def test_consume_threshold_publisher_outage_recovery_and_no_duplicates(tmp_path)
 
 def test_process_reconstruction_durable_delivered_ids_and_published_events_dedup(tmp_path):
     """Test process reconstruction: durable delivered IDs and published event tracking prevent duplicate events across restarts."""
-    bff_dir = str(Path(__file__).resolve().parents[2] / "services" / "control-plane" / "bff")
-    if bff_dir in sys.path:
-        sys.path.remove(bff_dir)
-    sys.path.insert(0, bff_dir)
-
     from services.incidents.consumer import (
         DurableDeliveredIncidentsStore,
         DurableDownstreamWorkStore,
         ThresholdTelemetryIncidentConsumer,
     )
-    from agora.performance.consumer import EvaluationTelemetryConsumer
-    from agora.performance.store import PerformanceSuggestionStore
+    from services.control_plane.bff.agora.performance.consumer import EvaluationTelemetryConsumer
+    from services.control_plane.bff.agora.performance.store import PerformanceSuggestionStore
 
     delivered_path = tmp_path / "delivered_store.json"
     downstream_path = tmp_path / "downstream_work.json"
@@ -1065,6 +1044,13 @@ def test_infrastructure_health_incident_resolves_through_status_route():
     assert resolved.json()["status"] == "resolved"
     assert resolved.json()["resolved_at"] == "2026-07-27T19:45:00Z"
 
+    owner = client.get("/api/incidents/infra-bff-resolve-001")
+    assert owner.status_code == 200, owner.text
+    refs = owner.json()["telemetry_event_ids"]
+    assert "infra-event-resolve-open" in refs
+    assert "infra-event-resolve-ok" in refs
+    assert refs.count("infra-event-resolve-ok") == 1
+
 
 # ---------------------------------------------------------------------------
 # GET /api/incidents — list
@@ -1234,16 +1220,12 @@ def test_consume_threshold_route_unacknowledged_publish_retryable_across_restart
     survives restart, and on replay with restored subscriber delivers the event and deduplicates.
     """
     import sys
-    bff_dir = str(Path(__file__).resolve().parents[2] / "services" / "control-plane" / "bff")
-    if bff_dir not in sys.path:
-        sys.path.insert(0, bff_dir)
-
     import services.incidents.main as main_mod
     from services.incidents.consumer import (
         DurableDeliveredIncidentsStore,
         DurableDownstreamWorkStore,
     )
-    from agora.performance.consumer import (
+    from services.control_plane.bff.agora.performance.consumer import (
         clear_performance_subscribers,
         canonical_performance_publisher,
     )
@@ -1322,3 +1304,6 @@ def test_consume_threshold_route_unacknowledged_publish_retryable_across_restart
         assert len(received_events) == 1
     finally:
         clear_performance_subscribers()
+        # Restore the module's own receiver so later tests that publish through
+        # the canonical transport see a subscriber regardless of test order.
+        main_mod._wire_canonical_performance_subscriber()

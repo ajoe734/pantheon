@@ -1645,8 +1645,8 @@ def test_scheduled_reconcile_lifecycle_and_incident_budget_bounded_under_cardina
         assert payload["evaluated_binding_count"] == 15
         assert len(payload["evaluation_ids"]) == 15
 
-        # All 15 bindings evaluated, store was scanned once at the tick start
-        assert list_eval_count == 1
+        # All 15 bindings evaluated with keyed reads only: no full evaluation scan
+        assert list_eval_count == 0
 
         # Timeouts passed to network were all bounded by SLA budget <= 5.0s
         for to in observed_lifecycle_timeouts:
@@ -3304,3 +3304,41 @@ def test_scheduled_tick_keeps_drift_for_active_binding_with_stale_summary() -> N
         assert payload["drift_report_ids"]
         assert payload["incident_ids"] == ["inc-active-stale-001"]
         assert classify.call_count == 1
+
+
+def test_scheduled_tick_uses_keyed_reads_and_stays_idempotent() -> None:
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+
+        def _forbidden(*_args, **_kwargs):
+            raise AssertionError("tick must use keyed reads, not a full listing")
+
+        svc.store.list_evaluations = _forbidden
+        svc.store.list_drift_reports = _forbidden
+        svc.store.list_reconciliation_records = _forbidden
+        summaries = [
+            {
+                "binding_id": "rtb-keyed-001",
+                "runtime_id": "runtime-keyed-001",
+                "telemetry_event_ids": ["evt-keyed-001"],
+                "observed_metrics": {},
+                "baseline_metrics": {},
+            }
+        ]
+        with mock.patch.object(svc, "fetch_runtime_summaries", return_value=summaries):
+            first = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": "tick-keyed-001"},
+            )
+            second = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": "tick-keyed-001"},
+            )
+        assert first.status_code == 201, first.text
+        assert first.json()["evaluated_binding_count"] == 1
+        assert second.status_code == 201, second.text
+        assert second.json()["evaluated_binding_count"] == 0
+        assert second.json()["skipped_binding_count"] == 1

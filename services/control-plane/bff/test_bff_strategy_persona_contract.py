@@ -159,6 +159,26 @@ class StrategyPersonaTestReadPorts(ReadSurfacePorts):
     def get_strategy_spec_detail(self, strategy_id: str, version_selector: str = "current") -> dict[str, Any] | None:
         return self.get_strategy(strategy_id)
 
+    def list_strategy_spec_versions(self, strategy_id: str | None) -> list[dict[str, Any]]:
+        strategy = self.get_strategy(strategy_id)
+        if not isinstance(strategy, dict):
+            return []
+        return [
+            {
+                "spec_version_id": version.get("spec_version_id"),
+                "spec_version": version.get("spec_version"),
+                "lifecycle_state": version.get("lifecycle_state"),
+                "created_at": version.get("created_at"),
+                "created_by": version.get("created_by"),
+                "parent_spec_version_id": version.get("parent_spec_version_id"),
+                "route_href": DefaultResearchKnowledgeSourcePort._kw05_strategy_route_href(
+                    str(version.get("strategy_id") or ""),
+                    str(version.get("spec_version_id") or ""),
+                ),
+            }
+            for version in DefaultResearchKnowledgeSourcePort._kw05_versions(strategy)
+        ]
+
     def upsert_strategy(self, strategy: dict[str, Any]) -> dict[str, Any]:
         sid = strategy.get("id") or strategy.get("strategy_id")
         self._data.setdefault("strategies", {})[sid] = strategy

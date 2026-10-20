@@ -10,11 +10,7 @@ import sys
 import tempfile
 import unittest
 
-# Ensure runtime-manager modules are importable
-RM_DIR = os.path.join(os.path.dirname(__file__), "..", "execution", "runtime-manager")
-sys.path.insert(0, RM_DIR)
-
-from kill_switch_controller import (
+from services.runtime_manager.kill_switch_controller import (
     KillSwitchController,
     EmergencyTrigger,
     KillSwitchActionType,
@@ -23,7 +19,7 @@ from kill_switch_controller import (
     SoftTriggerReason,
     KillSwitchError,
 )
-from runtime_binding import (
+from services.runtime_manager.runtime_binding import (
     RuntimeBindingStore,
     RuntimeBindingStatus,
     RollbackActionType,
@@ -124,7 +120,7 @@ class TestRuntimeBindingTransitions(unittest.TestCase):
 
     def _create_active_binding(self, binding_id="test-binding"):
         """Create an active binding for testing."""
-        from runtime_binding import RuntimeBinding
+        from services.runtime_manager.runtime_binding import RuntimeBinding
         binding = RuntimeBinding(
             binding_id=binding_id,
             runtime_id=f"runtime-{binding_id}",
@@ -233,7 +229,7 @@ class TestIncidentControlPathIntegration(unittest.TestCase):
 
     def test_full_pause_path(self):
         """Pause command flows through RuntimeBinding state machine."""
-        from runtime_binding import RuntimeBinding
+        from services.runtime_manager.runtime_binding import RuntimeBinding
         binding_id = "pause-integration-test"
         binding = RuntimeBinding(
             binding_id=binding_id,
@@ -278,7 +274,7 @@ class TestIncidentControlPathIntegration(unittest.TestCase):
 
     def test_full_rollback_path(self):
         """Rollback command flows through RuntimeBinding state machine."""
-        from runtime_binding import RuntimeBinding
+        from services.runtime_manager.runtime_binding import RuntimeBinding
         binding_id = "rollback-integration-test"
         binding = RuntimeBinding(
             binding_id=binding_id,

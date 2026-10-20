@@ -1,0 +1,136 @@
+{
+  "task_id": "REGISTRY-LIGHTWEIGHT-MARKET-IMPORT-20261018",
+  "title": "Remove Registry HTTP dependency from lightweight market validation imports",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "base_sha": "602ade93160a4a31898047615ce4c1746e35f08d",
+  "sanitized_root_input": {
+    "path": "/tmp/pantheon-registry-lightweight-import-input-20261018.json",
+    "sha256": "48d29af0e4ebb46c2f5ab3f9d1c346467a36d7930808fa0a9af0df9fa6ac1135",
+    "attributed_to": "Root (isolated FULL qualification run 39152997474 on BE 602ade93160a4a31898047615ce4c1746e35f08d; official_artifact_id 12146835769; zero hosted business/provider calls)",
+    "original_diagnosis": {
+      "purpose": "Sanitized actual isolated FULL failure. No live user data or credentials.",
+      "run": 39152997474,
+      "BE": "602ade93160a4a31898047615ce4c1746e35f08d",
+      "official_artifact_id": 12146835769,
+      "official_zip_sha256": "c4c8930e221532269a7b31eb1174aff570987e1f66a3698894c709a905143a75",
+      "first_failed_boundary": "runtime",
+      "passed_domain_suites": [
+        "research",
+        "human"
+      ],
+      "actual_observation": "Runtime fixture successfully reached approved RuntimeBinding creation but timed out180s waiting for its paper worker. Fleet reconciler traceback below and paper-signal-producer repeated the same pydantic missing-module error.",
+      "fleet_traceback": "Traceback (most recent call last):\npaper-fleet-reconciler-1  |   File \"/workspace/services/paper_fleet_reconciler/paper_fleet_reconciler.py\", line 1184, in _run_loop\npaper-fleet-reconciler-1  |     self.reconcile_once(self._leader_store)\npaper-fleet-reconciler-1  |   File \"/workspace/services/paper_fleet_reconciler/paper_fleet_reconciler.py\", line 984, in reconcile_once\npaper-fleet-reconciler-1  |     decision = self._check_market_admission(binding)\npaper-fleet-reconciler-1  |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npaper-fleet-reconciler-1  |   File \"/workspace/services/paper_fleet_reconciler/paper_fleet_reconciler.py\", line 1868, in _check_market_admission\npaper-fleet-reconciler-1  |     return admit_market_snapshot(\npaper-fleet-reconciler-1  |            ^^^^^^^^^^^^^^^^^^^^^^\npaper-fleet-reconciler-1  |   File \"/workspace/services/execution/market_snapshot_admission.py\", line 1031, in admit_market_snapshot\npaper-fleet-reconciler-1  |     return target_fn(\npaper-fleet-reconciler-1  |            ^^^^^^^^^^\npaper-fleet-reconciler-1  |   File \"/workspace/services/execution/market_snapshot_admission.py\", line 949, in admit_canonical_source_snapshot\npaper-fleet-reconciler-1  |     from services.registry.strategy_artifact import canonical_market_context\npaper-fleet-reconciler-1  |   File \"/workspace/services/registry/strategy_artifact.py\", line 33, in <module>\npaper-fleet-reconciler-1  |     from .split_api import RegistryError, RegistryService\npaper-fleet-reconciler-1  |   File \"/workspace/services/registry/split_api.py\", line 77, in <module>\npaper-fleet-reconciler-1  |     from services.governance.approval_authority import NoOwnerRedirect\npaper-fleet-reconciler-1  |   File \"/workspace/services/governance/approval_authority.py\", line 17, in <module>\npaper-fleet-reconciler-1  |     from pydantic import BaseModel, ConfigDict, Field\npaper-fleet-reconciler-1  | ModuleNotFoundError: No module named 'pydantic'",
+      "source_dependency_chain": [
+        "paper_fleet_reconciler._check_market_admission",
+        "execution.market_snapshot_admission.admit_canonical_source_snapshot",
+        "registry.strategy_artifact.canonical_market_context",
+        "registry.split_api module-scope NoOwnerRedirect import",
+        "governance.approval_authority module-scope pydantic import"
+      ],
+      "smallest_candidate_fix_to_evaluate": "Registry split_api only needs the existing NoOwnerRedirect class when performing _http_get_json. Prefer local import at that HTTP use site if sufficient. Keep the exact shared redirect guard. Do not add pydantic to light paper images or duplicate guard/helper implementations.",
+      "proof_limit": "This is actual isolated qualification failure; not a hosted product outage or final all12 acceptance. Root made zero hosted business/provider calls for this diagnosis.",
+      "teardown": {
+        "command": [
+          "docker",
+          "compose",
+          "-p",
+          "l12q39152997474x1",
+          "-f",
+          "/home/runner/work/pantheon/pantheon/docker-compose.yml",
+          "--profile",
+          "*",
+          "down",
+          "--volumes",
+          "--remove-orphans",
+          "--rmi",
+          "local"
+        ],
+        "compose_project": "l12q39152997474x1",
+        "down_returncode": 0,
+        "remaining_container_ids": [],
+        "zero_project_containers": true
+      }
+    }
+  },
+  "scoped_changes": {
+    "files": [
+      "services/registry/split_api.py",
+      "services/registry/test_strategy_artifact.py",
+      "docs/deployment/evidence/REGISTRY-LIGHTWEIGHT-MARKET-IMPORT-20261018/evidence.json"
+    ],
+    "production_line_budget": {
+      "file": "services/registry/split_api.py",
+      "added_lines": 2,
+      "deleted_lines": 3,
+      "net_line_increase": -1,
+      "max_net_line_increase_budget": 20,
+      "within_budget": true
+    },
+    "summary": [
+      "Moved `from services.governance.approval_authority import NoOwnerRedirect` in `services/registry/split_api.py` from module scope (line 77) into `_http_get_json` so importing `services.registry.strategy_artifact` (`canonical_market_context`) no longer imports `services.governance.approval_authority` (`pydantic`) at module load time.",
+      "Preserved the single canonical market validation implementation (`services.registry.strategy_artifact.canonical_market_context`) and the single shared redirect guard (`services.governance.approval_authority.NoOwnerRedirect`) used by `_http_get_json`.",
+      "Added `test_lightweight_canonical_source_snapshot_admission_subprocess_forbids_pydantic` in `services/registry/test_strategy_artifact.py` running in a fresh subprocess with `pydantic` imports forbidden via `sys.meta_path` to verify `paper_fleet_reconciler`, `paper_signal_producer`, `admit_market_snapshot`, `admit_canonical_source_snapshot`, `LatestMarketSnapshot`, and `canonical_market_context` across valid US/TW and contradictory/unsupported market cases."
+    ]
+  },
+  "acceptance_criteria_verification": {
+    "ac1_isolated_import_boundary_repair": {
+      "status": "passed",
+      "details": "Moved `from services.governance.approval_authority import NoOwnerRedirect` into `services/registry/split_api.py::_http_get_json`, matching the existing lazy Governance import pattern in `advance_artifact_state._validate_transition`. Preserved the single `canonical_market_context` implementation and shared `NoOwnerRedirect` guard."
+    },
+    "ac2_owner_http_and_market_validation_invariants": {
+      "status": "passed",
+      "details": "`_http_get_json` retains authenticated (`Authorization`) and tenant-bound (`X-Tenant-Id`) GET behavior with `urllib.request.build_opener(NoOwnerRedirect())` refusing 301/302/303/307/308 redirects. Strict market schema, timestamp, symbol, calendar, artifact, and paper/live boundaries remain unchanged with zero dependency/lockfile changes."
+    },
+    "ac3_fresh_subprocess_and_existing_regressions": {
+      "status": "passed",
+      "details": "`test_lightweight_canonical_source_snapshot_admission_subprocess_forbids_pydantic` in `services/registry/test_strategy_artifact.py` blocks `pydantic` and `pydantic.*` via a `MetaPathFinder` in a fresh Python subprocess, imports `paper_fleet_reconciler`, `paper_signal_producer`, `admit_market_snapshot`, `admit_canonical_source_snapshot`, `LatestMarketSnapshot`, and `canonical_market_context`, verifies valid US/TW snapshots and bare-quote symbols (`ABNB`) plus contradictory (`2330.TW` in `US`, `SPY.US` in `TW`) and unsupported (`MARS`) market rejections, and confirms neither `pydantic` nor `services.governance.approval_authority` is loaded."
+    },
+    "ac4_scope_budget_and_attribution": {
+      "status": "passed",
+      "details": "Only the 3 declared artifact paths are modified; net production line change in `services/registry/split_api.py` is -1 line (+2/-3, budget <= 20). Original diagnosis is attributed to Root's isolated FULL run 39152997474 without invented hosted acceptance."
+    }
+  },
+  "local_validation": {
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/registry/test_strategy_artifact.py",
+        "exit_code": 0,
+        "passed": 51,
+        "failed": 0,
+        "warnings": 1,
+        "output_summary": "51 passed, 1 warning"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/execution/test_market_snapshot_admission.py",
+        "exit_code": 0,
+        "passed": 26,
+        "failed": 0,
+        "warnings": 0,
+        "output_summary": "26 passed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/registry/test_registry_auth_wiring.py services/registry/smoke_test.py",
+        "exit_code": 0,
+        "passed": 43,
+        "failed": 0,
+        "warnings": 1,
+        "output_summary": "43 passed, 1 warning"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/registry/test_service.py services/registry/test_paper_scope_registry.py services/registry/test_paper_strategy_spec.py",
+        "exit_code": 0,
+        "passed": 113,
+        "failed": 0,
+        "warnings": 1,
+        "output_summary": "113 passed, 1 warning"
+      }
+    ],
+    "total_passed": 233,
+    "total_failed": 0
+  },
+  "scope_and_proof_limits": {
+    "worker_boundary": "Local source and isolated subprocess/HTTP regression proof only; zero VM/SSH, external model, or business calls executed by worker.",
+    "remaining_root_obligations": "Root separately re-pins exact FE/BFF after merge and runs the next matching FULL then ordinary existing Root deployment; original 43AC, all12, and TOTAL review remain owed."
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0",
+  "task_id": "DEPLOYMENT-STALE-AUTH-TESTS-20261019",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "base_ref": "dev",
+  "summary": "Four red services/deployment tests fixed (dispatcher, mfc_r4 contract x2, paper_scope) by supplying the identities and owner-read seams production requires; no auth check relaxed, no assertion weakened, no skip/deselect. The six test_promote_pipeline.py failures are out of scope: promote_pipeline.py and its test are restored to dev and are retired by PROMOTE-PIPELINE-RETIRE-20261019 (operator decision 2026-10-19).",
+  "verification": {
+    "command": "pytest services/deployment -q -p no:cacheprovider --ignore=services/deployment/test_promote_pipeline.py",
+    "result": "218 passed, 1 error",
+    "note": "The single error is test_l12_dep_001_dispatcher::test_approved_paper_command_reaches_terminal_plan_and_binding, which asserts GOV_APPROVAL_TEST_DSN (dedicated gov_approval_test Postgres). No Postgres was available in this worker, so it was not run here; it was green with the DSN in the previous run (225 passed incl. the retired promote_pipeline tests). It fails loudly by design, never skips.",
+    "previous_with_dsn": "GOV_APPROVAL_TEST_DSN=postgresql://postgres@127.0.0.1:25433/gov_approval_test"
+  },
+  "changes": {
+    "test_l12_mfc_r4_deploy_001_contract.py": "Inject registry_fetch_json, capital_fetch_json and a SnapshotApprovalReader (the scoped-principal seams of verify_deploy_authorities); rejection regex 'governance authority mismatch' unchanged.",
+    "test_l12_dep_001_dispatcher.py": "Plan carries explicit metadata.symbol (artifact approves 3 symbols); RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN set; capital reads served through the existing double.",
+    "test_paper_scope_service.py": "Prepend runtime-manager dir to sys.path (root conftest resets sys.path per module); previously order-dependent."
+  },
+  "not_changed": [
+    "branch-ci.yml",
+    "any auth/authorization check",
+    "any assertion"
+  ],
+  "out_of_scope": {
+    "test_promote_pipeline.py": "6 failures remain on dev; module has no caller and is retired by PROMOTE-PIPELINE-RETIRE-20261019. Both files unchanged in this PR."
+  },
+  "ci_requirements": {
+    "GOV_APPROVAL_TEST_DSN": "test_l12_dep_001_dispatcher needs a dedicated gov_approval_test Postgres (as in persona-owner-contract.yml); CI-FIXED-SERVICE-SUITES-20261019 must provide it."
+  }
+}

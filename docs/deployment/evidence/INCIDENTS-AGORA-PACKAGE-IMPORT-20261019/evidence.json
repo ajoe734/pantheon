@@ -1,0 +1,12 @@
+{
+  "task_id": "INCIDENTS-AGORA-PACKAGE-IMPORT-20261019",
+  "startup_check": {
+    "cwd": "repo root, PYTHONPATH unset",
+    "could_not_wire_warning": false,
+    "canonical_subscribers": 1,
+    "bff_dir_on_sys_path": false,
+    "consume_threshold_fixture": "fixtures/threshold_breach_telemetry.json -> HTTP 201 (reference validator stubbed; runtime-manager unavailable locally)"
+  },
+  "tests": "python -m pytest services/incidents -> 92 passed",
+  "hosted_proof": "pending next Root deployment; not dispatched by this task"
+}

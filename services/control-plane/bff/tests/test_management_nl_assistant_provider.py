@@ -3422,3 +3422,503 @@ def test_mgmt_nl_finalize_provider_turn_appends_assistant_turn_and_idempotency(t
     # completion (via command_reservation) is the sole persistence path, and
     # this call passed no reservation, so there is nothing further to assert
     # here beyond the assistant turn being appended exactly once.
+
+
+def test_mgmt_nl_collect_context_all_bounds_telemetry_owner_reads_and_reuses_trading_pulse_snippet(
+    tmp_path, monkeypatch
+) -> None:
+    original_store = get_management_nl_read_store()
+    try:
+        _clear_provider_env(monkeypatch)
+        _seeded_client(tmp_path, monkeypatch)
+        store = get_management_nl_read_store()
+
+        base_bindings = store.list_runtime_bindings()
+        extra_alpha_bindings = [
+            {
+                "binding_id": "rb-alpha-2",
+                "runtime_id": "rt-alpha-2",
+                "tenant_id": "tenant-alpha",
+                "capital_pool_id": "pool-alpha",
+                "deployment_stage": "paper",
+                "status": "running",
+            },
+            {
+                "binding_id": "rb-alpha-missing",
+                "runtime_id": "rt-alpha-missing",
+                "tenant_id": "tenant-alpha",
+                "capital_pool_id": "pool-alpha",
+                "deployment_stage": "paper",
+                "status": "running",
+            },
+        ]
+        base_telemetry = {
+            str(row.get("runtime_id") or row.get("id")): dict(row)
+            for row in store.list_telemetry_summaries()
+            if isinstance(row, dict) and (row.get("runtime_id") or row.get("id"))
+        }
+        base_telemetry["rt-alpha-2"] = {
+            "runtime_id": "rt-alpha-2",
+            "tenant_id": "tenant-alpha",
+            "pnl": 5.5,
+            "fill_rate": 0.9,
+            "total_trades": 6,
+            "metrics": {"pnl": 5.5, "fill_rate": 0.9, "total_trades": 6},
+            "collected_at": "2026-06-02T00:00:00Z",
+        }
+        base_telemetry["rt-alpha"] = {
+            **base_telemetry["rt-alpha"],
+            "tenant_id": "tenant-alpha",
+        }
+        base_telemetry["rt-beta"] = {
+            **base_telemetry["rt-beta"],
+            "tenant_id": "tenant-beta",
+        }
+
+        monitoring_sessions = [
+            {
+                "session_id": "mon-alpha-1",
+                "runtime_id": "rt-alpha",
+                "binding_id": "rb-alpha",
+                "status": "running",
+                "active": True,
+                "started_at": "2026-06-01T23:00:00Z",
+                "drift_detected": False,
+                "owner": "monitoring-owner",
+                "source_kind": "replayed",
+                "source_version": "mon-v3",
+                "observed_at": "2026-06-02T00:00:00Z",
+                "correlation_id": "mon-corr-1",
+            },
+            {
+                "session_id": "mon-alpha-2",
+                "runtime_id": "rt-alpha-2",
+                "binding_id": "rb-alpha-2",
+                "status": "running",
+                "active": True,
+                "started_at": "2026-06-01T23:30:00Z",
+                "drift_detected": False,
+                "owner": "monitoring-owner",
+                "source_kind": "replayed",
+                "source_version": "mon-v3",
+                "observed_at": "2026-06-02T00:00:00Z",
+                "correlation_id": "mon-corr-2",
+            },
+        ]
+
+        counts = {
+            "list_telemetry_summaries": 0,
+            "get_telemetry_summary": 0,
+            "list_paper_runtime_monitoring_sessions": 0,
+            "get_paper_runtime_monitoring_session": 0,
+            "list_runtime_bindings": 0,
+            "trading_pulse_snippet": 0,
+        }
+        projected_rows_batches: list[list[dict[str, Any]]] = []
+
+        def counted_list_telemetry_summaries() -> list[dict[str, Any]]:
+            counts["list_telemetry_summaries"] += 1
+            return list(base_telemetry.values())
+
+        def counted_get_telemetry_summary(runtime_id: str) -> dict[str, Any] | None:
+            counts["get_telemetry_summary"] += 1
+            return base_telemetry.get(runtime_id)
+
+        def counted_list_monitoring_sessions() -> list[dict[str, Any]]:
+            counts["list_paper_runtime_monitoring_sessions"] += 1
+            return list(monitoring_sessions)
+
+        def counted_get_monitoring_session(**kwargs: Any) -> dict[str, Any] | None:
+            counts["get_paper_runtime_monitoring_session"] += 1
+            return None
+
+        def counted_list_runtime_bindings() -> list[dict[str, Any]]:
+            counts["list_runtime_bindings"] += 1
+            return list(base_bindings) + list(extra_alpha_bindings)
+
+        orig_scoped_runtime_rows = bff_main._mgmt_nl_scoped_runtime_rows
+
+        def SpyScopedRuntimeRows(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+            rows = orig_scoped_runtime_rows(*args, **kwargs)
+            projected_rows_batches.append(rows)
+            return rows
+
+        orig_trading_pulse_snippet = bff_main._mgmt_nl_trading_pulse_snippet
+
+        def counted_trading_pulse_snippet(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            counts["trading_pulse_snippet"] += 1
+            return orig_trading_pulse_snippet(*args, **kwargs)
+
+        monkeypatch.setattr(store, "list_telemetry_summaries", counted_list_telemetry_summaries)
+        monkeypatch.setattr(store, "get_telemetry_summary", counted_get_telemetry_summary)
+        monkeypatch.setattr(
+            store, "list_paper_runtime_monitoring_sessions", counted_list_monitoring_sessions
+        )
+        monkeypatch.setattr(
+            store, "get_paper_runtime_monitoring_session", counted_get_monitoring_session
+        )
+        monkeypatch.setattr(store, "list_runtime_bindings", counted_list_runtime_bindings)
+        monkeypatch.setattr(store, "get_rollbacks", lambda _runtime_id: [])
+        monkeypatch.setattr(bff_main, "_mgmt_nl_scoped_runtime_rows", SpyScopedRuntimeRows)
+        monkeypatch.setattr(bff_main, "_mgmt_nl_trading_pulse_snippet", counted_trading_pulse_snippet)
+        monkeypatch.setattr(
+            bff_main,
+            "_build_operator_alerts_payload",
+            lambda _snapshot_at: {"alerts": [], "meta": {"surfaces": {}}},
+        )
+        monkeypatch.setattr(
+            bff_main,
+            "_human_inbox_payload",
+            lambda *args, **kwargs: {"items": [], "meta": {"surfaces": {}}},
+        )
+        monkeypatch.setattr(
+            bff_main,
+            "_build_management_anomalies_payload",
+            lambda _snapshot_at: {"items": [], "meta": {"surfaces": {}}},
+        )
+
+        context = bff_main._mgmt_nl_collect_context(
+            "all", "2026-06-02T00:05:00Z", tenant_id="tenant-alpha"
+        )
+
+        assert counts["list_telemetry_summaries"] == 1
+        assert counts["get_telemetry_summary"] == 0
+        assert counts["list_paper_runtime_monitoring_sessions"] == 1
+        assert counts["get_paper_runtime_monitoring_session"] == 0
+        assert counts["list_runtime_bindings"] == 1
+        assert counts["trading_pulse_snippet"] == 1
+
+        assert len(projected_rows_batches) == 1
+        rows_by_runtime = {row["runtime_id"]: row for row in projected_rows_batches[0]}
+        assert rows_by_runtime["rt-alpha"]["paper_runtime_monitoring"] is not None
+        assert (
+            rows_by_runtime["rt-alpha"]["paper_runtime_monitoring"]["session_id"]
+            == "mon-alpha-1"
+        )
+        assert rows_by_runtime["rt-alpha"]["monitoring_observation"]["owner"] == "monitoring-owner"
+        assert (
+            rows_by_runtime["rt-alpha"]["monitoring_observation"]["source_version"]
+            == "mon-v3"
+        )
+        assert (
+            rows_by_runtime["rt-alpha"]["monitoring_observation"]["correlation_id"]
+            == "mon-corr-1"
+        )
+        assert (
+            rows_by_runtime["rt-alpha-2"]["paper_runtime_monitoring"]["session_id"]
+            == "mon-alpha-2"
+        )
+
+        assert (
+            context["snippets"]["cockpit"]["trading_pulse_summary"]
+            == context["snippets"]["trading_pulse"]["summary"]
+        )
+        assert context["snippets"]["portfolio"]["runtime_count"] == 3
+        assert context["snippets"]["portfolio"]["total_pnl"] == 8.0
+
+        # Missing telemetry on rt-alpha-missing must keep degraded status across surfaces
+        assert context["surfaces"]["management_cockpit"]["status"] == "degraded"
+        assert context["surfaces"]["management_trading_pulse"]["status"] == "degraded"
+        assert context["surfaces"]["portfolio_book"]["status"] == "degraded"
+        trading_pulse_obs = (
+            context["surfaces"]["management_trading_pulse"]["owner_observation"][
+                "contributing_observations"
+            ]
+        )
+        mon_obs = [
+            obs
+            for obs in trading_pulse_obs
+            if obs.get("subject_type") == "paper_runtime_monitoring"
+            and obs.get("subject_id") == "rt-alpha"
+        ]
+        assert len(mon_obs) == 1
+        assert mon_obs[0]["owner"] == "monitoring-owner"
+        assert mon_obs[0]["source_version"] == "mon-v3"
+        assert mon_obs[0]["correlation_id"] == "mon-corr-1"
+        portfolio_obs = context["surfaces"]["portfolio_book"]["owner_observations"]
+        missing_obs = [
+            obs
+            for obs in portfolio_obs
+            if obs.get("subject_type") == "telemetry" and obs.get("subject_id") == "rt-alpha-missing"
+        ]
+        assert len(missing_obs) == 1
+        assert missing_obs[0]["status"] == "degraded"
+    finally:
+        set_management_nl_read_store(original_store)
+        bff_main._sse_buffers["ask"].clear()
+
+
+def test_mgmt_nl_collect_context_preserves_fail_closed_unavailable_when_telemetry_owner_raises(
+    tmp_path, monkeypatch
+) -> None:
+    original_store = get_management_nl_read_store()
+    try:
+        _clear_provider_env(monkeypatch)
+        _seeded_client(tmp_path, monkeypatch)
+        store = get_management_nl_read_store()
+        healthy_list_telemetry_summaries = store.list_telemetry_summaries
+
+        calls = {
+            "list_telemetry_summaries": 0,
+            "list_paper_runtime_monitoring_sessions": 0,
+        }
+
+        def failing_list_telemetry_summaries() -> dict[str, Any]:
+            calls["list_telemetry_summaries"] += 1
+            raise RuntimeError("telemetry owner down")
+
+        monkeypatch.setattr(store, "list_telemetry_summaries", failing_list_telemetry_summaries)
+        monkeypatch.setattr(
+            bff_main,
+            "_build_operator_alerts_payload",
+            lambda _snapshot_at: {"alerts": [], "meta": {"surfaces": {}}},
+        )
+        monkeypatch.setattr(
+            bff_main,
+            "_human_inbox_payload",
+            lambda *args, **kwargs: {"items": [], "meta": {"surfaces": {}}},
+        )
+        monkeypatch.setattr(
+            bff_main,
+            "_build_management_anomalies_payload",
+            lambda _snapshot_at: {"items": [], "meta": {"surfaces": {}}},
+        )
+
+        context = bff_main._mgmt_nl_collect_context(
+            "all", "2026-06-02T00:05:00Z", tenant_id="tenant-alpha"
+        )
+
+        assert calls["list_telemetry_summaries"] == 1
+        assert context["surfaces"]["management_cockpit"]["status"] == "unavailable"
+        assert context["surfaces"]["management_trading_pulse"]["status"] == "unavailable"
+        assert context["surfaces"]["portfolio_book"]["status"] == "unavailable"
+        assert context["surfaces"]["persona_fleet"]["status"] == "unavailable"
+
+        def failing_list_monitoring_sessions() -> list[dict[str, Any]]:
+            calls["list_paper_runtime_monitoring_sessions"] += 1
+            raise RuntimeError("monitoring owner down")
+
+        monkeypatch.setattr(
+            store, "list_telemetry_summaries", healthy_list_telemetry_summaries
+        )
+        monkeypatch.setattr(
+            store,
+            "list_paper_runtime_monitoring_sessions",
+            failing_list_monitoring_sessions,
+        )
+        monkeypatch.setattr(store, "get_rollbacks", lambda _runtime_id: [])
+
+        monitoring_failed_context = bff_main._mgmt_nl_collect_context(
+            "all", "2026-06-02T00:05:00Z", tenant_id="tenant-alpha"
+        )
+
+        assert calls["list_paper_runtime_monitoring_sessions"] == 1
+        assert (
+            monitoring_failed_context["surfaces"]["management_cockpit"]["status"]
+            == "unavailable"
+        )
+        assert (
+            monitoring_failed_context["surfaces"]["management_trading_pulse"]["status"]
+            == "unavailable"
+        )
+        assert "paper runtime monitoring read failed: monitoring owner down" in json.dumps(
+            monitoring_failed_context["surfaces"]["management_cockpit"]
+        )
+        assert "paper runtime monitoring read failed: monitoring owner down" in json.dumps(
+            monitoring_failed_context["surfaces"]["management_trading_pulse"]
+        )
+    finally:
+        set_management_nl_read_store(original_store)
+        bff_main._sse_buffers["ask"].clear()
+
+
+
+def test_management_nl_large_fleet_context_stays_within_provider_bound(tmp_path, monkeypatch) -> None:
+    original_store = get_management_nl_read_store()
+    fake = FakeProviderClient()
+    provider_bound_chars = 200_000
+    persona_count, runtime_count = 20, 40
+    blob = {"candles": ["x" * 40] * 10}
+    runtimes = [
+        {"runtime_id": f"rt-{i}", "status": "running", "tenant_id": "tenant-alpha", "detail": blob}
+        for i in range(runtime_count)
+    ]
+    ok_obs = [
+        {"subject_type": "telemetry", "subject_id": f"rt-{i}", "status": "ok", "owner": "telemetry",
+         "source_kind": "live", "contributing_observations": [{"subject_id": f"rt-{i}", "blob": blob}]}
+        for i in range(runtime_count)
+    ]
+    bad_obs = {"subject_type": "bindings", "subject_id": "persona-7", "status": "unavailable",
+               "owner": "runtime_manager", "source_kind": "unavailable", "degradation_reason": "owner down"}
+    items = [
+        {
+            "id": f"persona-{i}", "persona_id": f"persona-{i}", "persona": {"name": f"P{i}", "traits": blob},
+            "health": {"status": "healthy"}, "bindings": [],
+            "runtimeBindings": runtimes, "runtime_bindings": runtimes,
+            "telemetrySummary": {"runtime_count": runtime_count}, "telemetry_summary": {"runtime_count": runtime_count},
+            "owner_observations": ok_obs,
+        }
+        for i in range(persona_count)
+    ]
+    snippets = {"persona_fleet": {"total": persona_count, "summary": {"total_personas": 500}, "items": items}}
+    surfaces = {"persona_fleet": {"status": "unavailable", "source": "bff_composed", "owner_observations": [*ok_obs, bad_obs]}}
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "codex_cli")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        client = _seeded_client(tmp_path, monkeypatch)
+        monkeypatch.setattr(
+            bff_main, "_mgmt_nl_collect_context",
+            lambda focus, now, tenant_id=None: {"snippets": snippets, "surfaces": surfaces},
+        )
+        resp = client.post(
+            "/bff/management/nl/ask",
+            json={"question": "hello", "focus": "persona_fleet"},
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "ctx-bound-large-fleet"},
+        )
+        assert resp.status_code == 202, resp.text
+        assert resp.json()["data"]["provider_status"]["status"] == "completed"
+        assert len(fake.calls) == 1
+        pack = fake.calls[0]["context_pack"]
+        assert len(json.dumps(snippets)) > provider_bound_chars // 2  # fixture is realistically large
+        assert len(json.dumps(pack)) < provider_bound_chars
+        assert pack["bff_reads"]["context"]["mirrors"] == "backend"
+        assert "management_nl" in pack["bff_reads"]["context"]["source_keys"]
+        data = pack["backend"]["management_nl"]["data"]
+        fleet = data["summary_context"]["persona_fleet"]
+        assert fleet["summary"]["total_personas"] == 500
+        assert len(fleet["items"]) == persona_count
+        scope = fleet["population_scope"]
+        assert scope["partial"] is True
+        assert scope["total_population"] == 500
+        assert scope["returned_sample_count"] == persona_count
+        assert scope["omitted_count"] == 500 - persona_count
+        assert "healthy_personas" in scope["sample_scoped_summary_fields"]
+        assert scope["whole_population_health_counts"] == "unavailable"
+        assert fleet["items"][0]["runtime_bindings"]["count"] == runtime_count
+        assert fleet["shared_rows"]["runtime_bindings"][0]["runtime_id"] == "rt-0"
+        assert "runtimeBindings" not in fleet["items"][0]
+        observations = data["surfaces"]["persona_fleet"]["owner_observations"]
+        assert data["surfaces"]["persona_fleet"]["status"] == "unavailable"
+        assert any(o["status"] == "unavailable" and o["degradation_reason"] == "owner down" for o in observations)
+        grouped = [o for o in observations if o.get("count")]
+        assert grouped and grouped[0]["count"] == runtime_count
+    finally:
+        set_management_nl_read_store(original_store)
+        bff_main._sse_buffers["ask"].clear()
+
+
+def test_management_nl_residual_repeated_rows_and_merged_observations_stay_within_bound(tmp_path, monkeypatch) -> None:
+    original_store = get_management_nl_read_store()
+    fake = FakeProviderClient()
+    provider_bound_chars = 200_000
+    persona_count, runtime_count = 20, 84
+
+    def wide(prefix: str, i: int) -> dict:
+        return {f"{prefix}_field_{n}": f"{prefix}-{i}-value-{n}-" + "v" * 24 for n in range(12)}
+
+    runtimes = [
+        {"runtime_id": f"rt-{i}", "status": "running", "tenant_id": "tenant-alpha", **wide("rt", i)}
+        for i in range(runtime_count)
+    ]
+    summaries = [
+        {"runtime_id": f"rt-{i}", "status": "ok", "tenant_id": "tenant-alpha", "metrics": {"pnl": i}, **wide("tm", i)}
+        for i in range(runtime_count)
+    ]
+    decisions = [{"decision_id": f"dec-{i}", "status": "pending", **wide("dec", i)} for i in range(10)]
+    reason = {"telemetry": "telemetry summary not found for this runtime.", "rollback": "rollback owner unavailable."}
+
+    def real_obs(kind: str, i: int) -> dict:
+        # Real ManagementService shape: owner defaults to the runtime id, so it
+        # is unique per runtime; telemetry is degraded and rollback unavailable.
+        status = {"telemetry": "degraded", "rollback": "unavailable"}.get(kind, "ok")
+        return {
+            "subject_type": kind, "subject_id": f"rt-{i}", "status": status, "owner": f"rt-{i}",
+            "source_kind": "live" if status == "ok" else "unavailable", "source_version": None,
+            "observed_at": f"2026-10-20T10:00:{i % 60:02d}Z", "freshness_seconds": None,
+            "correlation_id": f"corr-{kind}-{i}", "degradation_reason": reason.get(kind),
+            "contributing_observations": [],
+        }
+
+    ok_obs = [real_obs(kind, i) for i in range(runtime_count) for kind in ("telemetry", "monitoring", "rollback")]
+    bad_obs = {"subject_type": "bindings", "subject_id": "persona-7", "status": "unavailable", "owner": "runtime_manager",
+               "source_kind": "unavailable", "degradation_reason": "binding owner down", "contributing_observations": []}
+    merged_obs = {
+        "status": "unavailable", "owner": "rt-0", "source_kind": "unavailable",
+        "degradation_reason": "; ".join(reason.values()), "contributing_observations": [*ok_obs, bad_obs],
+    }
+    items = [
+        {
+            "id": f"persona-{i}", "persona_id": f"persona-{i}", "persona": {"name": f"P{i}"},
+            "health": {"status": "healthy"}, "bindings": [],
+            "runtime_bindings": runtimes,
+            "telemetry_summary": {"runtime_count": runtime_count, "latest": summaries[0], "summaries": summaries},
+            "evolution": {"decision_count": len(decisions), "latest_decision": decisions[0], "decisions": decisions},
+        }
+        for i in range(persona_count)
+    ]
+    snippets = {"persona_fleet": {"total": persona_count, "summary": {"total_personas": persona_count}, "items": items}}
+    surfaces = {
+        "persona_fleet": {"status": "unavailable", "source": "bff_composed", "owner_observations": [*ok_obs, bad_obs]},
+        "management_cockpit": {"status": "unavailable", "source": "bff_composed", "owner_observation": merged_obs},
+        "management_trading_pulse": {"status": "unavailable", "source": "bff_composed", "owner_observation": merged_obs},
+    }
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "codex_cli")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        client = _seeded_client(tmp_path, monkeypatch)
+        monkeypatch.setattr(
+            bff_main, "_mgmt_nl_collect_context",
+            lambda focus, now, tenant_id=None: {"snippets": snippets, "surfaces": surfaces},
+        )
+        resp = client.post(
+            "/bff/management/nl/ask",
+            json={"question": "hello", "focus": "all"},
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "ctx-bound-residual-rows"},
+        )
+        assert resp.status_code == 202, resp.text
+        assert resp.json()["data"]["provider_status"]["status"] == "completed"
+        assert len(fake.calls) == 1
+        pack = fake.calls[0]["context_pack"]
+        assert len(json.dumps({"s": snippets, "u": surfaces})) > provider_bound_chars * 2
+        assert len(json.dumps(pack)) < provider_bound_chars
+        data = pack["backend"]["management_nl"]["data"]
+        fleet = data["summary_context"]["persona_fleet"]
+        assert len(fleet["items"]) == persona_count
+        first = fleet["items"][0]
+        shared = fleet["shared_rows"]
+        assert first["runtime_bindings"]["shared_row_list"] == "runtime_bindings"
+        assert first["runtime_bindings"]["count"] == runtime_count
+        assert first["runtime_bindings"]["row_indexes"] == list(range(runtime_count))
+        assert [r["runtime_id"] for r in shared["runtime_bindings"]] == [f"rt-{i}" for i in range(runtime_count)]
+        assert all(r["tenant_id"] == "tenant-alpha" for r in shared["runtime_bindings"])
+        assert first["telemetry_summary"]["summaries"]["count"] == runtime_count
+        assert first["telemetry_summary"]["latest"] == {"shared_row_table": "telemetry_summary.latest", "shared_row": 0}
+        assert first["telemetry_summary"]["runtime_count"] == runtime_count
+        assert first["evolution"]["decisions"]["count"] == len(decisions)
+        assert shared["evolution.decisions"][2]["decision_id"] == "dec-2"
+        for name in ("management_cockpit", "management_trading_pulse"):
+            merged = data["surfaces"][name]["owner_observation"]
+            assert merged["status"] == "unavailable"
+            assert "telemetry summary not found" in merged["degradation_reason"]
+            assert merged["contributing_count"] == len(ok_obs) + 1
+            contributing = merged["contributing_observations"]
+            by_key = {(o["subject_type"], o["status"]): o for o in contributing}
+            for kind, status in (("telemetry", "degraded"), ("rollback", "unavailable"), ("monitoring", "ok")):
+                group = by_key[(kind, status)]
+                assert group["count"] == runtime_count
+                assert group["subject_ids"] == [f"rt-{i}" for i in range(runtime_count)]
+                assert group["owners"] == group["subject_ids"]
+            assert by_key[("telemetry", "degraded")]["degradation_reason"] == reason["telemetry"]
+            assert by_key[("rollback", "unavailable")]["source_kind"] == "unavailable"
+            assert by_key[("bindings", "unavailable")]["subject_id"] == "persona-7"
+            assert sum(o.get("count", 1) for o in contributing) == len(ok_obs) + 1
+        pf = data["surfaces"]["persona_fleet"]["owner_observations"]
+        assert sum(o.get("count", 1) for o in pf) == len(ok_obs) + 1
+        assert any(o["subject_type"] == "bindings" and o["degradation_reason"] == "binding owner down" for o in pf)
+    finally:
+        set_management_nl_read_store(original_store)
+        bff_main._sse_buffers["ask"].clear()

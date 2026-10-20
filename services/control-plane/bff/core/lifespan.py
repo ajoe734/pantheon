@@ -151,6 +151,11 @@ async def refresh_provider_readiness(
         await asyncio.sleep(interval_seconds)
 
 
+def _reconciler_enabled() -> bool:
+    raw = os.getenv("PANTHEON_PERSONA_PROVISIONING_RECONCILER_ENABLED", "true")
+    return raw.strip().lower() not in {"0", "false", "no", "off", ""}
+
+
 def create_lifespan(
     cache: ProviderReadinessCache,
     *,
@@ -220,9 +225,23 @@ def create_lifespan(
         if monitor is not None:
             await monitor.start()
 
+        reconciler_task: Optional[asyncio.Task] = None
+        if _reconciler_enabled():
+            from ..personas.service import _persona_provisioning_reconciler_loop
+
+            reconciler_task = task_factory(
+                _persona_provisioning_reconciler_loop(),
+                name="bff-persona-provisioning-reconciler",
+            )
+        app.state.persona_provisioning_reconciler_task = reconciler_task
+
         try:
             yield
         finally:
+            if reconciler_task is not None:
+                reconciler_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await reconciler_task
             if monitor is not None:
                 await monitor.stop()
             refresh_task.cancel()

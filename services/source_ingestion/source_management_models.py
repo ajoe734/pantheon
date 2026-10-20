@@ -156,7 +156,7 @@ class CanaryStageName(str, Enum):
 
 # Invariant check: reject any secret material in public config / metadata
 _SUSPICIOUS_SECRET_KEYS = frozenset({
-    "api_key", "apikey", "secret", "password", "token", "auth_token", "private_key", "secret_key"
+    "api_key", "apikey", "secret", "password", "token", "auth_token", "private_key", "secret_key", "secret_value"
 })
 
 

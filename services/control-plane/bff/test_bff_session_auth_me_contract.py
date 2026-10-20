@@ -1128,3 +1128,45 @@ def test_bff_dev_login_minted_credential_passes_proof_preflight_validator(monkey
             f"{label} token exp={expires_at} must strictly exceed now + 1200 "
             f"({now_seconds + proof_window_floor}); remaining={expires_at - now_seconds}s"
         )
+
+
+def test_bff_auth_login_test_admin_preserves_stable_subject_and_exposes_client_id_display_name(
+    monkeypatch,
+) -> None:
+    _strict_auth_env(monkeypatch)
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_STAGE", "dev")
+    monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_ID", "admintest")
+    monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_SECRET", "test-admin-secret")
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-dev")
+    monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-dev")
+
+    client = TestClient(bff_main.app)
+    login = client.post(
+        "/bff/auth/dev-login",
+        json={
+            "grant_type": "client_credentials",
+            "client_id": "admintest",
+            "client_secret": "test-admin-secret",
+        },
+    )
+    assert login.status_code == 200, login.text
+    payload = login.json()
+    assert payload["meta"]["identity"] == "test_admin"
+    token = payload["access_token"]
+
+    me = client.get("/bff/me", headers={"Authorization": f"Bearer {token}"})
+    assert me.status_code == 200, me.text
+    data = me.json()["data"]
+    assert data["currentUser"]["id"] == "pantheon-dev-admin-test"
+    assert data["user"]["operator_id"] == "pantheon-dev-admin-test"
+    assert data["currentUser"]["display_name"] == "admintest"
+    assert data["user"]["display_name"] == "admintest"
+    assert set(data["roles"]) == {
+        "admin",
+        "operator",
+        "approver",
+        "governance_reviewer",
+        "risk_owner",
+        "reviewer",
+    }

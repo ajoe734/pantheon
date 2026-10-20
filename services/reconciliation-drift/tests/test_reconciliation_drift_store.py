@@ -785,3 +785,20 @@ def test_reconciliation_drift_store_counts_match_real_totals_and_bypass_full_lis
     assert json_store.count_reconciliation_records() == len(json_store.list_reconciliation_records()) == 1
     assert json_store.count_drift_reports() == len(json_store.list_drift_reports()) == 1
     assert json_store.count_worker_states() == len(json_store.list_worker_states()) == 1
+
+
+def test_keyed_existence_reads_are_tenant_scoped(tmp_path) -> None:
+    store = _load_store_module().ReconciliationDriftStore(tmp_path)
+    store.put_evaluation({"evaluation_id": "ev-1", "tenant_id": "t1", "binding_id": "b1"})
+    store.put_evaluation({"evaluation_id": "ev-2", "tenant_id": "t1", "binding_id": "b2"})
+    store.put_drift_report({"drift_report_id": "dr-1", "tenant_id": "t1"})
+    store.put_reconciliation_record({"record_id": "rc-1", "tenant_id": "t1"})
+
+    assert store.evaluation_exists("ev-1", "t1")
+    assert not store.evaluation_exists("ev-1", "t2")
+    assert not store.evaluation_exists("ev-9", "t1")
+    assert store.drift_report_exists("dr-1", "t1")
+    assert not store.drift_report_exists("dr-1", "t2")
+    assert store.reconciliation_record_exists("rc-1", "t1")
+    assert not store.reconciliation_record_exists("rc-2", "t1")
+    assert [r["evaluation_id"] for r in store.list_evaluations_for_binding("b2")] == ["ev-2"]

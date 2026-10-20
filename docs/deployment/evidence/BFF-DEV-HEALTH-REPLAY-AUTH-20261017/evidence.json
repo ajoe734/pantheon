@@ -1,0 +1,23 @@
+{
+  "task": "BFF-DEV-HEALTH-REPLAY-AUTH-20261017",
+  "scope": "source-only; no hosted replay, provider call, purge or deployment",
+  "base": {
+    "command": "pytest test_downstream_health_monitor.py (service.py at 4aacd76ca, tightened tests)",
+    "result": "3 failed, 36 passed",
+    "failed": [
+      "test_dev_matching_tenant_without_mfa_succeeds (HTTP 403 mfa_verified from unconditional MFA check)",
+      "test_dev_wrong_or_missing_tenant_denied_even_with_mfa (base returns 403 mfa_verified not tenant_scope for mfa=False path; with mfa=True no tenant check, adapter called)",
+      "test_dev_missing_approval_and_invalid_channel_rejected (base returns 403 mfa_verified before 422 validation when mfa=False)"
+    ],
+    "non_reproducing": [
+      "non-dev MFA denial (403 mfa_verified) and off-event-loop replay pass on base"
+    ],
+    "correction": "Earlier claim that 422 validation already passed on base was unsupported: with mfa=False base hits the MFA 403 first, and the prior Exception-only assertions could not distinguish it. Helper now defaults payload only when None, so empty {} is exercised."
+  },
+  "head": {
+    "result": "39 passed",
+    "assertions": "HTTPException status_code and precondition_failed asserted (403/tenant_scope, 403/mfa_verified, 422/approval_ref, 422/channel); empty {} and each missing audit field covered; zero adapter calls on denial; actor/reason forwarding retained"
+  },
+  "production_net_growth_lines": 12,
+  "note": "synthetic local identities do not certify production auth boundaries; hosted 403 evidence SHA 130640c7... is not a valid replay"
+}

@@ -1196,44 +1196,200 @@ def test_multiple_active_bindings_for_plan_fail_closed(harness: _Harness) -> Non
     ]
 
 
-def test_paused_binding_terminal_reason_includes_market_input_stale(
+def _paused_binding(reason_code: str) -> dict[str, Any]:
+    return _runtime_binding(
+        status="paused",
+        metadata={
+            "persona_id": PERSONA_ID,
+            "tenant_id": "tenant-alpha",
+            "session_admission": {
+                "reason_code": reason_code,
+                "source_snapshot_id": "mss-dev-paper-001",
+                "max_age_seconds": 86400,
+            },
+        },
+    )
+
+
+def test_market_input_pause_keeps_provisioning_without_compensation(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A market_input_* pause is transient even past the provisioning timeout."""
+    compensation_calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        personas_service,
+        "_reconcile_persona_provisioning_compensation",
+        lambda meta: compensation_calls.append(dict(meta)) or {"status": "completed"},
+    )
+
+    raw = _raw_persona(provisioning_readback_started_at=_now(-601))
+    state, raw = _evaluate(
+        raw=raw,
+        bindings={RUNTIME_BINDING_ID: _paused_binding("market_input_stale")},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+
+    assert state == "provisioning"
+    assert raw["metadata"]["provisioning_waiting_reason"] == "market_input_stale"
+    assert (
+        personas_service._persona_provisioning_authoritative_meta(raw)[
+            "provisioning_waiting_reason"
+        ]
+        == "market_input_stale"
+    )
+    assert "provisioning_failure_reason" not in raw["metadata"]
+    assert "provisioning_compensation" not in raw["metadata"]
+    assert compensation_calls == []
+    assert harness.provisioning_store.released == []
+
+
+def test_resumed_after_long_market_input_pause_keeps_provisioning_before_first_heartbeat(
     harness: _Harness,
 ) -> None:
-    """DEV-PAPER-MARKET-INPUT-STALENESS-001: when paper_fleet_reconciler has
-    paused the sole RuntimeBinding for market_input_stale
-    (services/paper_fleet_reconciler/paper_fleet_reconciler.py's
-    ``_check_market_admission``/session_admission patch), the persona
-    provisioning failure's terminal_reason must name that underlying cause
-    instead of only the generic runtime_binding_failed_or_mismatched
-    marker, so an operator does not have to query the binding row directly."""
-
-    paused_binding = _runtime_binding(
-        status="paused",
+    """Resuming after a long market_input_* pause resets the timeout clock to resumed_at."""
+    harness.read_store.sessions = [_worker_session(last_heartbeat_at=None)]
+    raw = _raw_persona(
+        provisioning_readback_started_at=_now(-1200),
+        provisioning_waiting_reason="market_input_stale",
+    )
+    resumed_binding = _runtime_binding(
         metadata={
             "persona_id": PERSONA_ID,
             "tenant_id": "tenant-alpha",
             "session_admission": {
                 "reason_code": "market_input_stale",
                 "source_snapshot_id": "mss-dev-paper-001",
-                "source_event_time": "2026-09-10T00:00:00Z",
-                "observed_at": "2026-09-18T00:10:00Z",
-                "max_age_seconds": 86400,
-                "pause_command_ref": "cmd-stale-pause-rb-authoritative-alpha-abcd1234",
-                "resume_snapshot_id": None,
-                "resumed_at": None,
+                "resume_snapshot_id": "mss-dev-paper-002",
+                "resumed_at": _now(-10),
             },
         },
     )
+
     state, raw = _evaluate(
-        bindings={RUNTIME_BINDING_ID: paused_binding},
+        raw=raw,
+        bindings={RUNTIME_BINDING_ID: resumed_binding},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+
+    assert state == "provisioning"
+    assert raw["metadata"]["provisioning_waiting_reason"] is None
+    assert "provisioning_failure_reason" not in raw["metadata"]
+    assert harness.provisioning_store.released == []
+
+
+def test_resumed_longer_ago_than_timeout_with_no_progress_fails(
+    harness: _Harness,
+) -> None:
+    """Timeout still triggers when resumed_at is older than the timeout window or predates readback_started_at."""
+    harness.read_store.sessions = [_worker_session(last_heartbeat_at=None)]
+    stale_resumed_binding = _runtime_binding(
+        metadata={
+            "persona_id": PERSONA_ID,
+            "tenant_id": "tenant-alpha",
+            "session_admission": {
+                "reason_code": "market_input_stale",
+                "resumed_at": _now(-601),
+            },
+        },
+    )
+    raw = _raw_persona(
+        provisioning_readback_started_at=_now(-1200),
+        provisioning_waiting_reason="market_input_stale",
+    )
+    state, raw = _evaluate(
+        raw=raw,
+        bindings={RUNTIME_BINDING_ID: stale_resumed_binding},
         cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
     )
 
     assert state == "provisioning_failed"
-    terminal_reason = raw["metadata"]["provisioning_failure_reason"]
-    assert "runtime_binding_failed_or_mismatched" in terminal_reason
-    assert "market_input_stale" in terminal_reason
-    assert "mss-dev-paper-001" in terminal_reason
+    assert raw["metadata"]["provisioning_waiting_reason"] is None
+    assert "provisioning_timeout" in raw["metadata"]["provisioning_failure_reason"]
+
+    harness.provisioning_store.state = "provisioning"
+    harness.provisioning_store.error = None
+    older_resumed_binding = _runtime_binding(
+        metadata={
+            "persona_id": PERSONA_ID,
+            "tenant_id": "tenant-alpha",
+            "session_admission": {
+                "reason_code": "market_input_stale",
+                "resumed_at": _now(-1200),
+            },
+        },
+    )
+    fresh_readback_raw = _raw_persona(provisioning_readback_started_at=_now(-10))
+    state, fresh_readback_raw = _evaluate(
+        raw=fresh_readback_raw,
+        bindings={RUNTIME_BINDING_ID: older_resumed_binding},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+
+    assert state == "provisioning"
+    assert "provisioning_failure_reason" not in fresh_readback_raw["metadata"]
+
+
+def test_operator_pause_or_no_progress_past_timeout_still_fails(
+    harness: _Harness,
+) -> None:
+    paused_raw = _raw_persona(
+        provisioning_readback_started_at=_now(-601),
+        provisioning_waiting_reason="market_input_stale",
+    )
+    state, paused_raw = _evaluate(
+        raw=paused_raw,
+        bindings={RUNTIME_BINDING_ID: _paused_binding("operator_pause")},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+
+    assert state == "provisioning_failed"
+    assert paused_raw["metadata"]["provisioning_waiting_reason"] is None
+    assert "runtime_binding_failed_or_mismatched" in paused_raw["metadata"][
+        "provisioning_failure_reason"
+    ]
+    assert "provisioning_timeout" in paused_raw["metadata"][
+        "provisioning_failure_reason"
+    ]
+
+    harness.provisioning_store.state = "provisioning"
+    harness.provisioning_store.error = None
+    no_progress_raw = _raw_persona(
+        provisioning_readback_started_at=_now(-601),
+        provisioning_waiting_reason="market_input_stale",
+    )
+    state, no_progress_raw = _evaluate(
+        raw=no_progress_raw,
+        bindings={},
+        cron_registrations=set(),
+    )
+
+    assert state == "provisioning_failed"
+    assert no_progress_raw["metadata"]["provisioning_waiting_reason"] is None
+    assert "provisioning_timeout" in no_progress_raw["metadata"][
+        "provisioning_failure_reason"
+    ]
+
+
+def test_retired_binding_hands_case_to_retire_case_without_compensation(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    retired_calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        personas_service,
+        "retire_persona_provisioning_case",
+        lambda tenant_id, persona_id, **_kw: retired_calls.append((tenant_id, persona_id)),
+    )
+
+    state, raw = _evaluate(
+        bindings={RUNTIME_BINDING_ID: _runtime_binding(status="retired")},
+        cron_registrations={(PERSONA_ID, FIRST_EVALUATION_WORKFLOW_ID)},
+    )
+
+    assert state == "retired"
+    assert retired_calls == [("tenant-alpha", PERSONA_ID)]
+    assert "provisioning_failure_reason" not in raw["metadata"]
+    assert harness.provisioning_store.released == []
 
 
 @pytest.mark.parametrize(

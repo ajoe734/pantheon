@@ -53,6 +53,7 @@ BFF_DATA_DIR = os.getenv("BFF_DATA_DIR", "/tmp/pantheon/bff")
 from services.control_plane.cron.persona_cron_registrar import (
     DEFAULT_HTTP_RESPONSE_ALLOWANCE_SECONDS,
 )
+from services.control_plane.bff.core.owner_reads import cached_owner_call, request_read_scope, selected_tenant
 
 from ..models import (
     ActionCommandStatus,
@@ -232,6 +233,15 @@ except ImportError:
     StrategySpecSeedStoreError = Exception
     StrategySpecSeedReviewError = Exception
 
+try:
+    from services.control_plane.bff.core.owner_reads import authorization as _owner_read_authorization
+    from services.control_plane.bff.source_management_client import SourceManagementClient
+except (ImportError, ValueError):
+    from ..core.owner_reads import authorization as _owner_read_authorization  # type: ignore
+    from ..source_management_client import SourceManagementClient  # type: ignore
+
+_DEFAULT_SEED_STORE_CLS = StrategySpecSeedStore
+
 
 try:
     from services.control_plane.persona.persona_strategy_discovery import (
@@ -401,6 +411,7 @@ def _ppl_alloc_009_eligibility_error(
 
 
 # --- _ppl_alloc_009_paper_eligibility_context ---
+@request_read_scope()
 def _ppl_alloc_009_paper_eligibility_context(
     *,
     persona_id: str,
@@ -452,7 +463,7 @@ def _ppl_alloc_009_paper_eligibility_context(
             precondition="paper_only_persona",
         )
 
-    league_rows = _pm12_persona_league_rows(q=persona_id, tenant_id=caller_tenant)
+    league_rows = _pm12_persona_league_rows(q=persona_id, tenant_id=caller_tenant, include_route_policy=False, include_health=False, include_allowed_actions=False)
     matches = [
         row
         for row in league_rows
@@ -1328,6 +1339,113 @@ def _reconcile_persona_provisioning_compensation(
     }
 
 
+# --- _persona_provisioning_ledger_retired ---
+def _persona_provisioning_ledger_retired(metadata: Mapping[str, Any]) -> bool:
+    """True when the durable ledger says the whole release case is retired."""
+
+    tenant_id = str(metadata.get("tenant_id") or "").strip()
+    idempotency_key = str(metadata.get("provisioning_idempotency_key") or "").strip()
+    if not tenant_id or not idempotency_key:
+        return False
+    try:
+        record = _persona_provisioning_store().get(tenant_id, idempotency_key)
+    except Exception as exc:
+        log.warning("Failed to read Persona provisioning ledger for retirement: %s", exc)
+        return False
+    return record is not None and record.state == "retired"
+
+
+# --- _archive_persona_required ---
+def _archive_persona_required(persona_id: str) -> Optional[Dict[str, Any]]:
+    """Archive the Persona through its write owner and read the status back."""
+
+    writer = _get_active_write_owner()
+    updater = getattr(writer, "update_persona", None) if writer else None
+    getter = getattr(writer, "get_persona", None) if writer else None
+    if not callable(updater) or not callable(getter):
+        raise RuntimeError(
+            f"Persona write owner unavailable for archive of {persona_id!r}; "
+            "no fallback writer is permitted."
+        )
+    current = getter(persona_id)
+    if current is None:
+        return None
+    if current.get("status") != "archived":
+        updater(
+            persona_id,
+            status="archived",
+            metadata={"lifecycle_state": "retired"},
+        )
+        current = getter(persona_id)
+    return current
+
+
+# --- _runtime_bindings_for_case ---
+def _runtime_bindings_for_case(plan_id: str, pool_id: str) -> List[Dict[str, Any]]:
+    """Read RuntimeBindings back by plan and by pool (deduplicated)."""
+
+    client = _runtime_manager_client()
+    found: Dict[str, Dict[str, Any]] = {}
+    for binding in [*client.list_by_plan(plan_id), *client.list_by_pool(pool_id)]:
+        key = str(binding.get("binding_id") or binding.get("id") or "")
+        found[key] = binding
+    return list(found.values())
+
+
+# --- retire_persona_provisioning_case ---
+def retire_persona_provisioning_case(
+    tenant_id: str,
+    persona_id: str,
+    *,
+    reason: str = "dev paper release case retired",
+) -> Optional[Dict[str, Any]]:
+    """Retire a whole release case through its provisioning coordinator.
+
+    In-process entrypoint for the BFF-hosted retire script.  Returns the
+    retirement summary, or ``None`` when no ledger exists for the Persona.
+    A case that does not converge stays ``pending`` (evidence only).
+    """
+
+    store = _persona_provisioning_store()
+    record = store.get_by_persona(tenant_id, persona_id)
+    if record is None:
+        return None
+    coordinator = PersonaProvisioningCoordinator(
+        store=store,
+        transport=_PersonaOwnerHttpTransport(tenant_id=tenant_id),
+        schedule_registrar=_register_persona_cron_required,
+        lease_owner=f"persona-retire:{uuid.uuid4().hex}",
+        lease_seconds=max(
+            30,
+            int(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
+        ),
+        actor_id=PERSONA_OWNER_SERVICE_ACTOR_ID,
+        governance_actor_id=os.getenv(
+            "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID", "pantheon-dev-paper-provisioner"
+        ),
+        schedule_remover=_remove_persona_cron_required,
+        runtime_binding_reader=_runtime_bindings_for_case,
+        persona_archiver=_archive_persona_required,
+    )
+    try:
+        retired = coordinator.retire_case(record, reason=reason)
+    except Exception as exc:  # noqa: BLE001 - retirement is evidence, never fatal
+        log.warning("Persona case retirement failed for %s: %s", persona_id, exc)
+        return {
+            "persona_id": persona_id,
+            "state": record.state,
+            "retirement": {
+                "status": "pending",
+                "pending_reason": str(exc) or exc.__class__.__name__,
+            },
+        }
+    return {
+        "persona_id": persona_id,
+        "state": retired.state,
+        "retirement": deepcopy(retired.references.get("retirement") or {}),
+    }
+
+
 # --- _evaluate_persona_provisioning_status ---
 def _evaluate_persona_provisioning_status(
     persona_id: str,
@@ -1348,6 +1466,10 @@ def _evaluate_persona_provisioning_status(
     )
     metadata = raw.get("metadata") or {}
     current_state = raw.get("lifecycle_state") or raw.get("state")
+    if current_state in ("provisioning", "provisioning_failed", "paper_running") and (
+        _persona_provisioning_ledger_retired(metadata)
+    ):
+        return "retired"
     if current_state == "provisioning_failed":
         terminal_updates: Dict[str, Any] = {}
         try:
@@ -1490,6 +1612,8 @@ def _evaluate_persona_provisioning_status(
     binding: Optional[Dict[str, Any]] = None
     binding_ok = False
     binding_failed = False
+    binding_retired = False
+    waiting_reason = ""
     # Populated when the (sole) RuntimeBinding for this plan is paused with a
     # recorded market-admission pause reason, so the terminal_reason built
     # below can name the underlying cause instead of only the generic
@@ -1562,12 +1686,20 @@ def _evaluate_persona_provisioning_status(
                     for value in authoritative_bindings
                     if str(value.get("state") or value.get("status") or "").lower() == "paused"
                 ]
-                if paused_bindings:
-                    # A paused binding for this plan is a failed/mismatched
-                    # binding from provisioning's point of view; when exactly
-                    # one is paused, surface why (e.g. market_input_stale)
-                    # instead of only the generic marker below.
-                    binding_failed = True
+                retired_bindings = [
+                    value
+                    for value in authoritative_bindings
+                    if str(value.get("state") or value.get("status") or "").lower() == "retired"
+                ]
+                if retired_bindings and not paused_bindings:
+                    # Retirement already reached the RuntimeBinding: the case
+                    # is over, so hand it to retire_case instead of letting the
+                    # provisioning timeout compensate it.
+                    binding_retired = True
+                elif paused_bindings:
+                    # A market-input pause (market_input_*) means the market
+                    # data gate has not opened yet; provisioning keeps waiting.
+                    # A pause for any other reason is a failed binding.
                     if len(paused_bindings) == 1:
                         paused_metadata = paused_bindings[0].get("metadata")
                         session_admission = (
@@ -1577,6 +1709,11 @@ def _evaluate_persona_provisioning_status(
                         )
                         if isinstance(session_admission, dict) and session_admission.get("reason_code"):
                             binding_pause_admission = session_admission
+                            reason_code = str(session_admission["reason_code"]).strip()
+                            if reason_code.startswith("market_input_"):
+                                waiting_reason = reason_code
+                    if not waiting_reason:
+                        binding_failed = True
                 elif binding_id and any(
                     str(value.get("binding_id") or value.get("id") or "") == binding_id
                     for value in (all_bindings or {}).values()
@@ -1598,6 +1735,14 @@ def _evaluate_persona_provisioning_status(
                 exc,
             )
             _append_persona_reconcile_diagnostic(diagnostics, "runtime_manager")
+
+    if binding_retired:
+        retire_persona_provisioning_case(
+            tenant_id,
+            persona_id,
+            reason="runtime binding retired during provisioning readback",
+        )
+        return "retired"
 
     # Require exactly one fresh, active worker joined on the complete identity.
     monitoring_sessions: List[Dict[str, Any]] = []
@@ -1757,11 +1902,37 @@ def _evaluate_persona_provisioning_status(
 
     # A timed-out attempt is terminal even if stale evidence happens to appear
     # later; recovery must be an explicit retry that acquires the durable lease.
+    # Measure from the later of provisioning_readback_started_at and the
+    # authoritative RuntimeBinding's session_admission.resumed_at so a long
+    # market_input_* pause does not immediately time out on the first readback
+    # after resume before the restarted worker sends its first heartbeat.
     is_timeout = False
     readback_started_at = metadata.get("provisioning_readback_started_at")
-    if readback_started_at:
+    if readback_started_at and not waiting_reason:
         try:
             started_at_dt = _parse_rfc3339(readback_started_at)
+            if (
+                started_at_dt is not None
+                and binding_ok
+                and isinstance(binding, Mapping)
+            ):
+                binding_meta = binding.get("metadata")
+                session_admission = (
+                    binding_meta.get("session_admission")
+                    if isinstance(binding_meta, Mapping)
+                    else None
+                )
+                resumed_at_dt = (
+                    _parse_rfc3339(session_admission.get("resumed_at"))
+                    if isinstance(session_admission, Mapping)
+                    else None
+                )
+                if (
+                    resumed_at_dt is not None
+                    and resumed_at_dt.tzinfo is not None
+                    and resumed_at_dt > started_at_dt
+                ):
+                    started_at_dt = resumed_at_dt
             timeout_seconds = max(
                 1,
                 int(os.getenv("PANTHEON_PERSONA_PROVISIONING_TIMEOUT_SECONDS", "600")),
@@ -1825,6 +1996,11 @@ def _evaluate_persona_provisioning_status(
     elif new_state == "paper_running":
         metadata_updates["paper_runtime_state"] = "running"
         metadata_updates.pop("provisioning_failure_reason", None)
+    if new_state == "provisioning" and waiting_reason:
+        if metadata.get("provisioning_waiting_reason") != waiting_reason:
+            metadata_updates["provisioning_waiting_reason"] = waiting_reason
+    elif metadata.get("provisioning_waiting_reason") is not None:
+        metadata_updates["provisioning_waiting_reason"] = None
 
     # The durable ledger is the release barrier for terminal Persona state.
     # If its lease is busy or storage is unavailable, leave the Persona in
@@ -2131,6 +2307,28 @@ def _routed_strategies_for_persona(persona_id: str) -> int:
     return len(items)
 
 
+def _routed_strategy_counts_by_persona() -> Dict[str, int]:
+    items = _get_active_read_store().list_strategy_specs() or []
+    counts: Dict[str, int] = {}
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        raw_ids = item.get("persona_ids") or item.get("personaIds")
+        if not raw_ids and isinstance(item.get("versions"), list) and item["versions"]:
+            first_ver = item["versions"][0]
+            if isinstance(first_ver, Mapping):
+                raw_ids = first_ver.get("persona_ids") or first_ver.get("personaIds")
+        if not isinstance(raw_ids, list):
+            continue
+        seen_personas = set()
+        for raw_pid in raw_ids:
+            pid = str(raw_pid or "").strip()
+            if pid and pid not in seen_personas:
+                seen_personas.add(pid)
+                counts[pid] = counts.get(pid, 0) + 1
+    return counts
+
+
 # --- _list_persona_records ---
 def _list_persona_records(
     tenant_id: Optional[str] = None,
@@ -2292,9 +2490,14 @@ def _load_strategy_seed_match_candidates(
     snapshot_at: str,
 ) -> Tuple[List[Any], Dict[str, Any]]:
     try:
-        store = StrategySpecSeedStore()
+        use_local = StrategySpecSeedStore is not _DEFAULT_SEED_STORE_CLS or (
+            bool(os.getenv("PYTEST_CURRENT_TEST"))
+            and bool(os.getenv("STRATEGY_SEED_STORE_PATH", "").strip())
+            and not any(os.getenv(k, "").strip() for k in ("PANTHEON_SOURCE_INGEST_API_URL", "PANTHEON_SOURCE_INGEST_URL", "SOURCE_INGEST_SERVICE_URL", "SOURCE_INGEST_URL"))
+        )
+        store: Any = StrategySpecSeedStore() if use_local else SourceManagementClient()
         seeds = store.list_all()
-        path_exists = store.path.exists()
+        path_exists = store.path.exists() if hasattr(store.path, "exists") else True
         surface: Dict[str, Any] = {
             "status": "ok" if path_exists else "degraded",
             "source": "strategy_spec_seed_store" if path_exists else "strategy_spec_seed_store_missing",
@@ -3647,6 +3850,7 @@ async def _persona_provisioning_reconciler_loop() -> None:
 
 # --- _project_persona_list_records ---
 def _project_persona_list_records(raw_personas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    routed_counts = _routed_strategy_counts_by_persona() if raw_personas else {}
     items = []
     for raw in raw_personas:
         persona_id = str(raw.get("persona_id") or raw.get("id") or "")
@@ -3654,7 +3858,7 @@ def _project_persona_list_records(raw_personas: List[Dict[str, Any]]) -> List[Di
             _project_persona_dto(
                 raw,
                 overlay=None,
-                routed_strategies=_routed_strategies_for_persona(persona_id),
+                routed_strategies=int(routed_counts.get(persona_id, 0)),
                 evaluate_provisioning=False,
             )
         )
@@ -3911,6 +4115,8 @@ def _persona_record_for_provisioning(
     )
     if succeeded_with_readback:
         lifecycle_state = "paper_running"
+    elif record.state == "retired":
+        lifecycle_state = "retired"
     elif record.state in {"failed", "compensated"}:
         lifecycle_state = "provisioning_failed"
     else:
@@ -4230,6 +4436,8 @@ def _persona_provisioning_authoritative_meta(raw: Mapping[str, Any]) -> Dict[str
         "available": bool(readback),
         "observed_at": readback.get("observed_at"),
     }
+    if metadata.get("provisioning_waiting_reason"):
+        result["provisioning_waiting_reason"] = metadata["provisioning_waiting_reason"]
     if runtime_binding:
         result["runtime_binding"] = {
             "runtime_binding_id": (
@@ -4375,8 +4583,9 @@ def _retrieve_canonical_persona_memory(
 
 
 # --- _pm12_persona_route_summary ---
-def _pm12_persona_route_summary(persona_id: str) -> Dict[str, Any]:
-    policy = _get_active_read_store().get_route_policy_for_persona(persona_id) or {}
+def _pm12_persona_route_summary(persona_id: str, *, policy: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    if policy is None:
+        policy = _get_active_read_store().get_route_policy_for_persona(persona_id) or {}
     rules = policy.get("rules") if isinstance(policy.get("rules"), list) else []
     consult_policy = policy.get("consult_policy") if isinstance(policy.get("consult_policy"), dict) else {}
     trigger_rules = (
@@ -4401,8 +4610,9 @@ def _pm12_persona_route_summary(persona_id: str) -> Dict[str, Any]:
 
 
 # --- _pm12_persona_capability_summary ---
-def _pm12_persona_capability_summary(persona_id: str) -> Dict[str, Any]:
-    snapshot = _get_active_read_store().get_capability_snapshot_for_persona(persona_id) or {}
+def _pm12_persona_capability_summary(persona_id: str, *, snapshot: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    if snapshot is None:
+        snapshot = _get_active_read_store().get_capability_snapshot_for_persona(persona_id) or {}
     skills = list(snapshot.get("effective_skills") or [])
     tools = list(snapshot.get("effective_tools") or [])
     workflows = list(snapshot.get("effective_workflows") or [])
@@ -4478,8 +4688,9 @@ def _pm12_persona_binding_summary(
 
 
 # --- _pm12_persona_evaluation_summary ---
-def _pm12_persona_evaluation_summary(persona_id: str) -> Dict[str, Any]:
-    teaching = _get_active_read_store().get_teaching_sessions_for_persona(persona_id) or []
+def _pm12_persona_evaluation_summary(persona_id: str, *, teaching: Optional[Sequence[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    if teaching is None:
+        teaching = _get_active_read_store().get_teaching_sessions_for_persona(persona_id) or []
     completed = [
         item for item in teaching
         if str(item.get("status") or "").lower() in {"completed", "complete", "passed"}
@@ -5804,6 +6015,7 @@ def _promotion_review_item_from_recommendation(
 
 
 # --- _promotion_review_items ---
+@request_read_scope()
 def _promotion_review_items(
     identity: OperatorIdentity,
     *,
@@ -5815,7 +6027,7 @@ def _promotion_review_items(
 ) -> tuple[List[Dict[str, Any]], Dict[str, Any], int, bool]:
     quarter_window = _pm12_quarter_window(quarter, snapshot_at)
     caller_tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-    rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id)
+    rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id, include_route_policy=False, include_health=False, include_allowed_actions=False)
     ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
     (
         public_evidence_refs,
@@ -5956,12 +6168,17 @@ def _project_persona_league_row(
     include_route_policy: bool = True,
     include_health: bool = True,
     include_allowed_actions: bool = True,
+    routed_strategies: Optional[int] = None,
 ) -> Dict[str, Any]:
     persona_id = str(raw.get("persona_id") or raw.get("id") or "")
     metadata = dict(raw.get("metadata") or {}) if isinstance(raw.get("metadata"), dict) else {}
-    routed = _routed_strategies_for_persona(persona_id)
-    route_policy = _pm12_persona_route_summary(persona_id) if include_route_policy else None
-    capabilities = _pm12_persona_capability_summary(persona_id)
+    state = _normalize_lifecycle_state(raw.get("lifecycle_state") or raw.get("state"))
+    is_retired = state == "retired"
+    if is_retired:
+        runtime_bindings, persona_bindings, persona_sessions, authoritative_sessions = [], [], [], []
+    routed = 0 if is_retired else (_routed_strategies_for_persona(persona_id) if routed_strategies is None else int(routed_strategies))
+    route_policy = _pm12_persona_route_summary(persona_id, policy={} if is_retired else None) if include_route_policy else None
+    capabilities = _pm12_persona_capability_summary(persona_id, snapshot={} if is_retired else None)
     bindings = _pm12_persona_binding_summary(
         persona_id,
         runtime_bindings=runtime_bindings,
@@ -5974,19 +6191,11 @@ def _project_persona_league_row(
         runtime_bindings=runtime_bindings,
         authoritative_sessions=authoritative_sessions,
     )
-    evaluations = _pm12_persona_evaluation_summary(persona_id)
+    evaluations = _pm12_persona_evaluation_summary(persona_id, teaching=[] if is_retired else None)
     memory = _pm12_persona_memory_summary(persona_id)
     health = _pm12_persona_health_summary(raw, sessions, capabilities) if include_health else None
-    if include_allowed_actions:
-        allowed_actions = _get_active_read_store().get_persona_allowed_actions(persona_id) or {}
-        enabled_actions = sorted(
-            str(action_id)
-            for action_id, enabled in allowed_actions.items()
-            if enabled
-        )
-    else:
-        allowed_actions = None
-        enabled_actions = None
+    allowed_actions = ({} if is_retired else (_get_active_read_store().get_persona_allowed_actions(persona_id) or {})) if include_allowed_actions else None
+    enabled_actions = sorted(str(action_id) for action_id, enabled in allowed_actions.items() if enabled) if allowed_actions is not None else None
     archetype = str(
         metadata.get("archetype")
         or raw.get("strategy_family")
@@ -5999,7 +6208,7 @@ def _project_persona_league_row(
         "name": raw.get("name") or persona_id,
         "owner": metadata.get("owner") or raw.get("owner") or "pantheon-bff",
         "updated_at": raw.get("updated_at") or raw.get("created_at") or utc_now(),
-        "state": _normalize_lifecycle_state(raw.get("lifecycle_state") or raw.get("state")),
+        "state": state,
         "owner_lifecycle_state": str(raw.get("lifecycle_state") or "").strip().lower() or None,
         "risk": _normalize_risk_level(metadata.get("risk_level") or raw.get("risk")),
         "archetype": archetype,
@@ -6065,6 +6274,7 @@ def _pm12_filter_persona_items(
 
 
 # --- _pm12_persona_league_rows ---
+@request_read_scope()
 def _pm12_persona_league_rows(
     *,
     state: Optional[str] = None,
@@ -6074,43 +6284,48 @@ def _pm12_persona_league_rows(
     include_route_policy: bool = True,
     include_health: bool = True,
     include_allowed_actions: bool = True,
+    routed_strategy_counts: Optional[Mapping[str, int]] = None,
 ) -> List[Dict[str, Any]]:
     raw_records = _list_persona_records(tenant_id)
-    try:
-        all_bindings = [
-            record
-            for record in (_get_active_read_store().list_bindings() or [])
-            if isinstance(record, dict)
-        ]
-    except Exception:
-        all_bindings = []
-    try:
-        all_runtimes = [
-            record
-            for record in (_get_active_read_store().list_runtime_bindings() or [])
-            if isinstance(record, dict)
-        ]
-    except Exception:
-        all_runtimes = []
-    try:
-        all_league_entries = [
-            record
-            for record in (_get_active_read_store().list_persona_league() or [])
-            if isinstance(record, dict)
-        ]
-    except Exception:
-        all_league_entries = []
+    norm_state = _normalize_lifecycle_state(state) if state else None
+    needle = q.strip().lower()
+    if norm_state or archetype or needle:
+        filtered_raw: List[Dict[str, Any]] = []
+        for raw in raw_records:
+            r_id = str(raw.get("persona_id") or raw.get("id") or "")
+            r_meta = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+            r_state = _normalize_lifecycle_state(raw.get("lifecycle_state") or raw.get("state"))
+            r_arch = str(r_meta.get("archetype") or raw.get("strategy_family") or raw.get("mandate") or "generalist")
+            r_name, r_owner = str(raw.get("name") or r_id), str(r_meta.get("owner") or raw.get("owner") or "pantheon-bff")
+            if (not norm_state or r_state == norm_state) and (not archetype or r_arch == archetype) and (not needle or any(needle in s.lower() for s in (r_id, r_name, r_owner, r_arch))):
+                filtered_raw.append(raw)
+        raw_records = filtered_raw
+    raw_records = sorted(raw_records, key=lambda raw: str(raw.get("name") or raw.get("persona_id") or raw.get("id") or ""))
+    has_active = any(_normalize_lifecycle_state(r.get("lifecycle_state") or r.get("state")) != "retired" for r in raw_records)
     active_store = _get_active_read_store()
+    all_bindings: List[Dict[str, Any]] = []
+    all_runtimes: List[Dict[str, Any]] = []
+    all_league_entries: List[Dict[str, Any]] = []
+    if has_active:
+        try:
+            all_bindings = [record for record in (active_store.list_bindings() or []) if isinstance(record, dict)]
+        except Exception:
+            all_bindings = []
+        try:
+            all_runtimes = [record for record in (active_store.list_runtime_bindings() or []) if isinstance(record, dict)]
+        except Exception:
+            all_runtimes = []
+        try:
+            all_league_entries = [record for record in (active_store.list_persona_league() or []) if isinstance(record, dict)]
+        except Exception:
+            all_league_entries = []
 
     sessions_by_persona: Optional[Dict[str, List[Dict[str, Any]]]] = None
     clean_tenant = str(tenant_id or "").strip()
-    if clean_tenant:
+    if clean_tenant and has_active and "get_sessions_for_persona" not in getattr(active_store, "__dict__", {}):
         try:
-            bulk_sessions = None
-            if hasattr(active_store, "list_sessions_for_persona"):
-                bulk_sessions = active_store.list_sessions_for_persona(None)
-            elif hasattr(active_store, "get_sessions_for_persona"):
-                bulk_sessions = active_store.get_sessions_for_persona(None)
+            fn = getattr(active_store, "list_sessions_for_persona", None) or getattr(active_store, "get_sessions_for_persona", None)
+            bulk_sessions = fn(None) if callable(fn) else None
             if bulk_sessions is not None:
                 sessions_by_persona = {}
                 for s in bulk_sessions:
@@ -6120,12 +6335,8 @@ def _pm12_persona_league_rows(
                     if s_tenant and s_tenant != clean_tenant:
                         continue
                     p_id = str(s.get("persona_id") or "").strip()
-                    if p_id:
-                        sessions_by_persona.setdefault(p_id, []).append(s)
-                    for alt_pid in (s.get("personas") or []):
-                        alt_clean = str(alt_pid or "").strip()
-                        if alt_clean and alt_clean != p_id:
-                            sessions_by_persona.setdefault(alt_clean, []).append(s)
+                    for alt_pid in ([p_id] if p_id else []) + [str(a or "").strip() for a in (s.get("personas") or []) if str(a or "").strip() and str(a or "").strip() != p_id]:
+                        sessions_by_persona.setdefault(alt_pid, []).append(s)
         except Exception:
             sessions_by_persona = None
 
@@ -6165,6 +6376,9 @@ def _pm12_persona_league_rows(
             if runtime_identity:
                 runtimes_by_identity.setdefault(runtime_identity, []).append(runtime)
 
+    if routed_strategy_counts is None:
+        routed_strategy_counts = _routed_strategy_counts_by_persona() if has_active else {}
+
     enriched_rows: List[Dict[str, Any]] = []
     for raw in raw_records:
         persona_id = str(raw.get("persona_id") or raw.get("id") or "").strip()
@@ -6178,7 +6392,11 @@ def _pm12_persona_league_rows(
             include_route_policy=include_route_policy,
             include_health=include_health,
             include_allowed_actions=include_allowed_actions,
+            routed_strategies=int(routed_strategy_counts.get(persona_id, 0)),
         )
+        if projected.get("state") == "retired":
+            enriched_rows.append(_enrich_persona_item_with_bindings(projected, bindings=[], runtimes=[], persona=raw, league_entry={}, authoritative_sessions=[], persona_sessions=[]))
+            continue
         persona_id = str(projected.get("persona_id") or projected.get("id") or "").strip()
         runtime_candidates: Dict[str, Dict[str, Any]] = {}
 
@@ -7657,6 +7875,7 @@ def _project_persona_fleet_list_row(
     context_persona: Dict[str, Any],
     snapshot_at: str,
     evolution_decisions: Optional[Sequence[Dict[str, Any]]] = None,
+    routed_strategies: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
     persona_id = _persona_id(persona)
     if not persona_id:
@@ -7852,7 +8071,11 @@ def _project_persona_fleet_list_row(
         or context_metadata.get("league_rank")
     )
     league_score = _as_float(league_entry.get("league_score") or context_metadata.get("league_score"), score)
-    routed = _routed_strategies_for_persona(persona_id)
+    routed = (
+        _routed_strategies_for_persona(persona_id)
+        if routed_strategies is None
+        else int(routed_strategies)
+    )
     drill_target = runtime_id or persona_id
     data_source_status = (
         context_metadata.get("data_source_status")
@@ -7871,11 +8094,12 @@ def _project_persona_fleet_list_row(
     )
     if not required_data_sources and isinstance(context_persona.get("required_data_sources"), list):
         required_data_sources = context_persona.get("required_data_sources") or []
-    data_source_status, data_sources, source_health_bindings = _overlay_source_health_truth(
-        data_source_status,
-        data_sources,
-        required_data_sources=required_data_sources,
-    )
+    if normalized_state != "retired":
+        data_source_status, data_sources, source_health_bindings = _overlay_source_health_truth(
+            data_source_status,
+            data_sources,
+            required_data_sources=required_data_sources,
+        )
     data_source_refs = (
         context_metadata.get("data_source_refs")
         if isinstance(context_metadata.get("data_source_refs"), list)
@@ -8070,6 +8294,7 @@ def _project_persona_fleet_list_row(
 
 
 # --- _persona_fleet_slim_list_payload ---
+@request_read_scope()
 def _persona_fleet_slim_list_payload(
     *,
     snapshot_at: str,
@@ -8087,6 +8312,7 @@ def _persona_fleet_slim_list_payload(
     # later degraded persona-service read from silently restoring league rank.
     quarter_window = _pm12_quarter_window(None, snapshot_at)
     telemetry_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+    telemetry_list_loaded = False
     try:
         for telemetry in _get_active_read_store().list_telemetry_summaries() or []:
             if not isinstance(telemetry, dict):
@@ -8100,12 +8326,22 @@ def _persona_fleet_slim_list_payload(
             )
             if runtime_id:
                 telemetry_cache[runtime_id] = telemetry
+        telemetry_list_loaded = True
     except Exception:
         telemetry_cache = {}
+    league_rows = _pm12_persona_league_rows(
+        state=None,
+        archetype=None,
+        q="",
+        tenant_id=tenant_id,
+        include_route_policy=False,
+        include_health=False,
+        include_allowed_actions=False,
+    )
     paper_rankings = {
         str(item.get("persona_id") or item.get("id") or "").strip(): item
         for item in _pm12_quarterly_ranking_items(
-            _pm12_persona_league_rows(state=None, archetype=None, q="", tenant_id=tenant_id),
+            league_rows,
             quarter_window=quarter_window,
             telemetry_cache=telemetry_cache,
         )
@@ -8115,6 +8351,7 @@ def _persona_fleet_slim_list_payload(
     personas = list(directory.records_by_id.values())
     canonical_total = len(directory.records_by_id)
     catalog_default_total = len(directory.catalog_defaults_by_id)
+    routed_strategy_counts = {str(r.get("persona_id") or r.get("id") or "").strip(): int(r.get("routed_strategy_count") or 0) for r in league_rows if str(r.get("persona_id") or r.get("id") or "").strip()} if league_rows else (_routed_strategy_counts_by_persona() if personas else {})
     league = _get_active_read_store().list_persona_league(include_market_persona_defaults=True)
     bindings = _get_active_read_store().list_bindings(include_market_persona_defaults=True)
     runtimes = _get_active_read_store().list_runtime_bindings(include_market_persona_defaults=True)
@@ -8252,16 +8489,24 @@ def _persona_fleet_slim_list_payload(
             val = str(runtime.get("runtime_id") or "").strip()
             if val:
                 runtime_ids.add(val)
-        active_incidents = _persona_fleet_active_incidents_for_row(
-            incidents=incidents,
-            persona_id=persona_id,
-            binding_ids=binding_ids,
-            capital_pool_ids=capital_pool_ids,
-            runtime_ids=runtime_ids,
+        is_retired_persona = (
+            _normalize_lifecycle_state(persona.get("lifecycle_state") or persona.get("status"))
+            == "retired"
+        )
+        active_incidents = (
+            []
+            if is_retired_persona
+            else _persona_fleet_active_incidents_for_row(
+                incidents=incidents,
+                persona_id=persona_id,
+                binding_ids=binding_ids,
+                capital_pool_ids=capital_pool_ids,
+                runtime_ids=runtime_ids,
+            )
         )
         telemetry_summaries = []
-        for runtime_id in sorted(runtime_ids):
-            if runtime_id not in telemetry_cache:
+        for runtime_id in ([] if is_retired_persona else sorted(runtime_ids)):
+            if runtime_id not in telemetry_cache and not telemetry_list_loaded:
                 telemetry_cache[runtime_id] = _get_active_read_store().get_telemetry_summary(runtime_id)
             summary = telemetry_cache.get(runtime_id)
             if summary:
@@ -8277,6 +8522,7 @@ def _persona_fleet_slim_list_payload(
             context_persona=context_persona,
             snapshot_at=snapshot_at,
             evolution_decisions=evolution_decisions,
+            routed_strategies=int(routed_strategy_counts.get(persona_id, 0)),
         )
         if row is not None:
             if row.get("capital_mode") == "paper":
@@ -8659,6 +8905,8 @@ def _extract_identity(
     mfa_token: Optional[str] = None,
     session_cookie: Optional[str] = None,
 ) -> OperatorIdentity:
+    if authorization or session_cookie:
+        _owner_read_authorization.set(authorization or f"Bearer {session_cookie}")
     if _bff_auth_stub_enabled():
         if authorization and authorization.startswith("Bearer "):
             raw = authorization[len("Bearer "):].strip()
@@ -10928,6 +11176,7 @@ def _persona_provisioning_metadata(
         "paper_runtime_state": (
             "running"
             if lifecycle_state == "paper_running"
+            else "retired" if lifecycle_state == "retired"
             else "failed" if lifecycle_state == "provisioning_failed" else "provisioning"
         ),
         "live_capital_enabled": False,
@@ -11292,9 +11541,9 @@ def _pm12_authoritative_paper_monitoring_sessions(
     for raw_session in (
         authoritative_sessions
         if authoritative_sessions is not None
-        else (
-            _get_active_read_store().list_authoritative_paper_runtime_monitoring_sessions()
-            or []
+        else cached_owner_call(
+            ("pm12_auth_paper_sessions", id(_get_active_read_store())),
+            lambda: _get_active_read_store().list_authoritative_paper_runtime_monitoring_sessions() or [],
         )
     ):
         if not isinstance(raw_session, dict):
@@ -11337,8 +11586,9 @@ def _pm12_runtime_session_resolution(
         # but it cannot prove that the canonical paper worker joined this exact
         # RuntimeBinding.
         if authoritative_sessions is None:
-            authoritative_sessions = (
-                _get_active_read_store().list_authoritative_paper_runtime_monitoring_sessions() or []
+            authoritative_sessions = cached_owner_call(
+                ("pm12_auth_paper_sessions", id(_get_active_read_store())),
+                lambda: _get_active_read_store().list_authoritative_paper_runtime_monitoring_sessions() or [],
             )
         sessions = _pm12_authoritative_paper_monitoring_sessions(
             runtime_aliases,
@@ -13058,10 +13308,12 @@ def _runtime_for_pool(
     return None
 
 
+@request_read_scope()
 def _build_persona_health_items_impl(
     snapshot_at: str,
     *,
     include_market_persona_defaults: bool = False,
+    league: Optional[Sequence[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
     """Sole implementation of the execution persona-health projection.
 
@@ -13071,24 +13323,44 @@ def _build_persona_health_items_impl(
     """
 
     read_store = _get_active_read_store()
-    league_by_persona = {
-        str(item.get("persona_id") or item.get("id") or ""): item
-        for item in read_store.list_persona_league(
+    league_items = (
+        league
+        if league is not None
+        else read_store.list_persona_league(
             include_market_persona_defaults=include_market_persona_defaults,
         )
+    )
+    league_by_persona = {
+        str(item.get("persona_id") or item.get("id") or ""): item
+        for item in (league_items or [])
     }
+    personas_list = list(
+        read_store.list_personas(
+            include_market_persona_defaults=include_market_persona_defaults,
+        )
+        or []
+    )
     context_defaults = (
-        _persona_fleet_context_defaults_by_market()
+        _persona_fleet_context_defaults_by_market(personas_list)
         if include_market_persona_defaults
         else {}
     )
     incidents_list = list(read_store.list_incidents() or [])
     all_decisions = list(read_store.list_evolution_decisions() or [])
     all_telemetry = list(read_store.list_telemetry_summaries() or [])
+    bindings_by_persona: Dict[str, List[Dict[str, Any]]] = {}
+    for b in read_store.list_bindings(include_market_persona_defaults=include_market_persona_defaults) or []:
+        pid = str(b.get("persona_id") or "").strip()
+        if pid:
+            bindings_by_persona.setdefault(pid, []).append(b)
+    runtime_by_pool: Dict[str, Dict[str, Any]] = {}
+    for rt in read_store.list_runtime_bindings(include_market_persona_defaults=include_market_persona_defaults) or []:
+        cpid = str(rt.get("capital_pool_id") or "").strip()
+        if cpid and cpid not in runtime_by_pool:
+            runtime_by_pool[cpid] = rt
+    routed_strategy_counts = _routed_strategy_counts_by_persona() if personas_list else {}
     items: List[Dict[str, Any]] = []
-    for persona in read_store.list_personas(
-        include_market_persona_defaults=include_market_persona_defaults,
-    ):
+    for persona in personas_list:
         persona_id = _persona_id(persona)
         if not persona_id:
             continue
@@ -13124,20 +13396,14 @@ def _build_persona_health_items_impl(
             else {}
         )
         metrics = {**performance, **league_metrics}
-        binding = _first_binding_for_persona(
-            persona_id,
-            include_market_persona_defaults=include_market_persona_defaults,
-        ) or {}
+        binding = _persona_fleet_first_binding_from_index(persona_id, bindings_by_persona) or {}
         pool_id = (
             league_entry.get("capital_pool_id")
             or metadata.get("capital_pool_id")
             or context_metadata.get("capital_pool_id")
             or binding.get("capital_pool_id")
         )
-        runtime = _runtime_for_pool(
-            pool_id,
-            include_market_persona_defaults=include_market_persona_defaults,
-        ) or {}
+        runtime = runtime_by_pool.get(str(pool_id or "").strip(), {}) if pool_id else {}
         runtime_id = (
             league_entry.get("runtime_id")
             or runtime.get("runtime_id")
@@ -13199,7 +13465,7 @@ def _build_persona_health_items_impl(
             risk_flags=risk_flags,
         )
         score = _as_float(league_entry.get("league_score") or context_metadata.get("league_score"), 75.0)
-        routed = _routed_strategies_for_persona(persona_id)
+        routed = int(routed_strategy_counts.get(persona_id, 0))
         open_findings = len(risk_flags) + int(metrics.get("violation_count") or 0)
         drill_target = runtime_id or persona_id
         governance_required = bool(
@@ -13235,11 +13501,14 @@ def _build_persona_health_items_impl(
         )
         if not required_data_sources and isinstance(context_persona.get("required_data_sources"), list):
             required_data_sources = context_persona.get("required_data_sources") or []
-        data_source_status, data_sources, source_health_bindings = _active_persona_service().overlay_source_health_truth(
-            data_source_status,
-            data_sources,
-            required_data_sources=required_data_sources,
-        )
+        if _normalize_lifecycle_state(lifecycle_state) != "retired":
+            data_source_status, data_sources, source_health_bindings = _active_persona_service().overlay_source_health_truth(
+                data_source_status,
+                data_sources,
+                required_data_sources=required_data_sources,
+            )
+        else:
+            source_health_bindings = []
         data_source_refs = (
             context_metadata.get("data_source_refs")
             if isinstance(context_metadata.get("data_source_refs"), list)
@@ -13704,6 +13973,7 @@ class PersonaService:
         snapshot_at: str,
         *,
         include_market_persona_defaults: bool = False,
+        league: Optional[Sequence[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         """Sole implementation of the execution persona-health projection.
 
@@ -13716,6 +13986,7 @@ class PersonaService:
             return _build_persona_health_items_impl(
                 snapshot_at,
                 include_market_persona_defaults=include_market_persona_defaults,
+                league=league,
             )
         finally:
             _current_persona_service.reset(token)
@@ -14023,6 +14294,7 @@ class PersonaService:
             return True
         return False
 
+    @request_read_scope()
     def _compose_quarterly_ranking_context(
         self,
         *,
@@ -14947,6 +15219,7 @@ class PersonaService:
         finally:
             _current_persona_service.reset(token)
 
+    @request_read_scope()
     def get_persona_league(
         self,
         *,
@@ -14961,7 +15234,7 @@ class PersonaService:
     ) -> Dict[str, Any]:
         snap = snapshot_at or self._utc_now()
         slice_fn = page_slice_fn or _page_slice
-        all_rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id)
+        all_rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id, include_route_policy=False, include_health=False, include_allowed_actions=False)
         ranking_basis, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
             [_pm12_persona_league_ranking_item(row) for row in all_rows],
             surface="rolling",
@@ -14998,6 +15271,13 @@ class PersonaService:
         )
         total = len(rows)
         page_items, next_page_token = slice_fn(rows, page_token, page_size)
+        for item in page_items:
+            pid, is_ret = str(item.get("persona_id") or item.get("id") or ""), item.get("state") == "retired"
+            item["route_policy_summary"] = _pm12_persona_route_summary(pid, policy={} if is_ret else None)
+            item["health_summary"] = _pm12_persona_health_summary({"lifecycle_state": item.get("owner_lifecycle_state") or item.get("state")}, item.get("session_summary") or {}, item.get("capability_summary") or {})
+            allowed = {} if is_ret else (_get_active_read_store().get_persona_allowed_actions(pid) or {})
+            enabled = sorted(str(k) for k, v in allowed.items() if v)
+            item["allowed_action_summary"] = {"count": len(allowed), "enabled_count": len(enabled), "enabled_actions": enabled}
         summary = {
             "persona_count": total,
             "returned_count": len(page_items),

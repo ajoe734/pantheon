@@ -11,9 +11,6 @@ from fastapi.testclient import TestClient
 
 # Ensure imports work
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_BFF_DIR = _REPO_ROOT / "services" / "control-plane" / "bff"
-if str(_BFF_DIR) not in sys.path:
-    sys.path.insert(0, str(_BFF_DIR))
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
@@ -33,12 +30,8 @@ finally:
     else:
         os.environ["PANTHEON_RUNTIME_MANAGER_TOKEN"] = _PREV_RUNTIME_MANAGER_TOKEN
 
-if str(_BFF_DIR) in sys.path:
-    sys.path.remove(str(_BFF_DIR))
-sys.path.insert(0, str(_BFF_DIR))
-
-from agora.performance.models import AdjustmentSuggestion, SuggestionProvenance
-from agora.performance.store import PerformanceSuggestionStore
+from services.control_plane.bff.agora.performance.models import AdjustmentSuggestion, SuggestionProvenance
+from services.control_plane.bff.agora.performance.store import PerformanceSuggestionStore
 
 
 @pytest.fixture
@@ -100,7 +93,10 @@ def test_list_and_get_suggestions_via_incidents_api(client: TestClient, tmp_path
     assert resp.json()["suggestion"]["suggestion_id"] == "sug-incidents-001"
 
     # 404 on missing
-    resp = client.get("/api/incidents/agora/performance/suggestions/sug-missing")
+    resp = client.get(
+        "/api/incidents/agora/performance/suggestions/sug-missing",
+        params={"tenant_id": "tenant-inc", "strategy_id": "strat-alpha"},
+    )
     assert resp.status_code == 404
 
 

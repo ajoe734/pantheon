@@ -131,6 +131,7 @@ from .api_models import (
     TriggerIngestJobRequest,
 )
 from .pipeline import IngestPipelineService
+from .strategy_seed_store import StrategySpecSeedStore
 
 
 def _resolve_data_dir() -> Path:
@@ -288,6 +289,12 @@ class SourceIngestionRuntime:
         self._market_data_storage_writer = MarketDataStorageWriter(self._MARKET_DATA_STORAGE_ROOT)
         self._distillation_job_queue = DistillationJobQueue(self._DISTILLATION_JOB_QUEUE_PATH)
         self._source_management_store = build_source_management_store(self._DATA_DIR)
+        self._STRATEGY_SEED_STORE_PATH = Path(
+            (os.getenv("STRATEGY_SPEC_SEED_STORE_PATH") or os.getenv("STRATEGY_SEED_STORE_PATH"))
+            if data_dir is None and (os.getenv("STRATEGY_SPEC_SEED_STORE_PATH") or os.getenv("STRATEGY_SEED_STORE_PATH"))
+            else str(self._DATA_DIR / "distill_seeds.jsonl")
+        )
+        self._strategy_seed_store = StrategySpecSeedStore(path=self._STRATEGY_SEED_STORE_PATH)
         self._source_command_engine = SourceCommandEngine(
             store=self._source_management_store,
             connector_store=self._connector_store,
@@ -296,6 +303,10 @@ class SourceIngestionRuntime:
         )
 
         self.pipeline = IngestPipelineService(self)
+
+    @property
+    def strategy_seed_store(self) -> StrategySpecSeedStore:
+        return self._active_attr("strategy_seed_store", self._strategy_seed_store)
 
     def _active_attr(self, name: str, default: Any) -> Any:
         if getattr(self, "_module", None) is not None:

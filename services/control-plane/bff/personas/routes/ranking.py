@@ -104,7 +104,7 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
         reject_retired_command("QuarterlyRankingRecommendationSubmit")
 
     @router.get("/bff/management/promotion-reviews")
-    async def bff_management_promotion_reviews(
+    def bff_management_promotion_reviews(
         quarter: Optional[str] = Query(default=None),
         state: Optional[str] = None,
         archetype: Optional[str] = None,
@@ -133,7 +133,7 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.get("/bff/management/promotion-reviews/{review_id}")
-    async def bff_management_promotion_review_detail(
+    def bff_management_promotion_review_detail(
         review_id: str,
         quarter: Optional[str] = Query(default=None),
         authorization: Optional[str] = Header(default=None),
@@ -159,7 +159,7 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.get("/bff/management/persona-league")
-    async def bff_management_persona_league(
+    def bff_management_persona_league(
         state: Optional[str] = None,
         archetype: Optional[str] = None,
         q: str = Query(default=""),
@@ -190,7 +190,7 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.get("/bff/management/persona-league/rankings")
-    async def bff_management_persona_league_rankings(
+    def bff_management_persona_league_rankings(
         state: Optional[str] = None,
         archetype: Optional[str] = None,
         q: str = Query(default=""),
@@ -239,7 +239,7 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.get("/bff/management/persona-league/movers")
-    async def bff_management_persona_league_movers(
+    def bff_management_persona_league_movers(
         state: Optional[str] = None,
         archetype: Optional[str] = None,
         q: str = Query(default=""),
@@ -269,7 +269,7 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.get("/bff/management/persona-league/tiers")
-    async def bff_management_persona_league_tiers(
+    def bff_management_persona_league_tiers(
         state: Optional[str] = None,
         archetype: Optional[str] = None,
         q: str = Query(default=""),
@@ -314,7 +314,7 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.get("/bff/management/persona-league/heatmap")
-    async def bff_management_persona_league_heatmap(
+    def bff_management_persona_league_heatmap(
         state: Optional[str] = None,
         archetype: Optional[str] = None,
         q: str = Query(default=""),
@@ -339,7 +339,7 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.get("/bff/management/quarterly-ranking/formula")
-    async def bff_management_quarterly_ranking_formula(
+    def bff_management_quarterly_ranking_formula(
         authorization: Optional[str] = Header(default=None),
     ):
         """BFF: PM-12 quarterly ranking formula weights, version, and governance trace."""
@@ -565,7 +565,7 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.get("/bff/persona-league")
-    async def bff_persona_league(
+    def bff_persona_league(
         market_scope: Optional[str] = None,
         status: Optional[str] = None,
         page_token: Optional[str] = None,
@@ -585,7 +585,7 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
 
     @router.get("/bff/persona-league/{persona_id}")
     @router.get("/bff/management/persona-league/{persona_id}")
-    async def bff_persona_league_detail(
+    def bff_persona_league_detail(
         persona_id: str,
         authorization: Optional[str] = Header(default=None),
     ):

@@ -10,6 +10,7 @@ import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Body, Header, HTTPException, Query, Request
 
+from services.control_plane.bff.core.owner_reads import evict_request_read_keys, request_read_scope
 from services.control_plane.bff.models import ErrorCode, ObjectType
 from ..service import (
     _PPL_ALLOC_009_ELIGIBILITY_BENCHMARK_VERSION,
@@ -166,6 +167,7 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
 
 
     @router.post("/bff/management/personas/{persona_id}/ppl-alloc-009-paper-eligibility-proof", status_code=202)
+    @request_read_scope()
     async def bff_ppl_alloc_009_paper_eligibility_proof(
         persona_id: str,
         payload: Dict[str, Any] = Body(...),
@@ -305,7 +307,15 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
                 status_code=502,
             ) from exc
 
-        refreshed_rows = _pm12_persona_league_rows(q=persona_id, tenant_id=caller_tenant)
+        evict_request_read_keys("telemetry", "pm12_league_rows")
+        refreshed_rows = await asyncio.to_thread(
+            _pm12_persona_league_rows,
+            q=persona_id,
+            tenant_id=caller_tenant,
+            include_route_policy=False,
+            include_health=False,
+            include_allowed_actions=False,
+        )
         refreshed_matches = [
             _pm12_persona_league_ranking_item(row)
             for row in refreshed_rows

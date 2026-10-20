@@ -1264,8 +1264,11 @@ class ResearchRouterService:
                 )
                 or []
             )
+        # An owner-backed read that succeeded and returned nothing is a genuine empty collection.
         surface = self._surface(
-            "research_artifacts", snapshot_at=snapshot_at, has_data=bool(records)
+            "research_artifacts",
+            snapshot_at=snapshot_at,
+            has_data=bool(records) or self._get_dataset_source("research_artifacts") == "service_client",
         )
         if surface.get("status") == "unavailable":
             page_items: List[Dict[str, Any]] = []

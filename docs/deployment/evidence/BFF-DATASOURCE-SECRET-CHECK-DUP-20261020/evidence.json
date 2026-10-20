@@ -1,0 +1,68 @@
+{
+  "task_id": "BFF-DATASOURCE-SECRET-CHECK-DUP-20261020",
+  "title": "移除 BFF 重複的資料來源明文金鑰檢查（誤擋 secret_scope，畫面新增資料來源必 400）",
+  "status": "verified",
+  "verified_at": "2026-10-20T08:46:30Z",
+  "hosted_incident_2026_10_20": {
+    "observed_date": "2026-10-20",
+    "hosted_bff_sha": "c1169fe7ee38ca844dd8c93b7acd09abd73f947b",
+    "frontend_source": "execute-plans src/management/pages/oversight/dataSources/DataSourceAddWizard.tsx:320-340",
+    "request": {
+      "method": "POST",
+      "path": "/bff/management/data-sources",
+      "definition_id": "tw-twse-tpex-official-market",
+      "secret_scope": "runtime_read_only",
+      "connector_config": {
+        "public": {},
+        "secret_ref_id": null,
+        "secret_scope": "runtime_read_only"
+      }
+    },
+    "response": {
+      "status_code": 400,
+      "error": {
+        "code": "VALIDATION_FAILED",
+        "message": "Raw secret material detected at connector_config.secret_scope: inline secrets are strictly forbidden; use secret_ref_id",
+        "details": {
+          "reason": "raw_secret_forbidden"
+        }
+      }
+    },
+    "root_cause": "services/control-plane/bff/console_gap/datasources.py maintained a duplicate assert_no_raw_secrets function using substring matching (any(kw in lower_k for kw in _SECRET_KEYWORDS)), which falsely flagged connector_config.secret_scope='runtime_read_only' because 'secret' is a substring of 'secret_scope'. The owner validator in services/source_ingestion/source_management_models.py uses exact key membership (_SUSPICIOUS_SECRET_KEYS)."
+  },
+  "resolution": {
+    "owner_validator": "services.source_ingestion.source_management_models.assert_no_raw_secrets",
+    "exact_suspicious_secret_keys": [
+      "api_key",
+      "apikey",
+      "auth_token",
+      "password",
+      "private_key",
+      "secret",
+      "secret_key",
+      "secret_value",
+      "token"
+    ],
+    "bff_validation_change": "Removed the BFF duplicate substring-matching assert_no_raw_secrets from services/control-plane/bff/console_gap/datasources.py and imported the owner assert_no_raw_secrets from services.source_ingestion.source_management_models.",
+    "response_redaction_preserved": "Kept redact_sensitive_values in services/control-plane/bff/console_gap/datasources.py conservative with substring matching over _SECRET_KEYWORDS for responses and receipts."
+  },
+  "changed_files": [
+    "services/control-plane/bff/console_gap/datasources.py",
+    "services/source_ingestion/source_management_models.py",
+    "services/control-plane/bff/test_management_data_sources_v2.py",
+    "services/source_ingestion/tests/test_srcm_p1_contracts.py",
+    "docs/deployment/evidence/BFF-DATASOURCE-SECRET-CHECK-DUP-20261020/evidence.json"
+  ],
+  "validation": {
+    "test_commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_management_data_sources_v2.py services/control-plane/bff/tests/test_bff_management_data_sources_contract.py services/control-plane/bff/tests/test_bff_management_gap_003_contract_schema.py services/source_ingestion/tests/test_srcm_p1_contracts.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_architecture_boundaries.py"
+    ],
+    "test_output_summary": {
+      "data_sources_and_source_ingestion_contracts": "52 passed, 3 warnings in 22.03s",
+      "bff_architecture_boundaries": "9 passed, 93 warnings in 19.45s"
+    },
+    "net_prod_line_budget": 0,
+    "net_prod_line_delta": -13
+  }
+}

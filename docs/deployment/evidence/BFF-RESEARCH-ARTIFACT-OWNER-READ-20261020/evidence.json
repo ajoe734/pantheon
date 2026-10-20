@@ -1,0 +1,21 @@
+{
+  "task_id": "BFF-RESEARCH-ARTIFACT-OWNER-READ-20261020",
+  "environment": "worker test interpreter ~/pantheon-ci-deploy/runtime/worker-test-python/current; task worktree cwd; no VM/SSH/provider/compute/hosted operation",
+  "owner_claims": "Default Management/RW-05 artifact list/detail now read saved Research run outputs from the existing owner (new read-only GET /api/research/artifacts[/{id}] over store.list_artifacts/get_artifact joined in-process to the run receipt) through ResearchServiceClient and DefaultResearchKnowledgeSourcePort. One owner request per list/detail; tenant forwarded from verified caller context and enforced by the owner (artifact->run->task tenant, fail closed, cross-tenant detail 404). Injected fixture dict still wins and bypasses the owner. Version/lineage/status/metrics/approval are not invented: status empty, version/lineage null, canCompare false. Owner failure -> 503, genuine empty -> ok/service_client with zero items, unknown id -> 404. REOPEN FIX: owner GET /api/research/artifacts[/{id}] now requires a verified bearer via services.deployment.auth.authenticate_tenant (service_prefix RESEARCH) bound to X-Tenant-Id; anonymous -> 401, bearer without tenant -> 400, signed-token tenant-claim mismatch -> 403, forged signature -> 401; tenantless/unresolved-owner artifacts are never listed or readable (the previous anonymous 200 and orphan-visibility counterexample is closed). Other Research owner APIs unchanged. READ-ROLE FIX: the two owner read handlers now pass an explicit read-role set (existing BFF read roles viewer/view_only/operator/approver/admin/reviewer plus shared service roles) to authenticate_tenant, so authenticated viewer reads succeed; unknown roles -> 403; anonymous/forged/mismatched-tenant/orphan negatives unchanged.",
+  "source_scope_note": "Touched: ports/research_knowledge_source.py, research/client.py, research/service.py (one has_data line), services/research/main.py, docs/bff/RW-05-artifact-compare.md, tests/research_write_owner/test_artifact_read_owner.py. Not touched: PM12 core/owner_reads/read_surface_ports, Tools/Skills/DataSources, frontend. Source delivery only; hosted Artifact UI and whole-system acceptance are not claimed.",
+  "dto_differences": "See docs/bff/RW-05-artifact-compare.md section 8.",
+  "validation": [
+    {
+      "command": "python3 -m pytest tests/research_write_owner services/control-plane/bff/test_rw05_artifact_compare_contract.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/test_mgmt_qlib_006_artifact_research_linkage.py services/control-plane/bff/tests/test_read_surface_port_cutover.py services/control-plane/bff/research -q",
+      "result": "143 passed"
+    },
+    {
+      "command": "python3 -m pytest tests/research_write_owner services/control-plane/bff/tests/test_research_knowledge_source_ports.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/test_rw05_artifact_compare_contract.py -q",
+      "result": "115 passed (includes anonymous/header-only/no-tenant/orphan/claim-mismatch/forged-signature owner negatives)"
+    },
+    {
+      "command": "/tmp/civenv/bin/python -m pytest tests/research_write_owner/test_artifact_read_owner.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/test_rw05_artifact_compare_contract.py -q",
+      "result": "104 passed (includes new viewer-positive and unknown-role-403 test)"
+    }
+  ]
+}

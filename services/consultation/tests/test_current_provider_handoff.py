@@ -23,7 +23,9 @@ import uvicorn
 from services.consultation import main as consultation_main
 from services.consultation.provider import (
     ContributionBlocked,
+    ContributionProviderError,
     HttpContributionProvider,
+    QualifiedContribution,
 )
 from services.consultation.store import ConsultationStore
 from services.consultation.workflow_executor import (
@@ -40,8 +42,16 @@ _ADAPTER_DIR = Path(__file__).resolve().parents[2] / "openclaw-gateway-adapter"
 if str(_ADAPTER_DIR) not in sys.path:
     sys.path.insert(0, str(_ADAPTER_DIR))
 
+from assistant_openclaw_provider import (  # noqa: E402
+    AssistantOpenClawProvider,
+    STRUCTURED_AGENT_ID,
+)
 from consultation_provider import (  # noqa: E402
     CONSULTATION_CONTRIBUTION_PATH,
+    ConsultationContributionRequest,
+    QUALIFIED_CONTRIBUTION_SCHEMA,
+    REQUIRED_OUTPUT,
+    _qualified_response,
     app as integrated_adapter_app,
     create_app,
 )
@@ -51,6 +61,7 @@ TENANT = "tenant-current-consultation"
 SERVICE_TOKEN = "current-consultation-service-token"
 OPERATOR_TOKEN = "current-consultation-operator-token"
 PROVIDER_TOKEN = "current-openclaw-provider-token"
+GATEWAY_TOKEN = "local-openclaw-gateway-token"
 HANDOFF_TOKEN = "current-governance-handoff-token"
 SERVICE_ACTOR = "consultation-workflow-executor"
 
@@ -113,62 +124,182 @@ def _request_json(
     return json.loads(raw) if raw else {}
 
 
-class FakeOpenClawProvider:
-    def __init__(self) -> None:
-        self.calls: list[dict[str, Any]] = []
-        self.findings_override: list[Any] | None = None
+def _default_contribution(tenant_id: str, request_id: str) -> dict[str, Any]:
+    return {
+        "contribution_id": f"openclaw-contribution-{request_id}",
+        "tenant_id": tenant_id,
+        "request_id": request_id,
+        "participant_type": "committee",
+        "participant_ref": "openclaw-risk-committee",
+        "summary": "OpenClaw produced a qualified advisory review.",
+        "recommendation": "approve_with_conditions",
+        "confidence": 0.82,
+        "event_type": "openclaw_committee_contribution",
+        "event_content": {
+            "claim": "Paper-only controls bound the reviewed risk.",
+            "provider_run_id": f"openclaw-run-{request_id}",
+        },
+        "evidence": [
+            {
+                "id": f"openclaw-evidence-{request_id}",
+                "evidence_type": "committee_review",
+                "link": f"artifact://consultation/{request_id}",
+            }
+        ],
+        "findings": [
+            {
+                "severity": "medium",
+                "category": "risk",
+                "claim": "Live authority remains disabled.",
+                "evidence_refs": [f"openclaw-evidence-{request_id}"],
+                "recommendation": "Retain paper-only rollout.",
+            }
+        ],
+    }
 
-    def invoke(self, prompt: str, **kwargs: Any) -> Any:
-        context = dict(kwargs["context_pack"])
-        request_id = str(context["request_id"])
-        contribution = {
-            "contribution_id": f"openclaw-contribution-{request_id}",
-            "tenant_id": str(context["tenant_id"]),
-            "request_id": request_id,
-            "participant_type": "committee",
-            "participant_ref": "openclaw-risk-committee",
-            "summary": "OpenClaw produced a qualified advisory review.",
-            "recommendation": "approve_with_conditions",
-            "confidence": 0.82,
-            "event_type": "openclaw_committee_contribution",
-            "event_content": {
-                "claim": "Paper-only controls bound the reviewed risk.",
-                "provider_run_id": f"openclaw-run-{request_id}",
-            },
-            "evidence": [
-                {
-                    "id": f"openclaw-evidence-{request_id}",
-                    "evidence_type": "committee_review",
-                    "link": f"artifact://consultation/{request_id}",
-                }
-            ],
-            "findings": [
-                {
-                    "severity": "medium",
-                    "category": "risk",
-                    "claim": "Live authority remains disabled.",
-                    "evidence_refs": [f"openclaw-evidence-{request_id}"],
-                    "recommendation": "Retain paper-only rollout.",
-                }
-            ],
-        }
-        if self.findings_override is not None:
-            contribution["findings"] = self.findings_override
-        self.calls.append({"prompt": prompt, "kwargs": kwargs})
-        return SimpleNamespace(
-            status="completed",
-            output={
-                "json_events": [
-                    {
-                        "type": "item.completed",
-                        "item": {
-                            "type": "agent_message",
-                            "text": json.dumps(contribution),
-                        },
-                    }
-                ]
-            },
+
+def _extract_schema_and_envelope(input_text: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    schema_marker = "that satisfies this JSON schema:\n"
+    prompt_marker = "\n\nYou are producing an advisory Pantheon Consultation contribution."
+    envelope_marker = "Consultation envelope JSON: "
+    schema_obj: dict[str, Any] = {}
+    envelope_obj: dict[str, Any] = {}
+    if schema_marker in input_text and prompt_marker in input_text:
+        raw_schema = input_text.split(schema_marker, 1)[1].split(prompt_marker, 1)[0]
+        schema_obj = json.loads(raw_schema)
+    if envelope_marker in input_text:
+        raw_envelope = input_text.split(envelope_marker, 1)[1].strip()
+        envelope_obj = json.loads(raw_envelope)
+    return schema_obj, envelope_obj
+
+
+@dataclass
+class GatewayResponsesControl:
+    calls: list[dict[str, Any]]
+    findings_override: list[Any] | None = None
+    contribution_override: dict[str, Any] | None = None
+    raw_text_override: str | None = None
+    function_calls_override: list[dict[str, Any]] | None = None
+    http_error: tuple[int, dict[str, Any]] | None = None
+
+
+class _GatewayResponsesServer(ThreadingHTTPServer):
+    control: GatewayResponsesControl
+
+
+class _GatewayResponsesHandler(BaseHTTPRequestHandler):
+    server: _GatewayResponsesServer
+
+    def log_message(self, _format: str, *args: object) -> None:
+        del args
+
+    def do_POST(self) -> None:  # noqa: N802 - stdlib handler contract
+        length = int(self.headers.get("Content-Length") or 0)
+        body = json.loads(self.rfile.read(length).decode("utf-8"))
+        if (
+            self.path != "/v1/responses"
+            or self.headers.get("Authorization") != f"Bearer {GATEWAY_TOKEN}"
+        ):
+            self._write_json(403, {"error": "gateway auth failed"})
+            return
+        input_text = str(body.get("input") or "")
+        schema_obj, envelope_obj = _extract_schema_and_envelope(input_text)
+        control = self.server.control
+        control.calls.append(
+            {
+                "path": self.path,
+                "headers": {k.lower(): v for k, v in self.headers.items()},
+                "body": body,
+                "prompt": input_text,
+                "agent_id": self.headers.get("X-OpenClaw-Agent-Id"),
+                "extraction_schema": schema_obj,
+                "envelope": envelope_obj,
+            }
         )
+        if control.http_error is not None:
+            status_code, err_payload = control.http_error
+            self._write_json(status_code, err_payload)
+            return
+
+        tenant_id = str(envelope_obj.get("tenant_id") or TENANT)
+        request_id = str(envelope_obj.get("request_id") or "unknown")
+        contribution = _default_contribution(tenant_id, request_id)
+        if control.findings_override is not None:
+            contribution["findings"] = control.findings_override
+        if control.contribution_override is not None:
+            contribution = dict(control.contribution_override)
+
+        if control.function_calls_override is not None:
+            events = [
+                {
+                    "type": "response.completed",
+                    "response": {
+                        "id": f"resp-{request_id}",
+                        "status": "incomplete",
+                        "output": [
+                            {
+                                "type": "function_call",
+                                "name": item.get("name", "emit_extraction"),
+                                "arguments": item.get("arguments", "{}"),
+                                "call_id": item.get("call_id", "call_1"),
+                            }
+                            for item in control.function_calls_override
+                        ],
+                    },
+                }
+            ]
+        else:
+            text = (
+                control.raw_text_override
+                if control.raw_text_override is not None
+                else json.dumps(contribution)
+            )
+            events = [
+                {"type": "response.output_text.done", "text": text},
+                {
+                    "type": "response.completed",
+                    "response": {
+                        "id": f"resp-{request_id}",
+                        "status": "completed",
+                        "usage": {"input_tokens": 32, "output_tokens": 48},
+                    },
+                },
+            ]
+        self._write_sse(events)
+
+    def _write_json(self, status: int, payload: dict[str, Any]) -> None:
+        raw = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def _write_sse(self, events: list[dict[str, Any]]) -> None:
+        chunks = [f"data: {json.dumps(evt)}\n\n" for evt in events]
+        chunks.append("data: [DONE]\n\n")
+        raw = "".join(chunks).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+
+@contextmanager
+def _serve_gateway_responses() -> Iterator[tuple[str, GatewayResponsesControl]]:
+    control = GatewayResponsesControl(calls=[])
+    server = _GatewayResponsesServer(("127.0.0.1", 0), _GatewayResponsesHandler)
+    server.control = control
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address
+        yield f"ws://{host}:{port}", control
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 @dataclass
@@ -241,7 +372,8 @@ class CurrentStack:
     api_url: str
     provider_url: str
     handoff_url: str
-    provider: FakeOpenClawProvider
+    provider: GatewayResponsesControl
+    real_provider: AssistantOpenClawProvider
     handoff: HandoffControl
     root: Path
 
@@ -305,6 +437,10 @@ class CurrentStack:
         return request
 
 
+def _forbidden_subprocess_run(*_args: object, **_kwargs: object) -> None:
+    raise AssertionError("structured consultation turn must not spawn CLI subprocess")
+
+
 @pytest.fixture
 def current_stack(
     tmp_path: Path,
@@ -317,24 +453,32 @@ def current_stack(
     consultation_main.workflow_state = WorkflowStateStore(
         tmp_path / "api-workflow.sqlite3"
     )
-    fake_provider = FakeOpenClawProvider()
-    provider_app = create_app(
-        provider=fake_provider,
-        provider_token=PROVIDER_TOKEN,
-        expected_service_actor=SERVICE_ACTOR,
-        replay_path=tmp_path / "provider-replay.sqlite3",
-    )
-    with _serve_handoff() as (handoff_url, handoff):
-        with _serve_asgi(provider_app) as provider_base:
-            with _serve_asgi(consultation_main.app) as api_url:
-                yield CurrentStack(
-                    api_url=api_url,
-                    provider_url=provider_base + CONSULTATION_CONTRIBUTION_PATH,
-                    handoff_url=handoff_url,
-                    provider=fake_provider,
-                    handoff=handoff,
-                    root=tmp_path,
-                )
+    with _serve_gateway_responses() as (gateway_url, gateway_control):
+        real_provider = AssistantOpenClawProvider(
+            gateway_url=gateway_url,
+            agent_id="main",
+            token=GATEWAY_TOKEN,
+            _which_func=lambda _: None,
+            _run_func=_forbidden_subprocess_run,
+        )
+        provider_app = create_app(
+            provider=real_provider,
+            provider_token=PROVIDER_TOKEN,
+            expected_service_actor=SERVICE_ACTOR,
+            replay_path=tmp_path / "provider-replay.sqlite3",
+        )
+        with _serve_handoff() as (handoff_url, handoff):
+            with _serve_asgi(provider_app) as provider_base:
+                with _serve_asgi(consultation_main.app) as api_url:
+                    yield CurrentStack(
+                        api_url=api_url,
+                        provider_url=provider_base + CONSULTATION_CONTRIBUTION_PATH,
+                        handoff_url=handoff_url,
+                        provider=gateway_control,
+                        real_provider=real_provider,
+                        handoff=handoff,
+                        root=tmp_path,
+                    )
 
 
 def _http_provider(config: ExecutorConfig) -> HttpContributionProvider:
@@ -382,6 +526,7 @@ def test_consultation_entrypoint_preserves_existing_adapter_routes() -> None:
 
     assert "/healthz" in paths
     assert "/api/openclaw-adapter/assistant/providers/openclaw/invoke" in paths
+    assert "/api/openclaw-adapter/assistant/providers/openclaw/structured" in paths
     assert CONSULTATION_CONTRIBUTION_PATH in paths
 
 
@@ -431,10 +576,16 @@ def test_current_provider_publishes_one_memo_and_replays_acknowledgement(
     assert recovered["outcome"] == "completed"
     assert "recovered acknowledged handoff" in recovered["detail"]
     assert len(current_stack.provider.calls) == 1
-    assert (
-        current_stack.provider.calls[0]["kwargs"].get("agent_id")
-        == "structured-extraction"
-    )
+    captured = current_stack.provider.calls[0]
+    assert captured["path"] == "/v1/responses"
+    assert captured["agent_id"] == STRUCTURED_AGENT_ID
+    assert captured["agent_id"] == "structured-extraction"
+    assert captured["body"]["model"] == "openclaw/structured-extraction"
+    assert captured["body"]["stream"] is True
+    assert "tools" not in captured["body"]
+    assert "tool_choice" not in captured["body"]
+    assert captured["extraction_schema"] == QUALIFIED_CONTRIBUTION_SCHEMA
+    assert captured["body"]["metadata"] == {"trace_id": f"trace-{request_id}"}
     assert len(current_stack.handoff.calls) == 1
 
     memos = _request_json(
@@ -445,6 +596,8 @@ def test_current_provider_publishes_one_memo_and_replays_acknowledgement(
     )
     assert len(memos) == 1
     assert memos[0]["status"] == "published"
+    assert memos[0]["author_type"] == "committee"
+    assert memos[0]["author_ref"] == "openclaw-risk-committee"
     assert memos[0]["findings"] == [
         {
             "severity": "medium",
@@ -575,6 +728,7 @@ def test_workflow_executor_loop_control_observation(
                 "severity": "catastrophic",
                 "category": "risk",
                 "claim": "c",
+                "evidence_refs": ["ev-1"],
                 "recommendation": "r",
             }
         ],
@@ -613,138 +767,291 @@ def test_provider_prompt_describes_canonical_finding_contract(
 ) -> None:
     request = current_stack.create_request("prompt-finding-contract")
     _http_provider(current_stack.config()).obtain(tenant_id=TENANT, request=request)
-    prompt = current_stack.provider.calls[0]["prompt"]
-    for token in ("severity", "category", "claim", "evidence_refs", "recommendation", "critical"):
+    call = current_stack.provider.calls[0]
+    prompt = call["prompt"]
+    assert prompt.startswith("No tool is available in this turn.")
+    for token in (
+        "severity",
+        "category",
+        "claim",
+        "evidence_refs",
+        "recommendation",
+        "critical",
+        "execution_authority=none",
+        "allowed_tools=[]",
+    ):
         assert token in prompt
     assert "no approval, deployment" in prompt
+    assert call["extraction_schema"] == QUALIFIED_CONTRIBUTION_SCHEMA
 
 
-def test_consultation_provider_uses_exact_restricted_agent_with_real_provider_spy(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    "raw_text",
+    [
+        "Advisory review complete: recommend approve_with_conditions.",
+        "```json\n{\"summary\": \"markdown fenced\"}\n```",
+    ],
+)
+def test_non_json_provider_output_fails_closed_and_dead_letters(
+    current_stack: CurrentStack,
+    raw_text: str,
 ) -> None:
-    from assistant_openclaw_provider import (
-        AssistantOpenClawProvider,
-        STRUCTURED_AGENT_ID,
+    request_id = "non-json-provider-output"
+    request = current_stack.create_request(request_id)
+    config = current_stack.config(max_blocked_attempts=2)
+    state = WorkflowStateStore(config.state_path)
+    current_stack.provider.raw_text_override = raw_text
+
+    with pytest.raises(ContributionBlocked, match="model answer is not valid JSON") as exc_info:
+        _http_provider(config).obtain(tenant_id=TENANT, request=request)
+    assert exc_info.value.retryable is False
+
+    first_tick = run_tick(config=config, state=state)
+    assert first_tick["blocked"] == 1
+    second_tick = run_tick(config=config, state=state)
+    assert second_tick["dead_lettered"] == 1
+    assert current_stack.handoff.calls == []
+    memos = _request_json(
+        current_stack.api_url + f"/api/consult/memos?request_id={request_id}"
     )
-
-    real_provider = AssistantOpenClawProvider(token="test-token")
-    captured_stream_kwargs: dict[str, Any] = {}
-
-    def spy_stream(prompt: str, **kwargs: Any) -> Iterator[dict[str, Any]]:
-        captured_stream_kwargs.update(kwargs)
-        captured_stream_kwargs["prompt"] = prompt
-        contribution = {
-            "contribution_id": "openclaw-contribution-spy",
-            "tenant_id": TENANT,
-            "request_id": "req-spy-test",
-            "participant_type": "committee",
-            "participant_ref": "openclaw-risk-committee",
-            "summary": "Spy advisory review.",
-            "recommendation": "approve_with_conditions",
-            "confidence": 0.85,
-            "event_type": "openclaw_committee_contribution",
-            "event_content": {"claim": "Paper controls active."},
-            "evidence": [
-                {
-                    "id": "ev-1",
-                    "evidence_type": "review",
-                    "link": "artifact://test",
-                }
-            ],
-            "findings": [
-                {
-                    "severity": "medium",
-                    "category": "risk",
-                    "claim": "No live trading.",
-                    "evidence_refs": ["ev-1"],
-                    "recommendation": "Maintain paper.",
-                }
-            ],
-        }
-        yield {
-            "type": "done",
-            "text": json.dumps(contribution),
-            "elapsed_ms": 1,
-        }
-
-    monkeypatch.setattr(real_provider, "stream", spy_stream)
-
-    app = create_app(
-        provider=real_provider,
-        provider_token=PROVIDER_TOKEN,
-        expected_service_actor=SERVICE_ACTOR,
-        replay_path=tmp_path / "spy-replay.sqlite3",
-    )
-    with _serve_asgi(app) as base_url:
-        http_provider = HttpContributionProvider(
-            endpoint=base_url + CONSULTATION_CONTRIBUTION_PATH,
-            bearer_token=PROVIDER_TOKEN,
-            service_actor=SERVICE_ACTOR,
-            timeout_seconds=5.0,
-        )
-        contribution = http_provider.obtain(
-            tenant_id=TENANT,
-            request={
-                "tenant_id": TENANT,
-                "request_id": "req-spy-test",
-                "task": "Review paper-only allocation risk.",
-                "metadata": {"paper_only": True},
-                "trace_id": "trace-spy-test",
-            },
-        )
-        assert contribution.request_id == "req-spy-test"
-        assert captured_stream_kwargs["agent_id"] == STRUCTURED_AGENT_ID
-        assert captured_stream_kwargs["agent_id"] == "structured-extraction"
-        assert captured_stream_kwargs["tools"] is None
-        assert captured_stream_kwargs["tool_choice"] is None
+    assert memos == []
 
 
-def test_consultation_provider_fails_closed_when_restricted_agent_rejected(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+def test_tool_call_output_is_rejected_and_not_cached(
+    current_stack: CurrentStack,
 ) -> None:
-    from assistant_openclaw_provider import AssistantOpenClawProvider
+    request_id = "tool-call-rejected"
+    request = current_stack.create_request(request_id)
+    config = current_stack.config()
+    current_stack.provider.function_calls_override = [
+        {"name": "emit_extraction", "arguments": "{}", "call_id": "call_1"}
+    ]
 
-    real_provider = AssistantOpenClawProvider(token="test-token")
-    captured_stream_kwargs: dict[str, Any] = {}
+    with pytest.raises(
+        ContributionBlocked,
+        match="structured extraction must not emit tool calls",
+    ) as exc_info:
+        _http_provider(config).obtain(tenant_id=TENANT, request=request)
+    assert exc_info.value.retryable is True
+    assert len(current_stack.provider.calls) == 1
 
-    def spy_stream_error(prompt: str, **kwargs: Any) -> Iterator[dict[str, Any]]:
-        captured_stream_kwargs.update(kwargs)
-        yield {
-            "type": "error",
-            "status_code": 404,
-            "message": "agent 'structured-extraction' not found",
-            "error_code": "OPENCLAW_AGENT_NOT_FOUND",
-        }
+    # Replay claim was released; a clean structured JSON answer now succeeds.
+    current_stack.provider.function_calls_override = None
+    contribution = _http_provider(config).obtain(tenant_id=TENANT, request=request)
+    assert contribution.request_id == request_id
+    assert len(current_stack.provider.calls) == 2
 
-    monkeypatch.setattr(real_provider, "stream", spy_stream_error)
 
-    app = create_app(
-        provider=real_provider,
-        provider_token=PROVIDER_TOKEN,
-        expected_service_actor=SERVICE_ACTOR,
-        replay_path=tmp_path / "spy-err-replay.sqlite3",
+def test_tenant_and_request_identity_mismatch_fail_closed(
+    current_stack: CurrentStack,
+) -> None:
+    request_id = "identity-mismatch-check"
+    request = current_stack.create_request(request_id)
+    config = current_stack.config()
+    provider_client = _http_provider(config)
+
+    # 1. Envelope vs nested request mismatch is rejected before invoking OpenClaw.
+    mismatched_nested = dict(request, tenant_id="other-tenant-id")
+    with pytest.raises(
+        ContributionBlocked,
+        match="ConsultRequest identity does not match provider envelope",
+    ):
+        provider_client.obtain(tenant_id=TENANT, request=mismatched_nested)
+    assert len(current_stack.provider.calls) == 0
+
+    # 2. Provider structured output with wrong tenant_id is rejected and not cached.
+    bad_tenant = _default_contribution("wrong-tenant", request_id)
+    current_stack.provider.contribution_override = bad_tenant
+    with pytest.raises(
+        ContributionBlocked,
+        match="provider contribution tenant mismatch",
+    ):
+        provider_client.obtain(tenant_id=TENANT, request=request)
+    assert len(current_stack.provider.calls) == 1
+
+    # 3. Provider structured output with wrong request_id is rejected and not cached.
+    bad_request = _default_contribution(TENANT, "wrong-request-id")
+    current_stack.provider.contribution_override = bad_request
+    with pytest.raises(
+        ContributionBlocked,
+        match="provider contribution request mismatch",
+    ):
+        provider_client.obtain(tenant_id=TENANT, request=request)
+    assert len(current_stack.provider.calls) == 2
+
+    # 4. Restoring matching identity succeeds on retry.
+    current_stack.provider.contribution_override = None
+    valid = provider_client.obtain(tenant_id=TENANT, request=request)
+    assert valid.tenant_id == TENANT
+    assert valid.request_id == request_id
+    assert len(current_stack.provider.calls) == 3
+
+
+def test_consultation_provider_surfaces_restricted_agent_and_gateway_failures(
+    current_stack: CurrentStack,
+) -> None:
+    request_id = "req-gateway-failure"
+    request = current_stack.create_request(request_id)
+    config = current_stack.config(max_blocked_attempts=2)
+    state = WorkflowStateStore(config.state_path)
+    health = initial_health_state(config)
+
+    # Non-retryable 404 when structured-extraction agent is rejected/missing.
+    current_stack.provider.http_error = (
+        404,
+        {"error": {"message": "agent 'structured-extraction' not found"}},
     )
-    with _serve_asgi(app) as base_url:
-        http_provider = HttpContributionProvider(
-            endpoint=base_url + CONSULTATION_CONTRIBUTION_PATH,
-            bearer_token=PROVIDER_TOKEN,
-            service_actor=SERVICE_ACTOR,
-            timeout_seconds=5.0,
+    with pytest.raises(ContributionBlocked) as exc_404:
+        _http_provider(config).obtain(tenant_id=TENANT, request=request)
+    assert "structured-extraction" in exc_404.value.reason
+    assert exc_404.value.retryable is False
+    assert current_stack.provider.calls[0]["agent_id"] == "structured-extraction"
+
+    # Retryable 503 upstream failure is surfaced in workflow state and health.
+    current_stack.provider.http_error = (
+        503,
+        {"error": {"message": "openclaw gateway temporarily unavailable"}},
+    )
+    with pytest.raises(ContributionBlocked) as exc_503:
+        _http_provider(config).obtain(tenant_id=TENANT, request=request)
+    assert exc_503.value.retryable is True
+
+    first_tick = run_tick(config=config, state=state)
+    update_functional_health(health, first_tick, observed_at="2026-10-18T17:20:00Z")
+    assert first_tick["blocked"] == 1
+    assert "503" in first_tick["outcomes"][0]["detail"]
+    assert health["status"] == "degraded"
+    assert health["functional_health"]["ready"] is False
+    assert health["functional_health"]["blocked_count"] == 1
+    assert "blocked item(s)" in health["last_failure_reason"]
+
+
+def test_empty_findings_succeed_and_publish_memo_with_evidence(
+    current_stack: CurrentStack,
+) -> None:
+    request_id = "empty-findings-valid"
+    request = current_stack.create_request(request_id)
+    config = current_stack.config()
+    provider_client = _http_provider(config)
+
+    assert "minItems" not in QUALIFIED_CONTRIBUTION_SCHEMA["properties"]["findings"]
+    assert QUALIFIED_CONTRIBUTION_SCHEMA["properties"]["evidence"]["minItems"] == 1
+
+    # Empty evidence=[] still fails closed under minItems=1.
+    no_evidence = _default_contribution(TENANT, request_id)
+    no_evidence["evidence"] = []
+    current_stack.provider.contribution_override = no_evidence
+    with pytest.raises(ContributionBlocked, match="evidence"):
+        provider_client.obtain(tenant_id=TENANT, request=request)
+    assert len(current_stack.provider.calls) == 1
+
+    # Valid empty findings=[] with non-empty evidence succeeds end-to-end.
+    current_stack.provider.contribution_override = None
+    current_stack.provider.findings_override = []
+    result = run_tick(config=config, state=WorkflowStateStore(config.state_path))
+    assert result["completed"] == 1
+    assert len(current_stack.provider.calls) == 2
+
+    memos = _request_json(
+        current_stack.api_url + f"/api/consult/memos?request_id={request_id}"
+    )
+    handoffs = _request_json(
+        current_stack.api_url + f"/api/consult/handoffs?request_id={request_id}"
+    )
+    assert len(memos) == 1
+    assert memos[0]["status"] == "published"
+    assert memos[0]["findings"] == []
+    assert len(handoffs) == 1
+    assert handoffs[0]["status"] == "acknowledged"
+
+
+def test_ai_only_attribution_and_agent_id_enforcement(
+    current_stack: CurrentStack,
+) -> None:
+    request_id = "ai-attribution-and-agent-id"
+    request = current_stack.create_request(request_id)
+    config = current_stack.config()
+    provider_client = _http_provider(config)
+
+    assert QUALIFIED_CONTRIBUTION_SCHEMA["properties"]["participant_type"]["enum"] == [
+        "committee",
+        "persona",
+    ]
+
+    # Shared domain model still permits genuine human_reviewer -> author_type='human'.
+    shared_human = _default_contribution(TENANT, request_id)
+    shared_human["participant_type"] = "human_reviewer"
+    domain_qualified = QualifiedContribution.from_payload(
+        shared_human,
+        expected_tenant_id=TENANT,
+        expected_request_id=request_id,
+    )
+    assert domain_qualified.participant_type == "human_reviewer"
+    assert domain_qualified.author_type == "human"
+
+    # OpenClaw AI boundary rejects participant_type='human_reviewer' via schema.
+    current_stack.provider.contribution_override = shared_human
+    with pytest.raises(ContributionBlocked, match="participant_type") as exc_schema:
+        provider_client.obtain(tenant_id=TENANT, request=request)
+    assert exc_schema.value.retryable is False
+    assert len(current_stack.provider.calls) == 1
+
+    # _qualified_response also rejects missing/wrong agent_id and human attribution directly.
+    envelope = ConsultationContributionRequest(
+        tenant_id=TENANT,
+        request_id=request_id,
+        request=request,
+        required_output=REQUIRED_OUTPUT,
+    )
+    valid_structured = _default_contribution(TENANT, request_id)
+    with pytest.raises(
+        ContributionProviderError,
+        match="OpenClaw consultation output must come from structured-extraction",
+    ):
+        _qualified_response(
+            SimpleNamespace(
+                status="completed",
+                output={"structured_data": valid_structured},
+            ),
+            envelope,
         )
-        with pytest.raises(ContributionBlocked) as exc_info:
-            http_provider.obtain(
-                tenant_id=TENANT,
-                request={
-                    "tenant_id": TENANT,
-                    "request_id": "req-spy-err",
-                    "task": "Review paper-only allocation risk.",
-                    "metadata": {"paper_only": True},
-                    "trace_id": "trace-spy-err",
+    with pytest.raises(
+        ContributionProviderError,
+        match="OpenClaw consultation output must come from structured-extraction",
+    ):
+        _qualified_response(
+            SimpleNamespace(
+                status="completed",
+                output={"agent_id": "main", "structured_data": valid_structured},
+            ),
+            envelope,
+        )
+    with pytest.raises(
+        ContributionProviderError,
+        match="OpenClaw consultation attribution must be committee or persona, not human",
+    ):
+        _qualified_response(
+            SimpleNamespace(
+                status="completed",
+                output={
+                    "agent_id": STRUCTURED_AGENT_ID,
+                    "structured_data": shared_human,
                 },
-            )
-        assert "structured-extraction" in exc_info.value.reason
-        assert exc_info.value.retryable is False
-        assert captured_stream_kwargs["agent_id"] == "structured-extraction"
+            ),
+            envelope,
+        )
+    with pytest.raises(
+        ContributionProviderError,
+        match="OpenClaw consultation attribution must be committee or persona, not human",
+    ):
+        _qualified_response(
+            SimpleNamespace(
+                status="completed",
+                output={
+                    "agent_id": STRUCTURED_AGENT_ID,
+                    "structured_data": dict(valid_structured, author_type="human"),
+                },
+            ),
+            envelope,
+        )
 

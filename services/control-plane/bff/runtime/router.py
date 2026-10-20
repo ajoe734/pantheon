@@ -22,6 +22,7 @@ except (ImportError, ValueError):
         from models import CommandType, ErrorCode, ObjectType
 
 from .service import RuntimeRouterService
+from ..core.owner_reads import request_read_scope
 
 
 def _accepts_idempotency_key(owner_call: Optional[Callable[..., Any]]) -> bool:
@@ -1105,7 +1106,7 @@ def create_runtime_router(
         return {"data": data, "meta": meta}
 
     @router.get("/bff/runtimes")
-    async def bff_list_runtimes(
+    def bff_list_runtimes(
         status: Optional[str] = None,
         deployment_stage: Optional[str] = None,
         page_token: Optional[str] = None,
@@ -1198,7 +1199,8 @@ def create_runtime_router(
 
 
     @router.get("/bff/v5/execution/persona-health")
-    async def bff_v5_execution_persona_health(
+    @request_read_scope()
+    def bff_v5_execution_persona_health(
         authorization: Optional[str] = Header(default=None),
     ):
         """BFF BFF-B2-006: v5 execution persona-health list."""
@@ -1215,6 +1217,11 @@ def create_runtime_router(
         health_items = _build_persona_health_items(
             snapshot_at,
             include_market_persona_defaults=True,
+            **(
+                {"league": league}
+                if "league" in inspect.signature(_build_persona_health_items).parameters
+                else {}
+            ),
         )
         return {
             "data": health_items,

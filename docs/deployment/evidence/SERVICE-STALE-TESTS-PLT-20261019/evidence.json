@@ -1,0 +1,53 @@
+{
+  "task_id": "SERVICE-STALE-TESTS-PLT-20261019",
+  "title": "Policy-learning training-session and promotion tests match current contracts",
+  "status": "ready_for_review",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "verdict": "all seven failures were stale tests; no production regression found; production code unchanged",
+  "findings": [
+    {
+      "tests": [
+        "services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py::test_default_compose_gives_api_and_scheduler_one_credential_and_tenant_scope",
+        "services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py::test_offline_compose_renderer_matches_docker_compose_config[overrides0..2]"
+      ],
+      "out_of_date": "test",
+      "cause": "docker-compose.yml put policy-learning-svc behind profiles [research, root] and the scheduler behind [root, workers]; the nonexistent profile 'policy-learning-shadow-eval-scheduler' no longer selected either service.",
+      "contract_commits": ["99833357f", "8b9f218f6", "eb75a1ad7 (OSS-PROFILES-OWNER-GROUPS-CORRECTION-20261004)"],
+      "fix": "docker compose config now uses --profile root, which carries both services and operator-bff. Assertions unchanged."
+    },
+    {
+      "tests": [
+        "services/training-session/tests/test_http_service.py::test_canonical_dataset_validation_and_fail_closed_and_evidence",
+        "services/training-session/tests/test_http_service.py::test_model_bound_preview_runs_real_backend_on_derived_candidate"
+      ],
+      "out_of_date": "test",
+      "cause": "The preview field was not moved. A failed evaluation now hands off to Consultation and fails closed (runtime_evidence_unavailable, ConsultationClientError 'consultation service URL is not configured') when the owner is unreachable, so the job failed and had no preview.",
+      "contract_commits": ["d1944a899 (L12-MFC-R4-TEACH-001: teaching eval & consult handoff)"],
+      "fix": "Added a consultation_owner fixture that runs the real Consultation ASGI app over HTTP with auth required, used by both tests. No mock of the owner boundary; assertions unchanged."
+    },
+    {
+      "tests": ["services/promotion/test_service.py::test_decide_failure_does_not_persist_partial_under_review_state"],
+      "out_of_date": "test",
+      "cause": "Governance approval_decision now rejects empty conditions with \"'approved_with_conditions' requires nonempty conditions\"; still HTTP 422 and still no partial persistence.",
+      "contract_commits": ["a9b34143a (GOV-APPROVAL-AUTHORITY-PREREQUISITE-001)"],
+      "fix": "Expected message updated to the current text. Status, no-partial-state assertions unchanged."
+    }
+  ],
+  "verification": {
+    "python": "worker-test-python (PANTHEON_DEPENDENCY_PYTHON)",
+    "services/policy-learning": "140 passed, 5 skipped",
+    "services/training-session": "240 passed, 2 skipped",
+    "services/promotion": "9 passed"
+  },
+  "scope_compliance": {
+    "declared_files_only": [
+      "services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py",
+      "services/training-session/tests/test_http_service.py",
+      "services/promotion/test_service.py",
+      "docs/deployment/evidence/SERVICE-STALE-TESTS-PLT-20261019/evidence.json"
+    ],
+    "no_skip_deselect_or_known_failures_list": true,
+    "branch_ci_yml_untouched": true
+  }
+}

@@ -1370,13 +1370,47 @@ class DeploymentOrchestrationService:
         if record is None:
             raise DeploymentSagaError(f"Outbox event '{event_id}' not found")
         saga = self._require_saga(record.event.aggregate_id)
+        plan = self.planner_service.get_plan(saga.plan_id)
+        if self._is_canonical_compensation_event(record, saga, plan):
+            # Persisted compensation recovery undoes an already-admitted
+            # forward action; it must not need the forward approval to be
+            # unexpired. Identity was verified above.
+            return self.saga_store.replay_outbox_event(event_id, reason=request.reason)
         try:
-            self._resolve_registry_entry_for_plan(self.planner_service.get_plan(saga.plan_id))
+            self._resolve_registry_entry_for_plan(plan)
         except DeploymentPlanError as exc:
             raise DeploymentSagaError(
                 f"Outbox event '{event_id}' replay denied: {exc}"
             ) from exc
         return self.saga_store.replay_outbox_event(event_id, reason=request.reason)
+
+    @staticmethod
+    def _is_canonical_compensation_event(
+        record: OutboxRecord, saga: DeploymentSaga, plan: DeploymentPlan
+    ) -> bool:
+        """True only for a persisted compensation event of this saga/plan."""
+        event = record.event
+        payload = event.payload if isinstance(event.payload, Mapping) else {}
+        compensation = saga.compensation
+        payload_compensation = payload.get("compensation")
+        if (
+            event.event_type != "deployment.compensation.requested"
+            or event.aggregate_type != "deployment_saga"
+            or record.owner_service != "deployment-orchestrator"
+            or event.aggregate_id != saga.saga_id
+            or compensation is None
+            or not isinstance(payload_compensation, Mapping)
+            or payload_compensation.get("command_type")
+            != _enum_value(compensation.command_type)
+            or payload.get("plan_id") != saga.plan_id
+            or plan.plan_id != saga.plan_id
+            or plan.approval_decision_id != saga.approval_decision_id
+            or plan.artifact_id != saga.artifact_id
+            or plan.artifact_version != saga.artifact_version
+        ):
+            return False
+        saga_tenant = _saga_tenant_id(saga)
+        return saga_tenant is not None and saga_tenant == _plan_tenant_id(plan)
 
     def _mark_plan_binding_created(
         self,

@@ -11,7 +11,12 @@ Implements the §8 operations from contract.md:
 """
 from __future__ import annotations
 
+import json
 import logging
+import os
+import urllib.error
+import urllib.parse
+import urllib.request
 from typing import Callable, Optional
 
 from .models import (
@@ -65,6 +70,33 @@ class RegistryConflictError(RegistryError):
     """Raised when a CAS-guarded mutation's base snapshot is stale (maps to HTTP 409)."""
 
 
+class RegistryOwnerUnavailableError(RegistryError):
+    """Raised when canonical runtime/deployment owner reads fail or disagree (maps to HTTP 503)."""
+
+
+def _http_get_json(url: str, *, tenant_id: Optional[str], authorization: Optional[str]) -> dict:
+    from services.governance.approval_authority import NoOwnerRedirect
+
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise RegistryOwnerUnavailableError(f"Invalid canonical owner URL: {url}")
+    headers = {"Accept": "application/json"}
+    if tenant_id:
+        headers["X-Tenant-Id"] = tenant_id
+    if authorization:
+        headers["Authorization"] = authorization
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    opener = urllib.request.build_opener(NoOwnerRedirect())
+    try:
+        with opener.open(req, timeout=5.0) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+        raise RegistryOwnerUnavailableError(f"Canonical owner GET failed for {url}: {exc}") from exc
+    if not isinstance(body, dict):
+        raise RegistryOwnerUnavailableError(f"Canonical owner GET returned non-object for {url}")
+    return body
+
+
 # Metadata keys that hold an immutable, validated payload (StrategySpec,
 # StrategyArtifact, AllocationPolicyArtifact) or an immutable identity link
 # (source_seed_id). The generic metadata-replace path (update_metadata) is an
@@ -109,9 +141,18 @@ def _reject_immutable_metadata_mutation(
 
 
 class RegistryService:
-    def __init__(self, store: RegistryStore, *, approval_reader=None):
+    def __init__(
+        self,
+        store: RegistryStore,
+        *,
+        approval_reader=None,
+        runtime_bindings_reader=None,
+        deployment_plan_reader=None,
+    ):
         self.store = store
         self.approval_reader = approval_reader
+        self.runtime_bindings_reader = runtime_bindings_reader
+        self.deployment_plan_reader = deployment_plan_reader
 
     # -- §8 operations ----------------------------------------------------
 
@@ -306,6 +347,9 @@ class RegistryService:
         """Enumerate versions within a strategy family."""
         entries = self.store.list_by_strategy(strategy_id)
         return [self._to_view(e) for e in entries]
+
+    def list_all_entries(self) -> list[RegistryEntryView]:
+        return [self._to_view(e) for e in self.store.list_all_entries()]
 
     def get_creation_receipt(self, registry_id: str) -> Optional[RegistryEntryView]:
         """Return the entry exactly as it was at its first successful
@@ -601,47 +645,180 @@ class RegistryService:
         strategy_id: str,
         *,
         visible: Optional["callable"] = None,
+        tenant_id: Optional[str] = None,
+        authorization: Optional[str] = None,
+        runtime_bindings_reader: Optional["callable"] = None,
+        deployment_plan_reader: Optional["callable"] = None,
     ) -> DeploymentView:
+        """Compose deployment-stage view from canonical RuntimeBinding + DeploymentPlan
+        owners joined with caller-visible approved Registry artifacts of this strategy family.
         """
-        Return the derived deployment-stage view from deployment/runtime objects.
-
-        This is a composed read path, not a registry-only write authority.
-        ``visible`` scopes the composition to entries a specific caller is
-        authorized to see — see :meth:`resolve_latest_approved`.
-        """
-        if visible is None:
-            return self.store.resolve_deployment_view(strategy_id)
-
-        entries = [v.entry for v in self.list_by_strategy(strategy_id) if visible(v.entry)]
+        all_entries = [v.entry for v in self.list_by_strategy(strategy_id)]
+        all_by_id = {e.registry_id: e for e in all_entries}
+        entries = [e for e in all_entries if visible is None or visible(e)]
         approved = [e for e in entries if e.artifact_state == ArtifactState.APPROVED]
         view = DeploymentView(strategy_id=strategy_id)
-        if not approved:
+        if approved:
+            latest = max(approved, key=lambda e: tuple(int(x) for x in e.version.split(".")))
+            view.latest_approved_registry_id = latest.registry_id
+            view.latest_approved_version = latest.version
+
+        bindings_reader = runtime_bindings_reader or self.runtime_bindings_reader
+        plan_reader = deployment_plan_reader or self.deployment_plan_reader
+        runtime_url = os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip().rstrip("/")
+        deployment_url = os.getenv("PANTHEON_DEPLOYMENT_API_URL", "").strip().rstrip("/")
+
+        if bindings_reader is None and runtime_url:
+            def bindings_reader(tid: Optional[str]) -> list[dict]:
+                data = _http_get_json(
+                    f"{runtime_url}/api/runtime-bindings",
+                    tenant_id=tid,
+                    authorization=authorization,
+                )
+                items = data.get("bindings")
+                if not isinstance(items, list):
+                    raise RegistryOwnerUnavailableError("runtime-manager bindings payload is invalid")
+                return items
+
+        if plan_reader is None and deployment_url:
+            def plan_reader(plan_id: str, tid: Optional[str]) -> dict:
+                q_id = urllib.parse.quote(plan_id, safe="")
+                return _http_get_json(
+                    f"{deployment_url}/api/deployment/plans/{q_id}",
+                    tenant_id=tid,
+                    authorization=authorization,
+                )
+
+        if bindings_reader is None or plan_reader is None:
+            raise RegistryOwnerUnavailableError(
+                "Canonical runtime-manager and deployment owner readers must both be configured"
+            )
+
+        try:
+            raw_bindings = bindings_reader(tenant_id)
+        except RegistryOwnerUnavailableError:
+            raise
+        except Exception as exc:
+            raise RegistryOwnerUnavailableError(f"RuntimeBinding owner read failed: {exc}") from exc
+        if isinstance(raw_bindings, dict):
+            raw_bindings = raw_bindings.get("bindings")
+        if not isinstance(raw_bindings, list):
+            raise RegistryOwnerUnavailableError("RuntimeBinding owner read returned invalid bindings list")
+
+        status_rank = {"active": 2, "pending_pause": 1, "paused": 0}
+        active_pools: set[str] = set()
+        pool_best: dict[str, tuple[tuple[int, str], tuple[str, int], dict, DeploymentStage, str, str]] = {}
+        for item in raw_bindings:
+            b = item.model_dump() if hasattr(item, "model_dump") else (dict(item) if isinstance(item, dict) else None)
+            if not isinstance(b, dict):
+                raise RegistryOwnerUnavailableError("Invalid RuntimeBinding record")
+            status = str(b.get("status") or "").strip().lower()
+            if status in {"retired", "failed"}:
+                continue
+            if status not in status_rank or b.get("retired_at"):
+                raise RegistryOwnerUnavailableError(f"Invalid current RuntimeBinding status={status!r}")
+            meta = b.get("metadata") if isinstance(b.get("metadata"), dict) else {}
+            b_tenant = str(b.get("tenant_id") or meta.get("tenant_id") or "").strip()
+            if tenant_id and tenant_id != BUILTIN_TENANT and b_tenant != tenant_id:
+                raise RegistryOwnerUnavailableError("RuntimeBinding tenant mismatch")
+            pool_id = str(b.get("capital_pool_id") or "").strip()
+            if not pool_id:
+                raise RegistryOwnerUnavailableError("Current RuntimeBinding is missing capital_pool_id")
+            if status == "active":
+                if pool_id in active_pools:
+                    raise RegistryOwnerUnavailableError(f"Multiple active RuntimeBindings in pool {pool_id!r}")
+                active_pools.add(pool_id)
+
+            artifact_id = str(b.get("artifact_id") or b.get("registry_id") or "").strip()
+            b_ver = str(b.get("artifact_version") or b.get("version") or "").strip()
+            b_strategy = str(b.get("strategy_id") or meta.get("strategy_id") or "").strip()
+            if not artifact_id or not b_ver:
+                raise RegistryOwnerUnavailableError("Current RuntimeBinding is missing artifact_id or artifact_version")
+
+            matched_entry = all_by_id.get(artifact_id)
+            if matched_entry is None:
+                if b_strategy == strategy_id or (not b_strategy and self.store.get(artifact_id) is None):
+                    raise RegistryOwnerUnavailableError(f"RuntimeBinding references unknown artifact {artifact_id!r}")
+                continue
+            if b_strategy and b_strategy != strategy_id:
+                raise RegistryOwnerUnavailableError("RuntimeBinding strategy_id mismatch")
+            if matched_entry.owner_tenant not in (None, BUILTIN_TENANT) and b_tenant != matched_entry.owner_tenant:
+                raise RegistryOwnerUnavailableError("RuntimeBinding owner_tenant mismatch")
+            if (visible is not None and not visible(matched_entry)) or matched_entry.artifact_state != ArtifactState.APPROVED:
+                raise RegistryOwnerUnavailableError("RuntimeBinding references non-approved or invisible Registry entry")
+            if b_ver != matched_entry.version:
+                raise RegistryOwnerUnavailableError("RuntimeBinding artifact_version mismatch")
+
+            binding_id = str(b.get("binding_id") or b.get("runtime_binding_id") or "").strip()
+            plan_id = str(b.get("plan_id") or b.get("deployment_plan_id") or "").strip()
+            if not binding_id or not plan_id:
+                raise RegistryOwnerUnavailableError("Current RuntimeBinding is missing binding_id or plan_id")
+
+            effective_tenant = tenant_id or b_tenant or None
+            try:
+                raw_plan = plan_reader(plan_id, effective_tenant)
+            except RegistryOwnerUnavailableError:
+                raise
+            except Exception as exc:
+                raise RegistryOwnerUnavailableError(f"DeploymentPlan owner read failed for {plan_id!r}: {exc}") from exc
+            plan = raw_plan.model_dump() if hasattr(raw_plan, "model_dump") else (dict(raw_plan) if isinstance(raw_plan, dict) else None)
+            if not plan or str(plan.get("plan_id") or "").strip() != plan_id:
+                raise RegistryOwnerUnavailableError(f"Linked DeploymentPlan {plan_id!r} missing or plan_id mismatch")
+
+            plan_status = str(plan.get("status") or "").strip().lower()
+            if plan_status not in {"approved", "executing", "executed"}:
+                raise RegistryOwnerUnavailableError(f"Linked DeploymentPlan {plan_id!r} has status {plan_status!r}")
+            plan_meta = plan.get("metadata") if isinstance(plan.get("metadata"), dict) else {}
+            plan_tenant = str(plan.get("tenant_id") or plan_meta.get("tenant_id") or "").strip()
+            if effective_tenant and effective_tenant != BUILTIN_TENANT and plan_tenant != effective_tenant:
+                raise RegistryOwnerUnavailableError(f"Linked DeploymentPlan {plan_id!r} tenant mismatch")
+            if (
+                str(plan.get("strategy_id") or "").strip() != strategy_id
+                or str(plan.get("artifact_id") or "").strip() != matched_entry.registry_id
+                or str(plan.get("artifact_version") or "").strip() != matched_entry.version
+                or str(plan.get("capital_pool_id") or "").strip() != pool_id
+            ):
+                raise RegistryOwnerUnavailableError(f"Linked DeploymentPlan {plan_id!r} identity/pool mismatch")
+            lifecycle = plan_meta.get("runtime_lifecycle") if isinstance(plan_meta.get("runtime_lifecycle"), dict) else {}
+            plan_bindings = [plan.get("binding_id"), plan.get("runtime_binding_id"), lifecycle.get("binding_id")]
+            if any(v is not None and str(v).strip() != binding_id for v in plan_bindings):
+                raise RegistryOwnerUnavailableError(f"Linked DeploymentPlan {plan_id!r} binding_id mismatch")
+            if plan_status == "executed" and not any(plan_bindings):
+                raise RegistryOwnerUnavailableError(f"Executed DeploymentPlan {plan_id!r} missing binding_id")
+
+            mode = str(b.get("deployment_mode") or b.get("current_stage") or "").strip().lower()
+            target_stage = str(plan.get("target_stage") or "").strip().lower()
+            try:
+                stage = DeploymentStage(mode)
+            except ValueError as exc:
+                raise RegistryOwnerUnavailableError(f"Invalid RuntimeBinding deployment_mode {mode!r}") from exc
+            if stage == DeploymentStage.NONE or target_stage != stage.value:
+                raise RegistryOwnerUnavailableError("RuntimeBinding mode disagrees with DeploymentPlan target_stage")
+
+            ts = str(
+                b.get("last_transition_at")
+                or meta.get("last_transition_at")
+                or meta.get("transitioned_at")
+                or meta.get("paused_at")
+                or b.get("updated_at")
+                or b.get("effective_at")
+                or b.get("created_at")
+                or plan.get("created_at")
+                or ""
+            )
+            pool_key = (status_rank[status], ts)
+            prev = pool_best.get(pool_id)
+            if prev is None or pool_key >= prev[0]:
+                pool_best[pool_id] = (pool_key, (ts, status_rank[status]), plan, stage, binding_id, ts)
+
+        if not pool_best:
             return view
 
-        def _parse_ver(v: str) -> tuple[int, ...]:
-            return tuple(int(x) for x in v.split("."))
-
-        approved_by_ver = sorted(approved, key=lambda e: _parse_ver(e.version), reverse=True)
-        latest = approved_by_ver[0]
-        view.latest_approved_registry_id = latest.registry_id
-        view.latest_approved_version = latest.version
-
-        deployed_candidates = [
-            e for e in approved
-            if e.deployment_summary is not None
-            and e.deployment_summary.current_stage is not None
-            and e.deployment_summary.current_stage != DeploymentStage.NONE
-        ]
-        if deployed_candidates:
-            deployed = max(
-                deployed_candidates,
-                key=lambda e: e.deployment_summary.last_transition_at or "",
-            )
-            ds = deployed.deployment_summary
-            view.current_stage = ds.current_stage
-            view.deployment_plan_id = ds.deployment_plan_id
-            view.runtime_binding_id = ds.runtime_binding_id
-            view.last_transition_at = ds.last_transition_at
+        _, _, winning_plan, stage, binding_id, ts = max(pool_best.values(), key=lambda item: item[1])
+        view.current_stage = stage
+        view.deployment_plan_id = str(winning_plan.get("plan_id"))
+        view.runtime_binding_id = binding_id
+        view.last_transition_at = ts or None
         return view
 
     # -- Deployment summary projection (called by deployment service) -------

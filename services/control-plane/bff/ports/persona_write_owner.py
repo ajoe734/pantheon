@@ -364,6 +364,7 @@ class PersonaRegistryHttpWritePort:
         lifecycle_state: str | None = None,
         risk_level: str | None = None,
         metadata: Mapping[str, Any] | None = None,
+        status: str | None = None,
     ) -> Optional[Dict[str, Any]]:
         del updated_at
         current = self.get_persona(persona_id)
@@ -381,6 +382,8 @@ class PersonaRegistryHttpWritePort:
         }
         if name is not None:
             patch["name"] = name
+        if status is not None:
+            patch["status"] = status
         if archetype is not None:
             patch["mandate"] = archetype
             patch["strategy_family"] = archetype

@@ -23,6 +23,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from services.control_plane.bff.core.owner_reads import cached_owner_call, selected_tenant
 from services.control_plane.bff.trade_journey_projection_store import (
     configured_projection_reader,
 )
@@ -1142,10 +1143,22 @@ class DomainTelemetryPort:
         )
         return events
 
+    def _get_raw_telemetry_summaries(self) -> List[Dict[str, Any]]:
+        if self._telemetry_summaries is not None:
+            return self._telemetry_summaries
+        if self._telemetry_summaries_reader is not None:
+            def _load() -> List[Dict[str, Any]]:
+                summaries = self._telemetry_summaries_reader()
+                if not isinstance(summaries, list) or any(not isinstance(item, dict) for item in summaries):
+                    raise RuntimeError("Invalid Telemetry owner summaries collection")
+                return summaries
+            return cached_owner_call(("telemetry_summaries", id(self), selected_tenant.get()), _load)
+        return []
+
     def get_telemetry_summary(self, runtime_id: str) -> Optional[Dict[str, Any]]:
-        for summary in self.list_telemetry_summaries():
+        for summary in self._get_raw_telemetry_summaries():
             if summary.get("runtime_id") == runtime_id or summary.get("id") == runtime_id:
-                return summary
+                return json.loads(json.dumps(summary))
         return None
 
     def dataset_source(self) -> str:
@@ -1159,21 +1172,13 @@ class DomainTelemetryPort:
         except RuntimeError:
             return "missing"
         try:
-            self.list_telemetry_summaries()
+            self._get_raw_telemetry_summaries()
             return "service"
         except Exception:
             return "unavailable"
 
     def list_telemetry_summaries(self) -> List[Dict[str, Any]]:
-        if self._telemetry_summaries is not None:
-            summaries = self._telemetry_summaries
-        elif self._telemetry_summaries_reader is not None:
-            summaries = self._telemetry_summaries_reader()
-            if not isinstance(summaries, list) or any(not isinstance(item, dict) for item in summaries):
-                raise RuntimeError("Invalid Telemetry owner summaries collection")
-        else:
-            return []
-        return [json.loads(json.dumps(s)) for s in summaries]
+        return [json.loads(json.dumps(s)) for s in self._get_raw_telemetry_summaries()]
 
     def get_telemetry_performance(self, artifact_id: str) -> Optional[Dict[str, Any]]:
         return self._telemetry_performance.get(artifact_id)

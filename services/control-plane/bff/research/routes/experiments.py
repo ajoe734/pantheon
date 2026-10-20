@@ -176,7 +176,7 @@ def create_research_experiments_router(
         return service.get_experiment_artifacts(experiment_id, snapshot_at=utc_now())
 
     @router.get("/bff/research-experiments")
-    async def list_research_experiments(
+    def list_research_experiments(
         status: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),
