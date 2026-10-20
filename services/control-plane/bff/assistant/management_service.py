@@ -5271,7 +5271,16 @@ def _mgmt_nl_build_context_pack(
         actor=context_identity,
         collect_source=collect_source,
     )
-    return pack.model_dump(mode="json", by_alias=False)
+    dumped = pack.model_dump(mode="json", by_alias=False)
+    # The composer mirrors `backend` into bff_reads.context; the canonical
+    # payload stays in `backend`, so the provider copy is a source reference.
+    bff_reads = dumped.get("bff_reads")
+    if isinstance(bff_reads, dict) and isinstance(bff_reads.get("context"), dict):
+        bff_reads["context"] = {
+            "mirrors": "backend",
+            "source_keys": sorted(str(k) for k in bff_reads["context"]),
+        }
+    return dumped
 def _mgmt_nl_provider_mode_from_context(context_pack: Dict[str, Any]) -> str:
     mode = str(context_pack.get("mode") or "user").strip()
     if mode in {"user", "kernel_observe", "kernel_debug"}:
