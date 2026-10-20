@@ -1,0 +1,516 @@
+{
+ "task_id": "PAPER-DRAWDOWN-BASELINE-PROPOSAL-20261020",
+ "kind": "research_proposal",
+ "status": "proposed_not_approved",
+ "authored_by": "Claude",
+ "computed_on": "2026-10-20",
+ "computation": "offline_deterministic_local_not_hosted",
+ "subject_artifact": {
+  "artifact_id": "artifact-persona-paper-0b4aedc1da04dba924d8",
+  "version": "1.0.0",
+  "strategy_id": "strategy-persona-0b4aedc1da04dba924d8",
+  "registry_checksum": "sha256:915d33f404097200ec51f62e56af3af49e90ea71e11cb7ffd0d7caef4c762c73",
+  "symbol": "2330.TW"
+ },
+ "proposal": {
+  "expected_drawdown": 0.0027,
+  "unit": "fraction_20_calendar_day_rolling_high_water_drawdown",
+  "max_observed_unrounded": 0.002697706949093271,
+  "max_observed_date": "2026-09-16",
+  "rounding_rule": "ceil(max_observed*10000)/10000"
+ },
+ "production_code": {
+  "commit": "e72ae033b38cb808d19df9cca12127a749ba437c",
+  "files": {
+   "services/registry/strategy_artifact.py": "9da2ebb36e69e349c78dfccc55b5ef2c402f083527a137c0db57a45b365f2c57",
+   "services/execution/lean_runtime/performance_telemetry.py": "664f6aa766e1ed5526e1c3dbb22480d7622c853c52b83989e7d8117bb5df6ebb"
+  },
+  "functions": [
+   "evaluate_strategy_action",
+   "value_portfolio",
+   "RollingDrawdownTracker(window_days=20)"
+  ]
+ },
+ "inputs": {
+  "sanitized_input_sha256": "467a7bf6eae1f950b46b25dfbd1ee7251ffbd3b7bce927567c7732d0feb8bea3",
+  "canonical_ohlcv_sha256_as_supplied": "01c1dbf12219a4b32071c1849ef5ea9fc1bb39b42f7277fb645e1d4870801994",
+  "registry_source_sha256": "149e3e552894d9aa5ab592efacd827346b88fbc018a1445ccfb052b4e0d617b5",
+  "dataset_id": "dataset:dsv-602cce23916f1b0d380f054e",
+  "bars": 40,
+  "first_bar": "2026-08-18",
+  "last_bar": "2026-10-15",
+  "market_data_input_reuse_only": true,
+  "learning_eligible": false
+ },
+ "ledger_assumptions": {
+  "initial_cash": 100000.0,
+  "currency_label": "TWD",
+  "fee_model": "none (gross fills at bar close)",
+  "slippage_model": "none",
+  "shorting": "allowed; SELL when flat yields negative holding",
+  "order_quantity_shares": 1,
+  "fills_per_bar": 1,
+  "asof_time_utc": "05:30:00 (00:00:00 gives identical series)"
+ },
+ "results": {
+  "observations": 39,
+  "fills": 39,
+  "buy": 19,
+  "sell": 20,
+  "final_position": -1.0,
+  "pnl_max": 255.0,
+  "pnl_min": -185.0,
+  "pnl_final": -15.0,
+  "series_sha256": "0cb91c67c4fb499ea19180ab8dca19e0f3693419c5788f0805db4bb8c01b9ff3"
+ },
+ "replay_script_sha256": "966b31ed2b7ad006bdc31361321351e728c4e5f5ae1b4e68ce0f0a45875f3d55",
+ "replay_script_location": "embedded verbatim in proposal.md",
+ "not_claimed": [
+  "hosted result",
+  "observed hosted days",
+  "same-strategy live or paper validation",
+  "profit",
+  "fee or currency model beyond production source",
+  "EVOLOOP-005 0.0303 reuse",
+  "1.25 multiplier in calculation"
+ ],
+ "not_changed": [
+  "services/evolution/config",
+  "policy_source approval",
+  "threshold 1.25",
+  "PnL activation",
+  "runtime/calibration services"
+ ],
+ "identity_lifecycle": "Bound to this artifact id, e72ae033 code, parameters and input window. A later release may create a different artifact id/commit; before publication verify executable parameters, production code and eligible input scope (or re-run) and record the legitimate existing policy approval.",
+ "daily_series": [
+  {
+   "date": "2026-08-19",
+   "action": "SELL",
+   "close": 2350.0,
+   "position": -1.0,
+   "cash": 102350.0,
+   "portfolio_value": 100000.0,
+   "pnl": 0.0,
+   "drawdown": 0.0,
+   "window_observations": 1
+  },
+  {
+   "date": "2026-08-20",
+   "action": "BUY",
+   "close": 2375.0,
+   "position": 0.0,
+   "cash": 99975.0,
+   "portfolio_value": 99975.0,
+   "pnl": -25.0,
+   "drawdown": 0.00025,
+   "window_observations": 2
+  },
+  {
+   "date": "2026-08-21",
+   "action": "BUY",
+   "close": 2410.0,
+   "position": 1.0,
+   "cash": 97565.0,
+   "portfolio_value": 99975.0,
+   "pnl": -25.0,
+   "drawdown": 0.00025,
+   "window_observations": 3
+  },
+  {
+   "date": "2026-08-24",
+   "action": "SELL",
+   "close": 2375.0,
+   "position": 0.0,
+   "cash": 99940.0,
+   "portfolio_value": 99940.0,
+   "pnl": -60.0,
+   "drawdown": 0.0006,
+   "window_observations": 4
+  },
+  {
+   "date": "2026-08-25",
+   "action": "BUY",
+   "close": 2400.0,
+   "position": 1.0,
+   "cash": 97540.0,
+   "portfolio_value": 99940.0,
+   "pnl": -60.0,
+   "drawdown": 0.0006,
+   "window_observations": 5
+  },
+  {
+   "date": "2026-08-26",
+   "action": "BUY",
+   "close": 2415.0,
+   "position": 2.0,
+   "cash": 95125.0,
+   "portfolio_value": 99955.0,
+   "pnl": -45.0,
+   "drawdown": 0.00045,
+   "window_observations": 6
+  },
+  {
+   "date": "2026-08-27",
+   "action": "SELL",
+   "close": 2410.0,
+   "position": 1.0,
+   "cash": 97535.0,
+   "portfolio_value": 99945.0,
+   "pnl": -55.0,
+   "drawdown": 0.00055,
+   "window_observations": 7
+  },
+  {
+   "date": "2026-08-28",
+   "action": "BUY",
+   "close": 2420.0,
+   "position": 2.0,
+   "cash": 95115.0,
+   "portfolio_value": 99955.0,
+   "pnl": -45.0,
+   "drawdown": 0.00045,
+   "window_observations": 8
+  },
+  {
+   "date": "2026-08-31",
+   "action": "SELL",
+   "close": 2405.0,
+   "position": 1.0,
+   "cash": 97520.0,
+   "portfolio_value": 99925.0,
+   "pnl": -75.0,
+   "drawdown": 0.00075,
+   "window_observations": 9
+  },
+  {
+   "date": "2026-09-01",
+   "action": "BUY",
+   "close": 2440.0,
+   "position": 2.0,
+   "cash": 95080.0,
+   "portfolio_value": 99960.0,
+   "pnl": -40.0,
+   "drawdown": 0.0004,
+   "window_observations": 10
+  },
+  {
+   "date": "2026-09-02",
+   "action": "SELL",
+   "close": 2385.0,
+   "position": 1.0,
+   "cash": 97465.0,
+   "portfolio_value": 99850.0,
+   "pnl": -150.0,
+   "drawdown": 0.0015,
+   "window_observations": 11
+  },
+  {
+   "date": "2026-09-03",
+   "action": "BUY",
+   "close": 2390.0,
+   "position": 2.0,
+   "cash": 95075.0,
+   "portfolio_value": 99855.0,
+   "pnl": -145.0,
+   "drawdown": 0.00145,
+   "window_observations": 12
+  },
+  {
+   "date": "2026-09-04",
+   "action": "BUY",
+   "close": 2410.0,
+   "position": 3.0,
+   "cash": 92665.0,
+   "portfolio_value": 99895.0,
+   "pnl": -105.0,
+   "drawdown": 0.00105,
+   "window_observations": 13
+  },
+  {
+   "date": "2026-09-07",
+   "action": "BUY",
+   "close": 2460.0,
+   "position": 4.0,
+   "cash": 90205.0,
+   "portfolio_value": 100045.0,
+   "pnl": 45.0,
+   "drawdown": 0.0,
+   "window_observations": 14
+  },
+  {
+   "date": "2026-09-08",
+   "action": "BUY",
+   "close": 2470.0,
+   "position": 5.0,
+   "cash": 87735.0,
+   "portfolio_value": 100085.0,
+   "pnl": 85.0,
+   "drawdown": 0.0,
+   "window_observations": 15
+  },
+  {
+   "date": "2026-09-09",
+   "action": "SELL",
+   "close": 2465.0,
+   "position": 4.0,
+   "cash": 90200.0,
+   "portfolio_value": 100060.0,
+   "pnl": 60.0,
+   "drawdown": 0.00024978768047159917,
+   "window_observations": 15
+  },
+  {
+   "date": "2026-09-10",
+   "action": "SELL",
+   "close": 2450.0,
+   "position": 3.0,
+   "cash": 92650.0,
+   "portfolio_value": 100000.0,
+   "pnl": 0.0,
+   "drawdown": 0.0008492781136034371,
+   "window_observations": 15
+  },
+  {
+   "date": "2026-09-11",
+   "action": "SELL",
+   "close": 2410.0,
+   "position": 2.0,
+   "cash": 95060.0,
+   "portfolio_value": 99880.0,
+   "pnl": -120.0,
+   "drawdown": 0.002048258979867113,
+   "window_observations": 15
+  },
+  {
+   "date": "2026-09-14",
+   "action": "SELL",
+   "close": 2380.0,
+   "position": 1.0,
+   "cash": 97440.0,
+   "portfolio_value": 99820.0,
+   "pnl": -180.0,
+   "drawdown": 0.002647749412998951,
+   "window_observations": 15
+  },
+  {
+   "date": "2026-09-15",
+   "action": "BUY",
+   "close": 2385.0,
+   "position": 2.0,
+   "cash": 95055.0,
+   "portfolio_value": 99825.0,
+   "pnl": -175.0,
+   "drawdown": 0.0025977918769046313,
+   "window_observations": 15
+  },
+  {
+   "date": "2026-09-16",
+   "action": "SELL",
+   "close": 2380.0,
+   "position": 1.0,
+   "cash": 97435.0,
+   "portfolio_value": 99815.0,
+   "pnl": -185.0,
+   "drawdown": 0.002697706949093271,
+   "window_observations": 15
+  },
+  {
+   "date": "2026-09-17",
+   "action": "BUY",
+   "close": 2425.0,
+   "position": 2.0,
+   "cash": 95010.0,
+   "portfolio_value": 99860.0,
+   "pnl": -140.0,
+   "drawdown": 0.002248089124244392,
+   "window_observations": 15
+  },
+  {
+   "date": "2026-09-18",
+   "action": "BUY",
+   "close": 2460.0,
+   "position": 3.0,
+   "cash": 92550.0,
+   "portfolio_value": 99930.0,
+   "pnl": -70.0,
+   "drawdown": 0.0015486836189239146,
+   "window_observations": 15
+  },
+  {
+   "date": "2026-09-21",
+   "action": "BUY",
+   "close": 2480.0,
+   "position": 4.0,
+   "cash": 90070.0,
+   "portfolio_value": 99990.0,
+   "pnl": -10.0,
+   "drawdown": 0.0009491931857920767,
+   "window_observations": 15
+  },
+  {
+   "date": "2026-09-22",
+   "action": "SELL",
+   "close": 2460.0,
+   "position": 3.0,
+   "cash": 92530.0,
+   "portfolio_value": 99910.0,
+   "pnl": -90.0,
+   "drawdown": 0.0017485137633011939,
+   "window_observations": 15
+  },
+  {
+   "date": "2026-09-23",
+   "action": "BUY",
+   "close": 2500.0,
+   "position": 4.0,
+   "cash": 90030.0,
+   "portfolio_value": 100030.0,
+   "pnl": 30.0,
+   "drawdown": 0.0005495328970375181,
+   "window_observations": 15
+  },
+  {
+   "date": "2026-09-24",
+   "action": "SELL",
+   "close": 2475.0,
+   "position": 3.0,
+   "cash": 92505.0,
+   "portfolio_value": 99930.0,
+   "pnl": -70.0,
+   "drawdown": 0.0015486836189239146,
+   "window_observations": 15
+  },
+  {
+   "date": "2026-09-29",
+   "action": "SELL",
+   "close": 2475.0,
+   "position": 2.0,
+   "cash": 94980.0,
+   "portfolio_value": 99930.0,
+   "pnl": -70.0,
+   "drawdown": 0.0012992204677193685,
+   "window_observations": 13
+  },
+  {
+   "date": "2026-09-30",
+   "action": "BUY",
+   "close": 2480.0,
+   "position": 3.0,
+   "cash": 92500.0,
+   "portfolio_value": 99940.0,
+   "pnl": -60.0,
+   "drawdown": 0.0008997300809757073,
+   "window_observations": 13
+  },
+  {
+   "date": "2026-10-01",
+   "action": "BUY",
+   "close": 2510.0,
+   "position": 4.0,
+   "cash": 89990.0,
+   "portfolio_value": 100030.0,
+   "pnl": 30.0,
+   "drawdown": 0.0,
+   "window_observations": 13
+  },
+  {
+   "date": "2026-10-02",
+   "action": "SELL",
+   "close": 2500.0,
+   "position": 3.0,
+   "cash": 92490.0,
+   "portfolio_value": 99990.0,
+   "pnl": -10.0,
+   "drawdown": 0.00039988003598920324,
+   "window_observations": 13
+  },
+  {
+   "date": "2026-10-05",
+   "action": "BUY",
+   "close": 2575.0,
+   "position": 4.0,
+   "cash": 89915.0,
+   "portfolio_value": 100215.0,
+   "pnl": 215.0,
+   "drawdown": 0.0,
+   "window_observations": 13
+  },
+  {
+   "date": "2026-10-06",
+   "action": "BUY",
+   "close": 2585.0,
+   "position": 5.0,
+   "cash": 87330.0,
+   "portfolio_value": 100255.0,
+   "pnl": 255.0,
+   "drawdown": 0.0,
+   "window_observations": 13
+  },
+  {
+   "date": "2026-10-07",
+   "action": "SELL",
+   "close": 2585.0,
+   "position": 4.0,
+   "cash": 89915.0,
+   "portfolio_value": 100255.0,
+   "pnl": 255.0,
+   "drawdown": 0.0,
+   "window_observations": 13
+  },
+  {
+   "date": "2026-10-08",
+   "action": "SELL",
+   "close": 2550.0,
+   "position": 3.0,
+   "cash": 92465.0,
+   "portfolio_value": 100115.0,
+   "pnl": 115.0,
+   "drawdown": 0.0013964390803451199,
+   "window_observations": 13
+  },
+  {
+   "date": "2026-10-12",
+   "action": "SELL",
+   "close": 2540.0,
+   "position": 2.0,
+   "cash": 95005.0,
+   "portfolio_value": 100085.0,
+   "pnl": 85.0,
+   "drawdown": 0.00169567602613336,
+   "window_observations": 12
+  },
+  {
+   "date": "2026-10-13",
+   "action": "SELL",
+   "close": 2490.0,
+   "position": 1.0,
+   "cash": 97495.0,
+   "portfolio_value": 99985.0,
+   "pnl": -15.0,
+   "drawdown": 0.00269313251209416,
+   "window_observations": 12
+  },
+  {
+   "date": "2026-10-14",
+   "action": "SELL",
+   "close": 2490.0,
+   "position": 0.0,
+   "cash": 99985.0,
+   "portfolio_value": 99985.0,
+   "pnl": -15.0,
+   "drawdown": 0.00269313251209416,
+   "window_observations": 12
+  },
+  {
+   "date": "2026-10-15",
+   "action": "SELL",
+   "close": 2440.0,
+   "position": -1.0,
+   "cash": 102425.0,
+   "portfolio_value": 99985.0,
+   "pnl": -15.0,
+   "drawdown": 0.00269313251209416,
+   "window_observations": 12
+  }
+ ]
+}
