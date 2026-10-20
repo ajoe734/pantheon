@@ -8330,9 +8330,9 @@ def _persona_fleet_slim_list_payload(
     except Exception:
         telemetry_cache = {}
     league_rows = _pm12_persona_league_rows(
-        state=state,
+        state=None,
         archetype=None,
-        q=str(q or ""),
+        q="",
         tenant_id=tenant_id,
         include_route_policy=False,
         include_health=False,
@@ -15234,7 +15234,7 @@ class PersonaService:
     ) -> Dict[str, Any]:
         snap = snapshot_at or self._utc_now()
         slice_fn = page_slice_fn or _page_slice
-        all_rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q, tenant_id=caller_tenant_id, include_route_policy=False, include_health=False, include_allowed_actions=False)
+        all_rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id, include_route_policy=False, include_health=False, include_allowed_actions=False)
         ranking_basis, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
             [_pm12_persona_league_ranking_item(row) for row in all_rows],
             surface="rolling",

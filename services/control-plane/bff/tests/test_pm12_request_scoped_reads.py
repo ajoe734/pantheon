@@ -562,7 +562,8 @@ def test_retired_personas_skip_enrichment_and_filters_and_pagination_bound_work(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Retired personas remain visible in fleet/league but skip live owner enrichment;
-    state/q filters run before enrichment and page_size bounds per-page enrichment."""
+    state/q filters run before enrichment, page_size bounds per-page enrichment, and
+    filtered persona-league requests preserve the full-league ranking_snapshot_id."""
     dataset = _build_fixture_dataset(total_personas=90, active_personas=12)
     server = CountingOwnerServer(dataset)
     server.start()
@@ -570,18 +571,76 @@ def test_retired_personas_skip_enrichment_and_filters_and_pagination_bound_work(
         client = _build_client(server, monkeypatch)
         auth = {"Authorization": _make_auth_header("tenant-dev")}
 
-        # 1. state=retired filter skips runtime_bindings, paper_fleet_sessions,
-        #    telemetry_summaries, capability_snapshots, and strategy_specs entirely
+        route_policy_calls: List[str] = []
+        allowed_action_calls: List[str] = []
+        read_store = client.app.state.persona_service._read_store
+        orig_route_policy = read_store.get_route_policy_for_persona
+        orig_allowed_actions = read_store.get_persona_allowed_actions
+        monkeypatch.setattr(
+            read_store,
+            "get_route_policy_for_persona",
+            lambda pid: route_policy_calls.append(str(pid)) or orig_route_policy(pid),
+        )
+        monkeypatch.setattr(
+            read_store,
+            "get_persona_allowed_actions",
+            lambda pid, **kw: allowed_action_calls.append(str(pid)) or orig_allowed_actions(pid, **kw),
+        )
+
+        # 0. Capture full-league ranking_snapshot_id from unfiltered request
+        resp_unfiltered = client.get("/bff/management/persona-league?page_size=20", headers=auth)
+        assert resp_unfiltered.status_code == 200
+        unfiltered_payload = resp_unfiltered.json()
+        full_snapshot_id = unfiltered_payload["data"]["summary"]["ranking_snapshot_id"]
+        assert full_snapshot_id.startswith("ranking-rolling-short-cycle-")
+        assert unfiltered_payload["data"]["ranking_snapshot_id"] == full_snapshot_id
+        assert unfiltered_payload["meta"]["ranking_snapshot_id"] == full_snapshot_id
+        assert all(
+            item["ranking_snapshot_id"] == full_snapshot_id
+            for item in unfiltered_payload["data"]["items"]
+        )
+
+        # 1. state=retired on persona-league preserves full-league ranking_snapshot_id
+        #    and skips per-persona route_policy and allowed_actions enrichment;
+        #    state=retired on movers skips live owner collections entirely
+        route_policy_calls.clear()
+        allowed_action_calls.clear()
         server.reset_counts()
         resp_retired = client.get(
             "/bff/management/persona-league?state=retired&page_size=20",
             headers=auth,
         )
         assert resp_retired.status_code == 200
-        body_retired = resp_retired.json()["data"]
+        retired_payload = resp_retired.json()
+        body_retired = retired_payload["data"]
         assert body_retired["summary"]["persona_count"] == 78
         assert len(body_retired["items"]) == 20
         assert all(item["state"] == "retired" for item in body_retired["items"])
+        assert body_retired["ranking_snapshot_id"] == full_snapshot_id
+        assert body_retired["summary"]["ranking_snapshot_id"] == full_snapshot_id
+        assert retired_payload["meta"]["ranking_snapshot_id"] == full_snapshot_id
+        assert all(item["ranking_snapshot_id"] == full_snapshot_id for item in body_retired["items"])
+        assert route_policy_calls == []
+        assert allowed_action_calls == []
+        _assert_bounded_owner_reads(server.snapshot_counts())
+
+        server.reset_counts()
+        tok_auth = owner_authorization.set(auth["Authorization"])
+        tok_tenant = owner_selected_tenant.set("tenant-dev")
+        tok_svc = client.app.state.persona_service
+        from services.control_plane.bff.personas.service import _current_persona_service
+        tok_ctx = _current_persona_service.set(tok_svc)
+        try:
+            with request_read_scope():
+                retired_rows = _pm12_persona_league_rows(
+                    state="retired",
+                    tenant_id="tenant-dev",
+                )
+                assert len(retired_rows) == 78
+        finally:
+            _current_persona_service.reset(tok_ctx)
+            owner_selected_tenant.reset(tok_tenant)
+            owner_authorization.reset(tok_auth)
         retired_counts = server.snapshot_counts()
         assert retired_counts.get("personas_collection") == 1
         assert retired_counts.get("runtime_bindings_collection", 0) == 0
@@ -601,41 +660,42 @@ def test_retired_personas_skip_enrichment_and_filters_and_pagination_bound_work(
         assert len(fleet_items) == 78
         assert all(item["state"] == "retired" for item in fleet_items)
 
-        # 3. q filter runs before per-persona enrichment
+        # 3. q filter runs before per-persona enrichment and preserves full-league ranking_snapshot_id
+        route_policy_calls.clear()
+        allowed_action_calls.clear()
         server.reset_counts()
         resp_q = client.get(
             "/bff/management/persona-league?q=persona-active-005",
             headers=auth,
         )
         assert resp_q.status_code == 200
-        q_items = resp_q.json()["data"]["items"]
+        q_payload = resp_q.json()
+        q_items = q_payload["data"]["items"]
         assert [item["persona_id"] for item in q_items] == ["persona-active-005"]
+        assert q_payload["data"]["ranking_snapshot_id"] == full_snapshot_id
+        assert q_payload["data"]["summary"]["ranking_snapshot_id"] == full_snapshot_id
+        assert q_payload["meta"]["ranking_snapshot_id"] == full_snapshot_id
+        assert q_items[0]["ranking_snapshot_id"] == full_snapshot_id
+        assert route_policy_calls == ["persona-active-005"]
+        assert allowed_action_calls == ["persona-active-005"]
         _assert_bounded_owner_reads(server.snapshot_counts())
 
-        # 4. page_size bounds per-page route_policy / allowed_actions enrichment
-        route_policy_calls: List[str] = []
-        allowed_action_calls: List[str] = []
-        read_store = client.app.state.persona_service._read_store
-        orig_route_policy = read_store.get_route_policy_for_persona
-        orig_allowed_actions = read_store.get_persona_allowed_actions
-        monkeypatch.setattr(
-            read_store,
-            "get_route_policy_for_persona",
-            lambda pid: route_policy_calls.append(str(pid)) or orig_route_policy(pid),
-        )
-        monkeypatch.setattr(
-            read_store,
-            "get_persona_allowed_actions",
-            lambda pid, **kw: allowed_action_calls.append(str(pid)) or orig_allowed_actions(pid, **kw),
-        )
+        # 4. page_size bounds per-page route_policy / allowed_actions enrichment and preserves ranking_snapshot_id
+        route_policy_calls.clear()
+        allowed_action_calls.clear()
         resp_page = client.get(
             "/bff/management/persona-league?state=active&page_size=5",
             headers=auth,
         )
         assert resp_page.status_code == 200
-        page_body = resp_page.json()["data"]
+        page_payload = resp_page.json()
+        page_body = page_payload["data"]
         assert page_body["summary"]["persona_count"] == 12
         assert len(page_body["items"]) == 5
+        assert page_body["ranking_snapshot_id"] == full_snapshot_id
+        assert page_body["summary"]["ranking_snapshot_id"] == full_snapshot_id
+        assert page_payload["meta"]["ranking_snapshot_id"] == full_snapshot_id
+        assert all(item["ranking_snapshot_id"] == full_snapshot_id for item in page_body["items"])
         assert len(route_policy_calls) == 5
         assert len(allowed_action_calls) == 5
     finally:
