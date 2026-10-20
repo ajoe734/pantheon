@@ -498,3 +498,25 @@ def test_domain_workflow_catalog_port_and_openclaw_adapter_owner_boundary() -> N
     assert skills_empty["meta"]["surfaces"]["skill_list"]["status"] == "ok"
     assert skills_empty["meta"]["surfaces"]["skill_list"]["source"] == "in_memory"
 
+    # 3. Canonical allowed_tenants second-tenant reaches unconfigured owner 503 instead of false 403,
+    #    while allowed-only claim with foreign X-Tenant-Id is rejected with 403 FORBIDDEN.
+    multi_tenant_headers = {
+        "Authorization": "Bearer consol-multi:operator:local-tenant-a,local-tenant-b",
+        "X-Tenant-Id": "local-tenant-b",
+        "Idempotency-Key": "k-multi-tenant-b",
+    }
+    second_tenant_resp = client_missing.post("/bff/tools", json={"name": "t-second"}, headers=multi_tenant_headers)
+    assert second_tenant_resp.status_code == 503
+    assert second_tenant_resp.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+
+    foreign_tenant_headers = {
+        "Authorization": "Bearer consol-multi:operator:local-tenant-a,local-tenant-b",
+        "X-Tenant-Id": "local-tenant-c",
+        "Idempotency-Key": "k-foreign-tenant-c",
+    }
+    foreign_tenant_resp = client_missing.post("/bff/tools", json={"name": "t-foreign"}, headers=foreign_tenant_headers)
+    assert foreign_tenant_resp.status_code == 403
+    assert foreign_tenant_resp.json()["error"]["code"] == "FORBIDDEN"
+    assert foreign_tenant_resp.json()["error"]["details"]["precondition_failed"] == "tenant_scope"
+
+

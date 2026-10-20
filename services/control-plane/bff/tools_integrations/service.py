@@ -27,7 +27,9 @@ from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from starlette.responses import JSONResponse
 
+from services.control_plane.bff.auth.policy import bff_me_tenant_payload
 from services.control_plane.bff.command_adapters.contracts import resolve_final_idempotency_key
+from services.control_plane.bff.core.owner_reads import selected_tenant
 
 from services.control_plane.bff.models import (
     ActionCommandStatus,
@@ -1101,38 +1103,13 @@ class IntegrationsService:
         requested = str(x_tenant_id or "").strip()
         if not requested:
             try:
-                from services.control_plane.bff.core.owner_reads import selected_tenant
                 requested = str(selected_tenant.get() or "").strip()
             except Exception:
                 requested = ""
-        allowed: List[str] = []
-        direct_tid = str(getattr(identity, "tenant_id", None) or "").strip()
-        if direct_tid:
-            allowed.append(direct_tid)
-        claims = getattr(identity, "claims", None)
-        if isinstance(claims, dict):
-            for key in ("tenant_id", "tenantId", "tid", "org_id"):
-                val = str(claims.get(key) or "").strip()
-                if val and val not in allowed:
-                    allowed.append(val)
-            tenant_obj = claims.get("tenant")
-            if isinstance(tenant_obj, dict) and str(tenant_obj.get("id") or "").strip():
-                allowed.append(str(tenant_obj.get("id")).strip())
-            for list_key in ("tenant_ids", "tenantIds"):
-                for item in (claims.get(list_key) or ()) if isinstance(claims.get(list_key), (list, tuple, set)) else ():
-                    if str(item or "").strip() and str(item).strip() not in allowed:
-                        allowed.append(str(item).strip())
-        if requested:
-            if allowed and requested not in allowed:
-                raise self.bff_error(
-                    403,
-                    ErrorCode.FORBIDDEN,
-                    "Tenant scope mismatch",
-                    f"Caller is not authorized for tenant {requested!r}",
-                    precondition_failed="tenant_scope",
-                )
-            return requested
-        return allowed[0] if allowed else "default"
+        if identity is None:
+            return requested or "default"
+        tenant = bff_me_tenant_payload(identity, requested_tenant=requested or None)
+        return str(tenant.get("id") or "").strip() or "default"
 
     def idempotency_scope_key(
         self, resolved_key: str, identity: Optional[Any] = None, *, tenant_id: Optional[str] = None

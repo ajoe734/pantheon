@@ -3,9 +3,9 @@
   "title": "Remove memory-only success from product Tools and Skills writes",
   "owner": "Antigravity2",
   "reviewer": "Antigravity",
-  "change_class": "feature",
+  "change_class": "corrective",
   "net_prod_line_budget": 200,
-  "net_prod_lines": 168,
+  "net_prod_lines": 145,
   "acceptance_criteria": {
     "ac_1_no_memory_only_saved_success_on_tools_and_skills_writes": {
       "status": "satisfied",
@@ -17,7 +17,7 @@
     },
     "ac_3_operator_role_and_tenant_actor_scoped_idempotency": {
       "status": "satisfied",
-      "detail": "POST /bff/tools and PATCH /bff/tools/{tool_id} now enforce _require_operator(identity) (matching POST /bff/skills and PATCH /bff/skills/{skill_id}) so read-only viewer tokens receive 403 FORBIDDEN. tools_bff_idempotency and skills_bff_idempotency are scoped by (tenant_id, operator_id, resolved_key) with tenant claim validation against X-Tenant-Id / selected_tenant (403 FORBIDDEN on mismatch), preventing cross-actor or cross-tenant replay borrowing while preserving 202 on POST /bff/skills/{id}/sandbox-eval."
+      "detail": "POST /bff/tools and PATCH /bff/tools/{tool_id} now enforce _require_operator(identity) (matching POST /bff/skills and PATCH /bff/skills/{skill_id}) so read-only viewer tokens receive 403 FORBIDDEN. tools_bff_idempotency and skills_bff_idempotency are scoped by (tenant_id, operator_id, resolved_key) and IntegrationsService.identity_tenant_id delegates directly to canonical bff_me_tenant_payload (with X-Tenant-Id / selected_tenant context), preserving allowed_tenants/allowedTenants/tenants/wildcard behavior on legitimate second-tenant requests and rejecting unauthorized foreign tenants with 403 FORBIDDEN while preserving 202 on POST /bff/skills/{id}/sandbox-eval."
     },
     "ac_4_read_surface_truth_without_memory_overlays": {
       "status": "satisfied",
@@ -25,7 +25,7 @@
     },
     "ac_5_focused_local_tests_and_fresh_instance_readback": {
       "status": "satisfied",
-      "detail": "Focused tests in test_tools_integrations_router.py and test_bff_consol_skills_mcp_registry_contract.py reproduce the exact sanitized counterexample (viewer 403, unconfigured operator 503, missing surface status='unavailable'/source='missing', configured_command_submission_count == 0), prove positive owner-backed create/patch + fresh IntegrationsService instance readback, prove 503 fail-closed when owner readback is unconfirmed, and verify tenant/operator idempotency isolation."
+      "detail": "Focused tests in test_tools_integrations_router.py and test_bff_consol_skills_mcp_registry_contract.py reproduce the exact sanitized counterexample (viewer 403, unconfigured operator 503, missing surface status='unavailable'/source='missing', configured_command_submission_count == 0), prove positive owner-backed create/patch + fresh IntegrationsService instance readback, prove 503 fail-closed when owner readback is unconfirmed, and verify canonical bff_me_tenant_payload alignment for allowed second-tenant and disallowed foreign-tenant shapes plus tenant/operator idempotency isolation."
     }
   },
   "owner_contract_analysis": {
@@ -71,20 +71,27 @@
     },
     "configured_command_submission_count": 0
   },
+  "prior_review_and_reopen_history": {
+    "initial_pr": 6693,
+    "initial_approved_head": "fb1e8485a79f31ffe9edc19944b57078e59793bc",
+    "initial_validation": "44 passed (focused) and 113 passed (6-file BFF suite)",
+    "reopened_reason": "IntegrationsService.identity_tenant_id re-parsed only primary/tenant_ids and omitted allowed_tenants/allowedTenants/tenants/wildcard behavior",
+    "repair_applied": "Removed duplicate tenant parser in IntegrationsService.identity_tenant_id and delegated directly to canonical bff_me_tenant_payload with X-Tenant-Id / selected_tenant context; added focused regression coverage for allowed second-tenant and disallowed foreign-tenant shapes"
+  },
   "validation": [
     {
       "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_tools_integrations_router.py services/control-plane/bff/tests/test_bff_consol_skills_mcp_registry_contract.py -q",
-      "result": "44 passed"
+      "result": "45 passed"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_tools_integrations_router.py services/control-plane/bff/tests/test_bff_consol_skills_mcp_registry_contract.py services/control-plane/bff/tests/test_bff_b2_003_capabilities.py services/control-plane/bff/tests/test_bff_path_dedupe.py services/control-plane/bff/tests/test_event_loop_owner_reads_guard.py services/control-plane/bff/tests/test_bff_test_architecture.py -q",
-      "result": "113 passed"
+      "result": "114 passed"
     }
   ],
   "diff_stat": {
     "services/control-plane/bff/openclaw_ops_client.py": "+8 / -0 (net +8)",
     "services/control-plane/bff/tools_integrations/router.py": "+110 / -118 (net -8)",
-    "services/control-plane/bff/tools_integrations/service.py": "+186 / -18 (net +168)",
-    "production_net": 168
+    "services/control-plane/bff/tools_integrations/service.py": "+163 / -18 (net +145)",
+    "production_net": 145
   }
 }

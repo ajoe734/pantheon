@@ -1293,6 +1293,131 @@ def test_tools_and_skills_idempotency_scoped_by_tenant_and_operator(client: Test
         headers={**op_a_tenant_1, "X-Tenant-Id": "tenant-2", "Idempotency-Key": "cross-tenant-key"},
     )
     assert r_mismatch.status_code == 403
-    assert r_mismatch.json()["detail"]["error"]["precondition_failed"] == "tenant_scope"
+    mismatch_err = r_mismatch.json()["detail"]["error"]
+    assert mismatch_err["code"] == "FORBIDDEN"
+    assert (mismatch_err.get("details") or mismatch_err).get("precondition_failed") == "tenant_scope"
+
+
+def test_canonical_tenant_policy_alignment_allowed_second_tenant_and_disallowed_foreign_header(
+    fake_read_store: FakeReadStore,
+):
+    from services.control_plane.bff.auth.policy import bff_me_tenant_payload
+    from services.control_plane.bff.core.owner_reads import selected_tenant
+    from services.control_plane.bff.models import OperatorIdentity
+
+    service = IntegrationsService(read_store=fake_read_store)
+
+    # 1. Legitimate second allowed tenant (tenant_id=local-tenant-a, allowed_tenants=[local-tenant-a, local-tenant-b])
+    second_tenant_identity = OperatorIdentity(
+        operator_id="op-multi-tenant",
+        roles=["operator"],
+        token_kind="jwt",
+        claims={
+            "tenant_id": "local-tenant-a",
+            "allowed_tenants": ["local-tenant-a", "local-tenant-b"],
+        },
+    )
+    canonical = bff_me_tenant_payload(second_tenant_identity, requested_tenant="local-tenant-b")
+    assert canonical["id"] == "local-tenant-b"
+    assert service.identity_tenant_id(second_tenant_identity, x_tenant_id="local-tenant-b") == "local-tenant-b"
+
+    # Also verify via selected_tenant ContextVar when X-Tenant-Id header was captured by upstream middleware
+    ctx_token = selected_tenant.set("local-tenant-b")
+    try:
+        assert service.identity_tenant_id(second_tenant_identity) == "local-tenant-b"
+    finally:
+        selected_tenant.reset(ctx_token)
+
+    # Also verify canonical aliases (allowedTenants, tenants, wildcard '*')
+    for alias_claims, req_tid in [
+        ({"tenant_id": "local-tenant-a", "allowedTenants": ["local-tenant-a", "local-tenant-b"]}, "local-tenant-b"),
+        ({"tenants": ["local-tenant-a", "local-tenant-b"]}, "local-tenant-b"),
+        ({"allowed_tenants": ["*"]}, "local-tenant-wildcard"),
+    ]:
+        alias_identity = OperatorIdentity(
+            operator_id="op-alias",
+            roles=["operator"],
+            token_kind="jwt",
+            claims=alias_claims,
+        )
+        assert (
+            service.identity_tenant_id(alias_identity, x_tenant_id=req_tid)
+            == bff_me_tenant_payload(alias_identity, requested_tenant=req_tid)["id"]
+            == req_tid
+        )
+
+    # 2. Allowed-only claims outside requested tenant must fail closed with 403 FORBIDDEN
+    allowed_only_identity = OperatorIdentity(
+        operator_id="op-allowed-only",
+        roles=["operator"],
+        token_kind="jwt",
+        claims={"allowed_tenants": ["local-tenant-a", "local-tenant-b"]},
+    )
+    with pytest.raises(Exception) as canonical_exc:
+        bff_me_tenant_payload(allowed_only_identity, requested_tenant="local-tenant-c")
+    with pytest.raises(Exception) as helper_exc:
+        service.identity_tenant_id(allowed_only_identity, x_tenant_id="local-tenant-c")
+    assert getattr(canonical_exc.value, "status_code", None) == 403
+    assert getattr(helper_exc.value, "status_code", None) == 403
+
+    # 3. Route-level verification for both allowed second tenant and disallowed foreign tenant
+    identities_by_token = {
+        "Bearer jwt-second-allowed": second_tenant_identity,
+        "Bearer jwt-allowed-only": allowed_only_identity,
+    }
+    app = FastAPI()
+    app.include_router(
+        create_integrations_router(
+            service=service,
+            extract_identity=lambda auth: identities_by_token[auth],
+        )
+    )
+    route_client = TestClient(app)
+
+    ok_tool = route_client.post(
+        "/bff/tools",
+        json={"name": "Second Tenant Tool"},
+        headers={
+            "Authorization": "Bearer jwt-second-allowed",
+            "X-Tenant-Id": "local-tenant-b",
+            "Idempotency-Key": "idem-second-tenant-tool",
+        },
+    )
+    assert ok_tool.status_code == 201
+    assert ok_tool.json()["tenant_id"] == "local-tenant-b"
+
+    ok_eval = route_client.post(
+        "/bff/skills/skill-fixture-1/sandbox-eval",
+        json={"inputs": {"x": 1}},
+        headers={
+            "Authorization": "Bearer jwt-second-allowed",
+            "X-Tenant-Id": "local-tenant-b",
+            "Idempotency-Key": "idem-second-tenant-eval",
+        },
+    )
+    assert ok_eval.status_code == 202
+
+    for method, path, body, key in [
+        ("POST", "/bff/tools", {"name": "Forbidden Tool"}, "idem-forbid-t1"),
+        ("PATCH", "/bff/tools/tool-fixture-1", {"description": "Forbidden"}, "idem-forbid-t2"),
+        ("POST", "/bff/skills", {"name": "Forbidden Skill"}, "idem-forbid-s1"),
+        ("PATCH", "/bff/skills/skill-fixture-1", {"description": "Forbidden"}, "idem-forbid-s2"),
+        ("POST", "/bff/skills/skill-fixture-1/sandbox-eval", {"inputs": {}}, "idem-forbid-eval"),
+    ]:
+        denied = route_client.request(
+            method,
+            path,
+            json=body,
+            headers={
+                "Authorization": "Bearer jwt-allowed-only",
+                "X-Tenant-Id": "local-tenant-c",
+                "Idempotency-Key": key,
+            },
+        )
+        assert denied.status_code == 403, f"{method} {path} returned {denied.status_code}: {denied.text}"
+        err = denied.json()["detail"]["error"]
+        assert err["code"] == "FORBIDDEN"
+        assert (err.get("details") or err).get("precondition_failed") == "tenant_scope"
+
 
 
