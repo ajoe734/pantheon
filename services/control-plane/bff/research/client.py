@@ -79,9 +79,9 @@ class ResearchServiceClient:
             )
         return f"{url.rstrip('/')}{path}"
 
-    def _call(self, method: str, path: str, payload: Optional[Dict[str, Any]] = None, *, allow_none: Tuple[int, ...] = ()) -> Any:
+    def _call(self, method: str, path: str, payload: Optional[Dict[str, Any]] = None, *, allow_none: Tuple[int, ...] = (), headers: Optional[Dict[str, str]] = None) -> Any:
         url = self._url(path)
-        code, body = self.http_request(method, url, payload, None)
+        code, body = self.http_request(method, url, payload, headers)
         if code in (200, 201, 202):
             return body
         if code in allow_none:
@@ -133,3 +133,27 @@ class ResearchServiceClient:
         return self._call("GET", f"/api/research/notes/{note_id}", allow_none=(404,)) if note_id else None
     def create_research_note(self, note: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return self._call("POST", "/api/research/notes", note, allow_none=(400, 404))
+
+    # Saved run-output artifacts (Management Artifact catalog): caller-scoped, request-time reads.
+    @staticmethod
+    def _caller_headers() -> Dict[str, str]:
+        try:
+            from ..core.owner_reads import authorization, verified_caller_tenant
+        except (ImportError, ValueError):
+            from services.control_plane.bff.core.owner_reads import authorization, verified_caller_tenant
+        auth = authorization.get()
+        if not auth:
+            raise ResearchCommandError("Research artifact reads require the caller's authorization", status_code=401)
+        return {"Authorization": auth, "X-Tenant-Id": verified_caller_tenant()}
+
+    def list_research_artifacts(self) -> List[Dict[str, Any]]:
+        # No allow_none: a 404 here is an owner failure, never a genuine empty collection.
+        res = self._call("GET", "/api/research/artifacts", headers=self._caller_headers())
+        if not isinstance(res, list):
+            raise ResearchCommandError("Research artifact collection response was not a list", status_code=502)
+        return res
+    def get_research_artifact(self, artifact_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not artifact_id:
+            return None
+        res = self._call("GET", f"/api/research/artifacts/{urllib.parse.quote(str(artifact_id), safe='')}", headers=self._caller_headers(), allow_none=(404,))
+        return res if isinstance(res, dict) else None

@@ -1,0 +1,13 @@
+{
+  "task_id": "BFF-RESEARCH-ARTIFACT-OWNER-READ-20261020",
+  "environment": "worker test interpreter ~/pantheon-ci-deploy/runtime/worker-test-python/current; task worktree cwd; no VM/SSH/provider/compute/hosted operation",
+  "owner_claims": "Default Management/RW-05 artifact list/detail now read saved Research run outputs from the existing owner (new read-only GET /api/research/artifacts[/{id}] over store.list_artifacts/get_artifact joined in-process to the run receipt) through ResearchServiceClient and DefaultResearchKnowledgeSourcePort. One owner request per list/detail; tenant forwarded from verified caller context and enforced by the owner (artifact->run->task tenant, fail closed, cross-tenant detail 404). Injected fixture dict still wins and bypasses the owner. Version/lineage/status/metrics/approval are not invented: status empty, version/lineage null, canCompare false. Owner failure -> 503, genuine empty -> ok/service_client with zero items, unknown id -> 404.",
+  "source_scope_note": "Touched: ports/research_knowledge_source.py, research/client.py, research/service.py (one has_data line), services/research/main.py, docs/bff/RW-05-artifact-compare.md, tests/research_write_owner/test_artifact_read_owner.py. Not touched: PM12 core/owner_reads/read_surface_ports, Tools/Skills/DataSources, frontend. Source delivery only; hosted Artifact UI and whole-system acceptance are not claimed.",
+  "dto_differences": "See docs/bff/RW-05-artifact-compare.md section 8.",
+  "validation": [
+    {
+      "command": "python3 -m pytest tests/research_write_owner services/control-plane/bff/test_rw05_artifact_compare_contract.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/test_mgmt_qlib_006_artifact_research_linkage.py services/control-plane/bff/tests/test_read_surface_port_cutover.py services/control-plane/bff/research -q",
+      "result": "143 passed"
+    }
+  ]
+}

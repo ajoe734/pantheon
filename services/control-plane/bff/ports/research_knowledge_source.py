@@ -553,6 +553,9 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 "research_artifacts": self._artifacts,
             }
             items = store_map.get(dataset, {})
+            if dataset == "research_artifacts" and not items:
+                owner = self._get_research_write_owner()
+                return "service_client" if owner is not None and hasattr(owner, "list_research_artifacts") else "missing"
             return "typed_store" if items else "missing"
         if dataset == "data_sources":
             return "service_client" if (self._source_ingest_service_url or self._source_management_client or self._data_source_registry) else "missing"
@@ -2350,17 +2353,69 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         }
 
     def _rw05_lineage_versions(self, lineage_id: Optional[str]) -> List[Dict[str, Any]]:
+        if not lineage_id:
+            return []
         artifacts = list(self._artifacts.values())
         chain = [a for a in artifacts if str(a.get("lineage_id") or "") == str(lineage_id or "")]
         chain.sort(key=lambda a: (int(a.get("version") or 0), str(a.get("created_at") or "")))
         return chain
 
-    def _rw05_is_current_version(self, artifact: Dict[str, Any]) -> bool:
+    def _rw05_is_current_version(self, artifact: Dict[str, Any]) -> Optional[bool]:
+        if artifact.get("saved_output"):
+            return None  # a saved run output is not a versioned RW-05 record
         lineage_id = artifact.get("lineage_id")
         if not lineage_id:
             return True
         chain = self._rw05_lineage_versions(lineage_id)
         return bool(chain and chain[-1].get("artifact_id") == artifact.get("artifact_id"))
+
+    @staticmethod
+    def _saved_output_fields(artifact: Dict[str, Any]) -> Dict[str, Any]:
+        saved = artifact.get("saved_output")
+        if not isinstance(saved, dict):
+            return {}
+        return {
+            "source_kind": "research_run_output",
+            "saved_output": json.loads(json.dumps(saved)),
+            "compare_unavailable_reason": "Saved Research run output is not a sealed or superseded versioned artifact.",
+        }
+
+    @staticmethod
+    def _saved_output_artifact(row: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize an owner run-output row; version/lineage/status/metrics stay absent."""
+        run = row.get("run") if isinstance(row.get("run"), dict) else {}
+        return {
+            "artifact_id": row.get("artifact_id"),
+            "name": row.get("title"),
+            "artifact_type": row.get("artifact_type"),
+            "status": None,
+            "created_at": row.get("created_at"),
+            "author": row.get("created_by"),
+            "tags": [],
+            "research_linkage": {k: row.get(k) for k in ("run_id", "task_id", "stage_id") if row.get(k)},
+            "saved_output": {
+                "run_id": row.get("run_id"),
+                "task_id": row.get("task_id"),
+                "receipt_id": run.get("receipt_id"),
+                "checksum": row.get("checksum") or run.get("artifact_digest"),
+                "storage_ref": row.get("storage_ref"),
+                "provenance": row.get("provenance") or run.get("provenance"),
+                "run_status": run.get("status"),
+                "completed_at": run.get("completed_at"),
+                "artifact_family": row.get("artifact_family"),
+                "stage_type": row.get("stage_type"),
+                "tenant_id": row.get("tenant_id"),
+            },
+        }
+
+    def _owner_artifact_rows(self) -> Optional[List[Dict[str, Any]]]:
+        """Saved Research owner outputs; ``None`` when no owner read is configured. Owner failures raise."""
+        if self._artifacts:
+            return None
+        owner = self._get_research_write_owner()
+        if owner is None or not hasattr(owner, "list_research_artifacts"):
+            return None
+        return [self._saved_output_artifact(r) for r in owner.list_research_artifacts() if isinstance(r, dict)]
 
     def _project_research_artifact_summary(self, artifact: Dict[str, Any]) -> Dict[str, Any]:
         status = str(artifact.get("status") or "")
@@ -2378,6 +2433,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             "tags": list(artifact.get("tags") or []),
             "metric_summary": self._rw05_metric_summary(artifact),
             "allowedActions": {"canCompare": self._rw05_can_compare(status)},
+            **self._saved_output_fields(artifact),
         }
 
     def _project_research_artifact_detail(self, artifact: Dict[str, Any]) -> Dict[str, Any]:
@@ -2416,6 +2472,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             "research_linkage": json.loads(json.dumps(artifact.get("research_linkage") or {})),
             "evidence_refs": json.loads(json.dumps(artifact.get("evidence_refs") or [])),
             "allowedActions": {"canCompare": self._rw05_can_compare(status)},
+            **self._saved_output_fields(artifact),
         }
 
     def list_research_artifacts(
@@ -2427,7 +2484,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         author: Optional[str] = None,
         date_range: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        artifacts = list(self._artifacts.values())
+        owner_rows = self._owner_artifact_rows()
+        artifacts = owner_rows if owner_rows is not None else list(self._artifacts.values())
         if artifact_type:
             artifacts = [a for a in artifacts if str(a.get("artifact_type") or "").lower() == artifact_type.lower()]
         if status:
@@ -2458,6 +2516,11 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         if not artifact_id:
             return None
         artifact = self._artifacts.get(str(artifact_id))
+        if artifact is None and not self._artifacts:
+            owner = self._get_research_write_owner()
+            if owner is not None and hasattr(owner, "get_research_artifact"):
+                row = owner.get_research_artifact(str(artifact_id))
+                artifact = self._saved_output_artifact(row) if isinstance(row, dict) else None
         return self._project_research_artifact_detail(artifact) if isinstance(artifact, dict) else None
 
     @staticmethod

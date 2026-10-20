@@ -424,3 +424,33 @@ All prerequisites are satisfied as of 2026-04-21:
 - RW-04 Experiment Launch routes are live; versioned `artifact_id` values are stable and resolvable
 
 Frontend handoff bundle: `docs/pantheon-handoffs/RW-05-artifact-compare/FRONTEND_CHANGE_SPEC.md`
+
+---
+
+## 8. Saved Research run outputs (owner-backed default composition)
+
+Added by BFF-RESEARCH-ARTIFACT-OWNER-READ-20261020. With no injected fixture
+dict, `DefaultResearchKnowledgeSourcePort` reads the existing Research owner
+(`GET /api/research/artifacts`, `GET /api/research/artifacts/{id}`; one
+request per list/detail, caller `Authorization` + verified `X-Tenant-Id`
+forwarded, owner filters by artifact → run → task tenant and fails closed on
+unknown ownership; cross-tenant detail is a 404).
+
+A saved run output is **not** a sealed/versioned RW-05 record. Differences
+from the versioned DTO, all explicit rather than invented:
+
+| Field | Saved run output |
+| --- | --- |
+| `status` | `""` (absent at source) |
+| `version`, `lineage_id` | `null`; `lineage.versions` is `[]` |
+| `is_current_version` | `null` |
+| `metrics`, `parameters`, `tags` | `{}` / `{}` / `[]` |
+| `allowedActions.canCompare` | `false` (compare returns `OPERATION_NOT_ALLOWED`) |
+| additive: `source_kind` | `"research_run_output"` |
+| additive: `saved_output` | `run_id`, `task_id`, `receipt_id`, `checksum`, `storage_ref`, `provenance`, `run_status`, `completed_at`, `tenant_id` |
+| additive: `compare_unavailable_reason` | why compare is unavailable |
+
+Surface semantics: owner reachable and non-empty → `ok/service_client`;
+owner reachable and empty → `ok/service_client` with zero items; owner
+failure/unauthenticated → 503 `DEPENDENCY_UNAVAILABLE` (never empty success);
+unknown id → 404. No owner configured → `unavailable/missing`.
