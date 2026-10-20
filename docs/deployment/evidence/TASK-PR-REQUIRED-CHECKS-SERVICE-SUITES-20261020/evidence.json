@@ -10,6 +10,7 @@
       ".orchestrator/release-state.json",
       "docs/operations/auto-integrator.md",
       "scripts/git/test_auto_integrator.py",
+      "scripts/git/test_task_review_merge_gate.py",
       "scripts/test_provision_live_supervisor_config.py"
     ],
     "unchanged_by_design": [
@@ -18,9 +19,9 @@
     ]
   },
   "verification": {
-    "command": "pytest scripts/test_provision_live_supervisor_config.py scripts/test_check_config_drift.py .orchestrator/test_common.py scripts/git/test_auto_integrator.py",
-    "result": "428 passed; 3 failures in .orchestrator/test_common.py are pre-existing and environmental (cryptography module missing in the verification venv), identical on base",
-    "note": "scripts/git/test_auto_integrator.py default fixtures gained a Service suites SUCCESS rollup entry because tests read the shipped config"
+    "command": "pytest scripts/test_provision_live_supervisor_config.py scripts/test_check_config_drift.py .orchestrator/test_common.py scripts/git/test_auto_integrator.py && pytest -q scripts/git/test_task_review_merge_gate.py",
+    "result": "Prior unchanged suites retained: 431 passed (715 subtests passed) in provisioned .venv-pantheon. Actual failed module scripts/git/test_task_review_merge_gate.py: 125 passed, 8 subtests passed (all 7 previously failing tests in IntegratorGateTests and RealGitExactHeadIntegrationTests now pass).",
+    "note": "scripts/git/test_auto_integrator.py and scripts/git/test_task_review_merge_gate.py (open_pr synthetic green-check helper) gained a Service suites SUCCESS rollup entry because tests read the shipped config; historical PR_4230 merged snapshot retains its original 3 checks, and pending/failure negatives plus master 3-check policy remain unchanged."
   },
   "deployment": "none; development tooling only. Live config picks this up via normal runtime promotion."
 }
