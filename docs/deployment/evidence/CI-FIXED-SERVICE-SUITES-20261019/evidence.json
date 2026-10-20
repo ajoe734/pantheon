@@ -27,7 +27,8 @@
     },
     "workflow_contract": "python3 -m unittest scripts.test_branch_ci_gate_selection: 13 OK"
   },
-  "pending": "deployment and consultation pass only in the PR CI run, which has the Postgres service.",
+  "pending": "none",
   "incidents_isolation_fix": "services/incidents/test_main_routes.py re-wires the module performance subscriber after clear_performance_subscribers(); without it five replay-suite tests failed on a clean INCIDENTS_DATA_DIR (CI) while stale /tmp/pantheon/incidents state masked it locally. Verified 92 passed with a fresh INCIDENTS_DATA_DIR.",
-  "ci_run_observed": "Run on 8fa48809c: incidents, postmortems, control_plane, policy-learning, training-session, promotion, deployment (219 passed) green; consultation needed DATABASE_URL plus the rankings table, added in the next commit."
+  "ci_run_observed": "Run on 8fa48809c: incidents, postmortems, control_plane, policy-learning, training-session, promotion, deployment (219 passed) green; consultation needed DATABASE_URL plus the rankings table, added in the next commit.",
+  "ci_verification": "PR #6667 Service suites job passed (run 39345978361): all nine suite steps green, each with if: !cancelled(); consultation runs the directory cleaned by AGORA-REMOVED-SURFACE-TESTS-RETIRE-20261019."
 }
