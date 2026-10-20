@@ -1,6 +1,7 @@
 """Research knowledge, workbench, institutional memory, and synthesis routes."""
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import os
@@ -262,7 +263,9 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_bff_search(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_bff_search(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+        # Sync handler: the threadpool serves the port reads that
+        # ``search_knowledge`` performs inline, keeping them off the event loop.
         identity = ctx.identity(request)
         try:
             page_size = int(ctx.query(request, "page_size", "20") or 20)
@@ -270,8 +273,9 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
             page_size = 20
         limit_val = ctx.query(request, "limit")
         limit = int(limit_val) if limit_val is not None and limit_val.isdigit() else None
-        try:
-            return await ctx.service.search_knowledge(
+
+        def _search() -> Any:
+            return ctx.service.search_knowledge(
                 query=str(ctx.query(request, "q", "") or "").strip(),
                 types_raw=ctx.query(request, "types"),
                 page_size=page_size,
@@ -279,6 +283,15 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
                 page_token=ctx.query(request, "page_token"),
                 identity=identity,
             )
+
+        try:
+            coro = _search()
+            try:
+                coro.send(None)
+            except StopIteration as done:  # no real suspension: finished inline
+                return done.value
+            coro.close()  # a custom async search fn needs a loop: re-run on a private one
+            return asyncio.run(_search())
         except Exception as exc:
             ctx.raise_service_error(exc)
 

@@ -56,6 +56,7 @@ SYNC_HANDLER_PATHS = [
     "/bff/mcp-servers",
     "/api/v1/knowledge/notes",
     "/api/v1/knowledge/memory",
+    "/bff/search",
     "/bff/agora/capabilities",
     "/bff/agora/journal",
 ]
@@ -63,7 +64,6 @@ SYNC_HANDLER_PATHS = [
 # Handlers that stay ``async def`` because they await, but must offload
 # their blocking reads (checked at runtime by the transport guard).
 ASYNC_OFFLOADED_PATHS = [
-    "/bff/search",
     "/bff/management/cockpit",
     "/bff/alerts",
     "/bff/approvals",

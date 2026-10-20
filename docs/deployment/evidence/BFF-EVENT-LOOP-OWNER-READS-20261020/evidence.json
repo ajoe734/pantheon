@@ -265,6 +265,11 @@
       "file": "services/control-plane/bff/tools_integrations/router.py",
       "line": 1100,
       "handler": "bff_list_mcp_servers_facade"
+    },
+    {
+      "file": "services/control-plane/bff/research/routes/knowledge.py",
+      "handler": "endpoint_bff_search (/bff/search)",
+      "note": "sync def driving ResearchRouterService.search_knowledge inline in the threadpool; research/service.py is outside the artifact contract and unchanged"
     }
   ],
   "offloaded_via_to_thread": [
@@ -277,11 +282,6 @@
       "file": "services/control-plane/bff/management_read_models/router.py",
       "handler": "bff_management_cockpit",
       "change": "fallback composer via asyncio.to_thread (run_management_read path already threaded)"
-    },
-    {
-      "file": "services/control-plane/bff/research/service.py",
-      "handler": "search_knowledge (/bff/search)",
-      "change": "sync cross_entity_search_fn and port reads via asyncio.to_thread"
     }
   ],
   "already_offloaded_unchanged": [
