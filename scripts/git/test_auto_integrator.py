@@ -338,6 +338,7 @@ def green_pr(number: int = 44, *, task_id: str = "ABC-001") -> dict[str, Any]:
             {"name": "Commit trailers", "conclusion": "SUCCESS", "status": "COMPLETED"},
             {"name": "Runtime mirror guard", "conclusion": "SUCCESS", "status": "COMPLETED"},
             {"name": "Smoke acceptance", "state": "SUCCESS"},
+            {"name": "Service suites", "conclusion": "SUCCESS", "status": "COMPLETED"},
         ],
     }
 
@@ -2631,6 +2632,7 @@ class CheckClassifierTests(unittest.TestCase):
                     {"name": "Commit trailers", "conclusion": "SUCCESS", "status": "COMPLETED", "isRequired": True},
                     {"name": "Runtime mirror guard", "conclusion": "SUCCESS", "status": "COMPLETED", "isRequired": True},
                     {"name": "Smoke acceptance", "state": "SUCCESS", "isRequired": True},
+                    {"name": "Service suites", "conclusion": "SUCCESS", "status": "COMPLETED", "isRequired": True},
                     {
                         "name": "Audit signed canonical review (not required issuer) (4741)",
                         "conclusion": "FAILURE",

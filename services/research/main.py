@@ -14,11 +14,12 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger("research-orchestrator")
 
+from services.deployment.auth import AUTHENTICATED_SERVICE_ROLES, AuthError, TenantBoundaryError, authenticate_tenant
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 from services.registry.split_api import RegistryService
@@ -2955,6 +2956,89 @@ def _handle_experiment_action(experiment_id: str, action_fn: Any, body: Optional
             raise HTTPException(status_code=404, detail=f"Research experiment '{experiment_id}' not found")
         raise HTTPException(status_code=409, detail=f"Research experiment '{experiment_id}' {err_desc}")
     return res
+
+
+# -----------------------------------------------------------------------------
+# Saved run-output artifact reads (Management Artifact catalog)
+# -----------------------------------------------------------------------------
+
+
+def _saved_artifact_tenant(art: Dict[str, Any]) -> Optional[str]:
+    """Owner tenant of a saved run output: its own stamp, else its run's, else its task's."""
+    for source in (
+        art,
+        store.get_run(str(art.get("run_id"))) if art.get("run_id") else None,
+        store.get_task(str(art.get("task_id"))) if art.get("task_id") else None,
+    ):
+        if isinstance(source, dict) and str(source.get("tenant_id") or "").strip():
+            return str(source["tenant_id"]).strip()
+    return None
+
+
+def _saved_artifact_read_model(art: Dict[str, Any], run: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Saved-output metadata only; no payload, and no approval/version/lineage the output never had."""
+    run = run or {}
+    receipt = run.get("receipt") if isinstance(run.get("receipt"), dict) else {}
+    keys = ("artifact_id", "run_id", "task_id", "stage_id", "stage_type", "artifact_type", "artifact_family",
+            "title", "storage_ref", "checksum", "provenance", "created_at", "created_by", "tenant_id")
+    out = {k: art.get(k) for k in keys}
+    out["tenant_id"] = _saved_artifact_tenant(art)
+    out["run"] = {
+        "run_id": art.get("run_id"), "status": run.get("status"), "provenance": run.get("provenance"),
+        "completed_at": run.get("completed_at"), "receipt_id": receipt.get("receipt_id"),
+        "artifact_digest": receipt.get("artifact_digest"),
+    }
+    return out
+
+
+def _visible_saved_artifacts(tenant_id: str) -> List[Dict[str, Any]]:
+    caller = str(tenant_id or "").strip()
+    if not caller:
+        return []
+    runs = {str(r.get("run_id")): r for r in store.list_runs()}
+    rows = [
+        _saved_artifact_read_model(a, runs.get(str(a.get("run_id"))))
+        for a in store.list_artifacts()
+    ]
+    # Fail closed: only the authenticated caller's own tenant; unresolved-tenant outputs are never visible.
+    rows = [r for r in rows if r["tenant_id"] and r["tenant_id"] == caller]
+    rows.sort(key=lambda r: (str(r.get("created_at") or ""), str(r.get("artifact_id") or "")), reverse=True)
+    return rows
+
+
+# Artifact reads keep the existing BFF read-role contract (viewer included); service defaults stay admitted.
+_ARTIFACT_READ_ROLES = tuple(dict.fromkeys(
+    ("viewer", "view_only", "operator", "approver", "admin", "reviewer", *AUTHENTICATED_SERVICE_ROLES)
+))
+
+
+def _authenticated_artifact_tenant(
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None),
+) -> str:
+    """Verified bearer identity bound to an explicit tenant (shared service boundary); anonymous is denied."""
+    try:
+        return authenticate_tenant(
+            authorization=authorization, tenant_id=x_tenant_id, service_prefix="RESEARCH",
+            required_roles=_ARTIFACT_READ_ROLES,
+        ).tenant_id
+    except AuthError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    except TenantBoundaryError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@app.get("/api/research/artifacts")
+def list_saved_research_artifacts(tenant_id: str = Depends(_authenticated_artifact_tenant)) -> List[Dict[str, Any]]:
+    return _visible_saved_artifacts(tenant_id)
+
+
+@app.get("/api/research/artifacts/{artifact_id}")
+def get_saved_research_artifact(artifact_id: str, tenant_id: str = Depends(_authenticated_artifact_tenant)) -> Dict[str, Any]:
+    for row in _visible_saved_artifacts(tenant_id):
+        if row["artifact_id"] == artifact_id:
+            return row
+    raise HTTPException(status_code=404, detail=f"Research artifact '{artifact_id}' not found")
 
 
 @app.post("/api/research/tickets")

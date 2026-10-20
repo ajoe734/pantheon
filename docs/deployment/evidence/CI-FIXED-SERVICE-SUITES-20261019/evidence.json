@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.0",
+  "task_id": "CI-FIXED-SERVICE-SUITES-20261019",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "base_ref": "dev",
+  "base_sha": "51759b97608238d981db574f88d4baa263510562",
+  "summary": "Adds a parallel 'Service suites' job to branch-ci.yml running incidents, postmortems, control_plane, policy-learning, training-session, promotion, deployment, consultation and search as individual directory steps. No known-failures list, deselect or skip. A separate job keeps the Smoke job inside its 30-minute budget.",
+  "postgres": {
+    "service": "postgres:16-alpine, trust auth, POSTGRES_DB gov_approval_test",
+    "deployment": "GOV_APPROVAL_TEST_DSN=postgresql://postgres@127.0.0.1:5432/gov_approval_test",
+    "consultation": "DATABASE_URL=postgresql://postgres@127.0.0.1:5432/consultation_test (database and rankings.rankings table created by setup step; the BFF import in the e2e tests needs it)"
+  },
+  "dependencies": "Each service requirements.txt, root requirements.txt, and qdrant-client pinned from services/search/requirements.lock; training-session requirements install vectorbt==1.1.1.",
+  "local_verification": {
+    "interpreter": "fresh python3 venv with the same installs",
+    "results": {
+      "incidents": "92 passed",
+      "postmortems": "54 passed",
+      "control_plane": "11 passed",
+      "policy-learning": "140 passed, 5 skipped",
+      "training-session": "240 passed, 2 skipped",
+      "promotion": "9 passed",
+      "search": "135 passed, 18 skipped",
+      "deployment": "23 passed before the first Postgres-dependent test errored (no local Postgres; CI provides gov_approval_test)",
+      "consultation": "collection error 'Postgres DSN is required' locally (no Postgres; CI provides CONSULTATION_STORE_DSN)"
+    },
+    "workflow_contract": "python3 -m unittest scripts.test_branch_ci_gate_selection: 13 OK"
+  },
+  "pending": "none",
+  "incidents_isolation_fix": "services/incidents/test_main_routes.py re-wires the module performance subscriber after clear_performance_subscribers(); without it five replay-suite tests failed on a clean INCIDENTS_DATA_DIR (CI) while stale /tmp/pantheon/incidents state masked it locally. Verified 92 passed with a fresh INCIDENTS_DATA_DIR.",
+  "ci_run_observed": "Run on 8fa48809c: incidents, postmortems, control_plane, policy-learning, training-session, promotion, deployment (219 passed) green; consultation needed DATABASE_URL plus the rankings table, added in the next commit.",
+  "ci_verification": "PR #6667 Service suites job passed (run 39345978361): all nine suite steps green, each with if: !cancelled(); consultation runs the directory cleaned by AGORA-REMOVED-SURFACE-TESTS-RETIRE-20261019."
+}

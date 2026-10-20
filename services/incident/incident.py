@@ -588,9 +588,14 @@ class IncidentStore:
         new_status: str,
         *,
         resolved_at: Optional[str] = None,
+        telemetry_event_ids: Optional[List[str]] = None,
         expected_snapshot: Optional[Mapping[str, Any]] = None,
     ) -> IncidentCase:
-        """Transition an incident to a new status."""
+        """Transition an incident to a new status.
+
+        Supplied telemetry_event_ids are appended to (never replace) the
+        incident's existing references.
+        """
         inc = self.require_incident(incident_id)
         if expected_snapshot is not None and inc.to_dict() != dict(expected_snapshot):
             raise IncidentConcurrencyError(
@@ -611,6 +616,10 @@ class IncidentStore:
             raise IncidentError(f"Incident is resolved and cannot regress to {new_status}")
 
         updates: Dict[str, Any] = {"status": new_status}
+        if telemetry_event_ids:
+            updates["telemetry_event_ids"] = _merge_unique(
+                inc.telemetry_event_ids, telemetry_event_ids
+            )
         if new_status in {IncidentStatus.RESOLVED.value, IncidentStatus.CLOSED.value}:
             updates["resolved_at"] = inc.resolved_at or resolved_at or _utc_now()
 

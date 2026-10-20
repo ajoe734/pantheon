@@ -248,7 +248,7 @@ def test_decide_failure_does_not_persist_partial_under_review_state(client):
         },
     )
     assert failed.status_code == 422
-    assert "requires at least one condition" in failed.json()["detail"]
+    assert "'approved_with_conditions' requires nonempty conditions" in failed.json()["detail"]
 
     listing = test_client.get(
         "/api/v1/approvals",

@@ -44,7 +44,7 @@ def _validate_artifact_status(ctx: ResearchRouteContext, value: Optional[str]) -
 def build_artifacts_router(ctx: ResearchRouteContext) -> APIRouter:
     router = APIRouter()
 
-    async def _list_artifacts(
+    def _list_artifacts(
         artifact_type: Optional[str],
         status: Optional[str],
         tags: Optional[str],
@@ -69,7 +69,7 @@ def build_artifacts_router(ctx: ResearchRouteContext) -> APIRouter:
             ctx.raise_service_error(exc)
             raise AssertionError("unreachable")
 
-    async def _get_artifact(artifact_id: str, authorization: Optional[str]) -> Dict[str, Any]:
+    def _get_artifact(artifact_id: str, authorization: Optional[str]) -> Dict[str, Any]:
         ctx.require_read_role(ctx.extract_identity(authorization))
         try:
             return ctx.service.get_artifact(artifact_id)
@@ -78,7 +78,7 @@ def build_artifacts_router(ctx: ResearchRouteContext) -> APIRouter:
             raise AssertionError("unreachable")
 
     @router.get("/api/v1/research/artifacts")
-    async def list_research_artifacts(
+    def list_research_artifacts(
         artifact_type: Optional[str] = None,
         status: Optional[str] = None,
         tags: Optional[str] = None,
@@ -88,12 +88,12 @@ def build_artifacts_router(ctx: ResearchRouteContext) -> APIRouter:
         page_size: int = Query(default=20, ge=1, le=100),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        return await _list_artifacts(
+        return _list_artifacts(
             artifact_type, status, tags, author, date_range, page_token, page_size, authorization,
         )
 
     @router.get("/api/v1/research/artifacts/compare")
-    async def compare_research_artifacts(
+    def compare_research_artifacts(
         artifact_ids: str = Query(..., description="Comma-separated artifact IDs to compare"),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -105,19 +105,19 @@ def build_artifacts_router(ctx: ResearchRouteContext) -> APIRouter:
             raise AssertionError("unreachable")
 
     @router.get("/api/v1/research/artifacts/{artifact_id}")
-    async def get_research_artifact(
+    def get_research_artifact(
         artifact_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        return await _get_artifact(artifact_id, authorization)
+        return _get_artifact(artifact_id, authorization)
 
     @router.get("/bff/artifacts")
-    async def bff_list_research_artifacts(
+    def bff_list_research_artifacts(
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=100),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        result = await _list_artifacts(None, None, None, None, None, page_token, page_size, authorization)
+        result = _list_artifacts(None, None, None, None, None, page_token, page_size, authorization)
         return {
             "data": result["artifacts"],
             "items": result["artifacts"],
@@ -126,11 +126,11 @@ def build_artifacts_router(ctx: ResearchRouteContext) -> APIRouter:
         }
 
     @router.get("/bff/artifacts/{artifact_id}")
-    async def bff_get_research_artifact(
+    def bff_get_research_artifact(
         artifact_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        payload = await _get_artifact(artifact_id, authorization)
+        payload = _get_artifact(artifact_id, authorization)
         meta = payload.pop("meta")
         return {"data": payload, "meta": meta}
 

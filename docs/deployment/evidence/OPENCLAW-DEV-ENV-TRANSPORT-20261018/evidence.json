@@ -1,0 +1,92 @@
+{
+  "task_id": "OPENCLAW-DEV-ENV-TRANSPORT-20261018",
+  "owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "title": "Wire OpenClaw Anthropic API key and workspace ID through dev nonprod deploy transport and runtime env parity",
+  "timestamp": "2026-10-18T15:40:15Z",
+  "base_commit": "553eab227487c3a5d1d77e6603f9517d2625c246",
+  "summary": "Wired DEV_OPENCLAW_ANTHROPIC_API_KEY and DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID into PANTHEON_OPENCLAW_ANTHROPIC_API_KEY and PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID in scripts/deploy_nonprod_vm.sh across initial optional defaults, usage() documentation, configure_management_ai_dev_kernel_env(), --dry-run boolean *_configured summaries (never logging secret values), ssh_bash command_prefix with shell_quote, and with_dev_bff_runtime_env for both formal root rollout and bff/Compose paths. Added recorder-backed parity and optional-omission contract tests in scripts/test_deploy_nonprod_env_parity.py using synthetic values only.",
+  "scope_and_budget": {
+    "touched_files": [
+      "scripts/deploy_nonprod_vm.sh",
+      "scripts/test_deploy_nonprod_env_parity.py",
+      "docs/deployment/evidence/OPENCLAW-DEV-ENV-TRANSPORT-20261018/evidence.json"
+    ],
+    "production_diff_numstat": {
+      "file": "scripts/deploy_nonprod_vm.sh",
+      "added_lines": 11,
+      "removed_lines": 0,
+      "net_lines": 11,
+      "budget_max_net_lines": 40,
+      "within_budget": true
+    },
+    "test_diff_numstat": {
+      "file": "scripts/test_deploy_nonprod_env_parity.py",
+      "added_lines": 150,
+      "removed_lines": 0
+    },
+    "sibling_task_boundary_preserved": {
+      "sibling_task": "OPENCLAW-STRUCTURED-OPENAI-RUNTIME-20261018",
+      "untouched_files": [
+        "docker-compose.yml",
+        ".github/workflows/nonprod-deploy.yml",
+        "services/openclaw_adapter/",
+        "scripts/openclaw-gateway-bootstrap.sh"
+      ]
+    }
+  },
+  "acceptance_criteria_verification": {
+    "ac1_deploy_nonprod_vm_wiring": {
+      "satisfied": true,
+      "evidence": "scripts/deploy_nonprod_vm.sh initializes DEV_OPENCLAW_ANTHROPIC_API_KEY and DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID to empty defaults (lines 81-82), documents them in usage() (line 426), maps them to PANTHEON_OPENCLAW_ANTHROPIC_API_KEY and PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID in configure_management_ai_dev_kernel_env() (lines 536-537), logs only boolean *_configured=true|false in --dry-run (lines 722-723), forwards shell-quoted PANTHEON_OPENCLAW_ANTHROPIC_API_KEY and PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID in ssh_bash command_prefix (lines 985-986), and exports both in with_dev_bff_runtime_env() (lines 4003-4004)."
+    },
+    "ac2_env_parity_recorder_tests": {
+      "satisfied": true,
+      "evidence": "scripts/test_deploy_nonprod_env_parity.py uses _setup_stub_bin local recorder with synthetic values only (sk-ant-synthetic-test-key-0001, wrk_synthetic_test_0001) to verify identical PANTHEON_OPENCLAW_ANTHROPIC_API_KEY and PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID across formal root rollout and bff recreate Compose paths, and verifies optional omission defaults both to empty strings without adding new auth gates or altering deployment/rollback semantics."
+    },
+    "ac3_scoped_files_and_validation": {
+      "satisfied": true,
+      "evidence": "Only the 3 scoped files were modified; net production diff in scripts/deploy_nonprod_vm.sh is +11 lines (<= 40 budget). In session 2b2b16ba-3111-4173-a16a-4481bddc7804, all standalone verification commands were executed to terminal completion: bash -n (exit 0), test_deploy_nonprod_env_parity.py (8 passed in 1.65s), test_deploy_nonprod_bff_strict_auth_default_contract.py + test_deploy_runtime_state_contract.py (41 passed in 17.45s), and standalone test_deploy_nonprod_artifact_restore.py (74 passed in 40.91s)."
+    }
+  },
+  "verification": {
+    "session_id": "2b2b16ba-3111-4173-a16a-4481bddc7804",
+    "commands": [
+      {
+        "command": "bash -n scripts/deploy_nonprod_vm.sh",
+        "exit_code": 0,
+        "result": "Syntax check passed with exit code 0"
+      },
+      {
+        "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest -q scripts/test_deploy_nonprod_env_parity.py",
+        "exit_code": 0,
+        "result": "8 passed in 1.65s"
+      },
+      {
+        "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest -q scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py scripts/test_deploy_runtime_state_contract.py",
+        "exit_code": 0,
+        "result": "41 passed in 17.45s"
+      },
+      {
+        "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest -q scripts/test_deploy_nonprod_artifact_restore.py",
+        "exit_code": 0,
+        "result": "74 passed in 40.91s"
+      }
+    ],
+    "prior_run_history_note": {
+      "log_file": "20261018T150322764598Z-antigravity2-antigravity2-22abe7.log",
+      "details": "In the initial run, a combined 4-suite invocation exited with 7 failed, 116 passed in 53.41s because fresh git worktree files had 0775 permissions; after running chmod -R go-w scripts, that session ran test_deploy_nonprod_env_parity.py (8 passed in 1.87s), test_deploy_nonprod_bff_strict_auth_default_contract.py + test_deploy_runtime_state_contract.py (41 passed in 17.50s), and a -k subset rerun on test_deploy_nonprod_artifact_restore.py (6 passed, 68 deselected in 17.12s). In the current session (2b2b16ba-3111-4173-a16a-4481bddc7804), the full standalone test_deploy_nonprod_artifact_restore.py suite and all sibling suites were executed to completion with exit_code 0 as recorded in verification.commands above."
+    },
+    "unrelated_baseline_failure_note": {
+      "base_commit": "553eab227487c3a5d1d77e6603f9517d2625c246",
+      "test": "scripts/test_dev_environment_lease_deploy_contract.py::test_release_case_retirement_runs_after_both_compensation_paths",
+      "location": "scripts/test_dev_environment_lease_deploy_contract.py:3181",
+      "suite_summary_on_unmodified_base": "1 failed, 323 passed, 2 skipped",
+      "explanation": "Pre-existing baseline failure on unmodified 553eab227487c3a5d1d77e6603f9517d2625c246 inspecting .github/workflows/nonprod-deploy.yml retire_step conditions; out of scope for OPENCLAW-DEV-ENV-TRANSPORT-20261018 and left untouched."
+    }
+  },
+  "review": {
+    "reviewer": "Antigravity",
+    "decision": "pending independent exact-head review"
+  }
+}

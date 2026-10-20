@@ -621,3 +621,172 @@ def test_synthesis_schema_accepted_by_real_adapter_validator(monkeypatch):
         "disagreements": [{"opinion_ids": ["o1", "o2"], "cause": "c", "detail": "d"}],
     }
     module._validate_extraction_arguments(result, _SYNTHESIS_SCHEMA)
+
+
+def test_original_workshop_daily_context_resolve_uses_registry_http_owner(monkeypatch):
+    import urllib.error
+    from services.control_plane.bff.command_adapters import base as adapter_base
+    from services.control_plane.bff.core import owner_reads
+    from services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort
+
+    c = client(monkeypatch)
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry.internal")
+
+    workshop_id = "b06627a9-4711-4baa-be58-23fa9a5400bc"
+    strategy_id = "strategy-persona-aa060d53ff712cbba704"
+    registry_id = "reg-strategy-spec-persona-aa060d53ff712cbba704"
+    persona_id = "persona-132519698e6199e80326"
+    tenant_id = "tenant-dev"
+
+    real_port = DefaultResearchKnowledgeSourcePort()
+    assert real_port._strategy_specs == {}
+    read_store.get_strategy_spec_detail = real_port.get_strategy_spec_detail
+    orig_list_personas = read_store.list_personas
+    read_store.list_personas = lambda **kw: orig_list_personas(**kw) + [
+        {
+            "persona_id": persona_id,
+            "tenant_id": tenant_id,
+            "display_name": "Original Workshop Persona",
+            "lifecycle_state": "active",
+            "environment_ceiling": "paper",
+        }
+    ]
+    workshop_store.create_session(
+        {
+            "workshop_id": workshop_id,
+            "tenant_id": tenant_id,
+            "user_id": "interaction-user",
+            "strategy_id": strategy_id,
+            "active_strategy_spec_registry_id": registry_id,
+            "selected_version_id": "v1",
+            "status": "open",
+        }
+    )
+
+    def make_registry_entry(owner_tenant: str = tenant_id, entry_reg_id: str = registry_id) -> dict:
+        return {
+            "registry_id": entry_reg_id,
+            "artifact_type": "strategy_spec",
+            "artifact_state": "approved",
+            "version": "1.0.0",
+            "strategy_id": strategy_id,
+            "owner_tenant": owner_tenant,
+            "lineage": {
+                "source_strategy_spec_id": strategy_id,
+                "parent_registry_ids": ["reg-strategy-spec-persona-baseline-aa060d53ff712cbba704"],
+            },
+            "metadata": {
+                "title": "Original Workshop Strategy Spec",
+                "persona_id": persona_id,
+                "strategy_spec": {
+                    "strategy_id": strategy_id,
+                    "spec_version": "1.0",
+                    "lifecycle_state": "candidate",
+                    "title": "Original Workshop Strategy Spec",
+                    "metadata": {"tenant_id": owner_tenant, "persona_id": persona_id},
+                },
+            },
+        }
+
+    daily_payload = {
+        "workshop_id": workshop_id,
+        "environment": "research",
+        "source_route": f"/agora/strategy-workshop/{workshop_id}",
+        "return_route": f"/agora/strategy-workshop/{workshop_id}",
+        "focused_object": {"kind": "workshop", "id": workshop_id, "version": "v1"},
+        "evidence_cutoff": "2026-10-18T12:00:00Z",
+        "selected_persona_ids": [persona_id],
+        "initial_mode": "ask",
+        "context_refs": [
+            {"type": "workshop", "id": workshop_id, "version_id": "v1"},
+            {"type": "strategy", "id": strategy_id, "version_id": registry_id},
+        ],
+    }
+    auth_token = f"Bearer interaction-user:operator:{tenant_id}"
+    headers_base = {"Authorization": auth_token, "X-Tenant-Id": tenant_id}
+
+    tok_auth = owner_reads.authorization.set(auth_token)
+    tok_tenant = owner_reads.selected_tenant.set(tenant_id)
+    try:
+        # 1. Owner entry present while BFF local store is empty -> 200 OK
+        monkeypatch.setattr(adapter_base, "http_request_json", lambda *a, **k: [make_registry_entry()])
+        ok_resp = c.post(
+            "/bff/agora/interactions/context:resolve",
+            headers={**headers_base, "Idempotency-Key": "orig-ws-ok"},
+            json=daily_payload,
+        )
+        assert ok_resp.status_code == 200, ok_resp.text
+        ok_data = ok_resp.json()["data"]
+        assert ok_data["verified"] is True
+        assert ok_data["workshop_id"] == workshop_id
+        assert ok_data["context_binding"]["strategy_ref"] == {
+            "strategy_id": strategy_id,
+            "version_id": registry_id,
+        }
+        assert real_port._strategy_specs == {}
+
+        # 2. Missing entry in Registry -> 409 strategy_not_found
+        monkeypatch.setattr(adapter_base, "http_request_json", lambda *a, **k: [])
+        missing_resp = c.post(
+            "/bff/agora/interactions/context:resolve",
+            headers={**headers_base, "Idempotency-Key": "orig-ws-missing"},
+            json=daily_payload,
+        )
+        assert missing_resp.status_code == 409, missing_resp.text
+        assert "strategy_not_found" in missing_resp.text
+
+        # 3. Wrong version in Registry -> 409 strategy_not_found
+        monkeypatch.setattr(
+            adapter_base,
+            "http_request_json",
+            lambda *a, **k: [make_registry_entry(entry_reg_id="reg-strategy-spec-other-version")],
+        )
+        wrong_ver_resp = c.post(
+            "/bff/agora/interactions/context:resolve",
+            headers={**headers_base, "Idempotency-Key": "orig-ws-wrong-ver"},
+            json=daily_payload,
+        )
+        assert wrong_ver_resp.status_code == 409, wrong_ver_resp.text
+        assert "strategy_not_found" in wrong_ver_resp.text
+
+        # 4. Foreign tenant in Registry -> 403 FORBIDDEN
+        monkeypatch.setattr(
+            adapter_base,
+            "http_request_json",
+            lambda *a, **k: [make_registry_entry(owner_tenant="tenant-other")],
+        )
+        forbidden_resp = c.post(
+            "/bff/agora/interactions/context:resolve",
+            headers={**headers_base, "Idempotency-Key": "orig-ws-forbidden"},
+            json=daily_payload,
+        )
+        assert forbidden_resp.status_code == 403, forbidden_resp.text
+        assert forbidden_resp.json()["error"]["code"] == "FORBIDDEN"
+
+        # 5. Registry owner unavailable (503 or untyped 404 route error) -> 503 DEPENDENCY_UNAVAILABLE
+        def raise_404(*a, **k):
+            raise urllib.error.HTTPError("http://registry.internal", 404, "Not Found", hdrs=None, fp=None)
+
+        monkeypatch.setattr(adapter_base, "http_request_json", raise_404)
+        http_404_resp = c.post(
+            "/bff/agora/interactions/context:resolve",
+            headers={**headers_base, "Idempotency-Key": "orig-ws-http-404"},
+            json=daily_payload,
+        )
+        assert http_404_resp.status_code == 503, http_404_resp.text
+        assert http_404_resp.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+
+        def raise_503(*a, **k):
+            raise urllib.error.HTTPError("http://registry.internal", 503, "Unavailable", hdrs=None, fp=None)
+
+        monkeypatch.setattr(adapter_base, "http_request_json", raise_503)
+        unavail_resp = c.post(
+            "/bff/agora/interactions/context:resolve",
+            headers={**headers_base, "Idempotency-Key": "orig-ws-unavail"},
+            json=daily_payload,
+        )
+        assert unavail_resp.status_code == 503, unavail_resp.text
+        assert unavail_resp.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+    finally:
+        owner_reads.authorization.reset(tok_auth)
+        owner_reads.selected_tenant.reset(tok_tenant)

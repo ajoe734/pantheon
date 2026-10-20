@@ -182,6 +182,8 @@ services:
       SOURCE_INGEST_LATEST_MARKET_SNAPSHOT_PATH: /data/source-ingest/latest_market_snapshots.jsonl
       # Shared queue with strategy-distillation-worker for normalized SourceRecord commits.
       DISTILLATION_JOB_QUEUE_PATH: /data/source-ingest/distill_job_queue.jsonl
+      STRATEGY_SPEC_SEED_STORE_PATH: /data/source-ingest/distill_seeds.jsonl
+      STRATEGY_SEED_STORE_PATH: /data/source-ingest/distill_seeds.jsonl
       SOURCE_INGEST_MAX_RECORDS: ${SOURCE_INGEST_MAX_RECORDS:-100}
       # Bounded deployment refresh resolves active symbols from RuntimeBinding store.
       SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS: ${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}
@@ -794,6 +796,9 @@ services:
       CLAUDE_CONFIG_DIR: ${OPENCLAW_CLAUDE_CONFIG_DIR:-/home/node/.openclaw/claude-cli}
       # Optional long-lived credential (`claude setup-token`) for Claude CLI.
       CLAUDE_CODE_OAUTH_TOKEN: ${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-}
+      ANTHROPIC_API_KEY: ${PANTHEON_OPENCLAW_ANTHROPIC_API_KEY:-}
+      ANTHROPIC_WORKSPACE_ID: ${PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID:-}
+      OPENCLAW_OPENAI_OAUTH_TOKEN: ${PANTHEON_OPENCLAW_OPENAI_OAUTH_TOKEN:-}
       PANTHEON_ASSISTANT_CODEX_HOST_HOME: ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}
       PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME: ${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}
       PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR: ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}
@@ -815,7 +820,7 @@ services:
         # Keep the token in the container environment rather than interpolating
         # it into the shell command. The opt-in isolated batch is applied here,
         # before the gateway serves, and fails closed without the credential.
-        "node dist/index.js config set gateway.http.endpoints.responses.enabled true --json >/dev/null && if [ -n \"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\" ]; then [ -n \"$$CLAUDE_CODE_OAUTH_TOKEN\" ] || exit 1; node dist/index.js config set --batch-json \"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\" >/dev/null || exit 1; fi && exec node dist/index.js gateway --allow-unconfigured --port 18789 --auth token --token \"$$OPENCLAW_GATEWAY_TOKEN\"",
+        "node dist/index.js config set gateway.http.endpoints.responses.enabled true --json >/dev/null && if [ -n \"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\" ]; then [ -n \"$$ANTHROPIC_API_KEY\" ] && [ -n \"$$ANTHROPIC_WORKSPACE_ID\" ] && [ -n \"$$OPENCLAW_OPENAI_OAUTH_TOKEN\" ] || exit 1; node dist/index.js config set --batch-json \"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\" >/dev/null || exit 1; fi && exec node dist/index.js gateway --allow-unconfigured --port 18789 --auth token --token \"$$OPENCLAW_GATEWAY_TOKEN\"",
       ]
     volumes:
       - openclaw-data:/home/node/.openclaw
@@ -854,6 +859,7 @@ services:
       # provider degrades with OPENCLAW_GATEWAY_TOKEN_not_set even when the CLI is baked.
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-pantheon-local-token}
       OPENCLAW_AGENT_ID: ${OPENCLAW_AGENT_ID:-main}
+      OPENCLAW_PRIMARY_MODEL: ${OPENCLAW_PRIMARY_MODEL:-openai/gpt-5.6-sol}
       # Agent ensure/reconcile runs in this authenticated adapter container but
       # must mutate the exact gateway-owned state and workspace volume.
       PANTHEON_OPENCLAW_GATEWAY_STATE_DIR: /home/node/.openclaw
@@ -968,6 +974,11 @@ services:
       # to the governance service from this path.
       PANTHEON_DEPLOYMENT_API_URL: http://deployment:8095
       PANTHEON_DEPLOYMENT_SERVICE_TOKEN: ${PANTHEON_DEPLOYMENT_SERVICE_TOKEN:-runtime-manager:service}
+      # Retirement telemetry: same service-token pattern as other producers.
+      # The tenant must be one telemetry's service token is scoped to.
+      PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
+      PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}
+      PANTHEON_TELEMETRY_TENANT_ID: ${PANTHEON_TELEMETRY_TENANT_ID:-${PANTHEON_DEPLOYMENT_TENANT_ID:-${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-${PANTHEON_DEV_BFF_TENANT_ID:-default}}}}}
       # Chain tenant default through PANTHEON_TENANT_ID/PANTHEON_BFF_TENANT_ID for dev tenant match.
       PANTHEON_DEPLOYMENT_TENANT_ID: ${PANTHEON_DEPLOYMENT_TENANT_ID:-${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-${PANTHEON_DEV_BFF_TENANT_ID:-default}}}}
       PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
@@ -1363,6 +1374,9 @@ services:
       PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID: ${PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID:-}
       PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET: ${PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET:-}
       PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_ALLOWED_TENANTS: ${PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_ALLOWED_TENANTS:-tenant-dev,pantheon-dev,pantheon-local}
+      PANTHEON_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_ID: ${PANTHEON_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_ID:-pantheon-dev-admin-test}
+      PANTHEON_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_SECRET: ${PANTHEON_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_SECRET:-}
+      PANTHEON_BFF_DEV_LOGIN_TEST_ADMIN_ALLOWED_TENANTS: ${PANTHEON_BFF_DEV_LOGIN_TEST_ADMIN_ALLOWED_TENANTS:-tenant-dev,pantheon-dev,pantheon-local}
       # The legacy/generic operator credential is intentionally the negative
       # no-MFA verifier identity. Dedicated governed actors may opt in to MFA.
       PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS: ${PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS:-1800}
@@ -1916,6 +1930,8 @@ services:
       PANTHEON_REGISTRY_JWT_ISSUER: ${PANTHEON_REGISTRY_JWT_ISSUER:-${CAPITAL_JWT_ISSUER:-${PANTHEON_DEV_BFF_JWT_ISSUER:-pantheon-dev-control-plane}}}
       PANTHEON_REGISTRY_JWT_AUDIENCE: ${PANTHEON_REGISTRY_JWT_AUDIENCE:-${CAPITAL_JWT_AUDIENCE:-${PANTHEON_DEV_BFF_JWT_AUDIENCE:-pantheon-dev-owners}}}
       PANTHEON_REGISTRY_ROLE_CLAIMS: ${PANTHEON_REGISTRY_ROLE_CLAIMS:-roles,role}
+      PANTHEON_RUNTIME_MANAGER_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-http://runtime-manager:8081}
+      PANTHEON_DEPLOYMENT_API_URL: ${PANTHEON_DEPLOYMENT_API_URL:-http://deployment:8095}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
     volumes:
       - dev-paper-registry-tokens:/run/pantheon-principals:ro
@@ -2182,6 +2198,8 @@ services:
       EVOLUTION_AUTH_TOKEN: ${EVOLUTION_AUTH_TOKEN:-pantheon-local-evolution-service}
       EVOLUTION_AUTH_ALLOWED_TENANTS: ${EVOLUTION_AUTH_ALLOWED_TENANTS:-${PANTHEON_DEV_BFF_TENANT_ID:-pantheon-default}}
       EVOLUTION_DEFAULT_TENANT_ID: ${EVOLUTION_DEFAULT_TENANT_ID:-${PANTHEON_DEV_BFF_TENANT_ID:-pantheon-default}}
+      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
+      PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}
       INCIDENT_STORE_BACKEND: ${INCIDENT_STORE_BACKEND:-json}
       POSTMORTEM_STORE_BACKEND: ${POSTMORTEM_STORE_BACKEND:-json}
     volumes:
@@ -2285,6 +2303,9 @@ services:
     environment:
       EVOCHAIN_TELEMETRY_API_URL: http://telemetry:8083
       EVOCHAIN_INCIDENTS_API_URL: http://incidents:8090
+      PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}
+      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
+      EVOLUTION_DEFAULT_TENANT_ID: ${EVOLUTION_DEFAULT_TENANT_ID:-${PANTHEON_DEV_BFF_TENANT_ID:-pantheon-default}}
       EVOCHAIN_THRESHOLD_SWEEP_CONFIG_PATH: /workspace/services/evolution/config/threshold_sweep_thresholds.json
       EVOCHAIN_THRESHOLD_SWEEP_BASELINES_PATH: /workspace/services/evolution/config/threshold_sweep_baselines.json
       EVOCHAIN_THRESHOLD_SWEEP_STATE_PATH: /data/evolution/threshold_sweep_state.json

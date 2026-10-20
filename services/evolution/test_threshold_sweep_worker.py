@@ -61,10 +61,16 @@ from services.evolution.threshold_sweep_worker import (
     load_thresholds,
     run_tick,
 )
+import os
+
+os.environ.setdefault("PANTHEON_RUNTIME_MANAGER_URL", "http://127.0.0.1:9")
+
 from services.incident.incident import IncidentStore
 from services.incident.reference_validation import CanonicalReferenceValidator
 from services.incidents.consumer import ThresholdTelemetryIncidentConsumer
-from services.incidents.main import app
+from services.incidents.main import _wire_canonical_performance_subscriber, app
+
+_wire_canonical_performance_subscriber()
 
 @pytest.fixture(autouse=True)
 def isolate_worker_paths(tmp_path, monkeypatch):
@@ -196,6 +202,8 @@ def _seed_real_summary(store: RuntimeSummaryProjectionStore, **event_overrides) 
         "metadata": {"connectivity_status": "connected"},
         "metrics": {"heartbeat": 1},
     }
+    if "tenant_id" in event_overrides:
+        heartbeat_event["tenant_id"] = event_overrides["tenant_id"]
     store.project_event(heartbeat_event)
 
     event = {
@@ -2568,3 +2576,370 @@ def test_wal_lock_serializes_concurrent_holders(tmp_path):
     assert not first.is_alive() and not second.is_alive()
     # "b" must never enter while "a" still holds the lock.
     assert order == ["a-enter", "a-exit", "b-enter", "b-exit"]
+
+
+# ---------------------------------------------------------------------------
+# EVOLUTION-TELEMETRY-AUTH-WIRING-20261018: strict Telemetry HTTP authority
+# boundary for runtime-summaries GET and derived-event ingest POST
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def strict_telemetry_http_server(monkeypatch):
+    """Run the real Flask services.telemetry.main.app under strict auth over HTTP."""
+    import asyncio
+    import threading
+    import types
+    from wsgiref.simple_server import WSGIRequestHandler, make_server
+
+    import services.telemetry.main as telemetry_main
+    from services.runtime_auth_inbound import AuthContext
+    from services.telemetry.lineage_read import LineageReadService
+
+    monkeypatch.setenv("PANTHEON_TELEMETRY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_TELEMETRY_SERVICE_TOKEN", "telemetry-strict-service-token")
+    monkeypatch.setenv("PANTHEON_TELEMETRY_SERVICE_TENANTS", "tenant-dev,tenant-alpha")
+    monkeypatch.delenv("TELEMETRY_DB_DSN", raising=False)
+
+    def _pinned_server_service_context(authorization: str):
+        if not authorization.startswith("Bearer "):
+            return None
+        presented = authorization.split(None, 1)[1].strip()
+        if presented != "telemetry-strict-service-token":
+            return None
+        return AuthContext(
+            actor_id="telemetry-service",
+            roles=frozenset({"service"}),
+            claims={"allowed_tenants": ["tenant-dev", "tenant-alpha"]},
+            token_kind="service",
+        )
+
+    monkeypatch.setattr("services.telemetry.auth._service_context", _pinned_server_service_context)
+
+    class _BindingStore:
+        def get_binding(self, binding_id: str):
+            if binding_id != "rb-evochain-001":
+                return None
+            return types.SimpleNamespace(
+                binding_id="rb-evochain-001",
+                runtime_id="runtime-evochain-001",
+                capital_pool_id="pool-evochain-001",
+                artifact_id="artifact-evochain-001",
+                artifact_version="1.0.0",
+                plan_id="plan-evochain-001",
+                persona_capital_binding_id="pcb-evochain-001",
+                deployment_mode="paper",
+                execution_mode="paper",
+                effective_at="2026-07-01T00:00:00Z",
+                retired_at=None,
+            )
+
+    loop = asyncio.new_event_loop()
+    loop_thread = threading.Thread(
+        target=lambda: (asyncio.set_event_loop(loop), loop.run_forever()),
+        daemon=True,
+    )
+    loop_thread.start()
+
+    summary_store = RuntimeSummaryProjectionStore(
+        path=None,
+        heartbeat_stale_after_seconds=10_000_000_000,
+    )
+    lineage_store = LineageReadService()
+    ingest_svc = TelemetryIngestService(
+        schema_path=_SCHEMA_PATH,
+        binding_store=_BindingStore(),
+        runtime_summary_store=summary_store,
+        lineage_write_store=lineage_store,
+    )
+    asyncio.run_coroutine_threadsafe(ingest_svc.start(), loop).result(timeout=5)
+
+    old_loop = telemetry_main._loop
+    old_svc = telemetry_main._svc
+    old_lineage = telemetry_main._lineage_svc
+    telemetry_main._loop = loop
+    telemetry_main._svc = ingest_svc
+    telemetry_main._lineage_svc = lineage_store
+
+    requests_seen: list[dict[str, Any]] = []
+
+    def _recording_app(environ, start_response):
+        requests_seen.append(
+            {
+                "method": environ.get("REQUEST_METHOD"),
+                "path": environ.get("PATH_INFO"),
+                "authorization": environ.get("HTTP_AUTHORIZATION"),
+                "tenant_id": environ.get("HTTP_X_TENANT_ID"),
+            }
+        )
+        return telemetry_main.app(environ, start_response)
+
+    class _QuietHandler(WSGIRequestHandler):
+        def log_message(self, *args):
+            pass
+
+    server = make_server("127.0.0.1", 0, _recording_app, handler_class=_QuietHandler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+
+    try:
+        yield {
+            "url": f"http://127.0.0.1:{server.server_port}",
+            "summary_store": summary_store,
+            "ingest_svc": ingest_svc,
+            "lineage_store": lineage_store,
+            "requests": requests_seen,
+        }
+    finally:
+        server.shutdown()
+        server_thread.join(timeout=5)
+        server.server_close()
+        asyncio.run_coroutine_threadsafe(ingest_svc.stop(graceful=True), loop).result(timeout=5)
+        telemetry_main._loop = old_loop
+        telemetry_main._svc = old_svc
+        telemetry_main._lineage_svc = old_lineage
+        if loop.is_running():
+            loop.call_soon_threadsafe(loop.stop)
+
+
+def test_threshold_worker_strict_telemetry_http_auth_reads_and_admits_configured_tenant(
+    tmp_path, monkeypatch, strict_telemetry_http_server
+):
+    """Scheduled producer authenticates GET /api/telemetry/runtime-summaries and
+    POST /api/telemetry/ingest with PANTHEON_TELEMETRY_SERVICE_TOKEN and its
+    configured tenant over the real strict Telemetry HTTP surface without
+    forwarding the Telemetry secret to Incidents."""
+    from services.evolution.threshold_sweep_worker import (
+        default_admit_telemetry_event,
+        default_fetch_summaries,
+    )
+
+    summary_store = strict_telemetry_http_server["summary_store"]
+    _seed_real_summary(summary_store, tenant_id="tenant-dev")
+    summary_store.project_event(
+        {
+            "tenant_id": "tenant-alpha",
+            "runtime_id": "runtime-alpha-other",
+            "binding_id": "rb-alpha-other",
+            "deployment_stage": "paper",
+            "capital_pool_id": "pool-alpha",
+            "artifact_id": "artifact-evochain-001",
+            "artifact_version": "1.0.0",
+            "plan_id": "plan-alpha",
+            "persona_capital_binding_id": "pcb-alpha",
+            "event_id": "evt-alpha-heartbeat",
+            "event_type": "heartbeat",
+            "created_at": "2026-07-13T00:00:00Z",
+            "metadata": {"connectivity_status": "connected"},
+            "metrics": {"heartbeat": 1, "drawdown_pct": 0.25},
+        }
+    )
+
+    monkeypatch.setenv("PANTHEON_TELEMETRY_SERVICE_TOKEN", "telemetry-strict-service-token")
+    monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-dev")
+    monkeypatch.delenv("EVOCHAIN_THRESHOLD_SWEEP_TENANT_ID", raising=False)
+    monkeypatch.delenv("EVOLUTION_DEFAULT_TENANT_ID", raising=False)
+
+    summaries = default_fetch_summaries(strict_telemetry_http_server["url"], timeout=5.0)
+    assert [item["runtime_id"] for item in summaries] == ["runtime-evochain-001"]
+
+    posted_incidents: list[dict[str, Any]] = []
+
+    def post_incident(url: str, payload: dict[str, Any], *, timeout: float) -> dict[str, Any]:
+        assert url == "http://incidents.test"
+        posted_incidents.append(payload)
+        return {"status": 201, "body": {"created": True}}
+
+    strict_telemetry_http_server["requests"].clear()
+    result = run_tick(
+        telemetry_api_url=strict_telemetry_http_server["url"],
+        incidents_api_url="http://incidents.test",
+        thresholds=THRESHOLDS,
+        baselines=BASELINES,
+        fetch_summaries=default_fetch_summaries,
+        admit_telemetry_event=default_admit_telemetry_event,
+        post_incident=post_incident,
+        state_path=str(tmp_path / "state.json"),
+        now=_NOW,
+    )
+
+    assert result["errors"] == 0, result["diagnostics"]
+    assert result["summaries_evaluated"] == 1
+    assert result["candidates"] == 1
+    assert result["incidents_created"] == 1
+    assert result["input_coverage"]["coverage_complete"] is True
+    assert len(posted_incidents) == 1
+    admitted_event_id = posted_incidents[0]["telemetry_event"]["event_id"]
+    assert (
+        strict_telemetry_http_server["lineage_store"].graph.get_node(
+            "telemetry_event", admitted_event_id
+        )
+        is not None
+    )
+    assert strict_telemetry_http_server["requests"] == [
+        {
+            "method": "GET",
+            "path": "/api/telemetry/runtime-summaries",
+            "authorization": "Bearer telemetry-strict-service-token",
+            "tenant_id": "tenant-dev",
+        },
+        {
+            "method": "POST",
+            "path": "/api/telemetry/ingest",
+            "authorization": "Bearer telemetry-strict-service-token",
+            "tenant_id": "tenant-dev",
+        },
+    ]
+
+
+def test_threshold_worker_missing_local_credential_or_tenant_fails_closed_without_anonymous_http(
+    tmp_path, monkeypatch, strict_telemetry_http_server
+):
+    """Missing PANTHEON_TELEMETRY_SERVICE_TOKEN or tenant_id fails closed locally
+    without sending an anonymous HTTP request to Telemetry."""
+    from services.evolution.threshold_sweep_worker import (
+        default_admit_telemetry_event,
+        default_fetch_summaries,
+    )
+
+    candidates, _ = evaluate_breaches(
+        [_summary()], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
+    )
+    derived_event = candidates[0]["telemetry_event"]
+
+    for token_val, tenant_val in [("", "tenant-dev"), ("telemetry-strict-service-token", "")]:
+        monkeypatch.setenv("PANTHEON_TELEMETRY_SERVICE_TOKEN", token_val)
+        monkeypatch.setenv("PANTHEON_TENANT_ID", tenant_val)
+        monkeypatch.delenv("EVOCHAIN_THRESHOLD_SWEEP_TENANT_ID", raising=False)
+        monkeypatch.delenv("EVOLUTION_DEFAULT_TENANT_ID", raising=False)
+        strict_telemetry_http_server["requests"].clear()
+
+        with pytest.raises(ValueError, match="PANTHEON_TELEMETRY_SERVICE_TOKEN and tenant_id"):
+            default_fetch_summaries(strict_telemetry_http_server["url"], timeout=5.0)
+        with pytest.raises(ValueError, match="PANTHEON_TELEMETRY_SERVICE_TOKEN and tenant_id"):
+            default_admit_telemetry_event(
+                strict_telemetry_http_server["url"], derived_event, timeout=5.0
+            )
+
+        result = run_tick(
+            telemetry_api_url=strict_telemetry_http_server["url"],
+            incidents_api_url="http://incidents.test",
+            thresholds=THRESHOLDS,
+            baselines=BASELINES,
+            fetch_summaries=default_fetch_summaries,
+            admit_telemetry_event=default_admit_telemetry_event,
+            post_incident=lambda *_a, **_kw: (_ for _ in ()).throw(
+                AssertionError("post_incident must not be called")
+            ),
+            state_path=str(tmp_path / f"state-{bool(token_val)}-{bool(tenant_val)}.json"),
+            now=_NOW,
+        )
+        assert result["summaries_evaluated"] == 0
+        assert result["candidates"] == 0
+        assert result["incidents_created"] == 0
+        assert result["input_coverage"] is None
+        assert any("telemetry fetch failed" in item for item in result["diagnostics"])
+        assert strict_telemetry_http_server["requests"] == []
+
+
+def test_threshold_worker_propagates_strict_telemetry_401_and_403_refusals(
+    tmp_path, monkeypatch, strict_telemetry_http_server
+):
+    """Invalid bearer (including Evolution inbound token misuse) returns 401 and
+    foreign tenant returns 403 from the real strict Telemetry HTTP server;
+    neither produces empty successful coverage, admits derived events, or posts
+    incidents."""
+    import urllib.request
+    from services.evolution.threshold_sweep_worker import (
+        default_admit_telemetry_event,
+        default_fetch_summaries,
+    )
+
+    _seed_real_summary(strict_telemetry_http_server["summary_store"], tenant_id="tenant-dev")
+    candidates, _ = evaluate_breaches(
+        [_summary()], THRESHOLDS, window_bucket="2026-07-13", baselines=BASELINES, now=_NOW
+    )
+    derived_event = candidates[0]["telemetry_event"]
+
+    # Reproduce the original pre-fix bare request refusal (omitted bearer/tenant -> 401).
+    bare_request = urllib.request.Request(
+        strict_telemetry_http_server["url"] + "/api/telemetry/runtime-summaries",
+        headers={"Accept": "application/json"},
+        method="GET",
+    )
+    with pytest.raises(urllib.error.HTTPError) as bare_exc:
+        urllib.request.urlopen(bare_request, timeout=5.0)
+    assert bare_exc.value.code == 401
+
+    # Invalid token (e.g. wrong token / Evolution inbound token) -> 401.
+    monkeypatch.setenv("EVOLUTION_AUTH_TOKEN", "pantheon-local-evolution-service")
+    monkeypatch.setenv("PANTHEON_TELEMETRY_SERVICE_TOKEN", "pantheon-local-evolution-service")
+    monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-dev")
+
+    with pytest.raises(urllib.error.HTTPError) as fetch_401:
+        default_fetch_summaries(strict_telemetry_http_server["url"], timeout=5.0)
+    assert fetch_401.value.code == 401
+
+    with pytest.raises(urllib.error.HTTPError) as admit_401:
+        default_admit_telemetry_event(
+            strict_telemetry_http_server["url"], derived_event, timeout=5.0
+        )
+    assert admit_401.value.code == 401
+
+    tick_401 = run_tick(
+        telemetry_api_url=strict_telemetry_http_server["url"],
+        incidents_api_url="http://incidents.test",
+        thresholds=THRESHOLDS,
+        baselines=BASELINES,
+        fetch_summaries=default_fetch_summaries,
+        admit_telemetry_event=default_admit_telemetry_event,
+        post_incident=lambda *_a, **_kw: (_ for _ in ()).throw(
+            AssertionError("post_incident must not be called on 401")
+        ),
+        state_path=str(tmp_path / "state-401.json"),
+        now=_NOW,
+    )
+    assert tick_401["input_coverage"] is None
+    assert tick_401["incidents_created"] == 0
+    assert any("HTTP Error 401" in item for item in tick_401["diagnostics"])
+
+    # Valid service token but unauthorized foreign tenant -> 403 on fetch and ingest.
+    monkeypatch.setenv("PANTHEON_TELEMETRY_SERVICE_TOKEN", "telemetry-strict-service-token")
+    monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-foreign")
+
+    with pytest.raises(urllib.error.HTTPError) as fetch_403:
+        default_fetch_summaries(strict_telemetry_http_server["url"], timeout=5.0)
+    assert fetch_403.value.code == 403
+
+    with pytest.raises(urllib.error.HTTPError) as admit_403:
+        default_admit_telemetry_event(
+            strict_telemetry_http_server["url"], derived_event, timeout=5.0
+        )
+    assert admit_403.value.code == 403
+
+    tick_403_ingest = run_tick(
+        telemetry_api_url=strict_telemetry_http_server["url"],
+        incidents_api_url="http://incidents.test",
+        thresholds=THRESHOLDS,
+        baselines=BASELINES,
+        fetch_summaries=lambda *_a, **_kw: [_summary()],
+        admit_telemetry_event=default_admit_telemetry_event,
+        post_incident=lambda *_a, **_kw: (_ for _ in ()).throw(
+            AssertionError("post_incident must not be called on ingest 403")
+        ),
+        state_path=str(tmp_path / "state-403-ingest.json"),
+        now=_NOW,
+    )
+    assert tick_403_ingest["incidents_created"] == 0
+    assert tick_403_ingest["errors"] == 1
+    assert any(
+        "telemetry ingest rejected derived event status=403" in item
+        for item in tick_403_ingest["diagnostics"]
+    )
+    assert (
+        strict_telemetry_http_server["lineage_store"].graph.get_node(
+            "telemetry_event", derived_event["event_id"]
+        )
+        is None
+    )
+

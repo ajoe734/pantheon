@@ -532,7 +532,7 @@ def create_integrations_router(
     # ========================================================================
 
     @router.get("/bff/tools")
-    async def bff_list_tools(
+    def bff_list_tools(
         status: Optional[str] = None,
         tool_class: Optional[str] = None,
         page_token: Optional[str] = None,
@@ -852,7 +852,7 @@ def create_integrations_router(
         )
 
     @router.get("/bff/skills")
-    async def bff_list_skills(
+    def bff_list_skills(
         status: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),
@@ -1097,7 +1097,7 @@ def create_integrations_router(
     # ========================================================================
 
     @router.get("/bff/mcp-servers")
-    async def bff_list_mcp_servers_facade(
+    def bff_list_mcp_servers_facade(
         status: Optional[str] = None,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:

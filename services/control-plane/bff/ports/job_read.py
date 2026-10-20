@@ -27,20 +27,30 @@ reached so the caller can return HTTP 503, never a silent 404.
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import urllib.error
-import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 try:
+    from services.control_plane.bff.command_adapters.base import (
+        ActionUnavailableError,
+        bound_tenant,
+        http_request_json_with_headers,
+    )
+    from services.control_plane.bff.core.owner_reads import authorization, selected_tenant
     from services.control_plane.bff.jobs.projection import (
         calculate_job_allowed_actions,
         project_job as _project_job_canonical,
     )
 except (ImportError, ValueError):
+    from ..command_adapters.base import (
+        ActionUnavailableError,
+        bound_tenant,
+        http_request_json_with_headers,
+    )
+    from ..core.owner_reads import authorization, selected_tenant
     from ..jobs.projection import (
         calculate_job_allowed_actions,
         project_job as _project_job_canonical,
@@ -151,13 +161,24 @@ HttpGetFn = Callable[[str], Tuple[bool, Any]]
 
 
 def _default_http_get(url: str) -> Tuple[bool, Any]:
-    """GET ``url`` and return ``(ok, parsed_json_or_none)``. Never raises."""
-    req = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
+    """GET ``url`` and return ``(ok, parsed_json_or_none)`` with verified caller auth and tenant."""
+    auth = (authorization.get() or "").strip()
+    caller_token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
+    if not caller_token:
+        log.warning("job source GET %s failed: missing caller authorization context", url)
+        return False, None
     try:
-        with urllib.request.urlopen(req, timeout=_timeout_seconds()) as resp:
-            raw = resp.read()
-            body = json.loads(raw.decode("utf-8")) if raw else None
-            return True, body
+        tenant_id = bound_tenant({}, tenant_id=selected_tenant.get(), auth_token=caller_token)
+        _, _, body = http_request_json_with_headers(
+            url,
+            method="GET",
+            auth_token=caller_token,
+            tenant_id=tenant_id,
+            timeout=_timeout_seconds(),
+        )
+        return True, body
+    except ActionUnavailableError:
+        raise
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             return True, None
@@ -220,9 +241,11 @@ class JobReadPort:
         *,
         status: Optional[str] = None,
         job_type: Optional[str] = None,
+        diagnostics: Optional[Dict[str, Any]] = None,
         **_kwargs: Any,
     ) -> List[Dict[str, Any]]:
-        self._degraded_sources = {}
+        degraded_sources: Dict[str, str] = {}
+        healthy_sources: List[str] = []
         jobs: List[Dict[str, Any]] = []
         for spec in self.sources:
             if not spec.supports_list or spec.list_path is None:
@@ -231,17 +254,23 @@ class JobReadPort:
                 continue
             base = _base_url(spec)
             if not base:
-                self._degraded_sources[spec.name] = "unconfigured"
+                degraded_sources[spec.name] = "unconfigured"
                 continue
             ok, payload = self.http_get(f"{base}{spec.list_path}")
             if not ok:
-                self._degraded_sources[spec.name] = "unreachable"
+                degraded_sources[spec.name] = "unreachable"
                 continue
+            healthy_sources.append(spec.name)
             for record in _extract_list(payload):
                 native_id = str(record.get(spec.native_id_field) or record.get("id") or "").strip()
                 if not native_id:
                     continue
                 jobs.append(_project_job(spec, native_id, record))
+        self._degraded_sources = dict(degraded_sources)
+        if isinstance(diagnostics, dict):
+            diagnostics.clear()
+            diagnostics["healthy_sources"] = healthy_sources
+            diagnostics["degraded_sources"] = dict(degraded_sources)
         if status:
             jobs = [j for j in jobs if j.get("status") == status]
         jobs.sort(key=lambda j: str(j.get("created_at") or ""), reverse=True)

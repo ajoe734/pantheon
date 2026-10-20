@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "task_id": "DEV-EVALUATOR-REGISTRY-READ-ROLE-20261019",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "base_ref": "dev",
+  "base_sha": "9580fe875",
+  "summary": "PERSONA_EVALUATOR_BFF_TOKEN role tuple changed from viewer to (viewer, registry-reader) via existing tuple support. Subject, service, tenant, scope, TTL, audience and all other principals unchanged. No admin/operator/registry-writer/Capital/runtime role. No Registry auth or BFF changes. Source only: no issuance, secrets, SSH or live mutation; Root applies the existing issuer during normal dev rollout.",
+  "changed": ["scripts/issue_dev_paper_principals.py", "scripts/test_issue_dev_paper_principals.py"],
+  "verification": {
+    "command": "python -m pytest -q -p no:cacheprovider scripts/test_issue_dev_paper_principals.py",
+    "result": "42 passed (includes new test_persona_evaluator_bff_reader_has_viewer_and_registry_read_only)"
+  },
+  "hosted_acceptance": "Not claimed; local source delivery only."
+}

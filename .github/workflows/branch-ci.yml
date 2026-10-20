@@ -5,9 +5,9 @@ name: Branch CI Gate
 # workflow_dispatch path because GitHub does not recursively emit pull_request
 # events for a PR created with that workflow's GITHUB_TOKEN. Runs
 # commit-trailer checks, runtime-mirror guard, and a fast smoke acceptance.
-# The three jobs below ("Commit trailers", "Runtime mirror guard", "Smoke
-# acceptance") are the required status checks on the dev and master branch
-# protections.
+# The jobs "Commit trailers", "Runtime mirror guard", "Smoke acceptance" and
+# "Service suites" are the four required status checks on the dev branch
+# protection; master protection still requires only the first three.
 
 on:
   push:
@@ -338,6 +338,111 @@ jobs:
         run: |
           python3 -m pytest -q services/reconciliation-drift
 
+      # Unconditional: these service suites were green locally but no workflow
+      # ran them. Each directory runs alone so one service's conftest cannot
+      # mask another's failures. No known-failures list, deselect or skip.
+      - name: Install service test dependencies
+        timeout-minutes: 5
+        run: |
+          python3 -m pip install -r services/broker/requirements.txt
+          python3 -m pip install -r services/evaluation/requirements.txt
+          python3 -m pip install -r services/feedback/requirements.txt
+          python3 -m pip install -r services/lineage-read/requirements.txt
+          python3 -m pip install -r services/loop-control/requirements.txt
+          python3 -m pip install -r services/memory/requirements.txt
+          python3 -m pip install -r services/optimizer-svc/requirements.txt
+          python3 -m pip install -r services/research-worker-gateway/requirements.txt
+
+      - name: Run broker service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/broker
+
+      - name: Run channels service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/channels
+
+      - name: Run data-plane service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/data-plane
+
+      - name: Run evaluation service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/evaluation
+
+      - name: Run feedback service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/feedback
+
+      - name: Run foundation service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/foundation
+
+      - name: Run frontend service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/frontend
+
+      - name: Run incident service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/incident
+
+      - name: Run knowledge service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/knowledge
+
+      - name: Run learning service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/learning
+
+      - name: Run lineage-read service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/lineage-read
+
+      - name: Run loop-control service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/loop-control
+
+      - name: Run memory service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/memory
+
+      - name: Run monitor-agent service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/monitor-agent
+
+      - name: Run optimizer-svc service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/optimizer-svc
+
+      - name: Run rankings service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/rankings
+
+      - name: Run research-worker-gateway service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/research-worker-gateway
+
+      - name: Run runtime_manager service tests
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/runtime_manager
+
       # Run the existing real boundary cases even for a workflow-only change.
       # unittest normally treats skipped tests as success; these are required.
       - name: Verify real worker sandbox boundaries
@@ -468,3 +573,120 @@ jobs:
           else
             echo "no smoke gate configured; skipping"
           fi
+
+  # Parallel to Smoke so the added suites cannot push Smoke past its 30-minute
+  # budget. Each directory runs alone (no repo-wide conftest masking). No
+  # known-failures list, deselect or skip. gov_approval_test backs
+  # services/deployment (GOV_APPROVAL_TEST_DSN, same pattern as
+  # persona-owner-contract.yml); consultation gets its own database.
+  service-suites:
+    name: Service suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs:
+      - trailers
+      - generated-files
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: gov_approval_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        timeout-minutes: 10
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt
+          python3 -m pip install -r services/incidents/requirements.txt
+          python3 -m pip install -r services/postmortems/requirements.txt
+          python3 -m pip install -r services/policy-learning/requirements.txt
+          python3 -m pip install -r services/promotion/requirements.txt
+          python3 -m pip install -r services/deployment/requirements.txt
+          python3 -m pip install -r services/consultation/requirements.txt
+          python3 -m pip install -r services/search/requirements.txt
+          # training-session pins vectorbt 1.1.1 for its real-backend preview test.
+          python3 -m pip install -r services/training-session/requirements.txt
+          # search tests import qdrant_client; take the pin from its own lock.
+          python3 -m pip install "$(grep -E '^qdrant-client==' services/search/requirements.lock)"
+
+      - name: Create consultation database
+        run: |
+          psql -h 127.0.0.1 -U postgres -c 'CREATE DATABASE consultation_test'
+          # The consultation e2e tests import the BFF, whose read-only rankings
+          # reader (RANKING_STORE_DSN or DATABASE_URL) never bootstraps its table.
+          # Let the rankings owner store create it, as the rankings service does.
+          DATABASE_URL=postgresql://postgres@127.0.0.1:5432/consultation_test \
+            python3 -c "from services.foundation.postgres_json_store import PostgresJsonOwnerStore as S; import os; S(dsn=os.environ['DATABASE_URL'], table='rankings.rankings', owner_service='rankings-svc')"
+
+      - name: Run incidents service tests
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/incidents
+
+      - name: Run postmortems service tests
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/postmortems
+
+      - name: Run control_plane service tests
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/control_plane
+
+      - name: Run policy-learning service tests
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/policy-learning
+
+      - name: Run training-session service tests
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/training-session
+
+      - name: Run promotion service tests
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/promotion
+
+      - name: Run deployment service tests
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        env:
+          GOV_APPROVAL_TEST_DSN: postgresql://postgres@127.0.0.1:5432/gov_approval_test
+        run: |
+          python3 -m pytest -q services/deployment
+
+      - name: Run consultation service tests
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        env:
+          DATABASE_URL: postgresql://postgres@127.0.0.1:5432/consultation_test
+        run: |
+          python3 -m pytest -q services/consultation
+
+      - name: Run search service tests
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/search

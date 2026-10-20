@@ -424,7 +424,7 @@ def create_deployment_router(
         return await stream_generic_events("artifact", last_event_id, authorization)
 
     @router.get("/bff/deployments")
-    async def bff_list_deployments(
+    def bff_list_deployments(
         status: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),

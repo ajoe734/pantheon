@@ -849,4 +849,214 @@ def test_build_market_transition_registry_payload():
     assert payload.metadata["parent_registry_id"] == "artifact-parent-001"
 
 
+def test_lightweight_canonical_source_snapshot_admission_subprocess_forbids_pydantic():
+    """REGISTRY-LIGHTWEIGHT-MARKET-IMPORT-20261018:
+    Paper workers (paper-fleet-reconciler, paper-signal-producer) validate canonical
+    Source snapshots via admit_market_snapshot -> admit_canonical_source_snapshot ->
+    canonical_market_context without pydantic installed. Verify in a fresh subprocess
+    with pydantic imports forbidden that valid and contradictory market cases behave
+    identically without importing pydantic or services.governance.approval_authority.
+    """
+    import json
+    from pathlib import Path
+    import subprocess
+    import sys
+    import textwrap
 
+    repo_root = Path(__file__).resolve().parents[2]
+    script = textwrap.dedent(
+        """
+        import importlib.abc
+        import json
+        import sys
+
+        class _ForbidPydanticFinder(importlib.abc.MetaPathFinder):
+            def find_spec(self, fullname, path, target=None):
+                if fullname == "pydantic" or fullname.startswith("pydantic."):
+                    raise ModuleNotFoundError("No module named 'pydantic'")
+                return None
+
+        for mod in list(sys.modules):
+            if mod == "pydantic" or mod.startswith("pydantic."):
+                del sys.modules[mod]
+        sys.meta_path.insert(0, _ForbidPydanticFinder())
+
+        try:
+            import pydantic  # noqa: F401
+        except ModuleNotFoundError:
+            pass
+        else:
+            raise AssertionError("pydantic import was not blocked")
+
+        from services.execution.lean_runtime import paper_signal_producer
+        from services.execution.market_snapshot_admission import (
+            admit_canonical_source_snapshot,
+            admit_market_snapshot,
+        )
+        from services.paper_fleet_reconciler import paper_fleet_reconciler
+        from services.registry.strategy_artifact import (
+            StrategyArtifactValidationError,
+            canonical_market_context,
+        )
+        from services.source_ingestion.requirement_state import (
+            LatestMarketSnapshot,
+            MarketSnapshotPoint,
+        )
+        assert paper_fleet_reconciler.admit_market_snapshot is admit_market_snapshot
+        assert paper_signal_producer.admit_market_snapshot is admit_market_snapshot
+
+        now_iso = "2026-10-07T06:00:00Z"
+        us_snap = LatestMarketSnapshot(
+            symbol="SPY",
+            points=(
+                MarketSnapshotPoint(
+                    event_time="2026-10-07T05:50:00Z",
+                    close=500.0,
+                    source_id="us-src:p1",
+                    connector_id="us-conn",
+                    content_ref="ref-1",
+                    ingest_run_id="run-1",
+                    market="US",
+                ),
+                MarketSnapshotPoint(
+                    event_time="2026-10-07T05:55:00Z",
+                    close=502.0,
+                    source_id="us-src:p2",
+                    connector_id="us-conn",
+                    content_ref="ref-2",
+                    ingest_run_id="run-1",
+                    market="US",
+                ),
+            ),
+            observed_at=now_iso,
+            market="US",
+        )
+        us_internal = us_snap.to_dict()
+        us_public = us_snap.to_public_dict(requested_symbol="SPY")
+
+        dec_internal = admit_market_snapshot(
+            us_internal, expected_symbol="SPY", max_age_seconds=86400, now_iso=now_iso
+        )
+        assert dec_internal.admitted is True, dec_internal
+        assert dec_internal.snapshot_id == us_internal["snapshot_id"]
+
+        dec_public = admit_market_snapshot(
+            us_public, expected_symbol="SPY", max_age_seconds=86400, now_iso=now_iso
+        )
+        assert dec_public.admitted is True, dec_public
+        assert dec_public.snapshot_id == us_public["snapshot_id"]
+
+        tw_snap = LatestMarketSnapshot(
+            symbol="2330.TWSE",
+            points=(
+                MarketSnapshotPoint(
+                    event_time="2026-10-06T05:30:00Z",
+                    close=950.0,
+                    source_id="tw-official:tw_price_daily:TWSE:2330:p1",
+                    connector_id="tw-twse-tpex-official-market",
+                    content_ref="tw-official://ref1",
+                    ingest_run_id="run-tw-1",
+                    market="TWSE",
+                ),
+                MarketSnapshotPoint(
+                    event_time="2026-10-07T05:30:00Z",
+                    close=955.0,
+                    source_id="tw-official:tw_price_daily:TWSE:2330:p2",
+                    connector_id="tw-twse-tpex-official-market",
+                    content_ref="tw-official://ref2",
+                    ingest_run_id="run-tw-1",
+                    market="TWSE",
+                ),
+            ),
+            observed_at=now_iso,
+            market="TWSE",
+        )
+        tw_public = tw_snap.to_public_dict(requested_symbol="2330.TW")
+        dec_tw = admit_market_snapshot(
+            tw_public, expected_symbol="2330.TW", max_age_seconds=86400, now_iso=now_iso
+        )
+        assert dec_tw.admitted is True, dec_tw
+
+        assert canonical_market_context("US", ["ABNB", "SPY"]) == "US"
+        try:
+            canonical_market_context("US", ["2330.TW"])
+        except StrategyArtifactValidationError as exc:
+            assert "contradicts explicit market 'US'" in str(exc)
+        else:
+            raise AssertionError("Expected StrategyArtifactValidationError for 2330.TW in US")
+
+        contradictory_tw_in_us = dict(us_public, symbol="2330.TW", market="US")
+        dec_contra_1 = admit_market_snapshot(
+            contradictory_tw_in_us,
+            expected_symbol="2330.TW",
+            max_age_seconds=86400,
+            now_iso=now_iso,
+        )
+        assert dec_contra_1.admitted is False
+        assert dec_contra_1.reason_code == "market_input_invalid"
+        assert "contradicts explicit market 'US'" in (dec_contra_1.detail or "")
+
+        contradictory_us_in_tw = dict(tw_public, symbol="SPY.US", market="TW")
+        dec_contra_2 = admit_canonical_source_snapshot(
+            contradictory_us_in_tw,
+            expected_symbol="SPY.US",
+            max_age_seconds=86400,
+            now_iso=now_iso,
+        )
+        assert dec_contra_2.admitted is False
+        assert dec_contra_2.reason_code == "market_input_invalid"
+        assert "contradicts explicit market 'TW'" in (dec_contra_2.detail or "")
+
+        unsupported_market = dict(us_public, market="MARS")
+        dec_bad_mkt = admit_market_snapshot(
+            unsupported_market,
+            expected_symbol="SPY",
+            max_age_seconds=86400,
+            now_iso=now_iso,
+        )
+        assert dec_bad_mkt.admitted is False
+        assert dec_bad_mkt.reason_code == "market_input_invalid"
+        assert "unsupported market context" in (dec_bad_mkt.detail or "")
+
+        assert not any(
+            m == "pydantic" or m.startswith("pydantic.") for m in sys.modules
+        )
+        assert "services.governance.approval_authority" not in sys.modules
+
+        print(
+            json.dumps(
+                {
+                    "us_internal_admitted": dec_internal.admitted,
+                    "us_public_admitted": dec_public.admitted,
+                    "tw_public_admitted": dec_tw.admitted,
+                    "contra_tw_in_us_reason": dec_contra_1.reason_code,
+                    "contra_us_in_tw_reason": dec_contra_2.reason_code,
+                    "unsupported_market_reason": dec_bad_mkt.reason_code,
+                    "pydantic_imported": False,
+                    "governance_approval_authority_imported": False,
+                }
+            )
+        )
+        """
+    )
+
+    proc = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout}\nstderr={proc.stderr}"
+    payload = json.loads(proc.stdout.strip())
+    assert payload == {
+        "us_internal_admitted": True,
+        "us_public_admitted": True,
+        "tw_public_admitted": True,
+        "contra_tw_in_us_reason": "market_input_invalid",
+        "contra_us_in_tw_reason": "market_input_invalid",
+        "unsupported_market_reason": "market_input_invalid",
+        "pydantic_imported": False,
+        "governance_approval_authority_imported": False,
+    }

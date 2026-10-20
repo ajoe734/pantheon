@@ -15,6 +15,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 import urllib.error
 import urllib.request
 
+from services.control_plane.bff.core.owner_reads import cached_owner_call, request_read_cache, selected_tenant
 from services.control_plane.bff.ports.operations_consultation import (
     CompositeOperationsConsultationPort,
     DomainConsultationPort,
@@ -148,6 +149,8 @@ class ReadSurfacePorts:
         self.persona_capital_runtime = persona_capital_runtime or create_persona_capital_runtime_port()
         self.ooda_management = ooda_management or OodaManagementDomainPort()
         self.research_knowledge_source = research_knowledge_source or DefaultResearchKnowledgeSourcePort()
+        if research_knowledge_source is None and type(self) is not ReadSurfacePorts:
+            self.research_knowledge_source._has_injected_strategy_specs = True
         self.lifecycle_telemetry_governance = lifecycle_telemetry_governance or create_lifecycle_telemetry_governance_port()
         self.persona_training = persona_training or PersonaTrainingDomainPort()
         self.job_read = job_read or create_job_read_port()
@@ -347,6 +350,7 @@ class ReadSurfacePorts:
         return self.persona_capital_runtime.list_operational_personas()
 
     def list_capital_pools(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        """Forward capital pool queries (including status and risk_policy_ref) to the domain port."""
         return self.persona_capital_runtime.list_capital_pools(**kwargs)
 
     def get_capital_pool(self, pool_id: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -606,6 +610,11 @@ class ReadSurfacePorts:
         return self.research_knowledge_source.get_insight_card(card_id)
 
     def list_strategy_specs(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        if not kwargs:
+            return cached_owner_call(
+                ("rsp_strategy_specs", id(self), selected_tenant.get()),
+                lambda: list(self.research_knowledge_source.list_strategy_specs() or []),
+            )
         return self.research_knowledge_source.list_strategy_specs(**kwargs)
 
     def list_strategy_summaries(self, **kwargs: Any) -> List[Dict[str, Any]]:
@@ -875,10 +884,24 @@ class ReadSurfacePorts:
     # -------------------------------------------------------------------------
     # Persona Training & Replay Delegates
     # -------------------------------------------------------------------------
-    def list_persona_sessions(self, persona_id: str, **kwargs: Any) -> List[Dict[str, Any]]:
+    def _all_persona_sessions(self) -> List[Dict[str, Any]]:
+        return cached_owner_call(("rsp_sessions", id(self), selected_tenant.get()), lambda: list(self.persona_training.list_persona_sessions(None) or []))
+
+    def list_persona_sessions(self, persona_id: Optional[str], **kwargs: Any) -> List[Dict[str, Any]]:
+        if not kwargs and request_read_cache.get() is not None and getattr(getattr(self.persona_training, "persona", None), "_store", None) is not None:
+            all_sessions = self._all_persona_sessions()
+            clean_id = str(persona_id or "").strip()
+            return [s for s in all_sessions if isinstance(s, Mapping) and (str(s.get("persona_id") or "").strip() == clean_id or clean_id in (s.get("personas") or []))] if clean_id else list(all_sessions)
         return self.persona_training.list_persona_sessions(persona_id, **kwargs)
 
     def list_persona_teaching_sessions(self, persona_id: str, **kwargs: Any) -> List[Dict[str, Any]]:
+        if not kwargs and request_read_cache.get() is not None:
+            store = getattr(getattr(self.persona_training, "persona", None), "_store", None)
+            if store is not None and hasattr(store, "list_teaching_sessions"):
+                all_t = cached_owner_call(("rsp_all_teaching", id(self), selected_tenant.get()), lambda: list(store.list_teaching_sessions() or []))
+                cid = str(persona_id or "").strip()
+                return [s for s in all_t if isinstance(s, Mapping) and str(s.get("persona_id") or "").strip() == cid] if cid else list(all_t)
+            return cached_owner_call(("rsp_teaching", id(self), str(persona_id or "").strip(), selected_tenant.get()), lambda: list(self.persona_training.list_persona_teaching_sessions(persona_id) or []))
         return self.persona_training.list_persona_teaching_sessions(persona_id, **kwargs)
 
     def get_persona_capabilities(self, persona_id: str) -> Optional[Dict[str, Any]]:
@@ -935,11 +958,37 @@ class ReadSurfacePorts:
         return None
 
     def get_capability_snapshot_for_persona(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        clean_id = str(persona_id or "").strip()
+        if not clean_id:
+            return None
         try:
+            p_port = getattr(self.persona_training, "persona", None)
+            store = getattr(p_port, "_store", None) if p_port is not None else None
+            if hasattr(self.persona_training, "list_capability_snapshots") or hasattr(p_port, "list_capability_snapshots") or hasattr(store, "list_capability_snapshots") or hasattr(store, "_request"):
+                def _load_batch() -> Dict[str, Dict[str, Any]]:
+                    by_pid = {str(p.get("persona_id") or p.get("id") or "").strip(): dict(snap) for p in (self.list_personas() or []) for snap in [p.get("capability_snapshot") or (p.get("metadata") or {}).get("capability_snapshot")] if str(p.get("persona_id") or p.get("id") or "").strip() and isinstance(snap, Mapping)}
+                    raw_snaps: Any = []
+                    for obj in (self.persona_training, p_port, store):
+                        if obj is not None and hasattr(obj, "list_capability_snapshots"):
+                            raw_snaps = obj.list_capability_snapshots()
+                            break
+                    else:
+                        if store is not None and hasattr(store, "_request"):
+                            try:
+                                resp = store._request("GET", "/api/capability-snapshots", dependency="persona_capability_write_owner")
+                                items = resp.get("snapshots") or resp.get("items") if isinstance(resp, Mapping) else resp
+                                raw_snaps = [store._snapshot_payload(s) if hasattr(store, "_snapshot_payload") else dict(s) for s in (items or []) if isinstance(s, Mapping)] if isinstance(items, list) else []
+                            except Exception:
+                                raw_snaps = []
+                    for s in raw_snaps or []:
+                        if isinstance(s, Mapping) and str(s.get("persona_id") or "").strip():
+                            by_pid[str(s.get("persona_id")).strip()] = dict(s)
+                    return by_pid
+                return cached_owner_call(("rsp_cap_snaps", id(self), selected_tenant.get()), _load_batch).get(clean_id)
             if hasattr(self.persona_training, "get_capability_snapshot_for_persona"):
-                return self.persona_training.get_capability_snapshot_for_persona(persona_id)
-            if persona_id and hasattr(self.persona_training, "get_persona_capabilities"):
-                return self.persona_training.get_persona_capabilities(persona_id)
+                return cached_owner_call(("rsp_cap_snap", id(self), clean_id, selected_tenant.get()), lambda: self.persona_training.get_capability_snapshot_for_persona(clean_id))
+            if hasattr(self.persona_training, "get_persona_capabilities"):
+                return self.persona_training.get_persona_capabilities(clean_id)
         except Exception:
             return None
         return None
@@ -1020,7 +1069,11 @@ class ReadSurfacePorts:
     def get_route_policy_for_persona(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not persona_id:
             return None
-        for policy in self.operations_consultation.list_route_policies():
+        policies = cached_owner_call(
+            ("rsp_route_policies", id(self), selected_tenant.get()),
+            lambda: list(self.operations_consultation.list_route_policies() or []),
+        )
+        for policy in policies:
             if policy.get("persona_id") == persona_id or policy.get("id") == persona_id:
                 return policy
         return None
@@ -1137,6 +1190,9 @@ class ReadSurfacePorts:
             return []
 
     def list_authoritative_paper_runtime_monitoring_sessions(self) -> List[Dict[str, Any]]:
+        return cached_owner_call(("rsp_paper_monitoring", id(self), selected_tenant.get()), self._load_paper_runtime_monitoring_sessions)
+
+    def _load_paper_runtime_monitoring_sessions(self) -> List[Dict[str, Any]]:
         provider = getattr(self, "_paper_runtime_monitoring_sessions_provider", None)
         if provider is not None:
             raw_sessions = provider()
@@ -1263,13 +1319,22 @@ class ReadSurfacePorts:
         """
         return self.job_read.get_job_bff(job_id)
 
-    def list_jobs_bff(self, **kwargs: Any) -> List[Dict[str, Any]]:
+    def list_jobs_bff(
+        self,
+        *,
+        status: Optional[str] = None,
+        job_type: Optional[str] = None,
+        diagnostics: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> List[Dict[str, Any]]:
         """Typed Job read composition across the six qualified sources.
 
         ``ResearchTicket`` records are never returned here; see
         ``get_job_bff`` docstring.
         """
-        return self.job_read.list_jobs_bff(**kwargs)
+        return self.job_read.list_jobs_bff(
+            status=status, job_type=job_type, diagnostics=diagnostics, **kwargs
+        )
 
     def get_job_logs_bff(self, job_id: str) -> List[Dict[str, Any]]:
         return self.job_read.get_job_logs_bff(job_id)
@@ -1283,27 +1348,27 @@ class ReadSurfacePorts:
         except Exception:
             return None
 
-    def get_sessions_for_persona(self, persona_id: str) -> List[Dict[str, Any]]:
+    def get_sessions_for_persona(self, persona_id: Optional[str]) -> List[Dict[str, Any]]:
         try:
-            return self.persona_training.list_persona_sessions(persona_id)
+            return self.list_persona_sessions(persona_id)
         except Exception:
             return []
 
-    def list_sessions_for_persona(self, persona_id: str, **kwargs: Any) -> List[Dict[str, Any]]:
+    def list_sessions_for_persona(self, persona_id: Optional[str], **kwargs: Any) -> List[Dict[str, Any]]:
         try:
-            return self.persona_training.list_persona_sessions(persona_id, **kwargs)
+            return self.list_persona_sessions(persona_id, **kwargs)
         except Exception:
             return []
 
     def get_teaching_sessions_for_persona(self, persona_id: str) -> List[Dict[str, Any]]:
         try:
-            return self.persona_training.list_persona_teaching_sessions(persona_id)
+            return self.list_persona_teaching_sessions(persona_id)
         except Exception:
             return []
 
     def list_teaching_sessions_for_persona(self, persona_id: str, **kwargs: Any) -> List[Dict[str, Any]]:
         try:
-            return self.persona_training.list_persona_teaching_sessions(persona_id, **kwargs)
+            return self.list_persona_teaching_sessions(persona_id, **kwargs)
         except Exception:
             return []
 
@@ -1429,6 +1494,8 @@ def create_read_surface_ports(
             persona_port=persona_port,
             trainer_port=trainer_port,
         )
+    if research_knowledge_source is None and persona_registry_store is not None:
+        research_knowledge_source = getattr(persona_registry_store, "research_knowledge_source", None)
     return ReadSurfacePorts(
         operations_consultation=operations_consultation,
         persona_capital_runtime=persona_capital_runtime,
@@ -1477,6 +1544,7 @@ def create_in_memory_read_surface_ports(
         review_queue_port=rq_p,
     )
     rks_port = DefaultResearchKnowledgeSourcePort(**(research_knowledge_source_kwargs or {}))
+    rks_port._has_injected_strategy_specs = True
     ltg_port = create_in_memory_lifecycle_telemetry_governance_port(**(lifecycle_telemetry_governance_kwargs or {}))
     pt_port = PersonaTrainingDomainPort(**(persona_training_kwargs or {}))
     paper_provider = paper_runtime_monitoring_sessions_provider

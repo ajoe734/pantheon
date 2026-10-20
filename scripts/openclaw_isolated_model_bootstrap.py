@@ -18,7 +18,33 @@ import sys
 from pathlib import Path
 
 POOL_SCRIPT = Path(__file__).with_name("openclaw-configure-shared-model-pool.sh")
+API_KEY_SOURCE_ENV = "PANTHEON_OPENCLAW_ANTHROPIC_API_KEY"
+WORKSPACE_SOURCE_ENV = "PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID"
 TOKEN_SOURCE_ENV = "PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN"
+OPENAI_OAUTH_TOKEN_SOURCE_ENV = "PANTHEON_OPENCLAW_OPENAI_OAUTH_TOKEN"
+OPENAI_CONTAINER_OAUTH_TOKEN_ENV = "OPENCLAW_OPENAI_OAUTH_TOKEN"
+ANTHROPIC_WORKSPACE_BATCH: list[dict[str, object]] = [
+    {
+        "path": "models.providers.anthropic.headers.anthropic-workspace-id",
+        "value": "${ANTHROPIC_WORKSPACE_ID}",
+    }
+]
+OPENAI_OAUTH_TOKEN_BATCH: list[dict[str, object]] = [
+    {
+        "path": "models.providers.openai",
+        "value": {
+            "baseUrl": "https://chatgpt.com/backend-api/codex",
+            "api": "openai-chatgpt-responses",
+            "auth": "token",
+            "apiKey": {
+                "source": "env",
+                "provider": "default",
+                "id": OPENAI_CONTAINER_OAUTH_TOKEN_ENV,
+            },
+            "models": [],
+        },
+    }
+]
 STRUCTURED_AGENT = {
     "id": "structured-extraction",
     "tools": {"deny": ["*"], "exec": {"security": "deny", "ask": "always"}},
@@ -37,19 +63,47 @@ def _script_batch(source: str, name: str) -> list[dict[str, object]]:
     return json.loads(match.group(1))
 
 
+def _validate_openai_oauth_token(raw_value: str) -> str:
+    value = raw_value.strip()
+    if (
+        not value
+        or re.search(r"\s", value)
+        or value.startswith(("{", "["))
+        or "refresh_token" in value.lower()
+    ):
+        raise BootstrapError(
+            f"{OPENAI_OAUTH_TOKEN_SOURCE_ENV} must be a single access-only bearer token; "
+            "whitespace, raw JSON auth stores, and refresh_token values are refused"
+        )
+    return value
+
+
 def render_batch(environ: dict[str, str] | None = None) -> list[dict[str, object]]:
     env = os.environ if environ is None else environ
-    if not str(env.get(TOKEN_SOURCE_ENV) or "").strip():
-        raise BootstrapError(
-            f"{TOKEN_SOURCE_ENV} is required; refusing to qualify without the "
-            "approved product provider credential"
+    missing = [
+        name
+        for name in (
+            API_KEY_SOURCE_ENV,
+            WORKSPACE_SOURCE_ENV,
+            OPENAI_OAUTH_TOKEN_SOURCE_ENV,
         )
+        if not str(env.get(name) or "").strip()
+    ]
+    if missing:
+        raise BootstrapError(
+            f"{', '.join(missing)} required; refusing to qualify without the "
+            "approved product provider API credential, workspace, and OpenAI native OAuth token"
+        )
+    _validate_openai_oauth_token(str(env.get(OPENAI_OAUTH_TOKEN_SOURCE_ENV) or ""))
     source = POOL_SCRIPT.read_text(encoding="utf-8")
     batch = (
         _script_batch(source, "MODEL_POOL_BATCH")
+        + ANTHROPIC_WORKSPACE_BATCH
+        + OPENAI_OAUTH_TOKEN_BATCH
         + _script_batch(source, "CLAUDE_TOOLSEARCH_BATCH")
-        + _script_batch(source, "CLAUDE_TOKEN_BATCH")
     )
+    if str(env.get(TOKEN_SOURCE_ENV) or "").strip():
+        batch += _script_batch(source, "CLAUDE_TOKEN_BATCH")
     # A fresh isolated volume has no agents; register the existing main identity
     # (no tools override) plus the deny-all structured agent, each exactly once.
     batch.append({"path": "agents.list", "value": [MAIN_AGENT, STRUCTURED_AGENT]})

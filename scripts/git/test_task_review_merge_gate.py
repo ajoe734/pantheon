@@ -171,6 +171,7 @@ def open_pr(**overrides: Any) -> dict[str, Any]:
             {"name": "Commit trailers", "conclusion": "SUCCESS"},
             {"name": "Runtime mirror guard", "conclusion": "SUCCESS"},
             {"name": "Smoke acceptance", "conclusion": "SUCCESS"},
+            {"name": "Service suites", "conclusion": "SUCCESS"},
         ],
     }
     pr.update(overrides)

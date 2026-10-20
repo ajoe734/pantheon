@@ -42,7 +42,13 @@ from .models import (
     StorageBackend,
     StorageRef,
 )
-from .split_api import RegistryConflictError, RegistryError, RegistryNotFoundError, RegistryService
+from .split_api import (
+    RegistryConflictError,
+    RegistryError,
+    RegistryNotFoundError,
+    RegistryOwnerUnavailableError,
+    RegistryService,
+)
 from .storage import get_store
 from .strategy_artifact import (
     build_strategy_artifact_registry_payload,
@@ -1345,13 +1351,30 @@ def latest_approved(strategy_id: str, authorization: Optional[str] = Header(defa
     "/api/registry/strategies/{strategy_id}/deployment-view",
     response_model=DeploymentView,
 )
-def deployment_view(strategy_id: str, authorization: Optional[str] = Header(default=None)):
+def deployment_view(
+    strategy_id: str,
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+):
     """Return the derived deployment-stage view for a strategy, scoped to the
-    caller's verified tenant (reviewer finding 1)."""
+    caller's verified tenant and composed from canonical RuntimeBinding and
+    DeploymentPlan owners (failing closed with 503 if owners are unavailable)."""
     ctx = _authenticate_registry_read(authorization)
-    return get_registry_service().resolve_deployment_view(
-        strategy_id, visible=lambda entry: _can_read_entry(ctx, entry),
-    )
+    caller_tenant = _caller_tenant(ctx)
+    if x_tenant_id is not None and x_tenant_id.strip() != (caller_tenant or ""):
+        raise HTTPException(
+            status_code=403,
+            detail="X-Tenant-Id header does not match verified caller tenant.",
+        )
+    try:
+        return get_registry_service().resolve_deployment_view(
+            strategy_id,
+            visible=lambda entry: _can_read_entry(ctx, entry),
+            tenant_id=caller_tenant,
+            authorization=authorization,
+        )
+    except RegistryOwnerUnavailableError as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
 
 # -- Internal: deployment summary projection ------------------------------
@@ -1467,25 +1490,50 @@ def get_strategy_spec_entry(registry_id: str, authorization: Optional[str] = Hea
     return _authorize_read(ctx, view)
 
 
-@app.get(
-    "/api/registry/strategies/{strategy_id}/strategy-specs",
-    response_model=list[RegistryEntryView],
-)
+def _filter_strategy_spec_views(
+    strategy_id: Optional[str],
+    authorization: Optional[str],
+    x_tenant_id: Optional[str],
+    artifact_state: Optional[ArtifactState],
+) -> list[RegistryEntryView]:
+    ctx = _authenticate_registry_read(authorization)
+    caller_tenant = _caller_tenant(ctx)
+    header_tenant = x_tenant_id.strip() if x_tenant_id is not None else None
+    if header_tenant is not None and (
+        not header_tenant
+        or header_tenant == BUILTIN_TENANT
+        or (caller_tenant is not None and header_tenant != caller_tenant)
+        or (caller_tenant is None and "admin" not in ctx.roles)
+    ):
+        raise HTTPException(status_code=403, detail="X-Tenant-Id header does not match verified caller tenant.")
+    svc = get_registry_service()
+    views = svc.list_all_entries() if strategy_id is None else svc.list_by_strategy(strategy_id)
+    return [
+        view for view in views
+        if view.entry.artifact_type == ArtifactType.STRATEGY_SPEC
+        and _can_read(ctx, view)
+        and (header_tenant is None or view.entry.owner_tenant in (header_tenant, BUILTIN_TENANT))
+        and (artifact_state is None or view.entry.artifact_state == artifact_state)
+    ]
+
+
+@app.get("/api/registry/strategy-specs", response_model=list[RegistryEntryView])
+def list_all_strategy_spec_entries(
+    artifact_state: Optional[ArtifactState] = None,
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+):
+    return _filter_strategy_spec_views(None, authorization, x_tenant_id, artifact_state)
+
+
+@app.get("/api/registry/strategies/{strategy_id}/strategy-specs", response_model=list[RegistryEntryView])
 def list_strategy_spec_entries(
     strategy_id: str,
     artifact_state: Optional[ArtifactState] = None,
     authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
 ):
-    """List StrategySpec artifact versions for one strategy family (tenant-scoped)."""
-    ctx = _authenticate_registry_read(authorization)
-    views = [
-        view
-        for view in get_registry_service().list_by_strategy(strategy_id)
-        if view.entry.artifact_type == ArtifactType.STRATEGY_SPEC and _can_read(ctx, view)
-    ]
-    if artifact_state is not None:
-        views = [view for view in views if view.entry.artifact_state == artifact_state]
-    return views
+    return _filter_strategy_spec_views(strategy_id, authorization, x_tenant_id, artifact_state)
 
 
 @app.post(

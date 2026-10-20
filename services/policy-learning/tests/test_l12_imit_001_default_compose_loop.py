@@ -10,7 +10,7 @@ tick answered 401, and the product loop discovered nothing.
 
 This module proves the compose default itself:
 
-  1. ``docker compose --profile policy-learning-shadow-eval-scheduler config``
+  1. ``docker compose --profile root config``
      renders one shared credential and one tenant scope for both services;
   2. the offline renderer used by the end-to-end proofs below agrees with that
      command, so those proofs really run on the compose default;
@@ -52,7 +52,9 @@ COMPOSE_FILE = _REPO_ROOT / "docker-compose.yml"
 
 API_SERVICE = "policy-learning-svc"
 SCHEDULER_SERVICE = "policy-learning-shadow-eval-scheduler"
-SCHEDULER_PROFILE = "policy-learning-shadow-eval-scheduler"
+# Both services moved behind owner profiles; "root" is the profile that carries the
+# whole stack (policy-learning-svc, the scheduler sidecar and operator-bff).
+COMPOSE_PROFILE = "root"
 
 POSTGRES_DSN = os.getenv("PANTHEON_TEST_POSTGRES_DSN", "").strip()
 
@@ -172,7 +174,7 @@ def render_compose_environment(service: str, env: Mapping[str, str] | None = Non
 
 
 def _docker_compose_config(overrides: Mapping[str, str] | None = None) -> dict[str, Any] | None:
-    """``docker compose config`` for the scheduler profile, or None if absent."""
+    """``docker compose config`` for the root profile, or None if absent."""
 
     if shutil.which("docker") is None:
         return None
@@ -190,7 +192,7 @@ def _docker_compose_config(overrides: Mapping[str, str] | None = None) -> dict[s
                 "--env-file",
                 os.devnull,
                 "--profile",
-                SCHEDULER_PROFILE,
+                COMPOSE_PROFILE,
                 "config",
                 "--format",
                 "json",

@@ -1,6 +1,7 @@
 """Research knowledge, workbench, institutional memory, and synthesis routes."""
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import os
@@ -53,7 +54,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_list_notes(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_list_notes(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
         try:
             page_size = int(ctx.query(request, "page_size", "20") or 20)
@@ -71,7 +72,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_get_note(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_get_note(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
         identifier = str(request.path_params.get("note_id") or "")
         try:
@@ -79,7 +80,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_list_evidence(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_list_evidence(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         identity = ctx.identity(request)
         try:
             page_size = int(ctx.query(request, "page_size", "20") or 20)
@@ -99,7 +100,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_get_evidence(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_get_evidence(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         identity = ctx.identity(request)
         identifier = str(request.path_params.get("ref_id") or "")
         try:
@@ -107,7 +108,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_list_insights(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_list_insights(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
         try:
             page_size = int(ctx.query(request, "page_size", "20") or 20)
@@ -129,7 +130,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_get_insight(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_get_insight(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
         identifier = str(request.path_params.get("insight_id") or "")
         try:
@@ -137,7 +138,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_list_strategy_specs(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_list_strategy_specs(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
         try:
             page_size = int(ctx.query(request, "page_size", "20") or 20)
@@ -155,7 +156,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_strategy_versions(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_strategy_versions(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
         strategy_id = str(request.path_params.get("strategy_id") or "")
         try:
@@ -163,7 +164,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_strategy_compare(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_strategy_compare(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
         strategy_id = str(request.path_params.get("strategy_id") or "")
         try:
@@ -177,7 +178,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_get_strategy_spec(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_get_strategy_spec(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
         strategy_id = str(request.path_params.get("strategy_id") or "")
         try:
@@ -188,7 +189,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_list_memory(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_list_memory(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
         try:
             page_number = int(ctx.query(request, "page", "1") or 1)
@@ -208,7 +209,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_get_memory(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_get_memory(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
         identifier = str(request.path_params.get("entry_id") or "")
         try:
@@ -216,7 +217,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_synthesis_conflict_logs(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_synthesis_conflict_logs(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
         raw_flag = os.getenv("PANTHEON_SYNTHESIS_CONFLICT_LOG_VIEW_ENABLED")
         if raw_flag is not None and raw_flag.strip().lower() in {"0", "false", "no", "off", "disabled"}:
@@ -245,7 +246,7 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_synthesis_conflict_log(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_synthesis_conflict_log(request: Request, **_kwargs: Any) -> Dict[str, Any]:
         ctx.identity(request)
         raw_flag = os.getenv("PANTHEON_SYNTHESIS_CONFLICT_LOG_VIEW_ENABLED")
         if raw_flag is not None and raw_flag.strip().lower() in {"0", "false", "no", "off", "disabled"}:
@@ -262,7 +263,9 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
         except Exception as exc:
             ctx.raise_service_error(exc)
 
-    async def endpoint_bff_search(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+    def endpoint_bff_search(request: Request, **_kwargs: Any) -> Dict[str, Any]:
+        # Sync handler: the threadpool serves the port reads that
+        # ``search_knowledge`` performs inline, keeping them off the event loop.
         identity = ctx.identity(request)
         try:
             page_size = int(ctx.query(request, "page_size", "20") or 20)
@@ -270,8 +273,9 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
             page_size = 20
         limit_val = ctx.query(request, "limit")
         limit = int(limit_val) if limit_val is not None and limit_val.isdigit() else None
-        try:
-            return await ctx.service.search_knowledge(
+
+        def _search() -> Any:
+            return ctx.service.search_knowledge(
                 query=str(ctx.query(request, "q", "") or "").strip(),
                 types_raw=ctx.query(request, "types"),
                 page_size=page_size,
@@ -279,6 +283,15 @@ def build_knowledge_router(ctx: ResearchRouteContext) -> APIRouter:
                 page_token=ctx.query(request, "page_token"),
                 identity=identity,
             )
+
+        try:
+            coro = _search()
+            try:
+                coro.send(None)
+            except StopIteration as done:  # no real suspension: finished inline
+                return done.value
+            coro.close()  # a custom async search fn needs a loop: re-run on a private one
+            return asyncio.run(_search())
         except Exception as exc:
             ctx.raise_service_error(exc)
 

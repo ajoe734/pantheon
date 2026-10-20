@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import socket
 import sys
 import tempfile
 import threading
@@ -11,6 +12,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest import mock
 
+import pytest
+import uvicorn
 from fastapi.testclient import TestClient
 
 from strict_test_support import (
@@ -24,6 +27,41 @@ from strict_test_support import (
 
 
 SERVICE_DIR = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture
+def consultation_owner(monkeypatch):
+    """Real Consultation owner over HTTP.
+
+    A failed evaluation hands off to Consultation and fails closed when the
+    owner is not reachable, so tests that fail validation need the real service.
+    """
+    from services.consultation import main as consultation_main
+    from services.consultation.store import ConsultationStore
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        monkeypatch.setattr(consultation_main, "store", ConsultationStore(data_dir))
+        monkeypatch.setenv("CONSULTATION_AUTH_REQUIRED", "true")
+        monkeypatch.setenv("CONSULTATION_SERVICE_TOKEN", "test-service-token-secret")
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = int(listener.getsockname()[1])
+        server = uvicorn.Server(
+            uvicorn.Config(consultation_main.app, host="127.0.0.1", port=port, log_level="error")
+        )
+        thread = threading.Thread(target=server.run, daemon=True)
+        thread.start()
+        deadline = time.monotonic() + 10
+        while not server.started:
+            if time.monotonic() >= deadline:
+                raise RuntimeError("consultation test server did not start")
+            time.sleep(0.01)
+        monkeypatch.setenv("PANTHEON_CONSULTATION_API_URL", f"http://127.0.0.1:{port}")
+        try:
+            yield consultation_main.store
+        finally:
+            server.should_exit = True
+            thread.join(timeout=5)
 
 
 def _load_service_module():
@@ -604,7 +642,7 @@ def test_replay_discard_idempotency_keeps_after_artifact_empty() -> None:
     assert [event["event_type"] for event in events].count("discard") == 1
 
 
-def test_canonical_dataset_validation_and_fail_closed_and_evidence() -> None:
+def test_canonical_dataset_validation_and_fail_closed_and_evidence(consultation_owner) -> None:
     module = _load_service_module()
     client = TestClient(module.app)
     fixture = module._strict_authority_fixture
@@ -1400,7 +1438,7 @@ def test_persona_without_runtime_binding_or_readback_stays_unbound() -> None:
     assert "short_window" in {c["parameter_key"] for c in controls}
 
 
-def test_model_bound_preview_runs_real_backend_on_derived_candidate() -> None:
+def test_model_bound_preview_runs_real_backend_on_derived_candidate(consultation_owner) -> None:
     from services.research.vectorbt.adapter import vectorbt_adapter as adapter
 
     module = _load_service_module()

@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "task_id": "PROMOTE-PIPELINE-RETIRE-20261019",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "base_ref": "dev",
+  "base_sha": "eb969adcc5916f062882715cf1d39be717e4a91d",
+  "summary": "Retire the unused EVOLOOP-006 services/deployment/promote_pipeline.py module and its unit test services/deployment/test_promote_pipeline.py per operator decision (2026-10-19). Historical documents and evidence files are left unchanged, and the production promotion path through Deployment sagas and the outbox consumer is untouched.",
+  "deleted": [
+    "services/deployment/promote_pipeline.py",
+    "services/deployment/test_promote_pipeline.py"
+  ],
+  "caller_search": {
+    "command": "git grep -n -E 'promote_pipeline|PromotePipeline'",
+    "result": "No code, workflow, script, or current runbook imports or calls promote_pipeline; only historical audit/evidence/review records reference the retired paths and remain untouched."
+  },
+  "production_promotion_path": "Unchanged: services/deployment/service.py, services/deployment/outbox_consumer_worker.py, services/deployment/outbox_lease.py, and services/promotion/main.py are untouched.",
+  "verification": {
+    "interpreter": "/tmp/pantheon-worker-worktrees/pantheon/promote-pipeline-retire-20261019/.venv-pantheon/bin/python3",
+    "postgres_dsn": "GOV_APPROVAL_TEST_DSN=postgresql://postgres@127.0.0.1:25439/gov_approval_test (isolated postgres:16-alpine container)",
+    "command": "GOV_APPROVAL_TEST_DSN=postgresql://postgres@127.0.0.1:25439/gov_approval_test .venv-pantheon/bin/python3 -m pytest -q -p no:cacheprovider services/deployment",
+    "result": "219 passed, 1 warning in 95.52s (exit 0)"
+  }
+}

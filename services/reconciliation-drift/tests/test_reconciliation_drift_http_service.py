@@ -469,3 +469,73 @@ def test_health_and_readyz_use_bounded_store_counts_without_full_list_hydration(
 
             failing_health = failing_client.get("/health")
             assert failing_health.status_code == 500
+
+
+def _forbid_full_listings(module) -> None:
+    def _forbidden(*_args, **_kwargs):
+        raise AssertionError("hot path must use keyed reads, not a full listing")
+
+    for name in (
+        "list_evaluations",
+        "list_drift_reports",
+        "list_reconciliation_records",
+    ):
+        setattr(module.store, name, _forbidden)
+
+
+def test_write_paths_use_keyed_reads_and_keep_generated_ids() -> None:
+    module = _load_service_module()
+    client = TestClient(module.app)
+    _forbid_full_listings(module)
+
+    evaluation_body = {
+        "binding_id": "binding-keyed-1",
+        "runtime_id": "runtime-keyed-1",
+        "baseline_metrics": {"pnl": 100.0},
+        "telemetry_events": [
+            {"event_id": "evt-keyed-1", "binding_id": "binding-keyed-1", "metrics": {"pnl": 100.0}}
+        ],
+        "evaluated_at": "2026-10-19T00:00:00Z",
+    }
+    first = client.post("/api/reconciliation-drift/evaluations", json=evaluation_body)
+    second = client.post("/api/reconciliation-drift/evaluations", json=evaluation_body)
+    assert first.status_code == 201, first.text
+    assert first.json()["evaluation_id"] == "rdeval-20261019-001"
+    assert second.json()["evaluation_id"] == "rdeval-20261019-002"
+
+    paper_body = {
+        "deployment_plan_id": "plan-keyed-1",
+        "artifact_id": "artifact-keyed-1",
+        "artifact_version": "1.0.0",
+        "capital_pool_id": "pool-keyed-1",
+        "persona_capital_binding_id": "pcb-keyed-1",
+        "trace_id": "trace-keyed-1",
+        "binding_id": "binding-keyed-1",
+        "runtime_id": "runtime-keyed-1",
+        "baseline_metrics": {"pnl": 100.0},
+        "telemetry_events": [
+            {"event_id": "evt-keyed-p", "binding_id": "binding-keyed-1", "metrics": {"pnl": 20.0}}
+        ],
+        "thresholds": {"pnl": {"critical_relative_delta": 0.50}},
+        "generated_at": "2026-10-19T00:00:00Z",
+    }
+    recon = client.post("/api/reconciliation-drift/paper-runs/reconcile", json=paper_body)
+    assert recon.status_code == 201, recon.text
+    assert recon.json()["record"]["record_id"] == "recon-20261019-001"
+
+    consumed = client.post(
+        "/api/reconciliation-drift/telemetry-events/consume",
+        json={
+            "event": {
+                "event_id": "evt-keyed-consume",
+                "binding_id": "binding-keyed-1",
+                "runtime_id": "runtime-keyed-1",
+                "metrics": {"pnl": 20.0},
+                "baseline_metrics": {"pnl": 100.0},
+                "thresholds": {"pnl": {"critical_relative_delta": 0.50}},
+            },
+            "generated_at": "2026-10-19T00:00:00Z",
+        },
+    )
+    assert consumed.status_code == 201, consumed.text
+    assert consumed.json()["drift_report_count"] == 1

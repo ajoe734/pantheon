@@ -523,6 +523,24 @@ def _sanitize_failure_reason(reason: Any, message: Any = None) -> str:
     return f"SHA256_{digest}"
 
 
+def _format_failed_response_message(evt: Dict[str, Any]) -> str:
+    resp = evt.get("response") if isinstance(evt.get("response"), dict) else {}
+    err = resp.get("error") if resp.get("error") is not None else evt.get("error")
+    err_map = err if isinstance(err, dict) else {}
+    code_raw = err_map.get("code") or err_map.get("type") or resp.get("code") or evt.get("code")
+    code = str(code_raw).strip() if isinstance(code_raw, (str, int)) and not isinstance(code_raw, bool) else ""
+    msg_raw = err_map.get("message") or (err if isinstance(err, str) else None) or resp.get("message") or evt.get("message") or resp.get("reason") or evt.get("reason")
+    msg = msg_raw.strip() if isinstance(msg_raw, str) else ""
+    detail = f"{code}: {msg}" if code and msg else (code or msg)
+    if not detail:
+        status = str(resp.get("status") or "").strip()
+        etype = str(evt.get("type") or "response.failed").strip()
+        detail = f"{etype} (status={status})" if status else etype
+    resp_id = resp.get("id") or evt.get("response_id")
+    suffix = f" (response_id={resp_id.strip()[:64]})" if isinstance(resp_id, str) and resp_id.strip() else ""
+    return f"{detail[: 300 - len(suffix)]}{suffix}"
+
+
 @dataclass(frozen=True)
 class OpenClawProviderResult:
     provider: str
@@ -833,7 +851,10 @@ class AssistantOpenClawProvider:
     ) -> List[str]:
         if requested_model:
             return [requested_model]
-        primary = os.getenv("OPENCLAW_PRIMARY_MODEL", "").strip() or DEFAULT_PRIMARY_MODEL
+        primary = (
+            os.getenv("OPENCLAW_PRIMARY_MODEL", "").strip()
+            or DEFAULT_PRIMARY_MODEL
+        )
         return [primary]
 
     def _resolve_effective_model(
@@ -912,11 +933,15 @@ class AssistantOpenClawProvider:
 
             cand_started = time.monotonic()
             try:
+                # One-shot and stateless: do not pin readiness probes onto a
+                # shared `user` session key, which would queue repeated probes
+                # behind prior warm-session turns or accumulate probe history.
                 result = self._invoke_via_http(
                     _READINESS_PROMPT,
                     model=candidate,
                     mode="user",
-                    operator_id="management-ai-readiness",
+                    operator_id=None,
+                    session_id=None,
                     timeout_seconds=cand_timeout,
                 )
                 answer = self._result_text(result)
@@ -949,7 +974,8 @@ class AssistantOpenClawProvider:
                     "deadline_seconds": answer_timeout,
                     "duration_ms": total_dur,
                     "reply_bytes": len(answer.encode("utf-8")),
-                    "active_model": candidate,
+                    "requested_model": candidate,
+                    **({"active_model": result.output["active_model"]} if result.output.get("active_model") else {}),
                     "primary_model": primary,
                 }
                 if is_fallback and primary_unavailable:
@@ -963,7 +989,8 @@ class AssistantOpenClawProvider:
                     "status": "ready",
                     "auth": "account_session",
                     "auth_status": "ready",
-                    "active_model": candidate,
+                    "requested_model": candidate,
+                    **({"active_model": result.output["active_model"]} if result.output.get("active_model") else {}),
                     "primary_model": primary,
                     **(
                         {
@@ -1097,8 +1124,9 @@ class AssistantOpenClawProvider:
             agent_id=selected_agent_id,
         )
         output["transport"] = "responses_http"
-        if model:
-            output["active_model"] = model
+        for field in ("requested_model", "active_model"):
+            if done.get(field):
+                output[field] = done[field]
         if function_calls:
             output["function_calls"] = function_calls
         # Missing usage is unknown, not zero — only set the key when upstream
@@ -1165,8 +1193,6 @@ class AssistantOpenClawProvider:
             )
 
         selected_model = self._resolve_effective_model(model, selected_agent_id)
-        primary_configured = os.getenv("OPENCLAW_PRIMARY_MODEL", "").strip() or DEFAULT_PRIMARY_MODEL
-
         result = self._invoke_via_http(
             prompt,
             model=selected_model,
@@ -1183,9 +1209,6 @@ class AssistantOpenClawProvider:
         )
         if selected_model:
             self._active_model = selected_model
-            if selected_model != primary_configured:
-                result.output["fallback_used"] = True
-                result.output["primary_model"] = primary_configured
         return result
 
     def invoke_structured(
@@ -1216,12 +1239,20 @@ class AssistantOpenClawProvider:
             "no code fence, that satisfies this JSON schema:\n"
             + json.dumps(extraction_schema, ensure_ascii=False)
         )
+        effective_agent_id = str(agent_id or STRUCTURED_AGENT_ID).strip()
+        if effective_agent_id != STRUCTURED_AGENT_ID:
+            raise OpenClawProviderError(
+                "Structured extraction is restricted to its dedicated agent; "
+                "persona/tool routing requires the admitted invoke endpoint.",
+                status_code=422,
+                error_code="OPENCLAW_STRUCTURED_AGENT_NOT_ALLOWED",
+            )
         # One-shot and stateless: a stable `user` key would reuse one warm CLI
         # session per caller, accumulating history until context_overflow.
         result = self._invoke_via_http(
             f"{instruction}\n\n{prompt}",
             model=model,
-            agent_id=agent_id,
+            agent_id=effective_agent_id,
             session_id=session_id or f"structured-{uuid.uuid4().hex}",
             mode=mode,
             messages=messages,
@@ -1247,7 +1278,7 @@ class AssistantOpenClawProvider:
 
         output: Dict[str, Any] = {
             "structured_data": parsed_arguments,
-            "agent_id": str(agent_id or self._agent_id).strip(),
+            "agent_id": effective_agent_id,
             "transport": "responses_http",
         }
         if "usage" in result.output:
@@ -1828,7 +1859,7 @@ class AssistantOpenClawProvider:
                         return [{
                             "type": "error",
                             "error_code": "OPENCLAW_RESPONSES_FAILED",
-                            "message": json.dumps(nested_response)[:300],
+                            "message": _format_failed_response_message(evt),
                         }], "return"
                     # The real pinned OpenClaw Gateway (v2026.7.1) emits
                     # response.completed with status="incomplete" as the
@@ -1869,6 +1900,14 @@ class AssistantOpenClawProvider:
                     "elapsed_ms": int((time.monotonic() - started_at) * 1000),
                     "transport": "responses_http",
                 }
+                if model:
+                    done_event["requested_model"] = model
+                # Gateway-reported model may itself be an agent alias. Preserve
+                # that evidence without treating the request override as proof.
+                if isinstance(nested_response, dict):
+                    reported_model = nested_response.get("model")
+                    if isinstance(reported_model, str) and reported_model.strip():
+                        done_event["active_model"] = reported_model.strip()
                 if function_calls:
                     done_event["function_calls"] = function_calls
                 # Missing usage is unknown, not zero — only include the key
@@ -1884,7 +1923,7 @@ class AssistantOpenClawProvider:
                 return [{
                     "type": "error",
                     "error_code": "OPENCLAW_RESPONSES_FAILED",
-                    "message": json.dumps(evt)[:300],
+                    "message": _format_failed_response_message(evt),
                 }], "return"
             return [], None
 

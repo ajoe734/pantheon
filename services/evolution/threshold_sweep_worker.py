@@ -744,10 +744,35 @@ def assess_input_coverage(
     }
 
 
-def default_fetch_summaries(telemetry_api_url: str, *, timeout: float) -> list[dict[str, Any]]:
+def _telemetry_headers(
+    *, tenant_id: str | None = None, service_token: str | None = None
+) -> dict[str, str]:
+    token = (
+        service_token
+        if service_token is not None
+        else os.getenv("PANTHEON_TELEMETRY_SERVICE_TOKEN", "")
+    ).strip()
+    tenant = (
+        tenant_id
+        if tenant_id is not None
+        else (
+            os.getenv("EVOCHAIN_THRESHOLD_SWEEP_TENANT_ID")
+            or os.getenv("PANTHEON_TENANT_ID")
+            or os.getenv("EVOLUTION_DEFAULT_TENANT_ID")
+            or ""
+        )
+    ).strip()
+    if not token or not tenant:
+        raise ValueError("PANTHEON_TELEMETRY_SERVICE_TOKEN and tenant_id are required")
+    return {"Accept": "application/json", "Authorization": f"Bearer {token}", "X-Tenant-Id": tenant}
+
+
+def default_fetch_summaries(
+    telemetry_api_url: str, *, timeout: float, tenant_id: str | None = None, service_token: str | None = None
+) -> list[dict[str, Any]]:
     request = urllib.request.Request(
         telemetry_api_url.rstrip("/") + "/api/telemetry/runtime-summaries",
-        headers={"Accept": "application/json"},
+        headers=_telemetry_headers(tenant_id=tenant_id, service_token=service_token),
         method="GET",
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -758,7 +783,12 @@ def default_fetch_summaries(telemetry_api_url: str, *, timeout: float) -> list[d
 
 
 def default_admit_telemetry_event(
-    telemetry_api_url: str, event: Mapping[str, Any], *, timeout: float
+    telemetry_api_url: str,
+    event: Mapping[str, Any],
+    *,
+    timeout: float,
+    tenant_id: str | None = None,
+    service_token: str | None = None,
 ) -> dict[str, Any]:
     """Admit a schema-valid derived telemetry event through real ingest.
 
@@ -768,10 +798,11 @@ def default_admit_telemetry_event(
     would reject.
     """
     body = json.dumps(dict(event)).encode("utf-8")
+    headers = {**_telemetry_headers(tenant_id=tenant_id, service_token=service_token), "Content-Type": "application/json"}
     request = urllib.request.Request(
         telemetry_api_url.rstrip("/") + "/api/telemetry/ingest",
         data=body,
-        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:

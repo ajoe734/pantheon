@@ -88,3 +88,14 @@ def test_unconfigured_reconciler_raises_dedicated_unavailable_error(monkeypatch)
     ports = ReadSurfacePorts.__new__(ReadSurfacePorts)
     with pytest.raises(PaperReconcilerUnavailableError):
         ports.list_authoritative_paper_runtime_monitoring_sessions()
+
+
+def test_persona_fleet_returns_503_when_paper_reconciler_times_out(monkeypatch):
+    from services.control_plane.bff.personas.routes import collection as persona_collection
+
+    def _reconciler_timeout(**_kw):
+        raise PaperReconcilerUnavailableError("paper fleet reconciler query failed: timed out")
+
+    monkeypatch.setattr(persona_collection, "_persona_fleet_slim_list_payload", _reconciler_timeout)
+    with _isolated_final_read_models() as client:
+        _assert_503(client.get("/bff/management/persona-fleet", headers=HEADERS))

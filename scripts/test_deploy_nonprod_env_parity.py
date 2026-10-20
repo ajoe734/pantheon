@@ -165,6 +165,8 @@ def _build_test_env(tmp_path: Path, bin_dir: Path) -> dict[str, str]:
     env["PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN"] = "token"
     env["PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED"] = "true"
     env["PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN"] = ""
+    env["PANTHEON_OPENCLAW_ANTHROPIC_API_KEY"] = ""
+    env["PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID"] = ""
     env["MANAGEMENT_AI_STORE_BACKEND"] = "postgres"
     env["MANAGEMENT_AI_STORE_SCHEMA"] = "management_ai"
     env["MANAGEMENT_AI_DATABASE_URL"] = "postgresql://localhost/test"
@@ -444,3 +446,151 @@ def test_deploy_script_syntax_and_shared_function_contract() -> None:
         assert ";" not in trimmed or trimmed.startswith("local ") or trimmed.startswith("shift "), (
             f"Found compressed assignment line: {line}"
         )
+
+
+def test_openclaw_anthropic_env_parity_across_root_and_bff_compose_paths(tmp_path: Path) -> None:
+    """Verify DEV_OPENCLAW_ANTHROPIC_API_KEY and DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID
+    wire into PANTHEON_OPENCLAW_ANTHROPIC_API_KEY and PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID
+    identically across both formal root rollout and bff recreate Compose paths."""
+    bin_dir, events_file = _setup_stub_bin(tmp_path)
+    env = _build_test_env(tmp_path, bin_dir)
+    env.pop("PANTHEON_OPENCLAW_ANTHROPIC_API_KEY", None)
+    env.pop("PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID", None)
+
+    synthetic_api_key = "sk-ant-synthetic-test-key-0001"
+    synthetic_workspace_id = "wrk_synthetic_test_0001"
+
+    source = _read_deploy_script()
+    configure_kernel_func = _extract_function(source, "configure_management_ai_dev_kernel_env")
+    with_env_func = _extract_function(source, "with_dev_bff_runtime_env")
+    run_candidate_func = _extract_function(source, "run_dev_candidate_compose")
+    root_invocation = _extract_root_rollout_invocation(source)
+    bff_invocation = _extract_bff_recreate_invocation(source)
+
+    for invocation in (root_invocation, bff_invocation):
+        script_payload = f"""#!/bin/bash
+set -euo pipefail
+info() {{ :; }}
+error() {{ echo "$*" >&2; exit 1; }}
+rollback_dev_bff_on_failure() {{ echo "rollback: $*" >&2; exit 1; }}
+validate_dev_candidate_override() {{ return 0; }}
+cleanup_stale_compose_replacement_containers() {{ :; }}
+
+DEPLOY_ENV="dev"
+DEV_ASSISTANT_KERNEL_ENABLED="true"
+DEV_ASSISTANT_CONTROL_MODE_STORE_PATH="/data/bff/mode.json"
+DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH=""
+DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="300"
+DEV_BFF_STUB_CAPABILITIES="test"
+DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN="token"
+DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="true"
+DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN=""
+DEV_OPENCLAW_ANTHROPIC_API_KEY="{synthetic_api_key}"
+DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID="{synthetic_workspace_id}"
+
+{configure_kernel_func}
+{with_env_func}
+{run_candidate_func}
+
+configure_management_ai_dev_kernel_env
+{invocation}
+"""
+        result = subprocess.run(["bash", "-s"], input=script_payload, env=env, text=True, capture_output=True)
+        assert result.returncode == 0, f"Compose invocation failed: {result.stderr}"
+
+    events = _read_recorded_events(events_file)
+    compose_events = [e for e in events if e.get("command") == "docker_compose"]
+    assert len(compose_events) == 2, f"Expected 2 docker compose invocations, got {len(compose_events)}"
+
+    root_env = compose_events[0]["env"]
+    bff_env = compose_events[1]["env"]
+    expected_openclaw_vars = {
+        "PANTHEON_OPENCLAW_ANTHROPIC_API_KEY": synthetic_api_key,
+        "PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID": synthetic_workspace_id,
+    }
+    _assert_expected_env_parity(root_env, expected_openclaw_vars, (), "root_rollout_openclaw_anthropic")
+    _assert_expected_env_parity(bff_env, expected_openclaw_vars, (), "bff_recreate_openclaw_anthropic")
+    assert root_env["PANTHEON_OPENCLAW_ANTHROPIC_API_KEY"] == bff_env["PANTHEON_OPENCLAW_ANTHROPIC_API_KEY"]
+    assert root_env["PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID"] == bff_env["PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID"]
+
+
+def test_openclaw_anthropic_env_optional_omission_and_transport_contracts(tmp_path: Path) -> None:
+    """Verify optional omission defaults both Anthropic variables to empty strings without
+    new auth gates, ssh_bash shell-quotes them, and dry-run logs only boolean configured status."""
+    bin_dir, events_file = _setup_stub_bin(tmp_path)
+    env = _build_test_env(tmp_path, bin_dir)
+    env.pop("PANTHEON_OPENCLAW_ANTHROPIC_API_KEY", None)
+    env.pop("PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID", None)
+    env.pop("DEV_OPENCLAW_ANTHROPIC_API_KEY", None)
+    env.pop("DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID", None)
+
+    source = _read_deploy_script()
+    configure_kernel_func = _extract_function(source, "configure_management_ai_dev_kernel_env")
+    with_env_func = _extract_function(source, "with_dev_bff_runtime_env")
+    run_candidate_func = _extract_function(source, "run_dev_candidate_compose")
+    root_invocation = _extract_root_rollout_invocation(source)
+    bff_invocation = _extract_bff_recreate_invocation(source)
+
+    for invocation in (root_invocation, bff_invocation):
+        script_payload = f"""#!/bin/bash
+set -euo pipefail
+info() {{ :; }}
+error() {{ echo "$*" >&2; exit 1; }}
+rollback_dev_bff_on_failure() {{ echo "rollback: $*" >&2; exit 1; }}
+validate_dev_candidate_override() {{ return 0; }}
+cleanup_stale_compose_replacement_containers() {{ :; }}
+
+DEPLOY_ENV="dev"
+DEV_ASSISTANT_KERNEL_ENABLED="true"
+DEV_ASSISTANT_CONTROL_MODE_STORE_PATH="/data/bff/mode.json"
+DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH=""
+DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="300"
+DEV_BFF_STUB_CAPABILITIES="test"
+DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN="token"
+DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="true"
+DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN=""
+DEV_OPENCLAW_ANTHROPIC_API_KEY="${{DEV_OPENCLAW_ANTHROPIC_API_KEY:-}}"
+DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID="${{DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID:-}}"
+
+{configure_kernel_func}
+{with_env_func}
+{run_candidate_func}
+
+configure_management_ai_dev_kernel_env
+{invocation}
+"""
+        result = subprocess.run(["bash", "-s"], input=script_payload, env=env, text=True, capture_output=True)
+        assert result.returncode == 0, f"Optional omission execution failed: {result.stderr}"
+
+    events = _read_recorded_events(events_file)
+    compose_events = [e for e in events if e.get("command") == "docker_compose"]
+    assert len(compose_events) == 2
+    for idx, path_name in enumerate(("root_rollout_omitted", "bff_recreate_omitted")):
+        _assert_expected_env_parity(
+            compose_events[idx]["env"],
+            {
+                "PANTHEON_OPENCLAW_ANTHROPIC_API_KEY": "",
+                "PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID": "",
+            },
+            (),
+            path_name,
+        )
+
+    # Structural check for initial defaults, usage(), dry-run boolean redaction, and ssh_bash transport
+    assert 'DEV_OPENCLAW_ANTHROPIC_API_KEY="${DEV_OPENCLAW_ANTHROPIC_API_KEY:-}"' in source
+    assert 'DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID="${DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID:-}"' in source
+    usage_func = _extract_function(source, "usage")
+    assert "DEV_OPENCLAW_ANTHROPIC_API_KEY" in usage_func
+    assert "DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID" in usage_func
+    assert (
+        'info "dev_openclaw_anthropic_api_key_configured=$([[ -n "${PANTHEON_OPENCLAW_ANTHROPIC_API_KEY:-}" ]] && echo true || echo false)"'
+        in source
+    )
+    assert (
+        'info "dev_openclaw_anthropic_workspace_id_configured=$([[ -n "${PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID:-}" ]] && echo true || echo false)"'
+        in source
+    )
+    ssh_bash_prefix = source.split("ssh_bash() {\n", 1)[1].split("  run_remote_payload() {\n", 1)[0]
+    assert 'command_prefix+=" PANTHEON_OPENCLAW_ANTHROPIC_API_KEY=$(shell_quote "${PANTHEON_OPENCLAW_ANTHROPIC_API_KEY:-}")"' in ssh_bash_prefix
+    assert 'command_prefix+=" PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID=$(shell_quote "${PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID:-}")"' in ssh_bash_prefix
+

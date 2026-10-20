@@ -1,0 +1,11 @@
+{
+  "task_id": "INCIDENT-INFRA-RECOVERY-LINEAGE-20261019",
+  "scope": "source-only; no hosted proof, no VM/provider/incident mutation, old resolved incident not backfilled",
+  "change": "POST /api/incidents/{id}/status now accepts source_event_id and telemetry_event_ids and IncidentStore.update_incident_status merges them (unique, order-preserving) into the saved IncidentCase.telemetry_event_ids alongside the opening references",
+  "tests": {
+    "command": "pytest services/incidents/test_main_routes.py services/incident/test_incident_store_concurrency.py services/incident/test_incident.py",
+    "result": "138 passed",
+    "regression": "test_infrastructure_health_incident_resolves_through_status_route asserts opening and recovery IDs both survive owner GET"
+  },
+  "root_followup": "Root joins reviewed sources and verifies actual saved effects in the original hosted flow"
+}

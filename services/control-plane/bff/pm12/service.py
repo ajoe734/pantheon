@@ -1551,6 +1551,39 @@ def _management_portfolio_book_entry(
     }
 
 
+def _management_portfolio_telemetry_snapshot(
+    read_store: Any, runtime_bindings: List[Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    """Read one owner collection for this portfolio projection, preserving lookup order."""
+    runtime_ids = [
+        _management_record_id(runtime, "runtime_id", "id", "binding_id")
+        for runtime in runtime_bindings
+    ]
+    runtime_ids = [runtime_id for runtime_id in runtime_ids if runtime_id]
+    if not runtime_ids:
+        return {}
+    list_summaries = getattr(read_store, "list_telemetry_summaries", None)
+    if callable(list_summaries):
+        wanted = set(runtime_ids)
+        first_match: Dict[str, Dict[str, Any]] = {}
+        for summary in list_summaries() or []:
+            for key in ("runtime_id", "id"):
+                runtime_id = summary.get(key)
+                if isinstance(runtime_id, str) and runtime_id in wanted:
+                    first_match.setdefault(runtime_id, summary)
+        return {runtime_id: first_match[runtime_id] for runtime_id in runtime_ids if runtime_id in first_match}
+    # Existing get-only read surfaces retain their original lookup contract.
+    get_summary = getattr(read_store, "get_telemetry_summary", None)
+    if get_summary is None:
+        return {}
+    result = {}
+    for runtime_id in runtime_ids:
+        summary = get_summary(runtime_id)
+        if summary is not None:
+            result[runtime_id] = summary
+    return result
+
+
 def _management_portfolio_book_pool_sources(
     read_store: Any,
     *,
@@ -1562,14 +1595,7 @@ def _management_portfolio_book_pool_sources(
     deployment_plans = (read_store.list_deployment_plans() or []) if hasattr(read_store, "list_deployment_plans") else []
     runtime_bindings = (read_store.list_runtime_bindings() or []) if hasattr(read_store, "list_runtime_bindings") else []
 
-    telemetry_by_runtime_id: Dict[str, Dict[str, Any]] = {}
-    for runtime in runtime_bindings:
-        runtime_id = _management_record_id(runtime, "runtime_id", "id", "binding_id")
-        if not runtime_id:
-            continue
-        telemetry = read_store.get_telemetry_summary(runtime_id) if hasattr(read_store, "get_telemetry_summary") else None
-        if telemetry is not None:
-            telemetry_by_runtime_id[runtime_id] = telemetry
+    telemetry_by_runtime_id = _management_portfolio_telemetry_snapshot(read_store, runtime_bindings)
 
     entries = [
         _management_portfolio_book_entry(
@@ -1921,13 +1947,7 @@ def _pm12_portfolio_book_holdings_response(
     bindings_by_id = {str(b.get("binding_id") or b.get("id") or b.get("persona_capital_binding_id") or "").strip(): b for b in bindings}
     pools_by_id = {str(p.get("pool_id") or p.get("id") or "").strip(): p for p in capital_pools}
 
-    telemetry_by_runtime_id: Dict[str, Dict[str, Any]] = {}
-    for r in runtime_bindings:
-        rid = str(r.get("runtime_id") or r.get("id") or r.get("binding_id") or "").strip()
-        if rid:
-            t = read_store.get_telemetry_summary(rid) if hasattr(read_store, "get_telemetry_summary") else None
-            if t is not None:
-                telemetry_by_runtime_id[rid] = t
+    telemetry_by_runtime_id = _management_portfolio_telemetry_snapshot(read_store, runtime_bindings)
 
     holding_items: List[Dict[str, Any]] = []
     for runtime in runtime_bindings:

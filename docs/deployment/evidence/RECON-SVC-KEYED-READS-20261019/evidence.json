@@ -1,0 +1,12 @@
+{
+  "task_id": "RECON-SVC-KEYED-READS-20261019",
+  "kind": "source_only",
+  "hosted_proof": "pending original Root coordinator next Root; no deployment or hosted write performed",
+  "benchmark": {
+    "method": "TestClient against main.py; store simulated with 60000 evaluations (~2 KB payload each); list_evaluations hydrates (json.loads) every row, keyed reads are dict lookups. Median of 5 runs. Synthetic, not hosted Postgres.",
+    "evaluations": 60000,
+    "before_ms": {"create_evaluation": 620.3, "scheduled_tick_one_binding": 660.6},
+    "after_ms": {"create_evaluation": 8.2, "scheduled_tick_one_binding": 69.9}
+  },
+  "tests": "services/reconciliation-drift/tests: 6 failed/165 passed; the 4 scheduler failures (idle_tick..., clean_no_drift..., degraded_downstream..., controller_error...) also fail on base in this local venv"
+}

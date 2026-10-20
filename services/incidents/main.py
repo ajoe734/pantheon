@@ -336,23 +336,9 @@ def get_incident_suggestion_consumer() -> Optional[Any]:
 _DEFAULT_SUGGESTION_STORE: Optional[Any] = None
 
 
-def _ensure_bff_agora_path() -> None:
-    bff_dir = str(Path(__file__).resolve().parent.parent / "control-plane" / "bff")
-    if bff_dir not in sys.path:
-        sys.path.insert(0, bff_dir)
-    try:
-        import agora
-        bff_agora = str(Path(bff_dir) / "agora")
-        if hasattr(agora, "__path__") and bff_agora not in agora.__path__:
-            agora.__path__.insert(0, bff_agora)
-    except Exception:
-        pass
-
-
 def _get_default_suggestion_store() -> Any:
     global _DEFAULT_SUGGESTION_STORE
-    _ensure_bff_agora_path()
-    from agora.performance.store import PerformanceSuggestionStore
+    from services.control_plane.bff.agora.performance.store import PerformanceSuggestionStore
     store_path = os.environ.get("PANTHEON_BFF_AGORA_PERFORMANCE_STORE_PATH")
     if not store_path:
         store_path = str(Path(DATA_DIR) / "agora_performance.sqlite3")
@@ -375,9 +361,8 @@ def _canonical_performance_read_model_receiver(topic: str, entity_id: str, paylo
 
 
 def _wire_canonical_performance_subscriber() -> None:
-    _ensure_bff_agora_path()
     try:
-        from agora.performance.consumer import (
+        from services.control_plane.bff.agora.performance.consumer import (
             get_canonical_performance_transport,
             register_performance_subscriber,
         )
@@ -392,9 +377,8 @@ _wire_canonical_performance_subscriber()
 
 
 def _build_default_suggestion_consumer() -> Optional[Any]:
-    _ensure_bff_agora_path()
     try:
-        from agora.performance.consumer import EvaluationTelemetryConsumer, canonical_performance_publisher
+        from services.control_plane.bff.agora.performance.consumer import EvaluationTelemetryConsumer, canonical_performance_publisher
         perf_store = _get_default_suggestion_store()
         eval_consumer = EvaluationTelemetryConsumer(
             store=perf_store,
@@ -980,6 +964,10 @@ def update_status(
             incident_id,
             body.status,
             resolved_at=body.resolved_at or previous.resolved_at,
+            telemetry_event_ids=[
+                *([body.source_event_id] if body.source_event_id else []),
+                *body.telemetry_event_ids,
+            ],
             expected_snapshot=previous.to_dict(),
         )
     except IncidentError as exc:
@@ -1101,7 +1089,7 @@ def act_on_agora_performance_suggestion(
     body: Dict[str, Any] = Body(...),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ) -> Dict[str, Any]:
-    from agora.performance.store import (
+    from services.control_plane.bff.agora.performance.store import (
         PerformanceSuggestionConflict,
         PerformanceSuggestionNotFound,
     )

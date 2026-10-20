@@ -353,7 +353,20 @@ class DurableIngestReceiptTest(unittest.IsolatedAsyncioTestCase):
             def terminate(self) -> None:
                 pass
 
-        fake_asyncpg = types.SimpleNamespace(connect=AsyncMock(return_value=FakeConnection()))
+        class FakePool:
+            def acquire(self, timeout=None):
+                conn = FakeConnection()
+
+                class _Ctx:
+                    async def __aenter__(_self):
+                        return conn
+
+                    async def __aexit__(_self, *exc):
+                        return False
+
+                return _Ctx()
+
+        fake_asyncpg = types.SimpleNamespace(create_pool=AsyncMock(return_value=FakePool()))
 
         with patch.dict(sys.modules, {"asyncpg": fake_asyncpg}):
             durable_reader, _ = build_postgres_event_reader("postgresql://test-l12/db", table="telemetry_events")
@@ -439,6 +452,53 @@ class DurableIngestReceiptTest(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(sq_no_tid["args"], ("evt-durable-snap-001",))
                 finally:
                     await service.stop(graceful=True)
+
+    async def test_event_reader_reuses_pool_and_surfaces_timeout_class(self):
+        import sys, types
+        from unittest.mock import patch
+
+        acquires = []
+
+        class FakeConn:
+            def __init__(self, hang):
+                self.hang = hang
+
+            async def fetch(self, sql, *args, timeout=None):
+                if self.hang:
+                    await asyncio.sleep(30)
+                return [{"event_id": "e1", "payload": json.dumps({"tenant_id": "t"}), "ingested_seq": 1}]
+
+        class FakePool:
+            hang = False
+
+            def acquire(self, timeout=None):
+                acquires.append(timeout)
+                conn = FakeConn(FakePool.hang)
+
+                class _Ctx:
+                    async def __aenter__(_self):
+                        return conn
+
+                    async def __aexit__(_self, *exc):
+                        return False
+
+                return _Ctx()
+
+        create_pool = AsyncMock(return_value=FakePool())
+        connect = AsyncMock(side_effect=AssertionError("per-read connect"))
+        fake = types.SimpleNamespace(create_pool=create_pool, connect=connect)
+        with patch.dict(sys.modules, {"asyncpg": fake}):
+            fetch_ev, _ = build_postgres_event_reader("postgresql://x/db")
+            for _ in range(5):
+                self.assertEqual(fetch_ev("e1")["event_id"], "e1")  # called inside a running loop
+            self.assertEqual(await asyncio.to_thread(fetch_ev, "e1", "t"), {"tenant_id": "t", "ingested_seq": 1, "event_id": "e1"})
+            self.assertEqual(create_pool.await_count, 1)
+            self.assertEqual(connect.await_count, 0)
+            self.assertEqual(len(acquires), 6)
+            FakePool.hang = True
+            with self.assertRaises(RuntimeError) as cm:
+                fetch_ev("e1")
+            self.assertIn("TimeoutError", str(cm.exception))
 
     async def test_put_succeeds_only_after_jetstream_puback(self):
         calls: list[str] = []

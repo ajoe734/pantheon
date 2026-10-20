@@ -1,0 +1,10 @@
+{
+  "task_id": "DEV-MGMT-CONTEXT-BOUND-20261020",
+  "change": "Provider-facing management_payload.summary_context and surfaces.owner_observations are projected concisely inside _mgmt_nl_build_context_pack: persona_fleet items drop camelCase alias duplicates and per-item owner_observations, nested rows become scalar views with omitted_nested_fields recorded; ok owner observations collapse into counted groups with subject ids; every non-ok observation is kept individually. The 200000 provider bound, the collector, and product UI/API DTOs are unchanged. persona_fleet also carries population_scope (total_population, returned_sample_count, omitted_count, partial, sample_scoped_summary_fields, whole_population_health_counts) so authoritative population is distinguished from the returned sample and health counts are labeled sample-scoped; no full health counts invented. Management-only: the composer's bff_reads.context mirror of backend (~half of the serialized pack) is replaced by a source reference {mirrors: backend, source_keys}; canonical payload stays in backend; generic composer/UI DTO untouched.",
+  "regression": "test_management_nl_large_fleet_context_stays_within_provider_bound: raw fixture ~2.8MB of context pack without the fix (fails), < 200000 with it; reply completes via injected provider; totals, runtime ids and unavailable owner truth retained. Fixture restored to original 20 personas x 40 runtimes (size assertion unchanged, <200000); asserts population_scope partial/500/20/480.",
+  "tests": {
+    "bff tests: provider + single_owner + assistant_context_pack": "84 passed"
+  },
+  "known_unrelated_baseline_failure": "test_mgmt_read_001_persona_fleet_owner_observations.py::test_persona_fleet_reports_degraded_when_auxiliary_owners_lack_records fails on unchanged base (persona_strategies owner unavailable); not modified.",
+  "no_provider_or_hosted_calls": true
+}

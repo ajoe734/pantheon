@@ -693,3 +693,329 @@ def test_strategy_seed_review_commands_reject_read_role() -> None:
         )
         assert command.status_code == 403, command.text
         assert _error(command.json())["details"]["precondition_failed"] == "role_check"
+
+
+def test_strategy_seed_owner_boundary_read_review_merge_replication_and_persona_discovery(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import io
+    import time
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    from services.control_plane.bff.core.owner_reads import authorization as _owner_auth, selected_tenant as _owner_tenant
+    from services.control_plane.bff.personas.service import _load_strategy_seed_match_candidates
+    from services.runtime_auth_inbound import encode_jwt_hs256
+    from services.source_ingestion.connectors.base import SourceRecord, SourceRecordStatus, SourceType
+    from services.source_ingestion.routers.management import create_management_router
+    from services.source_ingestion.runtime import SourceIngestionRuntime
+
+    owner_dir = tmp_path / "source-ingest"
+    owner_dir.mkdir(parents=True, exist_ok=True)
+    jwt_secret = "seed-owner-boundary-jwt-secret"
+    monkeypatch.setenv("SOURCE_INGEST_DATA_DIR", str(owner_dir))
+    monkeypatch.delenv("STRATEGY_SEED_STORE_PATH", raising=False)
+    monkeypatch.delenv("STRATEGY_SPEC_SEED_STORE_PATH", raising=False)
+    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_API_URL", "http://source-ingest.test")
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", jwt_secret)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", jwt_secret)
+    monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-dev")
+
+    runtime1 = SourceIngestionRuntime()
+    assert runtime1.strategy_seed_store.path == owner_dir / "distill_seeds.jsonl"
+
+    runtime1.evidence_repository.add_source_record(
+        SourceRecord(
+            source_id="src-finmind-twse-seed-001",
+            connector_id="conn-finmind-twse",
+            source_type=SourceType.MARKET,
+            title="TWSE Institutional Flow Source",
+            content_ref="https://api.finmindtrade.com/api/v4/data",
+            status=SourceRecordStatus.NORMALIZED,
+            created_at="2026-10-18T00:00:00Z",
+            metadata={"tenant_id": "tenant-dev"},
+        )
+    )
+
+    primary_id = "seed-1d23a6d2fbc149f4"
+    dup_id = "seed-dup-owner-002"
+    risk_id = "seed-risk-owner-003"
+    neg_id = "seed-neg-owner-004"
+    other_tenant_id = "seed-other-tenant-005"
+
+    def _source_owned_seed(seed_id: str, *, seed_kind: str = "strategy_spec_seed", metadata_extra: Dict[str, Any] | None = None) -> StrategySpecSeed:
+        base = _seed(seed_id)
+        payload = base.to_dict()
+        payload["source_id"] = "src-finmind-twse-seed-001"
+        payload["source_ids"] = ["src-finmind-twse-seed-001"]
+        meta = dict(payload.get("metadata") or {})
+        meta["seed_kind"] = seed_kind
+        if metadata_extra:
+            meta.update(metadata_extra)
+        payload["metadata"] = meta
+        return StrategySpecSeed.from_dict(payload)
+
+    runtime1.strategy_seed_store.save(_source_owned_seed(primary_id))
+    runtime1.strategy_seed_store.save(_source_owned_seed(dup_id))
+    runtime1.strategy_seed_store.save(_source_owned_seed(risk_id, seed_kind="risk_constraint", metadata_extra={"source_surface": "trainer"}))
+    runtime1.strategy_seed_store.save(_source_owned_seed(neg_id, seed_kind="negative", metadata_extra={"source_surface": "trainer"}))
+    runtime1.strategy_seed_store.save(
+        _source_owned_seed(other_tenant_id, metadata_extra={"tenant_id": "tenant-other"})
+    )
+
+    owner_app = FastAPI()
+    owner_app.include_router(create_management_router(runtime1))
+    owner_client = TestClient(owner_app)
+
+    class _FakeHttpResponse(io.BytesIO):
+        def __init__(self, body: bytes, status: int) -> None:
+            super().__init__(body)
+            self.status = status
+
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc, tb) -> None:
+            self.close()
+
+    def _fake_urlopen(req: urllib.request.Request, timeout: float = 5.0):
+        parsed = urllib.parse.urlsplit(req.full_url)
+        path_with_query = parsed.path + (f"?{parsed.query}" if parsed.query else "")
+        headers = {k: v for k, v in req.header_items()}
+        resp = owner_client.request(
+            req.get_method(),
+            path_with_query,
+            content=req.data,
+            headers=headers,
+        )
+        if resp.status_code >= 400:
+            raise urllib.error.HTTPError(
+                req.full_url,
+                resp.status_code,
+                resp.reason_phrase,
+                resp.headers,
+                io.BytesIO(resp.content),
+            )
+        return _FakeHttpResponse(resp.content, resp.status_code)
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+
+    read_store = create_in_memory_read_surface_ports()
+    bff_client = TestClient(_build_app(read_store))
+    op_jwt = encode_jwt_hs256(
+        {"sub": "seed-review-op", "roles": ["operator"], "tenant_id": "tenant-dev", "exp": int(time.time()) + 600},
+        secret=jwt_secret,
+    )
+    rev_jwt = encode_jwt_hs256(
+        {"sub": "seed-reviewer", "roles": ["reviewer"], "tenant_id": "tenant-dev", "exp": int(time.time()) + 600},
+        secret=jwt_secret,
+    )
+    op_headers = {"Authorization": f"Bearer {op_jwt}", "X-Tenant-Id": "tenant-dev"}
+    rev_headers = {"Authorization": f"Bearer {rev_jwt}", "X-Tenant-Id": "tenant-dev"}
+
+    # 1. List and detail routes read from source-ingest owner and filter by tenant
+    list_resp = bff_client.get("/bff/management/strategy-seeds", headers=rev_headers)
+    assert list_resp.status_code == 200, list_resp.text
+    list_body = list_resp.json()
+    assert list_body["meta"]["store_path"] == "http://source-ingest.test/api/source-ingest/management/strategy-seeds"
+    listed_ids = [item["seed_id"] for item in _seed_list_items(list_body)]
+    assert listed_ids == [primary_id, dup_id, risk_id, neg_id]
+
+    detail_resp = bff_client.get(f"/bff/management/strategy-seeds/{primary_id}", headers=rev_headers)
+    assert detail_resp.status_code == 200, detail_resp.text
+    assert detail_resp.json()["data"]["seed_id"] == primary_id
+
+    cross_tenant_resp = bff_client.get(f"/bff/management/strategy-seeds/{other_tenant_id}", headers=rev_headers)
+    assert cross_tenant_resp.status_code == 404, cross_tenant_resp.text
+    assert _error(cross_tenant_resp.json())["code"] == ErrorCode.RESOURCE_NOT_FOUND
+
+    missing_resp = bff_client.get("/bff/management/strategy-seeds/seed-missing-999", headers=rev_headers)
+    assert missing_resp.status_code == 404, missing_resp.text
+    assert _error(missing_resp.json())["code"] == ErrorCode.RESOURCE_NOT_FOUND
+
+    # 2. Review (accept + replay + convert-to-spec-seed), convert-to-risk, convert-to-negative, merge, and submit-replication persist in source-ingest
+    accept_resp = bff_client.post(
+        f"/bff/management/strategy-seeds/{primary_id}/review",
+        json={"action": "accept", "reason": "Verified TWSE flow signal."},
+        headers={**op_headers, "Idempotency-Key": "owner-bff-accept-1"},
+    )
+    assert accept_resp.status_code == 202, accept_resp.text
+    assert accept_resp.json()["data"]["status"] == "accepted"
+    assert accept_resp.json()["data"]["decision"]["reviewer_id"] == "seed-review-op"
+
+    bff_client.app.state.strategy_seed_review_idempotency.clear()
+    replay_resp = bff_client.post(
+        f"/bff/management/strategy-seeds/{primary_id}/review",
+        json={"action": "accept", "reason": "Verified TWSE flow signal."},
+        headers={**op_headers, "Idempotency-Key": "owner-bff-accept-1"},
+    )
+    assert replay_resp.status_code == 202, replay_resp.text
+    assert replay_resp.json()["meta"]["idempotency"]["replayed"] is True
+
+    promote_resp = bff_client.post(
+        f"/bff/management/strategy-seeds/{primary_id}/review",
+        json={"action": "convert-to-spec-seed", "reason": "Promote to StrategySpec."},
+        headers={**op_headers, "Idempotency-Key": "owner-bff-promote-1"},
+    )
+    assert promote_resp.status_code == 202, promote_resp.text
+    assert promote_resp.json()["data"]["status"] == "promoted_to_strategy_spec"
+
+    risk_resp = bff_client.post(
+        f"/bff/management/strategy-seeds/{risk_id}/review",
+        json={"action": "convert-to-risk", "reason": "Convert trainer risk constraint."},
+        headers={**op_headers, "Idempotency-Key": "owner-bff-risk-1"},
+    )
+    assert risk_resp.status_code == 202, risk_resp.text
+    assert risk_resp.json()["data"]["status"] == "converted_to_risk_constraint"
+
+    neg_resp = bff_client.post(
+        f"/bff/management/strategy-seeds/{neg_id}/review",
+        json={"action": "convert-to-negative", "reason": "Convert trainer negative memory."},
+        headers={**op_headers, "Idempotency-Key": "owner-bff-neg-1"},
+    )
+    assert neg_resp.status_code == 202, neg_resp.text
+    assert neg_resp.json()["data"]["status"] == "converted_to_negative"
+
+    merge_resp = bff_client.post(
+        f"/bff/management/strategy-seeds/{dup_id}/merge",
+        json={"target_seed_id": primary_id, "reason": "Merge duplicate hypothesis."},
+        headers={**op_headers, "Idempotency-Key": "owner-bff-merge-1"},
+    )
+    assert merge_resp.status_code == 202, merge_resp.text
+    assert merge_resp.json()["data"]["status"] == "merged"
+
+    rep_resp = bff_client.post(
+        f"/bff/management/strategy-seeds/{primary_id}/submit-replication",
+        json={"strategy_id": "strat-twse-flow-001", "strategy_spec_version": "1.0.0"},
+        headers={**op_headers, "Idempotency-Key": "owner-bff-rep-1"},
+    )
+    assert rep_resp.status_code == 202, rep_resp.text
+
+    # 3. Fresh SourceIngestionRuntime reading the same owner directory observes all persisted mutations
+    runtime2 = SourceIngestionRuntime()
+    reloaded_primary = runtime2.strategy_seed_store.get(primary_id)
+    assert reloaded_primary is not None
+    assert reloaded_primary.status == StrategySpecSeedStatus.PROMOTED_TO_STRATEGY_SPEC
+    assert reloaded_primary.lineage["submitted_by"] == "seed-review-op"
+    assert reloaded_primary.lineage["replication_ref"] == rep_resp.json()["data"]["replication_ref"]
+    assert runtime2.strategy_seed_store.get(dup_id).status == StrategySpecSeedStatus.MERGED
+    assert runtime2.strategy_seed_store.get(risk_id).status == StrategySpecSeedStatus.CONVERTED_TO_RISK_CONSTRAINT
+    assert runtime2.strategy_seed_store.get(neg_id).status == StrategySpecSeedStatus.CONVERTED_TO_NEGATIVE
+
+    # 4. Persona discovery loads seed candidates via SourceManagementClient without calling .exists() on remote URI
+    _owner_auth.set(op_headers["Authorization"])
+    _owner_tenant.set("tenant-dev")
+    persona_seeds, surface = _load_strategy_seed_match_candidates(snapshot_at="2026-10-18T00:00:00Z")
+    assert surface["status"] == "ok"
+    assert surface["path"] == "http://source-ingest.test/api/source-ingest/management/strategy-seeds"
+    assert [s.seed_id for s in persona_seeds] == [primary_id, dup_id, risk_id, neg_id]
+
+
+def test_strategy_seed_owner_boundary_unconfigured_or_unreachable_fails_closed_503(
+    monkeypatch,
+) -> None:
+    import io
+    import time
+    import urllib.error
+    import urllib.request
+    import pytest
+
+    from services.control_plane.bff.core.owner_reads import authorization as _owner_auth, selected_tenant as _owner_tenant
+    from services.control_plane.bff.personas.service import _load_strategy_seed_match_candidates
+    from services.control_plane.bff.source_management_client import SourceManagementClient, SourceManagementClientError
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    jwt_secret = "seed-owner-unreach-jwt-secret"
+    monkeypatch.delenv("STRATEGY_SEED_STORE_PATH", raising=False)
+    monkeypatch.delenv("STRATEGY_SPEC_SEED_STORE_PATH", raising=False)
+    monkeypatch.delenv("PANTHEON_SOURCE_INGEST_API_URL", raising=False)
+    monkeypatch.delenv("PANTHEON_SOURCE_INGEST_URL", raising=False)
+    monkeypatch.delenv("SOURCE_INGEST_SERVICE_URL", raising=False)
+    monkeypatch.delenv("SOURCE_INGEST_URL", raising=False)
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", jwt_secret)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", jwt_secret)
+    monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-dev")
+
+    read_store = create_in_memory_read_surface_ports()
+    bff_client = TestClient(_build_app(read_store))
+    op_jwt = encode_jwt_hs256(
+        {"sub": "seed-review-op", "roles": ["operator"], "tenant_id": "tenant-dev", "exp": int(time.time()) + 600},
+        secret=jwt_secret,
+    )
+    op_headers = {"Authorization": f"Bearer {op_jwt}", "X-Tenant-Id": "tenant-dev"}
+
+    # Unconfigured owner URL -> 503 DEPENDENCY_UNAVAILABLE (not 200 empty or 404)
+    unconf_list = bff_client.get("/bff/management/strategy-seeds", headers=op_headers)
+    assert unconf_list.status_code == 503, unconf_list.text
+    assert _error(unconf_list.json())["code"] == ErrorCode.DEPENDENCY_UNAVAILABLE
+    assert _error(unconf_list.json())["details"]["owner"] == "source-ingest"
+
+    unconf_detail = bff_client.get("/bff/management/strategy-seeds/seed-1d23a6d2fbc149f4", headers=op_headers)
+    assert unconf_detail.status_code == 503, unconf_detail.text
+    assert _error(unconf_detail.json())["code"] == ErrorCode.DEPENDENCY_UNAVAILABLE
+
+    # Unreachable owner -> 503 DEPENDENCY_UNAVAILABLE on read, review, merge, and submit-replication
+    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_API_URL", "http://source-ingest.unreachable")
+
+    def _unreachable_urlopen(req, timeout=5.0):
+        raise OSError("Connection refused")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _unreachable_urlopen)
+
+    for resp in (
+        bff_client.get("/bff/management/strategy-seeds", headers=op_headers),
+        bff_client.get("/bff/management/strategy-seeds/seed-1d23a6d2fbc149f4", headers=op_headers),
+        bff_client.post(
+            "/bff/management/strategy-seeds/seed-1d23a6d2fbc149f4/review",
+            json={"action": "accept", "reason": "test"},
+            headers={**op_headers, "Idempotency-Key": "unreach-rev-1"},
+        ),
+        bff_client.post(
+            "/bff/management/strategy-seeds/seed-1d23a6d2fbc149f4/merge",
+            json={"target_seed_id": "seed-other", "reason": "test"},
+            headers={**op_headers, "Idempotency-Key": "unreach-mrg-1"},
+        ),
+        bff_client.post(
+            "/bff/management/strategy-seeds/seed-1d23a6d2fbc149f4/submit-replication",
+            json={},
+            headers={**op_headers, "Idempotency-Key": "unreach-rep-1"},
+        ),
+    ):
+        assert resp.status_code == 503, resp.text
+        err = _error(resp.json())
+        assert err["code"] == ErrorCode.DEPENDENCY_UNAVAILABLE
+        assert err["details"]["owner"] == "source-ingest"
+        assert err["details"]["upstream_error_code"] == "CONNECTION_ERROR"
+
+    _owner_auth.set(op_headers["Authorization"])
+    _owner_tenant.set("tenant-dev")
+    persona_seeds, surface = _load_strategy_seed_match_candidates(snapshot_at="2026-10-18T00:00:00Z")
+    assert persona_seeds == []
+    assert surface["status"] == "unavailable"
+
+    # Untyped owner HTTP 404 (missing owner endpoint) -> SourceManagementClient.get raises (not None) and BFF fails closed 503
+    def _missing_endpoint_urlopen(req, timeout=5.0):
+        raise urllib.error.HTTPError(
+            req.full_url,
+            404,
+            "Not Found",
+            {"Content-Type": "application/json"},
+            io.BytesIO(b'{"detail":"Not Found"}'),
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _missing_endpoint_urlopen)
+    with pytest.raises(SourceManagementClientError) as exc_info:
+        SourceManagementClient().get("seed-1d23a6d2fbc149f4")
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.error_code == "HTTP_404"
+
+    owner_404_detail = bff_client.get("/bff/management/strategy-seeds/seed-1d23a6d2fbc149f4", headers=op_headers)
+    assert owner_404_detail.status_code == 503, owner_404_detail.text
+    owner_404_err = _error(owner_404_detail.json())
+    assert owner_404_err["code"] == ErrorCode.DEPENDENCY_UNAVAILABLE
+    assert owner_404_err["details"]["owner"] == "source-ingest"
+    assert owner_404_err["details"]["upstream_error_code"] == "HTTP_404"
+    assert owner_404_err["details"]["upstream_status"] == 404
+
+

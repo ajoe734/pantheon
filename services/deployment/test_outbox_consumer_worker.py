@@ -1760,6 +1760,55 @@ class TestRunPoll:
         consume.assert_called_once()
 
 
+    def test_replayed_compensation_converges_when_binding_retired(self, worker):
+        record = _outbox_record("evt-comp-retired", sequence_no=3)
+        record["event"].update(
+            {
+                "event_type": "deployment.compensation.requested",
+                "aggregate_id": "saga-001",
+            }
+        )
+        saga = _compensating_saga("request_rollback")
+        terminal = {**saga, "status": "failed", "current_step": "compensated"}
+        plan = {"plan_id": "plan-001", "status": "executed"}
+        retired = _runtime_binding(status="retired")
+        with (
+            patch.object(worker, "fetch_pending_outbox", return_value=[record]),
+            patch.object(
+                worker,
+                "fetch_applied_inbox",
+                return_value=[_applied_receipt(1), _applied_receipt(2)],
+            ),
+            patch.object(worker, "fetch_saga", side_effect=[saga, terminal]),
+            patch.object(worker, "fetch_plan", return_value=plan),
+            patch.object(worker, "finalize_compensation") as finalize,
+            patch.object(worker, "create_incident") as create_incident,
+            patch.object(
+                worker,
+                "fetch_projection",
+                return_value=_compensation_projection(terminal, plan_status="executed"),
+            ),
+            patch.object(
+                worker,
+                "consume_event",
+                return_value=_inbox_receipt("evt-comp-retired"),
+            ) as consume,
+            patch.object(worker, "RuntimeManagerClient") as client_class,
+        ):
+            client_class.return_value.get.return_value = retired
+            client_class.return_value.list_by_pool.return_value = [retired]
+            result = worker.run_poll(
+                api_url="http://localhost:8095", consumer_name="test-consumer"
+            )
+
+        assert result["consumed"] == 1
+        finalize.assert_called_once()
+        assert "already retired" in finalize.call_args.kwargs["note"]
+        create_incident.assert_not_called()
+        client_class.return_value.execute_kill_switch.assert_not_called()
+        consume.assert_called_once()
+
+
 class TestRetirementResolvesIncidents:
     URL = "http://incidents:8090"
 
@@ -1989,6 +2038,74 @@ class TestExecuteCompensation:
         assert result == ("failed", "executing")
         client.transition.assert_called_once_with("rb-001", "failed")
         finalize.assert_called_once()
+
+    def test_retired_binding_finalizes_without_containment_or_incident(self, worker):
+        saga = _compensating_saga("request_rollback")
+        retired = _runtime_binding(status="retired")
+        client = MagicMock()
+        client.get.return_value = retired
+        client.list_by_pool.return_value = [retired]
+        with (
+            patch.object(worker, "finalize_compensation") as finalize,
+            patch.object(worker, "create_incident") as create_incident,
+        ):
+            result = worker.execute_compensation(
+                api_url="http://deployment:8095",
+                saga=saga,
+                plan={"plan_id": "plan-001", "status": "executed"},
+                event=self._event("request_rollback"),
+                client=client,
+                incident_url="http://incidents:8090",
+                timeout_seconds=10.0,
+            )
+
+        assert result == ("failed", "executed")
+        create_incident.assert_not_called()
+        client.execute_kill_switch.assert_not_called()
+        client.rollback.assert_not_called()
+        client.transition.assert_not_called()
+        finalize.assert_called_once()
+        kwargs = finalize.call_args.kwargs
+        assert kwargs["terminal_status"] == "failed"
+        assert "rb-001" in kwargs["note"] and "retired" in kwargs["note"]
+
+    def test_retired_binding_with_other_identity_is_not_short_circuited(self, worker):
+        saga = _compensating_saga("request_rollback")
+        client = MagicMock()
+        client.get.return_value = _runtime_binding(status="retired", plan_id="other")
+        with patch.object(worker, "finalize_compensation") as finalize:
+            with pytest.raises(RuntimeError, match="identity mismatch"):
+                worker.execute_compensation(
+                    api_url="http://deployment:8095",
+                    saga=saga,
+                    plan={"plan_id": "plan-001", "status": "executed"},
+                    event=self._event("request_rollback"),
+                    client=client,
+                    incident_url="http://incidents:8090",
+                    timeout_seconds=10.0,
+                )
+        finalize.assert_not_called()
+
+    def test_terminal_verification_accepts_retired_binding(self, worker):
+        saga = {
+            **_compensating_saga("request_rollback"),
+            "status": "failed",
+            "current_step": "compensated",
+        }
+        retired = _runtime_binding(status="retired")
+        client = MagicMock()
+        client.get.return_value = retired
+        client.list_by_pool.return_value = [retired]
+        result = worker.verify_terminal_compensation_side_effects(
+            saga=saga,
+            plan={"plan_id": "plan-001", "status": "executed"},
+            event=self._event("request_rollback"),
+            client=client,
+            incident_url="http://incidents:8090",
+            timeout_seconds=10.0,
+        )
+        assert result == "executed"
+        client.get_safe_mode.assert_not_called()
 
     def test_rollback_recovers_existing_child_without_second_post(self, worker):
         saga = _compensating_saga("request_rollback")

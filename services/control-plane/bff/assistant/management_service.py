@@ -2769,7 +2769,9 @@ def _project_operator_runtime_state_row_impl(
     binding: Dict[str, Any],
     *,
     telemetry_summary_record: Optional[Dict[str, Any]] = None,
+    telemetry_observation: Optional[Dict[str, Any]] = None,
     monitoring_session_record: Optional[Dict[str, Any]] = None,
+    monitoring_observation: Optional[Dict[str, Any]] = None,
     prefetched: bool = False,
 ) -> Dict[str, Any]:
     runtime_id = str(binding.get("runtime_id") or binding.get("id") or "")
@@ -2778,9 +2780,16 @@ def _project_operator_runtime_state_row_impl(
         or binding.get("binding_id")
         or binding.get("id")
     )
-    telemetry_observation: Optional[Dict[str, Any]] = None
     if prefetched:
         raw_telemetry_summary = telemetry_summary_record
+        if telemetry_observation is None and hasattr(
+            _management_ai_context_service, "_build_context_telemetry_summary_result"
+        ):
+            _, telemetry_observation = (
+                _management_ai_context_service._build_context_telemetry_summary_result(
+                    runtime_id, raw_telemetry_summary
+                )
+            )
     else:
         raw_telemetry_summary, telemetry_observation = (
             _management_ai_context_service.get_context_telemetry_summary(runtime_id)
@@ -2788,9 +2797,16 @@ def _project_operator_runtime_state_row_impl(
     telemetry_summary = _project_runtime_state_telemetry_summary(
         raw_telemetry_summary
     )
-    monitoring_observation: Optional[Dict[str, Any]] = None
     if prefetched:
         raw_monitoring_session = monitoring_session_record
+        if monitoring_observation is None and hasattr(
+            _management_ai_context_service, "_build_context_monitoring_session_result"
+        ):
+            _, monitoring_observation = (
+                _management_ai_context_service._build_context_monitoring_session_result(
+                    runtime_id, raw_monitoring_session
+                )
+            )
     else:
         raw_monitoring_session, monitoring_observation = (
             _management_ai_context_service.get_context_monitoring_session(
@@ -4160,22 +4176,87 @@ def _mgmt_nl_add_record_entities(
 def _mgmt_nl_scoped_runtime_rows(
     runtime_bindings: List[Dict[str, Any]],
     entities: Set[Tuple[str, str]],
+    telemetry_by_runtime_id: Optional[Dict[str, Tuple[Optional[Dict[str, Any]], Dict[str, Any]]]] = None,
 ) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
+    runtime_ids: List[str] = []
+    for binding in runtime_bindings:
+        runtime_id = str(binding.get("runtime_id") or binding.get("id") or binding.get("binding_id") or "").strip()
+        if runtime_id:
+            runtime_ids.append(runtime_id)
+    missing_runtime_ids = [
+        rid for rid in runtime_ids if telemetry_by_runtime_id is None or rid not in telemetry_by_runtime_id
+    ]
+    fetched_telemetry: Dict[str, Tuple[Optional[Dict[str, Any]], Dict[str, Any]]] = {}
+    if missing_runtime_ids:
+        batch_telemetry_fn = getattr(
+            _management_ai_context_service, "get_context_telemetry_summaries_for_runtimes", None
+        )
+        if callable(batch_telemetry_fn):
+            fetched_telemetry = batch_telemetry_fn(missing_runtime_ids)
+        else:
+            for rid in dict.fromkeys(missing_runtime_ids):
+                fetched_telemetry[rid] = _management_ai_context_service.get_context_telemetry_summary(rid)
+        if telemetry_by_runtime_id is not None:
+            telemetry_by_runtime_id.update(fetched_telemetry)
+    effective_telemetry = telemetry_by_runtime_id if telemetry_by_runtime_id is not None else fetched_telemetry
+    batch_monitoring_fn = getattr(
+        _management_ai_context_service, "get_context_monitoring_sessions_for_bindings", None
+    )
+    monitoring_by_key = (
+        batch_monitoring_fn(runtime_bindings) if callable(batch_monitoring_fn) else {}
+    )
     for binding in runtime_bindings:
         runtime_id = str(binding.get("runtime_id") or binding.get("id") or binding.get("binding_id") or "").strip()
         binding_id = str(binding.get("binding_id") or binding.get("runtime_binding_id") or binding.get("id") or "").strip()
+        row_runtime_id = str(binding.get("runtime_id") or binding.get("id") or "")
+        row_binding_id = str(
+            binding.get("runtime_binding_id")
+            or binding.get("binding_id")
+            or binding.get("id")
+            or ""
+        )
         _mgmt_nl_add_entity(entities, "runtime", runtime_id)
         _mgmt_nl_add_entity(entities, "runtime_binding", binding_id)
         if binding.get("capital_pool_id"):
             _mgmt_nl_add_entity(entities, "capital_pool", binding.get("capital_pool_id"))
-        rows.append(_project_operator_runtime_state_row(binding))
+        telemetry_summary, telemetry_obs = effective_telemetry.get(
+            runtime_id, effective_telemetry.get(row_runtime_id, (None, None))
+        )
+        monitoring_key = (row_runtime_id, row_binding_id)
+        if monitoring_key in monitoring_by_key:
+            monitoring_session, monitoring_obs = monitoring_by_key[monitoring_key]
+        elif (runtime_id, binding_id) in monitoring_by_key:
+            monitoring_session, monitoring_obs = monitoring_by_key[(runtime_id, binding_id)]
+        elif not callable(batch_monitoring_fn):
+            monitoring_session, monitoring_obs = (
+                _management_ai_context_service.get_context_monitoring_session(
+                    row_runtime_id, row_binding_id
+                )
+            )
+        else:
+            monitoring_session, monitoring_obs = (None, None)
+        rows.append(
+            _project_operator_runtime_state_row(
+                binding,
+                telemetry_summary_record=telemetry_summary,
+                monitoring_session_record=monitoring_session,
+                telemetry_observation=telemetry_obs,
+                monitoring_observation=monitoring_obs,
+                prefetched=True,
+            )
+        )
     return rows
 def _mgmt_nl_trading_pulse_snippet(
     runtime_bindings: List[Dict[str, Any]],
     entities: Set[Tuple[str, str]],
+    telemetry_by_runtime_id: Optional[Dict[str, Tuple[Optional[Dict[str, Any]], Dict[str, Any]]]] = None,
 ) -> Dict[str, Any]:
-    runtime_rows = _mgmt_nl_scoped_runtime_rows(runtime_bindings, entities)
+    runtime_rows = _mgmt_nl_scoped_runtime_rows(
+        runtime_bindings,
+        entities,
+        telemetry_by_runtime_id=telemetry_by_runtime_id,
+    )
     telemetry_rows = [
         row.get("telemetry_summary")
         for row in runtime_rows
@@ -4314,6 +4395,48 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
     def _tenant_record_filter(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         return _mgmt_nl_filter_tenant_records(records, tenant_id)
 
+    _cached_runtime_bindings: Optional[Tuple[List[Dict[str, Any]], Dict[str, Any]]] = None
+    _cached_unfiltered_telemetry: Dict[str, Tuple[Optional[Dict[str, Any]], Dict[str, Any]]] = {}
+    _cached_trading_pulse_snippet: Optional[Dict[str, Any]] = None
+
+    def _get_runtime_bindings() -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        nonlocal _cached_runtime_bindings
+        if _cached_runtime_bindings is None:
+            _cached_runtime_bindings = _management_ai_context_service.get_context_runtime_bindings(
+                record_filter=_tenant_record_filter
+            )
+        return _cached_runtime_bindings
+
+    def _get_unfiltered_telemetry(
+        runtime_bindings: List[Dict[str, Any]],
+    ) -> List[Tuple[Optional[Dict[str, Any]], Dict[str, Any]]]:
+        ordered_ids: List[str] = [
+            str(r.get("runtime_id") or r.get("id") or r.get("binding_id") or "")
+            for r in runtime_bindings
+            if r.get("runtime_id") or r.get("id") or r.get("binding_id")
+        ]
+        missing_ids = [rid for rid in ordered_ids if rid not in _cached_unfiltered_telemetry]
+        if missing_ids:
+            batch_fn = getattr(
+                _management_ai_context_service, "get_context_telemetry_summaries_for_runtimes", None
+            )
+            if callable(batch_fn):
+                _cached_unfiltered_telemetry.update(batch_fn(missing_ids))
+            else:
+                for rid in dict.fromkeys(missing_ids):
+                    _cached_unfiltered_telemetry[rid] = (
+                        _management_ai_context_service.get_context_telemetry_summary(rid)
+                    )
+        return [_cached_unfiltered_telemetry[rid] for rid in ordered_ids]
+
+    def _get_trading_pulse_snippet(runtime_bindings: List[Dict[str, Any]]) -> Dict[str, Any]:
+        nonlocal _cached_trading_pulse_snippet
+        if _cached_trading_pulse_snippet is None:
+            _cached_trading_pulse_snippet = _mgmt_nl_trading_pulse_snippet(
+                runtime_bindings, evidence_entities, _cached_unfiltered_telemetry
+            )
+        return _cached_trading_pulse_snippet
+
     if use_all or focus == "cockpit":
         try:
             alerts_payload = _build_operator_alerts_payload(snapshot_at)
@@ -4331,10 +4454,8 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                 list(anomalies_payload.get("items") or []),
                 tenant_id,
             )
-            runtime_bindings, runtime_bindings_obs = _management_ai_context_service.get_context_runtime_bindings(
-                record_filter=_tenant_record_filter
-            )
-            trading_pulse = _mgmt_nl_trading_pulse_snippet(runtime_bindings, evidence_entities)
+            runtime_bindings, runtime_bindings_obs = _get_runtime_bindings()
+            trading_pulse = _get_trading_pulse_snippet(runtime_bindings)
             _mgmt_nl_add_record_entities(evidence_entities, alerts, "alert", "alert_id", "id")
             _mgmt_nl_add_record_entities(evidence_entities, inbox_items, "human_inbox", "id", "item_id")
             _mgmt_nl_add_record_entities(evidence_entities, anomalies, "incident", "id")
@@ -4376,10 +4497,8 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
 
     if use_all or focus == "trading_pulse":
         try:
-            runtime_bindings, runtime_bindings_obs = _management_ai_context_service.get_context_runtime_bindings(
-                record_filter=_tenant_record_filter
-            )
-            pulse_data = _mgmt_nl_trading_pulse_snippet(runtime_bindings, evidence_entities)
+            runtime_bindings, runtime_bindings_obs = _get_runtime_bindings()
+            pulse_data = _get_trading_pulse_snippet(runtime_bindings)
             evidence_source_types.update({"runtime", "runtime_binding", "telemetry", "paper_live_drift"})
             snippets["trading_pulse"] = {
                 "summary": pulse_data.get("summary"),
@@ -4401,19 +4520,11 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
             pools, pools_obs = _management_ai_context_service.get_context_capital_pools(
                 record_filter=_tenant_record_filter
             )
-            runtime_bindings, runtime_bindings_obs = _management_ai_context_service.get_context_runtime_bindings(
-                record_filter=_tenant_record_filter
-            )
+            runtime_bindings, runtime_bindings_obs = _get_runtime_bindings()
             _mgmt_nl_add_record_entities(evidence_entities, pools, "capital_pool", "pool_id", "id")
             _mgmt_nl_add_record_entities(evidence_entities, runtime_bindings, "runtime", "runtime_id", "id", "binding_id")
             evidence_source_types.update({"capital_pool", "runtime", "runtime_binding", "telemetry"})
-            telemetry_results = [
-                _management_ai_context_service.get_context_telemetry_summary(
-                    str(r.get("runtime_id") or r.get("id") or r.get("binding_id") or "")
-                )
-                for r in runtime_bindings
-                if r.get("runtime_id") or r.get("id") or r.get("binding_id")
-            ]
+            telemetry_results = _get_unfiltered_telemetry(runtime_bindings)
             telemetry_values = [t for t, _obs in telemetry_results if t is not None]
             telemetry_observations = [obs for _t, obs in telemetry_results]
             portfolio_rollup = _management_telemetry_rollup(telemetry_values)
@@ -4453,25 +4564,19 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
             personas, personas_obs = _management_ai_context_service.get_context_personas(
                 lambda: _list_persona_records(tenant_id), record_filter=_tenant_record_filter
             )
-            runtime_bindings, runtime_bindings_obs = _management_ai_context_service.get_context_runtime_bindings(
-                record_filter=_tenant_record_filter
-            )
+            runtime_bindings, runtime_bindings_obs = _get_runtime_bindings()
             incidents, incidents_obs = _management_ai_context_service.get_context_incidents(
                 record_filter=_tenant_record_filter
             )
             evolution_decisions, evolution_decisions_obs = _management_ai_context_service.get_context_evolution_decisions(
                 record_filter=_tenant_record_filter
             )
-            # Telemetry is read exactly once per tenant-scoped runtime
-            # binding, through the same typed owner-observation query used by
-            # the portfolio_book surface, and that single result is shared by
-            # both the per-persona snippet items below and the surface-level
-            # owner_observations aggregate. A second independent read of the
-            # same runtime could observe a different outcome than the first
-            # (e.g. a flaky provider that fails once and recovers), which
-            # would let the snippet and the surface silently disagree about
-            # the same runtime's telemetry.
-            telemetry_by_runtime_id: Dict[str, Tuple[Optional[Dict[str, Any]], Dict[str, Any]]] = {}
+            # Telemetry is read once in batch for all tenant-scoped runtime
+            # bindings (or derived from the request-scoped batch read already
+            # performed within this _mgmt_nl_collect_context call), and that
+            # single result is shared by both the per-persona snippet items
+            # below and the surface-level owner_observations aggregate.
+            fleet_runtime_ids: List[str] = []
             for runtime_binding in runtime_bindings:
                 fleet_runtime_id = str(
                     runtime_binding.get("runtime_id")
@@ -4479,11 +4584,24 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                     or runtime_binding.get("binding_id")
                     or ""
                 )
-                if not fleet_runtime_id or fleet_runtime_id in telemetry_by_runtime_id:
-                    continue
-                telemetry_by_runtime_id[fleet_runtime_id] = _management_ai_context_service.get_context_telemetry_summary(
-                    fleet_runtime_id, record_filter=_tenant_record_filter
+                if fleet_runtime_id and fleet_runtime_id not in fleet_runtime_ids:
+                    fleet_runtime_ids.append(fleet_runtime_id)
+            batch_telemetry_fn = getattr(
+                _management_ai_context_service, "get_context_telemetry_summaries_for_runtimes", None
+            )
+            if callable(batch_telemetry_fn):
+                telemetry_by_runtime_id = batch_telemetry_fn(
+                    fleet_runtime_ids,
+                    record_filter=_tenant_record_filter,
+                    prefetched_by_runtime_id=_cached_unfiltered_telemetry or None,
                 )
+            else:
+                telemetry_by_runtime_id = {
+                    rid: _management_ai_context_service.get_context_telemetry_summary(
+                        rid, record_filter=_tenant_record_filter
+                    )
+                    for rid in fleet_runtime_ids
+                }
             telemetry_observations = [obs for _summary, obs in telemetry_by_runtime_id.values()]
             # Project every persona independently: a raise from one persona's
             # bindings/telemetry/teaching-session owner must not discard the
@@ -4903,6 +5021,239 @@ def _mgmt_nl_evidence_entities_payload(entities: Any) -> List[Dict[str, str]]:
         {"entity_type": str(entity_type), "entity_ref": str(entity_ref)}
         for entity_type, entity_ref in sorted(list(entities or set()))
     ]
+def _mgmt_nl_scalar_view(record: Any) -> Any:
+    """Provider-facing view of a record: scalar fields only, with the names of
+    omitted nested fields recorded so the reduction is explicit, not silent."""
+    if not isinstance(record, dict):
+        return record
+    view = {k: v for k, v in record.items() if v is None or isinstance(v, (str, int, float, bool))}
+    omitted = sorted(str(k) for k in record if k not in view)
+    if omitted:
+        view["omitted_nested_fields"] = omitted
+    return view
+def _mgmt_nl_scalar_views(records: Any) -> Any:
+    if not isinstance(records, list):
+        return records
+    return [_mgmt_nl_scalar_view(record) for record in records]
+_MGMT_NL_PROVIDER_ALIAS_KEYS = frozenset({
+    "capitalPools", "runtimeBindings", "telemetrySummary", "activeIncidents",
+    "owner_observations",
+})
+def _mgmt_nl_provider_fleet_item(item: Any) -> Any:
+    """Concise provider projection of one persona_fleet item. Owner
+    observations are carried once at surface level; camelCase aliases that
+    duplicate snake_case fields are dropped; nested lists keep scalar rows."""
+    if not isinstance(item, dict):
+        return item
+    projected: Dict[str, Any] = {}
+    for key, value in item.items():
+        if key in _MGMT_NL_PROVIDER_ALIAS_KEYS:
+            continue
+        if key == "persona":
+            projected[key] = _mgmt_nl_scalar_view(value)
+        elif key == "bindings":
+            projected[key] = [
+                {**_mgmt_nl_scalar_view(b), "capital_pool": _mgmt_nl_scalar_view(b.get("capital_pool"))}
+                if isinstance(b, dict) else b
+                for b in (value or [])
+            ]
+        elif key in {"capital_pools", "runtime_bindings", "sessions", "active_incidents"}:
+            projected[key] = _mgmt_nl_scalar_views(value)
+        elif key == "telemetry_summary" and isinstance(value, dict):
+            projected[key] = {
+                **_mgmt_nl_scalar_view(value),
+                "latest": _mgmt_nl_scalar_view(value.get("latest")),
+                "summaries": _mgmt_nl_scalar_views(value.get("summaries")),
+            }
+            projected[key].pop("omitted_nested_fields", None)
+        elif key == "evolution" and isinstance(value, dict):
+            projected[key] = {
+                **_mgmt_nl_scalar_view(value),
+                "latest_decision": _mgmt_nl_scalar_view(value.get("latest_decision")),
+                "decisions": _mgmt_nl_scalar_views(value.get("decisions")),
+            }
+            projected[key].pop("omitted_nested_fields", None)
+        elif key == "training" and isinstance(value, dict):
+            projected[key] = {
+                **_mgmt_nl_scalar_view(value),
+                "latest_session": _mgmt_nl_scalar_view(value.get("latest_session")),
+            }
+            projected[key].pop("omitted_nested_fields", None)
+        else:
+            projected[key] = value
+    return projected
+_MGMT_NL_SHARED_ROW_PATHS: Tuple[Tuple[str, ...], ...] = (
+    ("bindings",), ("capital_pools",), ("runtime_bindings",), ("sessions",), ("active_incidents",),
+    ("telemetry_summary", "summaries"), ("telemetry_summary", "latest"),
+    ("evolution", "decisions"), ("evolution", "latest_decision"),
+    ("training", "latest_session"),
+)
+def _mgmt_nl_dedupe_shared_fleet_rows(items: List[Any]) -> Dict[str, List[Any]]:
+    """Move rows repeated across (or within) persona_fleet items into one
+    fleet-level `shared_rows` table. A list whose rows are all shared becomes
+    `{"shared_row_list", "count", "row_indexes"}`; a single shared row becomes
+    `{"shared_row": index}`; a mixed list keeps its unshared rows inline and
+    refers to shared ones as `{"shared_row": index}`. Counts and every row's
+    content (ids, tenant, status) remain recoverable, nothing is sliced."""
+
+    def slots(item: Any, path: Tuple[str, ...]) -> Tuple[Any, Optional[str], Any]:
+        parent: Any = item
+        for step in path[:-1]:
+            parent = parent.get(step) if isinstance(parent, dict) else None
+        if not isinstance(parent, dict):
+            return None, None, None
+        return parent, path[-1], parent.get(path[-1])
+
+    def row_key(row: Dict[str, Any]) -> str:
+        return json.dumps(row, sort_keys=True, default=str)
+
+    def rows(value: Any) -> List[Dict[str, Any]]:
+        if isinstance(value, list):
+            return [row for row in value if isinstance(row, dict)]
+        return [value] if isinstance(value, dict) else []
+
+    counts: Dict[Tuple[str, ...], Dict[str, int]] = {}
+    for item in items:
+        for path in _MGMT_NL_SHARED_ROW_PATHS:
+            _parent, _leaf, value = slots(item, path)
+            for row in rows(value):
+                bucket = counts.setdefault(path, {})
+                key = row_key(row)
+                bucket[key] = bucket.get(key, 0) + 1
+    shared: Dict[str, List[Any]] = {}
+    shared_index: Dict[Tuple[Tuple[str, ...], str], int] = {}
+
+    def index_of(path: Tuple[str, ...], row: Dict[str, Any]) -> Optional[int]:
+        key = row_key(row)
+        if counts[path][key] < 2:
+            return None
+        idx = shared_index.get((path, key))
+        if idx is None:
+            table = shared.setdefault(".".join(path), [])
+            idx = shared_index[(path, key)] = len(table)
+            table.append(row)
+        return idx
+
+    for item in items:
+        for path in _MGMT_NL_SHARED_ROW_PATHS:
+            parent, leaf, value = slots(item, path)
+            name = ".".join(path)
+            if isinstance(value, dict):
+                idx = index_of(path, value)
+                if idx is not None:
+                    parent[leaf] = {"shared_row_table": name, "shared_row": idx}
+            elif isinstance(value, list) and value:
+                indexes = [index_of(path, row) if isinstance(row, dict) else None for row in value]
+                if all(idx is not None for idx in indexes):
+                    parent[leaf] = {"shared_row_list": name, "count": len(value), "row_indexes": indexes}
+                elif any(idx is not None for idx in indexes):
+                    parent[leaf] = [
+                        {"shared_row_table": name, "shared_row": idx} if idx is not None else row
+                        for row, idx in zip(value, indexes)
+                    ]
+    return shared
+
+
+def _mgmt_nl_provider_summary_context(snippets: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(snippets, dict):
+        return snippets
+    projected = dict(snippets)
+    fleet = snippets.get("persona_fleet")
+    if isinstance(fleet, dict) and isinstance(fleet.get("items"), list):
+        summary = fleet.get("summary") if isinstance(fleet.get("summary"), dict) else {}
+        returned = len(fleet["items"])
+        total_population = summary.get("total_personas")
+        partial = isinstance(total_population, int) and total_population > returned
+        projected_items = [_mgmt_nl_provider_fleet_item(item) for item in fleet["items"]]
+        shared_rows = _mgmt_nl_dedupe_shared_fleet_rows(projected_items)
+        projected["persona_fleet"] = {
+            **fleet,
+            "items": projected_items,
+            **({"shared_rows": shared_rows} if shared_rows else {}),
+            # `total` is the returned sample size; the authoritative population
+            # is summary.total_personas. Health/bound counts in `summary` are
+            # computed over the returned sample only, never the whole population.
+            "population_scope": {
+                "total_population": total_population,
+                "returned_sample_count": returned,
+                "omitted_count": (total_population - returned) if partial else 0,
+                "partial": partial,
+                "sample_scoped_summary_fields": [
+                    "critical_personas", "degraded_personas", "healthy_personas",
+                    "bound_personas", "runtime_bound_personas",
+                ],
+                "whole_population_health_counts": "unavailable" if partial else "equals_sample",
+            },
+        }
+    return projected
+def _mgmt_nl_provider_owner_observations(observations: Any) -> Any:
+    """Group repeated per-subject observations (ok and non-ok alike) by
+    (subject_type, source_kind, status, degradation_reason, source_version).
+    Each group keeps status, reason, source_kind, a count, and every distinct
+    owner and subject id; null/empty fields are dropped. A singleton keeps its
+    own non-empty scalar fields. Per-subject timestamps/correlation ids of a
+    multi-subject group are named in `omitted_per_subject_fields`."""
+    if not isinstance(observations, list):
+        return observations
+    kept: List[Any] = []
+    groups: Dict[Tuple[str, ...], List[Dict[str, Any]]] = {}
+    for obs in observations:
+        if not isinstance(obs, dict):
+            kept.append(obs)
+            continue
+        key = tuple(
+            str(obs.get(f) or "")
+            for f in ("subject_type", "source_kind", "status", "degradation_reason", "source_version")
+        )
+        groups.setdefault(key, []).append(obs)
+    per_subject = ("observed_at", "freshness_seconds", "correlation_id")
+    for key, members in groups.items():
+        if len(members) == 1:
+            view = {k: v for k, v in _mgmt_nl_scalar_view(members[0]).items() if v not in (None, "", [], {})}
+            view.pop("omitted_nested_fields", None)
+            contributing = members[0].get("contributing_observations") or []
+            if contributing:
+                view["contributing_count"] = len(contributing)
+                view["contributing_observations"] = _mgmt_nl_provider_owner_observations(contributing)
+            kept.append(view)
+            continue
+        group: Dict[str, Any] = {
+            "subject_type": key[0], "source_kind": key[1], "status": key[2],
+            "count": len(members),
+        }
+        if key[3]:
+            group["degradation_reason"] = key[3]
+        if key[4]:
+            group["source_version"] = key[4]
+        owners = list(dict.fromkeys(str(m["owner"]) for m in members if m.get("owner")))
+        if owners:
+            group["owners"] = owners
+        group["subject_ids"] = list(dict.fromkeys(str(m["subject_id"]) for m in members if m.get("subject_id")))
+        omitted = [f for f in per_subject if any(m.get(f) not in (None, "") for m in members)]
+        if omitted:
+            group["omitted_per_subject_fields"] = omitted
+        nested = sum(len(m.get("contributing_observations") or []) for m in members)
+        if nested:
+            group["contributing_count"] = nested
+        kept.append(group)
+    return kept
+def _mgmt_nl_provider_surfaces(surfaces: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(surfaces, dict):
+        return surfaces
+    projected: Dict[str, Any] = {}
+    for name, surface in surfaces.items():
+        if isinstance(surface, dict) and isinstance(surface.get("owner_observations"), list):
+            surface = {**surface, "owner_observations": _mgmt_nl_provider_owner_observations(surface["owner_observations"])}
+        merged = surface.get("owner_observation") if isinstance(surface, dict) else None
+        if isinstance(merged, dict) and isinstance(merged.get("contributing_observations"), list):
+            contributing = merged["contributing_observations"]
+            view = _mgmt_nl_scalar_view(merged)
+            view.pop("omitted_nested_fields", None)
+            view["contributing_count"] = len(contributing)
+            view["contributing_observations"] = _mgmt_nl_provider_owner_observations(contributing)
+            surface = {**surface, "owner_observation": view}
+        projected[name] = surface
+    return projected
 def _mgmt_nl_build_context_pack(
     *,
     session_id: str,
@@ -4947,8 +5298,8 @@ def _mgmt_nl_build_context_pack(
             "session_id": session_id,
             "ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
         },
-        "summary_context": snippets,
-        "surfaces": surfaces,
+        "summary_context": _mgmt_nl_provider_summary_context(snippets),
+        "surfaces": _mgmt_nl_provider_surfaces(surfaces),
         "evidence_entities": _mgmt_nl_evidence_entities_payload(evidence_entities),
         "evidence_source_types": sorted(str(item) for item in (evidence_source_types or set())),
     }
@@ -5024,7 +5375,16 @@ def _mgmt_nl_build_context_pack(
         actor=context_identity,
         collect_source=collect_source,
     )
-    return pack.model_dump(mode="json", by_alias=False)
+    dumped = pack.model_dump(mode="json", by_alias=False)
+    # The composer mirrors `backend` into bff_reads.context; the canonical
+    # payload stays in `backend`, so the provider copy is a source reference.
+    bff_reads = dumped.get("bff_reads")
+    if isinstance(bff_reads, dict) and isinstance(bff_reads.get("context"), dict):
+        bff_reads["context"] = {
+            "mirrors": "backend",
+            "source_keys": sorted(str(k) for k in bff_reads["context"]),
+        }
+    return dumped
 def _mgmt_nl_provider_mode_from_context(context_pack: Dict[str, Any]) -> str:
     mode = str(context_pack.get("mode") or "user").strip()
     if mode in {"user", "kernel_observe", "kernel_debug"}:
@@ -6803,6 +7163,8 @@ async def _bff_management_nl_ask_stream_impl(
                 allowed_action_kinds=_mgmt_nl_allowed_action_kinds(ui_snapshot),
             )
             duration_ms = max(0, int((time.monotonic() - provider_started) * 1000))
+            active_model = str((final_event or {}).get("active_model") or "").strip()
+            requested_model = str((final_event or {}).get("requested_model") or "").strip()
             _management_ai_record_event(
                 {
                     "event_type": "management_ai.provider.completed",
@@ -6817,7 +7179,8 @@ async def _bff_management_nl_ask_stream_impl(
                     "mode": provider_mode,
                     "duration_ms": duration_ms,
                     "output_summary": {
-                        "model": "openclaw/main",
+                        "model": active_model or "openclaw/main",
+                        **({"requested_model": requested_model} if requested_model else {}),
                         "transport": "responses_http",
                         "output_bytes": len(answer.encode("utf-8")),
                     },
@@ -6828,6 +7191,8 @@ async def _bff_management_nl_ask_stream_impl(
                 "used": True,
                 "status": "completed",
                 "transport": "responses_http",
+                **({"active_model": active_model} if active_model else {}),
+                **({"requested_model": requested_model} if requested_model else {}),
             }
             _management_ai_append_turn(
                 turn_id=f"{message_id}-assistant",
@@ -6946,7 +7311,8 @@ async def bff_assistant_provider_usage_summary(
     """Return provider/model usage history plus provider-reported quota snapshots."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
-    return _assistant_provider_usage_summary(
+    return await asyncio.to_thread(
+        _assistant_provider_usage_summary,
         auth_probe=auth_probe,
         limit=limit,
         window_hours=window_hours,

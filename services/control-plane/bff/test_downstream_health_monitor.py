@@ -611,12 +611,16 @@ class TestReplayRouteDoesNotBlockEventLoop:
         replay_thread: Dict[str, int] = {}
 
         class _Monitor:
+            tenant_id = "tenant-a"
+
             def replay_dead_letters(self, **kwargs):
                 replay_thread["ident"] = threading.get_ident()
                 return {"replayed": 0, "delivered_now": 0, **kwargs}
 
         service = ControlLoopsService(downstream_health_monitor=_Monitor())
-        identity = types.SimpleNamespace(mfa_verified=True, operator_id="operator-1")
+        identity = types.SimpleNamespace(
+            mfa_verified=True, operator_id="operator-1", claims={"tenant_id": "tenant-a"}
+        )
 
         async def scenario():
             loop_thread["ident"] = threading.get_ident()
@@ -753,3 +757,75 @@ def test_file_worker_maps_to_scheduler_and_http_kinds_to_http_service(tmp_path):
     assert worker["component"]["component_kind"] == "scheduler"
     http = _event_for(monitor, "a", "runtime-owner-api", "http://a:1")
     assert http["component"]["component_kind"] == "http_service"
+
+
+class TestReplayAdmissionByEnvironment:
+    class _Monitor:
+        tenant_id = "tenant-a"
+
+        def __init__(self):
+            self.calls = []
+
+        def replay_dead_letters(self, **kwargs):
+            self.calls.append(kwargs)
+            return {"replayed": 0, **kwargs}
+
+    def _call(self, env, claims, mfa, payload=None):
+        from control_loops.service import ControlLoopsService
+
+        monitor = self._Monitor()
+        service = ControlLoopsService(
+            downstream_health_monitor=monitor, deployed_environment=env
+        )
+        identity = types.SimpleNamespace(
+            mfa_verified=mfa, operator_id="op-1", claims=claims
+        )
+        body = (
+            {"approval_ref": "apr-1", "reason": "drain"} if payload is None else payload
+        )
+        try:
+            result = _run(
+                service.replay_downstream_health_dead_letters(identity=identity, payload=body)
+            )
+        except Exception as exc:  # noqa: BLE001
+            return monitor, exc
+        return monitor, result
+
+    @staticmethod
+    def _assert_denied(monitor, err, status, precondition):
+        from fastapi import HTTPException
+
+        assert isinstance(err, HTTPException), repr(err)
+        assert err.status_code == status
+        assert precondition in json.dumps(err.detail, default=str)
+        assert not monitor.calls
+
+    def test_dev_matching_tenant_without_mfa_succeeds(self):
+        monitor, result = self._call("dev", {"tenant_id": "tenant-a"}, False)
+        assert result["data"]["approval_ref"] == "apr-1"
+        assert len(monitor.calls) == 1 and monitor.calls[0]["actor_id"] == "op-1"
+        assert monitor.calls[0]["reason"] == "drain"
+
+    def test_dev_wrong_or_missing_tenant_denied_even_with_mfa(self):
+        for claims in ({"tenant_id": "tenant-b"}, {}):
+            monitor, err = self._call("dev", claims, True)
+            self._assert_denied(monitor, err, 403, "tenant_scope")
+
+    def test_non_dev_still_requires_mfa(self):
+        monitor, err = self._call("prod", {"tenant_id": "tenant-a"}, False)
+        self._assert_denied(monitor, err, 403, "mfa_verified")
+
+    def test_dev_missing_approval_and_invalid_channel_rejected(self):
+        claims = {"tenant_id": "tenant-a"}
+        for body in (
+            {},
+            {"reason": "x"},
+            {"approval_ref": "a"},
+            {"approval_ref": " ", "reason": "x"},
+        ):
+            monitor, err = self._call("dev", claims, False, body)
+            self._assert_denied(monitor, err, 422, "approval_ref")
+        monitor, err = self._call(
+            "dev", claims, False, {"approval_ref": "a", "reason": "x", "channel": "bogus"}
+        )
+        self._assert_denied(monitor, err, 422, "channel")

@@ -1,0 +1,89 @@
+{
+  "task_id": "DEV-MGMT-USABILITY-DIRECT-20261019",
+  "predecessor": "DEV-MGMT-USABILITY-REPAIR-20261019",
+  "status": "local_validation_passed_pending_independent_review_and_hosted_acceptance",
+  "authorization": "Operator explicitly requested direct takeover of the four existing repairs; independent review and official deployment acceptance remain required.",
+  "source_fixes": [
+    {
+      "id": "test_admin_display_name",
+      "files": [
+        "services/control-plane/bff/auth/policy.py",
+        "services/control-plane/bff/auth/handlers.py",
+        "services/control-plane/bff/test_bff_session_auth_me_contract.py"
+      ],
+      "summary": "Include preferred_username and name claims from the configured test_admin client_id (admintest) on /bff/auth/dev-login so /bff/me exposes display_name=admintest while preserving stable audit subject sub=pantheon-dev-admin-test and all 6 roles."
+    },
+    {
+      "id": "capital_pool_port_risk_policy_ref_filter",
+      "files": [
+        "services/control-plane/bff/ports/persona_capital_runtime.py",
+        "services/control-plane/bff/ports/read_surface_ports.py",
+        "services/control-plane/bff/tests/test_persona_capital_runtime_ports.py"
+      ],
+      "summary": "Accept risk_policy_ref: Optional[str] = None in CapitalPoolPort.list_capital_pools, PersonaCapitalRuntimeDomainPort.list_capital_pools, and ReadSurfacePorts.list_capital_pools, filtering by risk_policy_ref/risk_policy_id so GET /bff/management/portfolio-book returns live owner data without TypeError (500) and honors risk policy filters."
+    },
+    {
+      "id": "async_providers_and_usage_summary_offload_with_contextvars",
+      "files": [
+        "services/control-plane/bff/assistant/routes.py",
+        "services/control-plane/bff/assistant/management_service.py",
+        "services/control-plane/bff/core/app_factory.py",
+        "services/control-plane/bff/auth/service.py",
+        "services/control-plane/bff/tests/test_bff_auth_facade.py"
+      ],
+      "summary": "Offload synchronous urllib provider list, provider readiness, and provider usage-summary calls via asyncio.to_thread (which preserves ContextVars) so simultaneous /bff/auth/readiness, /bff/me, and /bff/logout complete while slow provider callbacks remain pending while providers?auth_probe=true or providers/usage-summary?auth_probe=true runs."
+    },
+    {
+      "id": "management_openclaw_primary_model_routing_and_stateless_readiness",
+      "files": [
+        "docker-compose.yml",
+        "services/openclaw-gateway-adapter/assistant_openclaw_provider.py",
+        "services/openclaw-gateway-adapter/test_compose_activation.py",
+        "services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py"
+      ],
+      "summary": "Configure OPENCLAW_PRIMARY_MODEL=openai/gpt-5.6-sol for Management AI (agent_id=main) in openclaw-gateway-adapter without changing global/held agents (agents.defaults.model.primary=anthropic/claude-opus-4-8, persona-opinion-*, or structured-extraction), separately surface requested_model and the Gateway-reported active_model when provided, and keep readiness(auth_probe=True) stateless (operator_id=None, session_id=None) so repeated probes do not collide on a shared warm Gateway session lane."
+    },
+    {
+      "id": "truthful_optional_credential_mounts_absent",
+      "files": [
+        "services/openclaw-gateway-adapter/assistant_credential_mounts.py",
+        "services/openclaw-gateway-adapter/tests/test_assistant_credential_mounts.py"
+      ],
+      "summary": "Verify the expected provider auth file (auth.json for codex, .credentials.json for claude) exists as a regular file inside the mount before reporting ready or wrong_owner, so empty mount directories truthfully report status=missing_credentials and owner_check=not_checked regardless of directory ownership."
+    },
+    {
+      "id": "persona_fleet_threadpool_offload_and_truthful_batched_strategy_spec_counts",
+      "files": [
+        "services/control-plane/bff/personas/routes/collection.py",
+        "services/control-plane/bff/personas/service.py",
+        "services/control-plane/bff/ports/research_knowledge_source.py",
+        "services/control-plane/bff/tests/test_bff_auth_facade.py"
+      ],
+      "summary": "Run synchronous persona collection/fleet/intent route handlers on FastAPI's worker threadpool instead of blocking the main asyncio event loop, replace per-persona N+1 list_strategy_specs(persona_id=...) reads with a single batched _routed_strategy_counts_by_persona() read reused across league ranking and fleet row projection while preserving paper ranking snapshot capture before broader catalog-default persona reads and truthful error propagation (no exception-swallowing fallback to 0/{}), and replace repeated json.loads(json.dumps(...)) deep-copies and non-current version bundle normalization in DefaultResearchKnowledgeSourcePort.list_strategy_specs with copy.deepcopy and _kw05_select_current_version_candidate."
+    }
+  ],
+  "verification": {
+    "concurrency": "Threading events hold both provider callbacks and persona-fleet strategy_specs owner read while /bff/auth/readiness, /bff/me, /bff/logout, and /bff/management/portfolio-book complete concurrently. ContextVars preserved.",
+    "ac3_truthful_errors_and_ranking_snapshot_order": "Removed error-swallowing try/except blocks in _routed_strategies_for_persona and _routed_strategy_counts_by_persona; verified 503 error propagation when list_strategy_specs fails and verified paper ranking snapshot reads precede broader include_market_persona_defaults=True reads (persona_read_include_defaults[:3] == [False, False, True]).",
+    "six_module_baseline_comparison": {
+      "command": "/tmp/civenv/bin/pytest -q -p no:cacheprovider services/control-plane/bff/tests/test_bff_auth_facade.py services/control-plane/bff/tests/test_bff_b3_persona_fleet.py services/control-plane/bff/tests/test_research_knowledge_source_ports.py services/control-plane/bff/test_kw05_strategy_spec_contract.py services/control-plane/bff/test_bff_session_auth_me_contract.py services/control-plane/bff/tests/test_persona_router.py",
+      "baseline_9580fe875": "19 failed, 154 passed, 3 warnings in 103.52s (/tmp/pantheon-assist-20261013/Baseline9580-same-six-module-order-as-native-g6-20261019.json)",
+      "current_branch": "19 failed, 155 passed, 3 warnings in 98.72s",
+      "delta": "+1 passed (test_persona_fleet_owner_reads_allow_auth_and_portfolio_while_pending_and_batch_strategy_specs), 0 new failures; identical 19 pre-existing failures in test_bff_b3_persona_fleet.py (9) and test_persona_router.py (10) explicitly disclosed."
+    },
+    "negative_control": "Same normal test environment with asyncio.to_thread replaced by inline blocking: 1 failed in 6.40s (expected failure), proving blocking cannot pass the regression. Temporary plugin is not product source.",
+    "model": "requested_model is selected override; active_model is only Gateway-reported response.model, possibly an agent alias; absent report stays unknown. Explicit requests are not fallback.",
+    "hosted": "Pending exact-head review, merge, official root deployment and browser/AI persistence verification.",
+    "local_validation": {
+      "result": "143 passed, 3 warnings in 68.78s in focused 5-module suite; 155 passed / 19 pre-existing failed in 98.72s in 6-module baseline comparison",
+      "scope": "auth facade + persona-fleet concurrency/batching/AC3 regression, research knowledge source ports, kw05 strategy_spec contract, session auth me contract, and persona capital runtime ports"
+    }
+  },
+  "deploy_components_required_after_merge": [
+    "bff",
+    "openclaw-gateway-adapter"
+  ],
+  "predecessor_pr": 6656,
+  "delivery_branch": "task/DEV-MGMT-USABILITY-DIRECT-20261019",
+  "delivery_note": "Continued from preserved partial source (/tmp/pantheon-assist-20261013/Management-existing-g6-preserved-partial-for-AC3-correction-20261019.patch) on top of current dev (ec09f48db7c77d1034ff395a894fdf0d2aaefc7e), removing AC3 error-swallowing catches, restoring paper-ranking snapshot ordering before broader fleet reads, and fixing unit test tenant claims/command store setup."
+}

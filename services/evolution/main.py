@@ -2638,7 +2638,7 @@ def resolve_compensation(decision_id: str, body: CompensationResolveRequest):
 # --- Evolution input coverage ------------------------------------------------
 
 @app.get("/api/evolution/input-coverage")
-def get_input_coverage():
+def get_input_coverage(request: Request):
     """Report whether every monitored artifact has usable Evolution inputs.
 
     Reads the same live threshold and baseline config the sweep worker uses and
@@ -2648,9 +2648,10 @@ def get_input_coverage():
     """
     thresholds = load_thresholds()
     baselines = load_baselines()
+    request_tenant = _current_tenant() if str(request.headers.get("x-tenant-id") or "").strip() else ""
     try:
         summaries = default_fetch_summaries(
-            TELEMETRY_API_URL, timeout=DOWNSTREAM_TIMEOUT_SECONDS
+            TELEMETRY_API_URL, timeout=DOWNSTREAM_TIMEOUT_SECONDS, tenant_id=request_tenant
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(

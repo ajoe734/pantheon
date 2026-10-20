@@ -219,6 +219,32 @@ class TestCapitalPoolPort:
         assert len(port.list_capital_pools(include_market_persona_defaults=True)) == 1
         assert len(port.list_bindings(include_market_persona_defaults=True)) == 1
 
+    def test_risk_policy_ref_filter_contract(self):
+        pools = [
+            {"pool_id": "pool-conservative", "status": "active", "risk_policy_ref": "rp-conservative"},
+            {"pool_id": "pool-growth", "status": "active", "risk_policy_id": "rp-growth"},
+            {"pool_id": "pool-frozen", "status": "frozen", "risk_policy_ref": "rp-conservative"},
+        ]
+        port = CapitalPoolPort(pools_provider=lambda: pools, bindings_provider=lambda: [])
+        domain = PersonaCapitalRuntimeDomainPort(capital_port=port)
+
+        assert [p["pool_id"] for p in domain.list_capital_pools(risk_policy_ref=None)] == [
+            "pool-conservative",
+            "pool-growth",
+            "pool-frozen",
+        ]
+        assert [p["pool_id"] for p in domain.list_capital_pools(risk_policy_ref="rp-conservative")] == [
+            "pool-conservative",
+            "pool-frozen",
+        ]
+        assert [p["pool_id"] for p in domain.list_capital_pools(risk_policy_ref="rp-growth")] == [
+            "pool-growth",
+        ]
+        assert [
+            p["pool_id"]
+            for p in domain.list_capital_pools(status="active", risk_policy_ref="rp-conservative")
+        ] == ["pool-conservative"]
+
     def test_rejects_broad_unsupported_kwargs(self):
         import pytest
         port = CapitalPoolPort(pools_provider=lambda: [], bindings_provider=lambda: [])

@@ -1016,6 +1016,7 @@ def test_build_live_config_retains_declared_task_pr_status_checks(tmp_path):
         "Commit trailers",
         "Runtime mirror guard",
         "Smoke acceptance",
+        "Service suites",
     ]
 
 
