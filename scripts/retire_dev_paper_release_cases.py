@@ -28,7 +28,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
@@ -44,6 +46,17 @@ SERVED_CASE_STATE = "succeeded"
 
 CASE_RETIRED = "retired"
 CASE_PENDING = "pending"
+CASE_NOT_ATTEMPTED = "not_attempted_deadline"
+
+# Budget starts when the process starts, so BFF composition counts against it.
+_PROCESS_START = time.monotonic()
+# A new case is only started when at least this much budget remains, or the
+# slowest case seen in this run, whichever is larger.
+CASE_RESERVE_FLOOR_SECONDS = 20.0
+# The watchdog prints evidence at most this long after the budget ends.
+WATCHDOG_MARGIN_SECONDS = 5.0
+# Set when the watchdog gave up on a still-running worker thread.
+_ABANDONED = False
 
 
 class RetireError(RuntimeError):
@@ -132,6 +145,30 @@ def _summarize(summary: Any) -> str:
     return CASE_PENDING
 
 
+def _call_with_timeout(
+    fn: Callable[[], Any], timeout: float
+) -> tuple[bool, Any, BaseException | None]:
+    """Run ``fn`` in a daemon thread; return (finished, value, exception).
+
+    An unfinished call is abandoned (the process exits without waiting); this
+    is safe because retire_case is checkpointed and GET-first.
+    """
+    box: dict[str, Any] = {}
+
+    def target() -> None:
+        try:
+            box["value"] = fn()
+        except BaseException as exc:  # noqa: BLE001 - handed to the caller
+            box["error"] = exc
+
+    thread = threading.Thread(target=target, daemon=True)
+    thread.start()
+    thread.join(max(timeout, 0.0))
+    if thread.is_alive():
+        return False, None, None
+    return True, box.get("value"), box.get("error")
+
+
 def execute(
     *,
     store: Any,
@@ -142,9 +179,26 @@ def execute(
     dry_run: bool,
     timeout_seconds: float,
     monotonic: Callable[[], float] = time.monotonic,
+    started_at: float | None = None,
+    call_with_timeout: Callable[
+        [Callable[[], Any], float], tuple[bool, Any, BaseException | None]
+    ] = _call_with_timeout,
+    progress: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    deadline = monotonic() + timeout_seconds
-    cases = release_cases(store.list_all())
+    started = monotonic() if started_at is None else started_at
+    deadline = started + timeout_seconds
+    progress = {} if progress is None else progress
+    progress["stage"] = "list_cases"
+    finished, records, exc = call_with_timeout(
+        store.list_all, deadline - monotonic()
+    )
+    if not finished:
+        return _deadline_evidence(
+            outcome, new_case_key, run_id, dry_run, timeout_seconds, "list_cases"
+        )
+    if exc is not None:
+        raise exc
+    cases = release_cases(records)
     by_key = {str(c.idempotency_key): c for c in cases}
     decision = plan_retirement(cases, outcome=outcome, new_case_key=new_case_key)
     case_states = {
@@ -159,7 +213,13 @@ def execute(
         "case_states": case_states,
         "errors": {},
         "results": {},
+        "duration_seconds": {},
+        "budget_seconds": timeout_seconds,
+        "case_reserve_floor_seconds": CASE_RESERVE_FLOOR_SECONDS,
+        "deadline_reached": False,
     }
+    progress["result"] = result
+    progress["stage"] = "retire"
     errors: dict[str, str] = result["errors"]
     refusal = served_refusal(outcome, new_case_key, cases)
     result["executable"] = not refusal
@@ -171,26 +231,100 @@ def execute(
         result["status"] = "refused"
         return result
 
-    results: dict[str, str] = {}
+    results: dict[str, str] = result["results"]
+    durations: dict[str, float] = result["duration_seconds"]
+    slowest = 0.0
     for key in decision["retire"]:
-        if monotonic() >= deadline:
-            results[key] = "not_attempted_deadline"
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            result["deadline_reached"] = True
+        if result["deadline_reached"] or remaining < max(
+            CASE_RESERVE_FLOOR_SECONDS, slowest
+        ):
+            results[key] = CASE_NOT_ATTEMPTED
             continue
         case = by_key[key]
-        try:
-            summary = retire_case(
+        progress["in_flight"] = key
+        begun = monotonic()
+        finished, summary, exc = call_with_timeout(
+            lambda case=case, key=key: retire_case(
                 str(case.tenant_id), str(case.persona_id), reason=retire_reason(key)
-            )
-        except RetireCaseUnavailable:
-            raise
-        except Exception as exc:  # noqa: BLE001 - recorded, never fatal
+            ),
+            remaining,
+        )
+        progress["in_flight"] = ""
+        durations[key] = round(monotonic() - begun, 3)
+        slowest = max(slowest, durations[key])
+        if not finished:
+            # Still running at the budget: report pending and leave it to the
+            # checkpointed, GET-first coordinator to finish on a later run.
+            results[key] = CASE_PENDING
+            errors[key] = "deadline: retire_case still running at budget end"
+            result["deadline_reached"] = True
+            continue
+        if isinstance(exc, RetireCaseUnavailable):
+            raise exc
+        if exc is not None:
             errors[key] = f"{exc.__class__.__name__}: {exc}"
             results[key] = "error"
             continue
         results[key] = _summarize(summary)
-    result["results"] = results
     unsettled = [k for k, v in results.items() if v != CASE_RETIRED]
     result["status"] = "retired" if not unsettled and not errors else "partial"
+    return result
+
+
+def _deadline_evidence(
+    outcome: str,
+    new_case_key: str,
+    run_id: str,
+    dry_run: bool,
+    budget: float,
+    stage: str,
+) -> dict[str, Any]:
+    """Evidence when the budget ended before any case could be planned."""
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "status": "partial",
+        "dry_run": dry_run,
+        "run_id": run_id,
+        "outcome": outcome,
+        "new_case_key": new_case_key,
+        "errors": {"deadline": f"budget ended during {stage}; no case was started"},
+        "results": {},
+        "duration_seconds": {},
+        "budget_seconds": budget,
+        "case_reserve_floor_seconds": CASE_RESERVE_FLOOR_SECONDS,
+        "deadline_reached": True,
+        "deadline_stage": stage,
+    }
+
+
+def _watchdog_evidence(args: argparse.Namespace, progress: Mapping[str, Any]) -> dict[str, Any]:
+    """Evidence built from shared progress when the worker outlived the budget."""
+    live = progress.get("result")
+    if not isinstance(live, dict):
+        return _deadline_evidence(
+            args.outcome,
+            args.new_case_key,
+            args.run_id,
+            args.dry_run,
+            args.timeout_seconds,
+            str(progress.get("stage") or "build_runtime"),
+        )
+    result = json.loads(json.dumps(live, default=str))
+    results = result.setdefault("results", {})
+    in_flight = str(progress.get("in_flight") or "")
+    if in_flight and in_flight not in results:
+        results[in_flight] = CASE_PENDING
+        result.setdefault("errors", {})[in_flight] = (
+            "deadline: retire_case still running at budget end"
+        )
+    for key in result.get("retire", []):
+        results.setdefault(key, CASE_NOT_ATTEMPTED)
+    result["deadline_reached"] = True
+    if result.get("status") not in {"dry_run", "refused"}:
+        result["status"] = "partial"
     return result
 
 
@@ -237,11 +371,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return args
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    args = parse_args(argv)
+def _run(args: argparse.Namespace, box: dict[str, Any], progress: dict[str, Any]) -> None:
     try:
+        progress["stage"] = "build_runtime"
         store, retire_case = _build_runtime()
-        result = execute(
+        box["result"] = execute(
             store=store,
             retire_case=retire_case,
             outcome=args.outcome,
@@ -249,9 +383,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             run_id=args.run_id,
             dry_run=args.dry_run,
             timeout_seconds=args.timeout_seconds,
+            started_at=_PROCESS_START,
+            progress=progress,
         )
     except RetireCaseUnavailable as exc:
-        result = {
+        box["result"] = {
             "schema_version": SCHEMA_VERSION,
             "status": "retire_case_unavailable",
             "dry_run": args.dry_run,
@@ -259,16 +395,44 @@ def main(argv: Sequence[str] | None = None) -> int:
             "error": str(exc),
         }
     except Exception as exc:  # noqa: BLE001 - evidence, not a release failure
-        result = {
+        box["result"] = {
             "schema_version": SCHEMA_VERSION,
             "status": "error",
             "dry_run": args.dry_run,
             "run_id": args.run_id,
             "error": f"{exc.__class__.__name__}: {exc}",
         }
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    global _ABANDONED
+    args = parse_args(argv)
+    box: dict[str, Any] = {}
+    progress: dict[str, Any] = {}
+    # Everything (BFF composition, listing, cases) runs in a worker so the
+    # watchdog can print evidence at budget + margin whatever blocks.
+    worker = threading.Thread(target=_run, args=(args, box, progress), daemon=True)
+    worker.start()
+    wait = _PROCESS_START + args.timeout_seconds + WATCHDOG_MARGIN_SECONDS
+    worker.join(max(wait - time.monotonic(), 0.0))
+    if worker.is_alive():
+        _ABANDONED = True
+        result = _watchdog_evidence(args, progress)
+    else:
+        result = box["result"]
     print(json.dumps(result, indent=2, sort_keys=True))
-    return 0 if result.get("status") in {"retired", "dry_run"} else 1
+    bounded = result.get("deadline_reached") is True
+    return 0 if bounded or result.get("status") in {"retired", "dry_run"} else 1
+
+
+def _exit_process(code: int) -> None:
+    """Exit now; an abandoned worker thread must not delay the exit."""
+    sys.stdout.flush()
+    sys.stderr.flush()
+    if _ABANDONED:
+        os._exit(code)
+    sys.exit(code)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    _exit_process(main())
