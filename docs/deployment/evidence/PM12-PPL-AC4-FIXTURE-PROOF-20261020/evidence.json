@@ -1,0 +1,96 @@
+{
+  "task_id": "PM12-PPL-AC4-FIXTURE-PROOF-20261020",
+  "title": "PM-12 AC4 PPL paper-eligibility fixture alignment and non-swallowing request-scope reuse proof",
+  "preserved_parent_task": {
+    "task_id": "PM12-PERSONA-READS-BATCH-20261020",
+    "status": "done",
+    "implementation_commit": "201d6051178aba083922f48bf59a7d1b1648481c",
+    "merge_commit": "424422411984cc61395feff0205deb56edbd3eb7",
+    "pr_number": 470,
+    "preserved_regression_baseline": "240 passed across 17 PM-12, fleet, ranking, eligibility, and architecture test files"
+  },
+  "root_cause_analysis": {
+    "false_positive_location": "services/control-plane/bff/tests/test_pm12_request_scoped_reads.py:test_persona_health_reads_league_once_and_ppl_alloc_009_reuses_request_scope",
+    "findings": [
+      "persona-ppl-alloc-009 was seeded with lifecycle_state='active' and state='paper_running'. In services/control-plane/bff/personas/service.py (_persona_record_projected_state), raw.get('lifecycle_state') takes precedence over raw.get('state') and 'active' maps to 'deployed' in _STRATEGY_BFF_LIFECYCLE_MAP, causing _ppl_alloc_009_paper_eligibility_context to raise HTTPException 422 (precondition='paper_only_persona') at line 457 before reaching _pm12_persona_league_rows at line 466.",
+      "persona-ppl-alloc-009 referenced rt-active-000 / rb-active-000 / bind-active-000 (owned by persona-active-000) instead of its own paper-only capital pool (with internal=True, execution_context='paper', persona_id='persona-ppl-alloc-009'), paper_owner binding, paper RuntimeBinding (with artifact_id, artifact_version, plan_id, strategy_id, effective_at), paper monitoring session, telemetry summary, capability snapshot, and deployment plan.",
+      "A catch-all try/except Exception: pass block around _ppl_alloc_009_paper_eligibility_context swallowed the 422 precondition failure, and the subsequent manual _pm12_persona_league_rows call performed the first owner reads, making personas_collection == 1 and bindings_collection == 1 pass without exercising the helper's league/owner read path."
+    ]
+  },
+  "fixture_and_assertion_corrections": {
+    "modified_files": [
+      "services/control-plane/bff/tests/test_pm12_request_scoped_reads.py",
+      "docs/deployment/evidence/PM12-PPL-AC4-FIXTURE-PROOF-20261020/evidence.json"
+    ],
+    "production_files_modified": [],
+    "fixture_changes": {
+      "persona_id": "persona-ppl-alloc-009",
+      "lifecycle_state": "paper_running",
+      "state": "paper_running",
+      "provisioning_idempotency_key": "ppl-alloc-009-30095677466-persona-create",
+      "capital_pool_id": "pool-ppl-alloc-009",
+      "binding_id": "bind-ppl-alloc-009",
+      "binding_role": "paper_owner",
+      "runtime_id": "rt-ppl-alloc-009",
+      "runtime_binding_id": "rb-ppl-alloc-009",
+      "session_id": "sess-ppl-alloc-009",
+      "plan_id": "plan-ppl-alloc-009",
+      "strategy_id": "strat-ppl-alloc-009",
+      "counting_owner_endpoints_added": [
+        "/api/deployment/plans -> deployment_plans_collection"
+      ]
+    },
+    "owner_call_counts_progression_in_single_request_read_scope": {
+      "after_real_helper_before_manual_league_rows": {
+        "personas_collection": 1,
+        "bindings_collection": 1,
+        "runtime_bindings_collection": 1,
+        "capital_pools_collection": 1,
+        "sessions_collection": 1,
+        "paper_fleet_sessions_collection": 1,
+        "telemetry_summaries_collection": 1,
+        "capability_snapshots_collection": 1,
+        "strategy_specs_collection": 1,
+        "deployment_plans_collection": 1
+      },
+      "after_same_scope_manual_league_rows_and_ranking_item_before_evict": {
+        "personas_collection": 1,
+        "bindings_collection": 1,
+        "runtime_bindings_collection": 1,
+        "capital_pools_collection": 1,
+        "sessions_collection": 1,
+        "paper_fleet_sessions_collection": 1,
+        "telemetry_summaries_collection": 1,
+        "capability_snapshots_collection": 1,
+        "strategy_specs_collection": 1,
+        "deployment_plans_collection": 1,
+        "same_scope_reuse_equal_to_after_helper": true
+      },
+      "after_evict_request_read_keys_telemetry_pm12_league_rows_and_refresh": {
+        "personas_collection": 1,
+        "bindings_collection": 1,
+        "runtime_bindings_collection": 1,
+        "capital_pools_collection": 1,
+        "sessions_collection": 1,
+        "paper_fleet_sessions_collection": 1,
+        "capability_snapshots_collection": 1,
+        "strategy_specs_collection": 1,
+        "deployment_plans_collection": 1,
+        "telemetry_summaries_collection": 2,
+        "refreshed_pnl": 0.42
+      }
+    },
+    "negative_control_proof": {
+      "description": "Injecting a sentinel RuntimeError('sentinel_ppl_alloc_009_entry_failure') at _ppl_alloc_009_paper_eligibility_context entry causes test_persona_health_reads_league_once_and_ppl_alloc_009_reuses_request_scope to fail immediately instead of being swallowed.",
+      "command": "/tmp/pantheon-worker-worktrees/pantheon/pm12-ppl-ac4-fixture-proof-20261020/.venv-pantheon/bin/python3 -c 'import pytest; ...'",
+      "observed_pytest_exit_code": 1,
+      "observed_exception": "RuntimeError: sentinel_ppl_alloc_009_entry_failure"
+    }
+  },
+  "validation": {
+    "focused_test_command": "/tmp/pantheon-worker-worktrees/pantheon/pm12-ppl-ac4-fixture-proof-20261020/.venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_pm12_request_scoped_reads.py",
+    "focused_test_result": "3 passed in 30.98s (exit 0)",
+    "pm12_17_file_regression_command": "/tmp/pantheon-worker-worktrees/pantheon/pm12-ppl-ac4-fixture-proof-20261020/.venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_pm12_request_scoped_reads.py services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/control-plane/bff/tests/test_bff_b3_persona_fleet.py services/control-plane/bff/tests/test_persona_health_single_owner.py services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py services/control-plane/bff/tests/test_ppl_alloc_009_paper_eligibility_proof.py services/control-plane/bff/tests/test_persona_evaluator_mounted_ranking.py services/control-plane/bff/tests/test_persona_evaluator_projection.py services/control-plane/bff/tests/test_ranking_evidence_surfaces_default_composition.py services/control-plane/bff/tests/test_promotion_review_production_defects.py services/control-plane/bff/management_read_models/test_persona_fleet_read_failures.py services/control-plane/bff/tests/test_management_projection_test_doubles.py services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py services/control-plane/bff/tests/test_lifecycle_telemetry_governance_ports.py services/control-plane/bff/tests/test_bff_b2_006_v5_closed_loop_reads.py services/control-plane/bff/tests/test_owner_unavailable_503_consistency.py",
+    "pm12_17_file_regression_result": "240 passed, 270 warnings in 247.44s across 17 test files (exit 0)"
+  }
+}
