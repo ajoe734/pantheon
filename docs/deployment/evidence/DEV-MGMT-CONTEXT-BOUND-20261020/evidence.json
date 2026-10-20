@@ -1,0 +1,10 @@
+{
+  "task_id": "DEV-MGMT-CONTEXT-BOUND-20261020",
+  "change": "Provider-facing management_payload.summary_context and surfaces.owner_observations are projected concisely inside _mgmt_nl_build_context_pack: persona_fleet items drop camelCase alias duplicates and per-item owner_observations, nested rows become scalar views with omitted_nested_fields recorded; ok owner observations collapse into counted groups with subject ids; every non-ok observation is kept individually. The 200000 provider bound, the collector, and product UI/API DTOs are unchanged.",
+  "regression": "test_management_nl_large_fleet_context_stays_within_provider_bound: raw fixture ~2.8MB of context pack without the fix (fails), < 200000 with it; reply completes via injected provider; totals, runtime ids and unavailable owner truth retained.",
+  "tests": {
+    "services/control-plane/bff/tests/test_management_nl_assistant_provider.py + test_management_nl_single_owner.py": "79 passed"
+  },
+  "known_unrelated_baseline_failure": "test_mgmt_read_001_persona_fleet_owner_observations.py::test_persona_fleet_reports_degraded_when_auxiliary_owners_lack_records fails on unchanged base (persona_strategies owner unavailable); not modified.",
+  "no_provider_or_hosted_calls": true
+}

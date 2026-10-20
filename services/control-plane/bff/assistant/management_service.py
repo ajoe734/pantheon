@@ -5021,6 +5021,117 @@ def _mgmt_nl_evidence_entities_payload(entities: Any) -> List[Dict[str, str]]:
         {"entity_type": str(entity_type), "entity_ref": str(entity_ref)}
         for entity_type, entity_ref in sorted(list(entities or set()))
     ]
+def _mgmt_nl_scalar_view(record: Any) -> Any:
+    """Provider-facing view of a record: scalar fields only, with the names of
+    omitted nested fields recorded so the reduction is explicit, not silent."""
+    if not isinstance(record, dict):
+        return record
+    view = {k: v for k, v in record.items() if v is None or isinstance(v, (str, int, float, bool))}
+    omitted = sorted(str(k) for k in record if k not in view)
+    if omitted:
+        view["omitted_nested_fields"] = omitted
+    return view
+def _mgmt_nl_scalar_views(records: Any) -> Any:
+    if not isinstance(records, list):
+        return records
+    return [_mgmt_nl_scalar_view(record) for record in records]
+_MGMT_NL_PROVIDER_ALIAS_KEYS = frozenset({
+    "capitalPools", "runtimeBindings", "telemetrySummary", "activeIncidents",
+    "owner_observations",
+})
+def _mgmt_nl_provider_fleet_item(item: Any) -> Any:
+    """Concise provider projection of one persona_fleet item. Owner
+    observations are carried once at surface level; camelCase aliases that
+    duplicate snake_case fields are dropped; nested lists keep scalar rows."""
+    if not isinstance(item, dict):
+        return item
+    projected: Dict[str, Any] = {}
+    for key, value in item.items():
+        if key in _MGMT_NL_PROVIDER_ALIAS_KEYS:
+            continue
+        if key == "persona":
+            projected[key] = _mgmt_nl_scalar_view(value)
+        elif key == "bindings":
+            projected[key] = [
+                {**_mgmt_nl_scalar_view(b), "capital_pool": _mgmt_nl_scalar_view(b.get("capital_pool"))}
+                if isinstance(b, dict) else b
+                for b in (value or [])
+            ]
+        elif key in {"capital_pools", "runtime_bindings", "sessions", "active_incidents"}:
+            projected[key] = _mgmt_nl_scalar_views(value)
+        elif key == "telemetry_summary" and isinstance(value, dict):
+            projected[key] = {
+                **_mgmt_nl_scalar_view(value),
+                "latest": _mgmt_nl_scalar_view(value.get("latest")),
+                "summaries": _mgmt_nl_scalar_views(value.get("summaries")),
+            }
+            projected[key].pop("omitted_nested_fields", None)
+        elif key == "evolution" and isinstance(value, dict):
+            projected[key] = {
+                **_mgmt_nl_scalar_view(value),
+                "latest_decision": _mgmt_nl_scalar_view(value.get("latest_decision")),
+                "decisions": _mgmt_nl_scalar_views(value.get("decisions")),
+            }
+            projected[key].pop("omitted_nested_fields", None)
+        elif key == "training" and isinstance(value, dict):
+            projected[key] = {
+                **_mgmt_nl_scalar_view(value),
+                "latest_session": _mgmt_nl_scalar_view(value.get("latest_session")),
+            }
+            projected[key].pop("omitted_nested_fields", None)
+        else:
+            projected[key] = value
+    return projected
+def _mgmt_nl_provider_summary_context(snippets: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(snippets, dict):
+        return snippets
+    projected = dict(snippets)
+    fleet = snippets.get("persona_fleet")
+    if isinstance(fleet, dict) and isinstance(fleet.get("items"), list):
+        projected["persona_fleet"] = {
+            **fleet,
+            "items": [_mgmt_nl_provider_fleet_item(item) for item in fleet["items"]],
+        }
+    return projected
+def _mgmt_nl_provider_owner_observations(observations: Any) -> Any:
+    """Keep every non-ok observation individually (scalar fields plus a
+    contributing count); collapse repeated ok observations into counted
+    groups that keep their subject ids."""
+    if not isinstance(observations, list):
+        return observations
+    kept: List[Any] = []
+    groups: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
+    for obs in observations:
+        if not isinstance(obs, dict):
+            kept.append(obs)
+            continue
+        contributing = obs.get("contributing_observations") or []
+        if str(obs.get("status") or "") != "ok":
+            view = _mgmt_nl_scalar_view(obs)
+            view.pop("omitted_nested_fields", None)
+            view["contributing_count"] = len(contributing)
+            view["contributing_observations"] = _mgmt_nl_scalar_views(contributing)
+            kept.append(view)
+            continue
+        key = tuple(str(obs.get(f) or "") for f in ("subject_type", "owner", "source_kind", "status"))
+        group = groups.setdefault(key, {
+            "subject_type": key[0], "owner": key[1], "source_kind": key[2], "status": key[3],
+            "count": 0, "subject_ids": [],
+        })
+        group["count"] += 1
+        subject_id = str(obs.get("subject_id") or "")
+        if subject_id and subject_id not in group["subject_ids"]:
+            group["subject_ids"].append(subject_id)
+    return [*kept, *groups.values()]
+def _mgmt_nl_provider_surfaces(surfaces: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(surfaces, dict):
+        return surfaces
+    projected: Dict[str, Any] = {}
+    for name, surface in surfaces.items():
+        if isinstance(surface, dict) and isinstance(surface.get("owner_observations"), list):
+            surface = {**surface, "owner_observations": _mgmt_nl_provider_owner_observations(surface["owner_observations"])}
+        projected[name] = surface
+    return projected
 def _mgmt_nl_build_context_pack(
     *,
     session_id: str,
@@ -5065,8 +5176,8 @@ def _mgmt_nl_build_context_pack(
             "session_id": session_id,
             "ttl_seconds": _MGMT_AI_SESSION_TTL_SECONDS,
         },
-        "summary_context": snippets,
-        "surfaces": surfaces,
+        "summary_context": _mgmt_nl_provider_summary_context(snippets),
+        "surfaces": _mgmt_nl_provider_surfaces(surfaces),
         "evidence_entities": _mgmt_nl_evidence_entities_payload(evidence_entities),
         "evidence_source_types": sorted(str(item) for item in (evidence_source_types or set())),
     }
