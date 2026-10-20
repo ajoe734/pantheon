@@ -5,9 +5,9 @@ name: Branch CI Gate
 # workflow_dispatch path because GitHub does not recursively emit pull_request
 # events for a PR created with that workflow's GITHUB_TOKEN. Runs
 # commit-trailer checks, runtime-mirror guard, and a fast smoke acceptance.
-# The three jobs below ("Commit trailers", "Runtime mirror guard", "Smoke
-# acceptance") are the required status checks on the dev and master branch
-# protections.
+# The jobs "Commit trailers", "Runtime mirror guard", "Smoke acceptance" and
+# "Service suites" are the four required status checks on the dev branch
+# protection; master protection still requires only the first three.
 
 on:
   push:
