@@ -206,3 +206,15 @@ def test_build_runtime_reports_unavailable_when_image_lacks_entrypoint(monkeypat
     monkeypatch.delattr(service, "retire_persona_provisioning_case", raising=False)
     with pytest.raises(retire.RetireCaseUnavailable):
         retire._build_runtime()
+
+
+def test_build_runtime_composes_persona_service_via_app_factory(monkeypatch):
+    from services.control_plane.bff.personas import service
+
+    monkeypatch.setattr(service, "_composed_persona_service", None)
+    monkeypatch.setenv("RANKING_STORE_DSN", "postgresql://test:test@localhost:5432/test")
+    store, retire_case = retire._build_runtime()
+    assert service._composed_persona_service is not None
+    assert callable(retire_case) and store is not None
+    # the write owner the coordinator needs to archive the final Persona resolves
+    assert service._get_active_write_owner() is not None

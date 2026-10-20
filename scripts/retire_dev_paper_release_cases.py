@@ -202,6 +202,14 @@ def _build_runtime() -> tuple[Any, Callable[..., Any]]:
         raise RetireCaseUnavailable(
             "running image has no provisioning-coordinator retire_case"
         )
+    # Importing the BFF main composes the existing app (app_factory is the
+    # sole bind of PersonaService/write owner) so the coordinator can confirm
+    # the final Persona archive.
+    import importlib
+
+    importlib.import_module("services.control_plane.bff.main")
+    if getattr(service, "_composed_persona_service", None) is None:
+        raise RuntimeError("persona service was not composed by the app factory")
     return service._persona_provisioning_store(), retire
 
 
