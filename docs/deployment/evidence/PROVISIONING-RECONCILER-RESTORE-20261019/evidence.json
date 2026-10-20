@@ -14,5 +14,5 @@
     ],
     "assertions_weakened": false
   },
-  "tests": "test_persona_provisioning_readback.py, tests/test_bff_lifespan_background_work.py, tests/test_persona_provisioning_reconcile.py, test_persona_provisioning_coordinator.py: 116 passed; 5 new tests fail on base"
+  "tests": "test_persona_provisioning_readback.py, tests/test_persona_provisioning_reconcile.py (includes lifespan tests), test_persona_provisioning_coordinator.py passed; 5 new tests fail on base"
 }
