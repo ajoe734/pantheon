@@ -79,14 +79,19 @@ def _get_human_inbox_surface_timeout() -> float:
         return 3.0
 
 
+# The cockpit composes six owner-backed sections; the 0.6s generic management
+# budget is too tight for that even after request-scoped dedupe.
+_COCKPIT_DEFAULT_READ_TIMEOUT_SECONDS = 3.0
+
+
 def _get_management_cockpit_read_timeout() -> Optional[float]:
     raw = os.getenv("PANTHEON_BFF_COCKPIT_READ_TIMEOUT_SECONDS")
     if raw is None or not raw.strip():
-        return None
+        return _COCKPIT_DEFAULT_READ_TIMEOUT_SECONDS
     try:
         return max(0.05, float(raw))
     except (TypeError, ValueError):
-        return None
+        return _COCKPIT_DEFAULT_READ_TIMEOUT_SECONDS
 
 
 class _StoreTimeoutProxy:
@@ -122,16 +127,25 @@ def _get_evidence_degraded_payload(
     return payload
 
 
+_COCKPIT_DEGRADED_REASONS = {
+    "read_timeout": ("timeout_fallback", "Cockpit aggregation timed out under concurrent read fanout; degraded response returned."),
+    "read_capacity_saturated": ("capacity_fallback", "Cockpit read capacity is saturated; degraded response returned."),
+    "read_error": ("error_fallback", "Cockpit aggregation failed; degraded response returned."),
+}
+
+
 def _get_management_cockpit_degraded_payload(
     self=None,
     snapshot_at: Optional[str] = None,
+    reason: str = "read_timeout",
 ) -> Dict[str, Any]:
     snap = snapshot_at or _utc_now_rfc3339()
+    source, message = _COCKPIT_DEGRADED_REASONS.get(reason, _COCKPIT_DEGRADED_REASONS["read_error"])
     cockpit_surface = {
         "status": "degraded",
-        "reason": "read_timeout",
-        "source": "timeout_fallback",
-        "message": "Cockpit aggregation timed out under concurrent read fanout; degraded response returned.",
+        "reason": reason if reason in _COCKPIT_DEGRADED_REASONS else "read_error",
+        "source": source,
+        "message": message,
         "snapshot_at": snap,
     }
     return {
@@ -1615,8 +1629,16 @@ def create_management_router(
                     snapshot_at=snap,
                     timeout_seconds=_get_management_cockpit_read_timeout(),
                 )
-            except Exception:
-                return svc.get_management_cockpit_degraded_payload(snapshot_at=snap)
+            except Exception as exc:
+                from ..personas.routes.common import ManagementReadSaturated, ManagementReadTimeout
+                if isinstance(exc, ManagementReadTimeout):
+                    reason = "read_timeout"
+                elif isinstance(exc, ManagementReadSaturated):
+                    reason = "read_capacity_saturated"
+                else:
+                    reason = "read_error"
+                    logging.getLogger(__name__).warning("bff.management_cockpit composer failed: %s", type(exc).__name__)
+                return svc.get_management_cockpit_degraded_payload(snapshot_at=snap, reason=reason)
         return await asyncio.to_thread(cockpit_composer, snapshot_at=snap)
 
     # -----------------------------------------------------------------------
