@@ -1,0 +1,148 @@
+{
+  "task_id": "CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001",
+  "parent_task": "DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002",
+  "at": "2026-10-21T03:23:07.102945+00:00",
+  "status": "hosted_evidence_prepared_for_original_independent_review",
+  "owner": "Human/Ops",
+  "reviewer": "Antigravity",
+  "documentation_only": true,
+  "production_delta": 0,
+  "hosted_done": false,
+  "goal_complete": false,
+  "all12_complete": false,
+  "served_pair": {
+    "BE": "3f91b1c9724bcc7f7e5927223cdfd31ece3e363f",
+    "FE": "a70121543efec81e07a278d034898b258a8b4dc2",
+    "formal_run": 39527250552,
+    "component": "bff"
+  },
+  "original_acceptance": {
+    "AC1": {
+      "requirement": "Keep parent BFF-CAPITAL-FORWARD-002 source delivery #6088 accepted and do not reimplement it. Its archived hosted track remains external_wait; terminal done is not hosted completion. Preserve the specific original audit U02/U06 onboarding obligation here through genuine independent evidence.",
+      "evidence_state": "provided_for_independent_review",
+      "finding": "Source #6088 remains accepted and is an ancestor of actual served3f91. Reuse its real isolated canary/live no-authority, forwarding, tenant and paper activation negatives; no reimplementation or hosted completion inferred from source done.",
+      "proof_keys": [
+        "accepted_original_source"
+      ]
+    },
+    "AC2": {
+      "requirement": "Manual coordinator checkpoint only. Use the existing nonprod-deploy.yml exact-pair release and lease with the existing release coordinator after source prerequisites. Obtain fresh explicit authorization for each bounded VM operation and new labelled paper fixture. No worker receives VM or SSH access and no parallel release is triggered by assignment.",
+      "evidence_state": "provided_for_independent_review",
+      "finding": "Existing formal coordinator Root394987 created the original labelled0040 paper under the existing exact-pair lease; later formal BFF395272 accepted3f91/a701 and performed exact old525 artifact restore and same-final return while keeping0040. No source worker received SSH or VM access for this checkpoint. No extra capital or fixture action made by this evidence change.",
+      "proof_keys": [
+        "original_current0040_paper_onboarding_release",
+        "current_accepted_exact_pair"
+      ]
+    },
+    "AC3": {
+      "requirement": "Prove actual paper onboarding creates and activates one authoritative Capital pool and paper_owner binding without a Capital approval or invented policy reference. A real configured paper policy still applies; Registry artifact approvals retain their original meaning and are never substituted as Capital authority. Demonstrate genuine saved owner readback after refresh and process reload.",
+      "evidence_state": "provided_for_independent_review",
+      "finding": "Original99a8 pool and entire active paper_owner binding were actually read08:14, survived actual Capital container/image/PID replacement08:52, and were read again11:38. Current0040 has one active authoritative TWD pool and active paper_owner binding with approval_decision_id/risk_policy_ref null; complete16 Capital/19PCB owner fields and genuine operator UI/reload remain equal on accepted3f91. approval_digest is the owner checksum, not a Capital decision. Original99a8 later legitimately retired; current0040 is not claimed to have survived a replacement that happened before its creation.",
+      "proof_keys": [
+        "same_saved_owner_actual_process_replacement",
+        "current_original_UI_and_full_owners"
+      ]
+    },
+    "AC4": {
+      "requirement": "Use existing accepted local canary/live negatives for no-authority risk increases and separately verify only expressly authorized non-capital-affecting hosted boundaries. Do not execute real-money operations or fabricate product approvals or change existing dev pools/bindings. Missing authority or observations stays explicit unfinished work.",
+      "evidence_state": "provided_for_independent_review",
+      "finding": "Retain accepted source-local/isolated no-authority canary/live and tenant negatives from #6088. Genuine hosted login/session revocation/late-response isolation/outside-tenant denial was separately verified without a capital write. Current UI uses real operator tenant-dev; no real-money operation, existing-pool edit or invented approval/policy was executed by this checkpoint.",
+      "proof_keys": [
+        "accepted_original_source",
+        "genuine_auth_late_response_and_tenant_boundary",
+        "current_original_UI_and_full_owners"
+      ]
+    },
+    "AC5": {
+      "requirement": "Record exact FE/BFF and affected owner identities plus authentic test/readback results with safe redaction in existing evidence format. Obtain independent review before marking hosted done. Source tests and a healthy deployment alone never satisfy this checkpoint; no new acceptance framework.",
+      "evidence_state": "independent_review_pending",
+      "finding": "Exact served FE/BFF, formal run and owner replacement identities are retained in hash-bound raw evidence. This file is the original requested artifact prepared for the assigned Antigravity reviewer; it does not assert its own independent acceptance.",
+      "proof_keys": [
+        "accepted_original_source",
+        "same_saved_owner_actual_process_replacement",
+        "current_original_UI_and_full_owners",
+        "current_accepted_exact_pair",
+        "original_current0040_paper_onboarding_release",
+        "genuine_auth_late_response_and_tenant_boundary"
+      ]
+    }
+  },
+  "proofs": {
+    "accepted_original_source": {
+      "repository": "ajoe734/pantheon",
+      "PR": 6088,
+      "reviewed_head": "e8f30cad7d9d36d0b206c466f8d4a269811aed1f",
+      "merge": "799e40fc8c380137515e69b59b3fe7b617ee2c77",
+      "evidence_path": "docs/deployment/evidence/BFF-CAPITAL-FORWARD-002/evidence.json",
+      "evidence_sha256": "63021d5f018b8d88f0a42d93af2106cd8a177357b70faddee605e06cb9c9750f"
+    },
+    "same_saved_owner_actual_process_replacement": {
+      "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Capital-original390733-actual-pre0814-to-post1138-full-owner-body-after-real-replacement-independent-bounded-audit-20261020.json",
+      "sha256": "de091aabab33c5a278847165d30022ec740fe91c2b3c149f6b62ff8d265796de"
+    },
+    "current_original_UI_and_full_owners": {
+      "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/BFF395272-accepted-same-L12-owner20-current0040-fullCapital-PCB-and-three-UI-bounded-audit-20261021.json",
+      "sha256": "ad5046623d4e7a751e2c3553a0e68797a020a454c255c3fddfe0a650f8066dbe"
+    },
+    "current_accepted_exact_pair": {
+      "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Root39527250552-accepted-exact-artifact-roundtrip-proof-20261020.json",
+      "sha256": "cd74f3dfc7031e3f24a98e40a6af3c3dcc68d05d18c756200cebc4cee97a55e8"
+    },
+    "original_current0040_paper_onboarding_release": {
+      "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Root39498776317-accepted-exact-artifact-roundtrip-proof-20261020.json",
+      "sha256": "48c3427a0c497f354b4fa88c3a2bb8c5dcc4d91400c21b40d99aaf90e88c7aad"
+    },
+    "genuine_auth_late_response_and_tenant_boundary": {
+      "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Root39527250552-existing-approval-auth-late-read-20261020-continuation/checkpoint.json",
+      "sha256": "f4061beb108213d676382ada3f26d856092d9ebdec77ee34a2924bfe9ef418eb"
+    }
+  },
+  "process_replacement": {
+    "before": {
+      "container_id": "ced2e85321b6cab2220cbc6f91f1cca97c01831ffb5e57809c41ddd4d4f8649d",
+      "image_id": "sha256:54a3becb5fdc2ce7487199a5c37b167ac158f7407e7b971974cda87c85e77845",
+      "started_at": "2026-10-20T04:01:18.34058432Z",
+      "pid": 2714626,
+      "status": "running",
+      "restart_count": 0,
+      "service": "capital",
+      "oci_revision": null
+    },
+    "after": {
+      "container_id": "71c7666a7bd335f3484a9b04025fc3aed378c28d50dffdf65fbf3aba022c3ab7",
+      "image_id": "sha256:9bb7ee04e7b75f33be8e75b0f8d1f85770313212a139b3f2d596e505708aeb74",
+      "started_at": "2026-10-20T08:52:03.769746021Z",
+      "pid": 252897,
+      "status": "running",
+      "restart_count": 0,
+      "service": "capital",
+      "oci_revision": null
+    },
+    "current_read": {
+      "container_id": "71c7666a7bd335f3484a9b04025fc3aed378c28d50dffdf65fbf3aba022c3ab7",
+      "image_id": "sha256:9bb7ee04e7b75f33be8e75b0f8d1f85770313212a139b3f2d596e505708aeb74",
+      "started_at": "2026-10-20T08:52:03.769746021Z",
+      "pid": 252897,
+      "status": "running",
+      "restart_count": 0
+    }
+  },
+  "current_paper": {
+    "origin_run": 39498776317,
+    "pool_id": "pool-persona-paper-00400aa279b49774cde4",
+    "binding_id": "pcb-persona-paper-00400aa279b49774cde4",
+    "runtime_id": "rt-a5047c33",
+    "role": "paper_owner",
+    "stage": "paper",
+    "status": "active",
+    "approval_decision_id": null,
+    "risk_policy_ref": null
+  },
+  "limits": [
+    "This original Capital onboarding checkpoint is not complete net financial acceptance or all L1-L12.",
+    "Capital/holdings valuation fields remain genuinely absent. No fee/profit/20-day gate is added and no missing amount is relabelled zero.",
+    "Historical99a8 process-replacement proof retains actual timestamps; current0040 is separately verified after UI refresh. A later ordinary Root will test the same current0040 across its own replacements without creating a new case.",
+    "Existing external proof files are hash-bound host artifacts, not copied wholesale into source control.",
+    "No new VM operation, provider request, paper mutation or business approval is performed by this documentation change."
+  ]
+}
