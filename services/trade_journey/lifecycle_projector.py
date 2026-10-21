@@ -21,6 +21,7 @@ from pathlib import Path
 import sys
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
+from services.execution.lean_runtime.signal_producer import remember_canonical_journey
 from services.trade_journey.correlation_envelope import (
     CorrelationEnvelopeError,
     validate_envelope,
@@ -527,6 +528,13 @@ class RelationalLifecycleProjector:
             (canonical,) = bound
             if canonical is None or canonical == journey_id:
                 return None
+            remember_canonical_journey(
+                tenant_id=identity["tenant_id"],
+                environment=identity["environment"],
+                journey_id=canonical,
+                signal_id=identity.get("signal_id"),
+                run_id=identity.get("run_id"),
+            )
             return canonical
         decision_id = str(decision_id)
         decision_journey = self._bound_journey(
@@ -555,6 +563,14 @@ class RelationalLifecycleProjector:
             )
             if bound_journey != decision_journey:
                 return None
+        remember_canonical_journey(
+            tenant_id=identity["tenant_id"],
+            environment=identity["environment"],
+            journey_id=decision_journey,
+            signal_id=identity.get("signal_id"),
+            decision_id=decision_id,
+            run_id=identity.get("run_id"),
+        )
         return decision_journey
 
     @staticmethod
@@ -1217,6 +1233,25 @@ class RelationalLifecycleProjector:
             self.environment_scope,
             mutation,
         )
+        for entry in accepted_entries:
+            ident = entry["identity"]
+            ev = entry["event"]
+            meta = ev.get("metadata") if isinstance(ev.get("metadata"), Mapping) else {}
+            env_map = (
+                ev.get("correlation_envelope")
+                if isinstance(ev.get("correlation_envelope"), Mapping)
+                else {}
+            )
+            remember_canonical_journey(
+                tenant_id=ident["tenant_id"],
+                environment=ident["environment"],
+                journey_id=ident["journey_id"],
+                signal_id=ident.get("signal_id"),
+                decision_id=str(_first(ev.get("decision_id"), meta.get("decision_id")) or ""),
+                run_id=ident.get("run_id"),
+                correlation_id=str(env_map.get("correlation_id") or ""),
+                trace_id=ident.get("trace_id"),
+            )
         self._materializer = materializer
         current = self._controller()
         return ProjectionResult(

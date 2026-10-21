@@ -373,6 +373,57 @@ class TestDecisionSignalProducer(unittest.TestCase):
         self.assertGreaterEqual(direct_dt, before_direct)
         self.assertLessEqual(direct_dt, after_direct)
 
+    def test_producer_skips_started_execution_fence_and_reuses_original_canonical_journey(self) -> None:
+        from services.execution.lean_runtime.signal_producer import remember_canonical_journey
+
+        remember_canonical_journey(
+            tenant_id="tenant-a",
+            environment="paper",
+            journey_id="tj-paper-001",
+            signal_id="sig-76fdd54e9d601a08260e875aad01d23c",
+            decision_id="decision-paper-001",
+            run_id="run-rb-paper-001-2026-06-12",
+            trace_id="20000000-0000-0000-0000-000000000001",
+        )
+        decision = {
+            "decision_id": "decision-paper-001",
+            "signal_id": "sig-76fdd54e9d601a08260e875aad01d23c",
+            "run_id": "run-rb-paper-001-2026-06-12",
+            "strategy_id": "strategy-paper-001",
+            "timestamp": _NOW,
+            "symbol": "AAPL.US",
+            "action": "BUY",
+            "direction": "LONG",
+            "quantity": 1,
+            "quantity_type": "SHARES",
+            "tenant_id": "tenant-a",
+            "environment": "paper",
+        }
+        [built] = build_decision_signals(decision)
+        self.assertEqual(built["journey_id"], "tj-paper-001")
+        self.assertEqual(built["correlation_envelope"]["journey_id"], "tj-paper-001")
+        self.assertEqual(
+            built["correlation_envelope"]["trace_id"],
+            "20000000-0000-0000-0000-000000000001",
+        )
+
+        store = InMemoryPendingSignalStore()
+        producer = DecisionSignalProducer(store)
+        first_batch = producer.produce(decision)
+        self.assertEqual(first_batch.count, 1)
+        [claimed] = store.get_pending()
+        fence = store.begin_execution(claimed)
+        self.assertEqual(fence.status, "acquired")
+        self.assertFalse(store.is_processed(claimed["signal_id"]))
+
+        retry_batch = producer.produce(decision)
+        self.assertEqual(retry_batch.count, 0)
+        self.assertEqual(store.queue_depth(), 0)
+        self.assertEqual(
+            store._execution_fences[claimed["signal_id"]],
+            f"started:{fence.token}",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

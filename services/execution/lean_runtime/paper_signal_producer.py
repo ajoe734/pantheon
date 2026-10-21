@@ -1151,6 +1151,10 @@ class PaperSignalProducer:
         enqueued = 0
         if isinstance(out, list):
             # Legacy list-of-signals flow
+            from services.execution.lean_runtime.signal_producer import (
+                is_signal_already_admitted,
+                remember_canonical_journey,
+            )
             for sig in out:
                 if "metadata" not in sig:
                     sig["metadata"] = {}
@@ -1158,19 +1162,42 @@ class PaperSignalProducer:
                     sig["metadata"]["is_real_order"] = False
                     sig["metadata"]["is_real_capital"] = False
                 _paper_signal_identity(sig, b_dict, now_iso)
+                if is_signal_already_admitted(store, str(sig.get("signal_id") or "")):
+                    continue
+                env_map = (
+                    sig.get("correlation_envelope")
+                    if isinstance(sig.get("correlation_envelope"), Mapping)
+                    else {}
+                )
+                remember_canonical_journey(
+                    tenant_id=str(sig.get("tenant_id") or "default"),
+                    environment=str(sig.get("environment") or "paper"),
+                    journey_id=str(sig.get("journey_id") or ""),
+                    signal_id=str(sig.get("signal_id") or ""),
+                    decision_id=str(
+                        sig.get("decision_id")
+                        or (sig.get("metadata") or {}).get("decision_id")
+                        or ""
+                    ),
+                    run_id=str(sig.get("run_id") or ""),
+                    correlation_id=str(env_map.get("correlation_id") or ""),
+                    trace_id=str(env_map.get("trace_id") or ""),
+                )
                 store.enqueue(sig)
                 enqueued += 1
         elif isinstance(out, dict):
             # First-class decision dict flow
-            from services.execution.lean_runtime.signal_producer import DecisionSignalProducer
+            from services.execution.lean_runtime.signal_producer import (
+                DecisionSignalProducer,
+                is_signal_already_admitted,
+            )
             dsp = DecisionSignalProducer(store)
 
             # An explicit signal_id marks a decision whose identity is already
-            # deterministic; reuse the store's processed record instead of
-            # rebuilding and re-enqueueing a decision that has completed.
+            # deterministic; reuse the store's processed or execution-fence record
+            # instead of rebuilding and re-enqueueing an already-admitted decision.
             explicit_signal_id = str(out.get("signal_id") or "").strip()
-            is_processed = getattr(store, "is_processed", None)
-            if explicit_signal_id and callable(is_processed) and is_processed(explicit_signal_id):
+            if explicit_signal_id and is_signal_already_admitted(store, explicit_signal_id):
                 log.info(
                     "paper_signal_producer skipped completed decision %s for binding %s",
                     explicit_signal_id,

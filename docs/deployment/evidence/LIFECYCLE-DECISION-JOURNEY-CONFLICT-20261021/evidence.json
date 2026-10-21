@@ -1,17 +1,20 @@
 {
   "task_id": "LIFECYCLE-DECISION-JOURNEY-CONFLICT-20261021",
-  "root_cause": "DecisionSignalProducer._signal_envelope minted a random journey/correlation/trace per tick for market-input-deterministic decision/signal/run IDs; the relational projector then hit IdentityConflictException (decision_id already bound to the first journey) at checkpoint 7511939.",
-  "producer_fix": "Without an upstream envelope, journey/correlation/trace are uuid5-derived from tenant, environment and signal_id, so retries and restarts keep the original journey; tenants and distinct signals stay distinct.",
-  "projector_recovery": "A new-journey signal_generation, trade_decision, or no-op paper_order_simulated event whose decision/signal/run identifiers are already bound to one canonical journey is treated as a retry occurrence: it gets an 'ignored' receipt (source row retained, no rebinding, no quarantine, no readiness override). Decision-less no-op paper_order_simulated follow-ups are matched via signal_id and run_id; positive fills, downstream execution stages, differing signal/run, or another tenant/environment are never suppressed and raise IdentityConflictException; stores without resolve_identity are tolerated.",
-  "history_policy": "No telemetry rows deleted or edited; original business IDs keep their original journey; no accepted-live evidence fabricated.",
+  "root_cause": "DecisionSignalProducer._signal_envelope minted a random journey/correlation/trace per tick for market-input-deterministic decision/signal/run IDs, and PaperSignalProducer/DecisionSignalProducer only checked processed markers (missing TTL -1 started/completed execution reservations), re-emitting sig-76fdd54e9d601a08260e875aad01d23c every minute; the relational projector then hit IdentityConflictException (decision_id already bound to the first journey) at checkpoint 7511939.",
+  "producer_fix": "PaperSignalProducer and DecisionSignalProducer check both processed markers and read-only execution reservations (started:/completed:) without mutating existing reservations, and reuse any already-owned canonical journey (from store or projected bindings) before falling back to uuid5-derived journey/correlation/trace for fresh decisions.",
+  "projector_recovery": "A new-journey signal_generation, trade_decision, or no-op paper_order_simulated event whose decision/signal/run identifiers are already bound to one canonical journey is treated as a retry occurrence: it gets an 'ignored' receipt (source row retained, no rebinding, no quarantine, no readiness override) and records the canonical journey for producer reuse across code rollbacks. Decision-less no-op paper_order_simulated follow-ups are matched via signal_id and run_id; positive fills, downstream execution stages, differing signal/run, or another tenant/environment are never suppressed and raise IdentityConflictException; stores without resolve_identity are tolerated.",
+  "history_policy": "No telemetry rows deleted or edited; original business IDs keep their original journey; existing execution reservations untouched; no accepted-live evidence fabricated.",
   "tests": [
-    "services/execution/lean_runtime/test_signal_producer.py::test_repeated_identical_decision_keeps_one_journey_across_ticks",
+    "services/execution/lean_runtime/test_signal_producer.py::TestDecisionSignalProducer::test_repeated_identical_decision_keeps_one_journey_across_ticks",
+    "services/execution/lean_runtime/test_signal_producer.py::TestDecisionSignalProducer::test_producer_skips_started_execution_fence_and_reuses_original_canonical_journey",
+    "services/execution/lean_runtime/test_paper_signal_producer.py::TestDailyBarDecisionIdentity::test_started_execution_fence_without_processed_marker_suppresses_repeated_ticks",
     "services/trade_journey/test_lifecycle_projector.py::test_retry_of_projected_decision_with_new_journey_keeps_original_binding",
     "services/trade_journey/test_lifecycle_projector.py::test_retry_in_same_batch_is_ignored_and_distinct_decisions_stay_separate",
     "services/trade_journey/test_lifecycle_projector.py::test_multi_stage_retry_without_decision_id_on_followups_is_ignored",
     "services/trade_journey/test_lifecycle_projector.py::test_retry_journey_with_positive_fill_followup_is_rejected_not_ignored",
     "services/trade_journey/test_lifecycle_projector.py::test_same_decision_with_different_signal_is_still_a_conflict",
-    "services/trade_journey/test_lifecycle_projector.py::test_same_decision_in_another_tenant_is_not_treated_as_retry"
+    "services/trade_journey/test_lifecycle_projector.py::test_same_decision_in_another_tenant_is_not_treated_as_retry",
+    "services/trade_journey/test_lifecycle_projector.py::test_actual_first2_shape_retry_and_restored_23f_rollback_without_conflict"
   ],
   "local_result": "services/trade_journey/test_lifecycle_projector.py, test_lifecycle_projector_capacity.py and services/execution/lean_runtime pass; the new producer and projector retry tests fail on the previous code.",
   "not_done": "No merge/deploy/hosted acceptance; Root39619749022 integration owner controls release."

@@ -1908,3 +1908,78 @@ def test_same_decision_in_another_tenant_is_not_treated_as_retry():
     result = projector.project_records(other, mode="live", source_high_watermark=4)
 
     assert (result.accepted, result.ignored) == (2, 0)
+
+
+def test_actual_first2_shape_retry_and_restored_23f_rollback_without_conflict():
+    from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
+    from services.execution.lean_runtime.signal_producer import (
+        DecisionSignalProducer,
+        build_decision_signals,
+    )
+
+    store = _RecordingRelationalStore()
+    projector = RelationalLifecycleProjector(store, clock=lambda: NOW)
+    rows = lifecycle_rows()
+    first2 = json.loads(json.dumps(rows[:2]))
+    for row in first2:
+        payload = row["payload"]
+        payload["signal_id"] = "sig-76fdd54e9d601a08260e875aad01d23c"
+        payload["run_id"] = "run-rb-paper-001-2026-06-12"
+        payload["metadata"]["signal_id"] = "sig-76fdd54e9d601a08260e875aad01d23c"
+        payload["metadata"]["run_id"] = "run-rb-paper-001-2026-06-12"
+        for field in (
+            "client_order_id",
+            "order_id",
+            "reconciliation_id",
+            "risk_decision_id",
+            "broker_order_id",
+        ):
+            payload.pop(field, None)
+            payload["metadata"].pop(field, None)
+
+    legacy_retry = _retry_rows(first2, "tj-paper-retry", first_seq=3)
+    step1 = projector.project_records(
+        first2 + legacy_retry, mode="live", source_high_watermark=4
+    )
+    assert (step1.accepted, step1.ignored, step1.quarantined) == (2, 2, 0)
+    assert [j for (_, _, j) in store.stage_events] == ["tj-paper-001"]
+
+    decision = {
+        "decision_id": "decision-paper-001",
+        "signal_id": "sig-76fdd54e9d601a08260e875aad01d23c",
+        "run_id": "run-rb-paper-001-2026-06-12",
+        "strategy_id": IDENTITY["strategy_id"],
+        "symbol": "AAPL.US",
+        "action": "BUY",
+        "direction": "LONG",
+        "quantity": 3,
+        "quantity_type": "SHARES",
+        "tenant_id": IDENTITY["tenant_id"],
+        "environment": IDENTITY["environment"],
+    }
+    pending_store = InMemoryPendingSignalStore()
+    dsp = DecisionSignalProducer(pending_store)
+    assert dsp.produce(decision).count == 1
+    [claimed] = pending_store.get_pending()
+    assert claimed["journey_id"] == "tj-paper-001"
+    fence = pending_store.begin_execution(claimed)
+    assert fence.status == "acquired"
+    assert not pending_store.is_processed(claimed["signal_id"])
+    assert dsp.produce(decision).count == 0
+
+    [future_sig] = build_decision_signals(decision)
+    assert future_sig["journey_id"] == "tj-paper-001"
+
+    restored_23f = RelationalLifecycleProjector(store, clock=lambda: NOW)
+    restored_23f._superseded_retry_journey = lambda *a, **kw: None
+    future_rows = _retry_rows(first2, future_sig["journey_id"], first_seq=5)
+    step3 = restored_23f.project_records(
+        future_rows, mode="live", source_high_watermark=6
+    )
+    assert step3.quarantined == 0
+    assert (
+        store.identity_links[
+            (IDENTITY["tenant_id"], IDENTITY["environment"], "decision_id", "decision-paper-001")
+        ]
+        == "tj-paper-001"
+    )
