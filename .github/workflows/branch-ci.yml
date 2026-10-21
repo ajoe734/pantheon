@@ -727,3 +727,42 @@ jobs:
           DATABASE_URL: postgresql://postgres@127.0.0.1:5432/consultation_test
         run: |
           python3 -m pytest -q services/trade_journey
+
+  # Own job (and venv) so the research dependency set (QuantLib, mlflow,
+  # vectorbt, each pinned by its own requirements file) never shares an
+  # interpreter with another suite. No known-failures list, deselect or skip.
+  research-suite:
+    name: Research suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs:
+      - trailers
+      - generated-files
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install research dependencies
+        timeout-minutes: 15
+        run: |
+          python3 -m venv "$RUNNER_TEMP/research-venv"
+          "$RUNNER_TEMP/research-venv/bin/python" -m pip install --upgrade pip
+          "$RUNNER_TEMP/research-venv/bin/python" -m pip install \
+            -r requirements.txt \
+            -r services/research/quantlib/requirements.txt \
+            -r services/research/mlflow/requirements.txt
+          # vectorbt 1.1.1 needs numpy>=2.4.6, which the QuantLib/mlflow pins
+          # (numpy==1.26.4) rule out in one resolve; install it second so it
+          # moves numpy/scipy forward (pip check is clean, mlflow needs numpy<3).
+          "$RUNNER_TEMP/research-venv/bin/python" -m pip install \
+            -r services/research/vectorbt/requirements.txt
+          "$RUNNER_TEMP/research-venv/bin/python" -m pip check
+
+      - name: Run research suite
+        timeout-minutes: 20
+        run: |
+          "$RUNNER_TEMP/research-venv/bin/python" -m pytest -q services/research

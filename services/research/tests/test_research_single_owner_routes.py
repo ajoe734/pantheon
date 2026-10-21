@@ -373,13 +373,12 @@ def test_research_dag_fan_in_progression(client: TestClient) -> None:
         "idempotency_key": f"idemp-dag-fanin-1-{task_id}",
     })
     assert d1.status_code == 201
+    # Both roots are scheduled by the one dispatch. The fan-in successor s3 is
+    # scheduled by the owner as soon as s1 and s2 complete, so the run count
+    # cannot be pinned at exactly 2 without racing the background executor.
     runs_after_s1 = [r for r in research_main.store.list_runs() if r.get("task_id") == task_id]
-    assert {r["stage_id"] for r in runs_after_s1} == {"s1", "s2"}
-    runs_after_s1 = _wait_for_task_status(task_id, {"completed", "failed"}, expected_count=2)
-    assert len(runs_after_s1) == 2
-    assert all(r["status"] == "completed" for r in runs_after_s1)
+    assert {"s1", "s2"} <= {r["stage_id"] for r in runs_after_s1}
 
-    # One owner dispatch schedules both roots, then their fan-in successor.
     runs_after_s2 = _wait_for_task_status(task_id, {"completed", "failed"}, expected_count=3)
     assert len(runs_after_s2) == 3
     run_by_stage = {r["stage_id"]: r for r in runs_after_s2}

@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from services.governance.test_approval_authority import configure_registry_unit_auth, registry_unit_headers
 from services.registry.service import app as registry_app
 from services.registry.storage import reset_store
 from services.research.strategy_spec.models import validate_strategy_spec_payload
@@ -57,7 +58,9 @@ def test_distills_two_fixture_research_notes_to_valid_strategy_specs(tmp_path, m
     assert us_spec["code_refs"][0]["path"] == "services/research/vectorbt/adapter.py"
 
 
-def test_registry_payload_from_distillation_is_admissible(tmp_path) -> None:
+def test_registry_payload_from_distillation_is_admissible(tmp_path, monkeypatch) -> None:
+    configure_registry_unit_auth(monkeypatch)
+    monkeypatch.setenv("REGISTRY_STORE_BACKEND", "memory")
     _write_note(tmp_path, "src-note-tw-momentum-quality-001", _tw_momentum_note())
     distiller = ProductionStrategySpecDistiller(
         source_dirs=[tmp_path],
@@ -66,7 +69,7 @@ def test_registry_payload_from_distillation_is_admissible(tmp_path) -> None:
     registry_payload = distiller.distill_registry_payload("src-note-tw-momentum-quality-001")
     reset_store()
     try:
-        client = TestClient(registry_app)
+        client = TestClient(registry_app, headers=registry_unit_headers())
         response = client.post("/api/registry/strategy-specs", json=registry_payload)
 
         assert response.status_code == 200, response.text
