@@ -1,0 +1,8 @@
+{
+  "task_id": "CI-GREEN-SERVICE-SUITES-2-20261021",
+  "workflow": ".github/workflows/branch-ci.yml",
+  "job": "service-suites",
+  "added_steps": ["services/execution", "services/openclaw-gateway-adapter", "services/registry", "services/governance", "services/trade_journey"],
+  "postgres_env": {"governance": "GOV_APPROVAL_TEST_DSN", "trade_journey": "TEST_DATABASE_URL"},
+  "ci_result": "pending PR Service suites run"
+}
