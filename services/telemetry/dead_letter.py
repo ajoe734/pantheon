@@ -16,7 +16,8 @@ from collections import deque
 import json
 import logging
 import os
-from datetime import datetime, timezone
+import threading
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -85,11 +86,15 @@ class DeadLetterQueue:
     - Threshold monitoring (alerts when rejection rate exceeds configured limit)
     """
 
+    DEFAULT_RETENTION_SECONDS = 7 * 24 * 3600.0
+
     def __init__(
         self,
         spill_path: Optional[str] = None,
         max_memory_entries: int = 10_000,
         incident_threshold: int = 100,
+        retention_seconds: float = DEFAULT_RETENTION_SECONDS,
+        replayable_tags: tuple[str, ...] = (TAG_WRITER_ERROR, TAG_RETRY_EXHAUSTED),
     ):
         """
         Parameters
@@ -101,6 +106,12 @@ class DeadLetterQueue:
             spill_path but evicted from memory.
         incident_threshold : int
             Number of dead-letter entries that triggers an incident warning.
+        retention_seconds : float
+            Age cap for spill entries. Entries carrying any of
+            ``replayable_tags`` are exempt, because startup replay may still
+            retry them.
+        replayable_tags : tuple[str, ...]
+            Tags whose entries are kept regardless of age.
         """
         self._entries: list[DeadLetterEntry] = []
         self._spill_path = Path(spill_path) if spill_path else None
@@ -108,6 +119,10 @@ class DeadLetterQueue:
         self._incident_threshold = incident_threshold
         self._total_rejected = 0
         self._incident_fired = False
+        self._retention_seconds = max(1.0, float(retention_seconds))
+        self._replayable_tags = frozenset(replayable_tags)
+        self._spill_lock = threading.Lock()
+        self._spill_expired_dropped = 0
 
         if self._spill_path:
             self._spill_path.parent.mkdir(parents=True, exist_ok=True)
@@ -156,7 +171,7 @@ class DeadLetterQueue:
         persisted = False
         if self._spill_path:
             try:
-                with open(self._spill_path, "a") as f:
+                with self._spill_lock, open(self._spill_path, "a") as f:
                     f.write(entry.to_json() + "\n")
                     f.flush()
                     os.fsync(f.fileno())
@@ -220,13 +235,78 @@ class DeadLetterQueue:
         entries = self.get_entries(tag_filter=tag_filter, limit=10_000)
         return [e.event for e in entries if e.event is not None]
 
-    def load_from_spill(self) -> int:
-        """
-        Load dead-letter entries from the spill file into memory.
-        Returns the number of entries loaded.
+    def _spill_line_expired(self, line: str, cutoff: datetime) -> bool:
+        """Whether a spill line is past retention and not replayable."""
+        try:
+            data = json.loads(line)
+        except ValueError:
+            return True
+        if not isinstance(data, dict):
+            return True
+        tags = data.get("tags")
+        if isinstance(tags, list) and self._replayable_tags.intersection(tags):
+            return False
+        try:
+            rejected = datetime.fromisoformat(str(data.get("rejected_at", "")).replace("Z", "+00:00"))
+        except ValueError:
+            return True
+        if rejected.tzinfo is None:
+            rejected = rejected.replace(tzinfo=timezone.utc)
+        return rejected < cutoff
+
+    def compact_spill(self) -> int:
+        """Drop spill entries past retention, keeping every replayable one.
+
+        Streams the file (it may be far larger than memory) into a temp file and
+        replaces the spill atomically. Returns the number of entries dropped.
         """
         if not self._spill_path or not self._spill_path.exists():
             return 0
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=self._retention_seconds)
+        tmp_path = self._spill_path.with_name(self._spill_path.name + ".compact.tmp")
+        dropped = 0
+        kept = 0
+        with self._spill_lock:
+            try:
+                with open(self._spill_path, "r") as src, open(tmp_path, "w") as dst:
+                    for raw in src:
+                        line = raw.strip()
+                        if not line:
+                            continue
+                        if self._spill_line_expired(line, cutoff):
+                            dropped += 1
+                            continue
+                        dst.write(line + "\n")
+                        kept += 1
+                    dst.flush()
+                    os.fsync(dst.fileno())
+                if dropped:
+                    os.replace(tmp_path, self._spill_path)
+            except Exception as e:
+                log.error(f"DeadLetterQueue.compact_spill failed: {e}")
+                return 0
+            finally:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+        self._spill_expired_dropped += dropped
+        if dropped:
+            log.info(
+                "DeadLetterQueue spill retention dropped %s expired entries, kept %s",
+                dropped,
+                kept,
+            )
+        return dropped
+
+    def load_from_spill(self) -> int:
+        """
+        Load dead-letter entries from the spill file into memory.
+
+        The spill is first compacted to its retention window, so only retained
+        entries are read. Returns the number of entries loaded.
+        """
+        if not self._spill_path or not self._spill_path.exists():
+            return 0
+        self.compact_spill()
 
         observed_count = 0
         retained_lines: deque[str] = deque(maxlen=self._max_memory_entries)
@@ -290,6 +370,8 @@ class DeadLetterQueue:
             "incident_fired": self._incident_fired,
             "spill_path": str(self._spill_path) if self._spill_path else None,
             "tag_counts": tag_counts,
+            "retention_seconds": self._retention_seconds,
+            "spill_expired_dropped": self._spill_expired_dropped,
         }
 
     def reset_incident_flag(self) -> None:

@@ -159,6 +159,22 @@ TELEMETRY_INFRASTRUCTURE_HEALTH_LEASE_SECONDS
     the lease expires, and until then retries are answered as retryable rather
     than as delivered.
 
+TELEMETRY_INFRASTRUCTURE_HEALTH_DEDUPE_HORIZON_SECONDS
+    Dedupe horizon of the admission ledger (default 86400, i.e. 24h). An
+    infrastructure health event whose ``created_at`` is older than the horizon
+    is rejected (INFRA_EVENT_TOO_OLD, HTTP 422); every event inside it keeps
+    exactly-once dedupe. Ledger records past the horizon are dropped from memory
+    and startup replay, and compacted out of the file (atomic rewrite under the
+    advisory lock; live reservations are kept). Choose it above the producer's
+    longest retry window (the BFF downstream health monitor retries within
+    minutes to hours) so no retriable event is ever refused.
+
+TELEMETRY_DLQ_RETENTION_SECONDS
+    Age cap for dead_letter.jsonl (default 604800, i.e. 7 days). Applied at
+    startup before the spill is loaded. Entries startup replay may still retry
+    (writer_error, retry_exhausted and TELEMETRY_REPLAY_DLQ_TAG) are never aged
+    out; expired validation failures are dropped by an atomic rewrite.
+
 TELEMETRY_BATCH_SIZE
     Max events per write batch (default 500).
 
@@ -564,6 +580,16 @@ def _build_service(lineage_write_store: LineageReadService | None = None) -> Tel
         )
     except ValueError:
         infrastructure_health_lease = 30.0
+    try:
+        infrastructure_health_horizon = float(
+            os.getenv("TELEMETRY_INFRASTRUCTURE_HEALTH_DEDUPE_HORIZON_SECONDS", "86400")
+        )
+    except ValueError:
+        infrastructure_health_horizon = 86400.0
+    try:
+        dlq_retention_seconds = float(os.getenv("TELEMETRY_DLQ_RETENTION_SECONDS", "604800"))
+    except ValueError:
+        dlq_retention_seconds = 604800.0
     replay_dlq_on_start = _env_bool("TELEMETRY_REPLAY_DLQ_ON_START", default=False)
     dlq_replay_tag_filter = os.getenv("TELEMETRY_REPLAY_DLQ_TAG") or None
 
@@ -623,6 +649,8 @@ def _build_service(lineage_write_store: LineageReadService | None = None) -> Tel
         )
         or None,
         infrastructure_health_lease_seconds=infrastructure_health_lease,
+        infrastructure_health_dedupe_horizon_seconds=infrastructure_health_horizon,
+        dlq_retention_seconds=dlq_retention_seconds,
         event_reader=event_reader,
     )
     if lineage_write_store is not None and getattr(lineage_write_store, "_binding_store", None) is None:
@@ -1012,6 +1040,8 @@ _INFRASTRUCTURE_HEALTH_ERROR_STATUS = {
     # rather than treat the observation as delivered.
     "INFRA_ADMISSION_IN_FLIGHT": 503,
     "INFRA_ADMISSION_FENCED": 503,
+    # Not retryable: the event is past the ledger's dedupe horizon.
+    "INFRA_EVENT_TOO_OLD": 422,
 }
 
 
