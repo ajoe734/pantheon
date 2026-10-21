@@ -200,6 +200,126 @@ class InfrastructureHealthReservation:
     detail: Optional[str] = None
 
 
+class RetainedDeadLetterQueue(DeadLetterQueue):
+    """Dead-letter queue whose spill file is capped by age.
+
+    Entries carrying any of ``replayable_tags`` are what startup replay may
+    still retry, so they are never aged out; everything else is dropped once it
+    is older than ``retention_seconds``. The cap is applied at load time by a
+    streamed, atomic rewrite, so startup reads only the retained spill.
+    """
+
+    DEFAULT_RETENTION_SECONDS = 7 * 24 * 3600.0
+
+    def __init__(
+        self,
+        *args: Any,
+        retention_seconds: float = DEFAULT_RETENTION_SECONDS,
+        replayable_tags: tuple[str, ...] = _WRITE_FAILURE_TAGS,
+        compact_interval_seconds: float | None = None,
+        clock: Callable[[], datetime] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self._retention_seconds = max(1.0, float(retention_seconds))
+        self._replayable_tags = frozenset(replayable_tags)
+        # Injectable so elapsed-time behaviour is testable deterministically.
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        if compact_interval_seconds is None:
+            compact_interval_seconds = min(3600.0, self._retention_seconds)
+        self._compact_interval_seconds = max(1.0, float(compact_interval_seconds))
+        self._last_compact_at = self._clock()
+        # Re-entrant: reject() compacts while still holding the append lock.
+        self._spill_lock = threading.RLock()
+        self._spill_expired_dropped = 0
+
+    def reject(self, *args: Any, **kwargs: Any) -> bool:
+        # Serialise spill appends with compaction so a rewrite cannot lose them.
+        with self._spill_lock:
+            persisted = super().reject(*args, **kwargs)
+            # Apply retention during normal operation, not only at load, so a
+            # long-running service keeps the spill bounded. The append above is
+            # already fsynced; compaction never drops replayable entries.
+            elapsed = (self._clock() - self._last_compact_at).total_seconds()
+            if elapsed >= self._compact_interval_seconds:
+                self.compact_spill()
+            return persisted
+
+    def _spill_line_expired(self, line: str, cutoff: datetime) -> bool:
+        """Whether a spill line is past retention and not replayable."""
+        try:
+            data = json.loads(line)
+        except ValueError:
+            return True
+        if not isinstance(data, dict):
+            return True
+        tags = data.get("tags")
+        if isinstance(tags, list) and self._replayable_tags.intersection(tags):
+            return False
+        try:
+            rejected = datetime.fromisoformat(str(data.get("rejected_at", "")).replace("Z", "+00:00"))
+        except ValueError:
+            return True
+        if rejected.tzinfo is None:
+            rejected = rejected.replace(tzinfo=timezone.utc)
+        return rejected < cutoff
+
+    def compact_spill(self) -> int:
+        """Drop spill entries past retention, keeping every replayable one.
+
+        Streams the file (it may be far larger than memory) into a temp file and
+        replaces the spill atomically. Returns the number of entries dropped.
+        """
+        if not self._spill_path or not self._spill_path.exists():
+            return 0
+        now = self._clock()
+        cutoff = now - timedelta(seconds=self._retention_seconds)
+        tmp_path = self._spill_path.with_name(self._spill_path.name + ".compact.tmp")
+        dropped = 0
+        kept = 0
+        with self._spill_lock:
+            self._last_compact_at = now
+            try:
+                with open(self._spill_path, "r") as src, open(tmp_path, "w") as dst:
+                    for raw in src:
+                        line = raw.strip()
+                        if not line:
+                            continue
+                        if self._spill_line_expired(line, cutoff):
+                            dropped += 1
+                            continue
+                        dst.write(line + "\n")
+                        kept += 1
+                    dst.flush()
+                    os.fsync(dst.fileno())
+                if dropped:
+                    os.replace(tmp_path, self._spill_path)
+            except Exception as e:
+                log.error(f"DeadLetterQueue.compact_spill failed: {e}")
+                return 0
+            finally:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+        self._spill_expired_dropped += dropped
+        if dropped:
+            log.info(
+                "DeadLetterQueue spill retention dropped %s expired entries, kept %s",
+                dropped,
+                kept,
+            )
+        return dropped
+
+    def load_from_spill(self) -> int:
+        self.compact_spill()
+        return super().load_from_spill()
+
+    def stats(self) -> dict[str, Any]:
+        stats = super().stats()
+        stats["retention_seconds"] = self._retention_seconds
+        stats["spill_expired_dropped"] = self._spill_expired_dropped
+        return stats
+
+
 class InfrastructureHealthAdmissionLedger:
     """Durable, replica-safe two-phase admission log keyed by stable event ID.
 
@@ -245,17 +365,40 @@ class InfrastructureHealthAdmissionLedger:
     OUTCOME_FENCED = "fenced"
 
     DEFAULT_LEASE_SECONDS = 30.0
+    DEFAULT_DEDUPE_HORIZON_SECONDS = 24 * 3600.0
+    DEFAULT_COMPACTION_INTERVAL_SECONDS = 600.0
 
-    def __init__(self, path: str, *, lease_seconds: float = DEFAULT_LEASE_SECONDS) -> None:
+    def __init__(
+        self,
+        path: str,
+        *,
+        lease_seconds: float = DEFAULT_LEASE_SECONDS,
+        dedupe_horizon_seconds: float = DEFAULT_DEDUPE_HORIZON_SECONDS,
+        compaction_interval_seconds: float = DEFAULT_COMPACTION_INTERVAL_SECONDS,
+    ) -> None:
+        """Open the ledger.
+
+        ``dedupe_horizon_seconds`` bounds the ledger: an event whose
+        ``created_at`` is older than the horizon is never admitted (see
+        :meth:`within_horizon`), so a record for such an event can no longer be
+        needed for dedupe and is dropped from memory, from startup replay and,
+        on compaction, from the file.
+        """
         self._path = Path(path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._path.touch(exist_ok=True)
         self._lease_seconds = max(0.1, float(lease_seconds))
+        self._dedupe_horizon = timedelta(seconds=max(1.0, float(dedupe_horizon_seconds)))
+        self._compaction_interval = max(1.0, float(compaction_interval_seconds))
         self._lock = threading.Lock()
         self._records: dict[str, dict[str, Any]] = {}
         self._offset = 0
+        self._inode: Optional[int] = None
+        self._last_compaction = time.monotonic()
+        self._compacted_records = 0
         with self._lock:
             self._refresh_locked()
+        self.compact()
 
     @property
     def path(self) -> str:
@@ -264,6 +407,37 @@ class InfrastructureHealthAdmissionLedger:
     @property
     def lease_seconds(self) -> float:
         return self._lease_seconds
+
+    @property
+    def dedupe_horizon_seconds(self) -> float:
+        return self._dedupe_horizon.total_seconds()
+
+    def within_horizon(self, created_at: Any, *, now: Optional[datetime] = None) -> bool:
+        """Return whether an event created at *created_at* may still be admitted.
+
+        An unreadable timestamp is not rejected here; schema validation owns
+        that. Such a record is aged by its ledger timestamps instead.
+        """
+        created = self._parse_stamp(created_at)
+        if created is None:
+            return True
+        return created >= (now or self._now()) - self._dedupe_horizon
+
+    def _record_expired(self, record: Mapping[str, Any], now: datetime) -> bool:
+        """Whether *record* can no longer matter for dedupe.
+
+        A live reservation is never expired. Otherwise the record ages by the
+        event's ``created_at`` (a retry of that event is rejected once it is
+        past the horizon), falling back to the ledger's own timestamps.
+        """
+        if record.get("state") == self.STATE_RESERVED and not self._reservation_expired(record, now):
+            return False
+        cutoff = now - self._dedupe_horizon
+        for key in ("created_at", "committed_at", "reserved_at"):
+            stamp = self._parse_stamp(record.get(key))
+            if stamp is not None:
+                return stamp < cutoff
+        return True
 
     # -- internal helpers --
 
@@ -298,32 +472,112 @@ class InfrastructureHealthAdmissionLedger:
         return now >= expires_at
 
     def _refresh_locked(self) -> None:
-        """Replay ledger records written since the last read, in order."""
+        """Replay ledger records written since the last read, in order.
+
+        Records already past the dedupe horizon are not retained, so memory and
+        startup replay are bounded by the horizon, not by the file's history.
+        If the file was replaced by a compaction (another replica or this one)
+        the replay restarts from the beginning of the new file.
+        """
+        stat = self._path.stat()
+        if self._inode != stat.st_ino or stat.st_size < self._offset:
+            self._inode = stat.st_ino
+            self._offset = 0
+            self._records.clear()
+        now = self._now()
+        consumed = 0
         with self._path.open("rb") as handle:
             handle.seek(self._offset)
-            pending = handle.read()
-        consumed = 0
-        for raw_line in pending.splitlines(keepends=True):
-            if not raw_line.endswith(b"\n"):
-                # Partial trailing write from a crashed or concurrent writer.
-                # Leave it unconsumed and re-read it once it is complete.
-                break
-            consumed += len(raw_line)
-            try:
-                record = json.loads(raw_line.decode("utf-8"))
-            except (UnicodeDecodeError, ValueError):
-                log.warning("Skipping unreadable infrastructure health ledger record")
-                continue
-            if not isinstance(record, dict):
-                continue
-            event_id = str(record.get("event_id") or "").strip()
-            if not event_id:
-                continue
-            if record.get("state") == self.STATE_RELEASED:
-                self._records.pop(event_id, None)
-            else:
-                self._records[event_id] = record
+            for raw_line in handle:
+                if not raw_line.endswith(b"\n"):
+                    # Partial trailing write from a crashed or concurrent writer.
+                    # Leave it unconsumed and re-read it once it is complete.
+                    break
+                consumed += len(raw_line)
+                try:
+                    record = json.loads(raw_line.decode("utf-8"))
+                except (UnicodeDecodeError, ValueError):
+                    log.warning("Skipping unreadable infrastructure health ledger record")
+                    continue
+                if not isinstance(record, dict):
+                    continue
+                event_id = str(record.get("event_id") or "").strip()
+                if not event_id:
+                    continue
+                if record.get("state") == self.STATE_RELEASED:
+                    self._records.pop(event_id, None)
+                elif self._record_expired(record, now):
+                    self._records.pop(event_id, None)
+                else:
+                    self._records[event_id] = record
         self._offset += consumed
+
+    def compact(self) -> int:
+        """Rewrite the ledger without records past the dedupe horizon.
+
+        Runs under the same advisory lock as admission and replaces the file
+        atomically. Live reservations are always kept. Returns the number of
+        ledger lines removed.
+        """
+        with self._lock:
+            handle = self._locked_handle()
+            try:
+                self._refresh_locked()
+                now = self._now()
+                self._last_compaction = time.monotonic()
+                self._records = {
+                    event_id: record
+                    for event_id, record in self._records.items()
+                    if not self._record_expired(record, now)
+                }
+                before = self._path.stat().st_size
+                tmp_path = self._path.with_name(self._path.name + f".compact.{os.getpid()}.tmp")
+                kept = 0
+                written = 0
+                try:
+                    with tmp_path.open("wb") as out:
+                        for record in self._records.values():
+                            line = (
+                                json.dumps(record, separators=(",", ":"), sort_keys=True).encode("utf-8")
+                                + b"\n"
+                            )
+                            out.write(line)
+                            written += len(line)
+                            kept += 1
+                        out.flush()
+                        os.fsync(out.fileno())
+                        tmp_ino = os.fstat(out.fileno()).st_ino
+                    if written >= before:
+                        # Nothing to reclaim; keep the original file and inode.
+                        return 0
+                    os.replace(tmp_path, self._path)
+                finally:
+                    if tmp_path.exists():
+                        tmp_path.unlink()
+                # Track only what this compaction wrote; another replica may
+                # lock the new inode and append right after os.replace, and
+                # _refresh_locked must replay those records from `written`.
+                self._inode = tmp_ino
+                self._offset = written
+                removed = max(0, before - written)
+                self._compacted_records += 1
+                log.info(
+                    "Compacted infrastructure health ledger: kept=%s bytes_before=%s bytes_after=%s",
+                    kept,
+                    before,
+                    written,
+                )
+                return removed
+            finally:
+                self._unlock(handle)
+
+    def _compact_if_due(self) -> None:
+        if time.monotonic() - self._last_compaction >= self._compaction_interval:
+            try:
+                self.compact()
+            except OSError as exc:
+                self._last_compaction = time.monotonic()
+                log.error("Infrastructure health ledger compaction failed: %s", exc)
 
     def _append_locked(self, handle, record: dict[str, Any]) -> None:
         line = json.dumps(record, separators=(",", ":"), sort_keys=True).encode("utf-8") + b"\n"
@@ -334,10 +588,19 @@ class InfrastructureHealthAdmissionLedger:
         self._offset = handle.tell()
 
     def _locked_handle(self):
-        handle = self._path.open("r+b")
-        if fcntl is not None:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        return handle
+        while True:
+            handle = self._path.open("r+b")
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                # A compaction may have replaced the file while this caller
+                # waited on the lock; appending to the orphaned inode would lose
+                # the record, so re-open the current file.
+                if os.fstat(handle.fileno()).st_ino == self._path.stat().st_ino:
+                    return handle
+            except OSError:
+                pass
+            self._unlock(handle)
 
     @staticmethod
     def _unlock(handle) -> None:
@@ -371,6 +634,7 @@ class InfrastructureHealthAdmissionLedger:
         clean_id = str(event_id or "").strip()
         if not clean_id:
             raise ValueError("infrastructure health admission requires an event_id")
+        self._compact_if_due()
         now = self._now()
         with self._lock:
             handle = self._locked_handle()
@@ -521,6 +785,8 @@ class InfrastructureHealthAdmissionLedger:
                 "open_reservations": open_reservations,
                 "recoverable_expired_reservations": expired_reservations,
                 "lease_seconds": self._lease_seconds,
+                "dedupe_horizon_seconds": self.dedupe_horizon_seconds,
+                "compactions": self._compacted_records,
             }
 
 
@@ -855,6 +1121,8 @@ class TelemetryIngestService:
         dlq_replay_tag_filter: Optional[str] = None,
         infrastructure_health_ledger_path: Optional[str] = None,
         infrastructure_health_lease_seconds: Optional[float] = None,
+        infrastructure_health_dedupe_horizon_seconds: Optional[float] = None,
+        dlq_retention_seconds: Optional[float] = None,
         event_reader: Optional[Callable[[str], Optional[dict[str, Any]]]] = None,
     ):
         """
@@ -917,6 +1185,10 @@ class TelemetryIngestService:
             If True, load persisted DLQ spill entries and replay safe write
             failures after the writer starts. Validation-failure entries remain
             blocked by replay_dlq() policy.
+        infrastructure_health_dedupe_horizon_seconds : float, optional
+            Admission ledger dedupe horizon (default 24h).
+        dlq_retention_seconds : float, optional
+            Age cap for DLQ spill entries startup replay cannot retry (default 7d).
         dlq_replay_tag_filter : str, optional
             Optional explicit tag filter for startup replay. When None, startup
             replay uses the safe default write-failure tag set.
@@ -963,9 +1235,22 @@ class TelemetryIngestService:
         dlq_spill = dlq_spill_path
         if not dlq_spill and storage_dir:
             dlq_spill = str(Path(storage_dir) / "dead_letter.jsonl")
-        self._dlq = DeadLetterQueue(
+        # Entries startup replay may still retry are exempt from the age cap.
+        dlq_replayable_tags = tuple(
+            dict.fromkeys(
+                _WRITE_FAILURE_TAGS
+                + ((dlq_replay_tag_filter,) if dlq_replay_tag_filter else ())
+            )
+        )
+        self._dlq = RetainedDeadLetterQueue(
             spill_path=dlq_spill,
             incident_threshold=dlq_incident_threshold,
+            retention_seconds=(
+                dlq_retention_seconds
+                if dlq_retention_seconds is not None
+                else RetainedDeadLetterQueue.DEFAULT_RETENTION_SECONDS
+            ),
+            replayable_tags=dlq_replayable_tags,
         )
 
         # Backpressure controller
@@ -1019,6 +1304,11 @@ class TelemetryIngestService:
                         infrastructure_health_lease_seconds
                         if infrastructure_health_lease_seconds is not None
                         else InfrastructureHealthAdmissionLedger.DEFAULT_LEASE_SECONDS
+                    ),
+                    dedupe_horizon_seconds=(
+                        infrastructure_health_dedupe_horizon_seconds
+                        if infrastructure_health_dedupe_horizon_seconds is not None
+                        else InfrastructureHealthAdmissionLedger.DEFAULT_DEDUPE_HORIZON_SECONDS
                     ),
                 )
             except OSError as exc:
@@ -1664,6 +1954,22 @@ class TelemetryIngestService:
                 (
                     "Durable infrastructure health admission ledger is unavailable; "
                     "refusing to admit an event that cannot be deduplicated durably"
+                ),
+                dead_letter=False,
+            )
+
+        # Dedupe is only guaranteed inside the ledger's horizon, so an event
+        # older than it is refused rather than admitted without a durable
+        # dedupe record. Nothing inside the horizon is affected. Not
+        # dead-lettered: a stale event is not replayable and spooling it is
+        # what let the spill grow without bound.
+        if not ledger.within_horizon(event.get("created_at")):
+            return self._reject_infrastructure_health(
+                event,
+                "INFRA_EVENT_TOO_OLD",
+                (
+                    f"created_at {event.get('created_at')!r} is older than the "
+                    f"{ledger.dedupe_horizon_seconds:g}s dedupe horizon"
                 ),
                 dead_letter=False,
             )
