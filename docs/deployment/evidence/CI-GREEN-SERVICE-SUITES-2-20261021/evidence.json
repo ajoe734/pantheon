@@ -4,5 +4,5 @@
   "job": "service-suites",
   "added_steps": ["services/execution", "services/openclaw-gateway-adapter", "services/registry", "services/governance", "services/trade_journey"],
   "postgres_env": {"governance": "GOV_APPROVAL_TEST_DSN", "trade_journey": "TEST_DATABASE_URL"},
-  "ci_result": "pending PR Service suites run"
+  "ci_result": "Service suites pass in 20m39s on PR #6706 (run after DATABASE_URL fix; first run failed only test_rendered_compose_operator_bff_readiness_with_postgres_reader for missing DATABASE_URL)"
 }
