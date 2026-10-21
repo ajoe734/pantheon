@@ -1,0 +1,55 @@
+{
+  "task_id": "SERVICE-STALE-TESTS-OWNERS-20261021",
+  "verdict": "all 14 failures were stale tests; no product regression; no product files changed",
+  "findings": [
+    {
+      "tests": [
+        "services/capital/test_service.py::test_forwarded_operator_jwt_tenant_normalization_and_rejections"
+      ],
+      "product_change": "ae2f81cf2 EVALUATOR-EXISTING-OWNER-READ-CONTRACT-20261012 restored ACTOR_SERVICE_MISMATCH on Capital mutations",
+      "classification": "stale test",
+      "fix": "token now carries service=control-plane-bff matching X-Pantheon-Service; all TENANT_REQUIRED / TENANT_SCOPE_FORBIDDEN assertions unchanged"
+    },
+    {
+      "tests": [
+        "services/telemetry/test_paper_telemetry_packet.py (4 tests)"
+      ],
+      "product_change": "c9f3be20d PAPER-RUNTIME-BRIDGE-TRUTH-FAILCLOSED-20261010: _extract_verified_bridge returns None, unverified bindings emit no engine_bridge_*",
+      "classification": "stale test",
+      "fix": "tests assert engine_bridge_* is absent from events/summary and that the legacy packet validator reports exactly the three bridge errors (fail-closed outcome)"
+    },
+    {
+      "tests": [
+        "services/evolution/test_evo_005_rollback_followthrough.py (4 rollback happy paths)"
+      ],
+      "product_change": "RuntimeManagerService rollback requires an approved human_gate_decision bound to old_binding->prior_binding (service.py _prove_human_gated_rollback_target)",
+      "classification": "stale test",
+      "fix": "seed helper builds a fully signed approved gate decision for the exact target; added negative test: missing gate and a gate bound to another pairing both raise and leave the binding active"
+    },
+    {
+      "tests": [
+        "services/evolution/test_evo_005_rollback_followthrough.py::test_rollback_blocked_reason_surfaced_on_missing_binding"
+      ],
+      "product_change": "RuntimeBindingError is raised from services.runtime_manager.runtime_binding; the test imported a different module object via bare 'runtime_binding'",
+      "classification": "stale test",
+      "fix": "import RuntimeBindingError/RuntimeManagerError from the services.runtime_manager package"
+    },
+    {
+      "tests": [
+        "services/evolution/test_l12_evo_001_process_recovery.py::test_two_api_processes_and_restarted_worker_share_one_authority"
+      ],
+      "product_change": "dispatch_worker calls require_execution_approval (Governance reader) before adapter.submit",
+      "classification": "stale test",
+      "fix": "test hosts a Governance approval owner stub bound to the exact proposal digest and points the worker at it via EVOLUTION_GOVERNANCE_BASE_URL/SERVICE_TOKEN; unsupported/dead-letter/replay assertions unchanged"
+    },
+    {
+      "tests": [
+        "services/evolution/tests/test_client.py (3 tests)"
+      ],
+      "product_change": "none",
+      "classification": "stale test (environment drift): @pytest.mark.asyncio needs pytest-asyncio, absent from requirements.txt / ensure_worker_test_python.py",
+      "fix": "replaced @pytest.mark.asyncio with @pytest.mark.anyio (anyio is in the canonical env; same pattern as services/evolution/test_program_owner.py); test bodies unchanged"
+    }
+  ],
+  "verification": "pytest services/capital services/telemetry services/evolution under canonical .venv-pantheon: 1151 passed, 16 skipped (pre-existing), 0 failed"
+}
