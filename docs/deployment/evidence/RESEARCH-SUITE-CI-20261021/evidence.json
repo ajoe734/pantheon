@@ -40,6 +40,6 @@
   ],
   "product_regressions": [],
   "other_listed_failures": "single-owner routes, QuantLib 503 and mlflow security_boundary tests pass once QuantLib/mlflow are installed (dependency class); no product change needed",
-  "ci_result": "pending PR CI",
+  "ci_result": "Research suite passes in 8m47s on PR #6711 (run 39561599766), no deselection or known-failure list",
   "install_order": "root+quantlib+mlflow first, then vectorbt in a second pip invocation (vectorbt 1.1.1 needs numpy>=2.4.6, conflicting with numpy==1.26.4 pins in a single resolve); pip check clean"
 }
