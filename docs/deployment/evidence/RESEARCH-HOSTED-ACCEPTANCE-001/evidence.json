@@ -1,0 +1,169 @@
+{
+  "task_id": "RESEARCH-HOSTED-ACCEPTANCE-001",
+  "parent_task": "DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002",
+  "at": "2026-10-21T13:10:26.888088+00:00",
+  "status": "hosted_evidence_prepared_for_original_assigned_independent_review",
+  "documentation_only": true,
+  "production_delta": 0,
+  "owner": "Human/Ops",
+  "reviewer": "Antigravity",
+  "hosted_done": false,
+  "all12_complete": false,
+  "goal_complete": false,
+  "original_acceptance": {
+    "AC1": {
+      "requirement": "Preserve all unfulfilled hosted obligations from BFF-RESEARCH-SINGLE-OWNER-001 without reopening or duplicating its delivered source. PR6103 merged8af1ef2d0946d7eac7c87fba21af52233bc8a789 with source functional done but owner archived the root despite hosted external_wait. That terminal status is NOT hosted acceptance.",
+      "evidence_state": "provided_for_independent_review",
+      "finding": "Original source #6103 exact approved85f74a90 merged8af1ef2 remains delivered and an actual ancestor of served23f9dd. Its original functional tests/peer review remain source evidence; the original archived hosted external_wait was never completion. This supplement implements no source.",
+      "proof_keys": [
+        "original_source_archive",
+        "original_source_evidence"
+      ]
+    },
+    "AC2": {
+      "requirement": "After L12 source delivery and the single existing release coordinator exact-pair release obtain specific operation authorization and prove served FE/BFF/Research/owner identities before any hosted operation. Workers receive no SSH or VM credentials. This manual checkpoint grants no new hosted operation or deployment.",
+      "evidence_state": "provided_for_independent_review",
+      "finding": "Original ad64 operation was explicitly authorized and executed once on the original accepted release. The existing sole coordinator has now formally accepted23f9dd/a701 Root395649, with exact old3f91 artifacts restored then the same-new candidate returned. New Root requested no paper bootstrap/retirement. Workers received no VM/SSH credentials or new business authority.",
+      "proof_keys": [
+        "current_accepted_exact_pair",
+        "current_real_owner_process"
+      ]
+    },
+    "AC3": {
+      "requirement": "Using only newly authorized labeled paper/offline fixtures prove BFF-to-owner plan approval and per-stage governed tenant/dataset/content/mode binding and actual owner DAG progression and genuine available-backend/provider outputs. Missing or foreign inputs and unavailable real backends must fail closed. Simulation cannot certify real backend success.",
+      "evidence_state": "provided_for_independent_review",
+      "finding": "Original ad64 user-approved plan version3, real Vectorbt006 and real synthesis007 remain completed with exact stage/dataset/model/result/receipt links. Source15 data reuse and 40 actually computed2330 bars are separately established; original negative return/drawdown remains negative. Missing/foreign-dataset and real-backend-unavailable E8 controls are preserved as protocol negatives with zero backend/provider calls and zero artifacts, separate from real006/007 outputs.",
+      "proof_keys": [
+        "original_real_backtest_model_dataset_lineage",
+        "original_E8_protocol",
+        "current_saved_owner_and_artifacts",
+        "current_preserved_E8_and_experiment_intake"
+      ]
+    },
+    "AC4": {
+      "requirement": "Prove owner durable readback and cancellation/retry/idempotency and restart/recovery on the accepted exact release using existing tooling and scoped artifacts. Preserve existing data and separate genuine human decisions. No real-capital effects or credential changes or parallel acceptance platform.",
+      "evidence_state": "provided_for_independent_review",
+      "finding": "Original E8 concurrent same-key retry produced one child/generation increment, with same raw key on another parent isolated; all six protocol runs remain terminal and artifact-free. Real original Research owner artifacts survived an actual later Research container replacement. On accepted23f9dd the whole original owner run/artifact responses remain equal across pre-release, actual old leg and return; original Workshop UI shows same ad64/006/007 and saved semantic synthesis before/after reload. No cancellation/retry/model/CPU execution was replayed.",
+      "proof_keys": [
+        "original_E8_protocol",
+        "same_saved_owner_after_actual_replacement",
+        "current_real_owner_process",
+        "current_full22_three_leg_preservation",
+        "current_saved_same_resource_UI",
+        "current_preserved_E8_and_experiment_intake"
+      ]
+    },
+    "AC5": {
+      "requirement": "Keep hosted external_wait until truthful exact-pair evidence is independently reviewed and remaining final-pair browser/provider/persistence obligations are covered. Source tests and identity-only deployment are not completion.",
+      "evidence_state": "assigned_independent_review_pending",
+      "finding": "Exact final-pair/owner/browser/persistence observations are hash-bound here for assigned Antigravity. This file does not approve itself or set hosted done. Reviewer must inspect all five original clauses and actual limits before native acceptance.",
+      "proof_keys": [
+        "current_accepted_exact_pair",
+        "current_real_owner_process",
+        "current_full22_three_leg_preservation",
+        "current_saved_same_resource_UI"
+      ]
+    }
+  },
+  "proofs": {
+    "original_source_archive": {
+      "path": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root/ai-task-archive/tasks/BFF-RESEARCH-SINGLE-OWNER-001.json",
+      "sha256": "50ae0a9965bfdbfdcfcd92a3ac5d679621373b2f1bd6ae5f2e7f316c657f6fd5"
+    },
+    "original_source_evidence": {
+      "path": "/tmp/pantheon-capital-hosted-acceptance-20261021/docs/deployment/evidence/BFF-RESEARCH-SINGLE-OWNER-001/evidence.json",
+      "sha256": "e2030e4174aae1b46b843a65bb10b750596cdbb36d0205b7a42f69b4afdf7ee8"
+    },
+    "original_real_backtest_model_dataset_lineage": {
+      "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Original-ad64-canonical-Research-owner-receipt-model-dataset-and-Source15-data-reuse-independent-bounded-audit-20261020.json",
+      "sha256": "7bd862c95519a118c27b6b4a14e660c642656afb3fbbef9de5e7836e1d884279"
+    },
+    "original_E8_protocol": {
+      "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Original-E8-actual-protocol-stdout-20261019.ndjson",
+      "sha256": "595fdf6edabb0dd865d3631dca32eb9dbfeda73189bb2447a22f4df654e8796e"
+    },
+    "same_saved_owner_after_actual_replacement": {
+      "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Original-ad64-e72-Research-owner-artifact-equality-and-retained-run-difference-independent-audit-20261020.json",
+      "sha256": "8c8c04c45978100305104e26e813fa739f4cff97657903da254e8600b503dd57"
+    },
+    "current_accepted_exact_pair": {
+      "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Root39564986170-accepted-exact-artifact-roundtrip-proof-20261021.json",
+      "sha256": "7b4e6b7ff42cfefb7234cf4a9463a421c0f4b7afd5bef50e9acf5b646863637d"
+    },
+    "current_saved_owner_and_artifacts": {
+      "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/original-protected-records-readonly-post-root-readback-20261021T123540Z.json",
+      "sha256": "8493d6fdfe211dfa38d5d53f1321d54269976d5f875c8c3f18e5da81c28d4e51"
+    },
+    "current_full22_three_leg_preservation": {
+      "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Root39564986170-original25-three-leg-whole22-preservation-independent-audit-20261021.json",
+      "sha256": "621faa7db081d03b3b678d58d082dae1eb667f5e9b798d4175ec191301d3f3da"
+    },
+    "current_saved_same_resource_UI": {
+      "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/original-hosted-ui-after-accepted-Root39564986170-20261021T123748856Z/checkpoint.json",
+      "sha256": "b5a49daaf73ebf58cba5ad672a3ffc85a9bdabd0ac031b92facad9a99794832b"
+    },
+    "current_real_owner_process": {
+      "path": "/tmp/pantheon-assist-20261013/Actual-product-owners-post-accepted-Root39564986170-20261021T123747Z.json",
+      "sha256": "9c0d25e7572034a7a1dfcdaae2e2887154e8772365b27ad3d8fbe037b1f6a76b"
+    },
+    "current_preserved_E8_and_experiment_intake": {
+      "path": "/tmp/pantheon-assist-20261013/original-consumed-extra21-plus-current-Evaluator-postRoot39564986170-20261021T125142Z.json",
+      "sha256": "8ae3616d719195c858f3212b7866c8bb655c34106bf76e4beefcd4de2d14f323"
+    }
+  },
+  "original_resource": {
+    "workshop_id": "b06627a9-4711-4baa-be58-23fa9a5400bc",
+    "plan_id": "ad64f196-eac9-40c3-940f-258cb3da1db7",
+    "tenant_id": "tenant-dev",
+    "run_ids": [
+      "rrun-20261016-006",
+      "rrun-20261016-007"
+    ],
+    "approved_at": "2026-10-16T23:56:28Z",
+    "approval_actor": "pantheon-dev-operator-a",
+    "actual_user_consent": "User explicitly authorized approval/execution/one synthesis external transmission in this conversation; existing execution identity truthfully stored. No new vote or model permission inferred.",
+    "no_order_route_proof": "research_plan_no_order_route"
+  },
+  "final_accepted_release": {
+    "BE": "23f9dd03e5d12b2cab769dd8fc2596d117c01ba4",
+    "FE": "a70121543efec81e07a278d034898b258a8b4dc2",
+    "Root": 39564986170,
+    "proof": {
+      "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Root39564986170-accepted-exact-artifact-roundtrip-proof-20261021.json",
+      "sha256": "7b4e6b7ff42cfefb7234cf4a9463a421c0f4b7afd5bef50e9acf5b646863637d"
+    }
+  },
+  "new_business_or_provider_or_CPU_executions": 0,
+  "limits": [
+    "Original E8 hosted protocol used the canonical/internal owner boundary and records HTTP status null for SDK success. It is not a direct hosted JWT negative test or real backend execution; accepted source owner/tenant/mode invariants remain separately reviewed.",
+    "Actual current BFF/owner readback and browser persistence are verified on the accepted final pair. Real006/007 remain original operations; no historical operation is relabeled a new computation or re-authorized.",
+    "Original model checksum/source-file hashes remain declared provenance where original bytes were not acquired. The existing independent audit proves exact cross-record identity/data reuse, not reconstruction of unavailable preimages.",
+    "Saved semantic synthesis and Research negative performance are retained. Technical success is not profitability, strategy adoption or permission to move funds.",
+    "The later old99a8 paper entries in the original25 snapshot are historical and are not current0040 preservation proof. No finance/allL1-L12/naturalPattern/TOTAL completion follows from this Research checkpoint.",
+    "No new provider/model/CPU/business/VM operation is caused by this documentation change. Current owner observations use genuine identities; no fake second human or MFA status."
+  ],
+  "current_owner_identity": {
+    "container_id": "7e62115dfb4224360201bcd4a27c7af7eed2c63a64a19f96454d3e845c5f7f95",
+    "image_id": "sha256:acef4d7ae9b870118a561cdb601d1d99c1ce1e2c3e5b03d5243121ddb2a7ab0e",
+    "started_at": "2026-10-21T08:10:54.073777247Z",
+    "pid": 457758,
+    "status": "running",
+    "restart_count": 0,
+    "service": "research-orchestrator-svc",
+    "oci_revision": null
+  },
+  "current_UI_observation": {
+    "at": "2026-10-21T12:37:49.200Z",
+    "target": "original-workshop-research",
+    "before_and_after_reload": true,
+    "plan": "ad64f196-eac9-40c3-940f-258cb3da1db7",
+    "runs": [
+      "rrun-20261016-006",
+      "rrun-20261016-007"
+    ],
+    "visually_reviewed_after_reload": true,
+    "semantic_synthesis_recommends_more_research_and_no_promotion": true,
+    "whole_reader_technical_context_POSTs": 2,
+    "new_interaction_model_or_vote_calls": 0
+  }
+}
