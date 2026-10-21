@@ -345,7 +345,7 @@ def test_research_dag_three_stage_linear_progression(client: TestClient) -> None
     assert run_by_stage["s3"]["parent_run_id"] == run_by_stage["s2"]["run_id"]
 
 
-def test_research_dag_fan_in_progression(client: TestClient) -> None:
+def test_research_dag_fan_in_progression(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     ds = _valid_multimodal_dataset()
     t_res = client.post("/api/research-orchestrator/tasks", json={"title": "Fan-in DAG", "objective": "fan in to s3", "source_refs": [], "constraints": {}})
     assert t_res.status_code == 201
@@ -363,6 +363,42 @@ def test_research_dag_fan_in_progression(client: TestClient) -> None:
         "dataset": ds,
     }
 
+    # Hold s1/s2 in the stage executor until released so the ordering check does
+    # not depend on timing. s3 is never held.
+    started = {sid: threading.Event() for sid in ("s1", "s2", "s3")}
+    release = {sid: threading.Event() for sid in ("s1", "s2")}
+    lock = threading.Lock()
+    completed_before_start: Dict[str, List[str]] = {}
+    completion_order: List[str] = []
+    s3_starts: List[str] = []
+
+    def gated_stage(_stage_type: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        sid = payload["stage"]["stage_id"]
+        with lock:
+            completed_before_start[sid] = list(completion_order)
+            if sid == "s3":
+                s3_starts.append(payload["run_id"])
+        started[sid].set()
+        if sid in release:
+            assert release[sid].wait(10)
+        run = research_main.store.get_run(payload["run_id"])
+        run["status"] = "completed"
+        research_main.store.put_run(run)
+        with lock:
+            completion_order.append(sid)
+        return {"status": "succeeded"}
+
+    monkeypatch.setattr(research_main, "execute_research_stage", gated_stage)
+
+    def task_runs() -> List[Dict[str, Any]]:
+        return [r for r in research_main.store.list_runs() if r.get("task_id") == task_id]
+
+    def wait_until(predicate: Any) -> None:
+        deadline = time.monotonic() + 5.0
+        while not predicate():
+            assert time.monotonic() < deadline, "condition not reached"
+            time.sleep(0.01)
+
     # Dispatch s1 only -> s3 should NOT run
     d1 = client.post(f"/api/research-orchestrator/tasks/{task_id}/runs", json={
         "adapter": "vectorbt",
@@ -373,18 +409,35 @@ def test_research_dag_fan_in_progression(client: TestClient) -> None:
         "idempotency_key": f"idemp-dag-fanin-1-{task_id}",
     })
     assert d1.status_code == 201
-    # Both roots are scheduled by the one dispatch. The fan-in successor s3 is
-    # scheduled by the owner as soon as s1 and s2 complete, so the run count
-    # cannot be pinned at exactly 2 without racing the background executor.
-    runs_after_s1 = [r for r in research_main.store.list_runs() if r.get("task_id") == task_id]
-    assert {"s1", "s2"} <= {r["stage_id"] for r in runs_after_s1}
+    try:
+        # Both roots are scheduled by the one dispatch and held; s3 must not exist.
+        assert started["s1"].wait(5) and started["s2"].wait(5)
+        assert {r["stage_id"] for r in task_runs()} == {"s1", "s2"}
+        assert not started["s3"].is_set()
 
-    runs_after_s2 = _wait_for_task_status(task_id, {"completed", "failed"}, expected_count=3)
-    assert len(runs_after_s2) == 3
-    run_by_stage = {r["stage_id"]: r for r in runs_after_s2}
+        # Release s1 only: s2 is still incomplete, so s3 must still not be scheduled.
+        release["s1"].set()
+        wait_until(lambda: "s1" in completion_order)
+        assert "s2" not in completion_order
+        assert {r["stage_id"] for r in task_runs()} == {"s1", "s2"}
+        assert not started["s3"].is_set()
+
+        # Release s2: now (and only now) the join may be scheduled.
+        release["s2"].set()
+        assert started["s3"].wait(5)
+    finally:
+        release["s1"].set()
+        release["s2"].set()
+
+    runs = _wait_for_task_status(task_id, {"completed", "failed"}, expected_count=3)
+    assert len(runs) == 3
+    run_by_stage = {r["stage_id"]: r for r in runs}
     assert set(run_by_stage.keys()) == {"s1", "s2", "s3"}
     for sid in ("s1", "s2", "s3"):
         assert run_by_stage[sid]["status"] == "completed"
+    assert len(s3_starts) == 1
+    assert set(completed_before_start["s3"]) == {"s1", "s2"}
+    assert completion_order[-1] == "s3"
 
 
 def test_research_dag_fan_in_progression_is_atomic_across_repeated_runs(
