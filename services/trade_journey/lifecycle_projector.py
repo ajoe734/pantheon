@@ -466,7 +466,8 @@ class RelationalLifecycleProjector:
             value,
         )
         if key not in bindings:
-            bindings[key] = self.store.resolve_identity(*key)
+            resolve = getattr(self.store, "resolve_identity", None)
+            bindings[key] = resolve(*key) if callable(resolve) else None
         return bindings[key]
 
     def _superseded_retry_journey(
@@ -475,18 +476,36 @@ class RelationalLifecycleProjector:
         identity: Mapping[str, str],
         bindings: dict[tuple[str, str, str, str], str | None],
     ) -> str | None:
-        """Return the canonical journey when this event is a retry of its decision.
+        """Return the canonical journey when this event belongs to a retry journey.
 
         A retry reuses the decision, signal and run identifiers but carries a
-        different journey. Anything else that disagrees (different signal or
-        run, another tenant/environment) is a genuine conflict and is left to
-        the store's identity-link rejection.
+        different journey. Only some of its events carry the decision id, so
+        once a journey is recognised as a retry it stays superseded for the
+        rest of the batch, and decision-less events are recognised when their
+        signal and run are both already bound to one other journey. Anything
+        else that disagrees (different signal or run, another
+        tenant/environment) is a genuine conflict and is left to the store's
+        identity-link rejection.
         """
+        journey_id = identity["journey_id"]
+        scope = (identity["tenant_id"], identity["environment"])
+        superseded_key = (*scope, "superseded_journey", journey_id)
+        if bindings.get(superseded_key):
+            return bindings[superseded_key]
         metadata = event.get("metadata") if isinstance(event.get("metadata"), Mapping) else {}
         decision_id = _first(event.get("decision_id"), metadata.get("decision_id"))
         if decision_id is None:
-            return None
-        journey_id = identity["journey_id"]
+            bound = {
+                self._bound_journey(bindings, identity, identifier_type, identity[identifier_type])
+                for identifier_type in ("signal_id", "run_id")
+            }
+            if len(bound) != 1:
+                return None
+            (canonical,) = bound
+            if canonical is None or canonical == journey_id:
+                return None
+            bindings[superseded_key] = canonical
+            return canonical
         decision_id = str(decision_id)
         decision_journey = self._bound_journey(
             bindings, identity, "decision_id", decision_id
@@ -498,18 +517,18 @@ class RelationalLifecycleProjector:
                 ("signal_id", identity["signal_id"]),
                 ("run_id", identity["run_id"]),
             ):
-                key = (identity["tenant_id"], identity["environment"], identifier_type, value)
-                if bindings.get(key) is None:
-                    bindings[key] = journey_id
+                if self._bound_journey(bindings, identity, identifier_type, value) is None:
+                    bindings[(*scope, identifier_type, value)] = journey_id
             return None
         if decision_journey == journey_id:
             return None
         for identifier_type in ("signal_id", "run_id"):
-            bound = self._bound_journey(
+            bound_journey = self._bound_journey(
                 bindings, identity, identifier_type, identity[identifier_type]
             )
-            if bound != decision_journey:
+            if bound_journey != decision_journey:
                 return None
+        bindings[superseded_key] = decision_journey
         return decision_journey
 
     @staticmethod

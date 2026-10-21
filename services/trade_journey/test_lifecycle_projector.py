@@ -1823,6 +1823,23 @@ def test_retry_in_same_batch_is_ignored_and_distinct_decisions_stay_separate():
     assert store.controller.unresolved_quarantine_count == 0
 
 
+def test_multi_stage_retry_without_decision_id_on_followups_is_ignored():
+    store = _RecordingRelationalStore()
+    projector = RelationalLifecycleProjector(store, clock=lambda: NOW)
+    rows = lifecycle_rows()
+    projector.project_records(rows[:2], mode="live", source_high_watermark=2)
+    retry = _retry_rows(rows, "tj-paper-retry", first_seq=3, count=3)
+    for row in retry[2:]:
+        row["payload"]["metadata"].pop("decision_id", None)
+        row["payload"].pop("decision_id", None)
+
+    result = projector.project_records(retry, mode="live", source_high_watermark=5)
+
+    assert (result.accepted, result.quarantined) == (0, 0)
+    assert result.ignored == 3
+    assert (IDENTITY["tenant_id"], IDENTITY["environment"], "tj-paper-retry") not in store.stage_events
+
+
 def test_same_decision_with_different_signal_is_still_a_conflict():
     store = _RecordingRelationalStore()
     projector = RelationalLifecycleProjector(store, clock=lambda: NOW)
