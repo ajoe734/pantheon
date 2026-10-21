@@ -298,6 +298,11 @@ def _trade_identity(
     return tenant_id, environment
 
 
+def _stable_id(tenant_id: str, environment: str, signal_id: str, kind: str) -> str:
+    name = json.dumps([tenant_id, environment, signal_id, kind])
+    return str(uuid.uuid5(_UUID_NAMESPACE, name))
+
+
 def _signal_envelope(
     decision: Mapping[str, Any],
     upstream_envelope: Mapping[str, Any],
@@ -322,8 +327,11 @@ def _signal_envelope(
         seed = dict(upstream_envelope)
         seed["tenant_id"] = tenant_id
         seed["environment"] = environment
-        seed.setdefault("correlation_id", str(uuid.uuid4()))
-        seed.setdefault("trace_id", str(uuid.uuid4()))
+        # The signal_id is the replay-stable identity of one decision. Deriving
+        # the minted journey from it keeps every retry of the same decision on
+        # the original journey instead of minting a new one per tick.
+        seed.setdefault("correlation_id", _stable_id(tenant_id, environment, signal_id, "correlation"))
+        seed.setdefault("trace_id", _stable_id(tenant_id, environment, signal_id, "trace"))
         return mint_trade_envelope(
             seed,
             producer="execution.signal-decision",
@@ -334,6 +342,7 @@ def _signal_envelope(
                     _json_object(_field(decision, "metadata")) or {},
                     "journey_id",
                 )
+                or f"tj_{_stable_id(tenant_id, environment, signal_id, 'journey')}"
             ),
             event_id=event_id,
         )

@@ -452,6 +452,66 @@ class RelationalLifecycleProjector:
         materializer.reset_stats()
         return materializer
 
+    def _bound_journey(
+        self,
+        bindings: dict[tuple[str, str, str, str], str | None],
+        identity: Mapping[str, Any],
+        identifier_type: str,
+        value: str,
+    ) -> str | None:
+        key = (
+            str(identity["tenant_id"]),
+            str(identity["environment"]),
+            identifier_type,
+            value,
+        )
+        if key not in bindings:
+            bindings[key] = self.store.resolve_identity(*key)
+        return bindings[key]
+
+    def _superseded_retry_journey(
+        self,
+        event: Mapping[str, Any],
+        identity: Mapping[str, str],
+        bindings: dict[tuple[str, str, str, str], str | None],
+    ) -> str | None:
+        """Return the canonical journey when this event is a retry of its decision.
+
+        A retry reuses the decision, signal and run identifiers but carries a
+        different journey. Anything else that disagrees (different signal or
+        run, another tenant/environment) is a genuine conflict and is left to
+        the store's identity-link rejection.
+        """
+        metadata = event.get("metadata") if isinstance(event.get("metadata"), Mapping) else {}
+        decision_id = _first(event.get("decision_id"), metadata.get("decision_id"))
+        if decision_id is None:
+            return None
+        journey_id = identity["journey_id"]
+        decision_id = str(decision_id)
+        decision_journey = self._bound_journey(
+            bindings, identity, "decision_id", decision_id
+        )
+        if decision_journey is None:
+            # First sighting in this batch or store: it becomes canonical.
+            for identifier_type, value in (
+                ("decision_id", decision_id),
+                ("signal_id", identity["signal_id"]),
+                ("run_id", identity["run_id"]),
+            ):
+                key = (identity["tenant_id"], identity["environment"], identifier_type, value)
+                if bindings.get(key) is None:
+                    bindings[key] = journey_id
+            return None
+        if decision_journey == journey_id:
+            return None
+        for identifier_type in ("signal_id", "run_id"):
+            bound = self._bound_journey(
+                bindings, identity, identifier_type, identity[identifier_type]
+            )
+            if bound != decision_journey:
+                return None
+        return decision_journey
+
     @staticmethod
     def _identity_links_for_aggregate(agg: Any) -> list[IdentityLinkRow]:
         observations: dict[tuple[str, str], list[tuple[int, datetime]]] = {}
@@ -903,6 +963,7 @@ class RelationalLifecycleProjector:
         quarantines: list[QuarantineRow] = []
         accepted_entries: list[dict[str, Any]] = []
         batch_fingerprints: dict[str, str] = {}
+        canonical_bindings: dict[tuple[str, str, str, str], str | None] = {}
         duplicates = ignored = quarantined = 0
 
         for row in ordered_records:
@@ -1005,6 +1066,25 @@ class RelationalLifecycleProjector:
                     )
                 )
                 quarantined += 1
+                continue
+            canonical_journey = self._superseded_retry_journey(
+                event, identity, canonical_bindings
+            )
+            if canonical_journey is not None:
+                # A retry of an already-projected decision minted its own
+                # journey. The original journey keeps its identifiers; the
+                # source row is retained (receipt) but never rebinds them.
+                receipts.append(
+                    self._receipt(
+                        event_id=event_id,
+                        ingested_seq=sequence,
+                        fingerprint=fingerprint,
+                        source_event_type=str(event["event_type"]),
+                        created_at=created_at,
+                        disposition="ignored",
+                    )
+                )
+                ignored += 1
                 continue
             accepted_entries.append(
                 {

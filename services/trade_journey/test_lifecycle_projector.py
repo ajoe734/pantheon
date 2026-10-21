@@ -27,7 +27,7 @@ from services.trade_journey.lifecycle_projector import (
     _fingerprint,
     _record_worker_failure,
 )
-from services.trade_journey.materializer import JourneyMaterializer
+from services.trade_journey.materializer import JourneyMaterializer, SHARED_IDENTIFIER_TYPES
 from services.trade_journey.projection_store import ControllerStateRow, ProjectionStore
 
 
@@ -150,6 +150,7 @@ class _RecordingRelationalStore:
         self.receipts: dict[str, object] = {}
         self.stage_events: dict[tuple[str, str, str], list[dict]] = {}
         self.mutations: list[object] = []
+        self.identity_links: dict[tuple[str, str, str, str], str] = {}
         self.receipt_batch_calls: list[tuple[str, ...]] = []
         self.hydration_batch_calls: list[tuple[tuple[str, str, str], ...]] = []
 
@@ -158,6 +159,11 @@ class _RecordingRelationalStore:
 
     def get_receipt(self, event_id: str):
         return self.receipts.get(event_id)
+
+    def resolve_identity(self, tenant_id, environment, identifier_type, identifier_value):
+        return self.identity_links.get(
+            (tenant_id, environment, identifier_type, identifier_value)
+        )
 
     def get_receipts(self, event_ids):
         event_ids = tuple(event_ids)
@@ -186,6 +192,15 @@ class _RecordingRelationalStore:
             raise OSError("injected relational transaction failure")
         for receipt in mutation.receipts:
             self.receipts[receipt.event_id] = receipt
+        for link in mutation.identity_links:
+            if link.identifier_type in SHARED_IDENTIFIER_TYPES:
+                continue
+            bound = self.identity_links.setdefault(
+                (link.tenant_id, link.environment, link.identifier_type, link.identifier_value),
+                link.journey_id,
+            )
+            if bound != link.journey_id:
+                raise ValueError(f"identity link already bound to another journey: {link.identifier_type}={link.identifier_value}")
         for stage in mutation.stages:
             key = (stage.tenant_id, stage.environment, stage.journey_id)
             events = self.stage_events.setdefault(key, [])
@@ -1723,3 +1738,115 @@ def test_configured_relational_projector_rejects_invalid_timeout_env_vars(
 
     with pytest.raises(ValueError, match="must be a finite positive number"):
         lifecycle_projector_module._configured_relational_projector()
+
+
+def _retry_rows(rows: list[dict], journey_id: str, *, first_seq: int, count: int = 2) -> list[dict]:
+    """Re-emit a decision's first rows under a freshly minted journey (a tick retry)."""
+    retry = []
+    envelope = None
+    for offset, source in enumerate(rows[:count]):
+        row = json.loads(json.dumps(source))
+        payload = row["payload"]
+        event_id = _uuid(900 + first_seq + offset)
+        if envelope is None:
+            envelope = mint_trade_envelope(
+                {
+                    "tenant_id": payload["correlation_envelope"]["tenant_id"],
+                    "environment": payload["correlation_envelope"]["environment"],
+                    "trace_id": _uuid(7000 + first_seq),
+                },
+                producer="execution.signal-decision",
+                event_id=event_id,
+                journey_id=journey_id,
+                now=payload["created_at"],
+            )
+        else:
+            envelope = propagate_envelope(
+                envelope,
+                producer="test.lifecycle",
+                event_id=event_id,
+                event_time=payload["created_at"],
+            )
+        payload["event_id"] = event_id
+        payload["correlation_envelope"] = envelope
+        row.update(event_id=event_id, ingested_seq=first_seq + offset)
+        retry.append(row)
+    return retry
+
+
+def test_retry_of_projected_decision_with_new_journey_keeps_original_binding():
+    store = _RecordingRelationalStore()
+    projector = RelationalLifecycleProjector(store, clock=lambda: NOW)
+    rows = lifecycle_rows()
+    projector.project_records(rows[:2], mode="live", source_high_watermark=2)
+    retry = _retry_rows(rows, "tj-paper-retry", first_seq=3)
+
+    restarted = RelationalLifecycleProjector(store, clock=lambda: NOW)
+    result = restarted.project_records(retry, mode="live", source_high_watermark=4)
+
+    assert (result.accepted, result.ignored, result.quarantined) == (0, 2, 0)
+    assert result.checkpoint == 4
+    assert store.controller.unresolved_quarantine_count == 0
+    key = (IDENTITY["tenant_id"], IDENTITY["environment"], "decision_id", "decision-paper-001")
+    assert store.identity_links[key] == "tj-paper-001"
+    assert (IDENTITY["tenant_id"], IDENTITY["environment"], "tj-paper-retry") not in store.stage_events
+    # Later original-journey progress still projects after the retry.
+    follow = restarted.project_records(rows[2:3], mode="live", source_high_watermark=5)
+    assert follow.accepted == 1
+
+
+def test_retry_in_same_batch_is_ignored_and_distinct_decisions_stay_separate():
+    store = _RecordingRelationalStore()
+    projector = RelationalLifecycleProjector(store, clock=lambda: NOW)
+    rows = lifecycle_rows()
+    retry = _retry_rows(rows, "tj-paper-retry", first_seq=3)
+    distinct = _retry_rows(rows, "tj-paper-other", first_seq=5)
+    for row in distinct:
+        payload = row["payload"]
+        payload["run_id"] = "run-paper-002"
+        payload["signal_id"] = "signal-paper-002"
+        payload["trace_id"] = _uuid(8002)
+        payload["metadata"].update(
+            run_id="run-paper-002",
+            signal_id="signal-paper-002",
+            decision_id="decision-paper-002",
+            client_order_id="client-order-paper-002",
+            order_id="order-paper-002",
+            reconciliation_id="reconciliation-paper-002",
+        )
+
+    result = projector.project_records(
+        rows[:2] + retry + distinct, mode="live", source_high_watermark=6
+    )
+
+    assert (result.accepted, result.ignored) == (4, 2)
+    assert store.controller.unresolved_quarantine_count == 0
+
+
+def test_same_decision_with_different_signal_is_still_a_conflict():
+    store = _RecordingRelationalStore()
+    projector = RelationalLifecycleProjector(store, clock=lambda: NOW)
+    rows = lifecycle_rows()
+    projector.project_records(rows[:2], mode="live", source_high_watermark=2)
+    conflict = _retry_rows(rows, "tj-paper-conflict", first_seq=3)
+    for row in conflict:
+        row["payload"]["signal_id"] = "signal-paper-other"
+        row["payload"]["metadata"]["signal_id"] = "signal-paper-other"
+
+    with pytest.raises(ValueError, match="already bound"):
+        projector.project_records(conflict, mode="live", source_high_watermark=4)
+
+
+def test_same_decision_in_another_tenant_is_not_treated_as_retry():
+    store = _RecordingRelationalStore()
+    projector = RelationalLifecycleProjector(store, clock=lambda: NOW)
+    rows = lifecycle_rows()
+    projector.project_records(rows[:2], mode="live", source_high_watermark=2)
+    other = _retry_rows(rows, "tj-paper-tenant-b", first_seq=3)
+    for row in other:
+        row["payload"]["correlation_envelope"]["tenant_id"] = "tenant-b"
+        row["payload"]["metadata"]["tenant_id"] = "tenant-b"
+
+    result = projector.project_records(other, mode="live", source_high_watermark=4)
+
+    assert (result.accepted, result.ignored) == (2, 0)

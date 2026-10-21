@@ -191,6 +191,34 @@ class TestDecisionSignalProducer(unittest.TestCase):
         self.assertEqual(signals[0]["action"], "HOLD")
         self.assertEqual(signals[0]["direction"], "LONG")
 
+    def test_repeated_identical_decision_keeps_one_journey_across_ticks(self) -> None:
+        def decision(tenant: str = "tenant-a", decision_id: str = "dec-1") -> dict:
+            return {
+                "decision_id": decision_id,
+                "signal_id": f"sig-{decision_id}",
+                "strategy_id": "strategy-a",
+                "symbol": "SPY.US",
+                "action": "buy",
+                "direction": "long",
+                "quantity": 1,
+                "quantity_type": "SHARES",
+                "tenant_id": tenant,
+                "environment": "paper",
+            }
+
+        first = build_decision_signals(decision(), now_iso="2026-06-14T14:30:00Z")[0]
+        retry = build_decision_signals(decision(), now_iso="2026-06-14T14:31:02Z")[0]
+        other_decision = build_decision_signals(decision(decision_id="dec-2"))[0]
+        other_tenant = build_decision_signals(decision(tenant="tenant-b"))[0]
+
+        for field in ("journey_id", "correlation_id", "trace_id"):
+            self.assertEqual(
+                first["correlation_envelope"][field], retry["correlation_envelope"][field]
+            )
+        self.assertEqual(first["journey_id"], retry["journey_id"])
+        self.assertNotEqual(first["journey_id"], other_decision["journey_id"])
+        self.assertNotEqual(first["journey_id"], other_tenant["journey_id"])
+
     def test_redis_factory_uses_redis_pending_signal_store(self) -> None:
         mock_redis_module = MagicMock()
         mock_redis_module.Redis.from_url.return_value = MagicMock()
