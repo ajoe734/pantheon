@@ -424,6 +424,131 @@ class TestDecisionSignalProducer(unittest.TestCase):
             f"started:{fence.token}",
         )
 
+    def test_default_tenant_does_not_reuse_foreign_tenant_canonical_journey_and_fresh_process_preserves_fence(
+        self,
+    ) -> None:
+        import subprocess
+        from services.execution.lean_runtime.signal_producer import remember_canonical_journey
+
+        remember_canonical_journey(
+            tenant_id="tenant-dev",
+            environment="paper",
+            journey_id="tj_c7d14e8a-3cac-439a-81b7-7401fa2aaac3",
+            signal_id="sig-76fdd54e9d601a08260e875aad01d23c",
+            decision_id="dec-rb-2eebe2b7a8af4c0c909991a13bba75a6-76fdd54e9d601a08260e875a",
+            run_id="run-rb-2eebe2b7a8af4c0c909991a13bba75a6-76fdd54e9d601a08260e875a",
+            correlation_id="f2c61c63-b926-4bab-ad1e-1c792bcc18f2",
+            trace_id="bcde2641-a43e-4c6d-8a25-de42a0ad97a3",
+        )
+        base_decision = {
+            "decision_id": "dec-rb-2eebe2b7a8af4c0c909991a13bba75a6-76fdd54e9d601a08260e875a",
+            "signal_id": "sig-76fdd54e9d601a08260e875aad01d23c",
+            "run_id": "run-rb-2eebe2b7a8af4c0c909991a13bba75a6-76fdd54e9d601a08260e875a",
+            "strategy_id": "strategy-paper-001",
+            "timestamp": _NOW,
+            "symbol": "AAPL.US",
+            "action": "BUY",
+            "direction": "LONG",
+            "quantity": 1,
+            "quantity_type": "SHARES",
+            "environment": "paper",
+        }
+        [explicit_tenant_sig] = build_decision_signals(
+            {**base_decision, "tenant_id": "tenant-dev"}
+        )
+        self.assertEqual(explicit_tenant_sig["tenant_id"], "tenant-dev")
+        self.assertEqual(
+            explicit_tenant_sig["journey_id"],
+            "tj_c7d14e8a-3cac-439a-81b7-7401fa2aaac3",
+        )
+        self.assertEqual(
+            explicit_tenant_sig["correlation_envelope"]["correlation_id"],
+            "f2c61c63-b926-4bab-ad1e-1c792bcc18f2",
+        )
+        self.assertEqual(
+            explicit_tenant_sig["correlation_envelope"]["trace_id"],
+            "bcde2641-a43e-4c6d-8a25-de42a0ad97a3",
+        )
+
+        [implicit_default_sig] = build_decision_signals(dict(base_decision))
+        self.assertEqual(implicit_default_sig["tenant_id"], "default")
+        self.assertEqual(
+            implicit_default_sig["correlation_envelope"]["tenant_id"], "default"
+        )
+        self.assertNotEqual(
+            implicit_default_sig["journey_id"],
+            "tj_c7d14e8a-3cac-439a-81b7-7401fa2aaac3",
+        )
+        self.assertNotEqual(
+            implicit_default_sig["correlation_envelope"]["correlation_id"],
+            "f2c61c63-b926-4bab-ad1e-1c792bcc18f2",
+        )
+        self.assertNotEqual(
+            implicit_default_sig["correlation_envelope"]["trace_id"],
+            "bcde2641-a43e-4c6d-8a25-de42a0ad97a3",
+        )
+
+        script = """
+import hashlib, json, sys, types
+from services.execution.lean_runtime.signal_producer import DecisionSignalProducer, _CANONICAL_JOURNEYS
+
+assert len(_CANONICAL_JOURNEYS) == 0
+sid = "sig-76fdd54e9d601a08260e875aad01d23c"
+qkey = "pantheon:signals:pending:rb-2eebe2b7a8af4c0c909991a13bba75a6"
+ekey = f"{qkey}:execution:{hashlib.sha256(sid.encode('utf-8')).hexdigest()}"
+
+for fence_value in ("started:worker-1:1", "completed:worker-1:1"):
+    kv = {ekey: fence_value}
+    enqueued = []
+    mutations = []
+    class _FakeRedisClient:
+        def exists(self, key):
+            return 1 if key in kv else 0
+        def get(self, key):
+            return kv.get(key)
+        def rpush(self, key, val):
+            enqueued.append((key, val))
+        def set(self, *a, **kw):
+            mutations.append(("set", a, kw))
+        def setex(self, *a, **kw):
+            mutations.append(("setex", a, kw))
+        def delete(self, *a, **kw):
+            mutations.append(("delete", a, kw))
+        def eval(self, *a, **kw):
+            mutations.append(("eval", a, kw))
+
+    fake_redis_mod = types.ModuleType("redis")
+    fake_redis_mod.Redis = types.SimpleNamespace(from_url=lambda *a, **kw: _FakeRedisClient())
+    sys.modules["redis"] = fake_redis_mod
+    producer = DecisionSignalProducer.redis("redis://unused:6379/0", queue_key=qkey)
+    batch = producer.produce({
+        "decision_id": "dec-rb-2eebe2b7a8af4c0c909991a13bba75a6-76fdd54e9d601a08260e875a",
+        "signal_id": sid,
+        "run_id": "run-rb-2eebe2b7a8af4c0c909991a13bba75a6-76fdd54e9d601a08260e875a",
+        "strategy_id": "strategy-paper-001",
+        "timestamp": "2026-06-14T14:30:00Z",
+        "symbol": "AAPL.US",
+        "action": "BUY",
+        "direction": "LONG",
+        "quantity": 1,
+        "quantity_type": "SHARES",
+        "tenant_id": "tenant-dev",
+        "environment": "paper",
+    })
+    assert batch.count == 0
+    assert enqueued == []
+    assert mutations == []
+    assert kv == {ekey: fence_value}
+print("ok")
+"""
+        proc = subprocess.run(
+            [sys.executable, "-c", script],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(proc.stdout.strip(), "ok")
+
 
 if __name__ == "__main__":
     unittest.main()

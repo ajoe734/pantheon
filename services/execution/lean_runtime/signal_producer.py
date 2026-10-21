@@ -279,11 +279,6 @@ def build_decision_signals(
     normalized_strategy_id = _strategy_id(payload, strategy_id)
     upstream_envelope = _upstream_envelope(payload, decision_metadata)
     tenant_id, environment = _trade_identity(payload, decision_metadata, upstream_envelope)
-    explicit_tenant_provided = bool(
-        _first_string(payload, "tenant_id")
-        or _first_string(decision_metadata, "tenant_id")
-        or _first_string(upstream_envelope, "tenant_id")
-    )
     common = {
         "version": SIGNAL_SCHEMA_VERSION,
         "strategy_id": normalized_strategy_id,
@@ -318,7 +313,6 @@ def build_decision_signals(
             signal_id=str(signal["signal_id"]),
             decision_id=decision_id,
             run_id=str(effective_run_id) if effective_run_id else None,
-            explicit_tenant_provided=explicit_tenant_provided,
             single_target=single_target,
         )
         if (
@@ -455,7 +449,6 @@ def _resolve_canonical_journey(
     signal_id: str | None,
     decision_id: str | None,
     run_id: str | None,
-    explicit_tenant_provided: bool,
     single_target: bool,
 ) -> dict[str, str] | None:
     explicit_journey = (
@@ -535,23 +528,6 @@ def _resolve_canonical_journey(
             if explicit_signal and rec.get("signal_id") and explicit_signal != rec["signal_id"]:
                 continue
             return dict(rec)
-
-    if not explicit_tenant_provided:
-        for id_type, id_val in candidates:
-            matches = [
-                rec
-                for (_t_id, env, k_type, k_val), rec in _CANONICAL_JOURNEYS.items()
-                if env == environment
-                and k_type == id_type
-                and k_val == id_val
-                and not (
-                    explicit_signal
-                    and rec.get("signal_id")
-                    and explicit_signal != rec["signal_id"]
-                )
-            ]
-            if len({m["journey_id"] for m in matches}) == 1:
-                return dict(matches[0])
     return None
 
 
