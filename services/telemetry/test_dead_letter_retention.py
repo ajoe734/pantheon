@@ -15,8 +15,8 @@ from services.telemetry.dead_letter import (
     TAG_RETRY_EXHAUSTED,
     TAG_SCHEMA_VIOLATION,
     TAG_WRITER_ERROR,
-    DeadLetterQueue,
 )
+from services.telemetry.ingest_svc import RetainedDeadLetterQueue as DeadLetterQueue
 
 RETENTION = 3600.0
 

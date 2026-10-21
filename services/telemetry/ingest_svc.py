@@ -200,6 +200,108 @@ class InfrastructureHealthReservation:
     detail: Optional[str] = None
 
 
+class RetainedDeadLetterQueue(DeadLetterQueue):
+    """Dead-letter queue whose spill file is capped by age.
+
+    Entries carrying any of ``replayable_tags`` are what startup replay may
+    still retry, so they are never aged out; everything else is dropped once it
+    is older than ``retention_seconds``. The cap is applied at load time by a
+    streamed, atomic rewrite, so startup reads only the retained spill.
+    """
+
+    DEFAULT_RETENTION_SECONDS = 7 * 24 * 3600.0
+
+    def __init__(
+        self,
+        *args: Any,
+        retention_seconds: float = DEFAULT_RETENTION_SECONDS,
+        replayable_tags: tuple[str, ...] = _WRITE_FAILURE_TAGS,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self._retention_seconds = max(1.0, float(retention_seconds))
+        self._replayable_tags = frozenset(replayable_tags)
+        self._spill_lock = threading.Lock()
+        self._spill_expired_dropped = 0
+
+    def reject(self, *args: Any, **kwargs: Any) -> bool:
+        # Serialise spill appends with compaction so a rewrite cannot lose them.
+        with self._spill_lock:
+            return super().reject(*args, **kwargs)
+
+    def _spill_line_expired(self, line: str, cutoff: datetime) -> bool:
+        """Whether a spill line is past retention and not replayable."""
+        try:
+            data = json.loads(line)
+        except ValueError:
+            return True
+        if not isinstance(data, dict):
+            return True
+        tags = data.get("tags")
+        if isinstance(tags, list) and self._replayable_tags.intersection(tags):
+            return False
+        try:
+            rejected = datetime.fromisoformat(str(data.get("rejected_at", "")).replace("Z", "+00:00"))
+        except ValueError:
+            return True
+        if rejected.tzinfo is None:
+            rejected = rejected.replace(tzinfo=timezone.utc)
+        return rejected < cutoff
+
+    def compact_spill(self) -> int:
+        """Drop spill entries past retention, keeping every replayable one.
+
+        Streams the file (it may be far larger than memory) into a temp file and
+        replaces the spill atomically. Returns the number of entries dropped.
+        """
+        if not self._spill_path or not self._spill_path.exists():
+            return 0
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=self._retention_seconds)
+        tmp_path = self._spill_path.with_name(self._spill_path.name + ".compact.tmp")
+        dropped = 0
+        kept = 0
+        with self._spill_lock:
+            try:
+                with open(self._spill_path, "r") as src, open(tmp_path, "w") as dst:
+                    for raw in src:
+                        line = raw.strip()
+                        if not line:
+                            continue
+                        if self._spill_line_expired(line, cutoff):
+                            dropped += 1
+                            continue
+                        dst.write(line + "\n")
+                        kept += 1
+                    dst.flush()
+                    os.fsync(dst.fileno())
+                if dropped:
+                    os.replace(tmp_path, self._spill_path)
+            except Exception as e:
+                log.error(f"DeadLetterQueue.compact_spill failed: {e}")
+                return 0
+            finally:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+        self._spill_expired_dropped += dropped
+        if dropped:
+            log.info(
+                "DeadLetterQueue spill retention dropped %s expired entries, kept %s",
+                dropped,
+                kept,
+            )
+        return dropped
+
+    def load_from_spill(self) -> int:
+        self.compact_spill()
+        return super().load_from_spill()
+
+    def stats(self) -> dict[str, Any]:
+        stats = super().stats()
+        stats["retention_seconds"] = self._retention_seconds
+        stats["spill_expired_dropped"] = self._spill_expired_dropped
+        return stats
+
+
 class InfrastructureHealthAdmissionLedger:
     """Durable, replica-safe two-phase admission log keyed by stable event ID.
 
@@ -1116,13 +1218,13 @@ class TelemetryIngestService:
                 + ((dlq_replay_tag_filter,) if dlq_replay_tag_filter else ())
             )
         )
-        self._dlq = DeadLetterQueue(
+        self._dlq = RetainedDeadLetterQueue(
             spill_path=dlq_spill,
             incident_threshold=dlq_incident_threshold,
             retention_seconds=(
                 dlq_retention_seconds
                 if dlq_retention_seconds is not None
-                else DeadLetterQueue.DEFAULT_RETENTION_SECONDS
+                else RetainedDeadLetterQueue.DEFAULT_RETENTION_SECONDS
             ),
             replayable_tags=dlq_replayable_tags,
         )
