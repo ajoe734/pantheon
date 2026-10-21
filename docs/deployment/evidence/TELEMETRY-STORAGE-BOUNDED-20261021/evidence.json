@@ -5,7 +5,7 @@
     "env": "TELEMETRY_INFRASTRUCTURE_HEALTH_DEDUPE_HORIZON_SECONDS",
     "default_seconds": 86400,
     "reject_code": "INFRA_EVENT_TOO_OLD (HTTP 422, not dead-lettered)",
-    "compaction": "startup + every 600s on begin(); atomic os.replace under flock; live reservations kept; readers re-open on inode change"
+    "compaction": "startup + every 600s on begin(); atomic os.replace under flock; offset set to written bytes and inode taken from temp file before post-replace appends so concurrent replica appends after os.replace are replayed; live reservations kept; readers re-open on inode change"
   },
   "dlq": {
     "env": "TELEMETRY_DLQ_RETENTION_SECONDS",
@@ -14,8 +14,8 @@
   },
   "tests": {
     "command": "python -m pytest services/telemetry",
-    "result": "434 passed, 1 skipped, 4 failed",
+    "result": "435 passed, 1 skipped, 4 failed",
     "preexisting_failures": "test_paper_telemetry_packet.py (4) fail identically on base (engine_bridge_repo)",
-    "new_tests_fail_on_base": "11/11 in test_infrastructure_health_admission_ledger.py and test_dead_letter_retention.py"
+    "new_tests_fail_on_base": "12/12 in test_infrastructure_health_admission_ledger.py and test_dead_letter_retention.py"
   }
 }

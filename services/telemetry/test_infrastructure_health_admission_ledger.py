@@ -15,6 +15,7 @@ import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
@@ -117,6 +118,25 @@ class LedgerHorizonTest(unittest.TestCase):
         self.assertEqual(second.begin("fresh-1", fingerprint).outcome, second.OUTCOME_COMMITTED)
         _admit(second, "fresh-2", _stamp(-30))
         self.assertEqual({r["event_id"] for r in _lines(self.path)}, {"fresh-1", "fresh-2"})
+
+    def test_append_between_replace_and_bookkeeping_is_still_deduped(self):
+        first = self._ledger()
+        second = self._ledger()
+        _admit(first, "old-1", _stamp(-HORIZON - 600))
+        _admit(first, "fresh-1", _stamp(-60))
+        real_replace = os.replace
+        racer_fp = None
+
+        def replace_then_append(src, dst):
+            nonlocal racer_fp
+            real_replace(src, dst)
+            racer_fp, _ = _admit(second, "racer-1", _stamp(-10))
+
+        with patch("services.telemetry.ingest_svc.os.replace", side_effect=replace_then_append):
+            first.compact()
+
+        self.assertIsNotNone(racer_fp)
+        self.assertEqual(first.begin("racer-1", racer_fp).outcome, first.OUTCOME_COMMITTED)
 
 
 class ServiceHorizonTest(unittest.TestCase):

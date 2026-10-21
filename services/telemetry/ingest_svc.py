@@ -533,33 +533,39 @@ class InfrastructureHealthAdmissionLedger:
                 before = self._path.stat().st_size
                 tmp_path = self._path.with_name(self._path.name + f".compact.{os.getpid()}.tmp")
                 kept = 0
+                written = 0
                 try:
                     with tmp_path.open("wb") as out:
                         for record in self._records.values():
-                            out.write(
+                            line = (
                                 json.dumps(record, separators=(",", ":"), sort_keys=True).encode("utf-8")
                                 + b"\n"
                             )
+                            out.write(line)
+                            written += len(line)
                             kept += 1
                         out.flush()
                         os.fsync(out.fileno())
-                    if tmp_path.stat().st_size >= before:
+                        tmp_ino = os.fstat(out.fileno()).st_ino
+                    if written >= before:
                         # Nothing to reclaim; keep the original file and inode.
                         return 0
                     os.replace(tmp_path, self._path)
                 finally:
                     if tmp_path.exists():
                         tmp_path.unlink()
-                stat = self._path.stat()
-                self._inode = stat.st_ino
-                self._offset = stat.st_size
-                removed = max(0, before - stat.st_size)
+                # Track only what this compaction wrote; another replica may
+                # lock the new inode and append right after os.replace, and
+                # _refresh_locked must replay those records from `written`.
+                self._inode = tmp_ino
+                self._offset = written
+                removed = max(0, before - written)
                 self._compacted_records += 1
                 log.info(
                     "Compacted infrastructure health ledger: kept=%s bytes_before=%s bytes_after=%s",
                     kept,
                     before,
-                    stat.st_size,
+                    written,
                 )
                 return removed
             finally:
