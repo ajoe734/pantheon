@@ -5,6 +5,8 @@ from http.cookies import SimpleCookie
 import inspect
 import json
 import os
+import threading
+import time
 from typing import Any, Optional
 import urllib.error
 import urllib.request
@@ -12,11 +14,51 @@ import urllib.request
 authorization: ContextVar[Optional[str]] = ContextVar("owner_read_authorization", default=None)
 selected_tenant: ContextVar[Optional[str]] = ContextVar("owner_read_selected_tenant", default=None)
 request_read_cache: ContextVar[Optional[dict[Any, Any]]] = ContextVar("owner_read_request_cache", default=None)
+management_read_deadline: ContextVar[Optional[float]] = ContextVar("management_read_deadline", default=None)
+
+
+def remaining_management_read_budget(
+    default: Optional[float] = None,
+    *,
+    reserve_seconds: float = 0.0,
+) -> Optional[float]:
+    """Return remaining seconds before the active management_read_deadline, if any."""
+    deadline = management_read_deadline.get()
+    if deadline is None:
+        return default
+    remaining = max(0.0, deadline - time.monotonic() - max(0.0, reserve_seconds))
+    if default is None:
+        return remaining
+    return min(float(default), remaining)
+
+_CACHE_LOCK = threading.Lock()
+
+
+class _RequestReadCache(dict):
+    def __init__(self) -> None:
+        super().__init__()
+        self._key_locks: dict[Any, threading.RLock] = {}
+
+
+def _key_lock(cache: dict[Any, Any], key: Any) -> threading.RLock:
+    with _CACHE_LOCK:
+        locks = getattr(cache, "_key_locks", None)
+        if not isinstance(locks, dict):
+            locks = {}
+            try:
+                setattr(cache, "_key_locks", locks)
+            except AttributeError:
+                return _CACHE_LOCK  # type: ignore[return-value]
+        lock = locks.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            locks[key] = lock
+        return lock
 
 
 class request_read_scope:
     def __enter__(self):
-        self._tok = request_read_cache.set({}) if request_read_cache.get() is None else None
+        self._tok = request_read_cache.set(_RequestReadCache()) if request_read_cache.get() is None else None
         return self
 
     def __exit__(self, *exc):
@@ -42,10 +84,12 @@ def cached_owner_call(key: Any, fn: Any) -> Any:
     if cache is None:
         return fn()
     if key not in cache:
-        try:
-            cache[key] = (True, fn())
-        except Exception as exc:
-            cache[key] = (False, exc)
+        with _key_lock(cache, key):
+            if key not in cache:
+                try:
+                    cache[key] = (True, fn())
+                except Exception as exc:
+                    cache[key] = (False, exc)
     ok, val = cache[key]
     if not ok:
         raise val
@@ -54,8 +98,11 @@ def cached_owner_call(key: Any, fn: Any) -> Any:
 
 def evict_request_read_keys(*prefixes: str) -> None:
     cache = request_read_cache.get()
-    for k in [k for k in (cache or ()) if isinstance(k, tuple) and k and any(str(k[0]).startswith(p) or p in str(k[:2]) for p in prefixes)]:
-        cache.pop(k, None)
+    if cache is None:
+        return
+    with _CACHE_LOCK:
+        for k in [k for k in tuple(cache) if isinstance(k, tuple) and k and any(str(k[0]).startswith(p) or p in str(k[:2]) for p in prefixes)]:
+            cache.pop(k, None)
 
 from ..command_adapters.base import (
     ActionUnavailableError,
@@ -88,7 +135,7 @@ class OwnerReadContextMiddleware:
                 caller_auth = ""
         token = authorization.set(caller_auth or None)
         tenant_token = selected_tenant.set(headers.get(b"x-tenant-id", b"").decode().strip() or None)
-        cache_token = request_read_cache.set({})
+        cache_token = request_read_cache.set(_RequestReadCache())
         try:
             await self.app(scope, receive, send)
         finally:

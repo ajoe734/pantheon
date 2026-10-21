@@ -598,3 +598,268 @@ def test_cockpit_health_counts_canonical_active_binding_not_retired_or_paused():
     runtime = next(g for g in health["groups"] if g["group_id"] == "runtime")
     assert runtime["details"] == {"total_runtimes": 4, "active_runtimes": 1}
     assert runtime["summary"] == "1 active runtime(s) running."
+
+
+def test_cockpit_reload_parallel_owner_reads_prevent_serial_waterfall_timeout(monkeypatch) -> None:
+    """BFF-COCKPIT-RELOAD-20261021: get_operator_health_status and get_management_cockpit
+    must execute independent owner reads in parallel within request_read_scope rather
+    than in a 6-to-9-step serial waterfall that exceeds the cockpit timeout on reload."""
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+    import time
+
+    from services.control_plane.bff.core.owner_reads import (
+        OwnerReadContextMiddleware,
+        cached_owner_call,
+        create_owner_domain_ports,
+        selected_tenant,
+    )
+    from services.control_plane.bff.personas.routes.common import run_management_read
+    from services.control_plane.bff.ports.lifecycle_telemetry_governance import (
+        CompositeLifecycleTelemetryGovernancePort,
+        DomainGovernancePort,
+        DomainIncidentPort,
+        DomainLifecyclePort,
+        DomainLineagePort,
+        DomainTelemetryPort,
+    )
+    from services.control_plane.bff.ports.ooda_management import (
+        ManagementReviewQueuePort,
+        OodaManagementDomainPort,
+    )
+    from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+
+    per_owner_delay = 0.10
+    call_counts: dict[str, int] = {}
+    count_lock = threading.Lock()
+
+    def _record_call(name: str, result: Any) -> Any:
+        time.sleep(per_owner_delay)
+        with count_lock:
+            call_counts[name] = call_counts.get(name, 0) + 1
+        return result
+
+    def _fake_read_records(_url_builder, path: str, _key: Any = None):
+        payloads = {
+            "/api/runtime-bindings": [{"binding_id": "rb-1", "runtime_id": "rt-1", "persona_id": "p-1", "status": "active", "stage": "paper"}],
+            "/api/capital-pools": [{"pool_id": "pool-1", "id": "pool-1", "status": "active"}],
+            "/api/bindings": [{"binding_id": "cb-1", "id": "cb-1", "persona_id": "p-1", "pool_id": "pool-1", "status": "active"}],
+            "/api/deployment/plans": [{"plan_id": "dp-1", "id": "dp-1", "persona_id": "p-1", "status": "pending", "stage": "paper"}],
+            "/api/telemetry/runtime-summaries": [{"runtime_id": "rt-1", "pnl": 0.12, "drawdown": 0.03, "sharpe_ratio": 1.4, "fill_rate": 0.99}],
+        }
+        return cached_owner_call(
+            ("http_records", path, selected_tenant.get()),
+            lambda: _record_call(path, payloads.get(path, [])),
+        )
+
+    def _fake_read_evo(_url_builder, path: str, _key: Any = None):
+        return cached_owner_call(
+            ("evo_records", path, selected_tenant.get()),
+            lambda: _record_call(path, [{"decision_id": "evo-1", "id": "evo-1", "status": "pending"}]),
+        )
+
+    def _fake_approval_records():
+        return cached_owner_call(
+            ("approval_records", selected_tenant.get()),
+            lambda: _record_call(
+                "/api/governance/approvals",
+                [{"decision_id": "ap-1", "id": "ap-1", "decision_state": "pending", "status": "pending", "priority": "high"}],
+            ),
+        )
+
+    monkeypatch.setattr("services.control_plane.bff.core.owner_reads.read_records", _fake_read_records)
+    monkeypatch.setattr("services.control_plane.bff.core.owner_reads.read_evolution_records", _fake_read_evo)
+    monkeypatch.setattr("services.control_plane.bff.core.owner_reads.approval_records", _fake_approval_records)
+    monkeypatch.setenv("PANTHEON_EVOLUTION_API_URL", "http://evolution.test")
+
+    class _PersonaOwnerStore:
+        def list_personas(self):
+            return _record_call(
+                "/api/personas",
+                [{"persona_id": "p-1", "id": "p-1", "name": "Alpha", "lifecycle_state": "active", "status": "active"}],
+            )
+
+    pcr = create_owner_domain_ports(persona_store=_PersonaOwnerStore())
+    gov_port = DomainGovernancePort()
+
+    class _IncResp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+        def read(self):
+            return json.dumps(
+                _record_call(
+                    "/api/incidents",
+                    [{"incident_id": "inc-1", "id": "inc-1", "status": "open", "severity": "high", "title": "Drift alert"}],
+                )
+            ).encode("utf-8")
+
+    inc_port = DomainIncidentPort(
+        incidents_api_url="http://incidents.test",
+        opener=lambda _req, timeout=None: _IncResp(),
+    )
+    tel_port = DomainTelemetryPort(
+        telemetry_summaries_reader=lambda: _fake_read_records(None, "/api/telemetry/runtime-summaries", "summaries"),
+    )
+    ltg = CompositeLifecycleTelemetryGovernancePort(
+        lifecycle_port=DomainLifecyclePort(),
+        telemetry_port=tel_port,
+        incident_port=inc_port,
+        governance_port=gov_port,
+        lineage_port=DomainLineagePort(),
+    )
+    ooda = OodaManagementDomainPort(
+        review_queue_port=ManagementReviewQueuePort(
+            deployment_plans_reader=pcr.list_deployment_plans,
+            approval_decisions_reader=_fake_approval_records,
+            evolution_decisions_reader=pcr.list_evolution_decisions,
+        ),
+    )
+    store = ReadSurfacePorts(
+        persona_capital_runtime=pcr,
+        ooda_management=ooda,
+        lifecycle_telemetry_governance=ltg,
+        paper_runtime_monitoring_sessions_provider=lambda: [],
+    )
+
+    # Serial execution of the 9 owner reads would take >= 0.90s (and health alone >= 0.60s).
+    # With a 0.45s cockpit budget, serial execution always timed out with empty operator_home/runtime_health.
+    monkeypatch.setenv("PANTHEON_BFF_COCKPIT_READ_TIMEOUT_SECONDS", "0.45")
+    monkeypatch.setenv("PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS", "0.45")
+
+    app = FastAPI()
+    app.add_middleware(OwnerReadContextMiddleware)
+    svc = ManagementService(get_read_store=lambda: store)
+    app.include_router(
+        create_management_router(
+            get_read_store=lambda: store,
+            service=svc,
+            run_management_read=run_management_read,
+        )
+    )
+    client = TestClient(app)
+
+    # 1. Single cockpit request completes well within 0.45s and deduplicates every owner read.
+    resp = client.get("/bff/management/cockpit", headers=OPERATOR_HEADERS)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["meta"]["surfaces"]["management_cockpit"].get("reason") != "read_timeout"
+    assert body["data"]["operator_home"]["cards"]
+    assert len(body["data"]["runtime_health"]["groups"]) == 5
+    assert body["data"]["trading_pulse"]["summary"]["runtime_count"] == 1
+    assert body["data"]["human_inbox"]["data"]["summary"]["total"] >= 2
+    assert body["data"]["alerts"]["summary"]["total_active"] >= 1
+    for owner_path, count in call_counts.items():
+        assert count == 1, f"Expected {owner_path} to be fetched once per request, got {count}"
+
+    # 2. Simulate normal-browser initial mount fanout followed immediately by page.reload() fanout
+    # through the production app_factory (compose_bff_app) with main.py's build_cockpit_payload wiring.
+    from services.control_plane.bff.bootstrap.dependencies import AppDependencies
+    from services.control_plane.bff.core.app_factory import (
+        _resolve_default_dependency,
+        compose_bff_app,
+    )
+
+    from collections import defaultdict, deque
+
+    sse_bufs: dict[str, Any] = defaultdict(lambda: deque(maxlen=100))
+    sse_subs: dict[str, Any] = defaultdict(list)
+
+    def _test_dep_resolver(name: str, deps: Any) -> Any:
+        if name == "_sse_buffers":
+            return sse_bufs
+        if name == "_sse_subscribers":
+            return sse_subs
+        try:
+            return _resolve_default_dependency(name, deps)
+        except Exception:
+            return None
+
+    app_deps = AppDependencies.create_default(read_surface=store)
+    composed_app = compose_bff_app(
+        app_deps=app_deps,
+        dependency_resolver=_test_dep_resolver,
+        run_management_read=run_management_read,
+        build_cockpit_payload=lambda snapshot_at=None, human_inbox=None, **kw: ManagementService(
+            get_read_store=lambda: app_deps.read_surface,
+        ).get_management_cockpit(snapshot_at=snapshot_at, human_inbox=human_inbox, **kw),
+    )
+    composed_client = TestClient(composed_app)
+    paths = [
+        "/bff/management/shell-summary",
+        "/bff/management/cockpit",
+        "/bff/management/human-inbox",
+        "/bff/management/trading-pulse",
+    ]
+    for _wave in range(2):
+        with ThreadPoolExecutor(max_workers=len(paths)) as pool:
+            futures = {path: pool.submit(composed_client.get, path, headers=OPERATOR_HEADERS) for path in paths}
+            results = {path: fut.result() for path, fut in futures.items()}
+        for path, r in results.items():
+            assert r.status_code == 200, f"{path} failed: {r.text}"
+        cockpit_payload = results["/bff/management/cockpit"].json()
+        assert cockpit_payload["meta"]["surfaces"]["management_cockpit"].get("reason") != "read_timeout"
+        assert cockpit_payload["data"]["operator_home"]["cards"]
+        assert len(cockpit_payload["data"]["runtime_health"]["groups"]) == 5
+        inbox_payload = results["/bff/management/human-inbox"].json()
+        assert inbox_payload["meta"]["surfaces"]["human_inbox"].get("reason") != "read_timeout"
+        assert inbox_payload["data"]["summary"]["total"] >= 2
+    assert "_resolve_store" not in svc.__dict__
+
+
+def test_cached_owner_call_deduplicates_concurrent_same_key_and_expires_inner_deadline() -> None:
+    """Concurrent threads sharing a request_read_scope must deduplicate identical
+    owner keys without races, and expired management_read_deadline must fail fast."""
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+    import time
+
+    from services.control_plane.bff.core.owner_reads import cached_owner_call, request_read_scope
+    from services.control_plane.bff.personas.routes.common import (
+        management_read_deadline,
+        remaining_management_read_budget,
+    )
+
+    invocations = 0
+    lock = threading.Lock()
+
+    def _expensive():
+        nonlocal invocations
+        time.sleep(0.05)
+        with lock:
+            invocations += 1
+        return {"ok": True}
+
+    with request_read_scope():
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            futs = [
+                pool.submit(__import__("contextvars").copy_context().run, cached_owner_call, ("same-key", "t1"), _expensive)
+                for _ in range(6)
+            ]
+            vals = [f.result() for f in futs]
+    assert vals == [{"ok": True}] * 6
+    assert invocations == 1
+
+    store = create_in_memory_read_surface_ports()
+    persona_called = False
+
+    def _unexpected_persona_call(**_kwargs):
+        nonlocal persona_called
+        persona_called = True
+        return []
+
+    store.list_personas = _unexpected_persona_call
+    svc = ManagementService(read_store=store)
+    tok = management_read_deadline.set(time.monotonic() - 0.01)
+    try:
+        assert remaining_management_read_budget(1.0) == 0.0
+        rows, reason = svc._bounded_persona_readiness_rows("2026-10-21T00:00:00Z", store)
+        assert rows == []
+        assert reason == "read_timeout"
+        assert persona_called is False
+    finally:
+        management_read_deadline.reset(tok)
+

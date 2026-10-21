@@ -1,0 +1,66 @@
+{
+  "task_id": "BFF-COCKPIT-RELOAD-20261021",
+  "outcome": "root_causes_proven_and_repaired",
+  "reproduced": true,
+  "inspected_on": "e231f85638791517447d1125c69cfdc041849a2d",
+  "frontend_head": "d6b988d0e7e4f79e7c9f8ec68b0abd7e6b32b54c",
+  "captured_dev_vm_reload_traces": {
+    "run_2000_cockpit_reload_started_at": "2026-10-20T20:00:10.579Z",
+    "run_2000_serial_health_owner_waterfall_seconds": {
+      "runtime_bindings": 0.266,
+      "telemetry_runtime_summaries": 0.263,
+      "incidents": 0.422,
+      "governance_approvals": 0.175,
+      "deployment_plans": 0.104,
+      "evolution_proposals": 1.832,
+      "serial_sum_seconds": 3.062,
+      "parallel_wave_max_seconds": 1.832
+    },
+    "run_2039_cockpit_reload_started_at": "2026-10-20T20:39:05.714Z",
+    "run_2039_serial_health_owner_waterfall_seconds": {
+      "runtime_bindings": 0.204,
+      "telemetry_runtime_summaries": 0.335,
+      "incidents": 1.331,
+      "governance_approvals": 0.032,
+      "deployment_plans": 0.308,
+      "evolution_proposals": 0.903,
+      "serial_sum_seconds": 3.113,
+      "parallel_wave_max_seconds": 1.331
+    }
+  },
+  "proven_root_causes": [
+    {
+      "id": "RC-1",
+      "file": "services/control-plane/bff/management_read_models/service.py",
+      "symbol": "ManagementService.get_operator_health_status / ManagementService.get_management_cockpit",
+      "cause": "get_operator_health_status executed all five health groups and DomainGovernancePort.list_governance_review_queue_items' three owner reads (approval_records, list_deployment_plans, list_evolution_decisions) strictly serially, and get_human_inbox executed its persona/capital owner reads (list_personas, list_bindings, list_capital_pools) in a second serial waterfall after health completed. On both failed reload runs (20:00:10Z and 20:39:05Z), no single owner HTTP call exceeded 1.832s, but the 6-step serial sum in get_operator_health_status reached 3.062s and 3.113s, crossing the 3.0s PANTHEON_BFF_COCKPIT_READ_TIMEOUT_SECONDS budget before Section 1 (runtime_health) could complete and leaving completed_sections empty (operator_home: {}, runtime_health: {}).",
+      "repair": "Execute the independent health group reads and governance/cockpit owner read warmers concurrently within request_read_scope on a bounded worker pool while bounding group wait to the remaining management_read_deadline with headroom so runtime_health and operator_home complete in max(owner_latency) rather than sum(owner_latency)."
+    },
+    {
+      "id": "RC-2",
+      "file": "services/control-plane/bff/core/owner_reads.py",
+      "symbol": "cached_owner_call / _RequestReadCache",
+      "cause": "cached_owner_call checked and populated request_read_cache without synchronization, so concurrent threads sharing a request_read_scope via copy_context().run could race or duplicate identical owner reads.",
+      "repair": "Add per-key RLock synchronization on _RequestReadCache in cached_owner_call and lock-protected eviction in evict_request_read_keys so distinct owner reads run in parallel while identical in-flight owner keys within the same request are deduplicated."
+    },
+    {
+      "id": "RC-3",
+      "file": "services/control-plane/bff/personas/routes/common.py",
+      "symbol": "run_management_read / management_read_deadline / remaining_management_read_budget",
+      "cause": "run_management_read did not propagate its outer deadline to inner contributor reads (_StoreTimeoutProxy, _bounded_persona_readiness_rows) or subsequent cockpit sections, allowing timed-out worker threads to continue spawning fresh 3.0s contributor reads across the reload window.",
+      "repair": "Propagate management_read_deadline via ContextVar in run_management_read and cap _StoreTimeoutProxy, _bounded_persona_readiness_rows, and post-deadline cockpit sections to remaining_management_read_budget."
+    },
+    {
+      "id": "RC-4",
+      "file": "services/control-plane/bff/management_read_models/router.py",
+      "symbol": "_bounded_get_human_inbox",
+      "cause": "_bounded_get_human_inbox mutated self._resolve_store on the shared ManagementService instance across concurrent cockpit and human-inbox requests and declared synchronous GET handlers as async def without await.",
+      "repair": "Bind _StoreTimeoutProxy per-request via _MANAGEMENT_STORE_OVERRIDE ContextVar instead of mutating self._resolve_store on ManagementService, and declare synchronous GET route handlers as def so FastAPI runs them on its threadpool."
+    }
+  ],
+  "validation": {
+    "pytest_command": "/tmp/v/bin/pytest -q services/control-plane/bff/tests/test_bff_management_cockpit.py",
+    "status": "passed",
+    "passed_count": 21
+  }
+}
