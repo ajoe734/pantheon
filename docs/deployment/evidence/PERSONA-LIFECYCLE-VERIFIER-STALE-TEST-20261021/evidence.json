@@ -1,0 +1,16 @@
+{
+  "task_id": "PERSONA-LIFECYCLE-VERIFIER-STALE-TEST-20261021",
+  "verdict": "stale_test_not_product_regression",
+  "change": "services/persona/test_lifecycle_approval_verifier.py: readback client.get('/api/personas/per1') now sends headers=admin; assertion unchanged",
+  "auth_change": {
+    "task": "RANKING-OWNER-READ-AUTH-SEAMS-20261004",
+    "commit": "df0b3f2bf",
+    "summary": "enforce owner read privacy: services/persona/write_owner.py get_persona returns 401 UNAUTHORIZED for private personas without an Authorization header (403 on tenant mismatch)"
+  },
+  "reason_stale": "The test file was uncollectable until PERSONA-CRON-OODA-IMPORT-PATH-20261021 fixed the import path, so the 401 behaviour introduced earlier was never exercised by it.",
+  "verification": {
+    "command": "COMPOSE_PROFILES=core pytest services/persona",
+    "result": "129 passed, 1 skipped",
+    "skip": "test_cron_ooda_closure_live_smoke.py:147 pre-existing opt-in live smoke (OPENCLAW_OODA_CRON_LIVE_SMOKE=1); no new skips"
+  }
+}
