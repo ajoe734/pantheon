@@ -2086,6 +2086,59 @@ def test_scheduled_reconcile_all_six_incomplete_stages_pending_and_zero_telemetr
                 assert append.call_count == 1
 
 
+def _run_noop_order_cycle(noop_metadata: dict) -> tuple[dict, int, dict]:
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        summary = _make_inflight_paper_summary("paper_order_simulated", 3)
+        summary["last_lifecycle_identity"]["metadata"].update(noop_metadata)
+        binding_id = summary["binding_id"]
+        tick_id = "tick-noop-order-closed-001"
+        with (
+            mock.patch.dict("os.environ", {"PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083"}),
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary]),
+            mock.patch.object(
+                svc, "_append_telemetry_lifecycle_event", return_value=_accepted_delivery()
+            ) as append,
+        ):
+            resp = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile", json={"tick_id": tick_id}
+            )
+            assert resp.status_code == 201
+            stored = svc.store.get_evaluation(svc._tick_evaluation_id(tick_id, binding_id))
+            return resp.json(), append.call_count, stored
+
+
+def test_scheduled_reconcile_noop_order_cycle_is_closed_without_lifecycle_post() -> None:
+    for noop_metadata in (
+        {
+            "noop_reason": "execution_in_progress_elsewhere",
+            "broker_submission_status": "not_submitted_signal_filtered",
+        },
+        {"noop_reason": "set_holdings_no_delta", "fill_quantity": 0},
+    ):
+        payload, post_count, stored = _run_noop_order_cycle(noop_metadata)
+        assert payload["status"] == "ok"
+        assert post_count == 0
+        assert payload["lifecycle_retryable_errors"] == []
+        assert payload["lifecycle_accepted_event_ids"] == []
+        receipt = payload["lifecycle_append_results"][0]
+        assert receipt["status"] == "not_eligible"
+        assert receipt["terminal"] is True
+        assert receipt["retryable"] is False
+        assert receipt["reason"] == "lifecycle_noop_order_closed"
+        assert stored["lifecycle_append"]["reason"] == "lifecycle_noop_order_closed"
+
+
+def test_scheduled_reconcile_filled_paper_order_stays_in_flight() -> None:
+    payload, post_count, _ = _run_noop_order_cycle({"fill_id": "fill-1", "fill_quantity": 5})
+    assert payload["status"] == "failure"
+    assert post_count == 0
+    assert payload["lifecycle_append_results"][0]["reason"] == "lifecycle_in_flight"
+
+
 def test_scheduled_reconcile_inflight_preserves_malformed_identity_and_nonpaper_negatives() -> None:
     from fastapi.testclient import TestClient
 

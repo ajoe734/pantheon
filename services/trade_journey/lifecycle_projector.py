@@ -25,6 +25,7 @@ from services.trade_journey.correlation_envelope import (
     CorrelationEnvelopeError,
     validate_envelope,
 )
+from services.trade_journey.lifecycle_noop_order import is_noop_order
 from services.trade_journey.incremental_materializer import IncrementalLifecycleMaterializer
 from services.trade_journey.materializer import (
     IDENTIFIER_FIELDS,
@@ -470,30 +471,6 @@ class RelationalLifecycleProjector:
             bindings[key] = resolve(*key) if callable(resolve) else None
         return bindings[key]
 
-    @staticmethod
-    def _is_retry_noop_order(
-        event: Mapping[str, Any], metadata: Mapping[str, Any]
-    ) -> bool:
-        if event.get("event_type") != "paper_order_simulated":
-            return False
-        if _first(event.get("fill_id"), metadata.get("fill_id")) is not None:
-            return False
-        metrics = event.get("metrics") if isinstance(event.get("metrics"), Mapping) else {}
-        if metrics.get("submitted_to_broker") is True or metadata.get("submitted_to_broker") is True:
-            return False
-        quantity = _first(
-            metrics.get("fill_quantity"),
-            event.get("quantity"),
-            metadata.get("fill_quantity"),
-        )
-        if quantity is not None:
-            try:
-                if float(quantity) != 0.0:
-                    return False
-            except (TypeError, ValueError):
-                return False
-        return True
-
     def _superseded_retry_journey(
         self,
         event: Mapping[str, Any],
@@ -516,7 +493,7 @@ class RelationalLifecycleProjector:
             return None
         decision_id = _first(event.get("decision_id"), metadata.get("decision_id"))
         if decision_id is None:
-            if not self._is_retry_noop_order(event, metadata):
+            if not is_noop_order(event, metadata):
                 return None
             bound = {
                 self._bound_journey(bindings, identity, identifier_type, identity[identifier_type])
@@ -545,7 +522,7 @@ class RelationalLifecycleProjector:
         if decision_journey == journey_id:
             return None
         event_type = str(event.get("event_type") or "")
-        if event_type not in {"signal_generation", "trade_decision"} and not self._is_retry_noop_order(
+        if event_type not in {"signal_generation", "trade_decision"} and not is_noop_order(
             event, metadata
         ):
             return None
