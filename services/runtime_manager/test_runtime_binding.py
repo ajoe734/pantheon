@@ -707,7 +707,7 @@ class TestRetirementTelemetryEmission:
         assert event["created_at"] == "2026-05-16T01:00:00Z"
         assert event["authority_refs"]["write_owner"] == "runtime_manager"
 
-    def test_failed_terminal_binding_emits_acks_and_sweep_skips_paused(self) -> None:
+    def test_failed_terminal_binding_acked_and_paused_not_emitted(self) -> None:
         from services.runtime_manager.retirement_telemetry import (
             ACK_AT_KEY,
             RetirementTelemetryEmitter,
@@ -716,44 +716,24 @@ class TestRetirementTelemetryEmission:
         sent: list = []
         svc = self._service(sent)
         svc.store.create(_base())
-        failed = svc.store.transition_status(
+        svc.store.transition_status(
             "rtb-aaa000000001", "failed", retired_at="2026-05-16T03:00:00Z"
         )
-        assert failed.status == "failed"
-        assert len(sent) == 1
-        assert sent[0]["event_type"] == "runtime_retired"
-        assert sent[0]["metadata"]["terminal_status"] == "failed"
-        assert sent[0]["created_at"] == "2026-05-16T03:00:00Z"
-        assert svc.store.get("rtb-aaa000000001").metadata.get(ACK_AT_KEY)
-
-        # Already acked: sweep emits nothing more.
-        emitter = RetirementTelemetryEmitter(lambda e: sent.append(e) or True, store=svc.store)
-        assert emitter.pending() == []
-
-        # A non-terminal paused binding is never emitted.
         other = _base(binding_id="rtb-aaa000000002", runtime_id="rt-other", capital_pool_id="pool-other")
         svc.store.create(other)
         svc.store.transition_status("rtb-aaa000000002", "pending_pause")
         svc.store.transition_status("rtb-aaa000000002", "paused")
-        assert emitter.pending() == []
-        assert len(sent) == 1
 
-    def test_failed_binding_pending_until_acked_by_sweep(self) -> None:
-        from services.runtime_manager.retirement_telemetry import RetirementTelemetryEmitter
-
-        sent: list = []
-        svc = self._service(sent)
-        svc.store.create(_base())
-        svc.store._retirement_observers.clear()
-        svc.store.transition_status(
-            "rtb-aaa000000001", "failed", retired_at="2026-05-16T03:00:00Z"
-        )
-        assert sent == []
         emitter = RetirementTelemetryEmitter(
             lambda e: sent.append(e) or True, store=svc.store, tenant_id="t"
         )
         assert [b.binding_id for b in emitter.pending()] == ["rtb-aaa000000001"]
         assert emitter.sweep() == 1
+        assert len(sent) == 1
+        assert sent[0]["event_type"] == "runtime_retired"
+        assert sent[0]["metadata"]["terminal_status"] == "failed"
+        assert sent[0]["created_at"] == "2026-05-16T03:00:00Z"
+        assert svc.store.get("rtb-aaa000000001").metadata.get(ACK_AT_KEY)
         assert emitter.pending() == []
 
     def test_event_id_is_deterministic_for_replay(self) -> None:

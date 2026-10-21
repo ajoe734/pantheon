@@ -1,7 +1,7 @@
 {
   "task_id": "RUNTIME-TERMINAL-FAILED-TELEMETRY-20261021",
   "deployment": false,
-  "change": "runtime-manager emitter, sweep and store hook select bindings by is_terminal(); event carries metadata.terminal_status; event id scheme unchanged",
+  "change": "runtime-manager emitter and sweep select bindings by is_terminal(); event carries metadata.terminal_status; event id scheme unchanged",
   "verification": {
     "command": "pytest services/runtime_manager/test_runtime_binding.py services/telemetry/test_runtime_summary_projection.py",
     "result": "119 passed",

@@ -425,7 +425,7 @@ class RuntimeBindingStore:
         except Exception:
             self._bindings[binding_id] = binding
             raise
-        if updated.is_terminal():
+        if updated.status == RuntimeBindingStatus.RETIRED.value:
             self._notify_retired(updated)
         return updated
 
