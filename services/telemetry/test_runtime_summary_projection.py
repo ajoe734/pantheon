@@ -1555,3 +1555,107 @@ class TestValuationMarkProjection(unittest.TestCase):
         ev["metadata"]["derived_from_threshold_evaluation"] = True
         summary = store.project_event(ev)
         self.assertEqual(summary["positions"], [{"symbol": "2330.TW", "quantity": -1.0}])
+
+
+class TestValuationFailureProjection(unittest.TestCase):
+    def _store(self):
+        tmp = tempfile.mkdtemp()
+        store = RuntimeSummaryProjectionStore(path=str(Path(tmp) / "summaries.json"))
+        store.project_event(_fill_event(symbol="2330.TW", qty=-1.0, price=2400.0))
+        store.project_event(_valuation_event([_mark()]))
+        return store
+
+    def _perf_heartbeat(self, at, status="marks_unavailable", **extra):
+        hb = _event("heartbeat", created_at=at)
+        hb["event_id"] = f"evt-hb-{at}-{status}"
+        hb["metadata"]["performance_telemetry"] = {
+            "status": status,
+            "code": "stale_or_future_market_marks",
+            "attempted_at": at,
+            **extra,
+        }
+        return hb
+
+    def test_failed_valuation_heartbeat_withdraws_mark_but_keeps_last_known(self):
+        store = self._store()
+        summary = store.project_event(self._perf_heartbeat("2026-10-21T09:00:00Z"))
+        (row,) = summary["positions"]
+        self.assertNotIn("mark_price", row)
+        self.assertNotIn("market_value", row)
+        self.assertEqual(row["mark_unavailable_reason"], "stale_or_future_market_marks")
+        self.assertEqual(row["last_known_mark_price"], 2405.0)
+        self.assertEqual(row["last_known_mark_as_of"], "2026-10-20T00:00:00Z")
+
+    def test_older_failure_heartbeat_after_recovery_is_ignored(self):
+        store = self._store()
+        store.project_event(self._perf_heartbeat("2026-10-21T09:00:00Z"))
+        store.project_event(self._perf_heartbeat("2026-10-21T10:00:00Z", status="valued"))
+        summary = store.project_event(self._perf_heartbeat("2026-10-21T09:30:00Z"))
+        self.assertEqual(summary["positions"][0]["mark_price"], 2405.0)
+
+    def test_later_snapshot_clears_failure_but_older_event_does_not(self):
+        store = self._store()
+        store.project_event(self._perf_heartbeat("2026-10-21T09:00:00Z"))
+        summary = store.project_event(
+            _valuation_event(
+                [_mark(price=2410.0, as_of="2026-10-21T08:00:00Z")],
+                created_at="2026-10-21T08:30:00Z",
+                event_id="old-event",
+            )
+        )
+        self.assertNotIn("mark_price", summary["positions"][0])
+        summary = store.project_event(
+            _valuation_event(
+                [_mark(price=2420.0, as_of="2026-10-21T09:59:00Z")],
+                created_at="2026-10-21T10:00:00Z",
+                event_id="new-event",
+            )
+        )
+        self.assertEqual(summary["positions"][0]["mark_price"], 2420.0)
+
+    def test_failure_scoped_to_missing_symbols(self):
+        store = self._store()
+        store.project_event(_fill_event(symbol="2317.TW", qty=1.0, price=100.0))
+        store.project_event(_valuation_event([_mark(symbol="2317.TW", price=101.0)], event_id="o"))
+        summary = store.project_event(
+            self._perf_heartbeat("2026-10-21T09:00:00Z", missing_symbols=["2330.TW"])
+        )
+        by_symbol = {row["symbol"]: row for row in summary["positions"]}
+        self.assertNotIn("mark_price", by_symbol["2330.TW"])
+        self.assertEqual(by_symbol["2317.TW"]["mark_price"], 101.0)
+
+    def test_plain_heartbeat_after_mark_expiration_marks_position_stale(self):
+        tmp = tempfile.mkdtemp()
+        store = RuntimeSummaryProjectionStore(path=str(Path(tmp) / "summaries.json"))
+        store.project_event(_fill_event(symbol="2330.TW", qty=-1.0, price=2400.0))
+        store.project_event(
+            _valuation_event(
+                [_mark(price=2405.0, as_of="2026-10-15T00:00:00Z")],
+                created_at="2026-10-15T00:05:00Z",
+            )
+        )
+        hb = _event("heartbeat", created_at="2026-10-21T06:00:00Z")
+        hb["event_id"] = "evt-hb-6d-later"
+        summary = store.project_event(hb)
+        (row,) = summary["positions"]
+        self.assertNotIn("mark_price", row)
+        self.assertNotIn("market_value", row)
+        self.assertTrue(row["mark_stale"])
+        self.assertEqual(row["last_known_mark_price"], 2405.0)
+        self.assertEqual(row["last_known_mark_as_of"], "2026-10-15T00:00:00Z")
+        self.assertEqual(
+            row["last_known_mark_source_ref"],
+            "source-ingest://snapshots/mss-44f01ca7b8891e2be3fb721f",
+        )
+
+    def test_out_of_order_failure_heartbeat_before_newer_snapshot_is_ignored(self):
+        store = self._store()
+        store.project_event(
+            _valuation_event(
+                [_mark(price=2420.0, as_of="2026-10-21T09:59:00Z")],
+                created_at="2026-10-21T10:00:00Z",
+                event_id="snap-10",
+            )
+        )
+        summary = store.project_event(self._perf_heartbeat("2026-10-21T09:30:00Z"))
+        self.assertEqual(summary["positions"][0]["mark_price"], 2420.0)
