@@ -32,6 +32,7 @@ def remaining_management_read_budget(
     return min(float(default), remaining)
 
 _CACHE_LOCK = threading.Lock()
+_PLAIN_DICT_LOCKS: dict[int, tuple[dict[Any, Any], dict[Any, threading.RLock]]] = {}
 
 
 class _RequestReadCache(dict):
@@ -44,11 +45,17 @@ def _key_lock(cache: dict[Any, Any], key: Any) -> threading.RLock:
     with _CACHE_LOCK:
         locks = getattr(cache, "_key_locks", None)
         if not isinstance(locks, dict):
-            locks = {}
-            try:
-                setattr(cache, "_key_locks", locks)
-            except AttributeError:
-                return _CACHE_LOCK  # type: ignore[return-value]
+            entry = _PLAIN_DICT_LOCKS.get(id(cache))
+            if entry is not None and entry[0] is cache:
+                locks = entry[1]
+            else:
+                locks = {}
+                try:
+                    setattr(cache, "_key_locks", locks)
+                except AttributeError:
+                    if len(_PLAIN_DICT_LOCKS) >= 64:
+                        _PLAIN_DICT_LOCKS.pop(next(iter(_PLAIN_DICT_LOCKS)))
+                    _PLAIN_DICT_LOCKS[id(cache)] = (cache, locks)
         lock = locks.get(key)
         if lock is None:
             lock = threading.RLock()

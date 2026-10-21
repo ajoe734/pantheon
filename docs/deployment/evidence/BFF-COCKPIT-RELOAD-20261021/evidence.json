@@ -5,27 +5,134 @@
   "inspected_on": "e231f85638791517447d1125c69cfdc041849a2d",
   "frontend_head": "d6b988d0e7e4f79e7c9f8ec68b0abd7e6b32b54c",
   "captured_dev_vm_reload_traces": {
-    "run_2000_cockpit_reload_started_at": "2026-10-20T20:00:10.579Z",
-    "run_2000_serial_health_owner_waterfall_seconds": {
-      "runtime_bindings": 0.266,
-      "telemetry_runtime_summaries": 0.263,
-      "incidents": 0.422,
-      "governance_approvals": 0.175,
-      "deployment_plans": 0.104,
-      "evolution_proposals": 1.832,
-      "serial_sum_seconds": 3.062,
-      "parallel_wave_max_seconds": 1.832
+    "run_2000_browser_fanout": {
+      "window_utc": "2026-10-21T20:00:08.196Z to 2026-10-21T20:00:18.696Z",
+      "initial_mount": {
+        "finished_at": "2026-10-21T20:00:13.137Z",
+        "snapshot_at": "2026-10-21T20:00:10Z",
+        "management_cockpit_surface": {
+          "status": "degraded",
+          "reason": "read_timeout",
+          "source": "partial_composition"
+        },
+        "operator_home_populated": true,
+        "runtime_health_populated": true
+      },
+      "reload": {
+        "finished_at": "2026-10-21T20:00:18.482Z",
+        "snapshot_at": "2026-10-21T20:00:18Z",
+        "management_cockpit_surface": {
+          "status": "degraded",
+          "reason": "read_timeout",
+          "source": "timeout_fallback"
+        },
+        "operator_home_populated": false,
+        "runtime_health_populated": false
+      },
+      "artifacts": {
+        "checkpoint_json": {
+          "path": "/tmp/pantheon-direct-runtime-20261021/cockpit-browser-actual-fanout-final-39656137935/checkpoint.json",
+          "sha256": "d6042b4113c3025b52afcfebb7fe31024b8d19480d53570525180fbf9147f437"
+        },
+        "initial_cockpit_json": {
+          "path": "/tmp/pantheon-direct-runtime-20261021/cockpit-browser-actual-fanout-final-39656137935/initial-actual-cockpit.json",
+          "sha256": "9e1a42977e82f4a910b74f8f3823cdd896e0fdad3a07546b7bf806fe85de88a0"
+        },
+        "reload_cockpit_json": {
+          "path": "/tmp/pantheon-direct-runtime-20261021/cockpit-browser-actual-fanout-final-39656137935/reload-actual-cockpit.json",
+          "sha256": "582085defa5ff353549584fe7acf69991dc3fd61c8153f9afda697f6530a68f0"
+        },
+        "owner_access_log_window_json": {
+          "path": "/tmp/pantheon-assist-20261013/Root39656137935-original-saved-UI-L6L7-flat-and-native-docs-continuation-stage-20261021/Root39656137935-Cockpit-original2000-owner-access-log-window-readonly-20261021.json",
+          "sha256": "193aac5d62056315e70fe5ffbd6ee0c6edbb9c6df49265a61a3593e8826f4606"
+        }
+      }
     },
-    "run_2039_cockpit_reload_started_at": "2026-10-20T20:39:05.714Z",
-    "run_2039_serial_health_owner_waterfall_seconds": {
-      "runtime_bindings": 0.204,
-      "telemetry_runtime_summaries": 0.335,
-      "incidents": 1.331,
-      "governance_approvals": 0.032,
-      "deployment_plans": 0.308,
-      "evolution_proposals": 0.903,
-      "serial_sum_seconds": 3.113,
-      "parallel_wave_max_seconds": 1.331
+    "run_2008_separate_process_profile": {
+      "captured_at": "2026-10-21T20:08:39Z",
+      "total_seconds": 0.7419184719910845,
+      "section_timings_seconds": {
+        "get_operator_health_status": 0.4750083830440417,
+        "get_operator_home": 0.00003711704630404711,
+        "get_trading_pulse": 0.06808998400811106,
+        "get_human_inbox": 0.1801059260033071,
+        "get_operator_alerts": 0.01760903000831604,
+        "get_management_anomalies": 0.0005593010093085468
+      },
+      "artifact": {
+        "path": "/tmp/pantheon-direct-runtime-20261021/Cockpit-main-composition-profile-existing-service-logs-readonly-20261021T200839Z.json",
+        "sha256": "cc1c438282c82c15f0e784a6ac2901fc4b5cbbc270a900518ca8696ea8a9ce48"
+      },
+      "provenance_qualification": "Separate-process production-factory invocation completed in 0.742s without concurrent browser fanout; negative evidence showing isolated execution does not reproduce or explain the live HTTP worker reload timeout."
+    },
+    "run_2039_sampled_browser_fanout": {
+      "window_utc": "2026-10-21T20:39:05.211Z to 2026-10-21T20:39:12.540Z",
+      "initial_mount": {
+        "finished_at": "2026-10-21T20:39:08.366Z",
+        "snapshot_at": "2026-10-21T20:39:06Z",
+        "management_cockpit_surface": {
+          "status": "degraded",
+          "source": "bff_composed"
+        },
+        "operator_home_populated": true,
+        "runtime_health_populated": true
+      },
+      "reload": {
+        "finished_at": "2026-10-21T20:39:12.338Z",
+        "snapshot_at": "2026-10-21T20:39:09Z",
+        "management_cockpit_surface": {
+          "status": "degraded",
+          "reason": "read_timeout",
+          "source": "timeout_fallback"
+        },
+        "operator_home_populated": false,
+        "runtime_health_populated": false
+      },
+      "live_stack_sampling_thread_86_segment": {
+        "thread": "Thread 86 (bff-mgmt-read_0)",
+        "offset_seconds": "17.56 to 20.34",
+        "duration_seconds": 2.78,
+        "socket_readinto_seconds": 0.84,
+        "json_raw_decode_seconds": 0.82,
+        "downstream_health_monitor_sqlite_commit_seconds": 0.56,
+        "downstream_health_monitor_total_seconds": 0.84,
+        "sampled_serial_owner_calls_seconds": {
+          "list_deployment_plans": 0.5,
+          "list_evolution_decisions": 0.46,
+          "list_incidents": 0.4
+        }
+      },
+      "artifacts": {
+        "checkpoint_json": {
+          "path": "/tmp/pantheon-direct-runtime-20261021/cockpit-browser-actual-fanout-final-39656137935-sampled-20261021t2038/checkpoint.json",
+          "sha256": "844dc15baf1d58a41c93a9de4c0df87f517d6ab3b104e12b696e0197ff66a5e9"
+        },
+        "initial_cockpit_json": {
+          "path": "/tmp/pantheon-direct-runtime-20261021/cockpit-browser-actual-fanout-final-39656137935-sampled-20261021t2038/initial-actual-cockpit.json",
+          "sha256": "0bf15b6711a1c6d9ed12df1a6d2cafca1a9acf89698755ba1ccf3fcf81556ec6"
+        },
+        "reload_cockpit_json": {
+          "path": "/tmp/pantheon-direct-runtime-20261021/cockpit-browser-actual-fanout-final-39656137935-sampled-20261021t2038/reload-actual-cockpit.json",
+          "sha256": "9fe9a1bbce8c960be0b8191f055bf823d014aaf8d3eb2166d6ed4a8b565b31d9"
+        },
+        "bff_access_metadata_json": {
+          "path": "/tmp/pantheon-direct-runtime-20261021/Cockpit-original2039-failed-reload-existing-deployment-and-BFF-access-metadata.json",
+          "sha256": "08abe002b2f0cadc10c79f73c4e82393870a66a04432841284b2e81b768d69ba"
+        },
+        "stack_sampling_receipt_json": {
+          "path": "/tmp/pantheon-assist-20261013/Root39656137935-normal-Cockpit-actual40s-readonly-stack-sampling-receipt-20261021.json",
+          "sha256": "1eea891de88d606550e8b1a62f59b2139bc5f7eb7536b79c152754313e7e8e10"
+        },
+        "stack_sampling_speedscope_json": {
+          "path": "/tmp/pantheon-assist-20261013/Root39656137935-normal-Cockpit-actual40s-readonly-stacks-speedscope-20261021.json",
+          "sha256": "a9dc0475e299ec2020074850dd685e2c3dfce5714e6ed80a8f10b789a3d5f917"
+        },
+        "bounded_finding_json": {
+          "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/BFF-COCKPIT-RELOAD-20261021-actual-live-failure-stack-and-synchronous-monitor-critical-path-bounded-finding.json",
+          "sha256": "b30bf5351a56f9cdde79ab2871b622346d6669d2c536010335b1786c0355a58b"
+        }
+      },
+      "provenance_qualification": "In the 20:39 sampled run, the initial mount completed as full bff_composed (while the 20:00 initial mount returned partial_composition), and the reload timed out at 3.0s with empty operator_home and runtime_health. Access-log timestamps record completion times without request-ID linkage across overlapping browser fanout requests, and 50Hz py-spy stack samples do not carry HTTP request IDs; therefore synchronous downstream_health_monitor SQLite/JSON/socket work on the serial owner-read critical path is documented as a concrete contributor alongside serial owner waterfalls and cross-wave worker contention rather than sole-cause proof."
     }
   },
   "proven_root_causes": [
@@ -33,15 +140,15 @@
       "id": "RC-1",
       "file": "services/control-plane/bff/management_read_models/service.py",
       "symbol": "ManagementService.get_operator_health_status / ManagementService.get_management_cockpit",
-      "cause": "get_operator_health_status executed all five health groups and DomainGovernancePort.list_governance_review_queue_items' three owner reads (approval_records, list_deployment_plans, list_evolution_decisions) strictly serially, and get_human_inbox executed its persona/capital owner reads (list_personas, list_bindings, list_capital_pools) in a second serial waterfall after health completed. On both failed reload runs (20:00:10Z and 20:39:05Z), no single owner HTTP call exceeded 1.832s, but the 6-step serial sum in get_operator_health_status reached 3.062s and 3.113s, crossing the 3.0s PANTHEON_BFF_COCKPIT_READ_TIMEOUT_SECONDS budget before Section 1 (runtime_health) could complete and leaving completed_sections empty (operator_home: {}, runtime_health: {}).",
-      "repair": "Execute the independent health group reads and governance/cockpit owner read warmers concurrently within request_read_scope on a bounded worker pool while bounding group wait to the remaining management_read_deadline with headroom so runtime_health and operator_home complete in max(owner_latency) rather than sum(owner_latency)."
+      "cause": "get_operator_health_status executed all five health groups and DomainGovernancePort.list_governance_review_queue_items' three owner reads (approval_records, list_deployment_plans, list_evolution_decisions) strictly serially, and get_human_inbox executed its persona/capital owner reads (list_personas, list_bindings, list_capital_pools) in a second serial waterfall after health completed. Live 50Hz py-spy sampling on 2026-10-21T20:39Z (Thread 86, 2.78s segment) showed serial owner reads combined with synchronous socket.readinto (0.84s), JSON raw_decode (0.82s), and downstream_health_monitor SQLite commit work (0.56s commit / 0.84s total monitor work) contributing to the 3.0s PANTHEON_BFF_COCKPIT_READ_TIMEOUT_SECONDS budget exhaustion before Section 1 (runtime_health) could complete on reload. Additionally, _resolve_group collapsed deadline exhaustion / pending future timeout and RuntimeError into identical error surfaces.",
+      "repair": "Execute the independent health group reads and governance/cockpit owner read warmers concurrently within request_read_scope on a bounded worker pool while bounding group wait to the remaining management_read_deadline with headroom, and distinguish read_timeout (source: management_read_timeout, reason: read_timeout) from read_error (source: error, reason: read_error) in _resolve_group and health_status surface metadata."
     },
     {
       "id": "RC-2",
       "file": "services/control-plane/bff/core/owner_reads.py",
       "symbol": "cached_owner_call / _RequestReadCache",
-      "cause": "cached_owner_call checked and populated request_read_cache without synchronization, so concurrent threads sharing a request_read_scope via copy_context().run could race or duplicate identical owner reads.",
-      "repair": "Add per-key RLock synchronization on _RequestReadCache in cached_owner_call and lock-protected eviction in evict_request_read_keys so distinct owner reads run in parallel while identical in-flight owner keys within the same request are deduplicated."
+      "cause": "cached_owner_call checked and populated request_read_cache without synchronization, so concurrent threads sharing a request_read_scope via copy_context().run could race or duplicate identical owner reads; and fallback locking when request_read_cache was set to a plain dict must not share a single non-reentrant lock across nested cached_owner_call keys.",
+      "repair": "Add per-key RLock synchronization on _RequestReadCache and plain-dict request_read_cache instances in cached_owner_call and lock-protected eviction in evict_request_read_keys so distinct or nested owner reads never deadlock while identical in-flight owner keys within the same request are deduplicated."
     },
     {
       "id": "RC-3",
@@ -59,8 +166,8 @@
     }
   ],
   "validation": {
-    "pytest_command": "/tmp/v/bin/pytest -q services/control-plane/bff/tests/test_bff_management_cockpit.py",
+    "pytest_command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_management_cockpit.py services/control-plane/bff/tests/test_management_read_models_router.py",
     "status": "passed",
-    "passed_count": 21
+    "cockpit_test_passed_count": 23
   }
 }

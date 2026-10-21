@@ -47,7 +47,7 @@ from .models import (
 )
 import concurrent.futures
 import contextvars
-from ..core.owner_reads import remaining_management_read_budget
+from services.control_plane.bff.core.owner_reads import remaining_management_read_budget
 from .service import ManagementService, _MANAGEMENT_STORE_OVERRIDE
 
 from services.control_plane.bff.models import ErrorCode

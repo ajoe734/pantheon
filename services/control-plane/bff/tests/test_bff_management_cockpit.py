@@ -863,3 +863,136 @@ def test_cached_owner_call_deduplicates_concurrent_same_key_and_expires_inner_de
     finally:
         management_read_deadline.reset(tok)
 
+
+def test_plain_dict_request_read_cache_supports_nested_and_concurrent_cached_owner_call() -> None:
+    """When request_read_cache is set to a plain dict, nested cached_owner_call with
+    different or identical keys must not deadlock and must still provide per-key RLock synchronization."""
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+    import time
+
+    from services.control_plane.bff.core.owner_reads import (
+        cached_owner_call,
+        evict_request_read_keys,
+        request_read_cache,
+    )
+
+    plain_cache: dict[Any, Any] = {}
+    tok = request_read_cache.set(plain_cache)
+    try:
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            nested_fut = pool.submit(
+                __import__("contextvars").copy_context().run,
+                lambda: cached_owner_call(
+                    "outer",
+                    lambda: cached_owner_call("inner", lambda: 42),
+                ),
+            )
+            assert nested_fut.result(timeout=1.0) == 42
+        assert plain_cache == {"inner": (True, 42), "outer": (True, 42)}
+
+        invocations = 0
+        lock = threading.Lock()
+
+        def _slow_val() -> int:
+            nonlocal invocations
+            time.sleep(0.03)
+            with lock:
+                invocations += 1
+            return 99
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futs = [
+                pool.submit(
+                    __import__("contextvars").copy_context().run,
+                    cached_owner_call,
+                    ("concurrent", "k1"),
+                    _slow_val,
+                )
+                for _ in range(4)
+            ]
+            assert [f.result(timeout=1.0) for f in futs] == [99, 99, 99, 99]
+        assert invocations == 1
+        evict_request_read_keys(("concurrent",))
+        assert ("concurrent", "k1") not in plain_cache
+    finally:
+        request_read_cache.reset(tok)
+
+
+def test_operator_health_status_distinguishes_timeout_from_error() -> None:
+    """get_operator_health_status must report read_timeout / management_read_timeout for
+    expired deadlines, pending group futures, or TimeoutError, and read_error / error for RuntimeError."""
+    import threading
+    import time
+
+    from services.control_plane.bff.personas.routes.common import management_read_deadline
+
+    # 1. Pre-expired deadline must not invoke store methods and must surface read_timeout.
+    expired_store = create_in_memory_read_surface_ports()
+    runtime_called = False
+
+    def _unexpected_runtime() -> list[dict[str, Any]]:
+        nonlocal runtime_called
+        runtime_called = True
+        return []
+
+    expired_store.list_runtime_bindings = _unexpected_runtime
+    svc_expired = ManagementService(read_store=expired_store)
+    tok = management_read_deadline.set(time.monotonic() - 0.01)
+    try:
+        expired_health = svc_expired.get_operator_health_status(snapshot_at="2026-10-21T20:39:09Z")
+    finally:
+        management_read_deadline.reset(tok)
+    assert runtime_called is False
+    assert expired_health["meta"]["surfaces"]["runtime"] == {
+        "status": "unavailable",
+        "source": "management_read_timeout",
+        "reason": "read_timeout",
+    }
+    assert expired_health["meta"]["surfaces"]["health_status"]["reason"] == "read_timeout"
+    assert expired_health["meta"]["surfaces"]["health_status"]["source"] == "management_read_timeout"
+
+    # 2. Pending future timeout vs RuntimeError vs TimeoutError within the same health evaluation.
+    release = threading.Event()
+    mixed_store = create_in_memory_read_surface_ports()
+
+    def _hanging_runtime() -> list[dict[str, Any]]:
+        release.wait(1.0)
+        return [{"runtime_id": "rt-late", "status": "active"}]
+
+    def _timeout_telemetry() -> list[dict[str, Any]]:
+        raise TimeoutError("owner telemetry timed out")
+
+    def _boom_incidents() -> list[dict[str, Any]]:
+        raise RuntimeError("owner incident failure")
+
+    mixed_store.list_runtime_bindings = _hanging_runtime
+    mixed_store.list_telemetry_summaries = _timeout_telemetry
+    mixed_store.list_incidents = _boom_incidents
+    svc_mixed = ManagementService(read_store=mixed_store)
+    tok2 = management_read_deadline.set(time.monotonic() + 0.08)
+    try:
+        mixed_health = svc_mixed.get_operator_health_status(snapshot_at="2026-10-21T20:39:09Z")
+    finally:
+        release.set()
+        management_read_deadline.reset(tok2)
+
+    surfaces = mixed_health["meta"]["surfaces"]
+    assert surfaces["runtime"] == {
+        "status": "unavailable",
+        "source": "management_read_timeout",
+        "reason": "read_timeout",
+    }
+    assert surfaces["telemetry"] == {
+        "status": "unavailable",
+        "source": "management_read_timeout",
+        "reason": "read_timeout",
+    }
+    assert surfaces["incident"] == {
+        "status": "unavailable",
+        "source": "error",
+        "reason": "read_error",
+    }
+    assert surfaces["runtime"] != surfaces["incident"]
+    assert surfaces["health_status"]["reason"] == "read_timeout"
+

@@ -2797,8 +2797,11 @@ class ManagementService:
         with request_read_scope():
             group_futures: Dict[str, Any] = {}
             warm_futures: List[Any] = []
+            supported_groups: Set[str] = set()
+            outer_remaining = remaining_management_read_budget()
+            deadline_exhausted = outer_remaining is not None and outer_remaining <= 0.0
             if store is not None:
-                if _is_unpatched_port_method(store, "list_governance_review_queue_items"):
+                if _is_unpatched_port_method(store, "list_governance_review_queue_items") and not deadline_exhausted:
                     raw_store = getattr(store, "_target", store)
                     for warm_name in ("list_deployment_plans", "list_evolution_decisions"):
                         if _is_unpatched_port_method(raw_store, warm_name):
@@ -2809,56 +2812,69 @@ class ManagementService:
                             )
 
                 if hasattr(store, "list_runtime_bindings"):
-                    group_futures["runtime"] = _HEALTH_OWNER_READ_EXECUTOR.submit(
-                        copy_context().run, lambda: store.list_runtime_bindings() or []
-                    )
+                    supported_groups.add("runtime")
+                    if not deadline_exhausted:
+                        group_futures["runtime"] = _HEALTH_OWNER_READ_EXECUTOR.submit(
+                            copy_context().run, lambda: store.list_runtime_bindings() or []
+                        )
                 if hasattr(store, "list_telemetry_summaries"):
-                    def _read_telemetry() -> List[Dict[str, Any]]:
-                        res = store.list_telemetry_summaries()
-                        return list(res.values()) if isinstance(res, dict) else (res or [])
+                    supported_groups.add("telemetry")
+                    if not deadline_exhausted:
+                        def _read_telemetry() -> List[Dict[str, Any]]:
+                            res = store.list_telemetry_summaries()
+                            return list(res.values()) if isinstance(res, dict) else (res or [])
 
-                    group_futures["telemetry"] = _HEALTH_OWNER_READ_EXECUTOR.submit(
-                        copy_context().run, _read_telemetry
-                    )
+                        group_futures["telemetry"] = _HEALTH_OWNER_READ_EXECUTOR.submit(
+                            copy_context().run, _read_telemetry
+                        )
                 if hasattr(store, "list_incidents") or hasattr(store, "list_incident_alerts"):
-                    def _read_incidents() -> List[Dict[str, Any]]:
-                        if hasattr(store, "list_incidents"):
-                            return store.list_incidents() or []
-                        return store.list_incident_alerts() or []
+                    supported_groups.add("incident")
+                    if not deadline_exhausted:
+                        def _read_incidents() -> List[Dict[str, Any]]:
+                            if hasattr(store, "list_incidents"):
+                                return store.list_incidents() or []
+                            return store.list_incident_alerts() or []
 
-                    group_futures["incident"] = _HEALTH_OWNER_READ_EXECUTOR.submit(
-                        copy_context().run, _read_incidents
-                    )
+                        group_futures["incident"] = _HEALTH_OWNER_READ_EXECUTOR.submit(
+                            copy_context().run, _read_incidents
+                        )
                 if (
                     hasattr(store, "list_approval_queue_items")
                     or hasattr(store, "list_governance_review_queue_items")
                     or hasattr(store, "list_approval_records")
                 ):
-                    def _read_governance() -> List[Dict[str, Any]]:
-                        items: List[Dict[str, Any]] = []
-                        if hasattr(store, "list_approval_queue_items"):
-                            items.extend(store.list_approval_queue_items() or [])
-                        if hasattr(store, "list_governance_review_queue_items"):
-                            items.extend(store.list_governance_review_queue_items() or [])
-                        if not items and hasattr(store, "list_approval_records"):
-                            items.extend(store.list_approval_records() or [])
-                        return items
+                    supported_groups.add("governance")
+                    if not deadline_exhausted:
+                        def _read_governance() -> List[Dict[str, Any]]:
+                            items: List[Dict[str, Any]] = []
+                            if hasattr(store, "list_approval_queue_items"):
+                                items.extend(store.list_approval_queue_items() or [])
+                            if hasattr(store, "list_governance_review_queue_items"):
+                                items.extend(store.list_governance_review_queue_items() or [])
+                            if not items and hasattr(store, "list_approval_records"):
+                                items.extend(store.list_approval_records() or [])
+                            return items
 
-                    group_futures["governance"] = _HEALTH_OWNER_READ_EXECUTOR.submit(
-                        copy_context().run, _read_governance
-                    )
+                        group_futures["governance"] = _HEALTH_OWNER_READ_EXECUTOR.submit(
+                            copy_context().run, _read_governance
+                        )
                 if hasattr(store, "get_kill_switch_status"):
-                    group_futures["kill_switch"] = _HEALTH_OWNER_READ_EXECUTOR.submit(
-                        copy_context().run, store.get_kill_switch_status
-                    )
+                    supported_groups.add("kill_switch")
+                    if not deadline_exhausted:
+                        group_futures["kill_switch"] = _HEALTH_OWNER_READ_EXECUTOR.submit(
+                            copy_context().run, store.get_kill_switch_status
+                        )
 
             done_futures: Set[Any] = set()
             if group_futures:
                 outer_remaining = remaining_management_read_budget()
                 group_timeout: Optional[float] = None
                 if outer_remaining is not None:
-                    reserve = min(0.35, outer_remaining * 0.2)
-                    group_timeout = remaining_management_read_budget(reserve_seconds=reserve)
+                    if outer_remaining <= 0.0:
+                        group_timeout = 0.0
+                    else:
+                        reserve = min(0.35, outer_remaining * 0.2)
+                        group_timeout = remaining_management_read_budget(reserve_seconds=reserve)
                 done_futures, pending_futures = _futures_wait(
                     list(group_futures.values()), timeout=group_timeout
                 )
@@ -2869,22 +2885,37 @@ class ManagementService:
                     wf.cancel()
 
             def _resolve_group(group_id: str, default: Any) -> Any:
-                fut = group_futures.get(group_id)
-                if fut is None:
+                if group_id not in supported_groups:
                     group_surfaces[group_id] = {
                         "status": "unavailable",
                         "source": "missing" if store is None else "unsupported",
                     }
                     return default
-                if fut not in done_futures:
-                    group_surfaces[group_id] = {"status": "unavailable", "source": "error"}
+                fut = group_futures.get(group_id)
+                if deadline_exhausted or fut is None or fut not in done_futures:
+                    group_surfaces[group_id] = {
+                        "status": "unavailable",
+                        "source": "management_read_timeout",
+                        "reason": "read_timeout",
+                    }
                     return default
                 try:
                     val = fut.result()
                     group_surfaces[group_id] = {"status": "ok", "source": "store"}
                     return val if val is not None else default
-                except Exception:
-                    group_surfaces[group_id] = {"status": "unavailable", "source": "error"}
+                except Exception as exc:
+                    if isinstance(exc, (TimeoutError, _FuturesTimeoutError)) or "timeout" in type(exc).__name__.lower():
+                        group_surfaces[group_id] = {
+                            "status": "unavailable",
+                            "source": "management_read_timeout",
+                            "reason": "read_timeout",
+                        }
+                    else:
+                        group_surfaces[group_id] = {
+                            "status": "unavailable",
+                            "source": "error",
+                            "reason": "read_error",
+                        }
                     return default
 
             # 1. Runtime group
@@ -2961,6 +2992,15 @@ class ManagementService:
 
         groups = [runtime_group, telemetry_group, incident_group, governance_group, kill_switch_group]
         overall_surface = _aggregate_group_surface("health_status", list(group_surfaces.values()), snapshot_at=snap)
+        group_reasons = {s.get("reason") for s in group_surfaces.values() if isinstance(s, dict) and s.get("reason")}
+        if "read_timeout" in group_reasons:
+            overall_surface["reason"] = "read_timeout"
+            if all(s.get("reason") == "read_timeout" for s in group_surfaces.values() if isinstance(s, dict)):
+                overall_surface["source"] = "management_read_timeout"
+        elif "read_error" in group_reasons:
+            overall_surface["reason"] = "read_error"
+            if all(s.get("reason") == "read_error" for s in group_surfaces.values() if isinstance(s, dict)):
+                overall_surface["source"] = "error"
         overall_status = overall_surface.get("status", "ok")
 
         group_counts = {
