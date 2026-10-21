@@ -1,0 +1,18 @@
+{
+  "task_id": "BFF-PORTFOLIO-EXPLICIT-FLAT-20261021",
+  "base_commit": "05c6ff9b2038c27cdbf9a38e52bd3591cababf70",
+  "root_cause": "pm12 holdings response turned empty positions into [{}] and classified position_source_count<=0 as MISSING_HOLDING_ROW even when the real RuntimeSummaryProjectionStore explicitly reported positions=[] and position_count=0.",
+  "fix": "Explicit flat = positions is an empty list AND position_count is integer 0. Such runtimes emit no holding row and no MISSING_HOLDING_ROW, but still count in runtime/telemetry coverage and keep stale/degraded diagnostics; filters apply identically. Missing fields still yield MISSING_HOLDING_ROW / MISSING_TELEMETRY.",
+  "reproduction": "Producer-shaped paper_fill_simulated -1 then +1 through RuntimeSummaryProjectionStore failed before the change (1 synthetic holding); hosted counterexample: holding_count 1, position_source_rows 0, MISSING_HOLDING_ROW.",
+  "tests": {
+    "command": "/tmp/civenv/bin/python -m pytest services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py -q",
+    "result": "61 passed",
+    "added": [
+      "test_portfolio_holdings_explicit_flat_book_has_no_synthetic_holding_or_incident",
+      "test_portfolio_holdings_missing_positions_field_is_not_a_flat_book",
+      "test_portfolio_holdings_explicit_flat_book_keeps_stale_telemetry_diagnostic"
+    ]
+  },
+  "scope": ["services/control-plane/bff/pm12/service.py", "services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py"],
+  "operations_performed": {"vm_or_ssh": false, "deployment": false, "provider_or_market_data": false, "business_mutation": false}
+}

@@ -172,6 +172,8 @@ def _provisioning_read_surface_double():
         runtime_bindings if dataset == "runtime_bindings" else personas if dataset == "personas" else {}
     )
     store.list_authoritative_paper_runtime_monitoring_sessions = lambda: []
+    store.list_strategy_specs = lambda **_kw: []
+    store.get_strategy_spec_detail = lambda *_a, **_kw: None
     return store
 
 
@@ -182,11 +184,17 @@ def mock_external_services(monkeypatch):
     _state.transport = transport
     monkeypatch.setattr(_persona_service_module, "_PERSONA_PROVISIONING_STORE", MemoryPersonaProvisioningStore())
     monkeypatch.setattr(_persona_service_module, "_PersonaOwnerHttpTransport", lambda *args, **kwargs: transport)
-    monkeypatch.setattr(_persona_service_module, "_register_persona_cron_required", _schedule_receipt)
+    monkeypatch.setattr(
+        _persona_service_module,
+        "_register_persona_cron_required",
+        lambda persona_id, pool_id, binding_id, **_kwargs: _schedule_receipt(
+            persona_id, pool_id, binding_id
+        ),
+    )
     monkeypatch.setattr(
         _persona_service_module,
         "_remove_persona_cron_required",
-        lambda persona_id: {
+        lambda persona_id, **_kwargs: {
             "persona_id": persona_id,
             "registered": False,
             "removed_ids": [],

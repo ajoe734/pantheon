@@ -1,0 +1,16 @@
+{
+  "task_id": "CI-FIXED-SERVICE-SUITES-2-20261021",
+  "workflow": ".github/workflows/branch-ci.yml",
+  "job": "service-suites",
+  "steps_added": ["capital", "telemetry", "evolution", "persona"],
+  "step_condition": "!cancelled()",
+  "no_deselect_or_known_failures": true,
+  "local_results": {
+    "capital": "359 passed, 12 skipped",
+    "telemetry": "457 passed, 1 skipped",
+    "evolution": "351 passed, 3 skipped",
+    "persona": "128 passed, 1 skipped, 1 failed without COMPOSE_PROFILES=core; 16/16 in test_lifecycle_approval_verifier.py with it"
+  },
+  "persona_note": "test_rendered_compose_gives_persona_the_bff_jwt_verifier_config reads the persona service, which docker-compose.yml gates behind profiles core/root; the persona step sets COMPOSE_PROFILES=core. Assertions unchanged.",
+  "dependencies_added": ["services/capital/requirements.txt", "services/telemetry/requirements.txt", "services/evolution/requirements.txt"]
+}

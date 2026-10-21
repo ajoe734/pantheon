@@ -1371,10 +1371,12 @@ class DeploymentOrchestrationService:
             raise DeploymentSagaError(f"Outbox event '{event_id}' not found")
         saga = self._require_saga(record.event.aggregate_id)
         plan = self.planner_service.get_plan(saga.plan_id)
-        if self._is_canonical_compensation_event(record, saga, plan):
-            # Persisted compensation recovery undoes an already-admitted
-            # forward action; it must not need the forward approval to be
-            # unexpired. Identity was verified above.
+        if self._is_canonical_compensation_event(
+            record, saga, plan
+        ) or self._is_canonical_retirement_event(record, saga, plan):
+            # Persisted compensation/retirement teardown undoes an
+            # already-admitted forward action; it must not need the forward
+            # approval to be unexpired. Identity was verified above.
             return self.saga_store.replay_outbox_event(event_id, reason=request.reason)
         try:
             self._resolve_registry_entry_for_plan(plan)
@@ -1383,6 +1385,41 @@ class DeploymentOrchestrationService:
                 f"Outbox event '{event_id}' replay denied: {exc}"
             ) from exc
         return self.saga_store.replay_outbox_event(event_id, reason=request.reason)
+
+    @staticmethod
+    def _plan_matches_saga_identity(saga: DeploymentSaga, plan: DeploymentPlan) -> bool:
+        if (
+            plan.plan_id != saga.plan_id
+            or plan.approval_decision_id != saga.approval_decision_id
+            or plan.artifact_id != saga.artifact_id
+            or plan.artifact_version != saga.artifact_version
+        ):
+            return False
+        saga_tenant = _saga_tenant_id(saga)
+        return saga_tenant is not None and saga_tenant == _plan_tenant_id(plan)
+
+    @classmethod
+    def _is_canonical_retirement_event(
+        cls, record: OutboxRecord, saga: DeploymentSaga, plan: DeploymentPlan
+    ) -> bool:
+        """True only for the saga's recorded retirement event."""
+        event = record.event
+        payload = event.payload if isinstance(event.payload, Mapping) else {}
+        retirement = saga.retirement or {}
+        requested_event_id = retirement.get("requested_event_id")
+        if (
+            event.event_type != "deployment.retirement.requested"
+            or event.aggregate_type != "deployment_saga"
+            or record.owner_service != "runtime-manager-svc"
+            or event.aggregate_id != saga.saga_id
+            or not requested_event_id
+            or event.event_id != requested_event_id
+            or not saga.binding_id
+            or payload.get("plan_id") != saga.plan_id
+            or payload.get("binding_id") != saga.binding_id
+        ):
+            return False
+        return cls._plan_matches_saga_identity(saga, plan)
 
     @staticmethod
     def _is_canonical_compensation_event(
@@ -1403,14 +1440,9 @@ class DeploymentOrchestrationService:
             or payload_compensation.get("command_type")
             != _enum_value(compensation.command_type)
             or payload.get("plan_id") != saga.plan_id
-            or plan.plan_id != saga.plan_id
-            or plan.approval_decision_id != saga.approval_decision_id
-            or plan.artifact_id != saga.artifact_id
-            or plan.artifact_version != saga.artifact_version
         ):
             return False
-        saga_tenant = _saga_tenant_id(saga)
-        return saga_tenant is not None and saga_tenant == _plan_tenant_id(plan)
+        return DeploymentOrchestrationService._plan_matches_saga_identity(saga, plan)
 
     def _mark_plan_binding_created(
         self,

@@ -39,7 +39,9 @@ from services.control_plane.bff.core.owner_reads import (
 from services.control_plane.bff.personas.service import (
     _PPL_ALLOC_009_ELIGIBILITY_IDEMPOTENCY_KEY,
     _PPL_ALLOC_009_ELIGIBILITY_RUN_KEY,
+    _current_persona_service,
     _extract_identity,
+    _pm12_persona_league_ranking_item,
     _pm12_persona_league_rows,
     _ppl_alloc_009_paper_eligibility_context,
 )
@@ -435,6 +437,12 @@ class CountingOwnerServer:
                 elif path == "/api/source-ingest/health-usage-snapshot":
                     outer._record("source_health_snapshot", self.path)
                     self.send_json(200, {"sources": []})
+                elif path == "/api/deployment/plans":
+                    outer._record("deployment_plans_collection", self.path)
+                    self.send_json(
+                        200,
+                        _by_tenant(outer.dataset.get("deployment_plans", [])),
+                    )
                 else:
                     outer._record(f"other:{path}", self.path)
                     self.send_json(200, {"items": []})
@@ -476,6 +484,7 @@ def _build_client(server: CountingOwnerServer, monkeypatch: pytest.MonkeyPatch) 
     owner_url = f"http://127.0.0.1:{server.port}"
     monkeypatch.setenv("PANTHEON_PERSONA_URL", owner_url)
     monkeypatch.setenv("PANTHEON_CAPITAL_API_URL", owner_url)
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_API_URL", owner_url)
     monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", owner_url)
     monkeypatch.setenv("PANTHEON_TELEMETRY_API_URL", owner_url)
     monkeypatch.setenv("PANTHEON_SOURCE_INGEST_URL", owner_url)
@@ -709,29 +718,144 @@ def test_persona_health_reads_league_once_and_ppl_alloc_009_reuses_request_scope
     and evicts stale telemetry/league cache keys on refresh."""
     dataset = _build_fixture_dataset(total_personas=90, active_personas=12)
     proof_pid = "persona-ppl-alloc-009"
+    proof_pool_id = "pool-ppl-alloc-009"
+    proof_bind_id = "bind-ppl-alloc-009"
+    proof_rt_id = "rt-ppl-alloc-009"
+    proof_rb_id = "rb-ppl-alloc-009"
+    proof_sess_id = "sess-ppl-alloc-009"
+    proof_plan_id = "plan-ppl-alloc-009"
+    proof_strategy_id = "strat-ppl-alloc-009"
     dataset["personas"].append(
         {
             "id": proof_pid,
             "persona_id": proof_pid,
             "tenant_id": "tenant-dev",
             "name": f"PPL ALLOC 009 {_PPL_ALLOC_009_ELIGIBILITY_RUN_KEY}",
-            "lifecycle_state": "active",
+            "lifecycle_state": "paper_running",
             "state": "paper_running",
+            "strategy_family": "momentum",
+            "required_data_sources": ["twse"],
             "metadata": {
                 "tenant_id": "tenant-dev",
+                "owner": "team-alpha",
+                "archetype": "momentum",
                 "provisioning_idempotency_key": "ppl-alloc-009-30095677466-persona-create",
                 "capital_mode": "paper",
                 "deployment_stage": "paper",
+                "paper_ledger_id": f"paper-ledger-{proof_pid}",
                 "live_capital_enabled": False,
                 "live_write_enabled": False,
                 "order_side_effects_allowed": False,
                 "capital_side_effects_allowed": False,
-                "runtime_id": "rt-active-000",
-                "runtime_binding_id": "rb-active-000",
-                "binding_id": "bind-active-000",
+                "runtime_id": proof_rt_id,
+                "runtime_binding_id": proof_rb_id,
+                "binding_id": proof_bind_id,
             },
         }
     )
+    dataset["capital_pools"].append(
+        {
+            "id": proof_pool_id,
+            "capital_pool_id": proof_pool_id,
+            "tenant_id": "tenant-dev",
+            "name": "PPL ALLOC 009 Paper Pool",
+            "status": "active",
+            "mode": "paper",
+            "metadata": {
+                "internal": True,
+                "execution_context": "paper",
+                "persona_id": proof_pid,
+            },
+        }
+    )
+    dataset["bindings"].append(
+        {
+            "id": proof_bind_id,
+            "binding_id": proof_bind_id,
+            "persona_capital_binding_id": proof_bind_id,
+            "persona_id": proof_pid,
+            "capital_pool_id": proof_pool_id,
+            "tenant_id": "tenant-dev",
+            "role": "paper_owner",
+            "status": "active",
+            "validity": "active",
+            "deployment_stage": "paper",
+            "allowed_deployment_scope": "paper",
+        }
+    )
+    dataset["runtime_bindings"].append(
+        {
+            "id": proof_rb_id,
+            "runtime_binding_id": proof_rb_id,
+            "binding_id": proof_bind_id,
+            "persona_capital_binding_id": proof_bind_id,
+            "runtime_id": proof_rt_id,
+            "persona_id": proof_pid,
+            "capital_pool_id": proof_pool_id,
+            "tenant_id": "tenant-dev",
+            "status": "running",
+            "state": "running",
+            "deployment_mode": "paper",
+            "deployment_stage": "paper",
+            "artifact_id": "art-ppl-alloc-009",
+            "artifact_version": "1.0.0",
+            "plan_id": proof_plan_id,
+            "strategy_id": proof_strategy_id,
+            "effective_at": "2026-10-20T09:00:00Z",
+            "updated_at": "2026-10-20T10:00:00Z",
+        }
+    )
+    proof_sess = {
+        "id": proof_sess_id,
+        "session_id": proof_sess_id,
+        "persona_id": proof_pid,
+        "runtime_id": proof_rt_id,
+        "runtime_binding_id": proof_rb_id,
+        "tenant_id": "tenant-dev",
+        "status": "active",
+        "state": "running",
+        "session_type": "paper_runtime_monitoring",
+        "deployment_stage": "paper",
+        "last_heartbeat_at": "2026-10-20T10:00:00Z",
+    }
+    dataset["sessions"].append(proof_sess)
+    dataset["paper_sessions"].append(dict(proof_sess))
+    proof_telemetry = {
+        "id": "tel-ppl-alloc-009",
+        "runtime_id": proof_rt_id,
+        "persona_id": proof_pid,
+        "tenant_id": "tenant-dev",
+        "pnl": 0.18,
+        "drawdown": 0.02,
+        "max_drawdown": 0.02,
+        "fill_rate": 0.99,
+        "avg_slippage_bps": 1.1,
+        "total_trades": 30,
+        "collected_at": "2026-10-20T10:00:00Z",
+    }
+    dataset["telemetry_summaries"].append(proof_telemetry)
+    dataset["capability_snapshots"].append(
+        {
+            "id": "cap-ppl-alloc-009",
+            "snapshot_id": "cap-ppl-alloc-009",
+            "persona_id": proof_pid,
+            "tenant_id": "tenant-dev",
+            "effective_skills": ["skill-a"],
+            "effective_tools": ["tool-a"],
+            "effective_workflows": ["wf-a"],
+            "generated_at": "2026-10-20T09:00:00Z",
+        }
+    )
+    dataset["deployment_plans"] = [
+        {
+            "id": proof_plan_id,
+            "plan_id": proof_plan_id,
+            "tenant_id": "tenant-dev",
+            "strategy_id": proof_strategy_id,
+            "capital_pool_id": proof_pool_id,
+            "status": "active",
+        }
+    ]
     server = CountingOwnerServer(dataset)
     server.start()
     try:
@@ -757,39 +881,76 @@ def test_persona_health_reads_league_once_and_ppl_alloc_009_reuses_request_scope
         identity = _extract_identity(auth["Authorization"])
         tok_auth = owner_authorization.set(auth["Authorization"])
         tok_tenant = owner_selected_tenant.set("tenant-dev")
+        tok_ctx = _current_persona_service.set(client.app.state.persona_service)
         try:
             with request_read_scope():
-                try:
-                    _ppl_alloc_009_paper_eligibility_context(
-                        persona_id=proof_pid,
-                        identity=identity,
-                        observed_at="2026-10-20T10:00:00Z",
-                    )
-                except Exception:
-                    pass
-                _pm12_persona_league_rows(
-                    q=proof_pid,
-                    tenant_id="tenant-dev",
-                    include_route_policy=False,
-                    include_health=False,
-                    include_allowed_actions=False,
+                ctx = _ppl_alloc_009_paper_eligibility_context(
+                    persona_id=proof_pid,
+                    identity=identity,
+                    observed_at="2026-10-20T10:00:00Z",
                 )
-                counts_before_evict = server.snapshot_counts()
-                assert counts_before_evict.get("personas_collection", 0) == 1
-                assert counts_before_evict.get("bindings_collection", 0) == 1
+                assert ctx["strategy_id"] == proof_strategy_id
+                assert ctx["paper_session_id"] == proof_sess_id
+                assert ctx["paper_ledger_id"] == f"paper-ledger-{proof_pid}"
+                assert ctx["capital"]["binding_id"] == proof_bind_id
+                assert ctx["capital"]["capital_pool_id"] == proof_pool_id
+                assert ctx["runtime_binding"]["runtime_binding_id"] == proof_rb_id
+                assert ctx["ranking_item"]["persona_id"] == proof_pid
+                assert ctx["ranking_item"]["runtime_resolution"] == "active"
+                assert ctx["ranking_item"]["session_resolution"] == "active"
+                assert ctx["ranking_item"]["stage"] == "paper_running"
+                assert ctx["ranking_item"]["capital_scope"] == "paper_ledger"
 
-                evict_request_read_keys("telemetry", "pm12_league_rows")
-                _pm12_persona_league_rows(
+                counts_after_helper = server.snapshot_counts()
+                assert counts_after_helper.get("personas_collection", 0) == 1
+                assert counts_after_helper.get("bindings_collection", 0) == 1
+                assert counts_after_helper.get("runtime_bindings_collection", 0) == 1
+                assert counts_after_helper.get("capital_pools_collection", 0) == 1
+                assert counts_after_helper.get("sessions_collection", 0) == 1
+                assert counts_after_helper.get("paper_fleet_sessions_collection", 0) == 1
+                assert counts_after_helper.get("telemetry_summaries_collection", 0) == 1
+                assert counts_after_helper.get("capability_snapshots_collection", 0) == 1
+                assert counts_after_helper.get("strategy_specs_collection", 0) == 1
+                assert counts_after_helper.get("deployment_plans_collection", 0) == 1
+
+                reused_rows = _pm12_persona_league_rows(
                     q=proof_pid,
                     tenant_id="tenant-dev",
                     include_route_policy=False,
                     include_health=False,
                     include_allowed_actions=False,
                 )
+                assert len(reused_rows) == 1
+                reused_item = _pm12_persona_league_ranking_item(reused_rows[0])
+                assert reused_item["metrics"]["pnl"] == pytest.approx(0.18)
+                counts_before_evict = server.snapshot_counts()
+                assert counts_before_evict == counts_after_helper
+
+                proof_telemetry["pnl"] = 0.42
+                evict_request_read_keys("telemetry", "pm12_league_rows")
+                refreshed_rows = _pm12_persona_league_rows(
+                    q=proof_pid,
+                    tenant_id="tenant-dev",
+                    include_route_policy=False,
+                    include_health=False,
+                    include_allowed_actions=False,
+                )
+                assert len(refreshed_rows) == 1
+                refreshed_item = _pm12_persona_league_ranking_item(refreshed_rows[0])
+                assert refreshed_item["metrics"]["pnl"] == pytest.approx(0.42)
                 counts_after_evict = server.snapshot_counts()
                 assert counts_after_evict.get("personas_collection", 0) == 1
                 assert counts_after_evict.get("bindings_collection", 0) == 1
+                assert counts_after_evict.get("runtime_bindings_collection", 0) == 1
+                assert counts_after_evict.get("capital_pools_collection", 0) == 1
+                assert counts_after_evict.get("sessions_collection", 0) == 1
+                assert counts_after_evict.get("paper_fleet_sessions_collection", 0) == 1
+                assert counts_after_evict.get("capability_snapshots_collection", 0) == 1
+                assert counts_after_evict.get("strategy_specs_collection", 0) == 1
+                assert counts_after_evict.get("deployment_plans_collection", 0) == 1
+                assert counts_after_evict.get("telemetry_summaries_collection", 0) == 2
         finally:
+            _current_persona_service.reset(tok_ctx)
             owner_selected_tenant.reset(tok_tenant)
             owner_authorization.reset(tok_auth)
     finally:

@@ -27,7 +27,7 @@ import re
 import threading
 import time
 import uuid
-from contextvars import copy_context
+from contextvars import ContextVar, copy_context
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
@@ -68,7 +68,11 @@ from services.control_plane.bff.models import (
     fail_closed_redacted_refs,
     redact_evidence_refs,
 )
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeoutError
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeoutError, wait as _futures_wait
+from services.control_plane.bff.core.owner_reads import (
+    remaining_management_read_budget,
+    request_read_scope,
+)
 from services.control_plane.bff.governance.human_inbox import (
     _build_persona_readiness_items,
     _human_inbox_persona_blocking_reasons,
@@ -129,6 +133,25 @@ _HUMAN_INBOX_READ_EXECUTOR = ThreadPoolExecutor(
     max_workers=_HUMAN_INBOX_READ_SLOT_COUNT,
     thread_name_prefix="bff-human-inbox-read",
 )
+_HEALTH_OWNER_READ_EXECUTOR = ThreadPoolExecutor(
+    max_workers=16,
+    thread_name_prefix="bff-health-owner-read",
+)
+_MANAGEMENT_STORE_OVERRIDE: ContextVar[Optional[Any]] = ContextVar(
+    "bff_management_store_override", default=None
+)
+
+
+def _is_unpatched_port_method(store: Any, name: str) -> bool:
+    raw = getattr(store, "_target", store)
+    if raw is None or not hasattr(raw, "persona_capital_runtime"):
+        return False
+    if name in getattr(raw, "__dict__", {}):
+        return False
+    delegate = getattr(raw, "_active_delegate", None)
+    if delegate is not None and delegate is not raw and name in getattr(delegate, "__dict__", {}):
+        return False
+    return hasattr(raw, name)
 
 
 def _discard_late_management_read_result_sync(future: Any) -> None:
@@ -1781,6 +1804,9 @@ class ManagementService:
         self._ops_read_model_entry_fn = ops_read_model_entry_fn
 
     def _resolve_store(self) -> Optional[Any]:
+        override = _MANAGEMENT_STORE_OVERRIDE.get()
+        if override is not None:
+            return override
         if self._get_read_store is not None:
             try:
                 return self._get_read_store()
@@ -2766,136 +2792,215 @@ class ManagementService:
         snap = snapshot_at or self._utc_now()
         store = self._resolve_store()
         group_surfaces: Dict[str, Any] = {}
+        default_kill_switch_state = {"status": "armed", "safe_mode_status": "off", "active": False}
 
-        # 1. Runtime group
-        runtime_bindings: List[Dict[str, Any]] = []
-        if store is not None and hasattr(store, "list_runtime_bindings"):
-            try:
-                runtime_bindings = store.list_runtime_bindings() or []
-                group_surfaces["runtime"] = {"status": "ok", "source": "store"}
-            except Exception:
-                group_surfaces["runtime"] = {"status": "unavailable", "source": "error"}
-        else:
-            group_surfaces["runtime"] = {"status": "unavailable", "source": "missing" if store is None else "unsupported"}
+        with request_read_scope():
+            group_futures: Dict[str, Any] = {}
+            warm_futures: List[Any] = []
+            supported_groups: Set[str] = set()
+            outer_remaining = remaining_management_read_budget()
+            deadline_exhausted = outer_remaining is not None and outer_remaining <= 0.0
+            if store is not None:
+                if _is_unpatched_port_method(store, "list_governance_review_queue_items") and not deadline_exhausted:
+                    raw_store = getattr(store, "_target", store)
+                    for warm_name in ("list_deployment_plans", "list_evolution_decisions"):
+                        if _is_unpatched_port_method(raw_store, warm_name):
+                            warm_futures.append(
+                                _HEALTH_OWNER_READ_EXECUTOR.submit(
+                                    copy_context().run, getattr(raw_store, warm_name)
+                                )
+                            )
 
-        active_runtimes = sum(1 for b in runtime_bindings if isinstance(b, dict) and b.get("status") == "running")
-        runtime_group = {
-            "group_id": "runtime",
-            "label": _HEALTH_GROUP_LABELS["runtime"],
-            "status": group_surfaces["runtime"]["status"],
-            "summary": f"{active_runtimes} active runtime(s) running." if runtime_bindings else "No active runtime bindings.",
-            "details": {
-                "total_runtimes": len(runtime_bindings),
-                "active_runtimes": active_runtimes,
-            },
-            "target_refs": [{"label": "Runtime State", "href": "/api/v1/operator/runtime-state"}],
-        }
+                if hasattr(store, "list_runtime_bindings"):
+                    supported_groups.add("runtime")
+                    if not deadline_exhausted:
+                        group_futures["runtime"] = _HEALTH_OWNER_READ_EXECUTOR.submit(
+                            copy_context().run, lambda: store.list_runtime_bindings() or []
+                        )
+                if hasattr(store, "list_telemetry_summaries"):
+                    supported_groups.add("telemetry")
+                    if not deadline_exhausted:
+                        def _read_telemetry() -> List[Dict[str, Any]]:
+                            res = store.list_telemetry_summaries()
+                            return list(res.values()) if isinstance(res, dict) else (res or [])
 
-        # 2. Telemetry group
-        telemetry_records: List[Dict[str, Any]] = []
-        if store is not None and hasattr(store, "list_telemetry_summaries"):
-            try:
-                res = store.list_telemetry_summaries()
-                telemetry_records = list(res.values()) if isinstance(res, dict) else (res or [])
-                group_surfaces["telemetry"] = {"status": "ok", "source": "store"}
-            except Exception:
-                group_surfaces["telemetry"] = {"status": "unavailable", "source": "error"}
-        else:
-            group_surfaces["telemetry"] = {"status": "unavailable", "source": "missing" if store is None else "unsupported"}
+                        group_futures["telemetry"] = _HEALTH_OWNER_READ_EXECUTOR.submit(
+                            copy_context().run, _read_telemetry
+                        )
+                if hasattr(store, "list_incidents") or hasattr(store, "list_incident_alerts"):
+                    supported_groups.add("incident")
+                    if not deadline_exhausted:
+                        def _read_incidents() -> List[Dict[str, Any]]:
+                            if hasattr(store, "list_incidents"):
+                                return store.list_incidents() or []
+                            return store.list_incident_alerts() or []
 
-        telemetry_group = {
-            "group_id": "telemetry",
-            "label": _HEALTH_GROUP_LABELS["telemetry"],
-            "status": group_surfaces["telemetry"]["status"],
-            "summary": f"{len(telemetry_records)} telemetry summaries observed." if telemetry_records else "No active telemetry feeds.",
-            "details": {
-                "telemetry_count": len(telemetry_records),
-            },
-            "target_refs": [{"label": "Telemetry", "href": "/bff/management/paper-telemetry"}],
-        }
+                        group_futures["incident"] = _HEALTH_OWNER_READ_EXECUTOR.submit(
+                            copy_context().run, _read_incidents
+                        )
+                if (
+                    hasattr(store, "list_approval_queue_items")
+                    or hasattr(store, "list_governance_review_queue_items")
+                    or hasattr(store, "list_approval_records")
+                ):
+                    supported_groups.add("governance")
+                    if not deadline_exhausted:
+                        def _read_governance() -> List[Dict[str, Any]]:
+                            items: List[Dict[str, Any]] = []
+                            if hasattr(store, "list_approval_queue_items"):
+                                items.extend(store.list_approval_queue_items() or [])
+                            if hasattr(store, "list_governance_review_queue_items"):
+                                items.extend(store.list_governance_review_queue_items() or [])
+                            if not items and hasattr(store, "list_approval_records"):
+                                items.extend(store.list_approval_records() or [])
+                            return items
 
-        # 3. Incident group
-        incidents: List[Dict[str, Any]] = []
-        if store is not None and (hasattr(store, "list_incidents") or hasattr(store, "list_incident_alerts")):
-            try:
-                if hasattr(store, "list_incidents"):
-                    incidents = store.list_incidents() or []
-                elif hasattr(store, "list_incident_alerts"):
-                    incidents = store.list_incident_alerts() or []
-                group_surfaces["incident"] = {"status": "ok", "source": "store"}
-            except Exception:
-                group_surfaces["incident"] = {"status": "unavailable", "source": "error"}
-        else:
-            group_surfaces["incident"] = {"status": "unavailable", "source": "missing" if store is None else "unsupported"}
+                        group_futures["governance"] = _HEALTH_OWNER_READ_EXECUTOR.submit(
+                            copy_context().run, _read_governance
+                        )
+                if hasattr(store, "get_kill_switch_status"):
+                    supported_groups.add("kill_switch")
+                    if not deadline_exhausted:
+                        group_futures["kill_switch"] = _HEALTH_OWNER_READ_EXECUTOR.submit(
+                            copy_context().run, store.get_kill_switch_status
+                        )
 
-        open_incidents = [i for i in incidents if isinstance(i, dict) and i.get("status") in ("open", "active", "triggered")]
-        incident_group = {
-            "group_id": "incident",
-            "label": _HEALTH_GROUP_LABELS["incident"],
-            "status": "degraded" if open_incidents else group_surfaces["incident"]["status"],
-            "summary": f"{len(open_incidents)} active incident(s)." if open_incidents else "No active incidents.",
-            "details": {
-                "total_incidents": len(incidents),
-                "open_incidents": len(open_incidents),
-            },
-            "target_refs": [{"label": "Incidents", "href": "/bff/alerts"}],
-        }
+            done_futures: Set[Any] = set()
+            if group_futures:
+                outer_remaining = remaining_management_read_budget()
+                group_timeout: Optional[float] = None
+                if outer_remaining is not None:
+                    if outer_remaining <= 0.0:
+                        group_timeout = 0.0
+                    else:
+                        reserve = min(0.35, outer_remaining * 0.2)
+                        group_timeout = remaining_management_read_budget(reserve_seconds=reserve)
+                done_futures, pending_futures = _futures_wait(
+                    list(group_futures.values()), timeout=group_timeout
+                )
+                for pending in pending_futures:
+                    pending.cancel()
+            for wf in warm_futures:
+                if not wf.done():
+                    wf.cancel()
 
-        # 4. Governance group
-        approvals: List[Dict[str, Any]] = []
-        if store is not None and (
-            hasattr(store, "list_approval_queue_items")
-            or hasattr(store, "list_governance_review_queue_items")
-            or hasattr(store, "list_approval_records")
-        ):
-            try:
-                if hasattr(store, "list_approval_queue_items"):
-                    approvals.extend(store.list_approval_queue_items() or [])
-                if hasattr(store, "list_governance_review_queue_items"):
-                    approvals.extend(store.list_governance_review_queue_items() or [])
-                if not approvals and hasattr(store, "list_approval_records"):
-                    approvals.extend(store.list_approval_records() or [])
-                group_surfaces["governance"] = {"status": "ok", "source": "store"}
-            except Exception:
-                group_surfaces["governance"] = {"status": "unavailable", "source": "error"}
-        else:
-            group_surfaces["governance"] = {"status": "unavailable", "source": "missing" if store is None else "unsupported"}
+            def _resolve_group(group_id: str, default: Any) -> Any:
+                if group_id not in supported_groups:
+                    group_surfaces[group_id] = {
+                        "status": "unavailable",
+                        "source": "missing" if store is None else "unsupported",
+                    }
+                    return default
+                fut = group_futures.get(group_id)
+                if deadline_exhausted or fut is None or fut not in done_futures:
+                    group_surfaces[group_id] = {
+                        "status": "unavailable",
+                        "source": "management_read_timeout",
+                        "reason": "read_timeout",
+                    }
+                    return default
+                try:
+                    val = fut.result()
+                    group_surfaces[group_id] = {"status": "ok", "source": "store"}
+                    return val if val is not None else default
+                except Exception as exc:
+                    if isinstance(exc, (TimeoutError, _FuturesTimeoutError)) or "timeout" in type(exc).__name__.lower():
+                        group_surfaces[group_id] = {
+                            "status": "unavailable",
+                            "source": "management_read_timeout",
+                            "reason": "read_timeout",
+                        }
+                    else:
+                        group_surfaces[group_id] = {
+                            "status": "unavailable",
+                            "source": "error",
+                            "reason": "read_error",
+                        }
+                    return default
 
-        pending_gov = [a for a in approvals if isinstance(a, dict) and (a.get("status") in ("pending", "open", "in_review") or a.get("decision_state") in ("pending", "open", "in_review"))]
-        governance_group = {
-            "group_id": "governance",
-            "label": _HEALTH_GROUP_LABELS["governance"],
-            "status": "degraded" if pending_gov else group_surfaces["governance"]["status"],
-            "summary": f"{len(pending_gov)} pending governance decision(s)." if pending_gov else "Governance queues clear.",
-            "details": {
-                "total_items": len(approvals),
-                "pending_items": len(pending_gov),
-            },
-            "target_refs": [{"label": "Approval Queue", "href": "/api/v1/operator/governance/approval-queue"}],
-        }
+            # 1. Runtime group
+            runtime_bindings: List[Dict[str, Any]] = _resolve_group("runtime", [])
+            active_runtimes = sum(
+                1 for b in runtime_bindings
+                if isinstance(b, dict) and b.get("status") in {"active", "running"}
+            )
+            runtime_group = {
+                "group_id": "runtime",
+                "label": _HEALTH_GROUP_LABELS["runtime"],
+                "status": group_surfaces["runtime"]["status"],
+                "summary": f"{active_runtimes} active runtime(s) running." if runtime_bindings else "No active runtime bindings.",
+                "details": {
+                    "total_runtimes": len(runtime_bindings),
+                    "active_runtimes": active_runtimes,
+                },
+                "target_refs": [{"label": "Runtime State", "href": "/api/v1/operator/runtime-state"}],
+            }
 
-        # 5. Kill switch group
-        kill_switch_state = {"status": "armed", "safe_mode_status": "off", "active": False}
-        if store is not None and hasattr(store, "get_kill_switch_status"):
-            try:
-                kill_switch_state = store.get_kill_switch_status() or kill_switch_state
-                group_surfaces["kill_switch"] = {"status": "ok", "source": "store"}
-            except Exception:
-                group_surfaces["kill_switch"] = {"status": "unavailable", "source": "error"}
-        else:
-            group_surfaces["kill_switch"] = {"status": "unavailable", "source": "missing" if store is None else "unsupported"}
+            # 2. Telemetry group
+            telemetry_records: List[Dict[str, Any]] = _resolve_group("telemetry", [])
+            telemetry_group = {
+                "group_id": "telemetry",
+                "label": _HEALTH_GROUP_LABELS["telemetry"],
+                "status": group_surfaces["telemetry"]["status"],
+                "summary": f"{len(telemetry_records)} telemetry summaries observed." if telemetry_records else "No active telemetry feeds.",
+                "details": {
+                    "telemetry_count": len(telemetry_records),
+                },
+                "target_refs": [{"label": "Telemetry", "href": "/bff/management/paper-telemetry"}],
+            }
 
-        kill_switch_group = {
-            "group_id": "kill_switch",
-            "label": _HEALTH_GROUP_LABELS["kill_switch"],
-            "status": group_surfaces["kill_switch"]["status"],
-            "summary": f"Kill switch {kill_switch_state.get('status', 'armed')}, Safe mode {kill_switch_state.get('safe_mode_status', 'off')}.",
-            "details": kill_switch_state,
-            "target_refs": [{"label": "Kill Switch", "href": "/api/v1/operator/kill-switch"}],
-        }
+            # 3. Incident group
+            incidents: List[Dict[str, Any]] = _resolve_group("incident", [])
+            open_incidents = [i for i in incidents if isinstance(i, dict) and i.get("status") in ("open", "active", "triggered")]
+            incident_group = {
+                "group_id": "incident",
+                "label": _HEALTH_GROUP_LABELS["incident"],
+                "status": "degraded" if open_incidents else group_surfaces["incident"]["status"],
+                "summary": f"{len(open_incidents)} active incident(s)." if open_incidents else "No active incidents.",
+                "details": {
+                    "total_incidents": len(incidents),
+                    "open_incidents": len(open_incidents),
+                },
+                "target_refs": [{"label": "Incidents", "href": "/bff/alerts"}],
+            }
+
+            # 4. Governance group
+            approvals: List[Dict[str, Any]] = _resolve_group("governance", [])
+            pending_gov = [a for a in approvals if isinstance(a, dict) and (a.get("status") in ("pending", "open", "in_review") or a.get("decision_state") in ("pending", "open", "in_review"))]
+            governance_group = {
+                "group_id": "governance",
+                "label": _HEALTH_GROUP_LABELS["governance"],
+                "status": "degraded" if pending_gov else group_surfaces["governance"]["status"],
+                "summary": f"{len(pending_gov)} pending governance decision(s)." if pending_gov else "Governance queues clear.",
+                "details": {
+                    "total_items": len(approvals),
+                    "pending_items": len(pending_gov),
+                },
+                "target_refs": [{"label": "Approval Queue", "href": "/api/v1/operator/governance/approval-queue"}],
+            }
+
+            # 5. Kill switch group
+            kill_switch_state = _resolve_group("kill_switch", default_kill_switch_state) or default_kill_switch_state
+            kill_switch_group = {
+                "group_id": "kill_switch",
+                "label": _HEALTH_GROUP_LABELS["kill_switch"],
+                "status": group_surfaces["kill_switch"]["status"],
+                "summary": f"Kill switch {kill_switch_state.get('status', 'armed')}, Safe mode {kill_switch_state.get('safe_mode_status', 'off')}.",
+                "details": kill_switch_state,
+                "target_refs": [{"label": "Kill Switch", "href": "/api/v1/operator/kill-switch"}],
+            }
 
         groups = [runtime_group, telemetry_group, incident_group, governance_group, kill_switch_group]
         overall_surface = _aggregate_group_surface("health_status", list(group_surfaces.values()), snapshot_at=snap)
+        group_reasons = {s.get("reason") for s in group_surfaces.values() if isinstance(s, dict) and s.get("reason")}
+        if "read_timeout" in group_reasons:
+            overall_surface["reason"] = "read_timeout"
+            if all(s.get("reason") == "read_timeout" for s in group_surfaces.values() if isinstance(s, dict)):
+                overall_surface["source"] = "management_read_timeout"
+        elif "read_error" in group_reasons:
+            overall_surface["reason"] = "read_error"
+            if all(s.get("reason") == "read_error" for s in group_surfaces.values() if isinstance(s, dict)):
+                overall_surface["source"] = "error"
         overall_status = overall_surface.get("status", "ok")
 
         group_counts = {
@@ -2946,9 +3051,14 @@ class ManagementService:
     # -----------------------------------------------------------------------
     # 3. Operator Home
     # -----------------------------------------------------------------------
-    def get_operator_home(self, snapshot_at: Optional[str] = None) -> Dict[str, Any]:
+    def get_operator_home(
+        self,
+        snapshot_at: Optional[str] = None,
+        health_payload: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         snap = snapshot_at or self._utc_now()
-        health_payload = self.get_operator_health_status(snapshot_at=snap)
+        if health_payload is None:
+            health_payload = self.get_operator_health_status(snapshot_at=snap)
         groups_by_id = {g["group_id"]: g for g in health_payload.get("groups", [])}
 
         incident_grp = groups_by_id.get("incident", {})
@@ -3511,11 +3621,39 @@ class ManagementService:
         capacity = _HUMAN_INBOX_READ_SLOTS
         executor = _HUMAN_INBOX_READ_EXECUTOR
         timeout_budget = human_inbox_surface_timeout_seconds()
-        build_fn = _build_persona_readiness_items
+        outer_remaining = remaining_management_read_budget()
+        if outer_remaining is not None:
+            timeout_budget = remaining_management_read_budget(timeout_budget) or 0.0
+            if timeout_budget <= 0.0:
+                return [], "read_timeout"
+
+        def _build_with_parallel_owner_warm() -> List[Dict[str, Any]]:
+            with request_read_scope():
+                raw_store = getattr(store, "_target", store)
+                if (
+                    _is_unpatched_port_method(raw_store, "list_personas")
+                    and _is_unpatched_port_method(raw_store, "list_persona_league")
+                ):
+                    warm_futs = [
+                        _HEALTH_OWNER_READ_EXECUTOR.submit(
+                            copy_context().run, getattr(raw_store, warm_name)
+                        )
+                        for warm_name in (
+                            "list_personas",
+                            "list_bindings",
+                            "list_capital_pools",
+                            "list_runtime_bindings",
+                        )
+                        if _is_unpatched_port_method(raw_store, warm_name)
+                    ]
+                    if warm_futs:
+                        _futures_wait(warm_futs, timeout=timeout_budget)
+                return _build_persona_readiness_items(snapshot_at, read_store=store)
+
         if not capacity.acquire(blocking=False):
             return [], "read_capacity_saturated"
         try:
-            future = executor.submit(copy_context().run, build_fn, snapshot_at, read_store=store)
+            future = executor.submit(copy_context().run, _build_with_parallel_owner_warm)
         except BaseException:
             capacity.release()
             raise
@@ -3540,10 +3678,11 @@ class ManagementService:
         identity: Optional[Any] = None,
     ) -> Dict[str, Any]:
         snap = self._utc_now()
-        store = self._resolve_store()
+        store = _MANAGEMENT_STORE_OVERRIDE.get() or self._resolve_store()
         all_items: List[Dict[str, Any]] = []
         failures: Dict[str, Dict[str, Any]] = {}
         surfaces: Dict[str, Dict[str, Any]] = {}
+        warm_futures: List[Any] = []
 
         if store is None:
             failures["store"] = {
@@ -3559,6 +3698,29 @@ class ManagementService:
                 "snapshot_at": snap,
             }
         else:
+            scope = request_read_scope()
+            scope.__enter__()
+            raw_store = getattr(store, "_target", store)
+            if (
+                _is_unpatched_port_method(raw_store, "list_approval_queue_items")
+                and _is_unpatched_port_method(raw_store, "list_governance_review_queue_items")
+                and _is_unpatched_port_method(raw_store, "list_incidents")
+            ):
+                for warm_name in (
+                    "list_deployment_plans",
+                    "list_evolution_decisions",
+                    "list_incidents",
+                    "list_personas",
+                    "list_bindings",
+                    "list_capital_pools",
+                    "list_runtime_bindings",
+                ):
+                    if _is_unpatched_port_method(raw_store, warm_name):
+                        warm_futures.append(
+                            _HEALTH_OWNER_READ_EXECUTOR.submit(
+                                copy_context().run, getattr(raw_store, warm_name)
+                            )
+                        )
             # 1. Approvals
             if hasattr(store, "list_approval_queue_items") or hasattr(store, "list_approval_records"):
                 try:
@@ -3807,6 +3969,10 @@ class ManagementService:
                     }
                     surfaces["persona_readiness"] = failures["persona_readiness"]
 
+            for wf in warm_futures:
+                if not wf.done():
+                    wf.cancel()
+            scope.__exit__(None, None, None)
             surfaces["human_inbox"] = _aggregate_group_surface("human_inbox", list(surfaces.values()), snapshot_at=snap)
 
         filtered = []
@@ -4240,16 +4406,94 @@ class ManagementService:
         self,
         snapshot_at: Optional[str] = None,
         human_inbox: Optional[Dict[str, Any]] = None,
+        completed_sections: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         snap = snapshot_at or self._utc_now()
-        operator_home = self.get_operator_home(snapshot_at=snap)
-        runtime_health = self.get_operator_health_status(snapshot_at=snap)
-        trading_pulse = self.get_trading_pulse(snapshot_at=snap)
-        if human_inbox is None:
-            human_inbox = self.get_human_inbox()
-        alerts_payload = self.get_operator_alerts(snapshot_at=snap)
-        anomalies_payload = self.get_management_anomalies(snapshot_at=snap)
+        sections = completed_sections if completed_sections is not None else {}
 
+        def _section(name: str, surface_key: str, fn: Any) -> Dict[str, Any]:
+            # Publish only completed sections into this request's progress dict.
+            # A later slow contributor must not erase real health/home data.
+            remaining = remaining_management_read_budget()
+            if remaining is not None and remaining <= 0.0 and name not in ("runtime_health", "operator_home"):
+                return {"meta": {"surfaces": {surface_key: {
+                    "status": "unavailable", "source": "incomplete_read",
+                    "reason": "read_timeout", "snapshot_at": snap,
+                }}}}
+            try:
+                value = fn()
+                if not isinstance(value, dict):
+                    raise TypeError("Cockpit section must return an object")
+            except Exception as exc:
+                log.warning("bff.cockpit section %s unavailable: %s", name, type(exc).__name__)
+                value = {"meta": {"surfaces": {surface_key: {
+                    "status": "unavailable", "source": "error", "reason": "section_error",
+                }}}}
+            after_remaining = remaining_management_read_budget()
+            if after_remaining is None or after_remaining > 0.0 or name in ("runtime_health", "operator_home"):
+                sections[name] = value
+            return value
+
+        with request_read_scope():
+            cockpit_warm_futures: List[Any] = []
+            store = self._resolve_store()
+            if (
+                human_inbox is None
+                and store is not None
+                and _is_unpatched_port_method(store, "list_personas")
+                and _is_unpatched_port_method(store, "list_persona_league")
+            ):
+                raw_store = getattr(store, "_target", store)
+                for warm_name in ("list_personas", "list_bindings", "list_capital_pools"):
+                    if _is_unpatched_port_method(raw_store, warm_name):
+                        cockpit_warm_futures.append(
+                            _HEALTH_OWNER_READ_EXECUTOR.submit(
+                                copy_context().run, getattr(raw_store, warm_name)
+                            )
+                        )
+            try:
+                # Health is computed once; operator_home reuses it instead of recomputing.
+                runtime_health = _section("runtime_health", "health_status", lambda: self.get_operator_health_status(snapshot_at=snap))
+                operator_home = _section(
+                    "operator_home", "operator_home",
+                    lambda: self.get_operator_home(snapshot_at=snap, health_payload=runtime_health)
+                    if "groups" in runtime_health else self.get_operator_home(snapshot_at=snap),
+                )
+                trading_pulse = _section("trading_pulse", "management_trading_pulse", lambda: self.get_trading_pulse(snapshot_at=snap))
+                if human_inbox is None:
+                    human_inbox = _section("human_inbox", "human_inbox", self.get_human_inbox)
+                else:
+                    sections["human_inbox"] = human_inbox
+                alerts_payload = _section("alerts", "alerts", lambda: self.get_operator_alerts(snapshot_at=snap))
+                anomalies_payload = _section("anomalies", "management_anomalies", lambda: self.get_management_anomalies(snapshot_at=snap))
+                return self.compose_management_cockpit_sections(sections, snapshot_at=snap)
+            finally:
+                for wf in cockpit_warm_futures:
+                    if not wf.done():
+                        wf.cancel()
+
+    def compose_management_cockpit_sections(
+        self, sections: Dict[str, Any], *, snapshot_at: str,
+        incomplete_reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Format completed reads; missing sections remain explicitly unavailable."""
+        snap = snapshot_at
+
+        def section(name: str, surface_key: str) -> Dict[str, Any]:
+            if name in sections:
+                return sections[name]
+            return {"meta": {"surfaces": {surface_key: {
+                "status": "unavailable", "source": "incomplete_read",
+                "reason": incomplete_reason or "section_not_completed",
+                "snapshot_at": snap,
+            }}}}
+
+        runtime_health = section("runtime_health", "health_status")
+        operator_home = section("operator_home", "operator_home")
+        trading_pulse = section("trading_pulse", "management_trading_pulse")
+        human_inbox = section("human_inbox", "human_inbox")
+        alerts_payload = section("alerts", "alerts")
+        anomalies_payload = section("anomalies", "management_anomalies")
         alerts = {
             "items": alerts_payload.get("alerts", []),
             "summary": alerts_payload.get("summary", {}),

@@ -47,7 +47,8 @@ from .models import (
 )
 import concurrent.futures
 import contextvars
-from .service import ManagementService
+from services.control_plane.bff.core.owner_reads import remaining_management_read_budget
+from .service import ManagementService, _MANAGEMENT_STORE_OVERRIDE
 
 from services.control_plane.bff.models import ErrorCode
 from services.control_plane.bff.operations_read_model import OperationsReadModelEnvelope
@@ -79,14 +80,19 @@ def _get_human_inbox_surface_timeout() -> float:
         return 3.0
 
 
+# The cockpit composes six owner-backed sections; the 0.6s generic management
+# budget is too tight for that even after request-scoped dedupe.
+_COCKPIT_DEFAULT_READ_TIMEOUT_SECONDS = 3.0
+
+
 def _get_management_cockpit_read_timeout() -> Optional[float]:
     raw = os.getenv("PANTHEON_BFF_COCKPIT_READ_TIMEOUT_SECONDS")
     if raw is None or not raw.strip():
-        return None
+        return _COCKPIT_DEFAULT_READ_TIMEOUT_SECONDS
     try:
         return max(0.05, float(raw))
     except (TypeError, ValueError):
-        return None
+        return _COCKPIT_DEFAULT_READ_TIMEOUT_SECONDS
 
 
 class _StoreTimeoutProxy:
@@ -98,9 +104,12 @@ class _StoreTimeoutProxy:
         attr = getattr(self._target, name)
         if name in ("list_governance_review_queue_items", "list_approval_queue_items", "list_approval_records") and callable(attr):
             def _timed_call(*args: Any, **kwargs: Any) -> Any:
+                budget = remaining_management_read_budget(self._timeout)
+                if budget is not None and budget <= 0.0:
+                    raise concurrent.futures.TimeoutError(f"{name} exceeded the Human Inbox surface budget")
                 fut = _HUMAN_INBOX_CONTRIBUTOR_EXECUTOR.submit(contextvars.copy_context().run, attr, *args, **kwargs)
                 try:
-                    return fut.result(timeout=self._timeout)
+                    return fut.result(timeout=self._timeout if budget is None else budget)
                 except concurrent.futures.TimeoutError:
                     raise concurrent.futures.TimeoutError(f"{name} exceeded the Human Inbox surface budget")
             return _timed_call
@@ -122,18 +131,36 @@ def _get_evidence_degraded_payload(
     return payload
 
 
+_COCKPIT_DEGRADED_REASONS = {
+    "read_timeout": ("timeout_fallback", "Cockpit aggregation timed out under concurrent read fanout; degraded response returned."),
+    "read_capacity_saturated": ("capacity_fallback", "Cockpit read capacity is saturated; degraded response returned."),
+    "read_error": ("error_fallback", "Cockpit aggregation failed; degraded response returned."),
+}
+
+
 def _get_management_cockpit_degraded_payload(
     self=None,
     snapshot_at: Optional[str] = None,
+    reason: str = "read_timeout",
+    completed_sections: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     snap = snapshot_at or _utc_now_rfc3339()
+    source, message = _COCKPIT_DEGRADED_REASONS.get(reason, _COCKPIT_DEGRADED_REASONS["read_error"])
     cockpit_surface = {
         "status": "degraded",
-        "reason": "read_timeout",
-        "source": "timeout_fallback",
-        "message": "Cockpit aggregation timed out under concurrent read fanout; degraded response returned.",
+        "reason": reason if reason in _COCKPIT_DEGRADED_REASONS else "read_error",
+        "source": source,
+        "message": message,
         "snapshot_at": snap,
     }
+    if completed_sections:
+        payload = self.compose_management_cockpit_sections(
+            completed_sections, snapshot_at=snap, incomplete_reason=cockpit_surface["reason"],
+        )
+        cockpit_surface.update(source="partial_composition", message="Cockpit read did not complete; completed owner sections are returned.")
+        payload["meta"].update(partial=True)
+        payload["meta"]["surfaces"]["management_cockpit"] = cockpit_surface
+        return payload
     return {
         "data": {
             "id": "management-cockpit",
@@ -220,19 +247,17 @@ _orig_get_human_inbox = ManagementService.get_human_inbox
 
 def _bounded_get_human_inbox(self: ManagementService, *args: Any, **kwargs: Any) -> Dict[str, Any]:
     timeout_budget = _get_human_inbox_surface_timeout()
-    orig_resolve_store = self._resolve_store
-
-    def _proxied_resolve_store() -> Any:
-        s = orig_resolve_store()
-        if s is not None:
-            return _StoreTimeoutProxy(s, timeout_budget)
-        return None
-
-    self._resolve_store = _proxied_resolve_store  # type: ignore[assignment]
+    base_store = self._resolve_store()
+    token = (
+        _MANAGEMENT_STORE_OVERRIDE.set(_StoreTimeoutProxy(base_store, timeout_budget))
+        if base_store is not None
+        else None
+    )
     try:
         res = _orig_get_human_inbox(self, *args, **kwargs)
     finally:
-        self._resolve_store = orig_resolve_store  # type: ignore[assignment]
+        if token is not None:
+            _MANAGEMENT_STORE_OVERRIDE.reset(token)
 
     if isinstance(res, dict) and "meta" in res and isinstance(res["meta"], dict):
         surfaces = res["meta"].get("surfaces")
@@ -1010,7 +1035,7 @@ def _register_composed_read_models(
         "/bff/management/formula-jobs",
         response_model=FormulaJobsEnvelope,
     )
-    async def bff_management_formula_jobs(
+    def bff_management_formula_jobs(
         status: Optional[str] = Query(default=None),
         formula_id: Optional[str] = Query(default=None),
         page_token: Optional[str] = Query(default=None),
@@ -1105,7 +1130,7 @@ def _register_composed_read_models(
         "/bff/management/activity",
         response_model=ActivityEnvelope,
     )
-    async def bff_management_activity(
+    def bff_management_activity(
         event_type: Optional[str] = Query(default=None),
         actor_id: Optional[str] = Query(default=None),
         page_token: Optional[str] = Query(default=None),
@@ -1202,7 +1227,7 @@ def _register_composed_read_models(
         "/bff/management/paper-telemetry",
         response_model=PaperTelemetryEnvelope,
     )
-    async def bff_management_paper_telemetry(
+    def bff_management_paper_telemetry(
         strategy_id: Optional[str] = Query(default=None),
         persona_id: Optional[str] = Query(default=None),
         page_token: Optional[str] = Query(default=None),
@@ -1298,7 +1323,7 @@ def _register_composed_read_models(
         "/bff/management/postmortems",
         response_model=PostmortemsEnvelope,
     )
-    async def bff_management_postmortems(
+    def bff_management_postmortems(
         severity: Optional[str] = Query(default=None),
         status: Optional[str] = Query(default=None),
         page_token: Optional[str] = Query(default=None),
@@ -1392,7 +1417,7 @@ def _register_composed_read_models(
         "/bff/management/postmortems/{postmortem_id}",
         response_model=PostmortemDetailEnvelope,
     )
-    async def bff_management_postmortem_detail(
+    def bff_management_postmortem_detail(
         postmortem_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -1567,7 +1592,7 @@ def create_management_router(
     # 2. Operator Home
     # -----------------------------------------------------------------------
     @router.get("/api/v1/operator/home")
-    async def get_operator_home(
+    def get_operator_home(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """Overview cards and dispatch shortcuts for operator home dashboard."""
@@ -1607,17 +1632,34 @@ def create_management_router(
             return svc.get_management_cockpit
 
         cockpit_composer = _resolve_cockpit_composer()
+        completed_sections: Dict[str, Any] = {}
+        composer_kwargs: Dict[str, Any] = {"snapshot_at": snap}
+        # Keep injected legacy composers compatible; production forwards kwargs
+        # to ManagementService, which records per-request completed sections.
+        params = inspect.signature(cockpit_composer).parameters
+        if "completed_sections" in params or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+            composer_kwargs["completed_sections"] = completed_sections
 
         if run_management_read is not None:
             try:
                 return await run_management_read(
                     cockpit_composer,
-                    snapshot_at=snap,
                     timeout_seconds=_get_management_cockpit_read_timeout(),
+                    **composer_kwargs,
                 )
-            except Exception:
-                return svc.get_management_cockpit_degraded_payload(snapshot_at=snap)
-        return await asyncio.to_thread(cockpit_composer, snapshot_at=snap)
+            except Exception as exc:
+                from ..personas.routes.common import ManagementReadSaturated, ManagementReadTimeout
+                if isinstance(exc, ManagementReadTimeout):
+                    reason = "read_timeout"
+                elif isinstance(exc, ManagementReadSaturated):
+                    reason = "read_capacity_saturated"
+                else:
+                    reason = "read_error"
+                    logging.getLogger(__name__).warning("bff.management_cockpit composer failed: %s", type(exc).__name__)
+                return svc.get_management_cockpit_degraded_payload(
+                    snapshot_at=snap, reason=reason, completed_sections=dict(completed_sections),
+                )
+        return await asyncio.to_thread(cockpit_composer, **composer_kwargs)
 
     # -----------------------------------------------------------------------
     # 4. Trading Pulse
@@ -1636,7 +1678,7 @@ def create_management_router(
     # 5. Trading Pulse Rankings
     # -----------------------------------------------------------------------
     @router.get("/bff/management/trading-pulse/rankings")
-    async def bff_management_trading_pulse_rankings(
+    def bff_management_trading_pulse_rankings(
         limit: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -1650,7 +1692,7 @@ def create_management_router(
     # 7. Operator Health Status
     # -----------------------------------------------------------------------
     @router.get("/api/v1/operator/health-status")
-    async def get_operator_health_status(
+    def get_operator_health_status(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """BFF: Grouped control plane health status and secondary control path."""
@@ -1663,7 +1705,7 @@ def create_management_router(
     # 8. Loop Throughput
     # -----------------------------------------------------------------------
     @router.get("/bff/management/loop-throughput")
-    async def bff_management_loop_throughput(
+    def bff_management_loop_throughput(
         status: Optional[str] = Query(default=None),
         runtime_id: Optional[str] = Query(default=None),
         loop_type: Optional[str] = Query(default=None),
@@ -1688,7 +1730,7 @@ def create_management_router(
     # 9. Risk Radar
     # -----------------------------------------------------------------------
     @router.get("/bff/management/risk-radar")
-    async def bff_management_risk_radar(
+    def bff_management_risk_radar(
         persona_id: Optional[str] = Query(default=None),
         strategy_id: Optional[str] = Query(default=None),
         capital_pool_id: Optional[str] = Query(default=None),
@@ -1715,7 +1757,7 @@ def create_management_router(
     # 10. Incident Timeline
     # -----------------------------------------------------------------------
     @router.get("/bff/management/incident-timeline")
-    async def bff_management_incident_timeline(
+    def bff_management_incident_timeline(
         status: Optional[str] = Query(default=None),
         severity: Optional[str] = Query(default=None),
         capital_pool_id: Optional[str] = Query(default=None),
@@ -1782,7 +1824,7 @@ def create_management_router(
     # 12. Human Review Inbox Detail
     # -----------------------------------------------------------------------
     @router.get("/bff/management/human-inbox/{item_id}")
-    async def bff_management_human_inbox_detail(
+    def bff_management_human_inbox_detail(
         item_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -1812,7 +1854,7 @@ def create_management_router(
     # 13. HIQ Backlog
     # -----------------------------------------------------------------------
     @router.get("/bff/management/hiq-backlog")
-    async def bff_management_hiq_backlog(
+    def bff_management_hiq_backlog(
         source_type: Optional[str] = Query(default=None),
         status: Optional[str] = Query(default=None),
         kind: Optional[str] = Query(default=None),
@@ -1926,7 +1968,7 @@ def create_management_router(
         "/bff/management/operations-read-model/{persona_id}",
         **operations_kwargs,
     )
-    async def bff_management_operations_read_model(
+    def bff_management_operations_read_model(
         persona_id: str,
         period: str = Query(default="latest"),
         authorization: Optional[str] = Header(default=None),
@@ -1949,7 +1991,7 @@ def create_management_router(
     # 17. Degraded Control Guidance
     # -----------------------------------------------------------------------
     @router.get("/api/v1/operator/degraded-control-guidance")
-    async def degraded_control_guidance() -> Response:
+    def degraded_control_guidance() -> Response:
         """Return guidance for operators when the BFF is degraded or unavailable."""
         res = svc.get_degraded_control_guidance()
         return JSONResponse(

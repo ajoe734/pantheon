@@ -1446,13 +1446,16 @@ def retire_persona_provisioning_case(
     }
 
 
+_PERSONA_CLEANUP_BACKOFF: Dict[Tuple[int, str], Tuple[int, float]] = {}
+
+
 # --- _evaluate_persona_provisioning_status ---
 def _evaluate_persona_provisioning_status(
     persona_id: str,
     raw: Dict[str, Any],
     *,
     all_bindings: Optional[Dict[str, Dict[str, Any]]] = None,
-    all_cron_registrations: Optional[Set[Tuple[str, str]]] = None,
+    all_cron_registrations: Optional[Any] = None,
     all_monitoring_sessions: Optional[List[Dict[str, Any]]] = None,
     diagnostics: Optional[List[str]] = None,
 ) -> str:
@@ -1472,24 +1475,35 @@ def _evaluate_persona_provisioning_status(
         return "retired"
     if current_state == "provisioning_failed":
         terminal_updates: Dict[str, Any] = {}
-        try:
-            schedule_cleanup = _remove_persona_cron_required(persona_id, deadline=eval_deadline)
-            terminal_updates["first_evaluation_schedule_cleanup"] = schedule_cleanup
-        except Exception as exc:
-            log.warning(
-                "Failed to reconcile terminal first-evaluation cleanup for %s: %s",
-                persona_id,
-                exc,
-            )
-            terminal_updates["first_evaluation_schedule_cleanup"] = {
-                "status": "pending",
-                "registered": None,
-                "terminal_reason": str(exc) or exc.__class__.__name__,
-            }
-            _append_persona_reconcile_diagnostic(diagnostics, "persona_cron")
-        compensation = _reconcile_persona_provisioning_compensation(metadata)
-        if compensation is not None:
-            terminal_updates["provisioning_compensation"] = compensation
+        existing_cleanup = metadata.get("first_evaluation_schedule_cleanup")
+        if not (isinstance(existing_cleanup, Mapping) and existing_cleanup.get("registered") is False):
+            backoff_key = (id(_get_active_write_owner()), persona_id)
+            failures, retry_at = _PERSONA_CLEANUP_BACKOFF.get(backoff_key, (0, 0.0))
+            if isinstance(existing_cleanup, Mapping) and eval_start_time < retry_at:
+                _append_persona_reconcile_diagnostic(diagnostics, "persona_cron")
+            else:
+                try:
+                    schedule_cleanup = _remove_persona_cron_required(persona_id, deadline=eval_deadline)
+                    _PERSONA_CLEANUP_BACKOFF.pop(backoff_key, None)
+                    terminal_updates["first_evaluation_schedule_cleanup"] = schedule_cleanup
+                except Exception as exc:
+                    log.warning("Failed to reconcile terminal first-evaluation cleanup for %s: %s", persona_id, exc)
+                    failures = failures + 1 if isinstance(existing_cleanup, Mapping) else 1
+                    _PERSONA_CLEANUP_BACKOFF[backoff_key] = (
+                        failures,
+                        eval_start_time + min(300.0, 10.0 * (2 ** (failures - 1))),
+                    )
+                    terminal_updates["first_evaluation_schedule_cleanup"] = {
+                        "status": "pending",
+                        "registered": None,
+                        "terminal_reason": str(exc) or exc.__class__.__name__,
+                    }
+                    _append_persona_reconcile_diagnostic(diagnostics, "persona_cron")
+        existing_comp = metadata.get("provisioning_compensation")
+        if not (isinstance(existing_comp, Mapping) and existing_comp.get("status") in {"completed", "not_required"}):
+            compensation = _reconcile_persona_provisioning_compensation(metadata)
+            if compensation is not None:
+                terminal_updates["provisioning_compensation"] = compensation
         changed_updates = {
             key: value
             for key, value in terminal_updates.items()
@@ -1852,29 +1866,35 @@ def _evaluate_persona_provisioning_status(
     cron_ok = False
     authoritative_schedule_readback: Optional[Dict[str, Any]] = None
     try:
-        schedule_discovered = all_cron_registrations is None or (
-                persona_id,
-                _PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
-            ) in all_cron_registrations
-        if schedule_discovered:
-            if (
-                projection_observed
-                and projection_complete
-                and binding_ok
-                and runtime_id
-                and binding_id
-                and capital_pool_id
-                and persona_capital_binding_id
-            ):
+        schedule_discovered = (
+            all_cron_registrations is None
+            or isinstance(all_cron_registrations, list)
+            or (persona_id, _PERSONA_FIRST_EVALUATION_WORKFLOW_ID) in all_cron_registrations
+        )
+        if schedule_discovered and (
+            projection_observed and projection_complete and binding_ok
+            and runtime_id and binding_id and capital_pool_id and persona_capital_binding_id
+        ):
+            authoritative = None
+            if isinstance(all_cron_registrations, list):
+                from services.control_plane.cron.persona_cron_registrar import PersonaCronRegistrar
+                reg = PersonaCronRegistrar()
+                job = reg.get_first_evaluation_registration(
+                    persona_id, runtime_id=runtime_id, runtime_binding_id=binding_id,
+                    capital_pool_id=capital_pool_id, persona_capital_binding_id=persona_capital_binding_id,
+                    jobs=all_cron_registrations,
+                )
+                if job is not None:
+                    authoritative = _build_schedule_readback(
+                        reg, persona_id, job, runtime_id, binding_id, capital_pool_id, persona_capital_binding_id
+                    )
+            if authoritative is None:
                 schedule_receipt = _register_persona_cron_required(
-                    persona_id,
-                    capital_pool_id,
-                    persona_capital_binding_id,
-                    runtime_id=runtime_id,
-                    runtime_binding_id=binding_id,
-                    deadline=eval_deadline,
+                    persona_id, capital_pool_id, persona_capital_binding_id,
+                    runtime_id=runtime_id, runtime_binding_id=binding_id, deadline=eval_deadline,
                 )
                 authoritative = schedule_receipt.get("authoritative_readback")
+            if True:
                 cron_ok = bool(
                     isinstance(authoritative, dict)
                     and authoritative.get("registered") is True
@@ -3716,24 +3736,27 @@ def _register_persona_cron_required(
         )
     if time.monotonic() > operation_deadline:
         raise TimeoutError("schedule deadline exceeded during authoritative readback")
-    authoritative_event = registrar._decode_job_event(authoritative_job) or {}
-    body["authoritative_readback"] = {
-        "persona_id": persona_id,
-        "workflow_id": _PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
-        "runtime_id": runtime_id,
-        "runtime_binding_id": runtime_binding_id,
-        "capital_pool_id": capital_pool_id,
-        "persona_capital_binding_id": binding_id,
-        "registered": True,
-        "job_id": authoritative_job.get("id"),
-        "job_name": authoritative_job.get("name"),
-        "request_id": authoritative_event.get("request_id"),
-        "schedule": deepcopy(authoritative_job.get("schedule")),
-        "session_target": authoritative_job.get("sessionTarget"),
-        "readback_attempts": readback_attempts,
+    body["authoritative_readback"] = _build_schedule_readback(
+        registrar, persona_id, authoritative_job, runtime_id, runtime_binding_id, capital_pool_id, binding_id, readback_attempts
+    )
+    return body
+
+
+def _build_schedule_readback(
+    registrar: Any, persona_id: str, job: Mapping[str, Any], runtime_id: Optional[str],
+    runtime_binding_id: Optional[str], capital_pool_id: Optional[str],
+    persona_capital_binding_id: Optional[str], readback_attempts: int = 1,
+) -> Dict[str, Any]:
+    event = registrar._decode_job_event(dict(job)) or {}
+    return {
+        "persona_id": persona_id, "workflow_id": _PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+        "runtime_id": runtime_id, "runtime_binding_id": runtime_binding_id,
+        "capital_pool_id": capital_pool_id, "persona_capital_binding_id": persona_capital_binding_id,
+        "registered": True, "job_id": job.get("id"), "job_name": job.get("name"),
+        "request_id": event.get("request_id"), "schedule": deepcopy(job.get("schedule")),
+        "session_target": job.get("sessionTarget"), "readback_attempts": readback_attempts,
         "observed_at": utc_now(),
     }
-    return body
 
 
 # --- _remove_persona_cron_required ---
@@ -3772,7 +3795,7 @@ def _try_bootstrap_persona_ooda_packet(persona_id: str) -> Optional[Dict[str, An
 # --- _persona_readback_snapshot ---
 def _persona_readback_snapshot() -> Tuple[
     Dict[str, Dict[str, Any]],
-    Optional[Set[Tuple[str, str]]],
+    Optional[Any],
     List[Dict[str, Any]],
 ]:
     """Fetch owner readbacks off the async event loop for Persona projections."""
@@ -3787,10 +3810,16 @@ def _persona_readback_snapshot() -> Tuple[
         all_bindings = {}
         log.warning("Failed to batch list runtime bindings: %s", exc)
 
-    # A (persona_id, workflow_id) set discards duplicates and every schedule,
-    # payload, target, and authority identity field.  It is therefore never a
-    # lifecycle proof.  Each provisioning projection performs the registrar's
-    # strict owner readback instead.
+    all_cron_registrations: Optional[Any] = None
+    try:
+        from services.control_plane.cron.persona_cron_registrar import PersonaCronRegistrar
+
+        registrar = PersonaCronRegistrar()
+        runtime = None if registrar._dry_run else registrar._get_runtime()
+        if runtime is not None:
+            all_cron_registrations = registrar._list_jobs(runtime)
+    except Exception as exc:
+        log.warning("Failed to batch list persona cron registrations: %s", exc)
     monitoring_sessions: List[Dict[str, Any]] = []
     try:
         monitoring_sessions = (
@@ -3798,14 +3827,14 @@ def _persona_readback_snapshot() -> Tuple[
         )
     except Exception as exc:
         log.warning("Failed to batch list paper worker sessions: %s", exc)
-    return all_bindings, None, monitoring_sessions
+    return all_bindings, all_cron_registrations, monitoring_sessions
 
 
 # --- _reconcile_persona_provisioning_once ---
 def _reconcile_persona_provisioning_once() -> int:
     """Materialize provisioning lifecycle from owner readbacks off read paths."""
 
-    all_bindings, _, monitoring_sessions = _persona_readback_snapshot()
+    snapshot: Optional[Tuple[Dict[str, Dict[str, Any]], Optional[Any], List[Dict[str, Any]]]] = None
     reconciled = 0
     for raw in _list_persona_records():
         state = str(raw.get("lifecycle_state") or raw.get("state") or "").strip()
@@ -3814,12 +3843,15 @@ def _reconcile_persona_provisioning_once() -> int:
         persona_id = str(raw.get("persona_id") or raw.get("id") or "").strip()
         if not persona_id:
             continue
+        if state == "provisioning" and snapshot is None:
+            snapshot = _persona_readback_snapshot()
+        all_bindings, all_cron_registrations, monitoring_sessions = snapshot or ({}, None, [])
         try:
             _evaluate_persona_provisioning_status(
                 persona_id,
                 raw,
                 all_bindings=all_bindings,
-                all_cron_registrations=None,
+                all_cron_registrations=all_cron_registrations,
                 all_monitoring_sessions=monitoring_sessions,
             )
             reconciled += 1
@@ -11219,6 +11251,9 @@ def _persona_provisioning_metadata(
         metadata["provisioning_error"] = deepcopy(record.error)
     if record.compensation:
         metadata["provisioning_compensation"] = deepcopy(record.compensation)
+    cleanup = record.references.get("first_evaluation_schedule_cleanup")
+    if isinstance(cleanup, Mapping) and cleanup.get("registered") is False:
+        metadata["first_evaluation_schedule_cleanup"] = deepcopy(dict(cleanup))
     if traits:
         metadata["traits"] = deepcopy(traits)
     metadata["openclaw_agent_reconcile"] = _openclaw_agent_reconcile_request(

@@ -1,0 +1,11 @@
+{
+  "task_id": "DEPLOYMENT-RETIREMENT-REPLAY-AUTH-20261021",
+  "change": "replay_outbox_event exempts only the saga's recorded deployment.retirement.requested event (id == saga.retirement.requested_event_id, owner runtime-manager-svc, payload plan_id/binding_id match, plan identity and tenant match via shared _plan_matches_saga_identity) from forward approval re-admission",
+  "files": ["services/deployment/service.py", "services/deployment/test_service.py"],
+  "tests": {
+    "command": "GOV_APPROVAL_TEST_DSN=postgresql://postgres@127.0.0.1:25441/gov_approval_test pytest services/deployment (isolated postgres:16-alpine)",
+    "result": "229 passed",
+    "base_check": "test_recorded_retirement_replay_does_not_need_unexpired_forward_approval fails without the service.py change"
+  },
+  "not_done": "no deployment, no hosted replay"
+}

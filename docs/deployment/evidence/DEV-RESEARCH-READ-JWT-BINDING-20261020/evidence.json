@@ -1,0 +1,88 @@
+{
+  "task_id": "DEV-RESEARCH-READ-JWT-BINDING-20261020",
+  "title": "Pass existing dev JWT verifier settings to Research reads",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "change_class": "corrective",
+  "repository": "ajoe734/pantheon",
+  "environment": "worker test interpreter via scripts/dev/provision_python_distribution.py (.venv-pantheon/bin/python3); task worktree cwd; configuration source delivery only; no VM/SSH, product credentials, or hosted deployment actions",
+  "source_finding_reference": {
+    "path": "/tmp/pantheon-assist-20261013/DEV-RESEARCH-READ-JWT-BINDING-20261020-sanitized-technical-finding.json",
+    "classification": "Current dev deployment configuration omission for an existing verifier; no new auth capability",
+    "parallel_research_reader_task": "BFF-RESEARCH-ARTIFACT-OWNER-READ-20261020",
+    "prerequisite_task": "DEV-EXISTING-OWNER-VERIFIER-BINDINGS-20261005"
+  },
+  "acceptance_criteria": {
+    "ac_1_pass_dev_bff_jwt_verifier_settings_to_research": {
+      "status": "satisfied",
+      "detail": "Mapped PANTHEON_RESEARCH_AUTH_MODE, PANTHEON_RESEARCH_JWT_SECRET, PANTHEON_RESEARCH_JWT_ISSUER, and PANTHEON_RESEARCH_JWT_AUDIENCE into services.research-orchestrator-svc.environment in docker-compose.yml so services.deployment.auth.service_auth_env('RESEARCH') and authenticate_tenant(..., service_prefix='RESEARCH') receive the configured verification mode, secret, issuer, and audience when authenticating BFF-forwarded callers."
+    },
+    "ac_2_reuse_canonical_aliases_and_preserve_overrides": {
+      "status": "satisfied",
+      "detail": "Chained PANTHEON_RESEARCH_AUTH_MODE -> PANTHEON_BFF_AUTH_MODE -> PANTHEON_DEV_BFF_AUTH_MODE -> strict, and PANTHEON_RESEARCH_JWT_{SECRET,ISSUER,AUDIENCE} -> PANTHEON_BFF_JWT_{SECRET,ISSUER,AUDIENCE} -> PANTHEON_DEV_BFF_JWT_{SECRET,ISSUER,AUDIENCE} -> empty. Preserves service-specific PANTHEON_RESEARCH_* overrides, supports scripts/deploy_nonprod_vm.sh with_dev_bff_runtime_env (PANTHEON_BFF_*) and canonical PANTHEON_DEV_BFF_* aliases including non-default issuer and audience, and introduces no hardcoded credentials, live secret values, secret files, rotation, issuers, grants, MFA, or new auth services."
+    },
+    "ac_3_confine_changes_to_research_compose_environment": {
+      "status": "satisfied",
+      "detail": "Production diff is confined strictly to 4 environment lines in services.research-orchestrator-svc.environment in docker-compose.yml (+4/-0 lines). All other services, images, ports, volumes, egress settings, and paper/live boundaries are untouched. Parallel Research reader source (BFF-RESEARCH-ARTIFACT-OWNER-READ-20261020), Tools/Skills, and PM12 source files are untouched."
+    },
+    "ac_4_validate_compose_render_and_verifier_bindings": {
+      "status": "satisfied",
+      "detail": "Validated effective docker compose --profile root config render with placeholder secrets and non-default issuer/audience across (1) PANTHEON_BFF_* runtime injection, (2) PANTHEON_DEV_BFF_* canonical alias fallback, and (3) PANTHEON_RESEARCH_* service-specific override precedence, and verified that service_auth_env('RESEARCH') and authenticate_tenant(..., service_prefix='RESEARCH') enforce the bound mode, secret presence, issuer, audience, and tenant claims without printing secret values."
+    },
+    "ac_5_clean_task_branch_and_source_only_delivery": {
+      "status": "satisfied",
+      "detail": "Delivered on clean task/DEV-RESEARCH-READ-JWT-BINDING-20261020 branch with scoped artifacts only (docker-compose.yml and docs/deployment/evidence/DEV-RESEARCH-READ-JWT-BINDING-20261020/evidence.json) for independent exact-head review, CI, and native dev integration."
+    },
+    "ac_6_coordinator_retains_joined_release_and_hosted_verification": {
+      "status": "satisfied",
+      "detail": "No separate deployment or release controller action was performed; the original coordinator owns the joined exact-pair dev release, post-deploy configuration presence verification, and hosted operator/viewer readback and auth/tenant negative checks."
+    }
+  },
+  "compose_render_verifier_check": {
+    "bff_injection_presence": {
+      "effective_auth_mode": "strict",
+      "effective_JWT_secret_present": true,
+      "effective_JWT_issuer": "nondefault-dev-issuer",
+      "effective_JWT_audience": "nondefault-dev-audience"
+    },
+    "dev_alias_presence": {
+      "effective_auth_mode": "strict",
+      "effective_JWT_secret_present": true,
+      "effective_JWT_issuer": "alias-nondefault-issuer",
+      "effective_JWT_audience": "alias-nondefault-audience"
+    },
+    "research_override_presence": {
+      "effective_auth_mode": "permissive",
+      "effective_JWT_secret_present": true,
+      "effective_JWT_issuer": "research-override-issuer",
+      "effective_JWT_audience": "research-override-audience"
+    }
+  },
+  "validation": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "provisioned interpreter .venv-pantheon/bin/python3"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_research_orchestrator_compose_activation.py tests/integration/test_product_functional_compose_contract.py scripts/test_current_l12_compose_wiring.py scripts/test_bootstrap_dev_paper_baseline.py",
+      "exit_code": 0,
+      "result": "46 passed, 1 warning in 15.98s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/deployment/test_service.py",
+      "exit_code": 0,
+      "result": "32 passed, 1 warning in 17.24s"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -c \"<docker compose --profile root --env-file /dev/null -f docker-compose.yml config --format json + service_auth_env('RESEARCH') + authenticate_tenant(..., service_prefix='RESEARCH') with placeholder secret and non-default issuer/audience across BFF injection, DEV_BFF alias, and RESEARCH override>\"",
+      "exit_code": 0,
+      "result": "verified effective_auth_mode=strict, effective_JWT_secret_present=true, non-default issuer/audience binding, override precedence, and 401 AUTH_JWT_ISSUER_MISMATCH / AUTH_JWT_AUDIENCE_MISMATCH negatives without printing secret values"
+    }
+  ],
+  "diff_stat": {
+    "docker-compose.yml": "+4 / -0 (net +4)",
+    "docs/deployment/evidence/DEV-RESEARCH-READ-JWT-BINDING-20261020/evidence.json": "+88 / -0 (docs/evidence class)",
+    "production_net": 4
+  }
+}

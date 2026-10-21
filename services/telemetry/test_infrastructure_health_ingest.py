@@ -35,6 +35,7 @@ import threading
 import time
 import types
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 from unittest.mock import patch
@@ -295,12 +296,17 @@ def _service_token(
     return encode_jwt_hs256(claims, secret=_JWT_SECRET)
 
 
+def _recent_stamp() -> str:
+    """Current time: the admission ledger rejects events past its dedupe horizon."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _infra_event(event_id: str = "infra-health-001", **overrides) -> dict:
     event = {
         "schema_version": INFRASTRUCTURE_HEALTH_SCHEMA_VERSION,
         "event_id": event_id,
         "event_type": "infrastructure_health",
-        "created_at": "2026-07-26T12:00:00Z",
+        "created_at": _recent_stamp(),
         "tenant_id": _TENANT_ID,
         "producer": _PRODUCER,
         "component": {
@@ -312,7 +318,7 @@ def _infra_event(event_id: str = "infra-health-001", **overrides) -> dict:
         "severity": "warning",
         "observation": {
             "probe_kind": "interval_probe",
-            "observed_at": "2026-07-26T12:00:00Z",
+            "observed_at": _recent_stamp(),
             "window_seconds": 60,
             "sample_count": 10,
             "failure_count": 4,

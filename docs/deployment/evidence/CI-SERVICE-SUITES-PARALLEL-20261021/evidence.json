@@ -1,0 +1,14 @@
+{
+  "task_id": "CI-SERVICE-SUITES-PARALLEL-20261021",
+  "pr": 6718,
+  "baseline": {"run_head": "1a8d420de", "service_suites_seconds": 1610},
+  "ci_run": "https://github.com/ajoe734/pantheon/actions/runs/39624400911",
+  "legs": [
+    {"job": "Service suites (postgres)", "duration": "8m23s", "timeout_minutes": 20},
+    {"job": "Service suites (runtime)", "duration": "7m0s", "timeout_minutes": 20},
+    {"job": "Service suites (heavy installs)", "duration": "6m20s", "timeout_minutes": 20},
+    {"job": "Service suites (misc)", "duration": "5m0s", "timeout_minutes": 20}
+  ],
+  "aggregator": {"job": "Service suites", "result": "pass"},
+  "wall_clock_note": "Slowest leg 8m23s plus 3s aggregator, under the 13m25s half-of-baseline target"
+}

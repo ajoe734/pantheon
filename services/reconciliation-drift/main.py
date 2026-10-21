@@ -33,6 +33,7 @@ except ImportError:  # pragma: no cover - defensive fallback
 from consumer import build_drift_report_from_event
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
+from services.trade_journey.lifecycle_noop_order import is_noop_order
 from services.trade_journey.correlation_envelope import (
     CorrelationEnvelopeError,
     propagate_envelope,
@@ -1944,6 +1945,8 @@ def _scheduled_lifecycle_event(
         "reconciliation_failed",
     }:
         return None, "lifecycle_already_reconciled"
+    if is_noop_order(identity, identity.get("metadata") or {}):
+        return None, "lifecycle_noop_order_closed"
     if identity["event_type"] != "position_snapshot":
         return None, "lifecycle_in_flight"
 

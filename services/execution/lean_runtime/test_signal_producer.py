@@ -191,6 +191,34 @@ class TestDecisionSignalProducer(unittest.TestCase):
         self.assertEqual(signals[0]["action"], "HOLD")
         self.assertEqual(signals[0]["direction"], "LONG")
 
+    def test_repeated_identical_decision_keeps_one_journey_across_ticks(self) -> None:
+        def decision(tenant: str = "tenant-a", decision_id: str = "dec-1") -> dict:
+            return {
+                "decision_id": decision_id,
+                "signal_id": f"sig-{decision_id}",
+                "strategy_id": "strategy-a",
+                "symbol": "SPY.US",
+                "action": "buy",
+                "direction": "long",
+                "quantity": 1,
+                "quantity_type": "SHARES",
+                "tenant_id": tenant,
+                "environment": "paper",
+            }
+
+        first = build_decision_signals(decision(), now_iso="2026-06-14T14:30:00Z")[0]
+        retry = build_decision_signals(decision(), now_iso="2026-06-14T14:31:02Z")[0]
+        other_decision = build_decision_signals(decision(decision_id="dec-2"))[0]
+        other_tenant = build_decision_signals(decision(tenant="tenant-b"))[0]
+
+        for field in ("journey_id", "correlation_id", "trace_id"):
+            self.assertEqual(
+                first["correlation_envelope"][field], retry["correlation_envelope"][field]
+            )
+        self.assertEqual(first["journey_id"], retry["journey_id"])
+        self.assertNotEqual(first["journey_id"], other_decision["journey_id"])
+        self.assertNotEqual(first["journey_id"], other_tenant["journey_id"])
+
     def test_redis_factory_uses_redis_pending_signal_store(self) -> None:
         mock_redis_module = MagicMock()
         mock_redis_module.Redis.from_url.return_value = MagicMock()
@@ -344,6 +372,102 @@ class TestDecisionSignalProducer(unittest.TestCase):
         direct_dt = datetime.fromisoformat(direct_dequeued["enqueued_at"])
         self.assertGreaterEqual(direct_dt, before_direct)
         self.assertLessEqual(direct_dt, after_direct)
+
+    def test_producer_skips_started_or_completed_execution_fence_and_cold_process_preserves_fence(
+        self,
+    ) -> None:
+        import subprocess
+
+        decision = {
+            "decision_id": "decision-paper-001",
+            "signal_id": "sig-76fdd54e9d601a08260e875aad01d23c",
+            "run_id": "run-rb-paper-001-2026-06-12",
+            "strategy_id": "strategy-paper-001",
+            "timestamp": _NOW,
+            "symbol": "AAPL.US",
+            "action": "BUY",
+            "direction": "LONG",
+            "quantity": 1,
+            "quantity_type": "SHARES",
+            "tenant_id": "tenant-a",
+            "environment": "paper",
+        }
+        store = InMemoryPendingSignalStore()
+        producer = DecisionSignalProducer(store)
+        first_batch = producer.produce(decision)
+        self.assertEqual(first_batch.count, 1)
+        [claimed] = store.get_pending()
+        fence = store.begin_execution(claimed)
+        self.assertEqual(fence.status, "acquired")
+        self.assertFalse(store.is_processed(claimed["signal_id"]))
+
+        retry_batch = producer.produce(decision)
+        self.assertEqual(retry_batch.count, 0)
+        self.assertEqual(store.queue_depth(), 0)
+        self.assertEqual(
+            store._execution_fences[claimed["signal_id"]],
+            f"started:{fence.token}",
+        )
+
+        script = """
+import hashlib, sys, types
+from services.execution.lean_runtime.signal_producer import DecisionSignalProducer
+
+sid = "sig-76fdd54e9d601a08260e875aad01d23c"
+qkey = "pantheon:signals:pending:rb-2eebe2b7a8af4c0c909991a13bba75a6"
+ekey = f"{qkey}:execution:{hashlib.sha256(sid.encode('utf-8')).hexdigest()}"
+
+for fence_value in ("started:worker-1:1", "completed:worker-1:1"):
+    kv = {ekey: fence_value}
+    enqueued = []
+    mutations = []
+    class _FakeRedisClient:
+        def exists(self, key):
+            return 1 if key in kv else 0
+        def get(self, key):
+            return kv.get(key)
+        def rpush(self, key, val):
+            enqueued.append((key, val))
+        def set(self, *a, **kw):
+            mutations.append(("set", a, kw))
+        def setex(self, *a, **kw):
+            mutations.append(("setex", a, kw))
+        def delete(self, *a, **kw):
+            mutations.append(("delete", a, kw))
+        def eval(self, *a, **kw):
+            mutations.append(("eval", a, kw))
+
+    fake_redis_mod = types.ModuleType("redis")
+    fake_redis_mod.Redis = types.SimpleNamespace(from_url=lambda *a, **kw: _FakeRedisClient())
+    sys.modules["redis"] = fake_redis_mod
+    producer = DecisionSignalProducer.redis("redis://unused:6379/0", queue_key=qkey)
+    batch = producer.produce({
+        "decision_id": "dec-rb-2eebe2b7a8af4c0c909991a13bba75a6-76fdd54e9d601a08260e875a",
+        "signal_id": sid,
+        "run_id": "run-rb-2eebe2b7a8af4c0c909991a13bba75a6-76fdd54e9d601a08260e875a",
+        "strategy_id": "strategy-paper-001",
+        "timestamp": "2026-06-14T14:30:00Z",
+        "symbol": "AAPL.US",
+        "action": "BUY",
+        "direction": "LONG",
+        "quantity": 1,
+        "quantity_type": "SHARES",
+        "tenant_id": "tenant-dev",
+        "environment": "paper",
+    })
+    assert batch.count == 0
+    assert enqueued == []
+    assert mutations == []
+    assert kv == {ekey: fence_value}
+print("ok")
+"""
+        proc = subprocess.run(
+            [sys.executable, "-c", script],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(proc.stdout.strip(), "ok")
 
 
 if __name__ == "__main__":

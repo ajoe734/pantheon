@@ -1,0 +1,16 @@
+{
+  "task_id": "DEV-ROOT-PAPER-SCOPE-20261021",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "summary": "Ordinary auto/root dev code releases no longer run paper_bootstrap, treat its skip as a failure, or retire an uncreated run-scoped paper case. One job-level decision PAPER_BOOTSTRAP_REQUESTED (auto/root AND any of ppl_alloc_009_dev_proof_enabled, run_loop_prod_tel_002_probe, run_evolution_dispatch_probe, run_bounded_source_refresh, bootstrap_empty_host) gates the paper step, deploy_compensation, lease_cleanup complete_success, the inline compensation retirement, and (via job output paper_bootstrap_requested) the cross-job retirement. Requested paper failure/cancel still blocks admission and compensates.",
+  "scope": [
+    ".github/workflows/nonprod-deploy.yml",
+    "scripts/test_nonprod_dev_artifact_workflow.py"
+  ],
+  "verification": {
+    "command": "pytest scripts/test_nonprod_dev_artifact_workflow.py -q",
+    "result": "179 passed",
+    "yaml_load": "ok"
+  },
+  "hosted_operations": "none; no SSH, provider or hosted request from the source worker. Root owns the subsequent matching FULL release and readbacks."
+}

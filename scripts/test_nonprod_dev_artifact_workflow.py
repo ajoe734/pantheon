@@ -136,12 +136,16 @@ MANDATORY = ("heartbeat", "deploy", "paper_bootstrap", "public_smoke",
              "artifact_candidate_seal", "artifact_candidate_upload")
 
 
-def run_completion(tmp_path, component, outcomes, cancelled=False, fault=None):
+def run_completion(tmp_path, component, outcomes, cancelled=False, fault=None, requested=None):
     """Run the production cleanup tail with only lease transport/stop stubbed."""
     cleanup = step(DEPLOY, "lease_cleanup")
+    if requested is None:  # explicit paper request on auto/root unless a test says otherwise
+        requested = component in ("auto", "root")
     values = {"env.TARGET_COMPONENT": component,
+              "env.PAPER_BOOTSTRAP_REQUESTED": str(requested).lower(),
               **{f"steps.{key}.outcome": value for key, value in outcomes.items()}}
-    env = {**os.environ, "TARGET_COMPONENT": component}
+    env = {**os.environ, "TARGET_COMPONENT": component,
+           "PAPER_BOOTSTRAP_REQUESTED": values["env.PAPER_BOOTSTRAP_REQUESTED"]}
     for key, expression in cleanup["env"].items():
         if key.endswith("_OUTCOME"):
             env[key] = values.get(expression[4:-3], "")
@@ -223,6 +227,69 @@ def test_compensation_needs_acquired_lease_and_captured_predecessor(prerequisite
                    f"steps.{prerequisite}.outcome": outcome})
     assert not evaluate(step(DEPLOY, "deploy_compensation")["if"], values)
     assert not evaluate(DEPLOY["outputs"]["bff_fe_pair_verified"], values)
+
+
+PAPER_FLAGS = ("ppl_alloc_009_dev_proof_enabled", "run_loop_prod_tel_002_probe",
+               "run_evolution_dispatch_probe", "run_bounded_source_refresh", "bootstrap_empty_host")
+
+
+def paper_requested(component, **flags):
+    expression = DEPLOY["env"]["PAPER_BOOTSTRAP_REQUESTED"]
+    expression = expression.removeprefix("${{").removesuffix("}}").strip()
+    for name in ("component", *PAPER_FLAGS):
+        value = component if name == "component" else flags.get(name, False)
+        expression = expression.replace("inputs." + name, repr(value))
+    expression = expression.replace("&&", " and ").replace("||", " or ")
+    return eval(expression, {"__builtins__": {}}) == "true"
+
+
+@pytest.mark.parametrize("component", ["auto", "root", "bff"])
+def test_ordinary_release_does_not_request_paper_bootstrap(component):
+    assert paper_requested(component) is False
+
+
+@pytest.mark.parametrize("flag", PAPER_FLAGS)
+@pytest.mark.parametrize("component", ["auto", "root", "bff"])
+def test_each_explicit_flag_requests_paper_only_on_auto_or_root(component, flag):
+    assert paper_requested(component, **{flag: True}) is (component != "bff")
+
+
+def test_paper_step_and_compensation_share_the_one_applicability_decision():
+    assert step(DEPLOY, "paper_bootstrap")["if"] == "${{ env.PAPER_BOOTSTRAP_REQUESTED == 'true' }}"
+    assert "PAPER_BOOTSTRAP_REQUESTED == 'true' && steps.paper_bootstrap.outcome != 'success'" in step(DEPLOY, "deploy_compensation")["if"]
+    assert DEPLOY["outputs"]["paper_bootstrap_requested"] == "${{ env.PAPER_BOOTSTRAP_REQUESTED }}"
+
+
+@pytest.mark.parametrize("component", ["auto", "root", "bff"])
+def test_ordinary_release_skipped_paper_completes_without_compensation(tmp_path, component):
+    outcomes = dict.fromkeys((*MANDATORY, "lease", "artifact_baseline"), "success")
+    outcomes["paper_bootstrap"] = "skipped"
+    result, admitted, compensate, calls = run_completion(tmp_path, component, outcomes, requested=False)
+    assert result.returncode == 0, result.stderr
+    assert admitted and not compensate and "release" in calls
+
+
+@pytest.mark.parametrize("outcome", ["failure", "cancelled", "skipped", ""])
+def test_requested_paper_failure_or_skip_still_blocks_and_compensates(tmp_path, outcome):
+    outcomes = dict.fromkeys((*MANDATORY, "lease", "artifact_baseline"), "success")
+    outcomes["paper_bootstrap"] = outcome
+    result, admitted, compensate, calls = run_completion(tmp_path, "root", outcomes, requested=True)
+    assert result.returncode == 0, result.stderr
+    assert not admitted and compensate and "release" not in calls
+
+
+def test_unrequested_paper_success_outcome_is_not_a_valid_completion(tmp_path):
+    outcomes = dict.fromkeys((*MANDATORY, "lease", "artifact_baseline"), "success")
+    _, admitted, _, _ = run_completion(tmp_path, "root", outcomes, requested=False)
+    assert not admitted
+
+
+def test_inline_retirement_only_for_requested_case_after_compensation():
+    retire = next(item for item in DEPLOY["steps"] if item.get("id") == "retire_release_cases")
+    base = {"steps.deploy_compensation.outcome": "success"}
+    assert evaluate(retire["if"], {**base, "env.PAPER_BOOTSTRAP_REQUESTED": "true"})
+    assert not evaluate(retire["if"], {**base, "env.PAPER_BOOTSTRAP_REQUESTED": "false"})
+    assert not evaluate(retire["if"], {"env.PAPER_BOOTSTRAP_REQUESTED": "true"})
 
 
 STATUS_FUNCTIONS = re.compile(r"\b(?:cancelled|success|failure|always)\(\)")
@@ -309,7 +376,7 @@ def test_coordinate_dev_release_roundtrip_opt_in_steps():
 
 
 
-def _eval_gha(expression, outcomes, roundtrip):
+def _eval_gha(expression, outcomes, roundtrip, requested="true"):
     import re
 
     expr = expression.strip()
@@ -318,6 +385,7 @@ def _eval_gha(expression, outcomes, roundtrip):
     expr = re.sub(r"steps\.(\w+)\.outputs\.evidence_dir", "'x'", expr)
     expr = re.sub(r"steps\.(\w+)\.outcome", lambda m: repr(outcomes.get(m.group(1), "skipped")), expr)
     expr = expr.replace("inputs.run_exact_artifact_roundtrip", repr(roundtrip))
+    expr = expr.replace("needs.deploy-dev.outputs.paper_bootstrap_requested", repr(requested))
     expr = expr.replace("always()", "True").replace("&&", " and ").replace("||", " or ")
     expr = re.sub(r"!(?!=)", " not ", expr)
     return eval(expr, {"__builtins__": {}}, {})  # noqa: S307 - fixed repo-owned expression
@@ -327,8 +395,8 @@ def test_retirement_requires_complete_roundtrip_or_successful_compensation():
     retire = step(COORDINATE, "retire_release_cases")
     base = {"frontend_release": "success", "final_artifact_verify": "success"}
 
-    def decide(outcomes, roundtrip):
-        admitted = bool(_eval_gha(retire["if"], outcomes, roundtrip))
+    def decide(outcomes, roundtrip, requested="true"):
+        admitted = bool(_eval_gha(retire["if"], outcomes, roundtrip, requested))
         outcome = _eval_gha(retire["env"]["RELEASE_OUTCOME"], outcomes, roundtrip)
         return admitted, outcome
 
@@ -344,6 +412,9 @@ def test_retirement_requires_complete_roundtrip_or_successful_compensation():
     complete = {**base, "roundtrip_baseline_restore": "success", "roundtrip_final_return": "success"}
     assert decide(complete, True) == (True, "accepted")
     assert decide(base, False) == (True, "accepted")
+    # Ordinary release never requested a run case: no retirement, accepted or compensated.
+    assert decide(base, False, "false")[0] is False
+    assert decide({**failed, "compensation": "success"}, True, "false")[0] is False
 
 
 def test_roundtrip_legs_share_final_verify_candidate_compose_context():

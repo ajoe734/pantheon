@@ -1,0 +1,32 @@
+{
+  "task_id": "LOOP-CONTROL-EVIDENCE-REFS-BOUND-20261020",
+  "fix": {
+    "owner": "services/loop-control/store.py::_dedupe_refs",
+    "algorithm": "linear dict-based dedupe (repeat moves to newest); keep newest N per ref class (scheme + path prefix before the last '/' segment; slashless refs: prefix before first ':'), oldest-first; global hard cap MAX_EVIDENCE_REFS=1000",
+    "per_class_default": 50,
+    "per_class_env": "LOOP_CONTROL_EVIDENCE_REFS_PER_CLASS",
+    "schema_bound": "schemas/loop-controller-record.schema.json evidence_refs.maxItems=1000 (test_schema_bound_agrees_with_store)",
+    "shrink_on_next_upsert": "_merge_record always rewrites merged evidence_refs through _dedupe_refs, so oversized hosted rows shrink on next write; no data repair"
+  },
+  "hosted_ref_counts_2026-10-20T18:50Z_at_77bb7b33f": {
+    "consultation": 43317, "promotion_deployment": 40506, "persona_teaching": 26842,
+    "evolution": 25847, "capital_pool_execution": 25793, "strategy_distillation": 15258,
+    "source_ingestion": 13194, "telemetry_reconciliation": 12787, "agora_interaction_evidence": 7355
+  },
+  "local_merge_timing": {
+    "before_dedupe_only": {"10000_refs_s": 1.065, "40000_refs_s": 17.197},
+    "after_merge_plus_schema_validation_40000_refs_s": 0.056,
+    "after_result_len": 50,
+    "test": "services/loop-control/test_store_evidence_refs_bound.py::test_oversized_row_shrinks_within_one_second"
+  },
+  "consumer_inventory": {
+    "services/loop-control/projector.py": "reads row evidence_refs only to forward as refs/artifacts and to set truth_status present vs missing_evidence (non-empty check); no dependence on old refs",
+    "services/loop-control/conformance.py": "asserts list of non-empty strings only",
+    "services/loop-control/writer.py": "passes per-write incoming refs through; does not read stored refs",
+    "services/control-plane/bff/management_read_models/loop_truth.py": "no direct evidence_refs access; consumes store.list_records via projector",
+    "services/loop-control/recovery_harness.py": "writes its own small fixed ref lists directly; does not read stored history",
+    "L1-L12 gate / recovery matrix scripts": "evidence_refs in scripts/run_loop_product_recovery_matrix.py are its own acceptance packet refs, not loop_controller_records; gate rows use small fresh refs and stay within bound",
+    "conclusion": "none relies on refs older than the retained window; latest tick ref of every class is always retained"
+  },
+  "verification": "services/loop-control pytest: 28 passed, 8 skipped (DB-gated)"
+}

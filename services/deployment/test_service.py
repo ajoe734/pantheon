@@ -5,6 +5,7 @@ Runs in-process via FastAPI TestClient with isolated temp storage.
 """
 from __future__ import annotations
 
+import copy
 import importlib
 import json
 import os
@@ -1504,6 +1505,68 @@ def test_compensation_replay_denied_on_plan_tenant_mismatch(client):
     _expire_seeded_approval(governance_dir)
     module = sys.modules["services.deployment.service"]
     plan = module.planner_service.plan_store.get("plan-comp-replay-002")
+    plan.metadata = {**(plan.metadata or {}), "tenant_id": "tenant-other"}
+    module.planner_service.plan_store.put(plan)
+    denied = test_client.post(f"/api/deployment/outbox/{event_id}/replay", json={"reason": "recover"})
+    assert denied.status_code in {400, 403, 404}
+    dlq = test_client.get("/api/deployment/outbox", params={"status": "dead_lettered"})
+    assert [r["event"]["event_id"] for r in dlq.json()] == [event_id]
+
+
+def _dead_lettered_retirement_event(test_client, plan_id: str) -> tuple[str, str]:
+    assert test_client.post("/api/deployment/plans", json=_plan_payload(plan_id=plan_id)).status_code == 201
+    dispatch = test_client.post(f"/api/deployment/plans/{plan_id}/dispatch", json={"trace_id": f"trace-{plan_id}"})
+    assert dispatch.status_code == 200, dispatch.text
+    saga_id = dispatch.json()["deployment_saga"]["saga"]["saga_id"]
+    ids = {"binding_id": f"binding-{plan_id}", "runtime_id": f"runtime-{plan_id}"}
+    assert test_client.post(f"/api/deployment/sagas/{saga_id}/binding-created", json=ids).status_code == 200
+    assert test_client.post(f"/api/deployment/sagas/{saga_id}/runtime-active", json=ids).status_code == 200
+    retire = test_client.post(f"/api/deployment/sagas/{saga_id}/retire", json={"reason": "cleanup"})
+    assert retire.status_code == 200, retire.text
+    event_id = retire.json()["event"]["event_id"]
+    _dead_letter(test_client, event_id)
+    return saga_id, event_id
+
+
+def test_recorded_retirement_replay_does_not_need_unexpired_forward_approval(client):
+    test_client, governance_dir = client
+    _, event_id = _dead_lettered_retirement_event(test_client, "plan-ret-replay-001")
+    _expire_seeded_approval(governance_dir)
+    replayed = test_client.post(f"/api/deployment/outbox/{event_id}/replay", json={"reason": "recover"})
+    assert replayed.status_code == 200, replayed.text
+    assert replayed.json()["replayed"] is True
+    assert replayed.json()["event"]["status"] == "pending"
+
+
+def test_retirement_replay_denied_when_not_the_recorded_event(client):
+    test_client, governance_dir = client
+    saga_id, event_id = _dead_lettered_retirement_event(test_client, "plan-ret-replay-002")
+    _expire_seeded_approval(governance_dir)
+    module = sys.modules["services.deployment.service"]
+    service = module.orchestration_service
+    record = service._find_outbox_event_by_event_id(event_id)
+    saga = service._require_saga(saga_id)
+    plan = service.planner_service.get_plan(saga.plan_id)
+    cls = type(service)
+    assert cls._is_canonical_retirement_event(record, saga, plan)
+
+    forged = copy.deepcopy(record)
+    forged.event.event_id = "evt-forged-retirement"
+    assert not cls._is_canonical_retirement_event(forged, saga, plan)
+    foreign = copy.deepcopy(record)
+    foreign.owner_service = "other-svc"
+    assert not cls._is_canonical_retirement_event(foreign, saga, plan)
+    wrong_binding = copy.deepcopy(record)
+    wrong_binding.event.payload = {**wrong_binding.event.payload, "binding_id": "binding-other"}
+    assert not cls._is_canonical_retirement_event(wrong_binding, saga, plan)
+
+
+def test_retirement_replay_denied_on_plan_tenant_mismatch(client):
+    test_client, governance_dir = client
+    _, event_id = _dead_lettered_retirement_event(test_client, "plan-ret-replay-003")
+    _expire_seeded_approval(governance_dir)
+    module = sys.modules["services.deployment.service"]
+    plan = module.planner_service.plan_store.get("plan-ret-replay-003")
     plan.metadata = {**(plan.metadata or {}), "tenant_id": "tenant-other"}
     module.planner_service.plan_store.put(plan)
     denied = test_client.post(f"/api/deployment/outbox/{event_id}/replay", json={"reason": "recover"})
