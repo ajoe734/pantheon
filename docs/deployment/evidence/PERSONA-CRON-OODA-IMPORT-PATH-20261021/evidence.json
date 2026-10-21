@@ -1,0 +1,11 @@
+{
+  "task_id": "PERSONA-CRON-OODA-IMPORT-PATH-20261021",
+  "import_check": {
+    "cwd": "repo root, PYTHONPATH unset",
+    "cron_ooda_closure_sys_path_insertion": false,
+    "cli_help": "python scripts/openclaw-close-persona-cron-ooda.py --help -> exit 0"
+  },
+  "tests": "python3.12 -m pytest services/persona (COMPOSE_PROFILES=core) -> 129 passed, 1 skipped (docker-compose-config test needs the core profile, as in CI)",
+  "test_fix": "test_lifecycle_approval_verifier: persona GET readback now sends the admin JWT (endpoint returns 401 without it); assertion unchanged",
+  "hosted_proof": "none; no deployment"
+}
