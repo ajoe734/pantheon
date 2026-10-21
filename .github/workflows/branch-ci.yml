@@ -754,8 +754,13 @@ jobs:
           "$RUNNER_TEMP/research-venv/bin/python" -m pip install \
             -r requirements.txt \
             -r services/research/quantlib/requirements.txt \
-            -r services/research/mlflow/requirements.txt \
+            -r services/research/mlflow/requirements.txt
+          # vectorbt 1.1.1 needs numpy>=2.4.6, which the QuantLib/mlflow pins
+          # (numpy==1.26.4) rule out in one resolve; install it second so it
+          # moves numpy/scipy forward (pip check is clean, mlflow needs numpy<3).
+          "$RUNNER_TEMP/research-venv/bin/python" -m pip install \
             -r services/research/vectorbt/requirements.txt
+          "$RUNNER_TEMP/research-venv/bin/python" -m pip check
 
       - name: Run research suite
         timeout-minutes: 20
