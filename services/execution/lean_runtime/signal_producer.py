@@ -6,6 +6,7 @@ and the execution-facing signal schema v1 payload consumed by
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from dataclasses import asdict, dataclass, is_dataclass
@@ -34,6 +35,66 @@ _ORDER_TYPES = {"MARKET", "LIMIT"}
 _QUANTITY_TYPES = {"SHARES", "PERCENT_PORTFOLIO", "CASH_VALUE"}
 _UUID_NAMESPACE = uuid.UUID("b22ee960-00c4-4e60-9d53-203f23a400c3")
 _SCHEMA_PATH = Path(__file__).resolve().parents[2] / "research" / "schema.json"
+
+
+def is_signal_already_admitted(store: Any, signal_id: str) -> bool:
+    """Return True when *signal_id* is already marked processed or has a live execution fence."""
+    sid = str(signal_id or "").strip()
+    if not sid or store is None:
+        return False
+    client = getattr(store, "_client", None)
+    processed_prefix = getattr(store, "_processed_prefix", None)
+    if client is not None and isinstance(processed_prefix, str):
+        exists_fn = getattr(client, "exists", None)
+        if callable(exists_fn):
+            try:
+                exists_val = exists_fn(processed_prefix + sid)
+                if isinstance(exists_val, (int, bool)) and bool(exists_val):
+                    return True
+            except Exception:  # noqa: BLE001
+                pass
+    else:
+        is_processed = getattr(store, "is_processed", None)
+        if callable(is_processed):
+            try:
+                res = is_processed(sid)
+                if isinstance(res, bool) and res:
+                    return True
+            except Exception:  # noqa: BLE001
+                pass
+
+    fences = getattr(store, "_execution_fences", None)
+    if isinstance(fences, Mapping):
+        fence = fences.get(sid)
+        if isinstance(fence, str) and fence.startswith(("started:", "completed:")):
+            return True
+
+    get_fn = getattr(client, "get", None)
+    if callable(get_fn):
+        exec_key = None
+        exec_key_fn = getattr(store, "_execution_key", None)
+        if callable(exec_key_fn):
+            try:
+                candidate = exec_key_fn(sid)
+                if isinstance(candidate, str) and candidate:
+                    exec_key = candidate
+            except Exception:  # noqa: BLE001
+                exec_key = None
+        if not exec_key:
+            queue_key = getattr(store, "_queue_key", None)
+            if isinstance(queue_key, str) and queue_key:
+                digest = hashlib.sha256(sid.encode("utf-8")).hexdigest()
+                exec_key = f"{queue_key}:execution:{digest}"
+        if exec_key:
+            try:
+                raw = get_fn(exec_key)
+                if isinstance(raw, bytes):
+                    raw = raw.decode("utf-8", errors="ignore")
+                if isinstance(raw, str) and raw.startswith(("started:", "completed:")):
+                    return True
+            except Exception:  # noqa: BLE001
+                pass
+    return False
 
 
 class SignalProducerValidationError(ValueError):
@@ -117,9 +178,13 @@ class DecisionSignalProducer:
             runtime_id=runtime_id,
             run_id=run_id,
         )
+        enqueued: list[dict[str, Any]] = []
         for signal in signals:
+            if is_signal_already_admitted(self._store, str(signal["signal_id"])):
+                continue
             self._store.enqueue(signal)
-        return ProducedSignalBatch(signals=signals)
+            enqueued.append(signal)
+        return ProducedSignalBatch(signals=enqueued)
 
     def produce_many(
         self,
@@ -298,6 +363,11 @@ def _trade_identity(
     return tenant_id, environment
 
 
+def _stable_id(tenant_id: str, environment: str, signal_id: str, kind: str) -> str:
+    name = json.dumps([tenant_id, environment, signal_id, kind])
+    return str(uuid.uuid5(_UUID_NAMESPACE, name))
+
+
 def _signal_envelope(
     decision: Mapping[str, Any],
     upstream_envelope: Mapping[str, Any],
@@ -322,8 +392,11 @@ def _signal_envelope(
         seed = dict(upstream_envelope)
         seed["tenant_id"] = tenant_id
         seed["environment"] = environment
-        seed.setdefault("correlation_id", str(uuid.uuid4()))
-        seed.setdefault("trace_id", str(uuid.uuid4()))
+        # The signal_id is the replay-stable identity of one decision. Deriving
+        # the minted journey from it keeps every retry of the same decision on
+        # the original journey instead of minting a new one per tick.
+        seed.setdefault("correlation_id", _stable_id(tenant_id, environment, signal_id, "correlation"))
+        seed.setdefault("trace_id", _stable_id(tenant_id, environment, signal_id, "trace"))
         return mint_trade_envelope(
             seed,
             producer="execution.signal-decision",
@@ -334,6 +407,7 @@ def _signal_envelope(
                     _json_object(_field(decision, "metadata")) or {},
                     "journey_id",
                 )
+                or f"tj_{_stable_id(tenant_id, environment, signal_id, 'journey')}"
             ),
             event_id=event_id,
         )
@@ -673,5 +747,6 @@ __all__ = [
     "SIGNAL_SCHEMA_VERSION",
     "SignalProducerValidationError",
     "build_decision_signals",
+    "is_signal_already_admitted",
     "validate_signal_v1",
 ]
