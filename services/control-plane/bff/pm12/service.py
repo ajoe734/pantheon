@@ -1153,15 +1153,52 @@ def _management_portfolio_holding_entry(
     )
     status = str(_management_first_non_empty(position.get("status"), runtime.get("status"), "unknown") or "unknown")
 
-    last_mark_at = str(
-        _management_first_non_empty(
-            _management_dict_value(position, "marked_at", "mark_time", "updated_at", "collected_at"),
-            _management_dict_value(mark, "marked_at", "mark_time", "updated_at", "collected_at"),
-            _management_dict_value(telemetry_dict, "collected_at", "updated_at"),
-            _management_dict_value(summary, "collected_at", "updated_at"),
+    # A summary-backed position carries its own quote as-of. Without one the
+    # mark is unavailable: the summary collected_at/heartbeat time is not a
+    # quote time and must not make a missing mark look fresh.
+    position_mark_as_of = _management_dict_value(position, "mark_as_of")
+    mark_status = "available" if mark_price is not None else "unavailable"
+    last_mark_at = ""
+    if _management_dict_value(position, "mark_unavailable_reason"):
+        # Failed valuation: the last known quote is provenance only.
+        mark_status = "unavailable"
+        last_mark_at = str(_management_dict_value(position, "last_known_mark_as_of") or "")
+    elif position.get("mark_stale") is True:
+        mark_status = "stale"
+        last_mark_at = str(
+            _management_dict_value(position, "mark_as_of", "last_known_mark_as_of") or ""
         )
-        or ""
-    )
+    elif position_mark_as_of:
+        last_mark_at = str(position_mark_as_of)
+        try:
+            quote_at = datetime.fromisoformat(last_mark_at.replace("Z", "+00:00"))
+            age = (datetime.now(timezone.utc) - quote_at).total_seconds()
+        except ValueError:
+            age = None
+        if age is None or age < -300.0 or age > 172800.0:
+            mark_status = "stale"
+    elif mark_price is not None:
+        last_mark_at = str(
+            _management_first_non_empty(
+                _management_dict_value(position, "marked_at", "mark_time", "updated_at", "collected_at"),
+                _management_dict_value(mark, "marked_at", "mark_time", "updated_at", "collected_at"),
+                _management_dict_value(telemetry_dict, "collected_at", "updated_at"),
+                _management_dict_value(summary, "collected_at", "updated_at"),
+            )
+            or ""
+        )
+    if mark_status != "available":
+        mark_price = None
+        market_value = None
+        if (
+            _management_first_non_empty(
+                _management_dict_value(position, "notional", "gross_notional"),
+                _management_dict_value(telemetry_dict, "notional", "gross_notional"),
+                _management_dict_value(summary, "notional", "gross_notional"),
+            )
+            is None
+        ):
+            notional = None
     source_issues = _management_portfolio_source_issues(
         runtime_id=runtime_id,
         persona_id=persona_id,
@@ -1226,10 +1263,15 @@ def _management_portfolio_holding_entry(
         "source_row_count": position_source_count,
         "source_issues": source_issues,
         "telemetry_available": bool(telemetry_dict),
-        "telemetry_stale": any(issue.get("code") == "STALE_TELEMETRY" for issue in source_issues),
+        "telemetry_stale": mark_status != "available" and bool(last_mark_at)
+        or any(issue.get("code") == "STALE_TELEMETRY" for issue in source_issues),
         "risk_state": risk_state,
         "capital_scope": capital_scope,
         "last_mark_at": last_mark_at or None,
+        "mark_source_ref": _management_dict_value(
+            position, "mark_source_ref", "last_known_mark_source_ref"
+        ),
+        "mark_status": mark_status,
         "links": links,
     }
 
