@@ -29,5 +29,218 @@
   "continuation": "task/PERSONA-EVALUATOR-AGENT-002-v2 from dev 66e162977 carries the reviewed 6377295aa..561aa5d44 task diff with compliant trailers; earlier figures above are refreshed to measured deltas; v1 history kept as-is",
   "continuation_tests": "agent+projection+promotion governance 46 passed; humangate+composition+pm12 eligibility+ppl_alloc_009 71 passed",
   "tenant_isolation_repair": "_pm12_quarterly_recommendations projects saved evaluator items only for personas in the caller tenant-filtered ranked_items (fail closed); regression test test_saved_recommendations_are_limited_to_personas_visible_to_the_caller. Snapshot values stay immutable. projection+promotion governance 33 passed (1 load-timing flake in slow_contributor passed in isolation); test_ppl_alloc_012 24 failures are identical at baseline (HTTP 403 env).",
-  "review_repair": "Ranking snapshot fields now include name, owner, state, owner_lifecycle_state, archetype, risk, tier_label, exclusion_reason; recommendation projection preserves saved non-null display/context fields and supports state/archetype filtering. State changes (paper_owner -> live_owner) produce distinct snapshot IDs, invalidate stale cached advice, trigger provider re-evaluation, and proposal idempotency/reuse is verified under mounted ranking and restart."
+  "review_repair": "Ranking snapshot fields now include name, owner, state, owner_lifecycle_state, archetype, risk, tier_label, exclusion_reason; recommendation projection preserves saved non-null display/context fields and supports state/archetype filtering. State changes (paper_owner -> live_owner) produce distinct snapshot IDs, invalidate stale cached advice, trigger provider re-evaluation, and proposal idempotency/reuse is verified under mounted ranking and restart.",
+  "hosted_acceptance": {
+    "task_id": "PERSONA-EVALUATOR-AGENT-002",
+    "at": "2026-10-21T15:23:00Z",
+    "status": "hosted_documentation_prepared_awaiting_coordinator_accepted_root_and_same_resource_ui_supplement",
+    "owner": "Antigravity",
+    "reviewer": "Codex2",
+    "generation": 4,
+    "original_contract_generation": 3,
+    "documentation_only": true,
+    "production_delta": 0,
+    "functional_track_status": "done",
+    "hosted_track_status": "external_wait",
+    "hosted_done": false,
+    "ready_for_final_review_or_hosted_done": false,
+    "all12_complete": false,
+    "sole_serial_hosted_coordinator": "01a10c97-4d16-7002-ad80-dc4384781fe2",
+    "formal_Root": {
+      "run_id": 39619749022,
+      "BE": "368b84c4b0d140ecf907ea9e6e069eaf657d05d2",
+      "FE": "1cfa8120c26e55f6a00beaff4e01bb4601eb540d",
+      "accepted": false,
+      "status": "in_progress",
+      "one_POST_only": true,
+      "note": "Sole formal Root release is currently in_progress; this document does not guess or claim future acceptance, and awaits coordinator accepted-Root plus same-resource UI/owner readback supplement before hosted done or final review submission."
+    },
+    "source_already_merged": {
+      "PR": 6086,
+      "head": "3bd15f871b460a7f5daca384202f4754a4176774",
+      "merge": "ac4fed216131398143417f1d02b310ba72f7b825",
+      "frozen_base": "035aceb50eef9f9da0b292852c804a2efb32c531",
+      "evidence_blob": "2c3315d656c44937217f38558ef1bfd5077ce0d1",
+      "evidence_sha256": "4dfd79f038804d8bbbd2aca24639f3627049eb9e057cafa3ba4dfc31929c1345",
+      "is_ancestor_of_current_dev_368b84c4b": true
+    },
+    "depends_on": [
+      "GOV-APPROVAL-TARGETS-001",
+      "AGORA-DEAD-SURFACES-REMOVAL-001"
+    ],
+    "known_current_Evaluator_technical_facts": {
+      "natural_run": "persona-eval-20261021T143037Z",
+      "evaluated_at": "2026-10-21T14:30:37.484541+00:00",
+      "source_snapshot": "ranking-quarterly-2026-q4-902d0455fbb26af2009b83a3",
+      "HTTP": 200,
+      "saved_items": 1,
+      "action_id": "require_retraining",
+      "governance_request": null,
+      "current_ranking_surfaces_ok": 13,
+      "retained_snapshot_count": 20,
+      "observer_model_calls": 0,
+      "limits": "OpenClaw is the saved provider label, not a newly proven physical Claude/OpenAI attribution. Old snapshot IDs absent from bounded retention are not current failures. One diagnostic wrong-header401 is not product failure."
+    },
+    "original_finite_business_grants_consumed": true,
+    "new_business_or_provider_or_CPU_or_VM_operations_by_worker": 0,
+    "original_acceptance": {
+      "AC1": {
+        "requirement": "A scheduled agent reads persona performance and health evidence through existing read APIs and proposes promote or demote transitions only by creating governance approval requests of type persona lifecycle transition with the evidence and rationale",
+        "evidence_state": "source_and_existing_saved_facts_mapped_pending_coordinator_root_and_ui_supplement",
+        "finding": "Merged PR #6086 (head 3bd15f871b460a7f5daca384202f4754a4176774, merge ac4fed216131398143417f1d02b310ba72f7b825) delivers collect_evidence() reading GET /bff/management/quarterly-ranking and propose_lifecycle() submitting POST /api/governance/approvals with target_type=persona_lifecycle_transition, proposal_id, proposal_content_digest, and validation_result_digest only for supported lifecycle transitions. Current natural run persona-eval-20261021T143037Z at 2026-10-21T14:30:37.484541+00:00 evaluated source snapshot ranking-quarterly-2026-q4-902d0455fbb26af2009b83a3 with 13/13 ranking surfaces ok (HTTP 200) and saved 1 advisory item (action_id=require_retraining, governance_request=null).",
+        "proof_keys": [
+          "original_merged_source_evidence",
+          "local_hosted_documentation_packet",
+          "existing_sanitized_technical_qualification"
+        ]
+      },
+      "AC2": {
+        "requirement": "The agent is given no tool that changes persona or capital or runtime state and cannot decide its own requests",
+        "evidence_state": "source_and_existing_saved_facts_mapped_pending_coordinator_root_and_ui_supplement",
+        "finding": "ask_agent() calls only /api/openclaw-adapter/assistant/providers/openclaw/structured with RECOMMENDATIONS_SCHEMA (data-only structured extraction, all native tools denied). The process holds only viewer read and approval_proposer tokens and has no endpoint or code path to decide, approve, revoke, or apply governance decisions or mutate persona, capital, or runtime state.",
+        "proof_keys": [
+          "original_merged_source_evidence",
+          "local_hosted_documentation_packet"
+        ]
+      },
+      "AC3": {
+        "requirement": "Requests are deduplicated per persona and target state and rate limited",
+        "evidence_state": "source_and_existing_saved_facts_mapped_pending_coordinator_root_and_ui_supplement",
+        "finding": "run_once() enforces MAX_PER_RUN=5, MAX_PER_HOUR=20 rolling-hour persisted reservation slots, and DEDUPE_TTL_SECONDS=604800 (7 days) per persona_id|to_state with deterministic Idempotency-Key and decision_id bound to persona, transition states, snapshot_id, and proposal_content_digest.",
+        "proof_keys": [
+          "original_merged_source_evidence"
+        ]
+      },
+      "AC4": {
+        "requirement": "When evidence or the agent is unavailable the run is recorded as degraded and creates nothing",
+        "evidence_state": "source_and_existing_saved_facts_mapped_pending_coordinator_root_and_ui_supplement",
+        "finding": "Degraded exceptions on missing/unavailable/changing ranking evidence, snapshot admission failure, or unavailable/malformed agent output record last_run={status:'degraded', created:0} in Store without creating recommendations or governance proposals.",
+        "proof_keys": [
+          "original_merged_source_evidence"
+        ]
+      },
+      "AC5": {
+        "requirement": "Tests cover dedupe and rate limit and degraded runs and the absence of write tools",
+        "evidence_state": "source_and_existing_saved_facts_mapped_pending_coordinator_root_and_ui_supplement",
+        "finding": "Independently verified in functional review of PR #6086 (3bd15f871b460a7f5daca384202f4754a4176774): services/persona-evaluator-agent/test_persona_evaluator_agent.py (14 passed) plus BFF projection/mounted ranking/governance suites (50 + 72 passed).",
+        "proof_keys": [
+          "original_merged_source_evidence"
+        ]
+      },
+      "AC6": {
+        "requirement": "This is the sole persona recommendation evaluator; replace the old BFF recommendation source in the same delivery rather than running a second recommendation engine next to it",
+        "evidence_state": "source_and_existing_saved_facts_mapped_pending_coordinator_root_and_ui_supplement",
+        "finding": "services/persona-evaluator-agent is the sole recommendation producer; the legacy BFF score-threshold recommendation engine was removed in the same PR #6086 delivery.",
+        "proof_keys": [
+          "original_merged_source_evidence"
+        ]
+      },
+      "AC7": {
+        "requirement": "Delete _pm12_recommendation_action_ids score-threshold action selection and its helper plus static rationale-generation in _pm12_quarterly_recommendation_item; _pm12_quarterly_recommendations becomes a projection of persisted evaluator output instead of computing advice during GET; remove now-unused recommendation-only constants",
+        "evidence_state": "source_and_existing_saved_facts_mapped_pending_coordinator_root_and_ui_supplement",
+        "finding": "_pm12_recommendation_action_ids, _pm12_add_recommendation_action, and static rationale formatting in services/control-plane/bff/pm12/service.py and services/control-plane/bff/personas/service.py were deleted in PR #6086; _pm12_quarterly_recommendations projects saved evaluator items from evaluator_results.saved_evaluator_result() filtered by caller tenant visibility.",
+        "proof_keys": [
+          "original_merged_source_evidence"
+        ]
+      },
+      "AC8": {
+        "requirement": "Preserve deterministic performance/risk/eligibility scores and fixed formulas as read-only evidence; the evaluator judges supported recommendations with source references and an actual provider rationale; read surfaces and Human Inbox reuse that saved result rather than regenerating it",
+        "evidence_state": "source_and_existing_saved_facts_mapped_pending_coordinator_root_and_ui_supplement",
+        "finding": "Deterministic ranking scores, tiers, eligibility, and evidence_refs remain read-only inputs; ask_agent() requires supported action_id, non-empty provider rationale, and evidence_ref_ids subset of the persona's supplied refs. BFF ranking recommendations, promotion review submit, and Human Inbox read the saved evaluator result without recomputing.",
+        "proof_keys": [
+          "original_merged_source_evidence",
+          "local_hosted_documentation_packet",
+          "existing_sanitized_technical_qualification"
+        ]
+      },
+      "AC9": {
+        "requirement": "Only supported lifecycle recommendations create the existing governance lifecycle approval request; other existing advisory categories may remain as persisted non-executable report entries; do not invent budget/tool/capital write capabilities or reinterpret those categories as lifecycle targets",
+        "evidence_state": "source_and_existing_saved_facts_mapped_pending_coordinator_root_and_ui_supplement",
+        "finding": "LIFECYCLE_TARGETS maps only freeze_persona->frozen and retire_persona->retired when allowed by LIFECYCLE_TRANSITIONS. Advisory actions (including require_retraining observed in natural run persona-eval-20261021T143037Z with governance_request=null) persist as non-executable report entries with no governance proposal or budget/tool/capital write.",
+        "proof_keys": [
+          "original_merged_source_evidence",
+          "local_hosted_documentation_packet",
+          "existing_sanitized_technical_qualification"
+        ]
+      },
+      "AC10": {
+        "requirement": "Reuse the evaluator run-result persistence already needed for degraded runs and existing governance requests; persist persona and period/source-snapshot identity so refresh/retry/restart reads the same recommendation; no second advisory service or queue and no heuristic recommendation fallback when the provider is unavailable",
+        "evidence_state": "source_and_existing_saved_facts_mapped_pending_coordinator_root_and_ui_supplement",
+        "finding": "Store persists results keyed by quarter|ranking_snapshot_id with bounded retention (MAX_SNAPSHOTS_KEPT=20; current retained_snapshot_count=20, observer_model_calls=0 on readback) alongside requests, created timestamps, and last_run in one state file; evaluator_results.py returns None with no heuristic fallback when unavailable.",
+        "proof_keys": [
+          "original_merged_source_evidence",
+          "local_hosted_documentation_packet",
+          "existing_sanitized_technical_qualification"
+        ]
+      },
+      "AC11": {
+        "requirement": "Keep agent creation/dedupe/rate-limit/degraded/no-direct-write acceptance from task 001; mounted ranking and Human Inbox tests prove the same persisted provider recommendation is returned and a score alone cannot create one; fixed score regression tests remain unchanged",
+        "evidence_state": "source_and_existing_saved_facts_mapped_pending_coordinator_root_and_ui_supplement",
+        "finding": "Mounted ranking and projection suites (test_persona_evaluator_mounted_ranking.py, test_persona_evaluator_projection.py) and independent review probe verified persisted provider recommendation reuse across ranking, submit, and Human Inbox, prove high/low score alone produces no recommendation without saved evaluator output, and keep fixed score regressions green.",
+        "proof_keys": [
+          "original_merged_source_evidence"
+        ]
+      },
+      "AC12": {
+        "requirement": "Real dev acceptance runs one evaluator against actual persona evidence and the real configured provider then reads the saved recommendation in the existing UI after refresh; human approval creates a decision without the evaluator approving it; lifecycle application is verified by its existing owner tasks",
+        "evidence_state": "awaiting_coordinator_accepted_root_and_same_resource_ui_owner_supplement",
+        "finding": "Current technical facts record natural evaluator run persona-eval-20261021T143037Z (evaluated_at 2026-10-21T14:30:37.484541+00:00, source_snapshot ranking-quarterly-2026-q4-902d0455fbb26af2009b83a3, HTTP 200, saved_items 1, action_id require_retraining, governance_request null, current_ranking_surfaces_ok 13, retained_snapshot_count 20, observer_model_calls 0). Formal Root 39619749022 (BE 368b84c4b0d140ecf907ea9e6e069eaf657d05d2 / FE 1cfa8120c26e55f6a00beaff4e01bb4601eb540d) under sole coordinator 01a10c97-4d16-7002-ad80-dc4384781fe2 is still in_progress (accepted=false). Hosted track remains external_wait awaiting coordinator accepted-Root and same-resource UI/owner supplement before hosted done or final independent review by Codex2.",
+        "proof_keys": [
+          "local_hosted_documentation_packet",
+          "existing_sanitized_technical_qualification",
+          "existing_post_root_evaluator_and_consumed_grants_record",
+          "prior_accepted_root39564986170_roundtrip_proof"
+        ]
+      },
+      "AC13": {
+        "requirement": "Keep the existing overall production budget of +400 at most while BFF recommendation code has a negative production delta; report BFF deletion and owner additions separately; this is replacement within the already planned evaluator rather than a new parallel agent",
+        "evidence_state": "source_and_existing_saved_facts_mapped_pending_coordinator_root_and_ui_supplement",
+        "finding": "Merged PR #6086 diff_budget verified BFF production +119/-185 (net -66), evaluator owner additions +412 (agent 374, Dockerfile 11, docker-compose.yml 27), and overall production +531/-185 (net +346 <= +400 budget). This hosted documentation preparation modifies only docs/deployment/evidence/PERSONA-EVALUATOR-AGENT-002/evidence.json with production_delta 0.",
+        "proof_keys": [
+          "original_merged_source_evidence",
+          "local_hosted_documentation_packet"
+        ]
+      }
+    },
+    "proofs": {
+      "original_merged_source_evidence": {
+        "repository": "ajoe734/pantheon",
+        "pr": 6086,
+        "head_sha": "3bd15f871b460a7f5daca384202f4754a4176774",
+        "merge_commit": "ac4fed216131398143417f1d02b310ba72f7b825",
+        "path": "docs/deployment/evidence/PERSONA-EVALUATOR-AGENT-002/evidence.json",
+        "blob_sha": "2c3315d656c44937217f38558ef1bfd5077ce0d1",
+        "sha256": "4dfd79f038804d8bbbd2aca24639f3627049eb9e057cafa3ba4dfc31929c1345"
+      },
+      "local_hosted_documentation_packet": {
+        "path": "/tmp/pantheon-assist-20261013/Original-Agora8-Evaluator13-existing-hosted-documents-local-only-packet-20261021.json",
+        "sha256": "0f44788aaed6754c500182cc821def309b5890490fc6b26ad2c1d29eb063469a"
+      },
+      "existing_sanitized_technical_qualification": {
+        "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/FULL39615739197-official12353946228-exact368b84-twelve-receipts-and-cleanup-independent-bounded-audit-20261021.json",
+        "sha256": "65c7e32473e6853692fba931c07eefbdedac9ac878fe06fac675974a13631b02"
+      },
+      "existing_post_root_evaluator_and_consumed_grants_record": {
+        "path": "/tmp/pantheon-assist-20261013/original-consumed-extra21-plus-current-Evaluator-postRoot39564986170-20261021T125142Z.json",
+        "sha256": "8ae3616d719195c858f3212b7866c8bb655c34106bf76e4beefcd4de2d14f323"
+      },
+      "prior_accepted_root39564986170_roundtrip_proof": {
+        "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Root39564986170-accepted-exact-artifact-roundtrip-proof-20261021.json",
+        "sha256": "7b4e6b7ff42cfefb7234cf4a9463a421c0f4b7afd5bef50e9acf5b646863637d"
+      },
+      "native_resumption_ack": {
+        "path": "/tmp/pantheon-assist-20261013/Original-Agora8-Evaluator13-existing-hosted-documents-native-resumption-ACK-20261021.json",
+        "sha256": "bb79da8e105078506747cab6025fb194f8afaa6509a9e6d3f6d39a3393c9ffb2"
+      }
+    },
+    "limits": [
+      "OpenClaw is the saved provider label in the persisted evaluator state, not a newly proven physical Claude/OpenAI model attribution.",
+      "Old ranking snapshot IDs absent from bounded 20-snapshot retention (retained_snapshot_count=20) are normal retention bounds, not current product failures.",
+      "One diagnostic wrong-header 401 probe is an authentication negative check and not a product failure.",
+      "Natural evaluator run persona-eval-20261021T143037Z produced advisory action_id=require_retraining with governance_request=null; non-lifecycle advisory categories do not create persona_lifecycle_transition governance proposals.",
+      "Original finite business grants are consumed and are not replayed; this worker executed 0 VM/SSH/Docker/BFF/provider/model/CPU/vote/lifecycle calls and read no secrets or raw user/provider/market-data receipt payloads.",
+      "Formal Root 39619749022 (BE 368b84c4b0d140ecf907ea9e6e069eaf657d05d2 / FE 1cfa8120c26e55f6a00beaff4e01bb4601eb540d) under sole coordinator 01a10c97-4d16-7002-ad80-dc4384781fe2 is still in_progress (accepted=false); this file does not claim hosted done, does not speculate on future Root acceptance, and awaits coordinator accepted-Root plus same-resource UI/owner supplement before final native review by Codex2."
+    ],
+    "independent_assigned_review_pending": true
+  }
 }
