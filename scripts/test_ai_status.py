@@ -8109,6 +8109,146 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         ):
             ai_status.validate_operator_accepted_merged_delivery(task)
 
+    def _capital_human_ops_checkpoint_task(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        head_sha = "a12b3d2acd1474c72b10220822ef73520b2ffaf7"
+        merge_sha = "6fa8101332573fe02522f78135be7f7db06273e1"
+        manifest_path = (
+            "docs/deployment/evidence/CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001/evidence.json"
+        )
+        task = self.state["tasks"][0]
+        task.update(
+            id="CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001",
+            status="review_approved",
+            owner="Human/Ops",
+            reviewer="Antigravity",
+            artifacts=[manifest_path],
+            review_file=manifest_path,
+            review_binding={
+                "pr": 6704,
+                "head_sha": head_sha,
+                "head_branch": "task/CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001",
+                "base": "dev",
+            },
+            delivery_binding={
+                "kind": "pull_request",
+                "pr": 6704,
+                "head_sha": head_sha,
+                "head_branch": "task/CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001",
+                "base": "dev",
+                "base_sha": "9ed064351ed756927e7e53714fde046f13c501b5",
+                "required_merge_method": "MERGE",
+                "evidence_manifest": {
+                    "path": manifest_path,
+                    "blob_sha": "24a4d1d1278bee7db71d37241493d3303a6af78f",
+                },
+            },
+            integration_receipt={
+                "result": "landed",
+                "pr": 6704,
+                "head_sha": head_sha,
+                "merge_commit_sha": merge_sha,
+                "task_generation": 3,
+            },
+            completion_tracks={
+                "hosted": {
+                    "status": "done",
+                    "evidence": [
+                        "Hosted dev deploy 25021393983 and hosted acceptance verified; smoke exited 0."
+                    ],
+                }
+            },
+        )
+        delivery = {
+            "repository_id": "pantheon",
+            "repository_slug": "ajoe734/pantheon",
+            "repository_path": "/tmp/pantheon",
+            "commit": head_sha,
+            "merge_target_ref": "origin/dev",
+            "merge_target_sha": merge_sha,
+            "head_merged_to_target": True,
+        }
+        return task, delivery
+
+    def test_reconcile_merged_done_closes_human_ops_owned_review_approved_checkpoint(
+        self,
+    ) -> None:
+        task, delivery = self._capital_human_ops_checkpoint_task()
+        env = {
+            "AI_NAME": "Human/Ops",
+            "PANTHEON_LOCAL_HUMAN_OPS": "1",
+            "ORCH_RUN_ID": "",
+            "RECONCILE_EVIDENCE_FILE": "",
+        }
+        with mock.patch.dict(os.environ, env, clear=False):
+            with self.assertRaisesRegex(RuntimeError, "local Human/Ops cannot authorize done"):
+                ai_status.validate_active_status_command_lease(
+                    "done", [task["id"], "Normal owner done is blocked for local Human/Ops."]
+                )
+            with (
+                mock.patch.object(
+                    ai_status,
+                    "load_config",
+                    return_value={"review_gate": {"github_review_bridge_required": False}},
+                ),
+                mock.patch.object(
+                    ai_status, "_validated_reconcile_delivery", return_value=delivery
+                ) as validate_delivery,
+                mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
+            ):
+                _command_reconcile_merged_done(
+                    self.state,
+                    [task["id"], "Human/Ops closed peer-approved hosted checkpoint."],
+                )
+
+        terminal = ai_status.get_task(self.state, task["id"])
+        self.assertEqual(terminal["status"], "done")
+        self.assertEqual(terminal["terminal_outcome"], "completed")
+        self.assertEqual(terminal["owner"], "Human/Ops")
+        self.assertEqual(terminal["reviewer"], "Antigravity")
+        self.assertEqual(
+            terminal["review_file"],
+            "docs/deployment/evidence/CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001/evidence.json",
+        )
+        self.assertTrue(
+            terminal["delivery"]["reconciled_from_human_ops_owner_review_approved"]
+        )
+        self.assertEqual(terminal["delivery"]["commit"], delivery["commit"])
+        validate_delivery.assert_called_once_with(task)
+
+    def test_reconcile_merged_done_human_ops_owner_closeout_preserves_rejections(
+        self,
+    ) -> None:
+        base_env = {
+            "AI_NAME": "Human/Ops",
+            "PANTHEON_LOCAL_HUMAN_OPS": "1",
+            "ORCH_RUN_ID": "",
+            "RECONCILE_EVIDENCE_FILE": "",
+        }
+        cases = (
+            ("foreign_owner", lambda t, _d: t.update(owner="Codex"), {}, "only Human/Ops-owned tasks"),
+            ("reviewer_not_local_owner", lambda _t, _d: None, {"AI_NAME": "Antigravity", "PANTHEON_LOCAL_HUMAN_OPS": ""}, "Only explicit local Human/Ops"),
+            ("missing_independent_reviewer", lambda t, _d: t.update(reviewer="Human/Ops"), {}, "independent peer reviewer"),
+            ("missing_review_binding", lambda t, _d: t.pop("review_binding", None), {}, "exact-head peer review binding"),
+            ("missing_review_file", lambda t, _d: t.pop("review_file", None), {}, "legacy or incomplete PR evidence-manifest binding"),
+            ("missing_manifest_binding", lambda t, _d: t["delivery_binding"].pop("evidence_manifest", None), {}, "legacy or incomplete PR delivery"),
+            ("wrong_merged_commit", lambda _t, d: d.update(commit="c" * 40), {}, "exact reviewed PR head"),
+            ("missing_hosted_evidence", lambda t, _d: t.update(completion_tracks={"hosted": {"status": "external_wait"}}), {}, "declared hosted completion"),
+        )
+        original = deepcopy(self.state)
+        for label, mutate, env_override, pattern in cases:
+            with self.subTest(label=label):
+                self.state = deepcopy(original)
+                task, delivery = self._capital_human_ops_checkpoint_task()
+                mutate(task, delivery)
+                with (
+                    mock.patch.dict(os.environ, {**base_env, **env_override}, clear=False),
+                    mock.patch.object(ai_status, "load_config", return_value={"review_gate": {"github_review_bridge_required": False}}),
+                    mock.patch.object(ai_status, "_validated_reconcile_delivery", return_value=delivery),
+                    self.assertRaisesRegex(SystemExit, pattern),
+                ):
+                    _command_reconcile_merged_done(self.state, [task["id"], "Must reject."])
+                self.assertEqual(task["status"], "review_approved")
+
     def test_reconcile_merged_done_tooling_mode_rejects_product_task(self) -> None:
         task = self.state["tasks"][0]
         task["status"] = "blocked"

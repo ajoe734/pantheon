@@ -19,6 +19,16 @@ from services.telemetry.paper_telemetry_packet import (
 )
 
 
+# The runtime emitter fails closed on bridge identity (PAPER-RUNTIME-BRIDGE-TRUTH-
+# FAILCLOSED-20261010): a statically declared binding is not a verified bridge, so
+# no engine_bridge_* metadata is emitted and the legacy packet validator reports it.
+UNVERIFIED_BRIDGE_ERRORS = [
+    "heartbeat must include engine_bridge_repo metadata",
+    "heartbeat must include engine_bridge_commit metadata",
+    "runtime summary must include engine_bridge_repo",
+]
+
+
 class PaperTelemetryPacketTest(unittest.TestCase):
     def test_builds_canonical_paper_telemetry_events(self) -> None:
         ctx = PaperTelemetryContext()
@@ -36,8 +46,8 @@ class PaperTelemetryPacketTest(unittest.TestCase):
             self.assertEqual(event["binding_id"], ctx.binding_id)
             self.assertEqual(event["runtime_id"], ctx.runtime_id)
             self.assertEqual(event["target"]["strategy_id"], ctx.strategy_id)
-            self.assertEqual(event["metadata"]["engine_bridge_repo"], "ajoe734/pantheon-lean.git")
-            self.assertEqual(event["metadata"]["engine_bridge_commit"], ctx.engine_bridge_commit)
+            self.assertNotIn("engine_bridge_repo", event["metadata"])
+            self.assertNotIn("engine_bridge_commit", event["metadata"])
 
     def test_bracket_event_is_logged_only_not_broker_submission(self) -> None:
         event = build_paper_telemetry_events(PaperTelemetryContext())[-1]
@@ -67,7 +77,7 @@ class PaperTelemetryPacketTest(unittest.TestCase):
         self.assertEqual(result["stats"]["writer"]["total_written"], len(events))
         self.assertEqual(summary["last_heartbeat_at"], events[0]["created_at"])
         self.assertEqual(summary["runtime_binding_id"], ctx.binding_id)
-        self.assertEqual(summary["engine_bridge_repo"], "ajoe734/pantheon-lean.git")
+        self.assertNotIn("engine_bridge_repo", summary)
 
     def test_evidence_packet_is_ooda_compatible(self) -> None:
         packet = build_evidence_packet(generated_at="2026-05-15T15:10:00Z")
@@ -75,8 +85,8 @@ class PaperTelemetryPacketTest(unittest.TestCase):
         self.assertEqual(packet["task_id"], TASK_ID)
         self.assertEqual(packet["environment"], "paper")
         self.assertFalse(packet["live_capital_side_effects"])
-        self.assertEqual(packet["validation_errors"], [])
-        self.assertEqual(validate_evidence_packet(packet), [])
+        self.assertEqual(packet["validation_errors"], UNVERIFIED_BRIDGE_ERRORS)
+        self.assertEqual(validate_evidence_packet(packet), UNVERIFIED_BRIDGE_ERRORS)
         self.assertEqual(
             packet["ooda_refs"]["observe"]["telemetry_refs"],
             [packet["telemetry_packet"]["events"][0]["event_id"]],
@@ -101,7 +111,7 @@ class PaperTelemetryPacketTest(unittest.TestCase):
 
             self.assertEqual(raw["task_id"], TASK_ID)
             self.assertEqual(raw["telemetry_packet"]["event_count"], 4)
-            self.assertEqual(raw["validation_errors"], [])
+            self.assertEqual(raw["validation_errors"], UNVERIFIED_BRIDGE_ERRORS)
             self.assertTrue(raw["safety_assertions"]["paper_stage_only"])
             self.assertTrue(raw["safety_assertions"]["bracket_logged_only"])
         finally:
