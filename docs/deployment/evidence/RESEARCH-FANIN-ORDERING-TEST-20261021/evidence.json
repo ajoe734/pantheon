@@ -1,0 +1,8 @@
+{
+  "task_id": "RESEARCH-FANIN-ORDERING-TEST-20261021",
+  "test": "services/research/tests/test_research_single_owner_routes.py::test_research_dag_fan_in_progression",
+  "approach": "execute_research_stage patched with a threading.Event gate holding s1/s2; asserts no s3 run while either is held, then s3 scheduled exactly once after both completed; no sleep-based ordering",
+  "local_runs": "20 consecutive runs of -k fan_in: 20/20 passed",
+  "product_regression": "none observed: owner does not schedule s3 early",
+  "full_file_note": "11 pre-existing failures in the same file are unchanged by this change (12 before incl. the old fan-in test, 11 after)"
+}
