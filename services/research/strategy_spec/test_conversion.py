@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from services.knowledge.evidence.models import EvidenceBundle, EvidenceItem
 from services.registry.service import app as registry_app
+from services.governance.test_approval_authority import configure_registry_unit_auth, registry_unit_headers
 from services.registry.storage import reset_store
 from services.research.strategy_spec.conversion import (
     StrategySpecConversionError,
@@ -62,7 +63,9 @@ def test_conversion_service_builds_strategy_spec_and_registry_payload_from_sourc
     assert result.evidence_code_lineage_edge["edge_type"] == "strategy_spec_evidence_code_linked"
 
 
-def test_converted_registry_payload_registers_and_advances_to_candidate() -> None:
+def test_converted_registry_payload_registers_and_advances_to_candidate(monkeypatch) -> None:
+    configure_registry_unit_auth(monkeypatch)
+    monkeypatch.setenv("REGISTRY_STORE_BACKEND", "memory")
     reset_store()
     try:
         result = StrategySpecConversionService().convert_source_material(
@@ -71,7 +74,7 @@ def test_converted_registry_payload_registers_and_advances_to_candidate() -> Non
             evidence_items=[_paper_item(), _repo_item()],
             created_at="2026-05-16T08:00:00Z",
         )
-        client = TestClient(registry_app)
+        client = TestClient(registry_app, headers=registry_unit_headers())
 
         create_resp = client.post("/api/registry/strategy-specs", json=result.registry_payload)
 
@@ -86,7 +89,12 @@ def test_converted_registry_payload_registers_and_advances_to_candidate() -> Non
 
         advance_resp = client.post(
             f"/api/registry/strategy-specs/{registry_id}/advance",
-            json=result.candidate_advance_request,
+            json={
+                **result.candidate_advance_request,
+                "expected_artifact_state": created["entry"]["artifact_state"],
+                "expected_version": created["entry"]["version"],
+                "expected_updated_at": created["entry"]["updated_at"],
+            },
         )
 
         assert advance_resp.status_code == 200, advance_resp.text
