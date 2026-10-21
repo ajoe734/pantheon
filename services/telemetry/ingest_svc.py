@@ -216,18 +216,34 @@ class RetainedDeadLetterQueue(DeadLetterQueue):
         *args: Any,
         retention_seconds: float = DEFAULT_RETENTION_SECONDS,
         replayable_tags: tuple[str, ...] = _WRITE_FAILURE_TAGS,
+        compact_interval_seconds: float | None = None,
+        clock: Callable[[], datetime] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
         self._retention_seconds = max(1.0, float(retention_seconds))
         self._replayable_tags = frozenset(replayable_tags)
-        self._spill_lock = threading.Lock()
+        # Injectable so elapsed-time behaviour is testable deterministically.
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        if compact_interval_seconds is None:
+            compact_interval_seconds = min(3600.0, self._retention_seconds)
+        self._compact_interval_seconds = max(1.0, float(compact_interval_seconds))
+        self._last_compact_at = self._clock()
+        # Re-entrant: reject() compacts while still holding the append lock.
+        self._spill_lock = threading.RLock()
         self._spill_expired_dropped = 0
 
     def reject(self, *args: Any, **kwargs: Any) -> bool:
         # Serialise spill appends with compaction so a rewrite cannot lose them.
         with self._spill_lock:
-            return super().reject(*args, **kwargs)
+            persisted = super().reject(*args, **kwargs)
+            # Apply retention during normal operation, not only at load, so a
+            # long-running service keeps the spill bounded. The append above is
+            # already fsynced; compaction never drops replayable entries.
+            elapsed = (self._clock() - self._last_compact_at).total_seconds()
+            if elapsed >= self._compact_interval_seconds:
+                self.compact_spill()
+            return persisted
 
     def _spill_line_expired(self, line: str, cutoff: datetime) -> bool:
         """Whether a spill line is past retention and not replayable."""
@@ -256,11 +272,13 @@ class RetainedDeadLetterQueue(DeadLetterQueue):
         """
         if not self._spill_path or not self._spill_path.exists():
             return 0
-        cutoff = datetime.now(timezone.utc) - timedelta(seconds=self._retention_seconds)
+        now = self._clock()
+        cutoff = now - timedelta(seconds=self._retention_seconds)
         tmp_path = self._spill_path.with_name(self._spill_path.name + ".compact.tmp")
         dropped = 0
         kept = 0
         with self._spill_lock:
+            self._last_compact_at = now
             try:
                 with open(self._spill_path, "r") as src, open(tmp_path, "w") as dst:
                     for raw in src:

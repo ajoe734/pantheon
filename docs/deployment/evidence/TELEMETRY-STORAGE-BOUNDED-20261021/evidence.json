@@ -10,7 +10,7 @@
   "dlq": {
     "env": "TELEMETRY_DLQ_RETENTION_SECONDS",
     "default_seconds": 604800,
-    "policy": "entries tagged writer_error/retry_exhausted/TELEMETRY_REPLAY_DLQ_TAG never aged out; others dropped past retention at load via streamed atomic rewrite"
+    "policy": "entries tagged writer_error/retry_exhausted/TELEMETRY_REPLAY_DLQ_TAG never aged out; others dropped past retention at load and during normal operation (reject triggers compaction once the injectable-clock elapsed interval, default min(1h, retention), passes) via streamed atomic rewrite"
   },
   "tests": {
     "command": "python -m pytest services/telemetry",

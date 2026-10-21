@@ -91,6 +91,31 @@ class DeadLetterRetentionTest(unittest.TestCase):
         dlq.reject({"event_id": "late"}, [TAG_SCHEMA_VIOLATION], "late")
         self.assertEqual(self._spilled_ids(), ["late"])
 
+    def test_normal_operation_applies_retention_without_reload(self):
+        now = [datetime.now(timezone.utc)]
+        # Spill already holds entries aged past retention (appended long ago).
+        self._write(
+            [
+                _line("retry-old", TAG_RETRY_EXHAUSTED, RETENTION * 10),
+                _line("schema-old", TAG_SCHEMA_VIOLATION, RETENTION * 10),
+            ]
+        )
+        dlq = DeadLetterQueue(
+            str(self.spill),
+            retention_seconds=RETENTION,
+            compact_interval_seconds=60.0,
+            clock=lambda: now[0],
+        )
+        # Within the compaction interval an ordinary reject only appends.
+        dlq.reject({"event_id": "a"}, [TAG_SCHEMA_VIOLATION], "s")
+        self.assertEqual(self._spilled_ids(), ["retry-old", "schema-old", "a"])
+
+        # Once the interval elapses the next reject compacts, with no reload.
+        now[0] += timedelta(seconds=61)
+        dlq.reject({"event_id": "b"}, [TAG_SCHEMA_VIOLATION], "s")
+        self.assertEqual(self._spilled_ids(), ["retry-old", "a", "b"])
+        self.assertEqual(dlq.stats()["spill_expired_dropped"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
