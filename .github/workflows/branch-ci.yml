@@ -722,5 +722,8 @@ jobs:
         timeout-minutes: 10
         env:
           TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/gov_approval_test
+          # The compose readiness test imports the BFF, whose rankings reader
+          # needs DATABASE_URL; consultation_test has the rankings table bootstrapped.
+          DATABASE_URL: postgresql://postgres@127.0.0.1:5432/consultation_test
         run: |
           python3 -m pytest -q services/trade_journey
