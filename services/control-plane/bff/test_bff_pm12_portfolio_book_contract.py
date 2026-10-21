@@ -1983,3 +1983,66 @@ def test_portfolio_holdings_later_valid_snapshot_recovers_after_failure(monkeypa
     (item,) = _alpha_holdings(monkeypatch, summary)
     assert item["mark_status"] == "available"
     assert item["mark_price"] == 2410.0
+
+
+_CLOSING_FILL = {
+    "event_id": "evt-fill-close",
+    "event_type": "paper_fill_simulated",
+    "created_at": "2026-10-21T02:30:00Z",
+    "metrics": {"fill_quantity": 1.0, "fill_price": 2395.0, "action": "market_order"},
+    "metadata": {"symbol": "2330.TW"},
+}
+
+
+def _alpha_holdings_response(monkeypatch, summary):
+    client = _portfolio_store(monkeypatch, telemetry={"runtime-alpha": summary})
+    response = client.get(
+        "/bff/management/portfolio-book/holdings",
+        headers=HEADERS,
+        params={"runtime_id": "runtime-alpha"},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_portfolio_holdings_explicit_flat_book_has_no_synthetic_holding_or_incident(monkeypatch) -> None:
+    summary = _projected_paper_summary(marks=None, extra_events=[_CLOSING_FILL])
+    # Producer-shaped nonzero-to-flat: explicit empty rows and an explicit zero count.
+    assert summary["positions"] == []
+    assert summary["position_count"] == 0
+    body = _alpha_holdings_response(monkeypatch, summary)
+    assert body["data"]["items"] == []
+    assert body["data"]["summary"]["holding_count"] == 0
+    assert body["data"]["summary"]["incident_count"] == 0
+    assert body["meta"]["incidents"] == []
+    assert body["page_info"]["total"] == 0
+    # Runtime and telemetry coverage for the filtered flat runtime stays truthful.
+    coverage = body["data"]["summary"]["source_coverage"]
+    assert coverage["runtime_count"] == 1
+    assert coverage["telemetry_runtime_count"] == 1
+    assert coverage["source_row_count"] == 0
+
+
+def test_portfolio_holdings_missing_positions_field_is_not_a_flat_book(monkeypatch) -> None:
+    summary = dict(_projected_paper_summary(marks=None, extra_events=[_CLOSING_FILL]))
+    summary.pop("positions")
+    summary.pop("position_count")
+    (item,) = _alpha_holdings(monkeypatch, summary)
+    assert item["symbol"] in (None, "")
+    assert any(i["code"] == "MISSING_HOLDING_ROW" for i in item["source_issues"])
+
+    # Empty rows without an explicit zero count are not evidence of a flat book either.
+    summary_no_count = dict(_projected_paper_summary(marks=None, extra_events=[_CLOSING_FILL]))
+    summary_no_count.pop("position_count")
+    (item,) = _alpha_holdings(monkeypatch, summary_no_count)
+    assert any(i["code"] == "MISSING_HOLDING_ROW" for i in item["source_issues"])
+
+
+def test_portfolio_holdings_explicit_flat_book_keeps_stale_telemetry_diagnostic(monkeypatch) -> None:
+    summary = dict(_projected_paper_summary(marks=None, extra_events=[_CLOSING_FILL]))
+    summary["stale"] = True
+    body = _alpha_holdings_response(monkeypatch, summary)
+    assert body["data"]["items"] == []
+    assert body["data"]["summary"]["source_coverage"]["stale_row_count"] == 1
+    assert body["data"]["summary"]["incident_count"] == 1
+    assert [i["code"] for i in body["meta"]["incidents"][0]["source_issues"]] == ["STALE_TELEMETRY"]
