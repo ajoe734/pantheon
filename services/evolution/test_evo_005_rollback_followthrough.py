@@ -75,6 +75,19 @@ for _p in (_RM_DIR, _EXEC_RM_DIR, _REPO_ROOT):
         sys.path.insert(0, str(_p))
 
 from service import RuntimeManagerService  # noqa: E402
+from services.governance.human_gate.decision_model import (  # noqa: E402
+    CanProceedInput,
+    EvidenceReviewed,
+    HumanGateDecision,
+    HumanGateSignature,
+    compute_evidence_hash,
+)
+from services.runtime_manager.runtime_binding import RuntimeBindingError  # noqa: E402
+from services.runtime_manager.service import (  # noqa: E402
+    ROLLBACK_HUMAN_GATE_REQUIRED_ROLES,
+    ROLLBACK_HUMAN_GATE_TARGET_TYPE,
+    RuntimeManagerError,
+)
 
 client = TestClient(app)
 
@@ -239,7 +252,43 @@ def _canonical_authority_report(request: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _seed_retired_target(rm: RuntimeManagerService, old_binding_id: str, plan_id: str, artifact_id: str, version: str) -> dict[str, Any]:
+def _approved_rollback_gate(old_binding_id: str, prior_binding_id: str, target_environment: str) -> dict[str, Any]:
+    """Approved HumanGateDecision bound to exactly old_binding -> prior_binding,
+    signed by every role RuntimeManagerService.rollback() requires."""
+    decision_id = f"hgd-rollback-{uuid.uuid4().hex[:8]}"
+    evidence_reviewed = (
+        EvidenceReviewed(
+            key="rollback_target",
+            evidence_hash="sha256:" + "a" * 64,
+            source_ref=f"runtime-binding://{prior_binding_id}",
+        ),
+    )
+    evidence_hash = compute_evidence_hash(evidence_reviewed)
+    decision = HumanGateDecision(
+        decision_id=decision_id,
+        target_type=ROLLBACK_HUMAN_GATE_TARGET_TYPE,
+        target_id=f"{old_binding_id}->{prior_binding_id}",
+        target_environment=target_environment,
+        required_roles=tuple(ROLLBACK_HUMAN_GATE_REQUIRED_ROLES),
+        evidence_reviewed=evidence_reviewed,
+        can_proceed_input=CanProceedInput(readiness_packet_can_proceed=True),
+        evidence_hash=evidence_hash,
+    )
+    for role in ROLLBACK_HUMAN_GATE_REQUIRED_ROLES:
+        decision = decision.with_signature(
+            HumanGateSignature(
+                signature_id=f"{decision_id}-{role}",
+                role=role,
+                actor_id=f"{role}-approver",
+                signed_at="2026-05-20T00:00:00Z",
+                evidence_hash=evidence_hash,
+                evidence_reviewed=("rollback_target",),
+            )
+        )
+    return decision.normalized().to_dict()
+
+
+def _seed_retired_target(rm: RuntimeManagerService, old_binding_id: str, plan_id: str, artifact_id: str, version: str) -> tuple[dict[str, Any], dict[str, Any]]:
     old_binding = rm.get(old_binding_id)
     req = {
         "plan_id": plan_id,
@@ -263,7 +312,8 @@ def _seed_retired_target(rm: RuntimeManagerService, old_binding_id: str, plan_id
     }
     prior = rm.deploy(req, _allow_cutover_bypass=True)
     rm.retire(prior.binding_id)
-    return att
+    gate = _approved_rollback_gate(old_binding_id, prior.binding_id, old_binding.deployment_mode)
+    return att, gate
 
 
 # ===========================================================================
@@ -576,7 +626,7 @@ class TestRollbackFollowthroughRuntimeManagerIntegration:
         # Step 4: Call RuntimeManagerService.rollback() — this is the runtime plane
         # follow-through that the rollback operator / saga would execute.
         replacement_plan_id = f"rb-plan-{uuid.uuid4().hex[:8]}"
-        att = _seed_retired_target(runtime_manager, old_binding_id, replacement_plan_id, "artifact-fallback-001", "v2-fallback")
+        att, gate = _seed_retired_target(runtime_manager, old_binding_id, replacement_plan_id, "artifact-fallback-001", "v2-fallback")
         result = runtime_manager.rollback({
             "current_binding_id": old_binding_id,
             "action_type": "replace",
@@ -589,6 +639,7 @@ class TestRollbackFollowthroughRuntimeManagerIntegration:
             "replacement_allowed_deployment_scope": "live",
             "loader_checks_passed": True,
             "replacement_authority_attestation": att,
+            "human_gate_decision": gate,
         })
 
         # Step 5: Verify follow-through evidence.
@@ -614,7 +665,7 @@ class TestRollbackFollowthroughRuntimeManagerIntegration:
         """pause_then_replace drains the old binding to paused before creating replacement."""
         old_binding_id = _active_paper_binding(runtime_manager)
         replacement_plan_id = f"rb-plan-{uuid.uuid4().hex[:8]}"
-        att = _seed_retired_target(runtime_manager, old_binding_id, replacement_plan_id, "artifact-fallback-002", "v2-fallback")
+        att, gate = _seed_retired_target(runtime_manager, old_binding_id, replacement_plan_id, "artifact-fallback-002", "v2-fallback")
 
         result = runtime_manager.rollback({
             "current_binding_id": old_binding_id,
@@ -627,6 +678,7 @@ class TestRollbackFollowthroughRuntimeManagerIntegration:
             "replacement_allowed_deployment_scope": "live",
             "loader_checks_passed": True,
             "replacement_authority_attestation": att,
+            "human_gate_decision": gate,
         })
 
         assert result["old_binding"]["status"] == "retired"
@@ -637,7 +689,7 @@ class TestRollbackFollowthroughRuntimeManagerIntegration:
         """liquidate_then_replace with replacement_start_paused keeps new binding paused."""
         old_binding_id = _active_paper_binding(runtime_manager)
         replacement_plan_id = f"rb-plan-{uuid.uuid4().hex[:8]}"
-        att = _seed_retired_target(runtime_manager, old_binding_id, replacement_plan_id, "artifact-fallback-003", "v2-fallback")
+        att, gate = _seed_retired_target(runtime_manager, old_binding_id, replacement_plan_id, "artifact-fallback-003", "v2-fallback")
 
         result = runtime_manager.rollback({
             "current_binding_id": old_binding_id,
@@ -651,6 +703,7 @@ class TestRollbackFollowthroughRuntimeManagerIntegration:
             "loader_checks_passed": True,
             "replacement_start_paused": True,
             "replacement_authority_attestation": att,
+            "human_gate_decision": gate,
         })
 
         assert result["old_binding"]["status"] == "retired"
@@ -702,7 +755,7 @@ class TestRollbackFollowthroughRuntimeManagerIntegration:
         # 4. The operator / saga picks up the rollback command and calls runtime-manager.
         #    Parameters come from the RollbackCommand emitted by the evolution controller.
         replacement_plan_id = f"evo-rb-{did[:12]}"
-        att = _seed_retired_target(runtime_manager, old_binding_id, replacement_plan_id, "artifact-fallback-001", "v2-fallback")
+        att, gate = _seed_retired_target(runtime_manager, old_binding_id, replacement_plan_id, "artifact-fallback-001", "v2-fallback")
         rollback_result = runtime_manager.rollback({
             "current_binding_id": old_binding_id,
             "action_type": "replace",
@@ -715,6 +768,7 @@ class TestRollbackFollowthroughRuntimeManagerIntegration:
             "replacement_allowed_deployment_scope": "live",
             "loader_checks_passed": True,
             "replacement_authority_attestation": att,
+            "human_gate_decision": gate,
         })
 
         # === Verify follow-through evidence ===
@@ -745,6 +799,31 @@ class TestRollbackFollowthroughRuntimeManagerIntegration:
             "Dispatched stage must carry execution_ref_id"
         )
 
+    def test_rollback_without_human_gate_decision_is_blocked(self, runtime_manager):
+        """A rollback request lacking an approved human gate is refused and nothing changes."""
+        old_binding_id = _active_paper_binding(runtime_manager)
+        replacement_plan_id = f"rb-plan-{uuid.uuid4().hex[:8]}"
+        att, gate = _seed_retired_target(runtime_manager, old_binding_id, replacement_plan_id, "artifact-fallback-004", "v2-fallback")
+        request = {
+            "current_binding_id": old_binding_id,
+            "action_type": "replace",
+            "replacement_plan_id": replacement_plan_id,
+            "replacement_artifact_id": "artifact-fallback-004",
+            "replacement_artifact_version": "v2-fallback",
+            "replacement_persona_capital_binding_id": "pcb-alpha",
+            "replacement_persona_capital_binding_status": "active",
+            "replacement_allowed_deployment_scope": "live",
+            "loader_checks_passed": True,
+            "replacement_authority_attestation": att,
+        }
+        with pytest.raises(RuntimeManagerError, match="human_gate_decision"):
+            runtime_manager.rollback(request)
+        # A decision bound to a different rollback pairing is refused as well.
+        forged = dict(gate, target_id="rb-other->rb-other-prior")
+        with pytest.raises(RuntimeManagerError):
+            runtime_manager.rollback({**request, "human_gate_decision": forged})
+        assert runtime_manager.get(old_binding_id).status == "active"
+
     def test_rollback_blocked_reason_surfaced_on_terminal_binding(self, runtime_manager):
         """runtime-manager.rollback() records a blocked reason when the binding is already terminal.
 
@@ -758,7 +837,6 @@ class TestRollbackFollowthroughRuntimeManagerIntegration:
 
         # Attempting rollback on an already-terminal binding must raise an error
         # with a clear blocked reason.
-        from service import RuntimeManagerError
         with pytest.raises(RuntimeManagerError) as exc_info:
             runtime_manager.rollback({
                 "current_binding_id": old_binding_id,
@@ -784,12 +862,6 @@ class TestRollbackFollowthroughRuntimeManagerIntegration:
         the binding_id is unknown — this IS the blocked-reason signal that the operator
         / retry-saga would act on.
         """
-        from service import RuntimeManagerError
-        # RuntimeBindingError is also acceptable here as a domain-level blocked reason.
-        try:
-            from runtime_binding import RuntimeBindingError
-        except ImportError:
-            RuntimeBindingError = RuntimeManagerError  # type: ignore[assignment,misc]
         with pytest.raises((RuntimeManagerError, RuntimeBindingError)) as exc_info:
             runtime_manager.rollback({
                 "current_binding_id": "rb-does-not-exist",

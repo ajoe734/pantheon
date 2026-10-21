@@ -17,14 +17,18 @@ import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
 from typing import Any
 
 from services.evolution.dispatch_outbox import (
     EvolutionDispatchOutbox,
     build_dispatch_outbox_store,
     dispatch_identity,
+    immutable_decision_fingerprint,
 )
+from services.governance.test_approval_authority import approval_snapshot
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -147,7 +151,7 @@ def _proposal(decision_id: str, target_id: str, *, action_type: str = "retrain")
     return payload
 
 
-def _approve_freeze(base_url: str, decision_id: str) -> None:
+def _approve_freeze(base_url: str, decision_id: str) -> dict[str, Any]:
     status, _ = _request_json(
         base_url,
         "POST",
@@ -179,6 +183,72 @@ def _approve_freeze(base_url: str, decision_id: str) -> None:
     )
     assert status == 200
     assert approved["decision_state"] == "approved"
+    return approved
+
+
+class _GovernanceOwner:
+    """Serves the exact Governance approval the worker re-reads before submit.
+
+    The dispatcher now requires current Governance authority bound to the
+    stored proposal (require_execution_approval), so the separate worker
+    process needs a reachable Governance reader.
+    """
+
+    TOKEN = "synthetic-process-proof-token"
+
+    def __init__(self, decision: dict[str, Any]) -> None:
+        risk = str(decision["risk_level"])
+        role = "governance_committee" if risk in {"high", "critical"} else "governance_reviewer"
+        self.approval_id = decision["approval_decision_id"]
+        self.snapshot = approval_snapshot(
+            decision_id=self.approval_id,
+            tenant_id=decision["tenant_id"],
+            risk_level=risk,
+            actor_role=role,
+            target_type="evolution_execute",
+            target_id=decision["decision_id"],
+            target_version=decision["target_version"],
+            owner_user_id="process-proof-proposer",
+            metadata={
+                "subject": {
+                    "proposal_id": decision["decision_id"],
+                    "proposal_content_digest": immutable_decision_fingerprint(decision),
+                },
+                "approvals": [{"actor_id": "process-proof-reviewer", "actor_role": role}],
+            },
+        )
+        owner = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                found = (
+                    self.path == f"/api/governance/approvals/{owner.approval_id}"
+                    and self.headers.get("Authorization") == f"Bearer {owner.TOKEN}"
+                )
+                self.send_response(200 if found else 404)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(owner.snapshot if found else {}).encode())
+
+            def log_message(self, *args: Any) -> None:
+                pass
+
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self._thread = Thread(target=self._server.serve_forever)
+        self._thread.start()
+
+    @property
+    def env(self) -> dict[str, str]:
+        return {
+            "EVOLUTION_GOVERNANCE_BASE_URL": f"http://127.0.0.1:{self._server.server_port}",
+            "EVOLUTION_GOVERNANCE_SERVICE_TOKEN": self.TOKEN,
+            "EVOLUTION_GOVERNANCE_SERVICE_TOKEN_FILE": "",
+        }
+
+    def close(self) -> None:
+        self._server.shutdown()
+        self._thread.join(timeout=5)
+        self._server.server_close()
 
 
 def _run_worker_once(*, api_url: str, env: dict[str, str], health_file: Path) -> dict[str, Any]:
@@ -215,6 +285,7 @@ def test_two_api_processes_and_restarted_worker_share_one_authority(tmp_path: Pa
     """Two replicas race safely; a fresh dispatcher recovers and sees the same DLQ."""
 
     env = _service_env(tmp_path)
+    governance: _GovernanceOwner | None = None
     first_port = _free_port()
     second_port = _free_port()
     first_url = f"http://127.0.0.1:{first_port}"
@@ -250,7 +321,9 @@ def test_two_api_processes_and_restarted_worker_share_one_authority(tmp_path: Pa
         # governance action. Rewind only the activation bit to reproduce a
         # crash after approval committed and before activation committed.
         decision_id = "evo-process-restart-freeze"
-        _approve_freeze(first_url, decision_id)
+        approved_decision = _approve_freeze(first_url, decision_id)
+        governance = _GovernanceOwner(approved_decision)
+        env.update(governance.env)
         data_dir = Path(env["EVOLUTION_DATA_DIR"])
         outbox = EvolutionDispatchOutbox(build_dispatch_outbox_store(data_dir=data_dir))
         outbox_id, _, _ = dispatch_identity(TENANT_ID, decision_id)
@@ -341,6 +414,8 @@ def test_two_api_processes_and_restarted_worker_share_one_authority(tmp_path: Pa
         assert decision["decision_state"] == "approved"
         assert decision["execution_result"] is None
     finally:
+        if governance is not None:
+            governance.close()
         _stop(second)
         _stop(first)
 
