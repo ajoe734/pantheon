@@ -930,6 +930,20 @@ class RuntimeSummaryProjectionStoreTest(unittest.TestCase):
         self.assertEqual([item["runtime_id"] for item in listed], ["rt-paper-001"])
         self.assertEqual(listed[0]["state"], "retired")
 
+    def test_failed_terminal_retirement_event_excludes_by_default(self):
+        store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)
+        store.project_event(_event())
+        event = self._retired_event()
+        event["metadata"]["terminal_status"] = "failed"
+        summary = store.project_event(event)
+
+        self.assertTrue(summary["retired"])
+        self.assertEqual(store.list(), [])
+        self.assertEqual(
+            [item["runtime_id"] for item in store.list(include_retired=True)],
+            ["rt-paper-001"],
+        )
+
     def test_retirement_stays_retired_whichever_side_of_last_heartbeat(self):
         for order in ("before", "after"):
             with self.subTest(order=order):
