@@ -584,3 +584,17 @@ def test_cockpit_timeout_keeps_completed_owner_sections(monkeypatch, blocked_sec
             release.set()
         # Late completion must not rewrite the already returned snapshot.
         assert json.dumps(response.json(), sort_keys=True) == before
+
+
+def test_cockpit_health_counts_canonical_active_binding_not_retired_or_paused():
+    store = create_in_memory_read_surface_ports()
+    store.list_runtime_bindings = lambda: [
+        {"runtime_id": "current-paper", "status": "active"},
+        {"runtime_id": "old-paper", "status": "retired"},
+        {"runtime_id": "failed-paper", "status": "failed"},
+        {"runtime_id": "paused-paper", "status": "paused"},
+    ]
+    health = ManagementService(read_store=store).get_operator_health_status()
+    runtime = next(g for g in health["groups"] if g["group_id"] == "runtime")
+    assert runtime["details"] == {"total_runtimes": 4, "active_runtimes": 1}
+    assert runtime["summary"] == "1 active runtime(s) running."

@@ -2778,7 +2778,10 @@ class ManagementService:
         else:
             group_surfaces["runtime"] = {"status": "unavailable", "source": "missing" if store is None else "unsupported"}
 
-        active_runtimes = sum(1 for b in runtime_bindings if isinstance(b, dict) and b.get("status") == "running")
+        active_runtimes = sum(
+            1 for b in runtime_bindings
+            if isinstance(b, dict) and b.get("status") in {"active", "running"}
+        )
         runtime_group = {
             "group_id": "runtime",
             "label": _HEALTH_GROUP_LABELS["runtime"],
