@@ -8122,6 +8122,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             owner="Human/Ops",
             reviewer="Antigravity",
             artifacts=[manifest_path],
+            review_file=manifest_path,
             review_binding={
                 "pr": 6704,
                 "head_sha": head_sha,
@@ -8228,6 +8229,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             ("reviewer_not_local_owner", lambda _t, _d: None, {"AI_NAME": "Antigravity", "PANTHEON_LOCAL_HUMAN_OPS": ""}, "Only explicit local Human/Ops"),
             ("missing_independent_reviewer", lambda t, _d: t.update(reviewer="Human/Ops"), {}, "independent peer reviewer"),
             ("missing_review_binding", lambda t, _d: t.pop("review_binding", None), {}, "exact-head peer review binding"),
+            ("missing_review_file", lambda t, _d: t.pop("review_file", None), {}, "legacy or incomplete PR evidence-manifest binding"),
             ("missing_manifest_binding", lambda t, _d: t["delivery_binding"].pop("evidence_manifest", None), {}, "legacy or incomplete PR delivery"),
             ("wrong_merged_commit", lambda _t, d: d.update(commit="c" * 40), {}, "exact reviewed PR head"),
             ("missing_hosted_evidence", lambda t, _d: t.update(completion_tracks={"hosted": {"status": "external_wait"}}), {}, "declared hosted completion"),

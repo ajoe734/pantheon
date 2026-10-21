@@ -6943,11 +6943,7 @@ def validate_human_ops_owner_merged_delivery(task: dict[str, Any]) -> dict[str, 
         raise SystemExit(
             "Cannot reconcile task: canonical Human/Ops owner closeout requires an assigned independent peer reviewer."
         )
-    candidate = deepcopy(task)
-    manifest = (candidate.get(DELIVERY_BINDING_KEY) or {}).get("evidence_manifest")
-    if isinstance(manifest, Mapping) and not str(candidate.get("review_file") or "").strip():
-        candidate["review_file"] = str(manifest.get("path") or "").strip()
-    delivery_binding = require_current_pr_delivery_binding(candidate, action="reconcile")
+    delivery_binding = require_current_pr_delivery_binding(task, action="reconcile")
     frozen_manifest = dict(delivery_binding["evidence_manifest"])
     frozen_review_file = str(frozen_manifest.get("path") or "").strip()
     env_review_file = os.environ.get("REVIEW_FILE", "").strip()
@@ -6955,11 +6951,11 @@ def validate_human_ops_owner_merged_delivery(task: dict[str, Any]) -> dict[str, 
         raise SystemExit(
             f"{task_id or 'task'}: REVIEW_FILE={env_review_file!r} differs from the manifest frozen at handoff ({frozen_review_file!r}); reopen and re-handoff the intended exact PR delivery"
         )
-    if not exact_head_acceptance_available(candidate, load_config()):
+    if not exact_head_acceptance_available(task, load_config()):
         raise SystemExit(
             "Cannot reconcile task: canonical exact-head peer review binding is missing or does not match the frozen PR delivery binding."
         )
-    binding = _validated_pr_binding(candidate.get(APPROVAL_BINDING_KEY) or {}, task_id)
+    binding = _validated_pr_binding(task.get(APPROVAL_BINDING_KEY) or {}, task_id)
     delivery = _validated_reconcile_delivery(task)
     if str(delivery.get("commit") or "").lower() != binding["head_sha"]:
         raise SystemExit(
@@ -7452,8 +7448,6 @@ def command_reconcile_merged_done(state: dict[str, Any], args: list[str]) -> Non
         "reconcile_merged_done", task
     )
     delivery = deepcopy(preflight["delivery"])
-    if not str(task.get("review_file") or "").strip() and str(delivery.get("review_file") or "").strip():
-        task["review_file"] = str(delivery["review_file"]).strip()
     recovered_archive = deepcopy(preflight.get("recovered_immutable_archive"))
     if recovered_archive is not None:
         current_archive = load_archived_snapshot(task_id)
