@@ -373,18 +373,11 @@ class TestDecisionSignalProducer(unittest.TestCase):
         self.assertGreaterEqual(direct_dt, before_direct)
         self.assertLessEqual(direct_dt, after_direct)
 
-    def test_producer_skips_started_execution_fence_and_reuses_original_canonical_journey(self) -> None:
-        from services.execution.lean_runtime.signal_producer import remember_canonical_journey
+    def test_producer_skips_started_or_completed_execution_fence_and_cold_process_preserves_fence(
+        self,
+    ) -> None:
+        import subprocess
 
-        remember_canonical_journey(
-            tenant_id="tenant-a",
-            environment="paper",
-            journey_id="tj-paper-001",
-            signal_id="sig-76fdd54e9d601a08260e875aad01d23c",
-            decision_id="decision-paper-001",
-            run_id="run-rb-paper-001-2026-06-12",
-            trace_id="20000000-0000-0000-0000-000000000001",
-        )
         decision = {
             "decision_id": "decision-paper-001",
             "signal_id": "sig-76fdd54e9d601a08260e875aad01d23c",
@@ -399,14 +392,6 @@ class TestDecisionSignalProducer(unittest.TestCase):
             "tenant_id": "tenant-a",
             "environment": "paper",
         }
-        [built] = build_decision_signals(decision)
-        self.assertEqual(built["journey_id"], "tj-paper-001")
-        self.assertEqual(built["correlation_envelope"]["journey_id"], "tj-paper-001")
-        self.assertEqual(
-            built["correlation_envelope"]["trace_id"],
-            "20000000-0000-0000-0000-000000000001",
-        )
-
         store = InMemoryPendingSignalStore()
         producer = DecisionSignalProducer(store)
         first_batch = producer.produce(decision)
@@ -424,75 +409,10 @@ class TestDecisionSignalProducer(unittest.TestCase):
             f"started:{fence.token}",
         )
 
-    def test_default_tenant_does_not_reuse_foreign_tenant_canonical_journey_and_fresh_process_preserves_fence(
-        self,
-    ) -> None:
-        import subprocess
-        from services.execution.lean_runtime.signal_producer import remember_canonical_journey
-
-        remember_canonical_journey(
-            tenant_id="tenant-dev",
-            environment="paper",
-            journey_id="tj_c7d14e8a-3cac-439a-81b7-7401fa2aaac3",
-            signal_id="sig-76fdd54e9d601a08260e875aad01d23c",
-            decision_id="dec-rb-2eebe2b7a8af4c0c909991a13bba75a6-76fdd54e9d601a08260e875a",
-            run_id="run-rb-2eebe2b7a8af4c0c909991a13bba75a6-76fdd54e9d601a08260e875a",
-            correlation_id="f2c61c63-b926-4bab-ad1e-1c792bcc18f2",
-            trace_id="bcde2641-a43e-4c6d-8a25-de42a0ad97a3",
-        )
-        base_decision = {
-            "decision_id": "dec-rb-2eebe2b7a8af4c0c909991a13bba75a6-76fdd54e9d601a08260e875a",
-            "signal_id": "sig-76fdd54e9d601a08260e875aad01d23c",
-            "run_id": "run-rb-2eebe2b7a8af4c0c909991a13bba75a6-76fdd54e9d601a08260e875a",
-            "strategy_id": "strategy-paper-001",
-            "timestamp": _NOW,
-            "symbol": "AAPL.US",
-            "action": "BUY",
-            "direction": "LONG",
-            "quantity": 1,
-            "quantity_type": "SHARES",
-            "environment": "paper",
-        }
-        [explicit_tenant_sig] = build_decision_signals(
-            {**base_decision, "tenant_id": "tenant-dev"}
-        )
-        self.assertEqual(explicit_tenant_sig["tenant_id"], "tenant-dev")
-        self.assertEqual(
-            explicit_tenant_sig["journey_id"],
-            "tj_c7d14e8a-3cac-439a-81b7-7401fa2aaac3",
-        )
-        self.assertEqual(
-            explicit_tenant_sig["correlation_envelope"]["correlation_id"],
-            "f2c61c63-b926-4bab-ad1e-1c792bcc18f2",
-        )
-        self.assertEqual(
-            explicit_tenant_sig["correlation_envelope"]["trace_id"],
-            "bcde2641-a43e-4c6d-8a25-de42a0ad97a3",
-        )
-
-        [implicit_default_sig] = build_decision_signals(dict(base_decision))
-        self.assertEqual(implicit_default_sig["tenant_id"], "default")
-        self.assertEqual(
-            implicit_default_sig["correlation_envelope"]["tenant_id"], "default"
-        )
-        self.assertNotEqual(
-            implicit_default_sig["journey_id"],
-            "tj_c7d14e8a-3cac-439a-81b7-7401fa2aaac3",
-        )
-        self.assertNotEqual(
-            implicit_default_sig["correlation_envelope"]["correlation_id"],
-            "f2c61c63-b926-4bab-ad1e-1c792bcc18f2",
-        )
-        self.assertNotEqual(
-            implicit_default_sig["correlation_envelope"]["trace_id"],
-            "bcde2641-a43e-4c6d-8a25-de42a0ad97a3",
-        )
-
         script = """
-import hashlib, json, sys, types
-from services.execution.lean_runtime.signal_producer import DecisionSignalProducer, _CANONICAL_JOURNEYS
+import hashlib, sys, types
+from services.execution.lean_runtime.signal_producer import DecisionSignalProducer
 
-assert len(_CANONICAL_JOURNEYS) == 0
 sid = "sig-76fdd54e9d601a08260e875aad01d23c"
 qkey = "pantheon:signals:pending:rb-2eebe2b7a8af4c0c909991a13bba75a6"
 ekey = f"{qkey}:execution:{hashlib.sha256(sid.encode('utf-8')).hexdigest()}"

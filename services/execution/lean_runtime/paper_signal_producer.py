@@ -1151,10 +1151,7 @@ class PaperSignalProducer:
         enqueued = 0
         if isinstance(out, list):
             # Legacy list-of-signals flow
-            from services.execution.lean_runtime.signal_producer import (
-                is_signal_already_admitted,
-                remember_canonical_journey,
-            )
+            from services.execution.lean_runtime.signal_producer import is_signal_already_admitted
             for sig in out:
                 if "metadata" not in sig:
                     sig["metadata"] = {}
@@ -1164,25 +1161,6 @@ class PaperSignalProducer:
                 _paper_signal_identity(sig, b_dict, now_iso)
                 if is_signal_already_admitted(store, str(sig.get("signal_id") or "")):
                     continue
-                env_map = (
-                    sig.get("correlation_envelope")
-                    if isinstance(sig.get("correlation_envelope"), Mapping)
-                    else {}
-                )
-                remember_canonical_journey(
-                    tenant_id=str(sig.get("tenant_id") or "default"),
-                    environment=str(sig.get("environment") or "paper"),
-                    journey_id=str(sig.get("journey_id") or ""),
-                    signal_id=str(sig.get("signal_id") or ""),
-                    decision_id=str(
-                        sig.get("decision_id")
-                        or (sig.get("metadata") or {}).get("decision_id")
-                        or ""
-                    ),
-                    run_id=str(sig.get("run_id") or ""),
-                    correlation_id=str(env_map.get("correlation_id") or ""),
-                    trace_id=str(env_map.get("trace_id") or ""),
-                )
                 store.enqueue(sig)
                 enqueued += 1
         elif isinstance(out, dict):

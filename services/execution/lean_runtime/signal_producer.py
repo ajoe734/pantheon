@@ -6,7 +6,6 @@ and the execution-facing signal schema v1 payload consumed by
 """
 from __future__ import annotations
 
-from collections import OrderedDict
 import hashlib
 import json
 import uuid
@@ -36,50 +35,6 @@ _ORDER_TYPES = {"MARKET", "LIMIT"}
 _QUANTITY_TYPES = {"SHARES", "PERCENT_PORTFOLIO", "CASH_VALUE"}
 _UUID_NAMESPACE = uuid.UUID("b22ee960-00c4-4e60-9d53-203f23a400c3")
 _SCHEMA_PATH = Path(__file__).resolve().parents[2] / "research" / "schema.json"
-_CANONICAL_JOURNEYS: OrderedDict[tuple[str, str, str, str], dict[str, str]] = OrderedDict()
-_MAX_CANONICAL_JOURNEYS = 4096
-
-
-def remember_canonical_journey(
-    *,
-    tenant_id: str,
-    environment: str,
-    journey_id: str,
-    signal_id: str | None = None,
-    decision_id: str | None = None,
-    run_id: str | None = None,
-    correlation_id: str | None = None,
-    trace_id: str | None = None,
-) -> None:
-    """Record an already-owned canonical journey so retries reuse it across rollbacks."""
-    t_id = str(tenant_id or "").strip()
-    env = str(environment or "").strip().lower()
-    j_id = str(journey_id or "").strip()
-    if not t_id or not env or not j_id:
-        return
-    record: dict[str, str] = {
-        "tenant_id": t_id,
-        "environment": env,
-        "journey_id": j_id,
-    }
-    for key, val in (
-        ("signal_id", signal_id),
-        ("decision_id", decision_id),
-        ("run_id", run_id),
-        ("correlation_id", correlation_id),
-        ("trace_id", trace_id),
-    ):
-        if isinstance(val, str) and val.strip():
-            record[key] = val.strip()
-    for id_type in ("signal_id", "decision_id", "run_id"):
-        id_val = record.get(id_type)
-        if not id_val:
-            continue
-        cache_key = (t_id, env, id_type, id_val)
-        _CANONICAL_JOURNEYS.pop(cache_key, None)
-        _CANONICAL_JOURNEYS[cache_key] = record
-        while len(_CANONICAL_JOURNEYS) > _MAX_CANONICAL_JOURNEYS:
-            _CANONICAL_JOURNEYS.popitem(last=False)
 
 
 def is_signal_already_admitted(store: Any, signal_id: str) -> bool:
@@ -200,7 +155,6 @@ class DecisionSignalProducer:
             binding_id=binding_id,
             runtime_id=runtime_id,
             run_id=run_id,
-            store=self._store,
         )
 
     def produce(
@@ -269,7 +223,6 @@ def build_decision_signals(
     binding_id: str | None = None,
     runtime_id: str | None = None,
     run_id: str | None = None,
-    store: Any = None,
 ) -> list[dict[str, Any]]:
     """Normalize a persona/strategy decision to one or more schema-v1 signals."""
     payload = _mapping_from_decision(decision)
@@ -286,9 +239,8 @@ def build_decision_signals(
         "tenant_id": tenant_id,
         "environment": environment,
     }
-    effective_run_id = run_id or _first_string(payload, "run_id") or _first_string(decision_metadata, "run_id")
-    if effective_run_id:
-        common["run_id"] = str(effective_run_id)
+    if run_id or _first_string(payload, "run_id"):
+        common["run_id"] = str(run_id or _first_string(payload, "run_id"))
     if binding_id or _first_string(payload, "binding_id"):
         common["binding_id"] = str(binding_id or _first_string(payload, "binding_id"))
     if runtime_id or _first_string(payload, "runtime_id"):
@@ -297,31 +249,11 @@ def build_decision_signals(
         common["source_worker"] = str(source_worker or _first_string(payload, "source_worker"))
 
     targets = _decision_targets(payload)
-    single_target = len(targets) == 1
-    decision_id = _decision_id(payload) or _first_string(decision_metadata, "decision_id")
     signals = [
         _build_one_signal(payload, target, index=index, common=common)
         for index, target in enumerate(targets)
     ]
     for signal in signals:
-        canonical = _resolve_canonical_journey(
-            payload,
-            decision_metadata,
-            store,
-            tenant_id=tenant_id,
-            environment=environment,
-            signal_id=str(signal["signal_id"]),
-            decision_id=decision_id,
-            run_id=str(effective_run_id) if effective_run_id else None,
-            single_target=single_target,
-        )
-        if (
-            single_target
-            and canonical
-            and canonical.get("signal_id")
-            and not (_field(targets[0], "signal_id", "signalId") or _field(payload, "signal_id", "signalId"))
-        ):
-            signal["signal_id"] = canonical["signal_id"]
         envelope = _signal_envelope(
             payload,
             upstream_envelope,
@@ -329,9 +261,6 @@ def build_decision_signals(
             tenant_id=tenant_id,
             environment=environment,
             timestamp=timestamp,
-            canonical=canonical,
-            decision_id=decision_id,
-            run_id=str(effective_run_id) if effective_run_id else None,
         )
         signal["correlation_envelope"] = envelope
         signal["journey_id"] = envelope["journey_id"]
@@ -439,98 +368,6 @@ def _stable_id(tenant_id: str, environment: str, signal_id: str, kind: str) -> s
     return str(uuid.uuid5(_UUID_NAMESPACE, name))
 
 
-def _resolve_canonical_journey(
-    decision: Mapping[str, Any],
-    metadata: Mapping[str, Any],
-    store: Any,
-    *,
-    tenant_id: str,
-    environment: str,
-    signal_id: str | None,
-    decision_id: str | None,
-    run_id: str | None,
-    single_target: bool,
-) -> dict[str, str] | None:
-    explicit_journey = (
-        _first_string(decision, "journey_id", "canonical_journey_id")
-        or _first_string(metadata, "journey_id", "canonical_journey_id")
-    )
-    if explicit_journey:
-        return {"journey_id": explicit_journey}
-
-    explicit_signal = _first_string(decision, "signal_id", "signalId") or _first_string(
-        metadata, "signal_id", "signalId"
-    )
-    candidates: list[tuple[str, str]] = []
-    if signal_id:
-        candidates.append(("signal_id", signal_id))
-    if single_target:
-        if decision_id:
-            candidates.append(("decision_id", decision_id))
-        if run_id:
-            candidates.append(("run_id", run_id))
-
-    for resolver_owner in (store, getattr(store, "projection_store", None)):
-        resolve = getattr(resolver_owner, "resolve_identity", None)
-        if not callable(resolve):
-            continue
-        for id_type, id_val in candidates:
-            try:
-                bound = resolve(tenant_id, environment, id_type, id_val)
-            except Exception:  # noqa: BLE001
-                bound = None
-            if isinstance(bound, str) and bound.strip():
-                return {"journey_id": bound.strip()}
-
-    if store is not None:
-        stored_items: list[Mapping[str, Any]] = []
-        for attr in ("_pending", "_dlq"):
-            seq = getattr(store, attr, None)
-            if isinstance(seq, list):
-                stored_items.extend(item for item in seq if isinstance(item, Mapping))
-        inflight = getattr(store, "_inflight", None)
-        if isinstance(inflight, Mapping):
-            stored_items.extend(item for item in inflight.values() if isinstance(item, Mapping))
-        for item in stored_items:
-            if str(item.get("tenant_id") or "default") != tenant_id:
-                continue
-            if str(item.get("environment") or "paper").lower() != environment:
-                continue
-            item_meta = item.get("metadata") if isinstance(item.get("metadata"), Mapping) else {}
-            item_sig = str(item.get("signal_id") or "")
-            item_dec = str(item.get("decision_id") or item_meta.get("decision_id") or "")
-            item_run = str(item.get("run_id") or item_meta.get("run_id") or "")
-            if (signal_id and item_sig == signal_id) or (
-                single_target
-                and ((decision_id and item_dec == decision_id) or (run_id and item_run == run_id))
-            ):
-                if explicit_signal and item_sig and explicit_signal != item_sig:
-                    continue
-                j_id = str(item.get("journey_id") or item_meta.get("journey_id") or "").strip()
-                if j_id:
-                    env_map = (
-                        item.get("correlation_envelope")
-                        if isinstance(item.get("correlation_envelope"), Mapping)
-                        else {}
-                    )
-                    out = {"journey_id": j_id}
-                    if item_sig:
-                        out["signal_id"] = item_sig
-                    for k in ("correlation_id", "trace_id"):
-                        v = env_map.get(k)
-                        if isinstance(v, str) and v.strip():
-                            out[k] = v.strip()
-                    return out
-
-    for id_type, id_val in candidates:
-        rec = _CANONICAL_JOURNEYS.get((tenant_id, environment, id_type, id_val))
-        if rec is not None:
-            if explicit_signal and rec.get("signal_id") and explicit_signal != rec["signal_id"]:
-                continue
-            return dict(rec)
-    return None
-
-
 def _signal_envelope(
     decision: Mapping[str, Any],
     upstream_envelope: Mapping[str, Any],
@@ -539,76 +376,41 @@ def _signal_envelope(
     tenant_id: str,
     environment: str,
     timestamp: str,
-    canonical: Mapping[str, str] | None = None,
-    decision_id: str | None = None,
-    run_id: str | None = None,
 ) -> dict[str, Any]:
     """Create one signal occurrence envelope while preserving upstream lineage."""
     event_id = f"signal:{signal_id}"
     try:
         if upstream_envelope.get("journey_id"):
             validated = validate_envelope(upstream_envelope)
-            propagated = propagate_envelope(
+            return propagate_envelope(
                 validated,
                 producer="execution.signal-decision",
                 event_id=event_id,
                 event_time=timestamp,
             )
-            remember_canonical_journey(
-                tenant_id=tenant_id,
-                environment=environment,
-                journey_id=str(propagated["journey_id"]),
-                signal_id=signal_id,
-                decision_id=decision_id,
-                run_id=run_id,
-                correlation_id=str(propagated.get("correlation_id") or ""),
-                trace_id=str(propagated.get("trace_id") or ""),
-            )
-            return propagated
 
         seed = dict(upstream_envelope)
         seed["tenant_id"] = tenant_id
         seed["environment"] = environment
-        if canonical is not None:
-            if canonical.get("correlation_id"):
-                seed.setdefault("correlation_id", canonical["correlation_id"])
-            if canonical.get("trace_id"):
-                seed.setdefault("trace_id", canonical["trace_id"])
-        # The signal_id is the replay-stable identity of one decision. Reusing an
-        # already-owned canonical journey (or deriving a deterministic uuid5 for a
-        # fresh decision) keeps every retry on the original journey.
+        # The signal_id is the replay-stable identity of one decision. Deriving
+        # the minted journey from it keeps every retry of the same decision on
+        # the original journey instead of minting a new one per tick.
         seed.setdefault("correlation_id", _stable_id(tenant_id, environment, signal_id, "correlation"))
         seed.setdefault("trace_id", _stable_id(tenant_id, environment, signal_id, "trace"))
-        journey_id = (
-            (canonical.get("journey_id") if canonical else None)
-            or _first_string(decision, "journey_id")
-            or _first_string(
-                _json_object(_field(decision, "metadata")) or {},
-                "journey_id",
-            )
-            or f"tj_{_stable_id(tenant_id, environment, signal_id, 'journey')}"
-        )
-        envelope = mint_trade_envelope(
+        return mint_trade_envelope(
             seed,
             producer="execution.signal-decision",
             now=timestamp,
-            journey_id=journey_id,
+            journey_id=(
+                _first_string(decision, "journey_id")
+                or _first_string(
+                    _json_object(_field(decision, "metadata")) or {},
+                    "journey_id",
+                )
+                or f"tj_{_stable_id(tenant_id, environment, signal_id, 'journey')}"
+            ),
             event_id=event_id,
         )
-        if _first_string(decision, "journey_id") or _first_string(
-            _json_object(_field(decision, "metadata")) or {}, "journey_id"
-        ):
-            remember_canonical_journey(
-                tenant_id=tenant_id,
-                environment=environment,
-                journey_id=str(envelope["journey_id"]),
-                signal_id=signal_id,
-                decision_id=decision_id,
-                run_id=run_id,
-                correlation_id=str(envelope.get("correlation_id") or ""),
-                trace_id=str(envelope.get("trace_id") or ""),
-            )
-        return envelope
     except CorrelationEnvelopeError as exc:
         raise SignalProducerValidationError(str(exc)) from exc
 
@@ -946,6 +748,5 @@ __all__ = [
     "SignalProducerValidationError",
     "build_decision_signals",
     "is_signal_already_admitted",
-    "remember_canonical_journey",
     "validate_signal_v1",
 ]
