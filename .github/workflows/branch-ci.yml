@@ -574,15 +574,16 @@ jobs:
             echo "no smoke gate configured; skipping"
           fi
 
-  # Parallel to Smoke so the added suites cannot push Smoke past its 30-minute
-  # budget. Each directory runs alone (no repo-wide conftest masking). No
-  # known-failures list, deselect or skip. gov_approval_test backs
-  # services/deployment (GOV_APPROVAL_TEST_DSN, same pattern as
-  # persona-owner-contract.yml); consultation gets its own database.
-  service-suites:
-    name: Service suites
+  # Parallel legs so the Service suites path stays well inside the 30-minute
+  # budget (serial run on 1a8d420de took 26m50s). Each suite is a whole
+  # directory run alone (no repo-wide conftest masking), no known-failures list,
+  # deselect or skip. The final "Service suites" job is the required check.
+  # gov_approval_test backs services/deployment (GOV_APPROVAL_TEST_DSN, same
+  # pattern as persona-owner-contract.yml); consultation gets its own database.
+  service-suites-postgres:
+    name: Service suites (postgres)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     needs:
       - trailers
       - generated-files
@@ -612,20 +613,8 @@ jobs:
         run: |
           python3 -m pip install --upgrade pip
           python3 -m pip install -r requirements.txt
-          python3 -m pip install -r services/incidents/requirements.txt
-          python3 -m pip install -r services/postmortems/requirements.txt
-          python3 -m pip install -r services/policy-learning/requirements.txt
-          python3 -m pip install -r services/promotion/requirements.txt
           python3 -m pip install -r services/deployment/requirements.txt
           python3 -m pip install -r services/consultation/requirements.txt
-          python3 -m pip install -r services/search/requirements.txt
-          python3 -m pip install -r services/capital/requirements.txt
-          python3 -m pip install -r services/telemetry/requirements.txt
-          python3 -m pip install -r services/evolution/requirements.txt
-          # training-session pins vectorbt 1.1.1 for its real-backend preview test.
-          python3 -m pip install -r services/training-session/requirements.txt
-          # search tests import qdrant_client; take the pin from its own lock.
-          python3 -m pip install "$(grep -E '^qdrant-client==' services/search/requirements.lock)"
 
       - name: Create consultation database
         run: |
@@ -635,42 +624,6 @@ jobs:
           # Let the rankings owner store create it, as the rankings service does.
           DATABASE_URL=postgresql://postgres@127.0.0.1:5432/consultation_test \
             python3 -c "from services.foundation.postgres_json_store import PostgresJsonOwnerStore as S; import os; S(dsn=os.environ['DATABASE_URL'], table='rankings.rankings', owner_service='rankings-svc')"
-
-      - name: Run incidents service tests
-        if: ${{ !cancelled() }}
-        timeout-minutes: 10
-        run: |
-          python3 -m pytest -q services/incidents
-
-      - name: Run postmortems service tests
-        if: ${{ !cancelled() }}
-        timeout-minutes: 10
-        run: |
-          python3 -m pytest -q services/postmortems
-
-      - name: Run control_plane service tests
-        if: ${{ !cancelled() }}
-        timeout-minutes: 10
-        run: |
-          python3 -m pytest -q services/control_plane
-
-      - name: Run policy-learning service tests
-        if: ${{ !cancelled() }}
-        timeout-minutes: 10
-        run: |
-          python3 -m pytest -q services/policy-learning
-
-      - name: Run training-session service tests
-        if: ${{ !cancelled() }}
-        timeout-minutes: 10
-        run: |
-          python3 -m pytest -q services/training-session
-
-      - name: Run promotion service tests
-        if: ${{ !cancelled() }}
-        timeout-minutes: 10
-        run: |
-          python3 -m pytest -q services/promotion
 
       - name: Run deployment service tests
         if: ${{ !cancelled() }}
@@ -687,30 +640,6 @@ jobs:
           DATABASE_URL: postgresql://postgres@127.0.0.1:5432/consultation_test
         run: |
           python3 -m pytest -q services/consultation
-
-      - name: Run search service tests
-        if: ${{ !cancelled() }}
-        timeout-minutes: 10
-        run: |
-          python3 -m pytest -q services/search
-
-      - name: Run execution service tests
-        if: ${{ !cancelled() }}
-        timeout-minutes: 10
-        run: |
-          python3 -m pytest -q services/execution
-
-      - name: Run openclaw-gateway-adapter service tests
-        if: ${{ !cancelled() }}
-        timeout-minutes: 10
-        run: |
-          python3 -m pytest -q services/openclaw-gateway-adapter
-
-      - name: Run registry service tests
-        if: ${{ !cancelled() }}
-        timeout-minutes: 10
-        run: |
-          python3 -m pytest -q services/registry
 
       - name: Run governance service tests
         if: ${{ !cancelled() }}
@@ -731,11 +660,99 @@ jobs:
         run: |
           python3 -m pytest -q services/trade_journey
 
-      - name: Run capital service tests
-        if: ${{ !cancelled() }}
-        timeout-minutes: 15
+  service-suites-heavy:
+    name: Service suites (heavy installs)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs:
+      - trailers
+      - generated-files
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        timeout-minutes: 10
         run: |
-          python3 -m pytest -q services/capital
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt
+          python3 -m pip install -r services/incidents/requirements.txt
+          python3 -m pip install -r services/postmortems/requirements.txt
+          python3 -m pip install -r services/promotion/requirements.txt
+          python3 -m pip install -r services/search/requirements.txt
+          # training-session pins vectorbt 1.1.1 for its real-backend preview test.
+          python3 -m pip install -r services/training-session/requirements.txt
+          # search tests import qdrant_client; take the pin from its own lock.
+          python3 -m pip install "$(grep -E '^qdrant-client==' services/search/requirements.lock)"
+
+      - name: Run training-session service tests
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/training-session
+
+      - name: Run search service tests
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/search
+
+      - name: Run incidents service tests
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/incidents
+
+      - name: Run postmortems service tests
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/postmortems
+
+      - name: Run control_plane service tests
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/control_plane
+
+      - name: Run promotion service tests
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/promotion
+
+  service-suites-runtime:
+    name: Service suites (runtime)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs:
+      - trailers
+      - generated-files
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        timeout-minutes: 10
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt
+          python3 -m pip install -r services/capital/requirements.txt
+          python3 -m pip install -r services/telemetry/requirements.txt
+
+      - name: Run openclaw-gateway-adapter service tests
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/openclaw-gateway-adapter
 
       - name: Run telemetry service tests
         if: ${{ !cancelled() }}
@@ -743,11 +760,58 @@ jobs:
         run: |
           python3 -m pytest -q services/telemetry
 
+      - name: Run capital service tests
+        if: ${{ !cancelled() }}
+        timeout-minutes: 15
+        run: |
+          python3 -m pytest -q services/capital
+
+  service-suites-misc:
+    name: Service suites (misc)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs:
+      - trailers
+      - generated-files
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        timeout-minutes: 10
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt
+          python3 -m pip install -r services/policy-learning/requirements.txt
+          python3 -m pip install -r services/evolution/requirements.txt
+
       - name: Run evolution service tests
         if: ${{ !cancelled() }}
         timeout-minutes: 15
         run: |
           python3 -m pytest -q services/evolution
+
+      - name: Run execution service tests
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/execution
+
+      - name: Run registry service tests
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/registry
+
+      - name: Run policy-learning service tests
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        run: |
+          python3 -m pytest -q services/policy-learning
 
       - name: Run persona service tests
         if: ${{ !cancelled() }}
@@ -758,6 +822,28 @@ jobs:
           COMPOSE_PROFILES: core
         run: |
           python3 -m pytest -q services/persona
+
+  # Aggregator: keeps the required check name "Service suites" stable for
+  # branch protection and .orchestrator/config.json required_status_checks.
+  service-suites:
+    name: Service suites
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs:
+      - service-suites-postgres
+      - service-suites-heavy
+      - service-suites-runtime
+      - service-suites-misc
+    steps:
+      - name: Require every leg to succeed
+        env:
+          LEG_RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "leg results: $LEG_RESULTS"
+          for r in $LEG_RESULTS; do
+            [[ "$r" == "success" ]] || { echo "a Service suites leg did not succeed"; exit 1; }
+          done
 
   # Own job (and venv) so the research dependency set (QuantLib, mlflow,
   # vectorbt, each pinned by its own requirements file) never shares an

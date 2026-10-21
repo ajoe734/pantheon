@@ -7,5 +7,161 @@
     "services/persona/write_owner.py: auth 5xx surfaces as 503; owner HTTP error detail now carries the stable code as 'CODE: message' on all PersonaAuthorityError handlers"
   ],
   "tests": "services/persona/test_lifecycle_approval_verifier.py (strict HTTP: no decision=LIFECYCLE_AUTHORITY_REQUIRED, nonexistent/mismatched=GOVERNANCE_DECISION_INVALID, bad signature=401, approved exact decision applies + readback, missing secret=503 AUTH_JWT_SECRET_MISSING; rendered docker compose config); with tests/persona_capital_write_owner, test_persona_owner_transport_contract.py, scripts/test_persona_provisioning_compose_contract.py: 60 passed",
-  "hosted_verification": "not performed by the worker (no deployed dev access); pending coordinator verification after next root deploy"
+  "hosted_verification": "not performed by the worker (no deployed dev access); pending coordinator verification after next root deploy",
+  "hosted_acceptance": {
+    "task_id": "PERSONA-OWNER-JWT-VERIFIER-DEV-20261004",
+    "at": "2026-10-21T13:21:05.395923+00:00",
+    "status": "hosted_supplement_prepared_for_original_assigned_independent_review",
+    "owner": "Human/Ops",
+    "reviewer": "Antigravity",
+    "documentation_only": true,
+    "production_delta": 0,
+    "hosted_done": false,
+    "all12_complete": false,
+    "original_acceptance": {
+      "AC1": {
+        "requirement": "On a deployed dev stack the Persona owner verifies the operator JWT that the BFF forwards for lifecycle and other JWT-authenticated mutations using the same issuer and audience and signing configuration as the other owners that already verify BFF-issued JWTs; strict mode stays strict and an unsigned or wrongly signed token is still rejected",
+        "evidence_state": "provided_for_independent_review",
+        "finding": "Original source tests and rendered verifier binding use the strict common issuer/audience/signature configuration and reject wrong signatures. Original explicitly authorized JWT-forwarded lifecycle command actually applied once; current canonical/BFF owner and genuine UI remain research_only after actual later Persona recreation on accepted23f9dd/a701. No unsigned token or fabricated MFA claim is used.",
+        "proof_keys": [
+          "original_source_evidence",
+          "rendered_owner_verifier_source_wiring",
+          "current_command_and_original_approval",
+          "actual_later_owner_identity",
+          "current_same_original_owner_and_approval"
+        ]
+      },
+      "AC2": {
+        "requirement": "A misconfigured verifier is reported as an explicit authentication-configuration error (for example 503 with a stable code) rather than an unhandled 500",
+        "evidence_state": "provided_for_independent_review",
+        "finding": "Original strict owner test actually proves missing secret returns503 AUTH_JWT_SECRET_MISSING instead of500. This is local/source negative validation; the hosted stack is not deliberately misconfigured for this supplement.",
+        "proof_keys": [
+          "original_source_evidence"
+        ]
+      },
+      "AC3": {
+        "requirement": "AdvanceLifecycle through the BFF without a Governance decision is rejected by the Persona owner with LIFECYCLE_AUTHORITY_REQUIRED and with a nonexistent or mismatched decision with GOVERNANCE_DECISION_INVALID; with an approved persona_lifecycle_transition decision for the exact persona and states it applies and the owner readback shows the new state",
+        "evidence_state": "provided_for_independent_review",
+        "finding": "Original DEV ACCEPTANCE ONLY Persona received exactly the user-authorized replacementv2 decision and draft→research_only command at01:13:49 Oct19, before approval expiry. Initial stale BFFdraft was retained as failure, later canonical state/UI separately verified. Current final-pair original full response and appliedcommand/approval persist across actual laterowner replacement and exact software rollback/return. Missing/nonexistent/mismatched decision cases are covered by accepted strict source tests, not replayed hosted transitions.",
+        "proof_keys": [
+          "actual_user_consent_and_single_owner_application",
+          "original_source_evidence",
+          "current_command_and_original_approval",
+          "current_whole22_three_leg_preservation",
+          "current_same_saved_UI"
+        ]
+      },
+      "AC4": {
+        "requirement": "Service-token callers that work today (for example paper onboarding) keep working",
+        "evidence_state": "provided_for_independent_review",
+        "finding": "Original service-token/provisioning transport regressions remain passing source evidence. Current genuine paper onboarding and unrelated service callers are not altered by this documentation-only supplement; no token/MFA status or business permission is invented.",
+        "proof_keys": [
+          "original_source_evidence",
+          "rendered_owner_verifier_source_wiring"
+        ]
+      },
+      "AC5": {
+        "requirement": "Rendered-compose and owner tests prove the deployed Persona service receives its verifier configuration and that the three decision cases behave as above",
+        "evidence_state": "provided_for_independent_review",
+        "finding": "Retain the original60 passing owner/transport/rendered-compose/provisioning tests covering all three decision cases. Final Root successfully recreated the actual Persona owner, and same original decision/command/canonical lifecycle plus UI survive. These scopes are separated; no source test is relabeled a fresh hosted negative request.",
+        "proof_keys": [
+          "original_source_evidence",
+          "rendered_owner_verifier_source_wiring",
+          "current_accepted_exact_pair",
+          "actual_later_owner_identity",
+          "current_whole22_three_leg_preservation",
+          "current_same_saved_UI"
+        ]
+      },
+      "AC6": {
+        "requirement": "Net production lines increase by at most 40",
+        "evidence_state": "provided_for_independent_review",
+        "finding": "Original source delivery and its<=40 net production-line scope are retained; this supplement changes only the existing evidence JSON, production delta0.",
+        "proof_keys": [
+          "original_source_evidence"
+        ]
+      }
+    },
+    "proofs": {
+      "original_source_evidence": {
+        "repository": "ajoe734/pantheon",
+        "commit": "05c6ff9b2038c27cdbf9a38e52bd3591cababf70",
+        "path": "docs/deployment/evidence/PERSONA-OWNER-JWT-VERIFIER-DEV-20261004/evidence.json",
+        "sha256": "a4c60ac78fc4a98e5e2ccf6640ed2b8196c7c51e22210b74a3da3874ba2d6480"
+      },
+      "actual_user_consent_and_single_owner_application": {
+        "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Original-Persona-consent-single-execution-valid-at-apply-and-current-canonical-owner-independent-bounded-audit-20261020.json",
+        "sha256": "e6bc40d5186e9a6c0b72f2bb56c8f116800998f5cb80c268a946e13bc5b4b29a"
+      },
+      "rendered_owner_verifier_source_wiring": {
+        "path": "/tmp/pantheon-capital-hosted-acceptance-20261021/docs/deployment/evidence/DEV-EXISTING-OWNER-VERIFIER-BINDINGS-20261005/evidence.json",
+        "sha256": "7d27313d5058e5eab4713b1284962dfa7d01d50ee2e331342394b8808f800d60"
+      },
+      "current_accepted_exact_pair": {
+        "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Root39564986170-accepted-exact-artifact-roundtrip-proof-20261021.json",
+        "sha256": "7b4e6b7ff42cfefb7234cf4a9463a421c0f4b7afd5bef50e9acf5b646863637d"
+      },
+      "current_same_original_owner_and_approval": {
+        "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/original-protected-records-readonly-post-root-readback-20261021T123540Z.json",
+        "sha256": "8493d6fdfe211dfa38d5d53f1321d54269976d5f875c8c3f18e5da81c28d4e51"
+      },
+      "current_same_saved_UI": {
+        "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/original-hosted-ui-after-accepted-Root39564986170-20261021T123748856Z/checkpoint.json",
+        "sha256": "b5a49daaf73ebf58cba5ad672a3ffc85a9bdabd0ac031b92facad9a99794832b"
+      },
+      "actual_later_owner_identity": {
+        "path": "/tmp/pantheon-assist-20261013/Actual-product-owners-post-accepted-Root39564986170-20261021T123747Z.json",
+        "sha256": "9c0d25e7572034a7a1dfcdaae2e2887154e8772365b27ad3d8fbe037b1f6a76b"
+      },
+      "current_command_and_original_approval": {
+        "path": "/tmp/pantheon-assist-20261013/original-consumed-extra21-plus-current-Evaluator-postRoot39564986170-20261021T125142Z.json",
+        "sha256": "8ae3616d719195c858f3212b7866c8bb655c34106bf76e4beefcd4de2d14f323"
+      },
+      "current_whole22_three_leg_preservation": {
+        "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Root39564986170-original25-three-leg-whole22-preservation-independent-audit-20261021.json",
+        "sha256": "621faa7db081d03b3b678d58d082dae1eb667f5e9b798d4175ec191301d3f3da"
+      },
+      "current_genuine_auth_and_tenant_boundary": {
+        "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Root39564986170-existing-approval-auth-late-read-20261020-continuation/checkpoint.json",
+        "sha256": "10964b9744391a328e495c0320bc18cda6e0f032167b4170a7dc14ac8eef6806"
+      }
+    },
+    "final_accepted_release": {
+      "BE": "23f9dd03e5d12b2cab769dd8fc2596d117c01ba4",
+      "FE": "a70121543efec81e07a278d034898b258a8b4dc2",
+      "Root": 39564986170,
+      "proof": {
+        "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Root39564986170-accepted-exact-artifact-roundtrip-proof-20261021.json",
+        "sha256": "7b4e6b7ff42cfefb7234cf4a9463a421c0f4b7afd5bef50e9acf5b646863637d"
+      }
+    },
+    "new_decisions_transitions_renewals_provider_or_capital_actions": 0,
+    "limits": [
+      "Original strict-negative/signature/misconfiguration/service-token cases are source/local validation and retain their original proof. No new hosted lifecycle mutation or deliberate secret removal is performed.",
+      "The user made the actual approval decision in chat; the existing execution identity is honestly recorded. There is no fabricated second human or MFA claim.",
+      "Replacement approval expired after the successful application. No renewal/replacement/second transition is inferred or executed.",
+      "The Persona correctly remains research_only and its paper onboarding UI is0/5/degraded because no paper operation was requested for this fixture; that is not force-changed to green.",
+      "Current owner image/OCI metadata is retained exactly, including any null field; no whole-stack revision or all49/allL1-L12/TOTAL acceptance is inferred.",
+      "Assigned Antigravity review remains pending; this supplement does not set hosted done."
+    ],
+    "actual_current_owner": {
+      "container_id": "3f9d55657f805a78ec11eeef01dd84ccbf34c8a6e17f3d6c32d78113f5b49619",
+      "image_id": "sha256:0127a91abedf695791227852f2c31d5a8ab3f3b81ef3769586a937aa5d17be4b",
+      "started_at": "2026-10-21T08:11:00.340333935Z",
+      "pid": 458702,
+      "status": "running",
+      "restart_count": 0,
+      "service": "persona",
+      "oci_revision": null
+    },
+    "actual_current_UI": {
+      "same_persona": "persona-dev-lifecycle-39057282435",
+      "state": "research_only",
+      "applied_at": "2026-10-19T01:13:49Z",
+      "visible_after_reload": true,
+      "visually_reviewed_after_reload": true,
+      "paper_onboarding_not_requested_for_this_research_only_fixture": true
+    },
+    "independent_assigned_review_pending": true
+  }
 }
