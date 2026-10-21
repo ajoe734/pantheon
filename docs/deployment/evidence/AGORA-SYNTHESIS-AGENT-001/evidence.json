@@ -26,13 +26,136 @@
   },
   "measured_deltas": {
     "production": "+150/-58 net +92",
-    "test": "+313/-4 net +309",
+    "test": "+307/-4 net +303 (manifest pre-review reported +313/-4 net +309; Codex2 independent measurement +303 governs)",
     "docs_evidence": "+38/-0 net +38"
   },
   "source_identity": {
     "reviewed_functional_head": "cc172a34264ae3d12d0d6a0190d208bb668eec59",
     "reviewed_pr": 6076,
     "reviewed_manifest_blob": "35b1638c22edaaa71874a3be38a6bc91cc003469",
-    "continuation": "task/AGORA-SYNTHESIS-AGENT-001-v3 (clean from dev; same scoped tree, trailer repair and sys.path cleanup)"
+    "continuation": "task/AGORA-SYNTHESIS-AGENT-001-v3 (clean from dev; same scoped tree, trailer repair and sys.path cleanup)",
+    "merged_pr": 6085,
+    "merged_head": "b009097e5daa1caa12a0c1626bf1409c05e0fce1",
+    "merged_base": "c95c47f3123c63385e1c144df9734a2630d030ea",
+    "merge_commit": "d0871bdf4056209d8a34548fc30da2268f59c9fe",
+    "merged_manifest_blob": "6e7491e39e67286653b4aefc14d7ca8261fe69d0"
+  },
+  "hosted_documentation_preparation": {
+    "at": "2026-10-21T15:22:00Z",
+    "status": "hosted_documentation_prepared_awaiting_coordinator_accepted_root_and_same_resource_supplement",
+    "documentation_only": true,
+    "production_delta": 0,
+    "owner": "Antigravity",
+    "reviewer": "Codex2",
+    "depends_on": [
+      "AGORA-DEAD-SURFACES-REMOVAL-001"
+    ],
+    "scoped_artifacts": [
+      "services/control-plane/bff/agora/interaction/",
+      "services/control-plane/bff/openclaw_ops_client.py",
+      "services/control-plane/bff/tests/",
+      "docs/deployment/evidence/AGORA-SYNTHESIS-AGENT-001/evidence.json",
+      "docker-compose.yml"
+    ],
+    "functional_done": true,
+    "hosted_done": false,
+    "all12_complete": false,
+    "new_business_or_provider_or_CPU_executions": 0,
+    "sole_serial_hosted_coordinator": "01a10c97-4d16-7002-ad80-dc4384781fe2",
+    "formal_Root": {
+      "run_id": 39619749022,
+      "BE": "368b84c4b0d140ecf907ea9e6e069eaf657d05d2",
+      "FE": "1cfa8120c26e55f6a00beaff4e01bb4601eb540d",
+      "accepted": false,
+      "status": "in_progress",
+      "one_POST_only": true
+    },
+    "original_Agora_saved_case": "int_b2d328beef06a00381a76e63",
+    "original_finite_business_grants_consumed": true,
+    "referenced_technical_packets": {
+      "local_hosted_documentation_packet": {
+        "path": "/tmp/pantheon-assist-20261013/Original-Agora8-Evaluator13-existing-hosted-documents-local-only-packet-20261021.json",
+        "sha256": "0f44788aaed6754c500182cc821def309b5890490fc6b26ad2c1d29eb063469a"
+      },
+      "existing_sanitized_technical_qualification": {
+        "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/FULL39615739197-official12353946228-exact368b84-twelve-receipts-and-cleanup-independent-bounded-audit-20261021.json",
+        "sha256": "65c7e32473e6853692fba931c07eefbdedac9ac878fe06fac675974a13631b02"
+      }
+    },
+    "repository_file_sha256_at_BE_368b84c4": {
+      "services/control-plane/bff/agora/interaction/runner.py": "37bd3cdfc2a690647b49afad2d26da0de463f514afac7c5a47a5182b363bb3ee",
+      "services/control-plane/bff/agora/interaction/store.py": "20b3f733a41f9ede2d139b3a8552e981343cbba949905a9c92f1ee335f50b43a",
+      "services/control-plane/bff/agora/interaction/test_worker.py": "1489d126566ad5db406e37acfcdca03dfff514ab0cbf0a3a394929307beb9d75",
+      "services/control-plane/bff/openclaw_ops_client.py": "95141d22549dd6416b3e5e4194bdea9551c932fd61260af0a609a839a8c5d4fd",
+      "services/control-plane/bff/tests/test_agora_persona_interactions.py": "d2e793a94b14e0e937b67762f55f3e151ca3213588c82b01d9b3ecd33f91e71b",
+      "services/control-plane/bff/tests/test_pint_003_durable_opinions.py": "85498f0e8095c51844f79e235d62966b8ee61d7a954fc1e9fe990db8b984b684",
+      "docker-compose.yml": "7aa1c3e3c0b0fe57107b48ee98df1340f63882df22da454102d8ae5d30be3dad"
+    },
+    "original_acceptance": {
+      "AC1": {
+        "requirement": "After existing selected-persona invocations produce opinions call the existing OpenClaw structured provider once per interaction and opinion-set identity to return semantic recommendation/options/no-consensus/more-research judgment plus summary and agreements/disagreements with rationale and referenced supplied evidence",
+        "source_evidence": "Merged in PR #6085 (head b009097e5daa1caa12a0c1626bf1409c05e0fce1, merge d0871bdf4056209d8a34548fc30da2268f59c9fe, ancestor of BE 368b84c4b0d140ecf907ea9e6e069eaf657d05d2): services/control-plane/bff/agora/interaction/runner.py (_SYNTHESIS_STATUSES, _SYNTHESIS_SCHEMA, _synthesize lines 137-257) sorts persisted opinions by opinion_id to compute opinion-set identity synthesis_id, claims one durable synthesis invocation (persona_id='synthesis'), and calls OpenClawOpsClient.invoke_structured_extraction (services/control-plane/bff/openclaw_ops_client.py lines 379-396) once per interaction and opinion-set identity.",
+        "existing_saved_hosted_evidence": "Original authorized Agora interaction int_b2d328beef06a00381a76e63 persisted from the finite grant remains intact across BFF/worker process restart (PIDs 3017090/3017371) with unchanged 7 Postgres table rowcounts/hashes and UI reload/logout/newlogin readback (30 TRUE + 15 independent checks bcce829d).",
+        "limits": "Original finite business grant for int_b2d328beef06a00381a76e63 is CONSUMED and must never be replayed or resubmitted. Formal Root 39619749022 (BE 368b84c4b0d140ecf907ea9e6e069eaf657d05d2 / FE 1cfa8120c26e55f6a00beaff4e01bb4601eb540d) is currently in_progress (accepted=false) under sole coordinator 01a10c97-4d16-7002-ad80-dc4384781fe2; post-Root same-resource UI/owner readback supplement is still pending.",
+        "evidence_state": "prepared_awaiting_accepted_root_and_same_resource_supplement"
+      },
+      "AC2": {
+        "requirement": "Delete runner._synthesize conclusion-string comparison and first-opinion anchoring plus joined-rationale summary generation in the same delivery; there is no heuristic fallback that presents a programmatically assembled opinion as an agent conclusion",
+        "source_evidence": "Merged in PR #6085: runner._synthesize deleted conclusion-label set comparison, first-opinion anchoring, and joined-rationale summary assembly in services/control-plane/bff/agora/interaction/runner.py; provider or validation failure surfaces status='degraded' with summary='Synthesis unavailable.' and never fabricates an agent conclusion.",
+        "existing_saved_hosted_evidence": "Saved interaction int_b2d328beef06a00381a76e63 and historical Oct 3 degraded case current6ef (UI 30 TRUE 84c594a0) preserve real persisted records without heuristic synthesis fallback.",
+        "limits": "No new model/provider call is permitted to re-prove deletion; source deletion is already merged and independently verified by Codex2 on PR #6085.",
+        "evidence_state": "source_merged_and_verified"
+      },
+      "AC3": {
+        "requirement": "Keep original persona opinions visible and persist the synthesis using the existing InteractionLifecycleStore and workshop result records; retries and worker restart adopt the same saved result and provider correlation rather than creating another synthesis store/queue/service or invoking each persona again",
+        "source_evidence": "Merged in PR #6085: runner.py (lines 222-257, 320-356, 730-746) and store.py (lines 1096, 1310) persist synthesis through existing InteractionLifecycleStore (persona_interaction_invocation and persona_interaction_synthesis tables plus workshop outbox cards/events), strip internal 'synthesis' payload from provider_invocations wire reads, reuse saved persona opinions on retry, and fail closed with SYNTHESIS_OUTCOME_AMBIGUOUS on crash-window reclaim (attempt > 1) rather than re-calling the non-deduping adapter.",
+        "existing_saved_hosted_evidence": "Canonical hosted track verified actual BFF/worker process restart once (05:37:15/16, new PIDs 3017090/3017371) with identical images/Env/normalizedMounts and all original 7 Postgres table rowcounts/hashes, preserving int_b2d328beef06a00381a76e63 timeline/Workshop/Research records, container readyz 200, and genuine UI reload/logout/newlogin readback (30 TRUE + 15 checks bcce829d) with zero new model or resource writes.",
+        "limits": "Post-Root 39619749022 same-resource UI/owner readback supplement remains owed after coordinator 01a10c97-4d16-7002-ad80-dc4384781fe2 completes and accepts the formal Root release. Separate WORKSHOP-COMPLETENESS-ATOMIC-CAS-20261017 product gap on metadata-only fixture 822ca900 (zero model interactions) remains tracked under its own task.",
+        "evidence_state": "prepared_awaiting_accepted_root_and_same_resource_supplement"
+      },
+      "AC4": {
+        "requirement": "Keep deterministic envelope/schema checks and factual provider-availability metadata plus referenced-opinion/evidence membership validation; source failure remains visibly degraded and is not an LLM decision; unavailable or malformed synthesis preserves existing opinions and reports synthesis unavailable without fabrication",
+        "source_evidence": "Merged in PR #6085: runner._validated_synthesis (lines 157-178) enforces deterministic shape, non-empty strings, unique disagreement opinion_ids (len >= 2) subset of supplied opinion IDs, and evidence_refs subset of supplied opinion evidence while preserving original supplied factual metadata (observed_at, data_cutoff, freshness); failure records status='degraded' and 'Synthesis unavailable.' while keeping persona opinions intact.",
+        "existing_saved_hosted_evidence": "Historical Oct 3 failed case current6ef (UI 30 TRUE 84c594a0) retains one real opinion and explicit synthesis unavailable on readback.",
+        "limits": "Historical Oct 3 failed case current6ef is an existing preserved record and NOT a fresh provider failure injection; finite business grants are consumed and no new provider failure call may be triggered.",
+        "evidence_state": "prepared_with_explicit_historical_degraded_limit"
+      },
+      "AC5": {
+        "requirement": "Use existing structured invocation capability and data-only authority; synthesis cannot approve requests or change persona/research execution/capital state; do not create a general tool-loop or admission framework",
+        "source_evidence": "Merged in PR #6085: OpenClawOpsClient.invoke_structured_extraction posts to /api/openclaw-adapter/assistant/providers/openclaw/structured (single pinned emit_extraction tool, no write/approval/capital tools), runner._synthesize attaches authority_boundary() (execution_authority='none'), and docker-compose.yml (lines 1604-1606) wires agora-interaction-worker to the existing adapter URL and PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN reference.",
+        "existing_saved_hosted_evidence": "Canonical hosted track verified A/B/viewer identities and same tenant via /me; anonymous 401, foreign tenant 403, B interaction 404, B Workshop 403, viewer 403, and unchanged original full record (10 TRUE 9b137405) with zero candidate/approval/capital mutations.",
+        "limits": "Read negatives (401/403/404) do not prove write CAS; write CAS for workshop completeness is tracked separately by WORKSHOP-COMPLETENESS-ATOMIC-CAS-20261017.",
+        "evidence_state": "source_merged_and_verified_with_read_negative_limit"
+      },
+      "AC6": {
+        "requirement": "Focused tests feed opinions with identical conclusion labels but conflicting reasons and different conclusion labels with compatible conditions; returned semantic synthesis must come from the injected provider; cover provider failure and persisted readback plus idempotent retry",
+        "source_evidence": "Merged in PR #6085 and independently verified by Codex2: services/control-plane/bff/agora/interaction/test_worker.py (test_synthesis_comes_from_provider_not_labels, test_different_labels_compatible_conditions_come_from_provider, test_synthesis_failure_keeps_opinions_and_retry_reuses_saved, test_synthesis_only_retry_and_restart_adoption, test_crash_window_is_not_re_executed_and_set_order_is_normalized, test_duplicate_opinion_ids_rejected_by_adapter_and_runner, test_selected_evidence_resolves_to_supplied_records_and_matches_wire_schema, test_compose_worker_env_wires_openclaw_client_and_adapter_service_auth), services/control-plane/bff/tests/test_agora_persona_interactions.py (test_synthesis_schema_accepted_by_real_adapter_validator), and services/control-plane/bff/tests/test_pint_003_durable_opinions.py. Independent functional review ran 82 passed (11 PostgreSQL-without-DSN skipped, exit 0) and 39 architecture tests passed (exit 0).",
+        "existing_saved_hosted_evidence": "Focused test coverage was independently executed and approved in functional track on PR #6085.",
+        "limits": "Local test execution without a PostgreSQL DSN skips 11 PostgreSQL-specific tests; hosted Postgres durability is covered by the canonical hosted track.",
+        "evidence_state": "functional_done"
+      },
+      "AC7": {
+        "requirement": "Real dev acceptance starts one existing workshop interaction with two personas and real provider responses then reads the persisted synthesis after refresh; one failed synthesis call leaves original opinions readable; keep existing UI response contract without a second frontend mode",
+        "source_evidence": "Wire schema compatibility with specs/agora/v10/persona_interaction_daily.schema.json verified without adding a second frontend mode.",
+        "existing_saved_hosted_evidence": "Original authorized Agora interaction int_b2d328beef06a00381a76e63 (finite grant CONSUMED) and historical Oct 3 degraded case current6ef (UI 30 TRUE 84c594a0) were verified across BFF/worker restart (PIDs 3017090/3017371) and UI reload/logout/newlogin (30 TRUE + 15 checks bcce829d) with all 7 Postgres table rowcounts/hashes unchanged. Existing sanitized technical qualification audit recorded at FULL39615739197-official12353946228-exact368b84-twelve-receipts-and-cleanup-independent-bounded-audit-20261021.json (SHA256 65c7e32473e6853692fba931c07eefbdedac9ac878fe06fac675974a13631b02).",
+        "limits": "Formal Root 39619749022 (BE 368b84c4b0d140ecf907ea9e6e069eaf657d05d2 / FE 1cfa8120c26e55f6a00beaff4e01bb4601eb540d) is currently in_progress (accepted=false) under sole serial coordinator 01a10c97-4d16-7002-ad80-dc4384781fe2. Historical Oct 3 current6ef is a preserved degraded record, not a fresh failure injection. Observer errors (missing stdin 9c0, unorderedMounts hash mismatch a9ac, PID typo dd136, wrong host port 8001 vs 18001 causing guard 75/830c before quarantine expiry and 404 release 411c10ab) are retained without guard bypass. Hosted track remains in_progress until coordinator Root 39619749022 acceptance, same-resource UI/owner readback supplement, and native Codex2 review.",
+        "evidence_state": "in_progress_awaiting_coordinator_accepted_root_and_same_resource_supplement"
+      },
+      "AC8": {
+        "requirement": "Net production growth is at most 100 lines across all touched files; old semantic heuristic implementation is deleted and existing durable execution machinery is reused",
+        "source_evidence": "PR #6085 (base c95c47f3123c63385e1c144df9734a2630d030ea -> head b009097e5daa1caa12a0c1626bf1409c05e0fce1, merged as d0871bdf4056209d8a34548fc30da2268f59c9fe) measured production +150/-58 net +92 lines (<= 100 budget, exit 0). Current hosted documentation preparation touches only docs/deployment/evidence/AGORA-SYNTHESIS-AGENT-001/evidence.json with production delta 0.",
+        "existing_saved_hosted_evidence": "Served BE 368b84c4b0d140ecf907ea9e6e069eaf657d05d2 contains merge commit d0871bdf4056209d8a34548fc30da2268f59c9fe with zero additional production lines.",
+        "limits": "None (budget +92 <= 100 on merged engine; +0 production lines in this documentation update).",
+        "evidence_state": "functional_done"
+      }
+    },
+    "limits": [
+      "Original Agora saved case int_b2d328beef06a00381a76e63 finite business grant is CONSUMED; no new model/provider/Research/Agora/evaluator/pattern tick/CPU/vote/Persona transition or business replay is permitted.",
+      "Historical Oct 3 failed case current6ef (UI 30 TRUE 84c594a0) retains one real opinion and explicit synthesis unavailable; it is a preserved historical record, NOT a fresh provider failure injection.",
+      "Read-path auth/tenant negatives (anonymous 401, foreign 403, B interaction 404, B Workshop 403, viewer 403; original full record unchanged 10 TRUE 9b137405) do not prove write CAS.",
+      "Observer failures are retained honestly without clearing flags or bypassing guards: missing stdin/no-op 9c0, unorderedMounts hash false mismatch a9ac, local PID name typo dd136, wrong host port 8001 vs published 18001 causing guard 75/830c, followed by quarantine expiry at 05:44:14 / GitHub server 05:45:42 and original owner/CAS CLI release to 404 (proof 411c10ab).",
+      "Separate authorized metadata-only fixture 822ca900 (zero model interactions, list envelope data:[]) exposed a write CAS product gap (same v2 ETag with two distinct keys produced two HTTP 201 and two distinct snapshots, final version 4), tracked separately under WORKSHOP-COMPLETENESS-ATOMIC-CAS-20261017.",
+      "Formal Root 39619749022 (BE 368b84c4b0d140ecf907ea9e6e069eaf657d05d2 / FE 1cfa8120c26e55f6a00beaff4e01bb4601eb540d) is currently in_progress (accepted=false) under sole serial hosted coordinator 01a10c97-4d16-7002-ad80-dc4384781fe2. Hosted done and final native review by Codex2 must wait for true accepted Root and same-resource UI/owner readback supplement."
+    ]
   }
 }
