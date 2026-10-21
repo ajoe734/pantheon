@@ -10,14 +10,36 @@
     "services/research/vectorbt/requirements.txt"
   ],
   "command": "python -m pytest -q services/research (no deselection, no known-failure list)",
-  "local_baseline_with_dependencies": "4 failed, 652 passed, 6 skipped (before fixes); all 4 resolved",
+  "local_baseline_with_dependencies": "4 failed, 652 passed, 6 skipped (before fixes); CI run 1 install failed (numpy conflict); CI run 2: 1 failed (racy fan-in test), 659 passed",
   "failure_classification": [
-    {"test": "services/research/tests/test_research_orchestrator_http_service.py::test_saved_model_is_evaluated_by_real_backend_with_derived_candidate", "class": "dependency", "detail": "vectorbt not installed (503 Vectorbt execution owner failure); fixed by installing services/research/vectorbt/requirements.txt"},
-    {"test": "services/research/tests/test_research_orchestrator_http_service.py::test_saved_model_without_parameter_overrides_runs_the_base_artifact", "class": "dependency", "detail": "same as above"},
-    {"test": "services/research/strategy_spec/test_conversion.py::test_converted_registry_payload_registers_and_advances_to_candidate", "class": "stale test", "detail": "Registry now requires verified Bearer auth, explicit REGISTRY_STORE_BACKEND and CAS expected_* fields on advance; test updated to supply them via the shared registry unit-auth helpers"},
-    {"test": "services/research/strategy_spec/test_production_distillation.py::test_registry_payload_from_distillation_is_admissible", "class": "stale test", "detail": "Registry Bearer auth and explicit store backend; test updated"}
+    {
+      "test": "services/research/tests/test_research_orchestrator_http_service.py::test_saved_model_is_evaluated_by_real_backend_with_derived_candidate",
+      "class": "dependency",
+      "detail": "vectorbt not installed (503 Vectorbt execution owner failure); fixed by installing services/research/vectorbt/requirements.txt"
+    },
+    {
+      "test": "services/research/tests/test_research_orchestrator_http_service.py::test_saved_model_without_parameter_overrides_runs_the_base_artifact",
+      "class": "dependency",
+      "detail": "same as above"
+    },
+    {
+      "test": "services/research/strategy_spec/test_conversion.py::test_converted_registry_payload_registers_and_advances_to_candidate",
+      "class": "stale test",
+      "detail": "Registry now requires verified Bearer auth, explicit REGISTRY_STORE_BACKEND and CAS expected_* fields on advance; test updated to supply them via the shared registry unit-auth helpers"
+    },
+    {
+      "test": "services/research/strategy_spec/test_production_distillation.py::test_registry_payload_from_distillation_is_admissible",
+      "class": "stale test",
+      "detail": "Registry Bearer auth and explicit store backend; test updated"
+    },
+    {
+      "test": "services/research/tests/test_research_single_owner_routes.py::test_research_dag_fan_in_progression",
+      "class": "stale test",
+      "detail": "Intermediate assertion pinned run count to exactly 2, racing the owner's background scheduling of fan-in stage s3 (3 runs seen in CI); intermediate count assertion removed, final s1/s2/s3 completion, receipt and status assertions kept"
+    }
   ],
   "product_regressions": [],
   "other_listed_failures": "single-owner routes, QuantLib 503 and mlflow security_boundary tests pass once QuantLib/mlflow are installed (dependency class); no product change needed",
-  "ci_result": "pending PR CI"
+  "ci_result": "pending PR CI",
+  "install_order": "root+quantlib+mlflow first, then vectorbt in a second pip invocation (vectorbt 1.1.1 needs numpy>=2.4.6, conflicting with numpy==1.26.4 pins in a single resolve); pip check clean"
 }
