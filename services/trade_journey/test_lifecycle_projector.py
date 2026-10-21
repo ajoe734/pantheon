@@ -190,17 +190,19 @@ class _RecordingRelationalStore:
         self.mutations.append(mutation)
         if self.fail_transactions:
             raise OSError("injected relational transaction failure")
-        for receipt in mutation.receipts:
-            self.receipts[receipt.event_id] = receipt
+        staged_links = dict(self.identity_links)
         for link in mutation.identity_links:
             if link.identifier_type in SHARED_IDENTIFIER_TYPES:
                 continue
-            bound = self.identity_links.setdefault(
+            bound = staged_links.setdefault(
                 (link.tenant_id, link.environment, link.identifier_type, link.identifier_value),
                 link.journey_id,
             )
             if bound != link.journey_id:
                 raise ValueError(f"identity link already bound to another journey: {link.identifier_type}={link.identifier_value}")
+        self.identity_links = staged_links
+        for receipt in mutation.receipts:
+            self.receipts[receipt.event_id] = receipt
         for stage in mutation.stages:
             key = (stage.tenant_id, stage.environment, stage.journey_id)
             events = self.stage_events.setdefault(key, [])
@@ -1829,15 +1831,54 @@ def test_multi_stage_retry_without_decision_id_on_followups_is_ignored():
     rows = lifecycle_rows()
     projector.project_records(rows[:2], mode="live", source_high_watermark=2)
     retry = _retry_rows(rows, "tj-paper-retry", first_seq=3, count=3)
-    for row in retry[2:]:
-        row["payload"]["metadata"].pop("decision_id", None)
-        row["payload"].pop("decision_id", None)
+    noop = retry[2]["payload"]
+    noop["event_type"] = "paper_order_simulated"
+    retry[2]["event_type"] = "paper_order_simulated"
+    noop.pop("decision_id", None)
+    noop["metadata"].pop("decision_id", None)
+    noop["metadata"].update(
+        noop_reason="execution_in_progress_elsewhere",
+        decision_status="no_order",
+        order_status="not_submitted",
+        computed_quantity=0.0,
+    )
+    noop["metrics"] = {
+        "action": "execution_in_progress_elsewhere_noop",
+        "fill_price": 0.0,
+        "fill_quantity": 0.0,
+        "submitted_to_broker": False,
+    }
 
     result = projector.project_records(retry, mode="live", source_high_watermark=5)
 
     assert (result.accepted, result.quarantined) == (0, 0)
     assert result.ignored == 3
     assert (IDENTITY["tenant_id"], IDENTITY["environment"], "tj-paper-retry") not in store.stage_events
+
+
+def test_retry_journey_with_positive_fill_followup_is_rejected_not_ignored():
+    store = _RecordingRelationalStore()
+    projector = RelationalLifecycleProjector(store, clock=lambda: NOW)
+    rows = lifecycle_rows()
+    projector.project_records(rows[:2], mode="live", source_high_watermark=2)
+    retry_with_fill = _retry_rows(rows, "tj-paper-retry", first_seq=3, count=8)
+    fill_event_id = retry_with_fill[5]["event_id"]
+
+    with pytest.raises(ValueError, match="already bound"):
+        projector.project_records(retry_with_fill, mode="live", source_high_watermark=10)
+    assert fill_event_id not in store.receipts
+
+    full_store = _RecordingRelationalStore()
+    full_projector = RelationalLifecycleProjector(full_store, clock=lambda: NOW)
+    full_projector.project_records(rows[:8], mode="live", source_high_watermark=8)
+    second_fill = _retry_rows(rows, "tj-paper-retry-fill", first_seq=9, count=6)
+    second_fill[5]["payload"]["metadata"]["fill_id"] = "fill-paper-new-999"
+    second_fill[5]["payload"]["metrics"]["fill_quantity"] = 9
+    second_fill[5]["payload"]["metrics"]["fill_price"] = 201.5
+
+    with pytest.raises(ValueError, match="already bound"):
+        full_projector.project_records(second_fill, mode="live", source_high_watermark=14)
+    assert second_fill[5]["event_id"] not in full_store.receipts
 
 
 def test_same_decision_with_different_signal_is_still_a_conflict():

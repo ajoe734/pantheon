@@ -470,6 +470,30 @@ class RelationalLifecycleProjector:
             bindings[key] = resolve(*key) if callable(resolve) else None
         return bindings[key]
 
+    @staticmethod
+    def _is_retry_noop_order(
+        event: Mapping[str, Any], metadata: Mapping[str, Any]
+    ) -> bool:
+        if event.get("event_type") != "paper_order_simulated":
+            return False
+        if _first(event.get("fill_id"), metadata.get("fill_id")) is not None:
+            return False
+        metrics = event.get("metrics") if isinstance(event.get("metrics"), Mapping) else {}
+        if metrics.get("submitted_to_broker") is True or metadata.get("submitted_to_broker") is True:
+            return False
+        quantity = _first(
+            metrics.get("fill_quantity"),
+            event.get("quantity"),
+            metadata.get("fill_quantity"),
+        )
+        if quantity is not None:
+            try:
+                if float(quantity) != 0.0:
+                    return False
+            except (TypeError, ValueError):
+                return False
+        return True
+
     def _superseded_retry_journey(
         self,
         event: Mapping[str, Any],
@@ -478,23 +502,22 @@ class RelationalLifecycleProjector:
     ) -> str | None:
         """Return the canonical journey when this event belongs to a retry journey.
 
-        A retry reuses the decision, signal and run identifiers but carries a
-        different journey. Only some of its events carry the decision id, so
-        once a journey is recognised as a retry it stays superseded for the
-        rest of the batch, and decision-less events are recognised when their
-        signal and run are both already bound to one other journey. Anything
-        else that disagrees (different signal or run, another
-        tenant/environment) is a genuine conflict and is left to the store's
-        identity-link rejection.
+        A retry reuses the decision, signal and run identifiers on a new
+        journey for ``signal_generation``, ``trade_decision``, and no-op
+        ``paper_order_simulated`` child events (which omit ``decision_id``).
+        Downstream execution stages, positive fills, differing signal/run, or
+        another tenant/environment are genuine conflicts and are left to the
+        store's identity-link rejection.
         """
         journey_id = identity["journey_id"]
         scope = (identity["tenant_id"], identity["environment"])
-        superseded_key = (*scope, "superseded_journey", journey_id)
-        if bindings.get(superseded_key):
-            return bindings[superseded_key]
         metadata = event.get("metadata") if isinstance(event.get("metadata"), Mapping) else {}
+        if _first(event.get("fill_id"), metadata.get("fill_id")) is not None:
+            return None
         decision_id = _first(event.get("decision_id"), metadata.get("decision_id"))
         if decision_id is None:
+            if not self._is_retry_noop_order(event, metadata):
+                return None
             bound = {
                 self._bound_journey(bindings, identity, identifier_type, identity[identifier_type])
                 for identifier_type in ("signal_id", "run_id")
@@ -504,7 +527,6 @@ class RelationalLifecycleProjector:
             (canonical,) = bound
             if canonical is None or canonical == journey_id:
                 return None
-            bindings[superseded_key] = canonical
             return canonical
         decision_id = str(decision_id)
         decision_journey = self._bound_journey(
@@ -522,13 +544,17 @@ class RelationalLifecycleProjector:
             return None
         if decision_journey == journey_id:
             return None
+        event_type = str(event.get("event_type") or "")
+        if event_type not in {"signal_generation", "trade_decision"} and not self._is_retry_noop_order(
+            event, metadata
+        ):
+            return None
         for identifier_type in ("signal_id", "run_id"):
             bound_journey = self._bound_journey(
                 bindings, identity, identifier_type, identity[identifier_type]
             )
             if bound_journey != decision_journey:
                 return None
-        bindings[superseded_key] = decision_journey
         return decision_journey
 
     @staticmethod
@@ -983,6 +1009,8 @@ class RelationalLifecycleProjector:
         accepted_entries: list[dict[str, Any]] = []
         batch_fingerprints: dict[str, str] = {}
         canonical_bindings: dict[tuple[str, str, str, str], str | None] = {}
+        provisional_retries: dict[tuple[str, str, str], list[tuple[int, dict[str, Any]]]] = {}
+        non_retry_journeys: set[tuple[str, str, str]] = set()
         duplicates = ignored = quarantined = 0
 
         for row in ordered_records:
@@ -1086,13 +1114,33 @@ class RelationalLifecycleProjector:
                 )
                 quarantined += 1
                 continue
-            canonical_journey = self._superseded_retry_journey(
-                event, identity, canonical_bindings
+            entry = {
+                "fingerprint": fingerprint,
+                "event": event,
+                "identity": identity,
+                "sequence_no": source_sequence,
+                "ingested_seq": sequence,
+                "ingested_at": str(row.get("ingested_at") or self.clock()),
+                "source_mode": mode,
+                "accepted_live": mode == "live",
+            }
+            journey_key = (
+                identity["tenant_id"],
+                identity["environment"],
+                identity["journey_id"],
+            )
+            canonical_journey = (
+                None
+                if journey_key in non_retry_journeys
+                else self._superseded_retry_journey(event, identity, canonical_bindings)
             )
             if canonical_journey is not None:
                 # A retry of an already-projected decision minted its own
                 # journey. The original journey keeps its identifiers; the
                 # source row is retained (receipt) but never rebinds them.
+                provisional_retries.setdefault(journey_key, []).append(
+                    (len(receipts), entry)
+                )
                 receipts.append(
                     self._receipt(
                         event_id=event_id,
@@ -1105,18 +1153,21 @@ class RelationalLifecycleProjector:
                 )
                 ignored += 1
                 continue
-            accepted_entries.append(
-                {
-                    "fingerprint": fingerprint,
-                    "event": event,
-                    "identity": identity,
-                    "sequence_no": source_sequence,
-                    "ingested_seq": sequence,
-                    "ingested_at": str(row.get("ingested_at") or self.clock()),
-                    "source_mode": mode,
-                    "accepted_live": mode == "live",
-                }
-            )
+            non_retry_journeys.add(journey_key)
+            for receipt_idx, prior_entry in provisional_retries.pop(journey_key, ()):
+                ignored -= 1
+                accepted_entries.append(prior_entry)
+                prior_event = prior_entry["event"]
+                receipts[receipt_idx] = self._receipt(
+                    event_id=str(prior_event["event_id"]),
+                    ingested_seq=int(prior_entry["ingested_seq"]),
+                    fingerprint=str(prior_entry["fingerprint"]),
+                    source_event_type=str(prior_event["event_type"]),
+                    created_at=_parse_iso(prior_event["created_at"]),
+                    disposition="applied",
+                    identity=prior_entry["identity"],
+                )
+            accepted_entries.append(entry)
             receipts.append(
                 self._receipt(
                     event_id=event_id,
