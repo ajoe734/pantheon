@@ -1885,3 +1885,39 @@ class TestDailyBarDecisionIdentity(unittest.TestCase):
         producer.produce(_BINDING, "2026-06-12T10:30:00Z")
         producer.produce(_BINDING, "2026-06-12T10:31:00Z")
         self.assertEqual(len({signal["signal_id"] for signal in store.get_pending()}), 2)
+
+    def test_started_execution_fence_without_processed_marker_suppresses_repeated_ticks(self) -> None:
+        from services.execution.lean_runtime.pending_signal_store import RedisPendingSignalStore
+
+        store = InMemoryPendingSignalStore()
+        producer = self._producer(store)
+        binding = self._binding()
+        self.assertEqual(producer.produce(binding, "2026-06-12T16:38:00Z"), 1)
+        [signal] = store.get_pending()
+        fence = store.begin_execution(signal)
+        self.assertEqual(fence.status, "acquired")
+        self.assertFalse(store.is_processed(signal["signal_id"]))
+
+        for minute in (39, 40):
+            self.assertEqual(producer.produce(binding, f"2026-06-12T16:{minute}:00Z"), 0)
+        self.assertEqual(store.queue_depth(), 0)
+        self.assertEqual(
+            store._execution_fences[signal["signal_id"]],
+            f"started:{fence.token}",
+        )
+
+        mock_redis = MagicMock()
+        mock_redis.exists.return_value = 0
+        mock_redis.get.return_value = "started:worker-1:1"
+        redis_store = RedisPendingSignalStore.__new__(RedisPendingSignalStore)
+        redis_store._client = mock_redis
+        redis_store._queue_key = "pantheon:signals:pending:rb-daily"
+        redis_store._processed_prefix = "pantheon:signals:pending:rb-daily:processed:"
+        redis_store._execution_prefix = "pantheon:signals:pending:rb-daily:execution:"
+
+        redis_producer = self._producer(redis_store)
+        self.assertEqual(redis_producer.produce(binding, "2026-06-12T16:40:00Z"), 0)
+        mock_redis.rpush.assert_not_called()
+        mock_redis.set.assert_not_called()
+        mock_redis.setex.assert_not_called()
+        mock_redis.delete.assert_not_called()
