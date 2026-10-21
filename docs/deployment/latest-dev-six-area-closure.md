@@ -1,39 +1,31 @@
 # Pantheon 開發與上線盤點
 
-最近核對：2026-10-21T14:09:52.252653+00:00。**已接受23f9dd／a701；Research與FE原hosted checkpoint已正式結案，Persona已獨審核准待CI；原0040自然新八事件與gross算術成立。平倉顯示修正6716已合併尚未部署，原49／完整適用財務／自然Pattern／指定TOTAL未全部完成。**
+最近核對：2026-10-21T15:36:26.966206+00:00。**唯一正式Root39619749022失敗，新版368b84／1cfa未接受。BFF雖已回舊23f，實際readyz仍503；補償未完整成功。原Publisher已恢復ACTIVE、既有整合鎖已釋放。原49／all12／TOTAL仍未完成。**
 
-## 已接受的交付與原任務收尾
+## 這次發布失敗的架構根因
 
-正式Root39564986170已成功，18項精確artifact回滾往返與同版本FULL39562257211均通過。Publisher已恢復ACTIVE，前次整合鎖已釋放。原22完整業務response三階段保存，ACK曾把0040誤涵蓋於原25讀取的範圍已另行更正，原ACK與POST原件未改。
+同一筆市場輸入在既有producer產生相同signal／decision／run ID，卻在不同tick產生新的隨機journey envelope。PostgreSQL投影要求一個decision只能歸屬一個journey，於checkpoint7511939拒絕第二個歸屬，controller失敗並令BFF `/readyz` 回503。15:32實讀與正式log一致；最近一次live success為12:47，早於14:46本次發布。舊23f與候選368b的producer及projector檔案SHA完全相同，不能把這個缺陷歸因於6716的平倉顯示修正。
 
-原Capital5AC已結案；Research5AC由原Antigravity獨立核准7e33f8310，PR6715合併b17d1306，13:53原生hosted done／archive completed。原FE審批6AC同樣由Antigravity核准262d1ebf2，PR864合併1cfa8120，14:02原生結案。Persona6AC已真實核准816853136，PR6717等待必要CI／合併，仍未結案。這三份只補原證據文件、產品源碼0，沒有第二位真人或新業務審批。各原條文、身分、依賴與產物均未改。
+這是producer重試身分與持久投影唯一性契約不一致。已寫入的衝突retry不會因回舊image消失，故延長readiness等待、重啟、放寬gate或另加健康寫入者不能完成恢復。原生任務LIFECYCLE-DECISION-JOURNEY-CONFLICT-20261021／PR6719已由Claude處理，Antigravity2獨審；修正須同時保持新retry身分穩定與既有衝突紀錄的誠實恢復，保留真正內容衝突拒絕，不刪事件、不重綁原業務ID、不偽造accepted-live。本對話不重複改worker的源碼。
 
-當前接受pair的Cockpit25、Management保存讀回18、真實登入／tenant／登出撤銷／lateGET隔離26項均通過。Management只讀回原a785保存結果（實際OpenAI/gpt-5.6-sol），沒有再聊天或呼叫模型。原有限F12控制的409／labelled503仍屬歷史pair；當前完整44欄與原owner保存相等，不冒稱重播。
+## 發布、補償與證據的界線
 
-## 平倉顯示的具體根因與剩餘交付
+同版本隔離FULL39615739197已核對14checks／10joins／12ordered receipts與清理0。隔離新環境通過，不等於長時間運行且累積重試的真實資料能通過。正式run於後端readiness失敗，FE gate／switch及精確往返未執行；old-leg觀測0次，不主張本次三階段資料保存已驗。
 
-原估值6710已交付，兩個實際運行檔案SHA對上23f。新的真交易把同一帳戶持倉平為0後，Telemetry明確回positions=[]、position_count=0；BFF卻把空陣列當成證據缺失，製造unknown holding與MISSING_HOLDING_ROW高嚴重性提示。這是「已知為零」與「未知」在投影邊界混用。
+補償step的GitHub結論是success，原因是既有continue-on-error；原始log實際exit75並明載rollback incomplete，沒有成功補償artifact。BFF版本讀回23f，公開FE仍a701／舊Root395649接受manifest，但readyz仍503。歷史accepted標籤不等於當前可用。Publisher已於15:31:04恢復ACTIVE，原整合鎖於15:31:53釋放；沒有第二次Root POST。[官方失敗與持久身分根因核對](/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Root39619749022-official-failure-and-persistent-identity-root-cause-bounded-audit-20261021.json)。
 
-沿用已存在的BFF-PORTFOLIO-EXPLICIT-FLAT原任務6716，由Claude修原service與原測試、Antigravity2獨審61pass、必要CI後合併368b84c4，產品淨增30行。修正保留真正缺證據與stale／failed quote診斷，只讓明確flat回0 holdings並保留coverage與filter；沒有新endpoint/store/schema/財務引擎。**源碼已交付、hosted仍未換版驗收。** 不為純文件或CI提交另追換版。
+## 原任務交付與剩餘驗收
 
-## 原0040的新自然事件與財務證據
+Capital5、Research5（PR6715）、FE審批6（PR864）已由原指定reviewer核對並原生結案。Persona6的PR6717已真獨審、必要CI通過、合併0bb5cf2e並原生結案；四個原checkpoint共22條已獨立核對。原Agora8與Evaluator13已由兩個supervisor worker各自只備原evidence文件，仍待真正接受版本與同一資源UI／owner補證，未標完成。原角色、條文、依賴與產物不改。
 
-官方自然台股排程39601608000（schedule）實際於12:45:16完成ingest-1d0b5725eff6，入庫mss-29861081f7ae94882e7e5196／48closes，與官方log、Source checksummed持久記錄及真signal的snapshot ID對上。原0040隨後BUY1@2420，與原SELL1@2405兩筆真fill及canonical closed episode的fill refs一致。八個新持久事件、七條精確causal parent、原tenant／binding／artifact／paper範圍、6對帳0drift均核對。
+6716的具體缺陷是Telemetry明確positions=[]／position_count=0時，BFF把「已知零持倉」誤當缺資料，製造unknown holding及MISSING_HOLDING_ROW。原局部修正已合併368b、61 tests與真獨審通過，保留coverage／filter／stale診斷，產品淨增30行；尚未線上交付。既有6710估值修正在此前23f已交付，沒有新增endpoint、store或第二套財務引擎。
 
-signed Decimal獨立算出cash99985、qty0、gross PnL−15、drawdown0.00015，與持久ledger與Telemetry一致。這是gross算術；canonical episode的realized_pnl仍null、coverage partial，不偷換成費後淨績效或完整財務。當前同Persona只有1個closed episode，原自然Pattern minimum2仍不足；不造第二筆、強平或重播模型。
+原0040已自然SELL1@2405、BUY1@2420平倉；8真事件／7因果邊、官方Source ingest與snapshot、6對帳0drift和持久ledger已對上。signed Decimal gross−15／cash99985／drawdown0.00015，不能偷換canonical episode仍為null的淨績效；coverage partial、missing opened_event與attribution保留。當前同Persona僅1 closed episode，原Pattern minimum2仍不足。L11原基準0.0027×1.25＝0.003375，尚未自然觸發，不製造breach或新交易。
 
-## Source短暫失聯的架構原因
-
-同一官方排程為開啟並恢復既有egress設定，兩次重建Source API容器。12:45:50→12:46:21的恢復重建與paper reconciler的connection-refused吻合；既有保守機制將binding暫停，12:46:40讀回新資料後自行恢復。沒有證據顯示store遺失，也沒有人工resume。本輪不加第二個scheduler、共享鎖或新健康寫入者；受控刷新重建的可用性影響與產品財務缺口分開記錄。
-
-## 原剩餘驗收與範圍
-
-繼續原Persona文件CI／合併／結案，完成6716必要同版本FULL與一次正式Root及精確往返，再驗同0040 repaired API/UI。適用L11沿原0.0027，不製造breach；目前真drawdown0.00015低於該值，完整當前owner下游仍按實際證據判定。原49（43AC＋Pattern6）、父六AC／21依賴／三文件及指定Antigravity TOTAL未縮減，all12_complete=false。
-
-原Research／Agora／L6／L7／Persona／F12有限許可均耗用；只讀回原真結果，不再投票／續期／轉態／訓練／模型外傳或動資金。來源已修改、真審查、CI、合併、部署與使用者流程驗收分別回報。分支歷史與文件整理是助手返工，不計功能交付。
+目前Evaluator原自然14:30保存建議與原Management a785（實際OpenAI/gpt-5.6-sol）、Research／Agora／L6／L7／Persona／F12保存結果都沿既有讀回驗，不重跑耗用的許可。原父6AC／21依賴／3文件、43AC＋Pattern6、指定Antigravity TOTAL與PR6668均保留；來源修改、測試、真審查、合併、部署、使用者流程驗收分開記錄。
 
 ## 原驗收與證據
 
-原43AC與Pattern6逐字保留於 [evidence.json](evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json)。其中原Capital5／Research5／FE6，共16條已有指定獨立checkpoint驗收及正式結案；其餘仍未標完成，這不是原指定TOTAL總驗收。父g17六AC／21依賴／三產物保持，原PR6668仍為草稿。
+原43AC與Pattern6逐字保留於 [evidence.json](evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/evidence.json)。其中原Capital5／Research5／FE6／Persona6，共22條已有指定獨立checkpoint驗收及正式結案；其餘仍未標完成，這不是原指定TOTAL總驗收。父g17六AC／21依賴／三產物保持，原PR6668仍為草稿。
 
 [source-delivery-ledger.json](evidence/DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002/source-delivery-ledger.json) 分開記錄source交付、hosted與工具／文件範圍。原歷史完整保留於Git，不將commit數、測試數或清理返工當功能交付。
