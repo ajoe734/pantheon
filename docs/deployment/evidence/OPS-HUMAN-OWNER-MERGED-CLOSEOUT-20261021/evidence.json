@@ -1,0 +1,52 @@
+{
+  "task_id": "OPS-HUMAN-OWNER-MERGED-CLOSEOUT-20261021",
+  "phase": "Human/Ops canonical merged-delivery closeout repair",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "title": "Allow Human/Ops owner closeout of peer-approved merged tasks without Task Brief fabrication",
+  "completed_at": "2026-10-21T05:02:00Z",
+  "task": {
+    "id": "OPS-HUMAN-OWNER-MERGED-CLOSEOUT-20261021",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "review_file": "docs/deployment/evidence/OPS-HUMAN-OWNER-MERGED-CLOSEOUT-20261021/evidence.json"
+  },
+  "scoped_artifacts": [
+    "scripts/ai_status.py",
+    "scripts/test_ai_status.py",
+    ".orchestrator/skills/task-closeout-finalization.md",
+    "docs/deployment/evidence/OPS-HUMAN-OWNER-MERGED-CLOSEOUT-20261021/evidence.json"
+  ],
+  "reproduction": {
+    "checkpoint_reference": "CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001 (PR #6704, head a12b3d2acd1474c72b10220822ef73520b2ffaf7, merge commit 6fa8101332573fe02522f78135be7f7db06273e1)",
+    "normal_done_rejection": "validate_active_status_command_lease('done', ...) raises RuntimeError('local Human/Ops cannot authorize done; allowed actions are ...') because done is not in LOCAL_HUMAN_OPS_ACTIONS",
+    "legacy_reconcile_merged_done_rejection_on_base": "prepare_external_mutation_preflight('reconcile_merged_done', ...) fell into validate_merged_done_evidence(task) and raised SystemExit('RECONCILE_EVIDENCE_FILE is required for reconcile_merged_done') even when status == 'review_approved', owner == 'Human/Ops', reviewer == 'Antigravity', frozen PR/head/manifest delivery_binding and review_binding matched, delivery was merged to origin/dev, and completion_tracks.hosted was done with evidence"
+  },
+  "repair_summary": {
+    "production_file": "scripts/ai_status.py",
+    "production_delta_lines": "+72/-0",
+    "test_file": "scripts/test_ai_status.py",
+    "test_delta_lines": "+138/-0",
+    "doc_file": ".orchestrator/skills/task-closeout-finalization.md",
+    "doc_delta_lines": "+23/-0",
+    "mechanism": "Added validate_human_ops_owner_merged_delivery(task) and wired it into prepare_external_mutation_preflight('reconcile_merged_done', ...) when RECONCILE_EVIDENCE_FILE is unset for a Human/Ops-owned task or explicit local Human/Ops review_approved closeout. Reuses require_current_pr_delivery_binding, exact_head_acceptance_available, _validated_pr_binding, _validated_reconcile_delivery (exact reviewed head merged to target), validate_hosted_completion (via validate_task_lifecycle_transition), and validate_protected_closeout_transition. Preserves lost-review-state recovery via RECONCILE_EVIDENCE_FILE unchanged."
+  },
+  "verification": {
+    "commands": [
+      "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m unittest scripts.test_ai_status.ReviewApprovedWorkflowTests.test_reconcile_merged_done_closes_human_ops_owned_review_approved_checkpoint scripts.test_ai_status.ReviewApprovedWorkflowTests.test_reconcile_merged_done_human_ops_owner_closeout_preserves_rejections -v",
+      "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m unittest scripts.test_ai_status"
+    ],
+    "results": {
+      "focused_regression_tests": "Ran 2 tests in 0.073s - OK (failed on unpatched base with SystemExit: RECONCILE_EVIDENCE_FILE is required for reconcile_merged_done; passed after patch)",
+      "full_test_ai_status_suite": "Ran 508 tests in 39.853s - OK"
+    },
+    "guardrails_preserved": {
+      "done_whitelist_unchanged": true,
+      "no_new_command_or_service": true,
+      "no_manufactured_task_brief_or_operator_accept": true,
+      "no_owner_or_reviewer_reassignment": true,
+      "no_development_tooling_relabel": true,
+      "no_live_taskstore_or_runtime_mutation": true
+    }
+  }
+}

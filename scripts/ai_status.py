@@ -6925,6 +6925,58 @@ def validate_operator_accepted_merged_delivery(task: dict[str, Any]) -> dict[str
     }
 
 
+def validate_human_ops_owner_merged_delivery(task: dict[str, Any]) -> dict[str, Any]:
+    """Validate canonical review_approved closeout for a Human/Ops-owned task."""
+
+    task_id = str(task.get("id") or "").strip()
+    owner = canonical_agent_name(task.get("owner"))
+    if owner != "Human/Ops":
+        raise SystemExit(
+            f"Cannot reconcile task: only Human/Ops-owned tasks may use canonical review_approved owner closeout (owner is {owner or 'missing'})."
+        )
+    if str(task.get("status") or "").strip() != "review_approved":
+        raise SystemExit(
+            "Cannot reconcile task: canonical Human/Ops owner closeout requires status=review_approved."
+        )
+    reviewer = canonical_agent_name(task.get("reviewer"))
+    if not reviewer or reviewer == owner:
+        raise SystemExit(
+            "Cannot reconcile task: canonical Human/Ops owner closeout requires an assigned independent peer reviewer."
+        )
+    candidate = deepcopy(task)
+    manifest = (candidate.get(DELIVERY_BINDING_KEY) or {}).get("evidence_manifest")
+    if isinstance(manifest, Mapping) and not str(candidate.get("review_file") or "").strip():
+        candidate["review_file"] = str(manifest.get("path") or "").strip()
+    delivery_binding = require_current_pr_delivery_binding(candidate, action="reconcile")
+    frozen_manifest = dict(delivery_binding["evidence_manifest"])
+    frozen_review_file = str(frozen_manifest.get("path") or "").strip()
+    env_review_file = os.environ.get("REVIEW_FILE", "").strip()
+    if env_review_file and env_review_file != frozen_review_file:
+        raise SystemExit(
+            f"{task_id or 'task'}: REVIEW_FILE={env_review_file!r} differs from the manifest frozen at handoff ({frozen_review_file!r}); reopen and re-handoff the intended exact PR delivery"
+        )
+    if not exact_head_acceptance_available(candidate, load_config()):
+        raise SystemExit(
+            "Cannot reconcile task: canonical exact-head peer review binding is missing or does not match the frozen PR delivery binding."
+        )
+    binding = _validated_pr_binding(candidate.get(APPROVAL_BINDING_KEY) or {}, task_id)
+    delivery = _validated_reconcile_delivery(task)
+    if str(delivery.get("commit") or "").lower() != binding["head_sha"]:
+        raise SystemExit(
+            "Cannot reconcile task: owner closeout must verify the exact reviewed PR head as the merged delivery commit."
+        )
+    return {
+        "recorded_at": iso_now(),
+        "reconciled_from_human_ops_owner_review_approved": True,
+        "owner": owner,
+        "reviewer": reviewer,
+        "review_file": frozen_review_file,
+        "review_binding": dict(binding),
+        "evidence_manifest": frozen_manifest,
+        **delivery,
+    }
+
+
 def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:
     """Validate immutable, dev-merged review and delivery evidence.
 
@@ -7400,6 +7452,8 @@ def command_reconcile_merged_done(state: dict[str, Any], args: list[str]) -> Non
         "reconcile_merged_done", task
     )
     delivery = deepcopy(preflight["delivery"])
+    if not str(task.get("review_file") or "").strip() and str(delivery.get("review_file") or "").strip():
+        task["review_file"] = str(delivery["review_file"]).strip()
     recovered_archive = deepcopy(preflight.get("recovered_immutable_archive"))
     if recovered_archive is not None:
         current_archive = load_archived_snapshot(task_id)
@@ -8224,6 +8278,24 @@ def prepare_external_mutation_preflight(
                 )
             delivery = validate_merged_tooling_done(task)
             verdict_ref = None
+        elif not os.environ.get("RECONCILE_EVIDENCE_FILE", "").strip() and (
+            canonical_agent_name(task.get("owner")) == "Human/Ops"
+            or (
+                local_human_ops_requested()
+                and str(task.get("status") or "").strip() == "review_approved"
+            )
+        ):
+            if actor != "Human/Ops" or not local_human_ops_requested():
+                raise SystemExit(
+                    "Only explicit local Human/Ops may close a Human/Ops-owned review_approved task"
+                )
+            delivery = validate_human_ops_owner_merged_delivery(task)
+            verdict_ref = validate_protected_closeout_transition(
+                task,
+                transition="done",
+                consume=True,
+                transition_actor=actor,
+            )
         else:
             existing_archive = load_archived_snapshot(task_id)
             delivery = validate_merged_done_evidence(task)
