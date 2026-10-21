@@ -3,14 +3,20 @@ from __future__ import annotations
 
 import asyncio
 from concurrent.futures import Executor, ThreadPoolExecutor
-from contextvars import copy_context
+from contextvars import ContextVar, copy_context
 from dataclasses import dataclass
 from functools import partial
 import logging
 import os
 import threading
+import time
 from typing import Any, Callable, Dict, List, Optional
 from fastapi import Depends, HTTPException
+
+from ...core.owner_reads import (
+    management_read_deadline,
+    remaining_management_read_budget,
+)
 
 log = logging.getLogger(__name__)
 
@@ -64,7 +70,15 @@ async def run_management_read(
 
     if not capacity.acquire(blocking=False):
         raise ManagementReadSaturated()
-    context = copy_context()
+    outer_deadline = management_read_deadline.get()
+    effective_deadline = time.monotonic() + float(budget)
+    if outer_deadline is not None:
+        effective_deadline = min(outer_deadline, effective_deadline)
+    deadline_token = management_read_deadline.set(effective_deadline)
+    try:
+        context = copy_context()
+    finally:
+        management_read_deadline.reset(deadline_token)
     call = partial(func, *args, **kwargs)
     try:
         worker_future = executor.submit(context.run, call) if executor else None

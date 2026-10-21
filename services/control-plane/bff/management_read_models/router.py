@@ -47,7 +47,8 @@ from .models import (
 )
 import concurrent.futures
 import contextvars
-from .service import ManagementService
+from services.control_plane.bff.core.owner_reads import remaining_management_read_budget
+from .service import ManagementService, _MANAGEMENT_STORE_OVERRIDE
 
 from services.control_plane.bff.models import ErrorCode
 from services.control_plane.bff.operations_read_model import OperationsReadModelEnvelope
@@ -103,9 +104,12 @@ class _StoreTimeoutProxy:
         attr = getattr(self._target, name)
         if name in ("list_governance_review_queue_items", "list_approval_queue_items", "list_approval_records") and callable(attr):
             def _timed_call(*args: Any, **kwargs: Any) -> Any:
+                budget = remaining_management_read_budget(self._timeout)
+                if budget is not None and budget <= 0.0:
+                    raise concurrent.futures.TimeoutError(f"{name} exceeded the Human Inbox surface budget")
                 fut = _HUMAN_INBOX_CONTRIBUTOR_EXECUTOR.submit(contextvars.copy_context().run, attr, *args, **kwargs)
                 try:
-                    return fut.result(timeout=self._timeout)
+                    return fut.result(timeout=self._timeout if budget is None else budget)
                 except concurrent.futures.TimeoutError:
                     raise concurrent.futures.TimeoutError(f"{name} exceeded the Human Inbox surface budget")
             return _timed_call
@@ -243,19 +247,17 @@ _orig_get_human_inbox = ManagementService.get_human_inbox
 
 def _bounded_get_human_inbox(self: ManagementService, *args: Any, **kwargs: Any) -> Dict[str, Any]:
     timeout_budget = _get_human_inbox_surface_timeout()
-    orig_resolve_store = self._resolve_store
-
-    def _proxied_resolve_store() -> Any:
-        s = orig_resolve_store()
-        if s is not None:
-            return _StoreTimeoutProxy(s, timeout_budget)
-        return None
-
-    self._resolve_store = _proxied_resolve_store  # type: ignore[assignment]
+    base_store = self._resolve_store()
+    token = (
+        _MANAGEMENT_STORE_OVERRIDE.set(_StoreTimeoutProxy(base_store, timeout_budget))
+        if base_store is not None
+        else None
+    )
     try:
         res = _orig_get_human_inbox(self, *args, **kwargs)
     finally:
-        self._resolve_store = orig_resolve_store  # type: ignore[assignment]
+        if token is not None:
+            _MANAGEMENT_STORE_OVERRIDE.reset(token)
 
     if isinstance(res, dict) and "meta" in res and isinstance(res["meta"], dict):
         surfaces = res["meta"].get("surfaces")
@@ -1033,7 +1035,7 @@ def _register_composed_read_models(
         "/bff/management/formula-jobs",
         response_model=FormulaJobsEnvelope,
     )
-    async def bff_management_formula_jobs(
+    def bff_management_formula_jobs(
         status: Optional[str] = Query(default=None),
         formula_id: Optional[str] = Query(default=None),
         page_token: Optional[str] = Query(default=None),
@@ -1128,7 +1130,7 @@ def _register_composed_read_models(
         "/bff/management/activity",
         response_model=ActivityEnvelope,
     )
-    async def bff_management_activity(
+    def bff_management_activity(
         event_type: Optional[str] = Query(default=None),
         actor_id: Optional[str] = Query(default=None),
         page_token: Optional[str] = Query(default=None),
@@ -1225,7 +1227,7 @@ def _register_composed_read_models(
         "/bff/management/paper-telemetry",
         response_model=PaperTelemetryEnvelope,
     )
-    async def bff_management_paper_telemetry(
+    def bff_management_paper_telemetry(
         strategy_id: Optional[str] = Query(default=None),
         persona_id: Optional[str] = Query(default=None),
         page_token: Optional[str] = Query(default=None),
@@ -1321,7 +1323,7 @@ def _register_composed_read_models(
         "/bff/management/postmortems",
         response_model=PostmortemsEnvelope,
     )
-    async def bff_management_postmortems(
+    def bff_management_postmortems(
         severity: Optional[str] = Query(default=None),
         status: Optional[str] = Query(default=None),
         page_token: Optional[str] = Query(default=None),
@@ -1415,7 +1417,7 @@ def _register_composed_read_models(
         "/bff/management/postmortems/{postmortem_id}",
         response_model=PostmortemDetailEnvelope,
     )
-    async def bff_management_postmortem_detail(
+    def bff_management_postmortem_detail(
         postmortem_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -1590,7 +1592,7 @@ def create_management_router(
     # 2. Operator Home
     # -----------------------------------------------------------------------
     @router.get("/api/v1/operator/home")
-    async def get_operator_home(
+    def get_operator_home(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """Overview cards and dispatch shortcuts for operator home dashboard."""
@@ -1676,7 +1678,7 @@ def create_management_router(
     # 5. Trading Pulse Rankings
     # -----------------------------------------------------------------------
     @router.get("/bff/management/trading-pulse/rankings")
-    async def bff_management_trading_pulse_rankings(
+    def bff_management_trading_pulse_rankings(
         limit: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -1690,7 +1692,7 @@ def create_management_router(
     # 7. Operator Health Status
     # -----------------------------------------------------------------------
     @router.get("/api/v1/operator/health-status")
-    async def get_operator_health_status(
+    def get_operator_health_status(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """BFF: Grouped control plane health status and secondary control path."""
@@ -1703,7 +1705,7 @@ def create_management_router(
     # 8. Loop Throughput
     # -----------------------------------------------------------------------
     @router.get("/bff/management/loop-throughput")
-    async def bff_management_loop_throughput(
+    def bff_management_loop_throughput(
         status: Optional[str] = Query(default=None),
         runtime_id: Optional[str] = Query(default=None),
         loop_type: Optional[str] = Query(default=None),
@@ -1728,7 +1730,7 @@ def create_management_router(
     # 9. Risk Radar
     # -----------------------------------------------------------------------
     @router.get("/bff/management/risk-radar")
-    async def bff_management_risk_radar(
+    def bff_management_risk_radar(
         persona_id: Optional[str] = Query(default=None),
         strategy_id: Optional[str] = Query(default=None),
         capital_pool_id: Optional[str] = Query(default=None),
@@ -1755,7 +1757,7 @@ def create_management_router(
     # 10. Incident Timeline
     # -----------------------------------------------------------------------
     @router.get("/bff/management/incident-timeline")
-    async def bff_management_incident_timeline(
+    def bff_management_incident_timeline(
         status: Optional[str] = Query(default=None),
         severity: Optional[str] = Query(default=None),
         capital_pool_id: Optional[str] = Query(default=None),
@@ -1822,7 +1824,7 @@ def create_management_router(
     # 12. Human Review Inbox Detail
     # -----------------------------------------------------------------------
     @router.get("/bff/management/human-inbox/{item_id}")
-    async def bff_management_human_inbox_detail(
+    def bff_management_human_inbox_detail(
         item_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
@@ -1852,7 +1854,7 @@ def create_management_router(
     # 13. HIQ Backlog
     # -----------------------------------------------------------------------
     @router.get("/bff/management/hiq-backlog")
-    async def bff_management_hiq_backlog(
+    def bff_management_hiq_backlog(
         source_type: Optional[str] = Query(default=None),
         status: Optional[str] = Query(default=None),
         kind: Optional[str] = Query(default=None),
@@ -1966,7 +1968,7 @@ def create_management_router(
         "/bff/management/operations-read-model/{persona_id}",
         **operations_kwargs,
     )
-    async def bff_management_operations_read_model(
+    def bff_management_operations_read_model(
         persona_id: str,
         period: str = Query(default="latest"),
         authorization: Optional[str] = Header(default=None),
@@ -1989,7 +1991,7 @@ def create_management_router(
     # 17. Degraded Control Guidance
     # -----------------------------------------------------------------------
     @router.get("/api/v1/operator/degraded-control-guidance")
-    async def degraded_control_guidance() -> Response:
+    def degraded_control_guidance() -> Response:
         """Return guidance for operators when the BFF is degraded or unavailable."""
         res = svc.get_degraded_control_guidance()
         return JSONResponse(
