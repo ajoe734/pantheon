@@ -1,0 +1,13 @@
+{
+  "task_id": "PORTFOLIO-VALUATION-PROJECTION-20261021",
+  "base_commit": "e7d041542fa7031750396797f55ccc31e704b44b",
+  "change": "RuntimeSummaryProjectionStore joins accepted pnl_snapshot/drawdown_snapshot metadata.mark_refs to fill-derived positions (mark_price, mark_as_of, mark_source_ref, signed market_value, quote_currency only if supplied). BFF holdings last_mark_at comes from the mark as-of; no mark => last_mark_at null, mark_status unavailable.",
+  "guards": ["per-symbol monotonic quote as_of", "binding-scoped, cleared on rollover", "invalid price/as_of/source_ref ignored", "derived metric echoes ignored", "no heartbeat/collected_at fallback for missing marks"],
+  "not_changed": ["no new writer/service/store/endpoint/config", "no fee/cost/PnL/currency invention"],
+  "tests": {
+    "telemetry": "services/telemetry/test_runtime_summary_projection.py TestValuationMarkProjection (5 of 10 fail before repair)",
+    "bff": "services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py 3 new tests fail before repair; 54 passed after",
+    "known_env_errors": "6 telemetry tests need flask (unchanged by this task)"
+  },
+  "root_owner_ui_verification": "separate; not claimed here"
+}

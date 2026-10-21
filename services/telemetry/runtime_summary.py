@@ -180,6 +180,44 @@ def _binding_effective_boundary(
     return None, None, None
 
 
+def _finite_number(value: Any) -> Optional[float]:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if number == number and abs(number) != float("inf") else None
+
+
+def _rebuild_positions(current: dict[str, Any]) -> None:
+    """Project fill-derived quantities, joined with accepted valuation marks.
+
+    Marks are only joined when they belong to the current binding generation
+    and the exact symbol; a position without one stays explicitly unmarked.
+    """
+    positions = current.get("_positions_by_symbol")
+    marks = current.get("_marks_by_symbol")
+    if not isinstance(positions, dict):
+        positions = {}
+    if not isinstance(marks, dict):
+        marks = {}
+    binding_id = str(current.get("binding_id") or "")
+    rows = []
+    for symbol, quantity in sorted(positions.items()):
+        if not quantity:
+            continue
+        row: dict[str, Any] = {"symbol": symbol, "quantity": quantity}
+        mark = marks.get(symbol)
+        if isinstance(mark, dict) and str(mark.get("binding_id") or "") == binding_id:
+            row["mark_price"] = mark["price"]
+            row["mark_as_of"] = mark["as_of"]
+            row["mark_source_ref"] = mark["source_ref"]
+            row["market_value"] = round(float(quantity) * float(mark["price"]), 6)
+            if mark.get("quote_currency"):
+                row["currency"] = mark["quote_currency"]
+        rows.append(row)
+    current["positions"] = rows
+    current["position_count"] = len(rows)
+
+
 def _summary_identity(payload: dict[str, Any]) -> Optional[tuple[str, str]]:
     runtime_id = str(payload.get("runtime_id") or "").strip()
     if not runtime_id:
@@ -374,7 +412,7 @@ class RuntimeSummaryProjectionStore:
                     "total_trades", "total_trades_at", "total_trades_binding_id",
                     "executed_trade_count",
                     "last_fill",
-                    "_positions_by_symbol", "positions", "position_count",
+                    "_positions_by_symbol", "_marks_by_symbol", "positions", "position_count",
                     "last_heartbeat_at", "last_heartbeat_event_id",
                     "state", "connectivity_status", "broker_status",
                     "queue_lag_ms", "event_delivery_lag_ms", "reported_health_summary",
@@ -609,12 +647,58 @@ class RuntimeSummaryProjectionStore:
                     if isinstance(fill_qty, (int, float)):
                         positions[symbol] = float(positions.get(symbol, 0.0)) + float(fill_qty)
                     current["_positions_by_symbol"] = positions
-                    current["positions"] = [
-                        {"symbol": s, "quantity": q}
-                        for s, q in sorted(positions.items())
-                        if q
-                    ]
-                    current["position_count"] = len(current["positions"])
+                    _rebuild_positions(current)
+
+            # Producer valuation snapshots carry the actual quote marks. Each
+            # mark keeps its own quote as-of (never the event/heartbeat time)
+            # and only advances per symbol, so replays and out-of-order
+            # events cannot regress or refresh an accepted mark.
+            mark_refs = metadata.get("mark_refs")
+            if (
+                event_type in ("pnl_snapshot", "drawdown_snapshot")
+                and not is_derived_metric_echo
+                and isinstance(mark_refs, list)
+            ):
+                marks = current.get("_marks_by_symbol")
+                if not isinstance(marks, dict):
+                    marks = {}
+                changed = False
+                for ref in mark_refs:
+                    if not isinstance(ref, dict):
+                        continue
+                    ref_symbol = ref.get("symbol")
+                    price = _finite_number(ref.get("price"))
+                    source_ref = ref.get("source_ref")
+                    ref_as_of_text, ref_as_of = _strict_rfc3339(ref.get("as_of"))
+                    if (
+                        not isinstance(ref_symbol, str)
+                        or not ref_symbol.strip()
+                        or price is None
+                        or price <= 0
+                        or not isinstance(source_ref, str)
+                        or not source_ref.strip()
+                        or ref_as_of is None
+                    ):
+                        continue
+                    previous = marks.get(ref_symbol)
+                    if isinstance(previous, dict) and str(previous.get("binding_id") or "") == binding_id:
+                        previous_as_of = _parse_rfc3339(previous.get("as_of"))
+                        if previous_as_of is not None and ref_as_of <= previous_as_of:
+                            continue
+                    entry = {
+                        "price": price,
+                        "as_of": ref_as_of_text,
+                        "source_ref": source_ref,
+                        "binding_id": binding_id,
+                    }
+                    quote_currency = ref.get("quote_currency")
+                    if isinstance(quote_currency, str) and quote_currency.strip():
+                        entry["quote_currency"] = quote_currency.strip()
+                    marks[ref_symbol] = entry
+                    changed = True
+                if changed:
+                    current["_marks_by_symbol"] = marks
+                    _rebuild_positions(current)
 
             if bridge_repo is not None:
                 current["engine_bridge_repo"] = bridge_repo

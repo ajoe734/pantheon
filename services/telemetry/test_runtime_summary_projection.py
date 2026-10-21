@@ -1413,3 +1413,145 @@ class TestRetirementEventDeliveryThroughRealAuth(unittest.TestCase):
             emitter = RetirementTelemetryEmitter(sender, store=svc.store)
             self.assertEqual(emitter.sweep(limit=2), 2)
             self.assertEqual(emitter.sweep(limit=2), 1)
+
+
+def _valuation_event(
+    marks,
+    *,
+    event_type="pnl_snapshot",
+    created_at="2026-10-21T02:36:09Z",
+    binding_id="rtb-paper-001",
+    event_id=None,
+):
+    ev = _event(event_type=event_type, created_at=created_at)
+    ev["event_id"] = event_id or f"evt-val-{event_type}-{created_at}-{binding_id}"
+    ev["binding_id"] = binding_id
+    ev["metrics"] = {"portfolio_value": 1.0, "pnl": 0.5, "drawdown_pct": 0.0}
+    ev["metadata"].update(
+        {
+            "valuation_method": "fill_cash_ledger_mark_to_market",
+            "valuation_as_of": "2026-10-20T00:00:00Z",
+            "mark_refs": marks,
+        }
+    )
+    return ev
+
+
+def _mark(symbol="2330.TW", price=2405.0, as_of="2026-10-20T00:00:00Z", **extra):
+    ref = {
+        "symbol": symbol,
+        "price": price,
+        "as_of": as_of,
+        "source_ref": "source-ingest://snapshots/mss-44f01ca7b8891e2be3fb721f",
+    }
+    ref.update(extra)
+    return ref
+
+
+class TestValuationMarkProjection(unittest.TestCase):
+    def _store(self):
+        tmp = tempfile.mkdtemp()
+        return RuntimeSummaryProjectionStore(path=str(Path(tmp) / "summaries.json"))
+
+    def _short_fill(self, store):
+        return store.project_event(_fill_event(symbol="2330.TW", qty=-1.0, price=2400.0))
+
+    def test_fill_only_position_has_no_mark(self):
+        summary = self._short_fill(self._store())
+        self.assertEqual(summary["positions"], [{"symbol": "2330.TW", "quantity": -1.0}])
+
+    def test_snapshot_marks_signed_position_with_quote_asof_not_event_time(self):
+        store = self._store()
+        self._short_fill(store)
+        summary = store.project_event(_valuation_event([_mark()]))
+        self.assertEqual(
+            summary["positions"],
+            [
+                {
+                    "symbol": "2330.TW",
+                    "quantity": -1.0,
+                    "mark_price": 2405.0,
+                    "mark_as_of": "2026-10-20T00:00:00Z",
+                    "mark_source_ref": "source-ingest://snapshots/mss-44f01ca7b8891e2be3fb721f",
+                    "market_value": -2405.0,
+                }
+            ],
+        )
+        self.assertNotIn("currency", summary["positions"][0])
+
+    def test_quote_currency_only_when_supplied(self):
+        store = self._store()
+        self._short_fill(store)
+        summary = store.project_event(_valuation_event([_mark(quote_currency="TWD")]))
+        self.assertEqual(summary["positions"][0]["currency"], "TWD")
+
+    def test_heartbeat_does_not_refresh_mark_asof(self):
+        store = self._store()
+        self._short_fill(store)
+        store.project_event(_valuation_event([_mark()]))
+        hb = _event("heartbeat", created_at="2026-10-21T09:00:00Z")
+        summary = store.project_event(hb)
+        self.assertEqual(summary["positions"][0]["mark_as_of"], "2026-10-20T00:00:00Z")
+
+    def test_mark_before_fill_still_joins_later_fill(self):
+        store = self._store()
+        store.project_event(_valuation_event([_mark()]))
+        summary = self._short_fill(store)
+        self.assertEqual(summary["positions"][0]["market_value"], -2405.0)
+
+    def test_older_or_duplicate_mark_does_not_regress_accepted_mark(self):
+        store = self._store()
+        self._short_fill(store)
+        store.project_event(_valuation_event([_mark(price=2405.0, as_of="2026-10-20T00:00:00Z")], event_id="a"))
+        store.project_event(_valuation_event([_mark(price=2300.0, as_of="2026-10-19T00:00:00Z")], event_id="b"))
+        summary = store.project_event(
+            _valuation_event([_mark(price=1.0, as_of="2026-10-20T00:00:00Z")], event_type="drawdown_snapshot", event_id="c")
+        )
+        self.assertEqual(summary["positions"][0]["mark_price"], 2405.0)
+        summary = store.project_event(
+            _valuation_event([_mark(price=2410.0, as_of="2026-10-21T00:00:00Z")], event_id="d")
+        )
+        self.assertEqual(summary["positions"][0]["mark_price"], 2410.0)
+        self.assertEqual(summary["positions"][0]["mark_as_of"], "2026-10-21T00:00:00Z")
+
+    def test_cross_symbol_mark_does_not_contaminate_position(self):
+        store = self._store()
+        self._short_fill(store)
+        summary = store.project_event(_valuation_event([_mark(symbol="2317.TW", price=99.0)]))
+        self.assertEqual(summary["positions"], [{"symbol": "2330.TW", "quantity": -1.0}])
+
+    def test_invalid_or_missing_marks_stay_unavailable(self):
+        store = self._store()
+        self._short_fill(store)
+        bad = [
+            _mark(price=0),
+            _mark(price=-5.0),
+            _mark(price=True),
+            _mark(price=float("nan")),
+            _mark(as_of="2026-10-20T00:00:00"),
+            {"symbol": "2330.TW", "price": 1.0, "as_of": "2026-10-20T00:00:00Z"},
+        ]
+        summary = store.project_event(_valuation_event(bad))
+        self.assertEqual(summary["positions"], [{"symbol": "2330.TW", "quantity": -1.0}])
+        summary = store.project_event(_valuation_event([], event_id="empty"))
+        self.assertEqual(summary["positions"], [{"symbol": "2330.TW", "quantity": -1.0}])
+
+    def test_binding_rollover_drops_old_binding_marks(self):
+        store = self._store()
+        self._short_fill(store)
+        store.project_event(_valuation_event([_mark()]))
+        new = _event("heartbeat", created_at="2026-10-21T10:00:00Z")
+        new.update({"event_id": "evt-new", "binding_id": "rtb-paper-002"})
+        new["metadata"]["runtime_binding_effective_at"] = "2026-10-21T09:59:00Z"
+        summary = store.project_event(new)
+        self.assertEqual(summary["binding_id"], "rtb-paper-002")
+        self.assertEqual(summary.get("positions", []), [])
+        self.assertNotIn("_marks_by_symbol", summary)
+
+    def test_derived_metric_echo_does_not_carry_marks(self):
+        store = self._store()
+        self._short_fill(store)
+        ev = _valuation_event([_mark()])
+        ev["metadata"]["derived_from_threshold_evaluation"] = True
+        summary = store.project_event(ev)
+        self.assertEqual(summary["positions"], [{"symbol": "2330.TW", "quantity": -1.0}])

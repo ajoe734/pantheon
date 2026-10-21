@@ -1733,3 +1733,119 @@ def test_portfolio_projections_use_one_owner_snapshot_with_identical_results() -
         assert actual == expected
         assert len(collection_calls) == 1, project.__name__
         assert summaries == original
+
+
+def _projected_paper_summary(*, marks, binding_id="rb-alpha"):
+    """Producer-shaped fill + valuation events through the real projection store."""
+    from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+
+    base = {
+        "deployment_stage": "paper",
+        "environment": "paper",
+        "binding_id": binding_id,
+        "runtime_id": "runtime-alpha",
+        "capital_pool_id": "pool-alpha",
+        "artifact_id": "artifact-alpha",
+        "artifact_version": "1.0.0",
+        "plan_id": "plan-alpha",
+        "persona_capital_binding_id": "binding-alpha",
+        "target": {"strategy_id": "strategy-alpha"},
+    }
+    store = RuntimeSummaryProjectionStore(path=None)
+    store.project_event(
+        {
+            **base,
+            "event_id": "evt-fill",
+            "event_type": "paper_fill_simulated",
+            "created_at": "2026-10-21T02:00:00Z",
+            "metrics": {"fill_quantity": -1.0, "fill_price": 2400.0, "action": "market_order"},
+            "metadata": {"symbol": "2330.TW"},
+        }
+    )
+    if marks is not None:
+        store.project_event(
+            {
+                **base,
+                "event_id": "evt-pnl",
+                "event_type": "pnl_snapshot",
+                "created_at": "2026-10-21T02:36:09Z",
+                "metrics": {"pnl": -5.0},
+                "metadata": {"valuation_as_of": "2026-10-20T00:00:00Z", "mark_refs": marks},
+            }
+        )
+    # A later heartbeat must not make the mark look fresh.
+    summary = store.project_event(
+        {
+            **base,
+            "event_id": "evt-hb",
+            "event_type": "heartbeat",
+            "created_at": "2026-10-21T03:00:00Z",
+            "metrics": {"heartbeat": 1},
+            "metadata": {},
+        }
+    )
+    return summary
+
+
+def _alpha_holdings(monkeypatch, summary):
+    client = _portfolio_store(monkeypatch, telemetry={"runtime-alpha": summary})
+    response = client.get(
+        "/bff/management/portfolio-book/holdings",
+        headers=HEADERS,
+        params={"runtime_id": "runtime-alpha"},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]["items"]
+
+
+def test_portfolio_holdings_carry_projected_mark_and_signed_market_value(monkeypatch) -> None:
+    summary = _projected_paper_summary(
+        marks=[
+            {
+                "symbol": "2330.TW",
+                "price": 2405.0,
+                "as_of": "2026-10-20T00:00:00Z",
+                "source_ref": "source-ingest://snapshots/mss-44f01ca7b8891e2be3fb721f",
+            }
+        ]
+    )
+    (item,) = _alpha_holdings(monkeypatch, summary)
+    assert item["symbol"] == "2330.TW"
+    assert item["quantity"] == -1
+    assert item["side"] == "short"
+    assert item["mark_price"] == 2405.0
+    assert item["market_value"] == -2405.0
+    assert item["mark_status"] == "available"
+    assert item["last_mark_at"] == "2026-10-20T00:00:00Z"
+    assert item["last_mark_at"] != summary["collected_at"]
+    # Nothing unsupported is invented.
+    assert item["currency"] is None
+    assert item["average_price"] is None
+    assert item["unrealized_pnl"] is None
+
+
+def test_portfolio_holdings_without_valuation_mark_stay_unavailable(monkeypatch) -> None:
+    summary = _projected_paper_summary(marks=None)
+    (item,) = _alpha_holdings(monkeypatch, summary)
+    assert item["quantity"] == -1
+    assert item["mark_price"] is None
+    assert item["market_value"] is None
+    assert item["mark_status"] == "unavailable"
+    assert item["last_mark_at"] is None
+
+
+def test_portfolio_holdings_ignore_cross_symbol_mark(monkeypatch) -> None:
+    summary = _projected_paper_summary(
+        marks=[
+            {
+                "symbol": "2317.TW",
+                "price": 99.0,
+                "as_of": "2026-10-20T00:00:00Z",
+                "source_ref": "source-ingest://snapshots/other",
+            }
+        ]
+    )
+    (item,) = _alpha_holdings(monkeypatch, summary)
+    assert item["mark_price"] is None
+    assert item["market_value"] is None
+    assert item["last_mark_at"] is None
