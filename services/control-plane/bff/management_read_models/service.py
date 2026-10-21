@@ -2778,7 +2778,10 @@ class ManagementService:
         else:
             group_surfaces["runtime"] = {"status": "unavailable", "source": "missing" if store is None else "unsupported"}
 
-        active_runtimes = sum(1 for b in runtime_bindings if isinstance(b, dict) and b.get("status") == "running")
+        active_runtimes = sum(
+            1 for b in runtime_bindings
+            if isinstance(b, dict) and b.get("status") in {"active", "running"}
+        )
         runtime_group = {
             "group_id": "runtime",
             "label": _HEALTH_GROUP_LABELS["runtime"],
@@ -4245,18 +4248,25 @@ class ManagementService:
         self,
         snapshot_at: Optional[str] = None,
         human_inbox: Optional[Dict[str, Any]] = None,
+        completed_sections: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         snap = snapshot_at or self._utc_now()
+        sections = completed_sections if completed_sections is not None else {}
 
         def _section(name: str, surface_key: str, fn: Any) -> Dict[str, Any]:
-            # One failing contributor must not blank the healthy sections.
+            # Publish only completed sections into this request's progress dict.
+            # A later slow contributor must not erase real health/home data.
             try:
-                return fn()
+                value = fn()
+                if not isinstance(value, dict):
+                    raise TypeError("Cockpit section must return an object")
             except Exception as exc:
                 log.warning("bff.cockpit section %s unavailable: %s", name, type(exc).__name__)
-                return {"meta": {"surfaces": {surface_key: {
+                value = {"meta": {"surfaces": {surface_key: {
                     "status": "unavailable", "source": "error", "reason": "section_error",
                 }}}}
+            sections[name] = value
+            return value
 
         # Health is computed once; operator_home reuses it instead of recomputing.
         runtime_health = _section("runtime_health", "health_status", lambda: self.get_operator_health_status(snapshot_at=snap))
@@ -4268,9 +4278,33 @@ class ManagementService:
         trading_pulse = _section("trading_pulse", "management_trading_pulse", lambda: self.get_trading_pulse(snapshot_at=snap))
         if human_inbox is None:
             human_inbox = _section("human_inbox", "human_inbox", self.get_human_inbox)
+        sections["human_inbox"] = human_inbox
         alerts_payload = _section("alerts", "alerts", lambda: self.get_operator_alerts(snapshot_at=snap))
         anomalies_payload = _section("anomalies", "management_anomalies", lambda: self.get_management_anomalies(snapshot_at=snap))
+        return self.compose_management_cockpit_sections(sections, snapshot_at=snap)
 
+    def compose_management_cockpit_sections(
+        self, sections: Dict[str, Any], *, snapshot_at: str,
+        incomplete_reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Format completed reads; missing sections remain explicitly unavailable."""
+        snap = snapshot_at
+
+        def section(name: str, surface_key: str) -> Dict[str, Any]:
+            if name in sections:
+                return sections[name]
+            return {"meta": {"surfaces": {surface_key: {
+                "status": "unavailable", "source": "incomplete_read",
+                "reason": incomplete_reason or "section_not_completed",
+                "snapshot_at": snap,
+            }}}}
+
+        runtime_health = section("runtime_health", "health_status")
+        operator_home = section("operator_home", "operator_home")
+        trading_pulse = section("trading_pulse", "management_trading_pulse")
+        human_inbox = section("human_inbox", "human_inbox")
+        alerts_payload = section("alerts", "alerts")
+        anomalies_payload = section("anomalies", "management_anomalies")
         alerts = {
             "items": alerts_payload.get("alerts", []),
             "summary": alerts_payload.get("summary", {}),

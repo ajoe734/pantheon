@@ -102,7 +102,7 @@ class _MockContextHost:
 mock_context_host = _MockContextHost()
 
 
-def _seeded_client(td: str, service_cls: type = ManagementService) -> TestClient:
+def _seeded_client(td: str, service_cls: type = ManagementService, **router_kwargs) -> TestClient:
     store = create_in_memory_read_surface_ports()
     store.list_incidents = lambda **kwargs: [
         {
@@ -234,7 +234,7 @@ def _seeded_client(td: str, service_cls: type = ManagementService) -> TestClient
 
     app = FastAPI()
     service = service_cls(get_read_store=lambda: store)
-    app.include_router(create_management_router(get_read_store=lambda: store, service=service))
+    app.include_router(create_management_router(get_read_store=lambda: store, service=service, **router_kwargs))
     return TestClient(app)
 
 
@@ -537,3 +537,64 @@ def test_incident_owner_list_is_fetched_once_per_request_and_not_across_requests
     with request_read_scope():
         port.list_incidents()
     assert len(fetched) == 4
+
+
+@pytest.mark.parametrize("blocked_section", ["human_inbox", "anomalies"])
+def test_cockpit_timeout_keeps_completed_owner_sections(monkeypatch, blocked_section):
+    import threading
+    from services.control_plane.bff.personas.routes.common import run_management_read
+
+    entered, release = threading.Event(), threading.Event()
+
+    class SlowSectionService(ManagementService):
+        def _block(self):
+            entered.set()
+            assert release.wait(3), "test must release the original worker"
+
+        def get_human_inbox(self, *args, **kwargs):
+            if blocked_section == "human_inbox":
+                self._block()
+            return super().get_human_inbox(*args, **kwargs)
+
+        def get_management_anomalies(self, *args, **kwargs):
+            if blocked_section == "anomalies":
+                self._block()
+            return super().get_management_anomalies(*args, **kwargs)
+
+    monkeypatch.setenv("PANTHEON_BFF_COCKPIT_READ_TIMEOUT_SECONDS", "0.15")
+    with tempfile.TemporaryDirectory() as td:
+        client = _seeded_client(td, SlowSectionService, run_management_read=run_management_read)
+        try:
+            response = client.get("/bff/management/cockpit", headers=OPERATOR_HEADERS)
+            assert entered.is_set(), "real composer must reach the blocked section"
+            assert response.status_code == 200
+            body = response.json()
+            assert body["data"]["operator_home"]["cards"]
+            assert body["data"]["runtime_health"]["groups"]
+            assert body["data"]["trading_pulse"]["summary"]["runtime_count"] == 1
+            assert body["meta"]["partial"] is True
+            assert body["meta"]["surfaces"]["management_cockpit"]["reason"] == "read_timeout"
+            assert body["meta"]["surfaces"]["management_cockpit"]["source"] == "partial_composition"
+            missing_key = "human_inbox" if blocked_section == "human_inbox" else "management_anomalies"
+            missing = body["meta"]["surfaces"][missing_key]
+            assert missing["status"] == "unavailable"
+            assert missing["reason"] == "read_timeout"
+            before = json.dumps(body, sort_keys=True)
+        finally:
+            release.set()
+        # Late completion must not rewrite the already returned snapshot.
+        assert json.dumps(response.json(), sort_keys=True) == before
+
+
+def test_cockpit_health_counts_canonical_active_binding_not_retired_or_paused():
+    store = create_in_memory_read_surface_ports()
+    store.list_runtime_bindings = lambda: [
+        {"runtime_id": "current-paper", "status": "active"},
+        {"runtime_id": "old-paper", "status": "retired"},
+        {"runtime_id": "failed-paper", "status": "failed"},
+        {"runtime_id": "paused-paper", "status": "paused"},
+    ]
+    health = ManagementService(read_store=store).get_operator_health_status()
+    runtime = next(g for g in health["groups"] if g["group_id"] == "runtime")
+    assert runtime["details"] == {"total_runtimes": 4, "active_runtimes": 1}
+    assert runtime["summary"] == "1 active runtime(s) running."
