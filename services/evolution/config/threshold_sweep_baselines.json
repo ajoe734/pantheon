@@ -10,6 +10,10 @@
     "artifact-tw-session-momentum-v1": {
       "expected_drawdown": 0.0303,
       "policy_source": "docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-005-governed-baselines.md#governance-decision"
+    },
+    "artifact-persona-paper-00400aa279b49774cde4": {
+      "expected_drawdown": 0.0027,
+      "policy_source": "docs/deployment/evidence/PAPER-DRAWDOWN-CURRENT0040-CONFIG-20261021/policy.md#reviewer-decision"
     }
   }
 }
