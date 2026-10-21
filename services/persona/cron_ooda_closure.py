@@ -65,7 +65,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -73,18 +72,13 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-_OODA_DIR = REPO_ROOT / "services" / "control-plane" / "ooda"
-_CRON_DIR = REPO_ROOT / "services" / "control-plane" / "cron"
-for _dir in (_OODA_DIR, _CRON_DIR):
-    if str(_dir) not in sys.path:
-        sys.path.insert(0, str(_dir))
 
-from jsonl_store import (  # noqa: E402
+from services.control_plane.ooda.jsonl_store import (  # noqa: E402
     DEFAULT_OODA_PACKET_STORE_PATH,
     SCHEMA_VERSION as _OODA_RECORD_SCHEMA_VERSION,
     OodaJsonlAppendStore,
 )
-from ooda_loop_packet import (  # noqa: E402
+from services.control_plane.ooda.ooda_loop_packet import (  # noqa: E402
     ActBundle,
     DecideBundle,
     LearnBundle,
@@ -95,8 +89,11 @@ from ooda_loop_packet import (  # noqa: E402
     OodaLoopPacket,
     OrientBundle,
 )
-from stage_transition import validate_status_transition  # noqa: E402
-from workflows import WorkflowDefinition, get_workflow_definition  # noqa: E402
+from services.control_plane.ooda.stage_transition import validate_status_transition  # noqa: E402
+from services.control_plane.cron.workflows import (  # noqa: E402
+    WorkflowDefinition,
+    get_workflow_definition,
+)
 
 from integrations.openclaw.adapter.cron_transport import force_run_job  # noqa: E402
 from integrations.openclaw.persona_ooda_runtime import (  # noqa: E402
