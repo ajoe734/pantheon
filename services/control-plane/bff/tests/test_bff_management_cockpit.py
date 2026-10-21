@@ -866,57 +866,110 @@ def test_cached_owner_call_deduplicates_concurrent_same_key_and_expires_inner_de
 
 def test_plain_dict_request_read_cache_supports_nested_and_concurrent_cached_owner_call() -> None:
     """When request_read_cache is set to a plain dict, nested cached_owner_call with
-    different or identical keys must not deadlock and must still provide per-key RLock synchronization."""
+    different or identical keys must not deadlock, must survive >64 concurrent plain-dict
+    caches during an in-flight read without evicting the active lock table, and must not
+    retain plain-dict caches or cached payloads by module-global strong reference."""
     from concurrent.futures import ThreadPoolExecutor
+    import gc
     import threading
     import time
+    import weakref
 
+    from services.control_plane.bff.core import owner_reads
     from services.control_plane.bff.core.owner_reads import (
+        _key_lock,
         cached_owner_call,
         evict_request_read_keys,
         request_read_cache,
     )
 
-    plain_cache: dict[Any, Any] = {}
-    tok = request_read_cache.set(plain_cache)
-    try:
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            nested_fut = pool.submit(
-                __import__("contextvars").copy_context().run,
-                lambda: cached_owner_call(
-                    "outer",
-                    lambda: cached_owner_call("inner", lambda: 42),
-                ),
-            )
-            assert nested_fut.result(timeout=1.0) == 42
-        assert plain_cache == {"inner": (True, 42), "outer": (True, 42)}
+    assert not hasattr(owner_reads, "_PLAIN_DICT_LOCKS")
 
-        invocations = 0
-        lock = threading.Lock()
+    class _CachedPayload:
+        pass
 
-        def _slow_val() -> int:
-            nonlocal invocations
-            time.sleep(0.03)
-            with lock:
-                invocations += 1
-            return 99
+    payload_ref: weakref.ReferenceType[_CachedPayload] | None = None
 
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            futs = [
-                pool.submit(
+    def _run_scoped_plain_cache() -> None:
+        nonlocal payload_ref
+        plain_cache: dict[Any, Any] = {}
+        tok = request_read_cache.set(plain_cache)
+        try:
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                nested_fut = pool.submit(
+                    __import__("contextvars").copy_context().run,
+                    lambda: cached_owner_call(
+                        "outer",
+                        lambda: cached_owner_call("inner", lambda: 42),
+                    ),
+                )
+                assert nested_fut.result(timeout=1.0) == 42
+            assert plain_cache["inner"] == (True, 42)
+            assert plain_cache["outer"] == (True, 42)
+
+            entered = threading.Event()
+            release = threading.Event()
+            invocations = 0
+            lock = threading.Lock()
+
+            def _slow_val() -> _CachedPayload:
+                nonlocal invocations
+                with lock:
+                    invocations += 1
+                entered.set()
+                assert release.wait(timeout=2.0)
+                return _CachedPayload()
+
+            inflight_key = ("concurrent", "k1")
+            initial_lock = _key_lock(plain_cache, inflight_key)
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                fut1 = pool.submit(
                     __import__("contextvars").copy_context().run,
                     cached_owner_call,
-                    ("concurrent", "k1"),
+                    inflight_key,
                     _slow_val,
                 )
-                for _ in range(4)
-            ]
-            assert [f.result(timeout=1.0) for f in futs] == [99, 99, 99, 99]
-        assert invocations == 1
-        evict_request_read_keys(("concurrent",))
-        assert ("concurrent", "k1") not in plain_cache
-    finally:
-        request_read_cache.reset(tok)
+                assert entered.wait(timeout=1.0)
+
+                # Churn >64 other plain-dict request caches while fut1 is in-flight.
+                for idx in range(80):
+                    other_cache: dict[Any, Any] = {}
+                    other_tok = request_read_cache.set(other_cache)
+                    try:
+                        assert cached_owner_call(("other", idx), lambda i=idx: i) == idx
+                    finally:
+                        request_read_cache.reset(other_tok)
+
+                assert _key_lock(plain_cache, inflight_key) is initial_lock
+                evict_request_read_keys(("other",))
+                assert _key_lock(plain_cache, inflight_key) is initial_lock
+
+                fut2 = pool.submit(
+                    __import__("contextvars").copy_context().run,
+                    cached_owner_call,
+                    inflight_key,
+                    _slow_val,
+                )
+                time.sleep(0.02)
+                with lock:
+                    assert invocations == 1
+                release.set()
+                res1 = fut1.result(timeout=1.0)
+                res2 = fut2.result(timeout=1.0)
+                assert res1 is res2
+                payload_ref = weakref.ref(res1)
+                del res1, res2
+            assert invocations == 1
+            evict_request_read_keys(("concurrent",))
+            assert inflight_key not in plain_cache
+            assert _key_lock(plain_cache, inflight_key) is initial_lock
+        finally:
+            request_read_cache.reset(tok)
+
+    _run_scoped_plain_cache()
+    gc.collect()
+    assert payload_ref is not None
+    assert payload_ref() is None, "plain-dict request cache payload must not be retained across requests"
 
 
 def test_operator_health_status_distinguishes_timeout_from_error() -> None:

@@ -147,8 +147,8 @@
       "id": "RC-2",
       "file": "services/control-plane/bff/core/owner_reads.py",
       "symbol": "cached_owner_call / _RequestReadCache",
-      "cause": "cached_owner_call checked and populated request_read_cache without synchronization, so concurrent threads sharing a request_read_scope via copy_context().run could race or duplicate identical owner reads; and fallback locking when request_read_cache was set to a plain dict must not share a single non-reentrant lock across nested cached_owner_call keys.",
-      "repair": "Add per-key RLock synchronization on _RequestReadCache and plain-dict request_read_cache instances in cached_owner_call and lock-protected eviction in evict_request_read_keys so distinct or nested owner reads never deadlock while identical in-flight owner keys within the same request are deduplicated."
+      "cause": "cached_owner_call checked and populated request_read_cache without synchronization, so concurrent threads sharing a request_read_scope via copy_context().run could race or duplicate identical owner reads; and fallback locking when request_read_cache was set to a plain dict must not share a single non-reentrant lock across nested cached_owner_call keys or retain plain-dict request caches in a module-global registry.",
+      "repair": "Add per-key RLock synchronization on _RequestReadCache._key_locks and plain-dict request_read_cache instances (via an in-cache private non-tuple sentinel key with zero cross-request retention) in cached_owner_call and lock-protected eviction in evict_request_read_keys so distinct or nested owner reads never deadlock while identical in-flight owner keys within the same request are deduplicated."
     },
     {
       "id": "RC-3",
