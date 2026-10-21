@@ -138,6 +138,7 @@ def _get_management_cockpit_degraded_payload(
     self=None,
     snapshot_at: Optional[str] = None,
     reason: str = "read_timeout",
+    completed_sections: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     snap = snapshot_at or _utc_now_rfc3339()
     source, message = _COCKPIT_DEGRADED_REASONS.get(reason, _COCKPIT_DEGRADED_REASONS["read_error"])
@@ -148,6 +149,14 @@ def _get_management_cockpit_degraded_payload(
         "message": message,
         "snapshot_at": snap,
     }
+    if completed_sections:
+        payload = self.compose_management_cockpit_sections(
+            completed_sections, snapshot_at=snap, incomplete_reason=cockpit_surface["reason"],
+        )
+        cockpit_surface.update(source="partial_composition", message="Cockpit read did not complete; completed owner sections are returned.")
+        payload["meta"].update(partial=True)
+        payload["meta"]["surfaces"]["management_cockpit"] = cockpit_surface
+        return payload
     return {
         "data": {
             "id": "management-cockpit",
@@ -1621,13 +1630,20 @@ def create_management_router(
             return svc.get_management_cockpit
 
         cockpit_composer = _resolve_cockpit_composer()
+        completed_sections: Dict[str, Any] = {}
+        composer_kwargs: Dict[str, Any] = {"snapshot_at": snap}
+        # Keep injected legacy composers compatible; production forwards kwargs
+        # to ManagementService, which records per-request completed sections.
+        params = inspect.signature(cockpit_composer).parameters
+        if "completed_sections" in params or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+            composer_kwargs["completed_sections"] = completed_sections
 
         if run_management_read is not None:
             try:
                 return await run_management_read(
                     cockpit_composer,
-                    snapshot_at=snap,
                     timeout_seconds=_get_management_cockpit_read_timeout(),
+                    **composer_kwargs,
                 )
             except Exception as exc:
                 from ..personas.routes.common import ManagementReadSaturated, ManagementReadTimeout
@@ -1638,8 +1654,10 @@ def create_management_router(
                 else:
                     reason = "read_error"
                     logging.getLogger(__name__).warning("bff.management_cockpit composer failed: %s", type(exc).__name__)
-                return svc.get_management_cockpit_degraded_payload(snapshot_at=snap, reason=reason)
-        return await asyncio.to_thread(cockpit_composer, snapshot_at=snap)
+                return svc.get_management_cockpit_degraded_payload(
+                    snapshot_at=snap, reason=reason, completed_sections=dict(completed_sections),
+                )
+        return await asyncio.to_thread(cockpit_composer, **composer_kwargs)
 
     # -----------------------------------------------------------------------
     # 4. Trading Pulse

@@ -1,0 +1,43 @@
+{
+  "task_id": "BFF-COCKPIT-FANOUT-20261021",
+  "at": "2026-10-21T00:55:11.758445+00:00",
+  "diagnosis": {
+    "served_BE": "525bb5c909df065bf765c5a19cb984b2046c976d",
+    "served_FE": "a70121543efec81e07a278d034898b258a8b4dc2",
+    "Root": 39517994071,
+    "actual_browser": "Normal page mount00:44:21 returned HTTP200 but all-empty operator_home/runtime_health with read_timeout. Same-source single request was1.397s with real data. Actual timeout setting3.0s verified.",
+    "cause_in_code": "Bounded aggregate discarded all completed sections when any later contributor exceeded its deadline. Prior per-section exception isolation did not cover an outer deadline.",
+    "limits": "Existing matching logs retained. Separate-process profiles are not live worker traces and do not establish which owner caused this particular timeout; concurrent Persona404 observations are not attributed as its root cause.",
+    "original_evidence": {
+      "cockpit-browser-genuine-page-v2-39517994071/initial-actual-cockpit.json": {
+        "path": "/tmp/pantheon-direct-runtime-20261021/cockpit-browser-genuine-page-v2-39517994071/initial-actual-cockpit.json",
+        "sha256": "4d12884bcc9aeccabc945095ba39ad590bb79a173ec9c1fd7b993befe0a1398d"
+      },
+      "browser-004421-service-window.txt": {
+        "path": "/tmp/pantheon-direct-runtime-20261021/browser-004421-service-window.txt",
+        "sha256": "b8c11bebfc3d0e2826ba5c9088db87b92a2c5720bda4789bc80f567e84683f5e"
+      },
+      "actual-browser-fanout-owner-log-window.json": {
+        "path": "/tmp/pantheon-direct-runtime-20261021/actual-browser-fanout-owner-log-window.json",
+        "sha256": "cb138384c06e72410afd4431f3597b3904df5fe7ecfb182a37c2d98909411c03"
+      }
+    }
+  },
+  "changes": [
+    "Record only completed sections in a fresh per-request dictionary passed through the existing production composer.",
+    "Reuse the same payload formatter for complete and partial responses. Preserve real completed health/home/trading data on deadline; missing sections explicitly unavailable with the original reason.",
+    "Retain existing3s default and env override plus true timeout/capacity/error distinctions. No cache/service/queue or owner write. Legacy injected composers remain supported."
+  ],
+  "verification": {
+    "focused_command": "python -m pytest -vv services/control-plane/bff/tests/test_bff_management_cockpit.py services/control-plane/bff/tests/test_owner_read_wiring.py",
+    "focused_result": "45 passed",
+    "regressions": "Two real router + bounded offloader tests block HumanInbox/anomalies, assert actual completed owner payload survives timeout and missing section is unavailable. Existing complete schema, exception reasons and tenant owner read tests pass.",
+    "architecture_and_capacity": "Architecture39 passed. Capacity5 passed and1 existing failure: empty-store HumanInbox remains truthfully degraded after capacity recovery. Same exact test fails unchanged on baseline525bb5 at line259 with same empty approval/persona surfaces. No assertion weakened or unrelated product behavior changed.",
+    "hosted_fix_acceptance": "not yet deployed; current served525 browser failure retained",
+    "final_Cockpit_result": "18 passed after final malformed-section guard; earlier45 Cockpit+wiring passed.",
+    "environment_note": "Initial sandboxed test had no output and was terminated; actual result is escalated loopback-enabled pytest. Initial system python lacked pytest; existing .venv was used."
+  },
+  "authority": "Latest user directs this chatbox to perform runtime testing and continue repair. Current chatbox direct implementation; native task ownerHuman/Ops reviewerAntigravity2 is independent review only.",
+  "all12_complete": false,
+  "goal_complete": false
+}
