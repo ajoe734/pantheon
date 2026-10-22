@@ -24,12 +24,14 @@ from services.source_ingestion.distillation_worker import (
     DistillationJobStatus,
     DistillationRunResult,
     DistillationWorker,
+    _canonical_json,
     _stable_bundle_id,
     _stable_item_id,
     _stable_job_id,
     _synthesize_evidence_bundle,
     _synthesize_evidence_item,
     source_version_digest,
+    source_version_identity,
 )
 from services.source_ingestion.strategy_seed_builder import StrategySpecSeedStatus
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
@@ -706,3 +708,228 @@ class TestTransientDeadLetterRedrive:
         assert rows["src-other"] == "dead_letter:1:0"
         assert actors == 1
         assert queue.redrive_transient_dead_letters(requested_by="ctl", tenant_id="tenant-missing") == []
+
+
+def _legacy_raw_refs_digest(source: SourceRecord) -> str:
+    import hashlib
+
+    metadata = dict(source.metadata)
+    for volatile_key in ("ingest_run_id", "source_ingest_run_id", "trace_id"):
+        metadata.pop(volatile_key, None)
+    identity = _canonical_json(
+        {
+            "source_id": source.source_id,
+            "connector_id": source.connector_id,
+            "source_type": source.source_type.value,
+            "title": source.title,
+            "content_ref": source.content_ref,
+            "metadata": metadata,
+        }
+    )
+    return "sha256:" + hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
+def _tw_market_source(
+    *,
+    source_id: str = "tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19",
+    connector_id: str = "tw-twse-tpex-official-market",
+    source_type: str = "market",
+    title: str = "TWSE 2330 daily price 2026-10-15",
+    content_ref: str = "tw-official://tw_price_daily/TWSE/2330/2026-10-15/e4b598d99f084c19",
+    raw_storage_refs: list[dict[str, Any]] | None = None,
+    ingest_run_id: str = "ingest-ac0cc7b00496",
+    trace_id: str = "trace-batch-1",
+    **extra_metadata: Any,
+) -> SourceRecord:
+    refs = (
+        raw_storage_refs
+        if raw_storage_refs is not None
+        else [
+            {
+                "dataset": "TaiwanStockPrice",
+                "raw_blob_path": f"raw/{ingest_run_id}/twse_2330_{idx:02d}.json",
+                "sha256": f"{idx:064x}",
+            }
+            for idx in range(4)
+        ]
+    )
+    return SourceRecord(
+        source_id=source_id,
+        connector_id=connector_id,
+        source_type=source_type,
+        title=title,
+        content_ref=content_ref,
+        status="normalized",
+        trace_id=trace_id,
+        metadata={
+            "tenant_id": "tenant-dev",
+            "dataset": "TaiwanStockPrice",
+            "symbol": "2330",
+            "market": "TWSE",
+            "date": "2026-10-15",
+            "normalized_row": {
+                "symbol": "2330",
+                "date": "2026-10-15",
+                "close": 1045.0,
+                "volume": 38120000,
+            },
+            "trust_score": 0.9,
+            "access_scope": ["research"],
+            "license_scope": "internal",
+            "keywords": ["twse", "2330", "daily_price"],
+            "ingest_run_id": ingest_run_id,
+            "source_ingest_run_id": ingest_run_id,
+            "trace_id": trace_id,
+            "raw_storage_refs": refs,
+            **extra_metadata,
+        },
+    )
+
+
+class TestBatchRawStorageRefsIdentity:
+    def test_batch_raw_storage_refs_and_run_local_fields_resolve_to_single_version_and_job(
+        self, tmp_path: Path
+    ) -> None:
+        queue = DistillationJobQueue(tmp_path / "queue.sqlite3")
+        batch_one = _tw_market_source(
+            ingest_run_id="ingest-ac0cc7b00496",
+            trace_id="trace-1",
+            raw_storage_refs=[
+                {"dataset": "TaiwanStockPrice", "raw_blob_path": "raw/run-1/part-0.json", "sha256": "11" * 32},
+                {"dataset": "TaiwanStockPrice", "raw_blob_path": "raw/run-1/part-1.json", "sha256": "22" * 32},
+            ],
+        )
+        batch_two = _tw_market_source(
+            ingest_run_id="ingest-84555a4c38a4",
+            trace_id="trace-2",
+            raw_storage_refs=[
+                {"dataset": "TaiwanStockPrice", "raw_blob_path": "raw/run-2/part-0.json", "sha256": "aa" * 32},
+                {"dataset": "TaiwanStockPrice", "raw_blob_path": "raw/run-2/part-1.json", "sha256": "bb" * 32},
+            ],
+        )
+
+        assert "raw_storage_refs" not in source_version_identity(batch_one)["metadata"]
+        assert source_version_identity(batch_one) == source_version_identity(batch_two)
+        assert source_version_digest(batch_one) == source_version_digest(batch_two)
+
+        job_one = queue.enqueue_source_record(batch_one)
+        job_two = queue.enqueue_source_record(batch_two)
+
+        assert job_one.job_id == job_two.job_id
+        assert job_one.source_digest == job_two.source_digest == source_version_digest(batch_one)
+        assert queue.version_count(batch_one.source_id) == 1
+        assert queue.count() == 1
+
+    def test_governed_fields_and_metadata_still_yield_distinct_digest_and_job(
+        self, tmp_path: Path
+    ) -> None:
+        queue = DistillationJobQueue(tmp_path / "queue.sqlite3")
+        base = _tw_market_source(ingest_run_id="run-1", trace_id="t-1")
+        same_content_new_raw_refs = _tw_market_source(
+            ingest_run_id="run-2",
+            trace_id="t-2",
+            raw_storage_refs=[{"dataset": "TaiwanStockPrice", "raw_blob_path": "raw/other.json"}],
+        )
+        assert source_version_digest(base) == source_version_digest(same_content_new_raw_refs)
+
+        base_job = queue.enqueue_source_record(base)
+        variants = [
+            _tw_market_source(title="TWSE 2330 revised close price"),
+            _tw_market_source(content_ref="tw-official://tw_price_daily/TWSE/2330/2026-10-16/revised"),
+            _tw_market_source(source_type="paper"),
+            _tw_market_source(connector_id="tw-finmind-market"),
+            _tw_market_source(
+                normalized_row={
+                    "symbol": "2330",
+                    "date": "2026-10-15",
+                    "close": 1050.0,
+                    "volume": 38120000,
+                }
+            ),
+        ]
+        seen_digests = {base_job.source_digest}
+        seen_job_ids = {base_job.job_id}
+        for variant in variants:
+            digest = source_version_digest(variant)
+            assert digest not in seen_digests
+            job = queue.enqueue_source_record(variant)
+            assert job.job_id not in seen_job_ids
+            seen_digests.add(digest)
+            seen_job_ids.add(job.job_id)
+
+        assert queue.version_count(base.source_id) == 1 + len(variants)
+        assert queue.count() == 1 + len(variants)
+
+    def test_reingest_of_previous_projection_ledger_row_resolves_to_existing_version_and_job(
+        self, tmp_path: Path
+    ) -> None:
+        queue_path = tmp_path / "queue.sqlite3"
+        queue = DistillationJobQueue(queue_path)
+        initial = _tw_market_source(
+            ingest_run_id="ingest-ac0cc7b00496",
+            trace_id="trace-legacy",
+            raw_storage_refs=[
+                {"dataset": "TaiwanStockPrice", "raw_blob_path": "raw/legacy/batch-1.json", "sha256": "11" * 32}
+            ],
+        )
+        legacy_digest = _legacy_raw_refs_digest(initial)
+        legacy_job_id = _stable_job_id(initial.source_id, legacy_digest)
+        legacy_event_id = f"source-normalized:{initial.source_id}:{legacy_digest}"
+        legacy_idempotency_key = f"distill:{initial.source_id}:{legacy_digest}"
+
+        with sqlite3.connect(queue_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO distillation_source_versions (
+                    source_id, source_digest, event_version, payload_json, committed_at
+                ) VALUES (?, ?, 'source_record.normalized.v1', ?, 1792481535.0)
+                """,
+                (initial.source_id, legacy_digest, _canonical_json(initial.to_dict())),
+            )
+            conn.execute(
+                """
+                INSERT INTO distillation_outbox (
+                    job_id, event_id, source_id, source_digest, event_version,
+                    idempotency_key, status, enqueued_at, available_at, max_attempts, updated_at
+                ) VALUES (?, ?, ?, ?, 'source_record.normalized.v1', ?, 'pending', 1792481535.0, 1792481535.0, 3, 1792481535.0)
+                """,
+                (
+                    legacy_job_id,
+                    legacy_event_id,
+                    initial.source_id,
+                    legacy_digest,
+                    legacy_idempotency_key,
+                ),
+            )
+            conn.commit()
+
+        assert legacy_digest != source_version_digest(initial)
+
+        reingested = _tw_market_source(
+            ingest_run_id="ingest-84555a4c38a4",
+            trace_id="trace-reingest",
+            raw_storage_refs=[
+                {"dataset": "TaiwanStockPrice", "raw_blob_path": "raw/reingest/batch-2.json", "sha256": "99" * 32}
+            ],
+        )
+
+        admitted = queue.enqueue_source_record(reingested)
+        assert admitted.job_id == legacy_job_id
+        assert admitted.source_digest == legacy_digest
+        assert queue.version_count(initial.source_id) == 1
+        assert queue.count() == 1
+        assert queue.get(initial.source_id, source_version_digest(reingested)).job_id == legacy_job_id
+
+        worker = DistillationWorker(
+            queue,
+            StrategySpecSeedStore(tmp_path / "seeds.jsonl"),
+            created_by="test_worker",
+        )
+        catch_up_result = worker.catch_up([reingested], tenant_id="tenant-dev")
+        assert catch_up_result.enqueued == 0
+        assert catch_up_result.processed == 1
+        assert catch_up_result.created == 1
+        assert queue.version_count(initial.source_id) == 1
+        assert queue.count() == 1
+        assert queue.get(initial.source_id, legacy_digest).status == DistillationJobStatus.DONE
+
