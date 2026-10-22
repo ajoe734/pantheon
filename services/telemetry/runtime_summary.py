@@ -180,6 +180,78 @@ def _binding_effective_boundary(
     return None, None, None
 
 
+def _finite_number(value: Any) -> Optional[float]:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if number == number and abs(number) != float("inf") else None
+
+
+def _rebuild_positions(
+    current: dict[str, Any],
+    *,
+    reference_at: Optional[datetime] = None,
+) -> None:
+    """Project fill-derived quantities, joined with accepted valuation marks.
+
+    Marks are only joined when they belong to the current binding generation
+    and the exact symbol; a position without one stays explicitly unmarked.
+    """
+    positions = current.get("_positions_by_symbol")
+    marks = current.get("_marks_by_symbol")
+    if not isinstance(positions, dict):
+        positions = {}
+    if not isinstance(marks, dict):
+        marks = {}
+    binding_id = str(current.get("binding_id") or "")
+    failure = current.get("_valuation_failure")
+    latest_event_at = reference_at or _parse_rfc3339(
+        current.get("_binding_latest_event_at") or current.get("last_event_at")
+    )
+    rows = []
+    for symbol, quantity in sorted(positions.items()):
+        if not quantity:
+            continue
+        row: dict[str, Any] = {"symbol": symbol, "quantity": quantity}
+        mark = marks.get(symbol)
+        if isinstance(mark, dict) and str(mark.get("binding_id") or "") == binding_id:
+            failed_symbols = failure.get("symbols") if isinstance(failure, dict) else None
+            if isinstance(failure, dict) and (not failed_symbols or symbol in failed_symbols):
+                # The producer's latest valuation attempt failed: keep the last
+                # known quote only as explicitly unavailable provenance.
+                row["mark_unavailable_reason"] = failure.get("code") or failure.get("status")
+                row["last_known_mark_price"] = mark["price"]
+                row["last_known_mark_as_of"] = mark["as_of"]
+                row["last_known_mark_source_ref"] = mark["source_ref"]
+                if mark.get("quote_currency"):
+                    row["currency"] = mark["quote_currency"]
+                rows.append(row)
+                continue
+            mark_as_of = _parse_rfc3339(mark.get("as_of"))
+            if (
+                latest_event_at is not None
+                and mark_as_of is not None
+                and (latest_event_at - mark_as_of).total_seconds() > 172800.0
+            ):
+                row["mark_stale"] = True
+                row["last_known_mark_price"] = mark["price"]
+                row["last_known_mark_as_of"] = mark["as_of"]
+                row["last_known_mark_source_ref"] = mark["source_ref"]
+                if mark.get("quote_currency"):
+                    row["currency"] = mark["quote_currency"]
+                rows.append(row)
+                continue
+            row["mark_price"] = mark["price"]
+            row["mark_as_of"] = mark["as_of"]
+            row["mark_source_ref"] = mark["source_ref"]
+            row["market_value"] = round(float(quantity) * float(mark["price"]), 6)
+            if mark.get("quote_currency"):
+                row["currency"] = mark["quote_currency"]
+        rows.append(row)
+    current["positions"] = rows
+    current["position_count"] = len(rows)
+
+
 def _summary_identity(payload: dict[str, Any]) -> Optional[tuple[str, str]]:
     runtime_id = str(payload.get("runtime_id") or "").strip()
     if not runtime_id:
@@ -374,7 +446,7 @@ class RuntimeSummaryProjectionStore:
                     "total_trades", "total_trades_at", "total_trades_binding_id",
                     "executed_trade_count",
                     "last_fill",
-                    "_positions_by_symbol", "positions", "position_count",
+                    "_positions_by_symbol", "_marks_by_symbol", "_valuation_failure", "_valuation_attempt_at", "positions", "position_count",
                     "last_heartbeat_at", "last_heartbeat_event_id",
                     "state", "connectivity_status", "broker_status",
                     "queue_lag_ms", "event_delivery_lag_ms", "reported_health_summary",
@@ -609,12 +681,127 @@ class RuntimeSummaryProjectionStore:
                     if isinstance(fill_qty, (int, float)):
                         positions[symbol] = float(positions.get(symbol, 0.0)) + float(fill_qty)
                     current["_positions_by_symbol"] = positions
-                    current["positions"] = [
-                        {"symbol": s, "quantity": q}
-                        for s, q in sorted(positions.items())
-                        if q
-                    ]
-                    current["position_count"] = len(current["positions"])
+                    _rebuild_positions(current)
+
+            # The producer reports a failed/expired valuation attempt through its
+            # heartbeat performance_telemetry. Only its own attempt time orders
+            # it; a heartbeat never refreshes a mark, it can only withdraw one.
+            perf = metadata.get("performance_telemetry")
+            if event_type == "heartbeat" and isinstance(perf, dict):
+                perf_diag = (
+                    perf.get("diagnostic")
+                    if isinstance(perf.get("diagnostic"), dict)
+                    else {}
+                )
+                perf_status = str(perf.get("status") or perf_diag.get("status") or "")
+                _, attempted_at = _strict_rfc3339(
+                    perf.get("attempted_at") or perf_diag.get("attempted_at")
+                )
+                if (
+                    attempted_at is not None
+                    and event_boundary_at is not None
+                    and attempted_at > event_boundary_at
+                ):
+                    attempted_at = event_boundary_at
+                attempted_at = attempted_at or event_boundary_at
+                prior = current.get("_valuation_failure")
+                prior_at = _parse_rfc3339(current.get("_valuation_attempt_at"))
+                if attempted_at is not None and (prior_at is None or attempted_at >= prior_at):
+                    current["_valuation_attempt_at"] = attempted_at.isoformat().replace("+00:00", "Z")
+                    if perf_status in (
+                        "marks_unavailable",
+                        "invalid_ledger",
+                        "invalid_drawdown_series",
+                    ):
+                        missing = (
+                            perf.get("missing_symbols")
+                            if "missing_symbols" in perf
+                            else perf_diag.get("missing_symbols")
+                        )
+                        current["_valuation_failure"] = {
+                            "status": perf_status,
+                            "code": str(
+                                perf.get("code")
+                                or perf_diag.get("code")
+                                or perf_status
+                            ),
+                            "at": attempted_at.isoformat().replace("+00:00", "Z"),
+                            "symbols": sorted(str(x) for x in missing)
+                            if isinstance(missing, list)
+                            else [],
+                        }
+                        _rebuild_positions(current)
+                    elif perf_status in ("valued", "unchanged", "emitted") and prior is not None:
+                        current.pop("_valuation_failure", None)
+                        _rebuild_positions(current)
+
+            # Producer valuation snapshots carry the actual quote marks. Each
+            # mark keeps its own quote as-of (never the event/heartbeat time)
+            # and only advances per symbol, so replays and out-of-order
+            # events cannot regress or refresh an accepted mark.
+            mark_refs = metadata.get("mark_refs")
+            if (
+                event_type in ("pnl_snapshot", "drawdown_snapshot")
+                and not is_derived_metric_echo
+                and isinstance(mark_refs, list)
+            ):
+                marks = current.get("_marks_by_symbol")
+                if not isinstance(marks, dict):
+                    marks = {}
+                changed = False
+                valid_ref_seen = False
+                for ref in mark_refs:
+                    if not isinstance(ref, dict):
+                        continue
+                    ref_symbol = ref.get("symbol")
+                    price = _finite_number(ref.get("price"))
+                    source_ref = ref.get("source_ref")
+                    ref_as_of_text, ref_as_of = _strict_rfc3339(ref.get("as_of"))
+                    if (
+                        not isinstance(ref_symbol, str)
+                        or not ref_symbol.strip()
+                        or price is None
+                        or price <= 0
+                        or not isinstance(source_ref, str)
+                        or not source_ref.strip()
+                        or ref_as_of is None
+                    ):
+                        continue
+                    previous = marks.get(ref_symbol)
+                    if isinstance(previous, dict) and str(previous.get("binding_id") or "") == binding_id:
+                        previous_as_of = _parse_rfc3339(previous.get("as_of"))
+                        if previous_as_of is not None:
+                            if ref_as_of < previous_as_of:
+                                continue
+                            if ref_as_of == previous_as_of:
+                                valid_ref_seen = True
+                                continue
+                    entry = {
+                        "price": price,
+                        "as_of": ref_as_of_text,
+                        "source_ref": source_ref,
+                        "binding_id": binding_id,
+                    }
+                    quote_currency = ref.get("quote_currency")
+                    if isinstance(quote_currency, str) and quote_currency.strip():
+                        entry["quote_currency"] = quote_currency.strip()
+                    marks[ref_symbol] = entry
+                    changed = True
+                    valid_ref_seen = True
+                if changed or valid_ref_seen:
+                    current["_marks_by_symbol"] = marks
+                    failure = current.get("_valuation_failure")
+                    failure_at = _parse_rfc3339(failure.get("at")) if isinstance(failure, dict) else None
+                    if failure_at is not None and event_boundary_at is not None and event_boundary_at > failure_at:
+                        current.pop("_valuation_failure", None)
+                    if event_boundary_at is not None:
+                        prior_attempt_at = _parse_rfc3339(current.get("_valuation_attempt_at"))
+                        if prior_attempt_at is None or event_boundary_at > prior_attempt_at:
+                            current["_valuation_attempt_at"] = event_boundary_at.isoformat().replace("+00:00", "Z")
+                    _rebuild_positions(current)
+
+            if isinstance(current.get("_positions_by_symbol"), dict) and current.get("_positions_by_symbol"):
+                _rebuild_positions(current)
 
             if bridge_repo is not None:
                 current["engine_bridge_repo"] = bridge_repo
@@ -874,6 +1061,12 @@ class RuntimeSummaryProjectionStore:
         now: Optional[datetime] = None,
     ) -> dict[str, Any]:
         projected = json.loads(json.dumps(summary))
+        if (
+            now is not None
+            and isinstance(projected.get("_positions_by_symbol"), dict)
+            and projected.get("_positions_by_symbol")
+        ):
+            _rebuild_positions(projected, reference_at=now.astimezone(timezone.utc))
         heartbeat_at = _parse_rfc3339(projected.get("last_heartbeat_at"))
         if heartbeat_at is None or projected.get("retired") is True:
             return projected

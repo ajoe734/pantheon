@@ -1,0 +1,102 @@
+{
+  "task_id": "PAPER-DRAWDOWN-CURRENT0040-CONFIG-20261021",
+  "kind": "low_risk_paper_policy_config",
+  "status": "proposed_pending_reviewer_decision",
+  "authored_by": "Claude",
+  "reviewer": "Antigravity2",
+  "approved_by": null,
+  "approval_recorded": false,
+  "policy_path": "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 6.1 low-risk, ReviewerOnDuty",
+  "proposal_ref": "PAPER-DRAWDOWN-BASELINE-PROPOSAL-20261020 (PR #6688)",
+  "subject": {
+    "artifact_id": "artifact-persona-paper-00400aa279b49774cde4",
+    "version": "1.0.0",
+    "strategy_id": "strategy-persona-00400aa279b49774cde4",
+    "symbol": "2330.TW",
+    "stage": "paper",
+    "registry_checksum": "sha256:11ede082f82dc2888434621ee436a382963f984d5ff0ee2fc442a8b2c22ddd6a",
+    "initial_cash_twd": 100000
+  },
+  "config": {
+    "file": "services/evolution/config/threshold_sweep_baselines.json",
+    "expected_drawdown": 0.0027,
+    "unchanged": [
+      "artifact-tw-session-momentum-v1 0.0303",
+      "rolling_pnl_floor disabled placeholder",
+      "threshold 1.25"
+    ]
+  },
+  "receipts_sha256": {
+    "registry": "7e50a695c7ccdc81daeb78dfd858e76488f1bed55da3aaf618f3cdd7a4cdf05d",
+    "param_logic_code_equivalence": "662d82006dec16025dd0bd02940120cecb29e7dd8077569966990ca432d024c9",
+    "four_source_audit": "d765e90e5554f609eee69caff1ac5c9a59d9b3e15e3041915f5d22dd78d8349d",
+    "current_runtime": "503b0c5466e8737baf6135a4fed7bd2a3920c78ec79003f658810d82da1191bf",
+    "producer_inputs_20261021T001125Z": "5ec6d56055c97a47af4a62ee46f0ce06132fb69920d3813b438189d19ec1e3eb",
+    "symbol_alias": "35496a8684346dfce4ae267a27ede456dd28e9b4b66e45d33ccef53bd7eaae55",
+    "bff_roundtrip": "b14c41be247bd8693e23b74c7ad34b233a6f9f9a2267dc06071974f2b840d5dd"
+  },
+  "four_code_hashes": {
+    "services/registry/strategy_artifact.py": "9da2ebb36e69e349c78dfccc55b5ef2c402f083527a137c0db57a45b365f2c57",
+    "services/execution/lean_runtime/performance_telemetry.py": "664f6aa766e1ed5526e1c3dbb22480d7622c853c52b83989e7d8117bb5df6ebb",
+    "services/execution/lean_runtime/paper_runtime.py": "9d0d7dccfc2ebbbccccd09d3e16c128aeac6b4bb6a59d56caab961b49779b89b",
+    "services/broker/paper_simulation.py": "ae42327cf999993166ca2e6efd0beb124b0624111a0d26cb88617893e7f09300"
+  },
+  "code_commits": {
+    "proposal_calibration": "e72ae033b38cb808d19df9cca12127a749ba437c",
+    "current": "684e63615edfbacad3ae04ba6fe504dafb0f355d"
+  },
+  "basis": {
+    "bars": 40,
+    "first_bar": "2026-08-18",
+    "last_bar": "2026-10-15",
+    "max_observed_drawdown": 0.002697706949093271,
+    "rounding": "ceil(max*10000)/10000",
+    "series_sha256": "0cb91c67c4fb499ea19180ab8dca19e0f3693419c5788f0805db4bb8c01b9ff3",
+    "gross": true,
+    "fee_slippage_modelled": false,
+    "learning_eligible": false,
+    "market_data_only_reuse": true
+  },
+  "producer_input_assessment": {
+    "at": "2026-10-21T00:11:25Z",
+    "numeric": true,
+    "provenance_ok": true,
+    "fresh": true,
+    "only_gap": "approved expected_drawdown baseline"
+  },
+  "validation": {
+    "method": "real load_baselines/approved_baseline_value/evaluate_breaches on receipt summary; no new tests",
+    "with_baseline": {
+      "value": 0.0027,
+      "payloads": 0,
+      "diagnostics": 0
+    },
+    "missing_baseline": "fail-closed diagnostic, 0 payloads",
+    "non_paper": "ineligible diagnostic, 0 payloads",
+    "stale": "fail-closed diagnostic, 0 payloads",
+    "pytest_available": false
+  },
+  "not_claimed": [
+    "net or zero-fee policy",
+    "20 hosted days",
+    "hosted profit",
+    "new Alpha",
+    "runtime consumed 40 or 47 bars",
+    "all12/L11 completion",
+    "human decision before reviewer records one"
+  ],
+  "not_changed": [
+    "PnL activation",
+    "threshold 1.25",
+    "Telemetry code",
+    "services/schema",
+    "second policy writer",
+    "new Root"
+  ],
+  "delivery": "Root only, after genuine approval and merge, via existing bindmount retune/restart of existing sweep producer after bounded BFF release; no worker VM/SSH authority",
+  "remaining": [
+    "same-target input coverage",
+    "natural producer threshold/sweep/cooldown/downstream observations",
+    "all49/all12/TOTAL"
+  ]
+}

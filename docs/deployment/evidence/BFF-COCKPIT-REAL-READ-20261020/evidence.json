@@ -1,0 +1,22 @@
+{
+  "task_id": "BFF-COCKPIT-REAL-READ-20261020",
+  "diagnosis": {
+    "cause": "Cockpit generic 0.6s management budget vs ~2.0s/13-GET serial composition; router mapped every exception to read_timeout and returned all-empty sections.",
+    "redundant_work_removed": [
+      "operator health computed twice (cockpit + operator_home)",
+      "incident list fetched 5x per request"
+    ]
+  },
+  "changes": {
+    "service.py": "health computed once and passed to get_operator_home; per-section failure isolation (section_error, exception type only logged)",
+    "lifecycle_telemetry_governance.py": "incident list HTTP read via existing request-scoped cached_owner_call (key includes tenant, url, path); no cross-request cache",
+    "router.py": "read_timeout only for ManagementReadTimeout; read_capacity_saturated and read_error distinct; cockpit default budget 3.0s (env override kept)"
+  },
+  "verification": {
+    "command": "pytest test_bff_management_cockpit.py test_owner_read_wiring.py + incident/lifecycle/promotion-review suites",
+    "result": "43 passed (cockpit+wiring); 93 passed (incident/lifecycle suites)",
+    "hosted_acceptance": "not performed; root owns release and live Cockpit readback",
+    "architecture_gate_fix": "tests/test_bff_management_cockpit.py: replaced monkeypatch.setattr(ManagementService, ...) with ManagementService subclass injected via create_management_router(service=...); production-entry assertions unchanged",
+    "architecture_gate_result": "test_bff_management_cockpit + test_bff_test_architecture + test_owner_read_wiring: 82 passed (includes test_no_global_monkeypatching_in_migrated_suites)"
+  }
+}

@@ -2,7 +2,7 @@
   "task_id": "BFF-TEST-ARCH-001",
   "version": "2.0",
   "description": "BFF test architecture inventory. imports_main / disposition are derived from a live AST scan of the tests on disk (see test_bff_test_architecture.py), not self-reported. live_scan_non_whitelisted_main_importer_ceiling is the process-controlled cap on non-whitelisted BFF main importers; it may only be lowered in a PR.",
-  "total_test_files": 389,
+  "total_test_files": 390,
   "migrated_in_task_count": 33,
   "composition_allowlist": [
     "auth/test_composition_root_smoke.py",
@@ -97,7 +97,7 @@
   ],
   "layer_summary": {
     "adapter": 53,
-    "application": 189,
+    "application": 190,
     "composition": 19,
     "hosted": 12,
     "router": 117
@@ -108,7 +108,7 @@
     "hosted": 1
   },
   "disposition_summary": {
-    "DECOUPLED": 325,
+    "DECOUPLED": 326,
     "MIGRATED": 45,
     "ALLOWLIST": 21
   },
@@ -2786,6 +2786,13 @@
       "imports_main": false,
       "disposition": "DECOUPLED",
       "rationale": "PM12-PERSONA-READS-BATCH-20261020 regression coverage for request-scoped owner reads"
+    },
+    {
+      "file": "tests/test_persona_provisioning_terminal_cleanup.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "PERSONA-PROVISIONING-FAILED-TERMINAL-20261020 regression coverage for terminal cleanup idempotency, bounded backoff, and single cron.list snapshot reuse; never imports main"
     }
   ],
   "live_scan_non_whitelisted_main_importer_ceiling": 0,

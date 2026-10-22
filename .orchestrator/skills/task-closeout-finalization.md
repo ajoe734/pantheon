@@ -254,6 +254,29 @@ export PANTHEON_TASK_STATE_EVENT_LOG="$(jq -r '.task_state_store.event_log' "$LI
 The wrapper rejects the command if either value is missing; do not point it at
 the relative repository template.
 
+When a product checkpoint is owned by `Human/Ops` (`owner: "Human/Ops"`) and has
+already reached canonical `review_approved` with an assigned independent peer
+`reviewer`, a handoff-frozen PR `delivery_binding` (including
+`evidence_manifest`), a matching `review_binding`, and any declared
+`completion_tracks.hosted` marked `done` with evidence, local `Human/Ops` does
+not use `done` (which requires a worker lease) and does not manufacture a
+Markdown Task Brief (`RECONCILE_EVIDENCE_FILE`), `operator_accept`, or
+`RECONCILE_DELIVERY_CLASS=development_tooling`. Close out the merged delivery
+via `scripts/human-ops-status.sh reconcile_merged_done`:
+
+```bash
+RECONCILE_DELIVERY_REPOSITORY=<owner/repo> \
+RECONCILE_DELIVERY_ROOT=<local-git-checkout> \
+RECONCILE_DELIVERY_COMMIT=<exact-reviewed-pr-head-sha> \
+RECONCILE_DELIVERY_TARGET_REF=origin/dev \
+./scripts/human-ops-status.sh reconcile_merged_done \
+  "$TASK" "<checkpoint message>"
+```
+
+Lost-review-state recovery for tasks that lost their `review_approved`
+transition continues to require `RECONCILE_EVIDENCE_FILE` and
+`RECONCILE_EVIDENCE_COMMIT`.
+
 ### Background Worker Restrictions
 
 Auto workers run without a human-attended terminal. Forbidden:

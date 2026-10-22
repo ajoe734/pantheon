@@ -102,7 +102,7 @@ class _MockContextHost:
 mock_context_host = _MockContextHost()
 
 
-def _seeded_client(td: str) -> TestClient:
+def _seeded_client(td: str, service_cls: type = ManagementService, **router_kwargs) -> TestClient:
     store = create_in_memory_read_surface_ports()
     store.list_incidents = lambda **kwargs: [
         {
@@ -233,7 +233,8 @@ def _seeded_client(td: str) -> TestClient:
     }.get(dataset, "missing")
 
     app = FastAPI()
-    app.include_router(create_management_router(get_read_store=lambda: store))
+    service = service_cls(get_read_store=lambda: store)
+    app.include_router(create_management_router(get_read_store=lambda: store, service=service, **router_kwargs))
     return TestClient(app)
 
 
@@ -429,4 +430,622 @@ def test_cockpit_surface_owner_observation_preserves_provenance_fields(
         if obs.get("owner") == "incident-owner"
     )
     assert observation[field] == value
+
+
+
+def test_cockpit_computes_operator_health_once_and_keeps_operator_home() -> None:
+    calls = []
+
+    class _SpyService(ManagementService):
+        def get_operator_health_status(self, *args, **kwargs):
+            calls.append(1)
+            return super().get_operator_health_status(*args, **kwargs)
+
+    with tempfile.TemporaryDirectory() as td:
+        response = _seeded_client(td, _SpyService).get("/bff/management/cockpit", headers=OPERATOR_HEADERS)
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert len(calls) >= 1
+    assert len(calls) == 1
+    assert data["operator_home"]["meta"]["surfaces"]["operator_home"]
+    assert data["runtime_health"]["groups"]
+
+
+def test_cockpit_contributor_exception_degrades_only_that_section() -> None:
+    class _BoomService(ManagementService):
+        def get_management_anomalies(self, *args, **kwargs):
+            raise RuntimeError("secret-token-abc")
+
+    with tempfile.TemporaryDirectory() as td:
+        response = _seeded_client(td, _BoomService).get("/bff/management/cockpit", headers=OPERATOR_HEADERS)
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert "secret-token-abc" not in response.text
+    surfaces = payload["meta"]["surfaces"]
+    assert surfaces["management_anomalies"]["status"] == "unavailable"
+    assert surfaces["management_anomalies"]["reason"] == "section_error"
+    assert payload["data"]["alerts"]["summary"]["total_active"] >= 1
+    assert payload["data"]["trading_pulse"]["summary"]["runtime_count"] == 1
+    assert surfaces["management_cockpit"].get("reason") != "read_timeout"
+
+
+@pytest.mark.parametrize(
+    "exc_name,reason",
+    [
+        ("ManagementReadTimeout", "read_timeout"),
+        ("ManagementReadSaturated", "read_capacity_saturated"),
+        ("RuntimeError", "read_error"),
+    ],
+)
+def test_cockpit_failure_reason_is_not_always_timeout(exc_name, reason) -> None:
+    from services.control_plane.bff.personas.routes import common
+
+    exc_type = getattr(common, exc_name, RuntimeError)
+
+    async def _failing_read(*_args, **_kwargs):
+        raise exc_type()
+
+    app = FastAPI()
+    app.include_router(
+        create_management_router(
+            get_read_store=lambda: create_in_memory_read_surface_ports(),
+            run_management_read=_failing_read,
+        )
+    )
+    response = TestClient(app).get("/bff/management/cockpit", headers=OPERATOR_HEADERS)
+    assert response.status_code == 200, response.text
+    assert response.json()["meta"]["surfaces"]["management_cockpit"]["reason"] == reason
+
+
+def test_incident_owner_list_is_fetched_once_per_request_and_not_across_requests() -> None:
+    import json as _json
+    from services.control_plane.bff.core.owner_reads import request_read_scope, selected_tenant
+    from services.control_plane.bff.ports.lifecycle_telemetry_governance import DomainIncidentPort
+
+    fetched = []
+
+    class _Resp:
+        def __init__(self, body):
+            self._b = _json.dumps(body).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return self._b
+
+    def _opener(req, timeout=None):
+        fetched.append(req.full_url)
+        return _Resp([{"incident_id": "inc-retired", "status": "closed"}, {"incident_id": "inc-active", "status": "open"}])
+
+    port = DomainIncidentPort(incidents_api_url="http://incidents.test", opener=_opener)
+    with request_read_scope():
+        tok = selected_tenant.set("tenant-a")
+        try:
+            for _ in range(5):
+                assert len(port.list_incidents()) == 2
+            assert [i["incident_id"] for i in port.list_incidents(status="open")] == ["inc-active"]
+            assert len(fetched) == 2  # unfiltered once, status=open once
+            selected_tenant.set("tenant-b")
+            port.list_incidents()
+            assert len(fetched) == 3
+        finally:
+            selected_tenant.reset(tok)
+    with request_read_scope():
+        port.list_incidents()
+    assert len(fetched) == 4
+
+
+@pytest.mark.parametrize("blocked_section", ["human_inbox", "anomalies"])
+def test_cockpit_timeout_keeps_completed_owner_sections(monkeypatch, blocked_section):
+    import threading
+    from services.control_plane.bff.personas.routes.common import run_management_read
+
+    entered, release = threading.Event(), threading.Event()
+
+    class SlowSectionService(ManagementService):
+        def _block(self):
+            entered.set()
+            assert release.wait(3), "test must release the original worker"
+
+        def get_human_inbox(self, *args, **kwargs):
+            if blocked_section == "human_inbox":
+                self._block()
+            return super().get_human_inbox(*args, **kwargs)
+
+        def get_management_anomalies(self, *args, **kwargs):
+            if blocked_section == "anomalies":
+                self._block()
+            return super().get_management_anomalies(*args, **kwargs)
+
+    monkeypatch.setenv("PANTHEON_BFF_COCKPIT_READ_TIMEOUT_SECONDS", "0.15")
+    with tempfile.TemporaryDirectory() as td:
+        client = _seeded_client(td, SlowSectionService, run_management_read=run_management_read)
+        try:
+            response = client.get("/bff/management/cockpit", headers=OPERATOR_HEADERS)
+            assert entered.is_set(), "real composer must reach the blocked section"
+            assert response.status_code == 200
+            body = response.json()
+            assert body["data"]["operator_home"]["cards"]
+            assert body["data"]["runtime_health"]["groups"]
+            assert body["data"]["trading_pulse"]["summary"]["runtime_count"] == 1
+            assert body["meta"]["partial"] is True
+            assert body["meta"]["surfaces"]["management_cockpit"]["reason"] == "read_timeout"
+            assert body["meta"]["surfaces"]["management_cockpit"]["source"] == "partial_composition"
+            missing_key = "human_inbox" if blocked_section == "human_inbox" else "management_anomalies"
+            missing = body["meta"]["surfaces"][missing_key]
+            assert missing["status"] == "unavailable"
+            assert missing["reason"] == "read_timeout"
+            before = json.dumps(body, sort_keys=True)
+        finally:
+            release.set()
+        # Late completion must not rewrite the already returned snapshot.
+        assert json.dumps(response.json(), sort_keys=True) == before
+
+
+def test_cockpit_health_counts_canonical_active_binding_not_retired_or_paused():
+    store = create_in_memory_read_surface_ports()
+    store.list_runtime_bindings = lambda: [
+        {"runtime_id": "current-paper", "status": "active"},
+        {"runtime_id": "old-paper", "status": "retired"},
+        {"runtime_id": "failed-paper", "status": "failed"},
+        {"runtime_id": "paused-paper", "status": "paused"},
+    ]
+    health = ManagementService(read_store=store).get_operator_health_status()
+    runtime = next(g for g in health["groups"] if g["group_id"] == "runtime")
+    assert runtime["details"] == {"total_runtimes": 4, "active_runtimes": 1}
+    assert runtime["summary"] == "1 active runtime(s) running."
+
+
+def test_cockpit_reload_parallel_owner_reads_prevent_serial_waterfall_timeout(monkeypatch) -> None:
+    """BFF-COCKPIT-RELOAD-20261021: get_operator_health_status and get_management_cockpit
+    must execute independent owner reads in parallel within request_read_scope rather
+    than in a 6-to-9-step serial waterfall that exceeds the cockpit timeout on reload."""
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+    import time
+
+    from services.control_plane.bff.core.owner_reads import (
+        OwnerReadContextMiddleware,
+        cached_owner_call,
+        create_owner_domain_ports,
+        selected_tenant,
+    )
+    from services.control_plane.bff.personas.routes.common import run_management_read
+    from services.control_plane.bff.ports.lifecycle_telemetry_governance import (
+        CompositeLifecycleTelemetryGovernancePort,
+        DomainGovernancePort,
+        DomainIncidentPort,
+        DomainLifecyclePort,
+        DomainLineagePort,
+        DomainTelemetryPort,
+    )
+    from services.control_plane.bff.ports.ooda_management import (
+        ManagementReviewQueuePort,
+        OodaManagementDomainPort,
+    )
+    from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+
+    per_owner_delay = 0.10
+    call_counts: dict[str, int] = {}
+    count_lock = threading.Lock()
+
+    def _record_call(name: str, result: Any) -> Any:
+        time.sleep(per_owner_delay)
+        with count_lock:
+            call_counts[name] = call_counts.get(name, 0) + 1
+        return result
+
+    def _fake_read_records(_url_builder, path: str, _key: Any = None):
+        payloads = {
+            "/api/runtime-bindings": [{"binding_id": "rb-1", "runtime_id": "rt-1", "persona_id": "p-1", "status": "active", "stage": "paper"}],
+            "/api/capital-pools": [{"pool_id": "pool-1", "id": "pool-1", "status": "active"}],
+            "/api/bindings": [{"binding_id": "cb-1", "id": "cb-1", "persona_id": "p-1", "pool_id": "pool-1", "status": "active"}],
+            "/api/deployment/plans": [{"plan_id": "dp-1", "id": "dp-1", "persona_id": "p-1", "status": "pending", "stage": "paper"}],
+            "/api/telemetry/runtime-summaries": [{"runtime_id": "rt-1", "pnl": 0.12, "drawdown": 0.03, "sharpe_ratio": 1.4, "fill_rate": 0.99}],
+        }
+        return cached_owner_call(
+            ("http_records", path, selected_tenant.get()),
+            lambda: _record_call(path, payloads.get(path, [])),
+        )
+
+    def _fake_read_evo(_url_builder, path: str, _key: Any = None):
+        return cached_owner_call(
+            ("evo_records", path, selected_tenant.get()),
+            lambda: _record_call(path, [{"decision_id": "evo-1", "id": "evo-1", "status": "pending"}]),
+        )
+
+    def _fake_approval_records():
+        return cached_owner_call(
+            ("approval_records", selected_tenant.get()),
+            lambda: _record_call(
+                "/api/governance/approvals",
+                [{"decision_id": "ap-1", "id": "ap-1", "decision_state": "pending", "status": "pending", "priority": "high"}],
+            ),
+        )
+
+    monkeypatch.setattr("services.control_plane.bff.core.owner_reads.read_records", _fake_read_records)
+    monkeypatch.setattr("services.control_plane.bff.core.owner_reads.read_evolution_records", _fake_read_evo)
+    monkeypatch.setattr("services.control_plane.bff.core.owner_reads.approval_records", _fake_approval_records)
+    monkeypatch.setenv("PANTHEON_EVOLUTION_API_URL", "http://evolution.test")
+
+    class _PersonaOwnerStore:
+        def list_personas(self):
+            return _record_call(
+                "/api/personas",
+                [{"persona_id": "p-1", "id": "p-1", "name": "Alpha", "lifecycle_state": "active", "status": "active"}],
+            )
+
+    pcr = create_owner_domain_ports(persona_store=_PersonaOwnerStore())
+    gov_port = DomainGovernancePort()
+
+    class _IncResp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+        def read(self):
+            return json.dumps(
+                _record_call(
+                    "/api/incidents",
+                    [{"incident_id": "inc-1", "id": "inc-1", "status": "open", "severity": "high", "title": "Drift alert"}],
+                )
+            ).encode("utf-8")
+
+    inc_port = DomainIncidentPort(
+        incidents_api_url="http://incidents.test",
+        opener=lambda _req, timeout=None: _IncResp(),
+    )
+    tel_port = DomainTelemetryPort(
+        telemetry_summaries_reader=lambda: _fake_read_records(None, "/api/telemetry/runtime-summaries", "summaries"),
+    )
+    ltg = CompositeLifecycleTelemetryGovernancePort(
+        lifecycle_port=DomainLifecyclePort(),
+        telemetry_port=tel_port,
+        incident_port=inc_port,
+        governance_port=gov_port,
+        lineage_port=DomainLineagePort(),
+    )
+    ooda = OodaManagementDomainPort(
+        review_queue_port=ManagementReviewQueuePort(
+            deployment_plans_reader=pcr.list_deployment_plans,
+            approval_decisions_reader=_fake_approval_records,
+            evolution_decisions_reader=pcr.list_evolution_decisions,
+        ),
+    )
+    store = ReadSurfacePorts(
+        persona_capital_runtime=pcr,
+        ooda_management=ooda,
+        lifecycle_telemetry_governance=ltg,
+        paper_runtime_monitoring_sessions_provider=lambda: [],
+    )
+
+    # Serial execution of the 9 owner reads would take >= 0.90s (and health alone >= 0.60s).
+    # With a 0.45s cockpit budget, serial execution always timed out with empty operator_home/runtime_health.
+    monkeypatch.setenv("PANTHEON_BFF_COCKPIT_READ_TIMEOUT_SECONDS", "0.45")
+    monkeypatch.setenv("PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS", "0.45")
+
+    app = FastAPI()
+    app.add_middleware(OwnerReadContextMiddleware)
+    svc = ManagementService(get_read_store=lambda: store)
+    app.include_router(
+        create_management_router(
+            get_read_store=lambda: store,
+            service=svc,
+            run_management_read=run_management_read,
+        )
+    )
+    client = TestClient(app)
+
+    # 1. Single cockpit request completes well within 0.45s and deduplicates every owner read.
+    resp = client.get("/bff/management/cockpit", headers=OPERATOR_HEADERS)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["meta"]["surfaces"]["management_cockpit"].get("reason") != "read_timeout"
+    assert body["data"]["operator_home"]["cards"]
+    assert len(body["data"]["runtime_health"]["groups"]) == 5
+    assert body["data"]["trading_pulse"]["summary"]["runtime_count"] == 1
+    assert body["data"]["human_inbox"]["data"]["summary"]["total"] >= 2
+    assert body["data"]["alerts"]["summary"]["total_active"] >= 1
+    for owner_path, count in call_counts.items():
+        assert count == 1, f"Expected {owner_path} to be fetched once per request, got {count}"
+
+    # 2. Simulate normal-browser initial mount fanout followed immediately by page.reload() fanout
+    # through the production app_factory (compose_bff_app) with main.py's build_cockpit_payload wiring.
+    from services.control_plane.bff.bootstrap.dependencies import AppDependencies
+    from services.control_plane.bff.core.app_factory import (
+        _resolve_default_dependency,
+        compose_bff_app,
+    )
+
+    from collections import defaultdict, deque
+
+    sse_bufs: dict[str, Any] = defaultdict(lambda: deque(maxlen=100))
+    sse_subs: dict[str, Any] = defaultdict(list)
+
+    def _test_dep_resolver(name: str, deps: Any) -> Any:
+        if name == "_sse_buffers":
+            return sse_bufs
+        if name == "_sse_subscribers":
+            return sse_subs
+        try:
+            return _resolve_default_dependency(name, deps)
+        except Exception:
+            return None
+
+    app_deps = AppDependencies.create_default(read_surface=store)
+    composed_app = compose_bff_app(
+        app_deps=app_deps,
+        dependency_resolver=_test_dep_resolver,
+        run_management_read=run_management_read,
+        build_cockpit_payload=lambda snapshot_at=None, human_inbox=None, **kw: ManagementService(
+            get_read_store=lambda: app_deps.read_surface,
+        ).get_management_cockpit(snapshot_at=snapshot_at, human_inbox=human_inbox, **kw),
+    )
+    composed_client = TestClient(composed_app)
+    paths = [
+        "/bff/management/shell-summary",
+        "/bff/management/cockpit",
+        "/bff/management/human-inbox",
+        "/bff/management/trading-pulse",
+    ]
+    for _wave in range(2):
+        with ThreadPoolExecutor(max_workers=len(paths)) as pool:
+            futures = {path: pool.submit(composed_client.get, path, headers=OPERATOR_HEADERS) for path in paths}
+            results = {path: fut.result() for path, fut in futures.items()}
+        for path, r in results.items():
+            assert r.status_code == 200, f"{path} failed: {r.text}"
+        cockpit_payload = results["/bff/management/cockpit"].json()
+        assert cockpit_payload["meta"]["surfaces"]["management_cockpit"].get("reason") != "read_timeout"
+        assert cockpit_payload["data"]["operator_home"]["cards"]
+        assert len(cockpit_payload["data"]["runtime_health"]["groups"]) == 5
+        inbox_payload = results["/bff/management/human-inbox"].json()
+        assert inbox_payload["meta"]["surfaces"]["human_inbox"].get("reason") != "read_timeout"
+        assert inbox_payload["data"]["summary"]["total"] >= 2
+    assert "_resolve_store" not in svc.__dict__
+
+
+def test_cached_owner_call_deduplicates_concurrent_same_key_and_expires_inner_deadline() -> None:
+    """Concurrent threads sharing a request_read_scope must deduplicate identical
+    owner keys without races, and expired management_read_deadline must fail fast."""
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+    import time
+
+    from services.control_plane.bff.core.owner_reads import cached_owner_call, request_read_scope
+    from services.control_plane.bff.personas.routes.common import (
+        management_read_deadline,
+        remaining_management_read_budget,
+    )
+
+    invocations = 0
+    lock = threading.Lock()
+
+    def _expensive():
+        nonlocal invocations
+        time.sleep(0.05)
+        with lock:
+            invocations += 1
+        return {"ok": True}
+
+    with request_read_scope():
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            futs = [
+                pool.submit(__import__("contextvars").copy_context().run, cached_owner_call, ("same-key", "t1"), _expensive)
+                for _ in range(6)
+            ]
+            vals = [f.result() for f in futs]
+    assert vals == [{"ok": True}] * 6
+    assert invocations == 1
+
+    store = create_in_memory_read_surface_ports()
+    persona_called = False
+
+    def _unexpected_persona_call(**_kwargs):
+        nonlocal persona_called
+        persona_called = True
+        return []
+
+    store.list_personas = _unexpected_persona_call
+    svc = ManagementService(read_store=store)
+    tok = management_read_deadline.set(time.monotonic() - 0.01)
+    try:
+        assert remaining_management_read_budget(1.0) == 0.0
+        rows, reason = svc._bounded_persona_readiness_rows("2026-10-21T00:00:00Z", store)
+        assert rows == []
+        assert reason == "read_timeout"
+        assert persona_called is False
+    finally:
+        management_read_deadline.reset(tok)
+
+
+def test_plain_dict_request_read_cache_supports_nested_and_concurrent_cached_owner_call() -> None:
+    """When request_read_cache is set to a plain dict, nested cached_owner_call with
+    different or identical keys must not deadlock, must survive >64 concurrent plain-dict
+    caches during an in-flight read without evicting the active lock table, and must not
+    retain plain-dict caches or cached payloads by module-global strong reference."""
+    from concurrent.futures import ThreadPoolExecutor
+    import gc
+    import threading
+    import time
+    import weakref
+
+    from services.control_plane.bff.core import owner_reads
+    from services.control_plane.bff.core.owner_reads import (
+        _key_lock,
+        cached_owner_call,
+        evict_request_read_keys,
+        request_read_cache,
+    )
+
+    assert not hasattr(owner_reads, "_PLAIN_DICT_LOCKS")
+
+    class _CachedPayload:
+        pass
+
+    payload_ref: weakref.ReferenceType[_CachedPayload] | None = None
+
+    def _run_scoped_plain_cache() -> None:
+        nonlocal payload_ref
+        plain_cache: dict[Any, Any] = {}
+        tok = request_read_cache.set(plain_cache)
+        try:
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                nested_fut = pool.submit(
+                    __import__("contextvars").copy_context().run,
+                    lambda: cached_owner_call(
+                        "outer",
+                        lambda: cached_owner_call("inner", lambda: 42),
+                    ),
+                )
+                assert nested_fut.result(timeout=1.0) == 42
+            assert plain_cache["inner"] == (True, 42)
+            assert plain_cache["outer"] == (True, 42)
+
+            entered = threading.Event()
+            release = threading.Event()
+            invocations = 0
+            lock = threading.Lock()
+
+            def _slow_val() -> _CachedPayload:
+                nonlocal invocations
+                with lock:
+                    invocations += 1
+                entered.set()
+                assert release.wait(timeout=2.0)
+                return _CachedPayload()
+
+            inflight_key = ("concurrent", "k1")
+            initial_lock = _key_lock(plain_cache, inflight_key)
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                fut1 = pool.submit(
+                    __import__("contextvars").copy_context().run,
+                    cached_owner_call,
+                    inflight_key,
+                    _slow_val,
+                )
+                assert entered.wait(timeout=1.0)
+
+                # Churn >64 other plain-dict request caches while fut1 is in-flight.
+                for idx in range(80):
+                    other_cache: dict[Any, Any] = {}
+                    other_tok = request_read_cache.set(other_cache)
+                    try:
+                        assert cached_owner_call(("other", idx), lambda i=idx: i) == idx
+                    finally:
+                        request_read_cache.reset(other_tok)
+
+                assert _key_lock(plain_cache, inflight_key) is initial_lock
+                evict_request_read_keys(("other",))
+                assert _key_lock(plain_cache, inflight_key) is initial_lock
+
+                fut2 = pool.submit(
+                    __import__("contextvars").copy_context().run,
+                    cached_owner_call,
+                    inflight_key,
+                    _slow_val,
+                )
+                time.sleep(0.02)
+                with lock:
+                    assert invocations == 1
+                release.set()
+                res1 = fut1.result(timeout=1.0)
+                res2 = fut2.result(timeout=1.0)
+                assert res1 is res2
+                payload_ref = weakref.ref(res1)
+                del res1, res2
+            assert invocations == 1
+            evict_request_read_keys(("concurrent",))
+            assert inflight_key not in plain_cache
+            assert _key_lock(plain_cache, inflight_key) is initial_lock
+        finally:
+            request_read_cache.reset(tok)
+
+    _run_scoped_plain_cache()
+    gc.collect()
+    assert payload_ref is not None
+    assert payload_ref() is None, "plain-dict request cache payload must not be retained across requests"
+
+
+def test_operator_health_status_distinguishes_timeout_from_error() -> None:
+    """get_operator_health_status must report read_timeout / management_read_timeout for
+    expired deadlines, pending group futures, or TimeoutError, and read_error / error for RuntimeError."""
+    import threading
+    import time
+
+    from services.control_plane.bff.personas.routes.common import management_read_deadline
+
+    # 1. Pre-expired deadline must not invoke store methods and must surface read_timeout.
+    expired_store = create_in_memory_read_surface_ports()
+    runtime_called = False
+
+    def _unexpected_runtime() -> list[dict[str, Any]]:
+        nonlocal runtime_called
+        runtime_called = True
+        return []
+
+    expired_store.list_runtime_bindings = _unexpected_runtime
+    svc_expired = ManagementService(read_store=expired_store)
+    tok = management_read_deadline.set(time.monotonic() - 0.01)
+    try:
+        expired_health = svc_expired.get_operator_health_status(snapshot_at="2026-10-21T20:39:09Z")
+    finally:
+        management_read_deadline.reset(tok)
+    assert runtime_called is False
+    assert expired_health["meta"]["surfaces"]["runtime"] == {
+        "status": "unavailable",
+        "source": "management_read_timeout",
+        "reason": "read_timeout",
+    }
+    assert expired_health["meta"]["surfaces"]["health_status"]["reason"] == "read_timeout"
+    assert expired_health["meta"]["surfaces"]["health_status"]["source"] == "management_read_timeout"
+
+    # 2. Pending future timeout vs RuntimeError vs TimeoutError within the same health evaluation.
+    release = threading.Event()
+    mixed_store = create_in_memory_read_surface_ports()
+
+    def _hanging_runtime() -> list[dict[str, Any]]:
+        release.wait(1.0)
+        return [{"runtime_id": "rt-late", "status": "active"}]
+
+    def _timeout_telemetry() -> list[dict[str, Any]]:
+        raise TimeoutError("owner telemetry timed out")
+
+    def _boom_incidents() -> list[dict[str, Any]]:
+        raise RuntimeError("owner incident failure")
+
+    mixed_store.list_runtime_bindings = _hanging_runtime
+    mixed_store.list_telemetry_summaries = _timeout_telemetry
+    mixed_store.list_incidents = _boom_incidents
+    svc_mixed = ManagementService(read_store=mixed_store)
+    tok2 = management_read_deadline.set(time.monotonic() + 0.08)
+    try:
+        mixed_health = svc_mixed.get_operator_health_status(snapshot_at="2026-10-21T20:39:09Z")
+    finally:
+        release.set()
+        management_read_deadline.reset(tok2)
+
+    surfaces = mixed_health["meta"]["surfaces"]
+    assert surfaces["runtime"] == {
+        "status": "unavailable",
+        "source": "management_read_timeout",
+        "reason": "read_timeout",
+    }
+    assert surfaces["telemetry"] == {
+        "status": "unavailable",
+        "source": "management_read_timeout",
+        "reason": "read_timeout",
+    }
+    assert surfaces["incident"] == {
+        "status": "unavailable",
+        "source": "error",
+        "reason": "read_error",
+    }
+    assert surfaces["runtime"] != surfaces["incident"]
+    assert surfaces["health_status"]["reason"] == "read_timeout"
 

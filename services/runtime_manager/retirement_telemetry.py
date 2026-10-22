@@ -41,9 +41,9 @@ def retirement_event_id(binding_id: str, retired_at: str) -> str:
 
 
 def build_retirement_event(binding: RuntimeBinding, tenant_id: str = "") -> Dict[str, Any]:
-    """Build the schema-valid retirement event for a retired binding."""
+    """Build the schema-valid terminal event for a retired or failed binding."""
     if not binding.retired_at:
-        raise ValueError("retired binding must carry retired_at")
+        raise ValueError("terminal binding must carry retired_at")
     event = {
         "event_id": retirement_event_id(binding.binding_id, binding.retired_at),
         "event_type": RUNTIME_RETIRED_EVENT_TYPE,
@@ -67,6 +67,7 @@ def build_retirement_event(binding: RuntimeBinding, tenant_id: str = "") -> Dict
         "metrics": {"action": RUNTIME_RETIRED_EVENT_TYPE},
         "metadata": {
             "retired_at": binding.retired_at,
+            "terminal_status": binding.status,
             "runtime_binding_effective_at": binding.effective_at,
             "emitted_by": _WRITE_OWNER,
         },
@@ -201,12 +202,12 @@ class RetirementTelemetryEmitter:
             )
 
     def pending(self) -> List[RuntimeBinding]:
-        """Retired bindings whose current retirement event is unacknowledged."""
+        """Terminal (retired/failed) bindings whose current retirement event is unacknowledged."""
         if self._store is None:
             return []
         out: List[RuntimeBinding] = []
         for binding in self._store.list_all():
-            if binding.status != "retired" or not binding.retired_at:
+            if not binding.is_terminal() or not binding.retired_at:
                 continue
             expected = retirement_event_id(binding.binding_id, binding.retired_at)
             meta = binding.metadata or {}

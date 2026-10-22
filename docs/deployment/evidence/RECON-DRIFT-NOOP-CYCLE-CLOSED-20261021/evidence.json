@@ -1,0 +1,9 @@
+{
+  "task_id": "RECON-DRIFT-NOOP-CYCLE-CLOSED-20261021",
+  "commands": [
+    {"cmd": "python -m pytest services/reconciliation-drift/tests services/trade_journey -q", "result": "559 passed, 82 skipped, 1 failed"}
+  ],
+  "known_failure": "services/trade_journey/test_lifecycle_projector_compose.py::test_rendered_compose_operator_bff_readiness_with_postgres_reader requires a Postgres DSN (ValueError: Postgres DSN is required); environmental, unrelated to this change",
+  "reason": "lifecycle_noop_order_closed",
+  "receipt": {"status": "not_eligible", "terminal": true, "retryable": false}
+}

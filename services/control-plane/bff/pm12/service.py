@@ -937,6 +937,7 @@ def _management_portfolio_holding_entry(
     capital_pool: Optional[Dict[str, Any]] = None,
     telemetry: Optional[Dict[str, Any]] = None,
     position_source_count: int = 1,
+    explicit_flat: bool = False,
     **kwargs: Any,
 ) -> Dict[str, Any]:
     plan_dict = plan or {}
@@ -1153,21 +1154,59 @@ def _management_portfolio_holding_entry(
     )
     status = str(_management_first_non_empty(position.get("status"), runtime.get("status"), "unknown") or "unknown")
 
-    last_mark_at = str(
-        _management_first_non_empty(
-            _management_dict_value(position, "marked_at", "mark_time", "updated_at", "collected_at"),
-            _management_dict_value(mark, "marked_at", "mark_time", "updated_at", "collected_at"),
-            _management_dict_value(telemetry_dict, "collected_at", "updated_at"),
-            _management_dict_value(summary, "collected_at", "updated_at"),
+    # A summary-backed position carries its own quote as-of. Without one the
+    # mark is unavailable: the summary collected_at/heartbeat time is not a
+    # quote time and must not make a missing mark look fresh.
+    position_mark_as_of = _management_dict_value(position, "mark_as_of")
+    mark_status = "available" if mark_price is not None else "unavailable"
+    last_mark_at = ""
+    if _management_dict_value(position, "mark_unavailable_reason"):
+        # Failed valuation: the last known quote is provenance only.
+        mark_status = "unavailable"
+        last_mark_at = str(_management_dict_value(position, "last_known_mark_as_of") or "")
+    elif position.get("mark_stale") is True:
+        mark_status = "stale"
+        last_mark_at = str(
+            _management_dict_value(position, "mark_as_of", "last_known_mark_as_of") or ""
         )
-        or ""
-    )
+    elif position_mark_as_of:
+        last_mark_at = str(position_mark_as_of)
+        try:
+            quote_at = datetime.fromisoformat(last_mark_at.replace("Z", "+00:00"))
+            age = (datetime.now(timezone.utc) - quote_at).total_seconds()
+        except ValueError:
+            age = None
+        if age is None or age < -300.0 or age > 172800.0:
+            mark_status = "stale"
+    elif mark_price is not None:
+        last_mark_at = str(
+            _management_first_non_empty(
+                _management_dict_value(position, "marked_at", "mark_time", "updated_at", "collected_at"),
+                _management_dict_value(mark, "marked_at", "mark_time", "updated_at", "collected_at"),
+                _management_dict_value(telemetry_dict, "collected_at", "updated_at"),
+                _management_dict_value(summary, "collected_at", "updated_at"),
+            )
+            or ""
+        )
+    if mark_status != "available":
+        mark_price = None
+        market_value = None
+        if (
+            _management_first_non_empty(
+                _management_dict_value(position, "notional", "gross_notional"),
+                _management_dict_value(telemetry_dict, "notional", "gross_notional"),
+                _management_dict_value(summary, "notional", "gross_notional"),
+            )
+            is None
+        ):
+            notional = None
     source_issues = _management_portfolio_source_issues(
         runtime_id=runtime_id,
         persona_id=persona_id,
         persona_binding_id=persona_binding_id,
         telemetry=telemetry_dict,
         position_source_count=position_source_count,
+        explicit_flat=explicit_flat,
     )
     source_status = _management_portfolio_source_status(source_issues)
     risk_state = _management_portfolio_risk_state(
@@ -1226,10 +1265,15 @@ def _management_portfolio_holding_entry(
         "source_row_count": position_source_count,
         "source_issues": source_issues,
         "telemetry_available": bool(telemetry_dict),
-        "telemetry_stale": any(issue.get("code") == "STALE_TELEMETRY" for issue in source_issues),
+        "telemetry_stale": mark_status != "available" and bool(last_mark_at)
+        or any(issue.get("code") == "STALE_TELEMETRY" for issue in source_issues),
         "risk_state": risk_state,
         "capital_scope": capital_scope,
         "last_mark_at": last_mark_at or None,
+        "mark_source_ref": _management_dict_value(
+            position, "mark_source_ref", "last_known_mark_source_ref"
+        ),
+        "mark_status": mark_status,
         "links": links,
     }
 
@@ -1241,6 +1285,7 @@ def _management_portfolio_source_issues(
     persona_binding_id: str,
     telemetry: Dict[str, Any],
     position_source_count: int,
+    explicit_flat: bool = False,
 ) -> List[Dict[str, Any]]:
     issues: List[Dict[str, Any]] = []
     if not persona_id or not persona_binding_id:
@@ -1255,7 +1300,7 @@ def _management_portfolio_source_issues(
             "code": "MISSING_TELEMETRY",
             "message": f"Telemetry summary is unavailable for runtime {runtime_id or 'unknown'}.",
         })
-    elif position_source_count <= 0:
+    elif position_source_count <= 0 and not explicit_flat:
         issues.append({
             "source_name": "portfolio_holdings",
             "code": "MISSING_HOLDING_ROW",
@@ -1926,6 +1971,24 @@ def _pm12_portfolio_book_exposure_response(
     }
 
 
+def _management_telemetry_is_explicit_flat(telemetry: Dict[str, Any]) -> bool:
+    """True only when the projection positively reports an empty book.
+
+    Requires both an empty ``positions`` list and an integer ``position_count``
+    of zero; a missing field (heartbeat-only or unavailable telemetry) is not
+    evidence of a flat book.
+    """
+    positions = telemetry.get("positions")
+    count = telemetry.get("position_count")
+    return (
+        isinstance(positions, list)
+        and not positions
+        and isinstance(count, int)
+        and not isinstance(count, bool)
+        and count == 0
+    )
+
+
 def _pm12_portfolio_book_holdings_response(
     read_store: Any,
     *,
@@ -1950,6 +2013,9 @@ def _pm12_portfolio_book_holdings_response(
     telemetry_by_runtime_id = _management_portfolio_telemetry_snapshot(read_store, runtime_bindings)
 
     holding_items: List[Dict[str, Any]] = []
+    # Runtimes with an explicitly flat book contribute coverage/diagnostics
+    # but never a holding row; they are filtered exactly like holdings.
+    flat_runtime_items: List[Dict[str, Any]] = []
     for runtime in runtime_bindings:
         rid = str(runtime.get("runtime_id") or runtime.get("id") or runtime.get("binding_id") or "").strip()
         telemetry = telemetry_by_runtime_id.get(rid, {})
@@ -1960,6 +2026,7 @@ def _pm12_portfolio_book_holdings_response(
         pool_id = str(runtime.get("capital_pool_id") or plan.get("capital_pool_id") or plan.get("target_pool_id") or persona_binding.get("capital_pool_id") or "").strip()
         capital_pool = pools_by_id.get(pool_id, {})
         position_records = telemetry.get("positions") if isinstance(telemetry.get("positions"), list) else []
+        explicit_flat = _management_telemetry_is_explicit_flat(telemetry)
         positions = position_records or [{}]
         position_source_count = len(position_records)
         for index, position in enumerate(positions):
@@ -1972,9 +2039,12 @@ def _pm12_portfolio_book_holdings_response(
                 capital_pool=capital_pool,
                 telemetry=telemetry,
                 position_source_count=position_source_count,
+                explicit_flat=explicit_flat,
             )
-            holding_items.append(entry)
+            (flat_runtime_items if explicit_flat else holding_items).append(entry)
 
+    flat_item_ids = {id(it) for it in flat_runtime_items}
+    holding_items = holding_items + flat_runtime_items
     capital_pool_id = qp.get("capital_pool_id") or qp.get("pool")
     if capital_pool_id:
         req = {x.strip() for x in str(capital_pool_id).split(",") if x.strip()}
@@ -2016,8 +2086,9 @@ def _pm12_portfolio_book_holdings_response(
         needle = str(q).strip().lower()
         holding_items = [it for it in holding_items if needle in " ".join(str(it.get(k) or "").lower() for k in ("holding_id", "symbol", "runtime_id", "capital_pool_id", "persona_id", "strategy_id"))]
 
+    flat_runtime_items = [it for it in holding_items if id(it) in flat_item_ids]
     holding_items = sorted(
-        holding_items,
+        (it for it in holding_items if id(it) not in flat_item_ids),
         key=lambda item: (
             str(item.get("capital_pool_id") or ""),
             str(item.get("runtime_id") or ""),
@@ -2027,17 +2098,18 @@ def _pm12_portfolio_book_holdings_response(
     )
     total = len(holding_items)
     page_items, next_page_token = _pm12_page_slice(holding_items, page_token, page_size)
+    coverage_items = holding_items + flat_runtime_items
     incidents = [
-        incident for incident in (_management_portfolio_incident(item) for item in holding_items)
+        incident for incident in (_management_portfolio_incident(item) for item in coverage_items)
         if incident is not None
     ]
     source_coverage = {
-        "source_row_count": sum(int(item.get("source_row_count") or 0) for item in holding_items),
-        "runtime_count": len({str(item.get("runtime_id") or "") for item in holding_items if str(item.get("runtime_id") or "")}),
-        "telemetry_runtime_count": len({str(item.get("runtime_id") or "") for item in holding_items if item.get("telemetry_available")}),
-        "stale_row_count": len([item for item in holding_items if item.get("telemetry_stale")]),
-        "missing_binding_count": len([item for item in holding_items if any(issue.get("code") == "MISSING_PERSONA_BINDING" for issue in (item.get("source_issues") or []))]),
-        "degraded_source_count": len([item for item in holding_items if str(item.get("source_status") or "").lower() in {"degraded", "stale", "unavailable"}]),
+        "source_row_count": sum(int(item.get("source_row_count") or 0) for item in coverage_items),
+        "runtime_count": len({str(item.get("runtime_id") or "") for item in coverage_items if str(item.get("runtime_id") or "")}),
+        "telemetry_runtime_count": len({str(item.get("runtime_id") or "") for item in coverage_items if item.get("telemetry_available")}),
+        "stale_row_count": len([item for item in coverage_items if item.get("telemetry_stale")]),
+        "missing_binding_count": len([item for item in coverage_items if any(issue.get("code") == "MISSING_PERSONA_BINDING" for issue in (item.get("source_issues") or []))]),
+        "degraded_source_count": len([item for item in coverage_items if str(item.get("source_status") or "").lower() in {"degraded", "stale", "unavailable"}]),
     }
     summary = {
         "holding_count": total,

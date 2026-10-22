@@ -137,6 +137,7 @@ jobs:
       # Admission requires mandatory restart/persistence checks, sealed artifacts,
       # and successful identity-bound lease cleanup after the entire sequence.
       bff_fe_pair_verified: ${{ steps.lease_cleanup.outputs.complete_success == 'true' }}
+      paper_bootstrap_requested: ${{ env.PAPER_BOOTSTRAP_REQUESTED }}
     env:
       TARGET_ENV: dev
       TARGET_COMPONENT: ${{ inputs.component }}
@@ -150,6 +151,10 @@ jobs:
       DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
       DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER }}
       BOOTSTRAP_EMPTY_HOST: ${{ inputs.bootstrap_empty_host || false }}
+      # One applicability decision for the run-scoped paper case: only an
+      # explicit proof/probe/bootstrap request on auto/root creates it, so an
+      # ordinary code release preserves the current paper reservation.
+      PAPER_BOOTSTRAP_REQUESTED: ${{ (inputs.component == 'auto' || inputs.component == 'root') && (inputs.ppl_alloc_009_dev_proof_enabled || inputs.run_loop_prod_tel_002_probe || inputs.run_evolution_dispatch_probe || inputs.run_bounded_source_refresh || inputs.bootstrap_empty_host) && 'true' || 'false' }}
       BOOTSTRAP_PREDECESSOR_BACKEND_SHA: ${{ inputs.bootstrap_predecessor_backend_sha || '' }}
       BOOTSTRAP_PREDECESSOR_FRONTEND_SHA: ${{ inputs.bootstrap_predecessor_frontend_sha || '' }}
     steps:
@@ -1360,7 +1365,7 @@ jobs:
 
       - name: Ensure governed dev paper baseline under lease
         id: paper_bootstrap
-        if: ${{ env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' }}
+        if: ${{ env.PAPER_BOOTSTRAP_REQUESTED == 'true' }}
         env:
           PATH: ${{ steps.runtime.outputs.safe_path }}
           BASH_ENV: ""
@@ -1764,7 +1769,7 @@ jobs:
 
       - name: Compensate dev deployment failure to exact hosted baseline
         id: deploy_compensation
-        if: ${{ always() && steps.lease.outcome == 'success' && steps.artifact_baseline.outcome == 'success' && (cancelled() || steps.heartbeat.outcome != 'success' || steps.deploy.outcome != 'success' || steps.artifact_baseline_upload.outcome != 'success' || steps.artifact_candidate_seal.outcome != 'success' || steps.artifact_candidate_upload.outcome != 'success' || ((env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root') && steps.paper_bootstrap.outcome != 'success') || steps.public_smoke.outcome != 'success' || steps.deploy-posture-evidence.outcome != 'success' || ((env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && steps.agora.outcome != 'success')) }}
+        if: ${{ always() && steps.lease.outcome == 'success' && steps.artifact_baseline.outcome == 'success' && (cancelled() || steps.heartbeat.outcome != 'success' || steps.deploy.outcome != 'success' || steps.artifact_baseline_upload.outcome != 'success' || steps.artifact_candidate_seal.outcome != 'success' || steps.artifact_candidate_upload.outcome != 'success' || (env.PAPER_BOOTSTRAP_REQUESTED == 'true' && steps.paper_bootstrap.outcome != 'success') || steps.public_smoke.outcome != 'success' || steps.deploy-posture-evidence.outcome != 'success' || ((env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && steps.agora.outcome != 'success')) }}
         continue-on-error: true
         timeout-minutes: 60
         env:
@@ -2172,7 +2177,7 @@ jobs:
         # Evidence-only: a retirement failure is recorded and never changes the
         # accepted/compensated outcome. Uses only the Deployment owner retire
         # action; on compensation only this run's case is retired.
-        if: ${{ always() && steps.deploy_compensation.outcome == 'success' }}
+        if: ${{ always() && env.PAPER_BOOTSTRAP_REQUESTED == 'true' && steps.deploy_compensation.outcome == 'success' }}
         continue-on-error: true
         timeout-minutes: 6
         env:
@@ -2258,6 +2263,7 @@ jobs:
           HEARTBEAT_OUTCOME: ${{ steps.heartbeat.outcome }}
           DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
           PAPER_BOOTSTRAP_OUTCOME: ${{ steps.paper_bootstrap.outcome }}
+          PAPER_BOOTSTRAP_REQUESTED: ${{ env.PAPER_BOOTSTRAP_REQUESTED }}
           PUBLIC_SMOKE_OUTCOME: ${{ steps.public_smoke.outcome }}
           DEPLOY_POSTURE_EVIDENCE_OUTCOME: ${{ steps.deploy-posture-evidence.outcome }}
           AGORA_OUTCOME: ${{ steps.agora.outcome }}
@@ -2313,12 +2319,13 @@ jobs:
           }
 
           complete_success=false
+          # An unrequested paper bootstrap is intentionally skipped; a
+          # requested one must have succeeded.
+          expected_paper=skipped
+          [[ "${PAPER_BOOTSTRAP_REQUESTED}" == "true" ]] && expected_paper=success
           case "${TARGET_COMPONENT}" in
-            auto|root)
-              [[ "${HEARTBEAT_OUTCOME}:${DEPLOY_OUTCOME}:${PAPER_BOOTSTRAP_OUTCOME}:${PUBLIC_SMOKE_OUTCOME}:${DEPLOY_POSTURE_EVIDENCE_OUTCOME}:${AGORA_OUTCOME}" == "success:success:success:success:success:success" ]] && complete_success=true
-              ;;
-            bff)
-              [[ "${HEARTBEAT_OUTCOME}:${DEPLOY_OUTCOME}:${PAPER_BOOTSTRAP_OUTCOME}:${PUBLIC_SMOKE_OUTCOME}:${DEPLOY_POSTURE_EVIDENCE_OUTCOME}:${AGORA_OUTCOME}" == "success:success:skipped:success:success:success" ]] && complete_success=true
+            auto|root|bff)
+              [[ "${HEARTBEAT_OUTCOME}:${DEPLOY_OUTCOME}:${PAPER_BOOTSTRAP_OUTCOME}:${PUBLIC_SMOKE_OUTCOME}:${DEPLOY_POSTURE_EVIDENCE_OUTCOME}:${AGORA_OUTCOME}" == "success:success:${expected_paper}:success:success:success" ]] && complete_success=true
               ;;
           esac
 
@@ -2953,7 +2960,7 @@ jobs:
         # Evidence-only: a retirement failure is recorded and never changes the
         # accepted/compensated outcome. Uses only the Deployment owner retire
         # action; on compensation only this run's case is retired.
-        if: ${{ always() && steps.frontend_release.outputs.evidence_dir != '' && ((steps.frontend_release.outcome == 'success' && steps.final_artifact_verify.outcome == 'success' && (!inputs.run_exact_artifact_roundtrip || (steps.roundtrip_baseline_restore.outcome == 'success' && steps.roundtrip_final_return.outcome == 'success'))) || steps.compensation.outcome == 'success') }}
+        if: ${{ always() && needs.deploy-dev.outputs.paper_bootstrap_requested == 'true' && steps.frontend_release.outputs.evidence_dir != '' && ((steps.frontend_release.outcome == 'success' && steps.final_artifact_verify.outcome == 'success' && (!inputs.run_exact_artifact_roundtrip || (steps.roundtrip_baseline_restore.outcome == 'success' && steps.roundtrip_final_return.outcome == 'success'))) || steps.compensation.outcome == 'success') }}
         continue-on-error: true
         timeout-minutes: 6
         env:

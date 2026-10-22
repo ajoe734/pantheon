@@ -19,7 +19,7 @@ from services.evolution.client import (
 )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_evolution_client_token_mode_success():
     class DummyResponse:
         def __init__(self, status_code, json_data, text=""):
@@ -91,7 +91,7 @@ async def test_evolution_client_token_mode_success():
     assert get_req[3]["X-Tenant-Id"] == "tenant-test-1"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_evolution_client_401_negative():
     class DummyResponse:
         def __init__(self, status_code, text="Unauthorized"):
@@ -120,7 +120,7 @@ async def test_evolution_client_401_negative():
     assert "401" in str(exc_info.value)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_evolution_client_readback_mismatch():
     class DummyResponse:
         def __init__(self, status_code, json_data):

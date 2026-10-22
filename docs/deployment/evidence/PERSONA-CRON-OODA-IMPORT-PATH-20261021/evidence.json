@@ -1,0 +1,11 @@
+{
+  "task_id": "PERSONA-CRON-OODA-IMPORT-PATH-20261021",
+  "import_check": {
+    "cwd": "repo root, PYTHONPATH unset",
+    "cron_ooda_closure_sys_path_insertion": false,
+    "cli_help": "python scripts/openclaw-close-persona-cron-ooda.py --help -> exit 0"
+  },
+  "tests": "python3.12 -m pytest services/persona -> collects; 127 passed, 1 skipped; 2 failures in test_lifecycle_approval_verifier.py are outside this task's artifact contract (test_rendered_compose needs COMPOSE_PROFILES=core locally; test_strict_owner_http_decision_cases_and_error_codes does an unauthenticated GET /api/personas/per1 that now returns 401). test_cron_ooda_closure.py 7 passed.",
+  "hosted_proof": "none; no deployment",
+  "follow_up": "Fix test_strict_owner_http_decision_cases_and_error_codes readback (send admin JWT; assertion unchanged) before adding services/persona to CI."
+}

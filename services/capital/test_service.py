@@ -357,6 +357,7 @@ def test_forwarded_operator_jwt_tenant_normalization_and_rejections(strict_clien
             {
                 "sub": "op-review",
                 "client_id": "bff-dev-operator",
+                "service": "control-plane-bff",
                 "roles": ["operator"],
                 "allowed_tenants": list(allowed_tenants),
                 "exp": int(time.time()) + 300,

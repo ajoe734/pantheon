@@ -227,7 +227,7 @@ def test_strict_owner_http_decision_cases_and_error_codes(tmp_path, monkeypatch)
     assert advance("d1", headers=unsigned).status_code == 401
     monkeypatch.setattr(ApprovalReader, "get", lambda self, _id: _evidence())
     assert advance("d1").status_code == 200
-    assert client.get("/api/personas/per1").json()["lifecycle_state"] == "paper_owner"
+    assert client.get("/api/personas/per1", headers=admin).json()["lifecycle_state"] == "paper_owner"
 
     monkeypatch.delenv("PERSONA_JWT_SECRET")
     monkeypatch.delenv("PANTHEON_RUNTIME_JWT_SECRET", raising=False)

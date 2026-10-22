@@ -369,3 +369,154 @@ def test_mcp_tools_no_live_execution_in_governance() -> None:
         assert governance.get("live_execution_allowed") is False, (
             f"Expected live_execution_allowed=False in {item.get('server_id')}"
         )
+
+
+def test_memory_only_tool_and_skill_registries_are_not_served_as_catalog_truth() -> None:
+    """Process-local tool_registry and skill_registry entries do not appear in catalog reads."""
+    read_store = _ConsolSkillsReadStore(_SKILLS_FIXTURE, _TOOLS_FIXTURE, {}, {})
+    service = IntegrationsService(read_store=read_store, bff_error_fn=bff_error, utc_now_fn=utc_now)
+    service.tool_registry["tool-memory-ghost"] = {
+        "id": "tool-memory-ghost",
+        "tool_id": "tool-memory-ghost",
+        "name": "Memory Ghost Tool",
+        "status": "draft",
+    }
+    service.skill_registry["skill-memory-ghost"] = {
+        "id": "skill-memory-ghost",
+        "skill_id": "skill-memory-ghost",
+        "name": "Memory Ghost Skill",
+        "status": "draft",
+    }
+    app = FastAPI()
+    register_error_handlers(app)
+    app.include_router(
+        create_integrations_router(
+            service=service,
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            require_operator_role=require_operator_role,
+            bff_error=bff_error,
+            utc_now_fn=utc_now,
+        )
+    )
+    client = TestClient(app)
+
+    tools_resp = client.get("/bff/tools", headers=HEADERS)
+    assert tools_resp.status_code == 200
+    assert [t["tool_id"] for t in tools_resp.json()["data"]] == ["tool-cp-qlib"]
+    assert client.get("/bff/tools/tool-memory-ghost", headers=HEADERS).status_code == 404
+
+    skills_resp = client.get("/bff/skills", headers=HEADERS)
+    assert skills_resp.status_code == 200
+    assert {s["skill_id"] for s in skills_resp.json()["data"]} == set(_SKILLS_FIXTURE.keys())
+    assert client.get("/bff/skills/skill-memory-ghost", headers=HEADERS).status_code == 404
+
+
+def test_domain_workflow_catalog_port_and_openclaw_adapter_owner_boundary() -> None:
+    """DomainWorkflowCatalogPort and OpenClawOpsClient fail closed on writes and preserve empty vs missing surface status."""
+    from services.control_plane.bff.ports import DomainWorkflowCatalogPort
+    from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient
+
+    openclaw_client = OpenClawOpsClient()
+    for op in ("create_tool", "update_tool", "create_skill", "update_skill"):
+        assert openclaw_client.supports_catalog_metadata_mutation(op) is False
+
+    # 1. Unconfigured DomainWorkflowCatalogPort reports missing/unavailable and rejects writes with 503/403
+    unconfigured_port = DomainWorkflowCatalogPort()
+    unconfigured_service = IntegrationsService(
+        read_store=unconfigured_port,
+        openclaw_client=openclaw_client,
+        bff_error_fn=bff_error,
+        utc_now_fn=utc_now,
+    )
+    app_missing = FastAPI()
+    register_error_handlers(app_missing)
+    app_missing.include_router(
+        create_integrations_router(
+            service=unconfigured_service,
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            require_operator_role=require_operator_role,
+            bff_error=bff_error,
+            utc_now_fn=utc_now,
+        )
+    )
+    client_missing = TestClient(app_missing)
+
+    tools_missing = client_missing.get("/bff/tools", headers=HEADERS).json()
+    assert tools_missing["data"] == []
+    assert tools_missing["meta"]["surfaces"]["tool_list"]["status"] == "unavailable"
+    assert tools_missing["meta"]["surfaces"]["tool_list"]["source"] == "missing"
+
+    skills_missing = client_missing.get("/bff/skills", headers=HEADERS).json()
+    assert skills_missing["data"] == []
+    assert skills_missing["meta"]["surfaces"]["skill_list"]["status"] == "unavailable"
+    assert skills_missing["meta"]["surfaces"]["skill_list"]["source"] == "missing"
+
+    viewer_headers = {"Authorization": "Bearer consol-viewer:viewer", "Idempotency-Key": "k-viewer-1"}
+    assert client_missing.post("/bff/tools", json={"name": "t1"}, headers=viewer_headers).status_code == 403
+    assert client_missing.post(
+        "/bff/tools",
+        json={"name": "t1"},
+        headers={**HEADERS, "Idempotency-Key": "k-op-1"},
+    ).status_code == 503
+    assert client_missing.post(
+        "/bff/skills",
+        json={"name": "s1"},
+        headers={**HEADERS, "Idempotency-Key": "k-op-2"},
+    ).status_code == 503
+
+    # 2. Configured empty DomainWorkflowCatalogPort reports ok/in_memory (actual empty vs unavailable)
+    empty_port = DomainWorkflowCatalogPort(datasets={"tools": {}, "skills": {}})
+    empty_service = IntegrationsService(
+        read_store=empty_port,
+        openclaw_client=openclaw_client,
+        bff_error_fn=bff_error,
+        utc_now_fn=utc_now,
+    )
+    app_empty = FastAPI()
+    register_error_handlers(app_empty)
+    app_empty.include_router(
+        create_integrations_router(
+            service=empty_service,
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            require_operator_role=require_operator_role,
+            bff_error=bff_error,
+            utc_now_fn=utc_now,
+        )
+    )
+    client_empty = TestClient(app_empty)
+
+    tools_empty = client_empty.get("/bff/tools", headers=HEADERS).json()
+    assert tools_empty["data"] == []
+    assert tools_empty["meta"]["surfaces"]["tool_list"]["status"] == "ok"
+    assert tools_empty["meta"]["surfaces"]["tool_list"]["source"] == "in_memory"
+
+    skills_empty = client_empty.get("/bff/skills", headers=HEADERS).json()
+    assert skills_empty["data"] == []
+    assert skills_empty["meta"]["surfaces"]["skill_list"]["status"] == "ok"
+    assert skills_empty["meta"]["surfaces"]["skill_list"]["source"] == "in_memory"
+
+    # 3. Canonical allowed_tenants second-tenant reaches unconfigured owner 503 instead of false 403,
+    #    while allowed-only claim with foreign X-Tenant-Id is rejected with 403 FORBIDDEN.
+    multi_tenant_headers = {
+        "Authorization": "Bearer consol-multi:operator:local-tenant-a,local-tenant-b",
+        "X-Tenant-Id": "local-tenant-b",
+        "Idempotency-Key": "k-multi-tenant-b",
+    }
+    second_tenant_resp = client_missing.post("/bff/tools", json={"name": "t-second"}, headers=multi_tenant_headers)
+    assert second_tenant_resp.status_code == 503
+    assert second_tenant_resp.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+
+    foreign_tenant_headers = {
+        "Authorization": "Bearer consol-multi:operator:local-tenant-a,local-tenant-b",
+        "X-Tenant-Id": "local-tenant-c",
+        "Idempotency-Key": "k-foreign-tenant-c",
+    }
+    foreign_tenant_resp = client_missing.post("/bff/tools", json={"name": "t-foreign"}, headers=foreign_tenant_headers)
+    assert foreign_tenant_resp.status_code == 403
+    assert foreign_tenant_resp.json()["error"]["code"] == "FORBIDDEN"
+    assert foreign_tenant_resp.json()["error"]["details"]["precondition_failed"] == "tenant_scope"
+
+

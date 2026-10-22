@@ -1,0 +1,21 @@
+{
+  "task_id": "TELEMETRY-STORAGE-BOUNDED-20261021",
+  "scope": "source-only; no deployment; no hosted file edited",
+  "ledger": {
+    "env": "TELEMETRY_INFRASTRUCTURE_HEALTH_DEDUPE_HORIZON_SECONDS",
+    "default_seconds": 86400,
+    "reject_code": "INFRA_EVENT_TOO_OLD (HTTP 422, not dead-lettered)",
+    "compaction": "startup + every 600s on begin(); atomic os.replace under flock; offset set to written bytes and inode taken from temp file before post-replace appends so concurrent replica appends after os.replace are replayed; live reservations kept; readers re-open on inode change"
+  },
+  "dlq": {
+    "env": "TELEMETRY_DLQ_RETENTION_SECONDS",
+    "default_seconds": 604800,
+    "policy": "entries tagged writer_error/retry_exhausted/TELEMETRY_REPLAY_DLQ_TAG never aged out; others dropped past retention at load and during normal operation (reject triggers compaction once the injectable-clock elapsed interval, default min(1h, retention), passes) via streamed atomic rewrite"
+  },
+  "tests": {
+    "command": "python -m pytest services/telemetry",
+    "result": "435 passed, 1 skipped, 4 failed",
+    "preexisting_failures": "test_paper_telemetry_packet.py (4) fail identically on base (engine_bridge_repo)",
+    "new_tests_fail_on_base": "12/12 in test_infrastructure_health_admission_ledger.py and test_dead_letter_retention.py"
+  }
+}
