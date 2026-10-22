@@ -39,6 +39,7 @@ from services.source_ingestion.distillation_worker import (
     RegistrySyncResult,
     make_distillation_worker,
     source_version_digest,
+    source_version_digest_matches,
 )
 from services.source_ingestion.pg_store import read_source_records_for_tenant
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
@@ -273,7 +274,7 @@ def _build_registry_payload(
     source = request.source
     job = request.job
     committed_digest = source_version_digest(source)
-    if job.source_digest and committed_digest != job.source_digest:
+    if job.source_digest and not source_version_digest_matches(source, job.source_digest):
         raise RuntimeError(
             f"Registry sync source digest mismatch for {source.source_id}: "
             f"job={job.source_digest}, committed={committed_digest}"
