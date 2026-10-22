@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from unittest import mock
 
+import pytest
 from fastapi.testclient import TestClient
 
 from strict_test_support import (
@@ -1262,3 +1263,108 @@ def test_main_requests_lease_covering_interval_plus_timeout(monkeypatch) -> None
     monkeypatch.setattr(module, "_write_alive", lambda *a, **k: None)
     module.main()
     assert captured["lease_duration_seconds"] >= 50
+
+
+def _flat_bar_workflow(real_workflow, *, strip_zero_activity_reason: bool = False):
+    """Run the real vectorbt backend on bars that never produce an MA crossover."""
+
+    def run(dataset, *, backend=None, config=None):  # noqa: ANN001
+        records = [
+            {**record, "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0}
+            for record in dataset["records"]
+        ]
+        with mock.patch.dict(os.environ, {"PANTHEON_VECTORBT_BACKEND": "real"}):
+            result = real_workflow({**dataset, "records": records}, backend=backend, config=config)
+        if strip_zero_activity_reason:  # shape of the adapter before the reason was reported
+            result.backtest_result.aggregate_metrics.pop("sharpe_undefined_reason", None)
+        return result
+
+    return run
+
+
+def _real_run_vectorbt_workflow():
+    pytest.importorskip("vectorbt")
+    from services.research.vectorbt.adapter.vectorbt_adapter import run_vectorbt_workflow
+
+    return run_vectorbt_workflow
+
+
+def _run_zero_trade_job(tmp_path, workflow_factory):
+    service, _fixture = _load_service_module(tmp_path)
+    service.run_vectorbt_workflow = workflow_factory(_real_run_vectorbt_workflow())
+
+    class _Receipt:
+        consult_request_id = "consult-zero-trade"
+
+        def to_dict(self):
+            return {"consult_request_id": self.consult_request_id}
+
+    class _ConsultationClient:
+        def create_teaching_consult_request(self, **_kwargs):  # noqa: ANN003
+            return _Receipt()
+
+    service.TrainingConsultationClient = _ConsultationClient
+    client = TestClient(service.app)
+    created = client.post(
+        "/api/training/sessions",
+        json={"persona_id": "persona-alpha", "objective": "zero trade", "actor_id": "operator-1"},
+    )
+    session_id = created.json()["session_id"]
+    seed_changed_supported_controls(service, session_id)
+    queued = client.post(
+        f"/api/training/sessions/{session_id}/preview-jobs",
+        json={"mode": "refresh", "requested_by": "operator-1"},
+        headers={"Idempotency-Key": "zero-trade-001"},
+    )
+    assert queued.status_code == 201
+    ran = client.post(f"/api/training/preview-jobs/{queued.json()['job_id']}/run", json={})
+    assert ran.status_code == 200, ran.text
+    return service, ran.json()
+
+
+def test_zero_trade_window_completes_as_failed_evaluation(tmp_path) -> None:
+    service, job = _run_zero_trade_job(tmp_path, _flat_bar_workflow)
+
+    assert job["status"] == "completed"
+    assert job["governance_gate_state"] == "failed"
+    path = Path(os.environ.get("TRAINING_SESSION_RUNTIME_EVIDENCE_PATH") or service._data_dir())
+    if path.is_dir():
+        path = path / "runtime-evidence.jsonl"
+    lines = [json.loads(line) for line in path.read_text().splitlines() if "preview_evaluation_terminal" in line]
+    payload = lines[-1].get("payload", lines[-1])
+    assert payload["validation_status"] == "failed"
+    assert "sharpe_undefined_no_trading_activity" in payload["validation_errors"]
+    assert payload["instrument_activity"]
+    for row in payload["instrument_activity"].values():
+        assert row["trade_count"] == 0
+        assert row["num_bars"] >= 30
+
+
+def test_zero_trade_window_without_reason_is_admission_rejected(tmp_path) -> None:
+    _service, job = _run_zero_trade_job(
+        tmp_path, lambda real: _flat_bar_workflow(real, strip_zero_activity_reason=True)
+    )
+
+    assert job["status"] == "failed"
+    assert job["error_code"] == "evaluation_admission_rejected"
+    assert "non-finite" in job["failure_reason"]
+    assert "trades=0/bars=" in job["failure_reason"]
+
+
+def test_nonfinite_sharpe_after_trading_is_still_admission_rejected(tmp_path) -> None:
+    def traded_nan(_real):
+        fake = make_fake_real_vectorbt_workflow()
+
+        def run(dataset, *, backend=None, config=None):  # noqa: ANN001
+            result = fake(dataset, backend=backend, config=config)
+            result.backtest_result.aggregate_metrics["mean_sharpe_ratio"] = float("nan")
+            return result
+
+        return run
+
+    _service, job = _run_zero_trade_job(tmp_path, traded_nan)
+
+    assert job["status"] == "failed"
+    assert job["error_code"] == "evaluation_admission_rejected"
+    assert "mean_sharpe_ratio is non-finite" in job["failure_reason"]
+    assert "trades=3/bars=" in job["failure_reason"]

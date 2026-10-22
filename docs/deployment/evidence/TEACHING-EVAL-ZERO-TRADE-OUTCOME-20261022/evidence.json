@@ -1,0 +1,12 @@
+{
+  "task_id": "TEACHING-EVAL-ZERO-TRADE-OUTCOME-20261022",
+  "real_vectorbt_environment": "/tmp/civenv (vectorbt 1.1.1, numpy 2.5.3)",
+  "reproduction": "flat/no-crossover bars, MA 7/21, real VectorbtBackend: trade_count 0, sharpe_ratio non-finite (inf here, NaN possible); old path -> evaluation_admission_rejected",
+  "design": "adapter classifies non-finite Sharpe (no_trading_activity | zero_return_variance) and emits aggregate sharpe_undefined_reason only when every non-finite Sharpe is explained; training-session turns it into a completed evaluation with validation_status failed and error sharpe_undefined_<reason>; unexplained non-finite stays admission-rejected. Sharpe placeholder 0.0 is never evaluated against the threshold in that case.",
+  "failure_detail": "rejections append per-instrument trades/bars to failure_reason; terminal evidence records instrument_activity",
+  "tests": {
+    "services/research/vectorbt": "41 passed",
+    "services/training-session": "243 passed, 2 skipped"
+  },
+  "l12_gate_rerun": "not run by this task"
+}
