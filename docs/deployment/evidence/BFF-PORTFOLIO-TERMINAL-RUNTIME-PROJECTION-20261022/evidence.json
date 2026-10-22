@@ -1,0 +1,10 @@
+{
+  "task_id": "BFF-PORTFOLIO-TERMINAL-RUNTIME-PROJECTION-20261022",
+  "change": "pm12 holdings projection skips runtimes with authoritative terminal lifecycle (retired/failed/failed_inactive) only when current telemetry omits them; active-missing telemetry, reported positions and explicit-flat handling unchanged",
+  "tests": {
+    "file": "services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py",
+    "before_fix": "2 failed (retired/failed omission, active missing control), 62 passed",
+    "after_fix": "64 passed"
+  },
+  "hosted_acceptance": "not claimed; source delivery only"
+}
