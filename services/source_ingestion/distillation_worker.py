@@ -64,21 +64,27 @@ _IMMUTABLE_SEED_STATUSES: frozenset[str] = frozenset(
 )
 
 
+_VOLATILE_RUN_METADATA_KEYS: tuple[str, ...] = (
+    "ingest_run_id",
+    "source_ingest_run_id",
+    "trace_id",
+)
+_VOLATILE_VERSION_METADATA_KEYS: tuple[str, ...] = (
+    *_VOLATILE_RUN_METADATA_KEYS,
+    "raw_storage_refs",
+)
+
+
 def _canonical_json(value: Mapping[str, Any]) -> str:
     return json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
 
 
-def source_version_identity(source: SourceRecord) -> dict[str, Any]:
-    """Return the content projection that defines one normalized source version.
-
-    Run-local correlation fields are deliberately excluded so that re-ingesting
-    the same normalized content in a later run maps to the same version, while
-    a revised title, reference, body, content hash, or governed metadata
-    creates a distinct event and distillation job.
-    """
-
+def _source_version_identity_with_exclusions(
+    source: SourceRecord,
+    excluded_keys: Sequence[str],
+) -> dict[str, Any]:
     metadata = dict(source.metadata)
-    for volatile_key in ("ingest_run_id", "source_ingest_run_id", "trace_id"):
+    for volatile_key in excluded_keys:
         metadata.pop(volatile_key, None)
     return {
         "source_id": source.source_id,
@@ -90,11 +96,51 @@ def source_version_identity(source: SourceRecord) -> dict[str, Any]:
     }
 
 
+def source_version_identity(source: SourceRecord) -> dict[str, Any]:
+    """Return the content projection that defines one normalized source version.
+
+    Run-local correlation fields and batch-scoped raw archive references are
+    deliberately excluded so that re-ingesting the same normalized content in a
+    later run maps to the same version, while a revised title, reference, body,
+    content hash, or governed metadata creates a distinct event and
+    distillation job.
+    """
+
+    return _source_version_identity_with_exclusions(
+        source,
+        _VOLATILE_VERSION_METADATA_KEYS,
+    )
+
+
 def source_version_digest(source: SourceRecord) -> str:
     """Return the stable content identity digest for one source version."""
 
     identity = _canonical_json(source_version_identity(source))
     return "sha256:" + hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
+def _legacy_raw_refs_source_version_digest(source: SourceRecord) -> str:
+    """Return the pre-repair digest projection that retained ``raw_storage_refs``."""
+
+    identity = _canonical_json(
+        _source_version_identity_with_exclusions(
+            source,
+            _VOLATILE_RUN_METADATA_KEYS,
+        )
+    )
+    return "sha256:" + hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
+def source_version_digest_matches(source: SourceRecord, digest: str) -> bool:
+    """Return True when ``digest`` matches the current or pre-repair projection."""
+
+    if not digest:
+        return False
+    if source_version_digest(source) == digest:
+        return True
+    if "raw_storage_refs" not in source.metadata:
+        return False
+    return _legacy_raw_refs_source_version_digest(source) == digest
 
 
 def _same_version_identity(
@@ -546,6 +592,48 @@ class DistillationJobQueue:
             (job_id,),
         ).fetchone()
 
+    def _resolve_committed_source_digest(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        source_id: str,
+        source_digest: str,
+        payload_json: str,
+        event_version: str,
+        versioned: bool,
+    ) -> str:
+        if not versioned or not source_digest:
+            return source_digest
+        exact = connection.execute(
+            """
+            SELECT source_digest
+              FROM distillation_source_versions
+             WHERE source_id = ? AND source_digest = ?
+            """,
+            (source_id, source_digest),
+        ).fetchone()
+        if exact is not None:
+            return source_digest
+        rows = connection.execute(
+            """
+            SELECT source_digest, payload_json, event_version
+              FROM distillation_source_versions
+             WHERE source_id = ? AND source_digest <> ''
+             ORDER BY committed_at ASC, rowid ASC
+            """,
+            (source_id,),
+        ).fetchall()
+        for row in rows:
+            if str(row["event_version"]) != event_version:
+                continue
+            if _same_version_identity(
+                stored_payload_json=str(row["payload_json"]),
+                incoming_payload_json=payload_json,
+                versioned=True,
+            ):
+                return str(row["source_digest"])
+        return source_digest
+
     def _insert_source_version_and_job(
         self,
         *,
@@ -557,16 +645,24 @@ class DistillationJobQueue:
         event_version: str,
         versioned: bool,
     ) -> DistillationJob:
-        job_id = _stable_job_id(source_id, source_digest if versioned else None)
-        event_id = f"source-normalized:{source_id}:{source_digest or job_id}"
-        idempotency_key = (
-            f"distill:{source_id}:{source_digest}"
-            if versioned
-            else f"distill:{source_id}:{requested_by}"
-        )
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
+                source_digest = self._resolve_committed_source_digest(
+                    connection,
+                    source_id=source_id,
+                    source_digest=source_digest,
+                    payload_json=payload_json,
+                    event_version=event_version,
+                    versioned=versioned,
+                )
+                job_id = _stable_job_id(source_id, source_digest if versioned else None)
+                event_id = f"source-normalized:{source_id}:{source_digest or job_id}"
+                idempotency_key = (
+                    f"distill:{source_id}:{source_digest}"
+                    if versioned
+                    else f"distill:{source_id}:{requested_by}"
+                )
                 connection.execute(
                     """
                     INSERT INTO distillation_source_versions (
@@ -710,6 +806,34 @@ class DistillationJobQueue:
                     """,
                     (source_id, source_digest),
                 ).fetchone()
+                if row is None and source_digest:
+                    version_rows = connection.execute(
+                        """
+                        SELECT source_digest, payload_json
+                          FROM distillation_source_versions
+                         WHERE source_id = ? AND source_digest <> ''
+                         ORDER BY committed_at ASC, rowid ASC
+                        """,
+                        (source_id,),
+                    ).fetchall()
+                    for version_row in version_rows:
+                        try:
+                            stored = SourceRecord.from_dict(
+                                json.loads(str(version_row["payload_json"]))
+                            )
+                        except Exception:
+                            continue
+                        if source_version_digest_matches(stored, source_digest):
+                            row = connection.execute(
+                                """
+                                SELECT *
+                                  FROM distillation_outbox
+                                 WHERE source_id = ? AND source_digest = ?
+                                """,
+                                (source_id, str(version_row["source_digest"])),
+                            ).fetchone()
+                            if row is not None:
+                                break
         return self._job_from_row(row) if row is not None else None
 
     def list_pending(self) -> list[DistillationJob]:
@@ -1847,4 +1971,5 @@ __all__ = [
     "RegistrySyncResult",
     "make_distillation_worker",
     "source_version_digest",
+    "source_version_digest_matches",
 ]
