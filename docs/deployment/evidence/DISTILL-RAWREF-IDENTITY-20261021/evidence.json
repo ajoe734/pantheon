@@ -1,0 +1,58 @@
+{
+  "task_id": "DISTILL-RAWREF-IDENTITY-20261021",
+  "change_class": "corrective",
+  "summary": "Exclude batch-scoped metadata.raw_storage_refs from SourceRecord version identity while preserving already-persisted legacy digests, distillation job IDs, registry IDs, DLQ/retry_wait/pending rows, and resolving re-ingested legacy snapshots to their already-committed source version and job.",
+  "incident_context": {
+    "symptom": "On accepted backend e231f856, one unchanged Taiwan equity market SourceRecord (tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19) produced two source version digests (a9a675e5bc226bb07fd3b673c43106f0f095620780b1815fa4ab012ef0128ba1 and 573592d07e1217121b934d50b7e922df8282b867ef294e629199c581be1e71bb) and two completed distillation jobs (distill-35169d5c1df1f4c8a80ba470 and distill-926134262a5ce64486fa721d) across two batch pulls despite identical content_ref and normalized content.",
+    "root_cause": "services/source_ingestion/pipeline.py compact_bulk_market_record attaches all batch-scoped raw archive pointers to each compacted market SourceRecord under metadata['raw_storage_refs'] (40 refs). services/source_ingestion/distillation_worker.py source_version_identity only excluded ingest_run_id, source_ingest_run_id, and trace_id, hashing metadata.raw_storage_refs into the content version digest.",
+    "resolution": "Updated source_version_identity in services/source_ingestion/distillation_worker.py to exclude raw_storage_refs alongside ingest_run_id, source_ingest_run_id, and trace_id; added source_version_digest_matches and _legacy_raw_refs_source_version_digest to recognize pre-repair digests computed with raw_storage_refs; updated DistillationJobQueue._resolve_committed_source_digest and DistillationJobQueue.get so re-ingestions of pre-repair rows resolve to the existing committed version and job inside the existing admission transaction; updated DistillationController._build_registry_payload in services/source_ingestion/distillation_controller.py to validate job.source_digest via source_version_digest_matches so existing pending, retry_wait, DLQ, and redriven jobs pass registry sync without mutating their source_digest, job_id, or registry_id."
+  },
+  "scoped_artifacts": [
+    "services/source_ingestion/distillation_worker.py",
+    "services/source_ingestion/distillation_controller.py",
+    "services/source_ingestion/tests/test_distillation_worker.py",
+    "services/source_ingestion/tests/test_distillation_controller.py",
+    "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py",
+    "docs/deployment/evidence/DISTILL-RAWREF-IDENTITY-20261021/evidence.json"
+  ],
+  "acceptance_verification": {
+    "ac1_batch_raw_storage_refs_excluded": "passed: two normalized SourceRecord snapshots of one source_id differing only in metadata.raw_storage_refs or run-local fields (ingest_run_id, source_ingest_run_id, trace_id) resolve to one source_version_digest and one distillation job_id; enqueue_source_record admits no second version and creates no second outbox job",
+    "ac2_governed_fields_change_version": "passed: any change to title, content_ref, source_type, connector_id, trust_tier, provenance, or governed metadata fields (such as record_digest, symbol, market) produces a distinct source_version_digest and a new distillation job",
+    "ac3_legacy_persisted_jobs_processable": "passed: pending, retry_wait, DLQ, and redriven jobs persisted under the previous digest projection keep their source_digest, job_id, and registry_id and pass the registry sync digest check in distillation_controller.py (_build_registry_payload) without raising a digest mismatch",
+    "ac4_reingest_legacy_row_resolves_to_existing_version": "passed: re-ingesting a SourceRecord whose content was previously admitted under the legacy projection (with raw_storage_refs included in the digest) and that differs only in raw_storage_refs resolves to the already-committed source_digest and job_id in source_version_ledger and distillation_jobs without admitting a replacement version or second job",
+    "ac5_minimal_in_place_scope": "passed: repair stays strictly inside services/source_ingestion/distillation_worker.py and services/source_ingestion/distillation_controller.py; no new cache, registry, mapping table, service, schema migration, or gate is added, and no persisted outbox/inbox/lease/DLQ row or identifier is rewritten or deleted",
+    "ac6_synthetic_tests_and_before_after_suite_results": "passed: 6 new synthetic regression tests fail on parent commit c4d33e4faa1bd035ef9ec9a39dbdce3a68c6c2f7 and pass on the delivered head; full services/source_ingestion/tests suite passes on both parent and delivered head"
+  },
+  "before_after_test_results": {
+    "parent_commit": "c4d33e4faa1bd035ef9ec9a39dbdce3a68c6c2f7",
+    "before_parent_baseline": {
+      "focused_suite": {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_distillation_controller.py services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py",
+        "exit_code": 0,
+        "summary": "90 passed, 2 warnings in 30.96s"
+      },
+      "full_source_ingestion_suite": {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests",
+        "exit_code": 0,
+        "summary": "1036 passed, 4 skipped, 5 warnings in 456.03s (0:07:36)"
+      },
+      "new_regression_tests_on_unmodified_parent": {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_distillation_worker.py -k TestBatchRawStorageRefsIdentity services/source_ingestion/tests/test_distillation_controller.py -k 'legacy_raw_storage_refs_digest or reingested_legacy_raw_storage_refs' services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py -k legacy_raw_storage_refs_digest",
+        "exit_code": 1,
+        "summary": "5 failed, 2 warnings in 3.37s (all new regression assertions fail on unmodified parent commit c4d33e4faa1bd035ef9ec9a39dbdce3a68c6c2f7 before code repair)"
+      }
+    },
+    "after_delivered_head": {
+      "focused_suite": {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_distillation_controller.py services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py",
+        "exit_code": 0,
+        "summary": "96 passed, 2 warnings in 42.22s"
+      },
+      "full_source_ingestion_suite": {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests",
+        "exit_code": 0,
+        "summary": "1042 passed, 4 skipped, 5 warnings in 454.60s (0:07:34)"
+      }
+    }
+  }
+}

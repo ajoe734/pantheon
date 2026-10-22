@@ -591,6 +591,52 @@ class TestConcurrentWorkers:
         assert first.job_id == second.job_id
         assert queue.version_count("src-dup-001") == 1
 
+    def test_recrawl_with_changed_batch_raw_storage_refs_does_not_create_a_second_version(
+        self, tmp_path: Path, registry: _RecordingRegistry
+    ) -> None:
+        config = _controller_config(tmp_path)
+        source_id = "tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19"
+        first_batch = _normalized_source(
+            source_id,
+            title="TWSE 2330 daily price 2026-10-15",
+            ingest_run_id="ingest-ac0cc7b00496",
+            source_ingest_run_id="ingest-ac0cc7b00496",
+            trace_id="trace-batch-1",
+            raw_storage_refs=[
+                {"dataset": "TaiwanStockPrice", "raw_blob_path": "raw/run-1/part-0.json", "sha256": "11" * 32},
+                {"dataset": "TaiwanStockPrice", "raw_blob_path": "raw/run-1/part-1.json", "sha256": "22" * 32},
+            ],
+        )
+        _write_evidence(config, first_batch)
+        result_one, error_one, _ = _run_tick(config, _DummyLoopWriter())
+        assert error_one is None
+        assert result_one["actual"]["synced_count"] == 1
+
+        second_batch = _normalized_source(
+            source_id,
+            title="TWSE 2330 daily price 2026-10-15",
+            ingest_run_id="ingest-84555a4c38a4",
+            source_ingest_run_id="ingest-84555a4c38a4",
+            trace_id="trace-batch-2",
+            raw_storage_refs=[
+                {"dataset": "TaiwanStockPrice", "raw_blob_path": "raw/run-2/part-0.json", "sha256": "aa" * 32},
+                {"dataset": "TaiwanStockPrice", "raw_blob_path": "raw/run-2/part-1.json", "sha256": "bb" * 32},
+            ],
+        )
+        _write_evidence(config, second_batch)
+        result_two, error_two, _ = _run_tick(config, _DummyLoopWriter())
+        assert error_two is None
+        assert result_two["reconcile"]["enqueued"] == 0
+        assert result_two["reconcile"]["processed"] == 0
+        assert result_two["actual"]["synced_count"] == 0
+
+        queue = DistillationJobQueue(config.job_queue_path)
+        assert queue.version_count(source_id) == 1
+        assert queue.count() == 1
+        assert registry.writes == [_registry_id_for(first_batch)]
+        assert len(registry.entries) == 1
+        assert len(StrategySpecSeedStore(config.seed_store_path).list_all()) == 1
+
     def test_revised_content_syncs_two_distinct_registry_drafts(
         self, tmp_path: Path, registry: _RecordingRegistry
     ) -> None:

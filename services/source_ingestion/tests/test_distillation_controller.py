@@ -611,3 +611,313 @@ def test_controller_redrives_transient_dead_letters_after_registry_recovers(tmp_
     assert res["status"] == "success"
     assert res["actual"]["outbox"]["dead_letter"] == 0
     assert res["actual"]["synced_count"] == 1
+
+
+def _legacy_raw_refs_digest(source: SourceRecord) -> str:
+    import hashlib
+    from services.source_ingestion.distillation_worker import _canonical_json
+
+    metadata = dict(source.metadata)
+    for volatile_key in ("ingest_run_id", "source_ingest_run_id", "trace_id"):
+        metadata.pop(volatile_key, None)
+    identity = _canonical_json(
+        {
+            "source_id": source.source_id,
+            "connector_id": source.connector_id,
+            "source_type": source.source_type.value,
+            "title": source.title,
+            "content_ref": source.content_ref,
+            "metadata": metadata,
+        }
+    )
+    return "sha256:" + hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
+def test_controller_processes_pending_and_dlq_jobs_persisted_under_previous_raw_refs_projection(
+    tmp_path, monkeypatch
+) -> None:
+    import sqlite3
+    from services.source_ingestion.distillation_worker import _canonical_json, _stable_job_id
+
+    evidence_path = tmp_path / "source_evidence.jsonl"
+    job_queue_path = tmp_path / "job_queue.sqlite3"
+    seed_store_path = tmp_path / "seeds.jsonl"
+    state_path = tmp_path / "controller_state.json"
+
+    pending_initial = _normalized_source(
+        "tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19",
+        tenant_id="test",
+        ingest_run_id="ingest-ac0cc7b00496",
+        source_ingest_run_id="ingest-ac0cc7b00496",
+        raw_storage_refs=[
+            {"dataset": "TaiwanStockPrice", "raw_blob_path": "raw/run-1/2330.json", "sha256": "11" * 32}
+        ],
+    )
+    dlq_initial = _normalized_source(
+        "tw-official:tw_price_daily:TWSE:2317:aa11bb22cc33dd44",
+        tenant_id="test",
+        ingest_run_id="ingest-ac0cc7b00496",
+        source_ingest_run_id="ingest-ac0cc7b00496",
+        raw_storage_refs=[
+            {"dataset": "TaiwanStockPrice", "raw_blob_path": "raw/run-1/2317.json", "sha256": "22" * 32}
+        ],
+    )
+
+    queue = DistillationJobQueue(job_queue_path, default_max_attempts=1)
+    pending_legacy_digest = _legacy_raw_refs_digest(pending_initial)
+    pending_legacy_job_id = _stable_job_id(pending_initial.source_id, pending_legacy_digest)
+    dlq_legacy_digest = _legacy_raw_refs_digest(dlq_initial)
+    dlq_legacy_job_id = _stable_job_id(dlq_initial.source_id, dlq_legacy_digest)
+
+    with sqlite3.connect(job_queue_path) as conn:
+        for record, digest, job_id, status in (
+            (pending_initial, pending_legacy_digest, pending_legacy_job_id, "pending"),
+            (dlq_initial, dlq_legacy_digest, dlq_legacy_job_id, "dead_letter"),
+        ):
+            event_id = f"source-normalized:{record.source_id}:{digest}"
+            idempotency_key = f"distill:{record.source_id}:{digest}"
+            payload_json = _canonical_json(record.to_dict())
+            conn.execute(
+                """
+                INSERT INTO distillation_source_versions (
+                    source_id, source_digest, event_version, payload_json, committed_at
+                ) VALUES (?, ?, 'source_record.normalized.v1', ?, 1792481535.0)
+                """,
+                (record.source_id, digest, payload_json),
+            )
+            conn.execute(
+                """
+                INSERT INTO distillation_outbox (
+                    job_id, event_id, source_id, source_digest, event_version,
+                    idempotency_key, status, enqueued_at, available_at, attempts, max_attempts, updated_at
+                ) VALUES (?, ?, ?, ?, 'source_record.normalized.v1', ?, ?, 1792481535.0, 1792481535.0, ?, 1, 1792481535.0)
+                """,
+                (
+                    job_id,
+                    event_id,
+                    record.source_id,
+                    digest,
+                    idempotency_key,
+                    status,
+                    1 if status == "dead_letter" else 0,
+                ),
+            )
+            if status == "dead_letter":
+                conn.execute(
+                    """
+                    INSERT INTO distillation_inbox (
+                        event_id, job_id, payload_digest, status, attempts, last_error, updated_at
+                    ) VALUES (?, ?, ?, 'dead_letter', 1, 'registry_sync_failed: RuntimeError: Failed to query registry: timed out', 1792481535.0)
+                    """,
+                    (event_id, job_id, digest),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO distillation_dead_letters (
+                        job_id, event_id, source_id, source_digest, payload_json, attempts, reason, created_at
+                    ) VALUES (?, ?, ?, ?, ?, 1, 'registry_sync_failed: RuntimeError: Failed to query registry: timed out', 1792481535.0)
+                    """,
+                    (job_id, event_id, record.source_id, digest, payload_json),
+                )
+        conn.commit()
+
+    # Desired state has re-ingested snapshots with new batch raw_storage_refs
+    pending_reingested = _normalized_source(
+        pending_initial.source_id,
+        tenant_id="test",
+        ingest_run_id="ingest-84555a4c38a4",
+        source_ingest_run_id="ingest-84555a4c38a4",
+        raw_storage_refs=[
+            {"dataset": "TaiwanStockPrice", "raw_blob_path": "raw/run-2/2330.json", "sha256": "aa" * 32}
+        ],
+    )
+    dlq_reingested = _normalized_source(
+        dlq_initial.source_id,
+        tenant_id="test",
+        ingest_run_id="ingest-84555a4c38a4",
+        source_ingest_run_id="ingest-84555a4c38a4",
+        raw_storage_refs=[
+            {"dataset": "TaiwanStockPrice", "raw_blob_path": "raw/run-2/2317.json", "sha256": "bb" * 32}
+        ],
+    )
+    evidence_path.write_text(
+        "\n".join(
+            json.dumps({"record_type": "source_record", "payload": r.to_dict()})
+            for r in (pending_reingested, dlq_reingested)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    config = DistillationControllerConfig(
+        database_url="postgresql://test:test@localhost:5432/test",
+        registry_url="http://mock-registry:8087",
+        interval_seconds=60,
+        max_ticks=1,
+        state_path=state_path,
+        alive_path=tmp_path / "alive",
+        job_queue_path=job_queue_path,
+        seed_store_path=seed_store_path,
+        evidence_store_path=evidence_path,
+        source_dirs=[tmp_path],
+        max_attempts=1,
+    )
+    state = ControllerState(
+        controller_id="test-controller",
+        controller_name="test-distillation-controller",
+        environment="test",
+        tenant_id="test",
+        deployment={"git_sha": "test-sha"},
+    )
+    store = ControllerStateStore(state_path)
+    store.save(state)
+    registry_entries: dict[str, dict] = {}
+
+    def get_entry(url, registry_id):
+        return registry_entries.get(registry_id)
+
+    def register(url, payload):
+        metadata = dict(payload.get("metadata") or {})
+        if isinstance(payload.get("strategy_spec"), dict):
+            metadata.setdefault("strategy_spec", payload["strategy_spec"])
+        entry = {
+            **payload,
+            "artifact_type": "strategy_spec",
+            "artifact_state": "draft",
+            "lineage": {
+                "parent_registry_ids": None,
+                **dict(payload.get("lineage") or {}),
+                "source_strategy_spec_id": None,
+            },
+            "metadata": metadata,
+        }
+        entry.pop("strategy_spec", None)
+        entry.pop("source_digest", None)
+        registry_entries[payload["registry_id"]] = {"entry": entry}
+        return {"entry": entry}
+
+    mod = "services.source_ingestion.distillation_controller"
+    monkeypatch.setattr(f"{mod}._get_registry_entry", get_entry)
+    monkeypatch.setattr(f"{mod}._register_strategy_spec_if_absent", register)
+
+    res = run_controller_tick(
+        config=config, state=state, store=store, writer=DummyLoopWriter(), queue=queue
+    )
+    assert res["status"] == "success"
+    assert res["reconcile"]["enqueued"] == 0
+    assert res["reconcile"]["processed"] == 2
+    assert res["actual"]["synced_count"] == 2
+    assert res["actual"]["outbox"]["dead_letter"] == 0
+    assert queue.count() == 2
+    assert queue.version_count(pending_initial.source_id) == 1
+    assert queue.version_count(dlq_initial.source_id) == 1
+
+    expected_pending_reg_id = (
+        f"reg-strategy-spec-{pending_initial.source_id}-"
+        f"{pending_legacy_digest.removeprefix('sha256:')[:12]}"
+    )
+    expected_dlq_reg_id = (
+        f"reg-strategy-spec-{dlq_initial.source_id}-"
+        f"{dlq_legacy_digest.removeprefix('sha256:')[:12]}"
+    )
+    assert set(registry_entries) == {expected_pending_reg_id, expected_dlq_reg_id}
+    pending_job = queue.get(pending_initial.source_id, pending_legacy_digest)
+    dlq_job = queue.get(dlq_initial.source_id, dlq_legacy_digest)
+    assert pending_job.job_id == pending_legacy_job_id
+    assert pending_job.source_digest == pending_legacy_digest
+    assert pending_job.registry_id == expected_pending_reg_id
+    assert dlq_job.job_id == dlq_legacy_job_id
+    assert dlq_job.source_digest == dlq_legacy_digest
+    assert dlq_job.registry_id == expected_dlq_reg_id
+
+
+def test_build_registry_payload_accepts_previous_raw_refs_digest_and_rejects_tampered_digest(
+    tmp_path
+) -> None:
+    from services.source_ingestion.distillation_controller import (
+        _build_registry_payload,
+        _versioned_registry_id,
+    )
+    from services.source_ingestion.distillation_worker import (
+        DistillationJob,
+        DistillationJobStatus,
+        RegistrySyncRequest,
+        _stable_job_id,
+        _synthesize_evidence_bundle,
+        _synthesize_evidence_item,
+    )
+    from services.source_ingestion.seed_materializer import (
+        MaterializationMode,
+        SeedMaterializationService,
+    )
+
+    source = _normalized_source(
+        "tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19",
+        tenant_id="test",
+        raw_storage_refs=[
+            {"dataset": "TaiwanStockPrice", "raw_blob_path": "raw/run-1/2330.json", "sha256": "11" * 32}
+        ],
+    )
+    legacy_digest = _legacy_raw_refs_digest(source)
+    assert legacy_digest != source_version_digest(source)
+
+    item = _synthesize_evidence_item(source, legacy_digest)
+    bundle = _synthesize_evidence_bundle(source, item, legacy_digest)
+    seed_store = StrategySpecSeedStore(tmp_path / "seeds.jsonl")
+    seed = SeedMaterializationService(store=seed_store, created_by="test").materialize(
+        bundle,
+        source_records=[source],
+        evidence_items=[item],
+        mode=MaterializationMode.CREATE_IF_ABSENT,
+        requested_by="test",
+        idempotency_key=f"distill:{source.source_id}:{legacy_digest}",
+    ).seed
+    job = DistillationJob(
+        job_id=_stable_job_id(source.source_id, legacy_digest),
+        source_id=source.source_id,
+        idempotency_key=f"distill:{source.source_id}:{legacy_digest}",
+        status=DistillationJobStatus.LEASED,
+        enqueued_at="2026-10-20T07:32:05Z",
+        source_digest=legacy_digest,
+    )
+    registry_id = _versioned_registry_id(source, job)
+    payload = _build_registry_payload(
+        request=RegistrySyncRequest(
+            source=source,
+            seed=seed,
+            job=job,
+            evidence_item=item,
+            evidence_bundle=bundle,
+            version_key=legacy_digest,
+        ),
+        registry_id=registry_id,
+    )
+    assert payload["registry_id"] == registry_id
+    assert payload["source_digest"] == legacy_digest
+    assert payload["metadata"]["distillation"]["source_digest"] == legacy_digest
+
+    tampered_digest = "sha256:" + ("0" * 64)
+    tampered_item = _synthesize_evidence_item(source, tampered_digest)
+    tampered_bundle = _synthesize_evidence_bundle(source, tampered_item, tampered_digest)
+    tampered_job = DistillationJob(
+        job_id=_stable_job_id(source.source_id, tampered_digest),
+        source_id=source.source_id,
+        idempotency_key=f"distill:{source.source_id}:{tampered_digest}",
+        status=DistillationJobStatus.LEASED,
+        enqueued_at="2026-10-20T07:32:05Z",
+        source_digest=tampered_digest,
+    )
+    with pytest.raises(RuntimeError, match="Registry sync source digest mismatch"):
+        _build_registry_payload(
+            request=RegistrySyncRequest(
+                source=source,
+                seed=seed,
+                job=tampered_job,
+                evidence_item=tampered_item,
+                evidence_bundle=tampered_bundle,
+                version_key=tampered_digest,
+            ),
+            registry_id=_versioned_registry_id(source, tampered_job),
+        )
+
+
