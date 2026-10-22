@@ -72,6 +72,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeo
 from services.control_plane.bff.core.owner_reads import (
     remaining_management_read_budget,
     request_read_scope,
+    submit_owner_read,
 )
 from services.control_plane.bff.governance.human_inbox import (
     _build_persona_readiness_items,
@@ -2805,18 +2806,14 @@ class ManagementService:
                     raw_store = getattr(store, "_target", store)
                     for warm_name in ("list_deployment_plans", "list_evolution_decisions"):
                         if _is_unpatched_port_method(raw_store, warm_name):
-                            warm_futures.append(
-                                _HEALTH_OWNER_READ_EXECUTOR.submit(
-                                    copy_context().run, getattr(raw_store, warm_name)
-                                )
-                            )
+                            _warm = submit_owner_read(_HEALTH_OWNER_READ_EXECUTOR, getattr(raw_store, warm_name), warm_key=warm_name)
+                            if _warm is not None:
+                                warm_futures.append(_warm)
 
                 if hasattr(store, "list_runtime_bindings"):
                     supported_groups.add("runtime")
                     if not deadline_exhausted:
-                        group_futures["runtime"] = _HEALTH_OWNER_READ_EXECUTOR.submit(
-                            copy_context().run, lambda: store.list_runtime_bindings() or []
-                        )
+                        group_futures["runtime"] = submit_owner_read(_HEALTH_OWNER_READ_EXECUTOR, lambda: store.list_runtime_bindings() or [])
                 if hasattr(store, "list_telemetry_summaries"):
                     supported_groups.add("telemetry")
                     if not deadline_exhausted:
@@ -2824,9 +2821,7 @@ class ManagementService:
                             res = store.list_telemetry_summaries()
                             return list(res.values()) if isinstance(res, dict) else (res or [])
 
-                        group_futures["telemetry"] = _HEALTH_OWNER_READ_EXECUTOR.submit(
-                            copy_context().run, _read_telemetry
-                        )
+                        group_futures["telemetry"] = submit_owner_read(_HEALTH_OWNER_READ_EXECUTOR, _read_telemetry)
                 if hasattr(store, "list_incidents") or hasattr(store, "list_incident_alerts"):
                     supported_groups.add("incident")
                     if not deadline_exhausted:
@@ -2835,9 +2830,7 @@ class ManagementService:
                                 return store.list_incidents() or []
                             return store.list_incident_alerts() or []
 
-                        group_futures["incident"] = _HEALTH_OWNER_READ_EXECUTOR.submit(
-                            copy_context().run, _read_incidents
-                        )
+                        group_futures["incident"] = submit_owner_read(_HEALTH_OWNER_READ_EXECUTOR, _read_incidents)
                 if (
                     hasattr(store, "list_approval_queue_items")
                     or hasattr(store, "list_governance_review_queue_items")
@@ -2855,15 +2848,11 @@ class ManagementService:
                                 items.extend(store.list_approval_records() or [])
                             return items
 
-                        group_futures["governance"] = _HEALTH_OWNER_READ_EXECUTOR.submit(
-                            copy_context().run, _read_governance
-                        )
+                        group_futures["governance"] = submit_owner_read(_HEALTH_OWNER_READ_EXECUTOR, _read_governance)
                 if hasattr(store, "get_kill_switch_status"):
                     supported_groups.add("kill_switch")
                     if not deadline_exhausted:
-                        group_futures["kill_switch"] = _HEALTH_OWNER_READ_EXECUTOR.submit(
-                            copy_context().run, store.get_kill_switch_status
-                        )
+                        group_futures["kill_switch"] = submit_owner_read(_HEALTH_OWNER_READ_EXECUTOR, store.get_kill_switch_status)
 
             done_futures: Set[Any] = set()
             if group_futures:
@@ -3635,9 +3624,7 @@ class ManagementService:
                     and _is_unpatched_port_method(raw_store, "list_persona_league")
                 ):
                     warm_futs = [
-                        _HEALTH_OWNER_READ_EXECUTOR.submit(
-                            copy_context().run, getattr(raw_store, warm_name)
-                        )
+                        fut
                         for warm_name in (
                             "list_personas",
                             "list_bindings",
@@ -3645,6 +3632,10 @@ class ManagementService:
                             "list_runtime_bindings",
                         )
                         if _is_unpatched_port_method(raw_store, warm_name)
+                        for fut in (submit_owner_read(
+                            _HEALTH_OWNER_READ_EXECUTOR, getattr(raw_store, warm_name), warm_key=warm_name,
+                        ),)
+                        if fut is not None
                     ]
                     if warm_futs:
                         _futures_wait(warm_futs, timeout=timeout_budget)
@@ -3716,11 +3707,9 @@ class ManagementService:
                     "list_runtime_bindings",
                 ):
                     if _is_unpatched_port_method(raw_store, warm_name):
-                        warm_futures.append(
-                            _HEALTH_OWNER_READ_EXECUTOR.submit(
-                                copy_context().run, getattr(raw_store, warm_name)
-                            )
-                        )
+                        _warm = submit_owner_read(_HEALTH_OWNER_READ_EXECUTOR, getattr(raw_store, warm_name), warm_key=warm_name)
+                        if _warm is not None:
+                            warm_futures.append(_warm)
             # 1. Approvals
             if hasattr(store, "list_approval_queue_items") or hasattr(store, "list_approval_records"):
                 try:
@@ -4446,11 +4435,9 @@ class ManagementService:
                 raw_store = getattr(store, "_target", store)
                 for warm_name in ("list_personas", "list_bindings", "list_capital_pools"):
                     if _is_unpatched_port_method(raw_store, warm_name):
-                        cockpit_warm_futures.append(
-                            _HEALTH_OWNER_READ_EXECUTOR.submit(
-                                copy_context().run, getattr(raw_store, warm_name)
-                            )
-                        )
+                        _warm = submit_owner_read(_HEALTH_OWNER_READ_EXECUTOR, getattr(raw_store, warm_name), warm_key=warm_name)
+                        if _warm is not None:
+                            cockpit_warm_futures.append(_warm)
             try:
                 # Health is computed once; operator_home reuses it instead of recomputing.
                 runtime_health = _section("runtime_health", "health_status", lambda: self.get_operator_health_status(snapshot_at=snap))

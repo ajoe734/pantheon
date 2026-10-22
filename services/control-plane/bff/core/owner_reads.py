@@ -1,5 +1,5 @@
 """Request-scoped owner reads; no cross-request cache or BFF copy of domain records."""
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
 from functools import wraps
 from http.cookies import SimpleCookie
 import inspect
@@ -97,6 +97,34 @@ def cached_owner_call(key: Any, fn: Any) -> Any:
     if not ok:
         raise val
     return val
+
+
+def submit_owner_read(executor: Any, fn: Any, *, warm_key: Optional[str] = None) -> Any:
+    """Submit one owner read in a copy of the request context.
+
+    A read that starts after its request's management_read_deadline has passed
+    is skipped, so abandoned requests (e.g. a reloaded page) stop occupying the
+    shared worker pool. With ``warm_key``, a prefetch already submitted in this
+    request is not submitted again (returns None); the request cache dedupes the
+    read itself, but a duplicate task would still hold a worker while blocked on
+    the in-flight key lock. No state outlives the request's cache.
+    """
+    if warm_key is not None:
+        cache = request_read_cache.get()
+        if cache is not None:
+            marker = ("owner_warm_submitted", warm_key)
+            with _CACHE_LOCK:
+                if marker in cache:
+                    return None
+                cache[marker] = (True, None)
+
+    def _run() -> Any:
+        remaining = remaining_management_read_budget()
+        if remaining is not None and remaining <= 0.0:
+            raise TimeoutError("owner read skipped: request read budget exhausted")
+        return fn()
+
+    return executor.submit(copy_context().run, _run)
 
 
 def evict_request_read_keys(*prefixes: str) -> None:
