@@ -1,0 +1,139 @@
+{
+  "task_id": "HOSTED-ALL12-DOMAIN-PHASES-20261023",
+  "kind": "source_delivery_not_hosted_acceptance",
+  "base": "dev 72fcefa58 (includes accepted T1 PR6741 merge 4eb71123ec2d10427ba9ea1cf3ebfba89cf07999)",
+  "contract_source": "/tmp/pantheon-codex-01a11-review-20261023/approved-T2-T3-disjoint-native-packets.json",
+  "a4_receipt": "/tmp/pantheon-codex-01a11-review-20261023/T1-postrelease-owner-contracts-20261023T151422Z.json",
+  "a4_reading": "existing fields only; no enforced runtime MFA; arbitrary plan-metadata write and executable distilled readiness NOT proven, so both are verified by the C_promote caller at run time and reported concretely if absent",
+  "hosted_execution": "none; no hosted suite, VM change, provider request, owner write or business approval was performed",
+  "files": [
+    "tests/integration/l12/l12_owner_auth.py",
+    "tests/integration/l12/test_current_research_loops_deployed_e2e.py",
+    "tests/integration/l12/test_current_human_learning_deployed_e2e.py",
+    "tests/integration/l12/test_current_runtime_loops_deployed_e2e.py",
+    "tests/unit/l12/test_hosted_domain_contract.py"
+  ],
+  "interface_for_parent_and_workflow": {
+    "enable": "PANTHEON_L12_HOSTED_CHAIN=1 with PANTHEON_L12_CROSS_LOOP_RUN_ID, PANTHEON_L12_HOSTED_CHAIN_PHASE, PANTHEON_L12_HOSTED_CHAIN_INPUT (JSON: chain_id, phase, predecessors, decisions)",
+    "suite_phases": {
+      "research suite": [
+        "A_research"
+      ],
+      "human-learning suite": [
+        "B_learning"
+      ],
+      "runtime suite": [
+        "C_promote",
+        "D_observe"
+      ],
+      "parent only": [
+        "E_close"
+      ]
+    },
+    "predecessor_keys_read": {
+      "B_learning": [
+        "teaching_session_id",
+        "registry_id",
+        "checksum",
+        "strategy_id",
+        "eval_identity (optional)"
+      ],
+      "C_promote": [
+        "registry_id",
+        "checksum",
+        "governance_handoff_id",
+        "persona_id",
+        "symbol/teaching_session_id/consult_request_id/candidate_id/strategy_id (optional)"
+      ],
+      "D_observe": [
+        "runtime_binding_id",
+        "runtime_id",
+        "plan_id",
+        "capital_pool_id (optional)",
+        "capital_binding_id (optional)"
+      ],
+      "A_research (A2)": [
+        "registry_id",
+        "checksum"
+      ]
+    },
+    "decision_references": {
+      "H1": "{decision_id} Governance approval; decided/approved, tenant-matching, unexpired, bound to the exact registry_id and checksum",
+      "H2": "actual recorded-consent object {record_ref, decided_by, recorded_at}; no Governance gate, no owner GET; persisted in ConsultRequest metadata",
+      "H3": "{decision_id} Governance approval with the owner plan-release scope read back: target_type=registry_entry, target_id=registry_id, target_version, candidate_digest=checksum, capital_pool_id, persona_id (same fields Runtime deploy_authority enforces); registry-id-only match is not enough",
+      "H4": "{decision_id} actual Evolution decision, approved/executed, with target_id=chain registry_id, capital_pool_id=chain pool and linked_incident_id=chain incident"
+    },
+    "receipt_fields_added": [
+      "hosted_chain",
+      "chain_id",
+      "phase",
+      "phase_status",
+      "blocked_before",
+      "resource_ids",
+      "detail"
+    ],
+    "status_mapping": "completed -> status passed; paused -> status paused; failed -> status failed. Isolated reports are unchanged.",
+    "new_env_names_for_workflow": [
+      "PANTHEON_L12_HOSTED_EXECUTOR_TOKEN (real executing identity; PANTHEON_L12_{OPERATOR,REVIEWER}_TOKEN are ignored in hosted mode)",
+      "PANTHEON_L12_BFF_BEARER (runtime suite D_observe; no JWT is minted)",
+      "PANTHEON_L12_CAPITAL_TOKEN, PANTHEON_L12_TRAINING_TOKEN, PANTHEON_L12_{AGORA_HANDOFF,POLICY_LEARNING,CONSULTATION}_TOKEN are required (no local defaults) in hosted mode"
+    ],
+    "pause_points": {
+      "A_research": "alpha_admission (H1)",
+      "B_learning": "agora_interaction_evidence (missing A predecessors); consultation_request (H2)",
+      "C_promote": "unsupported_executable_path (before any Capital/plan write); capital_pool_creation (missing predecessors); runtime_binding_dispatch (H3); runtime_execution_observation (no natural paper fill, loop 9)",
+      "D_observe": "observation (missing predecessors); runtime_execution_observation; drift_incident_observation (loop 10); evolution_decision_observation (loop 11); evolution_decision_acceptance (H4)"
+    },
+    "canonical_resource_ids": [
+      "registry_id",
+      "capital_pool_id",
+      "capital_binding_id",
+      "runtime_binding_id",
+      "plan_id",
+      "incident_id",
+      "h3_decision_id",
+      "h4_decision_id",
+      "source_id",
+      "source_digest",
+      "distillation_job_id",
+      "distillation_source_id",
+      "distillation_source_digest"
+    ],
+    "phase_loops": {
+      "C_promote": [
+        8,
+        9
+      ],
+      "D_observe": [
+        10,
+        11,
+        12
+      ]
+    }
+  },
+  "behaviour": {
+    "determinism": "owner IDs are hosted-all12-<chain_id>-<kind>; every create is preceded by an owner GET (source record, admission, Teaching session by trace_id, capital pool/binding, deployment plan, ConsultRequest, candidate by dataset_version_id)",
+    "teaching_to_agora": "Agora content, source_refs, session_id and captured_at come from the chain's Teaching terminal-readback and the controls the Training owner stored (GET /api/training/controls/{session_id} current_value, written by PATCH); fewer than two distinct real control actions fails closed instead of padding",
+    "predecessor_persistence": "ConsultRequest metadata and DeploymentPlan metadata carry the actual Registry/Teaching/Agora/candidate/consultation IDs and are read back; the plan binds the chain's own approved StrategySpec and H1 decision, never artifact-tw-session-momentum-v1 (referenced only as the unchanged rollback target)",
+    "hosted_exclusions": "no Compose restart/stop (guarded in _restart_service), no pre-existing binding retirement, no broken-binding negatives, no single-worker fleet assumption, no minted/stub tokens or ':mfa' marker, no approval propose/review/decide",
+    "paper_capital": "pool and binding created and activated without any approval id",
+    "loop_12": "D_observe only reads BFF typed health; it keeps its own trigger path and adds no 11->12 edge",
+    "capital_actor": "hosted Capital bodies name the real principal decoded from PANTHEON_L12_CAPITAL_TOKEN (delegated_actor_id/operator_id/user_id, else sub) and X-Pantheon-Service from its service claim; no token is minted",
+    "executable_path": "before any Capital or DeploymentPlan write C_promote requires the chain registry_id at /api/registry/strategy-artifacts to be an approved execution_bundle with embedded StrategyArtifact and matching checksum; otherwise the phase pauses as unsupported_executable_path. Plan registry_id stays the Registry id. No parent artifact is mutated and no owner API is invented",
+    "loop_receipts": "C_promote emits loop 8 and loop 9 cases; D_observe emits loops 10, 11 (natural IncidentCase and Evolution decision read from owners, nothing injected) and 12 (BFF typed health). Unobserved evidence pauses; H4 is checked after the loops",
+    "registry_lineage": "A_research resource_ids expose source_id, source_digest, distillation_job_id, distillation_source_id/digest and registry_id so the parent proves ownership through stored distillation lineage"
+  },
+  "validation": [
+    "tests/unit/l12/test_hosted_domain_contract.py: 23 passed (bounded fake owners with real owner DTO shapes)",
+    "tests/integration/l12 opt-in suites and AST guards (default isolated mode): all skipped/guards passed",
+    "scripts/test_run_isolated_l12_runtime_e2e.py: 49 passed"
+  ],
+  "unverified": [
+    "whether the owner Registry holds the chain StrategySpec as an execution_bundle at strategy-artifacts; the expected distilled strategy_spec is reported as paused unsupported_executable_path",
+    "whether DeploymentPlan metadata round-trips new keys; reported as DeployedProofError",
+    "owner replay idempotency of Agora evidence / Training session reuse across processes (assumed by evidence_id and trace_id)",
+    "Capital accepting the executor token with a decodable JWT carrying a service claim"
+  ],
+  "residual_ownership": "E_close, parent resume selection, tenant/label verification of prior receipts and owner retirement belong to HOSTED-ALL12-STIMULUS-PHASES-20261023; workflow join to HOSTED-ALL12 T4",
+  "correction_round": "addresses PR6745 original-author list items 1-7 on top of 4d7d1ca19; no live run"
+}
