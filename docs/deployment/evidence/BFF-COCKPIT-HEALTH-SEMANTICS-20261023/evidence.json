@@ -1,0 +1,19 @@
+{
+  "task_id": "BFF-COCKPIT-HEALTH-SEMANTICS-20261023",
+  "scope": "ManagementService.get_operator_health_status only; source delivery, not hosted acceptance",
+  "changes": [
+    "Failed/timed-out owner reads for runtime, telemetry, incident, governance, kill_switch report unknown (null counts, unavailable_reason/source, honest summary) instead of fabricated zero/'queues clear'/armed",
+    "overall_status, headline, message and group_counts derive from returned group status (real pending governance / open incidents included)",
+    "meta.surfaces keeps owner read availability separately; timeouts, deadlines, cancellation, dedupe unchanged"
+  ],
+  "tests": {
+    "command": "pytest services/control-plane/bff/tests/test_bff_management_cockpit.py -q",
+    "result": "28 passed (full file run)",
+    "note": "test_cockpit_overlapping_reload_waves_keep_every_section_complete is timing-flaky; fails in isolation on unmodified base too"
+  },
+  "added_tests": [
+    "test_operator_health_failed_reads_report_unknown_not_zero",
+    "test_operator_health_successful_empty_reads_are_genuine_zero",
+    "test_operator_health_overall_and_counts_match_returned_groups"
+  ]
+}
