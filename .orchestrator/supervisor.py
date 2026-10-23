@@ -5934,6 +5934,7 @@ def plan_task_assignment_pair(
     excluded_reviewers: set[str] | None = None,
     preserve_in_progress_incumbents: bool = False,
     require_owner_ready: bool = True,
+    require_reviewer_ready: bool = True,
 ) -> tuple[str, str] | None:
     """Plan one viable, independent owner/reviewer pair before mutation.
 
@@ -6037,7 +6038,8 @@ def plan_task_assignment_pair(
                 else state
             )
             if (
-                reviewer_is_explicit_human_gate(candidate_reviewer)
+                not require_reviewer_ready
+                or reviewer_is_explicit_human_gate(candidate_reviewer)
                 or agent_can_take_task(
                     config,
                     candidate_reviewer,
@@ -13187,6 +13189,23 @@ def worker_recovery_assignment_pair(
             owner=pair[0],
             reviewer=pair[1],
             target_agent=pair[0],
+        ):
+            return pair
+    # A missing process does not make the configured owner unhealthy; once
+    # alternates fail, retry the healthy incumbent through the same fenced CAS.
+    if receipt.get("reason_kind") == "worker_process_missing" and owner and reviewer:
+        pair = plan_task_assignment_pair(
+            config,
+            task,
+            state=state,
+            owner_candidates=[owner],
+            preferred_reviewers=[reviewer],
+            allowed_reviewers=[reviewer],
+            require_reviewer_ready=False,  # reviewer readiness is checked at review dispatch
+        )
+        if pair and _worker_recovery_candidate_has_capacity(
+            config, state, status, task,
+            owner=pair[0], reviewer=pair[1], target_agent=pair[0],
         ):
             return pair
     return None
