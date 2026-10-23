@@ -84,8 +84,8 @@ derived from `chain_id` + step.
 
 | Phase | Lease | Loops | Ends at |
 |---|---|---|---|
-| `A_research` | held | 1–4 (reuse research suite) | Teaching result recorded |
-| `B_learning` | held | 5–7 (human-learning suite) | Consultation memo + governance handoff, started only once H2 is decided (otherwise stops before consultation/synthesis); H1 must be decided before `C_promote` starts |
+| `A_research` | held | 1–4 (reuse research suite) | Segment A1 (loops 1–2) ends with the distilled draft StrategySpec read back; it pauses before the Registry approval prerequisite until H1 is decided for that exact `registry_id` + checksum. Segment A2 (loops 3–4) starts only after H1 and ends with the Teaching result recorded |
+| `B_learning` | held | 5–7 (human-learning suite) | Consultation memo + governance handoff, started only once H2 is decided (otherwise stops before consultation/synthesis); H1 was already decided in `A_research` |
 | `C_promote` | held | 8–9 (runtime suite, hosted subset) | Paper pool and paper binding (no approval needed), plan, runtime binding active; the runtime binding is created only after H3, otherwise stops before that action |
 | `D_observe` | none (read-only) | 9–12 | Repeated on later trading days; collects episodes, telemetry, drift, evolution, BFF health |
 | `E_close` | held briefly | 11–12 + stimulus closure parent | Evidence sealed, retirement run |
@@ -112,7 +112,7 @@ under a real executing identity with the real decision-maker recorded (section 0
 
 | ID | Approval | Decided by | Blocks |
 |---|---|---|---|
-| H1 | Registry artifact approval for the chain's strategy artifact (Governance propose → review → decide, bound to the exact `registry_id` + candidate digest). A Registry/Governance approval, **not** a Capital approval, and never described as one. | authorised human (UI, or saved by authorised executor) | `C_promote` |
+| H1 | Registry artifact approval for the chain's distilled StrategySpec (Governance propose → review → decide, bound to the exact `registry_id` + checksum read back from loop 2). It is the existing approval prerequisite the research suite already crosses before Alpha admission (`distill.reviewed_admission_prerequisite`), so it is paused and read back **before** Alpha admission, not before `C_promote`. The same approved `registry_id` is what Alpha admission (`strategy_spec_id`) and later `C_promote` consume; a later approval of a different artifact does not satisfy H1, and no second H1 is created. A Registry/Governance approval, **not** a Capital approval, and never described as one. | authorised human (UI, or saved by authorised executor) | Alpha admission (loop 3) in `A_research`; therefore also `C_promote` |
 | H2 | Agora synthesis consent (two existing Persona opinions + one synthesis; the previously pending request must not be reused for this chain) | data owner; recorded, not auto-created | consultation/synthesis in `B_learning` |
 | H3 | Deployment plan release for the labelled paper scope | authorised human (UI, or saved by authorised executor) | runtime binding |
 | H4 | Evolution decision acceptance | authorised human (UI, or saved by authorised executor) | closure of loop 11 |
@@ -140,7 +140,7 @@ database by hand.
 | Consultation + governance handoff (loop 7) | B | Closed memo; handoff acknowledged. |
 | **Capital pool** (paper; no Capital approval) | C | Close/deactivate pool in `E_close`. |
 | **Persona capital binding** (paper; no Capital approval) | C | Revoke/deactivate in `E_close`; must be done before the pool closes. |
-| **Registry artifact approval** (mutation of a chain-owned child of `artifact-tw-session-momentum-v1`, never the parent) | C | Revoke approval / deprecate chain artifact in `E_close`. |
+| **Registry artifact approval** (H1; the chain-owned distilled StrategySpec entry, never a pre-existing parent such as `artifact-tw-session-momentum-v1`) | A | Revoke approval / deprecate chain artifact in `E_close`. |
 | **Deployment plan** | C | Terminal plan state, then superseded/cancelled by the owner. |
 | **Runtime binding** | C | Deactivate in `E_close`; confirm fleet-ready count returns to the pre-run baseline. |
 | Telemetry/reconciliation/drift/incident (loops 10) | D | Close incident; labelled history retained. |
@@ -216,9 +216,11 @@ dev Persona meeting the original conditions counts, and the result names which o
 1. Episodes come from the normal paper runtime on stored real market data from `source-ingest`. No
    prices, fills or episodes are injected, backdated or seeded. Chain-labelled episodes carry the
    chain label; other Personas' episodes are identified by their own owner IDs.
-2. "Naturally closed" means the Persona's own exit rule fired on real data during a TW trading session
-   (09:00–13:30 Asia/Taipei, Mon–Fri, excluding exchange holidays). `D_observe` records closed-episode
-   counts with Asia/Taipei timestamps and the source snapshot ids behind each entry/exit.
+2. "Naturally closed" means the Persona's own exit rule fired on real data in the normal paper runtime.
+   No clock-time or weekday cutoff is imposed (the original condition and the owner's
+   `qualifying_episodes` have none; an existing legitimate closed episode closed at 20:46 Taipei).
+   `D_observe` records closed-episode counts with Asia/Taipei timestamps and the source snapshot ids
+   behind each entry/exit.
 3. "Uncovered" means no existing Pattern record covers the episode, checked by readback from the
    Persona/Pattern owner. The two existing Patterns (`72215b2f-…`, `7ce68816-…`) are not reused.
 4. Reflection is the scheduler's own natural interval run; the harness only polls its HTTP-visible
