@@ -536,10 +536,20 @@ def test_hosted_compose_files_drop_only_missing_restore_override(monkeypatch, tm
 def test_hosted_compose_files_keep_missing_persistent_input_visible(monkeypatch, tmp_path: Path) -> None:
     runner = _load_vm_runner()
     missing = tmp_path / "gone-override.yml"
-    restore = tmp_path / ".restore-abc" / "images.json"
+    restore = tmp_path / "images" / ".restore-abc" / "images.json"
     out = _compose_files_with_label(runner, monkeypatch, f"{missing},{restore}")
     assert out == str(missing)  # kept, so docker still fails visibly
     assert _compose_files_with_label(runner, monkeypatch, str(restore)) == ""
+    # Only the exact restore image-override shape is dropped; other absent
+    # files under a .restore-* segment stay visible.
+    others = [
+        tmp_path / ".restore-abc" / "docker-compose.yml",
+        tmp_path / ".restore-abc" / "images.json",
+        tmp_path / "images" / ".restore-abc" / "config.yml",
+        tmp_path / "images" / ".restore-abc" / "nested" / "images.json",
+    ]
+    for other in others:
+        assert _compose_files_with_label(runner, monkeypatch, str(other)) == str(other)
 
 
 def test_hosted_vm_runner_fails_without_any_compose_base(monkeypatch, tmp_path: Path) -> None:

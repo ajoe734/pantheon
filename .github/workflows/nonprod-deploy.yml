@@ -3715,11 +3715,16 @@ jobs:
               # deletes its scratch override (images/.restore-*/images.json). Drop only
               # that evidenced ephemeral path when absent; any other missing persistent
               # input is kept so the owner discovery still fails visibly.
-              kept = [
-                  part for part in parts
-                  if os.path.exists(part)
-                  or not any(seg.startswith(".restore-") for seg in part.split("/"))
-              ]
+              def restore_override(part):
+                  segs = part.split("/")
+                  return (
+                      len(segs) >= 3
+                      and segs[-1] == "images.json"
+                      and segs[-2].startswith(".restore-")
+                      and segs[-3] == "images"
+                  )
+
+              kept = [part for part in parts if os.path.exists(part) or not restore_override(part)]
               return os.pathsep.join(kept)
 
 
