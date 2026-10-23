@@ -330,7 +330,7 @@ carries `dataset_version_id`, `handoff_id`, `governance_handoff_id`;
 | 4→5 Teaching→Agora | **owner supports it**: `AgoraInteractionEvidenceRequest` has `session_id` and `source_refs: list[str]` (`dataset_extraction/models.py:78-80`) and persists both | the human suite passes its own token `session:session-l12-hl-<run>` (`test_current_human_learning_deployed_e2e.py:599`) instead of the Teaching `session_id` | **caller-input gap only; no owner API gap** |
 | 5→6, 6→7 | yes: consult request carries `candidate:`, `dataset:`, `evidence:` context refs, `research_run:` evidence ref and `metadata.agora_handoff_id` (same file `:845-857`) | only that the whole human suite is not fed from loop 4/earlier chain | supported within suite |
 | 7→8 Consultation→deployment | `CreateDeploymentPlanRequest` (`services/deployment/models.py:104-125`, `extra=forbid`) has no handoff field; `metadata` is a free dict preserved on the plan, and governance has `consultation-handoffs` (`governance/main.py:327`), but no deployment code reads either | no consumer verifies the `handoff_id`; plan binds only `registry_id` + `approval_decision_id` | **proven owner seam missing as a validated edge; a plan `metadata.consult_handoff_id` caller reference is possible without an owner change but is a recorded reference, not owner enforcement** |
-| 2→8 (registry artifact) | runtime suite mutates the pre-existing parent artifact (`test_current_runtime_loops_deployed_e2e.py:732`, `artifact-tw-session-momentum-v1`), then plans on the child | plan does not use the chain's own distilled `registry_id`; whether a distilled strategy-spec entry carries `strategy_artifact` metadata (required for paper plans, `deployment/service.py:477`) is unverified | **needs fresh owner GET (A.4)** |
+| 2→8 (registry artifact) | runtime suite mutates the pre-existing parent artifact (`test_current_runtime_loops_deployed_e2e.py:732`, `artifact-tw-session-momentum-v1`), then plans on the child | plan does not use the chain's own distilled `registry_id`; `strategy_artifact` is an optional inline projection, applied only when the key is present in registry metadata (`deployment/service.py:477-519`); it is not universally required for paper-plan creation, so its absence alone proves neither a product gap nor executable readiness, and the actual executable artifact/reference path for the distilled entry is unverified | **needs fresh owner GET (A.4)** |
 | 8→9, 9→10, 10→11 | yes inside runtime suite | — | supported |
 | 11→12 | not an edge (loop policy §3.12) | — | unchanged |
 
@@ -346,11 +346,17 @@ the implementing task):
 * **T2 (suites):** only (1) pass the Teaching `session_id` into the Agora evidence `session_id`/`source_refs`
   in the human suite; (2) add the hosted skip list of section 5 and reject minted tokens;
   (3) record the chain's `registry_id`/`handoff_id` as the plan's predecessor reference (existing `metadata`) if A.4 shows the path carries it.
+  The Agora evidence must consume genuine Teaching content (not only the `session_id`); the human suite's fixed
+  approve/placeholder/training rows (`test_current_human_learning_deployed_e2e.py:571-603`) cannot be relabelled as causal proof.
+  Domain UUIDs differ across suites and `CROSS_LOOP_RUN_ID` is not consumed today.
   Files: `tests/integration/l12/test_current_human_learning_deployed_e2e.py`,
   `test_current_runtime_loops_deployed_e2e.py`, `test_current_research_loops_deployed_e2e.py`,
   `l12_owner_auth.py`, matching unit tests.
-* **T3 (driver):** needed only for cross-process sequencing, human-decision wait/readback and
-  `E_close` retirement (no existing caller does these); keep to `scripts/run_hosted_all12_chain.py`.
+* **T3 (stimulus parent):** the existing parent `tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py`
+  (`:265-322` launches the three suites; `:131-168,211-250` normalize/write receipts) already launches and
+  normalizes them. Extend it minimally for cross-process phase/resume/`E_close` retirement via owner reads; do not
+  build a second suite-launching engine. Ownership: parent exclusively T3; domains and `l12_owner_auth.py` T2.
+  `scripts/run_hosted_all12_chain.py` only as a thin invocation adapter if strictly necessary.
 * **T4:** workflow job unchanged from section 10. **T5:** read-only Persona Pattern observation.
 * No new owner API is authorised by this audit; owner-side gaps (7→8 enforcement, missing retire
   operations) are residuals needing a separate operator decision.
@@ -360,13 +366,16 @@ the implementing task):
 Read-only, only after the exact854 release (live release 39966041271 / 48cfa); none run here. Return the
 responses (safe fields only) as evidence:
 
-1. `GET /api/registry/strategy-specs?artifact_state=approved` (`services/registry/service.py:1520`), or
-   `GET /api/registry/strategy-specs/{registry_id}` (`:1481`) for one concrete existing distilled ID:
-   return `registry_id`, `artifact_state` and the `metadata` key names; state whether `strategy_artifact`
-   is present.
+1. `GET /api/registry/strategy-specs/{registry_id}` (`services/registry/service.py:1481`) for one concrete existing
+   distilled ID, or the tenant-scoped strategy-spec list **without** an `artifact_state` filter (`:1520`). Distillation
+   emits a *draft* StrategySpec (`source_ingestion/distillation_controller.py:140-160,383-390`) and the response wraps it as
+   `RegistryEntryView.entry` (`registry/models.py:320-324`), so read fields under `entry`; an approved-only query
+   cannot prove a distilled record is absent. Return `registry_id`, `artifact_state`, `metadata` key names and whether
+   `strategy_artifact` is present (presence is informational, not a requirement).
 2. `GET /api/deployment/plans/{plan_id}` (`services/deployment/service.py:2275`) for one existing plan
-   (or `GET /api/deployment/plans?strategy_id=<id>`): return `plan_id`, `registry_id`,
-   `approval_decision_id` and `metadata` key names. This proves only that **existing** metadata keys are
+   (or `GET /api/deployment/plans?strategy_id=<id>`): return `plan_id`, `artifact_id`
+   (the plan body field, resolved as the registry_id: `deployment/models.py:76-101`, `service.py:1540-1550`; there is no top-level
+   `registry_id`), `approval_decision_id` and `metadata` key names. This proves only that **existing** metadata keys are
    preserved; a new arbitrary key round-trip requires a write and is not claimed by GET.
 3. `GET /api/runtime-bindings/{binding_id}` (`services/runtime-manager/main.py:722`) for one existing
    binding: return `binding_id` and `metadata.tenant_id`.

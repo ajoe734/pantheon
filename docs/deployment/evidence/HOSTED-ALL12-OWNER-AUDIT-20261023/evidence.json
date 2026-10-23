@@ -30,7 +30,7 @@
   "residuals": [
     "no retire/delete for source records, alpha admissions, agora evidence, completed teaching sessions, drift reports, executed evolution decisions",
     "no owner validates a consult handoff_id in deployment plans (7->8)",
-    "plan registry_id uses mutated parent artifact, not chain distilled spec (2->8); strategy_artifact metadata presence unverified"
+    "plan uses mutated parent artifact, not chain distilled spec (2->8); strategy_artifact is an optional inline projection (deployment/service.py:477-519), absence is not a gap nor executable readiness; executable artifact path unverified"
   ],
   "edges": {
     "4->5": "owner supports session_id/source_refs; caller-input gap only",
@@ -43,8 +43,8 @@
     "docs/deployment/evidence/CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001/evidence.json"
   ],
   "fresh_gets_for_root01a11": [
-    "GET /api/registry/strategy-specs?artifact_state=approved or /{registry_id}: metadata keys, strategy_artifact presence",
-    "GET /api/deployment/plans/{plan_id}: registry_id, approval_decision_id, existing metadata keys (new-key roundtrip needs a write; not claimed)",
+    "GET /api/registry/strategy-specs/{registry_id} for a concrete distilled id, or tenant list without state filter (draft; RegistryEntryView.entry): metadata keys, strategy_artifact presence informational",
+    "GET /api/deployment/plans/{plan_id}: artifact_id (used as registry_id; no top-level registry_id), approval_decision_id, existing metadata keys (new-key roundtrip needs a write; not claimed)",
     "GET /api/runtime-bindings/{binding_id}: metadata.tenant_id",
     "nonsecret PANTHEON_RUNTIME_MFA_REQUIRED value"
   ],
