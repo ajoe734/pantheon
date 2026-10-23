@@ -652,12 +652,16 @@ def _decision_id(value: Any) -> str:
 
 
 def _typed_id(kind: str, value: Any) -> str:
-    """Resource IDs are nonsecret scalar owner IDs; never an object or a path."""
+    """Resource values are nonsecret scalars. Only real owner endpoint IDs (those
+    interpolated into owner paths) get path-safety rules; other values such as the
+    opaque H2 consent record_ref only need to be nonempty scalars."""
 
     if isinstance(value, (Mapping, list, tuple)) or isinstance(value, bool):
         raise StimulusProofError(f"resource id {kind} must be a scalar owner id")
     text = str(value or "").strip()
-    if not text or any(ch.isspace() or ch in "/?#" for ch in text):
+    if not text:
+        raise StimulusProofError(f"resource id {kind} is empty")
+    if kind in RECORD_SPECS and any(ch.isspace() or ch in "/?#" for ch in text):
         raise StimulusProofError(f"resource id {kind} is not a valid owner id")
     return text
 
@@ -751,8 +755,11 @@ class HostedChainRunner:
         source_id = str(lineage.get("source_id") or "")
         if not source_id or not str(lineage.get("source_digest") or ""):
             return f"registry_id {record_id}: no source/distillation lineage to prove chain ownership"
-        if source_id != self.resource_ids.get("source_id") or self.chain_id not in source_id:
+        if source_id != self.resource_ids.get("source_id") or source_id != f"hosted-all12-{self.chain_id}-src":
             return f"registry_id {record_id}: lineage source {source_id!r} is not this chain's Source"
+        supplied_digest = self.resource_ids.get("source_digest")
+        if supplied_digest and str(lineage.get("source_digest")) != supplied_digest:
+            return f"registry_id {record_id}: lineage source digest differs from the chain's supplied digest"
         checksum = self.resource_ids.get("checksum")
         if checksum and record.get("checksum") != checksum:
             return f"registry_id {record_id}: checksum differs from the chain checksum"

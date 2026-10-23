@@ -390,7 +390,7 @@ def test_object_decisions_parse_decision_id_and_forward_h2_mapping(monkeypatch, 
 
 def test_registry_without_chain_id_is_verified_by_distillation_lineage(monkeypatch, tmp_path):
     monkeypatch.setattr(subprocess, "run", FakeChild({}))
-    src = f"src-{CHAIN}-1"
+    src = f"hosted-all12-{CHAIN}-src"
     lineage = {"source_id": src, "source_digest": "sha256:ab"}
     entry = {"tenant_id": TENANT, "metadata": {"distillation": lineage}, "checksum": "ck"}
     prior = {"hosted": {"chain_id": CHAIN, "phases": {"A_research": {"phase_status": "completed"}},
@@ -398,7 +398,7 @@ def test_registry_without_chain_id_is_verified_by_distillation_lineage(monkeypat
     owner = FakeOwner({("registry", "/api/registry/strategy-specs/reg-1"): {"entry": entry}})
     runner = _runner(tmp_path, "A_research", owner, prior=prior)
     assert runner.verify_predecessors() == []
-    entry["metadata"]["distillation"] = dict(lineage, source_id="src-someone-else-1")
+    entry["metadata"]["distillation"] = dict(lineage, source_id=f"hosted-all12-{CHAIN}-other-src")
     assert "not this chain's Source" in runner.verify_predecessors()[0]
     entry["metadata"] = {}
     assert "no source/distillation lineage" in runner.verify_predecessors()[0]
@@ -453,3 +453,19 @@ def test_unreadable_baseline_pauses_c_before_launch(monkeypatch, tmp_path):
     evidence = _runner(tmp_path, "C_promote", FakeOwner({}), prior={"hosted": {"chain_id": CHAIN, "phases": done}}).run()
     assert child.calls == [] and evidence.status == "paused"
     assert _receipt(tmp_path)["hosted"]["blocked_before"] == "C_promote:baseline_unavailable"
+
+
+def test_opaque_h2_consent_ref_accepted_and_lineage_is_exact(monkeypatch, tmp_path):
+    ref = "consent rec/1?x#y"
+    runner = parent.HostedChainRunner(_settings(tmp_path), chain_id=CHAIN, phase="A_research", tenant_id=TENANT,
+                                      owner=FakeOwner({}), predecessors={"h2_consent_ref": ref})
+    assert runner.resource_ids["h2_consent_ref"] == ref
+    src = f"hosted-all12-{CHAIN}-src"
+    entry = {"tenant_id": TENANT, "metadata": {"distillation": {"source_id": f"{src}-other", "source_digest": "sha256:ab"}}}
+    owner = FakeOwner({("registry", "/api/registry/strategy-specs/reg-1"): {"entry": entry}})
+    r = parent.HostedChainRunner(_settings(tmp_path), chain_id=CHAIN, phase="A_research", tenant_id=TENANT, owner=owner,
+                                 predecessors={"registry_id": "reg-1", "source_id": f"{src}-other"})
+    assert "not this chain's Source" in r.verify_predecessors()[0]
+    entry["metadata"]["distillation"]["source_id"] = src
+    r.resource_ids.update(source_id=src, source_digest="sha256:zz")
+    assert "digest differs" in r.verify_predecessors()[0]
