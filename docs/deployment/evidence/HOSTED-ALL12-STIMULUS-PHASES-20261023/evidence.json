@@ -13,8 +13,11 @@
     "resume": "prior receipt is a lookup hint; every referenced owner record is re-read (tenant + chain label) and every referenced decision is re-read (decided/approved, H1 target = registry_id); mismatch pauses without launching",
     "idempotency": "a completed phase in the prior receipt is reused, not re-dispatched, only after owner records and decisions are re-read and verified (D_observe may repeat); hosted mode excludes the legacy full-chain test so only the requested phase dispatches",
     "ordering": "A_research, B_learning, C_promote, D_observe, E_close; skipping ahead raises",
-    "e_close": "existing owner retire operations only for records whose GET shows the verified tenant and chain label; unrelated records rejected untouched; non-retirable kinds reported as residual",
-    "all12_passed": "true only when all five phases completed and twelve loops are present; paused is never success"
+    "e_close": "existing owner retire operations only for records whose GET shows verified tenant+chain label; every retire is read back (accepted != retired); rejected/unreadable/unread-back records leave E_close paused (cleanup_incomplete), never completed; E_close never reuses a prior completed receipt; H1 revoke only when the chain registry entry itself was verified",
+    "all12_passed": "true only when all five phases completed, twelve loops present, and E_close baseline_fleet_check == verified; the parent records not_verified_by_parent, so it never claims all12 by itself",
+    "owner_request_schemas": "Capital PATCH status {actor_id,actor_role,status} using executing identity (PANTHEON_L12_HOSTED_OWNER_ACTOR_ID, PANTHEON_L12_HOSTED_OWNER_ROLES) and a granted role; Governance revoke {actor_id,actor_role,expected_version from record}; Registry advance CAS body; Runtime retire {}; Deployment plan status {status}. No identity/role => incomplete, nothing fabricated",
+    "decisions": "only H1 is read from Governance; H2-H4 recorded consents are carried as references and never gated",
+    "entry": "PANTHEON_L12_HOSTED_CHAIN_INPUT packet (chain_id, phase, decisions, predecessors) is honored and merged with prior receipt / DECISION_REFS; mismatching chain_id/phase raises"
   },
   "assumptions_for_reviewer": [
     "child suites (T2) report chain_id, phase, phase_status, blocked_before, resource_ids, exit 0 when paused",
@@ -25,7 +28,8 @@
   "not_done": [
     "baseline fleet-ready count check at E_close (recorded as not_verified_by_parent)",
     "no hosted run, VM change, provider request or business approval",
-    "product hosted execution and independent restart remain original parent obligations"
+    "product hosted execution and independent restart remain original parent obligations",
+    "T2 must agree the packet 'predecessors'/'decisions' keys and the two new owner-identity env vars via native notes; not exercised against a live owner"
   ],
-  "validation": "/tmp/hs-venv/bin/python -m pytest -q tests/unit/l12/test_hosted_stimulus_contract.py tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py -> 14 passed, 2 skipped"
+  "validation": "/tmp/hs-venv/bin/python -m pytest -q tests/unit/l12/test_hosted_stimulus_contract.py tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py -> 21 passed, 2 skipped"
 }

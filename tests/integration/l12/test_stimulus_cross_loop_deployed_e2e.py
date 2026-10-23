@@ -488,9 +488,17 @@ class OwnerClient(Protocol):
 class UrllibOwnerClient:
     """Plain HTTP owner access under the real executing identity from env."""
 
-    def __init__(self, urls: Mapping[str, str], token: str) -> None:
+    def __init__(
+        self,
+        urls: Mapping[str, str],
+        token: str,
+        actor_id: str = "",
+        roles: tuple[str, ...] = (),
+    ) -> None:
         self.urls = dict(urls)
         self.token = token
+        # Identity the token really carries; owners reject any other actor/role.
+        self.actor_id, self.roles = actor_id, tuple(roles)
 
     @classmethod
     def from_env(cls) -> "UrllibOwnerClient":
@@ -499,7 +507,17 @@ class UrllibOwnerClient:
             name: _required_env(f"PANTHEON_L12_{name.upper()}_URL").rstrip("/")
             for name in services
         }
-        return cls(urls, _required_env("PANTHEON_L12_HOSTED_OWNER_TOKEN"))
+        roles = tuple(
+            r.strip()
+            for r in os.getenv("PANTHEON_L12_HOSTED_OWNER_ROLES", "").split(",")
+            if r.strip()
+        )
+        return cls(
+            urls,
+            _required_env("PANTHEON_L12_HOSTED_OWNER_TOKEN"),
+            os.getenv("PANTHEON_L12_HOSTED_OWNER_ACTOR_ID", "").strip(),
+            roles,
+        )
 
     def request(
         self,
@@ -532,7 +550,7 @@ class UrllibOwnerClient:
             return status, {"raw": raw}
 
 
-def _registry_retire_body(record: Mapping[str, Any], chain_id: str) -> dict[str, Any]:
+def _registry_retire_body(record: Mapping[str, Any], chain_id: str, *_identity: Any) -> dict[str, Any]:
     # Registry advance is a CAS on the entry the caller just read.
     return {
         "target_state": "retired",
@@ -543,12 +561,17 @@ def _registry_retire_body(record: Mapping[str, Any], chain_id: str) -> dict[str,
     }
 
 
-def _capital_status_body(status: str, role: str) -> Callable[[Mapping[str, Any], str], dict[str, Any]]:
-    return lambda _record, chain_id: {
-        "actor_id": f"{chain_id}-e-close",
-        "actor_role": role,
-        "status": status,
-    }
+def _capital_status_body(
+    status: str, roles: tuple[str, ...]
+) -> Callable[[Mapping[str, Any], str, str, tuple[str, ...]], dict[str, Any] | None]:
+    # Capital binds actor_id to the authenticated actor and needs a granted role.
+    def build(_record: Mapping[str, Any], _chain: str, actor_id: str, granted: tuple[str, ...]):
+        role = next((r for r in roles if r in granted), None)
+        if not actor_id or role is None:
+            return None
+        return {"actor_id": actor_id, "actor_role": role, "status": status}
+
+    return build
 
 
 @dataclass(frozen=True)
@@ -559,7 +582,7 @@ class OwnerRecordSpec:
     read_path: str
     retire_method: str | None = None
     retire_path: str | None = None
-    retire_body: Callable[[Mapping[str, Any], str], dict[str, Any]] | None = None
+    retire_body: Callable[..., dict[str, Any] | None] | None = None
     retired_states: tuple[str, ...] = ()
 
 
@@ -567,20 +590,20 @@ class OwnerRecordSpec:
 RECORD_SPECS: dict[str, OwnerRecordSpec] = {
     "capital_binding_id": OwnerRecordSpec(
         "capital", "/api/bindings/{id}", "PATCH", "/api/bindings/{id}/status",
-        _capital_status_body("revoked", "persona.admin"), ("revoked",),
+        _capital_status_body("revoked", ("persona.admin", "operator")), ("revoked",),
     ),
     "runtime_binding_id": OwnerRecordSpec(
         "runtime", "/api/runtime-bindings/{id}", "POST", "/api/runtime-bindings/{id}/retire",
-        lambda _r, chain_id: {"actor_id": f"{chain_id}-e-close", "reason": f"{chain_id} E_close"},
+        lambda *_a: {},  # runtime retire reads only an optional retired_at
         ("retired", "inactive"),
     ),
     "plan_id": OwnerRecordSpec(
         "deployment", "/api/deployment/plans/{id}", "POST", "/api/deployment/plans/{id}/status",
-        lambda _r, _c: {"status": "aborted"}, ("aborted",),
+        lambda *_a: {"status": "aborted"}, ("aborted",),
     ),
     "capital_pool_id": OwnerRecordSpec(
         "capital", "/api/capital-pools/{id}", "PATCH", "/api/capital-pools/{id}/status",
-        _capital_status_body("archived", "capital.admin"), ("archived",),
+        _capital_status_body("archived", ("capital.admin", "operator")), ("archived",),
     ),
     "registry_id": OwnerRecordSpec(
         "registry", "/api/registry/strategy-specs/{id}", "POST",
@@ -589,6 +612,9 @@ RECORD_SPECS: dict[str, OwnerRecordSpec] = {
 }
 APPROVAL_READ = "/api/governance/approvals/{id}"
 APPROVAL_REVOKE = "/api/governance/approvals/{id}/revoke"
+H1_REVOKE_ROLES = ("risk_owner", "governance_committee")  # governance REVOKE_AUTHORITY
+# Only H1 is a Governance approval; H2-H4 are recorded consents carried as references.
+GOVERNANCE_DECISIONS = ("H1",)
 _STATE_KEYS = ("status", "artifact_state", "state")
 
 
@@ -637,6 +663,7 @@ class HostedChainRunner:
         owner: OwnerClient,
         prior_receipt: Mapping[str, Any] | None = None,
         decision_refs: Mapping[str, str] | None = None,
+        predecessors: Mapping[str, str] | None = None,
     ) -> None:
         if not _CHAIN_ID_PATTERN.match(chain_id):
             raise StimulusProofError("chain id must be a stable lowercase nonsecret identifier")
@@ -652,7 +679,10 @@ class HostedChainRunner:
         self.phases: dict[str, dict[str, Any]] = {
             name: dict(value) for name, value in (hosted.get("phases") or {}).items()
         }
-        self.resource_ids: dict[str, str] = dict(hosted.get("resource_ids") or {})
+        self.resource_ids: dict[str, str] = {
+            **dict(hosted.get("resource_ids") or {}),
+            **{str(k): str(v) for k, v in (predecessors or {}).items() if str(v or "").strip()},
+        }
         self.decisions: dict[str, str] = {**dict(hosted.get("decisions") or {}), **dict(decision_refs or {})}
         self.loops: dict[str, dict[str, Any]] = {
             item["loop_id"]: item for item in hosted.get("loops") or []
@@ -689,6 +719,10 @@ class HostedChainRunner:
             if mismatch:
                 problems.append(mismatch)
         for name, decision_id in sorted(self.decisions.items()):
+            if name not in GOVERNANCE_DECISIONS:
+                if not str(decision_id or "").strip():
+                    problems.append(f"decision {name}: empty consent reference")
+                continue  # recorded consent (e.g. H2): not a Governance record, never gated here
             problems.extend(self._verify_decision(name, decision_id))
         return problems
 
@@ -739,7 +773,7 @@ class HostedChainRunner:
             previous = self.phases.get(self.phase, {})
             # E_close verifies and rejects per record instead of pausing as a whole.
             problems = [] if self.phase == "E_close" else self.verify_predecessors()
-            if previous.get("phase_status") == "completed" and self.phase != "D_observe" and not problems:
+            if previous.get("phase_status") == "completed" and self.phase not in {"D_observe", "E_close"} and not problems:
                 record = dict(previous, reused=True)  # old receipt is a hint; owner truth just re-verified
                 self.phases[self.phase] = record
             else:
@@ -765,6 +799,8 @@ class HostedChainRunner:
     def _receipt(self) -> dict[str, Any]:
         current = self.phases.get(self.phase, {})
         all_done = all(self.phases.get(p, {}).get("phase_status") == "completed" for p in HOSTED_PHASES)
+        # The parent cannot read the baseline fleet count; without it the chain is not proven closed.
+        all_done = all_done and self.phases.get("E_close", {}).get("baseline_fleet_check") == "verified"
         return {
             "all12_passed": bool(all_done and len(self.loops) == len(CANONICAL_LOOP_IDS)),
             "blocked_before": current.get("blocked_before"),
@@ -835,58 +871,98 @@ class HostedChainRunner:
 
     # -- E_close ----------------------------------------------------------
     def _close(self) -> dict[str, Any]:
+        actor = str(getattr(self.owner, "actor_id", "") or "")
+        roles = tuple(getattr(self.owner, "roles", ()) or ())
         retired: list[dict[str, Any]] = []
         rejected: list[str] = []
+        incomplete: list[str] = []
         failures: list[str] = []
+        verified: set[str] = set()
         for kind, spec in RECORD_SPECS.items():
             record_id = self.resource_ids.get(kind)
             if not record_id:
                 continue
             quoted = urllib.parse.quote(record_id, safe="")
-            status, record = self._read(spec, spec.read_path.format(id=quoted))
+            path = spec.read_path.format(id=quoted)
+            status, record = self._read(spec, path)
             mismatch = self._check_scope(kind, record_id, record) if status == 200 else f"{kind} {record_id}: GET {status}"
             if mismatch:
-                rejected.append(mismatch)  # unrelated or missing: never touched
+                rejected.append(mismatch)  # unrelated or missing: never touched, never retired
                 continue
+            verified.add(kind)
             if _record_state(record) in spec.retired_states:
                 retired.append({"kind": kind, "id": record_id, "already": True})
                 continue
-            code, payload = self.owner.request(
+            body = spec.retire_body(record, self.chain_id, actor, roles)
+            if body is None:
+                incomplete.append(f"{kind} {record_id}: executing identity has no role for retirement")
+                continue
+            code, _ = self.owner.request(
                 spec.service,
                 spec.retire_method or "POST",
                 spec.retire_path.format(id=quoted),
-                spec.retire_body(record, self.chain_id),
+                body,
                 idempotency_key=f"{self.chain_id}-e-close-{kind}",
             )
             if code not in (200, 201, 202):
                 failures.append(f"{kind} {record_id}: retire returned {code}")
                 continue
-            retired.append({"kind": kind, "id": record_id, "http": code})
+            status, after = self._read(spec, path)  # acceptance is not retirement: read it back
+            if status == 200 and _record_state(after) in spec.retired_states:
+                retired.append({"kind": kind, "id": record_id, "http": code})
+            else:
+                incomplete.append(f"{kind} {record_id}: retire accepted ({code}) but state is {_record_state(after)!r}")
         h1 = self.decisions.get("H1")
         if h1:
-            status, record = self.owner.request("governance", "GET", APPROVAL_READ.format(id=urllib.parse.quote(h1, safe="")))
-            record = _unwrap(record)
-            if status == 200 and _record_tenant(record) == self.tenant_id and record.get("target_id") == self.resource_ids.get("registry_id"):
-                code, _ = self.owner.request(
-                    "governance", "POST", APPROVAL_REVOKE.format(id=urllib.parse.quote(h1, safe="")),
-                    {"actor_id": f"{self.chain_id}-e-close"}, idempotency_key=f"{self.chain_id}-e-close-H1",
-                )
-                if code in (200, 201, 202):
-                    retired.append({"kind": "H1_approval", "id": h1, "http": code})
-                else:
-                    failures.append(f"H1 {h1}: revoke returned {code}")
-            else:
-                rejected.append(f"H1 {h1}: not a verified approval for this chain registry entry")
+            self._revoke_h1(h1, verified, actor, roles, retired, rejected, incomplete, failures)
         residual = sorted(k for k in self.resource_ids if k not in RECORD_SPECS)
+        pending = rejected + incomplete
         return self._result(
-            "failed" if failures else "completed",
-            None,
+            "failed" if failures else ("paused" if pending else "completed"),
+            "E_close:cleanup_incomplete" if pending and not failures else None,
             error="; ".join(failures) or None,
             retired=retired,
             rejected_unrelated=rejected,
+            incomplete_cleanup=incomplete,
             residual_non_retirable=residual,
             baseline_fleet_check="not_verified_by_parent",
         )
+
+    def _revoke_h1(self, h1, verified, actor, roles, retired, rejected, incomplete, failures) -> None:
+        registry_id = self.resource_ids.get("registry_id")
+        quoted = urllib.parse.quote(h1, safe="")
+        status, record = self.owner.request("governance", "GET", APPROVAL_READ.format(id=quoted))
+        record = _unwrap(record)
+        if status != 200 or not record:
+            rejected.append(f"H1 {h1}: owner GET returned {status}")
+            return
+        if "registry_id" not in verified:
+            rejected.append(f"H1 {h1}: chain registry entry not verified; approval left untouched")
+            return
+        if _record_tenant(record) != self.tenant_id or record.get("target_id") != registry_id:
+            rejected.append(f"H1 {h1}: not an approval for this chain registry entry")
+            return
+        if str(record.get("decision_state") or "").lower() == "revoked":
+            retired.append({"kind": "H1_approval", "id": h1, "already": True})
+            return
+        role = next((r for r in H1_REVOKE_ROLES if r in roles), None)
+        version = record.get("version")
+        if not actor or role is None or not isinstance(version, int):
+            incomplete.append(f"H1 {h1}: revoke needs actor, a Governance revoke role and the record version")
+            return
+        code, _ = self.owner.request(
+            "governance", "POST", APPROVAL_REVOKE.format(id=quoted),
+            {"actor_id": actor, "actor_role": role, "expected_version": version},
+            idempotency_key=f"{self.chain_id}-e-close-H1",
+        )
+        if code not in (200, 201, 202):
+            failures.append(f"H1 {h1}: revoke returned {code}")
+            return
+        status, after = self.owner.request("governance", "GET", APPROVAL_READ.format(id=quoted))
+        if status == 200 and str(_unwrap(after).get("decision_state") or "").lower() == "revoked":
+            retired.append({"kind": "H1_approval", "id": h1, "http": code})
+        else:
+            incomplete.append(f"H1 {h1}: revoke accepted ({code}) but not read back as revoked")
 
 
 def _load_prior_receipt() -> Mapping[str, Any] | None:
@@ -896,16 +972,36 @@ def _load_prior_receipt() -> Mapping[str, Any] | None:
     return json.loads(Path(raw).read_text(encoding="utf-8"))
 
 
+def _load_chain_input(chain_id: str, phase: str) -> Mapping[str, Any]:
+    """Shared packet (PANTHEON_L12_HOSTED_CHAIN_INPUT): chain_id, phase, decisions, predecessors."""
+
+    raw = os.getenv("PANTHEON_L12_HOSTED_CHAIN_INPUT", "").strip()
+    if not raw:
+        return {}
+    packet = json.loads(Path(raw).read_text(encoding="utf-8"))
+    if not isinstance(packet, Mapping):
+        raise StimulusProofError("hosted chain input must be a JSON object")
+    for key, expected in (("chain_id", chain_id), ("phase", phase)):
+        if packet.get(key) not in (None, expected):
+            raise StimulusProofError(f"hosted chain input {key} does not match the requested {expected!r}")
+    return packet
+
+
 def run_hosted_phase_from_env() -> Evidence:
+    chain_id = _required_env("PANTHEON_L12_CROSS_LOOP_RUN_ID")
+    phase = _required_env("PANTHEON_L12_HOSTED_CHAIN_PHASE")
+    packet = _load_chain_input(chain_id, phase)
     refs = os.getenv("PANTHEON_L12_HOSTED_CHAIN_DECISION_REFS", "").strip()
+    decisions = {**(json.loads(refs) if refs else {}), **dict(packet.get("decisions") or {})}
     runner = HostedChainRunner(
         Settings.from_env(),
-        chain_id=_required_env("PANTHEON_L12_CROSS_LOOP_RUN_ID"),
-        phase=_required_env("PANTHEON_L12_HOSTED_CHAIN_PHASE"),
+        chain_id=chain_id,
+        phase=phase,
         tenant_id=_required_env("PANTHEON_L12_TENANT_ID"),
         owner=UrllibOwnerClient.from_env(),
         prior_receipt=_load_prior_receipt(),
-        decision_refs=json.loads(refs) if refs else None,
+        decision_refs=decisions,
+        predecessors=packet.get("predecessors") or None,
     )
     return runner.run()
 

@@ -61,15 +61,36 @@ class FakeChild:
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
 
+RETIRED = {  # write path suffix -> (state key, state after the write)
+    "/status": None,
+    "/retire": ("status", "retired"),
+    "/advance": ("artifact_state", "retired"),
+    "/revoke": ("decision_state", "revoked"),
+}
+
+
 class FakeOwner:
-    def __init__(self, records: dict[tuple[str, str], Any]) -> None:
-        self.records, self.log = records, []
+    actor_id = "exec-actor-1"
+    roles = ("persona.admin", "capital.admin", "risk_owner")
+
+    def __init__(self, records: dict[tuple[str, str], Any], stuck: tuple[str, ...] = ()) -> None:
+        self.records, self.log, self.stuck = records, [], stuck
 
     def request(self, service, method, path, body=None, idempotency_key=None):
         self.log.append((service, method, path, body))
         if method == "GET":
             record = self.records.get((service, path))
             return (200, record) if record is not None else (404, {})
+        base = path.rsplit("/", 1)[0]
+        record = self.records.get((service, base))
+        if record is not None and base not in self.stuck:
+            inner = next((v for v in record.values() if isinstance(v, dict)), record) if "tenant_id" not in record else record
+            if body and "status" in body:
+                inner["status"] = body["status"]
+            else:
+                for suffix, change in RETIRED.items():
+                    if change and path.endswith(suffix):
+                        inner[change[0]] = change[1]
         return 200, {}
 
 
@@ -188,7 +209,7 @@ def test_e_close_retires_only_verified_chain_records(monkeypatch, tmp_path):
         ("capital", "/api/capital-pools/pool-unrelated"): {"tenant_id": TENANT, "metadata": {"chain_id": "other-chain"}},
         ("deployment", "/api/deployment/plans/plan-1"): _owned(status="executed"),
         ("registry", "/api/registry/strategy-specs/reg-1"): {"entry": _owned(artifact_state="approved", version=3)},
-        ("governance", "/api/governance/approvals/apv-1"): _owned(decision_state="decided", decision="approved", target_id="reg-1"),
+        ("governance", "/api/governance/approvals/apv-1"): _owned(decision_state="decided", decision="approved", target_id="reg-1", version=3),
     })
     evidence = _runner(tmp_path, "E_close", owner, prior=prior).run()
     writes = [(m, p) for _s, m, p, _b in owner.log if m != "GET"]
@@ -199,10 +220,84 @@ def test_e_close_retires_only_verified_chain_records(monkeypatch, tmp_path):
         ("POST", "/api/governance/approvals/apv-1/revoke"),
     ]
     assert all("pool-unrelated" not in p for _m, p in writes)
+    bodies = {p: b for _s, m, p, b in owner.log if m != "GET"}
+    # real executing identity and the owners' actual request schemas
+    assert bodies["/api/bindings/bnd-1/status"] == {"actor_id": "exec-actor-1", "actor_role": "persona.admin", "status": "revoked"}
+    assert bodies["/api/governance/approvals/apv-1/revoke"] == {"actor_id": "exec-actor-1", "actor_role": "risk_owner", "expected_version": 3}
+    assert set(bodies["/api/registry/strategy-specs/reg-1/advance"]) == {
+        "target_state", "command_key", "expected_artifact_state", "expected_version", "expected_updated_at"}
     close = _receipt(tmp_path)["hosted"]["phases"]["E_close"]
     assert "chain label" in close["rejected_unrelated"][0]
     assert close["residual_non_retirable"] == ["teaching_session_id"]
-    assert evidence.status == "passed" and close["phase_status"] == "completed"
+    # the unrelated pool stays unretired, so cleanup is incomplete and never complete/all12
+    assert evidence.status == "paused" and close["phase_status"] == "paused"
+    assert close["blocked_before"] == "E_close:cleanup_incomplete"
+    assert _receipt(tmp_path)["hosted"]["all12_passed"] is False
+
+
+def _close_prior(**resources):
+    done = {p: {"phase_status": "completed"} for p in parent.HOSTED_PHASES[:4]}
+    return {"hosted": {"chain_id": CHAIN, "phases": done, "decisions": {"H1": "apv-1"}, "resource_ids": resources}}
+
+
+def test_e_close_unrelated_registry_blocks_h1_revoke(monkeypatch, tmp_path):
+    owner = FakeOwner({
+        ("registry", "/api/registry/strategy-specs/reg-1"): {"entry": {"tenant_id": TENANT, "metadata": {"chain_id": "other"}, "artifact_state": "approved"}},
+        ("governance", "/api/governance/approvals/apv-1"): _owned(decision_state="decided", decision="approved", target_id="reg-1", version=3),
+    })
+    _runner(tmp_path, "E_close", owner, prior=_close_prior(registry_id="reg-1")).run()
+    assert [x for x in owner.log if x[1] != "GET"] == []
+    assert _receipt(tmp_path)["hosted"]["phases"]["E_close"]["phase_status"] == "paused"
+
+
+def test_e_close_accepted_but_not_retired_is_incomplete(monkeypatch, tmp_path):
+    owner = FakeOwner({
+        ("capital", "/api/bindings/bnd-1"): {"binding": _owned(status="active")},
+    }, stuck=("/api/bindings/bnd-1",))
+    _runner(tmp_path, "E_close", owner, prior=_close_prior(capital_binding_id="bnd-1")).run()
+    close = _receipt(tmp_path)["hosted"]["phases"]["E_close"]
+    assert close["phase_status"] == "paused" and "accepted (200) but state" in close["incomplete_cleanup"][0]
+    assert _receipt(tmp_path)["hosted"]["all12_passed"] is False
+
+
+def test_e_close_completed_receipt_is_not_trusted(monkeypatch, tmp_path):
+    prior = _close_prior(capital_binding_id="bnd-1")
+    prior["hosted"]["phases"]["E_close"] = {"phase_status": "completed"}
+    owner = FakeOwner({("capital", "/api/bindings/bnd-1"): {"binding": _owned(status="active")}})
+    _runner(tmp_path, "E_close", owner, prior=prior).run()
+    assert [p for _s, m, p, _b in owner.log if m != "GET"] == ["/api/bindings/bnd-1/status"]
+
+
+def test_h2_consent_is_a_carried_reference_not_a_governance_gate(monkeypatch, tmp_path):
+    child = FakeChild({"B_learning": _report("human", "B_learning", "completed", B_KEYS, {})})
+    monkeypatch.setattr(subprocess, "run", child)
+    done = {"A_research": {"phase_status": "completed"}}
+    prior = {"hosted": {"chain_id": CHAIN, "phases": done}}
+    owner = FakeOwner({})
+    _runner(tmp_path, "B_learning", owner, prior=prior, decisions={"H2": "consent-rec-1"}).run()
+    assert owner.log == [] and child.calls[0]["input"]["decisions"] == {"H2": "consent-rec-1"}
+
+
+def test_entry_honors_shared_chain_input_packet(monkeypatch, tmp_path):
+    packet = tmp_path / "in.json"
+    packet.write_text(json.dumps({"chain_id": CHAIN, "phase": "B_learning", "decisions": {"H2": "c-1"},
+                                  "predecessors": {"registry_id": "reg-1"}}))
+    captured = {}
+    class Capture:
+        def __init__(self, *_a, **kw): captured.update(kw)
+        def run(self): return "ok"
+    for k, v in {"PANTHEON_L12_CROSS_LOOP_RUN_ID": CHAIN, "PANTHEON_L12_HOSTED_CHAIN_PHASE": "B_learning",
+                 "PANTHEON_L12_TENANT_ID": TENANT, "PANTHEON_L12_HOSTED_CHAIN_INPUT": str(packet),
+                 "PANTHEON_L12_EXPECTED_SHA": SHA, "PANTHEON_L12_STIMULUS_EVIDENCE_OUTPUT": str(tmp_path / "e.json")}.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setattr(parent, "Settings", SimpleNamespace(from_env=lambda: object()))
+    monkeypatch.setattr(parent.UrllibOwnerClient, "from_env", classmethod(lambda cls: object()))
+    monkeypatch.setattr(parent, "HostedChainRunner", Capture)
+    assert parent.run_hosted_phase_from_env() == "ok"
+    assert captured["decision_refs"] == {"H2": "c-1"} and captured["predecessors"] == {"registry_id": "reg-1"}
+    packet.write_text(json.dumps({"chain_id": "other-chain-0001"}))
+    with pytest.raises(parent.StimulusProofError):
+        parent.run_hosted_phase_from_env()
 
 
 def test_all12_requires_every_phase_completed(monkeypatch, tmp_path):
@@ -211,7 +306,9 @@ def test_all12_requires_every_phase_completed(monkeypatch, tmp_path):
     runner = _runner(tmp_path, "E_close", FakeOwner({}), prior={"hosted": {"chain_id": CHAIN, "phases": done}})
     runner.run()
     hosted = _receipt(tmp_path)["hosted"]
-    assert hosted["phase_status"] == "completed" and hosted["all12_passed"] is False  # no loop evidence carried
+    # no loop evidence carried and baseline fleet check not verified by the parent
+    assert hosted["phase_status"] == "completed" and hosted["all12_passed"] is False
+    assert hosted["phases"]["E_close"]["baseline_fleet_check"] == "not_verified_by_parent"
 
 
 def test_default_isolated_launch_has_no_hosted_environment(monkeypatch, tmp_path):
