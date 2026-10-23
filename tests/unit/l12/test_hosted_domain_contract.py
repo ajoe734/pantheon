@@ -14,6 +14,7 @@ import inspect
 import json
 import sys
 import urllib.parse
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -888,3 +889,19 @@ def test_hosted_runtime_paths_never_stop_or_restart_services(
         source = inspect.getsource(method)
         for forbidden in ('"stop"', '"restart"', "_retire_invalid_preexisting_bindings", "negative_", "mfa"):
             assert forbidden not in source, (method.__name__, forbidden)
+
+
+def test_hosted_capital_credential_is_requested_fresh_for_every_call(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    mod, chain, fake = _runtime(monkeypatch, tmp_path, "C_promote")
+    issued: list[str] = []
+
+    def issue() -> str:
+        issued.append(CAPITAL_JWT)
+        return f"Bearer {CAPITAL_JWT}"
+
+    chain.settings = replace(chain.settings, capital_headers={}, capital_authorization=issue)
+    assert chain.settings.capital_auth() == {"Authorization": f"Bearer {CAPITAL_JWT}"}
+    chain.settings.capital_auth()
+    assert len(issued) == 2

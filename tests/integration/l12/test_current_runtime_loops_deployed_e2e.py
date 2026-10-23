@@ -52,6 +52,7 @@ from l12_owner_auth import (
     approve_registry_entry,
     bearer,
     capital_identity,
+    fresh_capital_authorization,
     hosted_chain_enabled,
     hosted_receipt_fields,
     hosted_token,
@@ -137,11 +138,12 @@ def _encode_jwt_hs256(payload: Mapping[str, Any], *, secret: str) -> str:
 
 
 def _capital_bearer(name: str) -> dict[str, str]:
+    if hosted_chain_enabled():
+        # Capital tokens live ~120s: Settings refreshes a genuine one per request instead.
+        return {}
     token = os.getenv(name, "").strip()
     if token:
         return {"Authorization": f"Bearer {token}"}
-    if hosted_chain_enabled():
-        raise DeployedProofError(f"{name} must be supplied for the hosted chain; no token is minted")
     secret = os.getenv("CAPITAL_JWT_SECRET", "pantheon-local-capital-jwt-secret")
     encoded = _encode_jwt_hs256(
         {
@@ -196,6 +198,13 @@ class Settings:
     compose_files: tuple[str, ...]
     evidence_output: Path
     capital_headers: dict[str, str]
+    capital_authorization: Callable[[], str] | None = None
+
+    def capital_auth(self) -> dict[str, str]:
+        """Capital credential for one request: fresh per call in the hosted chain."""
+        if self.capital_authorization is not None:
+            return {"Authorization": self.capital_authorization()}
+        return dict(self.capital_headers)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -247,7 +256,7 @@ class Settings:
             raise DeployedProofError(
                 "the test writes a temporary atomic result; checked-in evidence is owner-managed"
             )
-        return cls(
+        settings = cls(
             urls=urls,
             expected_sha=expected_sha,
             compose_project=_require_env("PANTHEON_L12_COMPOSE_PROJECT"),
@@ -255,6 +264,13 @@ class Settings:
             evidence_output=output,
             capital_headers=_capital_bearer("PANTHEON_L12_CAPITAL_TOKEN"),
         )
+        if hosted_chain_enabled():
+            object.__setattr__(
+                settings,
+                "capital_authorization",
+                lambda: fresh_capital_authorization(settings.compose_command, TENANT_ID),
+            )
+        return settings
 
     def compose_command(self, *args: str) -> list[str]:
         command = ["docker", "compose", "-p", self.compose_project]
@@ -584,7 +600,7 @@ class RuntimeChain:
         headers = {
             "X-Tenant-Id": TENANT_ID,
             "X-Pantheon-Service": "control-plane-bff",
-            **self.settings.capital_headers,
+            **self.settings.capital_auth(),
         }
         self.http.request(
             "capital",
@@ -1132,15 +1148,15 @@ class RuntimeChain:
         assert chain is not None
         pool_id, binding_id = chain.id("pool"), chain.id("pcb")
         # Capital compares the body actor to the verified principal: name the real one.
-        actor_id, service = capital_identity(self.settings.capital_headers["Authorization"])
-        headers = {
-            "X-Tenant-Id": TENANT_ID,
-            "X-Pantheon-Service": service,
-            **self.settings.capital_headers,
-        }
+        actor_id, service = capital_identity(self.settings.capital_auth()["Authorization"])
+
+        def headers() -> dict[str, str]:
+            # A fresh genuine Capital token per request (~120s lifetime).
+            return {"X-Tenant-Id": TENANT_ID, "X-Pantheon-Service": service, **self.settings.capital_auth()}
+
         labels = {"paper_only": True, "execution_context": "paper", "tenant_id": TENANT_ID, **chain.labels()}
         pool = self.http.request(
-            "capital", "GET", f"/api/capital-pools/{pool_id}", headers=headers, expected={200, 404}
+            "capital", "GET", f"/api/capital-pools/{pool_id}", headers=headers(), expected={200, 404}
         )
         if pool.get("pool_id") != pool_id:
             self.http.request(
@@ -1162,11 +1178,11 @@ class RuntimeChain:
                     "single_runtime_enforced": True,
                     "metadata": labels,
                 },
-                headers=headers,
+                headers=headers(),
                 expected={201},
             )
         binding = self.http.request(
-            "capital", "GET", f"/api/bindings/{binding_id}", headers=headers, expected={200, 404}
+            "capital", "GET", f"/api/bindings/{binding_id}", headers=headers(), expected={200, 404}
         )
         if binding.get("binding_id") != binding_id:
             binding = self.http.request(
@@ -1187,7 +1203,7 @@ class RuntimeChain:
                     "created_by": HOSTED_TASK_ID,
                     "metadata": {"paper_only": True, **chain.labels()},
                 },
-                headers=headers,
+                headers=headers(),
                 expected={201},
             )
         if binding.get("status") != "active":
@@ -1198,7 +1214,7 @@ class RuntimeChain:
                 "POST",
                 f"/api/bindings/{binding_id}/activate",
                 body={"actor_id": actor_id, "actor_role": "persona.admin"},
-                headers=headers,
+                headers=headers(),
             )
         if binding.get("status") != "active" or binding.get("allowed_deployment_scope") != "paper":
             raise DeployedProofError("hosted PersonaCapitalBinding is not active paper-only authority")
