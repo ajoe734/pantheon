@@ -1060,3 +1060,96 @@ def test_lightweight_canonical_source_snapshot_admission_subprocess_forbids_pyda
         "pydantic_imported": False,
         "governance_approval_authority_imported": False,
     }
+
+
+def _spec_entry_with_recipe(recipe_overrides=None, **entry_overrides):
+    from .strategy_artifact import strategy_spec_payload_checksum
+
+    recipe = {
+        "kind": "close_to_close_momentum",
+        "symbols": ["2330.TW"],
+        "bar_frequency": "1d",
+        "data_source": "source-ingest:normalized/x",
+        "lookback_bars": 3,
+        "momentum_threshold": 0.02,
+        "positive_action": "BUY",
+        "non_positive_action": "HOLD",
+        "order_quantity": 2,
+        "quantity_type": "SHARES",
+        **(recipe_overrides or {}),
+    }
+    spec = {
+        "strategy_id": "strat-x",
+        "market_scope": {"symbols": ["2330.TW"], "frequency": "1d"},
+        "data_dependencies": [{"ref": "source-ingest:normalized/x", "kind": "dataset"}],
+        "execution_profile": {"quantity_type": "SHARES"},
+        "metadata": {"execution_recipe": recipe},
+    }
+    entry = {
+        "registry_id": "spec-reg-1",
+        "version": "1.2.0",
+        "checksum": strategy_spec_payload_checksum(spec),
+        "lineage": {"source_run_ids": ["seed-1"], "source_dataset_refs": ["src-1"]},
+        "metadata": {"strategy_spec": spec},
+    }
+    entry.update(entry_overrides)
+    return entry
+
+
+def test_execution_artifact_is_distinct_and_keeps_spec_identity_and_lineage():
+    from .strategy_artifact import build_execution_artifact_registration
+
+    entry = _spec_entry_with_recipe()
+    original = copy.deepcopy(entry)
+    registration = build_execution_artifact_registration(
+        entry, artifact_id="exec-1", algorithm_commit="b" * 40
+    )
+    artifact = registration["strategy_artifact"]
+
+    assert entry == original
+    assert artifact["artifact_id"] == "exec-1" != entry["registry_id"]
+    assert (artifact["strategy_id"], artifact["version"]) == ("strat-x", "1.2.0")
+    assert artifact["lineage"]["source_strategy_spec_id"] == "spec-reg-1"
+    assert artifact["lineage"]["source_run_ids"] == ["seed-1"]
+    assert evaluate_strategy_action(artifact, [100, 100, 103]) == "BUY"
+    assert evaluate_strategy_action(artifact, [100, 100, 101]) == "HOLD"
+    registry_id, _ = build_strategy_artifact_registry_payload(registration)
+    assert registry_id == "exec-1"
+
+
+@pytest.mark.parametrize(
+    "mutate, reason",
+    [
+        (lambda e: e.update(checksum="sha256:" + "0" * 64), "checksum does not match"),
+        (lambda e: e["metadata"]["strategy_spec"]["metadata"]["execution_recipe"].update(kind="pairs"), "unsupported execution_recipe kind"),
+    ],
+)
+def test_execution_artifact_rejects_tampered_or_unsupported_spec(mutate, reason):
+    from .strategy_artifact import (
+        build_execution_artifact_registration,
+        strategy_spec_payload_checksum,
+    )
+
+    entry = _spec_entry_with_recipe()
+    mutate(entry)
+    if reason != "checksum does not match":
+        entry["checksum"] = strategy_spec_payload_checksum(entry["metadata"]["strategy_spec"])
+    with pytest.raises(StrategyArtifactValidationError, match=reason):
+        build_execution_artifact_registration(
+            entry, artifact_id="exec-1", algorithm_commit="b" * 40
+        )
+
+
+def test_execution_artifact_rejects_recipe_spec_contradiction_and_same_id():
+    from .strategy_artifact import build_execution_artifact_registration
+
+    with pytest.raises(StrategyArtifactValidationError, match="quantity_type contradicts"):
+        build_execution_artifact_registration(
+            _spec_entry_with_recipe({"quantity_type": "CASH_VALUE"}),
+            artifact_id="exec-1",
+            algorithm_commit="b" * 40,
+        )
+    with pytest.raises(StrategyArtifactValidationError, match="distinct"):
+        build_execution_artifact_registration(
+            _spec_entry_with_recipe(), artifact_id="spec-reg-1", algorithm_commit="b" * 40
+        )

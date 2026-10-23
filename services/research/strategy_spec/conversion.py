@@ -15,6 +15,11 @@ import re
 from typing import Any, Mapping, Sequence
 
 from services.knowledge.evidence.models import EvidenceBundle, EvidenceItem
+from services.registry.strategy_artifact import (
+    StrategyArtifactValidationError,
+    validate_execution_recipe,
+    validate_execution_recipe_against_spec,
+)
 from services.research.strategy_spec.lineage import (
     StrategySpecLineageRefs,
     attach_lineage_refs_to_strategy_spec_payload,
@@ -199,6 +204,7 @@ class StrategySpecConversionService:
         metadata: Mapping[str, Any] | None,
     ) -> dict[str, Any]:
         conversion_metadata = _conversion_metadata(seed, metadata)
+        recipe = _execution_recipe(conversion_metadata)
         payload = {
             "spec_version": "1.0",
             "strategy_id": strategy_id,
@@ -215,7 +221,7 @@ class StrategySpecConversionService:
             "data_dependencies": _data_dependencies(seed),
             "execution_profile": {
                 "signal_schema_version": str(conversion_metadata.get("signal_schema_version") or "research-signal-v1"),
-                "quantity_type": "PERCENT_PORTFOLIO",
+                "quantity_type": recipe["quantity_type"] if recipe else "PERCENT_PORTFOLIO",
                 "execution_mode_hint": "research",
             },
             "evaluation_plan": {
@@ -240,6 +246,11 @@ class StrategySpecConversionService:
         rebalance_cadence = _rebalance_cadence(seed)
         if rebalance_cadence:
             payload["execution_profile"]["rebalance_cadence"] = rebalance_cadence
+        if recipe:
+            try:
+                validate_execution_recipe_against_spec(recipe, payload)
+            except StrategyArtifactValidationError as exc:
+                raise StrategySpecConversionError(str(exc)) from exc
         return attach_lineage_refs_to_strategy_spec_payload(payload, lineage_refs)
 
 
@@ -309,6 +320,26 @@ def _strategy_spec_checksum(payload: Mapping[str, Any]) -> str:
     return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
 
 
+def _execution_recipe(conversion_metadata: dict[str, Any]) -> dict[str, Any] | None:
+    """Validate the explicit recipe and align Spec scope fields it declares.
+
+    Symbols and frequency are only filled from the recipe when the caller gave
+    none; a different caller value stays and is rejected as a contradiction.
+    """
+    if "execution_recipe" not in conversion_metadata:
+        return None
+    try:
+        recipe = validate_execution_recipe(conversion_metadata["execution_recipe"])
+    except StrategyArtifactValidationError as exc:
+        raise StrategySpecConversionError(str(exc)) from exc
+    conversion_metadata["execution_recipe"] = recipe
+    if not conversion_metadata.get("symbols") and not conversion_metadata.get("symbol_universe"):
+        conversion_metadata["symbols"] = list(recipe["symbols"])
+    if not conversion_metadata.get("frequency") and not conversion_metadata.get("bar_frequency"):
+        conversion_metadata["frequency"] = recipe["bar_frequency"]
+    return recipe
+
+
 def _conversion_metadata(seed: StrategySpecSeed, metadata: Mapping[str, Any] | None) -> dict[str, Any]:
     source_metadata = dict(seed.metadata)
     payload = {
@@ -324,9 +355,16 @@ def _conversion_metadata(seed: StrategySpecSeed, metadata: Mapping[str, Any] | N
         "required_data": list(seed.required_data),
         "confidence": seed.confidence,
     }
-    for key in ("source_license_scope", "access_scope", "entitlement_tags"):
+    for key in ("source_license_scope", "access_scope", "entitlement_tags", "execution_recipe"):
         if key in source_metadata:
             payload[key] = source_metadata[key]
+    if "execution_recipe" in (metadata or {}):
+        # Reserved: the recipe is the Seed's (Source's); callers may not add or
+        # rewrite it.
+        if source_metadata.get("execution_recipe") != metadata["execution_recipe"]:
+            raise StrategySpecConversionError(
+                "conversion metadata execution_recipe contradicts or is absent from the Seed recipe"
+            )
     payload.update(dict(metadata or {}))
     payload.update(
         {
