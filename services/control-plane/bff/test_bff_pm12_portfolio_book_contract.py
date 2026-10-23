@@ -2046,3 +2046,75 @@ def test_portfolio_holdings_explicit_flat_book_keeps_stale_telemetry_diagnostic(
     assert body["data"]["summary"]["source_coverage"]["stale_row_count"] == 1
     assert body["data"]["summary"]["incident_count"] == 1
     assert [i["code"] for i in body["meta"]["incidents"][0]["source_issues"]] == ["STALE_TELEMETRY"]
+
+
+def _holdings_for(monkeypatch, runtimes, telemetry):
+    client = _portfolio_store(
+        monkeypatch,
+        extra_runtime_bindings=runtimes,
+        telemetry=telemetry,
+    )
+    ids = ",".join(r["runtime_id"] for r in runtimes)
+    response = client.get(
+        "/bff/management/portfolio-book/holdings",
+        headers=HEADERS,
+        params={"runtime_id": ids},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _term_runtime(runtime_id, status):
+    return {
+        "id": f"rb-{runtime_id}",
+        "runtime_id": runtime_id,
+        "capital_pool_id": "pool-alpha",
+        "status": status,
+        "deployment_stage": "paper",
+    }
+
+
+def test_portfolio_holdings_terminal_runtime_omission_is_not_current_holding_or_incident(monkeypatch) -> None:
+    body = _holdings_for(
+        monkeypatch,
+        [_term_runtime("rt-retired", "retired"), _term_runtime("rt-failed", "failed")],
+        {},
+    )
+    assert body["data"]["items"] == []
+    assert body["data"]["summary"]["holding_count"] == 0
+    assert body["data"]["summary"]["incident_count"] == 0
+    assert body["meta"]["incidents"] == []
+
+
+def test_portfolio_holdings_active_runtime_missing_telemetry_stays_incident(monkeypatch) -> None:
+    body = _holdings_for(
+        monkeypatch,
+        [_term_runtime("rt-retired", "retired"), _term_runtime("rt-active", "active")],
+        {},
+    )
+    assert [i["runtime_id"] for i in body["data"]["items"]] == ["rt-active"]
+    assert body["data"]["summary"]["incident_count"] == 1
+    assert body["data"]["summary"]["source_coverage"]["runtime_count"] == 1
+
+
+def test_portfolio_holdings_terminal_runtime_with_reported_position_is_kept(monkeypatch) -> None:
+    summary = {
+        "runtime_id": "rt-retired",
+        "positions": [{"symbol": "2330.TW", "quantity": 1.0, "average_price": 2400.0}],
+        "position_count": 1,
+    }
+    body = _holdings_for(
+        monkeypatch,
+        [_term_runtime("rt-retired", "retired")],
+        {"rt-retired": summary},
+    )
+    assert [i["symbol"] for i in body["data"]["items"]] == ["2330.TW"]
+
+
+def test_portfolio_holdings_canonical_active_status_wins_over_lower_priority_terminal_fields(monkeypatch) -> None:
+    runtime = _term_runtime("rt-conflict", "active")
+    runtime["state"] = "retired"
+    runtime["lifecycle_state"] = "failed"
+    body = _holdings_for(monkeypatch, [runtime], {})
+    assert [i["runtime_id"] for i in body["data"]["items"]] == ["rt-conflict"]
+    assert body["data"]["summary"]["incident_count"] == 1

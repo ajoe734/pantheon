@@ -1989,6 +1989,14 @@ def _management_telemetry_is_explicit_flat(telemetry: Dict[str, Any]) -> bool:
     )
 
 
+_PM12_TERMINAL_RUNTIME_STATUSES = frozenset({"retired", "failed", "failed_inactive"})
+
+
+def _management_runtime_is_terminal(runtime: Dict[str, Any]) -> bool:
+    """Authoritative lifecycle: the telemetry owner intentionally omits these runtimes."""
+    return _management_normalized_status(runtime) in _PM12_TERMINAL_RUNTIME_STATUSES
+
+
 def _pm12_portfolio_book_holdings_response(
     read_store: Any,
     *,
@@ -2019,6 +2027,11 @@ def _pm12_portfolio_book_holdings_response(
     for runtime in runtime_bindings:
         rid = str(runtime.get("runtime_id") or runtime.get("id") or runtime.get("binding_id") or "").strip()
         telemetry = telemetry_by_runtime_id.get(rid, {})
+        # Terminal runtimes are omitted from current telemetry by contract; that
+        # omission is not a current holding or a missing-telemetry incident.
+        # Any telemetry still reported for one keeps flowing through unchanged.
+        if not telemetry and _management_runtime_is_terminal(runtime):
+            continue
         plan = plans_by_id.get(str(runtime.get("plan_id") or runtime.get("deployment_plan_id") or "").strip(), {})
         plan_binding_ids = [str(v).strip() for v in (plan.get("binding_ids") or []) if str(v).strip()]
         persona_binding_id = str(runtime.get("persona_capital_binding_id") or (plan_binding_ids[0] if plan_binding_ids else "")).strip()
