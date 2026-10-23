@@ -309,7 +309,7 @@ Line numbers are `path:line` of the route decorator.
 | Capital pool (paper) | `POST /api/capital-pools` `services/capital/main.py:1081` | `tenant_id`, `idempotency_key` in body (`models.py:59-60`) | `PATCH /api/capital-pools/{id}/status` `:1109` → `archived` (`PoolStatus`, `governance/capital_pool.py:53`) | status PATCH has no idem key |
 | Persona capital binding (paper) | `POST /api/bindings` `:1153`, `/activate` `:1188` | `tenant_id`, `idempotency_key` (`models.py:86-87`); metadata | `PATCH /api/bindings/{id}/status` `:1198` → `revoked` | revoke before archiving pool |
 | Deployment plan | `POST /api/deployment/plans` `services/deployment/service.py:2211` | tenant forced from identity (`:420-427`); `metadata` free; no idem header (plan_id caller-chosen) | `POST …/plans/{id}/status` `:2323` → `aborted`; `POST …/sagas/{id}/retire` `:2474` | plan record stays labelled |
-| Runtime binding | created by deployment saga | tenant stamped from plan (`runtime-manager/main.py:234`) | `POST /api/runtime-bindings/{id}/retire` `:747` | **route requires `mfa_required=True`**: executor must hold a real MFA-satisfying identity; none is fabricated (section 0). If unavailable, residual |
+| Runtime binding | created by deployment saga | tenant stamped from plan (`runtime-manager/main.py:234`) | `POST /api/runtime-bindings/{id}/retire` `:747` | route is decorated `mfa_required=True`, but `services/runtime_auth_inbound.py:874-877` enforces MFA only when that flag AND `PANTHEON_RUNTIME_MFA_REQUIRED=true` (default `false`). Deployed policy is **unverified** until Root reads that nonsecret flag; not a proven owner gap and no MFA identity/issuer is required or fabricated (section 0) |
 | Telemetry / drift / incident (loop 10) | `POST /api/reconciliation-drift/telemetry-events/consume` `services/reconciliation-drift/main.py:1001`; `POST /api/incidents/consume-drift-report` `services/incidents/main.py:433` | tenant in identity | `POST /api/incidents/{id}/status` `:932` | drift reports are history |
 | Evolution decision (loop 11) | `POST /api/evolution/proposals` `services/evolution/main.py:1320`; `/threshold-evaluate` `:2696`; `/daily-sweep` `:1548` | tenant; roles checked | `POST …/proposals/{id}/cancel` `:1968` (proposed/reviewed/approved) | executed decisions are history |
 
@@ -345,7 +345,7 @@ the implementing task):
 
 * **T2 (suites):** only (1) pass the Teaching `session_id` into the Agora evidence `session_id`/`source_refs`
   in the human suite; (2) add the hosted skip list of section 5 and reject minted tokens;
-  (3) feed the chain's `registry_id`/`handoff_id` into the plan request if A.4 shows it is accepted.
+  (3) record the chain's `registry_id`/`handoff_id` as the plan's predecessor reference (existing `metadata`) if A.4 shows the path carries it.
   Files: `tests/integration/l12/test_current_human_learning_deployed_e2e.py`,
   `test_current_runtime_loops_deployed_e2e.py`, `test_current_research_loops_deployed_e2e.py`,
   `l12_owner_auth.py`, matching unit tests.
@@ -353,20 +353,33 @@ the implementing task):
   `E_close` retirement (no existing caller does these); keep to `scripts/run_hosted_all12_chain.py`.
 * **T4:** workflow job unchanged from section 10. **T5:** read-only Persona Pattern observation.
 * No new owner API is authorised by this audit; owner-side gaps (7→8 enforcement, missing retire
-  operations, runtime retire MFA) are residuals needing a separate operator decision.
+  operations) are residuals needing a separate operator decision.
 
 ### A.4 Fresh owner GETs for the serial release coordinator (sole Root01a11)
 
-Read-only, only after the exact854 release, none run here; return responses as evidence:
+Read-only, only after the exact854 release (live release 39966041271 / 48cfa); none run here. Return the
+responses (safe fields only) as evidence:
 
-1. `GET /api/registry/strategy-specs?` for any one existing distilled entry: show `metadata` keys and
-   whether `strategy_artifact` is present.
-2. `GET /api/deployment/plans?` (one plan) to confirm `metadata` round-trips an arbitrary key.
-3. `GET /api/runtime-bindings/{id}` (one existing binding): show `metadata.tenant_id`.
-4. Identity check for the runtime retire route: confirm which executing identity satisfies `mfa_required`
-   (status only; no secret or token printed).
+1. `GET /api/registry/strategy-specs?artifact_state=approved` (`services/registry/service.py:1520`), or
+   `GET /api/registry/strategy-specs/{registry_id}` (`:1481`) for one concrete existing distilled ID:
+   return `registry_id`, `artifact_state` and the `metadata` key names; state whether `strategy_artifact`
+   is present.
+2. `GET /api/deployment/plans/{plan_id}` (`services/deployment/service.py:2275`) for one existing plan
+   (or `GET /api/deployment/plans?strategy_id=<id>`): return `plan_id`, `registry_id`,
+   `approval_decision_id` and `metadata` key names. This proves only that **existing** metadata keys are
+   preserved; a new arbitrary key round-trip requires a write and is not claimed by GET.
+3. `GET /api/runtime-bindings/{binding_id}` (`services/runtime-manager/main.py:722`) for one existing
+   binding: return `binding_id` and `metadata.tenant_id`.
+4. Nonsecret deployment flag only: value of `PANTHEON_RUNTIME_MFA_REQUIRED` (true/false/unset) for the
+   runtime-manager. No token, identity or secret is read or printed.
 
-No hosted L12 suite, owner mutation, provider refresh, service restart or secret access is requested.
+The chain requires the actual predecessor ID inside each consumer record (section 5A). That is distinct
+from optional new owner-side enforcement (e.g. deployment validating `handoff_id`): enforcement is not
+required, and no separate product API is asked for unless the source/payload above shows the existing
+path cannot carry the predecessor ID.
+
+No hosted L12 suite, owner mutation, VM/HTTP write, source refresh, provider refresh, service restart
+or secret access is requested.
 
 ### A.5 Preserved constraints
 
