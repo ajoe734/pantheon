@@ -737,12 +737,12 @@ class HostedChainRunner:
         try:
             self._check_order()
             previous = self.phases.get(self.phase, {})
-            if previous.get("phase_status") == "completed" and self.phase != "D_observe":
-                record = dict(previous, reused=True)  # no duplicate predecessor dispatch
+            # E_close verifies and rejects per record instead of pausing as a whole.
+            problems = [] if self.phase == "E_close" else self.verify_predecessors()
+            if previous.get("phase_status") == "completed" and self.phase != "D_observe" and not problems:
+                record = dict(previous, reused=True)  # old receipt is a hint; owner truth just re-verified
                 self.phases[self.phase] = record
             else:
-                # E_close verifies and rejects per record instead of pausing as a whole.
-                problems = [] if self.phase == "E_close" else self.verify_predecessors()
                 if problems:
                     record = self._result("paused", f"{self.phase}:predecessor_verification", evidence=problems)
                 elif self.phase == "E_close":
@@ -984,8 +984,9 @@ def test_prebuilt_verifier_is_explicitly_not_the_closure_gate() -> None:
 
 @pytest.mark.skipif(
     os.getenv("PANTHEON_L12_STIMULUS_CROSS_LOOP_E2E", "").strip().lower()
-    not in {"1", "true", "yes"},
-    reason="set PANTHEON_L12_STIMULUS_CROSS_LOOP_E2E=1 for the deployed closure gate",
+    not in {"1", "true", "yes"}
+    or os.getenv(HOSTED_FLAG, "").strip().lower() in {"1", "true", "yes"},
+    reason="set PANTHEON_L12_STIMULUS_CROSS_LOOP_E2E=1 (without hosted mode) for the full isolated closure gate",
 )
 def test_stimulus_driven_cross_loop_management_closure() -> None:
     evidence = StimulusDrivenClosureGate(Settings.from_env()).run()

@@ -223,3 +223,26 @@ def test_default_isolated_launch_has_no_hosted_environment(monkeypatch, tmp_path
     assert parent.HOSTED_FLAG not in env or env[parent.HOSTED_FLAG] != "1"
     assert "PANTHEON_L12_HOSTED_CHAIN_PHASE" not in env
     assert gate.evidence.hosted is None
+
+
+def test_completed_phase_reuse_rereads_owner_truth(monkeypatch, tmp_path):
+    child = FakeChild({"A_research": _report("research", "A_research", "completed", A_KEYS, {"registry_id": "reg-1"})})
+    monkeypatch.setattr(subprocess, "run", child)
+    prior = {"hosted": {"chain_id": CHAIN, "resource_ids": {"registry_id": "reg-1"},
+                        "decisions": {"H1": "apv-1"},
+                        "phases": {"A_research": {"phase_status": "completed"}}}}
+    # owner record deleted and approval revoked: old receipt must not stay passed
+    owner = FakeOwner({("governance", "/api/governance/approvals/apv-1"): _owned(decision_state="decided", decision="rejected", target_id="reg-1")})
+    evidence = _runner(tmp_path, "A_research", owner, prior=prior).run()
+    hosted = _receipt(tmp_path)["hosted"]
+    assert child.calls == [] and evidence.status == "paused"
+    assert hosted["phases"]["A_research"].get("reused") is None
+    assert hosted["all12_passed"] is False
+
+
+def test_legacy_fullchain_test_is_excluded_in_hosted_mode():
+    skip = [m for m in parent.test_stimulus_driven_cross_loop_management_closure.pytestmark if m.name == "skipif"][0]
+    # the mark condition is evaluated at import; hosted mode must be part of it
+    source = PARENT.read_text(encoding="utf-8")
+    block = source[source.index("@pytest.mark.skipif", source.index("def test_prebuilt_verifier")):source.index("def test_stimulus_driven_cross_loop")]
+    assert "HOSTED_FLAG" in block and skip.args

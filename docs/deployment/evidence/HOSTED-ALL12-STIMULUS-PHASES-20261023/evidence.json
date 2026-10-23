@@ -11,7 +11,7 @@
     "child_launch": "existing StimulusDrivenClosureGate._run_domain_suite with extra env (chain id, phase, input file); no second launch engine",
     "receipt": "existing atomic Evidence.write plus a hosted block: chain_id, phase, phase_status completed|paused|failed, blocked_before, resource_ids, decisions, per-phase history",
     "resume": "prior receipt is a lookup hint; every referenced owner record is re-read (tenant + chain label) and every referenced decision is re-read (decided/approved, H1 target = registry_id); mismatch pauses without launching",
-    "idempotency": "a completed phase in the prior receipt is reused, not re-dispatched (D_observe may repeat)",
+    "idempotency": "a completed phase in the prior receipt is reused, not re-dispatched, only after owner records and decisions are re-read and verified (D_observe may repeat); hosted mode excludes the legacy full-chain test so only the requested phase dispatches",
     "ordering": "A_research, B_learning, C_promote, D_observe, E_close; skipping ahead raises",
     "e_close": "existing owner retire operations only for records whose GET shows the verified tenant and chain label; unrelated records rejected untouched; non-retirable kinds reported as residual",
     "all12_passed": "true only when all five phases completed and twelve loops are present; paused is never success"
