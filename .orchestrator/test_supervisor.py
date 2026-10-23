@@ -7714,6 +7714,15 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
             ),
             ("Codex", "Antigravity"),
         )
+        # Future reviewer readiness is checked at review dispatch, not here.
+        reviewer_down = copy.deepcopy(state)
+        reviewer_down["delivery_health"]["endpoints"]["antigravity"]["state"] = "unavailable"
+        self.assertEqual(
+            supervisor.worker_recovery_assignment_pair(
+                self.config, reviewer_down, self.status, self.task, receipt,
+            ),
+            ("Codex", "Antigravity"),
+        )
         for condition in ("auth", "capacity", "lease_expired"):
             with self.subTest(condition=condition):
                 candidate_state = copy.deepcopy(state)
