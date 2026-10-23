@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 import os
 import re
 import uuid
@@ -359,6 +360,48 @@ class StubVectorbtBackend:
             notes=("Stub backend is intended for governed smoke tests and packaging validation.",),
         )
 
+NO_TRADING_ACTIVITY = "no_trading_activity"
+ZERO_RETURN_VARIANCE = "zero_return_variance"
+
+
+def _sharpe_undefined_reason(metrics: Mapping[str, Any]) -> str | None:
+    """Name why a non-finite Sharpe is a legitimate zero-activity outcome.
+
+    Sharpe is 0/0 when nothing traded or returns never varied. A non-finite
+    Sharpe from an instrument that traded and had return variance stays
+    unexplained so downstream consumers keep rejecting it fail-closed.
+    """
+
+    if math.isfinite(metrics["sharpe_ratio"]):
+        return None
+    if metrics["trade_count"] == 0:
+        return NO_TRADING_ACTIVITY
+    if metrics["total_return"] == 0 and metrics["max_drawdown"] == 0:
+        return ZERO_RETURN_VARIANCE
+    return None
+
+
+def _annotate_sharpe_reason(metrics: dict[str, Any]) -> None:
+    reason = _sharpe_undefined_reason(metrics)
+    if reason is not None:
+        metrics["sharpe_undefined_reason"] = reason
+
+
+def _aggregate_sharpe_reason(per_instrument: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    """Aggregate reason only when every non-finite Sharpe is explained."""
+
+    reasons: set[str] = set()
+    for metrics in per_instrument.values():
+        if math.isfinite(metrics["sharpe_ratio"]):
+            continue
+        reason = metrics.get("sharpe_undefined_reason")
+        if reason is None:
+            return {}
+        reasons.add(reason)
+    if not reasons:
+        return {}
+    return {"sharpe_undefined_reason": NO_TRADING_ACTIVITY if NO_TRADING_ACTIVITY in reasons else ZERO_RETURN_VARIANCE}
+
 
 class VectorbtBackend:
     """Real upstream backend using vbt.Portfolio.from_signals().
@@ -416,6 +459,7 @@ class VectorbtBackend:
                     "num_bars": len(bars),
                     "net_position": float(pf.asset_flow().sum()),
                 }
+                _annotate_sharpe_reason(per_instrument[inst])
                 continue
             short_ma = closes.rolling(short_window).mean()
             long_ma = closes.rolling(long_window).mean()
@@ -437,6 +481,7 @@ class VectorbtBackend:
                 "trade_count": int(pf.trades.count()),
                 "num_bars": len(bars),
             }
+            _annotate_sharpe_reason(per_instrument[inst])
 
         returns = [m["total_return"] for m in per_instrument.values()]
         sharpes = [m["sharpe_ratio"] for m in per_instrument.values()]
@@ -447,6 +492,7 @@ class VectorbtBackend:
             "mean_sharpe_ratio": round(sum(sharpes) / len(sharpes), 6) if sharpes else 0.0,
             "mean_max_drawdown": round(sum(drawdowns) / len(drawdowns), 6) if drawdowns else 0.0,
             "total_trades": sum(m["trade_count"] for m in per_instrument.values()),
+            **_aggregate_sharpe_reason(per_instrument),
         }
         return BacktestRunResult(
             backend=PRIMARY_BACKEND,
