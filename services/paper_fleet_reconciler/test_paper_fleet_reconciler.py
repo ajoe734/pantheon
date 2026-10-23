@@ -2204,6 +2204,24 @@ class TestPaperFleetStaleSessionAdmissionAndResume(unittest.TestCase):
         self.assertEqual(len(self.transitions), 0)
         self.assertEqual(store.get("b-cal-us").status, "paused")
 
+    def test_calendar_correction_requires_tw_snapshot_and_calendar_that_removes_cause(self) -> None:
+        from services.paper_fleet_reconciler.paper_fleet_reconciler import _is_official_calendar_correction
+
+        v1, v2 = self._v1_v2_evidence()
+        adm = self._calendar_correction_binding("b-x", "mss-x")["metadata"]["session_admission"]
+        corrected = self._tw_snapshot(observed_at="2026-10-23T07:01:00Z", event_time=self._CAL_EVENT, evidence=v2, run="run2")
+        self.assertTrue(_is_official_calendar_correction(adm, corrected))
+        # Non-Taiwan snapshot carrying a valid corrected Taiwan calendar.
+        aapl = {**corrected, "symbol": "AAPL.US"}
+        self.assertFalse(_is_official_calendar_correction(adm, aapl))
+        # Unchanged v1 calendar re-fetched after the pause: validates, but does not close Oct 23.
+        refetched = json.loads(json.dumps(v1))
+        refetched["fetched_at"] = "2026-10-23T07:00:00Z"
+        stale_cal = {**corrected, "calendar_evidence": refetched}
+        self.assertFalse(_is_official_calendar_correction(adm, stale_cal))
+        # Pause stored without usable event time cannot be proven overturned.
+        self.assertFalse(_is_official_calendar_correction({**adm, "source_event_time": None}, corrected))
+
     def test_calendar_correction_resume_never_resumes_operator_pause(self) -> None:
         _, v2 = self._v1_v2_evidence()
         corrected = self._tw_snapshot(observed_at="2026-10-23T07:01:00Z", event_time=self._CAL_EVENT, evidence=v2, run="run2")

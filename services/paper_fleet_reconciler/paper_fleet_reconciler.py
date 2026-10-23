@@ -59,7 +59,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -72,6 +72,7 @@ from services.execution.market_snapshot_admission import (
     SnapshotAdmissionDecision,
     admit_market_snapshot,
     parse_rfc3339 as _admission_parse_rfc3339,
+    is_taiwan_symbol as _is_taiwan_symbol,
     validate_taiwan_calendar_evidence as _validate_taiwan_calendar_evidence,
 )
 
@@ -178,26 +179,48 @@ def _is_official_calendar_correction(
     session_adm: Dict[str, Any],
     snapshot: Any,
 ) -> bool:
-    """True when ``snapshot`` carries a governed Taiwan calendar published after an automatic stale pause.
+    """True when ``snapshot``'s governed Taiwan calendar overturns the automatic stale pause.
 
-    SD-PAPER-01 §7.3: an official calendar correction can make the same
-    event-time data legal again.  The evidence must validate against the
-    governed pins and its ``fetched_at`` must post-date the pause decision it
-    would overturn; this never relaxes ordering for any other same-time data.
+    SD-PAPER-01 §7.3: the same event-time data may become legal again only when
+    the snapshot is a Taiwan symbol, its calendar validates against the governed
+    pins, was fetched after the pause, and explicitly marks as closures every
+    weekday session that had "closed" after the paused event date as of the
+    pause (at least one), i.e. the very cause of the stale pause.  An unchanged
+    or irrelevant calendar, or a non-Taiwan snapshot, never qualifies.
     """
     if str(session_adm.get("reason_code") or "") != "market_input_stale":
         return False
-    if not isinstance(snapshot, dict):
+    if not isinstance(snapshot, dict) or not _is_taiwan_symbol(snapshot.get("symbol")):
         return False
     evidence = snapshot.get("calendar_evidence")
     if not isinstance(evidence, dict):
         return False
-    ok, _err, _norm = _validate_taiwan_calendar_evidence(evidence)
-    if not ok:
+    ok, _err, norm = _validate_taiwan_calendar_evidence(evidence)
+    if not ok or not isinstance(norm, dict):
         return False
     fetched_dt, _ = _admission_parse_rfc3339(evidence.get("fetched_at"), field_name="calendar_fetched_at")
     observed_dt, _ = _admission_parse_rfc3339(session_adm.get("observed_at"), field_name="pause_observed_at")
-    return bool(fetched_dt and observed_dt and fetched_dt > observed_dt)
+    event_dt, _ = _admission_parse_rfc3339(session_adm.get("source_event_time"), field_name="pause_event_time")
+    if not (fetched_dt and observed_dt and event_dt and fetched_dt > observed_dt):
+        return False
+
+    taipei = timezone(timedelta(hours=8))
+    event_date = event_dt.astimezone(taipei).date()
+    pause_local = observed_dt.astimezone(taipei)
+    holidays = norm.get("holidays") or {}
+    start, end = norm.get("coverage_start"), norm.get("coverage_end")
+    overturned = 0
+    day = event_date + timedelta(days=1)
+    while day <= pause_local.date():
+        if day.weekday() < 5:
+            if day == pause_local.date() and (pause_local.hour, pause_local.minute) < (13, 30):
+                break  # that day's session had not closed when the pause was decided
+            iso = day.isoformat()
+            if (start and iso < start) or (end and iso > end) or iso not in holidays:
+                return False
+            overturned += 1
+        day += timedelta(days=1)
+    return overturned > 0
 
 
 def _iso_now() -> str:

@@ -6,11 +6,11 @@
     "services/paper_fleet_reconciler/test_paper_fleet_reconciler.py",
     "docs/04/pantheon_current_code_gap_sa_2026-08-22/SD_IMPLEMENTATION_DESIGN_2026-08-22.md"
   ],
-  "rule": "same-event-time resume only for automatic market_input_stale pause when distinct snapshot is admitted and governed Taiwan calendar evidence validates with fetched_at later than pause observed_at",
+  "rule": "same-event-time resume only for automatic market_input_stale pause when distinct snapshot is admitted and governed Taiwan calendar evidence validates with fetched_at later than pause observed_at, snapshot is a Taiwan symbol, and the calendar marks every closed weekday session between paused event date and pause time as a holiday (removes the stale cause)",
   "tests": {
     "command": "python3 -m unittest services.paper_fleet_reconciler.test_paper_fleet_reconciler",
-    "new_calendar_correction_tests": "4 passed; positive case fails without the fix",
-    "full_module": "82 run, 2 errors from missing flask/asyncpg in local env (unrelated, pre-existing), 1 skipped"
+    "new_calendar_correction_tests": "positive case plus negatives (non-TW with TW calendar, unchanged v1 re-fetch, no/tampered/early calendar, unchanged snapshot, older event, US same-time, operator pause) pass",
+    "full_module": "83 run, OK, 1 skipped (complete env: venv with asyncpg, flask, pydantic)"
   },
   "not_done": ["hosted retained-v1 refresh", "VM/SSH", "provider calls", "store edits"]
 }

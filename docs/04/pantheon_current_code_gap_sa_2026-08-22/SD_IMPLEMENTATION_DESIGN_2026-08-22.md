@@ -399,8 +399,12 @@ time, when an official Taiwan calendar correction later made that same-day
 close legal (e.g. the 2026-10-23 TWSE closure, `twse-2026-emergency-closure-20261023-v2`).
 This additionally requires that the snapshot ID differs, the unchanged
 admission function admits it, the snapshot's calendar evidence validates
-against the governed pins, and that evidence's `fetched_at` is later than the
-pause's `observed_at`. Older event times, same-time data without such
+against the governed pins, the snapshot is a Taiwan symbol, that evidence's
+`fetched_at` is later than the pause's `observed_at`, and the calendar
+explicitly marks as closures every weekday session between the paused event
+date and the pause time (at least one), i.e. it removes the stale cause itself.
+A non-Taiwan snapshot carrying a Taiwan calendar, or an unchanged calendar
+re-fetched later, does not qualify. Older event times, same-time data without such
 evidence, unchanged snapshots, and operator pauses stay paused. Source
 provenance and market timestamps are not rewritten; the retained snapshot must
 still be re-published by the existing Source refresh before this applies.
