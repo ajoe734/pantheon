@@ -643,7 +643,7 @@ def test_twse_emergency_closure_20261023_keeps_oct22_close_fresh_until_oct27_ses
 
     # Closure day (after 13:30 Asia/Taipei), weekend and 10/26 holiday: admitted.
     for now in (
-        "2026-10-23T06:50:00+00:00",
+        "2026-10-23T07:05:00+00:00",
         "2026-10-24T03:00:00+00:00",
         "2026-10-26T03:00:00+00:00",
         "2026-10-27T02:00:00+00:00",

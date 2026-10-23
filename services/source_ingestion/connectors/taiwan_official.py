@@ -177,13 +177,13 @@ _TWSE_2026_SCHEDULE_CALENDAR_PAYLOAD: Mapping[str, Any] = {
 }
 
 # Bounded correction to twse-2026-schedule-v1: TWSE announced on 2026-10-22
-# 20:10 (newsDetail 8a8216d6a0fa351b01a1638557450205, attachment
+# 20:10 (newsDetail zh id 8a8216d6a0fa351b01a1638507a10203 (JSON alternate-language id ...0205), attachment
 # https://www.twse.com.tw/staticFiles/news/news/tsecnews/8a8216d6a0fa351b01a1638507940202.pdf)
 # that the whole 2026-10-23 session is closed (typhoon).  v1 stays pinned and
 # unchanged; v2 only supersedes it for the 2026-10-22..2026-10-28 window.
 TWSE_2026_EMERGENCY_CLOSURE_CALENDAR_VERSION = "twse-2026-emergency-closure-20261023-v2"
 TWSE_2026_EMERGENCY_CLOSURE_CALENDAR_SHA256 = "48e8d89449b436d936cb4a25c9860141b11a838d4f873deb2717af9fd896df99"
-TWSE_2026_EMERGENCY_CLOSURE_CALENDAR_FETCHED_AT = "2026-10-23T06:45:17Z"
+TWSE_2026_EMERGENCY_CLOSURE_CALENDAR_FETCHED_AT = "2026-10-23T07:00:39Z"
 _TWSE_2026_EMERGENCY_CLOSURE_CALENDAR_PAYLOAD: Mapping[str, Any] = {
     "authority": "Taiwan Stock Exchange 115 年10月23日休市公告 (2026-10-22)",
     "coverage_end": "2026-10-28",
