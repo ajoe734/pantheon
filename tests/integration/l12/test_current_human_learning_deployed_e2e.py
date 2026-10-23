@@ -42,7 +42,17 @@ from typing import Any, Callable, Mapping, Sequence
 
 import pytest
 
-from l12_owner_auth import bearer, compose_file_args, human_token, token_subject
+from l12_owner_auth import (
+    HostedPause,
+    bearer,
+    compose_file_args,
+    hosted_chain_enabled,
+    hosted_receipt_fields,
+    human_token,
+    load_hosted_input,
+    require_decided_approval,
+    token_subject,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -96,6 +106,92 @@ def _canonical_json(value: Mapping[str, Any]) -> str:
     return json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
 
 
+TEACHING_METRIC_KEYS = ("total_return", "sharpe_ratio", "max_drawdown")
+
+
+def _finite_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if number == number and number not in (float("inf"), float("-inf")) else None
+
+
+def teaching_agora_content(
+    *,
+    terminal: Mapping[str, Any],
+    controls_record: Mapping[str, Any],
+    registry_id: str,
+    strategy_id: str,
+    checksum: str,
+) -> dict[str, Any]:
+    """Agora interaction content built only from the chain's real Teaching result.
+
+    Every number comes from the Teaching evaluation or from a control the Teaching
+    session actually proposed; the decision is the Teaching governance outcome and
+    the target is the chain's own Registry entry. Nothing here is a fixed row: if
+    the Teaching session does not expose at least two distinct real control actions
+    (the BC baseline's minimum) the caller fails closed instead of padding.
+    """
+
+    session_id = str(terminal.get("session_id") or "")
+    eval_identity = str(terminal.get("eval_identity") or "")
+    evaluation = terminal.get("evaluation_result")
+    if not session_id or not eval_identity or not isinstance(evaluation, Mapping):
+        raise RuntimeError("Teaching terminal readback lacks session_id, eval_identity or evaluation_result")
+    metrics = evaluation.get("metrics") if isinstance(evaluation.get("metrics"), Mapping) else {}
+    vector = [_finite_number(metrics.get(key)) for key in TEACHING_METRIC_KEYS]
+    if any(value is None for value in vector):
+        raise RuntimeError("Teaching evaluation lacks finite total_return/sharpe_ratio/max_drawdown")
+    validation = evaluation.get("validation_status")
+    if validation not in {"passed", "failed"}:
+        raise RuntimeError(f"Teaching evaluation validation_status {validation!r} is not terminal")
+    steps: list[dict[str, Any]] = []
+    for control in controls_record.get("controls") or []:
+        if not isinstance(control, Mapping) or not control.get("parameter_key"):
+            continue
+        proposed = _finite_number(control.get("proposed_value"))
+        if proposed is None:
+            continue
+        key = str(control["parameter_key"])
+        steps.append(
+            {
+                "observation": [*vector, proposed],
+                "action": f"set_{key}",
+                "reward": vector[0],
+                "feedback_event_id": f"{eval_identity}:{key}",
+            }
+        )
+    if len({step["action"] for step in steps}) < 2:
+        raise RuntimeError(
+            "Teaching session exposes fewer than two distinct proposed control actions; "
+            "refusing to fabricate Agora trajectory rows"
+        )
+    return {
+        "actor_id": str(terminal.get("persona_id") or ""),
+        "actor_role": "persona",
+        "decision": "approve" if validation == "passed" else "reject",
+        "target": {
+            "registry_id": registry_id,
+            "strategy_id": strategy_id,
+            "artifact_version": str(terminal.get("artifact_version") or "teaching-evaluated"),
+            "artifact_type": "strategy_spec",
+            "promotion_state": "approved",
+        },
+        "strategy_id": strategy_id,
+        "source_strategy_spec_id": registry_id,
+        "teaching_session_id": session_id,
+        "teaching": {
+            "session_id": session_id,
+            "eval_identity": eval_identity,
+            "eval_id": evaluation.get("eval_id"),
+            "validation_status": validation,
+            "metrics": {key: metrics[key] for key in TEACHING_METRIC_KEYS},
+            "registry_checksum": checksum,
+        },
+        "steps": steps,
+    }
+
+
 class BoundaryFailure(RuntimeError):
     def __init__(self, boundary: str, detail: Any) -> None:
         super().__init__(_bounded_text(detail))
@@ -112,6 +208,12 @@ class DeployedHumanLearningHarness:
         self.compose_project = os.getenv("PANTHEON_L12_COMPOSE_PROJECT", "pantheon").strip()
         self.timeout_seconds = float(os.getenv("PANTHEON_L12_POLL_TIMEOUT_SECONDS", "210"))
         self.poll_seconds = float(os.getenv("PANTHEON_L12_POLL_INTERVAL_SECONDS", "2"))
+        # Hosted chain mode: one phase per process; deterministic IDs from the chain id.
+        self.hosted = hosted_chain_enabled()
+        self.hosted_input = load_hosted_input(("B_learning",)) if self.hosted else None
+        self.paused: dict[str, Any] | None = None
+        if self.hosted_input is not None:
+            self.run_token = self.hosted_input.chain_id
         self.tenant_id = os.getenv(
             "PANTHEON_L12_HUMAN_LEARNING_TENANT_ID",
             os.getenv("PANTHEON_L12_TENANT_ID", "pantheon-local"),
@@ -134,17 +236,15 @@ class DeployedHumanLearningHarness:
             "PANTHEON_L12_PERSONA_URL", "http://127.0.0.1:18002"
         ).rstrip("/")
         self.bff_bearer = self._resolve_bff_bearer()
-        self.agora_handoff_token = os.getenv(
-            "PANTHEON_L12_AGORA_HANDOFF_TOKEN",
-            "pantheon-local-agora-handoff-service-token",
+        self.training_url = os.getenv("PANTHEON_L12_TRAINING_URL", "http://127.0.0.1:18099").rstrip("/")
+        self.agora_handoff_token = self._service_token(
+            "PANTHEON_L12_AGORA_HANDOFF_TOKEN", "pantheon-local-agora-handoff-service-token"
         )
-        self.policy_learning_token = os.getenv(
-            "PANTHEON_L12_POLICY_LEARNING_TOKEN",
-            "pantheon-local-policy-learning-service",
+        self.policy_learning_token = self._service_token(
+            "PANTHEON_L12_POLICY_LEARNING_TOKEN", "pantheon-local-policy-learning-service"
         )
-        self.consultation_token = os.getenv(
-            "PANTHEON_L12_CONSULTATION_TOKEN",
-            "pantheon-local-consultation-service",
+        self.consultation_token = self._service_token(
+            "PANTHEON_L12_CONSULTATION_TOKEN", "pantheon-local-consultation-service"
         )
         self.report_path = Path(os.getenv("PANTHEON_L12_REPORT_PATH", str(DEFAULT_REPORT_PATH)))
         self.git_sha = (
@@ -186,6 +286,11 @@ class DeployedHumanLearningHarness:
                     return str(body["access_token"])
             except Exception:
                 pass
+        if self.hosted:
+            raise RuntimeError(
+                "hosted chain needs a real BFF bearer (PANTHEON_L12_BFF_BEARER or dev-login "
+                "credentials); the isolated stub bearer is never synthesized"
+            )
         return f"l12-current-e2e:operator,admin:{self.tenant_id}"
 
     # -- infra helpers -----------------------------------------------------
@@ -282,6 +387,27 @@ class DeployedHumanLearningHarness:
             f"{_canonical_json(last_identity)}"
         )
 
+    def _service_token(self, name: str, isolated_default: str) -> str:
+        """Isolated stacks fall back to their local service token; hosted never guesses one."""
+        value = os.getenv(name)
+        if self.hosted:
+            if not (value or "").strip():
+                raise RuntimeError(f"{name} must be supplied for the hosted chain")
+            return value.strip()
+        return value if value is not None else isolated_default
+
+    def _rid(self, default: str, *parts: str) -> str:
+        return self.hosted_input.id(*parts) if self.hosted_input is not None else default
+
+    def _chain_labels(self) -> dict[str, Any]:
+        return self.hosted_input.labels() if self.hosted_input is not None else {}
+
+    def _restart_or_skip(self, service: str) -> dict[str, Any]:
+        """Hosted never restarts a shared service; isolated keeps the real restart proof."""
+        if self.hosted:
+            return {"service": service, "skipped": "hosted_shared_service_restart_excluded"}
+        return self._restart_service(service)
+
     def _service_identities(self, services: str | Sequence[str]) -> dict[str, dict[str, Any]]:
         names = (services,) if isinstance(services, str) else tuple(services)
         return {service: self._service_identity(service) for service in names}
@@ -295,6 +421,8 @@ class DeployedHumanLearningHarness:
         not create a second durable result.
         """
 
+        if self.hosted:
+            raise RuntimeError("hosted chain mode never restarts a shared Compose service")
         before = self._service_identity(service)
         self._command(self._compose_argv("restart", service))
         after = self._service_identity(service, allow_starting=True)
@@ -367,7 +495,7 @@ class DeployedHumanLearningHarness:
             raise RuntimeError("boundary executed outside a loop case")
         try:
             result = action()
-        except BoundaryFailure:
+        except (BoundaryFailure, HostedPause):
             raise
         except Exception as exc:  # noqa: BLE001 - fail-closed boundary wrapper
             raise BoundaryFailure(boundary, exc) from exc
@@ -381,13 +509,54 @@ class DeployedHumanLearningHarness:
         if not condition:
             raise RuntimeError(detail)
 
+    def _hosted_resource_ids(self) -> dict[str, Any]:
+        keys = (
+            "teaching_session_id",
+            "registry_id",
+            "checksum",
+            "evidence_id",
+            "dataset_version_id",
+            "agora_handoff_id",
+            "candidate_id",
+            "experiment_task_id",
+            "experiment_run_id",
+            "consult_request_id",
+            "memo_id",
+            "governance_handoff_id",
+            "h2_consent_ref",
+        )
+        return {key: self.chain.get(key) for key in keys}
+
     def _report_payload(self, status: str) -> dict[str, Any]:
+        payload = self._base_report_payload(status)
+        if self.hosted_input is not None:
+            if self.paused is not None:
+                phase_status, blocked_before, detail = "paused", self.paused["blocked_before"], self.paused["detail"]
+            elif self.first_failure is not None:
+                phase_status, blocked_before = "failed", self.first_failure.get("boundary")
+                detail = self.first_failure.get("detail")
+            else:
+                phase_status = "completed" if status == "passed" else "running"
+                blocked_before, detail = None, None
+            if phase_status != "running":
+                payload.update(
+                    hosted_receipt_fields(
+                        self.hosted_input,
+                        phase_status=phase_status,
+                        blocked_before=blocked_before,
+                        resource_ids=self._hosted_resource_ids(),
+                        detail=detail,
+                    )
+                )
+        return payload
+
+    def _base_report_payload(self, status: str) -> dict[str, Any]:
         return {
             "schema_version": "pantheon.l12.human-learning.deployed-e2e.v1",
             "task_id": TASK_ID,
             "status": status,
             "started_at": self.started_at,
-            "completed_at": _utc_now() if status in {"passed", "failed"} else None,
+            "completed_at": _utc_now() if status in {"passed", "failed", "paused"} else None,
             "git_sha": self.git_sha,
             "compose_project": self.compose_project,
             "anti_fixture": {
@@ -412,9 +581,17 @@ class DeployedHumanLearningHarness:
     # -- case driver ---------------------------------------------------------
 
     def run_case(self, target_index: int) -> None:
-        while len(self.case_results) < target_index and self.first_failure is None:
+        while (
+            len(self.case_results) < target_index
+            and self.first_failure is None
+            and self.paused is None
+        ):
             index = len(self.case_results) + 1
             self._execute_case(index)
+        if self.paused is not None:
+            pytest.skip(
+                f"hosted chain paused before {self.paused['blocked_before']}: {self.paused['detail']}"
+            )
         if self.first_failure is not None:
             message = (
                 f"first deployed boundary failed: {self.first_failure['loop_id']} / "
@@ -445,6 +622,15 @@ class DeployedHumanLearningHarness:
         self._current_case = case
         try:
             getattr(self, f"_case_{loop_id}")(case)
+        except HostedPause as pause:
+            case["status"] = "paused"
+            case["completed_at"] = _utc_now()
+            case["blocked_before"] = pause.blocked_before
+            self.case_results.append(case)
+            self.paused = {"loop_id": loop_id, "blocked_before": pause.blocked_before, "detail": pause.detail}
+            self._current_case = None
+            self._write_report("paused")
+            return
         except BoundaryFailure as exc:
             case["status"] = "failed"
             case["completed_at"] = _utc_now()
@@ -555,13 +741,106 @@ class DeployedHumanLearningHarness:
 
     # -- Loop 5: Agora interaction evidence -> durable handoff -> intake ----
 
-    def _case_agora_interaction_evidence(self, case: dict[str, Any]) -> None:
-        self._ensure_persona(
-            "persona-advisor",
-            name="Advisor Persona",
-            mandate="Agora human learning advisor",
+    def _training_headers(self) -> dict[str, str]:
+        token = os.getenv("PANTHEON_L12_TRAINING_TOKEN", "").strip()
+        if not token:
+            raise RuntimeError("PANTHEON_L12_TRAINING_TOKEN is unset or empty")
+        return {
+            "Authorization": token if token.startswith("Bearer ") else f"Bearer {token}",
+            "X-Tenant-Id": self.tenant_id,
+            "X-Pantheon-Service": "training-session-preview-worker",
+        }
+
+    def _hosted_teaching_inputs(self) -> dict[str, Any]:
+        """Read the chain's real Teaching result (loop 4) and build the Agora evidence from it."""
+        chain = self.hosted_input
+        assert chain is not None
+        wanted = {
+            key: chain.predecessor(key)
+            for key in ("teaching_session_id", "registry_id", "checksum", "strategy_id")
+        }
+        missing = [key for key, value in wanted.items() if not value]
+        if missing:
+            raise HostedPause(
+                "agora_interaction_evidence",
+                f"B_learning needs A_research predecessors {missing}; none supplied",
+            )
+        session = urllib.parse.quote(wanted["teaching_session_id"], safe="")
+        headers = self._training_headers()
+        terminal = self._http_json(
+            self.training_url, f"/api/training/sessions/{session}/terminal-readback", headers=headers
         )
-        evidence_id = f"ev-l12-hl-{self.run_token}"
+        controls = self._http_json(self.training_url, f"/api/training/controls/{session}", headers=headers)
+        self._require(
+            terminal.get("session_id") == wanted["teaching_session_id"],
+            "Teaching terminal readback does not match the predecessor session",
+        )
+        expected_eval = chain.predecessor("eval_identity")
+        self._require(
+            not expected_eval or terminal.get("eval_identity") == expected_eval,
+            "Teaching eval_identity drifted from the A_research receipt",
+        )
+        content = teaching_agora_content(
+            terminal=terminal,
+            controls_record=controls,
+            registry_id=wanted["registry_id"],
+            strategy_id=wanted["strategy_id"],
+            checksum=wanted["checksum"],
+        )
+        # Replays must be byte-identical for owner idempotency: take the capture time
+        # from the Teaching record itself, never from this process's clock.
+        evaluation = terminal.get("evaluation_result") or {}
+        captured_at = next(
+            (
+                str(value)
+                for value in (
+                    evaluation.get("evaluated_at"),
+                    evaluation.get("completed_at"),
+                    terminal.get("updated_at"),
+                    terminal.get("started_at"),
+                )
+                if value
+            ),
+            "",
+        )
+        self._require(bool(captured_at), "Teaching readback carries no timestamp for captured_at")
+        self.chain.update(
+            {
+                "teaching_session_id": wanted["teaching_session_id"],
+                "registry_id": wanted["registry_id"],
+                "checksum": wanted["checksum"],
+                "strategy_id": wanted["strategy_id"],
+                "teaching_eval_identity": terminal.get("eval_identity"),
+            }
+        )
+        return {
+            "persona_id": str(terminal.get("persona_id") or ""),
+            "session_id": wanted["teaching_session_id"],
+            "content": content,
+            "source_refs": [
+                f"session:{wanted['teaching_session_id']}",
+                f"teaching_eval:{terminal.get('eval_identity')}",
+                f"registry:{wanted['registry_id']}",
+            ],
+            "captured_at": captured_at,
+        }
+
+    def _case_agora_interaction_evidence(self, case: dict[str, Any]) -> None:
+        if self.hosted_input is not None:
+            hosted = self._hosted_teaching_inputs()
+            persona_id = hosted["persona_id"]
+            self._require(bool(persona_id), "Teaching readback carries no persona_id")
+            self._ensure_persona(
+                persona_id, name=f"Hosted Persona {persona_id}", mandate="Agora human learning advisor"
+            )
+        else:
+            hosted = None
+            self._ensure_persona(
+                "persona-advisor",
+                name="Advisor Persona",
+                mandate="Agora human learning advisor",
+            )
+        evidence_id = self._rid(f"ev-l12-hl-{self.run_token}", "ev")
         owners = self._at(
             "agora_and_policy.owner_compose_identities",
             lambda: self._service_identities(OWNER_SERVICES["agora_interaction_evidence"]),
@@ -601,6 +880,14 @@ class DeployedHumanLearningHarness:
             "learning_eligible": True,
             "captured_at": _utc_now(),
         }
+        if hosted is not None:
+            ev_payload.update(
+                persona_id=hosted["persona_id"],
+                session_id=hosted["session_id"],
+                content=hosted["content"],
+                source_refs=hosted["source_refs"],
+                captured_at=hosted["captured_at"],
+            )
         created = self._at(
             "agora.interaction_evidence_created",
             lambda: self._http_json(
@@ -612,7 +899,10 @@ class DeployedHumanLearningHarness:
                 expected=(200, 201),
             ),
         )
-        self._require(created.get("status") == "created", "evidence submission was not created")
+        # Hosted replays of the same evidence_id return the existing admission.
+        self._require(
+            self.hosted or created.get("status") == "created", "evidence submission was not created"
+        )
         dataset = created["data"]
         dataset_version_id = str(dataset["dataset_version_id"])
         self._require(dataset_version_id.startswith("dsv-"), "dataset_version_id has an unexpected shape")
@@ -623,38 +913,62 @@ class DeployedHumanLearningHarness:
             "dataset_version_id": dataset_version_id,
         }
 
-        processed = self._at(
-            "agora.dataset_worker_process",
-            lambda: self._http_json(
-                self.bff_url,
-                "/bff/agora/dataset-worker/process",
-                method="POST",
-                headers=self._bff_headers(),
-                expected=(200, 201),
-            ),
-        )
-        self._require(processed.get("status") == "success", "dataset worker did not process the inbox")
-
-        pending = self._at(
-            "agora.durable_handoff_visible",
-            lambda: self._poll(
-                f"durable handoff for {dataset_version_id}",
+        # Hosted: an earlier process of this chain (e.g. one that paused at H2) may
+        # already have drained the handoff, so it is no longer pending; reuse the
+        # processed candidate for this exact dataset_version_id instead.
+        prior_candidate = None
+        if self.hosted:
+            prior_candidate = self._at(
+                "policy_learning.prior_candidate_readback",
+                lambda: next(
+                    (
+                        item
+                        for item in self._http_json(
+                            self.policy_learning_url,
+                            "/api/policy-learning/candidates",
+                            headers=self._policy_learning_headers(),
+                        )
+                        if (item.get("dataset_ref") or {}).get("dataset_version_id") == dataset_version_id
+                    ),
+                    None,
+                ),
+            )
+        if prior_candidate is not None:
+            handoff_id = str(prior_candidate.get("handoff_id") or "")
+            self._require(bool(handoff_id), "prior candidate lost its Agora handoff_id")
+        else:
+            processed = self._at(
+                "agora.dataset_worker_process",
                 lambda: self._http_json(
                     self.bff_url,
-                    "/internal/agora/dataset-handoffs",
-                    headers=self._agora_service_headers(),
+                    "/bff/agora/dataset-worker/process",
+                    method="POST",
+                    headers=self._bff_headers(),
+                    expected=(200, 201),
                 ),
-                lambda value: any(
-                    item.get("dataset_version_id") == dataset_version_id
-                    for item in value.get("items", [])
+            )
+            self._require(processed.get("status") == "success", "dataset worker did not process the inbox")
+
+            pending = self._at(
+                "agora.durable_handoff_visible",
+                lambda: self._poll(
+                    f"durable handoff for {dataset_version_id}",
+                    lambda: self._http_json(
+                        self.bff_url,
+                        "/internal/agora/dataset-handoffs",
+                        headers=self._agora_service_headers(),
+                    ),
+                    lambda value: any(
+                        item.get("dataset_version_id") == dataset_version_id
+                        for item in value.get("items", [])
+                    ),
                 ),
-            ),
-        )
-        handoff = next(
-            item for item in pending["items"] if item.get("dataset_version_id") == dataset_version_id
-        )
-        handoff_id = str(handoff["handoff_id"])
-        self._require(handoff_id.startswith("gh-"), "handoff_id has an unexpected shape")
+            )
+            handoff = next(
+                item for item in pending["items"] if item.get("dataset_version_id") == dataset_version_id
+            )
+            handoff_id = str(handoff["handoff_id"])
+            self._require(handoff_id.startswith("gh-"), "handoff_id has an unexpected shape")
         case["authority_readback"] = {"dataset_version_id": dataset_version_id, "handoff_id": handoff_id}
 
         # The durable policy worker is normally interval-driven. Restarting
@@ -662,7 +976,7 @@ class DeployedHumanLearningHarness:
         # a drainer or policy endpoint from this test process.
         restart = self._at(
             "policy_learning.scheduler_restart_for_durable_handoff",
-            lambda: self._restart_service("policy-learning-shadow-eval-scheduler"),
+            lambda: self._restart_or_skip("policy-learning-shadow-eval-scheduler"),
         )
         candidates = self._at(
             "policy_learning.candidate_processed_by_deployed_worker",
@@ -723,7 +1037,7 @@ class DeployedHumanLearningHarness:
 
         replay = self._at(
             "policy_learning.restart_replay_is_idempotent",
-            lambda: self._restart_service("policy-learning-shadow-eval-scheduler"),
+            lambda: self._restart_or_skip("policy-learning-shadow-eval-scheduler"),
         )
         replayed_candidates = self._at(
             "policy_learning.restart_replay_readback",
@@ -828,6 +1142,19 @@ class DeployedHumanLearningHarness:
 
     # -- Loop 7: Consultation -> deployed OpenClaw provider -> Governance ---
 
+    def _hosted_h2_consent(self) -> dict[str, Any]:
+        """H2 is a data-owner consent with no owner GET: require its recorded reference, never infer it."""
+        assert self.hosted_input is not None
+        ref = self.hosted_input.decision("H2") or {}
+        required = ("record_ref", "decided_by", "recorded_at")
+        if not all(str(ref.get(key) or "").strip() for key in required):
+            raise HostedPause(
+                "consultation_request",
+                "H2 Agora synthesis consent is not recorded (needs record_ref, decided_by, recorded_at)",
+                self._hosted_resource_ids(),
+            )
+        return {key: str(ref[key]) for key in required}
+
     def _case_consultation_governance_handoff(self, case: dict[str, Any]) -> None:
         owners = self._at(
             "consultation_openclaw_governance.owner_compose_identities",
@@ -835,12 +1162,39 @@ class DeployedHumanLearningHarness:
         )
         case["owner"] = owners
 
-        request_id = f"cr-l12-hl-{self.run_token}"
+        request_id = self._rid(f"cr-l12-hl-{self.run_token}", "cr")
+        hosted_metadata: dict[str, Any] = {}
+        requested_by = {"actor_type": "operator", "actor_id": "l12-current-e2e-operator"}
+        if self.hosted_input is not None:
+            h2 = self._hosted_h2_consent()
+            requested_by = {"actor_type": "operator", "actor_id": token_subject(human_token("OPERATOR"))}
+            # The consumer record must carry the actual predecessors so a reader can
+            # follow Registry -> Teaching -> Agora -> candidate -> consultation by ID.
+            hosted_metadata = {
+                **self._chain_labels(),
+                "h2_consent_ref": h2,
+                **{
+                    key: self.chain.get(key) or self.hosted_input.predecessor(key)
+                    for key in (
+                        "registry_id",
+                        "checksum",
+                        "teaching_session_id",
+                        "teaching_eval_identity",
+                        "evidence_id",
+                        "dataset_version_id",
+                        "candidate_id",
+                        "experiment_run_id",
+                    )
+                },
+            }
+            missing = [key for key, value in hosted_metadata.items() if value in (None, "")]
+            self._require(not missing, f"consultation predecessors missing: {missing}")
+            self.chain["h2_consent_ref"] = h2["record_ref"]
         req_payload = {
             "request_id": request_id,
             "tenant_id": self.consultation_tenant_id,
             "request_type": "strategy_review",
-            "requested_by": {"actor_type": "operator", "actor_id": "l12-current-e2e-operator"},
+            "requested_by": requested_by,
             "target_type": "experiment_run",
             "target_id": self.chain.get("experiment_run_id", request_id),
             "task": "Review imitation policy risk bounds before promotion.",
@@ -851,7 +1205,11 @@ class DeployedHumanLearningHarness:
             ],
             "evidence_refs": [f"research_run:{self.chain.get('experiment_run_id', '')}"],
             "priority": "high",
-            "metadata": {"paper_only": True, "agora_handoff_id": self.chain.get("agora_handoff_id", "")},
+            "metadata": {
+                "paper_only": True,
+                "agora_handoff_id": self.chain.get("agora_handoff_id", ""),
+                **hosted_metadata,
+            },
             "trace_id": f"trace-l12-hl-{request_id}",
         }
         case["trigger"] = {"type": "ConsultRequest", "id": request_id}
@@ -867,18 +1225,38 @@ class DeployedHumanLearningHarness:
                 expected=(200, 201),
             ),
         )
-        self._require(created.get("status") == "draft", "consult request was not created in draft status")
-
-        self._at(
-            "consultation.request_submitted",
-            lambda: self._http_json(
-                self.consultation_url,
-                f"/api/consult/requests/{urllib.parse.quote(request_id, safe='')}/submit",
-                method="POST",
-                payload={},
-                headers=self._consultation_headers(),
-            ),
+        # Hosted: the deterministic request may already exist from an earlier process.
+        self._require(
+            self.hosted or created.get("status") == "draft",
+            "consult request was not created in draft status",
         )
+        if self.hosted_input is not None:
+            stored = self._at(
+                "consultation.predecessor_metadata_readback",
+                lambda: self._http_json(
+                    self.consultation_url,
+                    f"/api/consult/requests/{urllib.parse.quote(request_id, safe='')}",
+                    headers=self._consultation_headers(),
+                ),
+            )
+            persisted = stored.get("metadata") or {}
+            drifted = {
+                key: persisted.get(key) for key, value in hosted_metadata.items() if persisted.get(key) != value
+            }
+            self._require(not drifted, f"ConsultRequest did not persist predecessor references: {sorted(drifted)}")
+            created = stored
+
+        if not self.hosted or created.get("status") == "draft":
+            self._at(
+                "consultation.request_submitted",
+                lambda: self._http_json(
+                    self.consultation_url,
+                    f"/api/consult/requests/{urllib.parse.quote(request_id, safe='')}/submit",
+                    method="POST",
+                    payload={},
+                    headers=self._consultation_headers(),
+                ),
+            )
 
         memos = self._at(
             "consultation.supervised_executor_published_memo",
@@ -935,7 +1313,7 @@ class DeployedHumanLearningHarness:
         # not gain a second memo or Governance handoff.
         replay = self._at(
             "consultation.supervised_executor_restart_replay",
-            lambda: self._restart_service("consultation-svc"),
+            lambda: self._restart_or_skip("consultation-svc"),
         )
         replayed_memos = self._at(
             "consultation.restart_memo_readback",
@@ -1004,6 +1382,8 @@ def test_deployed_human_learning_chain_identity_correlation(
 ) -> None:
     """Read-only correlation over identifiers this run already produced."""
 
+    if deployed_human_learning_e2e.paused is not None:
+        pytest.skip("hosted chain paused; correlation needs a completed phase")
     chain = deployed_human_learning_e2e.chain
     for key in (
         "evidence_id",

@@ -1,0 +1,70 @@
+{
+  "task_id": "HOSTED-ALL12-DOMAIN-PHASES-20261023",
+  "kind": "source_delivery_not_hosted_acceptance",
+  "base": "dev 72fcefa58 (includes accepted T1 PR6741 merge 4eb71123ec2d10427ba9ea1cf3ebfba89cf07999)",
+  "contract_source": "/tmp/pantheon-codex-01a11-review-20261023/approved-T2-T3-disjoint-native-packets.json",
+  "a4_receipt": "/tmp/pantheon-codex-01a11-review-20261023/T1-postrelease-owner-contracts-20261023T151422Z.json",
+  "a4_reading": "existing fields only; no enforced runtime MFA; arbitrary plan-metadata write and executable distilled readiness NOT proven, so both are verified by the C_promote caller at run time and reported concretely if absent",
+  "hosted_execution": "none; no hosted suite, VM change, provider request, owner write or business approval was performed",
+  "files": [
+    "tests/integration/l12/l12_owner_auth.py",
+    "tests/integration/l12/test_current_research_loops_deployed_e2e.py",
+    "tests/integration/l12/test_current_human_learning_deployed_e2e.py",
+    "tests/integration/l12/test_current_runtime_loops_deployed_e2e.py",
+    "tests/unit/l12/test_hosted_domain_contract.py"
+  ],
+  "interface_for_parent_and_workflow": {
+    "enable": "PANTHEON_L12_HOSTED_CHAIN=1 with PANTHEON_L12_CROSS_LOOP_RUN_ID, PANTHEON_L12_HOSTED_CHAIN_PHASE, PANTHEON_L12_HOSTED_CHAIN_INPUT (JSON: chain_id, phase, predecessors, decisions)",
+    "suite_phases": {
+      "research suite": ["A_research"],
+      "human-learning suite": ["B_learning"],
+      "runtime suite": ["C_promote", "D_observe"],
+      "parent only": ["E_close"]
+    },
+    "predecessor_keys_read": {
+      "B_learning": ["teaching_session_id", "registry_id", "checksum", "strategy_id", "eval_identity (optional)"],
+      "C_promote": ["registry_id", "checksum", "governance_handoff_id", "persona_id", "symbol/teaching_session_id/consult_request_id/candidate_id/strategy_id (optional)"],
+      "D_observe": ["binding_id", "runtime_id", "plan_id"],
+      "A_research (A2)": ["registry_id", "checksum"]
+    },
+    "decision_references": {
+      "H1": "{decision_id} Governance approval; must be decided/approved, tenant-matching, unexpired, bound to the exact registry_id and checksum",
+      "H2": "{record_ref, decided_by, recorded_at}; no owner GET exists, so only presence is checked and the reference is persisted in the ConsultRequest metadata",
+      "H3": "{decision_id} Governance approval bound to the plan_id or registry_id",
+      "H4": "{decision_id} Evolution proposal in approved/executed state with linked_incident_id"
+    },
+    "receipt_fields_added": ["hosted_chain", "chain_id", "phase", "phase_status", "blocked_before", "resource_ids", "detail"],
+    "status_mapping": "completed -> status passed; paused -> status paused; failed -> status failed. Isolated reports are unchanged.",
+    "new_env_names_for_workflow": [
+      "PANTHEON_L12_HOSTED_EXECUTOR_TOKEN (real executing identity; PANTHEON_L12_{OPERATOR,REVIEWER}_TOKEN are ignored in hosted mode)",
+      "PANTHEON_L12_BFF_BEARER (runtime suite D_observe; no JWT is minted)",
+      "PANTHEON_L12_CAPITAL_TOKEN, PANTHEON_L12_TRAINING_TOKEN, PANTHEON_L12_{AGORA_HANDOFF,POLICY_LEARNING,CONSULTATION}_TOKEN are required (no local defaults) in hosted mode"
+    ],
+    "pause_points": {
+      "A_research": "alpha_admission (H1)",
+      "B_learning": "agora_interaction_evidence (missing A predecessors); consultation_request (H2)",
+      "C_promote": "capital_pool_creation (missing predecessors); runtime_binding_dispatch (H3)",
+      "D_observe": "observation (missing predecessors); evolution_decision_acceptance (H4)"
+    }
+  },
+  "behaviour": {
+    "determinism": "owner IDs are hosted-all12-<chain_id>-<kind>; every create is preceded by an owner GET (source record, admission, Teaching session by trace_id, capital pool/binding, deployment plan, ConsultRequest, candidate by dataset_version_id)",
+    "teaching_to_agora": "Agora content, source_refs, session_id and captured_at come from the chain's Teaching terminal-readback and proposed controls; decision follows the Teaching validation outcome; fewer than two distinct real control actions fails closed instead of padding",
+    "predecessor_persistence": "ConsultRequest metadata and DeploymentPlan metadata carry the actual Registry/Teaching/Agora/candidate/consultation IDs and are read back; the plan binds the chain's own approved StrategySpec and H1 decision, never artifact-tw-session-momentum-v1 (referenced only as the unchanged rollback target)",
+    "hosted_exclusions": "no Compose restart/stop (guarded in _restart_service), no pre-existing binding retirement, no broken-binding negatives, no single-worker fleet assumption, no minted/stub tokens or ':mfa' marker, no approval propose/review/decide",
+    "paper_capital": "pool and binding created and activated without any approval id",
+    "loop_12": "D_observe only reads BFF typed health; it keeps its own trigger path and adds no 11->12 edge"
+  },
+  "validation": [
+    "tests/unit/l12/test_hosted_domain_contract.py: 19 passed (bounded fake owners)",
+    "tests/integration/l12 (opt-in suites and AST guards, default isolated mode): collected, all skipped/guards passed",
+    "scripts/test_run_isolated_l12_runtime_e2e.py: passed (isolated wiring, auth-helper import check, runtime tenant fixture)"
+  ],
+  "unverified": [
+    "shape of GET /api/training/controls/{session_id} (proposed_value assumed); the builder fails closed if it differs",
+    "whether DeploymentPlan metadata round-trips new keys and whether the owner accepts a StrategySpec with no inline strategy_artifact; both are reported by C_promote as DeployedProofError / UnsupportedExecutablePath with owner errors",
+    "real behaviour of owner replays of Agora evidence / Training session reuse across processes (assumed idempotent by evidence_id and trace_id)",
+    "capital actor_id binding with a real capital token"
+  ],
+  "residual_ownership": "E_close, parent resume selection, tenant/label verification of prior receipts and owner retirement belong to HOSTED-ALL12-STIMULUS-PHASES-20261023; workflow join to HOSTED-ALL12 T4"
+}
