@@ -1,0 +1,8 @@
+{
+  "task": "INTEGRATION-UNBLOCK-HOSTED-ALL12-WORKFLOW-INTEGRATION-20261023-CI-RED-E3A20FA71AEC",
+  "blocked_pr": 6748,
+  "failed_check": "Run baseline stage-0 gate",
+  "root_cause": "scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py expected 6 occurrences of secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET; the new hosted-all12-chain-phase job legitimately adds a 7th.",
+  "fix": "Updated expected count to 7 on PR branch task/HOSTED-ALL12-WORKFLOW-INTEGRATION-20261023 (commit 73ac7d439).",
+  "local_verification": "Counted secret refs in workflow: VIEWER 6, APPROVER 5, RISK_OWNER 5, OPERATOR_A 7, OPERATOR_B 5 (match test). pytest unavailable locally; CI rerun pending."
+}
