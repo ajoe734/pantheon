@@ -722,3 +722,31 @@ def test_owner_client_reads_domain_services_under_their_own_headers(monkeypatch)
     assert seen["http://r/y"]["Authorization"] == "Bearer owner-token"
     with pytest.raises(parent.StimulusProofError, match="no owner URL"):
         client.request("consultation", "GET", "/z")
+
+
+def test_owner_client_signs_capital_requests_fresh_with_real_principal(monkeypatch):
+    import base64
+    seen = []
+    class Resp:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *_a): return False
+        def read(self): return b"{}"
+    monkeypatch.setattr(parent.urllib.request, "urlopen", lambda request, timeout=0: seen.append(dict(request.header_items())) or Resp())
+    issued = []
+    def mint():
+        claims = base64.urlsafe_b64encode(json.dumps({"sub": "operator-bff", "service": "operator-bff"}).encode()).decode().rstrip("=")
+        issued.append(1)
+        return f"Bearer h.{claims}.s{len(issued)}"
+    client = parent.UrllibOwnerClient(
+        {"capital": "http://c", "registry": "http://r"}, "owner-token",
+        actor_id="human", roles=("operator",), capital_authorization=mint, tenant_id=TENANT,
+    )
+    client.request("capital", "GET", "/api/bindings/b")
+    client.request("capital", "PATCH", "/api/bindings/b/status", {"status": "revoked"})
+    client.request("registry", "GET", "/y")
+    assert len(issued) == 2 and seen[0]["Authorization"] != seen[1]["Authorization"]
+    assert seen[0]["X-pantheon-service"] == "operator-bff" and seen[1]["X-tenant-id"] == TENANT
+    assert seen[2]["Authorization"] == "Bearer owner-token"
+    assert client.identity_for("capital")[0] == "operator-bff" and "persona.admin" in client.identity_for("capital")[1]
+    assert client.identity_for("registry") == ("human", ("operator",))

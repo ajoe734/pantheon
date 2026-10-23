@@ -495,8 +495,13 @@ class UrllibOwnerClient:
         actor_id: str = "",
         roles: tuple[str, ...] = (),
         service_headers: Mapping[str, Mapping[str, str]] | None = None,
+        capital_authorization: Callable[[], str] | None = None,
+        tenant_id: str = "",
     ) -> None:
         self.urls = dict(urls)
+        # Capital tokens live ~120s: one genuine token is fetched per request, never held.
+        self.capital_authorization = capital_authorization
+        self.tenant_id = tenant_id
         self.token = token
         # Services whose existing owner auth is not the generic bearer (Training,
         # Research, Consultation) read under their own configured headers.
@@ -549,13 +554,48 @@ class UrllibOwnerClient:
                 **bearer("PANTHEON_L12_CONSULTATION_TOKEN"),
                 **tenant_headers(consult_tenant),
             }
+        capital_authorization = None
+        if os.getenv("PANTHEON_L12_COMPOSE_PROJECT", "").strip():
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from l12_owner_auth import fresh_capital_authorization
+
+            def compose_command(*args: str) -> list[str]:
+                command = ["docker", "compose", "-p", _required_env("PANTHEON_L12_COMPOSE_PROJECT")]
+                for path in os.getenv("PANTHEON_L12_COMPOSE_FILES", "").split(os.pathsep):
+                    if path.strip():
+                        command.extend(("-f", path.strip()))
+                return [*command, *args]
+
+            capital_authorization = lambda: fresh_capital_authorization(compose_command, tenant)  # noqa: E731
         return cls(
             urls,
             _required_env("PANTHEON_L12_HOSTED_OWNER_TOKEN"),
             os.getenv("PANTHEON_L12_HOSTED_OWNER_ACTOR_ID", "").strip(),
             roles,
             service_headers,
+            capital_authorization,
+            tenant,
         )
+
+    def _capital_request_auth(self) -> tuple[dict[str, str], str, tuple[str, ...]]:
+        """Fresh Capital headers plus the (actor, roles) that token really carries."""
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from l12_owner_auth import capital_identity
+
+        authorization = self.capital_authorization()  # type: ignore[misc]
+        actor, service = capital_identity(authorization)
+        headers = {"Authorization": authorization, "X-Pantheon-Service": service}
+        if self.tenant_id:
+            headers["X-Tenant-Id"] = self.tenant_id
+        # The same roles Hosted C names under this Capital principal.
+        return headers, actor, ("capital.admin", "persona.admin")
+
+    def identity_for(self, service: str) -> tuple[str, tuple[str, ...]]:
+        """Actor/roles an owner compares a mutation body against (Capital: its own principal)."""
+        if service == "capital" and self.capital_authorization is not None:
+            _headers, actor, roles = self._capital_request_auth()
+            return actor, roles
+        return self.actor_id, self.roles
 
     def request(
         self,
@@ -568,7 +608,9 @@ class UrllibOwnerClient:
         if service not in self.urls:
             raise StimulusProofError(f"no owner URL configured for {service}")
         headers = {"Accept": "application/json", "Authorization": f"Bearer {self.token}"}
-        if service in self.service_headers:
+        if service == "capital" and self.capital_authorization is not None:
+            headers = {"Accept": "application/json", **self._capital_request_auth()[0]}
+        elif service in self.service_headers:
             headers = {"Accept": "application/json", **self.service_headers[service]}
         data = None
         if body is not None:
@@ -1259,7 +1301,9 @@ class HostedChainRunner:
             if _record_state(record) in spec.retired_states:
                 retired.append({"kind": kind, "id": record_id, "already": True})
                 continue
-            body = spec.retire_body(record, self.chain_id, actor, roles)
+            identity = getattr(self.owner, "identity_for", None)
+            body_actor, body_roles = identity(spec.service) if callable(identity) else (actor, roles)
+            body = spec.retire_body(record, self.chain_id, body_actor, body_roles)
             if body is None:
                 incomplete.append(f"{kind} {record_id}: executing identity has no role for retirement")
                 continue
