@@ -34,11 +34,16 @@ from typing import Any, Callable, Mapping, Sequence
 
 import pytest
 from l12_owner_auth import (
+    HostedPause,
     approve_registry_entry,
     bearer,
     compose_file_args,
+    hosted_chain_enabled,
+    hosted_receipt_fields,
     human_token,
+    load_hosted_input,
     registry_advance_body,
+    require_decided_approval,
     token_subject,
 )
 
@@ -125,6 +130,13 @@ class DeployedResearchHarness:
         self.governance_url = os.getenv("PANTHEON_L12_GOVERNANCE_URL", "http://127.0.0.1:18082").rstrip("/")
         self.tenant_id = os.getenv("PANTHEON_L12_TENANT_ID", "default").strip()
         self.report_path = Path(os.getenv("PANTHEON_L12_REPORT_PATH", str(DEFAULT_REPORT_PATH)))
+        # Hosted chain mode: one phase per process, deterministic owner IDs derived
+        # from the stable chain id so a later process reads back instead of re-creating.
+        self.hosted = hosted_chain_enabled()
+        self.hosted_input = load_hosted_input(("A_research",)) if self.hosted else None
+        self.paused: dict[str, Any] | None = None
+        if self.hosted_input is not None:
+            self.run_token = self.hosted_input.chain_id
         self.git_sha = self._command(["git", "rev-parse", "HEAD"]).strip()
         self.case_results: list[dict[str, Any]] = []
         self.first_failure: dict[str, Any] | None = None
@@ -138,6 +150,44 @@ class DeployedResearchHarness:
         self.source_reader_token = os.getenv("PANTHEON_L12_SOURCE_READER_TOKEN", "").strip()
         self.source_reader_tenant = os.getenv("PANTHEON_L12_SOURCE_READER_TENANT_ID", self.tenant_id).strip()
         self._write_report("running")
+
+    def _rid(self, default: str, *parts: str) -> str:
+        """Owner ID: the isolated per-run ID, or the chain-deterministic hosted ID."""
+        return self.hosted_input.id(*parts) if self.hosted_input is not None else default
+
+    def _chain_labels(self) -> dict[str, Any]:
+        return self.hosted_input.labels() if self.hosted_input is not None else {}
+
+    def _governance_read(self, decision_id: str) -> Mapping[str, Any] | None:
+        view = self._http_json(
+            self.governance_url,
+            f"/api/governance/approvals/{urllib.parse.quote(decision_id, safe='')}",
+            headers=self._registry_headers(),
+            expected=(200, 404),
+        )
+        return view if isinstance(view, Mapping) and view.get("decision_id") == decision_id else None
+
+    def _hosted_resource_ids(self) -> dict[str, Any]:
+        chain = self.chain
+        source = chain.get("source") or {}
+        return {
+            "source_id": source.get("source_id"),
+            "source_digest": chain.get("source_digest"),
+            "distillation_job_id": (chain.get("distillation") or {}).get("distillation_job_id"),
+            "distillation_source_id": (chain.get("distillation") or {}).get("source_id"),
+            "distillation_source_digest": (chain.get("distillation") or {}).get("source_digest"),
+            "registry_id": chain.get("registry_id"),
+            "strategy_id": chain.get("strategy_id"),
+            "checksum": chain.get("checksum"),
+            "h1_decision_id": chain.get("h1_decision_id"),
+            "admission_id": (chain.get("admission") or {}).get("admission_id"),
+            "authority_run_id": (chain.get("authority_run") or {}).get("run_id"),
+            "experiment_run_id": (chain.get("experiment_run") or {}).get("run_id"),
+            "teaching_session_id": (chain.get("session") or {}).get("session_id"),
+            "persona_id": (chain.get("session") or {}).get("persona_id"),
+            "eval_identity": chain.get("eval_identity"),
+            "eval_id": chain.get("eval_id"),
+        }
 
     def _source_reader_headers(self) -> dict[str, str]:
         if not self.source_reader_token:
@@ -313,7 +363,7 @@ class DeployedResearchHarness:
             raise RuntimeError("boundary executed outside a loop case")
         try:
             result = action()
-        except BoundaryFailure:
+        except (BoundaryFailure, HostedPause):
             raise
         except Exception as exc:
             raise BoundaryFailure(boundary, exc) from exc
@@ -399,12 +449,35 @@ class DeployedResearchHarness:
         )
 
     def _report_payload(self, status: str) -> dict[str, Any]:
+        payload = self._base_report_payload(status)
+        if self.hosted_input is not None:
+            if self.paused is not None:
+                phase_status, blocked_before, detail = "paused", self.paused["blocked_before"], self.paused["detail"]
+            elif self.first_failure is not None:
+                phase_status, blocked_before = "failed", self.first_failure.get("boundary")
+                detail = self.first_failure.get("detail")
+            else:
+                phase_status = "completed" if status == "passed" else "running"
+                blocked_before, detail = None, None
+            if phase_status != "running":
+                payload.update(
+                    hosted_receipt_fields(
+                        self.hosted_input,
+                        phase_status=phase_status,
+                        blocked_before=blocked_before,
+                        resource_ids=self._hosted_resource_ids(),
+                        detail=detail,
+                    )
+                )
+        return payload
+
+    def _base_report_payload(self, status: str) -> dict[str, Any]:
         return {
             "schema_version": "pantheon.l12.research-loops.deployed-e2e.v1",
             "task_id": TASK_ID,
             "status": status,
             "started_at": self.started_at,
-            "completed_at": _utc_now() if status in {"passed", "failed"} else None,
+            "completed_at": _utc_now() if status in {"passed", "failed", "paused"} else None,
             "git_sha": self.git_sha,
             "compose_project": self.compose_project,
             "anti_fixture": {
@@ -426,9 +499,17 @@ class DeployedResearchHarness:
         os.replace(temporary, self.report_path)
 
     def run_case(self, target_index: int) -> None:
-        while len(self.case_results) < target_index and self.first_failure is None:
+        while (
+            len(self.case_results) < target_index
+            and self.first_failure is None
+            and self.paused is None
+        ):
             index = len(self.case_results) + 1
             self._execute_case(index)
+        if self.paused is not None:
+            pytest.skip(
+                f"hosted chain paused before {self.paused['blocked_before']}: {self.paused['detail']}"
+            )
         if self.first_failure is not None:
             message = (
                 f"first deployed boundary failed: {self.first_failure['loop_id']} / "
@@ -459,6 +540,15 @@ class DeployedResearchHarness:
         self._current_case = case
         try:
             getattr(self, f"_case_{loop_id}")(case)
+        except HostedPause as pause:
+            case["status"] = "paused"
+            case["completed_at"] = _utc_now()
+            case["blocked_before"] = pause.blocked_before
+            self.case_results.append(case)
+            self.paused = {"loop_id": loop_id, "blocked_before": pause.blocked_before, "detail": pause.detail}
+            self._current_case = None
+            self._write_report("paused")
+            return
         except BoundaryFailure as exc:
             case["status"] = "failed"
             case["completed_at"] = _utc_now()
@@ -481,106 +571,126 @@ class DeployedResearchHarness:
         self._write_report("passed" if index == len(CASE_NAMES) else "running")
 
     def _case_source_ingestion(self, case: dict[str, Any]) -> None:
-        source_id = f"src-l12-e2e-{self.run_token}"
-        connector_id = f"conn-l12-e2e-{self.run_token}"
-        trace_id = f"trace-l12-e2e-{self.run_token}"
+        source_id = self._rid(f"src-l12-e2e-{self.run_token}", "src")
+        connector_id = self._rid(f"conn-l12-e2e-{self.run_token}", "conn")
+        trace_id = self._rid(f"trace-l12-e2e-{self.run_token}", "trace")
         owner = self._at(
             "source.owner_compose_identity",
             lambda: self._service_identity(OWNER_SERVICES["source_ingestion"]),
         )
         case["owner"] = owner
 
-        def preflight() -> None:
-            self._http_json(
+        def preflight() -> Mapping[str, Any] | None:
+            # Hosted: a prior process of this chain may already have ingested the
+            # deterministic SourceRecord; read it back instead of ingesting twice.
+            view = self._http_json(
                 self.source_url,
                 f"/api/source-ingest/source-records/{urllib.parse.quote(source_id, safe='')}",
                 headers=self._source_reader_headers(),
-                expected=(404,),
+                expected=(200, 404) if self.hosted else (404,),
             )
+            if self.hosted and isinstance(view, Mapping) and (
+                self._source_record(view).get("source_id") == source_id
+            ):
+                return view
+            return None
 
-        self._at("source.anti_preseed_readback", preflight)
-        available_time = _utc_now()
-        connector_payload = {
-            "connector": {
-                "connector_id": connector_id,
-                "source_type": "internal_note",
-                "provider": "L12 deployed E2E controlled source",
-                "license_scope": "internal",
-                "metadata": {"e2e_task_id": TASK_ID, "e2e_run_token": self.run_token},
-            },
-            "fetch": {
-                "mode": "static_records",
-                "next_watermark": available_time,
-                "records": [
-                    {
-                        "source_id": source_id,
-                        "title": "Deployed E2E Taiwan equity mean-reversion hypothesis",
-                        "content_ref": f"urn:pantheon:l12-e2e:{self.run_token}",
-                        "trace_id": trace_id,
-                        "metadata": {
-                            "body": (
-                                "Controlled research evidence for the deployed owner chain. "
-                                f"run_token={self.run_token}"
-                            ),
-                            # Source evidence reads are tenant-scoped; the record's
-                            # tenant claim is what makes it readable at all.
-                            "tenant_id": self.tenant_id,
-                            "access_scope": ["research"],
-                            "license_scope": "internal",
-                            "available_time": available_time,
-                            "strategy_seed": {
-                                "hypothesis": "Mean reversion in liquid Taiwan equity pairs",
-                                "asset_class": ["equity"],
-                                "market_scope": ["Taiwan"],
-                                "holding_period": "1 day",
-                                "required_data": ["OHLCV"],
-                                "backend_hint": "qlib",
-                                "feature_hints": ["zscore_spread"],
-                                "label_hints": ["return_1d"],
-                                "risk_notes": ["research_only"],
-                            },
-                        },
-                    }
-                ],
-            },
-        }
-        headers = self._source_ingest_headers()
-        configured = self._at(
-            "source.connector_command",
-            lambda: self._http_json(
-                self.source_url,
-                "/api/source-ingest/connectors",
-                method="POST",
-                payload=connector_payload,
-                headers=headers,
-                expected=(201,),
-            ),
-        )
-        self._require(isinstance(configured, Mapping), "connector command did not return an object")
-        job_result = self._at(
-            "source.manual_pull_job",
-            lambda: self._http_json(
-                self.source_url,
-                "/api/source-ingest/jobs",
-                method="POST",
-                payload={
+        existing_source = self._at("source.anti_preseed_readback", preflight)
+        if existing_source is not None:
+            case["trigger"] = {
+                "type": "manual_pull_job",
+                "id": connector_id,
+                "trace_id": trace_id,
+                "reused_existing_source_record": True,
+            }
+        else:
+            available_time = _utc_now()
+            connector_payload = {
+                "connector": {
                     "connector_id": connector_id,
-                    "trigger_type": "manual",
-                    "trace_id": trace_id,
+                    "source_type": "internal_note",
+                    "provider": "L12 deployed E2E controlled source",
+                    "license_scope": "internal",
+                    "metadata": {
+                            "e2e_task_id": TASK_ID,
+                            "e2e_run_token": self.run_token,
+                            **self._chain_labels(),
+                        },
                 },
-                headers=headers,
-                expected=(201,),
-            ),
-        )
-        job_run = job_result.get("run") if isinstance(job_result, Mapping) else None
-        ingest_run_id = job_run.get("ingest_run_id") if isinstance(job_run, Mapping) else None
-        self._require(bool(ingest_run_id), "manual pull job did not return ingest_run_id")
-        case["trigger"] = {
-            "type": "manual_pull_job",
-            "id": connector_id,
-            "ingest_run_id": ingest_run_id,
-            "trace_id": trace_id,
-        }
+                "fetch": {
+                    "mode": "static_records",
+                    "next_watermark": available_time,
+                    "records": [
+                        {
+                            "source_id": source_id,
+                            "title": "Deployed E2E Taiwan equity mean-reversion hypothesis",
+                            "content_ref": f"urn:pantheon:l12-e2e:{self.run_token}",
+                            "trace_id": trace_id,
+                            "metadata": {
+                                "body": (
+                                    "Controlled research evidence for the deployed owner chain. "
+                                    f"run_token={self.run_token}"
+                                ),
+                                # Source evidence reads are tenant-scoped; the record's
+                                # tenant claim is what makes it readable at all.
+                                "tenant_id": self.tenant_id,
+                                **self._chain_labels(),
+                                "access_scope": ["research"],
+                                "license_scope": "internal",
+                                "available_time": available_time,
+                                "strategy_seed": {
+                                    "hypothesis": "Mean reversion in liquid Taiwan equity pairs",
+                                    "asset_class": ["equity"],
+                                    "market_scope": ["Taiwan"],
+                                    "holding_period": "1 day",
+                                    "required_data": ["OHLCV"],
+                                    "backend_hint": "qlib",
+                                    "feature_hints": ["zscore_spread"],
+                                    "label_hints": ["return_1d"],
+                                    "risk_notes": ["research_only"],
+                                },
+                            },
+                        }
+                    ],
+                },
+            }
+            headers = self._source_ingest_headers()
+            configured = self._at(
+                "source.connector_command",
+                lambda: self._http_json(
+                    self.source_url,
+                    "/api/source-ingest/connectors",
+                    method="POST",
+                    payload=connector_payload,
+                    headers=headers,
+                    expected=(201,),
+                ),
+            )
+            self._require(isinstance(configured, Mapping), "connector command did not return an object")
+            job_result = self._at(
+                "source.manual_pull_job",
+                lambda: self._http_json(
+                    self.source_url,
+                    "/api/source-ingest/jobs",
+                    method="POST",
+                    payload={
+                        "connector_id": connector_id,
+                        "trigger_type": "manual",
+                        "trace_id": trace_id,
+                    },
+                    headers=headers,
+                    expected=(201,),
+                ),
+            )
+            job_run = job_result.get("run") if isinstance(job_result, Mapping) else None
+            ingest_run_id = job_run.get("ingest_run_id") if isinstance(job_run, Mapping) else None
+            self._require(bool(ingest_run_id), "manual pull job did not return ingest_run_id")
+            case["trigger"] = {
+                "type": "manual_pull_job",
+                "id": connector_id,
+                "ingest_run_id": ingest_run_id,
+                "trace_id": trace_id,
+            }
 
         source = self._source_record(
             self._at(
@@ -700,8 +810,37 @@ class DeployedResearchHarness:
         entry = self._entry(registry_view)
         self._require(entry.get("registry_id") == registry_id, "Registry readback identity drifted")
         self._require(entry.get("strategy_id") == strategy_id, "Registry strategy identity drifted")
-        self._require(entry.get("artifact_state") == "draft", "distilled StrategySpec is not a draft")
+        # Hosted: a later process of this chain finds the same entry already advanced by H1.
+        allowed_states = ("draft", "candidate", "approved") if self.hosted else ("draft",)
+        self._require(
+            entry.get("artifact_state") in allowed_states, "distilled StrategySpec is not a draft"
+        )
         self._require(bool(entry.get("checksum")), "distilled StrategySpec lacks checksum")
+        self.chain["checksum"] = entry.get("checksum")
+        # The Registry keeps no direct chain label: ownership is provable only through the stored
+        # distillation lineage, so expose the actual source/digest/job the owner recorded.
+        recorded = (entry.get("metadata") or {}).get("distillation") or {}
+        self.chain["distillation"] = {
+            "source_id": recorded.get("source_id"),
+            "source_digest": recorded.get("source_digest"),
+            "distillation_job_id": recorded.get("distillation_job_id"),
+        }
+        if self.hosted_input is not None:
+            expected_registry = self.hosted_input.predecessor("registry_id")
+            expected_checksum = self.hosted_input.predecessor("checksum")
+
+            def same_predecessor() -> None:
+                # A2 must consume the very draft A1 paused on, not a re-distilled one.
+                self._require(
+                    not expected_registry or expected_registry == registry_id,
+                    f"chain predecessor registry_id {expected_registry!r} drifted to {registry_id!r}",
+                )
+                self._require(
+                    not expected_checksum or expected_checksum == entry.get("checksum"),
+                    "chain predecessor checksum drifted from the Registry readback",
+                )
+
+            self._at("distill.predecessor_identity", same_predecessor)
         case["terminal_output"] = {
             "type": "StrategySpec",
             "id": registry_id,
@@ -717,6 +856,8 @@ class DeployedResearchHarness:
 
         def approve() -> Mapping[str, Any]:
             observed = entry
+            if self.hosted_input is not None:
+                return approve_hosted(observed)
             for target in ("candidate", "approved"):
                 decision_id = None
                 if target == "approved":
@@ -741,6 +882,44 @@ class DeployedResearchHarness:
                 observed = self._entry(view)
             return observed
 
+        def approve_hosted(observed: Mapping[str, Any]) -> Mapping[str, Any]:
+            """H1: read the human decision back; advance only the exact entry it covers."""
+            assert self.hosted_input is not None
+            proof = require_decided_approval(
+                self._governance_read,
+                self.hosted_input.decision("H1"),
+                point="H1",
+                blocked_before="alpha_admission",
+                tenant_id=self.tenant_id,
+                target_ids=(registry_id,),
+                candidate_digest=str(entry.get("checksum")),
+                resource_ids=self._hosted_resource_ids(),
+            )
+            self.chain["h1_decision_id"] = proof["decision_id"]
+            order = ("draft", "candidate", "approved")
+            for target in ("candidate", "approved"):
+                if order.index(str(observed.get("artifact_state"))) >= order.index(target):
+                    continue
+                payload = registry_advance_body(
+                    observed,
+                    target,
+                    command_key=f"{self.hosted_input.id('registry', target)}",
+                    approval_decision_id=proof["decision_id"] if target == "approved" else None,
+                )
+                view = self._http_json(
+                    self.registry_url,
+                    f"/api/registry/strategy-specs/{urllib.parse.quote(registry_id, safe='')}/advance",
+                    method="POST",
+                    payload=payload,
+                    headers=self._registry_headers(),
+                )
+                observed = self._entry(view)
+            self._require(
+                observed.get("approval_decision_id") == proof["decision_id"],
+                "approved StrategySpec is not bound to the H1 decision",
+            )
+            return observed
+
         approved = self._at("distill.reviewed_admission_prerequisite", approve)
         self._require(approved.get("artifact_state") == "approved", "StrategySpec approval did not persist")
         alpha_owner = self._at(
@@ -757,16 +936,30 @@ class DeployedResearchHarness:
             "approver": approved.get("approver"),
             "mode": "initial",
         }
-        admission = self._at(
-            "distill.next_consumer_command",
-            lambda: self._http_json(
+        def read_admission() -> Any:
+            return self._http_json(
+                self.research_url,
+                "/api/research-orchestrator/alpha-replication/admissions/"
+                + urllib.parse.quote(self.tenant_id, safe="")
+                + "/"
+                + urllib.parse.quote(registry_id, safe=""),
+                expected=(200, 404) if self.hosted else (200,),
+            )
+
+        def admit() -> Any:
+            if self.hosted:
+                prior = read_admission()
+                if isinstance(prior, Mapping) and prior.get("strategy_spec_id") == registry_id:
+                    return prior
+            return self._http_json(
                 self.research_url,
                 "/api/research-orchestrator/alpha-replication/admissions",
                 method="POST",
                 payload=admission_payload,
                 expected=(201,),
-            ),
-        )
+            )
+
+        admission = self._at("distill.next_consumer_command", admit)
         admission_readback = self._at(
             "distill.next_consumer_receipt",
             lambda: self._http_json(
@@ -856,16 +1049,27 @@ class DeployedResearchHarness:
             "alpha.next_consumer_owner_identity",
             lambda: self._service_identity(OWNER_SERVICES["persona_teaching"]),
         )
-        persona_id = f"persona-l12-e2e-{self.run_token}"
+        persona_id = self._rid(f"persona-l12-e2e-{self.run_token}", "persona")
         self._ensure_persona(
             persona_id,
             name=f"L12 Research Persona {self.run_token}",
             mandate="Evaluate controls against the admitted Alpha replication result",
         )
         headers = self._training_headers()
-        session = self._at(
-            "alpha.next_consumer_command",
-            lambda: self._http_json(
+        teaching_trace_id = self._rid(f"trace-teaching-{self.run_token}", "trace", "teaching")
+
+        def open_teaching_session() -> Any:
+            if self.hosted:
+                # The Teaching owner assigns session_id, so reuse is by the chain's
+                # deterministic trace_id; a second process must not open a second session.
+                for prior in self._http_json(
+                    self.training_url,
+                    f"/api/training/sessions?persona_id={urllib.parse.quote(persona_id, safe='')}",
+                    headers=headers,
+                ):
+                    if isinstance(prior, Mapping) and prior.get("trace_id") == teaching_trace_id:
+                        return prior
+            return self._http_json(
                 self.training_url,
                 "/api/training/sessions",
                 method="POST",
@@ -873,7 +1077,7 @@ class DeployedResearchHarness:
                     "persona_id": persona_id,
                     "objective": "Evaluate controls against the admitted Alpha replication result",
                     "mode": "evaluation",
-                    "trace_id": f"trace-teaching-{self.run_token}",
+                    "trace_id": teaching_trace_id,
                     "context_refs": [
                         {
                             "type": "experiment_run",
@@ -885,8 +1089,9 @@ class DeployedResearchHarness:
                 },
                 headers=headers,
                 expected=(201,),
-            ),
-        )
+            )
+
+        session = self._at("alpha.next_consumer_command", open_teaching_session)
         session_id = str(session.get("session_id") or "")
         session_readback = self._at(
             "alpha.next_consumer_receipt",
@@ -916,7 +1121,10 @@ class DeployedResearchHarness:
 
     def _case_persona_teaching(self, case: dict[str, Any]) -> None:
         session_id = str(self.chain["session"]["session_id"])
-        persona_id = str(self.chain["session"].get("persona_id") or f"persona-l12-e2e-{self.run_token}")
+        persona_id = str(
+            self.chain["session"].get("persona_id")
+            or self._rid(f"persona-l12-e2e-{self.run_token}", "persona")
+        )
         self._ensure_persona(
             persona_id,
             name=f"L12 Research Persona {self.run_token}",
@@ -1124,6 +1332,8 @@ class DeployedResearchHarness:
             (verifier_readback.get("evaluation_result") or {}).get("eval_id") == evaluation.get("eval_id"),
             "operator/Learning verifier did not read the exact Teaching evaluation result",
         )
+        self.chain["eval_identity"] = eval_identity
+        self.chain["eval_id"] = evaluation.get("eval_id")
         case["next_consumer"] = {
             "consumer": "operator-learning-verifier",
             "receipt_type": "TeachingTerminalReadback",
