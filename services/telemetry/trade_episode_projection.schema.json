@@ -168,8 +168,9 @@
       "type": ["number", "null"]
     },
     "fees": {
-      "type": "number",
-      "minimum": 0
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Known cumulative fees. null means fee evidence is unavailable (see coverage.missing_refs 'fees'); 0 is only an explicit known zero."
     },
     "slippage": {
       "type": ["number", "null"]

@@ -57,6 +57,44 @@ def _extract_int_field(ev: dict[str, Any], *keys: str) -> int | None:
                     except (TypeError, ValueError): pass
     return None
 
+def _extract_fee_evidence(ev: dict[str, Any]) -> float | None:
+    """Known per-fill fee, or None when absent/non-finite/negative (fail closed)."""
+    for src in (ev.get("metrics"), ev.get("metadata"), ev.get("payload")):
+        if isinstance(src, dict):
+            for k in ("fees", "commission"):
+                v = _valid_fee(src.get(k))
+                if v is not None:
+                    return v
+    return None
+
+
+def _valid_fee(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None  # a Boolean is not fee evidence; float(True) must not become 1.0
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) and v >= 0 else None
+
+
+def _mark_fees_missing(proj: dict[str, Any]) -> None:
+    proj["fees"] = None
+    cov = proj["coverage"]
+    if "fees" not in cov["missing_refs"]:
+        cov["missing_refs"].append("fees")
+    if cov["state"] == "complete":
+        cov["state"] = "partial"
+
+
+def _mark_fees_known(proj: dict[str, Any]) -> None:
+    cov = proj["coverage"]
+    if "fees" in cov["missing_refs"]:
+        cov["missing_refs"] = [r for r in cov["missing_refs"] if r != "fees"]
+        if cov["state"] == "partial" and not cov["missing_refs"]:
+            cov["state"] = "complete"
+
+
 _extract_position_quantity = lambda ev: _extract_metric_qty(ev, "position_qty", "position_quantity", "quantity")
 _extract_fill_quantity = lambda ev: _extract_metric_qty(ev, "fill_quantity", "quantity")
 _extract_event_sequence = lambda ev: _extract_int_field(ev, "sequence_no", "sequence_number")
@@ -388,7 +426,7 @@ class TradeEpisodeProjectionStore:
             "filled_quantity": 0.0,
             "remaining_quantity": 0.0,
             "vwap": None,
-            "fees": 0.0,
+            "fees": None,
             "slippage": None,
             "rejects": [],
             "realized_pnl": realized_pnl,
@@ -515,7 +553,7 @@ class TradeEpisodeProjectionStore:
                     "filled_quantity": float(payload.get("filled_quantity") or 0.0),
                     "remaining_quantity": float(payload.get("remaining_quantity") or 0.0),
                     "vwap": float(payload["vwap"]) if payload.get("vwap") is not None else None,
-                    "fees": float(payload.get("fees") or 0.0),
+                    "fees": _valid_fee(payload["fees"]) if payload.get("fees") is not None else None,
                     "slippage": float(payload["slippage"]) if payload.get("slippage") is not None else None,
                     "rejects": payload.get("rejects") or [],
                     "realized_pnl": float(payload["realized_pnl"]) if payload.get("realized_pnl") is not None else None,
@@ -545,6 +583,8 @@ class TradeEpisodeProjectionStore:
                     "memory_governance_refs": [],
                     "last_event_sequence": ev.get("sequence_number"),
                 }
+                if proj["fees"] is None:
+                    _mark_fees_missing(proj)
             elif event_type == "trade_episode.updated":
                 if not proj:
                     proj = self._init_minimal_projection(ev)
@@ -559,7 +599,7 @@ class TradeEpisodeProjectionStore:
 
                 for num_field in [
                     "requested_quantity", "filled_quantity", "remaining_quantity",
-                    "vwap", "fees", "slippage", "realized_pnl", "unrealized_pnl",
+                    "vwap", "slippage", "realized_pnl", "unrealized_pnl",
                     "return_percent", "mae", "mfe", "holding_duration_seconds",
                     "benchmark_delta", "expected_loss", "confidence",
                 ]:
@@ -571,6 +611,15 @@ class TradeEpisodeProjectionStore:
                         for item in payload[list_field]:
                             if item not in proj[list_field]:
                                 proj[list_field].append(item)
+
+                if "fees" in payload:
+                    upd_fee = _valid_fee(payload["fees"]) if payload["fees"] is not None else None
+                    if upd_fee is not None:
+                        proj["fees"] = upd_fee
+                        _mark_fees_known(proj)
+                    else:
+                        # Authoritative null/invalid update clears the fee; never keep a stale total.
+                        _mark_fees_missing(proj)
 
                 if "rejects" in payload and isinstance(payload["rejects"], list):
                     proj["rejects"].extend(payload["rejects"])
@@ -668,6 +717,7 @@ class TradeEpisodeProjectionStore:
                 if not proj:
                     proj = self._init_minimal_projection(ev)
 
+                prior_fill_count = len(proj["fill_ids"])
                 fill_id = (ev.get("metadata") or {}).get("fill_id") or ev.get("fill_id") or ev.get("event_id")
                 if fill_id and fill_id not in proj["fill_ids"]:
                     proj["fill_ids"].append(fill_id)
@@ -679,6 +729,10 @@ class TradeEpisodeProjectionStore:
                     proj["remaining_quantity"] = 0.0
                     proj["closed_at"] = ev.get("occurred_at") or ev.get("created_at")
                     proj["coverage"]["as_of"] = ev.get("occurred_at") or ev.get("created_at")
+                    # The closing fill's fee is not allocated to the closed leg; if it is
+                    # unavailable the leg's cumulative fee total can no longer be complete.
+                    if _extract_fee_evidence(ev) is None:
+                        _mark_fees_missing(proj)
                     continue
 
                 if proj.get("side") is None or proj["filled_quantity"] == 0.0:
@@ -735,9 +789,13 @@ class TradeEpisodeProjectionStore:
                         elif proj["status"] in ("open", "partially_filled"):
                             proj["status"] = "reducing"
 
-                fees = _extract_metric_qty(ev, "fees", "commission")
-                if fees and fees > 0:
-                    proj["fees"] += fees
+                fees = _extract_fee_evidence(ev)
+                if fees is None:
+                    _mark_fees_missing(proj)
+                elif proj["fees"] is not None or prior_fill_count == 0:
+                    # A None total after earlier fills means a prior fill lacked fee evidence.
+                    proj["fees"] = (proj["fees"] or 0.0) + fees
+                    _mark_fees_known(proj)
 
                 proj["coverage"]["as_of"] = ev.get("occurred_at") or ev.get("created_at")
 
@@ -817,6 +875,28 @@ class TradeEpisodeProjectionStore:
                     self._projections = dict(data)
             except Exception as e:
                 log.warning("Failed to load trade episode projections: %s", e)
+
+        # Cached projections written before fee evidence was tracked may carry a
+        # fabricated 0.0; re-derive from retained raw events (in memory only).
+        for episode_id in list(self._projections):
+            if self._events.get(episode_id):
+                rebuilt = self._rebuild_projection(episode_id)
+                if rebuilt:
+                    self._projections[episode_id] = rebuilt
+                continue
+            # Projection-only cache: a legacy numeric 0 with no retained source
+            # events is not proven explicit zero; expose unknown (in memory only).
+            cached = self._projections[episode_id]
+            fees = cached.get("fees") if isinstance(cached, dict) else None
+            if (
+                isinstance(fees, (int, float))
+                and not isinstance(fees, bool)
+                and fees == 0
+                and isinstance(cached.get("coverage"), dict)
+            ):
+                cov = cached["coverage"]
+                cov.setdefault("missing_refs", [])
+                _mark_fees_missing(cached)
 
     def _persist(self) -> None:
         # Persist events
