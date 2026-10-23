@@ -1,0 +1,53 @@
+{
+  "task_id": "HOSTED-ALL12-OWNER-AUDIT-20261023",
+  "kind": "read_only_source_audit",
+  "base_sha": "854f33282",
+  "design": "docs/deployment/hosted-all12-causal-chain-design.md#appendix-a",
+  "operator_design_approval": {
+    "recorded_at": "2026-10-23T13:48:32Z",
+    "answer": "批准設計，交 supervisor 按依賴執行",
+    "design_pr": 6736,
+    "merge": "43473d1512dbb094074ec575ac1128be9b02e634",
+    "source_file": "/tmp/pantheon-codex-01a11-review-20261023/hosted-all12-design-actual-user-approval-20261023.json",
+    "h1_h4_decisions_approved": false
+  },
+  "production_delta": 0,
+  "owner_mutation": false,
+  "provider_refresh": false,
+  "secret_access": false,
+  "retirement": {
+    "registry": "POST /api/registry/strategy-specs/{id}/advance -> retired",
+    "governance": "POST /api/governance/approvals/{id}/revoke",
+    "capital_pool": "PATCH /api/capital-pools/{id}/status -> archived",
+    "binding": "PATCH /api/bindings/{id}/status -> revoked",
+    "plan": "POST /api/deployment/plans/{id}/status -> aborted; POST /api/deployment/sagas/{id}/retire",
+    "runtime_binding": "POST /api/runtime-bindings/{id}/retire (mfa_required=True)",
+    "incident": "POST /api/incidents/{id}/status",
+    "evolution": "POST /api/evolution/proposals/{id}/cancel",
+    "consult": "POST /api/consult/requests/{id}/cancel",
+    "connector": "PUT /api/source-ingest/connectors/{id}/lifecycle"
+  },
+  "residuals": [
+    "no retire/delete for source records, alpha admissions, agora evidence, completed teaching sessions, drift reports, executed evolution decisions",
+    "runtime binding retire requires MFA-satisfying identity",
+    "no owner validates a consult handoff_id in deployment plans (7->8)",
+    "plan registry_id uses mutated parent artifact, not chain distilled spec (2->8); strategy_artifact metadata presence unverified"
+  ],
+  "edges": {
+    "4->5": "owner supports session_id/source_refs; caller-input gap only",
+    "7->8": "owner seam missing as enforced edge; metadata reference possible",
+    "2->8": "needs fresh GET",
+    "others": "supported within suites"
+  },
+  "real_payload_evidence": [
+    "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/deployed-run.json",
+    "docs/deployment/evidence/CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001/evidence.json"
+  ],
+  "fresh_gets_for_root01a11": [
+    "registry strategy-spec metadata keys",
+    "deployment plan metadata round-trip",
+    "runtime binding metadata.tenant_id",
+    "identity satisfying runtime retire mfa (status only)"
+  ],
+  "validation": "focused document consistency check only; no tests"
+}

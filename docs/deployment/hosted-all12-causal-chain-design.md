@@ -1,7 +1,7 @@
 # Hosted All-12-Loop Causal Chain: Design
 
 Task: `HOSTED-ALL12-CHAIN-DESIGN-20261023` (design only; owner Claude, reviewer Antigravity2)
-Status: **proposed — requires operator approval before any implementation task is opened**
+Status: **design approved by the operator on 2026-10-23 (PR6736, merge `43473d151`); T1 audit appendix added by `HOSTED-ALL12-OWNER-AUDIT-20261023`. The H1–H4 business decisions are not approved by design consent.**
 Parent obligation: `DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002` original parent acceptance item 3
 (Hosted Harness, Twelve-Loop Causal Chain & Journey Verification; "Fresh Causal All-12"), recorded as
 open in `docs/deployment/latest-dev-six-area-closure.md` (Area 3, Remaining Obligation 1). The parent's
@@ -275,3 +275,101 @@ No task is started by this document.
 | T7 Hosted run and closeout | Execute phases A–E with the operator and humans; seal evidence; update the closure doc | `docs/deployment/evidence/HOSTED-ALL12-CHAIN-<DATE>/`, `docs/deployment/latest-dev-six-area-closure.md` | Every real causal edge linked by IDs and loop 12 shown via its own trigger path, or an honest not-observed record; cleanup verified |
 
 Order: T1 → T2 ∥ T3 → T4 → T5 → T6 → T7. Each task is its own PR with an independent reviewer.
+
+## Appendix A. T1 owner API and causal-seam audit (`HOSTED-ALL12-OWNER-AUDIT-20261023`)
+
+Read-only source audit on `dev` at `854f33282`. No code, workflow, VM, provider refresh, owner write or
+secret access. Machine-readable copy: `docs/deployment/evidence/HOSTED-ALL12-OWNER-AUDIT-20261023/evidence.json`.
+
+### A.0 Operator design approval (actual)
+
+The operator's real answer (conversation `01a11b73-51ee-7b52-bac2-bf1561292e00`, recorded
+2026-10-23T13:48:32Z in `/tmp/pantheon-codex-01a11-review-20261023/hosted-all12-design-actual-user-approval-20261023.json`):
+"批准設計，交 supervisor 按依賴執行" for PR6736 (reviewed head `d39f3cfc1`, merge `43473d151`).
+Scope: implement through the existing supervisor in dependency order; new flag/driver only if T1 proves
+existing callers insufficient. It does **not** approve any concrete H1–H4 decision. Parent
+`DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002` is unchanged (6 AC, 21 deps, 3 files, 49 criteria).
+
+### A.1 Owner write and retirement endpoint inventory (section 4)
+
+"Tenant" = tenant taken from the authenticated identity or request; "idem" = idempotency key support.
+Line numbers are `path:line` of the route decorator.
+
+| Owner write | Create endpoint | Tenant / label / idem | Retirement operation | Residual |
+|---|---|---|---|---|
+| Source connector / record (loops 1) | `POST /api/source-ingest/connectors` `services/source_ingestion/routers/ingest_operations.py:168`; `POST …/source-records` `:281`; `POST …/jobs` `:258` | tenant via `connector.metadata.tenant_id` (`:73`, `:104`); labels via metadata | `PUT /api/source-ingest/connectors/{id}/lifecycle` `:235` (connector only) | records have no delete/retire: labelled history; no idem header |
+| Distilled StrategySpec (loop 2) | `POST /api/registry/strategy-specs` `services/registry/service.py:1422` | `owner_tenant` checked (deployment `service.py:407`); metadata | `POST /api/registry/strategy-specs/{id}/advance` `:1540` → `retired` (`services/registry/models.py:68-71`, APPROVED→RETIRED allowed) | none |
+| H1 Registry approval | `POST /api/governance/approvals` `services/governance/main.py:1468`, `/review` `:1564`, `/decide` `:1576` | tenant from identity; `Idempotency-Key` required (`:1370`) | `POST /api/governance/approvals/{id}/revoke` `:1588` | none |
+| Alpha admission / run (loop 3) | `POST /api/research-orchestrator/alpha-replication/admissions` `services/research/main.py:941` | tenant in path of read `:956` | `POST /api/research-orchestrator/runs/{id}/cancel` `:1652` (runs only) | admission has no retire: labelled history |
+| Teaching session (loop 4) | `POST /api/training/sessions` `services/training-session/main.py:760` | tenant via `_tenant_id_for` (`:107`); idem header on commit/discard | `POST /api/training/replays/{id}/discard` `:2903` | completed sessions are history |
+| Agora interaction evidence (loop 5) | `POST /bff/agora/interaction-evidence` `services/control-plane/bff/agora/dataset_extraction/router.py:226` | `X-Tenant-Id`; `Idempotency-Key` required; `source_refs`, `session_id` free fields (`models.py:78-80`) | none; consent window `retention_days` | labelled history |
+| Imitation candidate (loop 6) | `POST /api/policy-learning/agora-handoff` `services/policy-learning/main.py:984` (drainer also exists) | tenant bound (`bind_tenant`) | `POST /api/policy-learning/jobs/{id}/reject` `:551` (jobs only) | candidate ends at its own terminal state |
+| Consultation (loop 7) | `POST /api/consult/requests` `services/consultation/main.py:277`, `/submit` `:345`, memos `:632`, handoffs `:856` | `tenant_id`, idempotency on every create (`:162-170`, `:640`, `:883`); `metadata` free | `POST …/requests/{id}/cancel` `:376` (409 when `linked_session_id`) | closed memo/handoff are history |
+| H2 Agora synthesis consent | recorded by data owner (not API-created) | — | finite window | none |
+| Capital pool (paper) | `POST /api/capital-pools` `services/capital/main.py:1081` | `tenant_id`, `idempotency_key` in body (`models.py:59-60`) | `PATCH /api/capital-pools/{id}/status` `:1109` → `archived` (`PoolStatus`, `governance/capital_pool.py:53`) | status PATCH has no idem key |
+| Persona capital binding (paper) | `POST /api/bindings` `:1153`, `/activate` `:1188` | `tenant_id`, `idempotency_key` (`models.py:86-87`); metadata | `PATCH /api/bindings/{id}/status` `:1198` → `revoked` | revoke before archiving pool |
+| Deployment plan | `POST /api/deployment/plans` `services/deployment/service.py:2211` | tenant forced from identity (`:420-427`); `metadata` free; no idem header (plan_id caller-chosen) | `POST …/plans/{id}/status` `:2323` → `aborted`; `POST …/sagas/{id}/retire` `:2474` | plan record stays labelled |
+| Runtime binding | created by deployment saga | tenant stamped from plan (`runtime-manager/main.py:234`) | `POST /api/runtime-bindings/{id}/retire` `:747` | **route requires `mfa_required=True`**: executor must hold a real MFA-satisfying identity; none is fabricated (section 0). If unavailable, residual |
+| Telemetry / drift / incident (loop 10) | `POST /api/reconciliation-drift/telemetry-events/consume` `services/reconciliation-drift/main.py:1001`; `POST /api/incidents/consume-drift-report` `services/incidents/main.py:433` | tenant in identity | `POST /api/incidents/{id}/status` `:932` | drift reports are history |
+| Evolution decision (loop 11) | `POST /api/evolution/proposals` `services/evolution/main.py:1320`; `/threshold-evaluate` `:2696`; `/daily-sweep` `:1548` | tenant; roles checked | `POST …/proposals/{id}/cancel` `:1968` (proposed/reviewed/approved) | executed decisions are history |
+
+Missing retirement or delete operations (source records, admissions, evidence, completed training
+sessions, drift reports, executed evolution decisions) are residuals: labelled and reported, no new API
+and no direct database write is authorised.
+
+### A.2 Causal-edge verification (section 5A)
+
+Edge status, using source contracts and existing real owner receipts (e.g.
+`docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/deployed-run.json`
+carries `dataset_version_id`, `handoff_id`, `governance_handoff_id`;
+`docs/deployment/evidence/CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001/evidence.json` carries `binding_id`).
+
+| Edge | Owner contract already supports it? | What is missing | Verdict |
+|---|---|---|---|
+| 1→2, 2→3, 3→4 | yes, inside research suite | — | supported |
+| 4→5 Teaching→Agora | **owner supports it**: `AgoraInteractionEvidenceRequest` has `session_id` and `source_refs: list[str]` (`dataset_extraction/models.py:78-80`) and persists both | the human suite passes its own token `session:session-l12-hl-<run>` (`test_current_human_learning_deployed_e2e.py:599`) instead of the Teaching `session_id` | **caller-input gap only; no owner API gap** |
+| 5→6, 6→7 | yes: consult request carries `candidate:`, `dataset:`, `evidence:` context refs, `research_run:` evidence ref and `metadata.agora_handoff_id` (same file `:845-857`) | only that the whole human suite is not fed from loop 4/earlier chain | supported within suite |
+| 7→8 Consultation→deployment | `CreateDeploymentPlanRequest` (`services/deployment/models.py:104-125`, `extra=forbid`) has no handoff field; `metadata` is a free dict preserved on the plan, and governance has `consultation-handoffs` (`governance/main.py:327`), but no deployment code reads either | no consumer verifies the `handoff_id`; plan binds only `registry_id` + `approval_decision_id` | **proven owner seam missing as a validated edge; a plan `metadata.consult_handoff_id` caller reference is possible without an owner change but is a recorded reference, not owner enforcement** |
+| 2→8 (registry artifact) | runtime suite mutates the pre-existing parent artifact (`test_current_runtime_loops_deployed_e2e.py:732`, `artifact-tw-session-momentum-v1`), then plans on the child | plan does not use the chain's own distilled `registry_id`; whether a distilled strategy-spec entry carries `strategy_artifact` metadata (required for paper plans, `deployment/service.py:477`) is unverified | **needs fresh owner GET (A.4)** |
+| 8→9, 9→10, 10→11 | yes inside runtime suite | — | supported |
+| 11→12 | not an edge (loop policy §3.12) | — | unchanged |
+
+A shared `chain_id` alone is still not causality; each edge must show predecessor ID and consumer
+record carrying it, otherwise it is reported unproven.
+
+### A.3 Reusable callers and bounded scopes for confirmed gaps only
+
+Existing entrypoints already do loops 1–4, 5–7 and 8–12 against a deployed stack; no new driver or mode
+is justified until the two caller gaps below are fixed in them. Scopes (indicative, to be re-sized by
+the implementing task):
+
+* **T2 (suites):** only (1) pass the Teaching `session_id` into the Agora evidence `session_id`/`source_refs`
+  in the human suite; (2) add the hosted skip list of section 5 and reject minted tokens;
+  (3) feed the chain's `registry_id`/`handoff_id` into the plan request if A.4 shows it is accepted.
+  Files: `tests/integration/l12/test_current_human_learning_deployed_e2e.py`,
+  `test_current_runtime_loops_deployed_e2e.py`, `test_current_research_loops_deployed_e2e.py`,
+  `l12_owner_auth.py`, matching unit tests.
+* **T3 (driver):** needed only for cross-process sequencing, human-decision wait/readback and
+  `E_close` retirement (no existing caller does these); keep to `scripts/run_hosted_all12_chain.py`.
+* **T4:** workflow job unchanged from section 10. **T5:** read-only Persona Pattern observation.
+* No new owner API is authorised by this audit; owner-side gaps (7→8 enforcement, missing retire
+  operations, runtime retire MFA) are residuals needing a separate operator decision.
+
+### A.4 Fresh owner GETs for the serial release coordinator (sole Root01a11)
+
+Read-only, only after the exact854 release, none run here; return responses as evidence:
+
+1. `GET /api/registry/strategy-specs?` for any one existing distilled entry: show `metadata` keys and
+   whether `strategy_artifact` is present.
+2. `GET /api/deployment/plans?` (one plan) to confirm `metadata` round-trips an arbitrary key.
+3. `GET /api/runtime-bindings/{id}` (one existing binding): show `metadata.tenant_id`.
+4. Identity check for the runtime retire route: confirm which executing identity satisfies `mfa_required`
+   (status only; no secret or token printed).
+
+No hosted L12 suite, owner mutation, provider refresh, service restart or secret access is requested.
+
+### A.5 Preserved constraints
+
+H1 before Alpha admission; H2–H4 with decision-maker versus executing actor recorded separately; no
+paper Capital approval; no second-human requirement; no L11→L12 edge; original Pattern six conditions
+and independent process-restart proof unchanged.
