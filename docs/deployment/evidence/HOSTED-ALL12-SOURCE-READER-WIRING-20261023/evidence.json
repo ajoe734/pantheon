@@ -1,0 +1,23 @@
+{
+  "task_id": "HOSTED-ALL12-SOURCE-READER-WIRING-20261023",
+  "kind": "source_delivery_not_hosted_acceptance",
+  "follows_up": "HOSTED-ALL12-WORKFLOW-INTEGRATION-20261023",
+  "proof": {
+    "path": "/tmp/pantheon-release399295-readonly-20261023/Hosted-A-exact9aeb-Source-reader-real-executor-binding-static-proof-20261023.json",
+    "sha256": "5d6e503929104e3877af3fb042b848f8dd61a2271b24e9657d207b3b2c300b4b"
+  },
+  "changed_files": [
+    ".github/workflows/nonprod-deploy.yml",
+    "scripts/test_isolated_l12_provider_workflow.py",
+    "docs/deployment/evidence/HOSTED-ALL12-SOURCE-READER-WIRING-20261023/evidence.json"
+  ],
+  "behavior": {
+    "change": "Staged run_phase.py execute() now sets PANTHEON_L12_SOURCE_READER_TOKEN to the freshly authenticated dev-login executor token and PANTHEON_L12_SOURCE_READER_TENANT_ID to the bundle tenant, next to the existing HOSTED_EXECUTOR/OWNER/BFF bindings.",
+    "no_minting": "Token and tenant come only from the existing bundle; nothing is issued or fabricated.",
+    "visible_failure": "A missing executor_token raises KeyError at bundle read; an inadmissible token still yields Source 401/403 on the first GET (auth not weakened).",
+    "redaction": "The same token is already in the runner secrets list, so log/meta redaction covers it; it is not in inputs, argv or uploads.",
+    "unchanged": "Ordinary dev release, isolated FULL, Source writer auth, product runtime/images/FE."
+  },
+  "validation": "scripts/test_isolated_l12_provider_workflow.py: 20 passed (assertions added for reader token/tenant in the assembled child env and log redaction)",
+  "not_proven": "JWT audience acceptance by Source is not runtime-proven; no hosted A run, release, VM/SSH, or business action performed. Workflow availability does not prove hosted A or all12 completion."
+}
