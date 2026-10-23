@@ -2109,3 +2109,12 @@ def test_portfolio_holdings_terminal_runtime_with_reported_position_is_kept(monk
         {"rt-retired": summary},
     )
     assert [i["symbol"] for i in body["data"]["items"]] == ["2330.TW"]
+
+
+def test_portfolio_holdings_canonical_active_status_wins_over_lower_priority_terminal_fields(monkeypatch) -> None:
+    runtime = _term_runtime("rt-conflict", "active")
+    runtime["state"] = "retired"
+    runtime["lifecycle_state"] = "failed"
+    body = _holdings_for(monkeypatch, [runtime], {})
+    assert [i["runtime_id"] for i in body["data"]["items"]] == ["rt-conflict"]
+    assert body["data"]["summary"]["incident_count"] == 1

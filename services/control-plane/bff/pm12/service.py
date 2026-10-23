@@ -1994,10 +1994,7 @@ _PM12_TERMINAL_RUNTIME_STATUSES = frozenset({"retired", "failed", "failed_inacti
 
 def _management_runtime_is_terminal(runtime: Dict[str, Any]) -> bool:
     """Authoritative lifecycle: the telemetry owner intentionally omits these runtimes."""
-    for field in ("status", "state", "lifecycle_state"):
-        if str(runtime.get(field) or "").strip().lower() in _PM12_TERMINAL_RUNTIME_STATUSES:
-            return True
-    return False
+    return _management_normalized_status(runtime) in _PM12_TERMINAL_RUNTIME_STATUSES
 
 
 def _pm12_portfolio_book_holdings_response(
