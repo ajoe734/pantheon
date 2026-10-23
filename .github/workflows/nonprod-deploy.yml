@@ -3397,9 +3397,12 @@ jobs:
           pathlib.Path(sys.argv[2]).write_text(json.dumps(receipt, sort_keys=True), encoding="utf-8")
           PY
 
-      # Only the pinned pytest closure (versions read from the existing root
-      # test lock) plus the CI pip wheel travel to the VM; nothing is installed
-      # on the host Python, in a running product container, or from the network.
+      # Only the pinned pytest closure, the jsonschema closure the Registry builder
+      # imports (versions read from the existing root test lock) and the CI pip wheel
+      # travel to the VM; nothing is installed on the host Python, in a running
+      # product container, or from the network.  Wheels are resolved for the real
+      # host interpreter/architecture (probed over the pinned SSH transport), not
+      # for the CI runner default, because rpds-py is a native wheel.
       - name: Download pinned pytest closure and pip wheel
         id: wheels
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
@@ -3407,13 +3410,26 @@ jobs:
           wheels="${RUNNER_TEMP}/hosted-all12-wheels-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           mkdir -p "${wheels}"
           pins=()
-          for name in pytest iniconfig packaging pluggy pygments; do
+          for name in pytest iniconfig packaging pluggy pygments jsonschema jsonschema-specifications attrs referencing rpds-py typing-extensions; do
             pin="$(grep -E "^${name}==[0-9][^ ]*$" dependencies/locks/root-tests.txt)"
             [[ -n "${pin}" ]] || { echo "dependencies/locks/root-tests.txt has no pin for ${name}" >&2; exit 1; }
             pins+=("${pin}")
           done
+          export DEV_DEPLOY_SSH_KEY_FILE="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/deploy_key"
+          export DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/known_hosts"
+          host_probe="$(timeout --kill-after=10 60 "${GITHUB_WORKSPACE}/scripts/dev_vm_ssh.sh" exec \
+            "python3 -c 'import platform,sys; print(sys.version_info[0], sys.version_info[1], platform.machine())'")"
+          read -r host_major host_minor host_arch <<< "${host_probe}"
+          [[ "${host_major}.${host_minor}" == "3.12" ]] || { echo "dev VM Python is ${host_major}.${host_minor}, expected 3.12" >&2; exit 1; }
+          case "${host_arch}" in
+            x86_64|aarch64) ;;
+            *) echo "unsupported dev VM architecture ${host_arch}" >&2; exit 1 ;;
+          esac
           pip_pin="pip==$(python3 -m pip --version | awk '{print $2}')"
           python3 -m pip download --disable-pip-version-check --only-binary=:all: --no-deps \
+            --implementation cp --python-version 3.12 --abi cp312 --abi abi3 --abi none \
+            --platform "manylinux2014_${host_arch}" --platform "manylinux_2_17_${host_arch}" \
+            --platform "manylinux_2_28_${host_arch}" --platform any \
             --dest "${wheels}" "${pins[@]}" "${pip_pin}"
           printf '%s\n' "${pins[@]}" > "${wheels}/pins.txt"
           echo "wheels_dir=${wheels}" >> "${GITHUB_OUTPUT}"
@@ -3590,7 +3606,7 @@ jobs:
           OWNERS = (
               (("SOURCE", "SOURCE_INGEST"), "source-ingest", 8097),
               (("TRAINING",), "training-session-svc", 8099),
-              (("RESEARCH",), "research-orchestrator", 8101),
+              (("RESEARCH",), "research-orchestrator-svc", 8101),
               (("PERSONA",), "persona", 8002),
               (("POLICY_LEARNING",), "policy-learning-svc", 8100),
               (("CONSULTATION",), "consultation-svc", 8096),

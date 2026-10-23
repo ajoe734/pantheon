@@ -363,6 +363,8 @@ def test_hosted_credentials_stay_out_of_inputs_argv_and_uploads() -> None:
 
 
 def test_hosted_vm_runner_uses_existing_parent_node_and_pinned_offline_bootstrap() -> None:
+    import re
+
     runner = _load_vm_runner()
     assert runner.PARENT_NODE == (
         "tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py::test_hosted_chain_phase"
@@ -372,6 +374,9 @@ def test_hosted_vm_runner_uses_existing_parent_node_and_pinned_offline_bootstrap
     wheels = HOSTED_STEPS["Download pinned pytest closure and pip wheel"]["run"]
     assert "dependencies/locks/root-tests.txt" in wheels and "--only-binary=:all:" in wheels
     assert "--no-index" in run
+    for lib in ("jsonschema", "jsonschema-specifications", "attrs", "referencing", "rpds-py", "typing-extensions"):
+        assert re.search(rf"[ ;]{re.escape(lib)}[ ;]", wheels)
+    assert "--python-version 3.12" in wheels and "--abi cp312" in wheels and "host_arch" in wheels
     for forbidden in ("apt-get", "pip install --user", "sudo", "docker compose up", "docker compose restart"):
         assert forbidden not in run
 
@@ -405,6 +410,17 @@ def test_hosted_parent_environment_matches_the_merged_contract() -> None:
         assert name in parent_source and name in script
     for required in ("registry", "governance", "capital", "deployment", "runtime"):
         assert any(required.upper() in names for names, _s, _p in runner.OWNERS)
+
+
+def test_hosted_vm_runner_owner_labels_are_real_compose_services() -> None:
+    import re
+
+    compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    services = set(re.findall(r"^  ([a-z0-9][a-z0-9-]*):\s*$", compose, re.MULTILINE))
+    runner = _load_vm_runner()
+    research = [svc for names, svc, _p in runner.OWNERS if "RESEARCH" in names]
+    assert research == ["research-orchestrator-svc"]
+    assert "research-orchestrator-svc" in services
 
 
 def _fake_docker(runner, tmp_path, *, head="a" * 40, dirty="", capital="cap-token-123456"):
