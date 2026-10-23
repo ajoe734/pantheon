@@ -2,11 +2,31 @@
 
 Task: `HOSTED-ALL12-CHAIN-DESIGN-20261023` (design only; owner Claude, reviewer Antigravity2)
 Status: **proposed — requires operator approval before any implementation task is opened**
-Parent obligation: `DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002` acceptance item 2 ("Fresh Causal All-12"),
-recorded as open in `docs/deployment/latest-dev-six-area-closure.md`.
+Parent obligation: `DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002` original parent acceptance item 3
+(Hosted Harness, Twelve-Loop Causal Chain & Journey Verification; "Fresh Causal All-12"), recorded as
+open in `docs/deployment/latest-dev-six-area-closure.md` (Area 3, Remaining Obligation 1). The parent's
+original 6 acceptance criteria, 21 dependencies, 3 formal files and 49 criteria are unchanged by this
+document, and the sealed Research, Capital, Persona and FE checkpoints are not reopened.
 
-This document changes no workflow, harness or service. Everything it calls "new" is an
-implementation task listed in section 10.
+This document changes no workflow, harness or service. Everything it calls "new" is a **proposal**
+(section 10) that stays unapproved until the operator approves it. Section 5A first inventories what
+existing callers and APIs already do, so any proposal is limited to the concrete gaps found there.
+
+## 0. Authority correction (operator decision, 2026-10-23)
+
+The operator withdrew the earlier extra "two additional real humans" rule and authorised recording
+their decisions under their real execution identity. This design therefore:
+
+* requires **no second human** for any approval point and has no "same subject fails automatically"
+  rule; no fake account, MFA, issuer or execution-grant gate is introduced;
+* keeps the real authorisation and identity audit: each decision is made through the Management UI by
+  a real authenticated subject, and the evidence records the subject, tenant, owner version and
+  timestamp read back from the owner.
+
+The task's historical acceptance item 5 still contains the words "maker-checker separation". The
+native CLI has no acceptance-edit entry, so the canonical task JSON is **not** changed and this
+document does not claim it was. Where they differ, this correction governs (higher-priority user
+decision).
 
 ## 1. Goal and non-goals
 
@@ -39,6 +59,14 @@ no fabricated market events, approvals or episodes.
   parent `test_stimulus_cross_loop_deployed_e2e.py`, through a hosted mode flag (section 5) plus the
   existing `l12_owner_auth.py` token seam. Evidence uses the existing atomic evidence-output contract
   and the existing `docs/deployment/evidence/<TASK>/` convention. Nothing else is added.
+* Known shared-stack limit, not worked around: the existing runtime suite requires the whole fleet to
+  have exactly one running worker (`test_current_runtime_loops_deployed_e2e.py` ~L1708). That cannot
+  hold on the persistent shared fleet, so assertions that depend on it are replaced by the
+  chain-scoped readbacks of section 5A, never by touching the fleet.
+* The paper capital pool and paper persona binding need no live approval
+  (`services/capital/capital_guard.py:is_paper_operation`; sealed
+  `CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001` AC3: "without a Capital approval or invented policy
+  reference").
 
 ## 3. Segments, pause and resume (acceptance 5)
 
@@ -53,7 +81,7 @@ derived from `chain_id` + step.
 |---|---|---|---|
 | `A_research` | held | 1–4 (reuse research suite) | Teaching result recorded |
 | `B_learning` | held | 5–7 (human-learning suite) | Consultation memo + governance handoff, started only once H2 is decided (otherwise stops before consultation/synthesis); H1 must be decided before `C_promote` starts |
-| `C_promote` | held | 8–9 (runtime suite, hosted subset) | Paper pool, binding, plan, runtime binding active; each is created only after the approval that covers it (H3 before runtime binding, H4 before the capital binding), otherwise stops before that action |
+| `C_promote` | held | 8–9 (runtime suite, hosted subset) | Paper pool and paper binding (no approval needed), plan, runtime binding active; the runtime binding is created only after H3, otherwise stops before that action |
 | `D_observe` | none (read-only) | 9–12 | Repeated on later trading days; collects episodes, telemetry, drift, evolution, BFF health |
 | `E_close` | held briefly | 11–12 + stimulus closure parent | Evidence sealed, retirement run |
 
@@ -61,29 +89,30 @@ Ordering rule: an approval or consent is obtained *before* the outbound action o
 covers (the "Blocks" column below), never after. If it is not yet decided, the segment stops before
 that action, releases the lease, and a later dispatch resumes; the decision itself is still made only
 by the originally designated humans. Ordinary read-only calls need no approval. This adds no approval
-point beyond H1–H5.
+point beyond H1–H4.
 
 A paused segment writes nothing and waits for the next dispatch, so there is no timeout-driven
 auto-approval path. The workflow never calls approve/decide endpoints on a human's behalf.
 
 ### Human approval points
 
+Each point is decided by a real human through the Management UI; one authorised human per point is
+sufficient (section 0).
+
 The harness-minted `PANTHEON_L12_OPERATOR_TOKEN` / `..._REVIEWER_TOKEN` (`l12_owner_auth.py`) are
 **rejected in hosted mode**; hosted mode only accepts that a decided approval already exists, made
 through the Management UI.
 
-| ID | Approval | Maker | Checker | Blocks |
-|---|---|---|---|---|
-| H1 | Registry artifact approval for the chain's strategy artifact (Governance propose → review → decide, bound to the exact `registry_id` + candidate digest) | operator (human 1) | governance_reviewer (human 2) | `C_promote` |
-| H2 | Agora synthesis consent (two existing Persona opinions + one synthesis; the previously pending request must not be reused for this chain) | operator | — (consent by the data owner; recorded, not auto-created) | consultation/synthesis in `B_learning` |
-| H3 | Deployment plan release for the labelled paper scope | operator | governance_reviewer | runtime binding |
-| H4 | Paper capital binding approval (`approval_decision_id`, paper context only) | operator | governance_reviewer | capital loop |
-| H5 | Evolution decision acceptance | operator | governance_reviewer | closure of loop 11 |
+| ID | Approval | Decided by | Blocks |
+|---|---|---|---|
+| H1 | Registry artifact approval for the chain's strategy artifact (Governance propose → review → decide, bound to the exact `registry_id` + candidate digest). A Registry/Governance approval, **not** a Capital approval, and never described as one. | authorised human via Management UI | `C_promote` |
+| H2 | Agora synthesis consent (two existing Persona opinions + one synthesis; the previously pending request must not be reused for this chain) | data owner; recorded, not auto-created | consultation/synthesis in `B_learning` |
+| H3 | Deployment plan release for the labelled paper scope | authorised human via Management UI | runtime binding |
+| H4 | Evolution decision acceptance | authorised human via Management UI | closure of loop 11 |
 
-Maker and checker must be different authenticated subjects; the segment aborts if the decided
-approval has the same subject for both. No extra gates (MFA, issuer, execution grants) are invented,
-consistent with the operator's earlier withdrawal; scope, tenant, secrets and paper/live separation
-stay as they are.
+There is no paper Capital approval: the paper pool and paper persona binding are created under the
+paper operation policy with no live approval. No extra gates (MFA, issuer, execution grants) are
+invented; scope, tenant, secrets and paper/live separation stay as they are.
 
 ## 4. Owner writes, labels and retirement (acceptance 4)
 
@@ -102,13 +131,13 @@ database by hand.
 | Agora interaction evidence + dataset version (loop 5) | B | Labelled; consent record (H2) expires on its own finite window. |
 | Imitation candidate / shadow evaluation (loop 6) | B | Labelled; closed by its own terminal state. |
 | Consultation + governance handoff (loop 7) | B | Closed memo; handoff acknowledged. |
-| **Capital pool** (paper) | C | Close/deactivate pool in `E_close`. |
-| **Persona capital binding** | C | Revoke/deactivate in `E_close`; must be done before the pool closes. |
+| **Capital pool** (paper; no Capital approval) | C | Close/deactivate pool in `E_close`. |
+| **Persona capital binding** (paper; no Capital approval) | C | Revoke/deactivate in `E_close`; must be done before the pool closes. |
 | **Registry artifact approval** (mutation of a chain-owned child of `artifact-tw-session-momentum-v1`, never the parent) | C | Revoke approval / deprecate chain artifact in `E_close`. |
 | **Deployment plan** | C | Terminal plan state, then superseded/cancelled by the owner. |
 | **Runtime binding** | C | Deactivate in `E_close`; confirm fleet-ready count returns to the pre-run baseline. |
 | Telemetry/reconciliation/drift/incident (loops 10) | D | Close incident; labelled history retained. |
-| Evolution decision (loop 11) | E | Terminal after H5; labelled. |
+| Evolution decision (loop 11) | E | Terminal after H4; labelled. |
 
 `E_close` ends with a readback proving: baseline fleet-ready/binding counts restored, zero active
 chain-labelled bindings or pools, and no non-chain record changed. Live broker and real capital are
@@ -122,7 +151,7 @@ No segment stops, restarts, recreates or reconfigures a shared service.
 | Case / step | Source | Hosted treatment | Reason |
 |---|---|---|---|
 | `negative_typed_worker_failure` (`docker compose stop/start paper-fleet-reconciler`) | runtime suite | **Excluded**; replaced by read-only BFF typed-worker/API health observation (loop 12) | Stops a shared worker (README finding 3). Failure-discrimination stays proven by the isolated gate. |
-| `_restart_service` (`docker compose restart`) in the human-learning suite | human-learning suite | **Excluded**; replaced by read-only service identity (`started_at` unchanged) plus an idempotent same-key replay that must not create a second durable result | Restarts shared workers. |
+| `_restart_service` (`docker compose restart`) in the human-learning suite | human-learning suite | **Excluded**; the chain triggers no restart. `started_at` unchanged plus a same-key replay shows idempotency only and is **not** the original parent AC4 cross-process restart proof. Restart persistence is claimed only if the chain's labelled records are read back before **and** after a restart that happens anyway (a coordinated release/version change or a genuine owner restart), with the same resource IDs/versions compared and the owner process identity shown to differ. If no such event occurs during the run, restart persistence is recorded as **not completed**. | The chain must not restart shared workers; the shared stack may restart for its own reasons. |
 | Parent stimulus gate "restarts the isolated runtime worker" | stimulus suite | Restart step skipped in hosted mode | Same. |
 | `invalid_bindings_migration_prerequisite` / harness pre-flight retirement of pre-existing invalid bindings | runtime suite, `run_isolated_l12_runtime_e2e.py` | **Excluded**; replaced by read-only check that pre-existing invalid bindings are reported, not altered | Mutates records the chain does not own. |
 | Missing-checksum and missing-market-symbol negatives | runtime suite | **Excluded**; keep isolated proof | They create deliberately broken bindings that shared fleet-readiness counters would see. |
@@ -130,29 +159,67 @@ No segment stops, restarts, recreates or reconfigures a shared service.
 | `bounded_lifecycle_cursor_and_resource_limits` | runtime suite | Keep only if T2 confirms it is read-only; otherwise excluded | Not yet verified in this design pass. |
 | `docker compose` identity lookups (`ps`, `inspect`) | all suites | Allowed (read-only); project name comes from the workflow, not the suites' `pantheon` default | Observation only. |
 
+## 5A. Existing capability inventory and causal-edge gaps
+
+**What exists (read from the suites, not run).**
+`test_stimulus_cross_loop_deployed_e2e.py` starts the three domain suites as separate child processes
+sharing only a `PANTHEON_L12_CROSS_LOOP_RUN_ID` string, then normalises each loop's
+`trigger / terminal_output / authority_readback / next_consumer` and reads Management loop health. The
+research suite's own cases chain by real IDs inside that suite (Source → Distillation → Registry
+approval → Alpha admission → Teaching). The human-learning and runtime suites each create their own
+records. Existing callers can therefore already: run each domain against a deployed stack, emit
+evidence, and read owner state over HTTP. They cannot yet: skip the shared-infrastructure cases in
+section 5 on a stack that is not isolated, wait on a human decision, or pass one domain's output ID
+into the next domain. These three are the only concrete gaps T2/T3 would cover.
+
+**Why a shared `chain_id` and three domain receipts are not enough.** A shared string and three passing
+domain reports show the suites ran in the same window, not that each loop consumed the previous
+loop's output. Causality needs, for every edge, the predecessor's output ID and a consumer record that
+references that exact ID. Status of each edge in the current suites:
+
+| Edge | Predecessor output ID | Next consumer reference | Gap |
+|---|---|---|---|
+| 1→2 | `SourceRecord.id` + digest | Distillation receipt `distillation_job_id` with `metadata.distillation.source_id/source_digest` equal to it | none inside research suite |
+| 2→3 | Registry approved entry `registry_id` | `ReplicationAdmission.admission_id` with `strategy_spec_id == registry_id` | none inside research suite |
+| 3→4 | Alpha `experiment_run_id` | `TeachingSession` `session_id` persisting the Alpha authority/domain refs | none inside research suite |
+| 4→5 | Teaching evaluation / `session_id` (`TeachingTerminalReadback`) | Agora interaction evidence input | **gap**: human suite builds its own interaction; no reference to the Teaching ID found |
+| 5→6 | `dataset_version_id`, `handoff_id` | `ShadowImitationCandidate.candidate_id` | within human suite only; not tied to loop 4 |
+| 6→7 | `candidate_id` / `ExperimentRun` id | `ConsultRequest` id → memo | within human suite only; not tied to loop 6 of the same chain |
+| 7→8 | `ConsultGateHandoff.handoff_id` | deployment plan referencing it | **gap**: runtime suite creates its own artifact/plan; no reference to the handoff |
+| 8→9 | plan id | runtime binding / capital binding `binding_id` | within runtime suite |
+| 9→10 | `binding_id`, `paper_fill_simulated` event id | telemetry drift id (`drift-…`), incident `linked_incident_id` | within runtime suite |
+| 10→11 | incident / drift id | evolution decision referencing it | within runtime suite |
+| 11→12 | evolution decision id | BFF typed-health / loop-health row | **gap**: health row is run-scoped, not shown to cite the decision |
+
+The three **gap** edges (4→5, 7→8, 11→12) plus the cross-suite seams are what a "same fresh chain"
+claim actually lacks today. The run must record, per edge, the predecessor ID and the consumer
+record that carries it, and any edge where the consumer does not carry it is reported **unproven**,
+not inferred from the shared `chain_id`. T1 verifies this table against the live owner payloads before
+anything is built.
+
 ## 6. Genuine Persona Pattern positives (acceptance 6)
 
-The original criterion requires at least two uncovered, naturally closed episodes, then natural
-reflection, BFF reload and next-interval dedupe. The design does not manufacture these:
+The original six Pattern conditions (any legitimate dev Persona with at least two uncovered, naturally
+closed episodes; natural reflection at the scheduler interval; BFF reload; dedupe at the immediately
+following interval) apply as written. This design adds no parent acceptance gate and narrows no scope.
+The chain's labelled Persona is an **example** source of episodes, not a required one: any legitimate
+dev Persona meeting the original conditions counts, and the result names which one.
 
-1. The chain's labelled persona is bound to the labelled paper pool and runs through the normal
-   paper runtime on the stored real market data from `source-ingest`. No prices, fills or episodes
-   are injected, backdated or seeded.
-2. An episode is "naturally closed" only when the persona's own strategy exit rule fires on real
-   data during a TW trading session (09:00–13:30 Asia/Taipei, Mon–Fri, excluding exchange holidays).
-   The `D_observe` phase is therefore dispatched on trading days and records per-day episode counts,
-   with timestamps in Asia/Taipei and the source snapshot ids that drove each entry/exit.
-3. "Uncovered" means no existing Pattern record already covers the episode; the check is a readback
-   from the Persona/Pattern owner, not a local assumption. Episodes carry the chain label so they
-   cannot be confused with the two existing Patterns (`72215b2f-…`, `7ce68816-…`).
-4. Reflection is the scheduler's own run; the harness only polls its HTTP-visible effect (same
-   technique as the Loop 5 drain in the human-learning suite). Then BFF reload shows the Pattern, and
-   a second scheduler interval must produce no duplicate.
-5. Honest outcomes: if the observation window (default 5 trading days, operator-adjustable before
-   approval) yields fewer than two closed uncovered episodes, the result is recorded as
-   "Pattern positive not observed", with the episode counts. Negative Sharpe, Teaching rejection,
-   quarantine and dedupe are valid outcomes, not failures, and are not rewritten as approvals.
-   Acceptance item 2 stays open in that case; no episode is fabricated to close it.
+1. Episodes come from the normal paper runtime on stored real market data from `source-ingest`. No
+   prices, fills or episodes are injected, backdated or seeded. Chain-labelled episodes carry the
+   chain label; other Personas' episodes are identified by their own owner IDs.
+2. "Naturally closed" means the Persona's own exit rule fired on real data during a TW trading session
+   (09:00–13:30 Asia/Taipei, Mon–Fri, excluding exchange holidays). `D_observe` records closed-episode
+   counts with Asia/Taipei timestamps and the source snapshot ids behind each entry/exit.
+3. "Uncovered" means no existing Pattern record covers the episode, checked by readback from the
+   Persona/Pattern owner. The two existing Patterns (`72215b2f-…`, `7ce68816-…`) are not reused.
+4. Reflection is the scheduler's own natural interval run; the harness only polls its HTTP-visible
+   effect. Then BFF reload must show the Pattern, and the immediately following interval must produce
+   no duplicate.
+5. A 5-trading-day observation window is an optional recommendation, not a gate. If the conditions are
+   not met when the operator ends observation, the result is "Pattern positive not observed" with
+   counts. Negative Sharpe, Teaching rejection, quarantine and dedupe are valid outcomes, not
+   approvals. The parent item then stays open; no episode is fabricated.
 
 ## 7. Resolution of the 2026-08-17 runtime-loops README findings
 
@@ -170,26 +237,31 @@ reflection, BFF reload and next-interval dedupe. The design does not manufacture
 
 * Owner retirement operations may be missing; mitigated by labels, residual reporting and T1.
 * Real markets may yield no episodes in the window (section 6, point 5).
+* No coordinated release or owner restart may occur during the run, leaving restart persistence uncompleted (section 5).
 * Humans may not be available; the chain stays parked, costs nothing, holds no lease.
 * Mutating segments queue behind other dev dispatches; acceptable.
 * Hosted mode must not weaken the isolated gate; T2 keeps hosted behaviour behind an explicit flag and tests default behaviour unchanged.
 
 ## 9. Operator decisions requested before implementation
 
-1. Approve this design and the five approval points, and name the two human subjects for maker/checker.
-2. Confirm the observation window (default 5 TW trading days).
+1. Approve this design and the four approval points (H1–H4). One authorised human each is sufficient; the deciding subject is recorded from the real identity.
+2. Optionally confirm an observation window (5 TW trading days is a recommendation only).
 3. Confirm that cases in section 5 are acceptable as excluded, with isolated-gate evidence for them.
 
-## 10. Implementation tasks (opened only after approval)
+## 10. Proposed implementation tasks (not approved; opened only after operator approval)
+
+These are proposals, bounded by the gaps in section 5A. The new hosted flag and driver below exist only
+if T1 shows that existing callers cannot do the job; the existing suites and workflow stay the default.
+No task is started by this document.
 
 | ID | Scope | Files (indicative) | Acceptance |
 |---|---|---|---|
-| T1 Owner retirement and label audit | Confirm per-owner write/retire endpoints and label support for the section 4 records | docs only: `docs/deployment/hosted-all12-causal-chain-design.md` appendix; no code unless an owner lacks retirement (then a separate owner task) | Table of endpoint per owner; residuals listed |
+| T1 Inventory, edge and retirement audit | Confirm per-owner write/retire endpoints and label support (section 4), and verify the section 5A edge table against live payloads | docs only: `docs/deployment/hosted-all12-causal-chain-design.md` appendix; no code unless an owner lacks retirement (then a separate owner task) | Table of endpoint per owner; residuals listed |
 | T2 Hosted mode in L12 suites | `PANTHEON_L12_HOSTED_CHAIN=1` flag: label injection, human-approval wait/readback, skip list from section 5, reject minted tokens | `tests/integration/l12/l12_owner_auth.py`, the three domain suites, stimulus suite, matching unit tests | Default behaviour unchanged (existing tests green); hosted flag skips each section 5 case; no `docker compose stop/restart` reachable in hosted mode (static test) |
-| T3 Hosted chain driver | Segment runner reading chain state from owners, idempotency keys, `E_close` retirement and baseline check | `scripts/run_hosted_all12_chain.py`, `tests/unit/scripts/test_run_hosted_all12_chain.py` | Replays do not duplicate; missing approval pauses; same-subject maker/checker aborts |
+| T3 Hosted chain driver | Segment runner reading chain state from owners, idempotency keys, `E_close` retirement and baseline check | `scripts/run_hosted_all12_chain.py`, `tests/unit/scripts/test_run_hosted_all12_chain.py` | Replays do not duplicate; missing approval pauses and nothing is approved on a human's behalf |
 | T4 Workflow job | New job + inputs in the existing workflow with lease `qualification`, concurrency group, exact-dev guard | `.github/workflows/nonprod-deploy.yml`, workflow guard tests | Lease acquired/released per segment; no new dispatcher; inventory/pinning checks pass |
 | T5 Pattern observation | `D_observe` readbacks (episodes, uncovered check, scheduler reflection, BFF reload, dedupe) | driver + persona-owner read client in `scripts/run_hosted_all12_chain.py` | Records episode counts with Asia/Taipei timestamps; never writes market data or episodes |
-| T6 Operator runbook | Management UI approval steps and dispatch commands | `docs/deployment/hosted-all12-causal-chain-runbook.md` | Operator can run H1–H5 without engineering help |
+| T6 Operator runbook | Management UI approval steps and dispatch commands | `docs/deployment/hosted-all12-causal-chain-runbook.md` | Operator can run H1–H4 without engineering help |
 | T7 Hosted run and closeout | Execute phases A–E with the operator and humans; seal evidence; update the closure doc | `docs/deployment/evidence/HOSTED-ALL12-CHAIN-<DATE>/`, `docs/deployment/latest-dev-six-area-closure.md` | All twelve loops linked by one `chain_id`, or an honest not-observed record; cleanup verified |
 
 Order: T1 → T2 ∥ T3 → T4 → T5 → T6 → T7. Each task is its own PR with an independent reviewer.
