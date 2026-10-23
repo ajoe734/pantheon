@@ -1,11 +1,11 @@
 {
   "task_id": "PAPER-DRAWDOWN-CURRENT0040-CONFIG-20261021",
   "kind": "low_risk_paper_policy_config",
-  "status": "proposed_pending_reviewer_decision",
+  "status": "approved_by_operator_reviewer_on_duty",
   "authored_by": "Claude",
   "reviewer": "Antigravity2",
-  "approved_by": null,
-  "approval_recorded": false,
+  "approved_by": "ajoe734",
+  "approval_recorded": true,
   "policy_path": "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 6.1 low-risk, ReviewerOnDuty",
   "proposal_ref": "PAPER-DRAWDOWN-BASELINE-PROPOSAL-20261020 (PR #6688)",
   "subject": {
@@ -98,5 +98,13 @@
     "same-target input coverage",
     "natural producer threshold/sweep/cooldown/downstream observations",
     "all49/all12/TOTAL"
-  ]
+  ],
+  "operator_decision": {
+    "approved_by": "ajoe734",
+    "role": "Reviewer on Duty",
+    "date": "2026-10-23",
+    "decision": "APPROVED",
+    "scope": "expected_drawdown = 0.0027 gross research-calibrated baseline for artifact-persona-paper-00400aa279b49774cde4@1.0.0 (2330.TW; PAPER only; 1 share against 100000 TWD; breach trigger 1.25x = 0.003375). Not a net-of-cost; live; other-sizing or other-artifact approval.",
+    "source": "Operator's answer in a coordination session on 2026-10-23; EVOLUTION_REVIEW_AND_THRESHOLDS.md 6.1"
+  }
 }

@@ -2054,6 +2054,185 @@ class TestPaperFleetStaleSessionAdmissionAndResume(unittest.TestCase):
         self.assertEqual(len(self.transitions), 0)
         self.assertEqual(store.get("b-older-snap").status, "paused")
 
+    _CAL_NOW = "2026-10-23T07:05:00Z"
+    _CAL_PAUSE_OBSERVED = "2026-10-23T05:30:07Z"
+    _CAL_EVENT = "2026-10-22T05:30:00Z"
+
+    def _tw_snapshot(self, *, observed_at: str, event_time: str, evidence: Any, run: str = "run1") -> Dict[str, Any]:
+        from services.source_ingestion.requirement_state import (
+            LatestMarketSnapshot,
+            MarketSnapshotPoint,
+        )
+
+        def pt(ev: str, close: float) -> MarketSnapshotPoint:
+            return MarketSnapshotPoint(
+                event_time=ev,
+                close=close,
+                source_id=f"tw-official:tw_price_daily:TWSE:2330:{ev}",
+                connector_id="tw-twse-tpex-official-market",
+                content_ref=f"tw-official://{run}/{ev}",
+                ingest_run_id=run,
+                market="TWSE",
+            )
+
+        prev = (
+            datetime.fromisoformat(event_time.replace("Z", "+00:00")) - timedelta(days=1)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        snap = LatestMarketSnapshot(
+            symbol="2330.TWSE",
+            points=(pt(prev, 950.0), pt(event_time, 955.0)),
+            observed_at=observed_at,
+            market="TWSE",
+        )
+        out = snap.to_public_dict(requested_symbol="2330.TW")
+        if evidence is not None:
+            out["calendar_evidence"] = evidence
+        return out
+
+    def _calendar_correction_binding(self, binding_id: str, snapshot_id: str, *, reason: str = "market_input_stale") -> Dict[str, Any]:
+        return _make_binding(
+            binding_id,
+            status="paused",
+            symbol="2330.TW",
+            market_data_policy={"owner": "source-ingest", "contract": "latest_stored_normalized", "max_age_seconds": 86400, "minimum_closes": 2},
+            metadata={
+                "session_admission": {
+                    "reason_code": reason,
+                    "source_snapshot_id": snapshot_id,
+                    "source_event_time": self._CAL_EVENT,
+                    "observed_at": self._CAL_PAUSE_OBSERVED,
+                    "max_age_seconds": 86400,
+                    "pause_command_ref": "cmd-pause-cal",
+                    "resume_snapshot_id": None,
+                    "resumed_at": None,
+                }
+            },
+        )
+
+    def _calendar_correction_run(self, binding_id: str, snapshot: Dict[str, Any], paused_snapshot_id: str, *, reason: str = "market_input_stale"):
+        b = self._calendar_correction_binding(binding_id, paused_snapshot_id, reason=reason)
+        store, recon = self._make_store_and_recon([b], source_snapshot=snapshot)
+        with patch("services.paper_fleet_reconciler.paper_fleet_reconciler._iso_now", return_value=self._CAL_NOW):
+            result = recon.reconcile_once()
+        return store, result
+
+    def _v1_v2_evidence(self):
+        from services.source_ingestion.connectors import taiwan_official as tw
+
+        v1 = {
+            **json.loads(json.dumps(tw._TWSE_2026_SCHEDULE_CALENDAR_PAYLOAD)),
+            "fetched_at": tw.TWSE_2026_SCHEDULE_CALENDAR_FETCHED_AT,
+            "checksum": tw.TWSE_2026_SCHEDULE_CALENDAR_SHA256,
+        }
+        v2 = tw.governed_taiwan_calendar_evidence(venue="TWSE", trade_date="2026-10-22")
+        return v1, v2
+
+    def test_official_calendar_correction_resumes_same_event_time_snapshot_via_store(self) -> None:
+        v1, v2 = self._v1_v2_evidence()
+        paused = self._tw_snapshot(observed_at="2026-10-23T05:00:00Z", event_time=self._CAL_EVENT, evidence=v1)
+        corrected = self._tw_snapshot(observed_at="2026-10-23T07:01:00Z", event_time=self._CAL_EVENT, evidence=v2, run="run2")
+        self.assertNotEqual(paused["snapshot_id"], corrected["snapshot_id"])
+        # Baseline: retained v1 snapshot is still rejected as stale by the unchanged admission.
+        _, base = self._calendar_correction_run("b-cal-base", paused, paused["snapshot_id"])
+        self.assertEqual(base["worker_count"], 0)
+        self.assertEqual(len(self.transitions), 0)
+
+        store, snap = self._calendar_correction_run("b-cal-ok", corrected, paused["snapshot_id"])
+        self.assertEqual(snap["running_count"], 1)
+        self.assertEqual([t["new_status"] for t in self.transitions[-1:]], ["active"])
+        saved = store.get("b-cal-ok")
+        self.assertEqual(saved.status, "active")
+        adm = saved.metadata["session_admission"]
+        self.assertEqual(adm["source_snapshot_id"], paused["snapshot_id"])
+        self.assertEqual(adm["source_event_time"], self._CAL_EVENT)
+        self.assertEqual(adm["resume_snapshot_id"], corrected["snapshot_id"])
+
+    def test_calendar_correction_resume_rejects_unproven_same_event_time_snapshots(self) -> None:
+        v1, v2 = self._v1_v2_evidence()
+        paused = self._tw_snapshot(observed_at="2026-10-23T05:00:00Z", event_time=self._CAL_EVENT, evidence=v1)
+        # Same snapshot (unchanged identity) even with v2 evidence.
+        same = self._tw_snapshot(observed_at="2026-10-23T05:00:00Z", event_time=self._CAL_EVENT, evidence=v2)
+        same["snapshot_id"] = paused["snapshot_id"]
+        # Distinct same-time snapshot without any calendar evidence.
+        no_cal = self._tw_snapshot(observed_at="2026-10-23T07:01:00Z", event_time=self._CAL_EVENT, evidence=None, run="run2")
+        # Untrusted calendar: tampered v2 payload fails the governed pin.
+        tampered = json.loads(json.dumps(v2))
+        tampered["holidays"] = list(tampered["holidays"]) + ["2026-10-22"]
+        bad_cal = self._tw_snapshot(observed_at="2026-10-23T07:01:00Z", event_time=self._CAL_EVENT, evidence=tampered, run="run2")
+        # Governed calendar fetched before the pause was decided is not a correction of it.
+        early_v2 = json.loads(json.dumps(v2))
+        early_v2["fetched_at"] = "2026-10-23T05:00:00Z"
+        early_cal = self._tw_snapshot(observed_at="2026-10-23T07:01:00Z", event_time=self._CAL_EVENT, evidence=early_v2, run="run2")
+        for name, snapshot in (("same", same), ("no_cal", no_cal), ("bad_cal", bad_cal), ("early_cal", early_cal)):
+            with self.subTest(name):
+                self.transitions.clear()
+                store, snap = self._calendar_correction_run(f"b-cal-{name}", snapshot, paused["snapshot_id"])
+                self.assertEqual(snap["worker_count"], 0)
+                self.assertEqual(len(self.transitions), 0)
+                self.assertEqual(store.get(f"b-cal-{name}").status, "paused")
+
+    def test_calendar_correction_resume_rejects_older_event_and_ordinary_same_time_data(self) -> None:
+        _, v2 = self._v1_v2_evidence()
+        # Older event_time never resumes, even with the corrected governed calendar.
+        older = self._tw_snapshot(observed_at="2026-10-23T07:01:00Z", event_time="2026-10-21T05:30:00Z", evidence=v2)
+        self.transitions.clear()
+        store, snap = self._calendar_correction_run("b-cal-older", older, "mss-" + "0" * 24)
+        self.assertEqual(snap["worker_count"], 0)
+        self.assertEqual(store.get("b-cal-older").status, "paused")
+        # Ordinary non-calendar same-time data (US feed) stays paused.
+        now = datetime.now(timezone.utc)
+        t = (now - timedelta(seconds=120)).isoformat().replace("+00:00", "Z")
+        us = {
+            "snapshot_id": "snap-us-new",
+            "symbol": "AAPL.US",
+            "event_time": t,
+            "observed_at": now.isoformat().replace("+00:00", "Z"),
+            "source_ref": "source-ref",
+            "lineage": {"source": "manual"},
+            "closes": [150.0, 151.0],
+        }
+        b = _make_binding(
+            "b-cal-us",
+            status="paused",
+            symbol="AAPL.US",
+            market_data_policy={"owner": "source-ingest", "contract": "latest_stored_normalized", "max_age_seconds": 86400, "minimum_closes": 2},
+            metadata={"session_admission": {"reason_code": "market_input_stale", "source_snapshot_id": "snap-us-old", "source_event_time": t, "observed_at": t, "max_age_seconds": 86400, "pause_command_ref": "c", "resume_snapshot_id": None, "resumed_at": None}},
+        )
+        store, recon = self._make_store_and_recon([b], source_snapshot=us)
+        self.transitions.clear()
+        self.assertEqual(recon.reconcile_once()["worker_count"], 0)
+        self.assertEqual(len(self.transitions), 0)
+        self.assertEqual(store.get("b-cal-us").status, "paused")
+
+    def test_calendar_correction_requires_tw_snapshot_and_calendar_that_removes_cause(self) -> None:
+        from services.paper_fleet_reconciler.paper_fleet_reconciler import _is_official_calendar_correction
+
+        v1, v2 = self._v1_v2_evidence()
+        adm = self._calendar_correction_binding("b-x", "mss-x")["metadata"]["session_admission"]
+        corrected = self._tw_snapshot(observed_at="2026-10-23T07:01:00Z", event_time=self._CAL_EVENT, evidence=v2, run="run2")
+        self.assertTrue(_is_official_calendar_correction(adm, corrected))
+        # Non-Taiwan snapshot carrying a valid corrected Taiwan calendar.
+        aapl = {**corrected, "symbol": "AAPL.US"}
+        self.assertFalse(_is_official_calendar_correction(adm, aapl))
+        # Unchanged v1 calendar re-fetched after the pause: validates, but does not close Oct 23.
+        refetched = json.loads(json.dumps(v1))
+        refetched["fetched_at"] = "2026-10-23T07:00:00Z"
+        stale_cal = {**corrected, "calendar_evidence": refetched}
+        self.assertFalse(_is_official_calendar_correction(adm, stale_cal))
+        # Pause stored without usable event time cannot be proven overturned.
+        self.assertFalse(_is_official_calendar_correction({**adm, "source_event_time": None}, corrected))
+
+    def test_calendar_correction_resume_never_resumes_operator_pause(self) -> None:
+        _, v2 = self._v1_v2_evidence()
+        corrected = self._tw_snapshot(observed_at="2026-10-23T07:01:00Z", event_time=self._CAL_EVENT, evidence=v2, run="run2")
+        self.transitions.clear()
+        store, snap = self._calendar_correction_run(
+            "b-cal-op", corrected, "mss-" + "1" * 24, reason="operator_requested_pause"
+        )
+        self.assertEqual(snap["worker_count"], 0)
+        self.assertEqual(len(self.transitions), 0)
+        self.assertEqual(store.get("b-cal-op").status, "paused")
+
     def test_invalid_or_future_or_wrong_scope_snapshot_cannot_resume(self) -> None:
         now = datetime.now(timezone.utc)
         old_time = (now - timedelta(seconds=50000)).isoformat().replace("+00:00", "Z")
