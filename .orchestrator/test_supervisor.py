@@ -10102,7 +10102,12 @@ class LostLeaseWorktreeRecoveryEligibilityTests(unittest.TestCase):
         # Fence without letting reassignment run, by removing the configured
         # fallback lane so the recovery CAS to "reassigned" cannot happen.
         # The generic enabled flag does not gate typed lost-lease recovery.
+        # The incumbent must also be unhealthy: a healthy incumbent is now
+        # legitimately retried, so make it genuinely auth-unavailable.
         self.config["worker_reassignment"]["owner_fallbacks"] = {}
+        state["delivery_health"]["endpoints"][worker["agent_id"]][
+            "state"
+        ] = "unavailable"
         with mock.patch.object(
             supervisor, "sync_status_pipeline", side_effect=self._drain_status_outbox
         ):

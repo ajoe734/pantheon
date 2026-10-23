@@ -9,8 +9,9 @@
   ],
   "net_production_lines": 16,
   "verification": {
-    "command": "cd .orchestrator && python3 -m unittest test_supervisor.DurableWorkerRecoveryTests",
-    "result": "passed: 30 tests, including test_lost_owner_retries_healthy_incumbent_only_for_process_missing (healthy retry; auth/capacity/lease_expired rejected) and the unchanged reviewer fallback test"
+    "command": "python3 -m unittest discover -s .orchestrator -p test_supervisor.py (repo root); plus DurableWorkerRecoveryTests and LostLeaseWorktreeRecoveryEligibilityTests",
+    "result": "passed: 402 tests in test_supervisor.py, including both classes (44 tests)",
+    "ci_fix": "CI run 39887564452 failed test_receipt_still_pending_is_ineligible because its fixture left the incumbent healthy. Fixture now marks the incumbent delivery endpoint unavailable (plus no owner_fallbacks); pending-receipt assertion and _eligible False are unchanged."
   },
   "not_changed": "runtime config, queue/receipts, FE873 source, auth, lanes, capacity, VM/provider/deploy"
 }
