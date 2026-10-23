@@ -1167,3 +1167,80 @@ def test_cockpit_overlapping_reload_waves_keep_every_section_complete(monkeypatc
         assert len(body["data"]["runtime_health"]["groups"]) == 5
         assert body["data"]["human_inbox"]["data"]["summary"]["total"] >= 2
         assert body["data"]["alerts"]["summary"]["total_active"] >= 1
+
+
+def test_operator_health_failed_reads_report_unknown_not_zero() -> None:
+    """BFF-COCKPIT-HEALTH-SEMANTICS-20261023: failed/timed-out owner reads are unknown, never factual zero."""
+    store = create_in_memory_read_surface_ports()
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("owner failure")
+
+    def _timeout(*_a, **_k):
+        raise TimeoutError("owner timed out")
+
+    store.list_runtime_bindings = _boom
+    store.list_telemetry_summaries = _timeout
+    store.list_incidents = _boom
+    store.list_approval_queue_items = _timeout
+    store.get_kill_switch_status = _boom
+    health = ManagementService(read_store=store).get_operator_health_status(snapshot_at="2026-10-23T00:00:00Z")
+    groups = {g["group_id"]: g for g in health["groups"]}
+    assert all(g["status"] == "unavailable" for g in groups.values())
+    assert groups["runtime"]["details"]["active_runtimes"] is None
+    assert groups["runtime"]["details"]["total_runtimes"] is None
+    assert groups["runtime"]["details"]["unavailable_reason"] == "read_error"
+    assert "unknown" in groups["runtime"]["summary"]
+    assert "No active" not in groups["runtime"]["summary"]
+    assert groups["telemetry"]["details"]["telemetry_count"] is None
+    assert groups["telemetry"]["details"]["unavailable_reason"] == "read_timeout"
+    assert groups["incident"]["details"]["open_incidents"] is None
+    assert "No active incidents" not in groups["incident"]["summary"]
+    assert groups["governance"]["details"]["pending_items"] is None
+    assert "clear" not in groups["governance"]["summary"]
+    assert groups["kill_switch"]["details"]["status"] == "unknown"
+    assert "armed" not in groups["kill_switch"]["summary"]
+    assert health["safe_mode_state"]["active"] is None
+    assert health["overall_status"] == "unavailable"
+    assert health["group_counts"] == {"ok": 0, "degraded": 0, "unavailable": 5}
+    assert health["meta"]["surfaces"]["runtime"]["reason"] == "read_error"
+
+
+def test_operator_health_successful_empty_reads_are_genuine_zero() -> None:
+    store = create_in_memory_read_surface_ports()
+    store.list_runtime_bindings = lambda: []
+    store.list_telemetry_summaries = lambda: []
+    store.list_incidents = lambda: []
+    store.list_approval_queue_items = lambda: []
+    store.get_kill_switch_status = lambda: {"status": "armed", "safe_mode_status": "off", "active": False}
+    health = ManagementService(read_store=store).get_operator_health_status()
+    groups = {g["group_id"]: g for g in health["groups"]}
+    assert groups["runtime"]["summary"] == "No active runtime bindings."
+    assert groups["runtime"]["details"] == {"total_runtimes": 0, "active_runtimes": 0}
+    assert groups["telemetry"]["details"] == {"telemetry_count": 0}
+    assert groups["incident"]["details"] == {"total_incidents": 0, "open_incidents": 0}
+    assert groups["governance"]["summary"] == "Governance queues clear."
+    assert groups["governance"]["details"] == {"total_items": 0, "pending_items": 0}
+    assert health["overall_status"] == "ok"
+    assert health["group_counts"] == {"ok": 5, "degraded": 0, "unavailable": 0}
+
+
+def test_operator_health_overall_and_counts_match_returned_groups() -> None:
+    store = create_in_memory_read_surface_ports()
+    store.list_runtime_bindings = lambda: [{"runtime_id": "r1", "status": "active"}]
+    store.list_telemetry_summaries = lambda: [{"runtime_id": "r1"}]
+    store.list_incidents = lambda: [{"incident_id": "i1", "status": "open"}]
+    store.list_approval_queue_items = lambda: [{"id": "a1", "status": "pending"}]
+    store.get_kill_switch_status = lambda: {"status": "armed", "safe_mode_status": "off", "active": False}
+    health = ManagementService(read_store=store).get_operator_health_status()
+    by_status: dict[str, int] = {"ok": 0, "degraded": 0, "unavailable": 0}
+    for g in health["groups"]:
+        by_status[g["status"]] += 1
+    assert by_status == {"ok": 3, "degraded": 2, "unavailable": 0}
+    assert health["group_counts"] == by_status
+    assert health["overall_status"] == "degraded"
+    assert health["headline"] == "Control plane degraded"
+    assert health["message"] == "2 of 5 health groups need attention."
+    # Source availability stays separate from business state.
+    assert health["meta"]["surfaces"]["incident"] == {"status": "ok", "source": "store"}
+    assert health["meta"]["surfaces"]["governance"] == {"status": "ok", "source": "store"}

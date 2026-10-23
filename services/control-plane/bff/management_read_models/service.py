@@ -2907,80 +2907,135 @@ class ManagementService:
                         }
                     return default
 
+            def _group_read_failed(group_id: str) -> bool:
+                return group_surfaces[group_id].get("status") == "unavailable"
+
+            def _failure_details(group_id: str) -> Dict[str, Any]:
+                surface = group_surfaces[group_id]
+                return {
+                    "read_available": False,
+                    "unavailable_reason": surface.get("reason") or surface.get("source"),
+                    "unavailable_source": surface.get("source"),
+                }
+
+            def _unknown_summary(group_id: str, subject: str) -> str:
+                reason = group_surfaces[group_id].get("reason") or group_surfaces[group_id].get("source")
+                return f"{subject} unknown: owner read unavailable ({reason})."
+
             # 1. Runtime group
             runtime_bindings: List[Dict[str, Any]] = _resolve_group("runtime", [])
             active_runtimes = sum(
                 1 for b in runtime_bindings
                 if isinstance(b, dict) and b.get("status") in {"active", "running"}
             )
+            runtime_failed = _group_read_failed("runtime")
             runtime_group = {
                 "group_id": "runtime",
                 "label": _HEALTH_GROUP_LABELS["runtime"],
                 "status": group_surfaces["runtime"]["status"],
-                "summary": f"{active_runtimes} active runtime(s) running." if runtime_bindings else "No active runtime bindings.",
-                "details": {
-                    "total_runtimes": len(runtime_bindings),
-                    "active_runtimes": active_runtimes,
-                },
+                "summary": (
+                    _unknown_summary("runtime", "Runtime counts")
+                    if runtime_failed
+                    else f"{active_runtimes} active runtime(s) running." if runtime_bindings else "No active runtime bindings."
+                ),
+                "details": (
+                    {"total_runtimes": None, "active_runtimes": None, **_failure_details("runtime")}
+                    if runtime_failed
+                    else {"total_runtimes": len(runtime_bindings), "active_runtimes": active_runtimes}
+                ),
                 "target_refs": [{"label": "Runtime State", "href": "/api/v1/operator/runtime-state"}],
             }
 
             # 2. Telemetry group
             telemetry_records: List[Dict[str, Any]] = _resolve_group("telemetry", [])
+            telemetry_failed = _group_read_failed("telemetry")
             telemetry_group = {
                 "group_id": "telemetry",
                 "label": _HEALTH_GROUP_LABELS["telemetry"],
                 "status": group_surfaces["telemetry"]["status"],
-                "summary": f"{len(telemetry_records)} telemetry summaries observed." if telemetry_records else "No active telemetry feeds.",
-                "details": {
-                    "telemetry_count": len(telemetry_records),
-                },
+                "summary": (
+                    _unknown_summary("telemetry", "Telemetry feed status")
+                    if telemetry_failed
+                    else f"{len(telemetry_records)} telemetry summaries observed." if telemetry_records else "No active telemetry feeds."
+                ),
+                "details": (
+                    {"telemetry_count": None, **_failure_details("telemetry")}
+                    if telemetry_failed
+                    else {"telemetry_count": len(telemetry_records)}
+                ),
                 "target_refs": [{"label": "Telemetry", "href": "/bff/management/paper-telemetry"}],
             }
 
             # 3. Incident group
             incidents: List[Dict[str, Any]] = _resolve_group("incident", [])
             open_incidents = [i for i in incidents if isinstance(i, dict) and i.get("status") in ("open", "active", "triggered")]
+            incident_failed = _group_read_failed("incident")
             incident_group = {
                 "group_id": "incident",
                 "label": _HEALTH_GROUP_LABELS["incident"],
                 "status": "degraded" if open_incidents else group_surfaces["incident"]["status"],
-                "summary": f"{len(open_incidents)} active incident(s)." if open_incidents else "No active incidents.",
-                "details": {
-                    "total_incidents": len(incidents),
-                    "open_incidents": len(open_incidents),
-                },
+                "summary": (
+                    _unknown_summary("incident", "Incident counts")
+                    if incident_failed
+                    else f"{len(open_incidents)} active incident(s)." if open_incidents else "No active incidents."
+                ),
+                "details": (
+                    {"total_incidents": None, "open_incidents": None, **_failure_details("incident")}
+                    if incident_failed
+                    else {"total_incidents": len(incidents), "open_incidents": len(open_incidents)}
+                ),
                 "target_refs": [{"label": "Incidents", "href": "/bff/alerts"}],
             }
 
             # 4. Governance group
             approvals: List[Dict[str, Any]] = _resolve_group("governance", [])
             pending_gov = [a for a in approvals if isinstance(a, dict) and (a.get("status") in ("pending", "open", "in_review") or a.get("decision_state") in ("pending", "open", "in_review"))]
+            governance_failed = _group_read_failed("governance")
             governance_group = {
                 "group_id": "governance",
                 "label": _HEALTH_GROUP_LABELS["governance"],
                 "status": "degraded" if pending_gov else group_surfaces["governance"]["status"],
-                "summary": f"{len(pending_gov)} pending governance decision(s)." if pending_gov else "Governance queues clear.",
-                "details": {
-                    "total_items": len(approvals),
-                    "pending_items": len(pending_gov),
-                },
+                "summary": (
+                    _unknown_summary("governance", "Governance queue state")
+                    if governance_failed
+                    else f"{len(pending_gov)} pending governance decision(s)." if pending_gov else "Governance queues clear."
+                ),
+                "details": (
+                    {"total_items": None, "pending_items": None, **_failure_details("governance")}
+                    if governance_failed
+                    else {"total_items": len(approvals), "pending_items": len(pending_gov)}
+                ),
                 "target_refs": [{"label": "Approval Queue", "href": "/api/v1/operator/governance/approval-queue"}],
             }
 
             # 5. Kill switch group
             kill_switch_state = _resolve_group("kill_switch", default_kill_switch_state) or default_kill_switch_state
+            kill_switch_failed = _group_read_failed("kill_switch")
+            if kill_switch_failed:
+                # Never present the placeholder "armed / safe mode off" as an observed fact.
+                kill_switch_state = {"status": "unknown", "safe_mode_status": "unknown", "active": None}
             kill_switch_group = {
                 "group_id": "kill_switch",
                 "label": _HEALTH_GROUP_LABELS["kill_switch"],
                 "status": group_surfaces["kill_switch"]["status"],
-                "summary": f"Kill switch {kill_switch_state.get('status', 'armed')}, Safe mode {kill_switch_state.get('safe_mode_status', 'off')}.",
-                "details": kill_switch_state,
+                "summary": (
+                    _unknown_summary("kill_switch", "Kill switch and safe mode state")
+                    if kill_switch_failed
+                    else f"Kill switch {kill_switch_state.get('status', 'armed')}, Safe mode {kill_switch_state.get('safe_mode_status', 'off')}."
+                ),
+                "details": (
+                    {**kill_switch_state, **_failure_details("kill_switch")}
+                    if kill_switch_failed
+                    else kill_switch_state
+                ),
                 "target_refs": [{"label": "Kill Switch", "href": "/api/v1/operator/kill-switch"}],
             }
 
         groups = [runtime_group, telemetry_group, incident_group, governance_group, kill_switch_group]
-        overall_surface = _aggregate_group_surface("health_status", list(group_surfaces.values()), snapshot_at=snap)
+        # Overall status and counts follow the returned group status (real pending
+        # governance / active incidents included); meta.surfaces keeps owner read
+        # availability separately.
+        overall_surface = _aggregate_group_surface("health_status", groups, snapshot_at=snap)
         group_reasons = {s.get("reason") for s in group_surfaces.values() if isinstance(s, dict) and s.get("reason")}
         if "read_timeout" in group_reasons:
             overall_surface["reason"] = "read_timeout"
@@ -2993,16 +3048,16 @@ class ManagementService:
         overall_status = overall_surface.get("status", "ok")
 
         group_counts = {
-            "ok": sum(1 for s in group_surfaces.values() if s.get("status") == "ok"),
-            "degraded": sum(1 for s in group_surfaces.values() if s.get("status") == "degraded"),
-            "unavailable": sum(1 for s in group_surfaces.values() if s.get("status") == "unavailable"),
+            "ok": sum(1 for g in groups if g.get("status") == "ok"),
+            "degraded": sum(1 for g in groups if g.get("status") == "degraded"),
+            "unavailable": sum(1 for g in groups if g.get("status") == "unavailable"),
         }
 
         safe_mode_state = {
             "status": kill_switch_state.get("safe_mode_status", "off"),
             "kill_switch_status": kill_switch_state.get("status", "inactive"),
-            "active": bool(kill_switch_state.get("active", False)),
-            "last_confirmed_at": snap,
+            "active": None if kill_switch_failed else bool(kill_switch_state.get("active", False)),
+            "last_confirmed_at": None if kill_switch_failed else snap,
             "last_triggered_at": None,
             "secondary_path_available": True,
         }
@@ -3017,7 +3072,7 @@ class ManagementService:
         message = (
             "All health groups are responding normally."
             if overall_status == "ok"
-            else f"{group_counts['degraded'] + group_counts['unavailable']} of {len(group_surfaces)} health groups need attention."
+            else f"{group_counts['degraded'] + group_counts['unavailable']} of {len(groups)} health groups need attention."
         )
 
         return {
