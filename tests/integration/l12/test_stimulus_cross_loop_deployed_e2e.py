@@ -494,9 +494,13 @@ class UrllibOwnerClient:
         token: str,
         actor_id: str = "",
         roles: tuple[str, ...] = (),
+        service_headers: Mapping[str, Mapping[str, str]] | None = None,
     ) -> None:
         self.urls = dict(urls)
         self.token = token
+        # Services whose existing owner auth is not the generic bearer (Training,
+        # Research, Consultation) read under their own configured headers.
+        self.service_headers = {k: dict(v) for k, v in (service_headers or {}).items()}
         # Identity the token really carries; owners reject any other actor/role.
         self.actor_id, self.roles = actor_id, tuple(roles)
 
@@ -512,11 +516,45 @@ class UrllibOwnerClient:
             for r in os.getenv("PANTHEON_L12_HOSTED_OWNER_ROLES", "").split(",")
             if r.strip()
         )
+        tenant = _required_env("PANTHEON_L12_TENANT_ID")
+
+        def tenant_headers(tenant_id: str) -> dict[str, str]:
+            return {
+                "X-Tenant-Id": tenant_id,
+                "X-Pantheon-Tenant": tenant_id,
+                "X-Pantheon-Tenant-Id": tenant_id,
+            }
+
+        def bearer(name: str) -> dict[str, str]:
+            token = os.getenv(name, "").strip()
+            return {"Authorization": token if token.startswith("Bearer ") else f"Bearer {token}"} if token else {}
+
+        service_headers: dict[str, dict[str, str]] = {}
+        for service, env_name in (("training", "TRAINING"), ("research", "RESEARCH"), ("consultation", "CONSULTATION")):
+            url = os.getenv(f"PANTHEON_L12_{env_name}_URL", "").strip().rstrip("/")
+            if not url:
+                continue  # unreadable later: the runner pauses with concrete evidence
+            urls[service] = url
+        if "training" in urls:
+            service_headers["training"] = {
+                **bearer("PANTHEON_L12_TRAINING_TOKEN"),
+                "X-Tenant-Id": tenant,
+                "X-Pantheon-Service": "training-session-preview-worker",
+            }
+        if "research" in urls:
+            service_headers["research"] = tenant_headers(tenant)
+        if "consultation" in urls:
+            consult_tenant = os.getenv("PANTHEON_L12_CONSULTATION_TENANT_ID", "").strip() or tenant
+            service_headers["consultation"] = {
+                **bearer("PANTHEON_L12_CONSULTATION_TOKEN"),
+                **tenant_headers(consult_tenant),
+            }
         return cls(
             urls,
             _required_env("PANTHEON_L12_HOSTED_OWNER_TOKEN"),
             os.getenv("PANTHEON_L12_HOSTED_OWNER_ACTOR_ID", "").strip(),
             roles,
+            service_headers,
         )
 
     def request(
@@ -527,7 +565,11 @@ class UrllibOwnerClient:
         body: Mapping[str, Any] | None = None,
         idempotency_key: str | None = None,
     ) -> tuple[int, Any]:
+        if service not in self.urls:
+            raise StimulusProofError(f"no owner URL configured for {service}")
         headers = {"Accept": "application/json", "Authorization": f"Bearer {self.token}"}
+        if service in self.service_headers:
+            headers = {"Accept": "application/json", **self.service_headers[service]}
         data = None
         if body is not None:
             data = _canonical_json(dict(body)).encode("utf-8")
@@ -792,6 +834,150 @@ class HostedChainRunner:
             elif name == "H3" and not _decision_id(reference):
                 problems.append("decision H3: no decision_id")
             # recorded consent (e.g. H2) is forwarded as given; never a Governance gate
+        problems.extend(self._verify_domain_outputs())
+        return problems
+
+    # -- completed-phase domain outputs ------------------------------------
+    def _get_domain(self, service: str, path: str, what: str) -> tuple[Mapping[str, Any] | None, str | None]:
+        try:
+            status, payload = self.owner.request(service, "GET", path)
+        except (StimulusProofError, KeyError) as exc:
+            return None, f"{what}: owner unreadable ({exc})"
+        if status != 200 or not isinstance(payload, Mapping) or not payload:
+            return None, f"{what}: owner GET returned {status}"
+        return payload, None
+
+    @staticmethod
+    def _loop_ref(loop: Mapping[str, Any] | None, *places: tuple[str, str]) -> str:
+        for section, key in places:
+            holder = (loop or {}).get(section)
+            if isinstance(holder, Mapping) and str(holder.get(key) or "").strip():
+                return str(holder[key])
+        return ""
+
+    def _verify_domain_outputs(self) -> list[str]:
+        """Re-read the real Teaching/Research/Consultation outputs of completed A/B.
+
+        Uses the per-loop receipts already kept in ``hosted.loops`` (the flat
+        resource map is overwritten by B), the existing owner GET routes and
+        tenant/identity lineage; never reruns a provider or business suite.
+        """
+
+        done = lambda name: self.phases.get(name, {}).get("phase_status") == "completed"  # noqa: E731
+        quote = lambda value: urllib.parse.quote(value, safe="")  # noqa: E731
+        problems: list[str] = []
+
+        def need(loop_id: str, label: str, value: str) -> str:
+            if not value:
+                problems.append(f"{loop_id}: completed receipt lacks required {label}")
+            return value
+
+        def tenant_ok(label: str, record: Mapping[str, Any]) -> None:
+            tenant = _record_tenant(record) or _record_tenant(
+                record.get("parameters") if isinstance(record.get("parameters"), Mapping) else {}
+            )
+            if tenant != self.tenant_id:
+                problems.append(f"{label}: tenant {tenant!r} != {self.tenant_id!r}")
+
+        if done("A_research"):
+            alpha = self.loops.get("alpha_replication")
+            teaching = self.loops.get("persona_teaching")
+            if alpha is None or teaching is None:
+                problems.append("A_research completed but alpha/teaching loop receipts are missing")
+            else:
+                authority_id = need("alpha_replication", "authority_run_id",
+                                    self._loop_ref(alpha, ("terminal_output", "authority_run_id"), ("authority_readback", "authority_run_id")))
+                domain_id = need("alpha_replication", "domain run id",
+                                 self._loop_ref(alpha, ("authority_readback", "domain_run_id"), ("terminal_output", "id")))
+                if authority_id:
+                    label = f"alpha authority run {authority_id}"
+                    run, err = self._get_domain("research", f"/api/research-orchestrator/runs/{quote(authority_id)}", label)
+                    if err:
+                        problems.append(err)
+                    else:
+                        params = run.get("parameters") if isinstance(run.get("parameters"), Mapping) else {}
+                        embedded = params.get("experiment_run") if isinstance(params.get("experiment_run"), Mapping) else {}
+                        tenant_ok(label, run)
+                        if run.get("run_id") != authority_id:
+                            problems.append(f"{label}: run_id {run.get('run_id')!r} differs")
+                        if domain_id and embedded.get("run_id") != domain_id:
+                            problems.append(f"{label}: embedded ExperimentRun {embedded.get('run_id')!r} != {domain_id!r}")
+                        if embedded.get("status") != "completed":
+                            problems.append(f"{label}: embedded ExperimentRun is not completed")
+                        spec = self._loop_ref(alpha, ("terminal_output", "strategy_spec_id"))
+                        if spec and params.get("strategy_spec_id") != spec:
+                            problems.append(f"{label}: strategy_spec_id {params.get('strategy_spec_id')!r} != {spec!r}")
+                session_id = need("persona_teaching", "session_id",
+                                  self._loop_ref(teaching, ("terminal_output", "session_id"), ("authority_readback", "session_id")))
+                eval_identity = self._loop_ref(teaching, ("terminal_output", "id"), ("authority_readback", "eval_identity"))
+                eval_id = self._loop_ref(teaching, ("terminal_output", "eval_id"))
+                if session_id:
+                    label = f"teaching session {session_id}"
+                    record, err = self._get_domain("training", f"/api/training/sessions/{quote(session_id)}", label)
+                    if err:
+                        problems.append(err)
+                    else:
+                        tenant_ok(label, record)
+                        if record.get("session_id") != session_id:
+                            problems.append(f"{label}: session_id {record.get('session_id')!r} differs")
+                        refs = record.get("context_refs") if isinstance(record.get("context_refs"), list) else []
+                        if authority_id and not any(
+                            isinstance(ref, Mapping) and ref.get("id") == authority_id
+                            and (not domain_id or ref.get("domain_run_id") == domain_id)
+                            for ref in refs
+                        ):
+                            problems.append(f"{label}: context_refs do not carry the Alpha authority/domain run identities")
+                    readback, err = self._get_domain(
+                        "training", f"/api/training/sessions/{quote(session_id)}/terminal-readback", f"{label} terminal readback"
+                    )
+                    if err:
+                        problems.append(err)
+                    else:
+                        if eval_identity and readback.get("eval_identity") != eval_identity:
+                            problems.append(f"{label}: eval_identity differs from the Teaching loop receipt")
+                        result = readback.get("evaluation_result") if isinstance(readback.get("evaluation_result"), Mapping) else {}
+                        if eval_id and result.get("eval_id") != eval_id:
+                            problems.append(f"{label}: evaluation_result.eval_id differs from the Teaching loop receipt")
+        if done("B_learning"):
+            imitation = self.loops.get("human_imitation_shadow_evaluation")
+            consult = self.loops.get("consultation")
+            if imitation is None or consult is None:
+                problems.append("B_learning completed but imitation/consultation loop receipts are missing")
+            else:
+                run_id = need("human_imitation_shadow_evaluation", "run_id", self._loop_ref(imitation, ("terminal_output", "run_id")))
+                task_id = need("human_imitation_shadow_evaluation", "task_id", self._loop_ref(imitation, ("terminal_output", "task_id")))
+                if run_id:
+                    label = f"imitation experiment run {run_id}"
+                    run, err = self._get_domain("research", f"/api/research-orchestrator/runs/{quote(run_id)}", label)
+                    if err:
+                        problems.append(err)
+                    else:
+                        tenant_ok(label, run)
+                        if run.get("run_id") != run_id or (task_id and run.get("task_id") != task_id):
+                            problems.append(f"{label}: run/task identity differs from the imitation loop receipt")
+                request_id = need("consultation", "request_id", self._loop_ref(consult, ("authority_readback", "request_id")))
+                handoff_id = need("consultation", "governance_handoff_id", self._loop_ref(consult, ("terminal_output", "governance_handoff_id")))
+                if request_id:
+                    label = f"consult request {request_id}"
+                    request, err = self._get_domain("consultation", f"/api/consult/requests/{quote(request_id)}", label)
+                    if err:
+                        problems.append(err)
+                    else:
+                        tenant_ok(label, request)
+                        if request.get("request_id") != request_id:
+                            problems.append(f"{label}: request_id {request.get('request_id')!r} differs")
+                        if run_id and (request.get("target_type") != "experiment_run" or request.get("target_id") != run_id):
+                            problems.append(f"{label}: target is not the imitation ExperimentRun {run_id!r}")
+                if handoff_id and request_id:
+                    label = f"governance handoff {handoff_id}"
+                    handoff, err = self._get_domain("consultation", f"/api/consult/handoffs/{quote(handoff_id)}", label)
+                    if err:
+                        problems.append(err)
+                    else:
+                        if handoff.get("handoff_id") != handoff_id or handoff.get("request_id") != request_id:
+                            problems.append(f"{label}: handoff/request identity differs")
+                        if handoff.get("status") != "acknowledged":
+                            problems.append(f"{label}: status {handoff.get('status')!r} is not acknowledged")
         return problems
 
     def _verify_decision(self, name: str, decision_id: str) -> list[str]:

@@ -23,7 +23,9 @@
    "registry_lineage": "registry entry without chain_id is accepted only when metadata.distillation.source_id equals resource_ids.source_id, contains the chain id, has a source_digest, and checksum matches; no new owner API",
    "typed_ids": "resource ids must be scalar nonsecret owner ids (no objects/paths); capital_pool_id/capital_binding_id/runtime_binding_id are read and retired by E_close",
    "baseline": "C_promote reads existing Runtime /api/runtime-fleet/desired-state before launch and carries baseline_fleet in the receipt; unreadable baseline pauses C; E_close compares and reports verified|mismatch|chain_binding_still_active|baseline_not_recorded|unreadable"
-  }
+  },
+  "domain_output_resume": "before reusing completed A/B (and on any later phase), verify_predecessors re-reads the actual owner outputs from the per-loop hosted.loops receipts: Research GET runs/{authority_run_id} (nested Alpha run id, status completed, tenant, strategy_spec_id); Training GET sessions/{id} (tenant, context_refs carry authority+domain run ids) and terminal-readback (eval_identity, evaluation_result.eval_id); Research GET runs/{imitation run_id} (run/task/tenant); Consultation GET requests/{id} (tenant, target=imitation run) and handoffs/{id} (request_id, status acknowledged). Missing/unreadable/mismatched/absent required refs pause with concrete evidence; no rerun of provider/business suites, no new store/API, no chain label imposed on DTOs lacking one.",
+  "owner_client_domain_auth": "UrllibOwnerClient reads training/research/consultation under their existing configured headers (PANTHEON_L12_TRAINING_TOKEN + X-Pantheon-Service, tenant headers, PANTHEON_L12_CONSULTATION_TOKEN); unconfigured URL => unreadable => pause"
  },
  "assumptions_for_reviewer": [
   "child suites (T2) report chain_id, phase, phase_status, blocked_before, resource_ids, exit 0 when paused",
@@ -36,6 +38,6 @@
   "product hosted execution and independent restart remain original parent obligations",
   "T2 must agree the packet 'predecessors'/'decisions' keys and the two new owner-identity env vars via native notes; not exercised against a live owner"
  ],
- "validation": "/tmp/hs-venv/bin/python -m pytest -q tests/unit/l12/test_hosted_stimulus_contract.py tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py -> 21 passed, 2 skipped",
- "verification": "tests/unit/l12/test_hosted_stimulus_contract.py 24 passed; parent file 4 passed 2 skipped (local fake-owner only)"
+ "validation": "/tmp/civenv/bin/pytest -q tests/unit/l12/test_hosted_stimulus_contract.py tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py (local only)",
+ "verification": "tests/unit/l12/test_hosted_stimulus_contract.py 41 passed; with parent file 45 passed 2 skipped (local fake-owner only)"
 }
