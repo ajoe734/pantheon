@@ -3781,6 +3781,10 @@ jobs:
                       "PANTHEON_L12_HOSTED_OWNER_ACTOR_ID": bundle.get("actor_id", ""),
                       "PANTHEON_L12_HOSTED_OWNER_ROLES": ",".join(bundle.get("roles", [])),
                       "PANTHEON_L12_BFF_BEARER": token,
+                      # Source GETs have no executor fallback; reuse the same freshly
+                      # authenticated identity and admitted tenant (no minting).
+                      "PANTHEON_L12_SOURCE_READER_TOKEN": token,
+                      "PANTHEON_L12_SOURCE_READER_TENANT_ID": bundle["tenant_id"],
                   }
               )
               # The product's existing per-request Capital transport lives in the caller

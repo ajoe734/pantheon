@@ -491,6 +491,8 @@ def test_hosted_vm_runner_assembles_private_environment_and_redacts(monkeypatch,
     assert env["PANTHEON_L12_HOSTED_CHAIN"] == "1" and env["PANTHEON_L12_STIMULUS_CROSS_LOOP_E2E"] == "1"
     assert env["PANTHEON_L12_HOSTED_CHAIN_PHASE"] == "C_promote"
     assert env["PANTHEON_L12_TENANT_ID"] == "tenant-dev"
+    assert env["PANTHEON_L12_SOURCE_READER_TOKEN"] == "executor-token-abcdef"
+    assert env["PANTHEON_L12_SOURCE_READER_TENANT_ID"] == "tenant-dev"
     assert env["PANTHEON_L12_STIMULUS_EXPECTED_SHA"] == "a" * 40
     assert env["PANTHEON_L12_HOSTED_CHAIN_PRIOR_RECEIPT"].endswith("prior-receipt.json")
     assert env["PANTHEON_L12_COMPOSE_FILES"] == "/srv/dev-root/docker-compose.yml:/srv/dev-root/override.yml"
