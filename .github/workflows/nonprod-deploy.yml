@@ -3710,7 +3710,22 @@ jobs:
                   ["docker", "inspect", bff_cid, "--format",
                    '{{ index .Config.Labels "com.docker.compose.project.config_files" }}']
               ).stdout.strip()
-              return os.pathsep.join(part for part in labels.split(",") if part.strip())
+              parts = [part.strip() for part in labels.split(",") if part.strip()]
+              # The label is historical command provenance; the release restore step
+              # deletes its scratch override (images/.restore-*/images.json). Drop only
+              # that evidenced ephemeral path when absent; any other missing persistent
+              # input is kept so the owner discovery still fails visibly.
+              def restore_override(part):
+                  segs = part.split("/")
+                  return (
+                      len(segs) >= 3
+                      and segs[-1] == "images.json"
+                      and segs[-2].startswith(".restore-")
+                      and segs[-3] == "images"
+                  )
+
+              kept = [part for part in parts if os.path.exists(part) or not restore_override(part)]
+              return os.pathsep.join(kept)
 
 
           def redact(text, secrets):
@@ -3804,6 +3819,10 @@ jobs:
               packet = os.path.join(scratch, "chain-input.json")
               prior = os.path.join(scratch, "prior-receipt.json")
               receipt = os.path.join(scratch, "receipt.json")
+              compose_input = compose_files(bff_cid)
+              if not compose_input:
+                  meta["error"] = "no persistent Compose input remains for owner discovery"
+                  return finish(2)
               environment.update(
                   {
                       "PYTHONDONTWRITEBYTECODE": "1",
@@ -3816,7 +3835,7 @@ jobs:
                       "PANTHEON_L12_STIMULUS_EXPECTED_SHA": args.expected_sha,
                       "PANTHEON_L12_STIMULUS_EVIDENCE_OUTPUT": receipt,
                       "PANTHEON_L12_COMPOSE_PROJECT": PROJECT,
-                      "PANTHEON_L12_COMPOSE_FILES": compose_files(bff_cid),
+                      "PANTHEON_L12_COMPOSE_FILES": compose_input,
                   }
               )
               if os.path.exists(prior):

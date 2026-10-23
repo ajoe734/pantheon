@@ -1,0 +1,23 @@
+{
+  "task_id": "HOSTED-ALL12-COMPOSE-READBACK-20261023",
+  "kind": "source_delivery_not_hosted_acceptance",
+  "follows_up": "HOSTED-ALL12-SOURCE-READER-WIRING-20261023",
+  "failure_followed": {
+    "run": "40020443136",
+    "artifact": "12529639558",
+    "sha256": "a29a21167ba002632482c3a748a25dd0b62b804f8b70852d3576bea5141336df",
+    "error": "source.owner_compose_identity: docker exited 1: open .../release-artifacts/images/.restore-x1nvgllk/images.json: no such file or directory"
+  },
+  "changed_files": [
+    ".github/workflows/nonprod-deploy.yml",
+    "scripts/test_isolated_l12_provider_workflow.py",
+    "docs/deployment/evidence/HOSTED-ALL12-COMPOSE-READBACK-20261023/evidence.json"
+  ],
+  "behavior": {
+    "change": "Staged run_phase.py compose_files() drops a BFF config_files label entry only when it is absent on disk and matches the exact restore image-override shape images/.restore-*/images.json (the normally deleted release restore scratch override); other absent files under any .restore-* segment are retained.",
+    "visible_failure": "Any other missing persistent input is kept so docker still fails visibly; if no input remains, execute() records an error in segment-meta and exits 2 before pytest.",
+    "unchanged": "Release restore cleanup, project/service identity, image revision and owner health checks, ordinary release and isolated FULL, product images/FE."
+  },
+  "validation": "scripts/test_isolated_l12_provider_workflow.py: 23 passed (3 new: missing restore override dropped with persistent inputs retained, missing persistent input kept incl. four over-broad .restore-* counterexample shapes, no compose base exits 2)",
+  "not_proven": "No hosted A run, release, VM/SSH or provider access performed. Workflow availability does not prove hosted A or all12 completion."
+}
