@@ -274,13 +274,24 @@ class StrategySpecSeedBuilder:
             "execution_route": "none",
             **dict(metadata or {}),
         }
+        # execution_recipe is reserved: only Source.metadata.strategy_seed may
+        # supply it, so caller metadata can neither add nor override one.
+        seed_metadata.pop("execution_recipe", None)
         if "execution_recipe" in strategy_metadata:
             # Carried verbatim from Source.metadata.strategy_seed; validation
             # against the Spec happens at conversion, never by parsing prose.
             recipe = strategy_metadata["execution_recipe"]
             if not isinstance(recipe, Mapping):
                 raise StrategySpecSeedError("execution_recipe must be an object")
-            seed_metadata.setdefault("execution_recipe", copy.deepcopy(dict(recipe)))
+            if "execution_recipe" in (metadata or {}) and dict(metadata["execution_recipe"] or {}) != dict(recipe):
+                raise StrategySpecSeedError(
+                    "caller metadata execution_recipe contradicts the Source recipe"
+                )
+            seed_metadata["execution_recipe"] = copy.deepcopy(dict(recipe))
+        elif "execution_recipe" in (metadata or {}):
+            raise StrategySpecSeedError(
+                "execution_recipe may only come from Source.metadata.strategy_seed"
+            )
         negative_memory_match = match_negative_memory(
             {
                 "seed_id": effective_seed_id,

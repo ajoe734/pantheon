@@ -960,9 +960,9 @@ def validate_execution_recipe(recipe: Any) -> dict[str, Any]:
             raise StrategyArtifactValidationError(
                 f"execution_recipe.{field} must be a finite number"
             )
-    if recipe["order_quantity"] < 0:
+    if recipe["order_quantity"] <= 0:
         raise StrategyArtifactValidationError(
-            "execution_recipe.order_quantity must not be negative"
+            "execution_recipe.order_quantity must be positive"
         )
     for field in ("positive_action", "non_positive_action"):
         if recipe[field] not in _EXECUTION_RECIPE_ACTIONS:
@@ -974,11 +974,6 @@ def validate_execution_recipe(recipe: Any) -> dict[str, Any]:
         raise StrategyArtifactValidationError(
             "execution_recipe.quantity_type must be one of "
             + "/".join(_EXECUTION_RECIPE_QUANTITY_TYPES)
-        )
-    sizing_actions = {recipe["positive_action"], recipe["non_positive_action"]}
-    if sizing_actions & {"BUY", "SELL"} and recipe["order_quantity"] <= 0:
-        raise StrategyArtifactValidationError(
-            "execution_recipe declares a BUY/SELL action but order_quantity is not positive"
         )
     return copy.deepcopy(dict(recipe))
 

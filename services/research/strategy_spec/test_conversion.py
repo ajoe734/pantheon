@@ -334,7 +334,7 @@ def test_source_without_recipe_stays_valid_research_and_not_executable() -> None
         (_recipe(kind="pairs_zscore"), "unsupported execution_recipe kind"),
         ({k: v for k, v in _recipe().items() if k != "momentum_threshold"}, "missing explicit fields"),
         (_recipe(positive_action="LONG"), "positive_action"),
-        (_recipe(order_quantity=0), "order_quantity is not positive"),
+        (_recipe(order_quantity=0), "order_quantity must be positive"),
         (_recipe(data_source="source-ingest:other"), "not a StrategySpec data dependency"),
     ],
 )
@@ -346,3 +346,16 @@ def test_unsupported_or_contradictory_recipe_is_rejected_with_reason(recipe, rea
 def test_recipe_symbols_contradicting_spec_symbols_are_rejected() -> None:
     with pytest.raises(StrategySpecConversionError, match="contradict StrategySpec market_scope.symbols"):
         _convert_with_recipe(_recipe(), metadata={"symbols": ["AAPL"]})
+
+
+@pytest.mark.parametrize("override", [{"order_quantity": 99}, {"positive_action": "SELL"}, {"kind": "pairs_zscore"}])
+def test_caller_metadata_cannot_rewrite_the_seed_recipe(override) -> None:
+    with pytest.raises(StrategySpecConversionError, match="execution_recipe contradicts"):
+        _convert_with_recipe(_recipe(), metadata={"execution_recipe": _recipe(**override)})
+    with pytest.raises(Exception, match="execution_recipe may only come from Source"):
+        _convert_with_recipe(None, metadata={"execution_recipe": _recipe(**override)})
+
+
+def test_hold_hold_zero_quantity_recipe_is_rejected() -> None:
+    with pytest.raises(StrategySpecConversionError, match="order_quantity must be positive"):
+        _convert_with_recipe(_recipe(positive_action="HOLD", non_positive_action="HOLD", order_quantity=0))

@@ -241,3 +241,19 @@ def test_non_object_execution_recipe_is_rejected() -> None:
         StrategySpecSeedBuilder().build_seed(
             _bundle(), source_records=[source], evidence_items=[_item()]
         )
+
+
+def test_caller_metadata_cannot_add_or_rewrite_the_source_execution_recipe() -> None:
+    recipe = {"kind": "close_to_close_momentum", "lookback_bars": 3}
+    source = _source()
+    source.metadata["strategy_seed"]["execution_recipe"] = recipe
+    with pytest.raises(StrategySpecSeedError, match="contradicts the Source recipe"):
+        StrategySpecSeedBuilder().build_seed(
+            _bundle(), source_records=[source], evidence_items=[_item()],
+            metadata={"execution_recipe": {**recipe, "lookback_bars": 99}},
+        )
+    with pytest.raises(StrategySpecSeedError, match="only come from Source"):
+        StrategySpecSeedBuilder().build_seed(
+            _bundle(), source_records=[_source()], evidence_items=[_item()],
+            metadata={"execution_recipe": recipe},
+        )

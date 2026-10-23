@@ -1108,24 +1108,42 @@ class HostedChainRunner:
         return problems
 
     def _verify_h3(self, decision_id: str) -> list[str]:
-        """H3 must be the decision for the derived artifact, never the Spec's H1."""
-        status, record = self.owner.request(
-            "governance", "GET", APPROVAL_READ.format(id=urllib.parse.quote(decision_id, safe=""))
-        )
-        record = _unwrap(record)
-        if status != 200 or not record:
-            return [f"decision H3 {decision_id}: owner GET returned {status}"]
-        wanted = {
-            "target_id": self.resource_ids["execution_artifact_id"],
-            "target_version": self.resource_ids.get("execution_artifact_version"),
-            "candidate_digest": self.resource_ids.get("execution_artifact_checksum"),
-            "capital_pool_id": self.resource_ids.get("capital_pool_id"),
-        }
-        return [
-            f"decision H3 {decision_id}: {key} {record.get(key)!r} != {want!r}"
-            for key, want in wanted.items()
-            if want and record.get(key) != want
-        ]
+        """H3 must be a live decision for the derived artifact, never the Spec's H1.
+
+        Same exact-ID read and expected fields Hosted C enforces before covered writes.
+        """
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from l12_owner_auth import HostedPause, require_decided_approval
+
+        def read(wanted_id: str) -> Mapping[str, Any] | None:
+            status, record = self.owner.request(
+                "governance", "GET", APPROVAL_READ.format(id=urllib.parse.quote(wanted_id, safe=""))
+            )
+            record = _unwrap(record)
+            if status != 200 or not isinstance(record, Mapping) or record.get("decision_id") != wanted_id:
+                return None
+            return record
+
+        ids = self.resource_ids
+        try:
+            require_decided_approval(
+                read,
+                {"decision_id": decision_id},
+                point="H3",
+                blocked_before="execution_artifact_approval",
+                tenant_id=self.tenant_id,
+                expected={
+                    "target_type": "registry_entry",
+                    "target_id": ids.get("execution_artifact_id"),
+                    "target_version": ids.get("execution_artifact_version"),
+                    "candidate_digest": ids.get("execution_artifact_checksum"),
+                    "capital_pool_id": ids.get("capital_pool_id"),
+                    "persona_id": ids.get("persona_id"),
+                },
+            )
+        except HostedPause as exc:
+            return [f"decision {exc.detail}"]
+        return []
 
     # -- phase ordering ---------------------------------------------------
     def _check_order(self) -> None:

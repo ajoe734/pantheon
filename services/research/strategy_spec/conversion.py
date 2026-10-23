@@ -358,6 +358,13 @@ def _conversion_metadata(seed: StrategySpecSeed, metadata: Mapping[str, Any] | N
     for key in ("source_license_scope", "access_scope", "entitlement_tags", "execution_recipe"):
         if key in source_metadata:
             payload[key] = source_metadata[key]
+    if "execution_recipe" in (metadata or {}):
+        # Reserved: the recipe is the Seed's (Source's); callers may not add or
+        # rewrite it.
+        if source_metadata.get("execution_recipe") != metadata["execution_recipe"]:
+            raise StrategySpecConversionError(
+                "conversion metadata execution_recipe contradicts or is absent from the Seed recipe"
+            )
     payload.update(dict(metadata or {}))
     payload.update(
         {

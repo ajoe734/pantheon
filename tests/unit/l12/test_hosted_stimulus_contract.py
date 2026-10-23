@@ -350,15 +350,45 @@ def test_e_close_never_retires_an_execution_artifact_that_is_not_the_chains_deri
     assert close["phase_status"] == "paused" and "execution_artifact_id exec-1" in close["rejected_unrelated"][0]
 
 
-def test_h3_for_a_different_target_than_the_execution_artifact_is_a_predecessor_problem(monkeypatch, tmp_path):
+H3_EXEC = dict(
+    decision_id="apv-3", decision_state="decided", decision="approved", target_type="registry_entry",
+    target_id="exec-1", target_version="1.0.0", candidate_digest="sha256:exec",
+    capital_pool_id="pool-1", persona_id="persona-1",
+)
+
+
+def _h3_problems(tmp_path, **override):
+    record = {**H3_EXEC, **override}
     owner = FakeOwner({
         ("registry", "/api/registry/strategy-artifacts/exec-1"): {"entry": _exec_record()},
-        ("governance", "/api/governance/approvals/apv-3"): _owned(decision_state="decided", decision="approved", target_id="reg-1"),
+        ("governance", "/api/governance/approvals/apv-3"): _owned(**record),
     })
     runner = _runner(tmp_path, "C_promote", owner, decisions={"H3": {"decision_id": "apv-3"}})
-    runner.resource_ids.update(EXEC_RESOURCES)
-    problems = runner.verify_predecessors()
-    assert any("decision H3 apv-3: target_id 'reg-1' != 'exec-1'" in p for p in problems)
+    runner.resource_ids.update(EXEC_RESOURCES, capital_pool_id="pool-1", persona_id="persona-1")
+    return runner.verify_predecessors()
+
+
+def test_exact_h3_for_the_execution_artifact_is_accepted(tmp_path):
+    assert not [p for p in _h3_problems(tmp_path) if "H3" in p]
+
+
+@pytest.mark.parametrize("override", [
+    dict(target_id="reg-1"),
+    dict(decision="rejected"),
+    dict(decision_state="pending"),
+    dict(tenant_id="foreign-tenant"),
+    dict(persona_id="persona-other"),
+    dict(capital_pool_id="pool-other"),
+    dict(revoked_at="2026-10-01T00:00:00Z"),
+    dict(superseded_by="apv-9"),
+    dict(expires_at="2020-01-01T00:00:00Z"),
+    dict(target_type="strategy_spec"),
+    dict(target_version="9.9.9"),
+    dict(candidate_digest="sha256:other"),
+    dict(decision_id="apv-other"),
+])
+def test_h3_not_exactly_covering_the_execution_artifact_is_a_predecessor_problem(tmp_path, override):
+    assert any(p.startswith("decision H3") for p in _h3_problems(tmp_path, **override))
 
 
 def _close_prior(**resources):

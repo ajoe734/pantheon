@@ -8,7 +8,9 @@
     "execution_artifact": "services.registry.strategy_artifact.build_execution_artifact_registration derives a DISTINCT artifact id/checksum from the owner-read-back Spec (stored checksum verified), keeping strategy_id/version and lineage.source_strategy_spec_id; the Spec itself is not modified.",
     "hosted_a": "Hosted stimulus explicitly uses supported momentum with a typed recipe and compares the owner-read-back Spec recipe; the default isolated stimulus remains the pairs research.",
     "hosted_c": "Registers the chain-owned candidate at /api/registry/strategy-artifacts, pauses (execution_artifact_approval) with exact version/checksum and the paper pool/persona until an exact H3 exists, then reuses that same H3 for Registry advance and plan approval_decision_id before dispatch. H1 remains the original Spec's decision; no fifth human point.",
-    "parent_e_close": "execution_artifact_id is verified (tenant, chain label, lineage to the Spec, version/checksum) and retired before its Spec; H3 target is checked against the artifact when known."
+    "parent_e_close": "execution_artifact_id is verified (tenant, chain label, lineage to the Spec, version/checksum) and retired before its Spec.",
+    "recipe_fence": "execution_recipe is reserved to Source.metadata.strategy_seed: caller metadata at Seed build or conversion can neither add nor rewrite it (contradiction rejected). order_quantity must be positive for every action (HOLD/HOLD qty 0 rejected, as the unchanged runtime does).",
+    "parent_h3_verify": "Predecessor H3 is read by exact decision_id and checked with the existing require_decided_approval: tenant, decided+approved, not revoked/superseded, optional expiry, target_type=registry_entry, artifact id/version/digest, capital pool and persona."
   },
   "tests": [
     "services/source_ingestion/tests/test_strategy_seed_builder.py",
