@@ -1,0 +1,35 @@
+{
+  "task_id": "TWSE-EMERGENCY-CLOSURE-20261023",
+  "announcement": {
+    "issued": "2026-10-22T20:10+08:00",
+    "title": "臺灣證券交易所集中交易市場115年10月23日休市一天",
+    "newsDetail_id": "8a8216d6a0fa351b01a1638507a10203",
+    "alternate_language_id": "8a8216d6a0fa351b01a1638557450205",
+    "attachment_url": "https://www.twse.com.tw/staticFiles/news/news/tsecnews/8a8216d6a0fa351b01a1638507940202.pdf",
+    "attachment_sha256": "07cdb8663b36ad6a89f4568fd653f6bdb8c2699af60781187c1d8e77279cbd5f"
+  },
+  "baseline_failure": {
+    "calendar_version": "twse-2026-schedule-v1",
+    "result": "market_input_stale",
+    "detail": "a newer official Taiwan session closed at 2026-10-23T05:30:00+00:00",
+    "inputs": "price date 2026-10-22, receipt 2026-10-23T06:45:17Z, now 2026-10-23T06:50Z",
+    "counterexample_file": "/tmp/pantheon-continue-20261023/TW-emergency-closure-current-production-calendar-counterexample.json"
+  },
+  "correction": {
+    "new_version": "twse-2026-emergency-closure-20261023-v2",
+    "sha256": "48e8d89449b436d936cb4a25c9860141b11a838d4f873deb2717af9fd896df99",
+    "coverage": "2026-10-22..2026-10-28",
+    "retained": [
+      "twse-2026-lny-v1",
+      "twse-2026-schedule-v1"
+    ],
+    "no_price_restamp": true,
+    "calendar_fetched_at": "2026-10-23T07:00:39Z",
+    "provenance_note": "newsDetail JSON retrieved 07:00:22Z, PDF 07:00:39Z (sha256 matches attachment_sha256); 06:45:17Z is the earlier price-date observation receipt, not the calendar retrieval"
+  },
+  "not_run": [
+    "Source scheduler/publish/reconcile",
+    "real model",
+    "VM/trading/deploy"
+  ]
+}
