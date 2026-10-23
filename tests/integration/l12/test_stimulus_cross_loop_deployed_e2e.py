@@ -603,6 +603,11 @@ def _registry_retire_body(record: Mapping[str, Any], chain_id: str, *_identity: 
     }
 
 
+def _execution_artifact_retire_body(record: Mapping[str, Any], chain_id: str, *_identity: Any) -> dict[str, Any]:
+    # Same CAS as the Spec, but a distinct command key: it retires a different Registry entry.
+    return {**_registry_retire_body(record, chain_id), "command_key": f"{chain_id}-e-close-execution-artifact"}
+
+
 def _capital_status_body(
     status: str, roles: tuple[str, ...]
 ) -> Callable[[Mapping[str, Any], str, str, tuple[str, ...]], dict[str, Any] | None]:
@@ -646,6 +651,11 @@ RECORD_SPECS: dict[str, OwnerRecordSpec] = {
     "capital_pool_id": OwnerRecordSpec(
         "capital", "/api/capital-pools/{id}", "PATCH", "/api/capital-pools/{id}/status",
         _capital_status_body("archived", ("capital.admin", "operator")), ("archived",),
+    ),
+    # The distinct execution artifact derived from the Spec retires before the Spec it came from.
+    "execution_artifact_id": OwnerRecordSpec(
+        "registry", "/api/registry/strategy-artifacts/{id}", "POST",
+        "/api/registry/strategy-artifacts/{id}/advance", _execution_artifact_retire_body, ("retired",),
     ),
     "registry_id": OwnerRecordSpec(
         "registry", "/api/registry/strategy-specs/{id}", "POST",
@@ -788,6 +798,22 @@ class HostedChainRunner:
             return self._check_registry_lineage(record_id, record)
         if chain != self.chain_id:
             return f"{kind} {record_id}: chain label {chain!r} != {self.chain_id!r}"
+        if kind == "execution_artifact_id":
+            return self._check_execution_artifact(record_id, record)
+        return None
+
+    def _check_execution_artifact(self, record_id: str, record: Mapping[str, Any]) -> str | None:
+        """The derived artifact must be the one C registered, linked to this chain's original Spec."""
+        spec_id = self.resource_ids.get("registry_id")
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), Mapping) else {}
+        embedded = metadata.get("strategy_artifact") if isinstance(metadata.get("strategy_artifact"), Mapping) else {}
+        linked = (embedded.get("lineage") or {}).get("source_strategy_spec_id")
+        if not spec_id or record_id == spec_id or linked != spec_id:
+            return f"execution_artifact_id {record_id}: lineage.source_strategy_spec_id {linked!r} is not this chain's Spec {spec_id!r}"
+        for field, key in (("checksum", "execution_artifact_checksum"), ("version", "execution_artifact_version")):
+            want = self.resource_ids.get(key)
+            if want and record.get(field) != want:
+                return f"execution_artifact_id {record_id}: {field} {record.get(field)!r} differs from the chain's {want!r}"
         return None
 
     def _check_registry_lineage(self, record_id: str, record: Mapping[str, Any]) -> str | None:
@@ -833,6 +859,8 @@ class HostedChainRunner:
                 problems.append(f"decision {name}: empty consent reference")
             elif name == "H3" and not _decision_id(reference):
                 problems.append("decision H3: no decision_id")
+            elif name == "H3" and self.resource_ids.get("execution_artifact_id"):
+                problems.extend(self._verify_h3(_decision_id(reference)))
             # recorded consent (e.g. H2) is forwarded as given; never a Governance gate
         problems.extend(self._verify_domain_outputs())
         return problems
@@ -1036,6 +1064,26 @@ class HostedChainRunner:
         if name == "H1" and registry_id and record.get("target_id") != registry_id:
             problems.append(f"decision H1 {decision_id}: targets {record.get('target_id')!r}, not {registry_id!r}")
         return problems
+
+    def _verify_h3(self, decision_id: str) -> list[str]:
+        """H3 must be the decision for the derived artifact, never the Spec's H1."""
+        status, record = self.owner.request(
+            "governance", "GET", APPROVAL_READ.format(id=urllib.parse.quote(decision_id, safe=""))
+        )
+        record = _unwrap(record)
+        if status != 200 or not record:
+            return [f"decision H3 {decision_id}: owner GET returned {status}"]
+        wanted = {
+            "target_id": self.resource_ids["execution_artifact_id"],
+            "target_version": self.resource_ids.get("execution_artifact_version"),
+            "candidate_digest": self.resource_ids.get("execution_artifact_checksum"),
+            "capital_pool_id": self.resource_ids.get("capital_pool_id"),
+        }
+        return [
+            f"decision H3 {decision_id}: {key} {record.get(key)!r} != {want!r}"
+            for key, want in wanted.items()
+            if want and record.get(key) != want
+        ]
 
     # -- phase ordering ---------------------------------------------------
     def _check_order(self) -> None:

@@ -309,6 +309,58 @@ def test_e_close_retires_only_verified_chain_records(monkeypatch, tmp_path):
     assert _receipt(tmp_path)["hosted"]["all12_passed"] is False
 
 
+def _exec_record(spec_id="reg-1", checksum="sha256:exec"):
+    return _owned(
+        artifact_state="approved", version="1.0.0", checksum=checksum,
+        metadata={"chain_id": CHAIN, "strategy_artifact": {"lineage": {"source_strategy_spec_id": spec_id}}},
+    )
+
+
+EXEC_RESOURCES = {"registry_id": "reg-1", "execution_artifact_id": "exec-1",
+                  "execution_artifact_version": "1.0.0", "execution_artifact_checksum": "sha256:exec"}
+
+
+def test_e_close_retires_the_derived_execution_artifact_before_its_spec(monkeypatch, tmp_path):
+    owner = FakeOwner({
+        ("registry", "/api/registry/strategy-artifacts/exec-1"): {"entry": _exec_record()},
+        ("registry", "/api/registry/strategy-specs/reg-1"): {"entry": _owned(artifact_state="approved", version=3)},
+        ("governance", "/api/governance/approvals/apv-1"): _owned(decision_state="decided", decision="approved", target_id="reg-1", version=3),
+    })
+    _runner(tmp_path, "E_close", owner, prior=_close_prior(**EXEC_RESOURCES)).run()
+    writes = [p for _s, m, p, _b in owner.log if m != "GET"]
+    assert writes == [
+        "/api/registry/strategy-artifacts/exec-1/advance",
+        "/api/registry/strategy-specs/reg-1/advance",
+        "/api/governance/approvals/apv-1/revoke",
+    ]
+    bodies = {p: b for _s, m, p, b in owner.log if m != "GET"}
+    assert bodies[writes[0]]["command_key"] != bodies[writes[1]]["command_key"]
+    close = _receipt(tmp_path)["hosted"]["phases"]["E_close"]
+    assert {"kind": "execution_artifact_id", "id": "exec-1", "http": 200} in close["retired"]
+    # the version/checksum references stay labelled residual, not silently dropped
+    assert {"execution_artifact_checksum", "execution_artifact_version"} <= set(close["residual_non_retirable"])
+
+
+@pytest.mark.parametrize("record", [_exec_record(spec_id="someone-elses-spec"), _exec_record(checksum="sha256:other")])
+def test_e_close_never_retires_an_execution_artifact_that_is_not_the_chains_derived_one(monkeypatch, tmp_path, record):
+    owner = FakeOwner({("registry", "/api/registry/strategy-artifacts/exec-1"): {"entry": record}})
+    _runner(tmp_path, "E_close", owner, prior=_close_prior(**EXEC_RESOURCES)).run()
+    assert [x for x in owner.log if x[1] != "GET"] == []
+    close = _receipt(tmp_path)["hosted"]["phases"]["E_close"]
+    assert close["phase_status"] == "paused" and "execution_artifact_id exec-1" in close["rejected_unrelated"][0]
+
+
+def test_h3_for_a_different_target_than_the_execution_artifact_is_a_predecessor_problem(monkeypatch, tmp_path):
+    owner = FakeOwner({
+        ("registry", "/api/registry/strategy-artifacts/exec-1"): {"entry": _exec_record()},
+        ("governance", "/api/governance/approvals/apv-3"): _owned(decision_state="decided", decision="approved", target_id="reg-1"),
+    })
+    runner = _runner(tmp_path, "C_promote", owner, decisions={"H3": {"decision_id": "apv-3"}})
+    runner.resource_ids.update(EXEC_RESOURCES)
+    problems = runner.verify_predecessors()
+    assert any("decision H3 apv-3: target_id 'reg-1' != 'exec-1'" in p for p in problems)
+
+
 def _close_prior(**resources):
     done = {p: {"phase_status": "completed"} for p in parent.HOSTED_PHASES[:4]}
     return {"hosted": {"chain_id": CHAIN, "phases": done, "decisions": {"H1": "apv-1"}, "resource_ids": resources}}

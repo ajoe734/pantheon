@@ -1,0 +1,21 @@
+{
+  "task_id": "SOURCE-SPEC-EXECUTION-RECIPE-20261023",
+  "kind": "source_review_manifest",
+  "scope": "source change only; not deployment, full49 or all12 acceptance. No live hosted/provider/approval/deploy execution was performed.",
+  "behavior": {
+    "source_to_spec": "Source.metadata.strategy_seed.execution_recipe is carried verbatim into Seed.metadata and, validated, into the checksummed StrategySpec.metadata.execution_recipe by the existing conversion path (distillation controller unchanged). Sources without a recipe stay valid, honestly non-executable research.",
+    "recipe_contract": "Only close_to_close_momentum with every field explicit (symbols, bar_frequency, data_source, lookback_bars, momentum_threshold, positive_action, non_positive_action, order_quantity, quantity_type). No prose parsing, defaults or pairs/zscore reinterpretation; unsupported kind or contradiction with Spec symbols/frequency/data dependency/quantity_type is rejected with a specific reason.",
+    "execution_artifact": "services.registry.strategy_artifact.build_execution_artifact_registration derives a DISTINCT artifact id/checksum from the owner-read-back Spec (stored checksum verified), keeping strategy_id/version and lineage.source_strategy_spec_id; the Spec itself is not modified.",
+    "hosted_a": "Hosted stimulus explicitly uses supported momentum with a typed recipe and compares the owner-read-back Spec recipe; the default isolated stimulus remains the pairs research.",
+    "hosted_c": "Registers the chain-owned candidate at /api/registry/strategy-artifacts, pauses (execution_artifact_approval) with exact version/checksum and the paper pool/persona until an exact H3 exists, then reuses that same H3 for Registry advance and plan approval_decision_id before dispatch. H1 remains the original Spec's decision; no fifth human point.",
+    "parent_e_close": "execution_artifact_id is verified (tenant, chain label, lineage to the Spec, version/checksum) and retired before its Spec; H3 target is checked against the artifact when known."
+  },
+  "tests": [
+    "services/source_ingestion/tests/test_strategy_seed_builder.py",
+    "services/research/strategy_spec/test_conversion.py",
+    "services/registry/test_strategy_artifact.py",
+    "tests/unit/l12/test_hosted_domain_contract.py",
+    "tests/unit/l12/test_hosted_stimulus_contract.py"
+  ],
+  "verification": "focused suites above plus services/source_ingestion/tests/test_distillation_controller.py and services/research/strategy_spec passed locally; hosted behavior against live owners not exercised by this task."
+}

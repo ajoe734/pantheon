@@ -172,7 +172,8 @@ class FakeResearchOwners:
             "checksum": "sha-1", "version": 1, "updated_at": "t0",
             "approval_decision_id": "apv-1" if entry_state == "approved" else None,
             "metadata": {"distillation": {"source_id": self.sid, "source_digest": self.digest,
-                                           "distillation_job_id": "dj-1"}},
+                                           "distillation_job_id": "dj-1"},
+                         "strategy_spec": {"metadata": {"execution_recipe": dict(mod.HOSTED_EXECUTION_RECIPE)}}},
         }
         self.decisions: dict[str, dict[str, Any]] = {}
         if decided:
@@ -264,6 +265,22 @@ def test_research_a1_returns_real_draft_then_pauses_before_alpha_without_h1(
     assert receipt["resource_ids"]["checksum"] == "sha-1"
     assert receipt["resource_ids"]["source_id"] == owners.sid
     assert owners.sid.startswith("hosted-all12-chain-x-")
+
+
+def test_hosted_source_declares_supported_momentum_recipe_and_isolated_default_stays_pairs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    mod, harness, owners = _research(monkeypatch, tmp_path)
+    hosted_seed, default_seed = mod._strategy_seed(True), mod._strategy_seed(False)
+    assert hosted_seed["execution_recipe"] == mod.HOSTED_EXECUTION_RECIPE
+    assert mod.HOSTED_EXECUTION_DATA_SOURCE in hosted_seed["required_data"]
+    assert "pairs" in default_seed["hypothesis"] and "execution_recipe" not in default_seed
+
+    # the recipe the owner read back must equal the Source's; any drift stops the phase
+    owners.entry["metadata"]["strategy_spec"]["metadata"]["execution_recipe"]["order_quantity"] = 5
+    with pytest.raises(RuntimeError, match="execution_recipe"):
+        harness.run_case(2)
+    assert owners.writes() == []
 
 
 def test_research_a2_reuses_exact_registry_id_and_checksum_with_h1_and_never_duplicates(
