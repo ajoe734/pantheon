@@ -20,15 +20,19 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping, Protocol
 
 import pytest
 
@@ -207,6 +211,7 @@ class Evidence:
     status: str = "running"
     first_failed_boundary: str | None = None
     error: str | None = None
+    hosted: dict[str, Any] | None = None
 
     def write(self) -> None:
         payload = {
@@ -235,6 +240,8 @@ class Evidence:
             "status": self.status,
             "task_id": TASK_ID,
         }
+        if self.hosted is not None:
+            payload["hosted"] = self.hosted
         self.settings.evidence_output.parent.mkdir(parents=True, exist_ok=True)
         descriptor, temporary = tempfile.mkstemp(
             dir=self.settings.evidence_output.parent,
@@ -256,13 +263,20 @@ class Evidence:
 class StimulusDrivenClosureGate:
     """Run fresh owner stimuli, then project their current Management truth."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, *, run_id: str | None = None) -> None:
         self.settings = settings
-        self.run_id = f"{TASK_ID.lower()}-{uuid.uuid4().hex[:12]}"
+        self.run_id = run_id or f"{TASK_ID.lower()}-{uuid.uuid4().hex[:12]}"
         self.evidence = Evidence(settings=settings, run_id=self.run_id)
         self._reports: dict[str, Mapping[str, Any]] = {}
 
-    def _run_domain_suite(self, domain: str, report_path: Path) -> None:
+    def _run_domain_suite(
+        self,
+        domain: str,
+        report_path: Path,
+        *,
+        extra_env: Mapping[str, str] | None = None,
+        accepted_statuses: tuple[str, ...] = ("passed",),
+    ) -> None:
         report_path.unlink(missing_ok=True)
         env = os.environ.copy()
         env.update(
@@ -282,6 +296,7 @@ class StimulusDrivenClosureGate:
         else:  # pragma: no cover - fixed internal dispatch table
             raise StimulusProofError(f"unknown domain suite {domain!r}")
 
+        env.update(extra_env or {})
         started_at = _utc_now()
         completed = subprocess.run(
             [sys.executable, "-m", "pytest", "-q", DOMAIN_SUITES[domain]],
@@ -306,7 +321,7 @@ class StimulusDrivenClosureGate:
             report = json.loads(report_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise StimulusProofError(f"{domain} stimulus report is invalid") from exc
-        if not isinstance(report, Mapping) or report.get("status") != "passed":
+        if not isinstance(report, Mapping) or report.get("status") not in accepted_statuses:
             raise StimulusProofError(f"{domain} stimulus report did not pass")
         report_sha = str(report.get("git_sha") or report.get("expected_sha") or "")
         if report_sha != self.settings.expected_sha:
@@ -432,6 +447,469 @@ class StimulusDrivenClosureGate:
             self.evidence.write()
 
 
+# --------------------------------------------------------------------------
+# Hosted chain phases (PANTHEON_L12_HOSTED_CHAIN=1).  The same parent launches
+# the same domain suites; hosted adds a stable chain id, one requested phase,
+# owner-verified predecessors and E_close retirement.  Owner GETs are truth;
+# receipt files are lookup hints only.  Default isolated behaviour is unchanged.
+# --------------------------------------------------------------------------
+
+HOSTED_FLAG = "PANTHEON_L12_HOSTED_CHAIN"
+HOSTED_PHASES = ("A_research", "B_learning", "C_promote", "D_observe", "E_close")
+HOSTED_PHASE_SUITE = {
+    "A_research": "research",
+    "B_learning": "human",
+    "C_promote": "runtime",
+    "D_observe": "runtime",
+}
+HOSTED_PHASE_LOOPS = {
+    "A_research": CANONICAL_LOOP_IDS[0:4],
+    "B_learning": CANONICAL_LOOP_IDS[4:7],
+    "C_promote": CANONICAL_LOOP_IDS[7:9],
+    "D_observe": CANONICAL_LOOP_IDS[9:12],
+}
+HOSTED_PHASE_STATUSES = ("completed", "paused", "failed")
+HOSTED_RECEIPT_SCHEMA = "pantheon.hosted_all12.stimulus_phase_receipt.v1"
+_CHAIN_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{7,63}$")
+_WRAPPER_KEYS = ("entry", "binding", "pool", "plan", "approval", "capital_pool")
+
+
+class OwnerClient(Protocol):
+    def request(
+        self,
+        service: str,
+        method: str,
+        path: str,
+        body: Mapping[str, Any] | None = None,
+        idempotency_key: str | None = None,
+    ) -> tuple[int, Any]: ...
+
+
+class UrllibOwnerClient:
+    """Plain HTTP owner access under the real executing identity from env."""
+
+    def __init__(self, urls: Mapping[str, str], token: str) -> None:
+        self.urls = dict(urls)
+        self.token = token
+
+    @classmethod
+    def from_env(cls) -> "UrllibOwnerClient":
+        services = ("registry", "governance", "capital", "deployment", "runtime")
+        urls = {
+            name: _required_env(f"PANTHEON_L12_{name.upper()}_URL").rstrip("/")
+            for name in services
+        }
+        return cls(urls, _required_env("PANTHEON_L12_HOSTED_OWNER_TOKEN"))
+
+    def request(
+        self,
+        service: str,
+        method: str,
+        path: str,
+        body: Mapping[str, Any] | None = None,
+        idempotency_key: str | None = None,
+    ) -> tuple[int, Any]:
+        headers = {"Accept": "application/json", "Authorization": f"Bearer {self.token}"}
+        data = None
+        if body is not None:
+            data = _canonical_json(dict(body)).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
+        request = urllib.request.Request(
+            f"{self.urls[service]}{path}", data=data, headers=headers, method=method
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                raw, status = response.read().decode("utf-8"), response.status
+        except urllib.error.HTTPError as exc:
+            raw, status = exc.read().decode("utf-8", errors="replace"), exc.code
+        except (urllib.error.URLError, OSError) as exc:
+            raise StimulusProofError(f"{method} {service}{path} transport failed: {exc}") from exc
+        try:
+            return status, (json.loads(raw) if raw else {})
+        except json.JSONDecodeError:
+            return status, {"raw": raw}
+
+
+def _registry_retire_body(record: Mapping[str, Any], chain_id: str) -> dict[str, Any]:
+    # Registry advance is a CAS on the entry the caller just read.
+    return {
+        "target_state": "retired",
+        "command_key": f"{chain_id}-e-close-registry",
+        "expected_artifact_state": record.get("artifact_state"),
+        "expected_version": record.get("version"),
+        "expected_updated_at": record.get("updated_at"),
+    }
+
+
+def _capital_status_body(status: str, role: str) -> Callable[[Mapping[str, Any], str], dict[str, Any]]:
+    return lambda _record, chain_id: {
+        "actor_id": f"{chain_id}-e-close",
+        "actor_role": role,
+        "status": status,
+    }
+
+
+@dataclass(frozen=True)
+class OwnerRecordSpec:
+    """Existing owner read (and retirement, when the owner has one)."""
+
+    service: str
+    read_path: str
+    retire_method: str | None = None
+    retire_path: str | None = None
+    retire_body: Callable[[Mapping[str, Any], str], dict[str, Any]] | None = None
+    retired_states: tuple[str, ...] = ()
+
+
+# Retirement order matters: binding before pool, runtime/plan before artifact.
+RECORD_SPECS: dict[str, OwnerRecordSpec] = {
+    "capital_binding_id": OwnerRecordSpec(
+        "capital", "/api/bindings/{id}", "PATCH", "/api/bindings/{id}/status",
+        _capital_status_body("revoked", "persona.admin"), ("revoked",),
+    ),
+    "runtime_binding_id": OwnerRecordSpec(
+        "runtime", "/api/runtime-bindings/{id}", "POST", "/api/runtime-bindings/{id}/retire",
+        lambda _r, chain_id: {"actor_id": f"{chain_id}-e-close", "reason": f"{chain_id} E_close"},
+        ("retired", "inactive"),
+    ),
+    "plan_id": OwnerRecordSpec(
+        "deployment", "/api/deployment/plans/{id}", "POST", "/api/deployment/plans/{id}/status",
+        lambda _r, _c: {"status": "aborted"}, ("aborted",),
+    ),
+    "capital_pool_id": OwnerRecordSpec(
+        "capital", "/api/capital-pools/{id}", "PATCH", "/api/capital-pools/{id}/status",
+        _capital_status_body("archived", "capital.admin"), ("archived",),
+    ),
+    "registry_id": OwnerRecordSpec(
+        "registry", "/api/registry/strategy-specs/{id}", "POST",
+        "/api/registry/strategy-specs/{id}/advance", _registry_retire_body, ("retired",),
+    ),
+}
+APPROVAL_READ = "/api/governance/approvals/{id}"
+APPROVAL_REVOKE = "/api/governance/approvals/{id}/revoke"
+_STATE_KEYS = ("status", "artifact_state", "state")
+
+
+def _unwrap(payload: Any) -> Mapping[str, Any]:
+    if not isinstance(payload, Mapping):
+        return {}
+    for key in _WRAPPER_KEYS:
+        inner = payload.get(key)
+        if isinstance(inner, Mapping):
+            return inner
+    return payload
+
+
+def _record_tenant(record: Mapping[str, Any]) -> str:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), Mapping) else {}
+    for candidate in (record.get("tenant_id"), metadata.get("tenant_id"), record.get("owner_tenant")):
+        if str(candidate or "").strip():
+            return str(candidate)
+    return ""
+
+
+def _record_chain(record: Mapping[str, Any]) -> str:
+    for holder in (record.get("metadata"), record.get("labels"), record):
+        if isinstance(holder, Mapping) and str(holder.get("chain_id") or "").strip():
+            return str(holder["chain_id"])
+    return ""
+
+
+def _record_state(record: Mapping[str, Any]) -> str:
+    for key in _STATE_KEYS:
+        if str(record.get(key) or "").strip():
+            return str(record[key]).lower()
+    return ""
+
+
+class HostedChainRunner:
+    """Run one requested phase, resuming from owner truth instead of receipts."""
+
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        chain_id: str,
+        phase: str,
+        tenant_id: str,
+        owner: OwnerClient,
+        prior_receipt: Mapping[str, Any] | None = None,
+        decision_refs: Mapping[str, str] | None = None,
+    ) -> None:
+        if not _CHAIN_ID_PATTERN.match(chain_id):
+            raise StimulusProofError("chain id must be a stable lowercase nonsecret identifier")
+        if phase not in HOSTED_PHASES:
+            raise StimulusProofError(f"phase {phase!r} is not one of {HOSTED_PHASES}")
+        if tenant_id in {"", "*"}:
+            raise StimulusProofError("hosted chain requires a concrete tenant, never '*'")
+        hosted = (prior_receipt or {}).get("hosted") or {}
+        if hosted and hosted.get("chain_id") != chain_id:
+            raise StimulusProofError("prior receipt belongs to a different chain id")
+        self.settings, self.chain_id, self.phase = settings, chain_id, phase
+        self.tenant_id, self.owner = tenant_id, owner
+        self.phases: dict[str, dict[str, Any]] = {
+            name: dict(value) for name, value in (hosted.get("phases") or {}).items()
+        }
+        self.resource_ids: dict[str, str] = dict(hosted.get("resource_ids") or {})
+        self.decisions: dict[str, str] = {**dict(hosted.get("decisions") or {}), **dict(decision_refs or {})}
+        self.loops: dict[str, dict[str, Any]] = {
+            item["loop_id"]: item for item in hosted.get("loops") or []
+        }
+        self.gate = StimulusDrivenClosureGate(settings, run_id=chain_id)
+        self.gate.evidence.hosted = {}
+
+    # -- owner truth ------------------------------------------------------
+    def _read(self, spec: OwnerRecordSpec, path: str) -> tuple[int, Mapping[str, Any]]:
+        status, payload = self.owner.request(spec.service, "GET", path)
+        return status, _unwrap(payload)
+
+    def _check_scope(self, kind: str, record_id: str, record: Mapping[str, Any]) -> str | None:
+        tenant, chain = _record_tenant(record), _record_chain(record)
+        if tenant != self.tenant_id:
+            return f"{kind} {record_id}: tenant {tenant!r} != {self.tenant_id!r}"
+        if chain != self.chain_id:
+            return f"{kind} {record_id}: chain label {chain!r} != {self.chain_id!r}"
+        return None
+
+    def verify_predecessors(self) -> list[str]:
+        """Read every referenced owner record; return concrete mismatches."""
+
+        problems: list[str] = []
+        for kind, record_id in sorted(self.resource_ids.items()):
+            spec = RECORD_SPECS.get(kind)
+            if spec is None:
+                continue  # carried as a nonsecret reference; owner read not defined here
+            status, record = self._read(spec, spec.read_path.format(id=urllib.parse.quote(record_id, safe="")))
+            if status != 200 or not record:
+                problems.append(f"{kind} {record_id}: owner GET returned {status}")
+                continue
+            mismatch = self._check_scope(kind, record_id, record)
+            if mismatch:
+                problems.append(mismatch)
+        for name, decision_id in sorted(self.decisions.items()):
+            problems.extend(self._verify_decision(name, decision_id))
+        return problems
+
+    def _verify_decision(self, name: str, decision_id: str) -> list[str]:
+        status, record = self.owner.request(
+            "governance", "GET", APPROVAL_READ.format(id=urllib.parse.quote(decision_id, safe=""))
+        )
+        record = _unwrap(record)
+        if status != 200 or not record:
+            return [f"decision {name} {decision_id}: owner GET returned {status}"]
+        problems: list[str] = []
+        if _record_tenant(record) != self.tenant_id:
+            problems.append(f"decision {name} {decision_id}: tenant mismatch")
+        if record.get("decision_state") != "decided" or record.get("decision") != "approved":
+            problems.append(
+                f"decision {name} {decision_id}: not an approved decided record "
+                f"(state={record.get('decision_state')!r} decision={record.get('decision')!r})"
+            )
+        registry_id = self.resource_ids.get("registry_id")
+        if name == "H1" and registry_id and record.get("target_id") != registry_id:
+            problems.append(f"decision H1 {decision_id}: targets {record.get('target_id')!r}, not {registry_id!r}")
+        return problems
+
+    # -- phase ordering ---------------------------------------------------
+    def _check_order(self) -> None:
+        index = HOSTED_PHASES.index(self.phase)
+        if index and self.phases.get(HOSTED_PHASES[index - 1], {}).get("phase_status") != "completed":
+            raise StimulusProofError(
+                f"phase {self.phase} requires completed predecessor phase {HOSTED_PHASES[index - 1]}"
+            )
+
+    def _result(self, status: str, blocked_before: str | None = None, **extra: Any) -> dict[str, Any]:
+        record = {
+            "phase": self.phase,
+            "phase_status": status,
+            "blocked_before": blocked_before,
+            "updated_at": _utc_now(),
+            **extra,
+        }
+        self.phases[self.phase] = record
+        return record
+
+    # -- dispatch ---------------------------------------------------------
+    def run(self) -> Evidence:
+        evidence = self.gate.evidence
+        try:
+            self._check_order()
+            previous = self.phases.get(self.phase, {})
+            if previous.get("phase_status") == "completed" and self.phase != "D_observe":
+                record = dict(previous, reused=True)  # no duplicate predecessor dispatch
+                self.phases[self.phase] = record
+            else:
+                # E_close verifies and rejects per record instead of pausing as a whole.
+                problems = [] if self.phase == "E_close" else self.verify_predecessors()
+                if problems:
+                    record = self._result("paused", f"{self.phase}:predecessor_verification", evidence=problems)
+                elif self.phase == "E_close":
+                    record = self._close()
+                else:
+                    record = self._launch_phase()
+            evidence.status = "passed" if record["phase_status"] == "completed" else record["phase_status"]
+            if record["phase_status"] == "failed":
+                evidence.error = str(record.get("error") or "phase failed")
+            return evidence
+        except Exception as exc:
+            evidence.status, evidence.error = "failed", f"{type(exc).__name__}: {exc}"
+            self._result("failed", error=evidence.error)
+            raise
+        finally:
+            evidence.loops = [self.loops[k] for k in CANONICAL_LOOP_IDS if k in self.loops]
+            evidence.hosted = self._receipt()
+            evidence.write()
+
+    def _receipt(self) -> dict[str, Any]:
+        current = self.phases.get(self.phase, {})
+        all_done = all(self.phases.get(p, {}).get("phase_status") == "completed" for p in HOSTED_PHASES)
+        return {
+            "all12_passed": bool(all_done and len(self.loops) == len(CANONICAL_LOOP_IDS)),
+            "blocked_before": current.get("blocked_before"),
+            "chain_id": self.chain_id,
+            "decisions": self.decisions,
+            "loops": [self.loops[k] for k in CANONICAL_LOOP_IDS if k in self.loops],
+            "phase": self.phase,
+            "phase_status": current.get("phase_status"),
+            "phases": self.phases,
+            "resource_ids": self.resource_ids,
+            "schema_version": HOSTED_RECEIPT_SCHEMA,
+            "tenant_id": self.tenant_id,
+        }
+
+    def _launch_phase(self) -> dict[str, Any]:
+        domain = HOSTED_PHASE_SUITE[self.phase]
+        with tempfile.TemporaryDirectory(prefix="pantheon-l12-hosted-") as temp_dir:
+            root = Path(temp_dir)
+            input_path = root / "chain-input.json"
+            input_path.write_text(
+                json.dumps(
+                    {
+                        "chain_id": self.chain_id,
+                        "decisions": self.decisions,
+                        "phase": self.phase,
+                        "predecessors": self.resource_ids,
+                    },
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
+            self.gate._run_domain_suite(
+                domain,
+                root / f"{domain}-report.json",
+                extra_env={
+                    HOSTED_FLAG: "1",
+                    "PANTHEON_L12_HOSTED_CHAIN_PHASE": self.phase,
+                    "PANTHEON_L12_HOSTED_CHAIN_INPUT": str(input_path),
+                },
+                accepted_statuses=("passed", "paused"),
+            )
+        report = self.gate._reports[domain]
+        if report.get("chain_id") != self.chain_id or report.get("phase") != self.phase:
+            raise StimulusProofError(f"{domain} receipt does not echo chain id and phase")
+        status = str(report.get("phase_status") or "")
+        if status not in HOSTED_PHASE_STATUSES:
+            raise StimulusProofError(f"{domain} receipt phase_status {status!r} is not recognised")
+        reported = report.get("resource_ids") or {}
+        if not isinstance(reported, Mapping):
+            raise StimulusProofError(f"{domain} receipt resource_ids must be an object")
+        self.resource_ids.update({str(k): str(v) for k, v in reported.items() if str(v or "").strip()})
+        cases = _report_cases(domain, report)
+        wanted = HOSTED_PHASE_LOOPS[self.phase]
+        for loop_id, loop_domain, case_key in LOOP_CASES:
+            if loop_id in wanted and case_key in cases:
+                self.loops[loop_id] = _normalize_case(
+                    loop_id=loop_id, domain=loop_domain, source_case=cases[case_key]
+                )
+        if status == "completed":
+            missing = [loop_id for loop_id in wanted if loop_id not in self.loops]
+            if missing:
+                raise StimulusProofError(f"{self.phase} completed without loop evidence for {missing}")
+        return self._result(
+            status,
+            report.get("blocked_before"),
+            report_sha256=self.gate.evidence.domain_suites[domain]["report_sha256"],
+        )
+
+    # -- E_close ----------------------------------------------------------
+    def _close(self) -> dict[str, Any]:
+        retired: list[dict[str, Any]] = []
+        rejected: list[str] = []
+        failures: list[str] = []
+        for kind, spec in RECORD_SPECS.items():
+            record_id = self.resource_ids.get(kind)
+            if not record_id:
+                continue
+            quoted = urllib.parse.quote(record_id, safe="")
+            status, record = self._read(spec, spec.read_path.format(id=quoted))
+            mismatch = self._check_scope(kind, record_id, record) if status == 200 else f"{kind} {record_id}: GET {status}"
+            if mismatch:
+                rejected.append(mismatch)  # unrelated or missing: never touched
+                continue
+            if _record_state(record) in spec.retired_states:
+                retired.append({"kind": kind, "id": record_id, "already": True})
+                continue
+            code, payload = self.owner.request(
+                spec.service,
+                spec.retire_method or "POST",
+                spec.retire_path.format(id=quoted),
+                spec.retire_body(record, self.chain_id),
+                idempotency_key=f"{self.chain_id}-e-close-{kind}",
+            )
+            if code not in (200, 201, 202):
+                failures.append(f"{kind} {record_id}: retire returned {code}")
+                continue
+            retired.append({"kind": kind, "id": record_id, "http": code})
+        h1 = self.decisions.get("H1")
+        if h1:
+            status, record = self.owner.request("governance", "GET", APPROVAL_READ.format(id=urllib.parse.quote(h1, safe="")))
+            record = _unwrap(record)
+            if status == 200 and _record_tenant(record) == self.tenant_id and record.get("target_id") == self.resource_ids.get("registry_id"):
+                code, _ = self.owner.request(
+                    "governance", "POST", APPROVAL_REVOKE.format(id=urllib.parse.quote(h1, safe="")),
+                    {"actor_id": f"{self.chain_id}-e-close"}, idempotency_key=f"{self.chain_id}-e-close-H1",
+                )
+                if code in (200, 201, 202):
+                    retired.append({"kind": "H1_approval", "id": h1, "http": code})
+                else:
+                    failures.append(f"H1 {h1}: revoke returned {code}")
+            else:
+                rejected.append(f"H1 {h1}: not a verified approval for this chain registry entry")
+        residual = sorted(k for k in self.resource_ids if k not in RECORD_SPECS)
+        return self._result(
+            "failed" if failures else "completed",
+            None,
+            error="; ".join(failures) or None,
+            retired=retired,
+            rejected_unrelated=rejected,
+            residual_non_retirable=residual,
+            baseline_fleet_check="not_verified_by_parent",
+        )
+
+
+def _load_prior_receipt() -> Mapping[str, Any] | None:
+    raw = os.getenv("PANTHEON_L12_HOSTED_CHAIN_PRIOR_RECEIPT", "").strip()
+    if not raw:
+        return None
+    return json.loads(Path(raw).read_text(encoding="utf-8"))
+
+
+def run_hosted_phase_from_env() -> Evidence:
+    refs = os.getenv("PANTHEON_L12_HOSTED_CHAIN_DECISION_REFS", "").strip()
+    runner = HostedChainRunner(
+        Settings.from_env(),
+        chain_id=_required_env("PANTHEON_L12_CROSS_LOOP_RUN_ID"),
+        phase=_required_env("PANTHEON_L12_HOSTED_CHAIN_PHASE"),
+        tenant_id=_required_env("PANTHEON_L12_TENANT_ID"),
+        owner=UrllibOwnerClient.from_env(),
+        prior_receipt=_load_prior_receipt(),
+        decision_refs=json.loads(refs) if refs else None,
+    )
+    return runner.run()
+
+
 def test_stimulus_gate_maps_all_twelve_canonical_loops() -> None:
     assert len(CANONICAL_LOOP_IDS) == 12
     assert len(set(CANONICAL_LOOP_IDS)) == 12
@@ -514,3 +992,15 @@ def test_stimulus_driven_cross_loop_management_closure() -> None:
     assert evidence.status == "passed"
     assert len(evidence.loops) == 12
     assert evidence.management["canonical_loop_count"] == 12
+
+
+@pytest.mark.skipif(
+    os.getenv(HOSTED_FLAG, "").strip().lower() not in {"1", "true", "yes"}
+    or os.getenv("PANTHEON_L12_STIMULUS_CROSS_LOOP_E2E", "").strip().lower()
+    not in {"1", "true", "yes"},
+    reason="set PANTHEON_L12_HOSTED_CHAIN=1 with the stimulus gate for a hosted phase",
+)
+def test_hosted_chain_phase() -> None:
+    # paused is normal incomplete progress, not a failure and never all12 success
+    evidence = run_hosted_phase_from_env()
+    assert evidence.status in {"passed", "paused"}

@@ -1,0 +1,225 @@
+"""Fake-owner tests for the hosted phase/resume/E_close contract of the stimulus parent."""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import subprocess
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+
+PARENT = Path(__file__).resolve().parents[2] / "integration/l12/test_stimulus_cross_loop_deployed_e2e.py"
+_spec = importlib.util.spec_from_file_location("stimulus_parent_under_test", PARENT)
+parent = importlib.util.module_from_spec(_spec)
+sys.modules[_spec.name] = parent
+_spec.loader.exec_module(parent)
+
+SHA = "b" * 40
+CHAIN = "hosted-all12-chain-0001"
+TENANT = "tenant-dev"
+
+
+def _case(loop_id: str, runtime: bool) -> dict[str, Any]:
+    if runtime:
+        return {
+            "trigger_id": f"trg-{loop_id}", "terminal_output_id": f"out-{loop_id}",
+            "authority_readback": {"id": loop_id}, "next_consumer_readback": {"n": 1},
+            "owner_worker_identity": {"svc": "x"},
+        }
+    return {
+        "loop_id": loop_id, "trigger": f"trg-{loop_id}", "terminal_output": f"out-{loop_id}",
+        "authority_readback": {"id": loop_id}, "next_consumer": {"n": 1}, "owner": {"svc": "x"},
+    }
+
+
+def _report(domain: str, phase: str, status: str, keys: list[str], resources: dict[str, str], blocked: str | None = None) -> dict[str, Any]:
+    runtime = domain == "runtime"
+    cases: Any = {k: _case(k, True) for k in keys} if runtime else [_case(k, False) for k in keys]
+    return {
+        "git_sha": SHA, "status": "passed" if status == "completed" else "paused",
+        "chain_id": CHAIN, "phase": phase, "phase_status": status, "blocked_before": blocked,
+        "resource_ids": resources, "cases": cases,
+    }
+
+
+class FakeChild:
+    def __init__(self, reports: dict[str, dict[str, Any]]) -> None:
+        self.reports, self.calls = reports, []
+
+    def __call__(self, *_args: Any, **kwargs: Any) -> SimpleNamespace:
+        env = kwargs["env"]
+        phase = env.get("PANTHEON_L12_HOSTED_CHAIN_PHASE")
+        self.calls.append({
+            "env": dict(env),
+            "input": json.loads(Path(env["PANTHEON_L12_HOSTED_CHAIN_INPUT"]).read_text()) if phase else None,
+        })
+        Path(env["PANTHEON_L12_REPORT_PATH"]).write_text(json.dumps(self.reports[phase]), encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+
+class FakeOwner:
+    def __init__(self, records: dict[tuple[str, str], Any]) -> None:
+        self.records, self.log = records, []
+
+    def request(self, service, method, path, body=None, idempotency_key=None):
+        self.log.append((service, method, path, body))
+        if method == "GET":
+            record = self.records.get((service, path))
+            return (200, record) if record is not None else (404, {})
+        return 200, {}
+
+
+def _owned(**extra: Any) -> dict[str, Any]:
+    return {"tenant_id": TENANT, "metadata": {"chain_id": CHAIN}, **extra}
+
+
+def _settings(tmp_path: Path, name: str = "receipt.json") -> Any:
+    return parent.Settings(expected_sha=SHA, evidence_output=tmp_path / name, timeout_seconds=60)
+
+
+def _runner(tmp_path, phase, owner, prior=None, name="receipt.json", decisions=None):
+    return parent.HostedChainRunner(
+        _settings(tmp_path, name), chain_id=CHAIN, phase=phase, tenant_id=TENANT,
+        owner=owner, prior_receipt=prior, decision_refs=decisions,
+    )
+
+
+def _receipt(tmp_path: Path, name: str = "receipt.json") -> dict[str, Any]:
+    return json.loads((tmp_path / name).read_text())
+
+
+A_LOOPS = list(parent.CANONICAL_LOOP_IDS[:4])
+A_KEYS = [c[2] for c in parent.LOOP_CASES[:4]]
+B_KEYS = [c[2] for c in parent.LOOP_CASES[4:7]]
+
+
+def test_paused_phase_is_normal_progress_not_failure_or_all12(monkeypatch, tmp_path):
+    child = FakeChild({"A_research": _report("research", "A_research", "paused", A_KEYS[:2], {"registry_id": "reg-1"}, "alpha_admission")})
+    monkeypatch.setattr(subprocess, "run", child)
+    evidence = _runner(tmp_path, "A_research", FakeOwner({})).run()
+    hosted = _receipt(tmp_path)["hosted"]
+    assert evidence.status == "paused" and evidence.error is None
+    assert hosted["phase_status"] == "paused" and hosted["blocked_before"] == "alpha_admission"
+    assert hosted["all12_passed"] is False
+    assert hosted["resource_ids"] == {"registry_id": "reg-1"}
+    assert [l["loop_id"] for l in hosted["loops"]] == A_LOOPS[:2]
+    assert child.calls[0]["env"][parent.HOSTED_FLAG] == "1"
+    assert child.calls[0]["env"]["PANTHEON_L12_CROSS_LOOP_RUN_ID"] == CHAIN
+
+
+def test_separate_process_resume_reuses_completed_phase_without_redispatch(monkeypatch, tmp_path):
+    reports = {
+        "A_research": _report("research", "A_research", "completed", A_KEYS, {"registry_id": "reg-1"}),
+        "B_learning": _report("human", "B_learning", "completed", B_KEYS, {"handoff_id": "ho-1"}),
+    }
+    child = FakeChild(reports)
+    monkeypatch.setattr(subprocess, "run", child)
+    owner = FakeOwner({("registry", "/api/registry/strategy-specs/reg-1"): {"entry": _owned()}})
+    _runner(tmp_path, "A_research", owner).run()
+    first = _receipt(tmp_path)
+
+    # new "process": only the receipt file and owner reads cross the boundary
+    _runner(tmp_path, "A_research", owner, prior=first, name="again.json").run()
+    assert len(child.calls) == 1
+    assert _receipt(tmp_path, "again.json")["hosted"]["phases"]["A_research"]["reused"] is True
+
+    _runner(tmp_path, "B_learning", owner, prior=first, name="b.json").run()
+    assert len(child.calls) == 2
+    assert child.calls[1]["input"] == {
+        "chain_id": CHAIN, "decisions": {}, "phase": "B_learning", "predecessors": {"registry_id": "reg-1"},
+    }
+    assert ("registry", "GET", "/api/registry/strategy-specs/reg-1", None) in owner.log
+    assert _receipt(tmp_path, "b.json")["hosted"]["resource_ids"] == {"registry_id": "reg-1", "handoff_id": "ho-1"}
+
+
+def test_phase_order_is_exact(monkeypatch, tmp_path):
+    child = FakeChild({})
+    monkeypatch.setattr(subprocess, "run", child)
+    with pytest.raises(parent.StimulusProofError, match="requires completed predecessor phase B_learning"):
+        _runner(tmp_path, "C_promote", FakeOwner({})).run()
+    assert child.calls == []
+    assert parent.HOSTED_PHASES == ("A_research", "B_learning", "C_promote", "D_observe", "E_close")
+    assert _receipt(tmp_path)["hosted"]["phase_status"] == "failed"
+
+
+@pytest.mark.parametrize("record", [None, {"entry": {"tenant_id": "other", "metadata": {"chain_id": CHAIN}}},
+                                    {"entry": {"tenant_id": TENANT, "metadata": {"chain_id": "someone-else"}}}])
+def test_missing_or_mismatched_predecessor_pauses_without_launch(monkeypatch, tmp_path, record):
+    child = FakeChild({})
+    monkeypatch.setattr(subprocess, "run", child)
+    prior = {"hosted": {"chain_id": CHAIN, "resource_ids": {"registry_id": "reg-1"},
+                        "phases": {"A_research": {"phase_status": "completed"}}}}
+    records = {} if record is None else {("registry", "/api/registry/strategy-specs/reg-1"): record}
+    runner = _runner(tmp_path, "B_learning", FakeOwner(records), prior=prior)
+    evidence = runner.run()
+    hosted = _receipt(tmp_path)["hosted"]
+    assert child.calls == [] and evidence.status == "paused"
+    assert hosted["blocked_before"] == "B_learning:predecessor_verification"
+    assert "registry_id reg-1" in hosted["phases"]["B_learning"]["evidence"][0]
+
+
+def test_receipt_only_approval_is_not_accepted(monkeypatch, tmp_path):
+    child = FakeChild({})
+    monkeypatch.setattr(subprocess, "run", child)
+    prior = {"hosted": {"chain_id": CHAIN, "resource_ids": {"registry_id": "reg-1"},
+                        "decisions": {"H1": "apv-1"},
+                        "phases": {"A_research": {"phase_status": "paused"}}}}
+    owner = FakeOwner({
+        ("registry", "/api/registry/strategy-specs/reg-1"): {"entry": _owned()},
+        ("governance", "/api/governance/approvals/apv-1"): _owned(decision_state="proposed", target_id="reg-1"),
+    })
+    evidence = _runner(tmp_path, "A_research", owner, prior=prior).run()
+    assert child.calls == [] and evidence.status == "paused"
+    assert "not an approved decided record" in _receipt(tmp_path)["hosted"]["phases"]["A_research"]["evidence"][0]
+
+
+def test_e_close_retires_only_verified_chain_records(monkeypatch, tmp_path):
+    monkeypatch.setattr(subprocess, "run", FakeChild({}))
+    done = {p: {"phase_status": "completed"} for p in parent.HOSTED_PHASES[:4]}
+    prior = {"hosted": {"chain_id": CHAIN, "phases": done, "decisions": {"H1": "apv-1"}, "resource_ids": {
+        "capital_binding_id": "bnd-1", "capital_pool_id": "pool-unrelated", "plan_id": "plan-1",
+        "registry_id": "reg-1", "teaching_session_id": "ts-1"}}}
+    owner = FakeOwner({
+        ("capital", "/api/bindings/bnd-1"): {"binding": _owned(status="active")},
+        ("capital", "/api/capital-pools/pool-unrelated"): {"tenant_id": TENANT, "metadata": {"chain_id": "other-chain"}},
+        ("deployment", "/api/deployment/plans/plan-1"): _owned(status="executed"),
+        ("registry", "/api/registry/strategy-specs/reg-1"): {"entry": _owned(artifact_state="approved", version=3)},
+        ("governance", "/api/governance/approvals/apv-1"): _owned(decision_state="decided", decision="approved", target_id="reg-1"),
+    })
+    evidence = _runner(tmp_path, "E_close", owner, prior=prior).run()
+    writes = [(m, p) for _s, m, p, _b in owner.log if m != "GET"]
+    assert writes == [
+        ("PATCH", "/api/bindings/bnd-1/status"),
+        ("POST", "/api/deployment/plans/plan-1/status"),
+        ("POST", "/api/registry/strategy-specs/reg-1/advance"),
+        ("POST", "/api/governance/approvals/apv-1/revoke"),
+    ]
+    assert all("pool-unrelated" not in p for _m, p in writes)
+    close = _receipt(tmp_path)["hosted"]["phases"]["E_close"]
+    assert "chain label" in close["rejected_unrelated"][0]
+    assert close["residual_non_retirable"] == ["teaching_session_id"]
+    assert evidence.status == "passed" and close["phase_status"] == "completed"
+
+
+def test_all12_requires_every_phase_completed(monkeypatch, tmp_path):
+    monkeypatch.setattr(subprocess, "run", FakeChild({}))
+    done = {p: {"phase_status": "completed"} for p in parent.HOSTED_PHASES[:4]}
+    runner = _runner(tmp_path, "E_close", FakeOwner({}), prior={"hosted": {"chain_id": CHAIN, "phases": done}})
+    runner.run()
+    hosted = _receipt(tmp_path)["hosted"]
+    assert hosted["phase_status"] == "completed" and hosted["all12_passed"] is False  # no loop evidence carried
+
+
+def test_default_isolated_launch_has_no_hosted_environment(monkeypatch, tmp_path):
+    child = FakeChild({None: {"git_sha": SHA, "status": "passed"}})
+    monkeypatch.setattr(subprocess, "run", child)
+    gate = parent.StimulusDrivenClosureGate(_settings(tmp_path))
+    gate._run_domain_suite("research", tmp_path / "r.json")
+    env = child.calls[0]["env"]
+    assert parent.HOSTED_FLAG not in env or env[parent.HOSTED_FLAG] != "1"
+    assert "PANTHEON_L12_HOSTED_CHAIN_PHASE" not in env
+    assert gate.evidence.hosted is None
