@@ -223,6 +223,33 @@ def hosted_token(role: str) -> str:
     return token
 
 
+def capital_identity(authorization: str) -> tuple[str, str]:
+    """(actor_id, service) Capital will compare a mutation body against, read from the real token.
+
+    Capital trusts ``delegated_actor_id``/``operator_id``/``user_id`` and falls back to the
+    token subject; the calling service must be one of the token's service claims. The claims
+    are only decoded (never verified or minted) so the body can name the genuine principal.
+    """
+
+    token = authorization.removeprefix("Bearer ").strip()
+    try:
+        payload = token.split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    except (IndexError, ValueError):
+        raise RuntimeError("hosted Capital token is not a decodable JWT; its actor cannot be named") from None
+    if not isinstance(claims, Mapping):
+        raise RuntimeError("hosted Capital token claims are not an object")
+
+    def first(keys: Sequence[str]) -> str:
+        return next((str(claims[k]).strip() for k in keys if str(claims.get(k) or "").strip()), "")
+
+    actor = first(("delegated_actor_id", "operator_id", "user_id", "sub"))
+    service = first(("service", "service_id", "serviceId", "client_id", "azp", "sub"))
+    if not actor or not service:
+        raise RuntimeError("hosted Capital token carries no actor or service claim")
+    return actor, service
+
+
 def _reject_credentials(node: Any, path: str = "") -> None:
     if isinstance(node, Mapping):
         for key, value in node.items():
@@ -296,6 +323,7 @@ def require_decided_approval(
     tenant_id: str,
     target_ids: Sequence[str] = (),
     candidate_digest: str | None = None,
+    expected: Mapping[str, Any] | None = None,
     resource_ids: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Read one human Governance decision back; pause before ``blocked_before`` unless it is decided.
@@ -329,6 +357,10 @@ def require_decided_approval(
         raise pause(f"decision {decision_id} is bound to {record.get('target_id')!r}, not {list(target_ids)}")
     if candidate_digest and record.get("candidate_digest") != candidate_digest:
         raise pause(f"decision {decision_id} candidate digest does not match {candidate_digest}")
+    for name, value in (expected or {}).items():
+        # Same exact-field scope the Deployment/Runtime owners enforce; a missing field never matches.
+        if value in (None, "") or record.get(name) != value:
+            raise pause(f"decision {decision_id} {name} is {record.get(name)!r}, expected {value!r}")
     return {
         "decision_id": decision_id,
         "version": record.get("version"),

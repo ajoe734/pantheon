@@ -51,6 +51,7 @@ from l12_owner_auth import (
     HostedPause,
     approve_registry_entry,
     bearer,
+    capital_identity,
     hosted_chain_enabled,
     hosted_receipt_fields,
     hosted_token,
@@ -1130,10 +1131,11 @@ class RuntimeChain:
         chain = self.hosted_input
         assert chain is not None
         pool_id, binding_id = chain.id("pool"), chain.id("pcb")
-        actor_id = f"{TASK_ID.lower()}-capital-admin"
+        # Capital compares the body actor to the verified principal: name the real one.
+        actor_id, service = capital_identity(self.settings.capital_headers["Authorization"])
         headers = {
             "X-Tenant-Id": TENANT_ID,
-            "X-Pantheon-Service": "control-plane-bff",
+            "X-Pantheon-Service": service,
             **self.settings.capital_headers,
         }
         labels = {"paper_only": True, "execution_context": "paper", "tenant_id": TENANT_ID, **chain.labels()}
@@ -1200,7 +1202,7 @@ class RuntimeChain:
             )
         if binding.get("status") != "active" or binding.get("allowed_deployment_scope") != "paper":
             raise DeployedProofError("hosted PersonaCapitalBinding is not active paper-only authority")
-        return {"pool_id": pool_id, "persona_id": persona_id, "pcb_id": binding_id}
+        return {"capital_pool_id": pool_id, "persona_id": persona_id, "capital_binding_id": binding_id}
 
     def _hosted_promote(self, chain: Any, ids: dict[str, Any]) -> None:
         wanted = {key: chain.predecessor(key) for key in ("registry_id", "checksum", "governance_handoff_id")}
@@ -1213,7 +1215,7 @@ class RuntimeChain:
         registry_id, checksum, handoff_id = wanted["registry_id"], wanted["checksum"], wanted["governance_handoff_id"]
         h1_id = str(h1_ref["decision_id"])
         ids.update(registry_id=registry_id, checksum=checksum, consult_handoff_id=handoff_id, h1_decision_id=h1_id)
-        for service in ("runtime-manager", "deployment", "deployment-outbox-consumer"):
+        for service in ("runtime-manager", "deployment", "deployment-outbox-consumer", "paper-signal-producer"):
             self._identity(service)
 
         # The chain's own approved StrategySpec - never the preexisting parent artifact.
@@ -1234,9 +1236,40 @@ class RuntimeChain:
                 "chain StrategySpec is not the approved H1 entry: "
                 f"{ {k: entry.get(k) for k in ('registry_id', 'artifact_state', 'checksum', 'approval_decision_id')} }"
             )
+        # The runtime loader reads strategy-artifacts and needs an approved execution_bundle with an
+        # embedded StrategyArtifact; a plain StrategySpec has none. Resolve that path from this
+        # chain's own entry BEFORE any Capital/plan write, or stop with the concrete reason.
+        executable = self.http.request(
+            "registry",
+            "GET",
+            f"/api/registry/strategy-artifacts/{urllib.parse.quote(registry_id, safe='')}",
+            headers=bearer(human_token("OPERATOR")),
+            expected={200, 404},
+        )
+        bundle = executable.get("entry") if isinstance(executable.get("entry"), Mapping) else {}
+        embedded = (bundle.get("metadata") or {}).get("strategy_artifact")
+        if (
+            bundle.get("registry_id") != registry_id
+            or bundle.get("artifact_type") != "execution_bundle"
+            or bundle.get("artifact_state") != "approved"
+            or bundle.get("checksum") != checksum
+            or not isinstance(embedded, Mapping)
+        ):
+            raise HostedPause(
+                "unsupported_executable_path",
+                f"unsupported_executable_path: the chain StrategySpec {registry_id} is not an approved "
+                "execution_bundle with an embedded StrategyArtifact at /api/registry/strategy-artifacts, "
+                "which the runtime loader requires; no Capital or DeploymentPlan was written and no "
+                "unrelated artifact was used",
+                ids,
+            )
         persona_id = chain.predecessor("persona_id") or chain.id("persona")
         capital = self._hosted_capital(persona_id)
-        ids.update(pool_id=capital["pool_id"], pcb_id=capital["pcb_id"], persona_id=persona_id)
+        ids.update(
+            capital_pool_id=capital["capital_pool_id"],
+            capital_binding_id=capital["capital_binding_id"],
+            persona_id=persona_id,
+        )
 
         strategy_id = str(entry.get("strategy_id") or chain.predecessor("strategy_id"))
         references = {
@@ -1254,7 +1287,7 @@ class RuntimeChain:
             "environment": "paper",
             "paper_only": True,
             "strategy_id": strategy_id,
-            "persona_capital_binding_id": capital["pcb_id"],
+            "persona_capital_binding_id": capital["capital_binding_id"],
             "market_data_policy": {
                 "owner": "source-ingest",
                 "contract": "latest_stored_normalized",
@@ -1268,7 +1301,7 @@ class RuntimeChain:
         plan_id = chain.id("plan")
         plan_body = {
             "approval_decision_id": h1_id,
-            "capital_pool_id": capital["pool_id"],
+            "capital_pool_id": capital["capital_pool_id"],
             "created_by": HOSTED_TASK_ID,
             "current_stage": "none",
             "metadata": metadata,
@@ -1321,7 +1354,16 @@ class RuntimeChain:
             point="H3",
             blocked_before="runtime_binding_dispatch",
             tenant_id=TENANT_ID,
-            target_ids=(plan_id, registry_id),
+            # The owner's plan-release scope (deploy_authority): this exact registry entry
+            # version/digest for this paper pool and persona - a registry-only match is not enough.
+            expected={
+                "target_type": "registry_entry",
+                "target_id": registry_id,
+                "target_version": entry.get("version"),
+                "candidate_digest": checksum,
+                "capital_pool_id": capital["capital_pool_id"],
+                "persona_id": capital["persona_id"],
+            },
             resource_ids=ids,
         )
         ids["h3_decision_id"] = h3["decision_id"]
@@ -1366,15 +1408,15 @@ class RuntimeChain:
         )
         expected = {
             "artifact_id": registry_id,
-            "capital_pool_id": capital["pool_id"],
-            "persona_capital_binding_id": capital["pcb_id"],
+            "capital_pool_id": capital["capital_pool_id"],
+            "persona_capital_binding_id": capital["capital_binding_id"],
             "plan_id": plan_id,
             "status": "active",
         }
         mismatches = {k: binding.get(k) for k, v in expected.items() if binding.get(k) != v}
         if mismatches:
             raise DeployedProofError(f"RuntimeBinding identity mismatch: {mismatches!r}")
-        ids.update(binding_id=binding["binding_id"], runtime_id=binding.get("runtime_id"))
+        ids.update(runtime_binding_id=binding["binding_id"], runtime_id=binding.get("runtime_id"))
         self.evidence.add_case(
             "loop_08_promotion_deployment",
             loop=8,
@@ -1393,76 +1435,193 @@ class RuntimeChain:
             },
         )
 
+        # Loop 9 is the real paper runtime acting on the binding; it is never injected. Until the
+        # normal runtime has produced a paper fill the phase stays paused, not completed.
+        started9 = _utc_now()
+        observed = self._hosted_paper_fill(binding, started9, ids)
+        event, summary = observed["event"], observed["summary"]
+        ids["telemetry_event_id"] = event["event_id"]
+        self.evidence.add_case(
+            "loop_09_capital_artifact_execution",
+            loop=9,
+            trigger_id=binding["binding_id"],
+            owner_worker=self.evidence.identities["paper-signal-producer"],
+            terminal_output_id=event["event_id"],
+            authority_readback=event,
+            next_consumer_readback={
+                "last_heartbeat_event_id": summary.get("last_heartbeat_event_id"),
+                "runtime_id": summary.get("runtime_id"),
+                "state": summary.get("state"),
+            },
+            started_at=started9,
+            compose_services=["paper-signal-producer", "paper-fleet-reconciler", "telemetry"],
+            assertions={
+                "artifact_signal_not_smoke": bool(event.get("artifact_id"))
+                and event.get("artifact_id") == binding.get("artifact_id"),
+                "paper_only": (event.get("metadata") or {}).get("is_real_capital") is not True,
+                "source_snapshot_driven": True,
+            },
+        )
+
+    def _hosted_paper_fill(self, binding: Mapping[str, Any], started: str, ids: dict[str, Any]) -> dict[str, Any]:
+        """The real runtime's paper fill; a missing one pauses the phase and is never injected."""
+        binding_id, runtime_id = str(binding["binding_id"]), str(binding.get("runtime_id") or "")
+        observed = self._runtime_event(runtime_id) if runtime_id else None
+        self.evidence.hosted["observations"] = {
+            **(self.evidence.hosted.get("observations") or {}),
+            "paper_fill_observed": observed is not None,
+            "fleet_worker_running": self._fleet_worker(binding_id) is not None,
+            "observed_at": started,
+        }
+        if observed is None:
+            raise HostedPause(
+                "runtime_execution_observation",
+                f"loop 9 paper runtime has not produced a paper fill for runtime {runtime_id!r} yet",
+                ids,
+            )
+        return observed
+
     def _hosted_observe(self, chain: Any, ids: dict[str, Any]) -> None:
-        wanted = {key: chain.predecessor(key) for key in ("binding_id", "runtime_id", "plan_id")}
+        keys = ("runtime_binding_id", "runtime_id", "plan_id")
+        wanted = {key: chain.predecessor(key) for key in keys}
         missing = [key for key, value in wanted.items() if not value]
         if missing:
             raise HostedPause("observation", f"D_observe needs C_promote predecessors {missing}")
+        for optional in ("capital_pool_id", "capital_binding_id"):
+            if chain.predecessor(optional):
+                wanted[optional] = chain.predecessor(optional)
         ids.update(wanted)
-        for service in ("operator-bff", "paper-signal-producer"):
+        for service in ("operator-bff", "paper-signal-producer", "reconciliation-drift-svc", "incidents", "evolution"):
             self._identity(service)
-        binding = self.http.request(
-            "runtime", "GET", f"/api/runtime-bindings/{wanted['binding_id']}", headers=self.runtime_headers
-        )
+        binding_id = wanted["runtime_binding_id"]
+        binding = self.http.request("runtime", "GET", f"/api/runtime-bindings/{binding_id}", headers=self.runtime_headers)
+        pool_id = str(binding.get("capital_pool_id") or "")
         if binding.get("status") != "active" or binding.get("plan_id") != wanted["plan_id"]:
             raise DeployedProofError(f"chain RuntimeBinding is not the active planned binding: {binding!r}")
+        if pool_id != wanted.get("capital_pool_id", pool_id) or pool_id != chain.id("pool"):
+            raise DeployedProofError(f"RuntimeBinding capital pool {pool_id!r} is not this chain's paper pool")
+        registry_id = str(binding.get("artifact_id") or "")
         started = _utc_now()
-        observed = self._runtime_event(wanted["runtime_id"])
-        worker = self._fleet_worker(wanted["binding_id"])
-        # A paper fill is only observed if the normal runtime produced one; nothing is injected.
-        self.evidence.hosted["observations"] = {
-            "paper_fill_observed": observed is not None,
-            "fleet_worker_running": worker is not None,
-            "observed_at": started,
-        }
-        if observed is not None:
-            event, summary = observed["event"], observed["summary"]
-            ids["telemetry_event_id"] = event["event_id"]
-            self.evidence.add_case(
-                "loop_09_capital_artifact_execution",
-                loop=9,
-                trigger_id=wanted["binding_id"],
-                owner_worker=self.evidence.identities["paper-signal-producer"],
-                terminal_output_id=event["event_id"],
-                authority_readback=event,
-                next_consumer_readback={
-                    "last_heartbeat_event_id": summary.get("last_heartbeat_event_id"),
-                    "runtime_id": summary.get("runtime_id"),
-                    "state": summary.get("state"),
-                },
-                started_at=started,
-                compose_services=["paper-signal-producer", "paper-fleet-reconciler", "telemetry"],
-                assertions={
-                    "artifact_signal_not_smoke": bool(event.get("artifact_id"))
-                    and event.get("artifact_id") == binding.get("artifact_id"),
-                    "is_real_capital": (event.get("metadata") or {}).get("is_real_capital"),
-                    "is_real_order": (event.get("metadata") or {}).get("is_real_order"),
-                    "source_snapshot_driven": True,
-                },
+        observed = self._hosted_paper_fill(binding, started, ids)
+        event = observed["event"]
+
+        # Loop 10/11 are natural owner outputs of the real runtime event: read them, never inject
+        # a baseline or run a sweep here. Absent evidence keeps the phase paused.
+        incidents = self.http.request("incidents", "GET", "/api/incidents", query={"binding_id": binding_id})
+        incidents = incidents if isinstance(incidents, list) else incidents.get("incidents", [])
+        incident = next(
+            (
+                item
+                for item in incidents
+                if isinstance(item, Mapping)
+                and item.get("binding_id") == binding_id
+                and event["event_id"] in (item.get("telemetry_event_ids") or [])
+            ),
+            None,
+        )
+        if incident is None:
+            raise HostedPause(
+                "drift_incident_observation",
+                f"no IncidentCase cites runtime telemetry event {event['event_id']} for binding {binding_id}; "
+                "loops 10-12 are not observed",
+                ids,
             )
+        incident_id = str(incident.get("incident_id") or incident.get("id"))
+        ids["incident_id"] = incident_id
+        self.evidence.add_case(
+            "loop_10_telemetry_reconciliation_incident",
+            loop=10,
+            trigger_id=event["event_id"],
+            owner_worker=self.evidence.identities["reconciliation-drift-svc"],
+            terminal_output_id=incident_id,
+            authority_readback=incident,
+            next_consumer_readback={"incident_id": incident_id, "binding_id": binding_id},
+            started_at=started,
+            compose_services=["telemetry", "reconciliation-drift-svc", "incidents"],
+            assertions={"incident_id": incident_id, "real_runtime_event_preserved": True},
+        )
+
+        decisions = self.http.request(
+            "evolution", "GET", "/api/evolution/proposals", query={"target_id": registry_id},
+            headers=self.evolution_headers,
+        )
+        natural = [
+            d for d in (decisions if isinstance(decisions, list) else [])
+            if isinstance(d, Mapping) and d.get("linked_incident_id") == incident_id
+        ]
+        if not natural:
+            raise HostedPause(
+                "evolution_decision_observation",
+                f"Evolution has no decision linked to incident {incident_id} for {registry_id}; loop 11 not observed",
+                ids,
+            )
+        proposal = natural[0]
+        self.evidence.add_case(
+            "loop_11_evolution_decision",
+            loop=11,
+            trigger_id=incident_id,
+            owner_worker=self.evidence.identities["evolution"],
+            terminal_output_id=proposal["decision_id"],
+            authority_readback=proposal,
+            next_consumer_readback={"proposal_only": (proposal.get("metadata") or {}).get("proposal_only")},
+            started_at=started,
+            compose_services=["incidents", "evolution"],
+            assertions={"incident_lineage_exact": True, "proposal_only": True, "runtime_mutation": False},
+        )
+
+        # Loop 12: BFF typed health only; it keeps its own trigger path.
         health = self._bff_health()
         targets = health.get("data", {}).get("targets", {})
-        self.evidence.hosted["observations"]["typed_health"] = {
-            name: (targets.get(name) or {}).get("ok") for name in ("runtime-manager", "paper-fleet-reconciler")
-        }
-        # H4 covers closure of loop 11; a missing decision is recorded as pending, never decided here.
+        typed = {name: (targets.get(name) or {}).get("ok") for name in ("runtime-manager", "paper-fleet-reconciler")}
+        if not all(value is True for value in typed.values()):
+            raise DeployedProofError(f"BFF typed health does not report the runtime owners ready: {typed!r}")
+        self.evidence.hosted["observations"]["typed_health"] = typed
+        self.evidence.add_case(
+            "loop_12_bff_typed_health",
+            loop=12,
+            trigger_id=f"bff-typed-health-{chain.chain_id}",
+            owner_worker=self.evidence.identities["operator-bff"],
+            terminal_output_id=binding_id,
+            authority_readback={"targets": typed},
+            next_consumer_readback={"typed_health": typed},
+            started_at=started,
+            compose_services=["operator-bff", "runtime-manager", "paper-fleet-reconciler"],
+            assertions={"typed_targets_ready": True},
+        )
+
+        # H4 accepts the decision of THIS chain: same target, pool and incident lineage.
         ref = chain.decision("H4") or {}
         decision_id = str(ref.get("decision_id") or "").strip()
         if not decision_id:
             raise HostedPause("evolution_decision_acceptance", "H4 Evolution decision acceptance is pending", ids)
-        decision = self.http.request(
-            "evolution", "GET", f"/api/evolution/proposals/{urllib.parse.quote(decision_id, safe='')}",
-            headers=self.evolution_headers, expected={200, 404},
-        )
+        decision = next((d for d in natural if d.get("decision_id") == decision_id), None)
+        if decision is None:
+            decision = self.http.request(
+                "evolution", "GET", f"/api/evolution/proposals/{urllib.parse.quote(decision_id, safe='')}",
+                headers=self.evolution_headers, expected={200, 404},
+            )
         if decision.get("decision_id") != decision_id:
             raise HostedPause("evolution_decision_acceptance", f"H4 decision {decision_id} not found at the owner", ids)
-        if decision.get("decision_state") not in {"approved", "executed"} or not decision.get("linked_incident_id"):
+        lineage = {
+            "target_id": registry_id,
+            "capital_pool_id": pool_id,
+            "linked_incident_id": incident_id,
+        }
+        off = {k: decision.get(k) for k, v in lineage.items() if decision.get(k) != v}
+        if off:
+            raise HostedPause(
+                "evolution_decision_acceptance",
+                f"H4 decision {decision_id} is not this chain's lineage: {off!r} != "
+                f"{ {k: lineage[k] for k in off} !r}",
+                ids,
+            )
+        if decision.get("decision_state") not in {"approved", "executed"}:
             raise HostedPause(
                 "evolution_decision_acceptance",
                 f"H4 decision {decision_id} is {decision.get('decision_state')!r}, not accepted",
                 ids,
             )
-        ids.update(h4_decision_id=decision_id, incident_id=decision["linked_incident_id"])
+        ids["h4_decision_id"] = decision_id
 
     def run_hosted(self) -> dict[str, Any]:
         chain = self.hosted_input

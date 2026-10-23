@@ -172,6 +172,10 @@ class DeployedResearchHarness:
         source = chain.get("source") or {}
         return {
             "source_id": source.get("source_id"),
+            "source_digest": chain.get("source_digest"),
+            "distillation_job_id": (chain.get("distillation") or {}).get("distillation_job_id"),
+            "distillation_source_id": (chain.get("distillation") or {}).get("source_id"),
+            "distillation_source_digest": (chain.get("distillation") or {}).get("source_digest"),
             "registry_id": chain.get("registry_id"),
             "strategy_id": chain.get("strategy_id"),
             "checksum": chain.get("checksum"),
@@ -813,6 +817,14 @@ class DeployedResearchHarness:
         )
         self._require(bool(entry.get("checksum")), "distilled StrategySpec lacks checksum")
         self.chain["checksum"] = entry.get("checksum")
+        # The Registry keeps no direct chain label: ownership is provable only through the stored
+        # distillation lineage, so expose the actual source/digest/job the owner recorded.
+        recorded = (entry.get("metadata") or {}).get("distillation") or {}
+        self.chain["distillation"] = {
+            "source_id": recorded.get("source_id"),
+            "source_digest": recorded.get("source_digest"),
+            "distillation_job_id": recorded.get("distillation_job_id"),
+        }
         if self.hosted_input is not None:
             expected_registry = self.hosted_input.predecessor("registry_id")
             expected_checksum = self.hosted_input.predecessor("checksum")

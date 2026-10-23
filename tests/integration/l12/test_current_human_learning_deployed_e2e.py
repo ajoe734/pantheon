@@ -127,7 +127,7 @@ def teaching_agora_content(
     """Agora interaction content built only from the chain's real Teaching result.
 
     Every number comes from the Teaching evaluation or from a control the Teaching
-    session actually proposed; the decision is the Teaching governance outcome and
+    session actually stored; the decision is the Teaching governance outcome and
     the target is the chain's own Registry entry. Nothing here is a fixed row: if
     the Teaching session does not expose at least two distinct real control actions
     (the BC baseline's minimum) the caller fails closed instead of padding.
@@ -149,13 +149,13 @@ def teaching_agora_content(
     for control in controls_record.get("controls") or []:
         if not isinstance(control, Mapping) or not control.get("parameter_key"):
             continue
-        proposed = _finite_number(control.get("proposed_value"))
-        if proposed is None:
+        stored = _finite_number(control.get("current_value"))
+        if stored is None:
             continue
         key = str(control["parameter_key"])
         steps.append(
             {
-                "observation": [*vector, proposed],
+                "observation": [*vector, stored],
                 "action": f"set_{key}",
                 "reward": vector[0],
                 "feedback_event_id": f"{eval_identity}:{key}",
@@ -163,7 +163,7 @@ def teaching_agora_content(
         )
     if len({step["action"] for step in steps}) < 2:
         raise RuntimeError(
-            "Teaching session exposes fewer than two distinct proposed control actions; "
+            "Teaching session exposes fewer than two distinct stored control actions; "
             "refusing to fabricate Agora trajectory rows"
         )
     return {

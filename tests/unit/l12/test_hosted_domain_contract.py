@@ -27,6 +27,11 @@ EXECUTOR_TOKEN = ".".join(
     base64.urlsafe_b64encode(json.dumps(part).encode()).decode().rstrip("=")
     for part in ({"alg": "none"}, {"sub": "executor-1"}, "sig")
 )
+CAPITAL_JWT = ".".join(
+    base64.urlsafe_b64encode(json.dumps(part).encode()).decode().rstrip("=")
+    for part in ({"alg": "none"}, {"sub": "svc-capital", "service": "svc-capital",
+                                    "delegated_actor_id": "operator-real"}, "sig")
+)
 
 
 def _load(monkeypatch: pytest.MonkeyPatch, filename: str, alias: str) -> Any:
@@ -322,9 +327,9 @@ def _terminal(validation: str = "passed") -> dict[str, Any]:
 
 
 CONTROLS = {"controls": [
-    {"parameter_key": "short_window", "proposed_value": 7},
-    {"parameter_key": "long_window", "proposed_value": 21},
-    {"parameter_key": "untouched", "proposed_value": None},
+    {"parameter_key": "short_window", "current_value": 7},
+    {"parameter_key": "long_window", "current_value": 21},
+    {"parameter_key": "untouched", "current_value": None},
 ]}
 
 
@@ -348,6 +353,12 @@ def test_agora_content_is_built_from_the_real_teaching_result(monkeypatch: pytes
         human.teaching_agora_content(
             terminal=_terminal(), controls_record={"controls": CONTROLS["controls"][:1]},
             registry_id="r", strategy_id="s", checksum="c")
+    # the Training owner stores current_value (PATCH) - a request-only proposed_value is not stored Teaching content
+    with pytest.raises(RuntimeError, match="fewer than two distinct"):
+        human.teaching_agora_content(
+            terminal=_terminal(), registry_id="r", strategy_id="s", checksum="c",
+            controls_record={"controls": [{"parameter_key": "a", "proposed_value": 1},
+                                          {"parameter_key": "b", "proposed_value": 2}]})
 
 
 class FakeLearningOwners:
@@ -473,10 +484,14 @@ def test_hosted_never_restarts_a_shared_service_and_isolated_still_does(
 
 
 class FakeRuntimeHttp:
-    def __init__(self, *, h3: bool, validation_ok: bool = True, drop_reference: bool = False) -> None:
+    def __init__(self, *, h3: bool, validation_ok: bool = True, drop_reference: bool = False,
+                 bundle: bool = True, h3_scope: dict[str, Any] | None = None) -> None:
         self.calls: list[tuple[str, str, str]] = []
         self.bodies: dict[str, Any] = {}
         self.h3, self.validation_ok, self.drop_reference = h3, validation_ok, drop_reference
+        self.bundle, self.h3_scope = bundle, h3_scope
+        self.incidents: list[dict[str, Any]] = []
+        self.proposals: list[dict[str, Any]] = []
         self.pool: dict[str, Any] = {}
         self.binding: dict[str, Any] = {}
         self.plan: dict[str, Any] = {}
@@ -489,12 +504,21 @@ class FakeRuntimeHttp:
         registry_id = f"reg-{CHAIN}"
         if path.startswith("/api/registry/strategy-specs/"):
             return {"entry": {"registry_id": registry_id, "artifact_state": "approved", "checksum": "sha-1",
-                              "approval_decision_id": "apv-1", "strategy_id": "strat-1"}}
+                              "approval_decision_id": "apv-1", "strategy_id": "strat-1", "version": "1.0.0"}}
+        if path.startswith("/api/registry/strategy-artifacts/"):
+            if not self.bundle:  # owner: a plain strategy_spec is not an execution_bundle
+                return {"detail": "StrategyArtifact registry entry not found"}
+            return {"entry": {"registry_id": registry_id, "artifact_type": "execution_bundle",
+                              "artifact_state": "approved", "checksum": "sha-1",
+                              "metadata": {"strategy_artifact": {"artifact_id": registry_id}}}}
         if path.startswith("/api/governance/approvals/"):
             decision = path.rsplit("/", 1)[-1]
             if decision == "apv-h3" and self.h3:
+                scope = {"target_type": "registry_entry", "target_id": f"reg-{CHAIN}", "target_version": "1.0.0",
+                         "candidate_digest": "sha-1", "capital_pool_id": f"hosted-all12-{CHAIN}-pool",
+                         "persona_id": "persona-teach", **(self.h3_scope or {})}
                 return {"decision_id": decision, "tenant_id": TENANT, "decision_state": "decided",
-                        "decision": "approved", "target_id": f"hosted-all12-{CHAIN}-plan", "version": 2}
+                        "decision": "approved", "version": 2, **scope}
             return {"detail": "not found"}
         if path.startswith("/api/capital-pools") and method == "GET":
             return self.pool or {"detail": "nf"}
@@ -525,9 +549,17 @@ class FakeRuntimeHttp:
             return self.plan or {"detail": "nf"}
         if path == "/api/runtime-bindings":
             return {"bindings": [{"binding_id": "rb-1"}]}
+        if path == "/api/incidents":
+            return self.incidents
+        if path == "/api/evolution/proposals":
+            return self.proposals
+        if path.startswith("/api/evolution/proposals/"):
+            found = [p for p in self.proposals if p["decision_id"] == path.rsplit("/", 1)[-1]]
+            return found[0] if found else {"detail": "nf"}
         if path.startswith("/api/runtime-bindings/"):
             return {"binding_id": "rb-1", "runtime_id": "rt-1", "artifact_id": registry_id, "status": "active",
-                    "capital_pool_id": self.pool.get("pool_id"), "plan_id": self.plan.get("plan_id"),
+                    "capital_pool_id": self.pool.get("pool_id") or f"hosted-all12-{CHAIN}-pool",
+                    "plan_id": self.plan.get("plan_id") or f"hosted-all12-{CHAIN}-plan",
                     "persona_capital_binding_id": self.binding.get("binding_id")}
         raise AssertionError(f"unexpected owner call {method} {path}")
 
@@ -539,6 +571,8 @@ def _runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, phase: str, **kwar
     h3 = kwargs.pop("h3", False)
     validation_ok = kwargs.pop("validation_ok", True)
     drop_reference = kwargs.pop("drop_reference", False)
+    bundle = kwargs.pop("bundle", True)
+    h3_scope = kwargs.pop("h3_scope", None)
     mod = _load(monkeypatch, "test_current_runtime_loops_deployed_e2e.py", "hosted_runtime_mod")
     _hosted_env(monkeypatch, tmp_path, phase, **kwargs)
     settings = mod.Settings(
@@ -546,10 +580,11 @@ def _runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, phase: str, **kwar
                                                  "incidents", "reconciliation", "registry", "runtime",
                                                  "source_ingest", "telemetry")},
         expected_sha=SHA, compose_project="p", compose_files=(), evidence_output=tmp_path / "evidence.json",
-        capital_headers={"Authorization": "Bearer capital-real"},
+        capital_headers={"Authorization": f"Bearer {CAPITAL_JWT}"},
     )
     chain = mod.RuntimeChain(settings)
-    fake = FakeRuntimeHttp(h3=h3, validation_ok=validation_ok, drop_reference=drop_reference)
+    fake = FakeRuntimeHttp(h3=h3, validation_ok=validation_ok, drop_reference=drop_reference,
+                           bundle=bundle, h3_scope=h3_scope)
     chain.http = fake
     chain._identity = lambda service: chain.evidence.identities.setdefault(service, {"service": service})
     return mod, chain, fake
@@ -557,6 +592,8 @@ def _runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, phase: str, **kwar
 
 PROMOTE_PREDECESSORS = {"registry_id": f"reg-{CHAIN}", "checksum": "sha-1", "governance_handoff_id": "gh-consult-1",
                         "teaching_session_id": "trn-1", "persona_id": "persona-teach"}
+_PAPER_FILL = {"event": {"event_id": "ev-1", "artifact_id": f"reg-{CHAIN}", "metrics": {"pnl": 1.0}, "metadata": {}},
+               "summary": {"runtime_id": "rt-1", "state": "running"}}
 PROMOTE_DECISIONS = {"H1": {"decision_id": "apv-1"}, "H3": {"decision_id": "apv-h3"}}
 
 
@@ -602,6 +639,9 @@ def test_hosted_promote_stops_before_runtime_binding_without_h3_and_dispatches_o
     assert plan["registry_id"] == f"reg-{CHAIN}" and plan["approval_decision_id"] == "apv-1"
     assert plan["metadata"]["consult_handoff_id"] == "gh-consult-1"  # actual Consultation predecessor
     assert plan["metadata"]["registry_checksum"] == "sha-1" and plan["metadata"]["chain_id"] == CHAIN
+    # Capital compares the body actor to the verified principal: the real delegated actor, not an isolated one
+    for write in ("POST /api/capital-pools", "POST /api/bindings", f"POST /api/bindings/hosted-all12-{CHAIN}-pcb/activate"):
+        assert fake.bodies[write]["actor_id"] == "operator-real"
     activation = fake.bodies[f"POST /api/bindings/hosted-all12-{CHAIN}-pcb/activate"]
     assert "approval_decision_id" not in activation  # paper capital: no invented approval
 
@@ -609,25 +649,59 @@ def test_hosted_promote_stops_before_runtime_binding_without_h3_and_dispatches_o
     _, second, fake2 = _runtime(monkeypatch, tmp_path, "C_promote", predecessors=PROMOTE_PREDECESSORS,
                                 decisions=PROMOTE_DECISIONS, h3=True)
     fake2.pool, fake2.binding, fake2.plan = dict(fake.pool), {**fake.binding}, dict(fake.plan)
+    second._runtime_event = lambda runtime_id: _PAPER_FILL
+    second._fleet_worker = lambda binding_id: {"worker": {}}
     second.run_hosted()
     done = json.loads((tmp_path / "evidence.json").read_text())
     assert done["phase_status"] == "completed" and done["status"] == "passed"
     assert fake2.dispatched
     assert [c for c in fake2.writes() if c[2] in {"/api/capital-pools", "/api/bindings", "/api/deployment/plans"}] == []
-    assert done["resource_ids"]["binding_id"] == "rb-1" and done["resource_ids"]["h3_decision_id"] == "apv-h3"
-    assert "loop_08_promotion_deployment" in second.evidence.cases
+    ids = done["resource_ids"]
+    assert ids["runtime_binding_id"] == "rb-1" and ids["h3_decision_id"] == "apv-h3"
+    assert ids["capital_pool_id"] == f"hosted-all12-{CHAIN}-pool" and ids["capital_binding_id"] == f"hosted-all12-{CHAIN}-pcb"
+    assert not {"pool_id", "pcb_id", "binding_id"} & set(ids)  # canonical names only
+    assert "loop_08_promotion_deployment" in second.evidence.cases and "loop_09_capital_artifact_execution" in second.evidence.cases
 
 
-def test_hosted_promote_reports_unsupported_executable_path_without_creating_a_plan(
+def test_hosted_promote_pauses_as_unsupported_executable_path_before_any_capital_or_plan_write(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    mod, chain, fake = _runtime(monkeypatch, tmp_path, "C_promote", predecessors=PROMOTE_PREDECESSORS,
-                                decisions=PROMOTE_DECISIONS, h3=True, validation_ok=False)
-    with pytest.raises(mod.UnsupportedExecutablePath, match="no executable artifact"):
-        chain.run_hosted()
+    # a distilled StrategySpec is no execution_bundle at strategy-artifacts (what the runtime loader reads)
+    _, chain, fake = _runtime(monkeypatch, tmp_path, "C_promote", predecessors=PROMOTE_PREDECESSORS,
+                              decisions=PROMOTE_DECISIONS, h3=True, bundle=False)
+    chain.run_hosted()
     receipt = json.loads((tmp_path / "evidence.json").read_text())
-    assert receipt["phase_status"] == "failed" and receipt["blocked_before"] == "unsupported_executable_path"
-    assert ("deployment", "POST", "/api/deployment/plans") not in fake.calls and not fake.dispatched
+    assert receipt["phase_status"] == "paused" and receipt["blocked_before"] == "unsupported_executable_path"
+    assert "execution_bundle" in receipt["detail"] and receipt["status"] == "paused"
+    assert fake.writes() == [] and not fake.dispatched
+    assert not any("parent" in c[2] or "tw-session" in c[2] for c in fake.calls)  # unrelated artifact untouched
+
+
+def test_hosted_promote_h3_must_match_the_plan_release_scope_not_just_the_registry_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    for scope in ({"capital_pool_id": "some-other-pool"}, {"persona_id": None}, {"candidate_digest": "sha-old"},
+                  {"target_type": "deployment_plan"}):
+        _, chain, fake = _runtime(monkeypatch, tmp_path, "C_promote", predecessors=PROMOTE_PREDECESSORS,
+                                  decisions=PROMOTE_DECISIONS, h3=True, h3_scope=scope)
+        chain.run_hosted()
+        receipt = json.loads((tmp_path / "evidence.json").read_text())
+        assert receipt["phase_status"] == "paused" and receipt["blocked_before"] == "runtime_binding_dispatch", scope
+        assert not fake.dispatched
+
+
+def test_hosted_promote_with_no_paper_fill_pauses_at_loop_9_instead_of_completing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _, chain, fake = _runtime(monkeypatch, tmp_path, "C_promote", predecessors=PROMOTE_PREDECESSORS,
+                              decisions=PROMOTE_DECISIONS, h3=True)
+    chain._runtime_event = lambda runtime_id: None
+    chain._fleet_worker = lambda binding_id: None
+    chain.run_hosted()
+    receipt = json.loads((tmp_path / "evidence.json").read_text())
+    assert receipt["phase_status"] == "paused" and receipt["blocked_before"] == "runtime_execution_observation"
+    assert set(receipt["cases"]) == {"loop_08_promotion_deployment"}  # loop 9 not claimed
+    assert receipt["resource_ids"]["runtime_binding_id"] == "rb-1"
 
 
 def test_hosted_promote_fails_when_the_plan_does_not_persist_predecessor_references(
@@ -640,26 +714,83 @@ def test_hosted_promote_fails_when_the_plan_does_not_persist_predecessor_referen
     assert not fake.dispatched
 
 
-def test_hosted_observe_records_h4_pending_and_no_hosted_path_stops_or_restarts_services(
+D_PREDECESSORS = {"runtime_binding_id": "rb-1", "runtime_id": "rt-1", "plan_id": f"hosted-all12-{CHAIN}-plan"}
+INCIDENT = {"incident_id": "inc-1", "binding_id": "rb-1", "telemetry_event_ids": ["ev-1"]}
+
+
+def _proposal(**over: Any) -> dict[str, Any]:
+    return {"decision_id": "evo-1", "decision_state": "approved", "target_id": f"reg-{CHAIN}",
+            "capital_pool_id": f"hosted-all12-{CHAIN}-pool", "linked_incident_id": "inc-1", "metadata": {}, **over}
+
+
+def _observe(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, fill: bool = True, incidents: Any = (),
+             proposals: Any = (), **kwargs: Any) -> tuple[Any, Any, FakeRuntimeHttp]:
+    mod, chain, fake = _runtime(monkeypatch, tmp_path, "D_observe", predecessors=D_PREDECESSORS, **kwargs)
+    chain._runtime_event = lambda runtime_id: _PAPER_FILL if fill else None
+    chain._fleet_worker = lambda binding_id: {"worker": {}}
+    chain._bff_health = lambda: {"data": {"targets": {"runtime-manager": {"ok": True},
+                                                      "paper-fleet-reconciler": {"ok": True}}}}
+    fake.incidents, fake.proposals = list(incidents), list(proposals)
+    return mod, chain, fake
+
+
+def _paused_at(tmp_path: Path) -> tuple[str, set[str]]:
+    receipt = json.loads((tmp_path / "evidence.json").read_text())
+    assert receipt["phase_status"] == "paused"
+    return receipt["blocked_before"], {c["loop"] for c in receipt["cases"].values()}
+
+
+def test_hosted_observe_pauses_without_claiming_loops_that_were_not_observed(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    _, chain, fake = _runtime(
-        monkeypatch, tmp_path, "D_observe",
-        predecessors={"binding_id": "rb-1", "runtime_id": "rt-1", "plan_id": f"hosted-all12-{CHAIN}-plan"},
-    )
-    chain._runtime_event = lambda runtime_id: None
-    chain._fleet_worker = lambda binding_id: None
-    chain._bff_health = lambda: {"data": {"targets": {"runtime-manager": {"ok": True}}}}
-    fake.plan = {"plan_id": f"hosted-all12-{CHAIN}-plan"}
+    _, chain, fake = _observe(monkeypatch, tmp_path, fill=False)
     chain.run_hosted()
-    receipt = json.loads((tmp_path / "evidence.json").read_text())
-    assert receipt["phase_status"] == "paused" and receipt["blocked_before"] == "evolution_decision_acceptance"
-    assert receipt["observations"]["paper_fill_observed"] is False
-    assert fake.writes() == []
+    assert _paused_at(tmp_path) == ("runtime_execution_observation", set())
 
-    mod = sys.modules["hosted_runtime_mod"]
+    _, chain, fake = _observe(monkeypatch, tmp_path)
+    chain.run_hosted()
+    assert _paused_at(tmp_path) == ("drift_incident_observation", set())  # natural incident absent: nothing injected
+
+    _, chain, fake = _observe(monkeypatch, tmp_path, incidents=[INCIDENT])
+    chain.run_hosted()
+    assert _paused_at(tmp_path) == ("evolution_decision_observation", {10})
+
+    _, chain, fake = _observe(monkeypatch, tmp_path, incidents=[INCIDENT], proposals=[_proposal()])
+    chain.run_hosted()  # loops 10-12 observed, H4 not supplied
+    assert _paused_at(tmp_path) == ("evolution_decision_acceptance", {10, 11, 12})
+    assert fake.writes() == []  # D only reads owners
+
+
+def test_hosted_observe_h4_must_match_this_chains_target_pool_and_incident_lineage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    h4 = {"H4": {"decision_id": "evo-1"}}
+    for off in ({"target_id": "other-artifact"}, {"capital_pool_id": "other-pool"},
+                {"decision_state": "proposed"}):
+        _, chain, _ = _observe(monkeypatch, tmp_path, incidents=[INCIDENT], proposals=[_proposal(**off)], decisions=h4)
+        chain.run_hosted()
+        assert _paused_at(tmp_path)[0] == "evolution_decision_acceptance", off
+
+    # an approved decision on another incident satisfies nothing: the loop-11 read finds no lineage match
+    _, chain, _ = _observe(monkeypatch, tmp_path, incidents=[INCIDENT],
+                           proposals=[_proposal(linked_incident_id="inc-other")], decisions=h4)
+    chain.run_hosted()
+    assert _paused_at(tmp_path)[0] == "evolution_decision_observation"
+
+    _, chain, _ = _observe(monkeypatch, tmp_path, incidents=[INCIDENT], proposals=[_proposal()], decisions=h4)
+    chain.run_hosted()
+    done = json.loads((tmp_path / "evidence.json").read_text())
+    assert done["phase_status"] == "completed" and {c["loop"] for c in done["cases"].values()} == {10, 11, 12}
+    assert done["resource_ids"]["h4_decision_id"] == "evo-1" and done["resource_ids"]["incident_id"] == "inc-1"
+
+
+def test_hosted_runtime_paths_never_stop_or_restart_services(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    mod, _, _ = _runtime(monkeypatch, tmp_path, "D_observe")
     for method in (mod.RuntimeChain._hosted_promote, mod.RuntimeChain._hosted_observe,
-                   mod.RuntimeChain._hosted_capital, mod.RuntimeChain.run_hosted):
+                   mod.RuntimeChain._hosted_capital, mod.RuntimeChain._hosted_paper_fill,
+                   mod.RuntimeChain.run_hosted):
         source = inspect.getsource(method)
         for forbidden in ('"stop"', '"restart"', "_retire_invalid_preexisting_bindings", "negative_", "mfa"):
             assert forbidden not in source, (method.__name__, forbidden)
