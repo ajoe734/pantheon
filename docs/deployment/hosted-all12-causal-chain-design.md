@@ -19,9 +19,14 @@ their decisions under their real execution identity. This design therefore:
 
 * requires **no second human** for any approval point and has no "same subject fails automatically"
   rule; no fake account, MFA, issuer or execution-grant gate is introduced;
-* keeps the real authorisation and identity audit: each decision is made through the Management UI by
-  a real authenticated subject, and the evidence records the subject, tenant, owner version and
-  timestamp read back from the owner.
+* keeps the real authorisation and identity audit with two separately recorded facts: (a) the **real
+  decision-maker** and the conversation consent evidence for the decision, and (b) the **actual
+  executing actor/session** that saved it through the existing owner API (which may be an authorised
+  executor acting on the human's decision). The executor never impersonates a human login, never asks
+  the user to log in a test account, and never fabricates MFA or new tokens. The evidence also records
+  tenant, owner version and timestamp read back from the owner. An unapproved business decision still
+  needs consent in its original scope; saving an already-authorised true decision is not blocked by a
+  UI-only rule.
 
 The task's historical acceptance item 5 still contains the words "maker-checker separation". The
 native CLI has no acceptance-edit entry, so the canonical task JSON is **not** changed and this
@@ -88,27 +93,29 @@ derived from `chain_id` + step.
 Ordering rule: an approval or consent is obtained *before* the outbound action or owner mutation it
 covers (the "Blocks" column below), never after. If it is not yet decided, the segment stops before
 that action, releases the lease, and a later dispatch resumes; the decision itself is still made only
-by the originally designated humans. Ordinary read-only calls need no approval. This adds no approval
+by the originally designated humans (saving that decision through an authorised executor is allowed, section 0). Ordinary read-only calls need no approval. This adds no approval
 point beyond H1–H4.
 
 A paused segment writes nothing and waits for the next dispatch, so there is no timeout-driven
-auto-approval path. The workflow never calls approve/decide endpoints on a human's behalf.
+auto-approval path. The workflow never invents or infers a decision; it calls approve/decide endpoints
+only to record a decision a real human has actually made and authorised for saving, never otherwise.
 
 ### Human approval points
 
-Each point is decided by a real human through the Management UI; one authorised human per point is
-sufficient (section 0).
+Each point is decided by a real human (decision source); it may be saved either by that human in the
+Management UI or by an authorised executor through the existing owner API, recording decision-maker
+and executing actor/session separately (section 0). One authorised human per point is sufficient.
 
 The harness-minted `PANTHEON_L12_OPERATOR_TOKEN` / `..._REVIEWER_TOKEN` (`l12_owner_auth.py`) are
-**rejected in hosted mode**; hosted mode only accepts that a decided approval already exists, made
-through the Management UI.
+**rejected in hosted mode**; hosted mode only accepts that a decided approval already exists, saved
+under a real executing identity with the real decision-maker recorded (section 0).
 
 | ID | Approval | Decided by | Blocks |
 |---|---|---|---|
-| H1 | Registry artifact approval for the chain's strategy artifact (Governance propose → review → decide, bound to the exact `registry_id` + candidate digest). A Registry/Governance approval, **not** a Capital approval, and never described as one. | authorised human via Management UI | `C_promote` |
+| H1 | Registry artifact approval for the chain's strategy artifact (Governance propose → review → decide, bound to the exact `registry_id` + candidate digest). A Registry/Governance approval, **not** a Capital approval, and never described as one. | authorised human (UI, or saved by authorised executor) | `C_promote` |
 | H2 | Agora synthesis consent (two existing Persona opinions + one synthesis; the previously pending request must not be reused for this chain) | data owner; recorded, not auto-created | consultation/synthesis in `B_learning` |
-| H3 | Deployment plan release for the labelled paper scope | authorised human via Management UI | runtime binding |
-| H4 | Evolution decision acceptance | authorised human via Management UI | closure of loop 11 |
+| H3 | Deployment plan release for the labelled paper scope | authorised human (UI, or saved by authorised executor) | runtime binding |
+| H4 | Evolution decision acceptance | authorised human (UI, or saved by authorised executor) | closure of loop 11 |
 
 There is no paper Capital approval: the paper pool and paper persona binding are created under the
 paper operation policy with no live approval. No extra gates (MFA, issuer, execution grants) are
@@ -189,10 +196,11 @@ references that exact ID. Status of each edge in the current suites:
 | 8→9 | plan id | runtime binding / capital binding `binding_id` | within runtime suite |
 | 9→10 | `binding_id`, `paper_fill_simulated` event id | telemetry drift id (`drift-…`), incident `linked_incident_id` | within runtime suite |
 | 10→11 | incident / drift id | evolution decision referencing it | within runtime suite |
-| 11→12 | evolution decision id | BFF typed-health / loop-health row | **gap**: health row is run-scoped, not shown to cite the decision |
+| 11→12 | none required: loop 11 is `EvolutionDecision` (threshold + daily sweep); loop 12 is a separate continuous/event path | Per `LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md` §3.12: BFF health metrics → telemetry ingest → incident pipeline; no EvolutionDecision precedes it | **not an edge**: report loop 12's own caller (continuous probe / error-rate event), output (health metrics) and consumer (telemetry ingest → incident pipeline); fresh evidence if observed, otherwise "not observed" |
 
-The three **gap** edges (4→5, 7→8, 11→12) plus the cross-suite seams are what a "same fresh chain"
-claim actually lacks today. The run must record, per edge, the predecessor ID and the consumer
+The two **gap** edges (4→5, 7→8) plus the cross-suite seams are what a "same fresh chain"
+claim actually lacks today. The twelve loops follow the hybrid trigger topology of the loop policy, not
+a forced linear order: loop 12 is not chained from loop 11, and no new field or gate is added for it. The run must record, per edge, the predecessor ID and the consumer
 record that carries it, and any edge where the consumer does not carry it is reported **unproven**,
 not inferred from the shared `chain_id`. T1 verifies this table against the live owner payloads before
 anything is built.
@@ -244,7 +252,7 @@ dev Persona meeting the original conditions counts, and the result names which o
 
 ## 9. Operator decisions requested before implementation
 
-1. Approve this design and the four approval points (H1–H4). One authorised human each is sufficient; the deciding subject is recorded from the real identity.
+1. Approve this design and the four approval points (H1–H4). One authorised human each is sufficient; the real decision-maker and the executing actor/session are recorded separately.
 2. Optionally confirm an observation window (5 TW trading days is a recommendation only).
 3. Confirm that cases in section 5 are acceptable as excluded, with isolated-gate evidence for them.
 
@@ -261,7 +269,7 @@ No task is started by this document.
 | T3 Hosted chain driver | Segment runner reading chain state from owners, idempotency keys, `E_close` retirement and baseline check | `scripts/run_hosted_all12_chain.py`, `tests/unit/scripts/test_run_hosted_all12_chain.py` | Replays do not duplicate; missing approval pauses and nothing is approved on a human's behalf |
 | T4 Workflow job | New job + inputs in the existing workflow with lease `qualification`, concurrency group, exact-dev guard | `.github/workflows/nonprod-deploy.yml`, workflow guard tests | Lease acquired/released per segment; no new dispatcher; inventory/pinning checks pass |
 | T5 Pattern observation | `D_observe` readbacks (episodes, uncovered check, scheduler reflection, BFF reload, dedupe) | driver + persona-owner read client in `scripts/run_hosted_all12_chain.py` | Records episode counts with Asia/Taipei timestamps; never writes market data or episodes |
-| T6 Operator runbook | Management UI approval steps and dispatch commands | `docs/deployment/hosted-all12-causal-chain-runbook.md` | Operator can run H1–H4 without engineering help |
-| T7 Hosted run and closeout | Execute phases A–E with the operator and humans; seal evidence; update the closure doc | `docs/deployment/evidence/HOSTED-ALL12-CHAIN-<DATE>/`, `docs/deployment/latest-dev-six-area-closure.md` | All twelve loops linked by one `chain_id`, or an honest not-observed record; cleanup verified |
+| T6 Operator runbook | approval-recording steps (UI or authorised executor) and dispatch commands | `docs/deployment/hosted-all12-causal-chain-runbook.md` | Operator can run H1–H4 without engineering help |
+| T7 Hosted run and closeout | Execute phases A–E with the operator and humans; seal evidence; update the closure doc | `docs/deployment/evidence/HOSTED-ALL12-CHAIN-<DATE>/`, `docs/deployment/latest-dev-six-area-closure.md` | Every real causal edge linked by IDs and loop 12 shown via its own trigger path, or an honest not-observed record; cleanup verified |
 
 Order: T1 → T2 ∥ T3 → T4 → T5 → T6 → T7. Each task is its own PR with an independent reviewer.
