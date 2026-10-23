@@ -72,6 +72,7 @@ from services.execution.market_snapshot_admission import (
     SnapshotAdmissionDecision,
     admit_market_snapshot,
     parse_rfc3339 as _admission_parse_rfc3339,
+    validate_taiwan_calendar_evidence as _validate_taiwan_calendar_evidence,
 )
 
 _HERE = Path(__file__).resolve().parent
@@ -171,6 +172,32 @@ def build_loop_truth(
         "evidence_refs": evidence,
         "backlog": len(unconverged),
     }
+
+
+def _is_official_calendar_correction(
+    session_adm: Dict[str, Any],
+    snapshot: Any,
+) -> bool:
+    """True when ``snapshot`` carries a governed Taiwan calendar published after an automatic stale pause.
+
+    SD-PAPER-01 §7.3: an official calendar correction can make the same
+    event-time data legal again.  The evidence must validate against the
+    governed pins and its ``fetched_at`` must post-date the pause decision it
+    would overturn; this never relaxes ordering for any other same-time data.
+    """
+    if str(session_adm.get("reason_code") or "") != "market_input_stale":
+        return False
+    if not isinstance(snapshot, dict):
+        return False
+    evidence = snapshot.get("calendar_evidence")
+    if not isinstance(evidence, dict):
+        return False
+    ok, _err, _norm = _validate_taiwan_calendar_evidence(evidence)
+    if not ok:
+        return False
+    fetched_dt, _ = _admission_parse_rfc3339(evidence.get("fetched_at"), field_name="calendar_fetched_at")
+    observed_dt, _ = _admission_parse_rfc3339(session_adm.get("observed_at"), field_name="pause_observed_at")
+    return bool(fetched_dt and observed_dt and fetched_dt > observed_dt)
 
 
 def _iso_now() -> str:
@@ -1077,7 +1104,8 @@ class PaperFleetReconciler:
                                 continue
                             paused_snap_id = session_adm.get("source_snapshot_id")
                             paused_time_str = session_adm.get("source_event_time")
-                            decision = self._check_market_admission(eb)
+                            resume_snapshot = self._resolve_market_snapshot(eb)
+                            decision = self._check_market_admission(eb, snapshot=resume_snapshot)
                             if decision is not None and decision.admitted:
                                 paused_dt, _ = _admission_parse_rfc3339(paused_time_str, field_name="paused_event_time")
                                 new_dt, _ = _admission_parse_rfc3339(decision.event_time, field_name="new_event_time")
@@ -1088,7 +1116,17 @@ class PaperFleetReconciler:
                                 # admitted snapshot is unambiguously newer than "no data".
                                 is_later_time = (new_dt > paused_dt) if new_dt and paused_dt else bool(new_dt) and paused_dt is None
 
-                                if is_different_snap and is_later_time:
+                                # Official calendar correction: the same event_time may
+                                # resume only a distinct snapshot whose governed calendar
+                                # post-dates the automatic stale pause (never older data).
+                                is_calendar_correction = bool(
+                                    new_dt
+                                    and paused_dt
+                                    and new_dt == paused_dt
+                                    and _is_official_calendar_correction(session_adm, resume_snapshot)
+                                )
+
+                                if is_different_snap and (is_later_time or is_calendar_correction):
                                     log.info(
                                         "resuming paused binding %s: new admitted snapshot %s (event_time=%s > %s)",
                                         binding_id,

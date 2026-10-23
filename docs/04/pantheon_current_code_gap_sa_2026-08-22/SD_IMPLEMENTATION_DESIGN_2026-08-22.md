@@ -393,6 +393,18 @@ The reconciler atomically records `resume_snapshot_id` and `resumed_at`, then
 uses the existing `paused -> active` transition. It starts at most one worker.
 It does not keep pulling for another snapshot.
 
+Official calendar correction exception: an automatic `market_input_stale`
+pause may also resume on a snapshot whose event time equals the paused event
+time, when an official Taiwan calendar correction later made that same-day
+close legal (e.g. the 2026-10-23 TWSE closure, `twse-2026-emergency-closure-20261023-v2`).
+This additionally requires that the snapshot ID differs, the unchanged
+admission function admits it, the snapshot's calendar evidence validates
+against the governed pins, and that evidence's `fetched_at` is later than the
+pause's `observed_at`. Older event times, same-time data without such
+evidence, unchanged snapshots, and operator pauses stay paused. Source
+provenance and market timestamps are not rewritten; the retained snapshot must
+still be re-published by the existing Source refresh before this applies.
+
 ### 7.4 Tests
 
 Positive tests:
