@@ -643,6 +643,44 @@ def _record_chain(record: Mapping[str, Any]) -> str:
     return ""
 
 
+def _decision_id(value: Any) -> str:
+    """Shared packets carry decisions as objects with ``decision_id`` (strings tolerated)."""
+
+    if isinstance(value, Mapping):
+        value = value.get("decision_id")
+    return str(value or "").strip()
+
+
+def _typed_id(kind: str, value: Any) -> str:
+    """Resource IDs are nonsecret scalar owner IDs; never an object or a path."""
+
+    if isinstance(value, (Mapping, list, tuple)) or isinstance(value, bool):
+        raise StimulusProofError(f"resource id {kind} must be a scalar owner id")
+    text = str(value or "").strip()
+    if not text or any(ch.isspace() or ch in "/?#" for ch in text):
+        raise StimulusProofError(f"resource id {kind} is not a valid owner id")
+    return text
+
+
+FLEET_PATH = "/api/runtime-fleet/desired-state?stage=paper&include_excluded=true"
+
+
+def _fleet_snapshot(payload: Any) -> dict[str, Any] | None:
+    """Existing Runtime owner read: active count and desired binding ids."""
+
+    if not isinstance(payload, Mapping) or not isinstance(payload.get("bindings"), list):
+        return None
+    ids = sorted(
+        str(item["binding_id"])
+        for item in payload["bindings"]
+        if isinstance(item, Mapping) and item.get("binding_id")
+    )
+    active = payload.get("active_count")
+    if not isinstance(active, int):
+        return None
+    return {"active_count": active, "binding_ids": ids}
+
+
 def _record_state(record: Mapping[str, Any]) -> str:
     for key in _STATE_KEYS:
         if str(record.get(key) or "").strip():
@@ -681,9 +719,10 @@ class HostedChainRunner:
         }
         self.resource_ids: dict[str, str] = {
             **dict(hosted.get("resource_ids") or {}),
-            **{str(k): str(v) for k, v in (predecessors or {}).items() if str(v or "").strip()},
+            **{str(k): _typed_id(str(k), v) for k, v in (predecessors or {}).items() if str(v or "").strip()},
         }
-        self.decisions: dict[str, str] = {**dict(hosted.get("decisions") or {}), **dict(decision_refs or {})}
+        self.decisions: dict[str, Any] = {**dict(hosted.get("decisions") or {}), **dict(decision_refs or {})}
+        self.baseline_fleet: dict[str, Any] | None = hosted.get("baseline_fleet") or None
         self.loops: dict[str, dict[str, Any]] = {
             item["loop_id"]: item for item in hosted.get("loops") or []
         }
@@ -699,8 +738,24 @@ class HostedChainRunner:
         tenant, chain = _record_tenant(record), _record_chain(record)
         if tenant != self.tenant_id:
             return f"{kind} {record_id}: tenant {tenant!r} != {self.tenant_id!r}"
+        if kind == "registry_id" and not chain:
+            return self._check_registry_lineage(record_id, record)
         if chain != self.chain_id:
             return f"{kind} {record_id}: chain label {chain!r} != {self.chain_id!r}"
+        return None
+
+    def _check_registry_lineage(self, record_id: str, record: Mapping[str, Any]) -> str | None:
+        # Actual distillation stores source/digest lineage, not a direct chain_id.
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), Mapping) else {}
+        lineage = metadata.get("distillation") if isinstance(metadata.get("distillation"), Mapping) else {}
+        source_id = str(lineage.get("source_id") or "")
+        if not source_id or not str(lineage.get("source_digest") or ""):
+            return f"registry_id {record_id}: no source/distillation lineage to prove chain ownership"
+        if source_id != self.resource_ids.get("source_id") or self.chain_id not in source_id:
+            return f"registry_id {record_id}: lineage source {source_id!r} is not this chain's Source"
+        checksum = self.resource_ids.get("checksum")
+        if checksum and record.get("checksum") != checksum:
+            return f"registry_id {record_id}: checksum differs from the chain checksum"
         return None
 
     def verify_predecessors(self) -> list[str]:
@@ -718,12 +773,18 @@ class HostedChainRunner:
             mismatch = self._check_scope(kind, record_id, record)
             if mismatch:
                 problems.append(mismatch)
-        for name, decision_id in sorted(self.decisions.items()):
-            if name not in GOVERNANCE_DECISIONS:
-                if not str(decision_id or "").strip():
-                    problems.append(f"decision {name}: empty consent reference")
-                continue  # recorded consent (e.g. H2): not a Governance record, never gated here
-            problems.extend(self._verify_decision(name, decision_id))
+        for name, reference in sorted(self.decisions.items()):
+            if name in GOVERNANCE_DECISIONS:
+                decision_id = _decision_id(reference)
+                if not decision_id:
+                    problems.append(f"decision {name}: no decision_id")
+                    continue
+                problems.extend(self._verify_decision(name, decision_id))
+            elif not (reference if isinstance(reference, Mapping) else str(reference or "").strip()):
+                problems.append(f"decision {name}: empty consent reference")
+            elif name == "H3" and not _decision_id(reference):
+                problems.append("decision H3: no decision_id")
+            # recorded consent (e.g. H2) is forwarded as given; never a Governance gate
         return problems
 
     def _verify_decision(self, name: str, decision_id: str) -> list[str]:
@@ -803,6 +864,7 @@ class HostedChainRunner:
         all_done = all_done and self.phases.get("E_close", {}).get("baseline_fleet_check") == "verified"
         return {
             "all12_passed": bool(all_done and len(self.loops) == len(CANONICAL_LOOP_IDS)),
+            "baseline_fleet": self.baseline_fleet,
             "blocked_before": current.get("blocked_before"),
             "chain_id": self.chain_id,
             "decisions": self.decisions,
@@ -815,8 +877,24 @@ class HostedChainRunner:
             "tenant_id": self.tenant_id,
         }
 
+    def _capture_baseline(self) -> str | None:
+        """Record the fleet before the first relevant mutation; return a pause cause if unreadable."""
+
+        if self.baseline_fleet or self.resource_ids.get("runtime_binding_id") or self.resource_ids.get("capital_binding_id"):
+            return None  # already recorded, or too late to claim a pre-mutation baseline
+        status, payload = self.owner.request("runtime", "GET", FLEET_PATH)
+        snapshot = _fleet_snapshot(payload) if status == 200 else None
+        if snapshot is None:
+            return f"runtime fleet desired-state read returned {status}; baseline cannot be recorded"
+        self.baseline_fleet = dict(snapshot, recorded_at=_utc_now())
+        return None
+
     def _launch_phase(self) -> dict[str, Any]:
         domain = HOSTED_PHASE_SUITE[self.phase]
+        if self.phase == "C_promote":
+            cause = self._capture_baseline()
+            if cause:
+                return self._result("paused", "C_promote:baseline_unavailable", evidence=[cause])
         with tempfile.TemporaryDirectory(prefix="pantheon-l12-hosted-") as temp_dir:
             root = Path(temp_dir)
             input_path = root / "chain-input.json"
@@ -851,14 +929,23 @@ class HostedChainRunner:
         reported = report.get("resource_ids") or {}
         if not isinstance(reported, Mapping):
             raise StimulusProofError(f"{domain} receipt resource_ids must be an object")
-        self.resource_ids.update({str(k): str(v) for k, v in reported.items() if str(v or "").strip()})
+        self.resource_ids.update(
+            {str(k): _typed_id(str(k), v) for k, v in reported.items() if str(v or "").strip()}
+        )
         cases = _report_cases(domain, report)
         wanted = HOSTED_PHASE_LOOPS[self.phase]
+        partial: dict[str, str] = {}
         for loop_id, loop_domain, case_key in LOOP_CASES:
             if loop_id in wanted and case_key in cases:
-                self.loops[loop_id] = _normalize_case(
-                    loop_id=loop_id, domain=loop_domain, source_case=cases[case_key]
-                )
+                try:
+                    self.loops[loop_id] = _normalize_case(
+                        loop_id=loop_id, domain=loop_domain, source_case=cases[case_key]
+                    )
+                except StimulusProofError as exc:
+                    if status == "completed":
+                        raise
+                    # A paused phase's unfinished case is progress, not a completed loop.
+                    partial[loop_id] = str(exc)
         if status == "completed":
             missing = [loop_id for loop_id in wanted if loop_id not in self.loops]
             if missing:
@@ -866,6 +953,7 @@ class HostedChainRunner:
         return self._result(
             status,
             report.get("blocked_before"),
+            partial_cases=partial,
             report_sha256=self.gate.evidence.domain_suites[domain]["report_sha256"],
         )
 
@@ -912,10 +1000,13 @@ class HostedChainRunner:
                 retired.append({"kind": kind, "id": record_id, "http": code})
             else:
                 incomplete.append(f"{kind} {record_id}: retire accepted ({code}) but state is {_record_state(after)!r}")
-        h1 = self.decisions.get("H1")
+        h1 = _decision_id(self.decisions.get("H1"))
         if h1:
             self._revoke_h1(h1, verified, actor, roles, retired, rejected, incomplete, failures)
         residual = sorted(k for k in self.resource_ids if k not in RECORD_SPECS)
+        baseline_check, baseline_note = self._baseline_check()
+        if baseline_check != "verified":
+            incomplete.append(f"baseline fleet: {baseline_note}")
         pending = rejected + incomplete
         return self._result(
             "failed" if failures else ("paused" if pending else "completed"),
@@ -925,8 +1016,26 @@ class HostedChainRunner:
             rejected_unrelated=rejected,
             incomplete_cleanup=incomplete,
             residual_non_retirable=residual,
-            baseline_fleet_check="not_verified_by_parent",
+            baseline_fleet_check=baseline_check,
         )
+
+    def _baseline_check(self) -> tuple[str, str]:
+        """Re-read the Runtime owner and compare with the baseline recorded before mutation."""
+
+        if not self.baseline_fleet:
+            return "baseline_not_recorded", "no pre-mutation baseline in the receipt; fleet not compared"
+        status, payload = self.owner.request("runtime", "GET", FLEET_PATH)
+        now = _fleet_snapshot(payload) if status == 200 else None
+        if now is None:
+            return "unreadable", f"runtime fleet desired-state read returned {status}"
+        chain_active = sorted(
+            set(now["binding_ids"]) & {self.resource_ids.get("runtime_binding_id") or ""}
+        )
+        if chain_active:
+            return "chain_binding_still_active", f"chain binding still desired: {chain_active}"
+        if now["active_count"] != self.baseline_fleet.get("active_count") or now["binding_ids"] != self.baseline_fleet.get("binding_ids"):
+            return "mismatch", f"fleet now {now} differs from baseline {self.baseline_fleet}"
+        return "verified", ""
 
     def _revoke_h1(self, h1, verified, actor, roles, retired, rejected, incomplete, failures) -> None:
         registry_id = self.resource_ids.get("registry_id")

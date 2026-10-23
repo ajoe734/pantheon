@@ -306,9 +306,9 @@ def test_all12_requires_every_phase_completed(monkeypatch, tmp_path):
     runner = _runner(tmp_path, "E_close", FakeOwner({}), prior={"hosted": {"chain_id": CHAIN, "phases": done}})
     runner.run()
     hosted = _receipt(tmp_path)["hosted"]
-    # no loop evidence carried and baseline fleet check not verified by the parent
-    assert hosted["phase_status"] == "completed" and hosted["all12_passed"] is False
-    assert hosted["phases"]["E_close"]["baseline_fleet_check"] == "not_verified_by_parent"
+    # no loop evidence carried and no pre-mutation baseline: never all12, cleanup paused honestly
+    assert hosted["phase_status"] == "paused" and hosted["all12_passed"] is False
+    assert hosted["phases"]["E_close"]["baseline_fleet_check"] == "baseline_not_recorded"
 
 
 def test_default_isolated_launch_has_no_hosted_environment(monkeypatch, tmp_path):
@@ -343,3 +343,113 @@ def test_legacy_fullchain_test_is_excluded_in_hosted_mode():
     source = PARENT.read_text(encoding="utf-8")
     block = source[source.index("@pytest.mark.skipif", source.index("def test_prebuilt_verifier")):source.index("def test_stimulus_driven_cross_loop")]
     assert "HOSTED_FLAG" in block and skip.args
+
+
+FLEET = "/api/runtime-fleet/desired-state?stage=paper&include_excluded=true"
+
+
+def _fleet(count, ids):
+    return {"active_count": count, "bindings": [{"binding_id": i} for i in ids]}
+
+
+def test_paused_partial_case_is_kept_as_progress_not_normalized(monkeypatch, tmp_path):
+    report = _report("runtime", "D_observe", "paused", [parent.LOOP_CASES[9][2]], {})
+    report["cases"][parent.LOOP_CASES[9][2]]["next_consumer_readback"] = None  # real A1H1-style partial
+    monkeypatch.setattr(subprocess, "run", FakeChild({"D_observe": report}))
+    done = {p: {"phase_status": "completed"} for p in parent.HOSTED_PHASES[:3]}
+    evidence = _runner(tmp_path, "D_observe", FakeOwner({}), prior={"hosted": {"chain_id": CHAIN, "phases": done}}).run()
+    hosted = _receipt(tmp_path)["hosted"]
+    assert evidence.status == "paused" and hosted["loops"] == []
+    assert "telemetry_reconciliation" in hosted["phases"]["D_observe"]["partial_cases"]
+
+
+def test_completed_phase_with_partial_case_is_still_rejected(monkeypatch, tmp_path):
+    report = _report("research", "A_research", "completed", A_KEYS, {})
+    report["cases"][0]["next_consumer"] = None
+    monkeypatch.setattr(subprocess, "run", FakeChild({"A_research": report}))
+    with pytest.raises(parent.StimulusProofError, match="next receipt"):
+        _runner(tmp_path, "A_research", FakeOwner({})).run()
+
+
+def test_object_decisions_parse_decision_id_and_forward_h2_mapping(monkeypatch, tmp_path):
+    child = FakeChild({"C_promote": _report("runtime", "C_promote", "paused", [], {}, "h3")})
+    monkeypatch.setattr(subprocess, "run", child)
+    done = {p: {"phase_status": "completed"} for p in parent.HOSTED_PHASES[:2]}
+    h2 = {"consent_id": "c-1", "recorded_by": "human"}
+    decisions = {"H1": {"decision_id": "apv-1"}, "H2": h2, "H3": {"decision_id": "apv-3"}}
+    owner = FakeOwner({
+        ("governance", "/api/governance/approvals/apv-1"): _owned(decision_state="decided", decision="approved", target_id="reg-1"),
+        ("registry", "/api/registry/strategy-specs/reg-1"): {"entry": _owned()},
+        ("runtime", FLEET): _fleet(1, ["old"]),
+    })
+    prior = {"hosted": {"chain_id": CHAIN, "phases": done, "resource_ids": {"registry_id": "reg-1"}}}
+    _runner(tmp_path, "C_promote", owner, prior=prior, decisions=decisions).run()
+    assert ("governance", "GET", "/api/governance/approvals/apv-1", None) in owner.log
+    assert child.calls[0]["input"]["decisions"]["H2"] == h2
+
+
+def test_registry_without_chain_id_is_verified_by_distillation_lineage(monkeypatch, tmp_path):
+    monkeypatch.setattr(subprocess, "run", FakeChild({}))
+    src = f"src-{CHAIN}-1"
+    lineage = {"source_id": src, "source_digest": "sha256:ab"}
+    entry = {"tenant_id": TENANT, "metadata": {"distillation": lineage}, "checksum": "ck"}
+    prior = {"hosted": {"chain_id": CHAIN, "phases": {"A_research": {"phase_status": "completed"}},
+                        "resource_ids": {"registry_id": "reg-1", "source_id": src, "checksum": "ck"}}}
+    owner = FakeOwner({("registry", "/api/registry/strategy-specs/reg-1"): {"entry": entry}})
+    runner = _runner(tmp_path, "A_research", owner, prior=prior)
+    assert runner.verify_predecessors() == []
+    entry["metadata"]["distillation"] = dict(lineage, source_id="src-someone-else-1")
+    assert "not this chain's Source" in runner.verify_predecessors()[0]
+    entry["metadata"] = {}
+    assert "no source/distillation lineage" in runner.verify_predecessors()[0]
+
+
+def test_typed_resource_ids_reject_objects_and_paths(tmp_path):
+    with pytest.raises(parent.StimulusProofError):
+        parent.HostedChainRunner(_settings(tmp_path), chain_id=CHAIN, phase="A_research", tenant_id=TENANT,
+                                 owner=FakeOwner({}), predecessors={"capital_pool_id": "../x"})
+    with pytest.raises(parent.StimulusProofError):
+        parent.HostedChainRunner(_settings(tmp_path), chain_id=CHAIN, phase="A_research", tenant_id=TENANT,
+                                 owner=FakeOwner({}), predecessors={"runtime_binding_id": {"a": 1}})
+
+
+def _close_owner(fleet_after, binding_status="active"):
+    return FakeOwner({
+        ("capital", "/api/bindings/cb-1"): {"binding": _owned(status=binding_status)},
+        ("capital", "/api/capital-pools/cp-1"): {"pool": _owned(status="active")},
+        ("runtime", "/api/runtime-bindings/rb-1"): _owned(status="active"),
+        ("runtime", FLEET): fleet_after,
+    })
+
+
+def test_baseline_recorded_before_first_mutation_and_restored_at_close(monkeypatch, tmp_path):
+    monkeypatch.setattr(subprocess, "run", FakeChild({"C_promote": _report("runtime", "C_promote", "completed", [parent.LOOP_CASES[7][2], parent.LOOP_CASES[8][2]], {
+        "capital_pool_id": "cp-1", "capital_binding_id": "cb-1", "runtime_binding_id": "rb-1"})}))
+    done = {p: {"phase_status": "completed"} for p in parent.HOSTED_PHASES[:2]}
+    owner = FakeOwner({("runtime", FLEET): _fleet(1, ["old"])})
+    _runner(tmp_path, "C_promote", owner, prior={"hosted": {"chain_id": CHAIN, "phases": done}}).run()
+    c = _receipt(tmp_path)["hosted"]
+    assert c["baseline_fleet"]["active_count"] == 1 and c["baseline_fleet"]["binding_ids"] == ["old"]
+    assert c["resource_ids"] == {"capital_pool_id": "cp-1", "capital_binding_id": "cb-1", "runtime_binding_id": "rb-1"}
+
+    c["phases"]["D_observe"] = {"phase_status": "completed"}
+    close = _close_owner(_fleet(1, ["old"]))
+    _runner(tmp_path, "E_close", close, prior={"hosted": c}, name="close.json").run()
+    phase = _receipt(tmp_path, "close.json")["hosted"]["phases"]["E_close"]
+    assert phase["baseline_fleet_check"] == "verified" and phase["phase_status"] == "completed"
+    assert {r["kind"] for r in phase["retired"]} == {"capital_binding_id", "runtime_binding_id", "capital_pool_id"}
+
+    drift = _close_owner(_fleet(2, ["old", "stray"]))
+    _runner(tmp_path, "E_close", drift, prior={"hosted": c}, name="drift.json").run()
+    phase = _receipt(tmp_path, "drift.json")["hosted"]["phases"]["E_close"]
+    assert phase["baseline_fleet_check"] == "mismatch" and phase["phase_status"] == "paused"
+    assert _receipt(tmp_path, "drift.json")["hosted"]["all12_passed"] is False
+
+
+def test_unreadable_baseline_pauses_c_before_launch(monkeypatch, tmp_path):
+    child = FakeChild({})
+    monkeypatch.setattr(subprocess, "run", child)
+    done = {p: {"phase_status": "completed"} for p in parent.HOSTED_PHASES[:2]}
+    evidence = _runner(tmp_path, "C_promote", FakeOwner({}), prior={"hosted": {"chain_id": CHAIN, "phases": done}}).run()
+    assert child.calls == [] and evidence.status == "paused"
+    assert _receipt(tmp_path)["hosted"]["blocked_before"] == "C_promote:baseline_unavailable"
