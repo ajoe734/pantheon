@@ -1,0 +1,38 @@
+{
+  "task_id": "HOSTED-ALL12-WORKFLOW-INTEGRATION-20261023",
+  "kind": "source_delivery_not_hosted_acceptance",
+  "base_contract": "PR6736 design sections 2/3/10 T4; merged T2 (domain phases) and T3 (stimulus parent phases, PR6743)",
+  "changed_files": [
+    ".github/workflows/nonprod-deploy.yml",
+    "scripts/test_isolated_l12_provider_workflow.py",
+    "docs/deployment/evidence/HOSTED-ALL12-WORKFLOW-INTEGRATION-20261023/evidence.json"
+  ],
+  "behavior": {
+    "inputs": "hosted_all12_chain (default false), chain_id, chain_phase (A_research..E_close), chain_input_json (nonsecret decisions/predecessors only), chain_prior_receipt_run_id (artifact lookup hint)",
+    "mode_separation": "deploy-dev and isolated job conditions gain !hosted_all12_chain; hosted job rejects isolated_provider_qualification=true at validation; default release and isolated qualification are otherwise unchanged; no needs/deploy/compensation/FE switch in the hosted job",
+    "guards": "exact current dev (GITHUB_REF/GITHUB_SHA/payload == origin/dev), component=auto, allow_dirty=false, strict auth, existing concurrency group with cancel-in-progress false, chain id pattern equal to the parent's, credential/approval keys rejected in chain_input_json",
+    "identity": "accepted hosted FE/BFF pair read from FE /deployment.json + BFF /bff/version (must agree, accepted state with releaseAdmission); recorded in accepted-identity.json separately from workflow_source_sha; that backend sha is PANTHEON_L12_STIMULUS_EXPECTED_SHA and the VM managed checkout must be that exact clean HEAD",
+    "lease": "existing dev_environment_lease.py (pinned controller aee1243, checksum-verified) acquire --mode qualification + identity-bound heartbeat for A/B/C/E; D_observe takes no lease; the release step runs always, so pause and failure release; it never holds across a human wait; a lost heartbeat or unprovable identity quarantines to TTL and fails the job",
+    "execution": "one ssh stdin transfer of the CI pip wheel + the five pytest closure wheels pinned from dependencies/locks/root-tests.txt and a workflow-staged runner; VM creates a private scratch venv --without-pip, bootstraps the transferred pip wheel via sys.path+runpy, installs offline --no-index; invokes only tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py::test_hosted_chain_phase from the accepted managed checkout; no host/global/container install, restart, image, daemon or service",
+    "owner_endpoints": "published host ports are read from the running compose containers (docker port), compose files from the BFF container label; no default ports are assumed",
+    "credentials": "runner does the existing dev-login exchange immediately before use; token plus actor/roles/tenant travel only on ssh stdin; service credentials are read privately from the running consumers' own config; nothing in dispatch inputs, argv, receipt or upload; phase.log is redacted of every gathered secret value",
+    "receipt": "receipt.json (the parent's atomic Evidence file incl. hosted block), segment-result.json, segment-meta.json, accepted-identity.json, redacted phase.log are uploaded always (success, pause, failure); a paused segment exits 0 and is reported complete=false; all12_claim_allowed is true only for E_close completed with the parent's all12_passed true"
+  },
+  "validation": {
+    "workflow_guard_tests": "scripts/test_isolated_l12_provider_workflow.py (19 passed): mode exclusivity, lease mode/ordering, credential containment, validation script via temp git (stale sha, isolated+hosted, bad chain id, bad phase, credential/approval keys), VM runner with fake docker/git/pytest (env assembly, redaction, dirty/other checkout refused, parent never launched), phase list and env names vs the merged parent",
+    "combined_join": "tests/unit/l12 (71 passed) incl. test_hosted_stimulus_contract.py real-shaped paused and completed receipts accepted by the parent; no hosted run, no provider call",
+    "bootstrap": "the extracted runner's bootstrap was executed locally against real wheels: --without-pip venv, pip wheel via runpy, --no-index install, pytest 9.1.1 importable, pip absent from venv",
+    "existing_contract_tests": "scripts/test_dev_direct_ssh_workflow_contract.py and the lease/artifact/ppl/loop-prod contract files: failure set equals the pre-existing base failures (7 in test_dev_environment_lease_deploy_contract.py plus ppl gate cases fail identically without this change)"
+  },
+  "dependencies_and_residuals": [
+    "Capital: caller seam still caches static capital headers at Settings construction. The workflow supplies one 120s service JWT from the BFF container's existing _PersonaOwnerHttpTransport at phase start for C/D/E (meta.capital_per_request_refresh_dependency); per-request refresh belongs to SOURCE-SPEC-EXECUTION-RECIPE (l12_owner_auth.py, runtime and parent suites), not edited here. A long phase may therefore fail Capital auth honestly until that seam merges; final combined validation must consume it before readiness is claimed",
+    "dev-login Operator A carries the operator role only; E_close retirements and Capital writes needing other roles will honestly pause/fail, no role is fabricated",
+    "tenant comes from vars.DEV_HOSTED_CHAIN_TENANT_ID or the login token tenant claim; no default is assumed",
+    "SOURCE_READER/SOURCE_INGEST_CONTROLLER tokens are not supplied (suite falls back to the executor bearer per the credential map)"
+  ],
+  "not_done": [
+    "no hosted run, VM command, login, provider request, owner write or approval was executed by this worker",
+    "source workflow availability is not hosted delivery; original 49 criteria, Pattern and independent restart obligations remain under the parent",
+    "native clean worktree/PR/review/checks/integration still required"
+  ]
+}

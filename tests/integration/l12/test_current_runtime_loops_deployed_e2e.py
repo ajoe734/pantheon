@@ -46,7 +46,21 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 import pytest
-from l12_owner_auth import approve_registry_entry, bearer, human_token, registry_advance_body
+from l12_owner_auth import (
+    HOSTED_TASK_ID,
+    HostedPause,
+    approve_registry_entry,
+    bearer,
+    capital_identity,
+    fresh_capital_authorization,
+    hosted_chain_enabled,
+    hosted_receipt_fields,
+    hosted_token,
+    human_token,
+    load_hosted_input,
+    registry_advance_body,
+    require_decided_approval,
+)
 
 
 TASK_ID = "PFG-L12-RUNTIME-E2E-20260820"
@@ -77,6 +91,10 @@ pytestmark = pytest.mark.skipif(
 
 class DeployedProofError(AssertionError):
     """The deployed runtime proof failed or was not safely configured."""
+
+
+class UnsupportedExecutablePath(DeployedProofError):
+    """The owner cannot turn this chain's own approved StrategySpec into a runtime binding."""
 
 
 def _utc_now() -> str:
@@ -120,6 +138,9 @@ def _encode_jwt_hs256(payload: Mapping[str, Any], *, secret: str) -> str:
 
 
 def _capital_bearer(name: str) -> dict[str, str]:
+    if hosted_chain_enabled():
+        # Capital tokens live ~120s: Settings refreshes a genuine one per request instead.
+        return {}
     token = os.getenv(name, "").strip()
     if token:
         return {"Authorization": f"Bearer {token}"}
@@ -177,6 +198,13 @@ class Settings:
     compose_files: tuple[str, ...]
     evidence_output: Path
     capital_headers: dict[str, str]
+    capital_authorization: Callable[[], str] | None = None
+
+    def capital_auth(self) -> dict[str, str]:
+        """Capital credential for one request: fresh per call in the hosted chain."""
+        if self.capital_authorization is not None:
+            return {"Authorization": self.capital_authorization()}
+        return dict(self.capital_headers)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -228,7 +256,7 @@ class Settings:
             raise DeployedProofError(
                 "the test writes a temporary atomic result; checked-in evidence is owner-managed"
             )
-        return cls(
+        settings = cls(
             urls=urls,
             expected_sha=expected_sha,
             compose_project=_require_env("PANTHEON_L12_COMPOSE_PROJECT"),
@@ -236,6 +264,13 @@ class Settings:
             evidence_output=output,
             capital_headers=_capital_bearer("PANTHEON_L12_CAPITAL_TOKEN"),
         )
+        if hosted_chain_enabled():
+            object.__setattr__(
+                settings,
+                "capital_authorization",
+                lambda: fresh_capital_authorization(settings.compose_command, TENANT_ID),
+            )
+        return settings
 
     def compose_command(self, *args: str) -> list[str]:
         command = ["docker", "compose", "-p", self.compose_project]
@@ -307,6 +342,7 @@ class Evidence:
     identities: dict[str, dict[str, Any]] = field(default_factory=dict)
     status: str = "running"
     error: str | None = None
+    hosted: dict[str, Any] = field(default_factory=dict)
 
     def add_case(
         self,
@@ -351,6 +387,9 @@ class Evidence:
             "status": self.status,
             "task_id": TASK_ID,
         }
+        if self.hosted:
+            payload.update(self.hosted)
+            payload["environment"] = "hosted_dev_paper"
         self.settings.evidence_output.parent.mkdir(parents=True, exist_ok=True)
         descriptor, temporary = tempfile.mkstemp(
             dir=self.settings.evidence_output.parent,
@@ -454,6 +493,13 @@ class RuntimeChain:
         self.evidence = Evidence(settings)
         self.suffix = uuid.uuid4().hex[:10]
         self.results: dict[str, Any] = {}
+        # Hosted chain mode runs exactly one selected phase and never mints an identity.
+        self.hosted_input = (
+            load_hosted_input(("C_promote", "D_observe")) if hosted_chain_enabled() else None
+        )
+        if self.hosted_input is not None:
+            self._init_hosted_headers()
+            return
         self.runtime_headers = {
             "Authorization": "Bearer l12-current-e2e:operator:mfa"
         }
@@ -478,6 +524,18 @@ class RuntimeChain:
             "Authorization": "Bearer l12-current-e2e:operator,service",
             "X-Tenant-Id": TENANT_ID,
         }
+
+    def _init_hosted_headers(self) -> None:
+        """Real executing identity only: no ``:mfa`` marker, no stub bearer, no minted JWT."""
+        executor = {"Authorization": f"Bearer {hosted_token('OPERATOR')}", "X-Tenant-Id": TENANT_ID}
+        self.runtime_headers = dict(executor)
+        self.deployment_headers = dict(executor)
+        self.telemetry_headers = dict(executor)
+        self.reconciliation_headers = dict(executor)
+        self.evolution_headers = dict(executor)
+        self.source_ingest_headers = dict(executor)
+        bff_bearer = _require_env("PANTHEON_L12_BFF_BEARER")
+        self.bff_headers = {"Authorization": f"Bearer {bff_bearer}", "X-Tenant-Id": TENANT_ID}
 
     def _compose_container_id(self, service: str) -> str:
         return _run(self.settings.compose_command("ps", "-q", service))
@@ -542,7 +600,7 @@ class RuntimeChain:
         headers = {
             "X-Tenant-Id": TENANT_ID,
             "X-Pantheon-Service": "control-plane-bff",
-            **self.settings.capital_headers,
+            **self.settings.capital_auth(),
         }
         self.http.request(
             "capital",
@@ -1067,6 +1125,609 @@ class RuntimeChain:
             "/bff/auth/readiness",
             headers=self.bff_headers,
         )
+
+    # -- hosted chain phases (C_promote, D_observe) ---------------------------------
+    #
+    # Each phase is its own entry point so selecting one can never trigger a later
+    # write. Nothing here stops, restarts or reconfigures a shared service, retires a
+    # pre-existing binding, or creates a deliberately broken binding.
+
+    def _governance_read(self, decision_id: str) -> Mapping[str, Any] | None:
+        view = self.http.request(
+            "governance",
+            "GET",
+            f"/api/governance/approvals/{urllib.parse.quote(decision_id, safe='')}",
+            headers=bearer(human_token("OPERATOR")),
+            expected={200, 404},
+        )
+        return view if isinstance(view, Mapping) and view.get("decision_id") == decision_id else None
+
+    def _hosted_capital(self, persona_id: str) -> dict[str, str]:
+        """Paper pool and paper binding: read-before-create, and no approval id is invented."""
+        chain = self.hosted_input
+        assert chain is not None
+        pool_id, binding_id = chain.id("pool"), chain.id("pcb")
+        # Capital compares the body actor to the verified principal: name the real one.
+        actor_id, service = capital_identity(self.settings.capital_auth()["Authorization"])
+
+        def headers() -> dict[str, str]:
+            # A fresh genuine Capital token per request (~120s lifetime).
+            return {"X-Tenant-Id": TENANT_ID, "X-Pantheon-Service": service, **self.settings.capital_auth()}
+
+        labels = {"paper_only": True, "execution_context": "paper", "tenant_id": TENANT_ID, **chain.labels()}
+        pool = self.http.request(
+            "capital", "GET", f"/api/capital-pools/{pool_id}", headers=headers(), expected={200, 404}
+        )
+        if pool.get("pool_id") != pool_id:
+            self.http.request(
+                "capital",
+                "POST",
+                "/api/capital-pools",
+                body={
+                    "actor_id": actor_id,
+                    "actor_role": "capital.admin",
+                    "idempotency_key": f"{HOSTED_TASK_ID}:{pool_id}",
+                    "request_hash": f"request-{pool_id}",
+                    "pool_id": pool_id,
+                    "name": f"Hosted all12 paper pool {chain.chain_id}",
+                    "owner_id": HOSTED_TASK_ID,
+                    "owner_type": "operator",
+                    "status": "active",
+                    "currency": "USD",
+                    "budget": 1000.0,
+                    "single_runtime_enforced": True,
+                    "metadata": labels,
+                },
+                headers=headers(),
+                expected={201},
+            )
+        binding = self.http.request(
+            "capital", "GET", f"/api/bindings/{binding_id}", headers=headers(), expected={200, 404}
+        )
+        if binding.get("binding_id") != binding_id:
+            binding = self.http.request(
+                "capital",
+                "POST",
+                "/api/bindings",
+                body={
+                    "actor_id": actor_id,
+                    "actor_role": "persona.admin",
+                    "idempotency_key": f"{HOSTED_TASK_ID}:{binding_id}",
+                    "request_hash": f"request-{binding_id}",
+                    "binding_id": binding_id,
+                    "persona_id": persona_id,
+                    "capital_pool_id": pool_id,
+                    "role": "paper_owner",
+                    "allowed_deployment_scope": "paper",
+                    "budget": 1000.0,
+                    "created_by": HOSTED_TASK_ID,
+                    "metadata": {"paper_only": True, **chain.labels()},
+                },
+                headers=headers(),
+                expected={201},
+            )
+        if binding.get("status") != "active":
+            # Paper operations are admitted without a Capital approval (capital_guard
+            # is_paper_operation); the activation therefore carries no approval id.
+            binding = self.http.request(
+                "capital",
+                "POST",
+                f"/api/bindings/{binding_id}/activate",
+                body={"actor_id": actor_id, "actor_role": "persona.admin"},
+                headers=headers(),
+            )
+        if binding.get("status") != "active" or binding.get("allowed_deployment_scope") != "paper":
+            raise DeployedProofError("hosted PersonaCapitalBinding is not active paper-only authority")
+        return {"capital_pool_id": pool_id, "persona_id": persona_id, "capital_binding_id": binding_id}
+
+    def _hosted_promote(self, chain: Any, ids: dict[str, Any]) -> None:
+        wanted = {key: chain.predecessor(key) for key in ("registry_id", "checksum", "governance_handoff_id")}
+        h1_ref = chain.decision("H1") or {"decision_id": chain.predecessor("h1_decision_id")}
+        missing = [key for key, value in wanted.items() if not value]
+        if not str(h1_ref.get("decision_id") or "").strip():
+            missing.append("H1 decision_id")
+        if missing:
+            raise HostedPause("capital_pool_creation", f"C_promote needs predecessors {missing}")
+        registry_id, checksum, handoff_id = wanted["registry_id"], wanted["checksum"], wanted["governance_handoff_id"]
+        h1_id = str(h1_ref["decision_id"])
+        ids.update(registry_id=registry_id, checksum=checksum, consult_handoff_id=handoff_id, h1_decision_id=h1_id)
+        for service in ("runtime-manager", "deployment", "deployment-outbox-consumer", "paper-signal-producer"):
+            self._identity(service)
+
+        # The chain's own approved StrategySpec - never the preexisting parent artifact.
+        view = self.http.request(
+            "registry",
+            "GET",
+            f"/api/registry/strategy-specs/{urllib.parse.quote(registry_id, safe='')}",
+            headers=bearer(human_token("OPERATOR")),
+        )
+        entry = view.get("entry") if isinstance(view.get("entry"), Mapping) else view
+        if (
+            entry.get("registry_id") != registry_id
+            or entry.get("artifact_state") != "approved"
+            or entry.get("checksum") != checksum
+            or entry.get("approval_decision_id") != h1_id
+        ):
+            raise DeployedProofError(
+                "chain StrategySpec is not the approved H1 entry: "
+                f"{ {k: entry.get(k) for k in ('registry_id', 'artifact_state', 'checksum', 'approval_decision_id')} }"
+            )
+        # The runtime loader reads strategy-artifacts and needs an approved execution_bundle with an
+        # embedded StrategyArtifact. Derive a DISTINCT chain-owned artifact from this Spec's own
+        # stored explicit recipe (no prose parsing, no fixed defaults), or stop with the concrete
+        # reason before any Capital/plan write. The original Spec and its H1 are never relabelled.
+        from services.registry.strategy_artifact import (
+            StrategyArtifactValidationError,
+            build_execution_artifact_registration,
+            strategy_artifact_checksum,
+        )
+
+        execution_id = chain.id("execution-artifact")
+        try:
+            registration = build_execution_artifact_registration(
+                entry,
+                artifact_id=execution_id,
+                algorithm_commit=self.settings.expected_sha,
+                requested_by=HOSTED_TASK_ID,
+            )
+        except StrategyArtifactValidationError as exc:
+            raise HostedPause(
+                "unsupported_executable_path",
+                f"unsupported_executable_path: the chain StrategySpec {registry_id} cannot be carried to "
+                f"an execution_bundle StrategyArtifact: {exc}; no Capital, artifact or DeploymentPlan was "
+                "written and no unrelated artifact was used",
+                ids,
+            ) from exc
+        derived = registration["strategy_artifact"]
+        execution_version = str(derived["version"])
+        execution_checksum = strategy_artifact_checksum(derived)
+        registration["metadata"].update({"tenant_id": TENANT_ID, **chain.labels()})
+        ids.update(
+            execution_artifact_id=execution_id,
+            execution_artifact_version=execution_version,
+            execution_artifact_checksum=execution_checksum,
+        )
+        persona_id = chain.predecessor("persona_id") or chain.id("persona")
+        capital = self._hosted_capital(persona_id)
+        ids.update(
+            capital_pool_id=capital["capital_pool_id"],
+            capital_binding_id=capital["capital_binding_id"],
+            persona_id=persona_id,
+        )
+
+        # Register the candidate (read-before-create). Candidate registration is not covered by H3.
+        quoted_execution = urllib.parse.quote(execution_id, safe="")
+        existing = self.http.request(
+            "registry", "GET", f"/api/registry/strategy-artifacts/{quoted_execution}",
+            headers=bearer(human_token("OPERATOR")), expected={200, 404},
+        )
+        execution_entry = existing.get("entry") if isinstance(existing.get("entry"), Mapping) else existing
+        if execution_entry.get("registry_id") != execution_id:
+            execution_entry = self.http.request(
+                "registry", "POST", "/api/registry/strategy-artifacts",
+                body=registration, headers=bearer(human_token("OPERATOR")), expected={200, 201},
+            )
+            execution_entry = (
+                execution_entry.get("entry") if isinstance(execution_entry.get("entry"), Mapping) else execution_entry
+            )
+        embedded = (execution_entry.get("metadata") or {}).get("strategy_artifact")
+        if (
+            execution_entry.get("registry_id") != execution_id
+            or execution_entry.get("artifact_type") != "execution_bundle"
+            or execution_entry.get("checksum") != execution_checksum
+            or execution_entry.get("version") != execution_version
+            or not isinstance(embedded, Mapping)
+            or (embedded.get("lineage") or {}).get("source_strategy_spec_id") != registry_id
+        ):
+            raise DeployedProofError(
+                f"owner read-back of execution artifact {execution_id} does not match the derived "
+                "candidate or does not link the chain Spec"
+            )
+
+        strategy_id = str(entry.get("strategy_id") or chain.predecessor("strategy_id"))
+        references = {
+            **chain.labels(),
+            "registry_id": execution_id,
+            "registry_checksum": execution_checksum,
+            "source_strategy_spec_id": registry_id,
+            "source_strategy_spec_checksum": checksum,
+            "h1_decision_id": h1_id,
+            "consult_handoff_id": handoff_id,
+        }
+        for optional in ("teaching_session_id", "consult_request_id", "candidate_id"):
+            if chain.predecessor(optional):
+                references[optional] = chain.predecessor(optional)
+
+        # H3 covers approval of the exact derived artifact, its plan and the dispatch: nothing
+        # below the candidate registration runs until it is decided for this version, digest,
+        # paper pool and persona. H1 is the Spec's decision and is never reused for this artifact.
+        h3 = require_decided_approval(
+            self._governance_read,
+            chain.decision("H3"),
+            point="H3",
+            blocked_before="execution_artifact_approval",
+            tenant_id=TENANT_ID,
+            expected={
+                "target_type": "registry_entry",
+                "target_id": execution_id,
+                "target_version": execution_version,
+                "candidate_digest": execution_checksum,
+                "capital_pool_id": capital["capital_pool_id"],
+                "persona_id": capital["persona_id"],
+            },
+            resource_ids=ids,
+        )
+        ids["h3_decision_id"] = h3["decision_id"]
+        order = ("draft", "candidate", "approved")
+        for target in ("candidate", "approved"):
+            if order.index(str(execution_entry.get("artifact_state"))) >= order.index(target):
+                continue
+            execution_entry = self.http.request(
+                "registry", "POST", f"/api/registry/strategy-artifacts/{quoted_execution}/advance",
+                body=registry_advance_body(
+                    execution_entry, target, command_key=chain.id("registry", "execution", target),
+                    approval_decision_id=h3["decision_id"] if target == "approved" else None,
+                ),
+                headers=bearer(human_token("OPERATOR")),
+            )
+            execution_entry = (
+                execution_entry.get("entry") if isinstance(execution_entry.get("entry"), Mapping) else execution_entry
+            )
+        if (
+            execution_entry.get("artifact_state") != "approved"
+            or execution_entry.get("approval_decision_id") != h3["decision_id"]
+            or execution_entry.get("checksum") != execution_checksum
+        ):
+            raise DeployedProofError("execution artifact is not approved under the H3 decision")
+        strategy_id = str(entry.get("strategy_id") or chain.predecessor("strategy_id"))
+        metadata: dict[str, Any] = {
+            "tenant_id": TENANT_ID,
+            "environment": "paper",
+            "paper_only": True,
+            "strategy_id": strategy_id,
+            "persona_capital_binding_id": capital["capital_binding_id"],
+            "market_data_policy": {
+                "owner": "source-ingest",
+                "contract": "latest_stored_normalized",
+                "max_age_seconds": 172800,
+                "minimum_closes": 2,
+            },
+            **references,
+        }
+        if chain.predecessor("symbol"):
+            metadata["symbol"] = chain.predecessor("symbol")
+        plan_id = chain.id("plan")
+        plan_body = {
+            "approval_decision_id": h3["decision_id"],
+            "capital_pool_id": capital["capital_pool_id"],
+            "created_by": HOSTED_TASK_ID,
+            "current_stage": "none",
+            "metadata": metadata,
+            "plan_id": plan_id,
+            "registry_id": execution_id,
+            "sponsor_persona_id": capital["persona_id"],
+            "status": "approved",
+            "target_stage": "paper",
+            "rollback": {
+                # Existing approved version referenced as the rollback target only; it is not mutated.
+                "target_artifact_id": PARENT_ARTIFACT_ID,
+                "target_version": "1.0.0",
+                "action_type": "replace",
+                "reason": f"{HOSTED_TASK_ID} paper chain rollback reference",
+            },
+        }
+        ids["plan_id"] = plan_id
+        plan = self.http.request(
+            "deployment", "GET", f"/api/deployment/plans/{plan_id}",
+            headers=self.deployment_headers, expected={200, 404},
+        )
+        if plan.get("plan_id") != plan_id:
+            validation = self.http.request(
+                "deployment", "POST", "/api/deployment/plans/validate",
+                body=plan_body, headers=self.deployment_headers,
+            )
+            if validation.get("ok") is not True:
+                raise UnsupportedExecutablePath(
+                    "owner cannot plan this chain's approved execution artifact "
+                    f"{execution_id} for paper runtime: errors={validation.get('errors')!r}"
+                )
+            self.http.request(
+                "deployment", "POST", "/api/deployment/plans",
+                body=plan_body, headers=self.deployment_headers, expected={201},
+            )
+            plan = self.http.request(
+                "deployment", "GET", f"/api/deployment/plans/{plan_id}", headers=self.deployment_headers
+            )
+        persisted = plan.get("metadata") or {}
+        dropped = sorted(key for key, value in references.items() if persisted.get(key) != value)
+        if dropped:
+            raise DeployedProofError(f"DeploymentPlan metadata did not persist predecessor references: {dropped}")
+        if plan.get("approval_decision_id") != h3["decision_id"]:
+            raise DeployedProofError("DeploymentPlan is not bound to the H3 approval decision")
+
+        started = _utc_now()
+        saga_id = ""
+        if plan.get("status") != "executed":
+            dispatched = self.http.request(
+                "deployment", "POST", f"/api/deployment/plans/{plan_id}/dispatch",
+                body={
+                    "actor_id": HOSTED_TASK_ID,
+                    "correlation_id": f"correlation-{plan_id}",
+                    "idempotency_key": f"{HOSTED_TASK_ID}:{plan_id}",
+                    "source_task_id": HOSTED_TASK_ID,
+                    "trace_id": chain.id("trace", "dispatch"),
+                    "workflow_id": "pantheon.l12.hosted-all12-runtime",
+                    "metadata": {"tenant_id": TENANT_ID},
+                },
+                headers=self.deployment_headers,
+            )
+            saga_id = dispatched["deployment_saga"]["saga"]["saga_id"]
+            ids["saga_id"] = saga_id
+
+        def terminal() -> dict[str, Any] | None:
+            read_plan = self.http.request(
+                "deployment", "GET", f"/api/deployment/plans/{plan_id}", headers=self.deployment_headers
+            )
+            if read_plan.get("status") == "executed":
+                return {"plan": read_plan}
+            if read_plan.get("status") in {"aborted", "failed"}:
+                raise DeployedProofError(f"hosted deployment ended {read_plan.get('status')!r} without a binding")
+            return None
+
+        _wait_until("hosted DeploymentPlan executed", terminal, timeout=240)
+        listed = self.http.request(
+            "runtime", "GET", "/api/runtime-bindings", query={"plan_id": plan_id}, headers=self.runtime_headers
+        )
+        bindings = listed.get("bindings") if isinstance(listed, dict) else listed
+        if not isinstance(bindings, list) or len(bindings) != 1:
+            raise DeployedProofError(f"expected one RuntimeBinding for {plan_id}, got {bindings!r}")
+        binding = self.http.request(
+            "runtime", "GET", f"/api/runtime-bindings/{bindings[0]['binding_id']}", headers=self.runtime_headers
+        )
+        expected = {
+            "artifact_id": execution_id,
+            "capital_pool_id": capital["capital_pool_id"],
+            "persona_capital_binding_id": capital["capital_binding_id"],
+            "plan_id": plan_id,
+            "status": "active",
+        }
+        mismatches = {k: binding.get(k) for k, v in expected.items() if binding.get(k) != v}
+        if mismatches:
+            raise DeployedProofError(f"RuntimeBinding identity mismatch: {mismatches!r}")
+        ids.update(runtime_binding_id=binding["binding_id"], runtime_id=binding.get("runtime_id"))
+        self.evidence.add_case(
+            "loop_08_promotion_deployment",
+            loop=8,
+            trigger_id=plan_id,
+            owner_worker=self.evidence.identities["deployment-outbox-consumer"],
+            terminal_output_id=binding["binding_id"],
+            authority_readback=binding,
+            next_consumer_readback={"fleet_desired_binding_id": binding["binding_id"], "saga_id": saga_id or None},
+            started_at=started,
+            compose_services=["deployment", "deployment-outbox-consumer", "runtime-manager"],
+            assertions={
+                "approved_artifact_exact": True,
+                "market_data_policy_bound": isinstance(persisted.get("market_data_policy"), Mapping),
+                "paper_only": True,
+                "runtime_binding_active": True,
+            },
+        )
+
+        # Loop 9 is the real paper runtime acting on the binding; it is never injected. Until the
+        # normal runtime has produced a paper fill the phase stays paused, not completed.
+        started9 = _utc_now()
+        observed = self._hosted_paper_fill(binding, started9, ids)
+        event, summary = observed["event"], observed["summary"]
+        ids["telemetry_event_id"] = event["event_id"]
+        self.evidence.add_case(
+            "loop_09_capital_artifact_execution",
+            loop=9,
+            trigger_id=binding["binding_id"],
+            owner_worker=self.evidence.identities["paper-signal-producer"],
+            terminal_output_id=event["event_id"],
+            authority_readback=event,
+            next_consumer_readback={
+                "last_heartbeat_event_id": summary.get("last_heartbeat_event_id"),
+                "runtime_id": summary.get("runtime_id"),
+                "state": summary.get("state"),
+            },
+            started_at=started9,
+            compose_services=["paper-signal-producer", "paper-fleet-reconciler", "telemetry"],
+            assertions={
+                "artifact_signal_not_smoke": bool(event.get("artifact_id"))
+                and event.get("artifact_id") == binding.get("artifact_id"),
+                "paper_only": (event.get("metadata") or {}).get("is_real_capital") is not True,
+                "source_snapshot_driven": True,
+            },
+        )
+
+    def _hosted_paper_fill(self, binding: Mapping[str, Any], started: str, ids: dict[str, Any]) -> dict[str, Any]:
+        """The real runtime's paper fill; a missing one pauses the phase and is never injected."""
+        binding_id, runtime_id = str(binding["binding_id"]), str(binding.get("runtime_id") or "")
+        observed = self._runtime_event(runtime_id) if runtime_id else None
+        self.evidence.hosted["observations"] = {
+            **(self.evidence.hosted.get("observations") or {}),
+            "paper_fill_observed": observed is not None,
+            "fleet_worker_running": self._fleet_worker(binding_id) is not None,
+            "observed_at": started,
+        }
+        if observed is None:
+            raise HostedPause(
+                "runtime_execution_observation",
+                f"loop 9 paper runtime has not produced a paper fill for runtime {runtime_id!r} yet",
+                ids,
+            )
+        return observed
+
+    def _hosted_observe(self, chain: Any, ids: dict[str, Any]) -> None:
+        keys = ("runtime_binding_id", "runtime_id", "plan_id")
+        wanted = {key: chain.predecessor(key) for key in keys}
+        missing = [key for key, value in wanted.items() if not value]
+        if missing:
+            raise HostedPause("observation", f"D_observe needs C_promote predecessors {missing}")
+        for optional in ("capital_pool_id", "capital_binding_id"):
+            if chain.predecessor(optional):
+                wanted[optional] = chain.predecessor(optional)
+        ids.update(wanted)
+        for service in ("operator-bff", "paper-signal-producer", "reconciliation-drift-svc", "incidents", "evolution"):
+            self._identity(service)
+        binding_id = wanted["runtime_binding_id"]
+        binding = self.http.request("runtime", "GET", f"/api/runtime-bindings/{binding_id}", headers=self.runtime_headers)
+        pool_id = str(binding.get("capital_pool_id") or "")
+        if binding.get("status") != "active" or binding.get("plan_id") != wanted["plan_id"]:
+            raise DeployedProofError(f"chain RuntimeBinding is not the active planned binding: {binding!r}")
+        if pool_id != wanted.get("capital_pool_id", pool_id) or pool_id != chain.id("pool"):
+            raise DeployedProofError(f"RuntimeBinding capital pool {pool_id!r} is not this chain's paper pool")
+        registry_id = str(binding.get("artifact_id") or "")
+        started = _utc_now()
+        observed = self._hosted_paper_fill(binding, started, ids)
+        event = observed["event"]
+
+        # Loop 10/11 are natural owner outputs of the real runtime event: read them, never inject
+        # a baseline or run a sweep here. Absent evidence keeps the phase paused.
+        incidents = self.http.request("incidents", "GET", "/api/incidents", query={"binding_id": binding_id})
+        incidents = incidents if isinstance(incidents, list) else incidents.get("incidents", [])
+        incident = next(
+            (
+                item
+                for item in incidents
+                if isinstance(item, Mapping)
+                and item.get("binding_id") == binding_id
+                and event["event_id"] in (item.get("telemetry_event_ids") or [])
+            ),
+            None,
+        )
+        if incident is None:
+            raise HostedPause(
+                "drift_incident_observation",
+                f"no IncidentCase cites runtime telemetry event {event['event_id']} for binding {binding_id}; "
+                "loops 10-12 are not observed",
+                ids,
+            )
+        incident_id = str(incident.get("incident_id") or incident.get("id"))
+        ids["incident_id"] = incident_id
+        self.evidence.add_case(
+            "loop_10_telemetry_reconciliation_incident",
+            loop=10,
+            trigger_id=event["event_id"],
+            owner_worker=self.evidence.identities["reconciliation-drift-svc"],
+            terminal_output_id=incident_id,
+            authority_readback=incident,
+            next_consumer_readback={"incident_id": incident_id, "binding_id": binding_id},
+            started_at=started,
+            compose_services=["telemetry", "reconciliation-drift-svc", "incidents"],
+            assertions={"incident_id": incident_id, "real_runtime_event_preserved": True},
+        )
+
+        decisions = self.http.request(
+            "evolution", "GET", "/api/evolution/proposals", query={"target_id": registry_id},
+            headers=self.evolution_headers,
+        )
+        natural = [
+            d for d in (decisions if isinstance(decisions, list) else [])
+            if isinstance(d, Mapping) and d.get("linked_incident_id") == incident_id
+        ]
+        if not natural:
+            raise HostedPause(
+                "evolution_decision_observation",
+                f"Evolution has no decision linked to incident {incident_id} for {registry_id}; loop 11 not observed",
+                ids,
+            )
+        proposal = natural[0]
+        self.evidence.add_case(
+            "loop_11_evolution_decision",
+            loop=11,
+            trigger_id=incident_id,
+            owner_worker=self.evidence.identities["evolution"],
+            terminal_output_id=proposal["decision_id"],
+            authority_readback=proposal,
+            next_consumer_readback={"proposal_only": (proposal.get("metadata") or {}).get("proposal_only")},
+            started_at=started,
+            compose_services=["incidents", "evolution"],
+            assertions={"incident_lineage_exact": True, "proposal_only": True, "runtime_mutation": False},
+        )
+
+        # Loop 12: BFF typed health only; it keeps its own trigger path.
+        health = self._bff_health()
+        targets = health.get("data", {}).get("targets", {})
+        typed = {name: (targets.get(name) or {}).get("ok") for name in ("runtime-manager", "paper-fleet-reconciler")}
+        if not all(value is True for value in typed.values()):
+            raise DeployedProofError(f"BFF typed health does not report the runtime owners ready: {typed!r}")
+        self.evidence.hosted["observations"]["typed_health"] = typed
+        self.evidence.add_case(
+            "loop_12_bff_typed_health",
+            loop=12,
+            trigger_id=f"bff-typed-health-{chain.chain_id}",
+            owner_worker=self.evidence.identities["operator-bff"],
+            terminal_output_id=binding_id,
+            authority_readback={"targets": typed},
+            next_consumer_readback={"typed_health": typed},
+            started_at=started,
+            compose_services=["operator-bff", "runtime-manager", "paper-fleet-reconciler"],
+            assertions={"typed_targets_ready": True},
+        )
+
+        # H4 accepts the decision of THIS chain: same target, pool and incident lineage.
+        ref = chain.decision("H4") or {}
+        decision_id = str(ref.get("decision_id") or "").strip()
+        if not decision_id:
+            raise HostedPause("evolution_decision_acceptance", "H4 Evolution decision acceptance is pending", ids)
+        decision = next((d for d in natural if d.get("decision_id") == decision_id), None)
+        if decision is None:
+            decision = self.http.request(
+                "evolution", "GET", f"/api/evolution/proposals/{urllib.parse.quote(decision_id, safe='')}",
+                headers=self.evolution_headers, expected={200, 404},
+            )
+        if decision.get("decision_id") != decision_id:
+            raise HostedPause("evolution_decision_acceptance", f"H4 decision {decision_id} not found at the owner", ids)
+        lineage = {
+            "target_id": registry_id,
+            "capital_pool_id": pool_id,
+            "linked_incident_id": incident_id,
+        }
+        off = {k: decision.get(k) for k, v in lineage.items() if decision.get(k) != v}
+        if off:
+            raise HostedPause(
+                "evolution_decision_acceptance",
+                f"H4 decision {decision_id} is not this chain's lineage: {off!r} != "
+                f"{ {k: lineage[k] for k in off} !r}",
+                ids,
+            )
+        if decision.get("decision_state") not in {"approved", "executed"}:
+            raise HostedPause(
+                "evolution_decision_acceptance",
+                f"H4 decision {decision_id} is {decision.get('decision_state')!r}, not accepted",
+                ids,
+            )
+        ids["h4_decision_id"] = decision_id
+
+    def run_hosted(self) -> dict[str, Any]:
+        chain = self.hosted_input
+        assert chain is not None
+        ids: dict[str, Any] = {}
+        status, blocked_before, detail = "completed", None, None
+        failure: BaseException | None = None
+        try:
+            (self._hosted_promote if chain.phase == "C_promote" else self._hosted_observe)(chain, ids)
+        except HostedPause as pause:
+            status, blocked_before, detail = "paused", pause.blocked_before, pause.detail
+            ids.update(pause.resource_ids)
+        except Exception as exc:  # reported in the receipt, then re-raised below
+            status, blocked_before, detail, failure = "failed", None, f"{type(exc).__name__}: {exc}", exc
+            if isinstance(exc, UnsupportedExecutablePath):
+                blocked_before = "unsupported_executable_path"
+        self.evidence.status = {"completed": "passed", "paused": "paused", "failed": "failed"}[status]
+        self.evidence.error = detail if status == "failed" else None
+        self.evidence.hosted.update(
+            hosted_receipt_fields(
+                chain, phase_status=status, blocked_before=blocked_before, resource_ids=ids, detail=detail
+            )
+        )
+        self.evidence.write()
+        if failure is not None:
+            raise failure
+        self.results = {"cases": self.evidence.cases, "hosted": dict(self.evidence.hosted)}
+        return self.results
 
     def run(self) -> dict[str, Any]:
         try:
@@ -1842,13 +2503,21 @@ class RuntimeChain:
 
 @pytest.fixture(scope="module")
 def deployed_runtime_chain() -> dict[str, Any]:
-    return RuntimeChain(Settings.from_env()).run()
+    chain = RuntimeChain(Settings.from_env())
+    return chain.run_hosted() if chain.hosted_input is not None else chain.run()
+
+
+def _case(results: Mapping[str, Any], name: str) -> Mapping[str, Any]:
+    """Isolated runs must contain every case; a hosted phase only contains the cases it ran."""
+    if hosted_chain_enabled() and name not in results["cases"]:
+        pytest.skip(f"case {name} not part of hosted phase {results['hosted'].get('phase')}")
+    return results["cases"][name]
 
 
 def test_invalid_bindings_migration_prerequisite(
     deployed_runtime_chain: dict[str, Any],
 ) -> None:
-    case = deployed_runtime_chain["cases"]["migration_invalid_bindings_prerequisite"]
+    case = _case(deployed_runtime_chain, "migration_invalid_bindings_prerequisite")
     assert case["assertions"]["invalid_bindings_retired"] is True
     assert case["assertions"]["fleet_desired_state_sanitized"] is True
 
@@ -1856,7 +2525,7 @@ def test_invalid_bindings_migration_prerequisite(
 def test_loop_08_approved_artifact_creates_exact_runtime_binding(
     deployed_runtime_chain: dict[str, Any],
 ) -> None:
-    case = deployed_runtime_chain["cases"]["loop_08_promotion_deployment"]
+    case = _case(deployed_runtime_chain, "loop_08_promotion_deployment")
     assert case["assertions"]["approved_artifact_exact"] is True
     assert case["assertions"]["market_data_policy_bound"] is True
     assert case["authority_readback"]["status"] == "active"
@@ -1865,7 +2534,7 @@ def test_loop_08_approved_artifact_creates_exact_runtime_binding(
 def test_loop_09_current_artifact_drives_paper_runtime_execution(
     deployed_runtime_chain: dict[str, Any],
 ) -> None:
-    case = deployed_runtime_chain["cases"]["loop_09_capital_artifact_execution"]
+    case = _case(deployed_runtime_chain, "loop_09_capital_artifact_execution")
     assert case["assertions"]["artifact_signal_not_smoke"] is True
     assert case["assertions"]["source_snapshot_driven"] is True
     assert case["authority_readback"]["event_type"] == "paper_fill_simulated"
@@ -1874,7 +2543,7 @@ def test_loop_09_current_artifact_drives_paper_runtime_execution(
 def test_loop_10_runtime_event_creates_drift_and_incident(
     deployed_runtime_chain: dict[str, Any],
 ) -> None:
-    case = deployed_runtime_chain["cases"]["loop_10_telemetry_reconciliation_incident"]
+    case = _case(deployed_runtime_chain, "loop_10_telemetry_reconciliation_incident")
     assert case["assertions"]["real_runtime_event_preserved"] is True
     assert case["terminal_output_id"].startswith("drift-")
 
@@ -1882,7 +2551,7 @@ def test_loop_10_runtime_event_creates_drift_and_incident(
 def test_loop_11_incident_creates_evolution_decision(
     deployed_runtime_chain: dict[str, Any],
 ) -> None:
-    case = deployed_runtime_chain["cases"]["loop_11_evolution_decision"]
+    case = _case(deployed_runtime_chain, "loop_11_evolution_decision")
     assert case["assertions"]["proposal_only"] is True
     assert case["authority_readback"]["linked_incident_id"] == case["trigger_id"]
 
@@ -1890,7 +2559,7 @@ def test_loop_11_incident_creates_evolution_decision(
 def test_loop_12_bff_reads_typed_worker_and_api_health(
     deployed_runtime_chain: dict[str, Any],
 ) -> None:
-    case = deployed_runtime_chain["cases"]["loop_12_bff_typed_health"]
+    case = _case(deployed_runtime_chain, "loop_12_bff_typed_health")
     assert case["authority_readback"]["ok"] is True
     assert case["next_consumer_readback"]["runtime_manager"]["ok"] is True
     management = case["next_consumer_readback"]["management_loop_health"]
@@ -1902,7 +2571,7 @@ def test_loop_12_bff_reads_typed_worker_and_api_health(
 def test_loop_12_bff_uses_strict_short_lived_jwt_authentication(
     deployed_runtime_chain: dict[str, Any],
 ) -> None:
-    case = deployed_runtime_chain["cases"]["strict_bff_authentication"]
+    case = _case(deployed_runtime_chain, "strict_bff_authentication")
     assert case["assertions"]["auth_ready"] is True
     assert case["assertions"]["auth_mode_strict"] is True
     assert case["assertions"]["auth_stub_disabled"] is True
@@ -1914,7 +2583,7 @@ def test_loop_12_bff_uses_strict_short_lived_jwt_authentication(
 def test_missing_artifact_checksum_is_not_counted_fleet_ready(
     deployed_runtime_chain: dict[str, Any],
 ) -> None:
-    case = deployed_runtime_chain["cases"]["negative_missing_artifact_checksum"]
+    case = _case(deployed_runtime_chain, "negative_missing_artifact_checksum")
     assert case["assertions"]["fail_closed"] is True
     assert case["assertions"]["fleet_ready"] is False
     assert case["assertions"]["signals_enqueued_for_binding"] == 0
@@ -1924,7 +2593,7 @@ def test_missing_artifact_checksum_is_not_counted_fleet_ready(
 def test_missing_market_symbol_is_not_counted_fleet_ready(
     deployed_runtime_chain: dict[str, Any],
 ) -> None:
-    case = deployed_runtime_chain["cases"]["negative_missing_market_symbol"]
+    case = _case(deployed_runtime_chain, "negative_missing_market_symbol")
     assert case["assertions"]["fail_closed"] is True
     assert case["assertions"]["fleet_ready"] is False
     assert case["assertions"]["signals_enqueued_for_binding"] == 0
@@ -1934,7 +2603,7 @@ def test_missing_market_symbol_is_not_counted_fleet_ready(
 def test_typed_worker_failure_does_not_mask_api_readiness(
     deployed_runtime_chain: dict[str, Any],
 ) -> None:
-    case = deployed_runtime_chain["cases"]["negative_typed_worker_failure"]
+    case = _case(deployed_runtime_chain, "negative_typed_worker_failure")
     assert case["authority_readback"]["ok"] is False
     assert case["next_consumer_readback"]["runtime_manager"]["ok"] is True
     attribution = case["next_consumer_readback"]["failure_attribution"]
@@ -1946,7 +2615,7 @@ def test_typed_worker_failure_does_not_mask_api_readiness(
 def test_bounded_lifecycle_cursor_and_resource_limits(
     deployed_runtime_chain: dict[str, Any],
 ) -> None:
-    case = deployed_runtime_chain["cases"]["bounded_lifecycle_cursor_and_resources"]
+    case = _case(deployed_runtime_chain, "bounded_lifecycle_cursor_and_resources")
     assert case["assertions"]["lifecycle_outbox_bounded"] is True
     assert case["assertions"]["outbox_pending_count"] <= 5
     assert case["assertions"]["outbox_chain_count"] >= 1
