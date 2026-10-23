@@ -1,6 +1,6 @@
 # PAPER-DRAWDOWN-CURRENT0040-CONFIG-20261021 — current0040 `expected_drawdown` low-risk PAPER policy review
 
-Status: **proposed / unapproved until the assigned ReviewerOnDuty records the decision below and the PR merges normally.**
+Status: **approved by the operator on 2026-10-23 (Reviewer on Duty, 6.1); see Reviewer decision below.**
 Author: Claude. Assigned reviewer: Antigravity2. Machine-readable twin: `evidence.json`.
 Path: `EVOLUTION_REVIEW_AND_THRESHOLDS.md` §6.1 low-risk path, Reviewer on Duty (existing; no new policy service, schema, queue or writer).
 
@@ -83,5 +83,5 @@ obligations. No PnL activation, Telemetry change, new Root or second writer.
 baseline and target for `artifact-persona-paper-00400aa279b49774cde4` (PAPER only)** is approved under §6.1, or reject
 it with reasons. Generic code approval alone is insufficient for Root activation.
 
-- Decision: _pending — to be recorded by the assigned reviewer (approve / reject, with date and rationale)_
+- Decision: APPROVED on 2026-10-23 by the operator (ajoe734; a human acting as Reviewer on Duty under EVOLUTION_REVIEW_AND_THRESHOLDS.md 6.1). Scope exactly as stated in this document: expected_drawdown = 0.0027 gross research-calibrated baseline for artifact-persona-paper-00400aa279b49774cde4@1.0.0 (2330.TW; PAPER only; 1 share against 100000 TWD; breach trigger 1.25x = 0.003375). Not a net-of-cost; live; other-sizing or other-artifact approval. Rationale: the operator accepted the basis and limits stated above. Recorded from the operator's answer in a coordination session on 2026-10-23.
 - If rejected: remove the config entry; keep this file as the record of the rejection.
