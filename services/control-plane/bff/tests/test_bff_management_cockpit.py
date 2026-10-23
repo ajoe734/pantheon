@@ -600,11 +600,8 @@ def test_cockpit_health_counts_canonical_active_binding_not_retired_or_paused():
     assert runtime["summary"] == "1 active runtime(s) running."
 
 
-def test_cockpit_reload_parallel_owner_reads_prevent_serial_waterfall_timeout(monkeypatch) -> None:
-    """BFF-COCKPIT-RELOAD-20261021: get_operator_health_status and get_management_cockpit
-    must execute independent owner reads in parallel within request_read_scope rather
-    than in a 6-to-9-step serial waterfall that exceeds the cockpit timeout on reload."""
-    from concurrent.futures import ThreadPoolExecutor
+def _build_reload_owner_store(monkeypatch, per_owner_delay: float, call_counts: dict[str, int]):
+    """Production owner ports over fake owner HTTP reads with per-read latency."""
     import threading
     import time
 
@@ -629,8 +626,6 @@ def test_cockpit_reload_parallel_owner_reads_prevent_serial_waterfall_timeout(mo
     )
     from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
 
-    per_owner_delay = 0.10
-    call_counts: dict[str, int] = {}
     count_lock = threading.Lock()
 
     def _record_call(name: str, result: Any) -> Any:
@@ -724,6 +719,22 @@ def test_cockpit_reload_parallel_owner_reads_prevent_serial_waterfall_timeout(mo
         lifecycle_telemetry_governance=ltg,
         paper_runtime_monitoring_sessions_provider=lambda: [],
     )
+    return store
+
+
+def test_cockpit_reload_parallel_owner_reads_prevent_serial_waterfall_timeout(monkeypatch) -> None:
+    """BFF-COCKPIT-RELOAD-20261021: get_operator_health_status and get_management_cockpit
+    must execute independent owner reads in parallel within request_read_scope rather
+    than in a 6-to-9-step serial waterfall that exceeds the cockpit timeout on reload."""
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+    import time
+
+    from services.control_plane.bff.core.owner_reads import OwnerReadContextMiddleware
+    from services.control_plane.bff.personas.routes.common import run_management_read
+
+    call_counts: dict[str, int] = {}
+    store = _build_reload_owner_store(monkeypatch, 0.10, call_counts)
 
     # Serial execution of the 9 owner reads would take >= 0.90s (and health alone >= 0.60s).
     # With a 0.45s cockpit budget, serial execution always timed out with empty operator_home/runtime_health.
@@ -1049,3 +1060,110 @@ def test_operator_health_status_distinguishes_timeout_from_error() -> None:
     assert surfaces["runtime"] != surfaces["incident"]
     assert surfaces["health_status"]["reason"] == "read_timeout"
 
+
+
+def test_submit_owner_read_dedupes_warmers_per_request_and_skips_expired_reads() -> None:
+    """BFF-COCKPIT-PARTIAL-READ-20261022: duplicate prefetches and reads queued by an
+    abandoned (expired) request must not keep occupying the shared owner-read pool."""
+    from concurrent.futures import ThreadPoolExecutor
+    import time
+
+    from services.control_plane.bff.core.owner_reads import (
+        _RequestReadCache,
+        management_read_deadline,
+        request_read_cache,
+        submit_owner_read,
+    )
+
+    ran: list[str] = []
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first_token = request_read_cache.set(_RequestReadCache())
+        try:
+            first = submit_owner_read(pool, lambda: ran.append("a") or "a", warm_key="list_personas")
+            assert first is not None and first.result(timeout=2) == "a"
+            assert submit_owner_read(pool, lambda: ran.append("dup"), warm_key="list_personas") is None
+        finally:
+            request_read_cache.reset(first_token)
+        # A new request starts with an empty warm marker set (nothing crosses requests).
+        second_token = request_read_cache.set(_RequestReadCache())
+        try:
+            second = submit_owner_read(pool, lambda: ran.append("b") or "b", warm_key="list_personas")
+            assert second is not None and second.result(timeout=2) == "b"
+        finally:
+            request_read_cache.reset(second_token)
+
+        deadline_token = management_read_deadline.set(time.monotonic() - 0.01)
+        try:
+            expired = submit_owner_read(pool, lambda: ran.append("late"))
+        finally:
+            management_read_deadline.reset(deadline_token)
+        with pytest.raises(TimeoutError):
+            expired.result(timeout=2)
+    assert ran == ["a", "b"]
+
+
+def test_cockpit_overlapping_reload_waves_keep_every_section_complete(monkeypatch) -> None:
+    """BFF-COCKPIT-PARTIAL-READ-20261022: with production owner ports, request context and
+    app factory, overlapping reload waves (cockpit + shell-summary + human-inbox +
+    trading-pulse + health + home + alerts) share the 16-worker owner pool. Duplicate
+    per-request prefetch tasks queued 100+ reads there and starved the cockpit into
+    partial_composition read_timeout with an empty human_inbox while health/home populated."""
+    from collections import defaultdict, deque
+    from concurrent.futures import ThreadPoolExecutor
+    import time
+
+    from services.control_plane.bff.bootstrap.dependencies import AppDependencies
+    from services.control_plane.bff.core.app_factory import _resolve_default_dependency, compose_bff_app
+    from services.control_plane.bff.personas.routes.common import run_management_read
+
+    store = _build_reload_owner_store(monkeypatch, 0.5, {})
+    sse_bufs: dict[str, Any] = defaultdict(lambda: deque(maxlen=100))
+    sse_subs: dict[str, Any] = defaultdict(list)
+
+    def _dep_resolver(name: str, deps: Any) -> Any:
+        if name == "_sse_buffers":
+            return sse_bufs
+        if name == "_sse_subscribers":
+            return sse_subs
+        try:
+            return _resolve_default_dependency(name, deps)
+        except Exception:
+            return None
+
+    app_deps = AppDependencies.create_default(read_surface=store)
+    client = TestClient(compose_bff_app(
+        app_deps=app_deps,
+        dependency_resolver=_dep_resolver,
+        run_management_read=run_management_read,
+        build_cockpit_payload=lambda snapshot_at=None, human_inbox=None, **kw: ManagementService(
+            get_read_store=lambda: app_deps.read_surface,
+        ).get_management_cockpit(snapshot_at=snapshot_at, human_inbox=human_inbox, **kw),
+    ))
+    paths = [
+        "/bff/management/shell-summary",
+        "/bff/management/cockpit",
+        "/bff/management/human-inbox",
+        "/bff/management/trading-pulse",
+        "/api/v1/operator/health-status",
+        "/api/v1/operator/home",
+        "/bff/alerts",
+    ]
+    cockpit_futures = []
+    with ThreadPoolExecutor(max_workers=40) as pool:
+        for _wave in range(5):
+            for path in paths:
+                fut = pool.submit(client.get, path, headers=OPERATOR_HEADERS)
+                if path.endswith("/cockpit"):
+                    cockpit_futures.append(fut)
+            time.sleep(0.1)
+        responses = [f.result() for f in cockpit_futures]
+    for resp in responses:
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        surface = body["meta"]["surfaces"]["management_cockpit"]
+        assert surface.get("reason") != "read_timeout", surface
+        assert surface.get("source") != "partial_composition", surface
+        assert body["data"]["operator_home"]["cards"]
+        assert len(body["data"]["runtime_health"]["groups"]) == 5
+        assert body["data"]["human_inbox"]["data"]["summary"]["total"] >= 2
+        assert body["data"]["alerts"]["summary"]["total_active"] >= 1

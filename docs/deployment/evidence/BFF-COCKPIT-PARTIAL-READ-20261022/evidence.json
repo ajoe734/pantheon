@@ -1,0 +1,35 @@
+{
+  "task_id": "BFF-COCKPIT-PARTIAL-READ-20261022",
+  "outcome": "reproduced_and_repaired",
+  "inspected_on": "1436b4f6e",
+  "live_observation": "After PR6723 (c4d33), normal browser then reload: health and home populated, two of three reads show partial-read timeout with other cards empty. Distinct from the earlier all-empty failure and from serial fast-control reads. No VM/SSH/provider access was used by this worker.",
+  "reproduction": {
+    "method": "Production compose_bff_app factory, OwnerReadContextMiddleware request context, production owner ports (create_owner_domain_ports, DomainGovernancePort, incident/telemetry ports) over fake owner reads with 0.5s latency each. 5 overlapping reload waves 0.1s apart of cockpit, shell-summary, human-inbox, trading-pulse, health-status, home, alerts. Test-local only; no provider calls or writes.",
+    "before_fix": "Shared _HEALTH_OWNER_READ_EXECUTOR (16 workers, process-wide) queue depth peaked at 113 tasks; 140 pool tasks ran for 5 requests (about 28 per request for about 9 distinct owner reads), 18 started after their request deadline. Cockpit waves 1-3 hit the 3.0s budget with human_inbox empty (inbox_total None); the last wave returned partial_composition/read_timeout with health_groups=5 and home_cards=5 populated.",
+    "after_fix": "All 5 cockpit waves complete (human_inbox total=5, health 5 groups, home cards populated), no read_timeout, no partial_composition, zero tasks started after deadline."
+  },
+  "proven_cause": {
+    "file": "services/control-plane/bff/management_read_models/service.py",
+    "symbol": "get_management_cockpit / get_operator_health_status / get_human_inbox / _bounded_persona_readiness_rows warmers",
+    "cause": "Each of cockpit, health, human-inbox and persona-readiness submitted its own prefetch of the same owner reads (list_personas, list_bindings, list_capital_pools, list_runtime_bindings, list_deployment_plans, list_evolution_decisions) to the shared 16-worker pool. The request cache dedupes the read, but each duplicate task still holds a worker blocked on the in-flight key lock. Overlapping reload waves therefore queued 100+ tasks FIFO, and tasks of expired requests still ran, starving later requests' required reads into read_timeout."
+  },
+  "repair": {
+    "files": [
+      "services/control-plane/bff/core/owner_reads.py",
+      "services/control-plane/bff/management_read_models/service.py"
+    ],
+    "change": "submit_owner_read (existing owner_reads ownership): warm_key skips a prefetch already submitted in this request (marker lives only in the request cache), and a read that starts after its request management_read_deadline is skipped with TimeoutError. All _HEALTH_OWNER_READ_EXECUTOR submissions use it.",
+    "not_changed": "No timeout, pool size or capacity increase; no second composer, cross-request cache, registry or queue. Truthful read_timeout/read_capacity_saturated, section_error and completed-section retention, tenant/actor context copy, and slow-owner timeout behaviour are unchanged."
+  },
+  "tests": {
+    "added": [
+      "test_submit_owner_read_dedupes_warmers_per_request_and_skips_expired_reads",
+      "test_cockpit_overlapping_reload_waves_keep_every_section_complete"
+    ],
+    "refactor": "Extracted _build_reload_owner_store from the existing reload test; existing failure fixtures kept.",
+    "overlap_test_fails_without_fix": true,
+    "command": "pytest -q services/control-plane/bff/tests/test_bff_management_cockpit.py services/control-plane/bff/tests/test_management_read_models_router.py",
+    "result": "66 passed"
+  },
+  "limits": "Live VM request-level traces were not available; the cause is established from the production factory under simulated concurrent load, not from the live host. Hosted closure remains with the original parent."
+}

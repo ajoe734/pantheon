@@ -7701,6 +7701,43 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
                     config, candidate_state, self.status, self.task, candidate_receipt,
                 ))
 
+    def test_lost_owner_retries_healthy_incumbent_only_for_process_missing(self) -> None:
+        self._add_agent("antigravity", "Antigravity")
+        self.task.update(status="in_progress", owner="Codex", reviewer="Antigravity")
+        receipt = {"recovery_role": "owner", "reason_kind": "worker_process_missing",
+                   "worker": {"agent": "Codex"}}
+        state = self._state()
+        state["delivery_health"]["endpoints"]["codex2"]["state"] = "unavailable"
+        self.assertEqual(
+            supervisor.worker_recovery_assignment_pair(
+                self.config, copy.deepcopy(state), self.status, self.task, receipt,
+            ),
+            ("Codex", "Antigravity"),
+        )
+        # Future reviewer readiness is checked at review dispatch, not here.
+        reviewer_down = copy.deepcopy(state)
+        reviewer_down["delivery_health"]["endpoints"]["antigravity"]["state"] = "unavailable"
+        self.assertEqual(
+            supervisor.worker_recovery_assignment_pair(
+                self.config, reviewer_down, self.status, self.task, receipt,
+            ),
+            ("Codex", "Antigravity"),
+        )
+        for condition in ("auth", "capacity", "lease_expired"):
+            with self.subTest(condition=condition):
+                candidate_state = copy.deepcopy(state)
+                candidate_config = copy.deepcopy(self.config)
+                candidate_receipt = copy.deepcopy(receipt)
+                if condition == "auth":
+                    candidate_state["delivery_health"]["endpoints"]["codex"]["state"] = "unavailable"
+                elif condition == "capacity":
+                    candidate_config["agents"]["codex"]["max_parallel"] = 0
+                else:
+                    candidate_receipt["reason_kind"] = "lease_expired"
+                self.assertIsNone(supervisor.worker_recovery_assignment_pair(
+                    candidate_config, candidate_state, self.status, self.task, candidate_receipt,
+                ))
+
     def test_promotion_drain_recovery_blocked_at_zero_capacity_and_respects_account_limits(self) -> None:
         self._add_agent("piastra", "PiAstra")
         self.config["agents"]["piastra"]["provider"] = "pi_astra"
@@ -10074,7 +10111,12 @@ class LostLeaseWorktreeRecoveryEligibilityTests(unittest.TestCase):
         # Fence without letting reassignment run, by removing the configured
         # fallback lane so the recovery CAS to "reassigned" cannot happen.
         # The generic enabled flag does not gate typed lost-lease recovery.
+        # The incumbent must also be unhealthy: a healthy incumbent is now
+        # legitimately retried, so make it genuinely auth-unavailable.
         self.config["worker_reassignment"]["owner_fallbacks"] = {}
+        state["delivery_health"]["endpoints"][worker["agent_id"]][
+            "state"
+        ] = "unavailable"
         with mock.patch.object(
             supervisor, "sync_status_pipeline", side_effect=self._drain_status_outbox
         ):
