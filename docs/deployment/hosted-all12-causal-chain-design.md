@@ -52,10 +52,16 @@ derived from `chain_id` + step.
 | Phase | Lease | Loops | Ends at |
 |---|---|---|---|
 | `A_research` | held | 1–4 (reuse research suite) | Teaching result recorded |
-| `B_learning` | held | 5–7 (human-learning suite) | Consultation memo + governance handoff; **pauses for H1/H2** |
-| `C_promote` | held | 8–9 (runtime suite, hosted subset) | Paper pool, binding, plan, runtime binding active; **pauses for H3/H4 as needed** |
+| `B_learning` | held | 5–7 (human-learning suite) | Consultation memo + governance handoff, started only once H2 is decided (otherwise stops before consultation/synthesis); H1 must be decided before `C_promote` starts |
+| `C_promote` | held | 8–9 (runtime suite, hosted subset) | Paper pool, binding, plan, runtime binding active; each is created only after the approval that covers it (H3 before runtime binding, H4 before the capital binding), otherwise stops before that action |
 | `D_observe` | none (read-only) | 9–12 | Repeated on later trading days; collects episodes, telemetry, drift, evolution, BFF health |
 | `E_close` | held briefly | 11–12 + stimulus closure parent | Evidence sealed, retirement run |
+
+Ordering rule: an approval or consent is obtained *before* the outbound action or owner mutation it
+covers (the "Blocks" column below), never after. If it is not yet decided, the segment stops before
+that action, releases the lease, and a later dispatch resumes; the decision itself is still made only
+by the originally designated humans. Ordinary read-only calls need no approval. This adds no approval
+point beyond H1–H5.
 
 A paused segment writes nothing and waits for the next dispatch, so there is no timeout-driven
 auto-approval path. The workflow never calls approve/decide endpoints on a human's behalf.

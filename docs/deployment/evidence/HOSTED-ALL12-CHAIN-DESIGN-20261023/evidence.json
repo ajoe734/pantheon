@@ -19,5 +19,6 @@
   "unverified": [
     "per-owner retirement endpoints (task T1)",
     "bounded_lifecycle_cursor_and_resource_limits read-only status (task T2)"
-  ]
+  ],
+  "revision_note": "Clarified phase-table ordering: approvals H1-H4 precede the action they cover; no new approval points."
 }
