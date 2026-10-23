@@ -1,0 +1,23 @@
+{
+  "task_id": "HOSTED-ALL12-CHAIN-DESIGN-20261023",
+  "kind": "design_document_only",
+  "design": "docs/deployment/hosted-all12-causal-chain-design.md",
+  "production_delta": 0,
+  "sources_read": [
+    "tests/integration/l12/test_current_runtime_loops_deployed_e2e.py",
+    "tests/integration/l12/test_current_research_loops_deployed_e2e.py",
+    "tests/integration/l12/test_current_human_learning_deployed_e2e.py",
+    "tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py",
+    "tests/integration/l12/l12_owner_auth.py",
+    "scripts/dev_environment_lease.py",
+    "scripts/run_isolated_l12_runtime_e2e.py",
+    ".github/workflows/nonprod-deploy.yml",
+    "docs/conventions/GIT_WORKFLOW.md",
+    "docs/deployment/evidence/twelve-loop-current/runtime-loops/README.md"
+  ],
+  "status": "proposed_pending_operator_approval",
+  "unverified": [
+    "per-owner retirement endpoints (task T1)",
+    "bounded_lifecycle_cursor_and_resource_limits read-only status (task T2)"
+  ]
+}
