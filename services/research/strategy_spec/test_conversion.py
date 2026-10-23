@@ -227,3 +227,122 @@ def _repo_item() -> EvidenceItem:
         confidence=0.78,
         trace_refs=["trace-repo-evidence"],
     )
+
+
+_DATA_SOURCE = "source-ingest:normalized/taiwanstockprice/finmind-daily"
+
+
+def _recipe(**overrides) -> dict:
+    recipe = {
+        "kind": "close_to_close_momentum",
+        "symbols": ["2330.TW"],
+        "bar_frequency": "1d",
+        "data_source": _DATA_SOURCE,
+        "lookback_bars": 2,
+        "momentum_threshold": 0.01,
+        "positive_action": "BUY",
+        "non_positive_action": "SELL",
+        "order_quantity": 1,
+        "quantity_type": "SHARES",
+    }
+    recipe.update(overrides)
+    return recipe
+
+
+def _convert_with_recipe(recipe: dict | None, **kwargs):
+    source = _paper_source()
+    source.metadata["strategy_seed"]["required_data"] = [_DATA_SOURCE]
+    if recipe is not None:
+        source.metadata["strategy_seed"]["execution_recipe"] = recipe
+    return StrategySpecConversionService().convert_source_material(
+        _bundle(),
+        source_records=[source, _repo_source()],
+        evidence_items=[_paper_item(), _repo_item()],
+        created_at="2026-05-16T08:00:00Z",
+        **kwargs,
+    )
+
+
+def test_explicit_recipe_roundtrips_into_checksummed_spec_and_drives_execution_artifact() -> None:
+    from services.registry.strategy_artifact import (
+        build_execution_artifact_registration,
+        build_strategy_artifact_registry_payload,
+        evaluate_strategy_action,
+        strategy_spec_payload_checksum,
+    )
+
+    result = _convert_with_recipe(_recipe())
+    spec = result.strategy_spec.to_dict()
+    payload = result.registry_payload
+
+    assert spec["metadata"]["execution_recipe"] == _recipe()
+    assert spec["market_scope"]["symbols"] == ["2330.TW"]
+    assert spec["execution_profile"]["quantity_type"] == "SHARES"
+    assert payload["checksum"] == strategy_spec_payload_checksum(payload["strategy_spec"])
+
+    spec_entry = {
+        "registry_id": "spec-reg-1",
+        "version": payload["version"],
+        "checksum": payload["checksum"],
+        "lineage": payload["lineage"],
+        "metadata": {"strategy_spec": payload["strategy_spec"]},
+    }
+    registration = build_execution_artifact_registration(
+        spec_entry, artifact_id="exec-art-1", algorithm_commit="a" * 40
+    )
+    artifact = registration["strategy_artifact"]
+    assert registration["registry_id"] != spec_entry["registry_id"]
+    assert artifact["strategy_id"] == spec["strategy_id"]
+    assert artifact["lineage"]["source_strategy_spec_id"] == "spec-reg-1"
+    assert artifact["lineage"]["source_run_ids"] == payload["lineage"]["source_run_ids"]
+    build_strategy_artifact_registry_payload(registration)
+
+    # Known closes: +2% (BUY), -2% (SELL); threshold boundary is non-positive.
+    assert evaluate_strategy_action(artifact, [100.0, 102.0]) == "BUY"
+    assert evaluate_strategy_action(artifact, [100.0, 98.0]) == "SELL"
+    assert evaluate_strategy_action(artifact, [100.0, 101.0]) == "SELL"
+    assert artifact["parameters"]["order_quantity"] == 1
+    assert artifact["parameters"]["quantity_type"] == "SHARES"
+
+
+def test_source_without_recipe_stays_valid_research_and_not_executable() -> None:
+    from services.registry.strategy_artifact import (
+        StrategyArtifactValidationError,
+        build_execution_artifact_registration,
+    )
+
+    result = _convert_with_recipe(None)
+    payload = result.registry_payload
+    assert "execution_recipe" not in payload["strategy_spec"]["metadata"]
+    with pytest.raises(StrategyArtifactValidationError, match="research-only"):
+        build_execution_artifact_registration(
+            {
+                "registry_id": "spec-reg-1",
+                "version": payload["version"],
+                "checksum": payload["checksum"],
+                "lineage": payload["lineage"],
+                "metadata": {"strategy_spec": payload["strategy_spec"]},
+            },
+            artifact_id="exec-art-1",
+            algorithm_commit="a" * 40,
+        )
+
+
+@pytest.mark.parametrize(
+    "recipe, reason",
+    [
+        (_recipe(kind="pairs_zscore"), "unsupported execution_recipe kind"),
+        ({k: v for k, v in _recipe().items() if k != "momentum_threshold"}, "missing explicit fields"),
+        (_recipe(positive_action="LONG"), "positive_action"),
+        (_recipe(order_quantity=0), "order_quantity is not positive"),
+        (_recipe(data_source="source-ingest:other"), "not a StrategySpec data dependency"),
+    ],
+)
+def test_unsupported_or_contradictory_recipe_is_rejected_with_reason(recipe, reason) -> None:
+    with pytest.raises(StrategySpecConversionError, match=reason):
+        _convert_with_recipe(recipe)
+
+
+def test_recipe_symbols_contradicting_spec_symbols_are_rejected() -> None:
+    with pytest.raises(StrategySpecConversionError, match="contradict StrategySpec market_scope.symbols"):
+        _convert_with_recipe(_recipe(), metadata={"symbols": ["AAPL"]})

@@ -216,3 +216,28 @@ def _bundle() -> EvidenceBundle:
         created_by="Codex",
         trace_refs=["trace-alpha-bundle"],
     )
+
+
+def test_explicit_execution_recipe_is_carried_verbatim_into_seed_metadata() -> None:
+    recipe = {"kind": "close_to_close_momentum", "lookback_bars": 3}
+    source = _source()
+    source.metadata["strategy_seed"]["execution_recipe"] = recipe
+
+    seed = StrategySpecSeedBuilder().build_seed(
+        _bundle(), source_records=[source], evidence_items=[_item()]
+    )
+
+    assert seed.metadata["execution_recipe"] == recipe
+    assert seed.metadata["research_only"] is True
+    assert "execution_recipe" not in StrategySpecSeedBuilder().build_seed(
+        _bundle(), source_records=[_source()], evidence_items=[_item()]
+    ).metadata
+
+
+def test_non_object_execution_recipe_is_rejected() -> None:
+    source = _source()
+    source.metadata["strategy_seed"]["execution_recipe"] = "buy when momentum is up"
+    with pytest.raises(StrategySpecSeedError, match="execution_recipe"):
+        StrategySpecSeedBuilder().build_seed(
+            _bundle(), source_records=[source], evidence_items=[_item()]
+        )

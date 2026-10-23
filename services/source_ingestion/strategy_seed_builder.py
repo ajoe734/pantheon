@@ -7,6 +7,7 @@ create execution routes.
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -273,6 +274,13 @@ class StrategySpecSeedBuilder:
             "execution_route": "none",
             **dict(metadata or {}),
         }
+        if "execution_recipe" in strategy_metadata:
+            # Carried verbatim from Source.metadata.strategy_seed; validation
+            # against the Spec happens at conversion, never by parsing prose.
+            recipe = strategy_metadata["execution_recipe"]
+            if not isinstance(recipe, Mapping):
+                raise StrategySpecSeedError("execution_recipe must be an object")
+            seed_metadata.setdefault("execution_recipe", copy.deepcopy(dict(recipe)))
         negative_memory_match = match_negative_memory(
             {
                 "seed_id": effective_seed_id,
