@@ -73,6 +73,52 @@ OWNER_SERVICES = {
 }
 
 
+# The default isolated stimulus keeps its pairs mean-reversion hypothesis: research-only and honestly
+# not executable. The hosted chain explicitly names the one supported executable stimulus instead:
+# close-to-close momentum with a complete typed recipe that Source carries verbatim into the Spec.
+# Nothing here parses prose, invents a value, or claims the pairs research executes.
+HOSTED_EXECUTION_DATA_SOURCE = "source-ingest:normalized/taiwanstockprice/finmind-daily"
+HOSTED_EXECUTION_RECIPE: dict[str, Any] = {
+    "kind": "close_to_close_momentum",
+    "symbols": ["2330.TW"],
+    "bar_frequency": "1d",
+    "data_source": HOSTED_EXECUTION_DATA_SOURCE,
+    "lookback_bars": 2,
+    "momentum_threshold": 0.01,
+    "positive_action": "BUY",
+    "non_positive_action": "SELL",
+    "order_quantity": 1,
+    "quantity_type": "SHARES",
+}
+
+
+def _strategy_seed(hosted: bool) -> dict[str, Any]:
+    if hosted:
+        return {
+            "hypothesis": "Close-to-close momentum in a liquid Taiwan equity",
+            "asset_class": ["equity"],
+            "market_scope": ["Taiwan"],
+            "holding_period": "1 day",
+            "required_data": [HOSTED_EXECUTION_DATA_SOURCE],
+            "backend_hint": "qlib",
+            "feature_hints": ["close_to_close_momentum"],
+            "label_hints": ["return_1d"],
+            "risk_notes": ["paper_only"],
+            "execution_recipe": dict(HOSTED_EXECUTION_RECIPE),
+        }
+    return {
+        "hypothesis": "Mean reversion in liquid Taiwan equity pairs",
+        "asset_class": ["equity"],
+        "market_scope": ["Taiwan"],
+        "holding_period": "1 day",
+        "required_data": ["OHLCV"],
+        "backend_hint": "qlib",
+        "feature_hints": ["zscore_spread"],
+        "label_hints": ["return_1d"],
+        "risk_notes": ["research_only"],
+    }
+
+
 def _utc_now() -> str:
     return (
         datetime.now(timezone.utc)
@@ -638,17 +684,7 @@ class DeployedResearchHarness:
                                 "access_scope": ["research"],
                                 "license_scope": "internal",
                                 "available_time": available_time,
-                                "strategy_seed": {
-                                    "hypothesis": "Mean reversion in liquid Taiwan equity pairs",
-                                    "asset_class": ["equity"],
-                                    "market_scope": ["Taiwan"],
-                                    "holding_period": "1 day",
-                                    "required_data": ["OHLCV"],
-                                    "backend_hint": "qlib",
-                                    "feature_hints": ["zscore_spread"],
-                                    "label_hints": ["return_1d"],
-                                    "risk_notes": ["research_only"],
-                                },
+                                "strategy_seed": _strategy_seed(self.hosted),
                             },
                         }
                     ],
@@ -816,6 +852,17 @@ class DeployedResearchHarness:
             entry.get("artifact_state") in allowed_states, "distilled StrategySpec is not a draft"
         )
         self._require(bool(entry.get("checksum")), "distilled StrategySpec lacks checksum")
+        if self.hosted:
+            # The recipe the Source declared must be the one the owner stored in the checksummed Spec.
+            stored = (
+                (((entry.get("metadata") or {}).get("strategy_spec") or {}).get("metadata") or {})
+            ).get("execution_recipe")
+            self._require(
+                stored == HOSTED_EXECUTION_RECIPE,
+                f"owner-read-back StrategySpec execution_recipe {stored!r} differs from the Source's "
+                f"explicit recipe {HOSTED_EXECUTION_RECIPE!r}",
+            )
+            self.chain["execution_recipe_kind"] = stored["kind"]
         self.chain["checksum"] = entry.get("checksum")
         # The Registry keeps no direct chain label: ownership is provable only through the stored
         # distillation lineage, so expose the actual source/digest/job the owner recorded.

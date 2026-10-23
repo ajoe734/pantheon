@@ -309,6 +309,88 @@ def test_e_close_retires_only_verified_chain_records(monkeypatch, tmp_path):
     assert _receipt(tmp_path)["hosted"]["all12_passed"] is False
 
 
+def _exec_record(spec_id="reg-1", checksum="sha256:exec"):
+    return _owned(
+        artifact_state="approved", version="1.0.0", checksum=checksum,
+        metadata={"chain_id": CHAIN, "strategy_artifact": {"lineage": {"source_strategy_spec_id": spec_id}}},
+    )
+
+
+EXEC_RESOURCES = {"registry_id": "reg-1", "execution_artifact_id": "exec-1",
+                  "execution_artifact_version": "1.0.0", "execution_artifact_checksum": "sha256:exec"}
+
+
+def test_e_close_retires_the_derived_execution_artifact_before_its_spec(monkeypatch, tmp_path):
+    owner = FakeOwner({
+        ("registry", "/api/registry/strategy-artifacts/exec-1"): {"entry": _exec_record()},
+        ("registry", "/api/registry/strategy-specs/reg-1"): {"entry": _owned(artifact_state="approved", version=3)},
+        ("governance", "/api/governance/approvals/apv-1"): _owned(decision_state="decided", decision="approved", target_id="reg-1", version=3),
+    })
+    _runner(tmp_path, "E_close", owner, prior=_close_prior(**EXEC_RESOURCES)).run()
+    writes = [p for _s, m, p, _b in owner.log if m != "GET"]
+    assert writes == [
+        "/api/registry/strategy-artifacts/exec-1/advance",
+        "/api/registry/strategy-specs/reg-1/advance",
+        "/api/governance/approvals/apv-1/revoke",
+    ]
+    bodies = {p: b for _s, m, p, b in owner.log if m != "GET"}
+    assert bodies[writes[0]]["command_key"] != bodies[writes[1]]["command_key"]
+    close = _receipt(tmp_path)["hosted"]["phases"]["E_close"]
+    assert {"kind": "execution_artifact_id", "id": "exec-1", "http": 200} in close["retired"]
+    # the version/checksum references stay labelled residual, not silently dropped
+    assert {"execution_artifact_checksum", "execution_artifact_version"} <= set(close["residual_non_retirable"])
+
+
+@pytest.mark.parametrize("record", [_exec_record(spec_id="someone-elses-spec"), _exec_record(checksum="sha256:other")])
+def test_e_close_never_retires_an_execution_artifact_that_is_not_the_chains_derived_one(monkeypatch, tmp_path, record):
+    owner = FakeOwner({("registry", "/api/registry/strategy-artifacts/exec-1"): {"entry": record}})
+    _runner(tmp_path, "E_close", owner, prior=_close_prior(**EXEC_RESOURCES)).run()
+    assert [x for x in owner.log if x[1] != "GET"] == []
+    close = _receipt(tmp_path)["hosted"]["phases"]["E_close"]
+    assert close["phase_status"] == "paused" and "execution_artifact_id exec-1" in close["rejected_unrelated"][0]
+
+
+H3_EXEC = dict(
+    decision_id="apv-3", decision_state="decided", decision="approved", target_type="registry_entry",
+    target_id="exec-1", target_version="1.0.0", candidate_digest="sha256:exec",
+    capital_pool_id="pool-1", persona_id="persona-1",
+)
+
+
+def _h3_problems(tmp_path, **override):
+    record = {**H3_EXEC, **override}
+    owner = FakeOwner({
+        ("registry", "/api/registry/strategy-artifacts/exec-1"): {"entry": _exec_record()},
+        ("governance", "/api/governance/approvals/apv-3"): _owned(**record),
+    })
+    runner = _runner(tmp_path, "C_promote", owner, decisions={"H3": {"decision_id": "apv-3"}})
+    runner.resource_ids.update(EXEC_RESOURCES, capital_pool_id="pool-1", persona_id="persona-1")
+    return runner.verify_predecessors()
+
+
+def test_exact_h3_for_the_execution_artifact_is_accepted(tmp_path):
+    assert not [p for p in _h3_problems(tmp_path) if "H3" in p]
+
+
+@pytest.mark.parametrize("override", [
+    dict(target_id="reg-1"),
+    dict(decision="rejected"),
+    dict(decision_state="pending"),
+    dict(tenant_id="foreign-tenant"),
+    dict(persona_id="persona-other"),
+    dict(capital_pool_id="pool-other"),
+    dict(revoked_at="2026-10-01T00:00:00Z"),
+    dict(superseded_by="apv-9"),
+    dict(expires_at="2020-01-01T00:00:00Z"),
+    dict(target_type="strategy_spec"),
+    dict(target_version="9.9.9"),
+    dict(candidate_digest="sha256:other"),
+    dict(decision_id="apv-other"),
+])
+def test_h3_not_exactly_covering_the_execution_artifact_is_a_predecessor_problem(tmp_path, override):
+    assert any(p.startswith("decision H3") for p in _h3_problems(tmp_path, **override))
+
+
 def _close_prior(**resources):
     done = {p: {"phase_status": "completed"} for p in parent.HOSTED_PHASES[:4]}
     return {"hosted": {"chain_id": CHAIN, "phases": done, "decisions": {"H1": "apv-1"}, "resource_ids": resources}}
@@ -670,3 +752,31 @@ def test_owner_client_reads_domain_services_under_their_own_headers(monkeypatch)
     assert seen["http://r/y"]["Authorization"] == "Bearer owner-token"
     with pytest.raises(parent.StimulusProofError, match="no owner URL"):
         client.request("consultation", "GET", "/z")
+
+
+def test_owner_client_signs_capital_requests_fresh_with_real_principal(monkeypatch):
+    import base64
+    seen = []
+    class Resp:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *_a): return False
+        def read(self): return b"{}"
+    monkeypatch.setattr(parent.urllib.request, "urlopen", lambda request, timeout=0: seen.append(dict(request.header_items())) or Resp())
+    issued = []
+    def mint():
+        claims = base64.urlsafe_b64encode(json.dumps({"sub": "operator-bff", "service": "operator-bff"}).encode()).decode().rstrip("=")
+        issued.append(1)
+        return f"Bearer h.{claims}.s{len(issued)}"
+    client = parent.UrllibOwnerClient(
+        {"capital": "http://c", "registry": "http://r"}, "owner-token",
+        actor_id="human", roles=("operator",), capital_authorization=mint, tenant_id=TENANT,
+    )
+    client.request("capital", "GET", "/api/bindings/b")
+    client.request("capital", "PATCH", "/api/bindings/b/status", {"status": "revoked"})
+    client.request("registry", "GET", "/y")
+    assert len(issued) == 2 and seen[0]["Authorization"] != seen[1]["Authorization"]
+    assert seen[0]["X-pantheon-service"] == "operator-bff" and seen[1]["X-tenant-id"] == TENANT
+    assert seen[2]["Authorization"] == "Bearer owner-token"
+    assert client.identity_for("capital")[0] == "operator-bff" and "persona.admin" in client.identity_for("capital")[1]
+    assert client.identity_for("registry") == ("human", ("operator",))

@@ -223,6 +223,32 @@ def hosted_token(role: str) -> str:
     return token
 
 
+_CAPITAL_TOKEN_SNIPPET = (
+    "import sys;"
+    "from services.control_plane.bff.personas.service import _PersonaOwnerHttpTransport as T;"
+    "sys.stdout.write(T(tenant_id=sys.argv[1])._service_jwt('capital'))"
+)
+
+
+def fresh_capital_authorization(compose_command: Callable[..., list[str]], tenant_id: str) -> str:
+    """A genuine, just-issued Capital service ``Authorization`` value.
+
+    The configured operator-bff signs it with its own production transport (the token lives
+    ~120s, so it is requested per call and never held for a phase). It is captured privately:
+    never logged, written to evidence, or placed in an error message.
+    """
+    import subprocess
+
+    result = subprocess.run(
+        compose_command("exec", "-T", "operator-bff", "python", "-c", _CAPITAL_TOKEN_SNIPPET, tenant_id),
+        capture_output=True, text=True, timeout=60, check=False,
+    )
+    token = result.stdout.strip()
+    if result.returncode != 0 or token.count(".") != 2:
+        raise RuntimeError(f"operator-bff did not issue a Capital service token (exit {result.returncode})")
+    return f"Bearer {token}"
+
+
 def capital_identity(authorization: str) -> tuple[str, str]:
     """(actor_id, service) Capital will compare a mutation body against, read from the real token.
 

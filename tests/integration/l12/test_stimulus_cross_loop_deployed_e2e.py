@@ -495,8 +495,13 @@ class UrllibOwnerClient:
         actor_id: str = "",
         roles: tuple[str, ...] = (),
         service_headers: Mapping[str, Mapping[str, str]] | None = None,
+        capital_authorization: Callable[[], str] | None = None,
+        tenant_id: str = "",
     ) -> None:
         self.urls = dict(urls)
+        # Capital tokens live ~120s: one genuine token is fetched per request, never held.
+        self.capital_authorization = capital_authorization
+        self.tenant_id = tenant_id
         self.token = token
         # Services whose existing owner auth is not the generic bearer (Training,
         # Research, Consultation) read under their own configured headers.
@@ -549,13 +554,48 @@ class UrllibOwnerClient:
                 **bearer("PANTHEON_L12_CONSULTATION_TOKEN"),
                 **tenant_headers(consult_tenant),
             }
+        capital_authorization = None
+        if os.getenv("PANTHEON_L12_COMPOSE_PROJECT", "").strip():
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from l12_owner_auth import fresh_capital_authorization
+
+            def compose_command(*args: str) -> list[str]:
+                command = ["docker", "compose", "-p", _required_env("PANTHEON_L12_COMPOSE_PROJECT")]
+                for path in os.getenv("PANTHEON_L12_COMPOSE_FILES", "").split(os.pathsep):
+                    if path.strip():
+                        command.extend(("-f", path.strip()))
+                return [*command, *args]
+
+            capital_authorization = lambda: fresh_capital_authorization(compose_command, tenant)  # noqa: E731
         return cls(
             urls,
             _required_env("PANTHEON_L12_HOSTED_OWNER_TOKEN"),
             os.getenv("PANTHEON_L12_HOSTED_OWNER_ACTOR_ID", "").strip(),
             roles,
             service_headers,
+            capital_authorization,
+            tenant,
         )
+
+    def _capital_request_auth(self) -> tuple[dict[str, str], str, tuple[str, ...]]:
+        """Fresh Capital headers plus the (actor, roles) that token really carries."""
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from l12_owner_auth import capital_identity
+
+        authorization = self.capital_authorization()  # type: ignore[misc]
+        actor, service = capital_identity(authorization)
+        headers = {"Authorization": authorization, "X-Pantheon-Service": service}
+        if self.tenant_id:
+            headers["X-Tenant-Id"] = self.tenant_id
+        # The same roles Hosted C names under this Capital principal.
+        return headers, actor, ("capital.admin", "persona.admin")
+
+    def identity_for(self, service: str) -> tuple[str, tuple[str, ...]]:
+        """Actor/roles an owner compares a mutation body against (Capital: its own principal)."""
+        if service == "capital" and self.capital_authorization is not None:
+            _headers, actor, roles = self._capital_request_auth()
+            return actor, roles
+        return self.actor_id, self.roles
 
     def request(
         self,
@@ -568,7 +608,9 @@ class UrllibOwnerClient:
         if service not in self.urls:
             raise StimulusProofError(f"no owner URL configured for {service}")
         headers = {"Accept": "application/json", "Authorization": f"Bearer {self.token}"}
-        if service in self.service_headers:
+        if service == "capital" and self.capital_authorization is not None:
+            headers = {"Accept": "application/json", **self._capital_request_auth()[0]}
+        elif service in self.service_headers:
             headers = {"Accept": "application/json", **self.service_headers[service]}
         data = None
         if body is not None:
@@ -601,6 +643,11 @@ def _registry_retire_body(record: Mapping[str, Any], chain_id: str, *_identity: 
         "expected_version": record.get("version"),
         "expected_updated_at": record.get("updated_at"),
     }
+
+
+def _execution_artifact_retire_body(record: Mapping[str, Any], chain_id: str, *_identity: Any) -> dict[str, Any]:
+    # Same CAS as the Spec, but a distinct command key: it retires a different Registry entry.
+    return {**_registry_retire_body(record, chain_id), "command_key": f"{chain_id}-e-close-execution-artifact"}
 
 
 def _capital_status_body(
@@ -646,6 +693,11 @@ RECORD_SPECS: dict[str, OwnerRecordSpec] = {
     "capital_pool_id": OwnerRecordSpec(
         "capital", "/api/capital-pools/{id}", "PATCH", "/api/capital-pools/{id}/status",
         _capital_status_body("archived", ("capital.admin", "operator")), ("archived",),
+    ),
+    # The distinct execution artifact derived from the Spec retires before the Spec it came from.
+    "execution_artifact_id": OwnerRecordSpec(
+        "registry", "/api/registry/strategy-artifacts/{id}", "POST",
+        "/api/registry/strategy-artifacts/{id}/advance", _execution_artifact_retire_body, ("retired",),
     ),
     "registry_id": OwnerRecordSpec(
         "registry", "/api/registry/strategy-specs/{id}", "POST",
@@ -788,6 +840,22 @@ class HostedChainRunner:
             return self._check_registry_lineage(record_id, record)
         if chain != self.chain_id:
             return f"{kind} {record_id}: chain label {chain!r} != {self.chain_id!r}"
+        if kind == "execution_artifact_id":
+            return self._check_execution_artifact(record_id, record)
+        return None
+
+    def _check_execution_artifact(self, record_id: str, record: Mapping[str, Any]) -> str | None:
+        """The derived artifact must be the one C registered, linked to this chain's original Spec."""
+        spec_id = self.resource_ids.get("registry_id")
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), Mapping) else {}
+        embedded = metadata.get("strategy_artifact") if isinstance(metadata.get("strategy_artifact"), Mapping) else {}
+        linked = (embedded.get("lineage") or {}).get("source_strategy_spec_id")
+        if not spec_id or record_id == spec_id or linked != spec_id:
+            return f"execution_artifact_id {record_id}: lineage.source_strategy_spec_id {linked!r} is not this chain's Spec {spec_id!r}"
+        for field, key in (("checksum", "execution_artifact_checksum"), ("version", "execution_artifact_version")):
+            want = self.resource_ids.get(key)
+            if want and record.get(field) != want:
+                return f"execution_artifact_id {record_id}: {field} {record.get(field)!r} differs from the chain's {want!r}"
         return None
 
     def _check_registry_lineage(self, record_id: str, record: Mapping[str, Any]) -> str | None:
@@ -833,6 +901,8 @@ class HostedChainRunner:
                 problems.append(f"decision {name}: empty consent reference")
             elif name == "H3" and not _decision_id(reference):
                 problems.append("decision H3: no decision_id")
+            elif name == "H3" and self.resource_ids.get("execution_artifact_id"):
+                problems.extend(self._verify_h3(_decision_id(reference)))
             # recorded consent (e.g. H2) is forwarded as given; never a Governance gate
         problems.extend(self._verify_domain_outputs())
         return problems
@@ -1037,6 +1107,44 @@ class HostedChainRunner:
             problems.append(f"decision H1 {decision_id}: targets {record.get('target_id')!r}, not {registry_id!r}")
         return problems
 
+    def _verify_h3(self, decision_id: str) -> list[str]:
+        """H3 must be a live decision for the derived artifact, never the Spec's H1.
+
+        Same exact-ID read and expected fields Hosted C enforces before covered writes.
+        """
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from l12_owner_auth import HostedPause, require_decided_approval
+
+        def read(wanted_id: str) -> Mapping[str, Any] | None:
+            status, record = self.owner.request(
+                "governance", "GET", APPROVAL_READ.format(id=urllib.parse.quote(wanted_id, safe=""))
+            )
+            record = _unwrap(record)
+            if status != 200 or not isinstance(record, Mapping) or record.get("decision_id") != wanted_id:
+                return None
+            return record
+
+        ids = self.resource_ids
+        try:
+            require_decided_approval(
+                read,
+                {"decision_id": decision_id},
+                point="H3",
+                blocked_before="execution_artifact_approval",
+                tenant_id=self.tenant_id,
+                expected={
+                    "target_type": "registry_entry",
+                    "target_id": ids.get("execution_artifact_id"),
+                    "target_version": ids.get("execution_artifact_version"),
+                    "candidate_digest": ids.get("execution_artifact_checksum"),
+                    "capital_pool_id": ids.get("capital_pool_id"),
+                    "persona_id": ids.get("persona_id"),
+                },
+            )
+        except HostedPause as exc:
+            return [f"decision {exc.detail}"]
+        return []
+
     # -- phase ordering ---------------------------------------------------
     def _check_order(self) -> None:
         index = HOSTED_PHASES.index(self.phase)
@@ -1211,7 +1319,9 @@ class HostedChainRunner:
             if _record_state(record) in spec.retired_states:
                 retired.append({"kind": kind, "id": record_id, "already": True})
                 continue
-            body = spec.retire_body(record, self.chain_id, actor, roles)
+            identity = getattr(self.owner, "identity_for", None)
+            body_actor, body_roles = identity(spec.service) if callable(identity) else (actor, roles)
+            body = spec.retire_body(record, self.chain_id, body_actor, body_roles)
             if body is None:
                 incomplete.append(f"{kind} {record_id}: executing identity has no role for retirement")
                 continue

@@ -885,3 +885,288 @@ def evaluate_strategy_action(
     if momentum > _decimal(threshold, "momentum threshold"):
         return logic["positive_action"]
     return logic["non_positive_action"]
+
+
+# ---------------------------------------------------------------------------
+# Source -> Spec -> execution recipe carriage
+# ---------------------------------------------------------------------------
+
+EXECUTION_RECIPE_KIND = "close_to_close_momentum"
+_EXECUTION_RECIPE_KEYS: frozenset[str] = frozenset({
+    "kind",
+    "symbols",
+    "bar_frequency",
+    "data_source",
+    "lookback_bars",
+    "momentum_threshold",
+    "positive_action",
+    "non_positive_action",
+    "order_quantity",
+    "quantity_type",
+})
+_EXECUTION_RECIPE_ACTIONS = ("BUY", "SELL", "HOLD")
+_EXECUTION_RECIPE_QUANTITY_TYPES = ("SHARES", "CASH_VALUE", "PERCENT_PORTFOLIO")
+
+
+def validate_execution_recipe(recipe: Any) -> dict[str, Any]:
+    """Validate an explicit close_to_close_momentum recipe and return a copy.
+
+    Nothing is defaulted or parsed from prose: every key must be present with
+    the declared type, and unsupported kinds are rejected by name.
+    """
+    if not isinstance(recipe, Mapping):
+        raise StrategyArtifactValidationError("execution_recipe must be a JSON object")
+    kind = recipe.get("kind")
+    if kind != EXECUTION_RECIPE_KIND:
+        raise StrategyArtifactValidationError(
+            f"unsupported execution_recipe kind {kind!r}; only "
+            f"{EXECUTION_RECIPE_KIND!r} is supported"
+        )
+    missing = sorted(_EXECUTION_RECIPE_KEYS - set(recipe))
+    if missing:
+        raise StrategyArtifactValidationError(
+            "execution_recipe is missing explicit fields: " + ", ".join(missing)
+        )
+    unknown = sorted(set(recipe) - _EXECUTION_RECIPE_KEYS)
+    if unknown:
+        raise StrategyArtifactValidationError(
+            "execution_recipe has unsupported fields: " + ", ".join(unknown)
+        )
+    symbols = recipe["symbols"]
+    if (
+        isinstance(symbols, (str, bytes))
+        or not isinstance(symbols, Sequence)
+        or not symbols
+        or any(not isinstance(s, str) or not s.strip() or s != s.strip() for s in symbols)
+        or len(set(symbols)) != len(symbols)
+    ):
+        raise StrategyArtifactValidationError(
+            "execution_recipe.symbols must be a non-empty list of unique canonical symbols"
+        )
+    for field in ("bar_frequency", "data_source"):
+        value = recipe[field]
+        if not isinstance(value, str) or not value.strip() or value != value.strip():
+            raise StrategyArtifactValidationError(
+                f"execution_recipe.{field} must be a canonical non-blank string"
+            )
+    lookback = recipe["lookback_bars"]
+    if not _is_integer(lookback) or lookback < 2:
+        raise StrategyArtifactValidationError(
+            "execution_recipe.lookback_bars must be an integer >= 2"
+        )
+    for field in ("momentum_threshold", "order_quantity"):
+        value = recipe[field]
+        if not _is_number(value) or not _is_finite_number(value):
+            raise StrategyArtifactValidationError(
+                f"execution_recipe.{field} must be a finite number"
+            )
+    if recipe["order_quantity"] <= 0:
+        raise StrategyArtifactValidationError(
+            "execution_recipe.order_quantity must be positive"
+        )
+    for field in ("positive_action", "non_positive_action"):
+        if recipe[field] not in _EXECUTION_RECIPE_ACTIONS:
+            raise StrategyArtifactValidationError(
+                f"execution_recipe.{field} must be one of "
+                + "/".join(_EXECUTION_RECIPE_ACTIONS)
+            )
+    if recipe["quantity_type"] not in _EXECUTION_RECIPE_QUANTITY_TYPES:
+        raise StrategyArtifactValidationError(
+            "execution_recipe.quantity_type must be one of "
+            + "/".join(_EXECUTION_RECIPE_QUANTITY_TYPES)
+        )
+    return copy.deepcopy(dict(recipe))
+
+
+def validate_execution_recipe_against_spec(
+    recipe: Any,
+    strategy_spec: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Require the recipe to agree with the actual StrategySpec payload."""
+    checked = validate_execution_recipe(recipe)
+    if not isinstance(strategy_spec, Mapping):
+        raise StrategyArtifactValidationError("strategy_spec must be a JSON object")
+    scope = strategy_spec.get("market_scope") or {}
+    profile = strategy_spec.get("execution_profile") or {}
+    if list(scope.get("symbols") or []) != list(checked["symbols"]):
+        raise StrategyArtifactValidationError(
+            "execution_recipe.symbols contradict StrategySpec market_scope.symbols: "
+            f"{checked['symbols']!r} != {scope.get('symbols')!r}"
+        )
+    if scope.get("frequency") != checked["bar_frequency"]:
+        raise StrategyArtifactValidationError(
+            "execution_recipe.bar_frequency contradicts StrategySpec market_scope.frequency: "
+            f"{checked['bar_frequency']!r} != {scope.get('frequency')!r}"
+        )
+    refs = {
+        dep.get("ref")
+        for dep in strategy_spec.get("data_dependencies") or []
+        if isinstance(dep, Mapping)
+    }
+    if checked["data_source"] not in refs:
+        raise StrategyArtifactValidationError(
+            "execution_recipe.data_source is not a StrategySpec data dependency: "
+            f"{checked['data_source']!r}"
+        )
+    if profile.get("quantity_type") != checked["quantity_type"]:
+        raise StrategyArtifactValidationError(
+            "execution_recipe.quantity_type contradicts StrategySpec "
+            f"execution_profile.quantity_type: {checked['quantity_type']!r} != "
+            f"{profile.get('quantity_type')!r}"
+        )
+    return checked
+
+
+def strategy_spec_payload_checksum(payload: Mapping[str, Any]) -> str:
+    """Checksum a StrategySpec payload exactly as Source->Spec conversion does."""
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
+
+
+def build_execution_artifact_registration(
+    spec_entry: Mapping[str, Any],
+    *,
+    artifact_id: str,
+    algorithm_commit: str,
+    requested_by: str | None = None,
+) -> dict[str, Any]:
+    """Derive a distinct execution StrategyArtifact registration from a Spec.
+
+    ``spec_entry`` is the owner-read-back registry entry of the Spec.  The
+    recipe, symbols, versions and lineage are taken from its stored values; the
+    Spec's own registry id, checksum and version are left untouched and the
+    result is linked only through ``lineage.source_strategy_spec_id``.
+    """
+    if not isinstance(spec_entry, Mapping):
+        raise StrategyArtifactValidationError("spec_entry must be a JSON object")
+    metadata = spec_entry.get("metadata")
+    spec = metadata.get("strategy_spec") if isinstance(metadata, Mapping) else None
+    if not isinstance(spec, Mapping):
+        raise StrategyArtifactValidationError(
+            "spec_entry is missing metadata.strategy_spec"
+        )
+    spec_registry_id = str(spec_entry.get("registry_id") or "").strip()
+    if not spec_registry_id:
+        raise StrategyArtifactValidationError("spec_entry is missing registry_id")
+    stored_checksum = spec_entry.get("checksum")
+    if stored_checksum != strategy_spec_payload_checksum(spec):
+        raise StrategyArtifactValidationError(
+            "spec_entry checksum does not match its stored strategy_spec payload"
+        )
+    artifact_id = str(artifact_id or "").strip()
+    if not artifact_id or artifact_id == spec_registry_id:
+        raise StrategyArtifactValidationError(
+            "execution artifact requires a distinct non-empty artifact_id"
+        )
+    spec_metadata = spec.get("metadata")
+    recipe_value = (
+        spec_metadata.get("execution_recipe")
+        if isinstance(spec_metadata, Mapping)
+        else None
+    )
+    if recipe_value is None:
+        raise StrategyArtifactValidationError(
+            "StrategySpec has no metadata.execution_recipe; it is research-only "
+            "and not executable"
+        )
+    recipe = validate_execution_recipe_against_spec(recipe_value, spec)
+
+    strategy_id = str(spec.get("strategy_id") or "").strip()
+    version = str(spec_entry.get("version") or "").strip()
+    if not strategy_id or not version:
+        raise StrategyArtifactValidationError(
+            "spec_entry must carry the original strategy_id and version"
+        )
+    entry_lineage = spec_entry.get("lineage") if isinstance(spec_entry.get("lineage"), Mapping) else {}
+    source_run_ids = [
+        str(v) for v in entry_lineage.get("source_run_ids") or [] if str(v).strip()
+    ]
+    if not source_run_ids:
+        raise StrategyArtifactValidationError(
+            "spec_entry lineage.source_run_ids is required to keep run lineage"
+        )
+    dataset_refs = [
+        str(v) for v in entry_lineage.get("source_dataset_refs") or [] if str(v).strip()
+    ]
+    lineage: dict[str, Any] = {
+        "source_run_ids": source_run_ids,
+        "source_strategy_spec_id": spec_registry_id,
+    }
+    if dataset_refs:
+        lineage["source_dataset_refs"] = dataset_refs
+
+    lookback = recipe["lookback_bars"]
+    artifact = {
+        "artifact_schema_version": "1.0",
+        "artifact_id": artifact_id,
+        "strategy_id": strategy_id,
+        "version": version,
+        "algorithm_ref": {
+            "engine": "lean",
+            "repository": "ajoe734/pantheon",
+            "commit": algorithm_commit,
+            "path": "services/registry/strategy_artifact.py",
+            "entrypoint": "services.registry.strategy_artifact:evaluate_strategy_action",
+            "signal_interface": (
+                "services.execution.lean_runtime.paper_signal_producer:Strategy"
+            ),
+            "signal_schema_version": "1.0",
+            "logic_interpreter": (
+                "services.registry.strategy_artifact:evaluate_strategy_action"
+            ),
+        },
+        "strategy_logic": {
+            "kind": EXECUTION_RECIPE_KIND,
+            "lookback_parameter": "lookback_bars",
+            "threshold_parameter": "momentum_threshold",
+            "positive_action": recipe["positive_action"],
+            "non_positive_action": recipe["non_positive_action"],
+        },
+        "parameters": {
+            "symbols": list(recipe["symbols"]),
+            "bar_frequency": recipe["bar_frequency"],
+            "data_source": recipe["data_source"],
+            "lookback_bars": lookback,
+            "momentum_threshold": recipe["momentum_threshold"],
+            "order_quantity": recipe["order_quantity"],
+            "quantity_type": recipe["quantity_type"],
+            "zero_momentum_action": recipe["non_positive_action"],
+        },
+        "mutation_surface": {
+            "controls": [
+                {
+                    "parameter_key": "lookback_bars",
+                    "value_type": "integer",
+                    "current_value": lookback,
+                    "allowed_range": {"min": 2, "max": max(60, lookback)},
+                    "step": 1,
+                }
+            ],
+            "immutable_parameters": [
+                "symbols",
+                "bar_frequency",
+                "data_source",
+                "momentum_threshold",
+                "order_quantity",
+                "quantity_type",
+                "zero_momentum_action",
+            ],
+        },
+        "lineage": lineage,
+        "provenance_refs": [f"strategy-spec:{spec_registry_id}"],
+    }
+    validate_strategy_artifact(artifact)
+    entry_metadata: dict[str, Any] = {
+        "source_strategy_spec_registry_id": spec_registry_id,
+        "source_strategy_spec_checksum": stored_checksum,
+        "execution_recipe_kind": EXECUTION_RECIPE_KIND,
+    }
+    if requested_by:
+        entry_metadata["requested_by"] = requested_by
+    return {
+        "registry_id": artifact_id,
+        "artifact_state": ArtifactState.CANDIDATE.value,
+        "strategy_artifact": artifact,
+        "producer_run_id": source_run_ids[-1],
+        "metadata": entry_metadata,
+    }
