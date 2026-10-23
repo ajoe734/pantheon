@@ -1,6 +1,6 @@
 {
   "task": "DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002",
-  "at": "2026-10-23T07:09:08.136924+00:00",
+  "at": "2026-10-23T07:41:05.248046+00:00",
   "phase": "All5productsourceDONE;4explicitindependentreviews merged/archive/settingsrestored; candidateec362/a206 notyetqualified/hosted; latestofficialdata22afterOct23close; originalPattern/UI/finance/TOTAL/report pending",
   "candidate_BE": "ec3628bdb6d73f02996fb1016cd8a4b118bc6442",
   "candidate_FE": "a206bed2daa6b8c5558468d9af5cb9d1ced37de2",
@@ -15,12 +15,12 @@
     }
   },
   "current_candidate": {
-    "source_merged": true,
+    "source_merged": false,
     "same_version_FULL_passed": false,
     "formal_Root_accepted": false,
     "exact18_roundtrip_passed": false,
     "all_product_acceptance_complete": false,
-    "scope": "Pinned final currentdev ec362/a206, no matchingFULL/releasePOST. Last accepted1436/c381 remains served; no freshness/provider-account bypass.",
+    "scope": "Original5 product source fixes merged at ec362/a206. Final candidate not frozen: existing unique emergency-calendar PR6737 must complete review/CI/merge first. Last accepted1436/c381 remains served; no oldcandidateFULL.",
     "four_review_delivery": {
       "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Four-authorized-existing-reviews-all-genuine-merged-archived-and-settings-restored-20261023.json",
       "sha256": "b743fc0c1df59b6ed0d5db5f5473685ce07de3980f2f3d54cd8e2e694f06c220"
@@ -49,7 +49,8 @@
     "original_consumer_tests": {
       "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/PTJ3eef-original-Persona-consumer-validation-existing-author-and-official-CI-evidence-20261023.json",
       "sha256": "57271def5614722e3f52bbaa72d11321c70f4542e02d6976167bb7f5cdf9a7db"
-    }
+    },
+    "calendar_correction": "evidence.json#/current_phase_authority/calendar_correction"
   },
   "source_deliveries": [
     {
@@ -302,10 +303,19 @@
   "count_meaning": "Source/commit/CI counts are engineering progress; no claim all49/all12/hosted accepted. Documentation cleanup is rework.",
   "current_source_implementation_writers": {
     "chatbox_product_runtime": 0,
-    "supervisor": "Original Claude source implementations completed through existing supervisor; actual distinct Claude2 review-only workers. No Root source coimplementation or duplicate task/writer.",
+    "supervisor": "Original5 done; existing supervisor/Claude owns only necessary calendar correction PR6737. Original A2 reviewer unchanged, no inferred C2permission or Root coimplementation.",
     "report": "Human/Ops coordinator updates only original3 documentation artifacts in draftPR6668."
   },
-  "pending_native_source_tasks": [],
+  "pending_native_source_tasks": [
+    {
+      "task": "TWSE-EMERGENCY-CLOSURE-20261023",
+      "PR": 6737,
+      "head": "37e04fc6ab63b67316e003faa754b9f5a1cc7f3e",
+      "owner": "Claude",
+      "reviewer": "Antigravity2",
+      "status": "review; requiredCI pending"
+    }
+  ],
   "original_mistaken_reopen_withdrawal": {
     "task": "BFF-COCKPIT-FANOUT-20261021",
     "generation": 2,
