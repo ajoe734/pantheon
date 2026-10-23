@@ -1,25 +1,26 @@
 {
   "task": "DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002",
-  "at": "2026-10-21T21:36:22.399121+00:00",
-  "phase": "Accepted e231/d6 and18roundtrip; all original six scoped checkpoints43/49 archived done; Cockpit/Pattern/TOTAL incomplete",
-  "candidate_BE": "e231f85638791517447d1125c69cfdc041849a2d",
-  "candidate_FE": "d6b988d0e7e4f79e7c9f8ec68b0abd7e6b32b54c",
+  "at": "2026-10-23T04:14:45.479159+00:00",
+  "phase": "Accepted1436/c381/exact18;2new product sourceDONE undeployed;3product followups/OPS review-promotion/Pattern/finalFULL/UI/finance/TOTAL/report pending",
+  "candidate_BE": null,
+  "candidate_FE": null,
   "accepted_pair": {
-    "BE": "e231f85638791517447d1125c69cfdc041849a2d",
-    "FE": "d6b988d0e7e4f79e7c9f8ec68b0abd7e6b32b54c",
-    "Root": 39656137935,
+    "BE": "1436b4f6e6ef2c2c38b5d73396377f6db5329214",
+    "FE": "c38144c5b8ad630ada8324acd97487092d49b4d3",
+    "Root": 39879759402,
     "deploymentState": "accepted",
     "proof": {
-      "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Root39656137935-accepted-exact-artifact-roundtrip-proof-20261021.json",
-      "sha256": "89b624ce120ddfc75e1467896945ad765f6509f05fbd1b1ad5f51e53c18c82f9"
+      "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Root398797-official-exact-eighteen-artifact-roundtrip-and-served-pair-independent-audit-20261023.json",
+      "sha256": "b96d6471e89de18086a8eb14f0227957303fc804dc5ba198a622c65d5421c7ae"
     }
   },
   "current_candidate": {
-    "source_merged": true,
-    "same_version_FULL_passed": true,
-    "formal_Root_accepted": true,
-    "exact18_roundtrip_passed": true,
-    "all_product_acceptance_complete": false
+    "source_merged": false,
+    "same_version_FULL_passed": false,
+    "formal_Root_accepted": false,
+    "exact18_roundtrip_passed": false,
+    "all_product_acceptance_complete": false,
+    "scope": "No final joined candidate pinned; accepted1436/c381 and historicale231 qualification are separate."
   },
   "source_deliveries": [
     {
@@ -196,20 +197,86 @@
       "native_status": "done",
       "source_merged": true,
       "hosted_current_fix_accepted": true
+    },
+    {
+      "task": "BFF-COCKPIT-RELOAD-20261021",
+      "PR": 6723,
+      "merge": "f9a49ab1e49e29781491f02d31e3b6312d016014",
+      "head": "6b960218232501de988acd3a3c6d0c6c44d9e645",
+      "native_status": "done",
+      "source_merged": true,
+      "present_in_last_accepted_BE": true,
+      "archive_sha256": "3cc774920799380f3478262a2a8b154684f037536733cc02a61bc3243880bedf"
+    },
+    {
+      "task": "DISTILL-RAWREF-IDENTITY-20261021",
+      "PR": 6726,
+      "merge": "1436b4f6e6ef2c2c38b5d73396377f6db5329214",
+      "head": "b281124679f4e9221cf48e09f916b864fcf7f0f3",
+      "native_status": "done",
+      "source_merged": true,
+      "present_in_last_accepted_BE": true,
+      "archive_sha256": "d8e97a274bf0b8fd56d1d717d9bad41d994c757fc02db51ae44d190941382750"
+    },
+    {
+      "task": "BFF-PORTFOLIO-TERMINAL-RUNTIME-PROJECTION-20261022",
+      "PR": 6730,
+      "merge": "4fc03f5be247b5416508edd2f69808c8f731b1b0",
+      "head": "ab34599fa757fbb0d4985e82e80feab31e99c76d",
+      "native_status": "done",
+      "source_merged": true,
+      "present_in_last_accepted_BE": false,
+      "archive_sha256": "0da50d12da458ec60cfece0ca359c57fb16c6d2b8fbead29457bcac6ee546276"
+    },
+    {
+      "task": "BFF-COCKPIT-PARTIAL-READ-20261022",
+      "PR": 6731,
+      "merge": "15e14d40bd17281c2172990be4c27ad339edfe2a",
+      "head": "90f8a5a445108c0848b957fc9deb2b105bab4348",
+      "native_status": "done",
+      "source_merged": true,
+      "present_in_last_accepted_BE": false,
+      "archive_sha256": "516ed28f5c40a50360e51048ce2ec288fde372a33002f37404483e51eaa0a7a6"
     }
   ],
   "count_meaning": "Source/commit/CI counts are engineering progress; no claim all49/all12/hosted accepted. Documentation cleanup is rework.",
   "current_source_implementation_writers": {
     "chatbox_product_runtime": 0,
-    "supervisor": "Cockpit original owner run ended, one genuine A2 reviewer dispatched. Original Agora/Evaluator docs done."
+    "supervisor": "Original Claude source writer for Teaching/PTJ/FE/OPS; no duplicate source task/writer.",
+    "report": "Human/Ops coordinator updates only original3 documentation artifacts in draftPR6668."
   },
   "pending_native_source_tasks": [
     {
-      "task": "BFF-COCKPIT-RELOAD-20261021",
-      "PR": 6723,
-      "head": "eb8ddc8b945df36ed27406b04e432bb0b1416f17",
-      "scope": "Original5AC6files; actual reload gap with exact source regressions; no new feature",
+      "task": "TEACHING-EVAL-ZERO-TRADE-OUTCOME-20261022",
+      "PR": 6732,
+      "head": "79cbf2c6e897984059cb9cdd52f7201e097f62af",
       "state": "review",
+      "reviewer": "Antigravity2",
+      "hosted_accepted": false
+    },
+    {
+      "task": "PTJ-MISSING-FEE-EVIDENCE-20261023",
+      "PR": 6733,
+      "proposed_head": "b88d065c5d1bc7555e582350b3d39377b6eb800d",
+      "state": "in_progress/gen2_recovery_pending",
+      "remaining": "Booleaninvalid-fee source correction and metadata/CI/legalhandoff; prior11cases pass.",
+      "hosted_accepted": false
+    },
+    {
+      "task": "FE-COCKPIT-CHILD-READ-CONTRACTS-20261023",
+      "repository": "ajoe734/execute-plans",
+      "PR": 873,
+      "proposed_head": "0ac9a8c0340adff346c907abde0ffa2ea2b76a12",
+      "state": "in_progress/gen2_recovery_pending",
+      "remaining": "Original source findings fixed; metadata/CI/legalhandoff pending.",
+      "hosted_accepted": false
+    },
+    {
+      "task": "OPS-OWNER-MISSING-RETRY-20261023",
+      "PR": 6734,
+      "head": "e49ba6b696fcc08c60b21e0709c7aa37ad899da8",
+      "state": "review/newCI_success/legalhandoff",
+      "scope": "Original3files/netprod19<=30; no livepromotion yet.",
       "hosted_accepted": false
     }
   ],
