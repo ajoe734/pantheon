@@ -1,0 +1,16 @@
+{
+  "task_id": "OPS-OWNER-MISSING-RETRY-20261023",
+  "change_class": "corrective",
+  "summary": "worker_recovery_assignment_pair now retries the healthy incumbent owner for reason_kind worker_process_missing (owner role) after configured owner_fallbacks fail, mirroring the existing reviewer branch. The pair still goes through plan_task_assignment_pair (health/auth/independence), _worker_recovery_candidate_has_capacity, and the existing fenced receipt CAS/generation.",
+  "scoped_artifacts": [
+    ".orchestrator/supervisor.py",
+    ".orchestrator/test_supervisor.py",
+    "docs/deployment/evidence/OPS-OWNER-MISSING-RETRY-20261023/evidence.json"
+  ],
+  "net_production_lines": 16,
+  "verification": {
+    "command": "cd .orchestrator && python3 -m unittest test_supervisor.DurableWorkerRecoveryTests",
+    "result": "passed: 30 tests, including test_lost_owner_retries_healthy_incumbent_only_for_process_missing (healthy retry; auth/capacity/lease_expired rejected) and the unchanged reviewer fallback test"
+  },
+  "not_changed": "runtime config, queue/receipts, FE873 source, auth, lanes, capacity, VM/provider/deploy"
+}

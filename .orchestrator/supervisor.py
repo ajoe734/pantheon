@@ -13189,6 +13189,22 @@ def worker_recovery_assignment_pair(
             target_agent=pair[0],
         ):
             return pair
+    # A missing process does not make the configured owner unhealthy; once
+    # alternates fail, retry the healthy incumbent through the same fenced CAS.
+    if receipt.get("reason_kind") == "worker_process_missing" and owner and reviewer:
+        pair = plan_task_assignment_pair(
+            config,
+            task,
+            state=state,
+            owner_candidates=[owner],
+            preferred_reviewers=[reviewer],
+            allowed_reviewers=[reviewer],
+        )
+        if pair and _worker_recovery_candidate_has_capacity(
+            config, state, status, task,
+            owner=pair[0], reviewer=pair[1], target_agent=pair[0],
+        ):
+            return pair
     return None
 
 
