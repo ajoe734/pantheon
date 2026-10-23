@@ -1,0 +1,15 @@
+{
+  "task_id": "PTJ-MISSING-FEE-EVIDENCE-20261023",
+  "original_task_id": "PTJ-ORIGINAL-PAPER-EPISODE-CORRELATION-20261012",
+  "technical_finding_sha256": "358d86dc2f7e23f81de4b09e87dc7100dc36e7302033abba27af25a1f3574c4e",
+  "change": "TradeEpisodeProjection.fees is null (with coverage.missing_refs 'fees', state partial) when fee evidence is absent/invalid; explicit 0 and nonzero remain known values; mixed missing/known fills stay null; authoritative trade_episode.updated fees resolves it. No fee derivation, no new owner/endpoint. Corrective: opened without fee is partial/missing; authoritative updated fees:null clears prior total; on load cached projections are re-derived in memory from retained raw events so legacy cached 0 without evidence reopens null and ordinary GET equals as_of_sequence replay. Reversal: a native closing fill without fee evidence marks the closed leg's fees null/missing (no proportional allocation or fill-fee sharing across legs). Cache-only: a stored projection with numeric fees 0 and no retained source events is exposed as null/missing fees on load (in memory only; stored files not rewritten); nonzero and event-backed explicit 0 preserved. Boolean fee values (false/true) are never coerced to 0/1: they are treated as missing evidence on opened, authoritative updated and native fill paths.",
+  "schema": "fees: [number, null], minimum 0",
+  "verification": {
+    "command": "python3 -m pytest -q services/telemetry/test_trade_episode_projection.py services/telemetry/test_paper_runtime_ingest_contract.py services/telemetry/test_trade_journal_contracts.py services/persona/test_trade_pattern_review.py services/persona/test_trade_reflection_contracts.py services/persona/test_trade_reflection_owner.py services/persona/test_trade_reflection_pipeline.py",
+    "result": "98 passed, 0 skipped, 0 failed",
+    "note": "source tests only; not hosted acceptance"
+  },
+  "hosted_claim": false,
+  "product_requests": 0,
+  "provider_calls": 0
+}

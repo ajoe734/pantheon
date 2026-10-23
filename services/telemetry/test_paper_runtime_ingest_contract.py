@@ -436,6 +436,28 @@ class PaperRuntimeTelemetryIngestContractTest(unittest.TestCase):
         self.assertIsNone(final_proj["closed_at"])
         self.assertEqual(final_proj["position_snapshot_refs"], [snap_id])
 
+    def test_native_fill_without_fee_metric_projects_null_fees(self):
+        emitter = RuntimeTelemetryEmitter(_runtime_identity(), _FakeBindingResolver())
+        episode_id = str(uuid.uuid4())
+        fill_event = emitter.build_event(
+            "paper_fill_simulated",
+            {"fill_quantity": 50.0, "fill_price": 450.0},
+            metadata={
+                "trade_episode_id": episode_id,
+                "symbol": "SPY",
+                "side": "buy",
+                "ledger_committed": True,
+                "ledger_fill_count": 1,
+                "position_quantity": 50.0,
+            },
+            event_id=str(uuid.uuid4()),
+            created_at="2026-05-01T00:01:00Z",
+        )
+        proj = TradeEpisodeProjectionStore().project_event(fill_event)
+        self.assertEqual(proj["filled_quantity"], 50.0)
+        self.assertIsNone(proj["fees"])
+        self.assertIn("fees", proj["coverage"]["missing_refs"])
+
     def test_canonical_batch_read_cross_run_and_ineligible_guards(self):
         async def scenario():
             summary_store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=60)

@@ -55,7 +55,10 @@ class TestTradeEpisodeProjectionStore(unittest.TestCase):
         self.assertEqual(proj["requested_quantity"], 100.0)
         self.assertEqual(proj["thesis"], "Fed meeting catalyst")
         self.assertEqual(proj["last_event_sequence"], 1)
-        self.assertEqual(proj["coverage"]["state"], "complete")
+        # No fee evidence on open: fees stay unknown and coverage says so.
+        self.assertIsNone(proj["fees"])
+        self.assertEqual(proj["coverage"]["state"], "partial")
+        self.assertIn("fees", proj["coverage"]["missing_refs"])
 
     def test_out_of_order_sequencing(self) -> None:
         episode_id = str(uuid.uuid4())
@@ -118,7 +121,8 @@ class TestTradeEpisodeProjectionStore(unittest.TestCase):
         self.assertEqual(proj2["filled_quantity"], 50.0)
         self.assertEqual(proj2["vwap"], 450.0)
         self.assertEqual(proj2["status"], "partially_filled")
-        self.assertEqual(proj2["coverage"]["state"], "complete")
+        self.assertIsNone(proj2["fees"])
+        self.assertEqual(proj2["coverage"]["state"], "partial")
 
     def test_as_of_queries(self) -> None:
         episode_id = str(uuid.uuid4())
@@ -511,6 +515,176 @@ class TestTradeEpisodeProjectionStore(unittest.TestCase):
         self.assertEqual(proj["status"], "closed")
         self.assertEqual(proj["closed_at"], "2026-07-11T13:05:00Z")
 
+    def _fee_fill(self, episode_id, seq, fees=..., **extra_metrics):
+        metrics = {"fill_quantity": 10.0, "fill_price": 100.0, **extra_metrics}
+        if fees is not ...:
+            metrics["fees"] = fees
+        return {
+            "event_id": str(uuid.uuid4()),
+            "event_type": "paper_fill_simulated",
+            "created_at": f"2026-07-11T12:0{seq}:00Z",
+            "deployment_stage": "paper",
+            "metrics": metrics,
+            "metadata": {"trade_episode_id": episode_id},
+            "sequence_number": seq,
+        }
+
+    def _fee_open(self, episode_id, **payload):
+        return {
+            "event_id": str(uuid.uuid4()),
+            "event_type": "trade_episode.opened",
+            "occurred_at": "2026-07-11T12:00:00Z",
+            "trade_episode_id": episode_id,
+            "persona_id": "persona-macro",
+            "environment": "paper",
+            "sequence_number": 1,
+            "payload": {"strategy_id": "s", "instrument_id": "SPY", **payload},
+        }
+
+    def test_missing_fee_evidence_is_null_not_zero(self) -> None:
+        absent, zero, nonzero = (str(uuid.uuid4()) for _ in range(3))
+        self.assertIsNone(self.store.project_event(self._fee_fill(absent, 2))["fees"])
+        self.assertEqual(self.store.project_event(self._fee_fill(zero, 2, fees=0.0))["fees"], 0.0)
+        self.assertEqual(self.store.project_event(self._fee_fill(nonzero, 2, fees=2.5))["fees"], 2.5)
+        absent_proj = self.store.get(absent)
+        self.assertIn("fees", absent_proj["coverage"]["missing_refs"])
+        self.assertNotIn("fees", self.store.get(zero)["coverage"]["missing_refs"])
+        self.assertNotIn("fees", self.store.get(nonzero)["coverage"]["missing_refs"])
+
+        opened_absent, opened_zero = str(uuid.uuid4()), str(uuid.uuid4())
+        self.assertIsNone(self.store.project_event(self._fee_open(opened_absent))["fees"])
+        self.assertEqual(self.store.project_event(self._fee_open(opened_zero, fees=0))["fees"], 0.0)
+
+    def test_invalid_fee_evidence_fails_closed_to_null(self) -> None:
+        for bad in (-1.0, float("nan"), float("inf"), "abc"):
+            episode_id = str(uuid.uuid4())
+            proj = self.store.project_event(self._fee_fill(episode_id, 2, fees=bad))
+            self.assertIsNone(proj["fees"], bad)
+            self.assertIn("fees", proj["coverage"]["missing_refs"])
+
+    def test_boolean_fee_evidence_is_not_coerced_to_numeric(self) -> None:
+        for bad in (False, True):
+            opened = str(uuid.uuid4())
+            proj = self.store.project_event(self._fee_open(opened, fees=bad))
+            self.assertIsNone(proj["fees"], bad)
+            self.assertIn("fees", proj["coverage"]["missing_refs"])
+
+            native = str(uuid.uuid4())
+            proj = self.store.project_event(self._fee_fill(native, 2, fees=bad))
+            self.assertIsNone(proj["fees"], bad)
+            self.assertIn("fees", proj["coverage"]["missing_refs"])
+
+            updated = str(uuid.uuid4())
+            self.store.project_event(self._fee_open(updated, fees=3.0))
+            update = dict(
+                self._fee_open(updated, fees=bad),
+                event_id=str(uuid.uuid4()),
+                event_type="trade_episode.updated",
+                sequence_number=2,
+            )
+            proj = self.store.project_event(update)
+            self.assertIsNone(proj["fees"], bad)
+            self.assertIn("fees", proj["coverage"]["missing_refs"])
+
+    def test_mixed_missing_and_known_fill_fees_not_advertised_as_total(self) -> None:
+        for order in ((1.5, ...), (..., 1.5)):
+            episode_id = str(uuid.uuid4())
+            proj = None
+            for i, fee in enumerate(order, start=2):
+                proj = self.store.project_event(self._fee_fill(episode_id, i, fees=fee))
+            self.assertIsNone(proj["fees"])
+            self.assertEqual(proj["coverage"]["state"], "partial")
+            self.assertIn("fees", proj["coverage"]["missing_refs"])
+
+        # Known fees across all fills still accumulate; explicit zero is real.
+        episode_id = str(uuid.uuid4())
+        self.store.project_event(self._fee_fill(episode_id, 2, fees=0.0))
+        proj = self.store.project_event(self._fee_fill(episode_id, 3, fees=2.0))
+        self.assertEqual(proj["fees"], 2.0)
+
+    def test_authoritative_fee_update_resolves_missing_and_survives_reopen(self) -> None:
+        episode_id = str(uuid.uuid4())
+        self.store.project_event(self._fee_open(episode_id))
+        self.store.project_event(self._fee_fill(episode_id, 2))
+        self.assertIsNone(self.store.get(episode_id)["fees"])
+        update = {
+            "event_id": str(uuid.uuid4()),
+            "event_type": "trade_episode.updated",
+            "occurred_at": "2026-07-11T12:09:00Z",
+            "trade_episode_id": episode_id,
+            "persona_id": "persona-macro",
+            "environment": "paper",
+            "sequence_number": 3,
+            "payload": {"fees": 4.25},
+        }
+        proj = self.store.project_event(update)
+        self.assertEqual(proj["fees"], 4.25)
+        self.assertNotIn("fees", proj["coverage"]["missing_refs"])
+        reopened = TradeEpisodeProjectionStore(projections_path=self.proj_path, events_path=self.events_path)
+        self.assertEqual(reopened.get(episode_id)["fees"], 4.25)
+        # Authoritative null update clears the fee and is not hidden by coverage.
+        bad = dict(update, event_id=str(uuid.uuid4()), sequence_number=4, payload={"fees": None})
+        cleared = self.store.project_event(bad)
+        self.assertIsNone(cleared["fees"])
+        self.assertIn("fees", cleared["coverage"]["missing_refs"])
+        self.assertEqual(cleared["coverage"]["state"], "partial")
+        reopened = TradeEpisodeProjectionStore(projections_path=self.proj_path, events_path=self.events_path)
+        self.assertIsNone(reopened.get(episode_id)["fees"])
+        self.assertIsNone(reopened.get(episode_id, as_of_sequence=4)["fees"])
+
+    def test_legacy_cached_zero_without_fee_evidence_reopens_unknown(self) -> None:
+        episode_id = str(uuid.uuid4())
+        self.store.project_event(self._fee_open(episode_id))
+        self.store.project_event(self._fee_fill(episode_id, 2))
+        # Simulate baseline cache: fabricated 0.0 persisted beside fee-less raw events.
+        cache = json.loads(Path(self.proj_path).read_text(encoding="utf-8"))
+        cache[episode_id]["fees"] = 0.0
+        cache[episode_id]["coverage"] = {**cache[episode_id]["coverage"], "state": "complete", "missing_refs": []}
+        Path(self.proj_path).write_text(json.dumps(cache), encoding="utf-8")
+        reopened = TradeEpisodeProjectionStore(projections_path=self.proj_path, events_path=self.events_path)
+        ordinary = reopened.get(episode_id)
+        replay = reopened.get(episode_id, as_of_sequence=2)
+        self.assertIsNone(ordinary["fees"])
+        self.assertEqual(ordinary["fees"], replay["fees"])
+        self.assertEqual(ordinary["coverage"], replay["coverage"])
+
+    def test_cache_only_legacy_zero_without_events_reopens_unknown(self) -> None:
+        episode_id = str(uuid.uuid4())
+        cov = {"state": "partial", "missing_refs": ["opened_event", "attribution"]}
+        cache = {
+            episode_id: {"trade_episode_id": episode_id, "fees": 0.0, "coverage": dict(cov)},
+            "nonzero": {"trade_episode_id": "nonzero", "fees": 2.5, "coverage": dict(cov)},
+        }
+        Path(self.proj_path).write_text(json.dumps(cache), encoding="utf-8")
+        reopened = TradeEpisodeProjectionStore(projections_path=self.proj_path)
+        got = reopened.get(episode_id)
+        self.assertIsNone(got["fees"])
+        self.assertIn("fees", got["coverage"]["missing_refs"])
+        self.assertEqual(reopened.get("nonzero")["fees"], 2.5)
+        # Stored file is not rewritten by reading.
+        self.assertEqual(json.loads(Path(self.proj_path).read_text(encoding="utf-8")), cache)
+
+    def test_null_fee_persists_and_rebuilds_after_reopen(self) -> None:
+        episode_id = str(uuid.uuid4())
+        self.store.project_event(self._fee_fill(episode_id, 2))
+        reopened = TradeEpisodeProjectionStore(projections_path=self.proj_path, events_path=self.events_path)
+        self.assertIsNone(reopened.get(episode_id)["fees"])
+        # Next event rebuilds from the persisted canonical events: still honest.
+        proj = reopened.project_event(self._fee_fill(episode_id, 3, fees=1.0))
+        self.assertIsNone(proj["fees"])
+        self.assertIn("fees", proj["coverage"]["missing_refs"])
+        # Duplicate delivery of the same event does not change the answer.
+        dup = self._fee_fill(episode_id, 3, fees=1.0)
+        self.assertIsNone(reopened.project_event(dup)["fees"])
+
+    def test_schema_allows_null_fees_but_forbids_negative(self) -> None:
+        schema = json.loads(
+            (Path(__file__).parent / "trade_episode_projection.schema.json").read_text(encoding="utf-8")
+        )
+        fees = schema["properties"]["fees"]
+        self.assertEqual(sorted(fees["type"]), ["null", "number"])
+        self.assertEqual(fees["minimum"], 0)
+
     def test_absent_pnl_remains_none_and_isolation_guards(self) -> None:
         episode_id = str(uuid.uuid4())
         fill_event = {
@@ -630,6 +804,31 @@ class TestTradeEpisodeProjectionStore(unittest.TestCase):
         self.assertEqual(self.store.get(foreign_ep)["status"], "open")
         self.assertEqual(self.store.get(foreign_ep)["fill_ids"], ["owned-first"])
         self.assertIsNone(self.store.get(new_ep))
+
+    def test_reversal_closing_fill_without_fee_leaves_closed_leg_unknown(self) -> None:
+        old_ep, new_ep = str(uuid.uuid4()), str(uuid.uuid4())
+        base = {"tenant_id": "tenant-a", "persona_id": "persona-a", "instrument_id": "SPY"}
+        self.store.project_event({
+            **base, "event_id": "open-known-fee", "event_type": "paper_fill_simulated",
+            "trade_episode_id": old_ep,
+            "metrics": {"fill_quantity": 10.0, "fill_price": 100.0, "fees": 2.5},
+        })
+        self.assertEqual(self.store.get(old_ep)["fees"], 2.5)
+        self.store.project_event({
+            **base, "event_id": "reverse-no-fee", "event_type": "paper_fill_simulated",
+            "trade_episode_id": new_ep,
+            "metrics": {"fill_quantity": -20.0, "fill_price": 100.0},
+            "metadata": {"reversal": {
+                "closed_episode_id": old_ep, "close_quantity": -10.0,
+                "opened_episode_id": new_ep, "open_quantity": -10.0,
+            }},
+        })
+        old, new = self.store.get(old_ep), self.store.get(new_ep)
+        self.assertEqual(old["status"], "closed")
+        self.assertIsNone(old["fees"])
+        self.assertIn("fees", old["coverage"]["missing_refs"])
+        self.assertIsNone(new["fees"])
+        self.assertIn("fees", new["coverage"]["missing_refs"])
 
 
 if __name__ == "__main__":
