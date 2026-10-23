@@ -1,29 +1,27 @@
 # Pantheon 開發與上線盤點
 
-最近核對：2026-10-23 12:05 台北時間。**整體L1–L12仍未完成。原五筆產品修正中，兩筆已完成來源交付，尚有三筆及一筆局部派工工具修正。來源交付、軟體換版與完整產品驗收分別列明。**
+最近核對：2026-10-23 15:10 台北時間。**這次同意的四筆審查已全部完成、合併及原生封存，臨時設定已還原。五筆必要產品來源全部交付；L1–L12整體仍未完成，最後配對尚待同版本FULL與實際換版驗收。**
 
-| 範圍 | 實證與尚未完成之處 |
+| 範圍 | 實際證據與剩餘缺口 |
 |---|---|
-| 已驗證正式換版 | Root39879759402／FEgate39881133929／FEdeploy39882890058成功，接受BE1436b4f6／FEc38144c5；原18項精確artifact往返及三份原始ZIP官方digest核對通過。這不是全stack／DB rollback，本次isolated matching FULL job skipped，也未包含下列兩筆新合併。 |
-| 兩筆來源真交付 | Portfolio PR6730 exactab345→merge4fc03；Cockpit PR6731 exact90f8→merge15e14。原Claude2兩個獨立review run均exit0，精確review binding／原生integration receipt／done／archive已核實。尚未做含這兩筆來源的最終換版與正常UI驗收。 |
-| 三筆產品來源待交付 | Teaching PR6732 exact79cb待獨立review。PTJ PR6733 b88原11有界案例通過，但另六Boolean無效費用反例失敗，並有提交格式／handoff問題。FE873 0ac的grouped rank、真owner總數與未知財務反例已修；仍有提交格式／handoff問題。後兩筆原生gen2 recovery pending，沒有另建任務或重工已修的舊反例。 |
-| 局部派工修正 | OPS6734目前head e49ba6b，已包含最新dev15e14。原三檔與cbee來源blob相同，production淨增19行／原上限30；原兩筆真receipt的有界候選核對已可選回健康Claude／原A2，保留distinct reviewer與預設review readiness。仍未真review、merge或套用runtime，沒有兩筆來源已恢復的主張。 |
-| 新head檢查與handoff | e49的新官方CI39894937563全部成功，原作者正常exit0，原生handoff已精確綁定e49／base15e14並進入review。cbee因缺最新dev而被拒絕的歷史保留；現在未通過的是獨立審查／merge／runtime promotion，不能說兩筆來源已恢復。 |
-| 審查權限與設定 | 你只限PR6730／6731的登入引用許可已實際執行，兩審查完成，設定精確恢復SHA5eeb／max0／原configdir。剩餘OPS6734、Teaching6732、PTJ6733、FE873的review-only具體方案另待決定，尚未套用；不含C2寫來源或替代原Antigravity TOTAL。原作者的普通dev續修已沿原supervisor進行。 |
-| Source15點查界線 | 8歷史等價版本／8done jobs皆最晚10/21入隊；最新Source投影10/22更新後，未見更晚同內容job。原worker實體碼含1436去重修正。先前兩筆是選樣，不是總數2；保留8舊紀錄，不冒稱完整L1／L2自然閉環。 |
-| 原完整驗收 | 六群組43/49真封存不變；Pattern原6AC適用任何合法devPersona，至少兩筆then-uncovered closed，不限7f4，也不加費用完整性門檻。原1325保存的有效72215仍未證自然caller／inputhash／精確下一interval；其餘財務/L11、跨owner因果、同最終版本FULL／部署／往返／真UI保存、指定TOTAL與原三repo產物未完成。PR6668原三檔已發現舊版本／22與43混寫，正於同草稿分支刷新。 |
+| 四筆限定審查 | OPS6734 e49→f980、Teaching6732 79cb→de54、PTJ6733 3eef→ec362、FE873 942→a206，真worker／exacthead review binding／原生integration／done／archive均核實，原作者與AC／檔案不變。Teaching reviewer143如實保留，其餘三個reviewer正常exit0。沒有C2寫來源或替代原TOTAL。 |
+| 設定還原 | 第一階段還原原5eeb；沿既有sync-dev-root正式套用de54後，第二階段還原該qualified基底04ff。13欄政策恢復、C2max0／原登入目錄／fallbacks恢復，watchdog active，worker清空；沒有移動或新造憑證。 |
+| 來源已收斂 | 含先前6730／6731，五筆必要產品來源全部真交付。OPS僅production＋19／原上限30，已qualified套用且原兩筆lost-lease receipt真恢復gen3、原Claude完成後兩筆，不再重工已修反例。 |
+| PTJ驗證 | 原作者98項包含原7檔、其中4個Persona consumer檔；真reviewer跑完整Telemetry 468通過／1跳過。同head官方CI亦跑完整Persona，129通過／1跳過；四必要檢查與整輪39908657638成功。沒有因reviewer未另跑就再建測試。尚待實際Telemetry換版與原資料讀回。 |
+| 最後候選與線上 | 現在兩repo dev為BE ec3628b／FE a206bed。公開manifest與BFF仍為Root398797接受的1436／c381、operator-live／strictauth。來源合併與開發工具runtime不是產品換版。 |
+| 既有FULL失敗 | 39907214769實際是de54隔離資格，台北13:50在官方台股source actual_readback被freshness_not_accepted／market_input_stale擋下；正式部署與FE切換均skipped。官方ZIP SHA／CRC及原容器清空已核實，未產出12條receipt／完整report。當時source payload未保留，不捏造實際日期或唯一根因。 |
+| 目前可重跑條件 | 台北14:46，官方TWSE、TPEx皆HTTP200，日期仍1151022（10/22）。既有規則要求最新已完成交易日；目前matchingFULL請求僅備妥、未送，等資料實際合格，不放寬門檻或切帳號。 |
+| 完整交付仍待 | 最後同版本FULL、root owner更新與exact FE/BFF gate／切換／artifact往返、正常UI reload與原savedowner保存、自然Pattern、財務與適用L11、原Antigravity獨立TOTAL，以及PR6668原三產物結案。原43／49與父任務6AC／21deps／3artifacts不變。 |
 
-[最新e49官方CI成功](/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/OPS6734-exacte49-official-whole-CI-success-20261023.json)；[精確合法handoff與作者exit0](/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/OPS6734-exacte49-CI-ready-and-legitimate-native-frozen-handoff-20261023.json)；[Pattern原六條逐條有界核對](/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Pattern-original-six-criteria-any-dev-persona-and-retained-natural-origin-gap-audit-20261023.json)。
+[四筆真交付／原契約與終局](/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Four-authorized-existing-reviews-all-genuine-merged-archived-and-settings-restored-20261023.json)；[第二階段精確還原](/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Claude2-four-review-phase2-final-exact-qualified-base-restoration-20261023.json)；[PTJ必要CI](/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/PTJ6733-exact3eef-official-four-required-CI-success-20261023.json)；[原Persona consumer既有證據](/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/PTJ3eef-original-Persona-consumer-validation-existing-author-and-official-CI-evidence-20261023.json)；[最後source／實際serving](/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Final-joined-ec362-a206-source-heads-latest-official-release-and-served-pair-readonly-20261023.json)；[FULL原失敗與清空](/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/FULL399072-original-isolated-failure-official-digest-source-freshness-and-cleanup-bounded-audit-20261023.json)；[官方當前日期只讀](/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/FULL399072-current-official-TWSE-TPEx-date-only-readonly-preflight-20261023.json)；[原生父任務交接](/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Root-all-four-reviews-sourceDONE-settings-restored-and-FULL-freshness-parent-note-ACK-20261023.json)。
 
-架構根因分成四個實際問題。Source15曾把每批raw參照混入內容身分，造成等價job及下游產物重複；去重修正沿原交易與歷史相容機制處理，沒有新版本服務。費用問題則是owner契約、schema、預設值與測試失配：未知值曾被補0，候選又在驗證前先float轉型，把false／true誤當0／1。既有FE的該費用欄已能把null顯示「—」，不為這一欄另開UI功能或費用引擎。
+架構根因仍是原有幾條權威與生命週期的失配。Source15把每次raw批次參照混進內容身分，形成8筆歷史等價job；既有去重保留歷史、消除後續重複。PTJ未知費用被預設成0，後續又先float把Boolean變0／1；修正owner、schema與既有coverage／reopen語義，保留真0與原始事件，不造費用引擎。Cockpit則同時有BFF重複warm／讀取成本與FE誤把inventory當ranking／把缺財務當缺整份summary；分別沿既有owner契約局部修正，最後須真UI驗證。
 
-Cockpit另有BFF讀取成本／重複warm與FE consumer契約誤接：回200、分離profile快速或mock通過都不能證明正常reload正確。BFF局部來源已合併，FE契約修正還未交付，最後仍要同一版本真畫面驗收。
+派工卡住是source恢復與未來reviewer此刻可用性耦合，19行局部修正已由真續派驗證。FULL這次則有不同邊界：外部資料尚不符合來源新鮮度，隔離資格就停止，沒有發生產品換版。HTTP200只證取得回應；不能將舊交易日改成今日、補抓取時間冒充event time，或拿模型額度解釋這個已明載的source拒絕。先讀官方當前資料再決定執行時點即可，沒有加新gate／平台。
 
-派工問題是來源續修與未來reviewer即時可用性耦合：a89雖CI全綠，兩筆實際receipt仍在作者健康且容量足夠時回None。新候選只調整來源階段的readiness，保留真作者資格、原reviewer身分及之後的審查／CAS／generation／fence；production目前淨增19行，原上限30行。這是局部工具返工，不是產品驗收，不靠手寫state、新dispatcher或新授權層補綠。
+Pattern原6AC接受任何合法devPersona至少兩筆then-uncovered closed，不另加費用完整門檻。保留的原72215 provider回應不能補成未證明的自然caller／inputhash／精確下一interval；不改寫舊資料或造交易補綠。本PR只更新原三份產物，維持草稿；必要CI以當前head核對，原完整驗收與指定Antigravity TOTAL未完成前不合併。
 
-[正式Root／18項精確往返](/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Root398797-official-exact-eighteen-artifact-roundtrip-and-served-pair-independent-audit-20261023.json)；[兩筆來源真審查、合併與封存](/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/PR6730-6731-authorized-real-Claude2-reviews-native-integration-current-20261023.json)；[原費用Boolean反例](/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/PR6733-exactb88-Boolean-fees-coercion-original-invalid-evidence-counterexample-20261023.json)。
-
-[原兩receipt候選核對](/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/OPS6734-exactcbee-actual-two-original-receipts-source-readiness-independent-audit-20261023.json)；[e49最新基底、三檔相同與19行範圍](/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/OPS6734-exacte49-current-dev-integration-source-and-CI-bounded-audit-20261023.json)；[e49官方CI／實際作者程序讀回](/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/OPS6734-exacte49-actual-current-CI-author-and-handoff-observation-20261023.json)；[最新原生binding](/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/OPS6734-exacte49-latest-native-author-binding-final-stage-observation-20261023.json)；[四筆既有review-only待決方案](/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Existing-Claude2-four-remaining-original-source-reviews-same-login-scoped-intent-PREPARED-20261023.json)。其餘有日期證據保留於JSON的current_phase_authority／current_evidence與下方歷史，不把舊狀態當新指令。
+台北15:00再次只讀的官方日期仍為1151022；這是外部資料現況，不是等待時間已滿就能算通過。
 
 ## 歷史行為稽核（2026-10-21）
 
