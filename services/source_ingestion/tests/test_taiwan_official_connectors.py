@@ -304,7 +304,8 @@ def test_taiwan_official_adapter_binds_exact_governed_twse_calendar_evidence() -
     assert "2026-10-08" in evidence_oct["trading_days"]
 
     catalog = adapter.connector().metadata["governed_calendar_evidence"]
-    assert len(catalog) == 2
+    assert len(catalog) == 3
+    assert catalog[2]["version"] == "twse-2026-emergency-closure-20261023-v2"
     assert catalog[0]["version"] == "twse-2026-lny-v1"
     assert catalog[0]["sha256"] == evidence_lny["checksum"]
     assert catalog[1]["version"] == TWSE_2026_SCHEDULE_CALENDAR_VERSION
@@ -1310,3 +1311,28 @@ def test_bounded_official_refresh_retains_configured_history_depth(monkeypatch) 
         assert aware_pattern.match(norm["available_time"])
         assert not re.match(r"^\d{4}-\d{2}-\d{2}$", record.metadata["available_time"])
 
+
+
+def test_taiwan_official_adapter_binds_emergency_closure_v2_for_oct22_price() -> None:
+    adapter = TaiwanOfficialMarketDatasetAdapter(max_records=10)
+    records = adapter.records_from_payload(
+        "tw_price_daily",
+        "TWSE",
+        [
+            {"Date": "1151021", "Code": "2330", "ClosingPrice": "960.00"},
+            {"Date": "1151022", "Code": "2330", "ClosingPrice": "961.00"},
+            {"Date": "1151028", "Code": "2330", "ClosingPrice": "962.00"},
+            {"Date": "1151029", "Code": "2330", "ClosingPrice": "963.00"},
+        ],
+        trace_id="trace-emergency-closure",
+    )
+    # Records outside the verified window keep the retained v1 evidence.
+    assert records[0].metadata["calendar_evidence"]["version"] == "twse-2026-schedule-v1"
+    assert records[3].metadata["calendar_evidence"]["version"] == "twse-2026-schedule-v1"
+    for record in records[1:3]:
+        evidence = record.metadata["calendar_evidence"]
+        assert evidence["version"] == "twse-2026-emergency-closure-20261023-v2"
+        assert evidence["source_url"].startswith("https://www.twse.com.tw/staticFiles/")
+        assert "2026-10-23" in evidence["holidays"]
+        assert "2026-10-23" not in evidence["trading_days"]
+        assert evidence["trading_days"] == ["2026-10-22", "2026-10-27", "2026-10-28"]

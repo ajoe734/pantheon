@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from services.source_ingestion import controller_worker
+from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
 from services.source_ingestion import controller_state
 from services.source_ingestion.controller_state import (
     ControllerState,
@@ -1562,6 +1563,80 @@ def test_terminal_readback_accepts_weekend_taiwan_official_market_bounded_refres
         actual=actual,
         now=now,
     )
+
+
+def _tw_oct22_close_readback(now: datetime) -> dict[str, Any]:
+    stamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    actual = _actual_readback()
+    actual["captured_at"] = stamp
+    conn = actual["connectors"][0]
+    conn["connector_id"] = "tw-twse-tpex-official-market"
+    conn["connector"]["connector_id"] = "tw-twse-tpex-official-market"
+    conn["schedule"]["connector_id"] = "tw-twse-tpex-official-market"
+    conn["freshness"].update(
+        {
+            "status": "fresh",
+            "is_due": False,
+            "staleness_seconds": 5,
+            "last_success_at": stamp,
+            "last_ingest_run_id": "run-tw-1023",
+            "latest_run": {"ingest_run_id": "run-tw-1023", "status": "completed"},
+        }
+    )
+    conn["latest_source_record"].update(
+        {
+            "source_id": "tw-official:tw_price_daily:TWSE:2330:oct22-close",
+            "connector_id": "tw-twse-tpex-official-market",
+            "status": "normalized",
+        }
+    )
+    conn["latest_source_record"]["provenance"].update(
+        {
+            "provider": "TWSE OpenAPI",
+            "dataset": DATASET,
+            "available_time": "2026-10-22T05:30:00Z",
+            "api_endpoint": "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+            "access_scope": "public",
+            "license_scope": "official_reference",
+            "schema_hash": "tw_price_daily.v1",
+            "source_ingest_run_id": "run-tw-1023",
+            "calendar_evidence": governed_taiwan_calendar_evidence(
+                venue="TWSE", trade_date="2026-10-22"
+            ),
+        }
+    )
+    conn["source_health"]["source_id"] = "tw-twse-tpex-official-market"
+    conn["source_health"]["metadata"]["last_ingest_run_id"] = "run-tw-1023"
+    return actual
+
+
+def _tw_reconcile() -> dict[str, Any]:
+    reconcile = _reconcile()
+    reconcile["results"][0]["actions"][0]["connector_id"] = "tw-twse-tpex-official-market"
+    return reconcile
+
+
+def test_terminal_readback_accepts_oct22_close_during_oct23_emergency_closure() -> None:
+    # Production default calendar pins: TWSE closed all of 2026-10-23 (official
+    # 2026-10-22 20:10 announcement), so the 10/22 close is still the latest session.
+    now = datetime(2026, 10, 23, 7, 5, 0, tzinfo=timezone.utc)
+    _validate_terminal_readback(
+        reconcile=_tw_reconcile(),
+        schedule=_schedule(),
+        actual=_tw_oct22_close_readback(now),
+        now=now,
+    )
+
+
+def test_terminal_readback_rejects_oct22_close_after_next_completed_session() -> None:
+    now = datetime(2026, 10, 27, 6, 0, 0, tzinfo=timezone.utc)
+    with pytest.raises(ControllerTickError, match=r"source_data_stale"):
+        _validate_terminal_readback(
+            reconcile=_tw_reconcile(),
+            schedule=_schedule(),
+            actual=_tw_oct22_close_readback(now),
+            now=now,
+        )
 
 
 def test_terminal_readback_rejects_stale_weekday_taiwan_official_data() -> None:
