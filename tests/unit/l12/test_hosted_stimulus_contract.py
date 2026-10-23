@@ -25,6 +25,8 @@ TENANT = "tenant-dev"
 
 AUTH, ALPHA, SESS, EVAL_IDENT, EVAL_ID = "auth-run-1", "alpha-run-1", "ts-1", "eval-ident-1", "eval-1"
 IMIT_RUN, IMIT_TASK, REQ, HANDOFF = "imit-run-1", "task-1", "req-1", "ho-1"
+CAND, DSV = "cand-1", "dsv-1"
+CHAIN_REFS = {"registry_id": "reg-1", "candidate_id": CAND, "dataset_version_id": DSV}
 
 # Real DTO shapes of the A/B domain loop receipts (terminal_output/authority_readback/next_consumer).
 DOMAIN_CASES: dict[str, dict[str, Any]] = {
@@ -53,6 +55,7 @@ def domain_records() -> dict[tuple[str, str], Any]:
     """Actual Research/Training/Consultation owner records behind the A/B loops."""
 
     return {
+        ("registry", "/api/registry/strategy-specs/reg-1"): {"entry": {"tenant_id": TENANT, "metadata": {"chain_id": CHAIN}}},
         ("research", f"/api/research-orchestrator/runs/{AUTH}"): {
             "run_id": AUTH, "tenant_id": TENANT,
             "parameters": {"tenant_id": TENANT, "strategy_spec_id": "reg-1",
@@ -67,9 +70,12 @@ def domain_records() -> dict[tuple[str, str], Any]:
         },
         ("research", f"/api/research-orchestrator/runs/{IMIT_RUN}"): {
             "run_id": IMIT_RUN, "task_id": IMIT_TASK, "tenant_id": TENANT,
+            "metadata": {"candidate_id": CAND},
         },
         ("consultation", f"/api/consult/requests/{REQ}"): {
             "request_id": REQ, "tenant_id": TENANT, "target_type": "experiment_run", "target_id": IMIT_RUN,
+            "metadata": {"chain_id": CHAIN, "registry_id": "reg-1", "teaching_session_id": SESS,
+                         "dataset_version_id": DSV, "candidate_id": CAND, "experiment_run_id": IMIT_RUN},
         },
         ("consultation", f"/api/consult/handoffs/{HANDOFF}"): {
             "handoff_id": HANDOFF, "request_id": REQ, "status": "acknowledged",
@@ -340,10 +346,10 @@ def test_h2_consent_is_a_carried_reference_not_a_governance_gate(monkeypatch, tm
     child = FakeChild({"B_learning": _report("human", "B_learning", "completed", B_KEYS, {})})
     monkeypatch.setattr(subprocess, "run", child)
     done = {"A_research": {"phase_status": "completed"}}
-    prior = {"hosted": {"chain_id": CHAIN, "phases": done, "loops": domain_loops("A_research")}}
+    prior = {"hosted": {"chain_id": CHAIN, "phases": done, "loops": domain_loops("A_research"), "resource_ids": dict(CHAIN_REFS)}}
     owner = FakeOwner(domain_records())
     _runner(tmp_path, "B_learning", owner, prior=prior, decisions={"H2": "consent-rec-1"}).run()
-    assert not [x for x in owner.log if x[0] in {"governance", "registry"}] and child.calls[0]["input"]["decisions"] == {"H2": "consent-rec-1"}
+    assert not [x for x in owner.log if x[0] == "governance" or x[1] != "GET"] and child.calls[0]["input"]["decisions"] == {"H2": "consent-rec-1"}
 
 
 def test_entry_honors_shared_chain_input_packet(monkeypatch, tmp_path):
@@ -425,7 +431,7 @@ def test_paused_partial_case_is_kept_as_progress_not_normalized(monkeypatch, tmp
     report["cases"][parent.LOOP_CASES[9][2]]["next_consumer_readback"] = None  # real A1H1-style partial
     monkeypatch.setattr(subprocess, "run", FakeChild({"D_observe": report}))
     done = {p: {"phase_status": "completed"} for p in parent.HOSTED_PHASES[:3]}
-    prior = {"hosted": {"chain_id": CHAIN, "phases": done, "loops": domain_loops("A_research", "B_learning")}}
+    prior = {"hosted": {"chain_id": CHAIN, "phases": done, "loops": domain_loops("A_research", "B_learning"), "resource_ids": dict(CHAIN_REFS)}}
     evidence = _runner(tmp_path, "D_observe", FakeOwner(domain_records()), prior=prior).run()
     hosted = _receipt(tmp_path)["hosted"]
     assert evidence.status == "paused" and [l["loop_id"] for l in hosted["loops"]] == ["alpha_replication", "persona_teaching", "human_imitation_shadow_evaluation", "consultation"]
@@ -453,7 +459,7 @@ def test_object_decisions_parse_decision_id_and_forward_h2_mapping(monkeypatch, 
         **domain_records(),
     })
     prior = {"hosted": {"chain_id": CHAIN, "phases": done, "resource_ids": {"registry_id": "reg-1"},
-                        "loops": domain_loops("A_research", "B_learning")}}
+                        "loops": domain_loops("A_research", "B_learning"), "resource_ids": dict(CHAIN_REFS)}}
     _runner(tmp_path, "C_promote", owner, prior=prior, decisions=decisions).run()
     assert ("governance", "GET", "/api/governance/approvals/apv-1", None) in owner.log
     assert child.calls[0]["input"]["decisions"]["H2"] == h2
@@ -465,8 +471,8 @@ def test_registry_without_chain_id_is_verified_by_distillation_lineage(monkeypat
     lineage = {"source_id": src, "source_digest": "sha256:ab"}
     entry = {"tenant_id": TENANT, "metadata": {"distillation": lineage}, "checksum": "ck"}
     prior = {"hosted": {"chain_id": CHAIN, "phases": {"A_research": {"phase_status": "completed"}}, "loops": domain_loops("A_research"),
-                        "resource_ids": {"registry_id": "reg-1", "source_id": src, "checksum": "ck"}}}
-    owner = FakeOwner({("registry", "/api/registry/strategy-specs/reg-1"): {"entry": entry}, **domain_records()})
+                        "resource_ids": {**CHAIN_REFS, "source_id": src, "checksum": "ck"}}}
+    owner = FakeOwner({**domain_records(), ("registry", "/api/registry/strategy-specs/reg-1"): {"entry": entry}})
     runner = _runner(tmp_path, "A_research", owner, prior=prior)
     assert runner.verify_predecessors() == []
     entry["metadata"]["distillation"] = dict(lineage, source_id=f"hosted-all12-{CHAIN}-other-src")
@@ -498,14 +504,15 @@ def test_baseline_recorded_before_first_mutation_and_restored_at_close(monkeypat
         "capital_pool_id": "cp-1", "capital_binding_id": "cb-1", "runtime_binding_id": "rb-1"})}))
     done = {p: {"phase_status": "completed"} for p in parent.HOSTED_PHASES[:2]}
     owner = FakeOwner({("runtime", FLEET): _fleet(1, ["old"]), **domain_records()})
-    _runner(tmp_path, "C_promote", owner, prior={"hosted": {"chain_id": CHAIN, "phases": done, "loops": domain_loops("A_research", "B_learning")}}).run()
+    _runner(tmp_path, "C_promote", owner, prior={"hosted": {"chain_id": CHAIN, "phases": done, "loops": domain_loops("A_research", "B_learning"), "resource_ids": dict(CHAIN_REFS)}}).run()
     c = _receipt(tmp_path)["hosted"]
     assert c["baseline_fleet"]["active_count"] == 1 and c["baseline_fleet"]["binding_ids"] == ["old"]
-    assert c["resource_ids"] == {"capital_pool_id": "cp-1", "capital_binding_id": "cb-1", "runtime_binding_id": "rb-1"}
+    assert c["resource_ids"] == {**CHAIN_REFS, "capital_pool_id": "cp-1", "capital_binding_id": "cb-1", "runtime_binding_id": "rb-1"}
     c["loops"] = [l for l in c["loops"] if l["loop_id"] not in {"alpha_replication", "persona_teaching",
                   "human_imitation_shadow_evaluation", "consultation"}] + domain_loops("A_research", "B_learning")
 
     c["phases"]["D_observe"] = {"phase_status": "completed"}
+    c["resource_ids"] = {k: v for k, v in c["resource_ids"].items() if k not in CHAIN_REFS}  # Registry retire is covered elsewhere
     close = _close_owner(_fleet(1, ["old"]))
     _runner(tmp_path, "E_close", close, prior={"hosted": c}, name="close.json").run()
     phase = _receipt(tmp_path, "close.json")["hosted"]["phases"]["E_close"]
@@ -523,7 +530,7 @@ def test_unreadable_baseline_pauses_c_before_launch(monkeypatch, tmp_path):
     child = FakeChild({})
     monkeypatch.setattr(subprocess, "run", child)
     done = {p: {"phase_status": "completed"} for p in parent.HOSTED_PHASES[:2]}
-    prior = {"hosted": {"chain_id": CHAIN, "phases": done, "loops": domain_loops("A_research", "B_learning")}}
+    prior = {"hosted": {"chain_id": CHAIN, "phases": done, "loops": domain_loops("A_research", "B_learning"), "resource_ids": dict(CHAIN_REFS)}}
     evidence = _runner(tmp_path, "C_promote", FakeOwner(domain_records()), prior=prior).run()
     assert child.calls == [] and evidence.status == "paused"
     assert _receipt(tmp_path)["hosted"]["blocked_before"] == "C_promote:baseline_unavailable"
@@ -547,7 +554,7 @@ def test_opaque_h2_consent_ref_accepted_and_lineage_is_exact(monkeypatch, tmp_pa
 
 def _reuse_prior(*phases):
     done = {p: {"phase_status": "completed"} for p in phases}
-    return {"hosted": {"chain_id": CHAIN, "phases": done, "loops": domain_loops(*phases)}}
+    return {"hosted": {"chain_id": CHAIN, "phases": done, "loops": domain_loops(*phases), "resource_ids": dict(CHAIN_REFS)}}
 
 
 def _reuse(tmp_path, monkeypatch, records, prior, phase="A_research"):
@@ -575,17 +582,21 @@ def test_missing_domain_owner_record_pauses_instead_of_reuse(monkeypatch, tmp_pa
     assert "owner GET returned 404" in " ".join(hosted["phases"]["B_learning"]["evidence"])
 
 
+def _registry_only():
+    return {k: v for k, v in domain_records().items() if k[0] == "registry"}
+
+
 def test_absent_required_domain_refs_pause_even_with_completed_receipt(monkeypatch, tmp_path):
     prior = _reuse_prior("A_research")
     prior["hosted"]["loops"] = []
-    child, owner, evidence, hosted = _reuse(tmp_path, monkeypatch, {}, prior)
-    assert child.calls == [] and evidence.status == "paused" and owner.log == []
+    child, owner, evidence, hosted = _reuse(tmp_path, monkeypatch, _registry_only(), prior)
+    assert child.calls == [] and evidence.status == "paused" and not [x for x in owner.log if x[0] != "registry"]
     assert "loop receipts are missing" in hosted["phases"]["A_research"]["evidence"][0]
     prior["hosted"]["loops"] = domain_loops("A_research")
     for loop in prior["hosted"]["loops"]:
         loop["terminal_output"] = {"id": loop["loop_id"]}
         loop["authority_readback"] = {"id": loop["loop_id"]}
-    _c, _o, evidence, hosted = _reuse(tmp_path, monkeypatch, {}, prior)
+    _c, _o, evidence, hosted = _reuse(tmp_path, monkeypatch, _registry_only(), prior)
     assert evidence.status == "paused"
     assert "lacks required authority_run_id" in " ".join(hosted["phases"]["A_research"]["evidence"])
 
@@ -603,6 +614,37 @@ def test_mismatched_domain_owner_record_pauses(monkeypatch, tmp_path, path, patc
     records = domain_records()
     records[path] = {**records[path], **patch}
     child, _owner, evidence, hosted = _reuse(tmp_path, monkeypatch, records, _reuse_prior("A_research", "B_learning"), "B_learning")
+    assert child.calls == [] and evidence.status == "paused"
+    assert needle in " ".join(hosted["phases"]["B_learning"]["evidence"])
+
+
+FOREIGN_CASES = [
+    # same-tenant foreign-chain outputs that are self-consistent with their own loop receipt
+    (("research", f"/api/research-orchestrator/runs/{AUTH}"), "alpha", "is not this chain's Registry"),
+    (("consultation", f"/api/consult/requests/{REQ}"), "chain", "chain label"),
+    (("consultation", f"/api/consult/requests/{REQ}"), "registry_id", "lineage registry_id"),
+    (("consultation", f"/api/consult/requests/{REQ}"), "teaching_session_id", "lineage teaching_session_id"),
+    (("consultation", f"/api/consult/requests/{REQ}"), "missing", "lineage dataset_version_id"),
+    (("research", f"/api/research-orchestrator/runs/{IMIT_RUN}"), "candidate", "lineage candidate_id"),
+]
+
+
+@pytest.mark.parametrize("path,kind,needle", FOREIGN_CASES)
+def test_same_tenant_foreign_chain_outputs_pause(monkeypatch, tmp_path, path, kind, needle):
+    records, prior = domain_records(), _reuse_prior("A_research", "B_learning")
+    record = records[path]
+    if kind == "alpha":
+        record["parameters"]["strategy_spec_id"] = "foreign-spec"
+        prior["hosted"]["loops"][0]["terminal_output"]["strategy_spec_id"] = "foreign-spec"
+    elif kind == "chain":
+        record["metadata"]["chain_id"] = "other-chain"
+    elif kind == "missing":
+        del record["metadata"]["dataset_version_id"]
+    elif kind == "candidate":
+        record["metadata"]["candidate_id"] = "foreign-cand"
+    else:
+        record["metadata"][kind] = "foreign"
+    child, _owner, evidence, hosted = _reuse(tmp_path, monkeypatch, records, prior, "B_learning")
     assert child.calls == [] and evidence.status == "paused"
     assert needle in " ".join(hosted["phases"]["B_learning"]["evidence"])
 

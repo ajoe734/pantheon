@@ -879,6 +879,27 @@ class HostedChainRunner:
             if tenant != self.tenant_id:
                 problems.append(f"{label}: tenant {tenant!r} != {self.tenant_id!r}")
 
+        def chain_ref(key: str) -> str:
+            value = str(self.resource_ids.get(key) or "").strip()
+            if not value:
+                problems.append(f"completed phase lacks chain-owned {key} to cross-join owner outputs")
+            return value
+
+        def lineage(label: str, record: Mapping[str, Any], expected: Mapping[str, str], need_chain: bool = True) -> None:
+            holders = [record.get("metadata"), record.get("parameters"), record]
+            holders = [h for h in holders if isinstance(h, Mapping)]
+            chain = _record_chain(record) or next(
+                (str(h["chain_id"]) for h in holders if str(h.get("chain_id") or "").strip()), ""
+            )
+            if need_chain and chain != self.chain_id:
+                problems.append(f"{label}: chain label {chain!r} != {self.chain_id!r}")
+            for key, want in expected.items():
+                if not want:
+                    continue
+                got = next((str(h[key]) for h in holders if str(h.get(key) or "").strip()), "")
+                if got != want:
+                    problems.append(f"{label}: lineage {key} {got!r} != this chain's {want!r}")
+
         if done("A_research"):
             alpha = self.loops.get("alpha_replication")
             teaching = self.loops.get("persona_teaching")
@@ -907,6 +928,11 @@ class HostedChainRunner:
                         spec = self._loop_ref(alpha, ("terminal_output", "strategy_spec_id"))
                         if spec and params.get("strategy_spec_id") != spec:
                             problems.append(f"{label}: strategy_spec_id {params.get('strategy_spec_id')!r} != {spec!r}")
+                        registry_id = chain_ref("registry_id")
+                        if registry_id and (params.get("strategy_spec_id") != registry_id or (spec and spec != registry_id)):
+                            problems.append(
+                                f"{label}: strategy_spec_id {params.get('strategy_spec_id')!r} is not this chain's Registry {registry_id!r}"
+                            )
                 session_id = need("persona_teaching", "session_id",
                                   self._loop_ref(teaching, ("terminal_output", "session_id"), ("authority_readback", "session_id")))
                 eval_identity = self._loop_ref(teaching, ("terminal_output", "id"), ("authority_readback", "eval_identity"))
@@ -955,6 +981,7 @@ class HostedChainRunner:
                         tenant_ok(label, run)
                         if run.get("run_id") != run_id or (task_id and run.get("task_id") != task_id):
                             problems.append(f"{label}: run/task identity differs from the imitation loop receipt")
+                        lineage(label, run, {"candidate_id": chain_ref("candidate_id")}, need_chain=False)
                 request_id = need("consultation", "request_id", self._loop_ref(consult, ("authority_readback", "request_id")))
                 handoff_id = need("consultation", "governance_handoff_id", self._loop_ref(consult, ("terminal_output", "governance_handoff_id")))
                 if request_id:
@@ -968,6 +995,16 @@ class HostedChainRunner:
                             problems.append(f"{label}: request_id {request.get('request_id')!r} differs")
                         if run_id and (request.get("target_type") != "experiment_run" or request.get("target_id") != run_id):
                             problems.append(f"{label}: target is not the imitation ExperimentRun {run_id!r}")
+                        teaching = self.loops.get("persona_teaching")
+                        lineage(label, request, {
+                            "registry_id": chain_ref("registry_id"),
+                            "teaching_session_id": self._loop_ref(
+                                teaching, ("terminal_output", "session_id"), ("authority_readback", "session_id")
+                            ),
+                            "dataset_version_id": chain_ref("dataset_version_id"),
+                            "candidate_id": chain_ref("candidate_id"),
+                            "experiment_run_id": run_id,
+                        })
                 if handoff_id and request_id:
                     label = f"governance handoff {handoff_id}"
                     handoff, err = self._get_domain("consultation", f"/api/consult/handoffs/{quote(handoff_id)}", label)

@@ -1,43 +1,47 @@
 {
- "task_id": "HOSTED-ALL12-STIMULUS-PHASES-20261023",
- "kind": "source_delivery_not_hosted_acceptance",
- "base_contract": "approved-T2-T3-disjoint-native-packets.json (PR6736, PR6741 merge 4eb71123ec2d10427ba9ea1cf3ebfba89cf07999)",
- "changed_files": [
-  "tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py",
-  "tests/unit/l12/test_hosted_stimulus_contract.py"
- ],
- "behavior": {
-  "opt_in": "PANTHEON_L12_HOSTED_CHAIN=1 plus PANTHEON_L12_STIMULUS_CROSS_LOOP_E2E=1; default isolated gate unchanged",
-  "child_launch": "existing StimulusDrivenClosureGate._run_domain_suite with extra env (chain id, phase, input file); no second launch engine",
-  "receipt": "existing atomic Evidence.write plus a hosted block: chain_id, phase, phase_status completed|paused|failed, blocked_before, resource_ids, decisions, per-phase history",
-  "resume": "prior receipt is a lookup hint; every referenced owner record is re-read (tenant + chain label) and every referenced decision is re-read (decided/approved, H1 target = registry_id); mismatch pauses without launching",
-  "idempotency": "a completed phase in the prior receipt is reused, not re-dispatched, only after owner records and decisions are re-read and verified (D_observe may repeat); hosted mode excludes the legacy full-chain test so only the requested phase dispatches",
-  "ordering": "A_research, B_learning, C_promote, D_observe, E_close; skipping ahead raises",
-  "e_close": "existing owner retire operations only for records whose GET shows verified tenant+chain label; every retire is read back (accepted != retired); rejected/unreadable/unread-back records leave E_close paused (cleanup_incomplete), never completed; E_close never reuses a prior completed receipt; H1 revoke only when the chain registry entry itself was verified",
-  "all12_passed": "true only when all five phases completed, twelve loops present, and E_close baseline_fleet_check == verified (Runtime desired-state re-read equals the baseline recorded before the first C_promote mutation)",
-  "owner_request_schemas": "Capital PATCH status {actor_id,actor_role,status} using executing identity (PANTHEON_L12_HOSTED_OWNER_ACTOR_ID, PANTHEON_L12_HOSTED_OWNER_ROLES) and a granted role; Governance revoke {actor_id,actor_role,expected_version from record}; Registry advance CAS body; Runtime retire {}; Deployment plan status {status}. No identity/role => incomplete, nothing fabricated",
-  "decisions": "H1/H3 are objects read via decision_id; only H1 is read from Governance; H2/H4 consent objects are forwarded unchanged and never gated",
-  "entry": "PANTHEON_L12_HOSTED_CHAIN_INPUT packet (chain_id, phase, decisions, predecessors) is honored and merged with prior receipt / DECISION_REFS; mismatching chain_id/phase raises",
-  "join_corrections": {
-   "paused_partial_cases": "on a paused phase a case that cannot be normalized is kept under phases.<phase>.partial_cases and not added to loops; completed phases still reject it",
-   "registry_lineage": "registry entry without chain_id is accepted only when metadata.distillation.source_id equals resource_ids.source_id, contains the chain id, has a source_digest, and checksum matches; no new owner API",
-   "typed_ids": "resource ids must be scalar nonsecret owner ids (no objects/paths); capital_pool_id/capital_binding_id/runtime_binding_id are read and retired by E_close",
-   "baseline": "C_promote reads existing Runtime /api/runtime-fleet/desired-state before launch and carries baseline_fleet in the receipt; unreadable baseline pauses C; E_close compares and reports verified|mismatch|chain_binding_still_active|baseline_not_recorded|unreadable"
+  "task_id": "HOSTED-ALL12-STIMULUS-PHASES-20261023",
+  "kind": "source_delivery_not_hosted_acceptance",
+  "base_contract": "approved-T2-T3-disjoint-native-packets.json (PR6736, PR6741 merge 4eb71123ec2d10427ba9ea1cf3ebfba89cf07999)",
+  "changed_files": [
+    "tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py",
+    "tests/unit/l12/test_hosted_stimulus_contract.py"
+  ],
+  "behavior": {
+    "opt_in": "PANTHEON_L12_HOSTED_CHAIN=1 plus PANTHEON_L12_STIMULUS_CROSS_LOOP_E2E=1; default isolated gate unchanged",
+    "child_launch": "existing StimulusDrivenClosureGate._run_domain_suite with extra env (chain id, phase, input file); no second launch engine",
+    "receipt": "existing atomic Evidence.write plus a hosted block: chain_id, phase, phase_status completed|paused|failed, blocked_before, resource_ids, decisions, per-phase history",
+    "resume": "prior receipt is a lookup hint; every referenced owner record is re-read (tenant + chain label) and every referenced decision is re-read (decided/approved, H1 target = registry_id); mismatch pauses without launching",
+    "idempotency": "a completed phase in the prior receipt is reused, not re-dispatched, only after owner records and decisions are re-read and verified (D_observe may repeat); hosted mode excludes the legacy full-chain test so only the requested phase dispatches",
+    "ordering": "A_research, B_learning, C_promote, D_observe, E_close; skipping ahead raises",
+    "e_close": "existing owner retire operations only for records whose GET shows verified tenant+chain label; every retire is read back (accepted != retired); rejected/unreadable/unread-back records leave E_close paused (cleanup_incomplete), never completed; E_close never reuses a prior completed receipt; H1 revoke only when the chain registry entry itself was verified",
+    "all12_passed": "true only when all five phases completed, twelve loops present, and E_close baseline_fleet_check == verified (Runtime desired-state re-read equals the baseline recorded before the first C_promote mutation)",
+    "owner_request_schemas": "Capital PATCH status {actor_id,actor_role,status} using executing identity (PANTHEON_L12_HOSTED_OWNER_ACTOR_ID, PANTHEON_L12_HOSTED_OWNER_ROLES) and a granted role; Governance revoke {actor_id,actor_role,expected_version from record}; Registry advance CAS body; Runtime retire {}; Deployment plan status {status}. No identity/role => incomplete, nothing fabricated",
+    "decisions": "H1/H3 are objects read via decision_id; only H1 is read from Governance; H2/H4 consent objects are forwarded unchanged and never gated",
+    "entry": "PANTHEON_L12_HOSTED_CHAIN_INPUT packet (chain_id, phase, decisions, predecessors) is honored and merged with prior receipt / DECISION_REFS; mismatching chain_id/phase raises",
+    "join_corrections": {
+      "paused_partial_cases": "on a paused phase a case that cannot be normalized is kept under phases.<phase>.partial_cases and not added to loops; completed phases still reject it",
+      "registry_lineage": "registry entry without chain_id is accepted only when metadata.distillation.source_id equals resource_ids.source_id, contains the chain id, has a source_digest, and checksum matches; no new owner API",
+      "typed_ids": "resource ids must be scalar nonsecret owner ids (no objects/paths); capital_pool_id/capital_binding_id/runtime_binding_id are read and retired by E_close",
+      "baseline": "C_promote reads existing Runtime /api/runtime-fleet/desired-state before launch and carries baseline_fleet in the receipt; unreadable baseline pauses C; E_close compares and reports verified|mismatch|chain_binding_still_active|baseline_not_recorded|unreadable"
+    },
+    "domain_output_resume": "before reusing completed A/B (and on any later phase), verify_predecessors re-reads the actual owner outputs from the per-loop hosted.loops receipts: Research GET runs/{authority_run_id} (nested Alpha run id, status completed, tenant, strategy_spec_id); Training GET sessions/{id} (tenant, context_refs carry authority+domain run ids) and terminal-readback (eval_identity, evaluation_result.eval_id); Research GET runs/{imitation run_id} (run/task/tenant); Consultation GET requests/{id} (tenant, target=imitation run) and handoffs/{id} (request_id, status acknowledged). Missing/unreadable/mismatched/absent required refs pause with concrete evidence; no rerun of provider/business suites, no new store/API, no chain label imposed on DTOs lacking one.",
+    "owner_client_domain_auth": "UrllibOwnerClient reads training/research/consultation under their existing configured headers (PANTHEON_L12_TRAINING_TOKEN + X-Pantheon-Service, tenant headers, PANTHEON_L12_CONSULTATION_TOKEN); unconfigured URL => unreadable => pause"
   },
-  "domain_output_resume": "before reusing completed A/B (and on any later phase), verify_predecessors re-reads the actual owner outputs from the per-loop hosted.loops receipts: Research GET runs/{authority_run_id} (nested Alpha run id, status completed, tenant, strategy_spec_id); Training GET sessions/{id} (tenant, context_refs carry authority+domain run ids) and terminal-readback (eval_identity, evaluation_result.eval_id); Research GET runs/{imitation run_id} (run/task/tenant); Consultation GET requests/{id} (tenant, target=imitation run) and handoffs/{id} (request_id, status acknowledged). Missing/unreadable/mismatched/absent required refs pause with concrete evidence; no rerun of provider/business suites, no new store/API, no chain label imposed on DTOs lacking one.",
-  "owner_client_domain_auth": "UrllibOwnerClient reads training/research/consultation under their existing configured headers (PANTHEON_L12_TRAINING_TOKEN + X-Pantheon-Service, tenant headers, PANTHEON_L12_CONSULTATION_TOKEN); unconfigured URL => unreadable => pause"
- },
- "assumptions_for_reviewer": [
-  "child suites (T2) report chain_id, phase, phase_status, blocked_before, resource_ids, exit 0 when paused",
-  "resource_ids keys read/retired by the parent: capital_binding_id, runtime_binding_id, plan_id, capital_pool_id, registry_id (+ decisions H1); other keys are carried as references and reported residual",
-  "owner access uses PANTHEON_L12_<SERVICE>_URL and PANTHEON_L12_HOSTED_OWNER_TOKEN (real executing identity); no tokens minted",
-  "retire request bodies follow the existing suite/owner models; not exercised against a live owner"
- ],
- "not_done": [
-  "no hosted run, VM change, provider request or business approval",
-  "product hosted execution and independent restart remain original parent obligations",
-  "T2 must agree the packet 'predecessors'/'decisions' keys and the two new owner-identity env vars via native notes; not exercised against a live owner"
- ],
- "validation": "/tmp/civenv/bin/pytest -q tests/unit/l12/test_hosted_stimulus_contract.py tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py (local only)",
- "verification": "tests/unit/l12/test_hosted_stimulus_contract.py 41 passed; with parent file 45 passed 2 skipped (local fake-owner only)"
+  "assumptions_for_reviewer": [
+    "child suites (T2) report chain_id, phase, phase_status, blocked_before, resource_ids, exit 0 when paused",
+    "resource_ids keys read/retired by the parent: capital_binding_id, runtime_binding_id, plan_id, capital_pool_id, registry_id (+ decisions H1); other keys are carried as references and reported residual",
+    "owner access uses PANTHEON_L12_<SERVICE>_URL and PANTHEON_L12_HOSTED_OWNER_TOKEN (real executing identity); no tokens minted",
+    "retire request bodies follow the existing suite/owner models; not exercised against a live owner"
+  ],
+  "not_done": [
+    "no hosted run, VM change, provider request or business approval",
+    "product hosted execution and independent restart remain original parent obligations",
+    "T2 must agree the packet 'predecessors'/'decisions' keys and the two new owner-identity env vars via native notes; not exercised against a live owner"
+  ],
+  "validation": "/tmp/civenv/bin/pytest -q tests/unit/l12/test_hosted_stimulus_contract.py tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py (local only)",
+  "verification": "tests/unit/l12/test_hosted_stimulus_contract.py 41 passed; with parent file 45 passed 2 skipped (local fake-owner only)",
+  "same_chain_cross_join": {
+    "rule": "On reuse of completed A/B, owner outputs are joined to chain-owned refs, not just to the untrusted receipt: Alpha authority run strategy_spec_id must equal the owner-verified chain Registry id; ConsultRequest metadata must carry this chain_id and the chain's registry_id, Teaching session, dataset_version_id, candidate_id and imitation run id; imitation run metadata candidate_id must equal the chain candidate_id. Missing lineage or missing chain-owned ref pauses with concrete evidence.",
+    "tests": "test_same_tenant_foreign_chain_outputs_pause (6 cases: foreign Alpha spec, foreign consult chain/registry/Teaching, missing dataset lineage, foreign B run candidate) plus the existing valid-chain reuse test; GET-only, no suites run"
+  }
 }
