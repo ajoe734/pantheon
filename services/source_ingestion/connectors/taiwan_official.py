@@ -176,6 +176,31 @@ _TWSE_2026_SCHEDULE_CALENDAR_PAYLOAD: Mapping[str, Any] = {
     "version": TWSE_2026_SCHEDULE_CALENDAR_VERSION,
 }
 
+# Bounded correction to twse-2026-schedule-v1: TWSE announced on 2026-10-22
+# 20:10 (newsDetail 8a8216d6a0fa351b01a1638557450205, attachment
+# https://www.twse.com.tw/staticFiles/news/news/tsecnews/8a8216d6a0fa351b01a1638507940202.pdf)
+# that the whole 2026-10-23 session is closed (typhoon).  v1 stays pinned and
+# unchanged; v2 only supersedes it for the 2026-10-22..2026-10-28 window.
+TWSE_2026_EMERGENCY_CLOSURE_CALENDAR_VERSION = "twse-2026-emergency-closure-20261023-v2"
+TWSE_2026_EMERGENCY_CLOSURE_CALENDAR_SHA256 = "48e8d89449b436d936cb4a25c9860141b11a838d4f873deb2717af9fd896df99"
+TWSE_2026_EMERGENCY_CLOSURE_CALENDAR_FETCHED_AT = "2026-10-23T06:45:17Z"
+_TWSE_2026_EMERGENCY_CLOSURE_CALENDAR_PAYLOAD: Mapping[str, Any] = {
+    "authority": "Taiwan Stock Exchange 115 年10月23日休市公告 (2026-10-22)",
+    "coverage_end": "2026-10-28",
+    "coverage_start": "2026-10-22",
+    "holidays": {
+        "2026-10-23": {"name": "颱風全日休市 (TWSE 臨時休市公告)"},
+        "2026-10-25": {"name": "臺灣光復暨金門古寧頭大捷紀念日"},
+        "2026-10-26": {"name": "臺灣光復暨金門古寧頭大捷紀念日"},
+    },
+    "market": "TW",
+    "source_url": "https://www.twse.com.tw/staticFiles/news/news/tsecnews/8a8216d6a0fa351b01a1638507940202.pdf",
+    "timezone": "Asia/Taipei",
+    "trading_days": ["2026-10-22", "2026-10-27", "2026-10-28"],
+    "venue": "TWSE",
+    "version": TWSE_2026_EMERGENCY_CLOSURE_CALENDAR_VERSION,
+}
+
 _DATASET_SCHEMA_HASHES = {
     "tw_price_daily": TW_PRICE_DAILY_SCHEMA_HASH,
     "tw_institutional_flow": TW_INSTITUTIONAL_FLOW_SCHEMA_HASH,
@@ -469,6 +494,14 @@ def governed_taiwan_calendar_evidence(
     fetched_at: str | None = None
 
     if (
+        _TWSE_2026_EMERGENCY_CLOSURE_CALENDAR_PAYLOAD["coverage_start"]
+        <= normalized_trade_date
+        <= _TWSE_2026_EMERGENCY_CLOSURE_CALENDAR_PAYLOAD["coverage_end"]
+    ):
+        matched_payload = _TWSE_2026_EMERGENCY_CLOSURE_CALENDAR_PAYLOAD
+        expected_digest = TWSE_2026_EMERGENCY_CLOSURE_CALENDAR_SHA256
+        fetched_at = TWSE_2026_EMERGENCY_CLOSURE_CALENDAR_FETCHED_AT
+    elif (
         _TWSE_2026_LNY_CALENDAR_PAYLOAD["coverage_start"]
         <= normalized_trade_date
         <= _TWSE_2026_LNY_CALENDAR_PAYLOAD["coverage_end"]
@@ -836,6 +869,15 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
                         "version": TWSE_2026_SCHEDULE_CALENDAR_VERSION,
                         "sha256": TWSE_2026_SCHEDULE_CALENDAR_SHA256,
                         "source_url": _TWSE_2026_SCHEDULE_CALENDAR_PAYLOAD["source_url"],
+                    },
+                    {
+                        "venue": "TWSE",
+                        "year": 2026,
+                        "coverage_start": _TWSE_2026_EMERGENCY_CLOSURE_CALENDAR_PAYLOAD["coverage_start"],
+                        "coverage_end": _TWSE_2026_EMERGENCY_CLOSURE_CALENDAR_PAYLOAD["coverage_end"],
+                        "version": TWSE_2026_EMERGENCY_CLOSURE_CALENDAR_VERSION,
+                        "sha256": TWSE_2026_EMERGENCY_CLOSURE_CALENDAR_SHA256,
+                        "source_url": _TWSE_2026_EMERGENCY_CLOSURE_CALENDAR_PAYLOAD["source_url"],
                     },
                 ],
                 "tier_policy": {

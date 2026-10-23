@@ -600,3 +600,94 @@ def test_taiwan_refresh_receipt_within_flat_window_accepted() -> None:
 
 
 
+
+
+def test_twse_emergency_closure_20261023_keeps_oct22_close_fresh_until_oct27_session() -> None:
+    from services.execution.market_snapshot_admission import (
+        TW_GOVERNED_CALENDAR_PINS,
+        evaluate_taiwan_market_freshness,
+    )
+    from services.source_ingestion.connectors.taiwan_official import (
+        TWSE_2026_EMERGENCY_CLOSURE_CALENDAR_SHA256,
+        TWSE_2026_EMERGENCY_CLOSURE_CALENDAR_VERSION,
+        TWSE_2026_SCHEDULE_CALENDAR_VERSION,
+        governed_taiwan_calendar_evidence,
+    )
+
+    # Prior v1 pin is retained; v2 is independently pinned by the consumer.
+    assert TWSE_2026_SCHEDULE_CALENDAR_VERSION in TW_GOVERNED_CALENDAR_PINS
+    assert (
+        TW_GOVERNED_CALENDAR_PINS[TWSE_2026_EMERGENCY_CLOSURE_CALENDAR_VERSION]
+        == TWSE_2026_EMERGENCY_CLOSURE_CALENDAR_SHA256
+    )
+
+    evidence = governed_taiwan_calendar_evidence(venue="TWSE", trade_date="2026-10-22")
+    assert evidence is not None
+    assert evidence["version"] == TWSE_2026_EMERGENCY_CLOSURE_CALENDAR_VERSION
+    assert "2026-10-23" in evidence["holidays"]
+    assert "2026-10-23" not in evidence["trading_days"]
+
+    lineage = {"connector_ids": ["tw-twse-tpex-official-market"]}
+    close_10_22 = datetime.fromisoformat("2026-10-22T05:30:00+00:00")
+    receipt = datetime.fromisoformat("2026-10-23T06:45:17+00:00")
+
+    def check(now: str, receipt_dt: datetime = receipt):
+        return evaluate_taiwan_market_freshness(
+            event_time_dt=close_10_22,
+            now_dt=datetime.fromisoformat(now),
+            refresh_receipt_dt=receipt_dt,
+            lineage=lineage,
+            max_refresh_age_seconds=86400,
+            calendar_evidence=evidence,
+        )
+
+    # Closure day (after 13:30 Asia/Taipei), weekend and 10/26 holiday: admitted.
+    for now in (
+        "2026-10-23T06:50:00+00:00",
+        "2026-10-24T03:00:00+00:00",
+        "2026-10-26T03:00:00+00:00",
+        "2026-10-27T02:00:00+00:00",
+    ):
+        assert check(now) == (True, None, None), now
+
+    # After the actual 10/27 session closes, 10/22 is stale.
+    ok, reason, detail = check("2026-10-27T06:00:00+00:00")
+    assert ok is False
+    assert reason in ("market_input_stale", "market_input_stale_refresh")
+    assert "2026-10-27" in str(detail) or "86400" in str(detail)
+
+    # A tampered or v1-labelled payload that still lists 10/23 as trading is rejected.
+    v1_like = dict(evidence)
+    v1_like["version"] = TWSE_2026_SCHEDULE_CALENDAR_VERSION
+    ok_v1, _, _ = evaluate_taiwan_market_freshness(
+        event_time_dt=close_10_22,
+        now_dt=datetime.fromisoformat("2026-10-23T06:50:00+00:00"),
+        refresh_receipt_dt=receipt,
+        lineage=lineage,
+        max_refresh_age_seconds=86400,
+        calendar_evidence=v1_like,
+    )
+    assert ok_v1 is False
+
+    # Baseline: retained v1 (10/23 listed as trading) reproduces the false rejection.
+    import json as _json
+    from services.source_ingestion.connectors import taiwan_official as _tw
+
+    v1_evidence = {
+        **_json.loads(_json.dumps(_tw._TWSE_2026_SCHEDULE_CALENDAR_PAYLOAD)),
+        "fetched_at": _tw.TWSE_2026_SCHEDULE_CALENDAR_FETCHED_AT,
+        "checksum": _tw.TWSE_2026_SCHEDULE_CALENDAR_SHA256,
+    }
+    ok_v1_real, reason_v1_real, detail_v1_real = evaluate_taiwan_market_freshness(
+        event_time_dt=close_10_22,
+        now_dt=datetime.fromisoformat("2026-10-23T06:50:00+00:00"),
+        refresh_receipt_dt=receipt,
+        lineage=lineage,
+        max_refresh_age_seconds=86400,
+        calendar_evidence=v1_evidence,
+    )
+    assert (ok_v1_real, reason_v1_real) == (False, "market_input_stale")
+    assert "2026-10-23T05:30:00" in str(detail_v1_real)
+
+    # TWSE proof is never relabelled as TPEx proof.
+    assert governed_taiwan_calendar_evidence(venue="TPEx", trade_date="2026-10-22") is None
