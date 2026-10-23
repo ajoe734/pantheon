@@ -63,6 +63,8 @@ TW_VALID_TIMEZONES = {"Asia/Taipei"}
 TW_GOVERNED_CALENDAR_PINS: Mapping[str, str] = {
     "twse-2026-lny-v1": "55b2e23b9bd30af666a99c98da2dbbfad568dcd655631b1c6347d12ee8381596",
     "twse-2026-schedule-v1": "69c1a9b5f8cd347faca498ea3ecbc63fc3fe7a7bbb49d1ddb2b50f4cef0c35eb",
+    # TWSE 2026-10-22 announcement: whole 2026-10-23 session closed (typhoon).
+    "twse-2026-emergency-closure-20261023-v2": "48e8d89449b436d936cb4a25c9860141b11a838d4f873deb2717af9fd896df99",
 }
 EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 

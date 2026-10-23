@@ -1299,6 +1299,25 @@ def _finite_metric(metrics: Dict[str, Any], key: str) -> float:
     return normalized
 
 
+def _instrument_activity(backend_result: Any) -> Dict[str, Dict[str, Any]]:
+    per_instrument = getattr(backend_result, "per_instrument_metrics", None) or {}
+    return {
+        str(instrument): {
+            "trade_count": metrics.get("trade_count"),
+            "num_bars": metrics.get("num_bars"),
+        }
+        for instrument, metrics in per_instrument.items()
+        if isinstance(metrics, dict)
+    }
+
+
+def _activity_summary(activity: Dict[str, Dict[str, Any]]) -> str:
+    return ",".join(
+        f"{instrument}:trades={row['trade_count']}/bars={row['num_bars']}"
+        for instrument, row in activity.items()
+    )
+
+
 def _proof_digest(proof: Dict[str, Any]) -> str:
     unsigned = dict(proof)
     unsigned.pop("proof_digest", None)
@@ -1516,14 +1535,34 @@ def _run_preview_evaluation(
     if not str(backend_result.run_id or "").startswith("vbt-real-"):
         raise AuthorityValidationError("evaluation backend did not return real vectorbt run provenance")
     aggregate = dict(backend_result.aggregate_metrics)
-    metrics = {
-        "total_return": _finite_metric(aggregate, "mean_total_return"),
-        "sharpe_ratio": _finite_metric(aggregate, "mean_sharpe_ratio"),
-        "max_drawdown": _finite_metric(aggregate, "mean_max_drawdown"),
-    }
+    instrument_activity = _instrument_activity(backend_result)
+    # The adapter names the zero-activity case; any other non-finite metric stays fail-closed.
+    sharpe_undefined_reason = aggregate.get("sharpe_undefined_reason")
+    if sharpe_undefined_reason not in (None, "no_trading_activity", "zero_return_variance"):
+        raise AuthorityValidationError(
+            f"vectorbt sharpe_undefined_reason {sharpe_undefined_reason!r} is not recognized"
+            f"; per-instrument activity: {_activity_summary(instrument_activity)}"
+        )
+    try:
+        metrics = {
+            "total_return": _finite_metric(aggregate, "mean_total_return"),
+            "sharpe_ratio": (
+                0.0
+                if sharpe_undefined_reason
+                else _finite_metric(aggregate, "mean_sharpe_ratio")
+            ),
+            "max_drawdown": _finite_metric(aggregate, "mean_max_drawdown"),
+        }
+    except AuthorityValidationError as exc:
+        raise AuthorityValidationError(
+            f"{exc}; per-instrument activity: {_activity_summary(instrument_activity)}"
+        ) from exc
     validation_errors: List[str] = []
     thresholds = dict(authority.thresholds)
-    if metrics["sharpe_ratio"] < float(thresholds["min_sharpe_ratio"]):
+    if sharpe_undefined_reason:
+        # Sharpe is undefined, so the 0.0 above is a placeholder that can never pass the gate.
+        validation_errors.append(f"sharpe_undefined_{sharpe_undefined_reason}")
+    elif metrics["sharpe_ratio"] < float(thresholds["min_sharpe_ratio"]):
         validation_errors.append("sharpe_ratio_below_threshold")
     if metrics["total_return"] < float(thresholds["min_total_return"]):
         validation_errors.append("total_return_below_threshold")
@@ -1645,6 +1684,7 @@ def _run_preview_evaluation(
             "backend": proof["backend"],
             "thresholds": thresholds,
             "metrics": metrics,
+            "instrument_activity": instrument_activity,
             "validation_status": validation_status,
             "validation_errors": validation_errors,
         },
