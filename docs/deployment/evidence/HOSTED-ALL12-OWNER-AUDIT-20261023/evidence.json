@@ -1,0 +1,56 @@
+{
+  "task_id": "HOSTED-ALL12-OWNER-AUDIT-20261023",
+  "kind": "read_only_source_audit",
+  "base_sha": "854f33282",
+  "design": "docs/deployment/hosted-all12-causal-chain-design.md#appendix-a",
+  "operator_design_approval": {
+    "recorded_at": "2026-10-23T13:48:32Z",
+    "answer": "批准設計，交 supervisor 按依賴執行",
+    "design_pr": 6736,
+    "merge": "43473d1512dbb094074ec575ac1128be9b02e634",
+    "source_file": "/tmp/pantheon-codex-01a11-review-20261023/hosted-all12-design-actual-user-approval-20261023.json",
+    "h1_h4_decisions_approved": false
+  },
+  "production_delta": 0,
+  "owner_mutation": false,
+  "provider_refresh": false,
+  "secret_access": false,
+  "retirement": {
+    "registry": "POST /api/registry/strategy-specs/{id}/advance -> retired",
+    "governance": "POST /api/governance/approvals/{id}/revoke",
+    "capital_pool": "PATCH /api/capital-pools/{id}/status -> archived",
+    "binding": "PATCH /api/bindings/{id}/status -> revoked",
+    "plan": "POST /api/deployment/plans/{id}/status -> aborted; POST /api/deployment/sagas/{id}/retire",
+    "runtime_binding": "POST /api/runtime-bindings/{id}/retire (decorator mfa_required=True; enforced only if PANTHEON_RUNTIME_MFA_REQUIRED=true, default false: services/runtime_auth_inbound.py:874-877)",
+    "incident": "POST /api/incidents/{id}/status",
+    "evolution": "POST /api/evolution/proposals/{id}/cancel",
+    "consult": "POST /api/consult/requests/{id}/cancel",
+    "connector": "PUT /api/source-ingest/connectors/{id}/lifecycle"
+  },
+  "residuals": [
+    "no retire/delete for source records, alpha admissions, agora evidence, completed teaching sessions, drift reports, executed evolution decisions",
+    "no owner validates a consult handoff_id in deployment plans (7->8)",
+    "plan uses mutated parent artifact, not chain distilled spec (2->8); strategy_artifact is an optional inline projection (deployment/service.py:477-519), absence is not a gap nor executable readiness; executable artifact path unverified"
+  ],
+  "edges": {
+    "4->5": "owner supports session_id/source_refs; caller-input gap only",
+    "7->8": "chain requires actual predecessor handoff_id in consumer record; owner enforcement optional, no new API required unless GET evidence shows existing path cannot carry it",
+    "2->8": "needs fresh GET",
+    "others": "supported within suites"
+  },
+  "real_payload_evidence": [
+    "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/deployed-run.json",
+    "docs/deployment/evidence/CAPITAL-FORWARD-HOSTED-ACCEPTANCE-001/evidence.json"
+  ],
+  "fresh_gets_for_root01a11": [
+    "GET /api/registry/strategy-specs/{registry_id} for a concrete distilled id, or tenant list without state filter (draft; RegistryEntryView.entry): metadata keys, strategy_artifact presence informational",
+    "GET /api/deployment/plans/{plan_id}: artifact_id (used as registry_id; no top-level registry_id), approval_decision_id, existing metadata keys (new-key roundtrip needs a write; not claimed)",
+    "GET /api/runtime-bindings/{binding_id}: metadata.tenant_id",
+    "nonsecret PANTHEON_RUNTIME_MFA_REQUIRED value"
+  ],
+  "validation": "focused document consistency check only; no tests",
+  "unverified": [
+    "deployed PANTHEON_RUNTIME_MFA_REQUIRED value (Root nonsecret read); not a proven owner gap"
+  ],
+  "source_check": "/tmp/pantheon-codex-01a11-review-20261023/PR6741-runtime-retire-full-auth-source-check.json"
+}

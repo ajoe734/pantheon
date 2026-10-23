@@ -1,0 +1,21 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "ENV-RELEASE-READINESS-20261023",
+  "recorded_at": "2026-10-23T14:55:00Z",
+  "owner": "Claude",
+  "reviewer": "Claude2",
+  "source_commit": "854f33282912bc038533226e9a928b13ce8748a5",
+  "artifacts": ["docs/deployment/first-production-release-readiness.md"],
+  "readonly_collection": {
+    "collected_at": "2026-10-23T14:51:41Z",
+    "github_environments": {"ajoe734/pantheon": ["dev"], "ajoe734/execute-plans": ["dev"]},
+    "dev_environment_protection_rules": [],
+    "production_or_staging_variables_or_secrets": [],
+    "residual_staging_variables": ["STAGING_BFF_CORS_ORIGIN", "STAGING_CONTROL_ZONE", "STAGING_EXEC_ZONE"],
+    "root_run_39966041271": "in_progress at collection; result not asserted"
+  },
+  "status": {"dev": "configured; not re-probed; acceptance owned elsewhere", "staging": "unavailable", "production": "unavailable"},
+  "not_done": ["no cloud/SSH/hosted probe", "no secret read", "no workflow dispatch", "no code/workflow/test change", "held packets not dispatched"],
+  "operator_choices_open": 7,
+  "summary": "Dev acceptance is not production readiness; staging and production are unprovisioned; remaining work is the held ENV-STG-EPHEMERAL-IMPL-001 and ENV-PROD-CONTROL-IMPL-001 plus operator choices."
+}
