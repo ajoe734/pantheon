@@ -417,3 +417,61 @@ class TestCanonicalArtifactBacktest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(_HAS_VECTORBT, "real vectorbt is not installed")
+class TestZeroActivitySharpe(unittest.TestCase):
+    """No MA 7/21 crossover: real vectorbt Sharpe is 0/0, reported with a reason."""
+
+    @staticmethod
+    def _dataset(closes):
+        def rows(instrument):
+            return [
+                {
+                    "instrument": instrument,
+                    "date": (date(2024, 1, 1) + timedelta(days=i)).isoformat(),
+                    "open": c, "high": c, "low": c, "close": c, "volume": 1_000,
+                }
+                for i, c in enumerate(closes)
+            ]
+
+        return {
+            "dataset_id": "dataset:zero-trade",
+            "strategy_id": "strategy-zero-trade",
+            "source_dataset_refs": ["dataset:test-source"],
+            "data_frequency": "daily",
+            "records": rows("AAA") + rows("BBB"),
+        }
+
+    def _run(self, closes):
+        from adapter.vectorbt_adapter import VectorbtBackend
+
+        with mock.patch.dict(os.environ, {"PANTHEON_VECTORBT_BACKEND": "real"}):
+            return run_vectorbt_workflow(
+                self._dataset(closes),
+                backend=VectorbtBackend(),
+                config=BacktestConfig(strategy_params={"short_window": 7, "long_window": 21}),
+            ).backtest_result
+
+    def test_flat_bars_report_no_trading_activity(self) -> None:
+        import math
+
+        result = self._run([100.0] * 35)
+
+        self.assertEqual(result.aggregate_metrics["total_trades"], 0)
+        self.assertFalse(math.isfinite(result.aggregate_metrics["mean_sharpe_ratio"]))
+        self.assertEqual(result.aggregate_metrics["sharpe_undefined_reason"], "no_trading_activity")
+        for metrics in result.per_instrument_metrics.values():
+            self.assertEqual(metrics["trade_count"], 0)
+            self.assertEqual(metrics["num_bars"], 35)
+            self.assertEqual(metrics["sharpe_undefined_reason"], "no_trading_activity")
+
+    def test_traded_nonfinite_sharpe_is_not_explained(self) -> None:
+        from adapter.vectorbt_adapter import _sharpe_undefined_reason
+
+        metrics = {"sharpe_ratio": float("nan"), "trade_count": 2, "total_return": 0.01, "max_drawdown": 0.02}
+        self.assertIsNone(_sharpe_undefined_reason(metrics))
+        self.assertEqual(
+            _sharpe_undefined_reason({**metrics, "total_return": 0.0, "max_drawdown": 0.0}),
+            "zero_return_variance",
+        )
