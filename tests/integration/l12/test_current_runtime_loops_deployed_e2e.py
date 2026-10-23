@@ -1237,32 +1237,40 @@ class RuntimeChain:
                 f"{ {k: entry.get(k) for k in ('registry_id', 'artifact_state', 'checksum', 'approval_decision_id')} }"
             )
         # The runtime loader reads strategy-artifacts and needs an approved execution_bundle with an
-        # embedded StrategyArtifact; a plain StrategySpec has none. Resolve that path from this
-        # chain's own entry BEFORE any Capital/plan write, or stop with the concrete reason.
-        executable = self.http.request(
-            "registry",
-            "GET",
-            f"/api/registry/strategy-artifacts/{urllib.parse.quote(registry_id, safe='')}",
-            headers=bearer(human_token("OPERATOR")),
-            expected={200, 404},
+        # embedded StrategyArtifact. Derive a DISTINCT chain-owned artifact from this Spec's own
+        # stored explicit recipe (no prose parsing, no fixed defaults), or stop with the concrete
+        # reason before any Capital/plan write. The original Spec and its H1 are never relabelled.
+        from services.registry.strategy_artifact import (
+            StrategyArtifactValidationError,
+            build_execution_artifact_registration,
+            strategy_artifact_checksum,
         )
-        bundle = executable.get("entry") if isinstance(executable.get("entry"), Mapping) else {}
-        embedded = (bundle.get("metadata") or {}).get("strategy_artifact")
-        if (
-            bundle.get("registry_id") != registry_id
-            or bundle.get("artifact_type") != "execution_bundle"
-            or bundle.get("artifact_state") != "approved"
-            or bundle.get("checksum") != checksum
-            or not isinstance(embedded, Mapping)
-        ):
+
+        execution_id = chain.id("execution-artifact")
+        try:
+            registration = build_execution_artifact_registration(
+                entry,
+                artifact_id=execution_id,
+                algorithm_commit=self.settings.expected_sha,
+                requested_by=HOSTED_TASK_ID,
+            )
+        except StrategyArtifactValidationError as exc:
             raise HostedPause(
                 "unsupported_executable_path",
-                f"unsupported_executable_path: the chain StrategySpec {registry_id} is not an approved "
-                "execution_bundle with an embedded StrategyArtifact at /api/registry/strategy-artifacts, "
-                "which the runtime loader requires; no Capital or DeploymentPlan was written and no "
-                "unrelated artifact was used",
+                f"unsupported_executable_path: the chain StrategySpec {registry_id} cannot be carried to "
+                f"an execution_bundle StrategyArtifact: {exc}; no Capital, artifact or DeploymentPlan was "
+                "written and no unrelated artifact was used",
                 ids,
-            )
+            ) from exc
+        derived = registration["strategy_artifact"]
+        execution_version = str(derived["version"])
+        execution_checksum = strategy_artifact_checksum(derived)
+        registration["metadata"].update({"tenant_id": TENANT_ID, **chain.labels()})
+        ids.update(
+            execution_artifact_id=execution_id,
+            execution_artifact_version=execution_version,
+            execution_artifact_checksum=execution_checksum,
+        )
         persona_id = chain.predecessor("persona_id") or chain.id("persona")
         capital = self._hosted_capital(persona_id)
         ids.update(
@@ -1271,17 +1279,91 @@ class RuntimeChain:
             persona_id=persona_id,
         )
 
+        # Register the candidate (read-before-create). Candidate registration is not covered by H3.
+        quoted_execution = urllib.parse.quote(execution_id, safe="")
+        existing = self.http.request(
+            "registry", "GET", f"/api/registry/strategy-artifacts/{quoted_execution}",
+            headers=bearer(human_token("OPERATOR")), expected={200, 404},
+        )
+        execution_entry = existing.get("entry") if isinstance(existing.get("entry"), Mapping) else existing
+        if execution_entry.get("registry_id") != execution_id:
+            execution_entry = self.http.request(
+                "registry", "POST", "/api/registry/strategy-artifacts",
+                body=registration, headers=bearer(human_token("OPERATOR")), expected={200, 201},
+            )
+            execution_entry = (
+                execution_entry.get("entry") if isinstance(execution_entry.get("entry"), Mapping) else execution_entry
+            )
+        embedded = (execution_entry.get("metadata") or {}).get("strategy_artifact")
+        if (
+            execution_entry.get("registry_id") != execution_id
+            or execution_entry.get("artifact_type") != "execution_bundle"
+            or execution_entry.get("checksum") != execution_checksum
+            or execution_entry.get("version") != execution_version
+            or not isinstance(embedded, Mapping)
+            or (embedded.get("lineage") or {}).get("source_strategy_spec_id") != registry_id
+        ):
+            raise DeployedProofError(
+                f"owner read-back of execution artifact {execution_id} does not match the derived "
+                "candidate or does not link the chain Spec"
+            )
+
         strategy_id = str(entry.get("strategy_id") or chain.predecessor("strategy_id"))
         references = {
             **chain.labels(),
-            "registry_id": registry_id,
-            "registry_checksum": checksum,
+            "registry_id": execution_id,
+            "registry_checksum": execution_checksum,
+            "source_strategy_spec_id": registry_id,
+            "source_strategy_spec_checksum": checksum,
             "h1_decision_id": h1_id,
             "consult_handoff_id": handoff_id,
         }
         for optional in ("teaching_session_id", "consult_request_id", "candidate_id"):
             if chain.predecessor(optional):
                 references[optional] = chain.predecessor(optional)
+
+        # H3 covers approval of the exact derived artifact, its plan and the dispatch: nothing
+        # below the candidate registration runs until it is decided for this version, digest,
+        # paper pool and persona. H1 is the Spec's decision and is never reused for this artifact.
+        h3 = require_decided_approval(
+            self._governance_read,
+            chain.decision("H3"),
+            point="H3",
+            blocked_before="execution_artifact_approval",
+            tenant_id=TENANT_ID,
+            expected={
+                "target_type": "registry_entry",
+                "target_id": execution_id,
+                "target_version": execution_version,
+                "candidate_digest": execution_checksum,
+                "capital_pool_id": capital["capital_pool_id"],
+                "persona_id": capital["persona_id"],
+            },
+            resource_ids=ids,
+        )
+        ids["h3_decision_id"] = h3["decision_id"]
+        order = ("draft", "candidate", "approved")
+        for target in ("candidate", "approved"):
+            if order.index(str(execution_entry.get("artifact_state"))) >= order.index(target):
+                continue
+            execution_entry = self.http.request(
+                "registry", "POST", f"/api/registry/strategy-artifacts/{quoted_execution}/advance",
+                body=registry_advance_body(
+                    execution_entry, target, command_key=chain.id("registry", "execution", target),
+                    approval_decision_id=h3["decision_id"] if target == "approved" else None,
+                ),
+                headers=bearer(human_token("OPERATOR")),
+            )
+            execution_entry = (
+                execution_entry.get("entry") if isinstance(execution_entry.get("entry"), Mapping) else execution_entry
+            )
+        if (
+            execution_entry.get("artifact_state") != "approved"
+            or execution_entry.get("approval_decision_id") != h3["decision_id"]
+            or execution_entry.get("checksum") != execution_checksum
+        ):
+            raise DeployedProofError("execution artifact is not approved under the H3 decision")
+        strategy_id = str(entry.get("strategy_id") or chain.predecessor("strategy_id"))
         metadata: dict[str, Any] = {
             "tenant_id": TENANT_ID,
             "environment": "paper",
@@ -1300,13 +1382,13 @@ class RuntimeChain:
             metadata["symbol"] = chain.predecessor("symbol")
         plan_id = chain.id("plan")
         plan_body = {
-            "approval_decision_id": h1_id,
+            "approval_decision_id": h3["decision_id"],
             "capital_pool_id": capital["capital_pool_id"],
             "created_by": HOSTED_TASK_ID,
             "current_stage": "none",
             "metadata": metadata,
             "plan_id": plan_id,
-            "registry_id": registry_id,
+            "registry_id": execution_id,
             "sponsor_persona_id": capital["persona_id"],
             "status": "approved",
             "target_stage": "paper",
@@ -1330,8 +1412,8 @@ class RuntimeChain:
             )
             if validation.get("ok") is not True:
                 raise UnsupportedExecutablePath(
-                    "owner cannot plan this chain's approved StrategySpec "
-                    f"{registry_id} for paper runtime: errors={validation.get('errors')!r}"
+                    "owner cannot plan this chain's approved execution artifact "
+                    f"{execution_id} for paper runtime: errors={validation.get('errors')!r}"
                 )
             self.http.request(
                 "deployment", "POST", "/api/deployment/plans",
@@ -1344,29 +1426,9 @@ class RuntimeChain:
         dropped = sorted(key for key, value in references.items() if persisted.get(key) != value)
         if dropped:
             raise DeployedProofError(f"DeploymentPlan metadata did not persist predecessor references: {dropped}")
-        if plan.get("approval_decision_id") != h1_id:
-            raise DeployedProofError("DeploymentPlan is not bound to the H1 approval decision")
+        if plan.get("approval_decision_id") != h3["decision_id"]:
+            raise DeployedProofError("DeploymentPlan is not bound to the H3 approval decision")
 
-        # H3 covers the runtime mutation: nothing below runs until it is decided.
-        h3 = require_decided_approval(
-            self._governance_read,
-            chain.decision("H3"),
-            point="H3",
-            blocked_before="runtime_binding_dispatch",
-            tenant_id=TENANT_ID,
-            # The owner's plan-release scope (deploy_authority): this exact registry entry
-            # version/digest for this paper pool and persona - a registry-only match is not enough.
-            expected={
-                "target_type": "registry_entry",
-                "target_id": registry_id,
-                "target_version": entry.get("version"),
-                "candidate_digest": checksum,
-                "capital_pool_id": capital["capital_pool_id"],
-                "persona_id": capital["persona_id"],
-            },
-            resource_ids=ids,
-        )
-        ids["h3_decision_id"] = h3["decision_id"]
         started = _utc_now()
         saga_id = ""
         if plan.get("status") != "executed":
@@ -1407,7 +1469,7 @@ class RuntimeChain:
             "runtime", "GET", f"/api/runtime-bindings/{bindings[0]['binding_id']}", headers=self.runtime_headers
         )
         expected = {
-            "artifact_id": registry_id,
+            "artifact_id": execution_id,
             "capital_pool_id": capital["capital_pool_id"],
             "persona_capital_binding_id": capital["capital_binding_id"],
             "plan_id": plan_id,

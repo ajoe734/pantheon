@@ -483,9 +483,56 @@ def test_hosted_never_restarts_a_shared_service_and_isolated_still_does(
 # --------------------------------------------------------------------------- runtime (C_promote, D_observe)
 
 
+_DATA_SOURCE = "source-ingest:normalized/taiwanstockprice/finmind-daily"
+EXEC_ID = f"hosted-all12-{CHAIN}-execution-artifact"
+
+
+def _runtime_spec(*, recipe: bool = True) -> dict[str, Any]:
+    spec: dict[str, Any] = {
+        "strategy_id": "strat-1",
+        "market_scope": {"symbols": ["2330.TW"], "frequency": "1d"},
+        "data_dependencies": [{"ref": _DATA_SOURCE, "kind": "dataset"}],
+        "execution_profile": {"quantity_type": "SHARES"},
+        "metadata": {},
+    }
+    if recipe:
+        spec["metadata"]["execution_recipe"] = {
+            "kind": "close_to_close_momentum", "symbols": ["2330.TW"], "bar_frequency": "1d",
+            "data_source": _DATA_SOURCE, "lookback_bars": 2, "momentum_threshold": 0.01,
+            "positive_action": "BUY", "non_positive_action": "SELL", "order_quantity": 1,
+            "quantity_type": "SHARES",
+        }
+    return spec
+
+
+def _spec_checksum(spec: Mapping[str, Any]) -> str:
+    from services.registry.strategy_artifact import strategy_spec_payload_checksum
+
+    return strategy_spec_payload_checksum(spec)
+
+
+def _artifact_checksum(artifact: Mapping[str, Any]) -> str:
+    from services.registry.strategy_artifact import strategy_artifact_checksum
+
+    return strategy_artifact_checksum(artifact)
+
+
+def _expected_execution_checksum() -> str:
+    from services.registry.strategy_artifact import build_execution_artifact_registration
+
+    entry = {"registry_id": f"reg-{CHAIN}", "version": "1.0.0", "checksum": _spec_checksum(_runtime_spec()),
+             "lineage": {"source_run_ids": ["seed-1"]}, "metadata": {"strategy_spec": _runtime_spec()}}
+    registration = build_execution_artifact_registration(entry, artifact_id=EXEC_ID, algorithm_commit=SHA)
+    return _artifact_checksum(registration["strategy_artifact"])
+
+
+EXEC_CHECKSUM = _expected_execution_checksum()
+
+
 class FakeRuntimeHttp:
     def __init__(self, *, h3: bool, validation_ok: bool = True, drop_reference: bool = False,
                  bundle: bool = True, h3_scope: dict[str, Any] | None = None) -> None:
+        self.execution: dict[str, Any] | None = None
         self.calls: list[tuple[str, str, str]] = []
         self.bodies: dict[str, Any] = {}
         self.h3, self.validation_ok, self.drop_reference = h3, validation_ok, drop_reference
@@ -503,19 +550,30 @@ class FakeRuntimeHttp:
         self.bodies[f"{method} {path}"] = body
         registry_id = f"reg-{CHAIN}"
         if path.startswith("/api/registry/strategy-specs/"):
-            return {"entry": {"registry_id": registry_id, "artifact_state": "approved", "checksum": "sha-1",
-                              "approval_decision_id": "apv-1", "strategy_id": "strat-1", "version": "1.0.0"}}
+            spec = _runtime_spec(recipe=self.bundle)
+            return {"entry": {"registry_id": registry_id, "artifact_state": "approved",
+                              "checksum": _spec_checksum(spec), "approval_decision_id": "apv-1",
+                              "strategy_id": "strat-1", "version": "1.0.0",
+                              "lineage": {"source_run_ids": ["seed-1"]}, "metadata": {"strategy_spec": spec}}}
+        if path == "/api/registry/strategy-artifacts" and method == "POST":
+            artifact = body["strategy_artifact"]
+            self.execution = {"registry_id": body["registry_id"], "artifact_type": "execution_bundle",
+                              "artifact_state": "candidate", "checksum": _artifact_checksum(artifact),
+                              "version": artifact["version"], "updated_at": "t0",
+                              "metadata": {**body["metadata"], "strategy_artifact": artifact}}
+            return {"entry": self.execution}
+        if path.startswith("/api/registry/strategy-artifacts/") and path.endswith("/advance"):
+            assert self.execution is not None
+            self.execution = {**self.execution, "artifact_state": body["target_state"],
+                              "approval_decision_id": body.get("approval_decision_id")}
+            return {"entry": self.execution}
         if path.startswith("/api/registry/strategy-artifacts/"):
-            if not self.bundle:  # owner: a plain strategy_spec is not an execution_bundle
-                return {"detail": "StrategyArtifact registry entry not found"}
-            return {"entry": {"registry_id": registry_id, "artifact_type": "execution_bundle",
-                              "artifact_state": "approved", "checksum": "sha-1",
-                              "metadata": {"strategy_artifact": {"artifact_id": registry_id}}}}
+            return {"entry": self.execution} if self.execution else {"detail": "StrategyArtifact registry entry not found"}
         if path.startswith("/api/governance/approvals/"):
             decision = path.rsplit("/", 1)[-1]
             if decision == "apv-h3" and self.h3:
-                scope = {"target_type": "registry_entry", "target_id": f"reg-{CHAIN}", "target_version": "1.0.0",
-                         "candidate_digest": "sha-1", "capital_pool_id": f"hosted-all12-{CHAIN}-pool",
+                scope = {"target_type": "registry_entry", "target_id": EXEC_ID, "target_version": "1.0.0",
+                         "candidate_digest": EXEC_CHECKSUM, "capital_pool_id": f"hosted-all12-{CHAIN}-pool",
                          "persona_id": "persona-teach", **(self.h3_scope or {})}
                 return {"decision_id": decision, "tenant_id": TENANT, "decision_state": "decided",
                         "decision": "approved", "version": 2, **scope}
@@ -557,7 +615,7 @@ class FakeRuntimeHttp:
             found = [p for p in self.proposals if p["decision_id"] == path.rsplit("/", 1)[-1]]
             return found[0] if found else {"detail": "nf"}
         if path.startswith("/api/runtime-bindings/"):
-            return {"binding_id": "rb-1", "runtime_id": "rt-1", "artifact_id": registry_id, "status": "active",
+            return {"binding_id": "rb-1", "runtime_id": "rt-1", "artifact_id": EXEC_ID, "status": "active",
                     "capital_pool_id": self.pool.get("pool_id") or f"hosted-all12-{CHAIN}-pool",
                     "plan_id": self.plan.get("plan_id") or f"hosted-all12-{CHAIN}-plan",
                     "persona_capital_binding_id": self.binding.get("binding_id")}
@@ -590,9 +648,9 @@ def _runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, phase: str, **kwar
     return mod, chain, fake
 
 
-PROMOTE_PREDECESSORS = {"registry_id": f"reg-{CHAIN}", "checksum": "sha-1", "governance_handoff_id": "gh-consult-1",
+PROMOTE_PREDECESSORS = {"registry_id": f"reg-{CHAIN}", "checksum": _spec_checksum(_runtime_spec()), "governance_handoff_id": "gh-consult-1",
                         "teaching_session_id": "trn-1", "persona_id": "persona-teach"}
-_PAPER_FILL = {"event": {"event_id": "ev-1", "artifact_id": f"reg-{CHAIN}", "metrics": {"pnl": 1.0}, "metadata": {}},
+_PAPER_FILL = {"event": {"event_id": "ev-1", "artifact_id": EXEC_ID, "metrics": {"pnl": 1.0}, "metadata": {}},
                "summary": {"runtime_id": "rt-1", "state": "running"}}
 PROMOTE_DECISIONS = {"H1": {"decision_id": "apv-1"}, "H3": {"decision_id": "apv-h3"}}
 
@@ -625,37 +683,52 @@ def test_hosted_promote_pauses_before_any_write_when_predecessors_are_missing(
     assert fake.writes() == [] and result["cases"] == {}
 
 
-def test_hosted_promote_stops_before_runtime_binding_without_h3_and_dispatches_once_with_it(
+def test_hosted_promote_registers_candidate_then_pauses_for_exact_h3_before_covered_writes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _, chain, fake = _runtime(monkeypatch, tmp_path, "C_promote", predecessors=PROMOTE_PREDECESSORS,
                               decisions={"H1": PROMOTE_DECISIONS["H1"]})
     chain.run_hosted()
     receipt = json.loads((tmp_path / "evidence.json").read_text())
-    assert receipt["phase_status"] == "paused" and receipt["blocked_before"] == "runtime_binding_dispatch"
-    assert not fake.dispatched
-    assert receipt["resource_ids"]["plan_id"] == f"hosted-all12-{CHAIN}-plan"
-    plan = fake.plan
-    assert plan["registry_id"] == f"reg-{CHAIN}" and plan["approval_decision_id"] == "apv-1"
-    assert plan["metadata"]["consult_handoff_id"] == "gh-consult-1"  # actual Consultation predecessor
-    assert plan["metadata"]["registry_checksum"] == "sha-1" and plan["metadata"]["chain_id"] == CHAIN
+    assert receipt["phase_status"] == "paused" and receipt["blocked_before"] == "execution_artifact_approval"
+    ids = receipt["resource_ids"]
+    # exact candidate version/checksum and the actual paper pool/persona are named for the H3 reviewer
+    assert ids["execution_artifact_id"] == EXEC_ID and ids["execution_artifact_version"] == "1.0.0"
+    assert ids["execution_artifact_checksum"] == EXEC_CHECKSUM
+    assert ids["capital_pool_id"] == f"hosted-all12-{CHAIN}-pool" and ids["persona_id"] == "persona-teach"
+    # candidate registered (distinct id, Spec lineage), but nothing H3 covers was written
+    assert fake.execution["artifact_state"] == "candidate" and fake.execution["registry_id"] != f"reg-{CHAIN}"
+    lineage = fake.execution["metadata"]["strategy_artifact"]["lineage"]
+    assert lineage["source_strategy_spec_id"] == f"reg-{CHAIN}"
+    covered = [c for c in fake.writes() if c[2].endswith("/advance") or "/api/deployment/plans" in c[2]]
+    assert covered == [] and not fake.dispatched
+    assert not any("/strategy-specs/" in c[2] and c[1] != "GET" for c in fake.calls)  # H1 Spec untouched
     # Capital compares the body actor to the verified principal: the real delegated actor, not an isolated one
     for write in ("POST /api/capital-pools", "POST /api/bindings", f"POST /api/bindings/hosted-all12-{CHAIN}-pcb/activate"):
         assert fake.bodies[write]["actor_id"] == "operator-real"
     activation = fake.bodies[f"POST /api/bindings/hosted-all12-{CHAIN}-pcb/activate"]
     assert "approval_decision_id" not in activation  # paper capital: no invented approval
 
-    # same chain, H3 now decided, separate process: no duplicate predecessor creation, one dispatch
+    # same chain, H3 now decided, separate process: one H3 used for Registry advance AND plan, one dispatch
     _, second, fake2 = _runtime(monkeypatch, tmp_path, "C_promote", predecessors=PROMOTE_PREDECESSORS,
                                 decisions=PROMOTE_DECISIONS, h3=True)
-    fake2.pool, fake2.binding, fake2.plan = dict(fake.pool), {**fake.binding}, dict(fake.plan)
+    fake2.pool, fake2.binding, fake2.execution = dict(fake.pool), {**fake.binding}, dict(fake.execution)
     second._runtime_event = lambda runtime_id: _PAPER_FILL
     second._fleet_worker = lambda binding_id: {"worker": {}}
     second.run_hosted()
     done = json.loads((tmp_path / "evidence.json").read_text())
     assert done["phase_status"] == "completed" and done["status"] == "passed"
     assert fake2.dispatched
-    assert [c for c in fake2.writes() if c[2] in {"/api/capital-pools", "/api/bindings", "/api/deployment/plans"}] == []
+    assert [c for c in fake2.writes() if c[2] in {"/api/capital-pools", "/api/bindings", "/api/strategy-artifacts"}] == []
+    assert not any(c[2] == "/api/registry/strategy-artifacts" for c in fake2.writes())  # no duplicate candidate
+    advances = [fake2.bodies[f"POST {c[2]}"] for c in fake2.writes() if c[2].endswith("/advance")]
+    assert [a["target_state"] for a in advances] == ["approved"] and advances[0]["approval_decision_id"] == "apv-h3"
+    plan = fake2.plan
+    assert plan["registry_id"] == EXEC_ID and plan["approval_decision_id"] == "apv-h3"
+    assert plan["metadata"]["consult_handoff_id"] == "gh-consult-1" and plan["metadata"]["chain_id"] == CHAIN
+    assert plan["metadata"]["registry_checksum"] == EXEC_CHECKSUM
+    assert plan["metadata"]["source_strategy_spec_id"] == f"reg-{CHAIN}"
+    assert plan["metadata"]["h1_decision_id"] == "apv-1"  # H1 stays the Spec's decision
     ids = done["resource_ids"]
     assert ids["runtime_binding_id"] == "rb-1" and ids["h3_decision_id"] == "apv-h3"
     assert ids["capital_pool_id"] == f"hosted-all12-{CHAIN}-pool" and ids["capital_binding_id"] == f"hosted-all12-{CHAIN}-pcb"
@@ -663,31 +736,35 @@ def test_hosted_promote_stops_before_runtime_binding_without_h3_and_dispatches_o
     assert "loop_08_promotion_deployment" in second.evidence.cases and "loop_09_capital_artifact_execution" in second.evidence.cases
 
 
-def test_hosted_promote_pauses_as_unsupported_executable_path_before_any_capital_or_plan_write(
+def test_hosted_promote_pauses_as_unsupported_executable_path_for_research_only_spec(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    # a distilled StrategySpec is no execution_bundle at strategy-artifacts (what the runtime loader reads)
-    _, chain, fake = _runtime(monkeypatch, tmp_path, "C_promote", predecessors=PROMOTE_PREDECESSORS,
+    # a Spec without an explicit supported recipe (e.g. pairs research) is honestly not executable
+    research_only = {**PROMOTE_PREDECESSORS, "checksum": _spec_checksum(_runtime_spec(recipe=False))}
+    _, chain, fake = _runtime(monkeypatch, tmp_path, "C_promote", predecessors=research_only,
                               decisions=PROMOTE_DECISIONS, h3=True, bundle=False)
     chain.run_hosted()
     receipt = json.loads((tmp_path / "evidence.json").read_text())
     assert receipt["phase_status"] == "paused" and receipt["blocked_before"] == "unsupported_executable_path"
-    assert "execution_bundle" in receipt["detail"] and receipt["status"] == "paused"
+    assert "research-only" in receipt["detail"] and receipt["status"] == "paused"
     assert fake.writes() == [] and not fake.dispatched
     assert not any("parent" in c[2] or "tw-session" in c[2] for c in fake.calls)  # unrelated artifact untouched
 
 
-def test_hosted_promote_h3_must_match_the_plan_release_scope_not_just_the_registry_id(
+def test_hosted_promote_h3_must_match_the_exact_artifact_pool_and_persona(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    for scope in ({"capital_pool_id": "some-other-pool"}, {"persona_id": None}, {"candidate_digest": "sha-old"},
+    h1_only_scope = {"target_id": f"reg-{CHAIN}"}  # H1 / Spec-targeted decision must never be reused
+    for scope in (h1_only_scope, {"capital_pool_id": "some-other-pool"}, {"persona_id": None},
+                  {"candidate_digest": _spec_checksum(_runtime_spec())}, {"target_version": "9.9.9"},
                   {"target_type": "deployment_plan"}):
         _, chain, fake = _runtime(monkeypatch, tmp_path, "C_promote", predecessors=PROMOTE_PREDECESSORS,
                                   decisions=PROMOTE_DECISIONS, h3=True, h3_scope=scope)
         chain.run_hosted()
         receipt = json.loads((tmp_path / "evidence.json").read_text())
-        assert receipt["phase_status"] == "paused" and receipt["blocked_before"] == "runtime_binding_dispatch", scope
-        assert not fake.dispatched
+        assert receipt["phase_status"] == "paused" and receipt["blocked_before"] == "execution_artifact_approval", scope
+        assert not fake.dispatched and fake.plan == {}
+        assert [c for c in fake.writes() if c[2].endswith("/advance") or "/api/deployment/plans" in c[2]] == []
 
 
 def test_hosted_promote_with_no_paper_fill_pauses_at_loop_9_instead_of_completing(
@@ -719,7 +796,7 @@ INCIDENT = {"incident_id": "inc-1", "binding_id": "rb-1", "telemetry_event_ids":
 
 
 def _proposal(**over: Any) -> dict[str, Any]:
-    return {"decision_id": "evo-1", "decision_state": "approved", "target_id": f"reg-{CHAIN}",
+    return {"decision_id": "evo-1", "decision_state": "approved", "target_id": EXEC_ID,
             "capital_pool_id": f"hosted-all12-{CHAIN}-pool", "linked_incident_id": "inc-1", "metadata": {}, **over}
 
 
