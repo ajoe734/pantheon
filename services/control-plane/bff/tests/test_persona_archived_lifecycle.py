@@ -111,7 +111,19 @@ def test_existing_lifecycle_values_keep_their_mapping() -> None:
     lifecycle_map = persona_service_module._STRATEGY_BFF_LIFECYCLE_MAP
     for owner_value, projected in _PRE_EXISTING_LIFECYCLE_MAP.items():
         assert lifecycle_map[owner_value] == projected, owner_value
-    assert set(lifecycle_map) - set(_PRE_EXISTING_LIFECYCLE_MAP) == {"archived"}
+    # BFF-LIFECYCLE-UNMAPPED-VALUES-20261024 maps the remaining owner values;
+    # test_persona_lifecycle_owner_vocabulary.py guards them.
+    assert set(lifecycle_map) - set(_PRE_EXISTING_LIFECYCLE_MAP) == {
+        "archived",
+        "rejected",
+        "superseded",
+        "research_only",
+        "consultable",
+        "paper_owner",
+        "live_owner",
+        "frozen",
+        "suspended",
+    }
 
 
 def test_archived_lifecycle_value_normalizes_to_the_terminal_state() -> None:
@@ -123,7 +135,8 @@ def test_archived_owner_status_outranks_the_governance_lifecycle_state() -> None
     project = persona_service_module._persona_record_projected_state
     assert project({"lifecycle_state": "paper_running", "status": "archived"}) == "retired"
     assert project({"lifecycle_state": "paper_running", "status": "active"}) == "paper_running"
-    assert project({"lifecycle_state": "paper_running", "status": "suspended"}) == "paper_running"
+    # A suspended owner is non-running (BFF-LIFECYCLE-UNMAPPED-VALUES-20261024).
+    assert project({"lifecycle_state": "paper_running", "status": "suspended"}) == "suspended"
 
 
 def test_league_projects_archived_persona_as_terminal_and_skips_enrichment(
