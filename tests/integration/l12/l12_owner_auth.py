@@ -301,8 +301,10 @@ def capital_identity(authorization: str, *, blocked_before: str = "capital_pool_
     if not actor or not service:
         raise HostedPause(
             blocked_before,
-            f"{CAPITAL_BLOCKER}: the executing session token carries no Capital service claim and no "
-            "governed principal path authorizes Capital writes; no service token is minted",
+            f"{CAPITAL_BLOCKER}: the executing session token carries no Capital service claim, and no "
+            "existing BFF paper-provisioning entry creates only the chain's pool and binding under the "
+            "BFF's own service identity without auto-approving H1/H3 (design doc section 3); the "
+            "harness sends no direct Capital write and mints no service token",
         )
     return actor, service
 

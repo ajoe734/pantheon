@@ -1,0 +1,12 @@
+{
+  "task_id": "HOSTED-ALL12-C-VIA-PAPER-PROVISIONING-20261024",
+  "outcome": "named_blocker_no_capital_only_product_entry",
+  "blocker": "CAPITAL_HOSTED_PRINCIPAL_DECISION_REQUIRED",
+  "reasons": [
+    "PersonaProvisioningCoordinator.coordinate auto-approves and derives new ids that differ from the chain's approved artifact/plan; no capital-only input",
+    "POST /bff/capital-pools forwards the caller JWT, so it is not the BFF's own service identity",
+    "_PersonaOwnerHttpTransport service authority is product-owned and must not be copied or minted in the harness"
+  ],
+  "behaviour": "C_promote pauses before capital_pool_creation; no direct Capital write, no token minted, H1/H3 stay human",
+  "needs": "new product code: capital-only provisioning entry with BFF service authority, outside this task's files"
+}

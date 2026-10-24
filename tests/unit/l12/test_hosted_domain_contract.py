@@ -1140,6 +1140,7 @@ def test_hosted_capital_uses_executor_token_and_stops_without_service_claim(
         capital_identity(capital_authorization())
     assert paused.value.blocked_before == "capital_pool_creation"
     assert "CAPITAL_HOSTED_PRINCIPAL_DECISION_REQUIRED" in paused.value.detail
+    assert "BFF paper-provisioning entry" in paused.value.detail and "H1/H3" in paused.value.detail
     assert not [c for c in fake.writes() if "/api/capital-pools" in c[2] or "/api/bindings" in c[2]]
     source = inspect.getsource(sys.modules["l12_owner_auth"])
     assert "_service_jwt" not in source and not hasattr(sys.modules["l12_owner_auth"], "fresh_capital_authorization")

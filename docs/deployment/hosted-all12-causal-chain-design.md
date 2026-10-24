@@ -121,22 +121,37 @@ There is no paper Capital approval: the paper pool and paper persona binding are
 paper operation policy with no live approval. No extra gates (MFA, issuer, execution grants) are
 invented; scope, tenant, secrets and paper/live separation stay as they are.
 
-### Capital write identity (decision required)
+### Capital write identity (operator decision 2026-10-24)
 
-Hosted mode mints no service token anywhere: neither the workflow nor `l12_owner_auth.py` calls
-`_service_jwt('capital')`. Capital writes (`POST /api/capital-pools`, `/api/bindings`, `/activate`)
-send the executing session's own token as received. Capital binds a mutation to the verified token
-(`services/capital/inbound_authority.py`): `X-Pantheon-Service` must be one of the token's service
-claims and be in `CAPITAL_ALLOWED_CALLER_SERVICES`, and the body actor must equal the token's
-delegated actor or subject. A human session token carries no service claim, and the existing dev
-paper principals (`docs/deployment/dev-paper-principals-20260908.md`) cover Governance only. So when
-the executor token has no service claim, `C_promote` pauses before `capital_pool_creation` with
-blocker `CAPITAL_HOSTED_PRINCIPAL_DECISION_REQUIRED`; no Capital write is attempted.
+Decision: the chain's paper pool and persona capital binding go through the product's existing BFF
+paper provisioning path, where the BFF writes Capital with its own service identity. The harness sends
+no direct Capital POST/PATCH, mints no token and borrows no service credential; the Capital records
+must show the product's provisioning identity as writer. Only the Capital-record part may be used:
+the product's automated paper approvals must never replace the chain's human H1 (registry approval)
+or H3 (deployment plan release).
 
-Decision needed from the owner (no new identity mechanism is added here): either (a) Capital accepts
-the executing human session for paper pool/binding writes (recording that session as actor), or
-(b) a dev paper principal is authorised for Capital with the same tenant-dev/paper/0 scope as the
-Governance one. Until one is chosen, the hosted chain stops at this blocker.
+Resulting flow in `C_promote`: with no governed product entry available, the harness does not call
+Capital. `capital_identity` pauses before `capital_pool_creation` with blocker
+`CAPITAL_HOSTED_PRINCIPAL_DECISION_REQUIRED` (name kept for continuity) unless the executing token
+itself carries a Capital service claim.
+
+Why no existing entry qualifies (source read, no new product code added here):
+
+* `PersonaProvisioningCoordinator.coordinate` (`persona_provisioning_coordinator.py`) is the whole
+  flow: it auto-approves registry/approval/plan and derives new ids
+  (`deterministic_provisioning_ids`) that differ from the chain's already-approved artifact and plan,
+  so using it would replace H1/H3. `_coordinate_capital_pool` is private to that flow and there is
+  no capital-only input.
+* `POST /bff/capital-pools` (`bff/capital/router.py`) forwards the caller's JWT to Capital, so it
+  does not establish the BFF's own service identity.
+* `_PersonaOwnerHttpTransport` (`personas/service.py`) holds product-owned service authority; the
+  harness must not copy or impersonate it.
+
+Unblocking needs new product code (a capital-only provisioning entry that keeps BFF service
+authority and the existing approved artifact/ids), which is outside this task's files; it is
+reported to the task owner for a scope decision. Once such an entry exists, `_hosted_capital`
+swaps its three writes for that call and keeps the existing read-before-create, scalar id
+persistence and retirement order (runtime binding, capital binding, pool).
 
 ## 4. Owner writes, labels and retirement (acceptance 4)
 
