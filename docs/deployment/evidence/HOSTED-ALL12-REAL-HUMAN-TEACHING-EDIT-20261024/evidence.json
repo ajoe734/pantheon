@@ -1,0 +1,14 @@
+{
+  "task_id": "HOSTED-ALL12-REAL-HUMAN-TEACHING-EDIT-20261024",
+  "acceptance": {
+    "1": "A_research hosted never PATCHes; pauses teaching_human_control_edit/awaiting_human_edit until a user control_patch exists (test_hosted_research_never_patches_controls_and_pauses_until_a_human_edit_exists)",
+    "2": "teaching_agora_content(hosted=True) rejects executor and service actors with named reasons (test_hosted_agora_content_rejects_the_executors_own_and_service_edits_with_named_reasons)",
+    "3": "BC observation uses pre_edit_evaluation (test_hosted_agora_content_accepts_a_distinct_human_edit_and_observes_pre_edit_metrics)",
+    "4": "unit tests above plus design doc section 'Human Teaching edit step'"
+  },
+  "verification": {
+    "command": "PYTHONPATH=. pytest tests/unit/l12/test_hosted_domain_contract.py -q",
+    "result": "34 passed"
+  },
+  "not_run": "hosted deployed e2e (requires the operator's real Management UI edit)"
+}
