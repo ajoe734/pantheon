@@ -446,6 +446,15 @@ class DeployedResearchHarness:
             "X-Pantheon-Service": "training-session-preview-worker",
         }
 
+    def _operator_training_headers(self) -> dict[str, str]:
+        # Control commands are human authority: the issuer-authenticated OPERATOR token
+        # through the authorized Training gateway binding, never the preview-worker service.
+        return {
+            **bearer(human_token("OPERATOR")),
+            "X-Tenant-Id": self.tenant_id,
+            "X-Pantheon-Service": "control-plane-bff",
+        }
+
     @staticmethod
     def _hosted_persona_id(strategy_id: str) -> str:
         return f"persona-{strategy_id}"
@@ -1287,6 +1296,12 @@ class DeployedResearchHarness:
             {"short_window", "long_window"}.issubset(by_key),
             "new TeachingSession has no public, governed short_window/long_window controls to command",
         )
+        # A recovered session may already hold the usual values from an earlier service-only
+        # patch; pick values that differ from the current ones so the edit is a real delta.
+        wanted = {
+            key: next(v for v in options if v != by_key[key].get("current_value"))
+            for key, options in (("short_window", (7, 5)), ("long_window", (21, 30)))
+        }
         patched = self._at(
             "teaching.command",
             lambda: self._http_json(
@@ -1295,14 +1310,18 @@ class DeployedResearchHarness:
                 method="PATCH",
                 payload={
                     "patches": [
-                        {"parameter_key": "short_window", "proposed_value": 7},
-                        {"parameter_key": "long_window", "proposed_value": 21},
+                        {"parameter_key": key, "proposed_value": value} for key, value in wanted.items()
                     ]
                 },
-                headers=headers,
+                headers=self._operator_training_headers(),
             ),
         )
         self._require(patched.get("status") == "accepted", "Teaching control command was rejected")
+        self._require(
+            {d.get("parameter_key") for d in patched.get("patch_delta") or [] if d.get("previous_value") != d.get("new_value")}
+            == set(wanted),
+            "Teaching control command produced no real patch delta",
+        )
         queued = self._at(
             "teaching.worker_trigger",
             lambda: self._http_json(
@@ -1313,7 +1332,7 @@ class DeployedResearchHarness:
                     "mode": "refresh",
                     "terminalize_session": False,
                 },
-                headers={**headers, "Idempotency-Key": f"l12-e2e-{self.run_token}"},
+                headers={**headers, "Idempotency-Key": f"l12-e2e-{self.run_token}-{wanted['short_window']}-{wanted['long_window']}"},
                 expected=(201,),
             ),
         )

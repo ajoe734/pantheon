@@ -86,6 +86,11 @@ def _make_test_harness(
         "Authorization": "Bearer test-operator-token",
         "X-Tenant-Id": harness.tenant_id,
     }
+    harness._operator_training_headers = lambda: {
+        "Authorization": "Bearer test-operator-token",
+        "X-Tenant-Id": harness.tenant_id,
+        "X-Pantheon-Service": "control-plane-bff",
+    }
     harness._service_identity = lambda service: {
         "compose_service": service,
         "container_id": "test-container-id",

@@ -9,6 +9,7 @@ service or provider is contacted.
 from __future__ import annotations
 
 import base64
+import hashlib
 import importlib.util
 import inspect
 import json
@@ -26,7 +27,7 @@ TENANT = "tenant-hosted"
 SHA = "a" * 40
 EXECUTOR_TOKEN = ".".join(
     base64.urlsafe_b64encode(json.dumps(part).encode()).decode().rstrip("=")
-    for part in ({"alg": "none"}, {"sub": "executor-1"}, "sig")
+    for part in ({"alg": "none"}, {"sub": "executor-1", "roles": ["operator"]}, "sig")
 )
 CAPITAL_JWT = ".".join(
     base64.urlsafe_b64encode(json.dumps(part).encode()).decode().rstrip("=")
@@ -394,48 +395,102 @@ def owners_registry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> str:
 # --------------------------------------------------------------------------- human learning (B_learning)
 
 
-def _terminal(validation: str = "passed") -> dict[str, Any]:
-    return {
-        "session_id": "trn-1", "persona_id": "persona-teach", "eval_identity": "eid-1",
+def _terminal(validation: str = "passed", candidate: bool = True) -> dict[str, Any]:
+    terminal = {
+        "session_id": "trn-1", "persona_id": "persona-teach", "status": "active", "eval_identity": "eid-1",
         "started_at": "2026-10-23T01:00:00Z", "updated_at": "2026-10-23T02:00:00Z",
-        "evaluation_result": {"eval_id": "teval-1", "validation_status": validation,
+        "evaluation_result": {"eval_id": "teval-1", "session_id": "trn-1", "persona_id": "persona-teach",
+                              "eval_identity": "eid-1", "validation_status": validation, "validation_errors": [],
                               "metrics": {"total_return": 0.12, "sharpe_ratio": 1.4, "max_drawdown": -0.07}},
     }
+    if candidate:
+        controls = [{"parameter_key": "short_window", "current_value": 5},
+                    {"parameter_key": "long_window", "current_value": 30}]
+        digest = hashlib.sha256(json.dumps(controls, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        terminal["preview"] = {"candidate_snapshot_at": "2026-10-23T01:30:00Z", "preview_quality": "vectorbt",
+                               "evaluation_proof": {"session_id": "trn-1", "job_id": "job-1", "eval_id": "teval-1",
+                                                    "proof_digest": "pd-1", "governance_gate_state": validation,
+                                                    "candidate_digest": "abc", "controls": controls,
+                                                    "controls_digest": digest,
+                                                    "backend": {"framework": "vectorbt", "run_id": "vbt-1"},
+                                                    "authority": {"dataset": {"dataset_version_id": "d", "digest": "s"},
+                                                                  "policy": {"policy_id": "p", "digest": "s"}}}}
+    return terminal
 
 
-CONTROLS = {"controls": [
-    {"parameter_key": "short_window", "current_value": 7},
-    {"parameter_key": "long_window", "current_value": 21},
-    {"parameter_key": "untouched", "current_value": None},
-]}
+def _edit(actor: str = "executor-1", actor_type: str = "user", event_id: str = "tevt-1") -> dict[str, Any]:
+    return {"event_id": event_id, "event_type": "control_patch", "actor": actor, "actor_type": actor_type,
+            "timestamp": "2026-10-23T01:20:00Z",
+            "patch_delta": [{"parameter_key": "short_window", "previous_value": 7, "new_value": 5},
+                            {"parameter_key": "long_window", "previous_value": 21, "new_value": 30}]}
 
 
-def test_agora_content_is_built_from_the_real_teaching_result(monkeypatch: pytest.MonkeyPatch) -> None:
+EVENTS = [_edit()]
+OPERATOR = {"sub": "executor-1", "roles": ["operator"]}
+
+
+def _content(human: Any, **over: Any) -> dict[str, Any]:
+    kwargs: dict[str, Any] = dict(terminal=_terminal(), events=EVENTS, operator=OPERATOR,
+                                  registry_id="reg-1", strategy_id="strat-1", checksum="sha-1")
+    return human.teaching_agora_content(**(kwargs | over))
+
+
+def test_agora_content_is_the_real_operator_edit_on_the_candidate_not_a_relabelled_outcome(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _, research, _ = _research(monkeypatch, tmp_path)
+    seen: dict[str, Any] = {}
+    research.chain["session"] = {"session_id": "trn-1", "persona_id": "persona-teach"}
+    research._current_case = {}
+    research._http_json = lambda _u, path, *, method="GET", payload=None, headers=None, **_: (
+        {"controls": [{"parameter_key": "short_window", "current_value": 7},
+                      {"parameter_key": "long_window", "current_value": 21}]} if "/controls/" in path else
+        (seen.update(patch=(headers, payload)) or {"status": "accepted", "patch_delta": _edit()["patch_delta"]})
+        if path.endswith("/controls") else
+        (seen.update(queue=headers) or {"job_id": "job-1", "eval_id": "teval-1"}) if path.endswith("/preview-jobs") else
+        {"job_id": "job-1", "session_id": "trn-1", "status": "completed", "eval_id": "teval-1"}
+        if "/preview-jobs/" in path else _terminal()
+    )
+    research._case_persona_teaching({})
+    assert seen["patch"][0]["Authorization"] == f"Bearer {EXECUTOR_TOKEN}"
+    assert seen["patch"][0]["X-Pantheon-Service"] == "control-plane-bff"
+    assert seen["patch"][1] == {"patches": [{"parameter_key": "short_window", "proposed_value": 5},
+                                            {"parameter_key": "long_window", "proposed_value": 30}]}
+    assert seen["queue"]["Idempotency-Key"] == f"l12-e2e-{CHAIN}-5-30"
+
     human = _load(monkeypatch, "test_current_human_learning_deployed_e2e.py", "hosted_human_mod")
-    content = human.teaching_agora_content(
-        terminal=_terminal(), controls_record=CONTROLS, registry_id="reg-1", strategy_id="strat-1", checksum="sha-1")
-    assert content["teaching_session_id"] == "trn-1"
-    assert content["teaching"]["eval_identity"] == "eid-1"
-    assert content["target"]["registry_id"] == "reg-1" and content["source_strategy_spec_id"] == "reg-1"
-    assert content["decision"] == "approve"
+    content = _content(human)
+    assert content["actor_role"] == "operator" and content["actor_id"] == "executor-1"
+    assert content["decision"] == "edit" and content["control_edit_event_id"] == "tevt-1"
+    assert content["target"]["promotion_state"] == "candidate" and "registry_id" not in content["target"] and content["target"]["lineage_ref"] == "teaching-candidate:trn-1:abc"
+    assert content["source_strategy_spec_id"] == "reg-1" and content["teaching"]["eval_identity"] == "eid-1"
     assert [s["action"] for s in content["steps"]] == ["set_short_window", "set_long_window"]
     assert content["steps"][0]["observation"] == [0.12, 1.4, -0.07, 7.0]
-    assert content["steps"][0]["feedback_event_id"] == "eid-1:short_window"
-    # nothing is relabelled from the isolated suite's fixed rows
-    assert "buy_small" not in json.dumps(content) and "reg-l12-human-learning" not in json.dumps(content)
-    rejected = human.teaching_agora_content(
-        terminal=_terminal("failed"), controls_record=CONTROLS, registry_id="reg-1", strategy_id="s", checksum="c")
-    assert rejected["decision"] == "reject"
-    with pytest.raises(RuntimeError, match="fewer than two distinct"):
-        human.teaching_agora_content(
-            terminal=_terminal(), controls_record={"controls": CONTROLS["controls"][:1]},
-            registry_id="r", strategy_id="s", checksum="c")
-    # the Training owner stores current_value (PATCH) - a request-only proposed_value is not stored Teaching content
-    with pytest.raises(RuntimeError, match="fewer than two distinct"):
-        human.teaching_agora_content(
-            terminal=_terminal(), registry_id="r", strategy_id="s", checksum="c",
-            controls_record={"controls": [{"parameter_key": "a", "proposed_value": 1},
-                                          {"parameter_key": "b", "proposed_value": 2}]})
+    assert content["steps"][0]["feedback_event_id"] == "tevt-1:short_window"
+    # the genuine edit passes the unchanged BC filter, and a failed strategy outcome stays truthful
+    from services.research.imitation.bc_trainer import prepare_dataset
+    failed = _content(human, terminal=_terminal("failed"))
+    assert failed["teaching"]["validation_status"] == "failed" and failed["decision"] == "edit"
+    prepared = prepare_dataset({"dataset_id": "d", "strategy_id": "strat-1", "source_dataset_refs": ["r"],
+                                "sessions": [{**failed, "trajectory_id": "t"}]})
+    assert prepared.included_trajectory_ids == ("t",)
+
+
+def test_agora_content_refuses_service_only_or_invented_feedback(monkeypatch: pytest.MonkeyPatch) -> None:
+    human = _load(monkeypatch, "test_current_human_learning_deployed_e2e.py", "hosted_human_mod")
+    for over in (
+        {"events": [_edit(actor_type="service")]},            # service is never relabelled human
+        {"events": [_edit(actor="someone-else")]},            # not the verified OPERATOR
+        {"events": []},                                       # GET controls alone is not an edit
+        {"events": [{**_edit(), "patch_delta": _edit()["patch_delta"][:1]}]},
+        {"events": [{**_edit(), "timestamp": "2026-10-23T01:45:00Z"}]},  # after the candidate snapshot
+        {"events": [{**_edit(), "patch_delta": [{**d, "previous_value": d["new_value"]} for d in _edit()["patch_delta"]]}]},  # zero delta
+        {"events": [{**_edit(), "patch_delta": [{**d, "new_value": 99, "previous_value": 1} for d in _edit()["patch_delta"]]}]},  # not the evaluated controls
+        {"terminal": _terminal(candidate=False)},             # no real candidate snapshot: no invented target
+        {"operator": {"sub": "executor-1", "roles": []}},
+    ):
+        with pytest.raises(human.NoGenuineControlEdit):
+            _content(human, **over)
 
 
 class FakeLearningOwners:
@@ -448,8 +503,8 @@ class FakeLearningOwners:
         self.calls.append((method, path, payload))
         if path.endswith("/terminal-readback"):
             return _terminal()
-        if path.startswith("/api/training/controls/"):
-            return CONTROLS
+        if path.endswith("/events"):
+            return EVENTS
         if path == "/api/consult/requests" and method == "POST":
             self.requests[payload["request_id"]] = {**payload, "status": "draft"}
             return self.requests[payload["request_id"]]
@@ -495,7 +550,8 @@ def test_human_agora_evidence_carries_the_teaching_id_registry_and_real_captured
     assert inputs["session_id"] == "trn-1" and inputs["persona_id"] == "persona-teach"
     assert "session:trn-1" in inputs["source_refs"] and "registry:reg-1" in inputs["source_refs"]
     assert inputs["captured_at"] == "2026-10-23T02:00:00Z"  # from Teaching, so replays are byte-identical
-    assert inputs["content"]["target"]["registry_id"] == "reg-1"
+    assert inputs["content"]["source_strategy_spec_id"] == "reg-1"
+    assert inputs["control_edit_event_id"] == "tevt-1" and "control_edit:tevt-1" in inputs["source_refs"]
     harness.chain.update(preds | {"teaching_eval_identity": "eid-1"})
     with pytest.raises(mod.HostedPause):
         harness._hosted_h2_consent()
