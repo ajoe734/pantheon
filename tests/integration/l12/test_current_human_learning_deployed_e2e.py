@@ -131,8 +131,9 @@ def _parse_time(value: str) -> datetime | None:
 class NoGenuineControlEdit(RuntimeError):
     """Teaching holds no eligible real operator control edit on a real candidate snapshot."""
 
-    def __init__(self, detail: str, resource_ids: Mapping[str, Any]) -> None:
+    def __init__(self, detail: str, resource_ids: Mapping[str, Any], reason: str = "no_control_edit") -> None:
         super().__init__(detail)
+        self.reason = reason
         self.resource_ids = dict(resource_ids)
 
 
@@ -144,6 +145,10 @@ def teaching_agora_content(
     registry_id: str,
     strategy_id: str,
     checksum: str,
+    hosted: bool = False,
+    executor_subject: str = "",
+    service_subjects: Sequence[str] = (),
+    pre_edit_evaluation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Agora content from one genuine operator control edit on a real Teaching candidate.
 
@@ -155,6 +160,13 @@ def teaching_agora_content(
     Teaching validation outcome (even a failed one) is preserved in ``teaching`` and
     is not the decision. Nothing is relabelled: with no such event or candidate the
     caller pauses with the actual IDs instead of inventing a positive sample.
+
+    Hosted mode: the demonstration is the edit a human made in the Management UI. An
+    edit counts only when its actor is a ``user`` session subject that differs from the
+    hosted executor token subject and from every known service subject; the executor's
+    own (or a service's) edit is rejected with a named reason. The BC observation is the
+    evaluation state captured *before* that edit (``pre_edit_evaluation``), never the
+    post-edit metrics.
     """
 
     session_id = str(terminal.get("session_id") or "")
@@ -177,8 +189,50 @@ def teaching_agora_content(
     if not digest or not snapshot_at:
         raise NoGenuineControlEdit("Teaching exposes no real candidate snapshot to attach feedback to", ids)
     operator_id, operator_roles = str(operator.get("sub") or ""), operator.get("roles") or []
-    if not operator_id or "operator" not in operator_roles:
+    if hosted:
+        executor_subject = executor_subject.strip()
+        if not executor_subject:
+            raise NoGenuineControlEdit("hosted executor token subject is unknown", ids, "executor_subject_unknown")
+        refused = {executor_subject, *(str(s) for s in service_subjects if s)}
+        human_events = [
+            e for e in events if e.get("event_type") == "control_patch" and e.get("actor_type") == "user"
+            and str(e.get("actor") or "") and str(e.get("actor")) not in refused
+        ]
+        own = [e for e in events if e.get("event_type") == "control_patch" and e.get("actor") == executor_subject]
+        service = [
+            e for e in events if e.get("event_type") == "control_patch"
+            and (e.get("actor_type") != "user" or str(e.get("actor")) in refused) and e.get("actor") != executor_subject
+        ]
+        if not human_events:
+            if own:
+                raise NoGenuineControlEdit(
+                    "the only control_patch was made with the hosted executor identity, not a human session",
+                    ids, "executor_edit_rejected",
+                )
+            if service:
+                raise NoGenuineControlEdit(
+                    "the only control_patch was made by a service identity, not a human session",
+                    ids, "service_identity_edit_rejected",
+                )
+            raise NoGenuineControlEdit(
+                "waiting for the operator to edit Teaching controls in the Management UI", ids, "awaiting_human_edit"
+            )
+        operator_id = str(human_events[0].get("actor"))
+    elif not operator_id or "operator" not in operator_roles:
         raise NoGenuineControlEdit("no issuer-authenticated OPERATOR identity to verify the edit actor", ids)
+    observation_vector = vector
+    if hosted:
+        pre_metrics = (pre_edit_evaluation or {}).get("metrics") if isinstance(pre_edit_evaluation, Mapping) else None
+        pre_metrics = pre_metrics if isinstance(pre_metrics, Mapping) else {}
+        observation_vector = [_finite_number(pre_metrics.get(key)) for key in TEACHING_METRIC_KEYS]
+        if any(value is None for value in observation_vector):
+            raise NoGenuineControlEdit(
+                "no pre-edit evaluation metrics; post-edit metrics cannot explain the action", ids, "pre_edit_evaluation_missing"
+            )
+        if (pre_edit_evaluation or {}).get("eval_id") == evaluation.get("eval_id"):
+            raise NoGenuineControlEdit(
+                "the pre-edit evaluation is the post-edit evaluation", ids, "pre_edit_evaluation_missing"
+            )
     controls = proof.get("controls")
     if (
         not isinstance(controls, list)
@@ -213,6 +267,10 @@ def teaching_agora_content(
         stamp = _parse_time(str(event.get("timestamp") or event.get("emitted_at") or ""))
         if stamp is None or snapshot_time is None or stamp > snapshot_time:
             continue  # not provably part of this candidate snapshot
+        if hosted:
+            pre_at = _parse_time(str((pre_edit_evaluation or {}).get("evaluated_at") or ""))
+            if pre_at is None or pre_at > stamp:
+                continue  # the observation must predate the human edit it explains
         event_steps: list[dict[str, Any]] = []
         for delta in event["patch_delta"]:
             before, after = _finite_number(delta.get("previous_value")), _finite_number(delta.get("new_value"))
@@ -221,7 +279,7 @@ def teaching_agora_content(
                 if _finite_number(snapshot_controls.get(key)) == after:
                     event_steps.append(
                         {
-                            "observation": [*vector, before],
+                            "observation": [*observation_vector, before],
                             "action": f"set_{key}",
                             "reward": vector[0],
                             "feedback_event_id": f"{event['event_id']}:{key}",
@@ -822,6 +880,29 @@ class DeployedHumanLearningHarness:
             "X-Pantheon-Service": "training-session-preview-worker",
         }
 
+    def _pre_edit_evaluation(
+        self, session_id: str, eval_id: Any, evaluated_at: Any, headers: Mapping[str, str]
+    ) -> dict[str, Any] | None:
+        """Read the pre-edit evaluation back from the Training owner by its scalar id (owner GET is truth)."""
+
+        eval_id = str(eval_id or "").strip()
+        if not eval_id:
+            return None
+        bundle = self._http_json(
+            self.training_url, f"/api/training/previews/{urllib.parse.quote(session_id, safe='')}", headers=headers
+        )
+        evaluations = bundle.get("evaluations") if isinstance(bundle, Mapping) else None
+        preview = evaluations.get(eval_id) if isinstance(evaluations, Mapping) else None
+        result = preview.get("evaluation_result") if isinstance(preview, Mapping) else None
+        if not isinstance(result, Mapping) or result.get("eval_id") != eval_id:
+            return None
+        return {
+            "eval_id": eval_id,
+            "eval_identity": preview.get("eval_identity") or result.get("eval_identity"),
+            "evaluated_at": str(evaluated_at or preview.get("candidate_snapshot_at") or ""),
+            "metrics": result.get("metrics"),
+        }
+
     def _hosted_teaching_inputs(self) -> dict[str, Any]:
         """Read the chain's real Teaching result (loop 4) and build the Agora evidence from it."""
         chain = self.hosted_input
@@ -852,18 +933,29 @@ class DeployedHumanLearningHarness:
             "Teaching eval_identity drifted from the A_research receipt",
         )
         operator_token = human_token("OPERATOR")
+        pre_edit = self._pre_edit_evaluation(
+            wanted["teaching_session_id"], chain.predecessors.get("pre_edit_eval_id"),
+            chain.predecessors.get("pre_edit_evaluated_at"), headers,
+        )
+        writer = persona_writer_identity()
         try:
             content = teaching_agora_content(
                 terminal=terminal,
                 events=events if isinstance(events, list) else [],
                 operator={"sub": token_subject(operator_token), "roles": token_roles(operator_token)},
+                hosted=True,
+                executor_subject=token_subject(operator_token),
+                service_subjects=[writer[1]] if writer else [],
+                pre_edit_evaluation=pre_edit if isinstance(pre_edit, Mapping) else None,
                 registry_id=wanted["registry_id"],
                 strategy_id=wanted["strategy_id"],
                 checksum=wanted["checksum"],
             )
         except NoGenuineControlEdit as absent:
             raise HostedPause(
-                "agora_interaction_evidence", str(absent), {**absent.resource_ids, "registry_id": wanted["registry_id"]}
+                "agora_interaction_evidence",
+                f"{absent.reason}: {absent}",
+                {**absent.resource_ids, "registry_id": wanted["registry_id"], "pause_reason": absent.reason},
             ) from absent
         # Replays must be byte-identical for owner idempotency: take the capture time
         # from the Teaching record itself, never from this process's clock.

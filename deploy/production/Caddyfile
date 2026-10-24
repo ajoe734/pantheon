@@ -1,0 +1,47 @@
+# Pantheon Production Caddy (ENV-PROD-CONTROL-IMPL-001).
+# Hostnames come from explicit environment values; no domain is assumed.
+# The BFF upstream is a separately replaced snippet (atomic mv by prod_atomic_switch.sh)
+# and the FE root is the `current` symlink (atomic ln -sfn + mv -T).
+
+{$PROD_BFF_HOST} {
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Pantheon-Environment "production"
+		-Server
+	}
+	request_body {
+		max_size 10MB
+	}
+	import {$PROD_ROOT}/proxy/bff_upstream.caddy
+}
+
+{$PROD_FE_HOST} {
+	root * {$PROD_ROOT}/fe/current
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy no-referrer
+		Strict-Transport-Security "max-age=31536000"
+		X-Pantheon-Environment "production"
+		-Server
+	}
+
+	handle /deployment.json {
+		header Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+		file_server
+	}
+
+	@hashed_assets path /assets/*
+	header @hashed_assets Cache-Control "public, max-age=31536000, immutable"
+
+	@spa_shell {
+		not path /assets/*
+		not path /deployment.json
+	}
+	header @spa_shell Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+	handle @spa_shell {
+		try_files {path} /index.html
+		file_server
+	}
+	file_server
+}

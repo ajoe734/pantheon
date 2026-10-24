@@ -1,0 +1,94 @@
+name: Pantheon Staging Orphan Cleanup
+
+# Independent scheduled orphan sweeper running every 30 minutes.
+# Remains strictly inert (`status=inert_disabled`, exit 0, zero cloud calls, zero GitHub
+# Environment mutation) until `STAGING_ORPHAN_CLEANUP_ENABLED=true` and
+# `STAGING_GCP_PROJECT_ID` / `STAGING_GCP_ZONE` are explicitly configured after
+# staging environment/project authority is verified.
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run inventory reconciliation in dry-run mode (true/false)"
+        required: false
+        default: "true"
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: staging-orphan-cleanup
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Gate orphan sweeper enablement (inert by default, no Environment mutation)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      STAGING_ORPHAN_CLEANUP_ENABLED: ${{ vars.STAGING_ORPHAN_CLEANUP_ENABLED || 'false' }}
+      STAGING_GCP_PROJECT_ID: ${{ vars.STAGING_GCP_PROJECT_ID || '' }}
+      STAGING_GCP_ZONE: ${{ vars.STAGING_GCP_ZONE || '' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Check inert status when orphan cleanup is disabled
+        if: ${{ vars.STAGING_ORPHAN_CLEANUP_ENABLED != 'true' }}
+        env:
+          STAGING_STATE_DIR: ${{ runner.temp }}/pantheon-staging-state
+        run: |
+          ./scripts/deploy/staging_destroy.sh --mode orphan-sweep
+
+  orphan-sweep:
+    name: Reconcile and sweep expired staging resources
+    needs: preflight
+    if: ${{ vars.STAGING_ORPHAN_CLEANUP_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: staging
+    env:
+      STAGING_ORPHAN_CLEANUP_ENABLED: ${{ vars.STAGING_ORPHAN_CLEANUP_ENABLED || 'false' }}
+      STAGING_GCP_PROJECT_ID: ${{ vars.STAGING_GCP_PROJECT_ID || '' }}
+      STAGING_GCP_ZONE: ${{ vars.STAGING_GCP_ZONE || '' }}
+      STAGING_WIF_PROVIDER: ${{ vars.STAGING_WIF_PROVIDER || '' }}
+      STAGING_SERVICE_ACCOUNT: ${{ vars.STAGING_SERVICE_ACCOUNT || '' }}
+      STAGING_DRY_RUN: ${{ inputs.dry_run || 'false' }}
+      GCLOUD_BIN: gcloud
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Authenticate to staging GCP project via Workload Identity Federation
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
+        with:
+          workload_identity_provider: ${{ vars.STAGING_WIF_PROVIDER }}
+          service_account: ${{ vars.STAGING_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
+
+      - name: Run cloud orphan inventory reconciliation and post-delete readback
+        env:
+          STAGING_STATE_DIR: ${{ runner.temp }}/pantheon-staging-state
+        run: |
+          ./scripts/deploy/staging_destroy.sh --mode orphan-sweep --require-configured
+
+      - name: Upload orphan sweep evidence if any expired resources were swept
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-orphan-sweep-${{ github.run_id }}
+          path: ${{ runner.temp }}/pantheon-staging-state/evidence/
+          if-no-files-found: ignore
+          retention-days: 14

@@ -1056,6 +1056,37 @@ def pm12_performance_attribution_facts(sources: Dict[str, Any], period_key: str)
     return facts
 
 
+def pm12_attribution_retired_runtime_ids_without_data(sources: Dict[str, Any]) -> set[str]:
+    """Runtime ids whose owner lifecycle is terminal and that report no attribution data.
+
+    The RuntimeBinding ``status`` written by the runtime owner (and required by
+    the release coordinator's ``retire_case``) is the lifecycle authority; the
+    terminal set is the one Portfolio Book already uses.  A terminal runtime
+    still reporting pnl, trades or positions is real history and is kept.
+    """
+    from services.control_plane.bff.pm12.service import _management_runtime_is_terminal
+
+    telemetry_by_runtime_id = sources["telemetry_by_runtime_id"]
+    retired_ids: set[str] = set()
+    for runtime in sources["runtime_bindings"]:
+        if not _management_runtime_is_terminal(runtime):
+            continue
+        runtime_id = _pm12_management_record_id(runtime, "runtime_id", "id", "binding_id")
+        if not runtime_id:
+            continue
+        telemetry = telemetry_by_runtime_id.get(runtime_id) or {}
+        summary = telemetry.get("summary") if isinstance(telemetry.get("summary"), dict) else {}
+        pnl = _pm12_management_as_float(
+            _pm12_management_first_non_empty(telemetry.get("pnl"), summary.get("total_pnl"))
+        )
+        trades = _pm12_management_as_float(
+            _pm12_management_first_non_empty(telemetry.get("total_trades"), summary.get("total_trades"))
+        )
+        if pnl is None and trades is None and not _pm12_management_position_records(telemetry):
+            retired_ids.add(runtime_id)
+    return retired_ids
+
+
 def pm12_metric_sum(facts: List[Dict[str, Any]], field: str) -> Optional[float]:
     values = [
         value
@@ -1307,6 +1338,15 @@ def pm12_performance_attribution_response(
     else:
         sources = pm12_performance_attribution_sources(tenant_id, read_store=read_store)
     facts = pm12_performance_attribution_facts(sources, period_key)
+
+    # Default list scope: drop retired runtimes that never produced attribution
+    # data, before filtering, grouping and paging so totals match rows.  An
+    # explicit persona/runtime drill-down still returns them; the facts builder
+    # itself stays unscoped for other readers such as the per-persona read model.
+    if not any((persona_id, persona, runtime_id, runtime)):
+        retired_runtime_ids = pm12_attribution_retired_runtime_ids_without_data(sources)
+        if retired_runtime_ids:
+            facts = [fact for fact in facts if fact.get("runtime_id") not in retired_runtime_ids]
 
     from services.control_plane.bff.personas.service import _filter_by_common_identifiers
     facts = _filter_by_common_identifiers(

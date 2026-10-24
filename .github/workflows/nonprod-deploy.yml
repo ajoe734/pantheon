@@ -3632,15 +3632,9 @@ jobs:
           )
           PERSONA_SERVICE = "persona"
           TRAINING_CONSUMER = "training-session-preview-worker"
-          CAPITAL_PHASES = {"C_promote", "D_observe", "E_close"}
           PIP_RUNPY = (
               "import runpy, sys; sys.path.insert(0, sys.argv[1]); sys.argv = ['pip'] + sys.argv[2:]; "
               "runpy.run_module('pip', run_name='__main__', alter_sys=True)"
-          )
-          CAPITAL_SNIPPET = (
-              "import sys; "
-              "from services.control_plane.bff.personas.service import _PersonaOwnerHttpTransport as T; "
-              "sys.stdout.write(T(tenant_id=sys.argv[1])._service_jwt('capital'))"
           )
 
 
@@ -3808,19 +3802,9 @@ jobs:
                       "PANTHEON_L12_SOURCE_READER_TENANT_ID": bundle["tenant_id"],
                   }
               )
-              # The product's existing per-request Capital transport lives in the caller
-              # seam; until it consumes that, this single short-lived service JWT only
-              # lets Settings parse and is never cached across phases or human waits.
-              meta["capital_credential"] = "not_requested"
-              if args.phase in CAPITAL_PHASES:
-                  issued = run(["docker", "exec", "-i", bff_cid, "python", "-c", CAPITAL_SNIPPET, bundle["tenant_id"]])
-                  if issued.returncode == 0 and issued.stdout.strip():
-                      environment["PANTHEON_L12_CAPITAL_TOKEN"] = issued.stdout.strip()
-                      secrets.append(issued.stdout.strip())
-                      meta["capital_credential"] = "single_service_jwt_at_phase_start_120s"
-                      meta["capital_per_request_refresh_dependency"] = "SOURCE-SPEC-EXECUTION-RECIPE caller seam"
-                  else:
-                      meta["capital_credential"] = "unavailable"
+              # No Capital credential is minted: the chain's Capital writes use the executing
+              # session token above, or stop at a named blocker (design section 3).
+              meta["capital_credential"] = "executor_session_token_no_service_token"
 
               packet = os.path.join(scratch, "chain-input.json")
               prior = os.path.join(scratch, "prior-receipt.json")
