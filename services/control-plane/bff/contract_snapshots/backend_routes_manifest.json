@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "snapshot_date": "2026-10-01",
+    "snapshot_date": "2026-10-24",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
     "total_routes": 621,
@@ -1605,18 +1605,6 @@
       "status": "implemented"
     },
     {
-      "method": "POST",
-      "path": "/bff/rebalances/{param}/approve",
-      "family": "capital-ranking-rebalance",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/rebalances/{param}/two-man-sign",
-      "family": "capital-ranking-rebalance",
-      "status": "implemented"
-    },
-    {
       "method": "GET",
       "path": "/bff/artifacts",
       "family": "evolution-experiment-jobs-events",
@@ -2905,6 +2893,18 @@
     },
     {
       "method": "POST",
+      "path": "/bff/personas/{param}/provisioning/paper-capital",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/personas/{param}/provisioning/paper-capital/retire",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
       "path": "/bff/personas/{param}/provisioning/reconcile",
       "family": "strategy-persona",
       "status": "implemented"
@@ -3707,7 +3707,7 @@
       "path": "/bff/management/promotion-reviews/{param}/decisions",
       "family": "unknown",
       "status": "superseded",
-      "covered_by": "POST /bff/approvals/{decision_id}/decide"
+      "covered_by": "POST /bff/approvals/{param}/decide"
     },
     {
       "method": "POST",

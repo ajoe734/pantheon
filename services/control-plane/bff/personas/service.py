@@ -1393,6 +1393,31 @@ def _runtime_bindings_for_case(plan_id: str, pool_id: str) -> List[Dict[str, Any
     return list(found.values())
 
 
+# --- chain paper capital entry ---
+def _chain_paper_capital_coordinator(tenant_id: str) -> PersonaProvisioningCoordinator:
+    """Capital-only coordinator: the BFF service principal is the owner writer."""
+
+    return PersonaProvisioningCoordinator(
+        store=_persona_provisioning_store(),
+        transport=_PersonaOwnerHttpTransport(tenant_id=tenant_id),
+        schedule_registrar=_register_persona_cron_required,
+        lease_owner=f"chain-paper-capital:{uuid.uuid4().hex}",
+        actor_id=PERSONA_OWNER_SERVICE_ACTOR_ID,
+    )
+
+
+def ensure_chain_paper_capital(tenant_id: str, persona_id: str, **kwargs: Any) -> Dict[str, Any]:
+    return _chain_paper_capital_coordinator(tenant_id).ensure_chain_paper_capital(
+        tenant_id=tenant_id, persona_id=persona_id, **kwargs
+    )
+
+
+def retire_chain_paper_capital(tenant_id: str, persona_id: str, **kwargs: Any) -> Dict[str, Any]:
+    return _chain_paper_capital_coordinator(tenant_id).retire_chain_paper_capital(
+        tenant_id=tenant_id, persona_id=persona_id, **kwargs
+    )
+
+
 # --- retire_persona_provisioning_case ---
 def retire_persona_provisioning_case(
     tenant_id: str,

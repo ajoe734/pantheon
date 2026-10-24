@@ -774,11 +774,26 @@ class PersonaProvisioningCoordinator:
         return {"bindings": observed}
 
     def _retire_pcb(self, record: ProvisioningRecord, ids: ProvisioningIds) -> Mapping[str, Any]:
-        path = f"/api/bindings/{_path_id(ids.persona_capital_binding_id)}"
+        return self._revoke_binding(
+            persona_id=record.persona_id,
+            pool_id=ids.capital_pool_id,
+            binding_id=ids.persona_capital_binding_id,
+        )
+
+    def _revoke_binding(
+        self,
+        *,
+        persona_id: str,
+        pool_id: str,
+        binding_id: str,
+    ) -> Mapping[str, Any]:
+        path = f"/api/bindings/{_path_id(binding_id)}"
         binding = self._owner_get("capital", path)
         if binding is None:
             return {"status": "absent"}
-        self._validate_binding_identity(binding, record, ids)
+        self._check_binding_identity(
+            binding, persona_id=persona_id, pool_id=pool_id, binding_id=binding_id
+        )
         if binding.get("status") not in {"revoked", "expired"}:
             try:
                 self.transport.patch(
@@ -797,16 +812,21 @@ class PersonaProvisioningCoordinator:
                 raise PersonaProvisioningCoordinationError(
                     "persona capital binding revoke has no authoritative readback"
                 )
-            self._validate_binding_identity(binding, record, ids)
-        return {"status": binding.get("status"), "binding_id": ids.persona_capital_binding_id}
+            self._check_binding_identity(
+                binding, persona_id=persona_id, pool_id=pool_id, binding_id=binding_id
+            )
+        return {"status": binding.get("status"), "binding_id": binding_id}
 
     def _retire_pool(self, record: ProvisioningRecord, ids: ProvisioningIds) -> Mapping[str, Any]:
+        return self._archive_pool(pool_id=ids.capital_pool_id)
+
+    def _archive_pool(self, *, pool_id: str) -> Mapping[str, Any]:
         # Only the pool status is written; kill-switch safe mode is left as is.
-        path = f"/api/capital-pools/{_path_id(ids.capital_pool_id)}"
+        path = f"/api/capital-pools/{_path_id(pool_id)}"
         pool = self._owner_get("capital", path)
         if pool is None:
             return {"status": "absent"}
-        if pool.get("pool_id") not in {None, ids.capital_pool_id}:
+        if pool.get("pool_id") not in {None, pool_id}:
             raise PersonaProvisioningCoordinationError(
                 "capital pool readback has the wrong identity"
             )
@@ -828,7 +848,7 @@ class PersonaProvisioningCoordinator:
                 raise PersonaProvisioningCoordinationError(
                     "capital pool archive has no authoritative readback"
                 )
-        return {"status": "archived", "pool_id": ids.capital_pool_id}
+        return {"status": "archived", "pool_id": pool_id}
 
     def _retire_persona(self, record: ProvisioningRecord) -> Mapping[str, Any]:
         if self.persona_archiver is None:
@@ -1162,6 +1182,259 @@ class PersonaProvisioningCoordinator:
                 lease_owner=self.lease_owner,
                 lease_seconds=self.lease_seconds,
             )
+
+    @staticmethod
+    def _registry_tenant(entry: Mapping[str, Any]) -> str | None:
+        metadata = entry.get("metadata")
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        value = entry.get("owner_tenant") or metadata.get("tenant_id")
+        return str(value).strip() if value else None
+
+    def ensure_chain_paper_capital(
+        self,
+        *,
+        tenant_id: str,
+        persona_id: str,
+        capital_pool_id: str,
+        binding_id: str,
+        requested_by: str,
+        currency: str,
+        name: str | None = None,
+        budget: Any = None,
+        mandate: Any = None,
+        risk_policy_ref: Any = None,
+        strategy_spec_registry_id: str | None = None,
+        strategy_artifact_id: str | None = None,
+        strategy_artifact_checksum: str | None = None,
+    ) -> dict[str, Any]:
+        """Ensure only the exact chain paper pool and binding under the BFF identity.
+
+        Capital-only: no Registry/Governance write, no approval proposal, review
+        or decision, and no id derivation.  The already-approved StrategySpec and
+        execution artifact are read back (GET only) and must still be approved
+        for ``tenant_id``.  Pool and binding are read before create; a matching
+        existing record is adopted unchanged, so its historical writer is kept.
+        New records are written by ``self.actor_id`` with ``requested_by`` as
+        audit metadata only.  Anything that is not a tenant-owned paper record
+        fails with a named error.
+        """
+
+        for label, value in (
+            ("tenant_id", tenant_id),
+            ("persona_id", persona_id),
+            ("capital_pool_id", capital_pool_id),
+            ("binding_id", binding_id),
+            ("requested_by", requested_by),
+            ("currency", currency),
+        ):
+            if not str(value or "").strip():
+                raise PersonaProvisioningCoordinationError(f"{label} is required")
+
+        registry: dict[str, Any] = {}
+        for key, registry_id, path, artifact_type in (
+            (
+                "strategy_spec",
+                strategy_spec_registry_id,
+                "/api/registry/strategy-specs/",
+                "strategy_spec",
+            ),
+            (
+                "strategy_artifact",
+                strategy_artifact_id,
+                "/api/registry/strategy-artifacts/",
+                "execution_bundle",
+            ),
+        ):
+            if not registry_id:
+                continue
+            entry = self._owner_get("registry", f"{path}{_path_id(registry_id)}")
+            if entry is None:
+                raise PersonaProvisioningCoordinationError(
+                    f"approved {key} {registry_id} was not found at the Registry owner"
+                )
+            entry = _registry_entry(entry)
+            if (
+                entry.get("registry_id") != registry_id
+                or entry.get("artifact_type") != artifact_type
+                or entry.get("artifact_state") != "approved"
+                or self._registry_tenant(entry) != tenant_id
+            ):
+                raise PersonaProvisioningCoordinationError(
+                    f"{key} {registry_id} is not an approved {artifact_type} of tenant {tenant_id}"
+                )
+            if (
+                key == "strategy_artifact"
+                and strategy_artifact_checksum
+                and entry.get("checksum") != strategy_artifact_checksum
+            ):
+                raise PersonaProvisioningCoordinationError(
+                    f"{key} {registry_id} checksum differs from the frozen checksum"
+                )
+            registry[key] = {
+                "registry_id": registry_id,
+                "version": entry.get("version"),
+                "checksum": entry.get("checksum"),
+            }
+
+        pool_path = f"/api/capital-pools/{_path_id(capital_pool_id)}"
+        pool_base: dict[str, Any] = {
+            "actor_id": self.actor_id,
+            "actor_role": "admin",
+            "pool_id": capital_pool_id,
+            "name": name or f"{persona_id} paper pool",
+            "owner_id": tenant_id,
+            "owner_type": "org",
+            "status": "active",
+            "currency": currency,
+            "budget": budget,
+            "risk_policy_ref": risk_policy_ref,
+            "single_runtime_enforced": True,
+            "metadata": {
+                "internal": True,
+                "execution_context": "paper",
+                "tenant_id": tenant_id,
+                "persona_id": persona_id,
+                "requested_by": requested_by,
+            },
+        }
+
+        def validate_pool(receipt: Mapping[str, Any]) -> None:
+            metadata = receipt.get("metadata")
+            metadata = metadata if isinstance(metadata, Mapping) else {}
+            if (
+                receipt.get("pool_id") != capital_pool_id
+                or receipt.get("owner_id") != tenant_id
+                or receipt.get("owner_type") != "org"
+                or receipt.get("status") != "active"
+                or receipt.get("single_runtime_enforced") is not True
+                or metadata.get("execution_context") != "paper"
+            ):
+                raise PersonaProvisioningCoordinationError(
+                    "CapitalPool readback is not an active tenant-owned paper pool"
+                )
+
+        pool = self._create_then_get(
+            owner="capital",
+            get_path=pool_path,
+            post_path="/api/capital-pools",
+            payload={
+                **pool_base,
+                "idempotency_key": f"chain-paper-capital:{tenant_id}:{capital_pool_id}",
+                "request_hash": _stable_hash(pool_base),
+            },
+            validate=validate_pool,
+        )
+
+        binding_path = f"/api/bindings/{_path_id(binding_id)}"
+        binding_base: dict[str, Any] = {
+            "actor_id": self.actor_id,
+            "actor_role": "admin",
+            "binding_id": binding_id,
+            "persona_id": persona_id,
+            "capital_pool_id": capital_pool_id,
+            "role": "paper_owner",
+            "allowed_deployment_scope": "paper",
+            "mandate": mandate,
+            "budget": budget,
+            "created_by": self.actor_id,
+            "metadata": {
+                "tenant_id": tenant_id,
+                "requested_by": requested_by,
+                **(
+                    {"registry_id": strategy_artifact_id}
+                    if strategy_artifact_id
+                    else {}
+                ),
+                **(
+                    {"strategy_spec_registry_id": strategy_spec_registry_id}
+                    if strategy_spec_registry_id
+                    else {}
+                ),
+            },
+        }
+
+        def validate_binding(receipt: Mapping[str, Any]) -> None:
+            self._check_binding_identity(
+                receipt,
+                persona_id=persona_id,
+                pool_id=capital_pool_id,
+                binding_id=binding_id,
+            )
+            if receipt.get("status") not in {"pending", "active"}:
+                raise PersonaProvisioningCoordinationError(
+                    "PersonaCapitalBinding readback is not pending/active"
+                )
+
+        self._create_then_get(
+            owner="capital",
+            get_path=binding_path,
+            post_path="/api/bindings",
+            payload={
+                **binding_base,
+                "idempotency_key": f"chain-paper-capital:{tenant_id}:{binding_id}",
+                "request_hash": _stable_hash(binding_base),
+            },
+            validate=validate_binding,
+        )
+
+        def binding_ready(receipt: Mapping[str, Any]) -> bool:
+            return receipt.get("status") == "active"
+
+        def validate_active(receipt: Mapping[str, Any]) -> None:
+            self._check_binding_identity(
+                receipt,
+                persona_id=persona_id,
+                pool_id=capital_pool_id,
+                binding_id=binding_id,
+            )
+            if not binding_ready(receipt):
+                raise PersonaProvisioningCoordinationError(
+                    "PersonaCapitalBinding activation readback is not active"
+                )
+
+        binding = self._transition_then_get(
+            owner="capital",
+            get_path=binding_path,
+            post_path=f"{binding_path}/activate",
+            payload={"actor_id": self.actor_id, "actor_role": "persona.admin"},
+            ready=binding_ready,
+            validate=validate_active,
+        )
+        return {
+            "tenant_id": tenant_id,
+            "persona_id": persona_id,
+            "capital_pool": pool,
+            "persona_capital_binding": binding,
+            "registry": registry,
+            "writer_actor_id": self.actor_id,
+            "requested_by": requested_by,
+        }
+
+    def retire_chain_paper_capital(
+        self,
+        *,
+        tenant_id: str,
+        persona_id: str,
+        capital_pool_id: str,
+        binding_id: str,
+    ) -> dict[str, Any]:
+        """Revoke the chain binding, then archive its pool (binding before pool).
+
+        Runtime dependants must already be retired.  Only these two paper
+        records are touched; an absent record is reported, not an error.  The
+        pool must belong to ``tenant_id`` before it is archived.
+        """
+
+        pool = self._owner_get("capital", f"/api/capital-pools/{_path_id(capital_pool_id)}")
+        if pool is not None and pool.get("owner_id") != tenant_id:
+            raise PersonaProvisioningCoordinationError(
+                "CapitalPool belongs to another tenant; refusing to retire it"
+            )
+        binding = self._revoke_binding(
+            persona_id=persona_id, pool_id=capital_pool_id, binding_id=binding_id
+        )
+        pool_result = self._archive_pool(pool_id=capital_pool_id)
+        return {"persona_capital_binding": dict(binding), "capital_pool": dict(pool_result)}
 
     def _preview(self, record: ProvisioningRecord) -> ProvisioningRecord:
         self._capital_pool_currency(record)
@@ -2416,10 +2689,25 @@ class PersonaProvisioningCoordinator:
         record: ProvisioningRecord,
         ids: ProvisioningIds,
     ) -> None:
+        self._check_binding_identity(
+            receipt,
+            persona_id=record.persona_id,
+            pool_id=ids.capital_pool_id,
+            binding_id=ids.persona_capital_binding_id,
+        )
+
+    @staticmethod
+    def _check_binding_identity(
+        receipt: Mapping[str, Any],
+        *,
+        persona_id: str,
+        pool_id: str,
+        binding_id: str,
+    ) -> None:
         if (
-            receipt.get("binding_id") != ids.persona_capital_binding_id
-            or receipt.get("persona_id") != record.persona_id
-            or receipt.get("capital_pool_id") != ids.capital_pool_id
+            receipt.get("binding_id") != binding_id
+            or receipt.get("persona_id") != persona_id
+            or receipt.get("capital_pool_id") != pool_id
             or receipt.get("role") != "paper_owner"
             or receipt.get("allowed_deployment_scope") != "paper"
         ):
