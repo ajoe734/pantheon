@@ -19,6 +19,6 @@
     "control_command": "A_research patches Teaching controls with OPERATOR token + X-Pantheon-Service control-plane-bff (allowed gateway), choosing values differing from current so a recovered service-patched session still yields a real delta, then queues a fresh preview eval keyed to the patched control values"
   },
   "bc_filters": "unchanged",
-  "validation": "tests/unit/l12 (96 passed) incl. real payload through prepare_dataset; rejects service-only, post-snapshot, zero-delta, unbound-control and invented-target edits",
+  "validation": "tests/unit/l12 (96 passed) + services/training-session/tests/test_teaching_evaluation_readback.py (8 passed); real payload through prepare_dataset; rejects service-only, post-snapshot, zero-delta, unbound-control and invented-target edits",
   "not_claimed": "source merged is not product accepted or all12 passed"
 }
