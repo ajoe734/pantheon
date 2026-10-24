@@ -333,7 +333,7 @@ def test_research_reuses_the_chain_teaching_session_instead_of_opening_another(
 ) -> None:
     _, harness, owners = _research(monkeypatch, tmp_path, decided=True, entry_state="approved",
                                    predecessors={"checksum": "sha-1"})
-    persona = f"hosted-all12-{CHAIN}-persona"
+    persona = f"persona-{owners.entry['strategy_id']}"
     owners.sessions.append({
         "session_id": "trn-prior", "persona_id": persona, "trace_id": f"hosted-all12-{CHAIN}-trace-teaching",
         "context_refs": [{"type": "experiment_run", "id": "auth-run-1", "domain_run_id": "exp-1",
@@ -352,7 +352,7 @@ def test_research_reuses_the_alpha_worker_teaching_session_with_a_different_trac
         _, harness, owners = _research(monkeypatch, tmp_path, decided=True, entry_state="approved",
                                        predecessors={"checksum": "sha-1"})
         owners.sessions.append({
-            "session_id": "trn-worker", "persona_id": f"hosted-all12-{CHAIN}-persona",
+            "session_id": "trn-worker", "persona_id": f"persona-{owners.entry['strategy_id']}",
             "trace_id": "trace-teaching-worker-default",
             "context_refs": [{"type": "experiment_run", **ref}],
         })

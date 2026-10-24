@@ -48,7 +48,7 @@
       "test_research_reuses_the_alpha_worker_teaching_session_with_a_different_trace (later auth-run-2/exp-2 pair)",
       "test_research_pauses_without_alternate_teaching_post_when_worker_receipt_is_missing"
     ],
-    "verification": "pytest tests/unit/l12/test_hosted_domain_contract.py: 27 passed, 2 skipped (the skips are the expected paused-chain assertions)",
+    "verification": "pytest tests/unit/l12/test_hosted_domain_contract.py: 29 passed, 0 skipped (both Teaching-session reuse tests seed persona-<strategy_id> and run to completion)",
     "not_done": "local fixtures only; no actual duplicate/replay/future worker success claimed; no SSH/provider/business calls; Root01a11 owns activation, chain A and DLQ recovery."
   }
 }

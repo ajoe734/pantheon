@@ -1196,9 +1196,10 @@ class DeployedResearchHarness:
         def open_teaching_session() -> Any:
             if worker_session is not None:
                 return worker_session
-            prior = self._prior_session(persona_id, registry_id, teaching_trace_id, headers)
-            if prior is not None:
-                return prior
+            if self.hosted:
+                prior = self._prior_session(persona_id, registry_id, teaching_trace_id, headers)
+                if prior is not None:
+                    return prior
             return self._http_json(
                 self.training_url,
                 "/api/training/sessions",
