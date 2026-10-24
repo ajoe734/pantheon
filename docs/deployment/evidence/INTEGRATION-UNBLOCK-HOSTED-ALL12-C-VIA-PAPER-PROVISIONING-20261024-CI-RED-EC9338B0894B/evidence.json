@@ -1,0 +1,43 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-HOSTED-ALL12-C-VIA-PAPER-PROVISIONING-20261024-CI-RED-EC9338B0894B",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "source_task_id": "HOSTED-ALL12-C-VIA-PAPER-PROVISIONING-20261024",
+  "blocked_pr": {
+    "number": 6771,
+    "url": "https://github.com/ajoe734/pantheon/pull/6771",
+    "head_sha": "0ace196ab2065880c8b002786599c1d028100b36",
+    "base_ref": "dev"
+  },
+  "first_failure_evidence": {
+    "workflow": "Branch CI Gate",
+    "job_name": "Smoke acceptance",
+    "run_id": 40101778814,
+    "job_id": 120896219403,
+    "job_url": "https://github.com/ajoe734/pantheon/actions/runs/40101778814/job/120896219403",
+    "step_name": "Provision real worker sandbox",
+    "installed_packages": {
+      "apparmor": "5.0.2-0ubuntu1~26.04.1",
+      "apparmor-profiles": "5.0.2-0ubuntu1~26.04.1",
+      "bubblewrap": "0.11.1-1ubuntu0.3"
+    },
+    "failing_line": ".github/workflows/branch-ci.yml:274-275",
+    "stderr": "sha256sum: /usr/share/apparmor/extra-profiles/bwrap-userns-restrict: No such file or directory",
+    "exit_code": 1
+  },
+  "root_cause": "GitHub Actions ubuntu-latest runner image advanced to Ubuntu 26.04 (resolute), where apparmor 5.0.2-0ubuntu1~26.04.1 ships the vendor bubblewrap AppArmor profile at /etc/apparmor.d/bwrap-userns-restrict instead of the Ubuntu 24.04 apparmor-profiles 4.x path /usr/share/apparmor/extra-profiles/bwrap-userns-restrict. Because .github/workflows/branch-ci.yml hard-coded only the 24.04 extra-profiles path, the 'Provision real worker sandbox' step exited 1 at sha256sum before any smoke or boundary tests ran. The failure is in CI worker sandbox provisioning, not in PR #6771's source changes or scripts/git/auto_integrator.py.",
+  "fix": {
+    "changed_files": [
+      ".github/workflows/branch-ci.yml",
+      "docs/deployment/evidence/INTEGRATION-UNBLOCK-HOSTED-ALL12-C-VIA-PAPER-PROVISIONING-20261024-CI-RED-EC9338B0894B/evidence.json"
+    ],
+    "summary": "Select the vendor-installed bwrap-userns-restrict AppArmor profile from /etc/apparmor.d/bwrap-userns-restrict (Ubuntu 26.04 apparmor 5.x) or /usr/share/apparmor/extra-profiles/bwrap-userns-restrict (Ubuntu 24.04 apparmor-profiles 4.x), verify package ownership via dpkg -S, log stat and sha256sum, load the unmodified vendor profile via apparmor_parser --replace, and retain the existing /usr/bin/bwrap capability probe and real worker sandbox boundary tests unchanged."
+  },
+  "local_validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m unittest scripts.test_branch_ci_gate_selection",
+      "tests": 13,
+      "exit_code": 0
+    }
+  ]
+}
