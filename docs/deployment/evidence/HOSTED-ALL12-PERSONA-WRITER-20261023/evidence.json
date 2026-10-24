@@ -1,0 +1,54 @@
+{
+  "task_id": "HOSTED-ALL12-PERSONA-WRITER-20261023",
+  "kind": "source_delivery_not_hosted_acceptance",
+  "follows_up": "HOSTED-ALL12-COMPOSE-READBACK-20261023",
+  "failure_followed": {
+    "run": "40042081495",
+    "artifact": "12539194768",
+    "sha256": "32bb326436461bfd972905ec191526ed5c27fee26ff9145d2bb11a92be8c5a30",
+    "error": "POST /api/personas 403 PERSONA_OWNER_REQUIRED: caller operator-a lacks persona.admin"
+  },
+  "changed_files": [
+    ".github/workflows/nonprod-deploy.yml",
+    "tests/integration/l12/l12_owner_auth.py",
+    "tests/integration/l12/test_current_research_loops_deployed_e2e.py",
+    "tests/integration/l12/test_current_human_learning_deployed_e2e.py",
+    "scripts/test_isolated_l12_provider_workflow.py",
+    "tests/unit/l12/test_hosted_domain_contract.py",
+    "docs/deployment/evidence/HOSTED-ALL12-PERSONA-WRITER-20261023/evidence.json"
+  ],
+  "behavior": {
+    "change": "Staged run_phase.py reads the persona container's own PANTHEON_PERSONA_SERVICE_TOKEN (fallback PERSONA_SERVICE_TOKEN) via container_env into PANTHEON_L12_PERSONA_SERVICE_TOKEN (private, redacted) and PANTHEON_PERSONA_SERVICE_ACTOR_ID (default operator-bff) into PANTHEON_L12_PERSONA_SERVICE_ACTOR_ID. l12_owner_auth.persona_writer_identity() returns the pair in hosted mode only; both hosted _ensure_persona use that Authorization and actor_id for Persona GET/POST. The opaque token is never decoded.",
+    "unchanged": "Persona owner authentication, actor binding and tenant checks; no role elevation of operator-a or TEST_ADMIN; Registry/Governance/H1 roles; isolated behavior (no staged writer -> human operator identity). Same-tenant existing Persona is still reused; tenant mismatch still fails closed."
+  },
+  "verification": {
+    "command": "pytest tests/unit/l12/test_hosted_domain_contract.py scripts/test_isolated_l12_provider_workflow.py",
+    "result": "50 passed (extended owner/actor and H1-before-Persona-before-admission assertions)"
+  },
+  "not_done": "No VM SSH, provider, model or business calls; no hosted dispatch. Root01a11 owns owner readback, samechain retry and release steps after merge.",
+  "corrections_on_head_5606": {
+    "owner_preserved": "Persona create now sends explicit owner and metadata.requested_by from the genuine executing human token subject; actor_id/created_by stays the configured Persona service actor (persona_create_identity in l12_owner_auth). Opaque service token is never decoded.",
+    "alpha_persona_order": "Hosted A ensures/reads persona-{strategy_id} (the Alpha worker default Teaching uses) after genuine H1 require_decided_approval and approved advance, before Alpha admission; chain persona_id is preserved early in resource_ids and reused by all A Teaching fallback/creation. B, C, E untouched; no Persona retirement.",
+    "not_done": "No DLQ replay, SSH, provider or hosted dispatch; Root owns replay_dlq after source accepted and Persona exists. Caller-side Teaching success does not prove worker recovery."
+  },
+  "corrections_on_head_05bbb": {
+    "defect": "hosted open_teaching_session matched only the chain teaching trace_id; the Alpha background worker receipt uses trace-teaching-{domain_run_id}, so a second POST would be issued",
+    "fix": "hosted caller reuses an existing session whose context_refs match exact authority run id + domain_run_id + strategy_spec_id (worker trace preserved), after a bounded readback window; isolated POST behavior unchanged",
+    "test": "tests/unit/l12/test_hosted_domain_contract.py::test_research_reuses_the_alpha_worker_teaching_session_with_a_different_trace",
+    "verification": "pytest tests/unit/l12: 94 passed",
+    "not_done": "no provider/business/VM call; activation, replay_dlq and samechain A resumption remain with Root01a11"
+  },
+  "corrections_on_head_4ae13": {
+    "defects": [
+      "hosted callback wait expiry fell through to POST /api/training/sessions",
+      "find_run pinned the first historical completed run, ignoring a later worker Teaching receipt after replay changed causal run ids"
+    ],
+    "fix": "hosted caller resolves the worker Teaching receipt via tenant/Persona/Spec experiment_run context refs, then reads that exact authority run and verifies its completed authority/domain pair; bounded wait expiry raises HostedPause(teaching_session) with registry_id/persona_id preserved and no Teaching POST. Isolated path unchanged.",
+    "tests": [
+      "test_research_reuses_the_alpha_worker_teaching_session_with_a_different_trace (later auth-run-2/exp-2 pair)",
+      "test_research_pauses_without_alternate_teaching_post_when_worker_receipt_is_missing"
+    ],
+    "verification": "pytest tests/unit/l12/test_hosted_domain_contract.py: 29 passed, 0 skipped (both Teaching-session reuse tests seed persona-<strategy_id> and run to completion)",
+    "not_done": "local fixtures only; no actual duplicate/replay/future worker success claimed; no SSH/provider/business calls; Root01a11 owns activation, chain A and DLQ recovery."
+  }
+}

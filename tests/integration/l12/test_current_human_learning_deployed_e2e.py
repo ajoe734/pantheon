@@ -50,6 +50,8 @@ from l12_owner_auth import (
     hosted_receipt_fields,
     human_token,
     load_hosted_input,
+    persona_create_identity,
+    persona_writer_identity,
     require_decided_approval,
     token_subject,
 )
@@ -691,7 +693,8 @@ class DeployedHumanLearningHarness:
         }
 
     def _persona_headers(self) -> dict[str, str]:
-        headers = bearer(human_token("OPERATOR"))
+        writer = persona_writer_identity()
+        headers = {"Authorization": writer[0]} if writer else bearer(human_token("OPERATOR"))
         headers["X-Tenant-Id"] = self.tenant_id
         return headers
 
@@ -709,14 +712,12 @@ class DeployedHumanLearningHarness:
                 f"Existing persona {persona_id!r} tenant {existing.get('tenant_id')!r} does not match required tenant {self.tenant_id!r}",
             )
             return
-        token = human_token("OPERATOR")
-        actor_id = token_subject(token)
         self._http_json(
             self.persona_url,
             "/api/personas",
             method="POST",
             payload={
-                "actor_id": actor_id,
+                **persona_create_identity(),
                 "persona_id": persona_id,
                 "name": name,
                 "mandate": mandate,

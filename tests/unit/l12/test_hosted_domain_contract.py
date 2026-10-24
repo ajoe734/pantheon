@@ -224,13 +224,14 @@ class FakeResearchOwners:
                 "record_type": "ExperimentRun", "strategy_spec_id": self.registry_id,
                 "experiment_run": {"run_id": "exp-1", "strategy_spec_id": self.registry_id, "status": "completed"}}}]
         if path.startswith("/api/research-orchestrator/runs/"):
-            return self.alpha_run()
+            run_id = unquoted.rsplit("/", 1)[-1]
+            return self.alpha_run(run_id, "exp-" + run_id.rsplit("-", 1)[-1])
         raise AssertionError(f"unexpected owner call {method} {path}")
 
-    def alpha_run(self) -> dict[str, Any]:
-        return {"run_id": "auth-run-1", "parameters": {
+    def alpha_run(self, run_id: str = "auth-run-1", domain: str = "exp-1") -> dict[str, Any]:
+        return {"run_id": run_id, "parameters": {
             "record_type": "ExperimentRun", "strategy_spec_id": self.registry_id,
-            "experiment_run": {"run_id": "exp-1", "strategy_spec_id": self.registry_id, "status": "completed"}}}
+            "experiment_run": {"run_id": domain, "strategy_spec_id": self.registry_id, "status": "completed"}}}
 
     def writes(self) -> list[tuple[str, str]]:
         return [c for c in self.calls if c[0] != "GET"]
@@ -246,7 +247,8 @@ def _research(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, owners_kwargs: di
     owners = FakeResearchOwners(mod, entry_state=entry_state, decided=decided)
     harness._http_json = owners
     harness._service_identity = lambda service: {"compose_service": service}
-    harness._ensure_persona = lambda *a, **k: None
+    owners.persona_calls = []
+    harness._ensure_persona = lambda pid, **k: owners.persona_calls.append((pid, len(owners.calls)))
     harness.poll_seconds, harness.timeout_seconds = 0.001, 1
     return mod, harness, owners
 
@@ -298,6 +300,17 @@ def test_research_a2_reuses_exact_registry_id_and_checksum_with_h1_and_never_dup
     assert harness.chain["admission"]["strategy_spec_id"] == owners.registry_id
     assert harness.chain["h1_decision_id"] == "apv-1"
 
+    # the worker-default Persona for the actual strategy is ensured after H1's approved advance and
+    # before Alpha admission, and the same id is the chain's Persona handed to Teaching
+    sid = owners.entry["strategy_id"]
+    assert harness.chain["persona_id"] == f"persona-{sid}"
+    first = owners.persona_calls[0]
+    assert first[0] == f"persona-{sid}"
+    approved_at = max(i for i, c in enumerate(owners.calls) if c[1].endswith("/advance"))
+    admit_at = next(i for i, c in enumerate(owners.calls) if c == ("POST", "/api/research-orchestrator/alpha-replication/admissions"))
+    assert approved_at < first[1] <= admit_at
+    assert harness._hosted_resource_ids()["persona_id"] == f"persona-{sid}"
+
     # a separate process of the same chain: everything exists, so nothing is written again
     mod2, second, owners2 = _research(
         monkeypatch, tmp_path, decided=True, predecessors={"checksum": "sha-1"}, entry_state="approved"
@@ -320,7 +333,7 @@ def test_research_reuses_the_chain_teaching_session_instead_of_opening_another(
 ) -> None:
     _, harness, owners = _research(monkeypatch, tmp_path, decided=True, entry_state="approved",
                                    predecessors={"checksum": "sha-1"})
-    persona = f"hosted-all12-{CHAIN}-persona"
+    persona = f"persona-{owners.entry['strategy_id']}"
     owners.sessions.append({
         "session_id": "trn-prior", "persona_id": persona, "trace_id": f"hosted-all12-{CHAIN}-trace-teaching",
         "context_refs": [{"type": "experiment_run", "id": "auth-run-1", "domain_run_id": "exp-1",
@@ -330,6 +343,52 @@ def test_research_reuses_the_chain_teaching_session_instead_of_opening_another(
     assert ("POST", "/api/training/sessions") not in owners.calls
     assert harness.chain["session"]["session_id"] == "trn-prior"
     assert harness._hosted_resource_ids()["teaching_session_id"] == "trn-prior"
+
+
+def test_research_reuses_the_alpha_worker_teaching_session_with_a_different_trace(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def run(ref: dict[str, Any]) -> tuple[Any, Any]:
+        _, harness, owners = _research(monkeypatch, tmp_path, decided=True, entry_state="approved",
+                                       predecessors={"checksum": "sha-1"})
+        owners.sessions.append({
+            "session_id": "trn-worker", "persona_id": f"persona-{owners.entry['strategy_id']}",
+            "trace_id": "trace-teaching-worker-default",
+            "context_refs": [{"type": "experiment_run", **ref}],
+        })
+        harness.run_case(3)
+        return harness, owners
+
+    harness, owners = run({"id": "auth-run-1", "domain_run_id": "exp-1", "strategy_spec_id": owners_registry(monkeypatch, tmp_path)})
+    assert ("POST", "/api/training/sessions") not in owners.calls
+    assert harness.chain["session"]["session_id"] == "trn-worker"
+
+    # a later worker receipt (replay changed the causal run ids) is used, not the first historical run
+    later, owners = run({"id": "auth-run-2", "domain_run_id": "exp-2", "strategy_spec_id": owners_registry(monkeypatch, tmp_path)})
+    assert ("POST", "/api/training/sessions") not in owners.calls
+    assert later.chain["experiment_run"]["run_id"] == "exp-2"
+    assert later.chain["authority_run"]["run_id"] == "auth-run-2"
+
+
+def test_research_pauses_without_alternate_teaching_post_when_worker_receipt_is_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    for refs in ([], [{"type": "experiment_run", "id": "auth-run-1", "domain_run_id": "exp-1",
+                       "strategy_spec_id": "reg-other"}]):
+        _, harness, owners = _research(monkeypatch, tmp_path, decided=True, entry_state="approved",
+                                       predecessors={"checksum": "sha-1"})
+        owners.sessions.append({"session_id": "trn-x", "persona_id": f"hosted-all12-{CHAIN}-persona",
+                                "trace_id": "t", "context_refs": refs})
+        with pytest.raises(pytest.skip.Exception, match="teaching_session"):
+            harness.run_case(3)
+        assert ("POST", "/api/training/sessions") not in owners.calls
+        receipt = json.loads((tmp_path / "report.json").read_text())
+        assert receipt["status"] == "paused" and receipt["blocked_before"] == "teaching_session"
+        assert receipt["resource_ids"]["registry_id"] == owners.registry_id
+
+
+def owners_registry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> str:
+    return _research(monkeypatch, tmp_path)[2].registry_id
 
 
 # --------------------------------------------------------------------------- human learning (B_learning)
@@ -905,3 +964,65 @@ def test_hosted_capital_credential_is_requested_fresh_for_every_call(
     assert chain.settings.capital_auth() == {"Authorization": f"Bearer {CAPITAL_JWT}"}
     chain.settings.capital_auth()
     assert len(issued) == 2
+
+
+# --------------------------------------------------------------------------- persona writer identity
+
+
+@pytest.mark.parametrize(
+    "filename, cls",
+    [
+        ("test_current_research_loops_deployed_e2e.py", "DeployedResearchHarness"),
+        ("test_current_human_learning_deployed_e2e.py", "DeployedHumanLearningHarness"),
+    ],
+)
+def test_hosted_ensure_persona_pairs_service_token_with_service_actor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, filename: str, cls: str
+) -> None:
+    mod = _load(monkeypatch, filename, f"persona_writer_{cls}")
+    _hosted_env(monkeypatch, tmp_path, "A_research" if "research" in filename else "B_learning")
+    monkeypatch.setenv("PANTHEON_L12_PERSONA_SERVICE_TOKEN", "opaque-persona-service-token")
+    monkeypatch.setenv("PANTHEON_L12_PERSONA_SERVICE_ACTOR_ID", "operator-bff")
+    harness = getattr(mod, cls)()
+    seen: list[tuple[str, str, Any, str]] = []
+
+    def owner(base_url: str, path: str, *, method: str = "GET", payload: Any = None,
+              headers: Mapping[str, str] | None = None, expected: Any = (200,), **_k: Any) -> Any:
+        seen.append((method, path, payload, (headers or {}).get("Authorization", "")))
+        if method == "POST":
+            return {}
+        return {"persona_id": "p-1", "tenant_id": harness.tenant_id}
+
+    harness._http_json = owner
+    # same-tenant existing Persona is reused without any write
+    harness._ensure_persona("p-1", name="n", mandate="m")
+    assert [c[0] for c in seen] == ["GET"]
+    assert seen[0][3] == "Bearer opaque-persona-service-token"
+
+    seen.clear()
+    state = {"n": 0}
+
+    def create(base_url: str, path: str, **kw: Any) -> Any:
+        state["n"] += 1
+        seen.append((kw.get("method", "GET"), path, kw.get("payload"), (kw.get("headers") or {}).get("Authorization", "")))
+        if state["n"] == 1:
+            return None  # 404: absent
+        return {} if kw.get("method") == "POST" else {"persona_id": "p-1", "tenant_id": harness.tenant_id}
+
+    harness._http_json = create
+    harness._ensure_persona("p-1", name="n", mandate="m")
+    post = next(c for c in seen if c[0] == "POST")
+    assert post[2]["actor_id"] == "operator-bff" and post[2]["tenant_id"] == harness.tenant_id
+    # logical owner stays the genuine executing human, never relabelled as the service actor
+    import l12_owner_auth
+    human = l12_owner_auth.token_subject(l12_owner_auth.human_token("OPERATOR"))
+    assert post[2]["owner"] == human and human != "operator-bff"
+    assert post[2]["metadata"] == {"requested_by": {"actor_type": "operator", "actor_id": human}}
+    assert {c[3] for c in seen} == {"Bearer opaque-persona-service-token"}
+
+    # without a staged writer (isolated / ordinary operator) the caller identity is untouched
+    monkeypatch.delenv("PANTHEON_L12_PERSONA_SERVICE_TOKEN")
+    assert mod.persona_writer_identity() is None
+    monkeypatch.delenv("PANTHEON_L12_HOSTED_CHAIN")
+    monkeypatch.setenv("PANTHEON_L12_PERSONA_SERVICE_TOKEN", "x")
+    assert mod.persona_writer_identity() is None
