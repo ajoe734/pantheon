@@ -4,6 +4,6 @@
   "blocker": "CAPITAL_HOSTED_PRINCIPAL_DECISION_REQUIRED",
   "removed": ["nonprod-deploy.yml CAPITAL_SNIPPET/_service_jwt('capital')", "l12_owner_auth.fresh_capital_authorization"],
   "behaviour": "Capital writes use the executing session token; a token without a service claim pauses C_promote before capital_pool_creation",
-  "verification": {"command": "pytest tests/unit/l12 scripts/test_isolated_l12_provider_workflow.py", "result": "132 passed"},
+  "verification": {"command": "pytest tests/unit/l12 scripts/test_isolated_l12_provider_workflow.py", "result": "137 passed (re-run at resume, head 2b49d647d)"},
   "scope_extensions": ["tests/integration/l12/test_stimulus_cross_loop_deployed_e2e.py (import of removed helper)", "scripts/test_isolated_l12_provider_workflow.py (asserted the minted token)"]
 }
