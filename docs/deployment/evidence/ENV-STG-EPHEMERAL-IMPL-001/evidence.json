@@ -1,0 +1,82 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "ENV-STG-EPHEMERAL-IMPL-001",
+  "title": "Ephemeral Staging Template & Automated Lifecycle Engine",
+  "recorded_at": "2026-10-24T08:10:00Z",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "target_repo": "pantheon",
+  "task_class": "functional",
+  "base_branch": "dev",
+  "task_branch": "task/ENV-STG-EPHEMERAL-IMPL-001",
+  "completion_tracks": {
+    "functional": {
+      "status": "ready_for_review",
+      "scope": "Source implementation of release manifest contract, ephemeral staging provision/verify/destroy controller, sanitized data preparation, inert-by-default orphan cleanup workflow, instance/compose/Caddy templates, runbook, and local contract/controller test suite."
+    },
+    "hosted": {
+      "status": "external_wait",
+      "note": "Local/mocked tests prove controller behavior only and do not count as hosted drill evidence. Hosted acceptance requires two consecutive zero-to-zero staging releases after external prerequisites are provisioned."
+    }
+  },
+  "artifacts": [
+    "scripts/deploy/release_manifest.py",
+    "schemas/release-manifest.schema.json",
+    "scripts/deploy/staging_provision.sh",
+    "scripts/deploy/staging_destroy.sh",
+    "scripts/deploy/staging_verify.sh",
+    "scripts/deploy/staging_sanitize.py",
+    ".github/workflows/staging-ephemeral-deploy.yml",
+    ".github/workflows/staging-orphan-cleanup.yml",
+    "deploy/staging/instance-template.json",
+    "deploy/staging/docker-compose.staging.yml",
+    "deploy/staging/Caddyfile.staging.tmpl",
+    "deploy/staging/staging-env.defaults",
+    "tests/deployment/test_staging_release.py",
+    "docs/deployment/ephemeral-staging-runbook.md",
+    "docs/deployment/evidence/ENV-STG-EPHEMERAL-IMPL-001/evidence.json"
+  ],
+  "safety_and_authority_invariants": {
+    "cloud_resources_provisioned": false,
+    "deployment_workflows_dispatched": false,
+    "github_settings_or_secrets_mutated": false,
+    "secret_values_read": false,
+    "nonprod_deploy_or_product_code_modified": false,
+    "rebuilt_fe_or_bff_during_promotion": false,
+    "retired_projects_or_hosts_rejected": [
+      "pantheon-lupin-dev-20260719",
+      "pantheon-benjamin-20260528",
+      "35.201.204.12",
+      "35.201.239.38",
+      "34.81.75.241",
+      "104.155.223.192",
+      "/home/lupin"
+    ],
+    "unaccepted_all12_chain_rejected": "h12-01a11-20261023-9aeb",
+    "safe_defaults_enforced": {
+      "provider_enabled": false,
+      "live_broker_enabled": false,
+      "real_writes_enabled": false,
+      "dev_stub_writes_enabled": false,
+      "control_vm_broker_credentials_present": false
+    }
+  },
+  "external_wait_prerequisites": [
+    "GCP CLI reauthentication (`gcloud auth login` / Workload Identity Federation setup) and confirmation of active non-production staging GCP project, billing, and Compute Engine quota.",
+    "Creation of GitHub `staging` Environment in `ajoe734/pantheon` (concurrency 1) and explicit configuration of `STAGING_GCP_PROJECT_ID`, `STAGING_GCP_ZONE`, `STAGING_INSTANCE_TEMPLATE`, `STAGING_SERVICE_ACCOUNT`, `STAGING_SANITIZED_SNAPSHOT`, `STAGING_EPHEMERAL_ENABLED=true`, and `STAGING_ORPHAN_CLEANUP_ENABLED=true`.",
+    "Genuine `dev_verified` release manifest after `DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002` / all12 chain `h12-01a11-20261023-9aeb` is resolved.",
+    "Execution of two consecutive ephemeral staging releases starting from zero staging resources, passing all verification gates, and destroying all owned VM/disks/IP/IAM bindings with zero orphan inventory."
+  ],
+  "validation": {
+    "commands": [
+      {
+        "command": "$PANTHEON_PY -m pytest -v tests/deployment/test_staging_release.py",
+        "result": "13 passed"
+      },
+      {
+        "command": "bash -n scripts/deploy/staging_provision.sh scripts/deploy/staging_verify.sh scripts/deploy/staging_destroy.sh",
+        "result": "exit 0"
+      }
+    ]
+  }
+}

@@ -63,6 +63,37 @@ from l12_owner_auth import (
 )
 
 
+HOSTED_IDS_PATH_ENV = "PANTHEON_L12_HOSTED_CHAIN_IDS_PATH"
+
+
+class PersistedIds(dict):
+    """Resource ids of a hosted phase, flushed to the parent's file on every change.
+
+    The parent merges this file into its receipt even when this child dies, so an id
+    created before a failure is never lost to the retirement path.
+    """
+
+    def __init__(self, path: str | None = None) -> None:
+        super().__init__()
+        self._path = path if path is not None else os.getenv(HOSTED_IDS_PATH_ENV, "").strip()
+
+    def _flush(self) -> None:
+        if not self._path:
+            return
+        target = Path(self._path)
+        scratch = target.with_name(target.name + ".tmp")
+        scratch.write_text(json.dumps(dict(self), sort_keys=True), encoding="utf-8")
+        os.replace(scratch, target)
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        super().__setitem__(key, value)
+        self._flush()
+
+    def update(self, *args: Any, **kwargs: Any) -> None:
+        super().update(*args, **kwargs)
+        self._flush()
+
+
 TASK_ID = "PFG-L12-RUNTIME-E2E-20260820"
 # The isolated harness runs the stack as the hosted dev tenant.
 TENANT_ID = os.getenv("PANTHEON_L12_TENANT_ID", "default").strip()
@@ -1142,7 +1173,7 @@ class RuntimeChain:
         )
         return view if isinstance(view, Mapping) and view.get("decision_id") == decision_id else None
 
-    def _hosted_capital(self, persona_id: str) -> dict[str, str]:
+    def _hosted_capital(self, persona_id: str, ids: dict[str, Any]) -> dict[str, str]:
         """Paper pool and paper binding: read-before-create, and no approval id is invented."""
         chain = self.hosted_input
         assert chain is not None
@@ -1181,6 +1212,7 @@ class RuntimeChain:
                 headers=headers(),
                 expected={201},
             )
+        ids["capital_pool_id"] = pool_id  # persisted before the next write can fail
         binding = self.http.request(
             "capital", "GET", f"/api/bindings/{binding_id}", headers=headers(), expected={200, 404}
         )
@@ -1206,6 +1238,7 @@ class RuntimeChain:
                 headers=headers(),
                 expected={201},
             )
+        ids["capital_binding_id"] = binding_id
         if binding.get("status") != "active":
             # Paper operations are admitted without a Capital approval (capital_guard
             # is_paper_operation); the activation therefore carries no approval id.
@@ -1263,32 +1296,53 @@ class RuntimeChain:
         )
 
         execution_id = chain.id("execution-artifact")
-        try:
-            registration = build_execution_artifact_registration(
-                entry,
-                artifact_id=execution_id,
-                algorithm_commit=self.settings.expected_sha,
-                requested_by=HOSTED_TASK_ID,
-            )
-        except StrategyArtifactValidationError as exc:
-            raise HostedPause(
-                "unsupported_executable_path",
-                f"unsupported_executable_path: the chain StrategySpec {registry_id} cannot be carried to "
-                f"an execution_bundle StrategyArtifact: {exc}; no Capital, artifact or DeploymentPlan was "
-                "written and no unrelated artifact was used",
-                ids,
-            ) from exc
-        derived = registration["strategy_artifact"]
-        execution_version = str(derived["version"])
-        execution_checksum = strategy_artifact_checksum(derived)
-        registration["metadata"].update({"tenant_id": TENANT_ID, **chain.labels()})
+        quoted_execution = urllib.parse.quote(execution_id, safe="")
+        existing = self.http.request(
+            "registry", "GET", f"/api/registry/strategy-artifacts/{quoted_execution}",
+            headers=bearer(human_token("OPERATOR")), expected={200, 404},
+        )
+        execution_entry = existing.get("entry") if isinstance(existing.get("entry"), Mapping) else existing
+        registration: Mapping[str, Any] | None = None
+        if execution_entry.get("registry_id") == execution_id:
+            # Resume: the chain's execution artifact identity is the registered one. Its checksum
+            # embeds the SHA that derived it, so it is never recomputed under a newer deployed SHA.
+            execution_version = str(execution_entry.get("version") or "")
+            execution_checksum = str(execution_entry.get("checksum") or "")
+            pinned = chain.predecessor("execution_artifact_checksum")
+            if not execution_checksum or (pinned and pinned != execution_checksum):
+                raise DeployedProofError(
+                    f"registered execution artifact {execution_id} checksum {execution_checksum!r} "
+                    f"is not the chain's pinned {pinned!r}"
+                )
+            ids["execution_artifact_id"] = execution_id
+        else:
+            # The runtime loader reads strategy-artifacts and needs an approved execution_bundle
+            # with an embedded StrategyArtifact; derive it from this Spec's stored recipe.
+            try:
+                registration = build_execution_artifact_registration(
+                    entry,
+                    artifact_id=execution_id,
+                    algorithm_commit=self.settings.expected_sha,
+                    requested_by=HOSTED_TASK_ID,
+                )
+            except StrategyArtifactValidationError as exc:
+                raise HostedPause(
+                    "unsupported_executable_path",
+                    f"unsupported_executable_path: the chain StrategySpec {registry_id} cannot be carried to "
+                    f"an execution_bundle StrategyArtifact: {exc}; no Capital, artifact or DeploymentPlan was "
+                    "written and no unrelated artifact was used",
+                    ids,
+                ) from exc
+            derived = registration["strategy_artifact"]
+            execution_version = str(derived["version"])
+            execution_checksum = strategy_artifact_checksum(derived)
+            registration["metadata"].update({"tenant_id": TENANT_ID, **chain.labels()})
         ids.update(
-            execution_artifact_id=execution_id,
             execution_artifact_version=execution_version,
             execution_artifact_checksum=execution_checksum,
         )
         persona_id = chain.predecessor("persona_id") or chain.id("persona")
-        capital = self._hosted_capital(persona_id)
+        capital = self._hosted_capital(persona_id, ids)
         ids.update(
             capital_pool_id=capital["capital_pool_id"],
             capital_binding_id=capital["capital_binding_id"],
@@ -1296,13 +1350,7 @@ class RuntimeChain:
         )
 
         # Register the candidate (read-before-create). Candidate registration is not covered by H3.
-        quoted_execution = urllib.parse.quote(execution_id, safe="")
-        existing = self.http.request(
-            "registry", "GET", f"/api/registry/strategy-artifacts/{quoted_execution}",
-            headers=bearer(human_token("OPERATOR")), expected={200, 404},
-        )
-        execution_entry = existing.get("entry") if isinstance(existing.get("entry"), Mapping) else existing
-        if execution_entry.get("registry_id") != execution_id:
+        if registration is not None:
             execution_entry = self.http.request(
                 "registry", "POST", "/api/registry/strategy-artifacts",
                 body=registration, headers=bearer(human_token("OPERATOR")), expected={200, 201},
@@ -1310,6 +1358,7 @@ class RuntimeChain:
             execution_entry = (
                 execution_entry.get("entry") if isinstance(execution_entry.get("entry"), Mapping) else execution_entry
             )
+            ids["execution_artifact_id"] = execution_id  # persisted once the owner holds it
         embedded = (execution_entry.get("metadata") or {}).get("strategy_artifact")
         if (
             execution_entry.get("registry_id") != execution_id
@@ -1416,12 +1465,13 @@ class RuntimeChain:
                 "reason": f"{HOSTED_TASK_ID} paper chain rollback reference",
             },
         }
-        ids["plan_id"] = plan_id
         plan = self.http.request(
             "deployment", "GET", f"/api/deployment/plans/{plan_id}",
             headers=self.deployment_headers, expected={200, 404},
         )
-        if plan.get("plan_id") != plan_id:
+        if plan.get("plan_id") == plan_id:
+            ids["plan_id"] = plan_id
+        else:
             validation = self.http.request(
                 "deployment", "POST", "/api/deployment/plans/validate",
                 body=plan_body, headers=self.deployment_headers,
@@ -1435,6 +1485,7 @@ class RuntimeChain:
                 "deployment", "POST", "/api/deployment/plans",
                 body=plan_body, headers=self.deployment_headers, expected={201},
             )
+            ids["plan_id"] = plan_id  # persisted once the owner holds it
             plan = self.http.request(
                 "deployment", "GET", f"/api/deployment/plans/{plan_id}", headers=self.deployment_headers
             )
@@ -1704,7 +1755,7 @@ class RuntimeChain:
     def run_hosted(self) -> dict[str, Any]:
         chain = self.hosted_input
         assert chain is not None
-        ids: dict[str, Any] = {}
+        ids: dict[str, Any] = PersistedIds()
         status, blocked_before, detail = "completed", None, None
         failure: BaseException | None = None
         try:
@@ -2545,7 +2596,12 @@ def test_loop_10_runtime_event_creates_drift_and_incident(
 ) -> None:
     case = _case(deployed_runtime_chain, "loop_10_telemetry_reconciliation_incident")
     assert case["assertions"]["real_runtime_event_preserved"] is True
-    assert case["terminal_output_id"].startswith("drift-")
+    if hosted_chain_enabled():
+        # Hosted D records the natural IncidentCase the runtime event produced, not a drift report.
+        assert case["terminal_output_id"]
+        assert case["assertions"]["incident_id"] == case["terminal_output_id"]
+    else:
+        assert case["terminal_output_id"].startswith("drift-")
 
 
 def test_loop_11_incident_creates_evolution_decision(
@@ -2560,6 +2616,12 @@ def test_loop_12_bff_reads_typed_worker_and_api_health(
     deployed_runtime_chain: dict[str, Any],
 ) -> None:
     case = _case(deployed_runtime_chain, "loop_12_bff_typed_health")
+    if hosted_chain_enabled():
+        # Hosted D reads BFF typed health only: {target: ok} for the runtime owners.
+        assert case["authority_readback"]["targets"] == {"runtime-manager": True, "paper-fleet-reconciler": True}
+        assert case["next_consumer_readback"]["typed_health"] == case["authority_readback"]["targets"]
+        assert case["assertions"]["typed_targets_ready"] is True
+        return
     assert case["authority_readback"]["ok"] is True
     assert case["next_consumer_readback"]["runtime_manager"]["ok"] is True
     management = case["next_consumer_readback"]["management_loop_health"]

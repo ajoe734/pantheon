@@ -1,0 +1,20 @@
+# Ephemeral Staging Safe Defaults (Non-Secret)
+# Sourced by scripts/deploy/staging_provision.sh and scripts/deploy/staging_verify.sh.
+# Any override that enables providers, live brokers, real writes, or broker credentials
+# on the control VM is rejected fail-closed.
+
+PANTHEON_ENV=staging
+PANTHEON_COMPOSE_PROJECT=pantheon-staging
+PANTHEON_PROVIDER_ENABLED=false
+PANTHEON_LIVE_BROKER_ENABLED=false
+PANTHEON_REAL_WRITES_ENABLED=false
+PANTHEON_DEV_STUB_WRITES_ENABLED=false
+PANTHEON_CONTROL_VM_BROKER_CREDENTIALS_PRESENT=false
+PANTHEON_EXECUTION_MODE=paper
+VITE_BFF_MODE=live
+VITE_BFF_FALLBACK=strict
+STAGING_DEFAULT_TTL_SECONDS=7200
+STAGING_MAX_TTL_SECONDS=86400
+STAGING_MACHINE_TYPE=e2-standard-2
+STAGING_BOOT_DISK_SIZE_GB=50
+STAGING_DATA_DISK_SIZE_GB=100

@@ -1,0 +1,17 @@
+{
+  "task_id": "HOSTED-ALL12-CLOSE-OBSERVE-RESUME-20261024",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "scope": "source/test only; no hosted run was performed and no hosted proof is claimed",
+  "findings_addressed": {
+    "H2_E_close": "E_close never sends an executed plan to aborted; the executed plan is retained as history and its saga is retired (landed in the previous task). Plan states with no remaining transition (failed, rejected, aborted) are treated as already closed. The unit fake owner now derives its transition table from services/deployment/service.py.",
+    "H3_D_observe": "Module-level loop 10 and loop 12 assertions take the hosted shape (incident id, typed health targets) when the hosted flag is set; the isolated shapes are unchanged and still enforced otherwise.",
+    "H4_cleanup": "Every id a child creates is flushed to PANTHEON_L12_HOSTED_CHAIN_IDS_PATH on each change and merged into the parent receipt even when the child exits non-zero. Ids are recorded only after the owner holds the record. E_close no longer requires C/D to have completed. Retirement order: runtime binding, plan, Capital binding, pool, execution artifact, Spec.",
+    "C_resume_checksum": "A registered chain execution artifact is reused with its owner-held checksum/version (checked against the pinned receipt value) instead of being re-derived under the newly deployed SHA."
+  },
+  "verification": [
+    "/tmp/rv-claude2/bin/python -m pytest tests/unit/l12 -q -> 108 passed",
+    "/tmp/rv-claude2/bin/python -m pytest tests/integration/l12 -q -> 6 passed, 27 skipped (hosted-only cases skip without the hosted environment)"
+  ],
+  "not_changed": ["H1 scripted edit presented as human", "H5 workflow-minted capital token"]
+}
