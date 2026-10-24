@@ -387,7 +387,11 @@ def test_operator_home_and_health_status_endpoints() -> None:
     resp = client.get("/api/v1/operator/health-status", headers={"Authorization": "Bearer op-1:operator"})
     assert resp.status_code == 200
     data = resp.json()
-    assert data["overall_status"] == "ok"
+    # BFF-COCKPIT-HEALTH-SEMANTICS-20261023 (#6744): overall status follows the returned
+    # groups; the mock store carries pending approvals/open alerts. Intentional contract
+    # update, not a weakening.
+    assert data["overall_status"] == "degraded"
+    assert data["meta"]["surfaces"]["health_status"]["status"] == "ok"
     assert "groups" in data
     assert len(data["groups"]) == 5
     group_ids = [g["group_id"] for g in data["groups"]]

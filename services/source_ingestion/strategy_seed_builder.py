@@ -187,7 +187,11 @@ class StrategySpecSeedBuilder:
         _validate_lineage_inputs(bundle, records, items)
 
         contexts = _collect_contexts(bundle, records, items)
-        strategy_metadata = _strategy_metadata(contexts)
+        strategy_metadata = dict(_strategy_metadata(contexts))
+        source_recipe = _source_execution_recipe(bundle, records, items)
+        strategy_metadata.pop("execution_recipe", None)
+        if source_recipe is not None:
+            strategy_metadata["execution_recipe"] = source_recipe
         text = _combined_text(bundle, records, items)
         source_id = str(bundle.source_ids[0])
         source_ids = _unique_strings(bundle.source_ids)
@@ -503,6 +507,45 @@ def _collect_contexts(
     contexts.extend(record.metadata for record in records)
     contexts.extend(item.metadata for item in items)
     return tuple(context for context in contexts if isinstance(context, Mapping))
+
+
+def _source_execution_recipe(
+    bundle: EvidenceBundle,
+    records: Sequence[SourceRecord],
+    items: Sequence[EvidenceItem],
+) -> Any:
+    """Return the recipe declared by Sources; reject any other origin."""
+
+    def declared(metadata: Any) -> tuple[bool, Any]:
+        if not isinstance(metadata, Mapping):
+            return False, None
+        nested = metadata.get("strategy_seed")
+        if isinstance(nested, Mapping) and "execution_recipe" in nested:
+            return True, nested["execution_recipe"]
+        return False, None
+
+    if declared(bundle.metadata)[0] or "execution_recipe" in (bundle.metadata or {}):
+        raise StrategySpecSeedError(
+            "execution_recipe in EvidenceBundle.metadata is not allowed; "
+            "only Source.metadata.strategy_seed may supply it"
+        )
+    for item in items:
+        if declared(item.metadata)[0] or "execution_recipe" in (item.metadata or {}):
+            raise StrategySpecSeedError(
+                f"execution_recipe in EvidenceItem {item.evidence_item_id} metadata is not allowed; "
+                "only Source.metadata.strategy_seed may supply it"
+            )
+    recipes: list[Any] = []
+    for record in records:
+        has, recipe = declared(record.metadata)
+        if has:
+            recipes.append(recipe)
+    if not recipes:
+        return None
+    first = recipes[0]
+    if any(recipe != first for recipe in recipes[1:]):
+        raise StrategySpecSeedError("Sources declare contradicting execution_recipe values")
+    return first
 
 
 def _strategy_metadata(contexts: Sequence[Mapping[str, Any]]) -> Mapping[str, Any]:

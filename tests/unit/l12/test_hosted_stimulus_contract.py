@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import importlib.util
 import json
 import subprocess
@@ -87,11 +88,12 @@ def domain_loops(*phases: str) -> list[dict[str, Any]]:
     keys = {"A_research": ("alpha_replication", "persona_teaching"),
             "B_learning": ("human_imitation_shadow_evaluation", "consultation")}
     cases = {c[0]: c[2] for c in parent.LOOP_CASES}
-    return [
+    # deep copies: tests mutate these records and must not leak into each other
+    return copy.deepcopy([
         {"loop_id": loop, "domain": "x", **{k: v for k, v in DOMAIN_CASES[cases[loop]].items()},
          "next_receipt": DOMAIN_CASES[cases[loop]].get("next_consumer", {"n": 1}), "owner_observation": {"svc": "x"}, "trigger": "t"}
         for phase in phases for loop in keys[phase]
-    ]
+    ])
 
 
 def _case(loop_id: str, runtime: bool) -> dict[str, Any]:
@@ -143,6 +145,26 @@ RETIRED = {  # write path suffix -> (state key, state after the write)
 }
 
 
+def _service_transition_table() -> dict[str, set[str]]:
+    """The DeploymentPlan transition table, read from services/deployment/service.py itself."""
+    source = (Path(__file__).resolve().parents[3] / "services/deployment/service.py").read_text()
+    block = source[source.index("allowed = {\n            PlanStatus.DRAFT"):]
+    block = block[: block.index("        }\n") ]
+    table: dict[str, set[str]] = {}
+    for line in block.splitlines()[1:]:
+        key, _, rest = line.strip().partition(": ")
+        names = {n.strip().split(".")[1].lower() for n in rest.strip("{},").split(",") if "PlanStatus." in n}
+        table[key.split(".")[1].lower()] = names
+    return table
+
+
+PLAN_TRANSITIONS = _service_transition_table()
+
+
+def _saga(**extra: Any) -> dict[str, Any]:
+    return {"saga_id": "saga-1", "plan_id": "plan-1", "tenant_id": TENANT, "binding_id": "rt-1", "status": "completed", **extra}
+
+
 class FakeOwner:
     actor_id = "exec-actor-1"
     roles = ("persona.admin", "capital.admin", "risk_owner")
@@ -157,6 +179,11 @@ class FakeOwner:
             return (200, record) if record is not None else (404, {})
         base = path.rsplit("/", 1)[0]
         record = self.records.get((service, base))
+        if record is not None and path.endswith("/status") and base.startswith("/api/deployment/plans/"):
+            # real DeploymentPlan transition table (services/deployment/service.py update_status)
+            current, target = record.get("status"), (body or {}).get("status")
+            if target != current and target not in PLAN_TRANSITIONS.get(current, set()):
+                return 400, {"detail": f"Invalid plan status transition: {current} -> {target}"}
         if record is not None and base not in self.stuck:
             inner = next((v for v in record.values() if isinstance(v, dict)), record) if "tenant_id" not in record else record
             if body and "status" in body:
@@ -277,19 +304,24 @@ def test_e_close_retires_only_verified_chain_records(monkeypatch, tmp_path):
     done = {p: {"phase_status": "completed"} for p in parent.HOSTED_PHASES[:4]}
     prior = {"hosted": {"chain_id": CHAIN, "phases": done, "decisions": {"H1": "apv-1"}, "resource_ids": {
         "capital_binding_id": "bnd-1", "capital_pool_id": "pool-unrelated", "plan_id": "plan-1",
-        "registry_id": "reg-1", "teaching_session_id": "ts-1"}}}
+        "runtime_binding_id": "rt-1", "registry_id": "reg-1", "teaching_session_id": "ts-1"}}}
     owner = FakeOwner({
         ("capital", "/api/bindings/bnd-1"): {"binding": _owned(status="active")},
         ("capital", "/api/capital-pools/pool-unrelated"): {"tenant_id": TENANT, "metadata": {"chain_id": "other-chain"}},
+        ("runtime", "/api/runtime-bindings/rt-1"): {"binding": _owned(status="active")},
         ("deployment", "/api/deployment/plans/plan-1"): _owned(status="executed"),
+        ("deployment", "/api/deployment/sagas?plan_id=plan-1"): [_saga()],
+        ("deployment", "/api/deployment/sagas/saga-1"): _saga(),
         ("registry", "/api/registry/strategy-specs/reg-1"): {"entry": _owned(artifact_state="approved", version=3)},
         ("governance", "/api/governance/approvals/apv-1"): _owned(decision_state="decided", decision="approved", target_id="reg-1", version=3),
     })
     evidence = _runner(tmp_path, "E_close", owner, prior=prior).run()
     writes = [(m, p) for _s, m, p, _b in owner.log if m != "GET"]
     assert writes == [
+        ("POST", "/api/runtime-bindings/rt-1/retire"),
+        ("POST", "/api/deployment/sagas/saga-1/retire"),
+        ("POST", "/api/deployment/sagas/saga-1/retire/finalize"),
         ("PATCH", "/api/bindings/bnd-1/status"),
-        ("POST", "/api/deployment/plans/plan-1/status"),
         ("POST", "/api/registry/strategy-specs/reg-1/advance"),
         ("POST", "/api/governance/approvals/apv-1/revoke"),
     ]
@@ -303,6 +335,10 @@ def test_e_close_retires_only_verified_chain_records(monkeypatch, tmp_path):
     close = _receipt(tmp_path)["hosted"]["phases"]["E_close"]
     assert "chain label" in close["rejected_unrelated"][0]
     assert close["residual_non_retirable"] == ["teaching_session_id"]
+    # the executed plan is retained history; only its saga and runtime binding are retired
+    assert close["retained_history"][0]["plan_state"] == "executed" and close["retained_history"][0]["saga_state"] == "retired"
+    assert all(r["kind"] != "plan_id" for r in close["retired"])
+    assert owner.records[("deployment", "/api/deployment/plans/plan-1")]["status"] == "executed"
     # the unrelated pool stays unretired, so cleanup is incomplete and never complete/all12
     assert evidence.status == "paused" and close["phase_status"] == "paused"
     assert close["blocked_before"] == "E_close:cleanup_incomplete"
@@ -318,6 +354,37 @@ def _exec_record(spec_id="reg-1", checksum="sha256:exec"):
 
 EXEC_RESOURCES = {"registry_id": "reg-1", "execution_artifact_id": "exec-1",
                   "execution_artifact_version": "1.0.0", "execution_artifact_checksum": "sha256:exec"}
+
+
+def test_e_close_executed_plan_refused_abort_and_saga_needs_retired_binding(monkeypatch, tmp_path):
+    plan = _owned(status="executed")
+    owner = FakeOwner({("deployment", "/api/deployment/plans/plan-1"): plan})
+    code, _ = owner.request("deployment", "POST", "/api/deployment/plans/plan-1/status", {"status": "aborted"})
+    assert code == 400 and plan["status"] == "executed"
+    # no retired runtime binding: the saga is never touched
+    _runner(tmp_path, "E_close", owner, prior=_close_prior(plan_id="plan-1")).run()
+    assert [x for x in owner.log if x[1] != "GET"][1:] == []
+    close = _receipt(tmp_path)["hosted"]["phases"]["E_close"]
+    assert close["phase_status"] == "paused" and close["retained_history"] == []
+
+
+def test_e_close_still_aborts_unexecuted_plan(monkeypatch, tmp_path):
+    owner = FakeOwner({("deployment", "/api/deployment/plans/plan-1"): _owned(status="approved")})
+    _runner(tmp_path, "E_close", owner, prior=_close_prior(plan_id="plan-1")).run()
+    assert [(m, p, b) for _s, m, p, b in owner.log if m != "GET"] == [
+        ("POST", "/api/deployment/plans/plan-1/status", {"status": "aborted"})]
+
+
+def test_owner_client_sends_configured_tenant_on_generic_requests(monkeypatch):
+    seen = {}
+    class Resp:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *_a): return False
+        def read(self): return b"{}"
+    monkeypatch.setattr(parent.urllib.request, "urlopen", lambda request, timeout=0: seen.update(request.header_items()) or Resp())
+    parent.UrllibOwnerClient({"deployment": "http://d"}, "owner-token", tenant_id=TENANT).request("deployment", "GET", "/api/deployment/plans/p")
+    assert seen["X-tenant-id"] == TENANT and seen["Authorization"] == "Bearer owner-token"
 
 
 def test_e_close_retires_the_derived_execution_artifact_before_its_spec(monkeypatch, tmp_path):
@@ -780,3 +847,172 @@ def test_owner_client_signs_capital_requests_fresh_with_real_principal(monkeypat
     assert seen[2]["Authorization"] == "Bearer owner-token"
     assert client.identity_for("capital")[0] == "operator-bff" and "persona.admin" in client.identity_for("capital")[1]
     assert client.identity_for("registry") == ("human", ("operator",))
+
+
+def test_fake_owner_uses_the_real_plan_transition_table():
+    assert PLAN_TRANSITIONS["executed"] == set() and PLAN_TRANSITIONS["failed"] == set()
+    assert PLAN_TRANSITIONS["approved"] == {"executing", "rejected", "aborted"}
+    for status, allowed in PLAN_TRANSITIONS.items():
+        if status == "aborted":
+            continue  # same-state requests are a no-op
+        owner = FakeOwner({("deployment", "/api/deployment/plans/p"): _owned(status=status)})
+        code, _ = owner.request("deployment", "POST", "/api/deployment/plans/p/status", {"status": "aborted"})
+        assert (code == 200) == ("aborted" in allowed), status
+
+
+def test_e_close_retires_runtime_binding_then_capital_binding_then_pool(monkeypatch, tmp_path):
+    prior = _close_prior(capital_pool_id="pool-1", capital_binding_id="bnd-1", runtime_binding_id="rt-1")
+    owner = FakeOwner({
+        ("capital", "/api/capital-pools/pool-1"): _owned(status="active"),
+        ("capital", "/api/bindings/bnd-1"): {"binding": _owned(status="active")},
+        ("runtime", "/api/runtime-bindings/rt-1"): {"binding": _owned(status="active")},
+    })
+    _runner(tmp_path, "E_close", owner, prior=prior).run()
+    assert [p for _s, m, p, _b in owner.log if m != "GET"] == [
+        "/api/runtime-bindings/rt-1/retire", "/api/bindings/bnd-1/status", "/api/capital-pools/pool-1/status"]
+
+
+@pytest.mark.parametrize("state", ["failed", "rejected", "aborted"])
+def test_e_close_dead_end_plan_states_are_not_sent_a_transition(monkeypatch, tmp_path, state):
+    owner = FakeOwner({("deployment", "/api/deployment/plans/plan-1"): _owned(status=state)})
+    _runner(tmp_path, "E_close", owner, prior=_close_prior(plan_id="plan-1")).run()
+    assert [x for x in owner.log if x[1] != "GET"] == []
+    assert _receipt(tmp_path)["hosted"]["phases"]["E_close"]["retired"][0]["already"] is True
+
+
+def test_failed_child_still_leaves_created_ids_in_the_parent_receipt(monkeypatch, tmp_path):
+    def crashing_child(*_args: Any, **kwargs: Any) -> SimpleNamespace:
+        Path(kwargs["env"][parent.HOSTED_IDS_PATH_ENV]).write_text(
+            json.dumps({"capital_pool_id": "pool-1", "capital_binding_id": "bnd-1", "plan_id": ["bad/id"]}))
+        return SimpleNamespace(returncode=1, stdout="boom", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", crashing_child)
+    prior = {"hosted": {"chain_id": CHAIN, "resource_ids": dict(CHAIN_REFS), "loops": domain_loops("A_research", "B_learning"),
+                        "phases": {p: {"phase_status": "completed"} for p in ("A_research", "B_learning")}}}
+    owner = FakeOwner({("runtime", FLEET): _fleet(1, ["old"]), **domain_records()})
+    with pytest.raises(parent.StimulusProofError, match="exited 1"):
+        _runner(tmp_path, "C_promote", owner, prior=prior).run()
+    hosted = _receipt(tmp_path)["hosted"]
+    assert hosted["phase_status"] == "failed"
+    assert hosted["resource_ids"] == {**CHAIN_REFS, "capital_pool_id": "pool-1", "capital_binding_id": "bnd-1"}
+
+    # ...and E_close, which no longer needs C/D to have completed, retires them dependants-first
+    owner = FakeOwner({
+        ("capital", "/api/capital-pools/pool-1"): _owned(status="active"),
+        ("capital", "/api/bindings/bnd-1"): {"binding": _owned(status="active")},
+    })
+    _runner(tmp_path, "E_close", owner, prior=_receipt(tmp_path), name="close.json").run()
+    assert [p for _s, m, p, _b in owner.log if m != "GET"] == [
+        "/api/bindings/bnd-1/status", "/api/capital-pools/pool-1/status"]
+    assert _receipt(tmp_path, "close.json")["hosted"]["all12_passed"] is False
+
+
+def test_persisted_ids_flush_on_every_change(tmp_path):
+    module = _runtime_module()
+    target = tmp_path / "ids.json"
+    ids = module.PersistedIds(str(target))
+    ids["capital_pool_id"] = "pool-1"
+    assert json.loads(target.read_text()) == {"capital_pool_id": "pool-1"}
+    ids.update(plan_id="plan-1")
+    assert json.loads(target.read_text()) == {"capital_pool_id": "pool-1", "plan_id": "plan-1"}
+
+
+def _runtime_module():
+    sys.path.insert(0, str(PARENT.parent))
+    sys.modules.pop("l12_owner_auth", None)
+    spec = importlib.util.spec_from_file_location(
+        "runtime_under_test", PARENT.parent / "test_current_runtime_loops_deployed_e2e.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_c_promote_resume_after_redeploy_reuses_the_pinned_execution_artifact(monkeypatch):
+    module = _runtime_module()
+    import l12_owner_auth
+    from services.registry import strategy_artifact
+
+    def derive(_entry, *, artifact_id, algorithm_commit, requested_by):
+        return {"strategy_artifact": {"version": "1.0.0", "commit": algorithm_commit}, "metadata": {}}
+
+    # the real checksum embeds the deriving SHA, so two deployed SHAs give two checksums
+    monkeypatch.setattr(strategy_artifact, "build_execution_artifact_registration", derive)
+    monkeypatch.setattr(strategy_artifact, "strategy_artifact_checksum", lambda art: f"sha256:{art['commit']}")
+    monkeypatch.setattr(module, "human_token", lambda _name: "tok")
+    monkeypatch.setattr(module, "bearer", lambda _tok: {})
+    monkeypatch.setattr(module.RuntimeChain, "_identity", lambda self, service: {})
+    monkeypatch.setattr(module.RuntimeChain, "_governance_read", lambda self, decision_id: None)  # H3 undecided
+    monkeypatch.setattr(
+        module.RuntimeChain, "_hosted_capital",
+        lambda self, persona_id, ids: {"capital_pool_id": "pool-1", "persona_id": persona_id, "capital_binding_id": "bnd-1"})
+
+    class Http:
+        def __init__(self) -> None:
+            self.artifact: dict[str, Any] | None = None
+            self.posts: list[str] = []
+
+        def request(self, service, method, path, *, body=None, **_kw):
+            if path.startswith("/api/registry/strategy-specs/"):
+                return {"entry": {"registry_id": "reg-1", "artifact_state": "approved", "checksum": "sha256:spec",
+                                  "approval_decision_id": "apv-1", "strategy_id": "s-1"}}
+            if method == "POST" and path == "/api/registry/strategy-artifacts":
+                self.posts.append(body["strategy_artifact"]["commit"])
+                self.artifact = {"registry_id": CHAIN_EXEC, "artifact_type": "execution_bundle", "version": "1.0.0",
+                                 "checksum": f"sha256:{body['strategy_artifact']['commit']}", "artifact_state": "candidate",
+                                 "metadata": {"strategy_artifact": {"lineage": {"source_strategy_spec_id": "reg-1"}}}}
+                return {"entry": self.artifact}
+            if path.startswith("/api/registry/strategy-artifacts/"):
+                return {"entry": self.artifact} if self.artifact else {}
+            raise AssertionError(f"unexpected {method} {path}")
+
+    chain_id = "hosted-all12-chain-0001"
+    CHAIN_EXEC = l12_owner_auth.hosted_id(chain_id, "execution-artifact")
+    http = Http()
+    predecessors = {"registry_id": "reg-1", "checksum": "sha256:spec", "governance_handoff_id": "ho-1"}
+    decisions = {"H1": {"decision_id": "apv-1"}}
+
+    def run(sha: str, pinned: dict[str, Any]) -> dict[str, Any]:
+        chain = module.RuntimeChain.__new__(module.RuntimeChain)
+        chain.settings = SimpleNamespace(expected_sha=sha)
+        chain.http, chain.evidence = http, SimpleNamespace(identities={})
+        hosted = l12_owner_auth.HostedChainInput(chain_id, "C_promote", {**predecessors, **pinned}, decisions)
+        ids: dict[str, Any] = {}
+        with pytest.raises(l12_owner_auth.HostedPause, match="H3") as paused:
+            chain._hosted_promote(hosted, ids)
+        assert paused.value.blocked_before == "execution_artifact_approval"
+        return ids
+
+    first = run("a" * 40, {})
+    assert first["execution_artifact_checksum"] == "sha256:" + "a" * 40 and first["execution_artifact_id"] == CHAIN_EXEC
+    # redeployed to another SHA: the registered artifact stays the chain's identity
+    second = run("c" * 40, {k: v for k, v in first.items() if k.startswith("execution_artifact")})
+    assert second["execution_artifact_checksum"] == first["execution_artifact_checksum"]
+    assert http.posts == ["a" * 40]  # never re-derived or re-registered under the new SHA
+    # a pin that disagrees with the registered artifact is refused, not silently replaced
+    with pytest.raises(module.DeployedProofError, match="pinned"):
+        run("c" * 40, {"execution_artifact_checksum": "sha256:other"})
+
+
+def test_hosted_d_module_cases_accept_the_recorded_incident_and_typed_health(monkeypatch):
+    module = _runtime_module()
+    monkeypatch.setattr(module, "hosted_chain_enabled", lambda: True)
+    typed = {"runtime-manager": True, "paper-fleet-reconciler": True}
+    results = {"hosted": {"phase": "D_observe"}, "cases": {
+        "loop_10_telemetry_reconciliation_incident": {
+            "terminal_output_id": "inc-1", "authority_readback": {"incident_id": "inc-1"},
+            "assertions": {"incident_id": "inc-1", "real_runtime_event_preserved": True}},
+        "loop_11_evolution_decision": {
+            "trigger_id": "inc-1", "authority_readback": {"linked_incident_id": "inc-1"},
+            "assertions": {"proposal_only": True}},
+        "loop_12_bff_typed_health": {
+            "authority_readback": {"targets": typed}, "next_consumer_readback": {"typed_health": typed},
+            "assertions": {"typed_targets_ready": True}},
+    }}
+    module.test_loop_10_runtime_event_creates_drift_and_incident(results)
+    module.test_loop_11_incident_creates_evolution_decision(results)
+    module.test_loop_12_bff_reads_typed_worker_and_api_health(results)
+    # the isolated shape is still required when not hosted
+    monkeypatch.setattr(module, "hosted_chain_enabled", lambda: False)
+    with pytest.raises(AssertionError):
+        module.test_loop_10_runtime_event_creates_drift_and_incident(results)

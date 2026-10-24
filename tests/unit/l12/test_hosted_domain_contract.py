@@ -435,45 +435,163 @@ def _content(human: Any, **over: Any) -> dict[str, Any]:
     return human.teaching_agora_content(**(kwargs | over))
 
 
-def test_agora_content_is_the_real_operator_edit_on_the_candidate_not_a_relabelled_outcome(
+HUMAN = "human-session-9"
+PRE_EDIT = {"eval_id": "teval-0", "eval_identity": "eid-0", "evaluated_at": "2026-10-23T01:10:00Z",
+            "metrics": {"total_return": 0.01, "sharpe_ratio": 0.2, "max_drawdown": -0.2}}
+
+
+def _hosted_content(human: Any, **over: Any) -> dict[str, Any]:
+    kwargs: dict[str, Any] = dict(events=[_edit(actor=HUMAN)], hosted=True, executor_subject="executor-1",
+                                  service_subjects=["operator-bff"], pre_edit_evaluation=PRE_EDIT)
+    return _content(human, **(kwargs | over))
+
+
+def test_hosted_research_never_patches_controls_and_pauses_until_a_human_edit_exists(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _, research, _ = _research(monkeypatch, tmp_path)
-    seen: dict[str, Any] = {}
+    calls: list[tuple[str, str]] = []
     research.chain["session"] = {"session_id": "trn-1", "persona_id": "persona-teach"}
     research._current_case = {}
-    research._http_json = lambda _u, path, *, method="GET", payload=None, headers=None, **_: (
-        {"controls": [{"parameter_key": "short_window", "current_value": 7},
-                      {"parameter_key": "long_window", "current_value": 21}]} if "/controls/" in path else
-        (seen.update(patch=(headers, payload)) or {"status": "accepted", "patch_delta": _edit()["patch_delta"]})
-        if path.endswith("/controls") else
-        (seen.update(queue=headers) or {"job_id": "job-1", "eval_id": "teval-1"}) if path.endswith("/preview-jobs") else
-        {"job_id": "job-1", "session_id": "trn-1", "status": "completed", "eval_id": "teval-1"}
-        if "/preview-jobs/" in path else _terminal()
-    )
+    state = {"events": []}
+
+    def http(_u: str, path: str, *, method: str = "GET", payload: Any = None, headers: Any = None, **_: Any) -> Any:
+        calls.append((method, path))
+        if "/controls/" in path:
+            return {"controls": [{"parameter_key": "short_window", "current_value": 5},
+                                 {"parameter_key": "long_window", "current_value": 30}]}
+        if path.endswith("/events"):
+            return state["events"]
+        if path.endswith("/terminal-readback"):
+            return _terminal()
+        if path.endswith("/preview-jobs"):
+            return {"job_id": "job-1", "eval_id": "teval-1"}
+        if "/preview-jobs/" in path:
+            return {"job_id": "job-1", "session_id": "trn-1", "status": "completed", "eval_id": "teval-1"}
+        raise AssertionError(f"unexpected call {method} {path}")
+
+    research._http_json = http
+    with pytest.raises(sys.modules["l12_owner_auth"].HostedPause) as paused:
+        research._case_persona_teaching({})
+    assert paused.value.blocked_before == "teaching_human_control_edit"
+    assert "awaiting_human_edit" in paused.value.detail and "Management UI" in paused.value.detail
+    assert paused.value.resource_ids["pre_edit_eval_id"] == "teval-1"
+    assert paused.value.resource_ids["pre_edit_evaluated_at"] == "2026-10-23T01:30:00Z"
+    _assert_scalar_ids(paused.value.resource_ids)
+    state["events"] = [_edit(actor=HUMAN)]
     research._case_persona_teaching({})
+    assert not [c for c in calls if c[0] == "PATCH"], "hosted mode must never write Teaching controls"
+    assert research.chain["pre_edit_eval_id"] == "teval-1"
+
+
+def _assert_scalar_ids(ids: dict[str, Any]) -> None:
+    """The parent stimulus receipt path (_typed_id) rejects mappings, lists and bools."""
+    spec = importlib.util.spec_from_file_location(
+        "hosted_parent_stimulus", L12_DIR / "test_stimulus_cross_loop_deployed_e2e.py"
+    )
+    parent = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = parent
+    spec.loader.exec_module(parent)
+    for kind, value in ids.items():
+        assert parent._typed_id(kind, value)
+
+
+def test_hosted_research_keeps_pausing_on_an_existing_executor_edit_and_picks_the_latest_human_edit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _, research, _ = _research(monkeypatch, tmp_path)
+    research.chain["session"] = {"session_id": "trn-1", "persona_id": "persona-teach"}
+    research._current_case = {}
+    state = {"events": [_edit(actor="executor-1")]}
+
+    def http(_u: str, path: str, *, method: str = "GET", payload: Any = None, headers: Any = None, **_: Any) -> Any:
+        if "/controls/" in path:
+            return {"controls": [{"parameter_key": "short_window", "current_value": 5},
+                                 {"parameter_key": "long_window", "current_value": 30}]}
+        if path.endswith("/events"):
+            return state["events"]
+        if path.endswith("/terminal-readback"):
+            return _terminal()
+        if path.endswith("/preview-jobs"):
+            return {"job_id": "job-1", "eval_id": "teval-1"}
+        if "/preview-jobs/" in path:
+            return {"job_id": "job-1", "session_id": "trn-1", "status": "completed", "eval_id": "teval-1"}
+        raise AssertionError(f"unexpected call {method} {path}")
+
+    research._http_json = http
+    with pytest.raises(sys.modules["l12_owner_auth"].HostedPause) as paused:
+        research._case_persona_teaching({})
+    assert paused.value.blocked_before == "teaching_human_control_edit"
+    assert "awaiting_human_edit" in paused.value.detail and "ignored" in paused.value.detail
+    _assert_scalar_ids(paused.value.resource_ids)
+    state["events"] = [_edit(actor="executor-1"), _edit(actor=HUMAN, event_id="tevt-2")]
+    research._case_persona_teaching({})
+
+
+def test_isolated_research_still_patches_controls_with_the_operator_token(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _, research, _ = _research(monkeypatch, tmp_path)
+    research.hosted = False
+    research._current_case = {}
+    seen: dict[str, Any] = {}
+    research._http_json = lambda _u, path, *, method="GET", payload=None, headers=None, **_: (
+        seen.update(patch=(headers, payload)) or {"status": "accepted", "patch_delta": _edit()["patch_delta"]})
+    wanted = research._operator_teaching_patch("trn-1", {"short_window": {"current_value": 7},
+                                                         "long_window": {"current_value": 21}})
+    assert wanted == {"short_window": 5, "long_window": 30}
     assert seen["patch"][0]["Authorization"] == f"Bearer {EXECUTOR_TOKEN}"
-    assert seen["patch"][0]["X-Pantheon-Service"] == "control-plane-bff"
     assert seen["patch"][1] == {"patches": [{"parameter_key": "short_window", "proposed_value": 5},
                                             {"parameter_key": "long_window", "proposed_value": 30}]}
-    assert seen["queue"]["Idempotency-Key"] == f"l12-e2e-{CHAIN}-5-30"
 
+
+def test_isolated_agora_content_is_the_operator_edit_on_the_candidate(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
     human = _load(monkeypatch, "test_current_human_learning_deployed_e2e.py", "hosted_human_mod")
     content = _content(human)
     assert content["actor_role"] == "operator" and content["actor_id"] == "executor-1"
-    assert content["decision"] == "edit" and content["control_edit_event_id"] == "tevt-1"
-    assert content["target"]["promotion_state"] == "candidate" and "registry_id" not in content["target"] and content["target"]["lineage_ref"] == "teaching-candidate:trn-1:abc"
-    assert content["source_strategy_spec_id"] == "reg-1" and content["teaching"]["eval_identity"] == "eid-1"
-    assert [s["action"] for s in content["steps"]] == ["set_short_window", "set_long_window"]
     assert content["steps"][0]["observation"] == [0.12, 1.4, -0.07, 7.0]
+
+
+def test_hosted_agora_content_accepts_a_distinct_human_edit_and_observes_pre_edit_metrics(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    human = _load(monkeypatch, "test_current_human_learning_deployed_e2e.py", "hosted_human_mod")
+    content = _hosted_content(human)
+    assert content["actor_id"] == HUMAN and content["actor_role"] == "operator"
+    assert content["decision"] == "edit" and content["control_edit_event_id"] == "tevt-1"
+    assert content["target"]["promotion_state"] == "candidate" and content["target"]["lineage_ref"] == "teaching-candidate:trn-1:abc"
+    assert [s["action"] for s in content["steps"]] == ["set_short_window", "set_long_window"]
+    # observation is the pre-edit evaluation (0.01/0.2/-0.2), never the post-edit 0.12/1.4/-0.07
+    assert content["steps"][0]["observation"] == [0.01, 0.2, -0.2, 7.0]
     assert content["steps"][0]["feedback_event_id"] == "tevt-1:short_window"
-    # the genuine edit passes the unchanged BC filter, and a failed strategy outcome stays truthful
     from services.research.imitation.bc_trainer import prepare_dataset
-    failed = _content(human, terminal=_terminal("failed"))
-    assert failed["teaching"]["validation_status"] == "failed" and failed["decision"] == "edit"
     prepared = prepare_dataset({"dataset_id": "d", "strategy_id": "strat-1", "source_dataset_refs": ["r"],
-                                "sessions": [{**failed, "trajectory_id": "t"}]})
+                                "sessions": [{**content, "trajectory_id": "t"}]})
     assert prepared.included_trajectory_ids == ("t",)
+
+
+def test_hosted_agora_content_rejects_the_executors_own_and_service_edits_with_named_reasons(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    human = _load(monkeypatch, "test_current_human_learning_deployed_e2e.py", "hosted_human_mod")
+    cases = (
+        ({"events": [_edit(actor="executor-1")]}, "executor_edit_rejected"),
+        ({"events": [_edit(actor="operator-bff", actor_type="service")]}, "service_identity_edit_rejected"),
+        ({"events": [_edit(actor="operator-bff")]}, "service_identity_edit_rejected"),
+        ({"events": []}, "awaiting_human_edit"),
+        ({"pre_edit_evaluation": None}, "pre_edit_evaluation_missing"),
+        ({"pre_edit_evaluation": {**PRE_EDIT, "eval_id": "teval-1"}}, "pre_edit_evaluation_missing"),
+        ({"executor_subject": ""}, "executor_subject_unknown"),
+    )
+    for over, reason in cases:
+        with pytest.raises(human.NoGenuineControlEdit) as raised:
+            _hosted_content(human, **over)
+        assert raised.value.reason == reason, (over, raised.value.reason)
+    # a pre-edit evaluation taken after the human edit cannot explain it
+    with pytest.raises(human.NoGenuineControlEdit):
+        _hosted_content(human, pre_edit_evaluation={**PRE_EDIT, "evaluated_at": "2026-10-23T01:25:00Z"})
 
 
 def test_agora_content_refuses_service_only_or_invented_feedback(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -503,8 +621,11 @@ class FakeLearningOwners:
         self.calls.append((method, path, payload))
         if path.endswith("/terminal-readback"):
             return _terminal()
+        if path.startswith("/api/training/previews/"):
+            return {"evaluations": {"teval-0": {"eval_identity": "eid-0", "evaluation_result": {
+                "eval_id": "teval-0", "metrics": PRE_EDIT["metrics"]}}}}
         if path.endswith("/events"):
-            return EVENTS
+            return [_edit(actor=HUMAN)]
         if path == "/api/consult/requests" and method == "POST":
             self.requests[payload["request_id"]] = {**payload, "status": "draft"}
             return self.requests[payload["request_id"]]
@@ -544,7 +665,8 @@ def test_human_agora_evidence_carries_the_teaching_id_registry_and_real_captured
 ) -> None:
     preds = {"teaching_session_id": "trn-1", "registry_id": "reg-1", "checksum": "sha-1",
              "strategy_id": "strat-1", "eval_identity": "eid-1"}
-    mod, harness, owners = _human(monkeypatch, tmp_path, predecessors=preds)
+    mod, harness, owners = _human(monkeypatch, tmp_path, predecessors={**preds, "pre_edit_eval_id": "teval-0",
+                                                                     "pre_edit_evaluated_at": PRE_EDIT["evaluated_at"]})
     harness._ensure_persona = lambda *a, **k: None
     inputs = harness._hosted_teaching_inputs()
     assert inputs["session_id"] == "trn-1" and inputs["persona_id"] == "persona-teach"
@@ -1006,20 +1128,25 @@ def test_hosted_runtime_paths_never_stop_or_restart_services(
             assert forbidden not in source, (method.__name__, forbidden)
 
 
-def test_hosted_capital_credential_is_requested_fresh_for_every_call(
+def test_hosted_capital_uses_executor_token_and_stops_without_service_claim(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     mod, chain, fake = _runtime(monkeypatch, tmp_path, "C_promote")
-    issued: list[str] = []
+    from l12_owner_auth import HostedPause, capital_authorization, capital_identity
 
-    def issue() -> str:
-        issued.append(CAPITAL_JWT)
-        return f"Bearer {CAPITAL_JWT}"
+    # The real hosted token shape: an operator session, no service claim, nothing minted.
+    assert capital_authorization() == f"Bearer {EXECUTOR_TOKEN}"
+    with pytest.raises(HostedPause) as paused:
+        capital_identity(capital_authorization())
+    assert paused.value.blocked_before == "capital_pool_creation"
+    assert "CAPITAL_HOSTED_PRINCIPAL_DECISION_REQUIRED" in paused.value.detail
+    assert not [c for c in fake.writes() if "/api/capital-pools" in c[2] or "/api/bindings" in c[2]]
+    source = inspect.getsource(sys.modules["l12_owner_auth"])
+    assert "_service_jwt" not in source and not hasattr(sys.modules["l12_owner_auth"], "fresh_capital_authorization")
 
-    chain.settings = replace(chain.settings, capital_headers={}, capital_authorization=issue)
-    assert chain.settings.capital_auth() == {"Authorization": f"Bearer {CAPITAL_JWT}"}
-    chain.settings.capital_auth()
-    assert len(issued) == 2
+
+def test_capital_identity_reads_service_claims_of_a_token_that_has_them(auth: Any) -> None:
+    assert auth.capital_identity(f"Bearer {CAPITAL_JWT}") == ("operator-real", "svc-capital")
 
 
 # --------------------------------------------------------------------------- persona writer identity

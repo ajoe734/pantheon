@@ -1,0 +1,13 @@
+{
+  "task_id": "CI-BFF-UBUNTU24-RUNNER-20261024",
+  "change": "branch-ci.yml: 10 jobs runs-on ubuntu-latest -> ubuntu-24.04",
+  "reason": "ubuntu-latest now resolves to 26.04 where the vendor AppArmor profile path used by worker sandbox setup is absent; same-day 24.04 Smoke job 120851223521 verified vendor profile and real sandbox",
+  "primary_evidence": {
+    "file": "/tmp/pantheon-release399295-readonly-20261023/CI-two-repos-real26-failures-and-same-day24-success-supported-runner-evidence-20261024.json",
+    "sha256": "c0e1f1e44e60bdc64c028b5e3dec4bc074be9c1d528691269591b966f56569ab",
+    "failed_run_ref": "0ace40101778814",
+    "rollout": "https://github.com/actions/runner-images/issues/14748"
+  },
+  "unchanged": ["sandbox setup and diagnostics", "required check names", "test suites", "lockfiles", "product code"],
+  "validation": {"yaml_parse": "passed", "capability_proof": "pending genuine PR CI on ubuntu-24.04"}
+}

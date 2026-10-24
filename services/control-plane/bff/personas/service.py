@@ -97,6 +97,7 @@ from ..models import (
 )
 
 from ..pm12 import evaluator_results
+from ..pm12.service import _management_runtime_is_terminal
 
 try:
     from ..capital.service import _pm12_semantic_values_match
@@ -2232,7 +2233,7 @@ def _project_persona_dto(
         "owner": metadata.get("owner") or raw.get("owner") or "pantheon-bff",
         "tenantId": metadata.get("tenant_id"),
         "updatedAt": raw.get("updated_at") or raw.get("created_at") or utc_now(),
-        "state": _normalize_lifecycle_state(raw.get("lifecycle_state")),
+        "state": _persona_record_projected_state(raw),
         "risk": _normalize_risk_level(metadata.get("risk_level")),
         "archetype": archetype,
         "routedStrategies": int(routed_strategies if routed_strategies is not None else 0),
@@ -3923,9 +3924,20 @@ def _persona_record_tenant_id(raw: Mapping[str, Any]) -> str:
 
 # --- _persona_record_projected_state ---
 def _persona_record_projected_state(raw: Mapping[str, Any]) -> str:
-    return _normalize_lifecycle_state(
+    # The Persona owner keeps the governance lifecycle_state and the
+    # administrative status (active/suspended/archived) apart. Archiving
+    # and suspending leave lifecycle_state untouched, so an archived owner
+    # is terminal whatever governance state it was archived from, and a
+    # suspended owner is suspended unless its lifecycle is already retired.
+    admin_status = str(raw.get("status") or "").strip().lower()
+    if admin_status == "archived":
+        return _normalize_lifecycle_state(admin_status)
+    lifecycle_state = _normalize_lifecycle_state(
         raw.get("lifecycle_state") or raw.get("state") or raw.get("status")
     )
+    if admin_status == "suspended" and lifecycle_state != "retired":
+        return _normalize_lifecycle_state(admin_status)
+    return lifecycle_state
 
 
 # --- _persona_record_archetype ---
@@ -4747,7 +4759,11 @@ def _pm12_persona_evaluation_summary(persona_id: str, *, teaching: Optional[Sequ
 # --- _pm12_persona_health_summary ---
 def _pm12_persona_health_summary(persona: Dict[str, Any], sessions: Dict[str, Any], capabilities: Dict[str, Any]) -> Dict[str, Any]:
     state = str(persona.get("lifecycle_state") or persona.get("state") or "").lower()
-    is_operational = _is_persona_lifecycle_operational(state)
+    is_operational = (
+        _is_persona_lifecycle_operational(state)
+        and _persona_record_projected_state(persona)
+        not in _PERSONA_NON_RUNNING_PROJECTED_STATES
+    )
     health = "healthy" if is_operational else "degraded"
     if is_operational and capabilities.get("has_snapshot") is False:
         health = "degraded"
@@ -5624,15 +5640,19 @@ def _enrich_persona_item_with_bindings(
         or item.get("stage")
         or "unknown"
     )
-    normalized_lifecycle = _normalize_lifecycle_state(lifecycle_state)
-    if (
+    normalized_lifecycle = (
+        _persona_record_projected_state(persona)
+        if persona
+        else _normalize_lifecycle_state(lifecycle_state)
+    )
+    if normalized_lifecycle in _PERSONA_NON_RUNNING_PROJECTED_STATES:
+        stage = normalized_lifecycle
+    elif (
         runtime
         and capital_mode in _PERSONA_FLEET_RUNNING_STAGE_STATES
         and _is_persona_lifecycle_operational(lifecycle_state)
     ):
         stage = f"{capital_mode}_running"
-    elif normalized_lifecycle in {"frozen", "suspended", "retired"}:
-        stage = normalized_lifecycle
     else:
         stage = "not_running"
     stage_capital_mode = {
@@ -6204,7 +6224,7 @@ def _project_persona_league_row(
 ) -> Dict[str, Any]:
     persona_id = str(raw.get("persona_id") or raw.get("id") or "")
     metadata = dict(raw.get("metadata") or {}) if isinstance(raw.get("metadata"), dict) else {}
-    state = _normalize_lifecycle_state(raw.get("lifecycle_state") or raw.get("state"))
+    state = _persona_record_projected_state(raw)
     is_retired = state == "retired"
     if is_retired:
         runtime_bindings, persona_bindings, persona_sessions, authoritative_sessions = [], [], [], []
@@ -6326,14 +6346,14 @@ def _pm12_persona_league_rows(
         for raw in raw_records:
             r_id = str(raw.get("persona_id") or raw.get("id") or "")
             r_meta = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
-            r_state = _normalize_lifecycle_state(raw.get("lifecycle_state") or raw.get("state"))
+            r_state = _persona_record_projected_state(raw)
             r_arch = str(r_meta.get("archetype") or raw.get("strategy_family") or raw.get("mandate") or "generalist")
             r_name, r_owner = str(raw.get("name") or r_id), str(r_meta.get("owner") or raw.get("owner") or "pantheon-bff")
             if (not norm_state or r_state == norm_state) and (not archetype or r_arch == archetype) and (not needle or any(needle in s.lower() for s in (r_id, r_name, r_owner, r_arch))):
                 filtered_raw.append(raw)
         raw_records = filtered_raw
     raw_records = sorted(raw_records, key=lambda raw: str(raw.get("name") or raw.get("persona_id") or raw.get("id") or ""))
-    has_active = any(_normalize_lifecycle_state(r.get("lifecycle_state") or r.get("state")) != "retired" for r in raw_records)
+    has_active = any(_persona_record_projected_state(r) != "retired" for r in raw_records)
     active_store = _get_active_read_store()
     all_bindings: List[Dict[str, Any]] = []
     all_runtimes: List[Dict[str, Any]] = []
@@ -8069,13 +8089,20 @@ def _project_persona_fleet_list_row(
         binding=binding,
         raw_metadata=raw_metadata,
     )
-    normalized_state = _persona_fleet_lifecycle_state(
-        persona_status=persona_status,
-        lifecycle_state=lifecycle_state,
-        capital_mode=capital_mode,
-        deployment_stage=deployment_stage,
-        runtime=runtime,
-        has_runtime_or_binding=bool(runtime or binding or pool_id),
+    # A terminal, frozen or suspended Persona owner record outranks
+    # runtime/capital stage hints.
+    persona_record_state = _persona_record_projected_state(persona)
+    normalized_state = (
+        persona_record_state
+        if persona_record_state in _PERSONA_NON_RUNNING_PROJECTED_STATES
+        else _persona_fleet_lifecycle_state(
+            persona_status=persona_status,
+            lifecycle_state=lifecycle_state,
+            capital_mode=capital_mode,
+            deployment_stage=deployment_stage,
+            runtime=runtime,
+            has_runtime_or_binding=bool(runtime or binding or pool_id),
+        )
     )
     review_projection = _persona_fleet_review_projection(
         persona_id=persona_id,
@@ -8491,6 +8518,8 @@ def _persona_fleet_slim_list_payload(
 
         # Choose primary runtime for row details based on activity status priority
         def runtime_priority(rt):
+            if _management_runtime_is_terminal(rt):
+                return 3
             status = str(rt.get("status") or "").lower()
             if status == "running":
                 return 0
@@ -8521,10 +8550,7 @@ def _persona_fleet_slim_list_payload(
             val = str(runtime.get("runtime_id") or "").strip()
             if val:
                 runtime_ids.add(val)
-        is_retired_persona = (
-            _normalize_lifecycle_state(persona.get("lifecycle_state") or persona.get("status"))
-            == "retired"
-        )
+        is_retired_persona = _persona_record_projected_state(persona) == "retired"
         active_incidents = (
             []
             if is_retired_persona
@@ -10691,6 +10717,7 @@ _STRATEGY_BFF_LIFECYCLE_MAP = {
     "deployed": "deployed",
     "paused": "paused",
     "retired": "retired",
+    "archived": "retired",
     "paper": "paper_running",
     "paper_running": "paper_running",
     "canary": "canary_running",
@@ -10704,7 +10731,27 @@ _STRATEGY_BFF_LIFECYCLE_MAP = {
     "failed": "failed",
     "provisioning": "provisioning",
     "provisioning_failed": "failed",
+    # StrategyLifecycleState terminal decisions
+    # (services/research/strategy_spec/models.py).
+    "rejected": "retired",
+    "superseded": "retired",
+    # PersonaLifecycleState capability ladder
+    # (services/control-plane/persona/persona_registry.py). A ladder stage
+    # grants capabilities; it does not say a runtime is running, so each
+    # stage projects as itself.
+    "research_only": "research_only",
+    "consultable": "consultable",
+    "paper_owner": "paper_owner",
+    "live_owner": "live_owner",
+    "frozen": "frozen",
+    # Persona administrative status
+    # (services/control-plane/persona/persona_registry.schema.json).
+    "suspended": "suspended",
 }
+
+# Projected Persona states that must never be shown as running, whatever
+# runtime, binding or capital stage is attached.
+_PERSONA_NON_RUNNING_PROJECTED_STATES = frozenset({"frozen", "suspended", "retired"})
 
 _PERSONA_OPERATIONAL_LIFECYCLE_STATES = frozenset({
     "active",
@@ -13519,6 +13566,11 @@ def _build_persona_health_items_impl(
             or persona.get("status")
             or lifecycle_state
         )
+        # A terminal, frozen or suspended Persona owner record outranks
+        # league and metadata status hints, as in the fleet projection.
+        persona_record_state = _persona_record_projected_state(persona)
+        if persona_record_state in _PERSONA_NON_RUNNING_PROJECTED_STATES:
+            persona_status = persona_record_state
         data_source_status = (
             context_metadata.get("data_source_status")
             if isinstance(context_metadata.get("data_source_status"), dict)
@@ -13536,7 +13588,7 @@ def _build_persona_health_items_impl(
         )
         if not required_data_sources and isinstance(context_persona.get("required_data_sources"), list):
             required_data_sources = context_persona.get("required_data_sources") or []
-        if _normalize_lifecycle_state(lifecycle_state) != "retired":
+        if persona_record_state != "retired":
             data_source_status, data_sources, source_health_bindings = _active_persona_service().overlay_source_health_truth(
                 data_source_status,
                 data_sources,

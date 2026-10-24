@@ -81,7 +81,10 @@ RuntimeBindingReader = Callable[[str, str], "list[Mapping[str, Any]]"]
 # persona_id -> authoritative Persona readback after archiving (None if absent).
 PersonaArchiver = Callable[[str], "Mapping[str, Any] | None"]
 
-_RETIRED_BINDING_STATUSES = frozenset({"retired", "failed", "failed_inactive"})
+# RuntimeBinding statuses after which a binding no longer runs. This
+# coordinator drives RuntimeBinding retirement; read projections import this
+# definition instead of keeping their own copy.
+TERMINAL_RUNTIME_BINDING_STATUSES = frozenset({"retired", "failed", "failed_inactive"})
 
 
 class PersonaProvisioningCoordinationError(RuntimeError):
@@ -763,7 +766,7 @@ class PersonaProvisioningCoordinator:
         for binding in bindings or []:
             binding_id = str(binding.get("binding_id") or binding.get("id") or "")
             observed[binding_id] = str(binding.get("status") or "")
-        live = {k: v for k, v in observed.items() if v not in _RETIRED_BINDING_STATUSES}
+        live = {k: v for k, v in observed.items() if v not in TERMINAL_RUNTIME_BINDING_STATUSES}
         if live:
             raise PersonaProvisioningCoordinationError(
                 f"RuntimeBindings are not retired: {sorted(live.items())}"

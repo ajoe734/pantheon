@@ -459,7 +459,7 @@ def _fake_docker(runner, tmp_path, *, head="a" * 40, dirty="", capital="cap-toke
         elif argv[:2] == ["docker", "exec"] and argv[2] == "cid-train" and "cat" in argv:
             out = "training-secret-1234\n"
         elif argv[:2] == ["docker", "exec"] and "-i" in argv:
-            out = capital
+            raise AssertionError("hosted runner must not mint a Capital service token")
         return type("P", (), {"returncode": 0, "stdout": out, "stderr": ""})()
 
     def fake_subprocess_run(argv, **kw):
@@ -470,7 +470,7 @@ def _fake_docker(runner, tmp_path, *, head="a" * 40, dirty="", capital="cap-toke
             json.dumps({"hosted": {"chain_id": kw["env"]["PANTHEON_L12_CROSS_LOOP_RUN_ID"], "phase_status": "paused"}}),
             encoding="utf-8",
         )
-        leaked = "stdout executor-token-abcdef agora-secret-1234 capital " + capital
+        leaked = "stdout executor-token-abcdef agora-secret-1234"
         return type("P", (), {"returncode": 0, "stdout": leaked, "stderr": ""})()
 
     return calls, state, fake_run, fake_subprocess_run
@@ -503,15 +503,15 @@ def test_hosted_vm_runner_assembles_private_environment_and_redacts(monkeypatch,
     assert env["PANTHEON_L12_REGISTRY_URL"].startswith("http://127.0.0.1:2")
     assert env["PANTHEON_L12_SOURCE_URL"] == env["PANTHEON_L12_SOURCE_INGEST_URL"]
     assert env["PANTHEON_L12_TRAINING_TOKEN"] == "training-secret-1234"
-    assert env["PANTHEON_L12_CAPITAL_TOKEN"] == "cap-token-123456"
+    assert "PANTHEON_L12_CAPITAL_TOKEN" not in env
     assert env["PANTHEON_L12_PERSONA_SERVICE_TOKEN"] == "persona-secret-1234"
     assert env["PANTHEON_L12_PERSONA_SERVICE_ACTOR_ID"] == "persona-writer-actor"
     assert state["argv"][-1] == runner.PARENT_NODE and state["cwd"] == str(tmp_path)
     log = (tmp_path / "phase.log").read_text(encoding="utf-8")
-    for secret in ("executor-token-abcdef", "agora-secret-1234", "cap-token-123456", "persona-secret-1234"):
+    for secret in ("executor-token-abcdef", "agora-secret-1234", "persona-secret-1234"):
         assert secret not in log
     meta = json.loads((tmp_path / "segment-meta.json").read_text(encoding="utf-8"))
-    assert meta["pytest_exit"] == 0 and meta["capital_per_request_refresh_dependency"]
+    assert meta["pytest_exit"] == 0 and meta["capital_credential"] == "executor_session_token_no_service_token"
     assert "executor-token-abcdef" not in json.dumps(meta)
     assert all("secret" not in " ".join(call) for call in calls)  # no credential in any argv
 

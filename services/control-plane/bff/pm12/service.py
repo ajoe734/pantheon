@@ -25,6 +25,7 @@ except (ImportError, ValueError):
     from models import ErrorCode, utc_now as _default_utc_now
 
 from . import evaluator_results
+from ..persona_provisioning_coordinator import TERMINAL_RUNTIME_BINDING_STATUSES
 from ..governance.promotion_review import (
     _promotion_review_clean_id,
     _promotion_review_decision_projection,
@@ -1989,12 +1990,9 @@ def _management_telemetry_is_explicit_flat(telemetry: Dict[str, Any]) -> bool:
     )
 
 
-_PM12_TERMINAL_RUNTIME_STATUSES = frozenset({"retired", "failed", "failed_inactive"})
-
-
 def _management_runtime_is_terminal(runtime: Dict[str, Any]) -> bool:
     """Authoritative lifecycle: the telemetry owner intentionally omits these runtimes."""
-    return _management_normalized_status(runtime) in _PM12_TERMINAL_RUNTIME_STATUSES
+    return _management_normalized_status(runtime) in TERMINAL_RUNTIME_BINDING_STATUSES
 
 
 def _pm12_portfolio_book_holdings_response(
