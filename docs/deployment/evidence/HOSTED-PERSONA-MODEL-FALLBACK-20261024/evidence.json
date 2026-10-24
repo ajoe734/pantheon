@@ -68,10 +68,10 @@
     {
       "path": "integrations/openclaw/persona_agent_sync.py",
       "changes": [
-        "Extended `PersonaAgentSpec` with `fallback_models`, `routing_mode`, and `model_policy()` returning `{\"primary\": self.model, \"fallbacks\": list(self.fallback_models)}`.",
-        "Updated `_runtime_profile_model` and `desired_agent_spec` to normalize route policies and preserve `routing.fallback_models` and `routing.mode` from `build_persona_runtime_profile`.",
+        "Extended `PersonaAgentSpec` with `fallback_models`, `routing_mode`, and `model_policy()` returning `{\"primary\": self.model, \"fallbacks\": list(self.fallback_models)}` from `build_persona_runtime_profile`.",
         "Updated `_agent_model` and `_agent_fallbacks` to support structured `{\"primary\", \"fallbacks\"}` model dicts in `agents.list` as well as string model fields.",
-        "Added `_reconcile_agent_model_policy` using `openclaw config get agents.list --json` and `openclaw config set agents.list <json> --strict-json --replace` so both newly created and already-provisioned agents persist `{\"primary\", \"fallbacks\"}` and update drifted primary/fallback policies."
+        "Preserved the existing `model_drift_update_unavailable` refusal (`repair_action: \"recreate_openclaw_agent_or_add_set_model_support\"`) when an existing agent's primary model differs from `spec.model`, without calling `config get`, `config set`, `set-identity`, or `write_soul`.",
+        "Made `_reconcile_agent_model_policy` fail closed when `openclaw config get agents.list --json` exits non-zero, returns invalid or non-list JSON, omits the target agent, or fails `openclaw config set agents.list`, so `sync_persona_agents` never reports `updated` without repairing the fallback array."
       ]
     },
     {
@@ -85,14 +85,14 @@
       "path": "services/control-plane/bff/openclaw_ops_client.py",
       "changes": [
         "Updated `OpenClawOpsClient.ensure_persona_opinion_agent` to resolve and validate canonical Persona model routing from `admission` and `persona_profile` via `build_persona_runtime_profile`, failing closed with `OPENCLAW_PERSONA_MODEL_ROUTING_INVALID` (HTTP 400) when outside the provider pool.",
-        "Propagated canonical `model_routing` in the adapter `/api/openclaw-adapter/agents/persona-opinion/ensure` request body and included the resolved model policy in the deterministic `Idempotency-Key` derivation so already-provisioned agents reconcile their `agents.list` model policy without stale replay collisions."
+        "Propagated canonical `model_routing` in the adapter `/api/openclaw-adapter/agents/persona-opinion/ensure` request body while preserving the deterministic `Idempotency-Key` derivation (`pantheon:persona-opinion-agent:{agent_id}:{capability_snapshot_id}`)."
       ]
     },
     {
       "path": "services/openclaw-gateway-adapter/main.py",
       "changes": [
-        "Accepted and validated optional `model_routing` on `OpenClawPersonaOpinionEnsureRequest` while keeping `_persona_admission_fingerprint` scoped to the 15 frozen admission identity/authority claims.",
-        "Updated `_sync_persona_opinion_agent`, `_apply_persona_opinion_runtime_policy`, `_assert_persona_opinion_runtime_policy`, and `_reconcile_persona_opinion_replay` to write and verify `item[\"model\"] = {\"primary\": spec.model, \"fallbacks\": list(spec.fallback_models)}` alongside `_PERSONA_OPINION_RUNTIME_POLICY` (`tools`, `skills`, `memorySearch`, `contextInjection`)."
+        "Accepted and validated optional `model_routing` on `OpenClawPersonaOpinionEnsureRequest` while keeping `_persona_admission_fingerprint` and `_agent_ensure_fingerprint` scoped to the 15 frozen admission identity/authority claims.",
+        "Used the existing admitted-opinion runtime-policy writer (`_apply_persona_opinion_runtime_policy`, `_assert_persona_opinion_runtime_policy`, and `_reconcile_persona_opinion_replay`) to persist and verify `item[\"model\"] = {\"primary\": spec.model, \"fallbacks\": list(spec.fallback_models)}` alongside `_PERSONA_OPINION_RUNTIME_POLICY` while refusing primary-model drift (`model_drift_update_unavailable`)."
       ]
     }
   ],
@@ -103,6 +103,8 @@
       "openai/gpt-5.5"
     ],
     "new_models_or_providers_added": false,
+    "primary_model_drift_refusal_preserved": true,
+    "public_sync_fail_closed_on_config_error": true,
     "execution_authority": "none",
     "allowed_capabilities": [
       "persona_opinion"
@@ -116,7 +118,6 @@
   "verification": {
     "focused_test_suites": [
       "integrations/openclaw/test_persona_agent_sync.py",
-      "integrations/openclaw/test_dev_gates.py",
       "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py",
       "services/openclaw-gateway-adapter/test_main.py",
       "services/control-plane/bff/tests/test_openclaw_ops_service_auth.py",

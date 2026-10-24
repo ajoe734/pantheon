@@ -2852,12 +2852,23 @@ def _apply_persona_opinion_runtime_policy(
         agents = json.loads(proc.stdout or "[]")
     except (TypeError, ValueError) as exc:
         raise RuntimeError("OpenClaw agent config is not valid JSON") from exc
+    if not isinstance(agents, list):
+        raise RuntimeError("OpenClaw agent config is not a JSON list")
     found = False
     for item in agents:
         if isinstance(item, dict) and str(item.get("id") or "") == agent_id:
-            item.update(json.loads(json.dumps(_PERSONA_OPINION_RUNTIME_POLICY)))
             if model_policy is not None:
+                raw_model = item.get("model")
+                current_primary = (
+                    str(raw_model.get("primary") or raw_model.get("model") or "").strip()
+                    if isinstance(raw_model, dict)
+                    else str(raw_model or "").strip()
+                )
+                desired_primary = str(model_policy.get("primary") or "").strip()
+                if current_primary and desired_primary and current_primary != desired_primary:
+                    raise RuntimeError("model_drift_update_unavailable")
                 item["model"] = json.loads(json.dumps(model_policy))
+            item.update(json.loads(json.dumps(_PERSONA_OPINION_RUNTIME_POLICY)))
             found = True
             break
     if not found:
@@ -3006,6 +3017,8 @@ class _AgentEnsureIdempotencyConflict(RuntimeError):
 
 
 def _agent_ensure_fingerprint(req: BaseModel) -> str:
+    if isinstance(req, OpenClawPersonaOpinionEnsureRequest):
+        return _persona_admission_fingerprint(req.model_dump(mode="json"))
     canonical = json.dumps(
         req.model_dump(mode="json"),
         sort_keys=True,

@@ -1012,8 +1012,8 @@ class TestPersonaOpinionEnsureModelPolicyAndFallbackPropagation:
             assert runtime_agents[0]["memorySearch"]["enabled"] is False
             assert runtime_agents[0]["contextInjection"] == "never"
 
-            # Now update the same already-provisioned agent with canonical
-            # `model_routing` on `persona_profile` (e.g. fallback with gpt-5.5 primary):
+            # Update the same already-provisioned agent's fallback order while
+            # preserving its primary model via canonical `model_routing`:
             ensured_routed = ops_client.ensure_persona_opinion_agent(
                 admission,
                 persona_profile={
@@ -1024,21 +1024,38 @@ class TestPersonaOpinionEnsureModelPolicyAndFallbackPropagation:
                         "model_routing": {
                             "mode": "fallback",
                             "fallback_models": [
+                                "anthropic/claude-opus-4-8",
                                 "openai/gpt-5.5",
-                                "anthropic/claude-sonnet-4-6",
                             ],
                         }
                     },
                 },
             )
-            assert ensured_routed["agent"]["model"] == "openai/gpt-5.5"
-            assert ensured_routed["agent"]["fallback_models"] == [
-                "anthropic/claude-sonnet-4-6"
-            ]
+            assert ensured_routed["agent"]["model"] == "anthropic/claude-opus-4-8"
+            assert ensured_routed["agent"]["fallback_models"] == ["openai/gpt-5.5"]
             assert ensured_routed["agent"]["routing_mode"] == "fallback"
             assert runtime_agents[0]["model"] == {
-                "primary": "openai/gpt-5.5",
-                "fallbacks": ["anthropic/claude-sonnet-4-6"],
+                "primary": "anthropic/claude-opus-4-8",
+                "fallbacks": ["openai/gpt-5.5"],
+            }
+
+            # Attempting to drift the existing agent's primary model must fail
+            # closed with `model_drift_update_unavailable` rather than rewriting:
+            with pytest.raises(ops_client_mod.OpenClawOpsClientError) as drift_exc:
+                ops_client.ensure_persona_opinion_agent(
+                    admission,
+                    persona_profile={
+                        "persona_id": admission["persona_id"],
+                        "name": admission["display_name"],
+                        "mandate": admission["mandate"],
+                        "preferred_model": "openai/gpt-5.5",
+                    },
+                )
+            assert drift_exc.value.status_code == 503
+            assert "model_drift_update_unavailable" in drift_exc.value.message
+            assert runtime_agents[0]["model"] == {
+                "primary": "anthropic/claude-opus-4-8",
+                "fallbacks": ["openai/gpt-5.5"],
             }
 
             # Verify that governed `/invoke` still accepts the unchanged frozen

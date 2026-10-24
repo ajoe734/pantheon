@@ -142,6 +142,8 @@ def test_sync_creates_missing_agent_and_writes_soul():
         calls.append(args)
         if args[:3] == ["openclaw", "agents", "list"]:
             return _cp(json.dumps({"agents": [{"id": "main"}]}))  # persona-crypto absent
+        if args[:5] == ["openclaw", "config", "get", "agents.list", "--json"]:
+            return _cp(json.dumps([{"id": "main"}, {"id": "persona-crypto", "model": sync.DEFAULT_PERSONA_MODEL}]))
         return _cp("{}")
 
     def soul_writer(ws: str, soul: str):
@@ -165,6 +167,8 @@ def test_sync_uses_route_policy_resolver_for_new_agent_model():
         calls.append(args)
         if args[:3] == ["openclaw", "agents", "list"]:
             return _cp(json.dumps({"agents": [{"id": "main"}]}))
+        if args[:5] == ["openclaw", "config", "get", "agents.list", "--json"]:
+            return _cp(json.dumps([{"id": "main"}, {"id": "persona-crypto", "model": "openai/gpt-5.5"}]))
         return _cp("{}")
 
     report = sync.sync_persona_agents(
@@ -189,6 +193,8 @@ def test_sync_materializes_memory_after_agent_create():
         calls.append(args)
         if args[:3] == ["openclaw", "agents", "list"]:
             return _cp(json.dumps({"agents": [{"id": "main"}]}))
+        if args[:5] == ["openclaw", "config", "get", "agents.list", "--json"]:
+            return _cp(json.dumps([{"id": "main"}, {"id": "persona-crypto", "model": sync.DEFAULT_PERSONA_MODEL}]))
         return _cp("{}")
 
     def materializer(workspace: str, persona: Dict[str, Any], spec: sync.PersonaAgentSpec):
@@ -221,6 +227,7 @@ def test_sync_blocks_existing_agent_model_drift_without_set_model_support():
     assert report.failed and report.failed[0]["persona_id"] == "persona-crypto"
     assert report.failed[0]["error"] == "model_drift_update_unavailable"
     assert report.failed[0]["desired_model"] == sync.DEFAULT_PERSONA_MODEL
+    assert calls == [["openclaw", "agents", "list", "--json"]]
     assert not any(c[:3] == ["openclaw", "agents", "set-identity"] for c in calls)
     assert souls == {}
 
@@ -246,6 +253,8 @@ def test_sync_updates_existing_agent_idempotently():
         calls.append(args)
         if args[:3] == ["openclaw", "agents", "list"]:
             return _cp(json.dumps({"agents": [{"id": "main"}, {"id": "persona-crypto"}]}))
+        if args[:5] == ["openclaw", "config", "get", "agents.list", "--json"]:
+            return _cp(json.dumps([{"id": "main"}, {"id": "persona-crypto", "model": sync.DEFAULT_PERSONA_MODEL}]))
         return _cp("{}")
 
     report = sync.sync_persona_agents([PERSONA_CRYPTO], runner=runner, soul_writer=lambda ws, s: souls.setdefault(ws, s))
@@ -272,6 +281,8 @@ def test_human_list_fallback_parsing():
     def runner(args: List[str]):
         if args[:3] == ["openclaw", "agents", "list"]:
             return _cp("- main (default)\n- persona-crypto\n")  # non-JSON human output
+        if args[:5] == ["openclaw", "config", "get", "agents.list", "--json"]:
+            return _cp(json.dumps([{"id": "main"}, {"id": "persona-crypto", "model": sync.DEFAULT_PERSONA_MODEL}]))
         return _cp("{}")
 
     report = sync.sync_persona_agents([PERSONA_CRYPTO], runner=runner, soul_writer=lambda ws, s: None)
@@ -282,6 +293,8 @@ def test_agora_servant_adapter_returns_agent_projection():
     def runner(args: List[str]):
         if args[:3] == ["openclaw", "agents", "list"]:
             return _cp(json.dumps({"agents": [{"id": "main"}]}))
+        if args[:5] == ["openclaw", "config", "get", "agents.list", "--json"]:
+            return _cp(json.dumps([{"id": "main"}, {"id": "persona-crypto", "model": sync.DEFAULT_PERSONA_MODEL}]))
         return _cp("{}")
 
     result = ensure_agora_servant_agent(PERSONA_CRYPTO, runner=runner, soul_writer=lambda ws, s: None)
@@ -405,26 +418,147 @@ def test_sync_persists_and_updates_model_policy_in_agents_list_for_new_and_exist
     assert by_id["persona-crypto"]["model"] == expected_default_policy
     assert by_id["persona-existing-single-string"]["model"] == expected_default_policy
 
-    # Now update the already-provisioned agent with an explicit canonical route policy:
+    # Update the already-provisioned agent's fallback order while preserving its primary model:
     updated_projection = ensure_agora_servant_agent(
         existing_persona,
         runner=runner,
         soul_writer=lambda ws, s: None,
         route_policy={
             "mode": "fallback",
-            "fallback_models": ["openai/gpt-5.5", "anthropic/claude-sonnet-4-6"],
+            "fallback_models": ["anthropic/claude-opus-4-8", "openai/gpt-5.5"],
         },
     )
     assert updated_projection["status"] == "updated"
-    assert updated_projection["model"] == "openai/gpt-5.5"
-    assert updated_projection["fallback_models"] == ["anthropic/claude-sonnet-4-6"]
+    assert updated_projection["model"] == "anthropic/claude-opus-4-8"
+    assert updated_projection["fallback_models"] == ["openai/gpt-5.5"]
     assert updated_projection["routing_mode"] == "fallback"
     assert updated_projection["model_policy"] == {
-        "primary": "openai/gpt-5.5",
-        "fallbacks": ["anthropic/claude-sonnet-4-6"],
+        "primary": "anthropic/claude-opus-4-8",
+        "fallbacks": ["openai/gpt-5.5"],
     }
     by_id_after = {item["id"]: item for item in agents_list}
     assert by_id_after["persona-existing-single-string"]["model"] == {
-        "primary": "openai/gpt-5.5",
-        "fallbacks": ["anthropic/claude-sonnet-4-6"],
+        "primary": "anthropic/claude-opus-4-8",
+        "fallbacks": ["openai/gpt-5.5"],
     }
+
+
+def test_sync_fails_closed_when_config_get_or_set_fails_on_existing_or_new_agent():
+    """Negative counterexample regression: public sync must fail closed when
+    `openclaw config get agents.list --json` exits non-zero, returns non-list JSON,
+    or omits the target agent, rather than reporting `updated: 1 / failed: 0`
+    without repairing the fallback array.
+    """
+    persona = {
+        "id": "isolated-source-invariant",
+        "name": "Isolated advisory",
+    }
+    calls: List[List[str]] = []
+    souls_written: Dict[str, str] = {}
+
+    def runner_config_get_exit_1(args: List[str]):
+        calls.append(args)
+        if args[:4] == ["openclaw", "agents", "list", "--json"]:
+            return _cp(
+                json.dumps(
+                    {
+                        "agents": [
+                            {
+                                "id": "isolated-source-invariant",
+                                "model": "anthropic/claude-opus-4-8",
+                            }
+                        ]
+                    }
+                )
+            )
+        if args[:3] == ["openclaw", "agents", "set-identity"]:
+            return _cp("ok")
+        if args[:5] == ["openclaw", "config", "get", "agents.list", "--json"]:
+            return _cp("", returncode=1, stderr="config read failed")
+        return _cp("", returncode=1, stderr=f"unexpected command: {args}")
+
+    report = sync.sync_persona_agents(
+        [persona],
+        runner=runner_config_get_exit_1,
+        soul_writer=lambda ws, s: souls_written.__setitem__(ws, s),
+    )
+    assert report.updated == []
+    assert report.created == []
+    assert len(report.failed) == 1
+    assert report.failed[0]["persona_id"] == "isolated-source-invariant"
+    assert "config read failed" in report.failed[0]["error"]
+    assert report.to_dict()["counts"] == {
+        "created": 0,
+        "updated": 0,
+        "unchanged": 0,
+        "memory_materialized": 0,
+        "failed": 1,
+    }
+    assert souls_written == {}
+    assert not any(c[:4] == ["openclaw", "config", "set", "agents.list"] for c in calls)
+
+
+def test_sync_refuses_primary_model_drift_without_config_rewrite_or_set_identity():
+    """Negative counterexample regression: when an existing agent's primary model
+    differs from desired `spec.model` (e.g. `openai/gpt-5.5` vs `anthropic/claude-opus-4-8`),
+    `sync_persona_agents` must preserve the accepted `model_drift_update_unavailable`
+    refusal without rewriting `agents.list`, calling `set-identity`, or writing SOUL.md.
+    """
+    persona = {
+        "id": "isolated-source-invariant",
+        "name": "Isolated advisory",
+    }
+    calls: List[List[str]] = []
+    config_writes: List[Any] = []
+    souls_written: Dict[str, str] = {}
+
+    def runner(args: List[str]):
+        calls.append(args)
+        if args[:4] == ["openclaw", "agents", "list", "--json"]:
+            return _cp(
+                json.dumps(
+                    {
+                        "agents": [
+                            {
+                                "id": "isolated-source-invariant",
+                                "model": "openai/gpt-5.5",
+                            }
+                        ]
+                    }
+                )
+            )
+        if args[:4] == ["openclaw", "config", "set", "agents.list"]:
+            config_writes.append(json.loads(args[4]))
+            return _cp("ok")
+        return _cp("{}")
+
+    report = sync.sync_persona_agents(
+        [persona],
+        runner=runner,
+        soul_writer=lambda ws, s: souls_written.__setitem__(ws, s),
+    )
+    assert report.to_dict() == {
+        "created": [],
+        "updated": [],
+        "unchanged": [],
+        "memory_materialized": [],
+        "failed": [
+            {
+                "persona_id": "isolated-source-invariant",
+                "error": "model_drift_update_unavailable",
+                "current_model": "openai/gpt-5.5",
+                "desired_model": "anthropic/claude-opus-4-8",
+                "repair_action": "recreate_openclaw_agent_or_add_set_model_support",
+            }
+        ],
+        "counts": {
+            "created": 0,
+            "updated": 0,
+            "unchanged": 0,
+            "memory_materialized": 0,
+            "failed": 1,
+        },
+    }
+    assert config_writes == []
+    assert calls == [["openclaw", "agents", "list", "--json"]]
+    assert souls_written == {}
