@@ -222,6 +222,29 @@ record that carries it, and any edge where the consumer does not carry it is rep
 not inferred from the shared `chain_id`. T1 verifies this table against the live owner payloads before
 anything is built.
 
+### Human Teaching edit step (operator decision, 2026-10-24; `HOSTED-ALL12-REAL-HUMAN-TEACHING-EDIT-20261024`)
+
+The human demonstration that feeds Behaviour Cloning in `B_learning` is a **real edit the operator makes in the
+Management UI** (changing both `short_window` and `long_window`) on the chain's `TeachingSession`; no harness writes it.
+
+- `A_research` (hosted) never PATCHes Teaching controls. After the TeachingSession exists it records the
+  evaluation state **before** any edit as scalar owner ids only (`pre_edit_eval_id`, `pre_edit_evaluated_at`;
+  receipts carry scalars, never objects) and, unless a `control_patch` by a distinct human subject exists
+  (the hosted executor token subject and known service subjects are refused, so an old executor edit keeps it
+  paused; the latest human edit is used), pauses at
+  `teaching_human_control_edit` with the named state `awaiting_human_edit`. The operator opens the session in
+  the Management UI, changes `short_window` and `long_window` once, then re-dispatches `A_research`, which reads
+  the `control_patch` event back and continues to the preview refresh. The isolated (non-hosted) suite keeps
+  its own operator-token PATCH unchanged.
+- `B_learning` accepts the edit as a human demonstration only when the event's `actor_type` is `user` and its
+  actor differs from the hosted executor token subject and from known service subjects. An edit by the executor
+  or a service is rejected with `executor_edit_rejected` / `service_identity_edit_rejected` (paused, never
+  relabelled); no edit at all stays `awaiting_human_edit`.
+- BC observations use the pre-edit evaluation, which `B_learning` reads back from the Training owner
+  (`GET /api/training/previews/{session}` → `evaluations[pre_edit_eval_id]`) (it must predate the edit and differ from the post-edit
+  evaluation); the post-edit metrics are only the reward/outcome. Missing it pauses with
+  `pre_edit_evaluation_missing`.
+
 ## 6. Genuine Persona Pattern positives (acceptance 6)
 
 The original six Pattern conditions (any legitimate dev Persona with at least two uncovered, naturally
