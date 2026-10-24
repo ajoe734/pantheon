@@ -3628,7 +3628,9 @@ jobs:
               ("PANTHEON_L12_AGORA_HANDOFF_TOKEN", "operator-bff", "AGORA_HANDOFF_SERVICE_TOKEN", ""),
               ("PANTHEON_L12_POLICY_LEARNING_TOKEN", "policy-learning-svc", "POLICY_LEARNING_SERVICE_TOKEN", ""),
               ("PANTHEON_L12_CONSULTATION_TOKEN", "consultation-svc", "CONSULTATION_SERVICE_TOKEN", "CONSULTATION_API_TOKEN"),
+              ("PANTHEON_L12_PERSONA_SERVICE_TOKEN", "persona", "PANTHEON_PERSONA_SERVICE_TOKEN", "PERSONA_SERVICE_TOKEN"),
           )
+          PERSONA_SERVICE = "persona"
           TRAINING_CONSUMER = "training-session-preview-worker"
           CAPITAL_PHASES = {"C_promote", "D_observe", "E_close"}
           PIP_RUNPY = (
@@ -3779,6 +3781,10 @@ jobs:
                       secrets.append(value)
                   else:
                       gaps.append(env_name)
+              persona_cid = container(PERSONA_SERVICE)
+              environment["PANTHEON_L12_PERSONA_SERVICE_ACTOR_ID"] = (
+                  (container_env(persona_cid, "PANTHEON_PERSONA_SERVICE_ACTOR_ID") if persona_cid else "") or "operator-bff"
+              )
               consumer = container(TRAINING_CONSUMER)
               value = training_token(consumer) if consumer else ""
               if value:
