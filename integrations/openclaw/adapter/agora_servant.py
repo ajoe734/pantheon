@@ -21,15 +21,22 @@ def ensure_agora_servant_agent(
     runner: Optional[CliRunner] = None,
     soul_writer: Optional[SoulWriter] = None,
     sync_fn: Optional[Callable[..., Any]] = None,
+    route_policy: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Create or update the OpenClaw agent for one user-private Agora servant.
 
     The underlying sync path is the existing persona-agent adapter: it creates a
     missing OpenClaw agent and refreshes identity/SOUL for an existing one.
     """
-    spec = desired_agent_spec(persona)
+    spec = desired_agent_spec(persona, route_policy=route_policy)
     sync = sync_fn or sync_persona_agents
-    report = sync([persona], runner=runner, soul_writer=soul_writer)
+    sync_kwargs: Dict[str, Any] = {
+        "runner": runner,
+        "soul_writer": soul_writer,
+    }
+    if route_policy is not None and sync is sync_persona_agents:
+        sync_kwargs["route_policy_resolver"] = lambda _persona: route_policy
+    report = sync([persona], **sync_kwargs)
     report_dict = report.to_dict() if hasattr(report, "to_dict") else dict(report)
     failed = list(report_dict.get("failed") or [])
     if failed:
@@ -53,6 +60,9 @@ def ensure_agora_servant_agent(
         "agent_id": spec.persona_id,
         "model_id": f"openclaw/{spec.persona_id}",
         "model": spec.model,
+        "fallback_models": list(spec.fallback_models),
+        "model_policy": spec.model_policy(),
+        "routing_mode": spec.routing_mode,
         "workspace_ref": spec.workspace,
         "report": report_dict,
     }

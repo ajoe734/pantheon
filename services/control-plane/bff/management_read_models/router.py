@@ -46,8 +46,9 @@ from .models import (
     PostmortemsEnvelope,
 )
 import concurrent.futures
+import contextlib
 import contextvars
-from services.control_plane.bff.core.owner_reads import remaining_management_read_budget
+from services.control_plane.bff.core.owner_reads import management_read_deadline, remaining_management_read_budget
 from .service import ManagementService, _MANAGEMENT_STORE_OVERRIDE
 
 from services.control_plane.bff.models import ErrorCode
@@ -93,6 +94,27 @@ def _get_management_cockpit_read_timeout() -> Optional[float]:
         return max(0.05, float(raw))
     except (TypeError, ValueError):
         return _COCKPIT_DEFAULT_READ_TIMEOUT_SECONDS
+
+
+@contextlib.contextmanager
+def _bounded_sync_read():
+    """Bound a synchronous health/home read with a request deadline.
+
+    Group reads and warmers submitted to the shared owner-read executor inherit
+    this deadline and are skipped once it passes, so a reloaded or abandoned
+    request stops occupying the pool.
+    """
+    from ..personas.routes.common import _management_read_timeout_seconds
+
+    deadline = time.monotonic() + _management_read_timeout_seconds()
+    outer = management_read_deadline.get()
+    if outer is not None:
+        deadline = min(outer, deadline)
+    token = management_read_deadline.set(deadline)
+    try:
+        yield
+    finally:
+        management_read_deadline.reset(token)
 
 
 class _StoreTimeoutProxy:
@@ -1599,7 +1621,8 @@ def create_management_router(
         identity = _extract_id(authorization)
         _req_read(identity)
         snap = _now()
-        return svc.get_operator_home(snapshot_at=snap)
+        with _bounded_sync_read():
+            return svc.get_operator_home(snapshot_at=snap)
 
     # -----------------------------------------------------------------------
     # 3. Management Cockpit Aggregate
@@ -1699,7 +1722,8 @@ def create_management_router(
         identity = _extract_id(authorization)
         _req_read(identity)
         snap = _now()
-        return svc.get_operator_health_status(snapshot_at=snap)
+        with _bounded_sync_read():
+            return svc.get_operator_health_status(snapshot_at=snap)
 
     # -----------------------------------------------------------------------
     # 8. Loop Throughput

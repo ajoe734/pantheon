@@ -1,0 +1,237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pantheon.internal/schemas/release-manifest.schema.json",
+  "title": "PantheonReleaseManifest",
+  "description": "Immutable exact-pair release manifest governing Dev, Ephemeral Staging, and Production promotion.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "release_id",
+    "release_state",
+    "frontend",
+    "backend",
+    "compatibility_manifest_sha256",
+    "migration_set_sha256",
+    "config_schema_version",
+    "safety_defaults",
+    "created_by_workflow",
+    "created_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "release_id": {
+      "type": "string",
+      "pattern": "^pantheon-[0-9]{8}-[0-9]{3}$"
+    },
+    "release_state": {
+      "type": "string",
+      "enum": [
+        "candidate_built",
+        "dev_verified",
+        "staging_provisioned",
+        "staging_verified",
+        "production_approved",
+        "prod_green_verified",
+        "prod_active",
+        "release_complete",
+        "dev_failed",
+        "staging_failed",
+        "prod_aborted",
+        "prod_rolled_back",
+        "cleanup_failed"
+      ]
+    },
+    "frontend": {
+      "type": "object",
+      "required": [
+        "repository",
+        "commit",
+        "artifact_sha256"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "type": "string",
+          "const": "ajoe734/execute-plans"
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "artifact_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
+    },
+    "backend": {
+      "type": "object",
+      "required": [
+        "repository",
+        "commit",
+        "images"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "type": "string",
+          "const": "ajoe734/pantheon"
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "images": {
+          "type": "object",
+          "required": [
+            "operator_bff"
+          ],
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9._:/-]+@sha256:[0-9a-f]{64}$"
+          },
+          "properties": {
+            "operator_bff": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9._:/-]+@sha256:[0-9a-f]{64}$"
+            }
+          }
+        }
+      }
+    },
+    "compatibility_manifest_sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "migration_set_sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "config_schema_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "safety_defaults": {
+      "type": "object",
+      "required": [
+        "provider_enabled",
+        "live_broker_enabled",
+        "real_writes_enabled",
+        "control_vm_broker_credentials_present"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "provider_enabled": {
+          "type": "boolean",
+          "const": false
+        },
+        "live_broker_enabled": {
+          "type": "boolean",
+          "const": false
+        },
+        "real_writes_enabled": {
+          "type": "boolean",
+          "const": false
+        },
+        "control_vm_broker_credentials_present": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    },
+    "dev_verification": {
+      "type": "object",
+      "required": [
+        "status",
+        "verified_at",
+        "workflow_run",
+        "frontend_commit",
+        "bff_version_commit",
+        "fe_deployment_manifest_sha256"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "dev_verified"
+        },
+        "verified_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+        },
+        "workflow_run": {
+          "type": "string",
+          "pattern": "^ajoe734/pantheon/actions/runs/[0-9]+$"
+        },
+        "frontend_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "bff_version_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "fe_deployment_manifest_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "all12_chain_id": {
+          "type": "string"
+        },
+        "all12_status": {
+          "type": "string",
+          "enum": [
+            "passed",
+            "failed",
+            "pending"
+          ]
+        }
+      }
+    },
+    "rollback_baseline": {
+      "type": "object",
+      "required": [
+        "previous_release_id",
+        "frontend_commit",
+        "frontend_artifact_sha256",
+        "backend_commit",
+        "backend_operator_bff_image"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "previous_release_id": {
+          "type": "string",
+          "pattern": "^pantheon-[0-9]{8}-[0-9]{3}$"
+        },
+        "frontend_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "frontend_artifact_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "backend_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "backend_operator_bff_image": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._:/-]+@sha256:[0-9a-f]{64}$"
+        }
+      }
+    },
+    "created_by_workflow": {
+      "type": "string",
+      "pattern": "^ajoe734/(pantheon|execute-plans)/actions/runs/[0-9]+$"
+    },
+    "created_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    }
+  }
+}

@@ -2204,17 +2204,24 @@ class RuntimeConfigurationContractTests(unittest.TestCase):
         self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex"), 0)
 
     def test_repo_codex_slots_inherit_logical_lane_capacity(self) -> None:
-        # The operator stopped the Codex lanes on 2026-10-06: zero lane
-        # capacity must reach every slot, so none of them can be dispatched.
+        # The operator stopped the Codex lanes on 2026-10-06 and restored one
+        # review-only slot each on 2026-10-24: the lane capacity, never a
+        # per-slot value, decides whether any slot can be dispatched.
         config = json.loads(Path(__file__).with_name("config.json").read_text())
         for agent_id in ("codex", "codex2"):
             with self.subTest(agent_id=agent_id):
                 lane = supervisor.delivery_lane_for_agent(config, agent_id)
-                self.assertEqual(lane.max_parallel, 0)
+                self.assertEqual(lane.max_parallel, 1)
                 self.assertTrue(lane.endpoints)
-                self.assertFalse(any(endpoint.enabled for endpoint in lane.endpoints))
+                self.assertTrue(all(endpoint.enabled for endpoint in lane.endpoints))
                 self.assertTrue(
                     all(endpoint.account_id for endpoint in lane.endpoints)
+                )
+                stopped = json.loads(json.dumps(config))
+                stopped["agents"][agent_id]["max_parallel"] = 0
+                stopped_lane = supervisor.delivery_lane_for_agent(stopped, agent_id)
+                self.assertFalse(
+                    any(endpoint.enabled for endpoint in stopped_lane.endpoints)
                 )
                 for slot_id in supervisor.logical_worker_slot_ids(config, agent_id):
                     self.assertNotIn("max_parallel", config["agents"][slot_id])
@@ -21528,18 +21535,32 @@ class ShippedReviewerFallbackPolicyTests(unittest.TestCase):
                     "a Codex quota exhaustion would stop all dispatch",
                 )
 
-    def test_stopped_codex_lanes_are_not_reviewer_fallbacks(self) -> None:
-        # The operator stopped the Codex lanes on 2026-10-06. A zero-capacity
-        # reviewer in a chain is only reassigned away again, so no other lane
-        # may list them.
+    def test_codex_reviewer_fallbacks_are_review_only_with_capacity(self) -> None:
+        # The operator stopped the Codex lanes on 2026-10-06 and restored them
+        # on 2026-10-24 only as last-resort reviewers for when the Antigravity
+        # account runs out of quota. A zero-capacity reviewer in a chain is
+        # only reassigned away again, and the lanes must never take owner work.
+        review_only = set(self.config["worker_reassignment"]["review_only_agents"])
+        capacity: dict[str, int] = {}
+        for agent in (self.config.get("agents") or {}).values():
+            lane = str(agent.get("display_name") or "")
+            capacity[lane] = max(capacity.get(lane, 0), int(agent.get("max_parallel") or 0))
         for lane, chain in self.fallbacks.items():
             if self.account_of.get(lane) in self.CODEX_ACCOUNTS:
                 continue
-            with self.subTest(lane=lane):
-                self.assertFalse(
-                    {"Codex", "Codex2"} & set(chain),
-                    f"lane {lane} still falls back to a stopped Codex reviewer",
-                )
+            for name in {"Codex", "Codex2"} & set(chain):
+                with self.subTest(lane=lane, reviewer=name):
+                    self.assertIn(name, review_only)
+                    self.assertGreater(
+                        capacity.get(name, 0),
+                        0,
+                        f"lane {lane} falls back to a stopped Codex reviewer",
+                    )
+                    self.assertEqual(
+                        chain[-2:],
+                        ["Codex", "Codex2"],
+                        f"lane {lane} must try its other reviewers before Codex",
+                    )
 
     def test_every_fallback_reviewer_has_its_own_chain(self) -> None:
         # Replacing an unavailable reviewer reads only that reviewer's own

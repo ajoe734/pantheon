@@ -1,0 +1,47 @@
+# Pantheon Ephemeral Staging — Caddy Reverse Proxy + Static FE Bundle
+# Rendered per ephemeral release (`__STAGING_BFF_HOST__`, `__STAGING_FE_HOST__`,
+# `__STAGING_FE_ROOT__`, `__STAGING_BFF_UPSTREAM__`).
+
+__STAGING_BFF_HOST__ {
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Pantheon-Environment "staging"
+		-Server
+	}
+	request_body {
+		max_size 10MB
+	}
+	reverse_proxy __STAGING_BFF_UPSTREAM__
+}
+
+__STAGING_FE_HOST__ {
+	root * __STAGING_FE_ROOT__
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy no-referrer
+		Strict-Transport-Security "max-age=31536000"
+		X-Pantheon-Environment "staging"
+		-Server
+	}
+
+	handle /deployment.json {
+		header Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+		file_server
+	}
+
+	@hashed_assets path /assets/*
+	header @hashed_assets Cache-Control "public, max-age=31536000, immutable"
+
+	@spa_shell {
+		not path /assets/*
+		not path /deployment.json
+	}
+	header @spa_shell Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+
+	encode zstd gzip
+	handle {
+		try_files {path} /index.html
+		file_server
+	}
+}
