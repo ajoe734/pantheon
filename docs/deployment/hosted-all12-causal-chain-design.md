@@ -130,10 +130,12 @@ must show the product's provisioning identity as writer. Only the Capital-record
 the product's automated paper approvals must never replace the chain's human H1 (registry approval)
 or H3 (deployment plan release).
 
-Resulting flow in `C_promote`: with no governed product entry available, the harness does not call
-Capital. `capital_identity` pauses before `capital_pool_creation` with blocker
-`CAPITAL_HOSTED_PRINCIPAL_DECISION_REQUIRED` (name kept for continuity) unless the executing token
-itself carries a Capital service claim.
+Resulting flow in `C_promote`: `_hosted_capital` only reads the pool and binding back (GET) and
+verifies the product provisioning writer identity, chain labels/tenant and active paper scope, then
+persists the scalar ids. When the records are absent or unproven it pauses before
+`capital_pool_creation` with blocker `CAPITAL_HOSTED_PRINCIPAL_DECISION_REQUIRED` (name kept for
+continuity). There is no service-claim exception: the harness never writes Capital directly in
+hosted mode, whatever the executing token carries.
 
 Why no existing entry qualifies (source read, no new product code added here):
 

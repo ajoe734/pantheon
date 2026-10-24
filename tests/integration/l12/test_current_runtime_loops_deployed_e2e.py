@@ -47,11 +47,11 @@ from typing import Any, Callable, Mapping
 
 import pytest
 from l12_owner_auth import (
+    CAPITAL_BLOCKER,
     HOSTED_TASK_ID,
     HostedPause,
     approve_registry_entry,
     bearer,
-    capital_identity,
     capital_authorization,
     hosted_chain_enabled,
     hosted_receipt_fields,
@@ -1174,82 +1174,48 @@ class RuntimeChain:
         return view if isinstance(view, Mapping) and view.get("decision_id") == decision_id else None
 
     def _hosted_capital(self, persona_id: str, ids: dict[str, Any]) -> dict[str, str]:
-        """Paper pool and paper binding: read-before-create, and no approval id is invented."""
+        """Read back the paper pool and binding the product's BFF provisioning wrote; never write Capital.
+
+        The harness sends no Capital POST/PATCH and borrows no service token. Absent or unproven
+        records pause before Capital with CAPITAL_HOSTED_PRINCIPAL_DECISION_REQUIRED.
+        """
         chain = self.hosted_input
         assert chain is not None
         pool_id, binding_id = chain.id("pool"), chain.id("pcb")
-        # Capital compares the body actor to the verified principal: name the real one.
-        actor_id, service = capital_identity(self.settings.capital_auth()["Authorization"])
+        headers = {"X-Tenant-Id": TENANT_ID, **self.settings.capital_auth()}
 
-        def headers() -> dict[str, str]:
-            return {"X-Tenant-Id": TENANT_ID, "X-Pantheon-Service": service, **self.settings.capital_auth()}
+        def pause(detail: str) -> HostedPause:
+            return HostedPause(
+                "capital_pool_creation",
+                f"{CAPITAL_BLOCKER}: {detail}; no existing BFF paper-provisioning entry creates only the "
+                "chain's pool and binding under the BFF's own service identity without auto-approving "
+                "H1/H3 (design doc section 3); the harness sends no direct Capital write",
+            )
 
-        labels = {"paper_only": True, "execution_context": "paper", "tenant_id": TENANT_ID, **chain.labels()}
-        pool = self.http.request(
-            "capital", "GET", f"/api/capital-pools/{pool_id}", headers=headers(), expected={200, 404}
-        )
-        if pool.get("pool_id") != pool_id:
-            self.http.request(
-                "capital",
-                "POST",
-                "/api/capital-pools",
-                body={
-                    "actor_id": actor_id,
-                    "actor_role": "capital.admin",
-                    "idempotency_key": f"{HOSTED_TASK_ID}:{pool_id}",
-                    "request_hash": f"request-{pool_id}",
-                    "pool_id": pool_id,
-                    "name": f"Hosted all12 paper pool {chain.chain_id}",
-                    "owner_id": HOSTED_TASK_ID,
-                    "owner_type": "operator",
-                    "status": "active",
-                    "currency": "USD",
-                    "budget": 1000.0,
-                    "single_runtime_enforced": True,
-                    "metadata": labels,
-                },
-                headers=headers(),
-                expected={201},
+        def writer(record: Mapping[str, Any]) -> str:
+            meta = record.get("metadata") if isinstance(record.get("metadata"), Mapping) else {}
+            return next(
+                (str(v).strip() for v in (record.get("created_by"), record.get("writer_id"), meta.get("provisioned_by")) if str(v or "").strip()),
+                "",
             )
-        ids["capital_pool_id"] = pool_id  # persisted before the next write can fail
-        binding = self.http.request(
-            "capital", "GET", f"/api/bindings/{binding_id}", headers=headers(), expected={200, 404}
-        )
-        if binding.get("binding_id") != binding_id:
-            binding = self.http.request(
-                "capital",
-                "POST",
-                "/api/bindings",
-                body={
-                    "actor_id": actor_id,
-                    "actor_role": "persona.admin",
-                    "idempotency_key": f"{HOSTED_TASK_ID}:{binding_id}",
-                    "request_hash": f"request-{binding_id}",
-                    "binding_id": binding_id,
-                    "persona_id": persona_id,
-                    "capital_pool_id": pool_id,
-                    "role": "paper_owner",
-                    "allowed_deployment_scope": "paper",
-                    "budget": 1000.0,
-                    "created_by": HOSTED_TASK_ID,
-                    "metadata": {"paper_only": True, **chain.labels()},
-                },
-                headers=headers(),
-                expected={201},
-            )
+
+        def readback(kind: str, key: str, path: str, record_id: str) -> Mapping[str, Any]:
+            record = self.http.request("capital", "GET", path, headers=headers, expected={200, 404})
+            if record.get(key) != record_id:
+                raise pause(f"{kind} {record_id} is absent")
+            meta = record.get("metadata") if isinstance(record.get("metadata"), Mapping) else {}
+            if meta.get("chain_id") != chain.chain_id or record.get("tenant_id", TENANT_ID) != TENANT_ID:
+                raise pause(f"{kind} {record_id} lacks the chain labels or tenant")
+            if not writer(record) or writer(record) == HOSTED_TASK_ID:
+                raise pause(f"{kind} {record_id} does not show the product provisioning identity as writer")
+            return record
+
+        readback("paper pool", "pool_id", f"/api/capital-pools/{pool_id}", pool_id)
+        ids["capital_pool_id"] = pool_id
+        binding = readback("persona capital binding", "binding_id", f"/api/bindings/{binding_id}", binding_id)
         ids["capital_binding_id"] = binding_id
-        if binding.get("status") != "active":
-            # Paper operations are admitted without a Capital approval (capital_guard
-            # is_paper_operation); the activation therefore carries no approval id.
-            binding = self.http.request(
-                "capital",
-                "POST",
-                f"/api/bindings/{binding_id}/activate",
-                body={"actor_id": actor_id, "actor_role": "persona.admin"},
-                headers=headers(),
-            )
         if binding.get("status") != "active" or binding.get("allowed_deployment_scope") != "paper":
-            raise DeployedProofError("hosted PersonaCapitalBinding is not active paper-only authority")
+            raise pause(f"binding {binding_id} is not active paper-only authority")
         return {"capital_pool_id": pool_id, "persona_id": persona_id, "capital_binding_id": binding_id}
 
     def _hosted_promote(self, chain: Any, ids: dict[str, Any]) -> None:

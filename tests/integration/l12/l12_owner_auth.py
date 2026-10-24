@@ -274,14 +274,14 @@ def capital_authorization() -> str:
 
 
 def capital_identity(authorization: str, *, blocked_before: str = "capital_pool_creation") -> tuple[str, str]:
-    """(actor_id, service) named by the executing session's token, or a pause before any Capital write.
+    """(actor_id, service) named by a token for Capital retirement calls (E_close, stimulus owner client).
+
+    Hosted C_promote never uses this: it sends no Capital write at all (design doc section 3).
 
     Capital binds a mutation to the verified token: the caller service must be one of the
     token's service claims and the body actor must equal ``delegated_actor_id``/``operator_id``/
-    ``user_id`` (else the token subject). The claims are only decoded, never verified or minted.
-    A human session token carries no service claim, and no existing governed principal path
-    (dev paper principals cover Governance only) lets Capital accept it, so the hosted run
-    stops with ``CAPITAL_BLOCKER`` instead of minting a service token (design doc section 3).
+    ``user_id`` (else the token subject). The claims are only decoded, never verified or minted;
+    a token without them pauses with ``CAPITAL_BLOCKER`` instead of minting a service token.
     """
 
     token = authorization.removeprefix("Bearer ").strip()
