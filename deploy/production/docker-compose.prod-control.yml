@@ -1,0 +1,64 @@
+# Pantheon Production Blue/Green Compose Overlay (ENV-PROD-CONTROL-IMPL-001).
+# Source template only: no cloud resource is created by merging it. Images are the
+# immutable digests from the release manifest and are never rebuilt or pulled by tag.
+# Stateful services (postgres, nats) are shared and exist ONCE; only the stateless BFF
+# is duplicated per color. Singleton workers are owned by exactly one color at a time
+# (drained on the old color before the new color activates; see prod_atomic_switch.sh).
+
+name: pantheon-production
+
+services:
+  postgres:
+    image: ${PANTHEON_POSTGRES_IMAGE:?pinned postgres image required}
+    restart: unless-stopped
+    profiles: ["stateful"]
+    environment:
+      POSTGRES_USER: ${PROD_POSTGRES_USER:?required}
+      POSTGRES_DB: ${PROD_POSTGRES_DB:?required}
+    volumes:
+      # Dedicated persistent data disk mount. Never recreated or overwritten by a release.
+      - ${PROD_DATA_MOUNT:?production data disk mount required}/postgres:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  nats:
+    image: ${PANTHEON_NATS_IMAGE:?pinned nats image required}
+    restart: unless-stopped
+    profiles: ["stateful"]
+    command: ["-js", "-sd", "/data"]
+    volumes:
+      - ${PROD_DATA_MOUNT:?production data disk mount required}/nats:/data
+    ports:
+      - "127.0.0.1:4222:4222"
+
+  # One color of the stateless BFF. Run with: --profile blue | --profile green and an
+  # explicit PROD_COLOR_PORT (blue and green must use different ports).
+  operator-bff-blue:
+    image: ${PANTHEON_OPERATOR_BFF_IMAGE:?immutable digest reference required}
+    pull_policy: never
+    restart: unless-stopped
+    profiles: ["blue"]
+    environment: &bff_env
+      PANTHEON_ENV: production
+      PANTHEON_RELEASE_ID: ${PANTHEON_RELEASE_ID:?release_id required}
+      PANTHEON_PROVIDER_ENABLED: "false"
+      PANTHEON_LIVE_BROKER_ENABLED: "false"
+      PANTHEON_REAL_WRITES_ENABLED: "false"
+      PANTHEON_DEV_STUB_WRITES_ENABLED: "false"
+      PANTHEON_EXECUTION_MODE: "paper"
+      PANTHEON_BFF_CORS_ORIGINS: ${PROD_BFF_CORS_ORIGINS:?production FE origin required}
+      PANTHEON_SINGLETON_OWNER: ${PROD_BLUE_SINGLETON_OWNER:-"false"}
+    ports:
+      - "127.0.0.1:${PROD_BLUE_PORT:?blue port required}:8000"
+
+  operator-bff-green:
+    image: ${PANTHEON_OPERATOR_BFF_IMAGE:?immutable digest reference required}
+    pull_policy: never
+    restart: unless-stopped
+    profiles: ["green"]
+    environment:
+      <<: *bff_env
+      # Green starts as a non-owner; ownership is handed over only after drain.
+      PANTHEON_SINGLETON_OWNER: ${PROD_GREEN_SINGLETON_OWNER:-"false"}
+    ports:
+      - "127.0.0.1:${PROD_GREEN_PORT:?green port required}:8000"

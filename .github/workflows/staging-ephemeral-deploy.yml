@@ -1,0 +1,159 @@
+name: Pantheon Ephemeral Staging Deploy
+
+# Five-stage ephemeral staging lifecycle (PROVISION -> DEPLOY -> VERIFY -> COLLECT -> DESTROY).
+# Dispatched explicitly for a `dev_verified` release manifest. Never triggers on push or PR;
+# merging source mutates zero cloud or GitHub environments.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_id:
+        description: "Immutable release ID (pantheon-YYYYMMDD-NNN)"
+        required: true
+        type: string
+      release_manifest_path:
+        description: "Repository-relative path to the dev_verified release manifest JSON"
+        required: true
+        type: string
+      expected_manifest_sha256:
+        description: "Expected sha256:<64-hex> checksum of the immutable release manifest"
+        required: true
+        type: string
+      fe_artifact_uri:
+        description: "Immutable FE bundle GCS URI (gs://...) or path matching manifest.frontend.artifact_sha256"
+        required: false
+        default: ""
+        type: string
+      ttl_seconds:
+        description: "Bounded staging TTL in seconds (default 7200, max 86400)"
+        required: false
+        default: "7200"
+        type: string
+      dry_run:
+        description: "Execute controller validation without cloud mutation (true/false)"
+        required: false
+        default: "true"
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: staging-ephemeral-${{ inputs.release_id || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  ephemeral-staging-lifecycle:
+    name: Ephemeral Staging (Provision / Deploy / Verify / Collect / Destroy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: staging
+    env:
+      RELEASE_ID: ${{ inputs.release_id }}
+      RELEASE_MANIFEST_PATH: ${{ inputs.release_manifest_path }}
+      EXPECTED_MANIFEST_SHA256: ${{ inputs.expected_manifest_sha256 }}
+      STAGING_FE_ARTIFACT_URI: ${{ inputs.fe_artifact_uri || vars.STAGING_FE_ARTIFACT_URI || '' }}
+      STAGING_TTL_SECONDS: ${{ inputs.ttl_seconds || '7200' }}
+      STAGING_DRY_RUN: ${{ inputs.dry_run || 'true' }}
+      WORKFLOW_RUN_ID: ${{ github.run_id }}
+      STAGING_EPHEMERAL_ENABLED: ${{ vars.STAGING_EPHEMERAL_ENABLED || 'false' }}
+      STAGING_GCP_PROJECT_ID: ${{ vars.STAGING_GCP_PROJECT_ID || '' }}
+      STAGING_GCP_ZONE: ${{ vars.STAGING_GCP_ZONE || '' }}
+      STAGING_WIF_PROVIDER: ${{ vars.STAGING_WIF_PROVIDER || '' }}
+      STAGING_INSTANCE_TEMPLATE: ${{ vars.STAGING_INSTANCE_TEMPLATE || '' }}
+      STAGING_SERVICE_ACCOUNT: ${{ vars.STAGING_SERVICE_ACCOUNT || '' }}
+      STAGING_SANITIZED_SNAPSHOT: ${{ vars.STAGING_SANITIZED_SNAPSHOT || '' }}
+      GCLOUD_BIN: gcloud
+      PANTHEON_PROVIDER_ENABLED: "false"
+      PANTHEON_LIVE_BROKER_ENABLED: "false"
+      PANTHEON_REAL_WRITES_ENABLED: "false"
+      PANTHEON_DEV_STUB_WRITES_ENABLED: "false"
+      PANTHEON_CONTROL_VM_BROKER_CREDENTIALS_PRESENT: "false"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Gate staging authority and explicit configuration (fail-closed)
+        run: |
+          if [[ "${STAGING_EPHEMERAL_ENABLED}" != "true" ]]; then
+            echo "Staging ephemeral execution is held (STAGING_EPHEMERAL_ENABLED != true)." >&2
+            exit 1
+          fi
+          for req in STAGING_GCP_PROJECT_ID STAGING_GCP_ZONE STAGING_INSTANCE_TEMPLATE STAGING_SERVICE_ACCOUNT STAGING_SANITIZED_SNAPSHOT; do
+            if [[ -z "${!req:-}" ]]; then
+              echo "Missing required staging variable: ${req}" >&2
+              exit 1
+            fi
+          done
+          if [[ "${STAGING_DRY_RUN}" != "true" ]]; then
+            for live_req in STAGING_WIF_PROVIDER STAGING_FE_ARTIFACT_URI; do
+              if [[ -z "${!live_req:-}" ]]; then
+                echo "Missing required live staging variable: ${live_req}" >&2
+                exit 1
+              fi
+            done
+          fi
+
+      - name: Authenticate to staging GCP project via Workload Identity Federation
+        if: ${{ (inputs.dry_run || 'true') != 'true' }}
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
+        with:
+          workload_identity_provider: ${{ vars.STAGING_WIF_PROVIDER }}
+          service_account: ${{ vars.STAGING_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        if: ${{ (inputs.dry_run || 'true') != 'true' }}
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
+
+      - name: Stage 1 & 2 - Provision ephemeral VM and deploy exact immutable artifacts
+        id: provision
+        env:
+          STAGING_STATE_DIR: ${{ runner.temp }}/pantheon-staging-state
+        run: |
+          ./scripts/deploy/staging_provision.sh
+
+      - name: Stage 3 - Collect and verify live sanitized data, migrations, backup/restore, rollback, and safety readbacks
+        id: verify
+        if: success()
+        env:
+          STAGING_STATE_DIR: ${{ runner.temp }}/pantheon-staging-state
+        run: |
+          ./scripts/deploy/staging_verify.sh
+
+      - name: Stage 4 & 5 - Collect bounded evidence and destroy owned staging resources
+        id: destroy
+        if: always()
+        env:
+          STAGING_STATE_DIR: ${{ runner.temp }}/pantheon-staging-state
+        run: |
+          result_flag="success"
+          reason_flag="completed"
+          if [[ "${{ job.status }}" == "cancelled" ]]; then
+            result_flag="failure"
+            reason_flag="cancelled"
+          elif [[ "${{ steps.provision.outcome }}" != "success" ]]; then
+            result_flag="failure"
+            reason_flag="partial_create_failure"
+          elif [[ "${{ steps.verify.outcome }}" != "success" ]]; then
+            result_flag="failure"
+            reason_flag="verification_failed"
+          fi
+          ./scripts/deploy/staging_destroy.sh \
+            --mode teardown \
+            --result "${result_flag}" \
+            --reason "${reason_flag}"
+
+      - name: Upload bounded staging evidence bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-evidence-${{ inputs.release_id }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/pantheon-staging-state/evidence/
+          if-no-files-found: ignore
+          retention-days: 14

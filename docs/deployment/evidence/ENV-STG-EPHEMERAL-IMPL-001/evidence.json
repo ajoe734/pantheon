@@ -1,0 +1,126 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "ENV-STG-EPHEMERAL-IMPL-001",
+  "title": "Ephemeral Staging Template & Automated Lifecycle Engine",
+  "recorded_at": "2026-10-24T12:59:10Z",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "target_repo": "pantheon",
+  "task_class": "functional",
+  "base_branch": "dev",
+  "task_branch": "task/ENV-STG-EPHEMERAL-IMPL-001",
+  "historical_source_deliveries": [
+    {
+      "pr": "https://github.com/ajoe734/pantheon/pull/6758",
+      "head_sha": "63155c0feecec77873b4623b029d137042a42c16",
+      "merge_commit_sha": "5dc101e9d1b943d9411a2c5156f7163f0f36bf01",
+      "note": "Historical initial source delivery preserved as source history only; superseded by this corrective implementation."
+    }
+  ],
+  "completion_tracks": {
+    "functional": {
+      "status": "ready_for_review",
+      "scope": "Corrective source implementation of release manifest contract, ephemeral staging provision/ops/verify/destroy controller with mandatory live GCLOUD_BIN & observed resource identity enforcement, genuine boot-disk/data-disk/reserved-IP attachment, stateless cross-run cloud orphan discovery & post-delete readback, preexisting IAM binding preservation, valid GCP cloud labels with epoch TTLs, immutable FE/BFF artifact retrieval & checksum verification via staging_ops.sh, live VM gate collection refusing dry-run/unobserved inputs from staging_verified, prod_preflight evidence alignment, actionlint-clean workflows with staging Environment & WIF/setup-gcloud, runbook, and focused local controller/contract test suite."
+    },
+    "hosted": {
+      "status": "external_wait",
+      "note": "Local/mocked tests prove controller and adapter behavior only and do not count as hosted drill evidence. Hosted acceptance requires infrastructure bootstrap (WIF provider, service account, instance template, sanitized snapshot, GitHub staging Environment variables), an accepted dev_verified release manifest from Root01a11, and two consecutive zero-to-zero live staging releases."
+    }
+  },
+  "artifacts": [
+    "scripts/deploy/release_manifest.py",
+    "schemas/release-manifest.schema.json",
+    "scripts/deploy/staging_provision.sh",
+    "scripts/deploy/staging_ops.sh",
+    "scripts/deploy/staging_destroy.sh",
+    "scripts/deploy/staging_verify.sh",
+    "scripts/deploy/staging_sanitize.py",
+    ".github/workflows/staging-ephemeral-deploy.yml",
+    ".github/workflows/staging-orphan-cleanup.yml",
+    "deploy/staging/instance-template.json",
+    "deploy/staging/docker-compose.staging.yml",
+    "deploy/staging/Caddyfile.staging.tmpl",
+    "deploy/staging/staging-env.defaults",
+    "tests/deployment/test_staging_release.py",
+    "docs/deployment/ephemeral-staging-runbook.md",
+    "docs/deployment/evidence/ENV-STG-EPHEMERAL-IMPL-001/evidence.json"
+  ],
+  "safety_and_authority_invariants": {
+    "cloud_resources_provisioned": false,
+    "deployment_workflows_dispatched": false,
+    "github_settings_or_secrets_mutated": false,
+    "secret_values_read": false,
+    "nonprod_deploy_or_product_code_modified": false,
+    "rebuilt_fe_or_bff_during_promotion": false,
+    "no_gcloud_false_success_rejected": true,
+    "dry_run_cannot_produce_staging_verified": true,
+    "retired_projects_or_hosts_rejected": [
+      "pantheon-lupin-dev-20260719",
+      "pantheon-benjamin-20260528",
+      "35.201.204.12",
+      "35.201.239.38",
+      "34.81.75.241",
+      "104.155.223.192",
+      "/home/lupin",
+      "front-ai-trading-system"
+    ],
+    "unaccepted_all12_chain_rejected": "h12-01a11-20261023-9aeb",
+    "safe_defaults_enforced": {
+      "provider_enabled": false,
+      "live_broker_enabled": false,
+      "real_writes_enabled": false,
+      "dev_stub_writes_enabled": false,
+      "control_vm_broker_credentials_present": false
+    }
+  },
+  "cloud_project_and_billing_baseline": {
+    "staging_project_id": "pantheon-stg-20260902",
+    "production_project_id": "pantheon-prod-20260902",
+    "billing_account": "017011-E5B441-28904B",
+    "billing_enabled": true,
+    "relinked_at": "2026-10-24T12:14:43Z",
+    "billing_evidence_path": "/tmp/pantheon-billing-relink-20261024/20261024T121443Z/summary.json",
+    "enabled_apis": [
+      "compute.googleapis.com",
+      "iam.googleapis.com",
+      "iamcredentials.googleapis.com",
+      "sts.googleapis.com",
+      "artifactregistry.googleapis.com",
+      "secretmanager.googleapis.com",
+      "dns.googleapis.com",
+      "logging.googleapis.com",
+      "monitoring.googleapis.com"
+    ],
+    "region_quota_asia_east1": {
+      "CPUS": 32.0,
+      "DISKS_TOTAL_GB": 2048.0,
+      "STATIC_ADDRESSES": 8.0,
+      "IN_USE_ADDRESSES": 4.0,
+      "INSTANCES": 8.0,
+      "current_vms": 0
+    },
+    "target_machine_sizing": "Standard Debian 12 e2-standard-2 non-Spot target pending measured staging sizing verification during live drills."
+  },
+  "external_wait_prerequisites": [
+    "Infrastructure bootstrap in `pantheon-stg-20260902`: Workload Identity Federation pool/provider (`STAGING_WIF_PROVIDER`), staging deployer service account (`STAGING_SERVICE_ACCOUNT`), GCE instance template (`STAGING_INSTANCE_TEMPLATE`), and initial non-production sanitized snapshot (`STAGING_SANITIZED_SNAPSHOT`).",
+    "Creation of GitHub `staging` Environment in `ajoe734/pantheon` (concurrency 1) and explicit configuration of `STAGING_GCP_PROJECT_ID=pantheon-stg-20260902`, `STAGING_GCP_ZONE=asia-east1-b`, `STAGING_WIF_PROVIDER`, `STAGING_INSTANCE_TEMPLATE`, `STAGING_SERVICE_ACCOUNT`, `STAGING_SANITIZED_SNAPSHOT`, `STAGING_FE_ARTIFACT_URI`, `STAGING_EPHEMERAL_ENABLED=true`, and `STAGING_ORPHAN_CLEANUP_ENABLED=true`.",
+    "Genuine `dev_verified` release manifest after `DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002` (`Root01a11`) resolves all12 chain `h12-01a11-20261023-9aeb`.",
+    "Execution of two consecutive live ephemeral staging releases starting from zero staging resources, passing all live verification gates, and destroying all owned VM/disks/IP/IAM bindings with zero orphan inventory."
+  ],
+  "validation": {
+    "commands": [
+      {
+        "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -v tests/deployment/test_staging_release.py tests/deployment/test_production_release.py",
+        "result": "39 passed, 14 subtests passed (18 in test_staging_release.py, 21 in test_production_release.py; local controller/contract validation only, not hosted proof)"
+      },
+      {
+        "command": "/tmp/pantheon-env-current-20261024/tools/actionlint .github/workflows/staging-ephemeral-deploy.yml .github/workflows/staging-orphan-cleanup.yml",
+        "result": "exit 0 (0 errors)"
+      },
+      {
+        "command": "bash -n scripts/deploy/staging_provision.sh scripts/deploy/staging_ops.sh scripts/deploy/staging_verify.sh scripts/deploy/staging_destroy.sh",
+        "result": "exit 0"
+      }
+    ]
+  }
+}
