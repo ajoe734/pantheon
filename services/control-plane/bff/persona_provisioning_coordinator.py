@@ -87,6 +87,9 @@ PersonaArchiver = Callable[[str], "Mapping[str, Any] | None"]
 TERMINAL_RUNTIME_BINDING_STATUSES = frozenset({"retired", "failed", "failed_inactive"})
 
 
+CHAIN_CAPITAL_LABEL_KEYS = frozenset({"chain_id", "task_id", "fixture", "paper_only"})
+
+
 class PersonaProvisioningCoordinationError(RuntimeError):
     """An owner receipt could not prove the requested provisioning step."""
 
@@ -1198,7 +1201,7 @@ class PersonaProvisioningCoordinator:
         capital_pool_id: str,
         binding_id: str,
         requested_by: str,
-        currency: str,
+        currency: str | None = None,
         name: str | None = None,
         budget: Any = None,
         mandate: Any = None,
@@ -1206,6 +1209,7 @@ class PersonaProvisioningCoordinator:
         strategy_spec_registry_id: str | None = None,
         strategy_artifact_id: str | None = None,
         strategy_artifact_checksum: str | None = None,
+        labels: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Ensure only the exact chain paper pool and binding under the BFF identity.
 
@@ -1225,7 +1229,6 @@ class PersonaProvisioningCoordinator:
             ("capital_pool_id", capital_pool_id),
             ("binding_id", binding_id),
             ("requested_by", requested_by),
-            ("currency", currency),
         ):
             if not str(value or "").strip():
                 raise PersonaProvisioningCoordinationError(f"{label} is required")
@@ -1276,7 +1279,16 @@ class PersonaProvisioningCoordinator:
                 "checksum": entry.get("checksum"),
             }
 
+        extra_labels = {
+            key: value
+            for key, value in dict(labels or {}).items()
+            if key in CHAIN_CAPITAL_LABEL_KEYS
+        }
         pool_path = f"/api/capital-pools/{_path_id(capital_pool_id)}"
+        if not currency and self._owner_get("capital", pool_path) is None:
+            raise PersonaProvisioningCoordinationError(
+                "currency is required to create the chain paper pool"
+            )
         pool_base: dict[str, Any] = {
             "actor_id": self.actor_id,
             "actor_role": "admin",
@@ -1295,6 +1307,7 @@ class PersonaProvisioningCoordinator:
                 "tenant_id": tenant_id,
                 "persona_id": persona_id,
                 "requested_by": requested_by,
+                **extra_labels,
             },
         }
 
@@ -1340,6 +1353,7 @@ class PersonaProvisioningCoordinator:
             "metadata": {
                 "tenant_id": tenant_id,
                 "requested_by": requested_by,
+                **extra_labels,
                 **(
                     {"registry_id": strategy_artifact_id}
                     if strategy_artifact_id

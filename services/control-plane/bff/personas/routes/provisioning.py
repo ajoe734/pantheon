@@ -35,7 +35,7 @@ class ChainPaperCapitalRequest(BaseModel):
 
     capital_pool_id: str = Field(pattern=_ID_PATTERN)
     binding_id: str = Field(pattern=_ID_PATTERN)
-    currency: str = Field(min_length=3, max_length=8)
+    currency: Optional[str] = Field(default=None, min_length=3, max_length=8)
     name: Optional[str] = Field(default=None, max_length=200)
     budget: Optional[Any] = None
     mandate: Optional[Any] = None
@@ -43,6 +43,7 @@ class ChainPaperCapitalRequest(BaseModel):
     strategy_spec_registry_id: Optional[str] = Field(default=None, pattern=_ID_PATTERN)
     strategy_artifact_id: Optional[str] = Field(default=None, pattern=_ID_PATTERN)
     strategy_artifact_checksum: Optional[str] = Field(default=None, max_length=256)
+    labels: Optional[Dict[str, Any]] = None
 
 
 class ChainPaperCapitalRetireRequest(BaseModel):

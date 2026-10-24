@@ -2619,3 +2619,21 @@ def test_chain_paper_capital_retires_binding_before_pool_and_only_chain_records(
             binding_id=_CHAIN["binding_id"],
         )
     assert [c for c in other.calls if c[0] != "GET"] == []
+
+
+def test_chain_paper_capital_labels_are_allow_listed_and_new_pool_needs_currency() -> None:
+    transport = FakeOwnerTransport()
+    _seed_approved_registry(transport)
+    with pytest.raises(PersonaProvisioningCoordinationError, match="currency is required"):
+        _ensure(_chain_coordinator(transport), currency=None)
+    assert [c for c in transport.calls if c[0] != "GET"] == []
+
+    _ensure(
+        _chain_coordinator(transport),
+        labels={"chain_id": "chain-1", "paper_only": True, "actor_id": "spoofed", "tenant_id": "tenant-b"},
+    )
+    bodies = {p: b for m, _, p, b in transport.calls if m == "POST"}
+    for path in ("/api/capital-pools", "/api/bindings"):
+        metadata = bodies[path]["metadata"]
+        assert metadata["chain_id"] == "chain-1" and metadata["paper_only"] is True
+        assert metadata["tenant_id"] == "tenant-a" and "actor_id" not in metadata
