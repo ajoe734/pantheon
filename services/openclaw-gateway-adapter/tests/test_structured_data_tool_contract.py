@@ -792,3 +792,496 @@ class TestStructuredEndpointRejectsCallerSuppliedTools:
             )
         assert resp.status_code == 200, resp.text
         assert mocked.call_count == 1
+
+
+class TestPersonaOpinionEnsureModelPolicyAndFallbackPropagation:
+    """Contract regressions for H2 (`HOSTED-PERSONA-MODEL-FALLBACK-20261024`):
+    admitted Persona opinion `ensure` must propagate declared runtime-profile
+    fallbacks and canonical model routing into the OpenClaw agent's `agents.list`
+    config and update already-provisioned agents without weakening tool denial,
+    memory disablement, or frozen admission checks.
+    """
+
+    @staticmethod
+    def _client():
+        import main as adapter_main  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        return TestClient(adapter_main.app), adapter_main
+
+    @staticmethod
+    def _opinion_admission(
+        adapter_main,
+        *,
+        persona_id: str = "agora-servant-4eef59cbdf80a6b9fea0",
+        persona_version: str = "2026-10-16T04:10:02.683698+00:00",
+        snapshot_id: str = "cap-servant-4f4c89ce8a18f2b1de54",
+        tenant_id: str = "pantheon-dev",
+        requested_environment: str = "paper",
+        display_name: str = "Agora Servant",
+    ) -> dict:
+        agent_id = adapter_main._persona_opinion_agent_id(
+            tenant_id,
+            persona_id,
+            persona_version,
+            snapshot_id,
+            requested_environment,
+        )
+        return {
+            "persona_id": persona_id,
+            "tenant_id": tenant_id,
+            "persona_version": persona_version,
+            "agent_id": agent_id,
+            "workspace_ref": f"/home/node/.openclaw/workspaces/{agent_id}",
+            "capability_snapshot_id": snapshot_id,
+            "allowed_capabilities": ["persona_opinion"],
+            "environment_ceiling": "paper",
+            "requested_environment": requested_environment,
+            "execution_authority": "none",
+            "display_name": display_name,
+            "mandate": "user_private_agora_servant",
+            "archetype": "agora_servant",
+            "strategy_family": "agora_servant",
+            "traits": {"decision_style": "operator-guided"},
+        }
+
+    @staticmethod
+    def _load_bff_ops_client():
+        import importlib.util  # noqa: PLC0415
+
+        bff_client_path = (
+            Path(__file__).resolve().parents[3]
+            / "services"
+            / "control-plane"
+            / "bff"
+            / "openclaw_ops_client.py"
+        )
+        spec = importlib.util.spec_from_file_location("bff_openclaw_ops_client", bff_client_path)
+        assert spec and spec.loader
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_ensure_propagates_default_fallbacks_and_updates_already_provisioned_single_string_agent(
+        self, tmp_path
+    ):
+        import subprocess
+        from unittest.mock import MagicMock
+
+        ops_client_mod = self._load_bff_ops_client()
+        OpenClawOpsClient = ops_client_mod.OpenClawOpsClient
+
+        client, adapter_main = self._client()
+        admission = self._opinion_admission(adapter_main)
+        agent_id = admission["agent_id"]
+
+        # Pre-seed an already-provisioned agent in `agents.list` with a bare
+        # single-string `"model": "anthropic/claude-opus-4-8"` (matching the H2
+        # failure condition on `persona-opinion-cc717e9a40ac3b5f7883bf62`).
+        runtime_agents = [
+            {
+                "id": agent_id,
+                "workspace": admission["workspace_ref"],
+                "model": "anthropic/claude-opus-4-8",
+            }
+        ]
+        written_souls = {}
+
+        def fake_runtime(args):
+            if args[1:4] == ["agents", "list", "--json"]:
+                return subprocess.CompletedProcess(
+                    args=args,
+                    returncode=0,
+                    stdout=json.dumps({"agents": runtime_agents}),
+                    stderr="",
+                )
+            if args[1:3] == ["agents", "add"]:
+                runtime_agents.append(
+                    {
+                        "id": args[3],
+                        "workspace": args[args.index("--workspace") + 1],
+                        "model": args[args.index("--model") + 1],
+                    }
+                )
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="{}", stderr="")
+            if args[1:5] == ["config", "get", "agents.list", "--json"]:
+                return subprocess.CompletedProcess(
+                    args=args,
+                    returncode=0,
+                    stdout=json.dumps(runtime_agents),
+                    stderr="",
+                )
+            if args[1:4] == ["config", "set", "agents.list"]:
+                runtime_agents[:] = json.loads(args[4])
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="ok", stderr="")
+            if args[1:3] == ["agents", "set-identity"]:
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="ok", stderr="")
+            return subprocess.CompletedProcess(
+                args=args, returncode=1, stdout="", stderr=f"unexpected command: {args}"
+            )
+
+        class _TestClientBridgeResponse:
+            def __init__(self, resp):
+                self._resp = resp
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            def getcode(self) -> int:
+                return self._resp.status_code
+
+            def read(self) -> bytes:
+                return self._resp.content
+
+        def fake_urlopen(request, timeout):
+            del timeout
+            headers = dict(request.header_items())
+            body = json.loads(request.data.decode("utf-8"))
+            path = "/" + request.full_url.split("://", 1)[1].split("/", 1)[1]
+            resp = client.post(path, json=body, headers=headers)
+            return _TestClientBridgeResponse(resp)
+
+        ops_client = OpenClawOpsClient(
+            base_url="http://openclaw-gateway-adapter:8104",
+            service_token="adapter-secret",
+            service_auth_required=True,
+        )
+        db_path = tmp_path / "agent-ensure.sqlite3"
+        provider_result = MagicMock()
+        provider_result.to_dict.return_value = {
+            "provider": "openclaw",
+            "mode": "user",
+            "status": "completed",
+            "output": {"agent_id": agent_id, "json_events": []},
+        }
+
+        with (
+            patch.object(adapter_main, "_ASSISTANT_SERVICE_TOKEN", "adapter-secret"),
+            patch.object(adapter_main, "_ASSISTANT_SERVICE_AUTH_REQUIRED", True),
+            patch.object(adapter_main, "_OPENCLAW_AGENT_IDEMPOTENCY_DB", db_path),
+            patch.object(adapter_main, "_gateway_state_agent_runner", side_effect=fake_runtime),
+            patch.object(
+                adapter_main,
+                "_gateway_state_soul_writer",
+                side_effect=lambda ws, soul: written_souls.__setitem__(ws, soul),
+            ),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_agents_list",
+                side_effect=lambda **_kw: list(runtime_agents),
+            ),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "invoke",
+                return_value=provider_result,
+            ),
+            patch.object(ops_client_mod.urllib.request, "urlopen", fake_urlopen),
+        ):
+            ensured = ops_client.ensure_persona_opinion_agent(
+                admission,
+                persona_profile={
+                    "persona_id": admission["persona_id"],
+                    "name": admission["display_name"],
+                    "mandate": admission["mandate"],
+                },
+            )
+            assert ensured["execution_authority"] == "none"
+            assert ensured["agent"]["agent_id"] == agent_id
+            assert ensured["agent"]["status"] == "updated"
+            assert ensured["agent"]["model"] == "anthropic/claude-opus-4-8"
+            assert ensured["agent"]["fallback_models"] == [
+                "anthropic/claude-sonnet-4-6",
+                "openai/gpt-5.5",
+            ]
+            assert ensured["agent"]["model_policy"] == {
+                "primary": "anthropic/claude-opus-4-8",
+                "fallbacks": ["anthropic/claude-sonnet-4-6", "openai/gpt-5.5"],
+            }
+            assert runtime_agents[0]["model"] == {
+                "primary": "anthropic/claude-opus-4-8",
+                "fallbacks": ["anthropic/claude-sonnet-4-6", "openai/gpt-5.5"],
+            }
+            assert runtime_agents[0]["tools"] == {
+                "allow": [],
+                "deny": ["*"],
+                "exec": {"security": "deny", "ask": "always"},
+            }
+            assert runtime_agents[0]["memorySearch"]["enabled"] is False
+            assert runtime_agents[0]["contextInjection"] == "never"
+
+            # Update the same already-provisioned agent's fallback order while
+            # preserving its primary model via canonical `model_routing`:
+            ensured_routed = ops_client.ensure_persona_opinion_agent(
+                admission,
+                persona_profile={
+                    "persona_id": admission["persona_id"],
+                    "name": admission["display_name"],
+                    "mandate": admission["mandate"],
+                    "metadata": {
+                        "model_routing": {
+                            "mode": "fallback",
+                            "fallback_models": [
+                                "anthropic/claude-opus-4-8",
+                                "openai/gpt-5.5",
+                            ],
+                        }
+                    },
+                },
+            )
+            assert ensured_routed["agent"]["model"] == "anthropic/claude-opus-4-8"
+            assert ensured_routed["agent"]["fallback_models"] == ["openai/gpt-5.5"]
+            assert ensured_routed["agent"]["routing_mode"] == "fallback"
+            assert runtime_agents[0]["model"] == {
+                "primary": "anthropic/claude-opus-4-8",
+                "fallbacks": ["openai/gpt-5.5"],
+            }
+
+            # Attempting to drift the existing agent's primary model must fail
+            # closed with `model_drift_update_unavailable` rather than rewriting:
+            with pytest.raises(ops_client_mod.OpenClawOpsClientError) as drift_exc:
+                ops_client.ensure_persona_opinion_agent(
+                    admission,
+                    persona_profile={
+                        "persona_id": admission["persona_id"],
+                        "name": admission["display_name"],
+                        "mandate": admission["mandate"],
+                        "preferred_model": "openai/gpt-5.5",
+                    },
+                )
+            assert drift_exc.value.status_code == 503
+            assert "model_drift_update_unavailable" in drift_exc.value.message
+            assert runtime_agents[0]["model"] == {
+                "primary": "anthropic/claude-opus-4-8",
+                "fallbacks": ["openai/gpt-5.5"],
+            }
+
+            # Verify that governed `/invoke` still accepts the unchanged frozen
+            # `admission` dict after model policy propagation:
+            invoked = ops_client.invoke_assistant_provider(
+                provider="openclaw",
+                mode="user",
+                prompt="Return governed opinion JSON",
+                context_pack={"participant": {"persona_id": admission["persona_id"]}},
+                operator_id="operator-1",
+                agent_id=agent_id,
+                persona_admission=admission,
+                idempotency_key="inv-h2-regression-001",
+            )
+            assert invoked["data"]["status"] == "completed"
+
+    def test_ensure_supports_hard_pin_and_replay_reconciles_single_string_agent(self, tmp_path):
+        import hashlib
+        import subprocess
+
+        client, adapter_main = self._client()
+        admission = self._opinion_admission(adapter_main)
+        agent_id = admission["agent_id"]
+        runtime_agents = []
+
+        def fake_runtime(args):
+            if args[1:4] == ["agents", "list", "--json"]:
+                return subprocess.CompletedProcess(
+                    args=args, returncode=0, stdout=json.dumps({"agents": runtime_agents}), stderr=""
+                )
+            if args[1:3] == ["agents", "add"]:
+                runtime_agents.append(
+                    {
+                        "id": args[3],
+                        "workspace": args[args.index("--workspace") + 1],
+                        "model": args[args.index("--model") + 1],
+                    }
+                )
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="{}", stderr="")
+            if args[1:5] == ["config", "get", "agents.list", "--json"]:
+                return subprocess.CompletedProcess(
+                    args=args, returncode=0, stdout=json.dumps(runtime_agents), stderr=""
+                )
+            if args[1:4] == ["config", "set", "agents.list"]:
+                runtime_agents[:] = json.loads(args[4])
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="ok", stderr="")
+            if args[1:3] == ["agents", "set-identity"]:
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="ok", stderr="")
+            return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
+
+        db_path = tmp_path / "agent-ensure-replay.sqlite3"
+        legacy_fingerprint = hashlib.sha256(
+            json.dumps(admission, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        assert (
+            adapter_main._agent_ensure_fingerprint(
+                adapter_main.OpenClawPersonaOpinionEnsureRequest(**admission)
+            )
+            == legacy_fingerprint
+        )
+        runtime_agents.append(
+            {
+                "id": agent_id,
+                "workspace": admission["workspace_ref"],
+                "model": "anthropic/claude-opus-4-8",
+            }
+        )
+        with adapter_main.sqlite3.connect(str(db_path)) as conn:
+            conn.execute(
+                """
+                CREATE TABLE agent_ensure_replays (
+                    idempotency_key TEXT PRIMARY KEY,
+                    request_fingerprint TEXT NOT NULL,
+                    http_status INTEGER NOT NULL,
+                    response_json TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO agent_ensure_replays VALUES (?, ?, ?, ?)",
+                (
+                    "legacy-preupgrade-ensure-key",
+                    legacy_fingerprint,
+                    201,
+                    json.dumps(
+                        {
+                            "status": "ok",
+                            "request_id": "req-legacy-0",
+                            "idempotency_key": "legacy-preupgrade-ensure-key",
+                            "agent": {
+                                "agent_id": agent_id,
+                                "status": "created",
+                                "model": "anthropic/claude-opus-4-8",
+                                "runtime_policy": adapter_main._PERSONA_OPINION_RUNTIME_POLICY,
+                            },
+                        },
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                ),
+            )
+            conn.commit()
+
+        headers = {
+            "X-Pantheon-Service-Token": "adapter-secret",
+            "Idempotency-Key": "ensure-replay-hard-pin-key",
+            "X-Request-Id": "req-hard-pin-1",
+        }
+        payload = {
+            **admission,
+            "model_routing": {"mode": "hard_pin", "model": "anthropic/claude-opus-4-8"},
+        }
+        with (
+            patch.object(adapter_main, "_ASSISTANT_SERVICE_TOKEN", "adapter-secret"),
+            patch.object(adapter_main, "_ASSISTANT_SERVICE_AUTH_REQUIRED", True),
+            patch.object(adapter_main, "_OPENCLAW_AGENT_IDEMPOTENCY_DB", db_path),
+            patch.object(adapter_main, "_gateway_state_agent_runner", side_effect=fake_runtime),
+            patch.object(adapter_main, "_gateway_state_soul_writer", side_effect=lambda ws, s: None),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_agents_list",
+                side_effect=lambda **_kw: list(runtime_agents),
+            ),
+        ):
+            # Legacy same-key replay where `model_routing` is omitted/None must match
+            # the pre-upgrade fingerprint and reconcile the bare string model:
+            legacy_replay = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json=admission,
+                headers={
+                    "X-Pantheon-Service-Token": "adapter-secret",
+                    "Idempotency-Key": "legacy-preupgrade-ensure-key",
+                    "X-Request-Id": "req-legacy-replay",
+                },
+            )
+            assert legacy_replay.status_code == 201, legacy_replay.text
+            assert runtime_agents[0]["model"] == {
+                "primary": "anthropic/claude-opus-4-8",
+                "fallbacks": ["anthropic/claude-sonnet-4-6", "openai/gpt-5.5"],
+            }
+
+            first = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json=payload,
+                headers=headers,
+            )
+            assert first.status_code == 200, first.text
+            assert runtime_agents[0]["model"] == {
+                "primary": "anthropic/claude-opus-4-8",
+                "fallbacks": [],
+            }
+            # Simulate an external config downgrade back to a bare string and
+            # verify that even a cached replay restores the structured model policy:
+            runtime_agents[0]["model"] = "anthropic/claude-opus-4-8"
+            replay = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json=payload,
+                headers={**headers, "X-Request-Id": "req-hard-pin-2"},
+            )
+            assert replay.status_code == 200, replay.text
+            assert runtime_agents[0]["model"] == {
+                "primary": "anthropic/claude-opus-4-8",
+                "fallbacks": [],
+            }
+            # Reusing the same Idempotency-Key with a different explicitly present
+            # `model_routing` (same primary model, different fallback policy) must
+            # conflict (409) rather than colliding on the admission-only hash:
+            conflict = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json={
+                    **admission,
+                    "model_routing": {
+                        "mode": "fallback",
+                        "fallback_models": [
+                            "anthropic/claude-opus-4-8",
+                            "openai/gpt-5.5",
+                        ],
+                    },
+                },
+                headers={**headers, "X-Request-Id": "req-hard-pin-conflict"},
+            )
+            assert conflict.status_code == 409, conflict.text
+            assert conflict.json()["error_code"] == "AGENT_SYNC_IDEMPOTENCY_CONFLICT"
+            assert runtime_agents[0]["model"] == {
+                "primary": "anthropic/claude-opus-4-8",
+                "fallbacks": [],
+            }
+
+    def test_ensure_rejects_out_of_pool_model_routing_fail_closed(self):
+        ops_client_mod = self._load_bff_ops_client()
+        OpenClawOpsClient = ops_client_mod.OpenClawOpsClient
+        OpenClawOpsClientError = ops_client_mod.OpenClawOpsClientError
+
+        client, adapter_main = self._client()
+        admission = self._opinion_admission(adapter_main)
+        ops_client = OpenClawOpsClient(
+            base_url="http://openclaw-gateway-adapter:8104",
+            service_token="adapter-secret",
+            service_auth_required=True,
+        )
+        with pytest.raises(OpenClawOpsClientError) as excinfo:
+            ops_client.ensure_persona_opinion_agent(
+                admission,
+                persona_profile={
+                    "persona_id": admission["persona_id"],
+                    "name": "Bad Model Persona",
+                    "preferred_model": "outside-pool/model-x",
+                },
+            )
+        assert excinfo.value.status_code == 400
+        assert excinfo.value.error_code == "OPENCLAW_PERSONA_MODEL_ROUTING_INVALID"
+
+        with (
+            patch.object(adapter_main, "_ASSISTANT_SERVICE_TOKEN", "adapter-secret"),
+            patch.object(adapter_main, "_ASSISTANT_SERVICE_AUTH_REQUIRED", True),
+        ):
+            resp = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json={
+                    **admission,
+                    "model_routing": {"mode": "hard_pin", "model": "outside-pool/model-x"},
+                },
+                headers={
+                    "X-Pantheon-Service-Token": "adapter-secret",
+                    "Idempotency-Key": "bad-model-key",
+                    "X-Request-Id": "bad-model-req",
+                },
+            )
+        assert resp.status_code == 422

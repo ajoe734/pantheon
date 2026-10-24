@@ -108,6 +108,78 @@ def _safe_json(raw: str) -> Dict[str, Any]:
     return {"data": loaded}
 
 
+def _resolve_persona_opinion_model_routing(
+    admission: Dict[str, Any],
+    persona_profile: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    profile_source: Dict[str, Any] = {}
+    if isinstance(persona_profile, dict):
+        profile_source.update(persona_profile)
+    profile_source["persona_id"] = str(
+        admission.get("agent_id")
+        or profile_source.get("persona_id")
+        or profile_source.get("id")
+        or admission.get("persona_id")
+        or ""
+    ).strip()
+    if admission.get("workspace_ref"):
+        profile_source["workspace_ref"] = admission["workspace_ref"]
+    raw_policy = (
+        admission.get("model_routing")
+        or (persona_profile or {}).get("route_policy")
+        or (persona_profile or {}).get("model_routing")
+    )
+    route_policy = (
+        {"model_routing": dict(raw_policy)}
+        if isinstance(raw_policy, dict)
+        and "model_routing" not in raw_policy
+        and "modelRouting" not in raw_policy
+        and "runtime_profile" not in raw_policy
+        and "runtimeProfile" not in raw_policy
+        and ("mode" in raw_policy or "routing_mode" in raw_policy)
+        else raw_policy if isinstance(raw_policy, dict) else None
+    )
+    runtime_profile = build_persona_runtime_profile(
+        profile_source,
+        route_policy=route_policy,
+    )
+    routing = runtime_profile.model_routing
+    if routing.status != "ready" or not routing.primary_model:
+        reason = routing.blocked_reason or routing.reason or "model_routing_degraded"
+        invalid = ",".join(routing.invalid_refs) if routing.invalid_refs else "none"
+        raise OpenClawOpsClientError(
+            "Persona model routing policy is invalid or outside the provider model pool "
+            f"(reason={reason}, invalid_refs={invalid}).",
+            status_code=400,
+            error_code="OPENCLAW_PERSONA_MODEL_ROUTING_INVALID",
+        )
+    if routing.mode == "hard_pin":
+        return {
+            "mode": "hard_pin",
+            "model": routing.primary_model,
+            "primary_model": routing.primary_model,
+            "fallback_models": [],
+        }
+    if routing.mode == "preferred_pool_model":
+        return {
+            "mode": "preferred_pool_model",
+            "preferred_model": routing.primary_model,
+            "primary_model": routing.primary_model,
+            "fallback_models": list(routing.fallback_models),
+        }
+    if routing.mode == "fallback":
+        return {
+            "mode": "fallback",
+            "primary_model": routing.primary_model,
+            "fallback_models": [routing.primary_model, *routing.fallback_models],
+        }
+    return {
+        "mode": "pool_default",
+        "primary_model": routing.primary_model,
+        "fallback_models": list(routing.fallback_models),
+    }
+
+
 def _validated_servant_admission(persona: Dict[str, Any], persona_id: str) -> str:
     """Verify the BFF-owned pre-sync admission claim against canonical IDs."""
 
@@ -243,12 +315,17 @@ class OpenClawOpsClient:
         # Identity is frozen by the BFF admission builder.  Do not rebuild it
         # from a mutable Registry projection here: that would create a TOCTOU
         # window between admission and agent reconciliation.
+        model_routing = _resolve_persona_opinion_model_routing(admission, persona_profile)
         payload = dict(admission)
+        payload["model_routing"] = model_routing
+        policy_digest = hashlib.sha256(
+            json.dumps(model_routing, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()[:12]
         idempotency_key = str(
             uuid.uuid5(
                 uuid.NAMESPACE_URL,
                 "pantheon:persona-opinion-agent:"
-                f"{admission.get('agent_id')}:{admission.get('capability_snapshot_id')}",
+                f"{admission.get('agent_id')}:{admission.get('capability_snapshot_id')}:{policy_digest}",
             )
         )
         response = self._request(

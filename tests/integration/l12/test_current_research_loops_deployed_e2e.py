@@ -46,6 +46,7 @@ from l12_owner_auth import (
     persona_writer_identity,
     registry_advance_body,
     require_decided_approval,
+    token_subject,
 )
 
 
@@ -233,6 +234,8 @@ class DeployedResearchHarness:
             "teaching_session_id": (chain.get("session") or {}).get("session_id"),
             "persona_id": chain.get("persona_id") or (chain.get("session") or {}).get("persona_id"),
             "eval_identity": chain.get("eval_identity"),
+            "pre_edit_eval_id": chain.get("pre_edit_eval_id"),
+            "pre_edit_evaluated_at": chain.get("pre_edit_evaluated_at"),
             "eval_id": chain.get("eval_id"),
         }
 
@@ -1259,6 +1262,104 @@ class DeployedResearchHarness:
         }
         self.chain.update({"authority_run": exact_run, "experiment_run": experiment_run, "session": session})
 
+    def _operator_teaching_patch(self, session_id: str, by_key: Mapping[str, Any]) -> dict[str, Any]:
+        """Isolated mode only: the harness itself plays the operator and PATCHes the controls."""
+        # A recovered session may already hold the usual values from an earlier service-only
+        # patch; pick values that differ from the current ones so the edit is a real delta.
+        wanted = {
+            key: next(v for v in options if v != by_key[key].get("current_value"))
+            for key, options in (("short_window", (7, 5)), ("long_window", (21, 30)))
+        }
+        patched = self._at(
+            "teaching.command",
+            lambda: self._http_json(
+                self.training_url,
+                f"/api/training/sessions/{urllib.parse.quote(session_id, safe='')}/controls",
+                method="PATCH",
+                payload={
+                    "patches": [
+                        {"parameter_key": key, "proposed_value": value} for key, value in wanted.items()
+                    ]
+                },
+                headers=self._operator_training_headers(),
+            ),
+        )
+        self._require(patched.get("status") == "accepted", "Teaching control command was rejected")
+        self._require(
+            {d.get("parameter_key") for d in patched.get("patch_delta") or [] if d.get("previous_value") != d.get("new_value")}
+            == set(wanted),
+            "Teaching control command produced no real patch delta",
+        )
+        return wanted
+
+    def _await_human_teaching_edit(
+        self, session_id: str, by_key: Mapping[str, Any], headers: Mapping[str, str]
+    ) -> dict[str, Any]:
+        """Hosted: never write controls. Record the pre-edit evaluation ids, then wait for a human edit.
+
+        Returns the control values the human set (read back from the control_patch event). Only
+        scalar owner ids cross segments; B reads the pre-edit evaluation back from Training.
+        """
+        quoted = urllib.parse.quote(session_id, safe="")
+        events = self._http_json(self.training_url, f"/api/training/sessions/{quoted}/events", headers=headers)
+        writer = persona_writer_identity()
+        executor = token_subject(human_token("OPERATOR"))
+        refused = {executor, *([str(writer[1])] if writer and writer[1] else [])}
+        control_patches = [
+            e for e in (events if isinstance(events, list) else [])
+            if isinstance(e, Mapping) and e.get("event_type") == "control_patch" and e.get("patch_delta")
+        ]
+        patches = [
+            e for e in control_patches
+            if e.get("actor_type") == "user" and str(e.get("actor") or "") and str(e.get("actor")) not in refused
+        ]
+        carried = self.hosted_input.predecessors if self.hosted_input else {}
+        pre_id = str(carried.get("pre_edit_eval_id") or "").strip()
+        pre_at = str(carried.get("pre_edit_evaluated_at") or "").strip()
+        if not pre_id:
+            terminal = self._http_json(
+                self.training_url, f"/api/training/sessions/{quoted}/terminal-readback", headers=headers
+            )
+            evaluation = terminal.get("evaluation_result") if isinstance(terminal, Mapping) else None
+            preview = terminal.get("preview") if isinstance(terminal, Mapping) and isinstance(terminal.get("preview"), Mapping) else {}
+            if isinstance(evaluation, Mapping) and isinstance(evaluation.get("metrics"), Mapping):
+                pre_id = str(evaluation.get("eval_id") or "").strip()
+                pre_at = str(preview.get("candidate_snapshot_at") or "").strip()
+        if pre_id:
+            self.chain["pre_edit_eval_id"] = pre_id
+        if pre_at:
+            self.chain["pre_edit_evaluated_at"] = pre_at
+        ids = {**self._hosted_resource_ids(), "teaching_session_id": session_id}
+        ids = {k: v for k, v in ids.items() if v not in (None, "")}
+        if not patches:
+            rejected = (
+                " (an existing control_patch from the hosted executor or a service identity was ignored)"
+                if control_patches else ""
+            )
+            raise HostedPause(
+                "teaching_human_control_edit",
+                "awaiting_human_edit: waiting for the operator to edit short_window/long_window of "
+                f"TeachingSession {session_id} in the Management UI{rejected}; "
+                "this suite never writes Teaching controls",
+                ids,
+            )
+        latest = max(patches, key=lambda e: str(e.get("timestamp") or e.get("emitted_at") or ""))
+        wanted = {
+            str(d["parameter_key"]): d["new_value"]
+            for d in latest["patch_delta"]
+            if d.get("parameter_key") in {"short_window", "long_window"} and d.get("previous_value") != d.get("new_value")
+        }
+        self._require(
+            set(wanted) == {"short_window", "long_window"},
+            "the human Teaching edit did not change both short_window and long_window",
+        )
+        self._require(
+            all(by_key[k].get("current_value") == v for k, v in wanted.items()),
+            "Teaching controls no longer hold the human's edited values",
+        )
+        self._require(bool(pre_id), "no pre-edit evaluation id was recorded before the human edit")
+        return wanted
+
     def _case_persona_teaching(self, case: dict[str, Any]) -> None:
         session_id = str(self.chain["session"]["session_id"])
         persona_id = str(
@@ -1296,32 +1397,10 @@ class DeployedResearchHarness:
             {"short_window", "long_window"}.issubset(by_key),
             "new TeachingSession has no public, governed short_window/long_window controls to command",
         )
-        # A recovered session may already hold the usual values from an earlier service-only
-        # patch; pick values that differ from the current ones so the edit is a real delta.
-        wanted = {
-            key: next(v for v in options if v != by_key[key].get("current_value"))
-            for key, options in (("short_window", (7, 5)), ("long_window", (21, 30)))
-        }
-        patched = self._at(
-            "teaching.command",
-            lambda: self._http_json(
-                self.training_url,
-                f"/api/training/sessions/{urllib.parse.quote(session_id, safe='')}/controls",
-                method="PATCH",
-                payload={
-                    "patches": [
-                        {"parameter_key": key, "proposed_value": value} for key, value in wanted.items()
-                    ]
-                },
-                headers=self._operator_training_headers(),
-            ),
-        )
-        self._require(patched.get("status") == "accepted", "Teaching control command was rejected")
-        self._require(
-            {d.get("parameter_key") for d in patched.get("patch_delta") or [] if d.get("previous_value") != d.get("new_value")}
-            == set(wanted),
-            "Teaching control command produced no real patch delta",
-        )
+        if self.hosted:
+            wanted = self._await_human_teaching_edit(session_id, by_key, headers)
+        else:
+            wanted = self._operator_teaching_patch(session_id, by_key)
         queued = self._at(
             "teaching.worker_trigger",
             lambda: self._http_json(
