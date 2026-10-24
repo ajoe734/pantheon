@@ -131,7 +131,8 @@ the product's automated paper approvals must never replace the chain's human H1 
 or H3 (deployment plan release).
 
 Resulting flow in `C_promote`: `_hosted_capital` only reads the pool and binding back (GET) and
-verifies the product provisioning writer identity, chain labels/tenant and active paper scope, then
+verifies the writer is exactly the product BFF identity `control-plane-bff` (`created_by` on pool and
+binding, `PERSONA_OWNER_SERVICE_ACTOR_ID`; any other writer, including metadata-only claims, is rejected), chain labels/tenant and active paper scope, then
 persists the scalar ids. When the records are absent or unproven it pauses before
 `capital_pool_creation` with blocker `CAPITAL_HOSTED_PRINCIPAL_DECISION_REQUIRED` (name kept for
 continuity). There is no service-claim exception: the harness never writes Capital directly in

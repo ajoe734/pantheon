@@ -902,10 +902,10 @@ def _runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, phase: str, **kwar
     if provisioned:
         # What the product's BFF paper provisioning wrote under its own service identity.
         meta = {"chain_id": CHAIN, "paper_only": True, "execution_context": "paper"}
-        fake.pool = {"pool_id": f"hosted-all12-{CHAIN}-pool", "tenant_id": TENANT, "created_by": "svc-bff-provisioning",
+        fake.pool = {"pool_id": f"hosted-all12-{CHAIN}-pool", "tenant_id": TENANT, "created_by": "control-plane-bff",
                      "metadata": meta}
         fake.binding = {"binding_id": f"hosted-all12-{CHAIN}-pcb", "tenant_id": TENANT, "status": "active",
-                        "allowed_deployment_scope": "paper", "created_by": "svc-bff-provisioning", "metadata": meta}
+                        "allowed_deployment_scope": "paper", "created_by": "control-plane-bff", "metadata": meta}
     chain.http = fake
     chain._identity = lambda service: chain.evidence.identities.setdefault(service, {"service": service})
     return mod, chain, fake
@@ -1158,10 +1158,17 @@ def test_hosted_capital_rejects_records_not_written_by_product_provisioning(
     _, chain, fake = _runtime(monkeypatch, tmp_path, "C_promote")
     from l12_owner_auth import HOSTED_TASK_ID, HostedPause
 
-    fake.pool["created_by"] = HOSTED_TASK_ID  # harness-written, not product provisioning
+    for wrong in (HOSTED_TASK_ID, "unrelated-service"):  # not the product BFF identity
+        fake.pool["created_by"] = wrong
+        fake.pool["metadata"] = {**fake.pool["metadata"], "provisioned_by": wrong}
+        with pytest.raises(HostedPause):
+            chain._hosted_capital("persona-teach", {})
+    fake.pool["created_by"] = "control-plane-bff"
+    fake.binding["created_by"] = "unrelated-service"
     with pytest.raises(HostedPause):
         chain._hosted_capital("persona-teach", {})
-    fake.pool["created_by"] = "svc-bff-provisioning"
+    fake.binding["created_by"] = "control-plane-bff"
+    fake.pool["created_by"] = "control-plane-bff"
     fake.binding["status"] = "pending"
     with pytest.raises(HostedPause):
         chain._hosted_capital("persona-teach", {})

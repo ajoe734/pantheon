@@ -95,6 +95,7 @@ class PersistedIds(dict):
 
 
 TASK_ID = "PFG-L12-RUNTIME-E2E-20260820"
+PRODUCT_PROVISIONING_WRITER = "control-plane-bff"
 # The isolated harness runs the stack as the hosted dev tenant.
 TENANT_ID = os.getenv("PANTHEON_L12_TENANT_ID", "default").strip()
 PARENT_ARTIFACT_ID = "artifact-tw-session-momentum-v1"
@@ -1192,13 +1193,6 @@ class RuntimeChain:
                 "H1/H3 (design doc section 3); the harness sends no direct Capital write",
             )
 
-        def writer(record: Mapping[str, Any]) -> str:
-            meta = record.get("metadata") if isinstance(record.get("metadata"), Mapping) else {}
-            return next(
-                (str(v).strip() for v in (record.get("created_by"), record.get("writer_id"), meta.get("provisioned_by")) if str(v or "").strip()),
-                "",
-            )
-
         def readback(kind: str, key: str, path: str, record_id: str) -> Mapping[str, Any]:
             record = self.http.request("capital", "GET", path, headers=headers, expected={200, 404})
             if record.get(key) != record_id:
@@ -1206,8 +1200,10 @@ class RuntimeChain:
             meta = record.get("metadata") if isinstance(record.get("metadata"), Mapping) else {}
             if meta.get("chain_id") != chain.chain_id or record.get("tenant_id", TENANT_ID) != TENANT_ID:
                 raise pause(f"{kind} {record_id} lacks the chain labels or tenant")
-            if not writer(record) or writer(record) == HOSTED_TASK_ID:
-                raise pause(f"{kind} {record_id} does not show the product provisioning identity as writer")
+            # Product contract: personas/service.py PERSONA_OWNER_SERVICE_ACTOR_ID is the BFF's own
+            # service identity; the coordinator writes it as created_by on the pool and the binding.
+            if str(record.get("created_by") or "").strip() != PRODUCT_PROVISIONING_WRITER:
+                raise pause(f"{kind} {record_id} was not written by the product BFF identity {PRODUCT_PROVISIONING_WRITER}")
             return record
 
         readback("paper pool", "pool_id", f"/api/capital-pools/{pool_id}", pool_id)
