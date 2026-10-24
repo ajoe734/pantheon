@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "template_name_prefix": "pantheon-stg-template",
+  "description": "Ephemeral Staging GCE Instance Template (Phase 2, standard non-Spot VM, 2h default TTL).",
+  "properties": {
+    "machineType": "e2-standard-2",
+    "scheduling": {
+      "automaticRestart": true,
+      "onHostMaintenance": "MIGRATE",
+      "preemptible": false,
+      "provisioningModel": "STANDARD"
+    },
+    "disks": [
+      {
+        "boot": true,
+        "autoDelete": true,
+        "Mode": "READ_WRITE",
+        "initializeParams": {
+          "diskSizeGb": "50",
+          "diskType": "pd-balanced",
+          "sourceImage": "projects/debian-cloud/global/images/family/debian-12"
+        }
+      }
+    ],
+    "networkInterfaces": [
+      {
+        "network": "global/networks/default",
+        "accessConfigs": [
+          {
+            "name": "External NAT",
+            "type": "ONE_TO_ONE_NAT",
+            "networkTier": "PREMIUM"
+          }
+        ]
+      }
+    ],
+    "tags": {
+      "items": [
+        "pantheon-staging-https"
+      ]
+    },
+    "labels": {
+      "environment": "staging",
+      "cleanup_policy": "automatic",
+      "managed_by": "pantheon-ephemeral-staging"
+    },
+    "metadata": {
+      "items": [
+        {
+          "key": "enable-oslogin",
+          "value": "TRUE"
+        },
+        {
+          "key": "block-project-ssh-keys",
+          "value": "TRUE"
+        }
+      ]
+    }
+  }
+}

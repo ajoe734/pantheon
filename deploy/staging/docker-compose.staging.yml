@@ -1,0 +1,61 @@
+# Pantheon Ephemeral Staging Compose Overlay (core profile)
+# Deploys immutable digest-pinned images from the release manifest without rebuilding.
+# Safe defaults remain strictly fail-closed: provider=false, live_broker=false, real_writes=false.
+
+name: pantheon-staging
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    profiles: ["core"]
+    environment:
+      POSTGRES_USER: ${STAGING_POSTGRES_USER:-pantheon_stg}
+      POSTGRES_DB: ${STAGING_POSTGRES_DB:-pantheon_staging}
+    volumes:
+      - /var/lib/pantheon-staging/postgres:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:15432:5432"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.75"
+          memory: 1536M
+
+  nats:
+    image: nats:2.10-alpine
+    restart: unless-stopped
+    profiles: ["core"]
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "127.0.0.1:14222:4222"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 384M
+
+  operator-bff:
+    image: ${PANTHEON_OPERATOR_BFF_IMAGE:?immutable digest reference required}
+    pull_policy: never
+    restart: unless-stopped
+    profiles: ["core"]
+    environment:
+      PANTHEON_ENV: staging
+      PANTHEON_RELEASE_ID: ${PANTHEON_RELEASE_ID:?release_id required}
+      PANTHEON_PROVIDER_ENABLED: "false"
+      PANTHEON_LIVE_BROKER_ENABLED: "false"
+      PANTHEON_REAL_WRITES_ENABLED: "false"
+      PANTHEON_DEV_STUB_WRITES_ENABLED: "false"
+      PANTHEON_EXECUTION_MODE: "paper"
+      PANTHEON_BFF_CORS_ORIGINS: ${STAGING_BFF_CORS_ORIGINS:?staging FE origin required}
+    ports:
+      - "127.0.0.1:18001:8000"
+    depends_on:
+      - postgres
+      - nats
+    deploy:
+      resources:
+        limits:
+          cpus: "0.75"
+          memory: 1536M
