@@ -271,9 +271,21 @@ jobs:
           dpkg-query --show --showformat='${Package} ${Version}\n' bubblewrap apparmor apparmor-profiles
           # Ubuntu supplies this per-binary profile for restricted userns hosts.
           # Load it unchanged; retain host-wide restrictions and child capability denial.
-          profile=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
-          sha256sum "$profile"
-          sudo apparmor_parser --replace "$profile"
+          # Ubuntu 26.04 (apparmor 5.x) moved/dropped the extra-profiles path;
+          # probe known locations and let the bwrap capability probe below gate.
+          profile=
+          for candidate in \
+            /usr/share/apparmor/extra-profiles/bwrap-userns-restrict \
+            /etc/apparmor.d/bwrap-userns-restrict \
+            /usr/share/apparmor/profiles/bwrap-userns-restrict; do
+            if [ -f "$candidate" ]; then profile="$candidate"; break; fi
+          done
+          if [ -n "$profile" ]; then
+            sha256sum "$profile"
+            sudo apparmor_parser --replace "$profile"
+          else
+            echo "No bwrap-userns-restrict profile shipped; relying on capability probe"
+          fi
           test "$(command -v bwrap)" = /usr/bin/bwrap
           /usr/bin/bwrap --version
           timeout 5s /usr/bin/bwrap --die-with-parent --unshare-pid \
