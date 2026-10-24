@@ -37,5 +37,18 @@
     "test": "tests/unit/l12/test_hosted_domain_contract.py::test_research_reuses_the_alpha_worker_teaching_session_with_a_different_trace",
     "verification": "pytest tests/unit/l12: 94 passed",
     "not_done": "no provider/business/VM call; activation, replay_dlq and samechain A resumption remain with Root01a11"
+  },
+  "corrections_on_head_4ae13": {
+    "defects": [
+      "hosted callback wait expiry fell through to POST /api/training/sessions",
+      "find_run pinned the first historical completed run, ignoring a later worker Teaching receipt after replay changed causal run ids"
+    ],
+    "fix": "hosted caller resolves the worker Teaching receipt via tenant/Persona/Spec experiment_run context refs, then reads that exact authority run and verifies its completed authority/domain pair; bounded wait expiry raises HostedPause(teaching_session) with registry_id/persona_id preserved and no Teaching POST. Isolated path unchanged.",
+    "tests": [
+      "test_research_reuses_the_alpha_worker_teaching_session_with_a_different_trace (later auth-run-2/exp-2 pair)",
+      "test_research_pauses_without_alternate_teaching_post_when_worker_receipt_is_missing"
+    ],
+    "verification": "pytest tests/unit/l12/test_hosted_domain_contract.py: 27 passed, 2 skipped (the skips are the expected paused-chain assertions)",
+    "not_done": "local fixtures only; no actual duplicate/replay/future worker success claimed; no SSH/provider/business calls; Root01a11 owns activation, chain A and DLQ recovery."
   }
 }

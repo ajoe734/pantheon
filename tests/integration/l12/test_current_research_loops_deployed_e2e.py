@@ -1040,6 +1040,57 @@ class DeployedResearchHarness:
         }
         self.chain.update({"approved_entry": approved, "admission": admission})
 
+    @staticmethod
+    def _worker_ref(session: Mapping[str, Any]) -> Mapping[str, Any]:
+        return next(
+            (
+                ref
+                for ref in session.get("context_refs") or []
+                if isinstance(ref, Mapping) and ref.get("type") == "experiment_run"
+            ),
+            {},
+        )
+
+    def _prior_session(
+        self, persona_id: str, registry_id: str, trace_id: str | None, headers: Mapping[str, str]
+    ) -> Mapping[str, Any] | None:
+        for prior in self._http_json(
+            self.training_url,
+            f"/api/training/sessions?persona_id={urllib.parse.quote(persona_id, safe='')}",
+            headers=headers,
+        ):
+            if not isinstance(prior, Mapping) or prior.get("persona_id") not in (None, persona_id):
+                continue
+            ref = self._worker_ref(prior)
+            if (
+                (trace_id is not None and prior.get("trace_id") == trace_id)
+                or (
+                    ref.get("strategy_spec_id") == registry_id
+                    and ref.get("tenant_id") in (None, self.tenant_id)
+                    and ref.get("id")
+                    and ref.get("domain_run_id")
+                )
+            ):
+                return prior
+        return None
+
+    def _wait_worker_session(self) -> Mapping[str, Any]:
+        persona_id = str(self.chain["persona_id"])
+        registry_id = str(self.chain["registry_id"])
+        headers = self._training_headers()
+        deadline = time.monotonic() + min(self.timeout_seconds, 60)
+        while True:
+            prior = self._prior_session(persona_id, registry_id, None, headers)
+            if prior is not None:
+                return prior
+            if time.monotonic() >= deadline:
+                raise HostedPause(
+                    "teaching_session",
+                    "Alpha worker Teaching receipt not visible yet; no alternate Teaching session opened",
+                    {"registry_id": registry_id, "persona_id": persona_id},
+                )
+            time.sleep(self.poll_seconds)
+
     def _case_alpha_replication(self, case: dict[str, Any]) -> None:
         registry_id = str(self.chain["registry_id"])
         admission = self.chain["admission"]
@@ -1072,15 +1123,30 @@ class DeployedResearchHarness:
                     return run
             return None
 
-        authority_run = self._at(
-            "alpha.durable_terminal_readback",
-            lambda: self._poll(
-                f"ExperimentRun for {registry_id}",
-                find_run,
-                lambda value: isinstance(value, Mapping),
-            ),
-        )
-        authority_run_id = str(authority_run.get("run_id") or "")
+        worker_session: Mapping[str, Any] | None = None
+        if self.hosted:
+            # The Alpha worker's Teaching receipt names the actual completed authority/domain run
+            # pair; resolve it by tenant/Persona/Spec refs rather than pinning a historical run.
+            worker_session = self._at("alpha.next_consumer_receipt_wait", self._wait_worker_session)
+            worker_ref = self._worker_ref(worker_session)
+            authority_run_id = str(worker_ref.get("id") or "")
+            authority_run = self._at(
+                "alpha.durable_terminal_readback",
+                lambda: self._http_json(
+                    self.research_url,
+                    f"/api/research-orchestrator/runs/{urllib.parse.quote(authority_run_id, safe='')}",
+                ),
+            )
+        else:
+            authority_run = self._at(
+                "alpha.durable_terminal_readback",
+                lambda: self._poll(
+                    f"ExperimentRun for {registry_id}",
+                    find_run,
+                    lambda value: isinstance(value, Mapping),
+                ),
+            )
+            authority_run_id = str(authority_run.get("run_id") or "")
         exact_run = self._at(
             "alpha.authority_actual_state",
             lambda: self._http_json(
@@ -1093,6 +1159,12 @@ class DeployedResearchHarness:
         self._require(experiment_run.get("status") == "completed", "Alpha ExperimentRun is not completed")
         experiment_run_id = str(experiment_run.get("run_id") or "")
         self._require(bool(experiment_run_id), "Alpha authority output lacks domain ExperimentRun id")
+        if worker_session is not None:
+            self._require(
+                (exact_run.get("parameters") or {}).get("strategy_spec_id") == registry_id
+                and self._worker_ref(worker_session).get("domain_run_id") == experiment_run_id,
+                "Teaching receipt does not match the completed authority/domain run pair",
+            )
         case["terminal_output"] = {
             "type": "ExperimentRun",
             "id": experiment_run_id,
@@ -1121,39 +1193,12 @@ class DeployedResearchHarness:
         headers = self._training_headers()
         teaching_trace_id = self._rid(f"trace-teaching-{self.run_token}", "trace", "teaching")
 
-        def _prior_session() -> Any:
-            for prior in self._http_json(
-                self.training_url,
-                f"/api/training/sessions?persona_id={urllib.parse.quote(persona_id, safe='')}",
-                headers=headers,
-            ):
-                if not isinstance(prior, Mapping):
-                    continue
-                # The Teaching owner assigns session_id. Reuse is by the chain's deterministic
-                # trace_id, or by the Alpha background worker's own receipt (its trace differs)
-                # carrying the exact same authority run / domain run / StrategySpec refs.
-                if prior.get("trace_id") == teaching_trace_id or any(
-                    isinstance(ref, Mapping)
-                    and ref.get("type") == "experiment_run"
-                    and ref.get("id") == authority_run_id
-                    and ref.get("domain_run_id") == experiment_run_id
-                    and ref.get("strategy_spec_id") == registry_id
-                    for ref in prior.get("context_refs") or []
-                ):
-                    return prior
-            return None
-
         def open_teaching_session() -> Any:
-            if self.hosted:
-                prior = _prior_session()
-                # The saved Alpha result precedes the worker's Teaching callback, so give that
-                # consumer a bounded window to show its receipt before opening another session.
-                deadline = time.monotonic() + min(self.timeout_seconds, 60)
-                while prior is None and time.monotonic() < deadline:
-                    time.sleep(self.poll_seconds)
-                    prior = _prior_session()
-                if prior is not None:
-                    return prior
+            if worker_session is not None:
+                return worker_session
+            prior = self._prior_session(persona_id, registry_id, teaching_trace_id, headers)
+            if prior is not None:
+                return prior
             return self._http_json(
                 self.training_url,
                 "/api/training/sessions",

@@ -224,13 +224,14 @@ class FakeResearchOwners:
                 "record_type": "ExperimentRun", "strategy_spec_id": self.registry_id,
                 "experiment_run": {"run_id": "exp-1", "strategy_spec_id": self.registry_id, "status": "completed"}}}]
         if path.startswith("/api/research-orchestrator/runs/"):
-            return self.alpha_run()
+            run_id = unquoted.rsplit("/", 1)[-1]
+            return self.alpha_run(run_id, "exp-" + run_id.rsplit("-", 1)[-1])
         raise AssertionError(f"unexpected owner call {method} {path}")
 
-    def alpha_run(self) -> dict[str, Any]:
-        return {"run_id": "auth-run-1", "parameters": {
+    def alpha_run(self, run_id: str = "auth-run-1", domain: str = "exp-1") -> dict[str, Any]:
+        return {"run_id": run_id, "parameters": {
             "record_type": "ExperimentRun", "strategy_spec_id": self.registry_id,
-            "experiment_run": {"run_id": "exp-1", "strategy_spec_id": self.registry_id, "status": "completed"}}}
+            "experiment_run": {"run_id": domain, "strategy_spec_id": self.registry_id, "status": "completed"}}}
 
     def writes(self) -> list[tuple[str, str]]:
         return [c for c in self.calls if c[0] != "GET"]
@@ -362,9 +363,28 @@ def test_research_reuses_the_alpha_worker_teaching_session_with_a_different_trac
     assert ("POST", "/api/training/sessions") not in owners.calls
     assert harness.chain["session"]["session_id"] == "trn-worker"
 
-    # refs that do not match the exact causal identities are not accepted
-    _, other = run({"id": "auth-run-other", "domain_run_id": "exp-1", "strategy_spec_id": "reg-other"})
-    assert ("POST", "/api/training/sessions") in other.calls
+    # a later worker receipt (replay changed the causal run ids) is used, not the first historical run
+    later, owners = run({"id": "auth-run-2", "domain_run_id": "exp-2", "strategy_spec_id": owners_registry(monkeypatch, tmp_path)})
+    assert ("POST", "/api/training/sessions") not in owners.calls
+    assert later.chain["experiment_run"]["run_id"] == "exp-2"
+    assert later.chain["authority_run"]["run_id"] == "auth-run-2"
+
+
+def test_research_pauses_without_alternate_teaching_post_when_worker_receipt_is_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    for refs in ([], [{"type": "experiment_run", "id": "auth-run-1", "domain_run_id": "exp-1",
+                       "strategy_spec_id": "reg-other"}]):
+        _, harness, owners = _research(monkeypatch, tmp_path, decided=True, entry_state="approved",
+                                       predecessors={"checksum": "sha-1"})
+        owners.sessions.append({"session_id": "trn-x", "persona_id": f"hosted-all12-{CHAIN}-persona",
+                                "trace_id": "t", "context_refs": refs})
+        with pytest.raises(pytest.skip.Exception, match="teaching_session"):
+            harness.run_case(3)
+        assert ("POST", "/api/training/sessions") not in owners.calls
+        receipt = json.loads((tmp_path / "report.json").read_text())
+        assert receipt["status"] == "paused" and receipt["blocked_before"] == "teaching_session"
+        assert receipt["resource_ids"]["registry_id"] == owners.registry_id
 
 
 def owners_registry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> str:
