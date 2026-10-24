@@ -108,6 +108,135 @@ def _safe_json(raw: str) -> Dict[str, Any]:
     return {"data": loaded}
 
 
+def _normalize_persona_route_policy(
+    admission: Dict[str, Any],
+    persona_profile: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    raw: Optional[Dict[str, Any]] = None
+    for container in (admission, persona_profile or {}):
+        if not isinstance(container, dict):
+            continue
+        for key in ("route_policy", "routePolicy", "model_routing", "modelRouting"):
+            candidate = container.get(key)
+            if isinstance(candidate, dict) and candidate:
+                raw = dict(candidate)
+                break
+        if raw is not None:
+            break
+    if raw is None:
+        return None
+    if any(k in raw for k in ("model_routing", "modelRouting", "runtime_profile", "runtimeProfile")):
+        nested = (
+            raw.get("model_routing")
+            or raw.get("modelRouting")
+            or (
+                raw.get("runtime_profile").get("model_routing")
+                if isinstance(raw.get("runtime_profile"), dict)
+                else None
+            )
+            or (
+                raw.get("runtimeProfile").get("modelRouting")
+                if isinstance(raw.get("runtimeProfile"), dict)
+                else None
+            )
+        )
+        inner = dict(nested) if isinstance(nested, dict) else dict(raw)
+    else:
+        inner = dict(raw)
+
+    if "primary" in inner and "mode" not in inner and "routing_mode" not in inner:
+        primary = str(inner.get("primary") or "").strip()
+        fallbacks = inner.get("fallbacks")
+        if primary and isinstance(fallbacks, list):
+            clean_fb = [str(item).strip() for item in fallbacks if str(item).strip()]
+            if clean_fb:
+                inner = {
+                    "mode": "fallback",
+                    "fallback_models": [primary, *[m for m in clean_fb if m != primary]],
+                }
+            else:
+                inner = {"mode": "hard_pin", "model": primary}
+
+    mode = str(inner.get("mode") or inner.get("routing_mode") or "").strip()
+    if mode == "fallback":
+        primary = str(
+            inner.get("primary_model")
+            or inner.get("primaryModel")
+            or inner.get("primary")
+            or inner.get("model")
+            or ""
+        ).strip()
+        raw_fb = (
+            inner.get("fallback_models")
+            or inner.get("fallbackModels")
+            or inner.get("fallbacks")
+        )
+        if primary and isinstance(raw_fb, list):
+            clean_fb = [str(item).strip() for item in raw_fb if str(item).strip()]
+            if not clean_fb or clean_fb[0] != primary:
+                inner = {
+                    **inner,
+                    "fallback_models": [primary, *[m for m in clean_fb if m != primary]],
+                }
+    return {"model_routing": inner}
+
+
+def _resolve_persona_opinion_model_routing(
+    admission: Dict[str, Any],
+    persona_profile: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    profile_source: Dict[str, Any] = {}
+    if isinstance(persona_profile, dict):
+        profile_source.update(persona_profile)
+    profile_source["persona_id"] = str(
+        admission.get("agent_id")
+        or profile_source.get("persona_id")
+        or profile_source.get("id")
+        or admission.get("persona_id")
+        or ""
+    ).strip()
+    if admission.get("workspace_ref"):
+        profile_source["workspace_ref"] = admission["workspace_ref"]
+    normalized_policy = _normalize_persona_route_policy(admission, persona_profile)
+    runtime_profile = build_persona_runtime_profile(
+        profile_source,
+        route_policy=normalized_policy,
+    )
+    routing = runtime_profile.model_routing
+    if routing.status != "ready" or not routing.primary_model:
+        reason = routing.blocked_reason or routing.reason or "model_routing_degraded"
+        invalid = ",".join(routing.invalid_refs) if routing.invalid_refs else "none"
+        raise OpenClawOpsClientError(
+            "Persona model routing policy is invalid or outside the provider model pool "
+            f"(reason={reason}, invalid_refs={invalid}).",
+            status_code=400,
+            error_code="OPENCLAW_PERSONA_MODEL_ROUTING_INVALID",
+        )
+    if routing.mode == "hard_pin":
+        return {
+            "mode": "hard_pin",
+            "model": routing.primary_model,
+            "primary_model": routing.primary_model,
+            "fallback_models": [],
+        }
+    if routing.mode == "preferred_pool_model":
+        return {
+            "mode": "preferred_pool_model",
+            "preferred_model": routing.primary_model,
+            "primary_model": routing.primary_model,
+            "fallback_models": list(routing.fallback_models),
+        }
+    if routing.mode == "fallback":
+        return {
+            "mode": "fallback",
+            "primary_model": routing.primary_model,
+            "fallback_models": [routing.primary_model, *routing.fallback_models],
+        }
+    return {
+        "mode": "pool_default",
+        "primary_model": routing.primary_model,
+        "fallback_models": list(routing.fallback_models),
+    }
 def _validated_servant_admission(persona: Dict[str, Any], persona_id: str) -> str:
     """Verify the BFF-owned pre-sync admission claim against canonical IDs."""
 
@@ -243,12 +372,19 @@ class OpenClawOpsClient:
         # Identity is frozen by the BFF admission builder.  Do not rebuild it
         # from a mutable Registry projection here: that would create a TOCTOU
         # window between admission and agent reconciliation.
+        model_routing = _resolve_persona_opinion_model_routing(admission, persona_profile)
         payload = dict(admission)
+        payload["model_routing"] = model_routing
+        model_policy_key = (
+            f"{model_routing['mode']}:{model_routing['primary_model']}:"
+            f"{','.join(model_routing['fallback_models'])}"
+        )
         idempotency_key = str(
             uuid.uuid5(
                 uuid.NAMESPACE_URL,
                 "pantheon:persona-opinion-agent:"
-                f"{admission.get('agent_id')}:{admission.get('capability_snapshot_id')}",
+                f"{admission.get('agent_id')}:{admission.get('capability_snapshot_id')}:"
+                f"{model_policy_key}",
             )
         )
         response = self._request(

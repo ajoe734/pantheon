@@ -1,0 +1,134 @@
+{
+  "task_id": "HOSTED-PERSONA-MODEL-FALLBACK-20261024",
+  "title": "Restore existing Persona model policy and backup propagation",
+  "parent_obligation_id": "DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002",
+  "depends_on": [
+    "HOSTED-ALL12-TEACHING-BC-SEAM-20261024"
+  ],
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "repository": "ajoe734/pantheon",
+  "base_branch": "dev",
+  "task_branch": "task/HOSTED-PERSONA-MODEL-FALLBACK-20261024",
+  "correlated_h2_failure_diagnosis": {
+    "failure_classification": "provider_upstream_http_400_anthropic_billing_without_agent_fallback_propagation",
+    "distinct_from": [
+      "opinion_json_schema_validation_failure",
+      "interaction_worker_lease_or_claim_failure",
+      "oauth_or_service_token_authentication_failure"
+    ],
+    "chain_id": "h12-01a11-20261023-9aeb",
+    "workshop_id": "ws_088df6e48eeb20c24a3146d5",
+    "interaction_id": "int_h12-01a11-20261023-9aeb-h2-2plus1-20261024",
+    "terminal_status": "degraded",
+    "synthesis_status": "skipped_zero_valid_persona_opinions",
+    "failed_invocations": [
+      {
+        "invocation_id": "inv-0e60ceb3e174e6143437",
+        "persona_id": "agora-servant-4eef59cbdf80a6b9fea0",
+        "persona_version": "2026-10-16T04:10:02.683698+00:00",
+        "provider_agent_id": "persona-opinion-cc717e9a40ac3b5f7883bf62",
+        "capability_snapshot_id": "cap-servant-4f4c89ce8a18f2b1de54",
+        "request_correlation_id": "h12-01a11-20261023-9aeb:inv-0e60ceb3e174e6143437",
+        "upstream_provider": "anthropic",
+        "upstream_model": "anthropic/claude-opus-4-8",
+        "upstream_http_status": 400,
+        "upstream_error_message": "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+        "gateway_failover_decision": {
+          "reason": "billing",
+          "decision": "surface_error",
+          "next_candidate": null
+        },
+        "adapter_error_code": "OPENCLAW_RESPONSES_UPSTREAM_FAILED",
+        "retryable": false
+      },
+      {
+        "invocation_id": "inv-3c140c6d4debd471d82f",
+        "persona_id": "agora-servant-fbeaee01e8f34c786555",
+        "persona_version": "2026-10-18T11:39:51.630789+00:00",
+        "provider_agent_id": "persona-opinion-8fbfcccdd46b90eff6a27499",
+        "capability_snapshot_id": "cap-servant-b4d4dc25bd6c75427ba3",
+        "request_correlation_id": "h12-01a11-20261023-9aeb:inv-3c140c6d4debd471d82f",
+        "upstream_provider": "anthropic",
+        "upstream_model": "anthropic/claude-opus-4-8",
+        "upstream_http_status": 400,
+        "upstream_error_message": "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+        "gateway_failover_decision": {
+          "reason": "billing",
+          "decision": "surface_error",
+          "next_candidate": null
+        },
+        "adapter_error_code": "OPENCLAW_RESPONSES_UPSTREAM_FAILED",
+        "retryable": false
+      }
+    ],
+    "root_cause_summary": "While `agents.defaults.model` in OpenClaw carried `{\"primary\": \"anthropic/claude-opus-4-8\", \"fallbacks\": [\"anthropic/claude-sonnet-4-6\", \"openai/gpt-5.5\"]}` and `PersonaRuntimeProfile` resolved `fallback_models: (\"anthropic/claude-sonnet-4-6\", \"openai/gpt-5.5\")`, the Persona opinion `ensure` and agent sync seam wrote only a single string `--model anthropic/claude-opus-4-8` via `openclaw agents add`, dropped `persona_profile` routing in `OpenClawOpsClient.ensure_persona_opinion_agent` and `_sync_persona_opinion_agent`, and did not write `{\"primary\", \"fallbacks\"}` into the agent's `agents.list` entry during `_apply_persona_opinion_runtime_policy` or update already-provisioned agents."
+  },
+  "repaired_seams": [
+    {
+      "path": "integrations/openclaw/persona_agent_sync.py",
+      "changes": [
+        "Extended `PersonaAgentSpec` with `fallback_models`, `routing_mode`, and `model_policy()` returning `{\"primary\": self.model, \"fallbacks\": list(self.fallback_models)}`.",
+        "Updated `_runtime_profile_model` and `desired_agent_spec` to normalize route policies and preserve `routing.fallback_models` and `routing.mode` from `build_persona_runtime_profile`.",
+        "Updated `_agent_model` and `_agent_fallbacks` to support structured `{\"primary\", \"fallbacks\"}` model dicts in `agents.list` as well as string model fields.",
+        "Added `_reconcile_agent_model_policy` using `openclaw config get agents.list --json` and `openclaw config set agents.list <json> --strict-json --replace` so both newly created and already-provisioned agents persist `{\"primary\", \"fallbacks\"}` and update drifted primary/fallback policies."
+      ]
+    },
+    {
+      "path": "integrations/openclaw/adapter/agora_servant.py",
+      "changes": [
+        "Threaded optional `route_policy` through `ensure_agora_servant_agent` into `desired_agent_spec` and `sync_persona_agents`.",
+        "Returned `fallback_models`, `model_policy`, and `routing_mode` in the ensured agent projection."
+      ]
+    },
+    {
+      "path": "services/control-plane/bff/openclaw_ops_client.py",
+      "changes": [
+        "Updated `OpenClawOpsClient.ensure_persona_opinion_agent` to resolve and validate canonical Persona model routing from `admission` and `persona_profile` via `build_persona_runtime_profile`, failing closed with `OPENCLAW_PERSONA_MODEL_ROUTING_INVALID` (HTTP 400) when outside the provider pool.",
+        "Propagated canonical `model_routing` in the adapter `/api/openclaw-adapter/agents/persona-opinion/ensure` request body and included the resolved model policy in the deterministic `Idempotency-Key` derivation so already-provisioned agents reconcile their `agents.list` model policy without stale replay collisions."
+      ]
+    },
+    {
+      "path": "services/openclaw-gateway-adapter/main.py",
+      "changes": [
+        "Accepted and validated optional `model_routing` on `OpenClawPersonaOpinionEnsureRequest` while keeping `_persona_admission_fingerprint` scoped to the 15 frozen admission identity/authority claims.",
+        "Updated `_sync_persona_opinion_agent`, `_apply_persona_opinion_runtime_policy`, `_assert_persona_opinion_runtime_policy`, and `_reconcile_persona_opinion_replay` to write and verify `item[\"model\"] = {\"primary\": spec.model, \"fallbacks\": list(spec.fallback_models)}` alongside `_PERSONA_OPINION_RUNTIME_POLICY` (`tools`, `skills`, `memorySearch`, `contextInjection`)."
+      ]
+    }
+  ],
+  "invariants_preserved": {
+    "provider_model_pool": [
+      "anthropic/claude-opus-4-8",
+      "anthropic/claude-sonnet-4-6",
+      "openai/gpt-5.5"
+    ],
+    "new_models_or_providers_added": false,
+    "execution_authority": "none",
+    "allowed_capabilities": [
+      "persona_opinion"
+    ],
+    "native_tools_denied": true,
+    "memory_search_disabled": true,
+    "context_injection": "never",
+    "historical_failed_records_mutated": false,
+    "non_retryable_billing_classification_preserved": true
+  },
+  "verification": {
+    "focused_test_suites": [
+      "integrations/openclaw/test_persona_agent_sync.py",
+      "integrations/openclaw/test_dev_gates.py",
+      "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py",
+      "services/openclaw-gateway-adapter/test_main.py",
+      "services/control-plane/bff/tests/test_openclaw_ops_service_auth.py",
+      "services/control-plane/bff/tests/test_pint_012_real_persona_provider.py",
+      "services/persona/test_runtime_profile.py"
+    ],
+    "status": "passed"
+  },
+  "delivery_boundary": {
+    "source_delivery_complete_on_branch": true,
+    "hosted_version_acceptance_claimed": false,
+    "business_2persona_plus_1_synthesis_claimed": false,
+    "note": "Source repair and unit/contract verification in `ajoe734/pantheon` are distinct from hosted deployment version acceptance (H1) and live hosted 2Persona+1 synthesis execution (H3/H6)."
+  }
+}

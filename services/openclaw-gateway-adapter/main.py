@@ -110,6 +110,7 @@ from assistant_provider_runtime import (
     ProviderInvocationRequest,
 )
 from integrations.openclaw.adapter.agora_servant import ensure_agora_servant_agent
+from integrations.openclaw.persona_agent_sync import desired_agent_spec
 
 from services.foundation.health import (
     health_payload,
@@ -2520,6 +2521,7 @@ class OpenClawPersonaOpinionEnsureRequest(BaseModel):
     archetype: Optional[str] = None
     strategy_family: Optional[str] = None
     traits: Dict[str, Any] = Field(default_factory=dict)
+    model_routing: Optional[Dict[str, Any]] = None
 
     @model_validator(mode="after")
     def validate_exact_admission(self) -> "OpenClawPersonaOpinionEnsureRequest":
@@ -2572,6 +2574,18 @@ def _validate_persona_opinion_admission(admission: Dict[str, Any]) -> None:
     workspace = Path(str(admission.get("workspace_ref") or "").strip()).resolve()
     if workspace != expected_workspace or _OPENCLAW_AGENT_WORKSPACE_ROOT not in workspace.parents:
         raise ValueError("workspace_ref does not match the frozen Persona agent")
+    if admission.get("model_routing") is not None:
+        raw_routing = admission.get("model_routing")
+        if not isinstance(raw_routing, dict):
+            raise ValueError("model_routing must be a mapping when supplied")
+        desired_agent_spec(
+            {
+                "persona_id": agent_id,
+                "name": str(admission.get("display_name") or agent_id),
+                "workspace_ref": str(workspace),
+            },
+            route_policy=raw_routing,
+        )
 
 
 def _servant_agent_request(req: OpenClawAgentEnsureRequest) -> Dict[str, Any]:
@@ -2812,15 +2826,25 @@ def _persona_opinion_runtime_agent(agent_id: str) -> Dict[str, Any]:
     return match
 
 
-def _assert_persona_opinion_runtime_policy(agent_id: str) -> Dict[str, Any]:
+def _assert_persona_opinion_runtime_policy(
+    agent_id: str,
+    *,
+    expected_model_policy: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     agent = _persona_opinion_runtime_agent(agent_id)
     for key, expected in _PERSONA_OPINION_RUNTIME_POLICY.items():
         if agent.get(key) != expected:
             raise ValueError(f"Persona opinion OpenClaw runtime policy mismatch: {key}")
+    if expected_model_policy is not None and agent.get("model") != expected_model_policy:
+        raise ValueError("Persona opinion OpenClaw runtime policy mismatch: model")
     return agent
 
 
-def _apply_persona_opinion_runtime_policy(agent_id: str) -> Dict[str, Any]:
+def _apply_persona_opinion_runtime_policy(
+    agent_id: str,
+    *,
+    model_policy: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     proc = _gateway_state_agent_runner(["openclaw", "config", "get", "agents.list", "--json"])
     if proc.returncode != 0:
         raise RuntimeError((proc.stderr or proc.stdout or "OpenClaw agent config read failed")[:300])
@@ -2832,6 +2856,8 @@ def _apply_persona_opinion_runtime_policy(agent_id: str) -> Dict[str, Any]:
     for item in agents:
         if isinstance(item, dict) and str(item.get("id") or "") == agent_id:
             item.update(json.loads(json.dumps(_PERSONA_OPINION_RUNTIME_POLICY)))
+            if model_policy is not None:
+                item["model"] = json.loads(json.dumps(model_policy))
             found = True
             break
     if not found:
@@ -2843,7 +2869,10 @@ def _apply_persona_opinion_runtime_policy(agent_id: str) -> Dict[str, Any]:
     ])
     if update.returncode != 0:
         raise RuntimeError((update.stderr or update.stdout or "OpenClaw runtime policy write failed")[:300])
-    return _assert_persona_opinion_runtime_policy(agent_id)
+    return _assert_persona_opinion_runtime_policy(
+        agent_id,
+        expected_model_policy=model_policy,
+    )
 
 
 def _gateway_state_soul_writer(workspace: str, soul: str) -> None:
@@ -2904,8 +2933,17 @@ Persona memory. Never claim that any recommendation was executed.
 """
 
 
-def _sync_persona_opinion_agent(req: OpenClawPersonaOpinionEnsureRequest) -> Dict[str, Any]:
-    persona = {
+def _persona_opinion_persona_record(req: OpenClawPersonaOpinionEnsureRequest) -> Dict[str, Any]:
+    metadata: Dict[str, Any] = {
+        "execution_authority": "none",
+        "interaction_capabilities": ["persona_opinion"],
+        "source_persona_id": req.persona_id,
+        "source_persona_version": req.persona_version,
+        "capability_snapshot_id": req.capability_snapshot_id,
+    }
+    if isinstance(req.model_routing, dict) and req.model_routing:
+        metadata["model_routing"] = dict(req.model_routing)
+    return {
         "persona_id": req.agent_id,
         "name": req.display_name,
         "mandate": req.mandate or "governed_persona_opinion",
@@ -2913,14 +2951,13 @@ def _sync_persona_opinion_agent(req: OpenClawPersonaOpinionEnsureRequest) -> Dic
         "lifecycle_state": "active",
         "workspace_ref": req.workspace_ref,
         "traits": req.traits,
-        "metadata": {
-            "execution_authority": "none",
-            "interaction_capabilities": ["persona_opinion"],
-            "source_persona_id": req.persona_id,
-            "source_persona_version": req.persona_version,
-            "capability_snapshot_id": req.capability_snapshot_id,
-        },
+        "metadata": metadata,
     }
+
+
+def _sync_persona_opinion_agent(req: OpenClawPersonaOpinionEnsureRequest) -> Dict[str, Any]:
+    persona = _persona_opinion_persona_record(req)
+    spec = desired_agent_spec(persona, route_policy=req.model_routing)
 
     def constrained_soul_writer(workspace: str, _generic_soul: str) -> None:
         _gateway_state_soul_writer(workspace, _persona_opinion_soul(req))
@@ -2929,10 +2966,39 @@ def _sync_persona_opinion_agent(req: OpenClawPersonaOpinionEnsureRequest) -> Dic
         persona,
         runner=_gateway_state_agent_runner,
         soul_writer=constrained_soul_writer,
+        route_policy=req.model_routing,
     )
-    _apply_persona_opinion_runtime_policy(req.agent_id)
+    model_policy = spec.model_policy()
+    _apply_persona_opinion_runtime_policy(req.agent_id, model_policy=model_policy)
+    agent["model"] = spec.model
+    agent["fallback_models"] = list(spec.fallback_models)
+    agent["model_policy"] = model_policy
+    agent["routing_mode"] = spec.routing_mode
     agent["runtime_policy"] = json.loads(json.dumps(_PERSONA_OPINION_RUNTIME_POLICY))
     return agent
+
+
+def _reconcile_persona_opinion_replay(
+    connection: sqlite3.Connection,
+    req: OpenClawPersonaOpinionEnsureRequest,
+    payload: Dict[str, Any],
+) -> None:
+    agent = payload.get("agent")
+    if not isinstance(agent, dict) or "runtime_policy" not in agent:
+        return
+    persona = _persona_opinion_persona_record(req)
+    spec = desired_agent_spec(persona, route_policy=req.model_routing)
+    model_policy = spec.model_policy()
+    _apply_persona_opinion_runtime_policy(req.agent_id, model_policy=model_policy)
+    agent["model"] = spec.model
+    agent["fallback_models"] = list(spec.fallback_models)
+    agent["model_policy"] = model_policy
+    agent["routing_mode"] = spec.routing_mode
+    response_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    connection.execute(
+        "UPDATE agent_ensure_replays SET response_json = ? WHERE idempotency_key = ?",
+        (response_json, str(payload.get("idempotency_key") or "")),
+    )
 
 
 class _AgentEnsureIdempotencyConflict(RuntimeError):
@@ -2957,6 +3023,7 @@ def _ensure_agent_idempotently(
     preflight_fn: Optional[Any] = None,
     commit_fn: Optional[Any] = None,
     postcondition_fn: Optional[Any] = None,
+    replay_fn: Optional[Any] = None,
 ) -> tuple[int, Dict[str, Any]]:
     """Serialize reconciliation and durably replay an exact request.
 
@@ -3002,6 +3069,8 @@ def _ensure_agent_idempotently(
                     "Idempotency-Key was already used with a different agent request"
                 )
             payload = json.loads(str(replay_json))
+            if replay_fn is not None:
+                replay_fn(connection, req, payload)
             if postcondition_fn is not None:
                 postcondition_fn(req)
             connection.commit()
@@ -3190,6 +3259,7 @@ def ensure_persona_opinion_agent(
             preflight_fn=_preflight_persona_opinion_admission,
             commit_fn=_commit_persona_opinion_admission,
             postcondition_fn=lambda request: _wait_for_live_persona_opinion_agent(request.agent_id),
+            replay_fn=_reconcile_persona_opinion_replay,
         )
         fingerprint = _persona_admission_fingerprint(req.model_dump(mode="json"))
     except _PersonaOpinionAgentNotReady as exc:

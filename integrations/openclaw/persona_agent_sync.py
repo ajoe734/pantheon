@@ -38,6 +38,14 @@ class PersonaAgentSpec:
     workspace: str
     soul: str
     sync_generation: int
+    fallback_models: List[str] = field(default_factory=list)
+    routing_mode: str = "pool_default"
+
+    def model_policy(self) -> Dict[str, Any]:
+        return {
+            "primary": self.model,
+            "fallbacks": list(self.fallback_models),
+        }
 
 
 @dataclass
@@ -69,11 +77,83 @@ def _persona_id(persona: Mapping[str, Any]) -> str:
     return str(persona.get("persona_id") or persona.get("id") or "").strip()
 
 
+def _normalize_route_policy(
+    persona: Mapping[str, Any],
+    route_policy: Optional[Mapping[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    raw: Optional[Mapping[str, Any]] = route_policy
+    if raw is None:
+        for key in ("route_policy", "routePolicy", "model_routing", "modelRouting"):
+            candidate = persona.get(key)
+            if isinstance(candidate, Mapping) and candidate:
+                raw = candidate
+                break
+    if not isinstance(raw, Mapping) or not raw:
+        return None
+    if any(k in raw for k in ("model_routing", "modelRouting", "runtime_profile", "runtimeProfile")):
+        nested = (
+            raw.get("model_routing")
+            or raw.get("modelRouting")
+            or (
+                raw.get("runtime_profile").get("model_routing")
+                if isinstance(raw.get("runtime_profile"), Mapping)
+                else None
+            )
+            or (
+                raw.get("runtimeProfile").get("modelRouting")
+                if isinstance(raw.get("runtimeProfile"), Mapping)
+                else None
+            )
+        )
+        if not isinstance(nested, Mapping):
+            return dict(raw)
+        inner = dict(nested)
+    else:
+        inner = dict(raw)
+
+    if "primary" in inner and "mode" not in inner and "routing_mode" not in inner:
+        primary = str(inner.get("primary") or "").strip()
+        fallbacks = inner.get("fallbacks")
+        if primary and isinstance(fallbacks, list):
+            clean_fb = [str(item).strip() for item in fallbacks if str(item).strip()]
+            if clean_fb:
+                inner = {
+                    "mode": "fallback",
+                    "fallback_models": [primary, *[m for m in clean_fb if m != primary]],
+                }
+            else:
+                inner = {"mode": "hard_pin", "model": primary}
+
+    mode = str(inner.get("mode") or inner.get("routing_mode") or "").strip()
+    if mode == "fallback":
+        primary = str(
+            inner.get("primary_model")
+            or inner.get("primaryModel")
+            or inner.get("primary")
+            or inner.get("model")
+            or ""
+        ).strip()
+        raw_fb = (
+            inner.get("fallback_models")
+            or inner.get("fallbackModels")
+            or inner.get("fallbacks")
+        )
+        if primary and isinstance(raw_fb, list):
+            clean_fb = [str(item).strip() for item in raw_fb if str(item).strip()]
+            if not clean_fb or clean_fb[0] != primary:
+                inner = {
+                    **inner,
+                    "fallback_models": [primary, *[m for m in clean_fb if m != primary]],
+                }
+    return {"model_routing": inner}
+
+
 def _runtime_profile_model(
     persona: Mapping[str, Any],
     route_policy: Optional[Mapping[str, Any]] = None,
-) -> tuple[str, str, int]:
-    profile = build_persona_runtime_profile(persona, route_policy=route_policy)
+) -> tuple[str, List[str], str, str, int]:
+    normalized_policy = _normalize_route_policy(persona, route_policy)
+    profile = build_persona_runtime_profile(persona, route_policy=normalized_policy)
     routing = profile.model_routing
     if routing.status != "ready" or not routing.primary_model:
         reason = routing.blocked_reason or routing.reason or "model_routing_degraded"
@@ -83,7 +163,13 @@ def _runtime_profile_model(
             f"reason={reason} invalid_refs={invalid} "
             "repair_action=fix_persona_route_policy_or_provider_pool"
         )
-    return routing.primary_model, profile.workspace_ref, profile.sync_generation
+    return (
+        routing.primary_model,
+        list(routing.fallback_models),
+        routing.mode,
+        profile.workspace_ref,
+        profile.sync_generation,
+    )
 
 
 # Trait fields (beyond mandate/strategy_family) that shape a persona's identity.
@@ -187,7 +273,9 @@ def desired_agent_spec(
     pid = _persona_id(persona)
     if not pid:
         raise ValueError("persona record has no persona_id/id")
-    model, workspace, sync_generation = _runtime_profile_model(persona, route_policy=route_policy)
+    model, fallback_models, routing_mode, workspace, sync_generation = _runtime_profile_model(
+        persona, route_policy=route_policy
+    )
     return PersonaAgentSpec(
         persona_id=pid,
         name=str(persona.get("name") or pid),
@@ -195,6 +283,8 @@ def desired_agent_spec(
         workspace=workspace,
         soul=build_persona_soul(persona),
         sync_generation=sync_generation,
+        fallback_models=fallback_models,
+        routing_mode=routing_mode,
     )
 
 
@@ -221,21 +311,86 @@ def _default_soul_writer(workspace: str, soul: str) -> None:
 
 def _agent_model(agent: Mapping[str, Any]) -> str:
     for key in ("model", "model_id", "modelId", "model_ref", "modelRef"):
-        value = str(agent.get(key) or "").strip()
+        raw = agent.get(key)
+        if isinstance(raw, Mapping):
+            primary = str(raw.get("primary") or raw.get("model") or "").strip()
+            if primary:
+                return primary
+            continue
+        value = str(raw or "").strip()
         if value:
             return value
     runtime = agent.get("runtime") if isinstance(agent.get("runtime"), Mapping) else {}
     for key in ("model", "model_id", "modelRef"):
-        value = str(runtime.get(key) or "").strip()
+        raw = runtime.get(key)
+        if isinstance(raw, Mapping):
+            primary = str(raw.get("primary") or raw.get("model") or "").strip()
+            if primary:
+                return primary
+            continue
+        value = str(raw or "").strip()
         if value:
             return value
     return ""
 
 
-def _existing_agents(runner: CliRunner) -> Dict[str, Dict[str, str]]:
+def _agent_fallbacks(agent: Mapping[str, Any]) -> Optional[List[str]]:
+    raw = agent.get("model")
+    if isinstance(raw, Mapping) and isinstance(raw.get("fallbacks"), list):
+        return [str(item).strip() for item in raw["fallbacks"] if str(item).strip()]
+    if isinstance(agent.get("fallbacks"), list):
+        return [str(item).strip() for item in agent["fallbacks"] if str(item).strip()]
+    return None
+
+
+def _reconcile_agent_model_policy(
+    run: CliRunner,
+    spec: PersonaAgentSpec,
+    *,
+    require_config_list: bool,
+) -> tuple[bool, Optional[str]]:
+    """Persist `{primary, fallbacks}` into `agents.list` via the existing config owner."""
+
+    get_proc = run(["openclaw", "config", "get", "agents.list", "--json"])
+    if get_proc.returncode != 0:
+        return (False, None) if require_config_list else (True, None)
+    try:
+        agents = json.loads((get_proc.stdout or "").strip() or "[]")
+    except (TypeError, ValueError):
+        return (False, None) if require_config_list else (True, None)
+    if not isinstance(agents, list):
+        return (False, None) if require_config_list else (True, None)
+    target = next(
+        (
+            item
+            for item in agents
+            if isinstance(item, dict) and str(item.get("id") or "") == spec.persona_id
+        ),
+        None,
+    )
+    if target is None:
+        return (False, None) if require_config_list else (True, None)
+    desired_policy = spec.model_policy()
+    if target.get("model") == desired_policy:
+        return True, None
+    target["model"] = desired_policy
+    set_proc = run([
+        "openclaw", "config", "set", "agents.list",
+        json.dumps(agents, sort_keys=True, separators=(",", ":")),
+        "--strict-json", "--replace",
+    ])
+    if set_proc.returncode != 0:
+        return (
+            False,
+            (set_proc.stderr or set_proc.stdout or "agents.list model policy write failed")[:300],
+        )
+    return True, None
+
+
+def _existing_agents(runner: CliRunner) -> Dict[str, Dict[str, Any]]:
     proc = runner(["openclaw", "agents", "list", "--json"])
     out = (proc.stdout or "").strip()
-    existing: Dict[str, Dict[str, str]] = {}
+    existing: Dict[str, Dict[str, Any]] = {}
     try:
         data = json.loads(out)
         agents = data.get("agents") if isinstance(data, dict) else data
@@ -244,10 +399,13 @@ def _existing_agents(runner: CliRunner) -> Dict[str, Dict[str, str]]:
                 aid = str(agent.get("id") or agent.get("agent_id") or agent.get("agentId") or "").strip()
                 if not aid:
                     continue
-                row = {"id": aid}
+                row: Dict[str, Any] = {"id": aid}
                 model = _agent_model(agent)
                 if model:
                     row["model"] = model
+                fallbacks = _agent_fallbacks(agent)
+                if fallbacks is not None:
+                    row["fallbacks"] = fallbacks
                 existing[aid] = row
             elif agent:
                 aid = str(agent).strip()
@@ -299,15 +457,26 @@ def sync_persona_agents(
             existing_agent = existing.get(spec.persona_id)
             if existing_agent is not None:
                 current_model = str(existing_agent.get("model") or "").strip()
-                if current_model and current_model != spec.model:
-                    report.failed.append({
-                        "persona_id": spec.persona_id,
-                        "error": "model_drift_update_unavailable",
-                        "current_model": current_model[:120],
-                        "desired_model": spec.model[:120],
-                        "repair_action": "recreate_openclaw_agent_or_add_set_model_support",
-                    })
-                    continue
+                model_drifted = bool(current_model and current_model != spec.model)
+                if model_drifted:
+                    reconciled, policy_err = _reconcile_agent_model_policy(
+                        run, spec, require_config_list=True,
+                    )
+                    if not reconciled:
+                        if policy_err:
+                            report.failed.append({
+                                "persona_id": spec.persona_id,
+                                "error": policy_err,
+                            })
+                        else:
+                            report.failed.append({
+                                "persona_id": spec.persona_id,
+                                "error": "model_drift_update_unavailable",
+                                "current_model": current_model[:120],
+                                "desired_model": spec.model[:120],
+                                "repair_action": "recreate_openclaw_agent_or_add_set_model_support",
+                            })
+                        continue
                 proc = run([
                     "openclaw", "agents", "set-identity", spec.persona_id,
                     "--name", spec.name,
@@ -318,6 +487,16 @@ def sync_persona_agents(
                         "error": (proc.stderr or proc.stdout or "agents set-identity failed")[:300],
                     })
                     continue
+                if not model_drifted:
+                    reconciled, policy_err = _reconcile_agent_model_policy(
+                        run, spec, require_config_list=False,
+                    )
+                    if not reconciled and policy_err:
+                        report.failed.append({
+                            "persona_id": spec.persona_id,
+                            "error": policy_err,
+                        })
+                        continue
                 write_soul(spec.workspace, spec.soul)
                 report.updated.append(spec.persona_id)
                 _try_materialize_memory(report, memory_materializer, spec, persona)
@@ -332,6 +511,15 @@ def sync_persona_agents(
                     report.failed.append({
                         "persona_id": spec.persona_id,
                         "error": (proc.stderr or proc.stdout or "agents add failed")[:300],
+                    })
+                    continue
+                reconciled, policy_err = _reconcile_agent_model_policy(
+                    run, spec, require_config_list=False,
+                )
+                if not reconciled and policy_err:
+                    report.failed.append({
+                        "persona_id": spec.persona_id,
+                        "error": policy_err,
                     })
                     continue
                 write_soul(spec.workspace, spec.soul)

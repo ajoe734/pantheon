@@ -302,3 +302,129 @@ def test_agora_servant_adapter_raises_on_failed_sync():
         assert False, "expected servant sync failure"
     except AgoraServantAgentSyncError as exc:
         assert "cannot add" in str(exc)
+
+
+def test_desired_spec_propagates_declared_runtime_profile_fallback_models_and_modes():
+    default_spec = sync.desired_agent_spec(PERSONA_CRYPTO)
+    assert default_spec.model == "anthropic/claude-opus-4-8"
+    assert default_spec.fallback_models == [
+        "anthropic/claude-sonnet-4-6",
+        "openai/gpt-5.5",
+    ]
+    assert default_spec.routing_mode == "pool_default"
+    assert default_spec.model_policy() == {
+        "primary": "anthropic/claude-opus-4-8",
+        "fallbacks": ["anthropic/claude-sonnet-4-6", "openai/gpt-5.5"],
+    }
+
+    preferred_spec = sync.desired_agent_spec(
+        {**PERSONA_CRYPTO, "preferred_model": "openai/gpt-5.5"}
+    )
+    assert preferred_spec.model == "openai/gpt-5.5"
+    assert preferred_spec.fallback_models == [
+        "anthropic/claude-opus-4-8",
+        "anthropic/claude-sonnet-4-6",
+    ]
+    assert preferred_spec.routing_mode == "preferred_pool_model"
+
+    hard_pin_spec = sync.desired_agent_spec(
+        PERSONA_CRYPTO,
+        route_policy={"mode": "hard_pin", "model": "openai/gpt-5.5"},
+    )
+    assert hard_pin_spec.model == "openai/gpt-5.5"
+    assert hard_pin_spec.fallback_models == []
+    assert hard_pin_spec.routing_mode == "hard_pin"
+    assert hard_pin_spec.model_policy() == {
+        "primary": "openai/gpt-5.5",
+        "fallbacks": [],
+    }
+
+    fallback_spec = sync.desired_agent_spec(
+        PERSONA_CRYPTO,
+        route_policy={
+            "mode": "fallback",
+            "fallback_models": ["openai/gpt-5.5", "anthropic/claude-sonnet-4-6"],
+        },
+    )
+    assert fallback_spec.model == "openai/gpt-5.5"
+    assert fallback_spec.fallback_models == ["anthropic/claude-sonnet-4-6"]
+    assert fallback_spec.routing_mode == "fallback"
+    assert fallback_spec.model_policy() == {
+        "primary": "openai/gpt-5.5",
+        "fallbacks": ["anthropic/claude-sonnet-4-6"],
+    }
+
+
+def test_sync_persists_and_updates_model_policy_in_agents_list_for_new_and_existing_agents():
+    agents_list: List[Dict[str, Any]] = [
+        {
+            "id": "persona-existing-single-string",
+            "model": "anthropic/claude-opus-4-8",
+            "workspace": "/home/node/.openclaw/workspaces/persona-existing-single-string",
+        }
+    ]
+
+    def runner(args: List[str]):
+        if args[:4] == ["openclaw", "agents", "list", "--json"]:
+            return _cp(json.dumps({"agents": agents_list}))
+        if args[:3] == ["openclaw", "agents", "add"]:
+            aid = args[3]
+            ws = args[args.index("--workspace") + 1]
+            mdl = args[args.index("--model") + 1]
+            agents_list.append({"id": aid, "workspace": ws, "model": mdl})
+            return _cp("{}")
+        if args[:5] == ["openclaw", "config", "get", "agents.list", "--json"]:
+            return _cp(json.dumps(agents_list))
+        if args[:4] == ["openclaw", "config", "set", "agents.list"]:
+            agents_list[:] = json.loads(args[4])
+            return _cp("ok")
+        if args[:3] == ["openclaw", "agents", "set-identity"]:
+            return _cp("ok")
+        return _cp("", returncode=1, stderr=f"unexpected command: {args}")
+
+    existing_persona = {
+        "id": "persona-existing-single-string",
+        "name": "Existing Servant",
+        "mandate": "user_private_agora_servant",
+        "strategy_family": "agora_servant",
+    }
+    report = sync.sync_persona_agents(
+        [PERSONA_CRYPTO, existing_persona],
+        runner=runner,
+        soul_writer=lambda ws, s: None,
+    )
+    assert report.created == ["persona-crypto"]
+    assert report.updated == ["persona-existing-single-string"]
+    assert report.failed == []
+
+    by_id = {item["id"]: item for item in agents_list}
+    expected_default_policy = {
+        "primary": "anthropic/claude-opus-4-8",
+        "fallbacks": ["anthropic/claude-sonnet-4-6", "openai/gpt-5.5"],
+    }
+    assert by_id["persona-crypto"]["model"] == expected_default_policy
+    assert by_id["persona-existing-single-string"]["model"] == expected_default_policy
+
+    # Now update the already-provisioned agent with an explicit canonical route policy:
+    updated_projection = ensure_agora_servant_agent(
+        existing_persona,
+        runner=runner,
+        soul_writer=lambda ws, s: None,
+        route_policy={
+            "mode": "fallback",
+            "fallback_models": ["openai/gpt-5.5", "anthropic/claude-sonnet-4-6"],
+        },
+    )
+    assert updated_projection["status"] == "updated"
+    assert updated_projection["model"] == "openai/gpt-5.5"
+    assert updated_projection["fallback_models"] == ["anthropic/claude-sonnet-4-6"]
+    assert updated_projection["routing_mode"] == "fallback"
+    assert updated_projection["model_policy"] == {
+        "primary": "openai/gpt-5.5",
+        "fallbacks": ["anthropic/claude-sonnet-4-6"],
+    }
+    by_id_after = {item["id"]: item for item in agents_list}
+    assert by_id_after["persona-existing-single-string"]["model"] == {
+        "primary": "openai/gpt-5.5",
+        "fallbacks": ["anthropic/claude-sonnet-4-6"],
+    }
