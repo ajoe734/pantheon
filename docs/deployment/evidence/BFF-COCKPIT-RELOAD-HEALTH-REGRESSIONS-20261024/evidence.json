@@ -1,0 +1,12 @@
+{
+  "task_id": "BFF-COCKPIT-RELOAD-HEALTH-REGRESSIONS-20261024",
+  "overlapping_reload_test_runs": {"total": 10, "passed": 10, "failed": 0},
+  "suite": "test_pkt013_operator_home_contract.py + test_management_read_models_router.py + test_bff_management_cockpit.py: 73 passed",
+  "changes": [
+    "health-status and home sync routes run under a request deadline (management_read_deadline)",
+    "meta.surfaces health_status/operator_home/management_cockpit reflect owner read availability only",
+    "triggered kill switch or hard safe mode makes overall_status degraded with advisory secondary control path",
+    "empty successful kill-switch read is reported unknown (degraded group, active=None)",
+    "test_operator_health_overall_and_counts_match_returned_groups updated: overall_status is availability, business status stays in groups"
+  ]
+}

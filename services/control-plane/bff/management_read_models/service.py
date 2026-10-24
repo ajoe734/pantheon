@@ -3009,33 +3009,54 @@ class ManagementService:
             }
 
             # 5. Kill switch group
-            kill_switch_state = _resolve_group("kill_switch", default_kill_switch_state) or default_kill_switch_state
+            kill_switch_state = _resolve_group("kill_switch", default_kill_switch_state)
             kill_switch_failed = _group_read_failed("kill_switch")
-            if kill_switch_failed:
+            kill_switch_empty = (
+                not kill_switch_failed
+                and "kill_switch" in group_futures
+                and not (isinstance(kill_switch_state, dict) and kill_switch_state)
+            )
+            if kill_switch_empty or not isinstance(kill_switch_state, dict):
+                kill_switch_state = default_kill_switch_state
+            if kill_switch_failed or kill_switch_empty:
                 # Never present the placeholder "armed / safe mode off" as an observed fact.
                 kill_switch_state = {"status": "unknown", "safe_mode_status": "unknown", "active": None}
+                if kill_switch_empty:
+                    group_surfaces["kill_switch"] = {
+                        "status": "degraded",
+                        "source": "store",
+                        "reason": "empty_read",
+                    }
+            kill_switch_engaged = (
+                not (kill_switch_failed or kill_switch_empty)
+                and (
+                    kill_switch_state.get("active") is True
+                    or str(kill_switch_state.get("status", "")).lower() == "triggered"
+                    or str(kill_switch_state.get("safe_mode_status", "")).lower() == "hard"
+                )
+            )
             kill_switch_group = {
                 "group_id": "kill_switch",
                 "label": _HEALTH_GROUP_LABELS["kill_switch"],
-                "status": group_surfaces["kill_switch"]["status"],
+                "status": "degraded" if kill_switch_engaged else group_surfaces["kill_switch"]["status"],
                 "summary": (
                     _unknown_summary("kill_switch", "Kill switch and safe mode state")
-                    if kill_switch_failed
+                    if kill_switch_failed or kill_switch_empty
                     else f"Kill switch {kill_switch_state.get('status', 'armed')}, Safe mode {kill_switch_state.get('safe_mode_status', 'off')}."
                 ),
                 "details": (
                     {**kill_switch_state, **_failure_details("kill_switch")}
-                    if kill_switch_failed
+                    if kill_switch_failed or kill_switch_empty
                     else kill_switch_state
                 ),
                 "target_refs": [{"label": "Kill Switch", "href": "/api/v1/operator/kill-switch"}],
             }
 
         groups = [runtime_group, telemetry_group, incident_group, governance_group, kill_switch_group]
-        # Overall status and counts follow the returned group status (real pending
-        # governance / active incidents included); meta.surfaces keeps owner read
-        # availability separately.
-        overall_surface = _aggregate_group_surface("health_status", groups, snapshot_at=snap)
+        # meta.surfaces reports owner read availability only; business status (pending
+        # approvals, open incidents) stays in the groups. A triggered kill switch or
+        # hard safe mode is control-plane state and makes overall_status non-healthy.
+        overall_surface = _aggregate_group_surface("health_status", list(group_surfaces.values()), snapshot_at=snap)
         group_reasons = {s.get("reason") for s in group_surfaces.values() if isinstance(s, dict) and s.get("reason")}
         if "read_timeout" in group_reasons:
             overall_surface["reason"] = "read_timeout"
@@ -3046,6 +3067,8 @@ class ManagementService:
             if all(s.get("reason") == "read_error" for s in group_surfaces.values() if isinstance(s, dict)):
                 overall_surface["source"] = "error"
         overall_status = overall_surface.get("status", "ok")
+        if overall_status == "ok" and (kill_switch_engaged or kill_switch_empty):
+            overall_status = "degraded"
 
         group_counts = {
             "ok": sum(1 for g in groups if g.get("status") == "ok"),
@@ -3056,8 +3079,8 @@ class ManagementService:
         safe_mode_state = {
             "status": kill_switch_state.get("safe_mode_status", "off"),
             "kill_switch_status": kill_switch_state.get("status", "inactive"),
-            "active": None if kill_switch_failed else bool(kill_switch_state.get("active", False)),
-            "last_confirmed_at": None if kill_switch_failed else snap,
+            "active": None if (kill_switch_failed or kill_switch_empty) else bool(kill_switch_state.get("active", False)),
+            "last_confirmed_at": None if (kill_switch_failed or kill_switch_empty) else snap,
             "last_triggered_at": None,
             "secondary_path_available": True,
         }

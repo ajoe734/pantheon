@@ -1238,9 +1238,48 @@ def test_operator_health_overall_and_counts_match_returned_groups() -> None:
         by_status[g["status"]] += 1
     assert by_status == {"ok": 3, "degraded": 2, "unavailable": 0}
     assert health["group_counts"] == by_status
-    assert health["overall_status"] == "degraded"
-    assert health["headline"] == "Control plane degraded"
-    assert health["message"] == "2 of 5 health groups need attention."
+    # Business status (open incident, pending approval) lives in the groups and
+    # group_counts; overall availability stays ok while every owner read succeeded.
+    assert health["overall_status"] == "ok"
+    assert health["headline"] == "Control plane healthy"
+    assert health["meta"]["surfaces"]["health_status"]["status"] == "ok"
     # Source availability stays separate from business state.
     assert health["meta"]["surfaces"]["incident"] == {"status": "ok", "source": "store"}
     assert health["meta"]["surfaces"]["governance"] == {"status": "ok", "source": "store"}
+
+
+def test_operator_health_triggered_kill_switch_or_hard_safe_mode_is_not_healthy() -> None:
+    for state in (
+        {"status": "triggered", "safe_mode_status": "soft", "active": True},
+        {"status": "armed", "safe_mode_status": "hard", "active": False},
+    ):
+        store = create_in_memory_read_surface_ports()
+        store.list_runtime_bindings = lambda: []
+        store.list_telemetry_summaries = lambda: []
+        store.list_incidents = lambda: []
+        store.list_approval_queue_items = lambda: []
+        store.get_kill_switch_status = lambda state=state: dict(state)
+        health = ManagementService(read_store=store).get_operator_health_status()
+        assert health["overall_status"] != "ok", state
+        assert health["headline"] != "Control plane healthy"
+        assert health["secondary_control_path"]["mode"] == "advisory"
+        assert health["secondary_control_path"]["targets"]
+        groups = {g["group_id"]: g for g in health["groups"]}
+        assert groups["kill_switch"]["status"] == "degraded"
+        assert health["meta"]["surfaces"]["health_status"]["status"] == "ok"
+
+
+def test_operator_health_empty_kill_switch_read_is_unknown_not_armed() -> None:
+    store = create_in_memory_read_surface_ports()
+    store.list_runtime_bindings = lambda: []
+    store.list_telemetry_summaries = lambda: []
+    store.list_incidents = lambda: []
+    store.list_approval_queue_items = lambda: []
+    store.get_kill_switch_status = lambda: {}
+    health = ManagementService(read_store=store).get_operator_health_status()
+    group = {g["group_id"]: g for g in health["groups"]}["kill_switch"]
+    assert group["details"]["status"] == "unknown"
+    assert "armed" not in group["summary"]
+    assert health["safe_mode_state"]["active"] is None
+    assert health["safe_mode_state"]["status"] == "unknown"
+    assert health["overall_status"] != "ok"
