@@ -1,0 +1,6 @@
+{
+  "task_id": "SOURCE-SEED-RECIPE-FENCE-20261024",
+  "change": "execution_recipe may only originate from Source.metadata.strategy_seed; EvidenceItem/EvidenceBundle recipes rejected; differing Source recipes raise a contradiction error",
+  "tests_file": "services/source_ingestion/tests/test_strategy_seed_builder.py (existing file)",
+  "verification": "pytest services/source_ingestion: 1101 passed on first run; 3 failures were missing deps (asyncpg, psycopg binary) and passed after install"
+}

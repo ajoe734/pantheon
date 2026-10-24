@@ -257,3 +257,31 @@ def test_caller_metadata_cannot_add_or_rewrite_the_source_execution_recipe() -> 
             _bundle(), source_records=[_source()], evidence_items=[_item()],
             metadata={"execution_recipe": recipe},
         )
+
+
+def test_evidence_item_recipe_is_rejected() -> None:
+    item = _item()
+    item.metadata["strategy_seed"] = {"execution_recipe": {"kind": "x"}}
+    with pytest.raises(StrategySpecSeedError, match="EvidenceItem .* not allowed"):
+        StrategySpecSeedBuilder().build_seed(
+            _bundle(), source_records=[_source()], evidence_items=[item]
+        )
+
+
+def test_evidence_bundle_recipe_is_rejected() -> None:
+    bundle = _bundle()
+    bundle.metadata["strategy_seed"] = {"execution_recipe": {"kind": "x"}}
+    with pytest.raises(StrategySpecSeedError, match="EvidenceBundle.metadata is not allowed"):
+        StrategySpecSeedBuilder().build_seed(
+            bundle, source_records=[_source()], evidence_items=[_item()]
+        )
+
+
+def test_multiple_sources_with_different_recipes_contradict() -> None:
+    a, b = _source(), _source()
+    a.metadata["strategy_seed"]["execution_recipe"] = {"kind": "a"}
+    b.metadata["strategy_seed"]["execution_recipe"] = {"kind": "b"}
+    with pytest.raises(StrategySpecSeedError, match="contradicting execution_recipe"):
+        StrategySpecSeedBuilder().build_seed(
+            _bundle(), source_records=[a, b], evidence_items=[_item()]
+        )
