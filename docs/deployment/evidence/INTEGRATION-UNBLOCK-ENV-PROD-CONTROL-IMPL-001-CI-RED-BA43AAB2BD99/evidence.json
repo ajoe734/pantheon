@@ -1,0 +1,8 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-ENV-PROD-CONTROL-IMPL-001-CI-RED-BA43AAB2BD99",
+  "blocked_pr": 6773,
+  "root_cause": "Branch CI Gate 'Smoke acceptance' job failed in 'Provision real worker sandbox': GitHub runner is now Ubuntu 26.04 (apparmor 5.0.2) and /usr/share/apparmor/extra-profiles/bwrap-userns-restrict no longer exists, so sha256sum exited 1. Unrelated to the PR's own changes (PR checks otherwise green; canonical review gate needs a separate review-proof tag).",
+  "fix": ".github/workflows/branch-ci.yml: probe known profile locations, load if found, otherwise rely on the existing bwrap capability probe as the gate.",
+  "verification": "python3 -m unittest scripts.test_branch_ci_gate_selection: 13 tests OK. Hosted re-run of Smoke acceptance pending on the fix PR.",
+  "follow_up": "After the fix merges to dev, re-run/rebase PR #6773 so Smoke acceptance picks up the workflow."
+}
