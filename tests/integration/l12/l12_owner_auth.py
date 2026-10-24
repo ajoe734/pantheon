@@ -54,6 +54,12 @@ def token_subject(token: str) -> str:
     return str(json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))["sub"])
 
 
+def token_roles(token: str) -> list[str]:
+    payload = token.split(".")[1]
+    roles = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))).get("roles")
+    return [str(role) for role in roles] if isinstance(roles, list) else []
+
+
 def approve_registry_entry(
     post: GovernancePost,
     *,

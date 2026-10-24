@@ -1,0 +1,24 @@
+{
+  "task_id": "HOSTED-ALL12-TEACHING-BC-SEAM-20261024",
+  "scope": "L12 A_research/B_learning harness only; no hosted calls, no product-runtime or BC-governance change",
+  "observed_failure": {
+    "chain": "B40055438340",
+    "handoff": "gh-de04d49505d295caa3ff6b7d",
+    "dataset_version": "dsv-dcba8dc1b083a01eb1675363",
+    "candidate": "sic-c604f0a96749c787f3513492eeeb7da5",
+    "reason": "No governed BC transitions remain after filtering",
+    "cause": "helper emitted actor_role=persona, decision from validation, target promotion_state=approved (Registry source)",
+    "preserved": "failed candidate, admitted evidence hosted-all12-h12-01a11-20261023-9aeb-ev and ACKed handoff are untouched; no replay"
+  },
+  "change": {
+    "feedback": "OPERATOR control_patch event (actor_type=user, actor == OPERATOR subject) with timestamp <= candidate_snapshot_at, >=2 non-zero deltas whose new_value equals the evaluated proof.controls (controls_digest verified); decision=edit",
+    "target": "Teaching candidate snapshot via artifact_version+artifact_type+lineage_ref (teaching-candidate:<session>:<candidate_digest>); no registry_id invented; approved source Spec kept only as source_strategy_spec_id",
+    "negative_outcome": "teaching.validation_status failed is preserved and is not the decision",
+    "no_eligible_input": "HostedPause before Agora with exact session/eval/event IDs; no positive sample invented",
+    "new_evidence_identity": "derived from the control-edit event id; existing admitted evidence is never reposted",
+    "control_command": "A_research patches Teaching controls with OPERATOR token + X-Pantheon-Service control-plane-bff (allowed gateway), choosing values differing from current so a recovered service-patched session still yields a real delta, then queues a fresh preview eval keyed to the patched control values"
+  },
+  "bc_filters": "unchanged",
+  "validation": "tests/unit/l12 (96 passed) incl. real payload through prepare_dataset; rejects service-only, post-snapshot, zero-delta, unbound-control and invented-target edits",
+  "not_claimed": "source merged is not product accepted or all12 passed"
+}
