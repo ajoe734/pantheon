@@ -11,7 +11,7 @@
 
 | Artifact | Role |
 | --- | --- |
-| `scripts/deploy/prod_preflight.py` | Fail-closed config, manifest checksum, `staging_verified` evidence binding, distinct-approver, baseline/bootstrap checks |
+| `scripts/deploy/prod_preflight.py` | Fail-closed config, manifest checksum, `staging_verified` evidence binding, approver-vs-Environment-policy, baseline/bootstrap checks |
 | `scripts/deploy/prod_atomic_switch.sh` | Blue/green controller (journal, green on alternate port, gates, singleton drain, upstream + FE atomic switch, exact identity readback) |
 | `scripts/deploy/prod_rollback.sh` | Restores FE symlink, BFF upstream/config and singleton owner from the journal |
 | `deploy/production/docker-compose.prod-control.yml` | Digest-pinned, `pull_policy: never`, safe-off defaults; stateful services exist once |
@@ -26,7 +26,7 @@ Host-side effects (compose start/stop, proxy reload, gates, snapshot, singleton 
 
 ## 3. Switch sequence
 
-1. Preflight: config, manifest SHA-256, `staging_verified` evidence for that exact manifest, `production` Environment approval by someone other than the initiator (run-approvals API), baseline posture.
+1. Preflight: config, manifest SHA-256, `staging_verified` evidence for that exact manifest, genuine `production` Environment approval (run-approvals API) by a required reviewer of the actual Environment record (`--env-policy` / `ENV_POLICY_PATH`); the approver may equal the initiator only when that record has `prevent_self_review=false` (operator policy 2026-10-24, same GitHub account `ajoe734`; readback `production-same-account-approval-policy.json`). Without a policy record the strict distinct-approver default applies, baseline posture.
 2. FE artifact bytes must equal manifest `artifact_sha256`; an existing release directory with different content is refused (never overwritten, never rebuilt).
 3. Snapshot preflight and healthy retained baseline (`baseline_health`).
 4. Journal restore targets, stage FE into `fe/releases/<id>`, start green on the alternate port.
@@ -49,4 +49,4 @@ First release needs explicit `PROD_BOOTSTRAP_FIRST_RELEASE=true` and a manifest 
 
 ## 6. Missing hosted prerequisites (recorded, not forged)
 
-Production project/billing/domain/IdP, WIF/SA/IAM, `production` GitHub Environment with required reviewers, `PRODUCTION_RELEASE_ENABLED`, ops adapter and artifact transport on the control VM, approved RPO/RTO/retention/on-call/rollback owner, `staging_verified` evidence from a genuine hosted staging run, and DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 / all12 chain `h12-01a11-20261023-9aeb` (not rerun or relabeled here).
+Production project/billing/domain/IdP, WIF/SA/IAM, `production` GitHub Environment with required reviewers (ajoe734; prevent_self_review=false), `PRODUCTION_RELEASE_ENABLED`, ops adapter and artifact transport on the control VM, approved RPO/RTO/retention/on-call/rollback owner, `staging_verified` evidence from a genuine hosted staging run, and DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002 / all12 chain `h12-01a11-20261023-9aeb` (not rerun or relabeled here).

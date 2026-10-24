@@ -119,6 +119,27 @@ class PreflightTests(unittest.TestCase):
         with self.assertRaises(prod_preflight.PreflightError):
             prod_preflight.check_config({**PROD_ENV, "PANTHEON_LIVE_BROKER_ENABLED": "true"})
 
+    def test_same_account_approval_follows_actual_environment_policy(self):
+        def policy(prevent, reviewers=("ajoe734",)):
+            return {"name": "production", "protection_rules": [{"type": "required_reviewers", "prevent_self_review": prevent,
+                    "reviewers": [{"type": "User", "reviewer": {"login": r}} for r in reviewers]}]}
+        same = [{"state": "approved", "user": {"login": "ajoe734"}, "environments": [{"name": "production"}]}]
+        self.assertEqual(prod_preflight.check_approval(same, "ajoe734", policy(False)), "ajoe734")
+        with self.assertRaises(prod_preflight.PreflightError):
+            prod_preflight.check_approval(same, "ajoe734", policy(True))
+        with self.assertRaises(prod_preflight.PreflightError):
+            prod_preflight.check_approval(same, "ajoe734")  # strict default without policy
+        with self.assertRaises(prod_preflight.PreflightError):  # approver not a required reviewer
+            prod_preflight.check_approval(same, "ajoe734", policy(False, ("someone-else",)))
+        with self.assertRaises(prod_preflight.PreflightError):  # unapproved state is never accepted
+            prod_preflight.check_approval([{**same[0], "state": "rejected"}], "ajoe734", policy(False))
+        with self.assertRaises(prod_preflight.PreflightError):  # wrong environment binding
+            prod_preflight.check_approval([{**same[0], "environments": [{"name": "staging"}]}], "ajoe734", policy(False))
+        with self.assertRaises(prod_preflight.PreflightError):
+            prod_preflight.check_approval(same, "ajoe734", {"name": "production", "protection_rules": []})
+        with self.assertRaises(prod_preflight.PreflightError):
+            prod_preflight.check_approval(same, "ajoe734", {"name": "staging"})
+
     def test_approval_requires_distinct_production_reviewer(self):
         self.assertEqual(prod_preflight.check_approval(APPROVALS, "initiator-a"), "reviewer-b")
         with self.assertRaises(prod_preflight.PreflightError):

@@ -6,7 +6,7 @@
   "release_complete_claimed": false,
   "validation": {
     "command": "python3 -m unittest tests.deployment.test_production_release tests.deployment.test_staging_release",
-    "result": "34 tests OK",
+    "result": "40 tests OK",
     "scope": "fake ops adapter and temp state tree; controller behavior only"
   },
   "hosted_acceptance": {
@@ -14,7 +14,7 @@
     "missing": [
       "production project, billing, domain, IdP",
       "production WIF/SA/IAM/secrets",
-      "GitHub production Environment with distinct required reviewer",
+      "GitHub production Environment approval is configured (reviewer ajoe734, prevent_self_review=false); a genuine run approval remains a hosted prerequisite",
       "control VM ops adapter and artifact transport",
       "approved RPO/RTO/retention/on-call/rollback owner",
       "genuine hosted staging_verified evidence for the exact manifest",

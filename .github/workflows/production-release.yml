@@ -3,7 +3,8 @@ name: Pantheon Production Release
 # Inert by default. Never triggers on push or PR; merging source mutates zero cloud or
 # GitHub settings. Execution requires PRODUCTION_RELEASE_ENABLED=true, explicit production
 # variables, staging_verified evidence for the exact manifest, and genuine protected
-# `production` Environment approval by a reviewer distinct from the initiator.
+# `production` Environment approval by a required reviewer (self review only if the actual
+# Environment has prevent_self_review=false).
 
 on:
   workflow_dispatch:
@@ -108,14 +109,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/approvals" > "${RUNNER_TEMP}/approvals.json"
-      - name: Verify distinct production approver before any cloud access
+          gh api "repos/${{ github.repository }}/environments/production" > "${RUNNER_TEMP}/env-policy.json"
+      - name: Verify production approver against actual Environment policy before any cloud access
         run: |
           python3 - <<'PY'
           import json, os, sys
           sys.path.insert(0, "scripts/deploy")
           import prod_preflight
           approvals = json.load(open(os.environ["RUNNER_TEMP"] + "/approvals.json"))
-          print("approver:", prod_preflight.check_approval(approvals, "${{ github.triggering_actor }}"))
+          policy = json.load(open(os.environ["RUNNER_TEMP"] + "/env-policy.json"))
+          print("approver:", prod_preflight.check_approval(approvals, "${{ github.triggering_actor }}", policy))
           PY
       - name: Authenticate to production (WIF, no long-lived keys)
         uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
@@ -126,6 +129,8 @@ jobs:
       - name: Run atomic switch on the production control VM
         env:
           WORKFLOW_INITIATOR: ${{ github.triggering_actor }}
+          ENV_POLICY_PATH: ${{ runner.temp }}/env-policy.json
+          APPROVALS_PATH: ${{ runner.temp }}/approvals.json
           PROD_BOOTSTRAP_FIRST_RELEASE: ${{ inputs.bootstrap_first_release }}
         run: |
           # The VM-side adapter (PROD_OPS_CMD) and artifact transport are hosted prerequisites

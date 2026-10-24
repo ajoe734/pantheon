@@ -13,7 +13,8 @@
 # Required env: PROD_ROOT PROD_OPS_CMD RELEASE_ID RELEASE_MANIFEST_PATH EXPECTED_MANIFEST_SHA256
 #   STAGING_EVIDENCE_PATH APPROVALS_PATH WORKFLOW_INITIATOR FE_ARTIFACT_PATH
 #   PROD_BLUE_PORT PROD_GREEN_PORT plus PROD_* configuration (see prod_preflight.py).
-# Optional: PROD_BOOTSTRAP_FIRST_RELEASE=true, PROD_ROLLBACK_BUDGET_SECONDS (default 120).
+# Optional: ENV_POLICY_PATH (actual GitHub production Environment record; absent => approver must differ from initiator),
+#   PROD_BOOTSTRAP_FIRST_RELEASE=true, PROD_ROLLBACK_BUDGET_SECONDS (default 120).
 
 set -uo pipefail
 
@@ -40,6 +41,7 @@ mkdir -p "$STATE" "${PROD_ROOT}/fe/releases" "${PROD_ROOT}/proxy"
 PREFLIGHT_ARGS=(all --manifest "$RELEASE_MANIFEST_PATH" --expected-sha256 "$EXPECTED_MANIFEST_SHA256"
   --staging-evidence "$STAGING_EVIDENCE_PATH" --approvals "$APPROVALS_PATH"
   --initiator "$WORKFLOW_INITIATOR" --baseline "$BASELINE_FILE")
+[[ -z "${ENV_POLICY_PATH:-}" ]] || PREFLIGHT_ARGS+=(--env-policy "$ENV_POLICY_PATH")
 BOOTSTRAP=false
 if [[ "${PROD_BOOTSTRAP_FIRST_RELEASE:-false}" == "true" ]]; then
   BOOTSTRAP=true; PREFLIGHT_ARGS+=(--bootstrap)

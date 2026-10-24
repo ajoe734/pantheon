@@ -7,8 +7,9 @@ Checks, without touching any cloud resource:
   placeholder, retired or staging/dev-shared values fail closed; nothing is guessed.
 - the immutable release manifest (outer SHA-256 match, no relabeling).
 - `staging_verified` evidence for that exact manifest checksum.
-- genuine protected `production` Environment approval whose approver differs from
-  the initiator (GitHub run-approvals API shape).
+- genuine protected `production` Environment approval (GitHub run-approvals API shape).
+  Approver must be a required reviewer of the actual Environment record; distinct from the
+  initiator unless that record has prevent_self_review=false (operator policy 2026-10-24).
 - rollback baseline presence, or an explicit first-release bootstrap declaration.
 
 Local checks prove controller behavior only; they are never hosted drill evidence.
@@ -135,16 +136,50 @@ def check_staging_evidence(evidence: Any, manifest: dict[str, Any], manifest_sha
         raise PreflightError(f"staging evidence gates incomplete; need {sorted(required)}")
 
 
-def check_approval(approvals: Any, initiator: str) -> str:
-    """Require an approved `production` Environment review by someone other than the initiator.
+def _environment_policy(env_policy: Any) -> tuple[set[str], bool]:
+    """Return (required reviewer user logins, prevent_self_review) from the actual
+    GitHub `environments/production` response. Fails closed on anything unreadable."""
+    if not isinstance(env_policy, dict) or env_policy.get("name") != "production":
+        raise PreflightError("environment policy must be the GitHub 'production' Environment record")
+    rule = next(
+        (r for r in env_policy.get("protection_rules") or [] if isinstance(r, dict) and r.get("type") == "required_reviewers"),
+        None,
+    )
+    if rule is None:
+        raise PreflightError("production Environment has no required_reviewers protection rule")
+    prevent = rule.get("prevent_self_review")
+    if not isinstance(prevent, bool):
+        raise PreflightError("production Environment prevent_self_review is not a boolean")
+    logins = {
+        ((r.get("reviewer") or {}).get("login") or "").strip().lower()
+        for r in rule.get("reviewers") or []
+        if isinstance(r, dict) and r.get("type") == "User"
+    }
+    logins.discard("")
+    if not logins:
+        raise PreflightError("production Environment lists no required reviewer users")
+    return logins, prevent
+
+
+def check_approval(approvals: Any, initiator: str, env_policy: Any = None) -> str:
+    """Require a genuine approved `production` Environment review.
 
     `approvals` is the GitHub `actions/runs/{id}/approvals` response (list of
-    {state, user:{login}, environments:[{name}]}). Returns the distinct approver login.
+    {state, user:{login}, environments:[{name}]}). Without `env_policy` the strict default
+    applies: the approver must differ from the initiator. With the actual `production`
+    Environment record, the approver must be a listed required reviewer, and may equal the
+    initiator only when the Environment really has prevent_self_review=false.
+    Returns the approver login.
     """
     if not initiator or not initiator.strip():
         raise PreflightError("initiator identity is missing")
     if not isinstance(approvals, list):
         raise PreflightError("approval record must be a list of run approvals")
+    reviewers: set[str] | None = None
+    prevent_self = True
+    if env_policy is not None:
+        reviewers, prevent_self = _environment_policy(env_policy)
+    init = initiator.strip().lower()
     for entry in approvals:
         if not isinstance(entry, dict) or entry.get("state") != "approved":
             continue
@@ -152,10 +187,16 @@ def check_approval(approvals: Any, initiator: str) -> str:
         if not any(isinstance(e, dict) and e.get("name") == "production" for e in envs):
             continue
         login = ((entry.get("user") or {}).get("login") or "").strip()
-        if login and login.lower() != initiator.strip().lower():
-            return login
+        if not login:
+            continue
+        if reviewers is not None and login.lower() not in reviewers:
+            continue
+        if prevent_self and login.lower() == init:
+            continue
+        return login
     raise PreflightError(
-        "no approved 'production' Environment review by a reviewer distinct from the initiator"
+        "no approved 'production' Environment review by a permitted required reviewer "
+        "(distinct from the initiator unless the Environment allows self review)"
     )
 
 
@@ -191,6 +232,7 @@ def run_all(
     staging_evidence_path: Path,
     approvals_path: Path | None,
     initiator: str,
+    env_policy_path: Path | None = None,
     baseline_path: Path | None,
     bootstrap: bool,
     require_approval: bool = True,
@@ -220,7 +262,13 @@ def run_all(
             approvals = json.loads(approvals_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise PreflightError(f"cannot read approval record: {exc}") from exc
-        approver = check_approval(approvals, initiator)
+        env_policy = None
+        if env_policy_path is not None:
+            try:
+                env_policy = json.loads(env_policy_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise PreflightError(f"cannot read environment policy: {exc}") from exc
+        approver = check_approval(approvals, initiator, env_policy)
     baseline_state = None
     if baseline_path is not None and baseline_path.exists():
         try:
@@ -250,6 +298,7 @@ def _cli() -> int:
     a.add_argument("--staging-evidence", type=Path, required=True)
     a.add_argument("--approvals", type=Path, default=None)
     a.add_argument("--initiator", default="")
+    a.add_argument("--env-policy", type=Path, default=None, help="GitHub production Environment record")
     a.add_argument("--baseline", type=Path, default=None)
     a.add_argument("--bootstrap", action="store_true")
     a.add_argument("--skip-approval", action="store_true", help="pre-approval validation only")
@@ -266,6 +315,7 @@ def _cli() -> int:
             staging_evidence_path=args.staging_evidence,
             approvals_path=args.approvals,
             initiator=args.initiator,
+            env_policy_path=args.env_policy,
             baseline_path=args.baseline,
             bootstrap=args.bootstrap,
             require_approval=not args.skip_approval,
