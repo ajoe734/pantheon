@@ -833,6 +833,10 @@ class FakeRuntimeHttp:
                 return {"decision_id": decision, "tenant_id": TENANT, "decision_state": "decided",
                         "decision": "approved", "version": 2, **scope}
             return {"detail": "not found"}
+        if path.startswith("/api/v1/capital-pools/") and method == "GET":
+            return {"data": self.pool} if self.pool else {"error": {"code": "RESOURCE_NOT_FOUND"}}
+        if path.startswith("/api/v1/bindings/") and method == "GET":
+            return {"data": self.binding} if self.binding else {"error": {"code": "RESOURCE_NOT_FOUND"}}
         if path.startswith("/api/capital-pools") and method == "GET":
             return self.pool or {"detail": "nf"}
         if path == "/api/capital-pools":
@@ -886,6 +890,7 @@ def _runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, phase: str, **kwar
     drop_reference = kwargs.pop("drop_reference", False)
     bundle = kwargs.pop("bundle", True)
     h3_scope = kwargs.pop("h3_scope", None)
+    provisioned = kwargs.pop("provisioned", True)
     mod = _load(monkeypatch, "test_current_runtime_loops_deployed_e2e.py", "hosted_runtime_mod")
     _hosted_env(monkeypatch, tmp_path, phase, **kwargs)
     settings = mod.Settings(
@@ -893,11 +898,19 @@ def _runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, phase: str, **kwar
                                                  "incidents", "reconciliation", "registry", "runtime",
                                                  "source_ingest", "telemetry")},
         expected_sha=SHA, compose_project="p", compose_files=(), evidence_output=tmp_path / "evidence.json",
-        capital_headers={"Authorization": f"Bearer {CAPITAL_JWT}"},
+        capital_headers={"Authorization": f"Bearer {EXECUTOR_TOKEN}"},
     )
     chain = mod.RuntimeChain(settings)
     fake = FakeRuntimeHttp(h3=h3, validation_ok=validation_ok, drop_reference=drop_reference,
                            bundle=bundle, h3_scope=h3_scope)
+    if provisioned:
+        # What the product's BFF paper provisioning wrote under its own service identity.
+        meta = {"chain_id": CHAIN, "paper_only": True, "execution_context": "paper"}
+        # Real DTO shapes: CapitalPoolBody has no created_by; the binding carries it.
+        fake.pool = {"pool_id": f"hosted-all12-{CHAIN}-pool", "tenant_id": TENANT, "metadata": meta}
+        fake.binding = {"binding_id": f"hosted-all12-{CHAIN}-pcb", "tenant_id": TENANT, "status": "active",
+                        "persona_id": "persona-teach", "capital_pool_id": f"hosted-all12-{CHAIN}-pool",
+                        "allowed_deployment_scope": "paper", "created_by": "control-plane-bff", "metadata": meta}
     chain.http = fake
     chain._identity = lambda service: chain.evidence.identities.setdefault(service, {"service": service})
     return mod, chain, fake
@@ -958,11 +971,8 @@ def test_hosted_promote_registers_candidate_then_pauses_for_exact_h3_before_cove
     covered = [c for c in fake.writes() if c[2].endswith("/advance") or "/api/deployment/plans" in c[2]]
     assert covered == [] and not fake.dispatched
     assert not any("/strategy-specs/" in c[2] and c[1] != "GET" for c in fake.calls)  # H1 Spec untouched
-    # Capital compares the body actor to the verified principal: the real delegated actor, not an isolated one
-    for write in ("POST /api/capital-pools", "POST /api/bindings", f"POST /api/bindings/hosted-all12-{CHAIN}-pcb/activate"):
-        assert fake.bodies[write]["actor_id"] == "operator-real"
-    activation = fake.bodies[f"POST /api/bindings/hosted-all12-{CHAIN}-pcb/activate"]
-    assert "approval_decision_id" not in activation  # paper capital: no invented approval
+    # the harness never writes Capital in hosted mode: the product-provisioned records are only read back
+    assert not [c for c in fake.calls if "/api/capital-pools" in c[2] or "/api/bindings" in c[2] if c[1] != "GET"]
 
     # same chain, H3 now decided, separate process: one H3 used for Registry advance AND plan, one dispatch
     _, second, fake2 = _runtime(monkeypatch, tmp_path, "C_promote", predecessors=PROMOTE_PREDECESSORS,
@@ -1128,21 +1138,49 @@ def test_hosted_runtime_paths_never_stop_or_restart_services(
             assert forbidden not in source, (method.__name__, forbidden)
 
 
-def test_hosted_capital_uses_executor_token_and_stops_without_service_claim(
+def test_hosted_capital_sends_no_direct_write_and_pauses_when_product_records_are_absent(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    mod, chain, fake = _runtime(monkeypatch, tmp_path, "C_promote")
-    from l12_owner_auth import HostedPause, capital_authorization, capital_identity
+    # The real hosted token shape: an operator session; nothing is minted or borrowed.
+    _, chain, fake = _runtime(monkeypatch, tmp_path, "C_promote", provisioned=False)
+    from l12_owner_auth import HostedPause, capital_authorization
 
-    # The real hosted token shape: an operator session, no service claim, nothing minted.
     assert capital_authorization() == f"Bearer {EXECUTOR_TOKEN}"
+    ids: dict[str, Any] = {}
     with pytest.raises(HostedPause) as paused:
-        capital_identity(capital_authorization())
+        chain._hosted_capital("persona-teach", ids)
     assert paused.value.blocked_before == "capital_pool_creation"
     assert "CAPITAL_HOSTED_PRINCIPAL_DECISION_REQUIRED" in paused.value.detail
-    assert not [c for c in fake.writes() if "/api/capital-pools" in c[2] or "/api/bindings" in c[2]]
+    assert "BFF paper-provisioning entry" in paused.value.detail and "H1/H3" in paused.value.detail
+    assert [c for c in fake.calls if c[1] != "GET"] == [] and ids == {}
+    assert all(c[0] == "bff" for c in fake.calls if "capital" in c[2] or "bindings" in c[2])
     source = inspect.getsource(sys.modules["l12_owner_auth"])
     assert "_service_jwt" not in source and not hasattr(sys.modules["l12_owner_auth"], "fresh_capital_authorization")
+
+
+def test_hosted_capital_rejects_records_not_written_by_product_provisioning(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _, chain, fake = _runtime(monkeypatch, tmp_path, "C_promote")
+    from l12_owner_auth import HOSTED_TASK_ID, HostedPause
+
+    for wrong in (HOSTED_TASK_ID, "unrelated-service"):  # not the product BFF identity
+        fake.binding["created_by"] = wrong
+        with pytest.raises(HostedPause):
+            chain._hosted_capital("persona-teach", {})
+    fake.binding["created_by"] = "control-plane-bff"
+    fake.binding["capital_pool_id"] = "other-pool"
+    with pytest.raises(HostedPause):
+        chain._hosted_capital("persona-teach", {})
+    fake.binding["capital_pool_id"] = fake.pool["pool_id"]
+    fake.pool["metadata"] = {**fake.pool["metadata"], "execution_context": "live"}
+    with pytest.raises(HostedPause):
+        chain._hosted_capital("persona-teach", {})
+    fake.pool["metadata"] = {**fake.pool["metadata"], "execution_context": "paper"}
+    fake.binding["status"] = "pending"
+    with pytest.raises(HostedPause):
+        chain._hosted_capital("persona-teach", {})
+    assert [c for c in fake.calls if c[1] != "GET"] == []
 
 
 def test_capital_identity_reads_service_claims_of_a_token_that_has_them(auth: Any) -> None:
