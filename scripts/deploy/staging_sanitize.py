@@ -128,7 +128,9 @@ def validate_sanitized_snapshot_metadata(metadata: dict[str, Any]) -> dict[str, 
         "pii_masked",
         "secrets_excluded",
     }
-    unknown_keys = set(metadata.keys()) - (required_keys | {"created_at", "dataset_sha256"})
+    unknown_keys = set(metadata.keys()) - (
+        required_keys | {"created_at", "dataset_sha256", "observed_from_live_vm", "dry_run"}
+    )
     missing_keys = required_keys - set(metadata.keys())
     if missing_keys:
         raise SanitizationError(f"snapshot metadata missing required keys: {sorted(missing_keys)}")
@@ -219,8 +221,9 @@ def sanitize_dataset(payload: dict[str, Any]) -> dict[str, Any]:
         raise SanitizationError("dataset payload must be a JSON object")
     _check_no_retired_identifiers(payload)
 
-    allowed_top = {"metadata", "tables"}
-    if set(payload.keys()) != allowed_top:
+    required_top = {"metadata", "tables"}
+    allowed_top = required_top | {"observed_from_live_vm", "dry_run"}
+    if not required_top.issubset(payload.keys()) or not set(payload.keys()).issubset(allowed_top):
         raise SanitizationError("dataset payload must contain exact keys: metadata, tables")
 
     metadata = copy.deepcopy(payload["metadata"])
@@ -278,7 +281,13 @@ def sanitize_dataset(payload: dict[str, Any]) -> dict[str, Any]:
 
 def verify_sanitized_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
     """Fail closed if a sanitized dataset still contains PII, secrets, or unsafe flags."""
-    if not isinstance(dataset, dict) or set(dataset.keys()) != {"metadata", "tables"}:
+    required_top = {"metadata", "tables"}
+    allowed_top = required_top | {"observed_from_live_vm", "dry_run"}
+    if (
+        not isinstance(dataset, dict)
+        or not required_top.issubset(dataset.keys())
+        or not set(dataset.keys()).issubset(allowed_top)
+    ):
         raise SanitizationError("sanitized dataset must contain exact keys: metadata, tables")
     validate_sanitized_snapshot_metadata(dataset["metadata"])
     tables = dataset["tables"]
