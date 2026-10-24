@@ -50,6 +50,7 @@ from l12_owner_auth import (
     hosted_receipt_fields,
     human_token,
     load_hosted_input,
+    persona_create_identity,
     persona_writer_identity,
     require_decided_approval,
     token_subject,
@@ -711,14 +712,12 @@ class DeployedHumanLearningHarness:
                 f"Existing persona {persona_id!r} tenant {existing.get('tenant_id')!r} does not match required tenant {self.tenant_id!r}",
             )
             return
-        writer = persona_writer_identity()
-        actor_id = writer[1] if writer else token_subject(human_token("OPERATOR"))
         self._http_json(
             self.persona_url,
             "/api/personas",
             method="POST",
             payload={
-                "actor_id": actor_id,
+                **persona_create_identity(),
                 "persona_id": persona_id,
                 "name": name,
                 "mandate": mandate,

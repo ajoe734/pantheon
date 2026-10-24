@@ -246,7 +246,8 @@ def _research(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, owners_kwargs: di
     owners = FakeResearchOwners(mod, entry_state=entry_state, decided=decided)
     harness._http_json = owners
     harness._service_identity = lambda service: {"compose_service": service}
-    harness._ensure_persona = lambda *a, **k: None
+    owners.persona_calls = []
+    harness._ensure_persona = lambda pid, **k: owners.persona_calls.append((pid, len(owners.calls)))
     harness.poll_seconds, harness.timeout_seconds = 0.001, 1
     return mod, harness, owners
 
@@ -297,6 +298,17 @@ def test_research_a2_reuses_exact_registry_id_and_checksum_with_h1_and_never_dup
     assert [c for c in owners.writes() if "admissions" in c[1]] == [("POST", "/api/research-orchestrator/alpha-replication/admissions")]
     assert harness.chain["admission"]["strategy_spec_id"] == owners.registry_id
     assert harness.chain["h1_decision_id"] == "apv-1"
+
+    # the worker-default Persona for the actual strategy is ensured after H1's approved advance and
+    # before Alpha admission, and the same id is the chain's Persona handed to Teaching
+    sid = owners.entry["strategy_id"]
+    assert harness.chain["persona_id"] == f"persona-{sid}"
+    first = owners.persona_calls[0]
+    assert first[0] == f"persona-{sid}"
+    approved_at = max(i for i, c in enumerate(owners.calls) if c[1].endswith("/advance"))
+    admit_at = next(i for i, c in enumerate(owners.calls) if c == ("POST", "/api/research-orchestrator/alpha-replication/admissions"))
+    assert approved_at < first[1] <= admit_at
+    assert harness._hosted_resource_ids()["persona_id"] == f"persona-{sid}"
 
     # a separate process of the same chain: everything exists, so nothing is written again
     mod2, second, owners2 = _research(
@@ -954,6 +966,11 @@ def test_hosted_ensure_persona_pairs_service_token_with_service_actor(
     harness._ensure_persona("p-1", name="n", mandate="m")
     post = next(c for c in seen if c[0] == "POST")
     assert post[2]["actor_id"] == "operator-bff" and post[2]["tenant_id"] == harness.tenant_id
+    # logical owner stays the genuine executing human, never relabelled as the service actor
+    import l12_owner_auth
+    human = l12_owner_auth.token_subject(l12_owner_auth.human_token("OPERATOR"))
+    assert post[2]["owner"] == human and human != "operator-bff"
+    assert post[2]["metadata"] == {"requested_by": {"actor_type": "operator", "actor_id": human}}
     assert {c[3] for c in seen} == {"Bearer opaque-persona-service-token"}
 
     # without a staged writer (isolated / ordinary operator) the caller identity is untouched

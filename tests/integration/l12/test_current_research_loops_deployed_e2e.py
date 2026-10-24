@@ -42,10 +42,10 @@ from l12_owner_auth import (
     hosted_receipt_fields,
     human_token,
     load_hosted_input,
+    persona_create_identity,
     persona_writer_identity,
     registry_advance_body,
     require_decided_approval,
-    token_subject,
 )
 
 
@@ -231,7 +231,7 @@ class DeployedResearchHarness:
             "authority_run_id": (chain.get("authority_run") or {}).get("run_id"),
             "experiment_run_id": (chain.get("experiment_run") or {}).get("run_id"),
             "teaching_session_id": (chain.get("session") or {}).get("session_id"),
-            "persona_id": (chain.get("session") or {}).get("persona_id"),
+            "persona_id": chain.get("persona_id") or (chain.get("session") or {}).get("persona_id"),
             "eval_identity": chain.get("eval_identity"),
             "eval_id": chain.get("eval_id"),
         }
@@ -446,6 +446,10 @@ class DeployedResearchHarness:
             "X-Pantheon-Service": "training-session-preview-worker",
         }
 
+    @staticmethod
+    def _hosted_persona_id(strategy_id: str) -> str:
+        return f"persona-{strategy_id}"
+
     def _persona_headers(self) -> dict[str, str]:
         writer = persona_writer_identity()
         headers = {"Authorization": writer[0]} if writer else bearer(human_token("OPERATOR"))
@@ -466,14 +470,12 @@ class DeployedResearchHarness:
                 f"Existing persona {persona_id!r} tenant {existing.get('tenant_id')!r} does not match required tenant {self.tenant_id!r}",
             )
             return
-        writer = persona_writer_identity()
-        actor_id = writer[1] if writer else token_subject(human_token("OPERATOR"))
         self._http_json(
             self.persona_url,
             "/api/personas",
             method="POST",
             payload={
-                "actor_id": actor_id,
+                **persona_create_identity(),
                 "persona_id": persona_id,
                 "name": name,
                 "mandate": mandate,
@@ -971,6 +973,15 @@ class DeployedResearchHarness:
 
         approved = self._at("distill.reviewed_admission_prerequisite", approve)
         self._require(approved.get("artifact_state") == "approved", "StrategySpec approval did not persist")
+        if self.hosted:
+            # The Alpha worker's own Teaching call uses persona-{strategy_id}; ensure that exact
+            # Persona (after H1, before admission) and keep it as the chain's one Persona id.
+            self.chain["persona_id"] = self._hosted_persona_id(strategy_id)
+            self._ensure_persona(
+                self.chain["persona_id"],
+                name=f"L12 Research Persona {self.run_token}",
+                mandate="Evaluate controls against the admitted Alpha replication result",
+            )
         alpha_owner = self._at(
             "distill.next_consumer_owner_identity",
             lambda: self._service_identity(OWNER_SERVICES["alpha_replication"]),
@@ -1098,7 +1109,10 @@ class DeployedResearchHarness:
             "alpha.next_consumer_owner_identity",
             lambda: self._service_identity(OWNER_SERVICES["persona_teaching"]),
         )
-        persona_id = self._rid(f"persona-l12-e2e-{self.run_token}", "persona")
+        persona_id = str(
+            self.chain.get("persona_id")
+            or self._rid(f"persona-l12-e2e-{self.run_token}", "persona")
+        )
         self._ensure_persona(
             persona_id,
             name=f"L12 Research Persona {self.run_token}",
@@ -1171,7 +1185,8 @@ class DeployedResearchHarness:
     def _case_persona_teaching(self, case: dict[str, Any]) -> None:
         session_id = str(self.chain["session"]["session_id"])
         persona_id = str(
-            self.chain["session"].get("persona_id")
+            self.chain.get("persona_id")
+            or self.chain["session"].get("persona_id")
             or self._rid(f"persona-l12-e2e-{self.run_token}", "persona")
         )
         self._ensure_persona(

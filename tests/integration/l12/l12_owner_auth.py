@@ -238,6 +238,24 @@ def persona_writer_identity() -> tuple[str, str] | None:
     return f"Bearer {token.removeprefix('Bearer ').strip()}", actor
 
 
+def persona_create_identity() -> dict[str, Any]:
+    """Create-request identity fields: service actor mutates, the executing human stays owner.
+
+    ``actor_id``/``created_by`` is the Persona service actor; ``owner`` and
+    ``metadata.requested_by`` keep the genuine human subject so the logical owner does not
+    silently become the service actor. Isolated mode keeps the human as the actor.
+    """
+    writer = persona_writer_identity()
+    human = token_subject(human_token("OPERATOR"))
+    if writer is None:
+        return {"actor_id": human}
+    return {
+        "actor_id": writer[1],
+        "owner": human,
+        "metadata": {"requested_by": {"actor_type": "operator", "actor_id": human}},
+    }
+
+
 _CAPITAL_TOKEN_SNIPPET = (
     "import sys;"
     "from services.control_plane.bff.personas.service import _PersonaOwnerHttpTransport as T;"
