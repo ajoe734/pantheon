@@ -19,6 +19,11 @@ on:
         description: "Expected sha256:<64-hex> checksum of the immutable release manifest"
         required: true
         type: string
+      fe_artifact_uri:
+        description: "Immutable FE bundle GCS URI (gs://...) or path matching manifest.frontend.artifact_sha256"
+        required: false
+        default: ""
+        type: string
       ttl_seconds:
         description: "Bounded staging TTL in seconds (default 7200, max 86400)"
         required: false
@@ -43,20 +48,23 @@ jobs:
     name: Ephemeral Staging (Provision / Deploy / Verify / Collect / Destroy)
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    environment: staging
     env:
       RELEASE_ID: ${{ inputs.release_id }}
       RELEASE_MANIFEST_PATH: ${{ inputs.release_manifest_path }}
       EXPECTED_MANIFEST_SHA256: ${{ inputs.expected_manifest_sha256 }}
+      STAGING_FE_ARTIFACT_URI: ${{ inputs.fe_artifact_uri || vars.STAGING_FE_ARTIFACT_URI || '' }}
       STAGING_TTL_SECONDS: ${{ inputs.ttl_seconds || '7200' }}
       STAGING_DRY_RUN: ${{ inputs.dry_run || 'true' }}
       WORKFLOW_RUN_ID: ${{ github.run_id }}
       STAGING_EPHEMERAL_ENABLED: ${{ vars.STAGING_EPHEMERAL_ENABLED || 'false' }}
       STAGING_GCP_PROJECT_ID: ${{ vars.STAGING_GCP_PROJECT_ID || '' }}
       STAGING_GCP_ZONE: ${{ vars.STAGING_GCP_ZONE || '' }}
+      STAGING_WIF_PROVIDER: ${{ vars.STAGING_WIF_PROVIDER || '' }}
       STAGING_INSTANCE_TEMPLATE: ${{ vars.STAGING_INSTANCE_TEMPLATE || '' }}
       STAGING_SERVICE_ACCOUNT: ${{ vars.STAGING_SERVICE_ACCOUNT || '' }}
       STAGING_SANITIZED_SNAPSHOT: ${{ vars.STAGING_SANITIZED_SNAPSHOT || '' }}
-      STAGING_STATE_DIR: ${{ runner.temp }}/pantheon-staging-state
+      GCLOUD_BIN: gcloud
       PANTHEON_PROVIDER_ENABLED: "false"
       PANTHEON_LIVE_BROKER_ENABLED: "false"
       PANTHEON_REAL_WRITES_ENABLED: "false"
@@ -83,27 +91,46 @@ jobs:
               exit 1
             fi
           done
+          if [[ "${STAGING_DRY_RUN}" != "true" ]]; then
+            for live_req in STAGING_WIF_PROVIDER STAGING_FE_ARTIFACT_URI; do
+              if [[ -z "${!live_req:-}" ]]; then
+                echo "Missing required live staging variable: ${live_req}" >&2
+                exit 1
+              fi
+            done
+          fi
+
+      - name: Authenticate to staging GCP project via Workload Identity Federation
+        if: ${{ (inputs.dry_run || 'true') != 'true' }}
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
+        with:
+          workload_identity_provider: ${{ vars.STAGING_WIF_PROVIDER }}
+          service_account: ${{ vars.STAGING_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        if: ${{ (inputs.dry_run || 'true') != 'true' }}
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
 
       - name: Stage 1 & 2 - Provision ephemeral VM and deploy exact immutable artifacts
         id: provision
+        env:
+          STAGING_STATE_DIR: ${{ runner.temp }}/pantheon-staging-state
         run: |
           ./scripts/deploy/staging_provision.sh
 
-      - name: Stage 3 - Verify sanitized data, migrations, backup/restore, rollback, and safety readbacks
+      - name: Stage 3 - Collect and verify live sanitized data, migrations, backup/restore, rollback, and safety readbacks
         id: verify
         if: success()
         env:
-          SANITIZED_DATASET_PATH: ${{ runner.temp }}/pantheon-staging-state/sanitized-dataset.json
-          MIGRATION_PLAN_PATH: ${{ runner.temp }}/pantheon-staging-state/migration-plan.json
-          BACKUP_RESTORE_RECORD_PATH: ${{ runner.temp }}/pantheon-staging-state/backup-restore.json
-          ROLLBACK_READBACK_PATH: ${{ runner.temp }}/pantheon-staging-state/rollback-readback.json
-          SECURITY_READBACK_PATH: ${{ runner.temp }}/pantheon-staging-state/security-readback.json
+          STAGING_STATE_DIR: ${{ runner.temp }}/pantheon-staging-state
         run: |
           ./scripts/deploy/staging_verify.sh
 
       - name: Stage 4 & 5 - Collect bounded evidence and destroy owned staging resources
         id: destroy
         if: always()
+        env:
+          STAGING_STATE_DIR: ${{ runner.temp }}/pantheon-staging-state
         run: |
           result_flag="success"
           reason_flag="completed"
