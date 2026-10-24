@@ -491,6 +491,8 @@ def test_hosted_vm_runner_assembles_private_environment_and_redacts(monkeypatch,
     assert env["PANTHEON_L12_HOSTED_CHAIN"] == "1" and env["PANTHEON_L12_STIMULUS_CROSS_LOOP_E2E"] == "1"
     assert env["PANTHEON_L12_HOSTED_CHAIN_PHASE"] == "C_promote"
     assert env["PANTHEON_L12_TENANT_ID"] == "tenant-dev"
+    assert env["PANTHEON_L12_SOURCE_READER_TOKEN"] == "executor-token-abcdef"
+    assert env["PANTHEON_L12_SOURCE_READER_TENANT_ID"] == "tenant-dev"
     assert env["PANTHEON_L12_STIMULUS_EXPECTED_SHA"] == "a" * 40
     assert env["PANTHEON_L12_HOSTED_CHAIN_PRIOR_RECEIPT"].endswith("prior-receipt.json")
     assert env["PANTHEON_L12_COMPOSE_FILES"] == "/srv/dev-root/docker-compose.yml:/srv/dev-root/override.yml"
@@ -508,6 +510,68 @@ def test_hosted_vm_runner_assembles_private_environment_and_redacts(monkeypatch,
     assert meta["pytest_exit"] == 0 and meta["capital_per_request_refresh_dependency"]
     assert "executor-token-abcdef" not in json.dumps(meta)
     assert all("secret" not in " ".join(call) for call in calls)  # no credential in any argv
+
+
+def _compose_files_with_label(runner, monkeypatch, label):
+    fake = type("P", (), {"returncode": 0, "stdout": label, "stderr": ""})()
+    monkeypatch.setattr(runner, "run", lambda argv, **_kw: fake)
+    return runner.compose_files("cid-bff")
+
+
+def test_hosted_compose_files_drop_only_missing_restore_override(monkeypatch, tmp_path: Path) -> None:
+    runner = _load_vm_runner()
+    base = tmp_path / "docker-compose.yml"
+    extra = tmp_path / "override.yml"
+    base.write_text("services: {}\n", encoding="utf-8")
+    extra.write_text("services: {}\n", encoding="utf-8")
+    restore = tmp_path / "images" / ".restore-x1nvgllk" / "images.json"
+    label = ",".join([str(base), str(restore), str(extra)])
+    assert _compose_files_with_label(runner, monkeypatch, label) == f"{base}:{extra}"
+    # A still-present restore override is a real input and is retained.
+    restore.parent.mkdir(parents=True)
+    restore.write_text("{}", encoding="utf-8")
+    assert str(restore) in _compose_files_with_label(runner, monkeypatch, label)
+
+
+def test_hosted_compose_files_keep_missing_persistent_input_visible(monkeypatch, tmp_path: Path) -> None:
+    runner = _load_vm_runner()
+    missing = tmp_path / "gone-override.yml"
+    restore = tmp_path / "images" / ".restore-abc" / "images.json"
+    out = _compose_files_with_label(runner, monkeypatch, f"{missing},{restore}")
+    assert out == str(missing)  # kept, so docker still fails visibly
+    assert _compose_files_with_label(runner, monkeypatch, str(restore)) == ""
+    # Only the exact restore image-override shape is dropped; other absent
+    # files under a .restore-* segment stay visible.
+    others = [
+        tmp_path / ".restore-abc" / "docker-compose.yml",
+        tmp_path / ".restore-abc" / "images.json",
+        tmp_path / "images" / ".restore-abc" / "config.yml",
+        tmp_path / "images" / ".restore-abc" / "nested" / "images.json",
+    ]
+    for other in others:
+        assert _compose_files_with_label(runner, monkeypatch, str(other)) == str(other)
+
+
+def test_hosted_vm_runner_fails_without_any_compose_base(monkeypatch, tmp_path: Path) -> None:
+    runner = _load_vm_runner()
+    _calls, state, fake_run, fake_sub = _fake_docker(runner, tmp_path)
+    restore = str(tmp_path / "images" / ".restore-q" / "images.json")
+    inner = fake_run
+
+    def run_no_base(argv, **kw):
+        if argv[:2] == ["docker", "inspect"]:
+            return type("P", (), {"returncode": 0, "stdout": restore, "stderr": ""})()
+        return inner(argv, **kw)
+
+    monkeypatch.setattr(runner, "run", run_no_base)
+    monkeypatch.setattr(runner.subprocess, "run", fake_sub)
+    args = type("A", (), dict(
+        scratch=str(tmp_path), worktree=str(tmp_path), expected_sha="a" * 40,
+        chain_id="hosted-all12-chain-0001", phase="C_promote", timeout=60,
+    ))()
+    bundle = {"executor_token": "executor-token-abcdef", "actor_id": "h", "roles": [], "tenant_id": "t"}
+    assert runner.execute(args, bundle) == 2
+    assert state["pytest_env"] is None
 
 
 def test_hosted_vm_runner_refuses_dirty_or_other_checkout(monkeypatch, tmp_path: Path) -> None:
