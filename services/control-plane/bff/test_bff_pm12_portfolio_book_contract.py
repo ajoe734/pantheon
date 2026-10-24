@@ -978,7 +978,14 @@ def test_performance_attribution_groups_requested_dimension(monkeypatch) -> None
     assert "items" not in payload
     assert "rows" not in payload
     assert "summary" not in payload
-    assert payload["data"]["summary"]["period"] == "30d"
+    # No dated attribution source exists, so a 30d request is answered from
+    # the latest snapshot and the response says so.
+    assert payload["data"]["summary"]["period"] == "latest"
+    assert payload["data"]["summary"]["requested_period"] == "30d"
+    assert payload["data"]["summary"]["period_windowed"] is False
+    assert payload["meta"]["period"]["requested"] == "30d"
+    assert payload["meta"]["period"]["applied"] == "latest"
+    assert payload["meta"]["period"]["windowed"] is False
     assert payload["data"]["summary"]["dimensions"] == ["asset"]
     assert payload["data"]["summary"]["supported_dimensions"] == [
         "persona",
@@ -995,7 +1002,7 @@ def test_performance_attribution_groups_requested_dimension(monkeypatch) -> None
     txf = rows["TXF"]
     assert txf["dimension"] == "asset"
     assert txf["label"] == "TXF"
-    assert txf["period"] == "30d"
+    assert txf["period"] == "latest"
     assert txf["metrics"]["total_pnl"] == 10.0
     assert txf["metrics"]["total_trades"] == 12
     assert txf["metrics"]["runtime_count"] == 1
@@ -1032,7 +1039,14 @@ def test_attribution_by_strategy_route_contract(monkeypatch) -> None:
     assert "items" not in payload
     assert "rows" not in payload
     assert "summary" not in payload
-    assert payload["data"]["summary"]["period"] == "30d"
+    # No dated attribution source exists, so a 30d request is answered from
+    # the latest snapshot and the response says so.
+    assert payload["data"]["summary"]["period"] == "latest"
+    assert payload["data"]["summary"]["requested_period"] == "30d"
+    assert payload["data"]["summary"]["period_windowed"] is False
+    assert payload["meta"]["period"]["requested"] == "30d"
+    assert payload["meta"]["period"]["applied"] == "latest"
+    assert payload["meta"]["period"]["windowed"] is False
     assert payload["data"]["summary"]["dimensions"] == ["strategy"]
     assert payload["page_info"] == {"next_page_token": None, "total": 3, "page_size": 20}
     assert {row["dimension"] for row in payload["data"]["items"]} == {"strategy"}
@@ -1118,7 +1132,14 @@ def test_performance_attribution_by_persona_route(monkeypatch) -> None:
     assert "items" not in payload
     assert "rows" not in payload
     assert "summary" not in payload
-    assert payload["data"]["summary"]["period"] == "30d"
+    # No dated attribution source exists, so a 30d request is answered from
+    # the latest snapshot and the response says so.
+    assert payload["data"]["summary"]["period"] == "latest"
+    assert payload["data"]["summary"]["requested_period"] == "30d"
+    assert payload["data"]["summary"]["period_windowed"] is False
+    assert payload["meta"]["period"]["requested"] == "30d"
+    assert payload["meta"]["period"]["applied"] == "latest"
+    assert payload["meta"]["period"]["windowed"] is False
     assert payload["data"]["summary"]["dimensions"] == ["persona"]
     assert payload["page_info"] == {"next_page_token": None, "total": 2, "page_size": 20}
     assert {row["dimension"] for row in payload["data"]["items"]} == {"persona"}
@@ -1153,7 +1174,14 @@ def test_performance_attribution_by_pool_route(monkeypatch) -> None:
     assert "items" not in payload
     assert "rows" not in payload
     assert "summary" not in payload
-    assert payload["data"]["summary"]["period"] == "30d"
+    # No dated attribution source exists, so a 30d request is answered from
+    # the latest snapshot and the response says so.
+    assert payload["data"]["summary"]["period"] == "latest"
+    assert payload["data"]["summary"]["requested_period"] == "30d"
+    assert payload["data"]["summary"]["period_windowed"] is False
+    assert payload["meta"]["period"]["requested"] == "30d"
+    assert payload["meta"]["period"]["applied"] == "latest"
+    assert payload["meta"]["period"]["windowed"] is False
     assert payload["data"]["summary"]["dimensions"] == ["pool"]
     assert payload["page_info"] == {"next_page_token": None, "total": 2, "page_size": 20}
     assert {row["dimension"] for row in payload["data"]["items"]} == {"pool"}
