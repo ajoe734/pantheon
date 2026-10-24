@@ -30,5 +30,12 @@
     "owner_preserved": "Persona create now sends explicit owner and metadata.requested_by from the genuine executing human token subject; actor_id/created_by stays the configured Persona service actor (persona_create_identity in l12_owner_auth). Opaque service token is never decoded.",
     "alpha_persona_order": "Hosted A ensures/reads persona-{strategy_id} (the Alpha worker default Teaching uses) after genuine H1 require_decided_approval and approved advance, before Alpha admission; chain persona_id is preserved early in resource_ids and reused by all A Teaching fallback/creation. B, C, E untouched; no Persona retirement.",
     "not_done": "No DLQ replay, SSH, provider or hosted dispatch; Root owns replay_dlq after source accepted and Persona exists. Caller-side Teaching success does not prove worker recovery."
+  },
+  "corrections_on_head_05bbb": {
+    "defect": "hosted open_teaching_session matched only the chain teaching trace_id; the Alpha background worker receipt uses trace-teaching-{domain_run_id}, so a second POST would be issued",
+    "fix": "hosted caller reuses an existing session whose context_refs match exact authority run id + domain_run_id + strategy_spec_id (worker trace preserved), after a bounded readback window; isolated POST behavior unchanged",
+    "test": "tests/unit/l12/test_hosted_domain_contract.py::test_research_reuses_the_alpha_worker_teaching_session_with_a_different_trace",
+    "verification": "pytest tests/unit/l12: 94 passed",
+    "not_done": "no provider/business/VM call; activation, replay_dlq and samechain A resumption remain with Root01a11"
   }
 }

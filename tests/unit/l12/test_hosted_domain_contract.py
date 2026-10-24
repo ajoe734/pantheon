@@ -344,6 +344,33 @@ def test_research_reuses_the_chain_teaching_session_instead_of_opening_another(
     assert harness._hosted_resource_ids()["teaching_session_id"] == "trn-prior"
 
 
+def test_research_reuses_the_alpha_worker_teaching_session_with_a_different_trace(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def run(ref: dict[str, Any]) -> tuple[Any, Any]:
+        _, harness, owners = _research(monkeypatch, tmp_path, decided=True, entry_state="approved",
+                                       predecessors={"checksum": "sha-1"})
+        owners.sessions.append({
+            "session_id": "trn-worker", "persona_id": f"hosted-all12-{CHAIN}-persona",
+            "trace_id": "trace-teaching-worker-default",
+            "context_refs": [{"type": "experiment_run", **ref}],
+        })
+        harness.run_case(3)
+        return harness, owners
+
+    harness, owners = run({"id": "auth-run-1", "domain_run_id": "exp-1", "strategy_spec_id": owners_registry(monkeypatch, tmp_path)})
+    assert ("POST", "/api/training/sessions") not in owners.calls
+    assert harness.chain["session"]["session_id"] == "trn-worker"
+
+    # refs that do not match the exact causal identities are not accepted
+    _, other = run({"id": "auth-run-other", "domain_run_id": "exp-1", "strategy_spec_id": "reg-other"})
+    assert ("POST", "/api/training/sessions") in other.calls
+
+
+def owners_registry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> str:
+    return _research(monkeypatch, tmp_path)[2].registry_id
+
+
 # --------------------------------------------------------------------------- human learning (B_learning)
 
 

@@ -1121,17 +1121,39 @@ class DeployedResearchHarness:
         headers = self._training_headers()
         teaching_trace_id = self._rid(f"trace-teaching-{self.run_token}", "trace", "teaching")
 
+        def _prior_session() -> Any:
+            for prior in self._http_json(
+                self.training_url,
+                f"/api/training/sessions?persona_id={urllib.parse.quote(persona_id, safe='')}",
+                headers=headers,
+            ):
+                if not isinstance(prior, Mapping):
+                    continue
+                # The Teaching owner assigns session_id. Reuse is by the chain's deterministic
+                # trace_id, or by the Alpha background worker's own receipt (its trace differs)
+                # carrying the exact same authority run / domain run / StrategySpec refs.
+                if prior.get("trace_id") == teaching_trace_id or any(
+                    isinstance(ref, Mapping)
+                    and ref.get("type") == "experiment_run"
+                    and ref.get("id") == authority_run_id
+                    and ref.get("domain_run_id") == experiment_run_id
+                    and ref.get("strategy_spec_id") == registry_id
+                    for ref in prior.get("context_refs") or []
+                ):
+                    return prior
+            return None
+
         def open_teaching_session() -> Any:
             if self.hosted:
-                # The Teaching owner assigns session_id, so reuse is by the chain's
-                # deterministic trace_id; a second process must not open a second session.
-                for prior in self._http_json(
-                    self.training_url,
-                    f"/api/training/sessions?persona_id={urllib.parse.quote(persona_id, safe='')}",
-                    headers=headers,
-                ):
-                    if isinstance(prior, Mapping) and prior.get("trace_id") == teaching_trace_id:
-                        return prior
+                prior = _prior_session()
+                # The saved Alpha result precedes the worker's Teaching callback, so give that
+                # consumer a bounded window to show its receipt before opening another session.
+                deadline = time.monotonic() + min(self.timeout_seconds, 60)
+                while prior is None and time.monotonic() < deadline:
+                    time.sleep(self.poll_seconds)
+                    prior = _prior_session()
+                if prior is not None:
+                    return prior
             return self._http_json(
                 self.training_url,
                 "/api/training/sessions",
