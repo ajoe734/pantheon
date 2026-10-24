@@ -1,26 +1,24 @@
 {
   "task": "DEV-SIX-AREA-HOSTED-CLOSEOUT-20261002",
-  "at": "2026-10-23T07:41:05.248046+00:00",
-  "phase": "All5productsourceDONE;4explicitindependentreviews merged/archive/settingsrestored; candidateec362/a206 notyetqualified/hosted; latestofficialdata22afterOct23close; originalPattern/UI/finance/TOTAL/report pending",
-  "candidate_BE": "ec3628bdb6d73f02996fb1016cd8a4b118bc6442",
-  "candidate_FE": "a206bed2daa6b8c5558468d9af5cb9d1ced37de2",
+  "at": "2026-10-24T04:06:50Z",
+  "phase": "Accepted26c7/c067 Root400491; same-chain A completed with real negative Teaching and published advisory ACK; B natural tick candidate failed BC filtering; PR6755 rejected and returned to original Claude in the same task; original Pattern6/remaining B-E/Antigravity TOTAL/report unfinished",
+  "candidate_BE": "26c7afc138707424f48897ef8d08cdb2c91af17a",
+  "candidate_FE": "c067d6a82573249ca338a38d30ad74611f0b53f8",
   "accepted_pair": {
-    "BE": "1436b4f6e6ef2c2c38b5d73396377f6db5329214",
-    "FE": "c38144c5b8ad630ada8324acd97487092d49b4d3",
-    "Root": 39879759402,
+    "BE": "26c7afc138707424f48897ef8d08cdb2c91af17a", "FE": "c067d6a82573249ca338a38d30ad74611f0b53f8", "Root": 40049139725,
     "deploymentState": "accepted",
     "proof": {
-      "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Root398797-official-exact-eighteen-artifact-roundtrip-and-served-pair-independent-audit-20261023.json",
-      "sha256": "b96d6471e89de18086a8eb14f0227957303fc804dc5ba198a622c65d5421c7ae"
+      "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Root40049139725-official-accepted-exact26c7-c067-and-normal-lane-scope-independent-audit-20261024.json",
+      "sha256": "a4b86b1b269f013ad3eb85d27a9ae5013352af81bcf59efb7cb367027a9dff2e"
     }
   },
   "current_candidate": {
-    "source_merged": false,
+    "source_merged": true,
     "same_version_FULL_passed": false,
-    "formal_Root_accepted": false,
+    "formal_Root_accepted": true,
     "exact18_roundtrip_passed": false,
     "all_product_acceptance_complete": false,
-    "scope": "Original5 product source fixes merged at ec362/a206. Final candidate not frozen: existing unique emergency-calendar PR6737 must complete review/CI/merge first. Last accepted1436/c381 remains served; no oldcandidateFULL.",
+    "scope": "These identities describe the accepted26c7/c067 product, not pending PR6755. Optional new FULL and exact-artifact roundtrip were skipped by the normal release inputs; same_version_FULL_passed=false and exact18_roundtrip_passed=false mean not run in that lane, not an unaccepted release or a new per-version gate. Existing FULL40005552528 qualifies9aeb only; Root400078 roundtrip keeps its original version scope and is never relabelled26c7. Source deployment does not establish all12/TOTAL. The sole pending same-task PR6755 is unmerged and undeployed.",
     "four_review_delivery": {
       "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Four-authorized-existing-reviews-all-genuine-merged-archived-and-settings-restored-20261023.json",
       "sha256": "b743fc0c1df59b6ed0d5db5f5473685ce07de3980f2f3d54cd8e2e694f06c220"
@@ -35,8 +33,8 @@
       "sha256": "c7da6d3f0c8c34a087a3a6ecd64f27b6b933840ce71c6f84b07c9b888ff75929"
     },
     "official_current_serving": {
-      "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Final-joined-ec362-a206-source-heads-latest-official-release-and-served-pair-readonly-20261023.json",
-      "sha256": "d748811031535b653f157b7ed672512d911de00b1cf58d3af39140bcf1e7131f"
+      "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Root40049139725-official-accepted-exact26c7-c067-and-normal-lane-scope-independent-audit-20261024.json",
+      "sha256": "a4b86b1b269f013ad3eb85d27a9ae5013352af81bcf59efb7cb367027a9dff2e"
     },
     "failed_earlier_isolated_FULL": {
       "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/FULL399072-original-isolated-failure-official-digest-source-freshness-and-cleanup-bounded-audit-20261023.json",
@@ -50,7 +48,13 @@
       "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/PTJ3eef-original-Persona-consumer-validation-existing-author-and-official-CI-evidence-20261023.json",
       "sha256": "57271def5614722e3f52bbaa72d11321c70f4542e02d6976167bb7f5cdf9a7db"
     },
-    "calendar_correction": "evidence.json#/current_phase_authority/calendar_correction"
+    "calendar_correction": {
+      "task": "TWSE-EMERGENCY-CLOSURE-20261023", "PR": 6737, "status": "done",
+      "terminal_outcome": "completed", "merge_commit": "219916c2afa2f8c8d6e6d517b8cd404fd19c1e05", "included_in_accepted_BE": true,
+      "archive": {"path": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root/ai-task-archive/tasks/TWSE-EMERGENCY-CLOSURE-20261023.json", "sha256": "348f12162db7320f347b976da04a0f7ba0b2e3695dcafd50b1ecda4c3a90fb59"}
+    },
+    "source_deployed": true,
+    "historical_support_reference_scope": "four_review_delivery, OPS_tooling_runtime, exact_settings_restored, failed_earlier_isolated_FULL, actual_official_source_dates and original_consumer_tests retain their dated Oct23 source/tooling evidence; they are not fresh current configuration, market-input or hosted-flow observations."
   },
   "source_deliveries": [
     {
@@ -301,19 +305,17 @@
     }
   ],
   "count_meaning": "Source/commit/CI counts are engineering progress; no claim all49/all12/hosted accepted. Documentation cleanup is rework.",
-  "current_source_implementation_writers": {
-    "chatbox_product_runtime": 0,
-    "supervisor": "Original5 done; existing supervisor/Claude owns only necessary calendar correction PR6737. Original A2 reviewer unchanged, no inferred C2permission or Root coimplementation.",
-    "report": "Human/Ops coordinator updates only original3 documentation artifacts in draftPR6668."
-  },
+  "current_source_implementation_writers": {"chatbox_product_runtime": 0, "supervisor": "Existing supervisor retains the sole HOSTED-ALL12-TEACHING-BC-SEAM-20261024 source task, Claude author/Antigravity reviewer. Exact8ed was rejected04:05:56 and materialized back to Claude04:06:50 for same-task repair. Root01a11 is the sole product/business/release and source-integration executor; no duplicate source writer or task.", "report": "Original Root0/HumanOps report owner prepares only the original three documentation artifacts through existing draftPR6668; this checkpoint is not source implementation or Antigravity TOTAL."},
   "pending_native_source_tasks": [
     {
-      "task": "TWSE-EMERGENCY-CLOSURE-20261023",
-      "PR": 6737,
-      "head": "37e04fc6ab63b67316e003faa754b9f5a1cc7f3e",
-      "owner": "Claude",
-      "reviewer": "Antigravity2",
-      "status": "review; requiredCI pending"
+      "task": "HOSTED-ALL12-TEACHING-BC-SEAM-20261024", "PR": 6755, "head": "8edabf42fae55df8ab0bb733814fdc25c4d368c3",
+      "owner": "Claude", "reviewer": "Antigravity", "status": "in_progress",
+      "observed_at": "2026-10-24T04:06:50Z", "merged": false, "deployed": false,
+      "review_result": {"head": "8edabf42fae55df8ab0bb733814fdc25c4d368c3", "verdict": "rejected", "at": "2026-10-24T04:05:56Z"},
+      "same_task_repair": {"returned_to": "Claude", "queue_event_id": "evt-20261024T040650Z-fe3bba1e", "materialized_at": "2026-10-24T04:06:50Z"},
+      "remaining_original_defects": ["The existing A producer remains service-authored, so B has no genuine human control-edit event to consume.", "edits[-1] is not bound to candidate_snapshot and controls_digest, and accepts a zero-delta edit.", "target.registry_id is populated with a snapshot sha256 rather than an actual Registry entry identity."],
+      "delivery_manifest": {"path": "docs/deployment/evidence/HOSTED-ALL12-TEACHING-BC-SEAM-20261024/evidence.json", "commit": "8edabf42fae55df8ab0bb733814fdc25c4d368c3", "git_blob": "81d14618f11e04a381602f005a19cadba77a171e", "sha256": "2e5909a0df8f2a60a581403d31c8a15822141f23dda735ed9bb9b03624e3bd71"},
+      "scope_limit": "Manifest describes the rejected initial head; its declared validation and pause behavior do not prove the source repaired or a lawful L6 computation/Research handoff. Original B candidate remains failed; no merge, deployment, CI refresh or product acceptance is claimed."
     }
   ],
   "original_mistaken_reopen_withdrawal": {
@@ -394,5 +396,6 @@
       "path": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/latest-dev-closure-20261002/recovery-20261018/Final-e231-d6b-current-dev-exact-reviewed-tree-and-existing-repair-scope-20261021.json",
       "sha256": "7819930e1cb9e9dbe47d4e3c73012f98831cb51d9a123a9a73b16288c956dc2c"
     }
-  }
+  },
+  "source_delivery_rows_snapshot": {"as_of": "2026-10-23T07:41:05.248046+00:00", "scope": "source_deliveries is retained byte-for-byte as the07:41 Oct23 source ledger. Per-row deployment/qualification booleans describe that historical checkpoint, not the accepted26c7/c067 deployment; read accepted_pair/current_candidate for current scope. checkpoint_delivery is also retained exactly: its43 accepted clauses do not close Pattern6, parent6AC/21deps/3artifacts or Antigravity TOTAL."}
 }
