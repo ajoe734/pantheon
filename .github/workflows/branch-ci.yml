@@ -41,7 +41,7 @@ concurrency:
 jobs:
   trailers:
     name: Commit trailers
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Validate explicit promote dispatch
         if: github.event_name == 'workflow_dispatch'
@@ -136,7 +136,7 @@ jobs:
 
   generated-files:
     name: Runtime mirror guard
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Validate explicit promote dispatch
         if: github.event_name == 'workflow_dispatch'
@@ -197,7 +197,7 @@ jobs:
           fi
   packaging:
     name: Python packaging provision
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -235,7 +235,7 @@ jobs:
 
   smoke:
     name: Smoke acceptance
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     needs:
       - trailers
@@ -582,7 +582,7 @@ jobs:
   # pattern as persona-owner-contract.yml); consultation gets its own database.
   service-suites-postgres:
     name: Service suites (postgres)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     needs:
       - trailers
@@ -662,7 +662,7 @@ jobs:
 
   service-suites-heavy:
     name: Service suites (heavy installs)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     needs:
       - trailers
@@ -727,7 +727,7 @@ jobs:
 
   service-suites-runtime:
     name: Service suites (runtime)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     needs:
       - trailers
@@ -768,7 +768,7 @@ jobs:
 
   service-suites-misc:
     name: Service suites (misc)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     needs:
       - trailers
@@ -828,7 +828,7 @@ jobs:
   service-suites:
     name: Service suites
     if: ${{ always() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     needs:
       - service-suites-postgres
@@ -850,7 +850,7 @@ jobs:
   # interpreter with another suite. No known-failures list, deselect or skip.
   research-suite:
     name: Research suite
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     needs:
       - trailers
