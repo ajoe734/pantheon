@@ -85,13 +85,13 @@
       "path": "services/control-plane/bff/openclaw_ops_client.py",
       "changes": [
         "Updated `OpenClawOpsClient.ensure_persona_opinion_agent` to resolve and validate canonical Persona model routing from `admission` and `persona_profile` via `build_persona_runtime_profile`, failing closed with `OPENCLAW_PERSONA_MODEL_ROUTING_INVALID` (HTTP 400) when outside the provider pool.",
-        "Propagated canonical `model_routing` in the adapter `/api/openclaw-adapter/agents/persona-opinion/ensure` request body while preserving the deterministic `Idempotency-Key` derivation (`pantheon:persona-opinion-agent:{agent_id}:{capability_snapshot_id}`)."
+        "Propagated canonical `model_routing` in the adapter `/api/openclaw-adapter/agents/persona-opinion/ensure` request body and included the resolved model-policy digest in the deterministic `Idempotency-Key` derivation (`pantheon:persona-opinion-agent:{agent_id}:{capability_snapshot_id}:{policy_digest}`)."
       ]
     },
     {
       "path": "services/openclaw-gateway-adapter/main.py",
       "changes": [
-        "Accepted and validated optional `model_routing` on `OpenClawPersonaOpinionEnsureRequest` while keeping `_persona_admission_fingerprint` and `_agent_ensure_fingerprint` scoped to the 15 frozen admission identity/authority claims.",
+        "Accepted and validated optional `model_routing` on `OpenClawPersonaOpinionEnsureRequest`, keeping `_persona_admission_fingerprint` scoped to the 15 frozen admission identity/authority claims while `_agent_ensure_fingerprint` omits `model_routing` only when `None`/absent (preserving legacy replay compatibility) and binds explicitly present `model_routing` in the canonical request hash.",
         "Used the existing admitted-opinion runtime-policy writer (`_apply_persona_opinion_runtime_policy`, `_assert_persona_opinion_runtime_policy`, and `_reconcile_persona_opinion_replay`) to persist and verify `item[\"model\"] = {\"primary\": spec.model, \"fallbacks\": list(spec.fallback_models)}` alongside `_PERSONA_OPINION_RUNTIME_POLICY` while refusing primary-model drift (`model_drift_update_unavailable`)."
       ]
     }

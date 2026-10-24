@@ -1073,6 +1073,7 @@ class TestPersonaOpinionEnsureModelPolicyAndFallbackPropagation:
             assert invoked["data"]["status"] == "completed"
 
     def test_ensure_supports_hard_pin_and_replay_reconciles_single_string_agent(self, tmp_path):
+        import hashlib
         import subprocess
 
         client, adapter_main = self._client()
@@ -1106,6 +1107,58 @@ class TestPersonaOpinionEnsureModelPolicyAndFallbackPropagation:
             return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
 
         db_path = tmp_path / "agent-ensure-replay.sqlite3"
+        legacy_fingerprint = hashlib.sha256(
+            json.dumps(admission, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        assert (
+            adapter_main._agent_ensure_fingerprint(
+                adapter_main.OpenClawPersonaOpinionEnsureRequest(**admission)
+            )
+            == legacy_fingerprint
+        )
+        runtime_agents.append(
+            {
+                "id": agent_id,
+                "workspace": admission["workspace_ref"],
+                "model": "anthropic/claude-opus-4-8",
+            }
+        )
+        with adapter_main.sqlite3.connect(str(db_path)) as conn:
+            conn.execute(
+                """
+                CREATE TABLE agent_ensure_replays (
+                    idempotency_key TEXT PRIMARY KEY,
+                    request_fingerprint TEXT NOT NULL,
+                    http_status INTEGER NOT NULL,
+                    response_json TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO agent_ensure_replays VALUES (?, ?, ?, ?)",
+                (
+                    "legacy-preupgrade-ensure-key",
+                    legacy_fingerprint,
+                    201,
+                    json.dumps(
+                        {
+                            "status": "ok",
+                            "request_id": "req-legacy-0",
+                            "idempotency_key": "legacy-preupgrade-ensure-key",
+                            "agent": {
+                                "agent_id": agent_id,
+                                "status": "created",
+                                "model": "anthropic/claude-opus-4-8",
+                                "runtime_policy": adapter_main._PERSONA_OPINION_RUNTIME_POLICY,
+                            },
+                        },
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                ),
+            )
+            conn.commit()
+
         headers = {
             "X-Pantheon-Service-Token": "adapter-secret",
             "Idempotency-Key": "ensure-replay-hard-pin-key",
@@ -1113,7 +1166,7 @@ class TestPersonaOpinionEnsureModelPolicyAndFallbackPropagation:
         }
         payload = {
             **admission,
-            "model_routing": {"mode": "hard_pin", "model": "openai/gpt-5.5"},
+            "model_routing": {"mode": "hard_pin", "model": "anthropic/claude-opus-4-8"},
         }
         with (
             patch.object(adapter_main, "_ASSISTANT_SERVICE_TOKEN", "adapter-secret"),
@@ -1127,27 +1180,67 @@ class TestPersonaOpinionEnsureModelPolicyAndFallbackPropagation:
                 side_effect=lambda **_kw: list(runtime_agents),
             ),
         ):
+            # Legacy same-key replay where `model_routing` is omitted/None must match
+            # the pre-upgrade fingerprint and reconcile the bare string model:
+            legacy_replay = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json=admission,
+                headers={
+                    "X-Pantheon-Service-Token": "adapter-secret",
+                    "Idempotency-Key": "legacy-preupgrade-ensure-key",
+                    "X-Request-Id": "req-legacy-replay",
+                },
+            )
+            assert legacy_replay.status_code == 201, legacy_replay.text
+            assert runtime_agents[0]["model"] == {
+                "primary": "anthropic/claude-opus-4-8",
+                "fallbacks": ["anthropic/claude-sonnet-4-6", "openai/gpt-5.5"],
+            }
+
             first = client.post(
                 "/api/openclaw-adapter/agents/persona-opinion/ensure",
                 json=payload,
                 headers=headers,
             )
-            assert first.status_code == 201, first.text
+            assert first.status_code == 200, first.text
             assert runtime_agents[0]["model"] == {
-                "primary": "openai/gpt-5.5",
+                "primary": "anthropic/claude-opus-4-8",
                 "fallbacks": [],
             }
             # Simulate an external config downgrade back to a bare string and
             # verify that even a cached replay restores the structured model policy:
-            runtime_agents[0]["model"] = "openai/gpt-5.5"
+            runtime_agents[0]["model"] = "anthropic/claude-opus-4-8"
             replay = client.post(
                 "/api/openclaw-adapter/agents/persona-opinion/ensure",
                 json=payload,
                 headers={**headers, "X-Request-Id": "req-hard-pin-2"},
             )
-            assert replay.status_code == 201, replay.text
+            assert replay.status_code == 200, replay.text
             assert runtime_agents[0]["model"] == {
-                "primary": "openai/gpt-5.5",
+                "primary": "anthropic/claude-opus-4-8",
+                "fallbacks": [],
+            }
+            # Reusing the same Idempotency-Key with a different explicitly present
+            # `model_routing` (same primary model, different fallback policy) must
+            # conflict (409) rather than colliding on the admission-only hash:
+            conflict = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json={
+                    **admission,
+                    "model_routing": {
+                        "mode": "fallback",
+                        "fallback_models": [
+                            "anthropic/claude-opus-4-8",
+                            "openai/gpt-5.5",
+                        ],
+                    },
+                },
+                headers={**headers, "X-Request-Id": "req-hard-pin-conflict"},
+            )
+            assert conflict.status_code == 409, conflict.text
+            assert conflict.json()["error_code"] == "AGENT_SYNC_IDEMPOTENCY_CONFLICT"
+            assert runtime_agents[0]["model"] == {
+                "primary": "anthropic/claude-opus-4-8",
                 "fallbacks": [],
             }
 

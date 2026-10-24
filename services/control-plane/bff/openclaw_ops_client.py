@@ -318,10 +318,14 @@ class OpenClawOpsClient:
         model_routing = _resolve_persona_opinion_model_routing(admission, persona_profile)
         payload = dict(admission)
         payload["model_routing"] = model_routing
+        policy_digest = hashlib.sha256(
+            json.dumps(model_routing, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()[:12]
         idempotency_key = str(
             uuid.uuid5(
                 uuid.NAMESPACE_URL,
-                f"pantheon:persona-opinion-agent:{admission.get('agent_id')}:{admission.get('capability_snapshot_id')}",
+                "pantheon:persona-opinion-agent:"
+                f"{admission.get('agent_id')}:{admission.get('capability_snapshot_id')}:{policy_digest}",
             )
         )
         response = self._request(

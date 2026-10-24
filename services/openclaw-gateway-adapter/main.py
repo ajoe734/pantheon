@@ -3017,10 +3017,11 @@ class _AgentEnsureIdempotencyConflict(RuntimeError):
 
 
 def _agent_ensure_fingerprint(req: BaseModel) -> str:
-    if isinstance(req, OpenClawPersonaOpinionEnsureRequest):
-        return _persona_admission_fingerprint(req.model_dump(mode="json"))
+    payload = req.model_dump(mode="json")
+    if isinstance(payload, dict) and payload.get("model_routing") is None:
+        payload = {key: value for key, value in payload.items() if key != "model_routing"}
     canonical = json.dumps(
-        req.model_dump(mode="json"),
+        payload,
         sort_keys=True,
         separators=(",", ":"),
     )
