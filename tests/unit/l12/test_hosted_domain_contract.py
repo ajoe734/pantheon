@@ -475,11 +475,57 @@ def test_hosted_research_never_patches_controls_and_pauses_until_a_human_edit_ex
         research._case_persona_teaching({})
     assert paused.value.blocked_before == "teaching_human_control_edit"
     assert "awaiting_human_edit" in paused.value.detail and "Management UI" in paused.value.detail
-    assert paused.value.resource_ids["pre_edit_evaluation"]["eval_id"] == "teval-1"
+    assert paused.value.resource_ids["pre_edit_eval_id"] == "teval-1"
+    assert paused.value.resource_ids["pre_edit_evaluated_at"] == "2026-10-23T01:30:00Z"
+    _assert_scalar_ids(paused.value.resource_ids)
     state["events"] = [_edit(actor=HUMAN)]
     research._case_persona_teaching({})
     assert not [c for c in calls if c[0] == "PATCH"], "hosted mode must never write Teaching controls"
-    assert research.chain["pre_edit_evaluation"]["eval_id"] == "teval-1"
+    assert research.chain["pre_edit_eval_id"] == "teval-1"
+
+
+def _assert_scalar_ids(ids: dict[str, Any]) -> None:
+    """The parent stimulus receipt path (_typed_id) rejects mappings, lists and bools."""
+    spec = importlib.util.spec_from_file_location(
+        "hosted_parent_stimulus", L12_DIR / "test_stimulus_cross_loop_deployed_e2e.py"
+    )
+    parent = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = parent
+    spec.loader.exec_module(parent)
+    for kind, value in ids.items():
+        assert parent._typed_id(kind, value)
+
+
+def test_hosted_research_keeps_pausing_on_an_existing_executor_edit_and_picks_the_latest_human_edit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _, research, _ = _research(monkeypatch, tmp_path)
+    research.chain["session"] = {"session_id": "trn-1", "persona_id": "persona-teach"}
+    research._current_case = {}
+    state = {"events": [_edit(actor="executor-1")]}
+
+    def http(_u: str, path: str, *, method: str = "GET", payload: Any = None, headers: Any = None, **_: Any) -> Any:
+        if "/controls/" in path:
+            return {"controls": [{"parameter_key": "short_window", "current_value": 5},
+                                 {"parameter_key": "long_window", "current_value": 30}]}
+        if path.endswith("/events"):
+            return state["events"]
+        if path.endswith("/terminal-readback"):
+            return _terminal()
+        if path.endswith("/preview-jobs"):
+            return {"job_id": "job-1", "eval_id": "teval-1"}
+        if "/preview-jobs/" in path:
+            return {"job_id": "job-1", "session_id": "trn-1", "status": "completed", "eval_id": "teval-1"}
+        raise AssertionError(f"unexpected call {method} {path}")
+
+    research._http_json = http
+    with pytest.raises(sys.modules["l12_owner_auth"].HostedPause) as paused:
+        research._case_persona_teaching({})
+    assert paused.value.blocked_before == "teaching_human_control_edit"
+    assert "awaiting_human_edit" in paused.value.detail and "ignored" in paused.value.detail
+    _assert_scalar_ids(paused.value.resource_ids)
+    state["events"] = [_edit(actor="executor-1"), _edit(actor=HUMAN, event_id="tevt-2")]
+    research._case_persona_teaching({})
 
 
 def test_isolated_research_still_patches_controls_with_the_operator_token(
@@ -575,6 +621,9 @@ class FakeLearningOwners:
         self.calls.append((method, path, payload))
         if path.endswith("/terminal-readback"):
             return _terminal()
+        if path.startswith("/api/training/previews/"):
+            return {"evaluations": {"teval-0": {"eval_identity": "eid-0", "evaluation_result": {
+                "eval_id": "teval-0", "metrics": PRE_EDIT["metrics"]}}}}
         if path.endswith("/events"):
             return [_edit(actor=HUMAN)]
         if path == "/api/consult/requests" and method == "POST":
@@ -616,7 +665,8 @@ def test_human_agora_evidence_carries_the_teaching_id_registry_and_real_captured
 ) -> None:
     preds = {"teaching_session_id": "trn-1", "registry_id": "reg-1", "checksum": "sha-1",
              "strategy_id": "strat-1", "eval_identity": "eid-1"}
-    mod, harness, owners = _human(monkeypatch, tmp_path, predecessors={**preds, "pre_edit_evaluation": PRE_EDIT})
+    mod, harness, owners = _human(monkeypatch, tmp_path, predecessors={**preds, "pre_edit_eval_id": "teval-0",
+                                                                     "pre_edit_evaluated_at": PRE_EDIT["evaluated_at"]})
     harness._ensure_persona = lambda *a, **k: None
     inputs = harness._hosted_teaching_inputs()
     assert inputs["session_id"] == "trn-1" and inputs["persona_id"] == "persona-teach"

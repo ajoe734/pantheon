@@ -880,6 +880,29 @@ class DeployedHumanLearningHarness:
             "X-Pantheon-Service": "training-session-preview-worker",
         }
 
+    def _pre_edit_evaluation(
+        self, session_id: str, eval_id: Any, evaluated_at: Any, headers: Mapping[str, str]
+    ) -> dict[str, Any] | None:
+        """Read the pre-edit evaluation back from the Training owner by its scalar id (owner GET is truth)."""
+
+        eval_id = str(eval_id or "").strip()
+        if not eval_id:
+            return None
+        bundle = self._http_json(
+            self.training_url, f"/api/training/previews/{urllib.parse.quote(session_id, safe='')}", headers=headers
+        )
+        evaluations = bundle.get("evaluations") if isinstance(bundle, Mapping) else None
+        preview = evaluations.get(eval_id) if isinstance(evaluations, Mapping) else None
+        result = preview.get("evaluation_result") if isinstance(preview, Mapping) else None
+        if not isinstance(result, Mapping) or result.get("eval_id") != eval_id:
+            return None
+        return {
+            "eval_id": eval_id,
+            "eval_identity": preview.get("eval_identity") or result.get("eval_identity"),
+            "evaluated_at": str(evaluated_at or preview.get("candidate_snapshot_at") or ""),
+            "metrics": result.get("metrics"),
+        }
+
     def _hosted_teaching_inputs(self) -> dict[str, Any]:
         """Read the chain's real Teaching result (loop 4) and build the Agora evidence from it."""
         chain = self.hosted_input
@@ -910,7 +933,10 @@ class DeployedHumanLearningHarness:
             "Teaching eval_identity drifted from the A_research receipt",
         )
         operator_token = human_token("OPERATOR")
-        pre_edit = chain.predecessors.get("pre_edit_evaluation")
+        pre_edit = self._pre_edit_evaluation(
+            wanted["teaching_session_id"], chain.predecessors.get("pre_edit_eval_id"),
+            chain.predecessors.get("pre_edit_evaluated_at"), headers,
+        )
         writer = persona_writer_identity()
         try:
             content = teaching_agora_content(
