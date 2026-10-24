@@ -833,6 +833,10 @@ class FakeRuntimeHttp:
                 return {"decision_id": decision, "tenant_id": TENANT, "decision_state": "decided",
                         "decision": "approved", "version": 2, **scope}
             return {"detail": "not found"}
+        if path.startswith("/api/v1/capital-pools/") and method == "GET":
+            return {"data": self.pool} if self.pool else {"error": {"code": "RESOURCE_NOT_FOUND"}}
+        if path.startswith("/api/v1/bindings/") and method == "GET":
+            return {"data": self.binding} if self.binding else {"error": {"code": "RESOURCE_NOT_FOUND"}}
         if path.startswith("/api/capital-pools") and method == "GET":
             return self.pool or {"detail": "nf"}
         if path == "/api/capital-pools":
@@ -902,9 +906,10 @@ def _runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, phase: str, **kwar
     if provisioned:
         # What the product's BFF paper provisioning wrote under its own service identity.
         meta = {"chain_id": CHAIN, "paper_only": True, "execution_context": "paper"}
-        fake.pool = {"pool_id": f"hosted-all12-{CHAIN}-pool", "tenant_id": TENANT, "created_by": "control-plane-bff",
-                     "metadata": meta}
+        # Real DTO shapes: CapitalPoolBody has no created_by; the binding carries it.
+        fake.pool = {"pool_id": f"hosted-all12-{CHAIN}-pool", "tenant_id": TENANT, "metadata": meta}
         fake.binding = {"binding_id": f"hosted-all12-{CHAIN}-pcb", "tenant_id": TENANT, "status": "active",
+                        "persona_id": "persona-teach", "capital_pool_id": f"hosted-all12-{CHAIN}-pool",
                         "allowed_deployment_scope": "paper", "created_by": "control-plane-bff", "metadata": meta}
     chain.http = fake
     chain._identity = lambda service: chain.evidence.identities.setdefault(service, {"service": service})
@@ -1148,6 +1153,7 @@ def test_hosted_capital_sends_no_direct_write_and_pauses_when_product_records_ar
     assert "CAPITAL_HOSTED_PRINCIPAL_DECISION_REQUIRED" in paused.value.detail
     assert "BFF paper-provisioning entry" in paused.value.detail and "H1/H3" in paused.value.detail
     assert [c for c in fake.calls if c[1] != "GET"] == [] and ids == {}
+    assert all(c[0] == "bff" for c in fake.calls if "capital" in c[2] or "bindings" in c[2])
     source = inspect.getsource(sys.modules["l12_owner_auth"])
     assert "_service_jwt" not in source and not hasattr(sys.modules["l12_owner_auth"], "fresh_capital_authorization")
 
@@ -1159,16 +1165,18 @@ def test_hosted_capital_rejects_records_not_written_by_product_provisioning(
     from l12_owner_auth import HOSTED_TASK_ID, HostedPause
 
     for wrong in (HOSTED_TASK_ID, "unrelated-service"):  # not the product BFF identity
-        fake.pool["created_by"] = wrong
-        fake.pool["metadata"] = {**fake.pool["metadata"], "provisioned_by": wrong}
+        fake.binding["created_by"] = wrong
         with pytest.raises(HostedPause):
             chain._hosted_capital("persona-teach", {})
-    fake.pool["created_by"] = "control-plane-bff"
-    fake.binding["created_by"] = "unrelated-service"
+    fake.binding["created_by"] = "control-plane-bff"
+    fake.binding["capital_pool_id"] = "other-pool"
     with pytest.raises(HostedPause):
         chain._hosted_capital("persona-teach", {})
-    fake.binding["created_by"] = "control-plane-bff"
-    fake.pool["created_by"] = "control-plane-bff"
+    fake.binding["capital_pool_id"] = fake.pool["pool_id"]
+    fake.pool["metadata"] = {**fake.pool["metadata"], "execution_context": "live"}
+    with pytest.raises(HostedPause):
+        chain._hosted_capital("persona-teach", {})
+    fake.pool["metadata"] = {**fake.pool["metadata"], "execution_context": "paper"}
     fake.binding["status"] = "pending"
     with pytest.raises(HostedPause):
         chain._hosted_capital("persona-teach", {})

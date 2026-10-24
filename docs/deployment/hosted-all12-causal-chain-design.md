@@ -130,10 +130,15 @@ must show the product's provisioning identity as writer. Only the Capital-record
 the product's automated paper approvals must never replace the chain's human H1 (registry approval)
 or H3 (deployment plan release).
 
-Resulting flow in `C_promote`: `_hosted_capital` only reads the pool and binding back (GET) and
-verifies the writer is exactly the product BFF identity `control-plane-bff` (`created_by` on pool and
-binding, `PERSONA_OWNER_SERVICE_ACTOR_ID`; any other writer, including metadata-only claims, is rejected), chain labels/tenant and active paper scope, then
-persists the scalar ids. When the records are absent or unproven it pauses before
+Resulting flow in `C_promote`: `_hosted_capital` only reads the pool and binding back (GET) through the
+product's BFF read routes with the operator session (`GET /api/v1/capital-pools/{pool_id}` in
+`bff/capital/router.py`, `GET /api/v1/bindings/{binding_id}` in `bff/runtime/router.py`; the BFF reads
+Capital under its own identity, so no service header is borrowed). Both return a `{"data": ...}` envelope;
+not-found maps to the named pause. `CapitalPool` has no `created_by`, so writer provenance is the
+binding's `created_by` == `control-plane-bff` (`PERSONA_OWNER_SERVICE_ACTOR_ID`, bound to the verified
+token by Capital), plus `binding.capital_pool_id == pool_id`, `binding.persona_id`, the pool's chain
+labels/tenant and `execution_context: paper`, and an active paper-only binding; any other writer,
+including metadata-only claims, is rejected. It then persists the scalar ids. When the records are absent or unproven it pauses before
 `capital_pool_creation` with blocker `CAPITAL_HOSTED_PRINCIPAL_DECISION_REQUIRED` (name kept for
 continuity). There is no service-claim exception: the harness never writes Capital directly in
 hosted mode, whatever the executing token carries.

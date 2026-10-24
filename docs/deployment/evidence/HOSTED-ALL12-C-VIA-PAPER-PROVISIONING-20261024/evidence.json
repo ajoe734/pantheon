@@ -7,7 +7,7 @@
     "POST /bff/capital-pools forwards the caller JWT, so it is not the BFF's own service identity",
     "_PersonaOwnerHttpTransport service authority is product-owned and must not be copied or minted in the harness"
   ],
-  "behaviour": "_hosted_capital only GETs the pool and binding and verifies product writer identity, chain labels/tenant, active paper scope and persists scalar ids; absent or unproven records pause before capital_pool_creation. The harness sends no Capital POST/PATCH and has no service-claim carve-out; H1/H3 stay human",
+  "behaviour": "_hosted_capital only GETs the pool and binding via BFF routes GET /api/v1/capital-pools/{pool_id} and GET /api/v1/bindings/{binding_id} (operator session) and verifies the binding created_by control-plane-bff, binding->pool/persona link, pool paper context, chain labels/tenant, active paper scope and persists scalar ids; absent or unproven records pause before capital_pool_creation. The harness sends no Capital POST/PATCH and has no service-claim carve-out; H1/H3 stay human",
   "verification": "tests/unit/l12: 115 passed (hosted C_promote asserts zero non-GET Capital calls)",
   "needs": "new product code: capital-only provisioning entry with BFF service authority, outside this task's files"
 }

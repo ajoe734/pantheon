@@ -1183,7 +1183,6 @@ class RuntimeChain:
         chain = self.hosted_input
         assert chain is not None
         pool_id, binding_id = chain.id("pool"), chain.id("pcb")
-        headers = {"X-Tenant-Id": TENANT_ID, **self.settings.capital_auth()}
 
         def pause(detail: str) -> HostedPause:
             return HostedPause(
@@ -1194,21 +1193,28 @@ class RuntimeChain:
             )
 
         def readback(kind: str, key: str, path: str, record_id: str) -> Mapping[str, Any]:
-            record = self.http.request("capital", "GET", path, headers=headers, expected={200, 404})
-            if record.get(key) != record_id:
+            # Product BFF read routes with the operator session: the BFF reads Capital under its own
+            # service identity, so no service header is borrowed and no Capital reader allow-list is hit.
+            envelope = self.http.request("bff", "GET", path, headers=self.bff_headers, expected={200, 404})
+            record = envelope.get("data") if isinstance(envelope, Mapping) else None
+            if not isinstance(record, Mapping) or record.get(key) != record_id:
                 raise pause(f"{kind} {record_id} is absent")
             meta = record.get("metadata") if isinstance(record.get("metadata"), Mapping) else {}
             if meta.get("chain_id") != chain.chain_id or record.get("tenant_id", TENANT_ID) != TENANT_ID:
                 raise pause(f"{kind} {record_id} lacks the chain labels or tenant")
-            # Product contract: personas/service.py PERSONA_OWNER_SERVICE_ACTOR_ID is the BFF's own
-            # service identity; the coordinator writes it as created_by on the pool and the binding.
-            if str(record.get("created_by") or "").strip() != PRODUCT_PROVISIONING_WRITER:
-                raise pause(f"{kind} {record_id} was not written by the product BFF identity {PRODUCT_PROVISIONING_WRITER}")
             return record
 
-        readback("paper pool", "pool_id", f"/api/capital-pools/{pool_id}", pool_id)
+        pool = readback("paper pool", "pool_id", f"/api/v1/capital-pools/{pool_id}", pool_id)
+        if (pool.get("metadata") or {}).get("execution_context") != "paper":
+            raise pause(f"pool {pool_id} is not a paper pool")
+        binding = readback("persona capital binding", "binding_id", f"/api/v1/bindings/{binding_id}", binding_id)
+        # CapitalPool carries no writer field; provenance is the binding's created_by, which Capital
+        # binds to the verified BFF service identity (personas/service.py PERSONA_OWNER_SERVICE_ACTOR_ID).
+        if str(binding.get("created_by") or "").strip() != PRODUCT_PROVISIONING_WRITER:
+            raise pause(f"binding {binding_id} was not written by the product BFF identity {PRODUCT_PROVISIONING_WRITER}")
+        if binding.get("capital_pool_id") != pool_id or binding.get("persona_id") != persona_id:
+            raise pause(f"binding {binding_id} does not tie persona {persona_id} to pool {pool_id}")
         ids["capital_pool_id"] = pool_id
-        binding = readback("persona capital binding", "binding_id", f"/api/bindings/{binding_id}", binding_id)
         ids["capital_binding_id"] = binding_id
         if binding.get("status") != "active" or binding.get("allowed_deployment_scope") != "paper":
             raise pause(f"binding {binding_id} is not active paper-only authority")
