@@ -1,0 +1,25 @@
+{
+  "task_id": "HOSTED-ALL12-PLAN-RESUME-CLOSE-20261024",
+  "owner": "Claude",
+  "reviewer": "Claude2",
+  "scope": "source-only repair of two parent caller seams; no hosted calls; not hosted acceptance, not an all12 claim",
+  "defects": [
+    {
+      "id": "missing-tenant-header",
+      "fix": "UrllibOwnerClient.request sends X-Tenant-Id (configured tenant) on the generic bearer path; service_headers overrides and genuine Capital auth are unchanged",
+      "test": "tests/unit/l12/test_hosted_stimulus_contract.py::test_owner_client_sends_configured_tenant_on_generic_requests"
+    },
+    {
+      "id": "executed-plan-abort",
+      "fix": "E_close no longer POSTs executed->aborted. For an executed plan it requires the chain runtime binding already retired, finds exactly one same-plan/tenant/binding saga, retires and finalizes it via the existing saga routes, reads it back as retired, and records the plan under retained_history (not retired). Unexecuted plans still abort.",
+      "tests": [
+        "test_e_close_retires_only_verified_chain_records",
+        "test_e_close_executed_plan_refused_abort_and_saga_needs_retired_binding",
+        "test_e_close_still_aborts_unexecuted_plan"
+      ],
+      "fake_correction": "FakeOwner now refuses executed->aborted like the real DeploymentPlan"
+    }
+  ],
+  "verification": "/tmp/civenv/bin/pytest tests/unit/l12/test_hosted_stimulus_contract.py -q -> 69 passed",
+  "independent_review": "pending (Claude2)"
+}

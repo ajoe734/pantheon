@@ -608,6 +608,8 @@ class UrllibOwnerClient:
         if service not in self.urls:
             raise StimulusProofError(f"no owner URL configured for {service}")
         headers = {"Accept": "application/json", "Authorization": f"Bearer {self.token}"}
+        if self.tenant_id:
+            headers["X-Tenant-Id"] = self.tenant_id  # owners enforce the tenant boundary on this header
         if service == "capital" and self.capital_authorization is not None:
             headers = {"Accept": "application/json", **self._capital_request_auth()[0]}
         elif service in self.service_headers:
@@ -1300,6 +1302,7 @@ class HostedChainRunner:
         actor = str(getattr(self.owner, "actor_id", "") or "")
         roles = tuple(getattr(self.owner, "roles", ()) or ())
         retired: list[dict[str, Any]] = []
+        retained: list[dict[str, Any]] = []
         rejected: list[str] = []
         incomplete: list[str] = []
         failures: list[str] = []
@@ -1318,6 +1321,10 @@ class HostedChainRunner:
             verified.add(kind)
             if _record_state(record) in spec.retired_states:
                 retired.append({"kind": kind, "id": record_id, "already": True})
+                continue
+            if kind == "plan_id" and _record_state(record) == "executed":
+                # An executed plan is immutable (executed -> aborted is refused): retire its saga instead.
+                self._retire_executed_plan_saga(record_id, retired, retained, incomplete, failures)
                 continue
             identity = getattr(self.owner, "identity_for", None)
             body_actor, body_roles = identity(spec.service) if callable(identity) else (actor, roles)
@@ -1353,11 +1360,64 @@ class HostedChainRunner:
             "E_close:cleanup_incomplete" if pending and not failures else None,
             error="; ".join(failures) or None,
             retired=retired,
+            retained_history=retained,
             rejected_unrelated=rejected,
             incomplete_cleanup=incomplete,
             residual_non_retirable=residual,
             baseline_fleet_check=baseline_check,
         )
+
+    def _retire_executed_plan_saga(self, plan_id, retired, retained, incomplete, failures) -> None:
+        """Retire the same-plan deployment saga; the executed plan itself stays as labelled history."""
+        label = f"plan_id {plan_id}"
+        binding_id = self.resource_ids.get("runtime_binding_id")
+        if not binding_id or not any(r.get("kind") == "runtime_binding_id" for r in retired):
+            incomplete.append(f"{label}: executed; runtime binding is not retired, saga left untouched")
+            return
+        quoted = urllib.parse.quote(plan_id, safe="")
+        status, listed = self.owner.request("deployment", "GET", f"/api/deployment/sagas?plan_id={quoted}")
+        items = listed if isinstance(listed, list) else (listed.get("sagas") or listed.get("items") or []) if isinstance(listed, Mapping) else []
+        sagas = [
+            s for s in items
+            if isinstance(s, Mapping) and s.get("plan_id") == plan_id and s.get("tenant_id") == self.tenant_id
+        ]
+        if status != 200 or len(sagas) != 1 or not sagas[0].get("saga_id"):
+            incomplete.append(f"{label}: expected exactly one same-plan saga (GET {status}, found {len(sagas)})")
+            return
+        saga = sagas[0]
+        if saga.get("binding_id") != binding_id:
+            incomplete.append(f"{label}: saga {saga['saga_id']} binding {saga.get('binding_id')!r} != chain runtime binding {binding_id!r}")
+            return
+        saga_id = urllib.parse.quote(str(saga["saga_id"]), safe="")
+        saga_path = f"/api/deployment/sagas/{saga_id}"
+        state = str(saga.get("status") or "").lower()
+        http = None
+        if state != "retired":
+            if state != "retiring":
+                http, _ = self.owner.request(
+                    "deployment", "POST", f"{saga_path}/retire",
+                    {"reason": f"{self.chain_id} E_close"}, idempotency_key=f"{self.chain_id}-e-close-saga",
+                )
+                if http not in (200, 201, 202):
+                    failures.append(f"{label}: saga retire returned {http}")
+                    return
+            http, _ = self.owner.request(
+                "deployment", "POST", f"{saga_path}/retire/finalize",
+                {"note": f"{self.chain_id} E_close"}, idempotency_key=f"{self.chain_id}-e-close-saga-finalize",
+            )
+            if http not in (200, 201, 202):
+                failures.append(f"{label}: saga retire finalize returned {http}")
+                return
+        status, after = self.owner.request("deployment", "GET", saga_path)
+        after_state = str(_unwrap(after).get("status") or "").lower() if status == 200 else ""
+        if after_state != "retired":
+            incomplete.append(f"{label}: saga {saga['saga_id']} retire accepted but state is {after_state!r}")
+            return
+        retained.append({
+            "kind": "plan_id", "id": plan_id, "plan_state": "executed",
+            "saga_id": saga["saga_id"], "saga_state": "retired", "binding_id": binding_id,
+            "note": "executed plan is immutable; retained as history, not retired",
+        })
 
     def _baseline_check(self) -> tuple[str, str]:
         """Re-read the Runtime owner and compare with the baseline recorded before mutation."""

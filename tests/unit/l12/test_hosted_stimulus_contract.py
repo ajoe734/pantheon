@@ -143,6 +143,10 @@ RETIRED = {  # write path suffix -> (state key, state after the write)
 }
 
 
+def _saga(**extra: Any) -> dict[str, Any]:
+    return {"saga_id": "saga-1", "plan_id": "plan-1", "tenant_id": TENANT, "binding_id": "rt-1", "status": "completed", **extra}
+
+
 class FakeOwner:
     actor_id = "exec-actor-1"
     roles = ("persona.admin", "capital.admin", "risk_owner")
@@ -157,6 +161,10 @@ class FakeOwner:
             return (200, record) if record is not None else (404, {})
         base = path.rsplit("/", 1)[0]
         record = self.records.get((service, base))
+        if record is not None and path.endswith("/status") and base.startswith("/api/deployment/plans/"):
+            # real DeploymentPlan: executed is terminal, executed -> aborted is refused
+            if record.get("status") == "executed" and (body or {}).get("status") == "aborted":
+                return 400, {"detail": "illegal transition executed -> aborted"}
         if record is not None and base not in self.stuck:
             inner = next((v for v in record.values() if isinstance(v, dict)), record) if "tenant_id" not in record else record
             if body and "status" in body:
@@ -277,11 +285,14 @@ def test_e_close_retires_only_verified_chain_records(monkeypatch, tmp_path):
     done = {p: {"phase_status": "completed"} for p in parent.HOSTED_PHASES[:4]}
     prior = {"hosted": {"chain_id": CHAIN, "phases": done, "decisions": {"H1": "apv-1"}, "resource_ids": {
         "capital_binding_id": "bnd-1", "capital_pool_id": "pool-unrelated", "plan_id": "plan-1",
-        "registry_id": "reg-1", "teaching_session_id": "ts-1"}}}
+        "runtime_binding_id": "rt-1", "registry_id": "reg-1", "teaching_session_id": "ts-1"}}}
     owner = FakeOwner({
         ("capital", "/api/bindings/bnd-1"): {"binding": _owned(status="active")},
         ("capital", "/api/capital-pools/pool-unrelated"): {"tenant_id": TENANT, "metadata": {"chain_id": "other-chain"}},
+        ("runtime", "/api/runtime-bindings/rt-1"): {"binding": _owned(status="active")},
         ("deployment", "/api/deployment/plans/plan-1"): _owned(status="executed"),
+        ("deployment", "/api/deployment/sagas?plan_id=plan-1"): [_saga()],
+        ("deployment", "/api/deployment/sagas/saga-1"): _saga(),
         ("registry", "/api/registry/strategy-specs/reg-1"): {"entry": _owned(artifact_state="approved", version=3)},
         ("governance", "/api/governance/approvals/apv-1"): _owned(decision_state="decided", decision="approved", target_id="reg-1", version=3),
     })
@@ -289,7 +300,9 @@ def test_e_close_retires_only_verified_chain_records(monkeypatch, tmp_path):
     writes = [(m, p) for _s, m, p, _b in owner.log if m != "GET"]
     assert writes == [
         ("PATCH", "/api/bindings/bnd-1/status"),
-        ("POST", "/api/deployment/plans/plan-1/status"),
+        ("POST", "/api/runtime-bindings/rt-1/retire"),
+        ("POST", "/api/deployment/sagas/saga-1/retire"),
+        ("POST", "/api/deployment/sagas/saga-1/retire/finalize"),
         ("POST", "/api/registry/strategy-specs/reg-1/advance"),
         ("POST", "/api/governance/approvals/apv-1/revoke"),
     ]
@@ -303,6 +316,10 @@ def test_e_close_retires_only_verified_chain_records(monkeypatch, tmp_path):
     close = _receipt(tmp_path)["hosted"]["phases"]["E_close"]
     assert "chain label" in close["rejected_unrelated"][0]
     assert close["residual_non_retirable"] == ["teaching_session_id"]
+    # the executed plan is retained history; only its saga and runtime binding are retired
+    assert close["retained_history"][0]["plan_state"] == "executed" and close["retained_history"][0]["saga_state"] == "retired"
+    assert all(r["kind"] != "plan_id" for r in close["retired"])
+    assert owner.records[("deployment", "/api/deployment/plans/plan-1")]["status"] == "executed"
     # the unrelated pool stays unretired, so cleanup is incomplete and never complete/all12
     assert evidence.status == "paused" and close["phase_status"] == "paused"
     assert close["blocked_before"] == "E_close:cleanup_incomplete"
@@ -318,6 +335,37 @@ def _exec_record(spec_id="reg-1", checksum="sha256:exec"):
 
 EXEC_RESOURCES = {"registry_id": "reg-1", "execution_artifact_id": "exec-1",
                   "execution_artifact_version": "1.0.0", "execution_artifact_checksum": "sha256:exec"}
+
+
+def test_e_close_executed_plan_refused_abort_and_saga_needs_retired_binding(monkeypatch, tmp_path):
+    plan = _owned(status="executed")
+    owner = FakeOwner({("deployment", "/api/deployment/plans/plan-1"): plan})
+    code, _ = owner.request("deployment", "POST", "/api/deployment/plans/plan-1/status", {"status": "aborted"})
+    assert code == 400 and plan["status"] == "executed"
+    # no retired runtime binding: the saga is never touched
+    _runner(tmp_path, "E_close", owner, prior=_close_prior(plan_id="plan-1")).run()
+    assert [x for x in owner.log if x[1] != "GET"][1:] == []
+    close = _receipt(tmp_path)["hosted"]["phases"]["E_close"]
+    assert close["phase_status"] == "paused" and close["retained_history"] == []
+
+
+def test_e_close_still_aborts_unexecuted_plan(monkeypatch, tmp_path):
+    owner = FakeOwner({("deployment", "/api/deployment/plans/plan-1"): _owned(status="approved")})
+    _runner(tmp_path, "E_close", owner, prior=_close_prior(plan_id="plan-1")).run()
+    assert [(m, p, b) for _s, m, p, b in owner.log if m != "GET"] == [
+        ("POST", "/api/deployment/plans/plan-1/status", {"status": "aborted"})]
+
+
+def test_owner_client_sends_configured_tenant_on_generic_requests(monkeypatch):
+    seen = {}
+    class Resp:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *_a): return False
+        def read(self): return b"{}"
+    monkeypatch.setattr(parent.urllib.request, "urlopen", lambda request, timeout=0: seen.update(request.header_items()) or Resp())
+    parent.UrllibOwnerClient({"deployment": "http://d"}, "owner-token", tenant_id=TENANT).request("deployment", "GET", "/api/deployment/plans/p")
+    assert seen["X-tenant-id"] == TENANT and seen["Authorization"] == "Bearer owner-token"
 
 
 def test_e_close_retires_the_derived_execution_artifact_before_its_spec(monkeypatch, tmp_path):
