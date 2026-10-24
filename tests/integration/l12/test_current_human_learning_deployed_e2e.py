@@ -27,6 +27,7 @@ runtime, create development tasks, or continue into later loop cases.
 from __future__ import annotations
 
 import ast
+import hashlib
 import inspect
 import json
 import os
@@ -53,6 +54,7 @@ from l12_owner_auth import (
     persona_create_identity,
     persona_writer_identity,
     require_decided_approval,
+    token_roles,
     token_subject,
 )
 
@@ -118,21 +120,41 @@ def _finite_number(value: Any) -> float | None:
     return number if number == number and number not in (float("inf"), float("-inf")) else None
 
 
+def _parse_time(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+class NoGenuineControlEdit(RuntimeError):
+    """Teaching holds no eligible real operator control edit on a real candidate snapshot."""
+
+    def __init__(self, detail: str, resource_ids: Mapping[str, Any]) -> None:
+        super().__init__(detail)
+        self.resource_ids = dict(resource_ids)
+
+
 def teaching_agora_content(
     *,
     terminal: Mapping[str, Any],
-    controls_record: Mapping[str, Any],
+    events: Sequence[Mapping[str, Any]],
+    operator: Mapping[str, Any],
     registry_id: str,
     strategy_id: str,
     checksum: str,
 ) -> dict[str, Any]:
-    """Agora interaction content built only from the chain's real Teaching result.
+    """Agora content from one genuine operator control edit on a real Teaching candidate.
 
-    Every number comes from the Teaching evaluation or from a control the Teaching
-    session actually stored; the decision is the Teaching governance outcome and
-    the target is the chain's own Registry entry. Nothing here is a fixed row: if
-    the Teaching session does not expose at least two distinct real control actions
-    (the BC baseline's minimum) the caller fails closed instead of padding.
+    BC accepts only operator/approver approve|edit feedback on a candidate or paper
+    target. So the feedback is the append-only ``control_patch`` event a verified
+    human authority wrote (event actor must equal the issuer-authenticated OPERATOR
+    subject, ``actor_type`` user, never a service), the target is the Teaching
+    candidate snapshot, and the approved source Spec stays only as lineage. The
+    Teaching validation outcome (even a failed one) is preserved in ``teaching`` and
+    is not the decision. Nothing is relabelled: with no such event or candidate the
+    caller pauses with the actual IDs instead of inventing a positive sample.
     """
 
     session_id = str(terminal.get("session_id") or "")
@@ -147,41 +169,89 @@ def teaching_agora_content(
     validation = evaluation.get("validation_status")
     if validation not in {"passed", "failed"}:
         raise RuntimeError(f"Teaching evaluation validation_status {validation!r} is not terminal")
+    ids = {"teaching_session_id": session_id, "eval_identity": eval_identity, "eval_id": evaluation.get("eval_id")}
+    preview = terminal.get("preview") if isinstance(terminal.get("preview"), Mapping) else {}
+    proof = preview.get("evaluation_proof") if isinstance(preview.get("evaluation_proof"), Mapping) else {}
+    digest = str(proof.get("candidate_digest") or "").strip()
+    snapshot_at = str(preview.get("candidate_snapshot_at") or "").strip()
+    if not digest or not snapshot_at:
+        raise NoGenuineControlEdit("Teaching exposes no real candidate snapshot to attach feedback to", ids)
+    operator_id, operator_roles = str(operator.get("sub") or ""), operator.get("roles") or []
+    if not operator_id or "operator" not in operator_roles:
+        raise NoGenuineControlEdit("no issuer-authenticated OPERATOR identity to verify the edit actor", ids)
+    controls = proof.get("controls")
+    if (
+        not isinstance(controls, list)
+        or not proof.get("controls_digest")
+        or hashlib.sha256(
+            json.dumps(controls, ensure_ascii=True, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+        ).hexdigest()
+        != proof["controls_digest"]
+    ):
+        raise NoGenuineControlEdit("Teaching evaluation proof controls do not match controls_digest", ids)
+    snapshot_controls = {
+        str(c.get("parameter_key")): c.get("current_value") for c in controls if isinstance(c, Mapping)
+    }
+    snapshot_time = _parse_time(snapshot_at)
+    candidates = [
+        event
+        for event in events
+        if event.get("event_type") == "control_patch"
+        and event.get("actor_type") == "user"
+        and event.get("actor") == operator_id
+        and event.get("event_id")
+        and isinstance(event.get("patch_delta"), list)
+        and event["patch_delta"]
+    ]
+    if not candidates:
+        raise NoGenuineControlEdit(
+            "Teaching holds no control_patch event written by the verified OPERATOR", ids
+        )
+    edit: Mapping[str, Any] | None = None
     steps: list[dict[str, Any]] = []
-    for control in controls_record.get("controls") or []:
-        if not isinstance(control, Mapping) or not control.get("parameter_key"):
-            continue
-        stored = _finite_number(control.get("current_value"))
-        if stored is None:
-            continue
-        key = str(control["parameter_key"])
-        steps.append(
-            {
-                "observation": [*vector, stored],
-                "action": f"set_{key}",
-                "reward": vector[0],
-                "feedback_event_id": f"{eval_identity}:{key}",
-            }
+    for event in sorted(candidates, key=lambda e: str(e.get("timestamp") or e.get("emitted_at") or ""), reverse=True):
+        stamp = _parse_time(str(event.get("timestamp") or event.get("emitted_at") or ""))
+        if stamp is None or snapshot_time is None or stamp > snapshot_time:
+            continue  # not provably part of this candidate snapshot
+        event_steps: list[dict[str, Any]] = []
+        for delta in event["patch_delta"]:
+            before, after = _finite_number(delta.get("previous_value")), _finite_number(delta.get("new_value"))
+            key = str(delta.get("parameter_key") or "")
+            if key and before is not None and after is not None and before != after:
+                if _finite_number(snapshot_controls.get(key)) == after:
+                    event_steps.append(
+                        {
+                            "observation": [*vector, before],
+                            "action": f"set_{key}",
+                            "reward": vector[0],
+                            "feedback_event_id": f"{event['event_id']}:{key}",
+                            "new_value": delta["new_value"],
+                        }
+                    )
+        if len({step["action"] for step in event_steps}) >= 2:
+            edit, steps = event, event_steps
+            break
+    if edit is None:
+        raise NoGenuineControlEdit(
+            "no OPERATOR control edit with two real non-zero deltas is bound to the candidate snapshot and its controls",
+            {**ids, "candidate_snapshot_at": snapshot_at},
         )
-    if len({step["action"] for step in steps}) < 2:
-        raise RuntimeError(
-            "Teaching session exposes fewer than two distinct stored control actions; "
-            "refusing to fabricate Agora trajectory rows"
-        )
+    event_id = str(edit["event_id"])
     return {
-        "actor_id": str(terminal.get("persona_id") or ""),
-        "actor_role": "persona",
-        "decision": "approve" if validation == "passed" else "reject",
+        "actor_id": operator_id,
+        "actor_role": "operator",
+        "decision": "edit",
         "target": {
-            "registry_id": registry_id,
             "strategy_id": strategy_id,
-            "artifact_version": str(terminal.get("artifact_version") or "teaching-evaluated"),
+            "artifact_version": snapshot_at,
             "artifact_type": "strategy_spec",
-            "promotion_state": "approved",
+            "lineage_ref": f"teaching-candidate:{session_id}:{digest}",
+            "promotion_state": "candidate",
         },
         "strategy_id": strategy_id,
         "source_strategy_spec_id": registry_id,
         "teaching_session_id": session_id,
+        "control_edit_event_id": event_id,
         "teaching": {
             "session_id": session_id,
             "eval_identity": eval_identity,
@@ -771,7 +841,7 @@ class DeployedHumanLearningHarness:
         terminal = self._http_json(
             self.training_url, f"/api/training/sessions/{session}/terminal-readback", headers=headers
         )
-        controls = self._http_json(self.training_url, f"/api/training/controls/{session}", headers=headers)
+        events = self._http_json(self.training_url, f"/api/training/sessions/{session}/events", headers=headers)
         self._require(
             terminal.get("session_id") == wanted["teaching_session_id"],
             "Teaching terminal readback does not match the predecessor session",
@@ -781,13 +851,20 @@ class DeployedHumanLearningHarness:
             not expected_eval or terminal.get("eval_identity") == expected_eval,
             "Teaching eval_identity drifted from the A_research receipt",
         )
-        content = teaching_agora_content(
-            terminal=terminal,
-            controls_record=controls,
-            registry_id=wanted["registry_id"],
-            strategy_id=wanted["strategy_id"],
-            checksum=wanted["checksum"],
-        )
+        operator_token = human_token("OPERATOR")
+        try:
+            content = teaching_agora_content(
+                terminal=terminal,
+                events=events if isinstance(events, list) else [],
+                operator={"sub": token_subject(operator_token), "roles": token_roles(operator_token)},
+                registry_id=wanted["registry_id"],
+                strategy_id=wanted["strategy_id"],
+                checksum=wanted["checksum"],
+            )
+        except NoGenuineControlEdit as absent:
+            raise HostedPause(
+                "agora_interaction_evidence", str(absent), {**absent.resource_ids, "registry_id": wanted["registry_id"]}
+            ) from absent
         # Replays must be byte-identical for owner idempotency: take the capture time
         # from the Teaching record itself, never from this process's clock.
         evaluation = terminal.get("evaluation_result") or {}
@@ -818,8 +895,10 @@ class DeployedHumanLearningHarness:
             "persona_id": str(terminal.get("persona_id") or ""),
             "session_id": wanted["teaching_session_id"],
             "content": content,
+            "control_edit_event_id": content["control_edit_event_id"],
             "source_refs": [
                 f"session:{wanted['teaching_session_id']}",
+                f"control_edit:{content['control_edit_event_id']}",
                 f"teaching_eval:{terminal.get('eval_identity')}",
                 f"registry:{wanted['registry_id']}",
             ],
@@ -841,7 +920,11 @@ class DeployedHumanLearningHarness:
                 name="Advisor Persona",
                 mandate="Agora human learning advisor",
             )
-        evidence_id = self._rid(f"ev-l12-hl-{self.run_token}", "ev")
+        # A new genuine control edit is a new evidence version: its identity comes from that
+        # event, never from re-posting changed content under an already admitted evidence ID.
+        evidence_id = self._rid(
+            f"ev-l12-hl-{self.run_token}", "ev", *([hosted["control_edit_event_id"]] if hosted else [])
+        )
         owners = self._at(
             "agora_and_policy.owner_compose_identities",
             lambda: self._service_identities(OWNER_SERVICES["agora_interaction_evidence"]),
