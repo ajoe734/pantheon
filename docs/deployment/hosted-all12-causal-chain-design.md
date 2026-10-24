@@ -121,6 +121,23 @@ There is no paper Capital approval: the paper pool and paper persona binding are
 paper operation policy with no live approval. No extra gates (MFA, issuer, execution grants) are
 invented; scope, tenant, secrets and paper/live separation stay as they are.
 
+### Capital write identity (decision required)
+
+Hosted mode mints no service token anywhere: neither the workflow nor `l12_owner_auth.py` calls
+`_service_jwt('capital')`. Capital writes (`POST /api/capital-pools`, `/api/bindings`, `/activate`)
+send the executing session's own token as received. Capital binds a mutation to the verified token
+(`services/capital/inbound_authority.py`): `X-Pantheon-Service` must be one of the token's service
+claims and be in `CAPITAL_ALLOWED_CALLER_SERVICES`, and the body actor must equal the token's
+delegated actor or subject. A human session token carries no service claim, and the existing dev
+paper principals (`docs/deployment/dev-paper-principals-20260908.md`) cover Governance only. So when
+the executor token has no service claim, `C_promote` pauses before `capital_pool_creation` with
+blocker `CAPITAL_HOSTED_PRINCIPAL_DECISION_REQUIRED`; no Capital write is attempted.
+
+Decision needed from the owner (no new identity mechanism is added here): either (a) Capital accepts
+the executing human session for paper pool/binding writes (recording that session as actor), or
+(b) a dev paper principal is authorised for Capital with the same tenant-dev/paper/0 scope as the
+Governance one. Until one is chosen, the hosted chain stops at this blocker.
+
 ## 4. Owner writes, labels and retirement (acceptance 4)
 
 Label contract for every record: tenant = the hosted dev tenant (never `*`), id prefix

@@ -1128,20 +1128,25 @@ def test_hosted_runtime_paths_never_stop_or_restart_services(
             assert forbidden not in source, (method.__name__, forbidden)
 
 
-def test_hosted_capital_credential_is_requested_fresh_for_every_call(
+def test_hosted_capital_uses_executor_token_and_stops_without_service_claim(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     mod, chain, fake = _runtime(monkeypatch, tmp_path, "C_promote")
-    issued: list[str] = []
+    from l12_owner_auth import HostedPause, capital_authorization, capital_identity
 
-    def issue() -> str:
-        issued.append(CAPITAL_JWT)
-        return f"Bearer {CAPITAL_JWT}"
+    # The real hosted token shape: an operator session, no service claim, nothing minted.
+    assert capital_authorization() == f"Bearer {EXECUTOR_TOKEN}"
+    with pytest.raises(HostedPause) as paused:
+        capital_identity(capital_authorization())
+    assert paused.value.blocked_before == "capital_pool_creation"
+    assert "CAPITAL_HOSTED_PRINCIPAL_DECISION_REQUIRED" in paused.value.detail
+    assert not [c for c in fake.writes() if "/api/capital-pools" in c[2] or "/api/bindings" in c[2]]
+    source = inspect.getsource(sys.modules["l12_owner_auth"])
+    assert "_service_jwt" not in source and not hasattr(sys.modules["l12_owner_auth"], "fresh_capital_authorization")
 
-    chain.settings = replace(chain.settings, capital_headers={}, capital_authorization=issue)
-    assert chain.settings.capital_auth() == {"Authorization": f"Bearer {CAPITAL_JWT}"}
-    chain.settings.capital_auth()
-    assert len(issued) == 2
+
+def test_capital_identity_reads_service_claims_of_a_token_that_has_them(auth: Any) -> None:
+    assert auth.capital_identity(f"Bearer {CAPITAL_JWT}") == ("operator-real", "svc-capital")
 
 
 # --------------------------------------------------------------------------- persona writer identity
