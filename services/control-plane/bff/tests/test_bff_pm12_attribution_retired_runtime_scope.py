@@ -7,9 +7,14 @@ persona/runtime drill-down keeps returning retired runtimes.
 """
 from __future__ import annotations
 
+import ast
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from services.control_plane.bff.agora.performance import service as perf
+from services.control_plane.bff.pm12 import service as pm12_service
+
+_BFF_DIR = Path(__file__).resolve().parents[1]
 
 
 def _runtime(runtime_id: str, persona_id: str, status: str) -> Dict[str, Any]:
@@ -147,27 +152,30 @@ def test_facts_builder_stays_unscoped_for_other_readers() -> None:
     assert {fact["runtime_id"] for fact in facts} >= {"rt-retired-empty-1", "rt-retired-empty-2"}
 
 
-def test_ops_read_model_still_sees_retired_runtime_facts(monkeypatch) -> None:
-    from services.control_plane.bff import main as bff_main
+def test_ops_read_model_still_sees_retired_runtime_facts() -> None:
+    """main._ops_read_model_entry_for_persona joins the unscoped facts builder.
 
-    sources = _mixed_sources()
-
-    class _Store:
-        def get_persona(self, persona_id: str) -> Dict[str, Any]:
-            return {"persona_id": persona_id, "name": persona_id, "status": "archived"}
-
-        def get_persona_league_entry(self, _persona_id: str) -> Dict[str, Any]:
-            return {}
-
-        def __getattr__(self, _name: str) -> Any:
-            return lambda *args, **kwargs: []
-
-    monkeypatch.setattr(bff_main, "read_store", _Store())
-    monkeypatch.setattr(bff_main, "_pm12_performance_attribution_sources", lambda _tenant: sources)
-
-    entry = bff_main._ops_read_model_entry_for_persona("p-retired-empty-1")
-    assert entry is not None
-    attribution = next(
-        source for source in entry.sources if source.source_name == "performance_attribution"
+    The read model lives in main.py, which BFF tests must not import (see
+    test_bff_test_architecture.py), so this checks it statically and then
+    exercises the exact facts symbol it calls with its persona filter.
+    """
+    main_tree = ast.parse((_BFF_DIR / "main.py").read_text(encoding="utf-8"))
+    read_model = next(
+        node
+        for node in ast.walk(main_tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "_ops_read_model_entry_for_persona"
     )
-    assert attribution.source_row_count == 1
+    called = {
+        node.func.id
+        for node in ast.walk(read_model)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "_pm12_performance_attribution_facts" in called
+    assert "_pm12_performance_attribution_response" not in called
+
+    persona_facts = [
+        fact
+        for fact in pm12_service._pm12_performance_attribution_facts(_mixed_sources(), "latest")
+        if str(fact.get("persona_id") or "") == "p-retired-empty-1"
+    ]
+    assert [fact["runtime_id"] for fact in persona_facts] == ["rt-retired-empty-1"]
