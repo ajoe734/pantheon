@@ -1238,10 +1238,11 @@ def test_operator_health_overall_and_counts_match_returned_groups() -> None:
         by_status[g["status"]] += 1
     assert by_status == {"ok": 3, "degraded": 2, "unavailable": 0}
     assert health["group_counts"] == by_status
-    # Business status (open incident, pending approval) lives in the groups and
-    # group_counts; overall availability stays ok while every owner read succeeded.
-    assert health["overall_status"] == "ok"
-    assert health["headline"] == "Control plane healthy"
+    # #6744 contract: overall status/headline follow the returned groups.
+    assert health["overall_status"] == "degraded"
+    assert health["headline"] == "Control plane degraded"
+    assert health["message"] == "2 of 5 health groups need attention."
+    # meta.surfaces stays availability-only.
     assert health["meta"]["surfaces"]["health_status"]["status"] == "ok"
     # Source availability stays separate from business state.
     assert health["meta"]["surfaces"]["incident"] == {"status": "ok", "source": "store"}

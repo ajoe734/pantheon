@@ -3053,9 +3053,9 @@ class ManagementService:
             }
 
         groups = [runtime_group, telemetry_group, incident_group, governance_group, kill_switch_group]
-        # meta.surfaces reports owner read availability only; business status (pending
-        # approvals, open incidents) stays in the groups. A triggered kill switch or
-        # hard safe mode is control-plane state and makes overall_status non-healthy.
+        # overall_status/headline/group_counts follow the returned group status (real
+        # pending governance, active incidents, triggered kill switch included, per
+        # BFF-COCKPIT-HEALTH-SEMANTICS-20261023); meta.surfaces stays availability-only.
         overall_surface = _aggregate_group_surface("health_status", list(group_surfaces.values()), snapshot_at=snap)
         group_reasons = {s.get("reason") for s in group_surfaces.values() if isinstance(s, dict) and s.get("reason")}
         if "read_timeout" in group_reasons:
@@ -3066,9 +3066,7 @@ class ManagementService:
             overall_surface["reason"] = "read_error"
             if all(s.get("reason") == "read_error" for s in group_surfaces.values() if isinstance(s, dict)):
                 overall_surface["source"] = "error"
-        overall_status = overall_surface.get("status", "ok")
-        if overall_status == "ok" and (kill_switch_engaged or kill_switch_empty):
-            overall_status = "degraded"
+        overall_status = _aggregate_group_surface("health_status", groups, snapshot_at=snap).get("status", "ok")
 
         group_counts = {
             "ok": sum(1 for g in groups if g.get("status") == "ok"),
