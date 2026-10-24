@@ -1,0 +1,8 @@
+{
+  "task": "INTEGRATION-UNBLOCK-HOSTED-ALL12-C-VIA-PAPER-PROVISIONING-20261024-CI-RED-EC9338B0894B",
+  "blocked_pr": 6771,
+  "failing_check": "Smoke acceptance (Branch CI Gate, job 120896219403)",
+  "root_cause": "Runner image moved to Ubuntu 26.04 (apparmor 5.0.2); /usr/share/apparmor/extra-profiles/bwrap-userns-restrict no longer exists, so 'Provision real worker sandbox' exited 1 at sha256sum. Unrelated to PR #6771 content; dev has the same exposure.",
+  "fix": ".github/workflows/branch-ci.yml: resolve the profile from several known paths and dpkg -L, fail with a diagnostic listing if absent.",
+  "unverified": "New profile location on 26.04 could not be confirmed locally; CI rerun required."
+}
